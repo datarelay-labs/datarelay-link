@@ -20,10 +20,10 @@ Group=root
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-# Do not list /run/drlink here: ReadWritePaths must exist before
-# RuntimeDirectory creates it and causes status=226/NAMESPACE.
-# RuntimeDirectory=drlink already grants write under ProtectSystem=strict.
-ReadWritePaths=/var/lib/drlink /var/log/drlink /etc/drlink /etc/frp
+# RuntimeDirectory=drlink/allocator only makes the innermost directory writable.
+# systemd creates /run/drlink before the mount namespace, so listing it here
+# does not cause status=226/NAMESPACE and lets ExecStartPre chmod the parent.
+ReadWritePaths=/var/lib/drlink /var/log/drlink /etc/drlink /etc/frp /run/drlink
 
 [Install]
 WantedBy=multi-user.target

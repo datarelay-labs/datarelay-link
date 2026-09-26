@@ -51,6 +51,7 @@ for macos_test in ./tests/test-macos-*.sh; do
   "$macos_test"
 done
 ./tests/test-portability.sh
+./tests/test-systemd-runtime-prep.sh
 ./tests/test-server-install-config.sh
 ./tests/test-qualified-artifacts.sh
 python3 tests/test-qualified-artifacts.py

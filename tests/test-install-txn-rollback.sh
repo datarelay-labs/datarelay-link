@@ -113,4 +113,143 @@ print("SYSTEMD_HOOK_OK")
 PY
 pass "ROLLBACK_SYSTEMD_FAILURE_TEST"
 
+# Failed upgrade after legacy unit retirement must restore the prior supervisor
+# and public CLI, and must stop the new unit before restarting the old one.
+LEGACY="$WORKDIR/legacy-root"
+LSNAP="$WORKDIR/legacy-snap"
+LSTATE="$WORKDIR/legacy-state"
+mkdir -p \
+  "$LEGACY/etc/systemd/system" \
+  "$LEGACY/usr/local/bin" \
+  "$LEGACY/usr/local/sbin" \
+  "$LSTATE"
+printf 'legacy-frps\n' >"$LEGACY/etc/systemd/system/frps.service"
+printf 'legacy-cli\n' >"$LEGACY/usr/local/bin/frpctl"
+printf 'legacy-status\n' >"$LEGACY/usr/local/sbin/frp-server-status"
+for unit in frps.service drlink-server.service drlink-client.service; do
+  echo not-found >"$LSTATE/${unit}.load"
+  echo not-found >"$LSTATE/${unit}.enabled"
+  echo inactive >"$LSTATE/${unit}.active"
+done
+echo loaded >"$LSTATE/frps.service.load"
+echo enabled >"$LSTATE/frps.service.enabled"
+echo active >"$LSTATE/frps.service.active"
+unset FRP_SERVER_TEST_ROOT FRP_INSTALL_TXN_HOOK_SYSTEMD_FAIL || true
+cat >"$WORKDIR/legacy-systemctl" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+STATE="${FRP_MOCK_SYSTEMCTL_STATE:?}"
+LOG="${FRP_MOCK_SYSTEMCTL_LOG:-}"
+mkdir -p "$STATE"
+[[ -z "$LOG" ]] || printf '%s\n' "$*" >>"$LOG"
+unit=""
+cmd="${1:-}"
+shift || true
+case "$cmd" in
+  show)
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        -p|--value|LoadState) shift ;;
+        *) unit="$1"; shift ;;
+      esac
+    done
+    if [[ -f "${STATE}/${unit}.load" ]]; then
+      cat "${STATE}/${unit}.load"
+    else
+      echo not-found
+    fi
+    exit 0
+    ;;
+  is-enabled)
+    unit="${1:-}"
+    if [[ -f "${STATE}/${unit}.enabled" ]]; then
+      cat "${STATE}/${unit}.enabled"
+      grep -qx enabled "${STATE}/${unit}.enabled" && exit 0
+      exit 1
+    fi
+    echo not-found
+    exit 1
+    ;;
+  is-active)
+    unit="${1:-}"
+    if [[ -f "${STATE}/${unit}.active" ]]; then
+      cat "${STATE}/${unit}.active"
+      grep -qx active "${STATE}/${unit}.active" && exit 0
+      exit 3
+    fi
+    echo inactive
+    exit 3
+    ;;
+  daemon-reload) exit 0 ;;
+  reset-failed)
+    # Real reset-failed clears the failed state and does not stop a running unit.
+    unit="${1:-}"
+    echo reset-failed >>"${STATE}/${unit}.events"
+    exit 0
+    ;;
+  stop)
+    unit="${1:-}"
+    echo stop >>"${STATE}/${unit}.events"
+    echo inactive >"${STATE}/${unit}.active"
+    exit 0
+    ;;
+  restart|start)
+    unit="${1:-}"
+    echo "$cmd" >>"${STATE}/${unit}.events"
+    echo loaded >"${STATE}/${unit}.load"
+    echo active >"${STATE}/${unit}.active"
+    exit 0
+    ;;
+  enable)
+    unit="${1:-}"
+    echo enable >>"${STATE}/${unit}.events"
+    echo enabled >"${STATE}/${unit}.enabled"
+    echo loaded >"${STATE}/${unit}.load"
+    exit 0
+    ;;
+  *) exit 0 ;;
+esac
+EOF
+chmod +x "$WORKDIR/legacy-systemctl"
+export FRP_INSTALL_TXN_HOOK_SYSTEMCTL="$WORKDIR/legacy-systemctl"
+export FRP_MOCK_SYSTEMCTL_STATE="$LSTATE"
+export FRP_MOCK_SYSTEMCTL_LOG="$WORKDIR/legacy-systemctl.log"
+: >"$WORKDIR/legacy-systemctl.log"
+python3 "$ROOT/lib/frp_install_txn.py" snapshot --root "$LEGACY" --dest "$LSNAP" \
+  || fail "legacy snapshot"
+rm -f "$LEGACY/etc/systemd/system/frps.service" \
+  "$LEGACY/usr/local/bin/frpctl" \
+  "$LEGACY/usr/local/sbin/frp-server-status"
+printf 'new-unit\n' >"$LEGACY/etc/systemd/system/drlink-server.service"
+printf 'new-cli\n' >"$LEGACY/usr/local/bin/drlink"
+printf 'new-client-unit\n' >"$LEGACY/etc/systemd/system/drlink-client.service"
+echo loaded >"$LSTATE/drlink-server.service.load"
+echo enabled >"$LSTATE/drlink-server.service.enabled"
+echo active >"$LSTATE/drlink-server.service.active"
+echo loaded >"$LSTATE/drlink-client.service.load"
+echo active >"$LSTATE/drlink-client.service.active"
+echo not-found >"$LSTATE/frps.service.load"
+echo inactive >"$LSTATE/frps.service.active"
+python3 "$ROOT/lib/frp_install_txn.py" restore --root "$LEGACY" --dest "$LSNAP" --apply-services \
+  || fail "legacy restore"
+grep -q 'legacy-frps' "$LEGACY/etc/systemd/system/frps.service" || fail "legacy frps unit not restored"
+grep -q 'legacy-cli' "$LEGACY/usr/local/bin/frpctl" || fail "legacy frpctl not restored"
+grep -q 'legacy-status' "$LEGACY/usr/local/sbin/frp-server-status" || fail "legacy status tool not restored"
+[[ ! -f "$LEGACY/etc/systemd/system/drlink-server.service" ]] || fail "new server unit survived rollback"
+[[ ! -f "$LEGACY/usr/local/bin/drlink" ]] || fail "new drlink CLI survived rollback"
+[[ ! -f "$LEGACY/etc/systemd/system/drlink-client.service" ]] || fail "migration-created client unit survived rollback"
+python3 - "$WORKDIR/legacy-systemctl.log" <<'PY' || fail "legacy restart order"
+import sys
+from pathlib import Path
+lines = Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()
+stop_at = next(i for i, line in enumerate(lines) if line.startswith("stop drlink-server.service"))
+restart_at = next(i for i, line in enumerate(lines) if line.startswith("restart frps.service"))
+if stop_at > restart_at:
+    raise SystemExit("restarted legacy frps before stopping drlink-server: %s" % lines)
+if not any(line.startswith("stop drlink-client.service") for line in lines):
+    raise SystemExit("did not stop migration-created drlink-client: %s" % lines)
+PY
+grep -qx active "$LSTATE/frps.service.active" || fail "legacy frps was not restarted"
+pass "LEGACY_UPGRADE_ROLLBACK_RESTORES_PRIOR"
+
 echo "INSTALL_TXN_ROLLBACK_TEST=PASS"

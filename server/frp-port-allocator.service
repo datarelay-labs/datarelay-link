@@ -20,7 +20,9 @@ Group=root
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ReadWritePaths=/var/lib/drlink /var/log/drlink /etc/drlink /etc/frp
+# RuntimeDirectory=drlink/allocator only makes the innermost directory writable.
+# ExecStartPre must chmod /run/drlink, so the parent needs an explicit allowance.
+ReadWritePaths=/var/lib/drlink /var/log/drlink /etc/drlink /etc/frp /run/drlink
 
 [Install]
 WantedBy=multi-user.target

@@ -120,7 +120,7 @@ grep -q '^RuntimeDirectory=drlink/allocator$' "$WORKDIR/allocator-252.service" \
 grep -q '^RuntimeDirectoryMode=0700$' "$WORKDIR/allocator-252.service" \
   || fail "allocator runtime directory mode missing"
 grep -q '^ProtectSystem=strict' "$WORKDIR/allocator-252.service" || fail "modern unit lost strict"
-grep -q '^ReadWritePaths=/var/lib/drlink /var/log/drlink /etc/drlink /etc/frp$' \
+grep -q '^ReadWritePaths=/var/lib/drlink /var/log/drlink /etc/drlink /etc/frp /run/drlink$' \
   "$WORKDIR/allocator-252.service" || fail "allocator writable paths incomplete"
 frp_write_compatible_systemd_unit \
   "$ROOT/server/drlink-frontend.service" \
@@ -145,6 +145,32 @@ pass "SYSTEMD_OLD_UNIT_COMPAT"
 python3 -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 7) else 1)" \
   || fail "host python is older than the documented minimum"
 frp_require_python || fail "frp_require_python on this host"
+# Rocky 8 may expose Python 3.6 as python3. The CLI must keep using a 3.7+
+# interpreter so grammar modules with future annotations can load.
+PY_STUB="$WORKDIR/py-stub"
+mkdir -p "$PY_STUB"
+cat >"$PY_STUB/python3" <<'EOF'
+#!/bin/sh
+exit 1
+EOF
+chmod 755 "$PY_STUB/python3"
+HOST_PYTHON="$(type -P python3)"
+cat >"$PY_STUB/python3.9" <<EOF
+#!/bin/sh
+exec $(printf '%q' "$HOST_PYTHON") "\$@"
+EOF
+chmod 755 "$PY_STUB/python3.9"
+unset _FRPCTL_PYTHON
+old_path="$PATH"
+PATH="$PY_STUB"
+selected="$(frpctl_resolve_python)" || fail "resolver found no python"
+[[ "$selected" == "$PY_STUB/python3.9" ]] || fail "resolver picked $selected"
+got="$(PATH="$PY_STUB" python3 -c 'from __future__ import annotations
+print("ann-ok")')"
+[[ "$got" == "ann-ok" ]] || fail "CLI python could not load future annotations: $got"
+PATH="$old_path"
+unset _FRPCTL_PYTHON
+pass "PYTHON_ROCKY8_SELECTS_37"
 grep -q 'python 3.7 or newer is required' "$ROOT/server/frp-port-allocator.py" \
   || fail "allocator min python guard"
 grep -q 'python 3.7 or newer is required' "$ROOT/server/migrate_token.py" \

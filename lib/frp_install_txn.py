@@ -33,6 +33,78 @@ UNIT_NAMES = (
     'drlink-mcp-bridge.service',
 )
 
+# Prior-stable names retired by frp_migrate_legacy_systemd_units. They are not
+# current manifest entries: the manifest must not put frpctl back on PATH.
+# Snapshot them anyway so a failed upgrade can restore the previous supervisor
+# and CLI after that migration has already stopped and deleted them.
+LEGACY_UNIT_NAMES = (
+    'frps.service',
+    'frpc.service',
+    'frp-port-allocator.service',
+    'frp-access-plugin.service',
+    'frp-egress-gateway.service',
+    'frp-frontend.service',
+)
+# Migration may install this unit while retiring frpc. If it did not exist
+# before the snapshot, rollback must remove it again.
+MIGRATION_CREATED_UNITS = (
+    'drlink-client.service',
+)
+LEGACY_CLI_NAMES = (
+    'frpctl',
+    'frp-create-client',
+    'frp-enrollments',
+    'frp-enrollment-revoke',
+    'frp-enrollment-purge',
+    'frp-enroll-bulk',
+    'frp-clients',
+    'frp-client-info',
+    'frp-client-set',
+    'frp-groups',
+    'frp-group-set',
+    'frp-release-client',
+    'frp-release-service',
+    'frp-revoke-client',
+    'frp-set-client-installer-url',
+    'frp-server-set',
+    'frp-server-status',
+    'frp-project-update',
+    'frp-backup',
+    'frp-restore',
+    'frp-support-bundle',
+    'frp-update',
+    'frp-upstream',
+)
+
+
+def legacy_recovery_rels():
+    rels = ['etc/systemd/system/%s' % name for name in LEGACY_UNIT_NAMES]
+    rels.extend('etc/systemd/system/%s' % name for name in MIGRATION_CREATED_UNITS)
+    for name in LEGACY_CLI_NAMES:
+        rels.append('usr/local/bin/%s' % name)
+        rels.append('usr/local/sbin/%s' % name)
+    return tuple(rels)
+
+
+def snapshot_paths():
+    seen = set()
+    ordered = []
+    for rel in tuple(SNAPSHOT_RELS) + legacy_recovery_rels():
+        if rel in seen:
+            continue
+        seen.add(rel)
+        ordered.append(rel)
+    return tuple(ordered)
+
+
+def service_capture_names():
+    """Stop current/new units before restarting legacy supervisors."""
+    ordered = list(UNIT_NAMES)
+    for name in MIGRATION_CREATED_UNITS + LEGACY_UNIT_NAMES:
+        if name not in ordered:
+            ordered.append(name)
+    return tuple(ordered)
+
 
 def _is_protected(rel):
     rel = rel.lstrip('/')
@@ -140,7 +212,7 @@ def capture_service_states(root):
     root = Path(root)
     if not _query_host_systemd():
         return {'units': [], 'skipped': True}
-    units = [_unit_state(name) for name in UNIT_NAMES]
+    units = [_unit_state(name) for name in service_capture_names()]
     nginx = _unit_state('nginx.service')
     return {'units': units, 'nginx': nginx, 'skipped': False}
 
@@ -152,7 +224,7 @@ def snapshot(root, dest, extra=None):
     files_dir.mkdir(parents=True, exist_ok=True)
     present = []
     absent = []
-    for rel in SNAPSHOT_RELS:
+    for rel in snapshot_paths():
         if _is_protected(rel):
             continue
         src = root / rel
