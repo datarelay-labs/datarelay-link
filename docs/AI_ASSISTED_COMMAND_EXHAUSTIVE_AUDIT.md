@@ -130,10 +130,14 @@ SAFETY_OVERRIDES_FIRST_ANSWER_FIDELITY=YES
 When the first answer fails:
 
 1. preserve the exact user-visible CLI output;
-2. send the AI the original intent plus **only that user-visible failure/output**;
-3. do not hint at the correct command;
-4. allow the AI to produce a corrected workflow;
-5. execute the correction without manual syntax repair.
+2. continue in the **same AI conversation/session** whenever the harness supports it, so the original intent and first answer remain in context;
+3. add **only that new user-visible failure/output** as recovery evidence;
+4. if the harness cannot preserve the session, resend the original natural-language intent and the AI's first answer verbatim, then append only the new user-visible failure/output;
+5. do not hint at the correct command or expected repair;
+6. allow the AI to produce a corrected workflow;
+7. execute the correction without manual syntax repair.
+
+A stateless retry that loses or changes the original user intent is not valid self-recovery evidence.
 
 Record:
 
