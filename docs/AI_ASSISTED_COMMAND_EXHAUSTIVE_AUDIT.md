@@ -63,7 +63,8 @@ Give the AI:
 
 - the natural-language user goal;
 - permission to read the public product documentation;
-- the product/version context only when a normal user would know it.
+- the product/version context only when a normal user would know it;
+- a unique audit resource prefix such as `uxai-<RUN_ID>-` when the intent requires creating temporary resources. A unique prefix is test isolation metadata, not a CLI syntax hint.
 
 Do **not** give it:
 
@@ -366,6 +367,12 @@ A scenario is:
 - **BLOCKED_ENVIRONMENT** — required real external integration is unavailable, such as a DRLink MCP connection that is not configured.
 
 A product defect discovered by the AI lane remains a product defect. Do not score the AI as successful merely because it accurately repeated documentation that the product violates.
+
+## 9.1 Parallel isolation rule
+
+AI-assisted scenarios may run in parallel with Direct CLI or other AI scenarios only when they use distinct namespaced resources. Never reuse a static prefix such as `uxai-ra-*` across concurrent lanes.
+
+If another lane mutates or deletes a resource during execution, mark that attempt `INVALIDATED_BY_CONCURRENT_STATE`, preserve the evidence, allocate a fresh RUN_ID-scoped prefix, and rerun. Do not classify the contaminated result as a product PASS or FAIL.
 
 ## 10. Evidence and GitHub reporting
 
