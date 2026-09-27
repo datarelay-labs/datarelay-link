@@ -3252,13 +3252,17 @@ frpctl_audit_tail() {
   # Default: human-readable recent events. Optional lightweight filters:
   # last <N> | managed-host <HOST> | event <EVENT>
   # Raw JSONL remains on disk; --json is an advanced escape hatch only.
-  local root="${FRP_DEPLOY_TEST_ROOT:-${FRP_CTL_TEST_ROOT:-}}"
-  python3 - "$root" "$@" <<'PY'
-import json, sys
+  local root="${FRP_DEPLOY_TEST_ROOT:-${FRP_CTL_TEST_ROOT:-}}" registry_py=""
+  registry_py="$(frpctl_lib_candidate frp_client_registry.py 2>/dev/null || true)"
+  python3 - "$root" "$registry_py" "$@" <<'PY'
+import importlib.util
+import json
+import sys
 from pathlib import Path
 
 root = sys.argv[1]
-args = sys.argv[2:]
+registry_py = sys.argv[2]
+args = sys.argv[3:]
 path = Path("/var/log/drlink/audit.jsonl")
 if root:
     path = Path(root + "/var/log/drlink/audit.jsonl")
@@ -3269,6 +3273,7 @@ if not path.is_file():
 want_json = False
 limit = 50
 client_filter = None
+managed_host_selector = None
 event_filter = None
 i = 0
 while i < len(args):
@@ -3285,8 +3290,12 @@ while i < len(args):
             raise SystemExit(2)
         i += 2
         continue
-    if tok in ("managed-host", "client") and i + 1 < len(args):
-        # "client" is hidden compatibility only; public help teaches Managed Host.
+    if tok == "managed-host" and i + 1 < len(args):
+        managed_host_selector = str(args[i + 1]).strip()
+        i += 2
+        continue
+    if tok == "client" and i + 1 < len(args):
+        # Hidden compatibility only. Public help teaches Managed Host.
         client_filter = str(args[i + 1]).strip().lower()
         i += 2
         continue
@@ -3301,6 +3310,25 @@ while i < len(args):
         file=sys.stderr,
     )
     raise SystemExit(2)
+
+if managed_host_selector is not None:
+    if not registry_py:
+        print("ERROR: Managed Host inventory is unavailable.", file=sys.stderr)
+        raise SystemExit(1)
+    try:
+        spec = importlib.util.spec_from_file_location("frp_client_registry", registry_py)
+        registry = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(registry)
+        _cfg, _registry_path, state = registry.load_server_registry(root)
+        client_id, _client = registry.resolve_client(state, managed_host_selector)
+        client_filter = str(client_id).lower()
+    except Exception:
+        print(
+            "ERROR: Managed Host selector %r could not be resolved." % managed_host_selector,
+            file=sys.stderr,
+        )
+        print("Run: show managed-hosts", file=sys.stderr)
+        raise SystemExit(2)
 
 raw_lines = path.read_text(encoding="utf-8").splitlines()
 records = []

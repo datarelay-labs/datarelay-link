@@ -250,6 +250,11 @@ cp "$WORKDIR/good" "$REG"
 "$CTL" system audit managed-host cccccccc >"$WORKDIR/audit-managed-host.out"
 grep -q 'group.member_added' "$WORKDIR/audit-managed-host.out"
 grep -q 'group.member_removed' "$WORKDIR/audit-managed-host.out"
+"$CTL" system audit managed-host spare >"$WORKDIR/audit-managed-host-hostname.out"
+grep -q 'group.member_added' "$WORKDIR/audit-managed-host-hostname.out"
+grep -q 'group.member_removed' "$WORKDIR/audit-managed-host-hostname.out"
+"$CTL" system audit managed-host acme-gw >"$WORKDIR/audit-managed-host-label.out"
+grep -q 'group.member_added' "$WORKDIR/audit-managed-host-label.out"
 set +e
 "$CTL" system audit unknown-filter value >"$WORKDIR/audit-invalid.out" 2>&1
 audit_invalid_rc=$?
