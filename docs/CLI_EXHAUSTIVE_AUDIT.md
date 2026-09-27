@@ -5,7 +5,7 @@
 > **Scope:** Human-operated CLI usability, syntax, discoverability, workflow closure, safety, recovery, and cross-surface consistency
 > **Target:** v2.4 and later until superseded
 > **Product authority:** `DATA_RELAY_LINK_CLI_AI_MASTER_v2.4_FINAL.md`, `CLI_REFERENCE.md`, `Data Relay Link CLI Information Architecture.md`
-> **Companion:** `AI_ASSISTED_COMMAND_EXHAUSTIVE_AUDIT.md`
+> **Companion:** `AI_ASSISTED_EXHAUSTIVE_AUDIT.md`
 
 ## 1. Execution triggers
 
@@ -25,7 +25,7 @@ When the user asks:
 - `CLI와 AI 지원 명령 전수 감사`
 - or equivalent wording that requests both human CLI and AI-assisted command auditing
 
-execute **this document and `AI_ASSISTED_COMMAND_EXHAUSTIVE_AUDIT.md`** against the same candidate and environment.
+execute **this document and `AI_ASSISTED_EXHAUSTIVE_AUDIT.md`** against the same candidate and environment.
 
 Do not answer with a plan-only response and do not ask for confirmation when designated test systems are available.
 
