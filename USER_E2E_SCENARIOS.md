@@ -46,6 +46,22 @@ The executor must autonomously:
 18. release the run lock only after evidence is durable;
 19. only after the run is exhausted, consolidate findings and enter the engineering fix/verify/rerun workflow.
 
+When both canonical Server hosts are reachable, assign them distinct test roles:
+
+~~~text
+DNS_VALIDATION_SERVER=frp-release-server
+DNS_VALIDATION_PUBLIC_HOSTNAME=remote.xdr.ooo
+IP_BASED_GENERAL_SERVER=frp-e2e-server
+DNS_INDEPENDENT_TEST_SERVER=frp-e2e-server
+PERFORMANCE_TEST_SERVER=frp-e2e-server
+~~~
+
+`frp-release-server` must be installed/configured through the public DNS-hostname path using `remote.xdr.ooo` and is the primary Server for DNS, public-hostname, certificate/TLS, and other hostname-dependent scenarios.
+
+`frp-e2e-server` must be installed through the public-IP path and is the primary Server for tests whose result should not depend on DNS behavior. In particular, throughput, latency, CPS, concurrency, soak, resource-pressure, and other DNS-independent performance/resilience scenarios should use `frp-e2e-server` unless the scenario explicitly tests DNS/TLS behavior.
+
+The two Server lanes may run concurrently when their scenarios do not share destructive global state.
+
 Default behavior is execution, not explanation.
 
 When the user triggers FULL_USER_E2E, the first assistant action must begin real execution. Do not spend the first response restating this contract, proposing a plan, asking for confirmation, summarizing intended scenarios, or discussing what could be tested.
@@ -70,6 +86,8 @@ UNIQUE_RESOURCE_PREFIX_REQUIRED=YES
 PARALLEL_BY_DEFAULT=YES
 CONTINUE_AFTER_INDEPENDENT_FAILURES=YES
 FIX_DURING_ACTIVE_RUN=NO
+RECOVER_TEST_ENVIRONMENT_TO_CONTINUE=YES
+PRODUCT_CODE_RECOVERY=NO
 STOP_WHEN_CURRENTLY_EXECUTABLE_SCENARIOS_EXHAUSTED=YES
 ~~~
 
@@ -297,6 +315,48 @@ END_OF_RUN
 ~~~
 
 The only reason to stop a specific scenario early is that continuing it would leave the designated test scope or create an external safety/security risk. That is recorded as a test result, not repaired during the run.
+
+### 2.2.1 Recover test infrastructure to continue the run
+
+A failed scenario must not unnecessarily stop the rest of FULL_USER_E2E.
+
+After preserving the failure evidence and grading the affected scenario, ChatGPT may directly recover **test environment, service, or host state** solely so the remaining independent scenarios can continue.
+
+Allowed continuation recovery includes, when safe and applicable:
+
+- restoring SSH/OOB access to a designated test host;
+- rebooting or power-cycling a designated test host;
+- restarting host, network, test-target, or product services after the original failure has already been recorded;
+- using normal OS/service controls for recovery when the public DRLink CLI is unavailable, provided that recovery is clearly labeled non-qualifying and is used only to make later independent scenarios executable;
+- restoring a test DNS/network prerequisite;
+- recreating disposable target applications, load generators, test files, or listeners;
+- clearing test-only resource exhaustion or temporary port occupation;
+- normalizing a damaged lab host and reinstalling the **same exact candidate** through supported install/uninstall paths;
+- moving independent scenarios to another designated test host or Server whose topology preserves the intended semantics.
+
+Continuation recovery must **not**:
+
+- edit product source code;
+- patch installed product binaries or generated installers;
+- change the candidate HEAD/build;
+- directly edit DRLink databases, authoritative runtime state, or generated product configuration;
+- use private/internal product APIs or helper CLIs to manufacture a PASS;
+- replace the failing candidate with an older/different build and count that result as release qualification.
+
+The original failing scenario remains `FAIL` when the observed problem is a product defect. Recovery does not convert that result to PASS. Post-recovery evidence applies only to scenarios executed after recovery, unless the recovery behavior itself is the scenario under test.
+
+If a candidate path cannot be made executable without changing product code, leave that path `FAIL` or `BLOCKED_BY_PRIOR_FAILURE`, record the dependency, and continue every other platform, topology, recovery path, and non-dependent scenario that remains executable.
+
+~~~text
+PRESERVE_FAILURE_EVIDENCE_FIRST=YES
+CHATGPT_MAY_RECOVER_TEST_ENVIRONMENT=YES
+RECOVERY_PURPOSE=CONTINUE_REMAINING_TESTS_ONLY
+RECOVERY_MAY_CHANGE_PRODUCT_CODE=NO
+RECOVERY_MAY_CHANGE_CANDIDATE=NO
+FAILED_SCENARIO_RESULT_PRESERVED=YES
+CONTINUE_ALL_NONDEPENDENT_SCENARIOS=YES
+CURSOR_FIX_HANDOFF_DURING_ACTIVE_RUN=NO
+~~~
 
 ### 2.3 Public product path only
 
@@ -781,6 +841,17 @@ Do not serialize merely because parallel execution is harder. Concurrency itself
 
 If a shared-state failure blocks one lane, continue every independent lane rather than stopping the run.
 
+Do not process independent scenarios sequentially merely because an earlier section was executed that way. Start independent lanes as soon as their prerequisites exist.
+
+When both canonical Servers are available, use the Server role split concurrently where practical:
+
+~~~text
+frp-release-server -> remote.xdr.ooo / DNS-hostname-dependent lane
+frp-e2e-server     -> IP-based / DNS-independent functional and performance lane
+~~~
+
+A destructive operation requiring exclusive ownership of one Server may serialize only the scenarios dependent on that Server. It does not serialize the other Server or unrelated Agent/platform lanes.
+
 ## 11. Bidirectional performance, churn, and resilience contract
 
 Performance is mandatory in FULL_USER_E2E and must be measured during both steady state and real operational change.
@@ -999,6 +1070,30 @@ Exercise every currently available/claimed topology that can be reached from the
 - AI/MCP public endpoint.
 
 Unavailable topology is recorded as COVERAGE_LIMITATION with the exact missing prerequisite. Continue the remaining topology tests.
+
+Canonical dual-Server assignment, when both aliases are reachable:
+
+~~~text
+frp-release-server:
+  INSTALL_IDENTITY=DNS
+  PUBLIC_HOSTNAME=remote.xdr.ooo
+  PRIMARY_SCOPE=DNS / hostname propagation / TLS-certificate behavior / DNS-dependent public endpoints
+
+frp-e2e-server:
+  INSTALL_IDENTITY=PUBLIC_IP
+  PRIMARY_SCOPE=DNS-independent functional / performance / concurrency / soak / resilience
+~~~
+
+Rules:
+
+- install `frp-release-server` with `remote.xdr.ooo` as the public DNS hostname and use it for scenarios that are intended to prove DNS/public-hostname behavior;
+- install `frp-e2e-server` using the IP-based path and prefer it for scenarios that should not inherit DNS/certificate variability;
+- throughput, latency, CPS, connection concurrency, saturation, soak, and similar performance tests default to `frp-e2e-server`;
+- all P-* scenarios default to `frp-e2e-server` unless the specific P-* scenario intentionally measures DNS, hostname, certificate, or DNS-dependent failover behavior;
+- hostname/DNS/certificate scenarios, including S-017 and any public-hostname propagation checks, default to `frp-release-server`;
+- when a feature requires both IP and DNS variants, test the variants on the corresponding Server lanes instead of treating one topology as evidence for the other;
+- one Server failure does not stop independent scenarios assigned to the other Server;
+- if one canonical Server alias is temporarily unavailable, record the coverage/topology limitation and continue with every scenario whose semantics can still be preserved on the remaining environment.
 
 ### 12.5 Inherently conditional scenarios
 
@@ -1430,6 +1525,12 @@ ADMIN_LIFECYCLE=
 SECURITY_FAILURE=
 MULTI_PLATFORM=
 TOPOLOGY_MATRIX=
+DNS_VALIDATION_SERVER=frp-release-server
+DNS_VALIDATION_PUBLIC_HOSTNAME=remote.xdr.ooo
+DNS_VALIDATION_RESULT=
+IP_BASED_GENERAL_SERVER=frp-e2e-server
+IP_BASED_GENERAL_RESULT=
+CONTINUATION_RECOVERY_ACTIONS=
 PARALLEL_MULTI_HOST=
 AVAILABLE_HOST_COUNT=
 MAX_PARALLEL_HOSTS_USED=
@@ -1486,10 +1587,24 @@ BLOCKERS=
 EVIDENCE_ROOT=
 ~~~
 
-After this report is complete:
+After this report is complete, update the active workstream's `[AI Work]` GitHub Issue with the consolidated result before handing off fixes. If no active Work Packet Issue exists, create one.
+
+The GitHub Issue update must include at least:
+
+- exact E2E contract ref/HEAD and product candidate HEAD;
+- `frp-release-server` DNS-lane result and `remote.xdr.ooo` status;
+- `frp-e2e-server` IP-lane result;
+- completed/failed/blocked/coverage-limited scenario accounting;
+- P0/P1/P2/UX/DOC/PERF findings;
+- evidence root and important evidence paths;
+- any continuation recovery performed, clearly separated from qualification evidence;
+- remaining candidate blockers and the next fix/verify/rerun action.
 
 ~~~text
-NEXT=consolidate findings -> create/update fix work -> Cursor implementation if required -> ChatGPT verification -> rerun affected/full qualification
+FINAL_REPORT_TO_ACTIVE_AI_WORK_ISSUE=REQUIRED
+REPORT_ALL_EXECUTABLE_SCENARIOS_ATTEMPTED=YES
+REPORT_CONTINUATION_RECOVERY=YES
+NEXT=consolidate findings -> update GitHub Work Packet -> create/update fix work -> Cursor implementation if required -> ChatGPT verification -> rerun affected/full qualification
 ~~~
 
 ## 19. Release qualification
