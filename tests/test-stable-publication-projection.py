@@ -230,6 +230,7 @@ def main() -> int:
         "operational_e2e_command: bash tests/run-release-qualification-pass.sh",
         "bash scripts/verify-sha256sums.sh",
         "bash scripts/verify-sbom.sh",
+        "python3 scripts/generate-sbom.py -o dist/sbom.spdx.json && bash scripts/verify-sbom.sh",
     ):
         if needle not in contract:
             fail("release.yaml missing %s" % needle)
