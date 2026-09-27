@@ -133,6 +133,72 @@ class EgressRuntimePermissionTests(unittest.TestCase):
         self.assertFalse(_acl_mentions_egress(secret))
 
 
+
+class EgressRuntimeLeastPrivilegeTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix="drlink-egress-least-")
+        self.root = Path(self.tmp.name)
+        os.environ["FRP_DEPLOY_TEST_ROOT"] = str(self.root)
+        self.runtime = self.root / "var/lib/drlink/runtime"
+        self.runtime.mkdir(parents=True)
+        (self.root / "etc/drlink").mkdir(parents=True)
+        (self.root / "var/log/drlink/egress").mkdir(parents=True)
+        (self.root / "run/drlink").mkdir(parents=True)
+        self.inventory = self.runtime / "client-inventory.json"
+        self.internet = self.runtime / "internet-access.json"
+        self.inventory.write_text(
+            '{"schema_version":2,"clients":{},"reserved":[]}\n',
+            encoding="utf-8",
+        )
+        self.internet.write_text(
+            '{"plane":"internet","rules":[]}\n',
+            encoding="utf-8",
+        )
+        os.chmod(self.inventory, 0o640)
+        os.chmod(self.internet, 0o600)
+
+    def tearDown(self):
+        os.environ.pop("FRP_DEPLOY_TEST_ROOT", None)
+        self.tmp.cleanup()
+
+    def test_group_fallback_repairs_inventory_and_only_exposes_internet_projection(self):
+        from unittest import mock
+
+        with (
+            mock.patch.object(EG.os, "geteuid", return_value=0),
+            mock.patch.object(EG, "_egress_uid_gid", return_value=(12345, 23456)),
+            mock.patch.object(EG, "_setfacl_user", return_value=False),
+            mock.patch.object(EG.os, "chown", return_value=None),
+        ):
+            EG.reapply_egress_runtime_permissions(parents=True)
+
+        self.assertEqual(stat.S_IMODE(self.inventory.stat().st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE(self.runtime.stat().st_mode), 0o710)
+        self.assertEqual(stat.S_IMODE(self.internet.stat().st_mode), 0o640)
+
+    def test_acl_path_never_grants_inventory_read(self):
+        from unittest import mock
+
+        grants = []
+
+        def fake_setfacl(path, perms):
+            grants.append((Path(path), perms))
+            return True
+
+        with (
+            mock.patch.object(EG.os, "geteuid", return_value=0),
+            mock.patch.object(EG, "_egress_uid_gid", return_value=(12345, 23456)),
+            mock.patch.object(EG, "_setfacl_user", side_effect=fake_setfacl),
+            mock.patch.object(EG.os, "chown", return_value=None),
+        ):
+            EG.reapply_egress_runtime_permissions(parents=True)
+
+        self.assertEqual(stat.S_IMODE(self.inventory.stat().st_mode), 0o600)
+        self.assertNotIn(self.inventory, [path for path, _ in grants])
+        self.assertIn((self.runtime, "--x"), grants)
+        self.assertIn((self.internet, "r--"), grants)
+
+
 class RestoreMissingLockHelperTests(unittest.TestCase):
     def test_restore_refuses_without_lock_helper(self):
         restore = ROOT / "tools" / "frp-restore"

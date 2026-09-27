@@ -384,7 +384,9 @@ def reapply_egress_runtime_permissions(
 
     Mirrors install-server.sh frp_server_ensure_sandbox_dirs file grants:
     prefer named-user ACL; else root:drlink-egress with 0640/0660.
-    Never widens CA keys, FRP token, or enrollment secrets.
+    Runtime access is least-privilege: client-inventory.json remains root-only
+    while only the Internet Access projection is readable by drlink-egress.
+    Never widens CA keys, FRP token, enrollment secrets, or critical inventory.
 
     Policy file is read-only for the egress service. Connection logging uses a
     service-owned writable subdirectory (``/var/log/drlink/egress``) so rotation
@@ -427,6 +429,8 @@ def reapply_egress_runtime_permissions(
     else:
         control_db_path = Path(control_db_path)
     runtime_dir = var_lib / "runtime"
+    internet_runtime_path = runtime_dir / "internet-access.json"
+    critical_inventory_path = runtime_dir / "client-inventory.json"
     if conn_log_path is None:
         conn_log_path = egress_log_dir / "connections.jsonl"
     else:
@@ -490,13 +494,23 @@ def reapply_egress_runtime_permissions(
         ):
             if path.is_file():
                 _acl_grant_file(path, "r--")
+        # Runtime contains mixed-sensitivity projections.  The client inventory
+        # is critical allocator state and must remain root-only.  Egress only
+        # needs the Internet Access projection; grant traverse-only on the
+        # directory and read access to that one file.
+        if critical_inventory_path.is_file():
+            try:
+                os.chown(critical_inventory_path, 0, 0)
+            except OSError:
+                pass
+            try:
+                os.chmod(critical_inventory_path, 0o600)
+            except OSError:
+                pass
         if runtime_dir.is_dir():
-            _setfacl_user(runtime_dir, "r-x")
-            for child in runtime_dir.rglob("*"):
-                if child.is_file():
-                    _acl_grant_file(child, "r--")
-                elif child.is_dir():
-                    _setfacl_user(child, "r-x")
+            _setfacl_user(runtime_dir, "--x")
+        if internet_runtime_path.is_file():
+            _acl_grant_file(internet_runtime_path, "r--")
         if conn_log_path.parent.is_dir():
             try:
                 conn_log_path.touch(exist_ok=True)
@@ -544,22 +558,27 @@ def reapply_egress_runtime_permissions(
                 os.chmod(path, 0o640)
             except OSError:
                 pass
+    # Group fallback mirrors the ACL path without widening the whole runtime
+    # tree.  Preserve/repair critical inventory as root-only; expose only the
+    # Internet Access projection to the egress group.
+    if critical_inventory_path.is_file():
+        try:
+            os.chown(critical_inventory_path, 0, 0)
+            os.chmod(critical_inventory_path, 0o600)
+        except OSError:
+            pass
     if runtime_dir.is_dir():
         try:
             os.chown(runtime_dir, 0, gid)
-            os.chmod(runtime_dir, 0o750)
+            os.chmod(runtime_dir, 0o710)
         except OSError:
             pass
-        for child in runtime_dir.rglob("*"):
-            try:
-                if child.is_dir():
-                    os.chown(child, 0, gid)
-                    os.chmod(child, 0o750)
-                elif child.is_file():
-                    os.chown(child, 0, gid)
-                    os.chmod(child, 0o640)
-            except OSError:
-                pass
+    if internet_runtime_path.is_file():
+        try:
+            os.chown(internet_runtime_path, 0, gid)
+            os.chmod(internet_runtime_path, 0o640)
+        except OSError:
+            pass
     if conn_log_path.parent.is_dir():
         try:
             conn_log_path.touch(exist_ok=True)
