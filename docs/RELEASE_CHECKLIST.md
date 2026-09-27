@@ -329,6 +329,7 @@ Before the run, discover the DRLink development server, inventory test-host cand
 - [ ] PASS 1: all applicable functions exercised directly through the public drlink CLI.
 - [ ] PASS 2: applicable workflows repeated with AI-generated commands and/or ConfigurationBundles, then actually executed through drlink.
 - [ ] PASS 3: real forward, reverse, and simultaneous full-duplex performance/resilience executed.
+- [ ] PASS 1/2/3 are evidence dimensions, not global serialization barriers; start any independent ready lane immediately across pass dimensions.
 - [ ] pre-run clean normalization completed on all designated mutable hosts; stale prior E2E/product state does not contaminate this run.
 - [ ] fresh Server install and first-use discovery.
 - [ ] fresh Agent install on every currently available applicable platform; unavailable claimed platforms recorded as coverage limitations.
