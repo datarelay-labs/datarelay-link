@@ -45,3 +45,14 @@ When the user explicitly requests an exhaustive Data Relay Link CLI or AI-assist
 - `CLI 및 AI지원 명령을 전수 감사해줘`, `CLI와 AI 지원 명령 전수 감사`, or equivalent → execute **both** documents against the same candidate.
 
 These are execution requests, not plan-only requests. Follow each document's candidate pinning, black-box constraints, evidence retention, failure-continuation, cleanup, and GitHub reporting rules. Do not repair product code during the active audit; hand bounded fixes to the implementation workflow only after independent scenarios are exhausted.
+
+
+## Data Relay Link product-audit trigger routing
+
+For this repository, the following user requests are execution triggers, not plan-only requests:
+
+- `CLI 전수 감사해줘` / equivalent direct-CLI exhaustive audit → read and execute `docs/CLI_EXHAUSTIVE_AUDIT.md`.
+- `AI 지원 명령 전수 감사해줘` / equivalent AI-assisted exhaustive audit → read and execute `docs/AI_ASSISTED_COMMAND_EXHAUSTIVE_AUDIT.md`.
+- `CLI 및 AI지원 명령을 전수 감사해줘` / equivalent combined request → read and execute **both** documents against the same exact candidate, starting independent lanes in parallel when safe.
+
+ChatGPT owns execution and final audit judgment. Cursor may implement bounded findings only after the active audit lanes have recorded their evidence; Cursor does not substitute for these audits.
