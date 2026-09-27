@@ -37,7 +37,7 @@ case "$cmd" in
     exit 0
     ;;
   bootout|unload)
-    rm -f "${FRP_TEST_LAUNCHCTL_RUNNING_FLAG:-}" 
+    rm -f "${FRP_TEST_LAUNCHCTL_RUNNING_FLAG:-}"
     echo "$*" >> "${FRP_TEST_LAUNCHCTL_LOG:-/dev/null}"
     exit 0
     ;;
