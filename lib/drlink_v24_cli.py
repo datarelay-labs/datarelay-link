@@ -456,6 +456,31 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
             )
         )
         return 0
+    if res == "enrollment":
+        _require_server(plane, "Enrollments")
+        if len(rest) != 2:
+            raise ControlPlaneError("Usage: show enrollment <ENROLLMENT>")
+        row = plane.conn.execute(
+            "SELECT id, kind, status, created_at, expires_at FROM enrollments WHERE id = ?",
+            (rest[1],),
+        ).fetchone()
+        if not row:
+            raise ControlPlaneError(v24.cli_error("Enrollment '%s' was not found." % rest[1]))
+        sys.stdout.write(
+            "Enrollment : %s\n"
+            "Kind       : %s\n"
+            "Status     : %s\n"
+            "Created    : %s\n"
+            "Expires    : %s\n"
+            % (
+                row["id"],
+                row["kind"],
+                row["status"],
+                row["created_at"],
+                row["expires_at"] or "-",
+            )
+        )
+        return 0
     if res in ("ai-identities",):
         _require_server(plane, "AI Identities")
         for p in plane.conn.execute("SELECT name, enabled, credential_status FROM ai_principals ORDER BY name"):

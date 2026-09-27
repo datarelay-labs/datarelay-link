@@ -259,6 +259,35 @@
   {
     "path": [
       "show",
+      "enrollment"
+    ],
+    "roles": "server",
+    "category": "Onboarding",
+    "summary": "Show one enrollment lifecycle record",
+    "detail": "Shows enrollment ID, kind, lifecycle status, creation time, and expiry without redisplaying credential secret material.",
+    "examples": [
+      "show enrollment enr_example"
+    ],
+    "args": [
+      {
+        "name": "<ENROLLMENT>",
+        "complete": null,
+        "required": true
+      }
+    ],
+    "tail": null,
+    "internal": null,
+    "aliases": [],
+    "destructive": false,
+    "hidden": false,
+    "risk": "none",
+    "confirmation": "none",
+    "surface": "",
+    "flags": []
+  },
+  {
+    "path": [
+      "show",
       "access-log"
     ],
     "roles": "server",
@@ -1807,7 +1836,7 @@
     "roles": "server",
     "category": "System",
     "summary": "Restore from a backup archive",
-    "detail": "Same-version restore only unless a migration exists. Shows a product-owned preflight and requires interactive y/N confirmation before mutation. Creates a pre-restore snapshot, replaces server state, and restarts services with automatic rollback on failure.",
+    "detail": "Same-version restore only unless a migration exists. Shows a product-owned preflight and requires interactive y/N confirmation before mutation; non-interactive restore fails closed. Creates a pre-restore snapshot, replaces server state, and restarts services with automatic rollback on failure.",
     "examples": [
       "system restore /var/lib/drlink/backups/b.tar.gz"
     ],
@@ -4952,6 +4981,96 @@
       "show ai-access-log"
     ],
     "args": [],
+    "tail": null,
+    "internal": null,
+    "aliases": [],
+    "destructive": false,
+    "hidden": false,
+    "risk": "none",
+    "confirmation": "none",
+    "surface": "",
+    "flags": []
+  },
+  {
+    "path": [
+      "show",
+      "ai-access-log",
+      "identity"
+    ],
+    "roles": "server",
+    "category": "AI Access",
+    "summary": "Filter AI Access Log by AI Identity",
+    "detail": "Filter AI Access Log by AI Identity.",
+    "examples": [
+      "show ai-access-log identity <IDENTITY>"
+    ],
+    "args": [
+      {
+        "name": "<IDENTITY>",
+        "complete": null,
+        "required": true
+      }
+    ],
+    "tail": null,
+    "internal": null,
+    "aliases": [],
+    "destructive": false,
+    "hidden": false,
+    "risk": "none",
+    "confirmation": "none",
+    "surface": "",
+    "flags": []
+  },
+  {
+    "path": [
+      "show",
+      "ai-access-log",
+      "destination"
+    ],
+    "roles": "server",
+    "category": "AI Access",
+    "summary": "Filter AI Access Log by destination",
+    "detail": "Filter AI Access Log by destination.",
+    "examples": [
+      "show ai-access-log destination <DESTINATION>"
+    ],
+    "args": [
+      {
+        "name": "<DESTINATION>",
+        "complete": null,
+        "required": true
+      }
+    ],
+    "tail": null,
+    "internal": null,
+    "aliases": [],
+    "destructive": false,
+    "hidden": false,
+    "risk": "none",
+    "confirmation": "none",
+    "surface": "",
+    "flags": []
+  },
+  {
+    "path": [
+      "show",
+      "ai-access-log",
+      "permission"
+    ],
+    "roles": "server",
+    "category": "AI Access",
+    "summary": "Filter AI Access Log by permission",
+    "detail": "Filter AI Access Log by permission.",
+    "examples": [
+      "show ai-access-log permission <PERMISSION>"
+    ],
+    "args": [
+      {
+        "name": "<PERMISSION>",
+        "complete": null,
+        "required": true
+      }
+    ],
     "tail": null,
     "internal": null,
     "aliases": [],

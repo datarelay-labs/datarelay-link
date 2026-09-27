@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 import os
 import re
@@ -11,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -106,6 +108,42 @@ def _extract_command_examples(text: str) -> list[str]:
 
 
 class ReleaseRecoveryDualRoleAuditDocsClosure(unittest.TestCase):
+    def test_show_enrollment_singular_catalog_and_runtime(self):
+        cmd = CATALOG.find(("show", "enrollment"))
+        self.assertIsNotNone(cmd)
+        self.assertIsNone(CATALOG.strict_error(["show", "enrollment", "enr_test"]))
+        result = GRAMMAR.match(["show", "enrollment", "enr_test"], "server")
+        self.assertEqual(result.get("status"), "ok", result)
+        self.assertEqual(result.get("action"), "control_plane", result)
+
+    def test_show_enrollment_runtime_hides_secret(self):
+        sys.path.insert(0, str(LIB))
+        from drlink_control_plane import ControlPlane, ControlPlaneError
+        import drlink_v24_cli as cli
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "etc/drlink").mkdir(parents=True)
+            (root / "etc/drlink/config.json").write_text('{"role":"server"}\n', encoding="utf-8")
+            plane = ControlPlane(str(root))
+            plane.conn.execute(
+                "INSERT INTO enrollments(id, kind, status, created_at, expires_at, secret_ref) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                ("enr_test", "manual", "issued", "2026-09-27T00:00:00Z", None, "secret-material"),
+            )
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                rc = cli.handle_show(plane, ["enrollment", "enr_test"])
+            self.assertEqual(rc, 0)
+            text = buf.getvalue()
+            self.assertIn("Enrollment : enr_test", text)
+            self.assertIn("Kind       : manual", text)
+            self.assertIn("Status     : issued", text)
+            self.assertIn("Expires    : -", text)
+            self.assertNotIn("secret-material", text)
+            with self.assertRaises(ControlPlaneError):
+                cli.handle_show(plane, ["enrollment", "missing"])
+
     def test_restore_requires_confirmation_metadata(self):
         cmd = CATALOG.find(("system", "restore"))
         self.assertIsNotNone(cmd)
