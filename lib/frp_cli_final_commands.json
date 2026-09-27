@@ -1807,7 +1807,7 @@
     "roles": "server",
     "category": "System",
     "summary": "Restore from a backup archive",
-    "detail": "Same-version restore only unless a migration exists. Shows a product-owned preflight and requires confirmation before mutation (or hidden --yes for automation). Creates a pre-restore snapshot, replaces server state, and restarts services with automatic rollback on failure.",
+    "detail": "Same-version restore only unless a migration exists. Shows a product-owned preflight and requires interactive y/N confirmation before mutation. Creates a pre-restore snapshot, replaces server state, and restarts services with automatic rollback on failure.",
     "examples": [
       "system restore /var/lib/drlink/backups/b.tar.gz"
     ],
@@ -1818,7 +1818,7 @@
         "required": true
       }
     ],
-    "tail": "flags",
+    "tail": null,
     "internal": [
       "restore",
       "backup"
@@ -1841,20 +1841,7 @@
     "risk": "outage",
     "confirmation": "y_n",
     "surface": "",
-    "flags": [
-      {
-        "name": "--yes",
-        "arity": 0,
-        "choices": [],
-        "hidden": true,
-        "required": false,
-        "description": "Skip interactive restore confirmation (automation only)",
-        "metavar": "",
-        "examples": [],
-        "effect": "Skips y/N confirmation after preflight",
-        "risk": "outage"
-      }
-    ]
+    "flags": []
   },
   {
     "path": [

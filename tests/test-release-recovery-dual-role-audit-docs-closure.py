@@ -112,16 +112,21 @@ class ReleaseRecoveryDualRoleAuditDocsClosure(unittest.TestCase):
         self.assertEqual(cmd.get("confirmation"), "y_n")
         self.assertTrue(cmd.get("destructive"))
         names = {f["name"] for f in (cmd.get("flags") or [])}
-        self.assertIn("--yes", names)
-        result = GRAMMAR.match(
+        self.assertNotIn("--yes", names)
+        rejected = GRAMMAR.match(
             ["system", "restore", "/var/lib/drlink/backups/b.tar.gz", "--yes"],
+            "server",
+        )
+        self.assertNotEqual(rejected.get("status"), "ok")
+        result = GRAMMAR.match(
+            ["system", "restore", "/var/lib/drlink/backups/b.tar.gz"],
             "server",
         )
         self.assertEqual(result.get("status"), "ok")
         # Unified Server DR: system restore dispatches restore_backup, not control_plane.
         self.assertEqual(result.get("action"), "restore_backup")
         self.assertEqual(result.get("path"), "/var/lib/drlink/backups/b.tar.gz")
-        self.assertEqual(result.get("passthrough") or [], ["--yes"])
+        self.assertEqual(result.get("passthrough") or [], [])
 
     def test_restore_help_states_same_version(self):
         help_txt = CATALOG.command_help(CATALOG.find(("system", "restore")))
