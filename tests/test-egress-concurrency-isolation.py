@@ -271,5 +271,76 @@ class InternetAccessConcurrency(unittest.TestCase):
         self.assertIn("control DB wedged", text)
 
 
+def _db_fd_count(db_path: str) -> int:
+    count = 0
+    for name in os.listdir("/proc/self/fd"):
+        try:
+            target = os.readlink("/proc/self/fd/%s" % name)
+        except OSError:
+            continue
+        if target == db_path:
+            count += 1
+    return count
+
+
+class InternetAccessDbFdIsolation(unittest.TestCase):
+    """A long-lived control connection must not keep fds from request planes."""
+
+    def test_concurrent_isolated_planes_do_not_accumulate_db_fds(self):
+        import frp_egress_runtime as rt
+        import drlink_v24 as v24
+        from drlink_control_plane import ControlPlane
+
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        os.environ["FRP_DEPLOY_TEST_ROOT"] = str(root)
+        self.addCleanup(os.environ.pop, "FRP_DEPLOY_TEST_ROOT", None)
+        cfg_path = root / "etc/drlink/config.json"
+        cfg_path.parent.mkdir(parents=True)
+        (root / "var/lib/drlink").mkdir(parents=True)
+        (root / "var/log/drlink/egress").mkdir(parents=True)
+        cfg_path.write_text("{}\n", encoding="utf-8")
+        plane = ControlPlane(str(root))
+        try:
+            v24.set_network_object(plane, "proxy-src", type="ip", value="127.0.0.1", oneshot=True)
+            v24.set_network_object(plane, "allowed-host", type="fqdn", value="allowed.test", oneshot=True)
+            v24.set_service_object(plane, "https", type="tcp", port=443, oneshot=True)
+            v24.set_access_rule(
+                plane,
+                "internet",
+                "allow-https",
+                mode="whitelist",
+                source="proxy-src",
+                destination="allowed-host",
+                service="https",
+                enabled=True,
+                oneshot=True,
+            )
+            plane.compile_runtime()
+        finally:
+            plane.close()
+        cache = rt.PolicyCache(cfg_path)
+        db_path = str(cache._cp.plane.db_file)
+        before = _db_fd_count(db_path)
+
+        def worker():
+            cache.authorize(
+                source_ip="127.0.0.1",
+                hostname="allowed.test",
+                port=443,
+                protocol="https",
+                method="CONNECT",
+                candidate_ips=["1.2.3.4"],
+            )
+
+        threads = [threading.Thread(target=worker) for _ in range(60)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        self.assertLessEqual(_db_fd_count(db_path), before + 1)
+
+
 if __name__ == "__main__":
     unittest.main()

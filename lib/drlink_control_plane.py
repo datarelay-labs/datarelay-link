@@ -313,9 +313,15 @@ class ControlPlane:
         self._agent_mgmt_side_effects: list = []
 
     def close(self) -> None:
-        if self.conn is not None:
-            self.conn.close()
-            self.conn = None
+        releaser = getattr(self, "_release_isolated_conn_lock", None)
+        self._release_isolated_conn_lock = None
+        try:
+            if self.conn is not None:
+                self.conn.close()
+                self.conn = None
+        finally:
+            if releaser is not None:
+                releaser()
 
     def _db_file_ident(self):
         try:

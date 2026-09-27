@@ -36,6 +36,18 @@ from drlink_control_plane import ControlPlane
 DECISION_ALLOW = "ALLOW"
 DECISION_DENY = "DENY"
 
+# SQLite leaks database fds when several connections are open together and a
+# long-lived connection outlives them. Request-private planes stay thread-safe
+# (they do not share the cached connection) but only one may be open at a time.
+_ISOLATED_CONN_LOCK = threading.Lock()
+
+
+def _release_isolated_conn_lock() -> None:
+    try:
+        _ISOLATED_CONN_LOCK.release()
+    except RuntimeError:
+        pass
+
 REASON_UNMAPPED_PROXY = "UNMAPPED_PROXY"
 REASON_SERVICE_DISABLED = "SERVICE_DISABLED"
 REASON_AUTHORIZATION_ERROR = "AUTHORIZATION_ERROR"
@@ -694,21 +706,18 @@ class ControlPlaneCache:
             root = self.plane.root if self.plane is not None else None
         if load_error is not None or root is None:
             return None, load_error or "control DB unavailable", cfg
+        _ISOLATED_CONN_LOCK.acquire()
         conn = None
         try:
             conn = connect(root=root, create=False)
-            return ControlPlane(root, conn=conn), None, cfg
-        except (ControlPlaneError, SchemaTooNewError, DatabaseCorruptError) as exc:
-            if conn is not None:
-                try:
-                    conn.close()
-                except Exception:
-                    pass
-            return None, str(exc), cfg
+            plane = ControlPlane(root, conn=conn)
         except Exception as exc:
             if conn is not None:
                 try:
                     conn.close()
                 except Exception:
                     pass
+            _release_isolated_conn_lock()
             return None, str(exc), cfg
+        plane._release_isolated_conn_lock = _release_isolated_conn_lock
+        return plane, None, cfg
