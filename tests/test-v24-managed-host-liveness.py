@@ -102,6 +102,30 @@ class ManagedHostLivenessTests(unittest.TestCase):
             cli.handle_show(self.plane, list(args))
         return buf.getvalue()
 
+    def test_managed_host_selector_matches_id_label_and_hostname(self):
+        self.assertEqual(self.plane.get_client(MACHINE)["id"], MACHINE)
+        self.assertEqual(self.plane.get_client(MACHINE[:8])["id"], MACHINE)
+        self.assertEqual(self.plane.get_client(HOST)["id"], MACHINE)
+        self.assertEqual(self.plane.get_client("expernet-dp1")["id"], MACHINE)
+
+        # Label precedence remains stronger than hostname, matching the legacy
+        # registry selector contract.
+        self.plane.conn.execute(
+            "UPDATE clients SET hostname = ? WHERE id = ?",
+            (HOST, OTHER),
+        )
+        self.plane.commit_if_autonomous()
+        self.assertEqual(self.plane.get_client(HOST)["id"], MACHINE)
+
+        # Duplicate hostnames are ambiguous and fail closed.
+        self.plane.conn.execute(
+            "UPDATE clients SET label = ?, hostname = ? WHERE id = ?",
+            ("other-host", "expernet-dp1", OTHER),
+        )
+        self.plane.commit_if_autonomous()
+        with self.assertRaises(ControlPlaneError):
+            self.plane.get_client("expernet-dp1")
+
     def test_connected_host_without_ai_worker_stays_online(self):
         row = self._client(MACHINE)
         self.assertEqual(int(row["connected"]), 1)

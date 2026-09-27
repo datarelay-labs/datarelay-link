@@ -829,6 +829,15 @@ class ControlPlane:
         ).fetchall()
         if len(rows) == 1:
             return rows[0]
+        if len(rows) > 1:
+            raise ControlPlaneError("multiple clients matched")
+        rows = self.conn.execute(
+            "SELECT * FROM clients WHERE lower(hostname) = lower(?)", (text,)
+        ).fetchall()
+        if len(rows) == 1:
+            return rows[0]
+        if len(rows) > 1:
+            raise ControlPlaneError("multiple clients matched")
         row = self.get_object(text)
         if row and row["type"] == "managed_endpoint":
             ep = self.conn.execute(
