@@ -34,3 +34,14 @@ When resuming a workstream, resolve this repository first, load only its single 
 For adoption or managed upgrades, follow `standards/ADOPTION.md`, preserve project-specific/stricter rules, and qualify the result deterministically.
 
 Tool-specific adapters may change syntax but must not weaken these rules.
+
+
+## Product audit execution shortcuts
+
+When the user explicitly requests an exhaustive Data Relay Link CLI or AI-assisted command audit, route directly to the canonical audit contract instead of improvising a new checklist:
+
+- `CLI 전수 감사해줘`, `CLI 명령 전수 감사해줘`, or equivalent → execute `docs/CLI_EXHAUSTIVE_AUDIT.md`.
+- `AI 지원 명령 전수 감사해줘`, `AI지원 전수 감사해줘`, or equivalent → execute `docs/AI_ASSISTED_COMMAND_EXHAUSTIVE_AUDIT.md`.
+- `CLI 및 AI지원 명령을 전수 감사해줘`, `CLI와 AI 지원 명령 전수 감사`, or equivalent → execute **both** documents against the same candidate.
+
+These are execution requests, not plan-only requests. Follow each document's candidate pinning, black-box constraints, evidence retention, failure-continuation, cleanup, and GitHub reporting rules. Do not repair product code during the active audit; hand bounded fixes to the implementation workflow only after independent scenarios are exhausted.
