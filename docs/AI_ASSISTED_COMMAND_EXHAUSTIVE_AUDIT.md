@@ -310,6 +310,27 @@ AI_GENERATED_CLI_BUNDLE_LANE_CONTINUES=YES
 
 Do not substitute a local mock MCP server and call it real interoperability.
 
+## 8.1 Runtime contradiction and AI masking rule
+
+When actual public runtime behavior contradicts public help/documentation, the AI must not invent an undocumented explanation merely to reconcile them.
+
+Examples:
+
+- help declares `Confirmation: y_n` and `This command is destructive`, but runtime mutates without prompting;
+- help advertises a subcommand that runtime rejects;
+- the AI proposes a recovery command that is not present in `system ?`, command-specific help, or another canonical public surface.
+
+In these cases:
+
+~~~text
+RUNTIME_CONTRACT_CONTRADICTION=YES
+AI_MUST_NOT_RATIONALIZE=YES
+AI_MUST_NOT_INVENT_RECOVERY_COMMAND=YES
+PRODUCT_DEFECT_MUST_REMAIN_VISIBLE=YES
+~~~
+
+Before recommending a recovery command that was not already part of the original documented workflow, validate that the command is actually present in the public CLI discovery/help surface. An invented but plausible command such as an unsupported rollback verb is an AI guidance failure, not a recovery.
+
 ## 9. PASS/PARTIAL/FAIL semantics
 
 A scenario is:
