@@ -161,7 +161,7 @@ def _bundle_has_mutation(kind: str, plan) -> bool:
     return bool(changes)
 
 
-def _approve_configuration_mutation() -> str:
+def _approve_configuration_mutation(operation: str = "system apply configuration") -> str:
     """Return apply, cancel, or refuse for a real ConfigurationBundle change.
 
     NO CHANGE callers must not use this. Interactive TTY honors y/n.
@@ -173,7 +173,7 @@ def _approve_configuration_mutation() -> str:
         sys.stdout.write("Cancelled.\nNo changes were applied.\n")
         return "cancel"
     sys.stderr.write(
-        "ERROR: system apply configuration requires confirmation.\n"
+        f"ERROR: {operation} requires confirmation.\n"
         "Run interactively and answer y.\n"
         "No changes were applied.\n"
     )
@@ -1298,6 +1298,112 @@ def _test(plane: ControlPlane, rest):
         "  test configuration <FILE|->\n"
     )
 
+
+def _parse_revision_id(value: str, usage: str) -> int:
+    try:
+        revision = int(str(value).strip())
+    except (TypeError, ValueError) as exc:
+        raise SystemExit("Invalid revision.\n\nUsage:\n  %s" % usage) from exc
+    if revision < 1:
+        raise SystemExit("Invalid revision.\n\nUsage:\n  %s" % usage)
+    return revision
+
+
+def _system_revision_show(plane: ControlPlane, value: str) -> int:
+    revision = _parse_revision_id(value, "system revision <REVISION>")
+    row = plane.revision_record(revision)
+    rollback_available = False
+    snapshot_note = ""
+    try:
+        payload = plane.revision_snapshot(revision)
+        rollback_available = bool(
+            isinstance(payload.get("configuration_bundle"), str)
+            and payload.get("configuration_bundle").strip()
+        )
+        snapshot_note = str(payload.get("snapshot_unavailable") or "").strip()
+    except ControlPlaneError as exc:
+        snapshot_note = str(exc)
+    sys.stdout.write(
+        "Revision: %s\nCreated: %s\nActor: %s\nCommand: %s\nSummary: %s\n"
+        "Rollback available: %s\n"
+        % (
+            row["revision"],
+            row["created_at"],
+            row["actor"],
+            row["command"],
+            row["summary"],
+            "YES" if rollback_available else "NO",
+        )
+    )
+    if snapshot_note and not rollback_available:
+        sys.stdout.write("Rollback note: %s\n" % snapshot_note)
+    return 0
+
+
+def _system_revision_diff(plane: ControlPlane, left: str, right: str) -> int:
+    import difflib
+
+    a = _parse_revision_id(left, "system diff <REVISION_A> <REVISION_B>")
+    b = _parse_revision_id(right, "system diff <REVISION_A> <REVISION_B>")
+    a_text = plane.revision_configuration(a)
+    b_text = plane.revision_configuration(b)
+    diff = list(
+        difflib.unified_diff(
+            a_text.splitlines(),
+            b_text.splitlines(),
+            fromfile="revision-%s" % a,
+            tofile="revision-%s" % b,
+            lineterm="",
+        )
+    )
+    if not diff:
+        sys.stdout.write("NO CHANGE\nRevisions %s and %s have identical configuration.\n" % (a, b))
+        return 0
+    sys.stdout.write("\n".join(diff) + "\n")
+    return 0
+
+
+def _system_revision_rollback(plane: ControlPlane, value: str) -> int:
+    revision = _parse_revision_id(value, "system rollback <REVISION>")
+    target_text = plane.revision_configuration(revision)
+    from drlink_v24_bundle import (
+        apply_v24_plan,
+        build_v24_rollback_bundle,
+        format_v24_plan,
+        prepare_v24_plan,
+    )
+
+    rollback_text = build_v24_rollback_bundle(plane, target_text)
+    plan = prepare_v24_plan(plane, rollback_text)
+    sys.stdout.write("Rollback target: revision %s\n" % revision)
+    sys.stdout.write(format_v24_plan(plan).replace("No changes were applied.\n", ""))
+    if plan.no_change:
+        sys.stdout.write("Rollback result: NO CHANGE\n")
+        return 0
+
+    decision = _approve_configuration_mutation("system rollback")
+    if decision == "cancel":
+        return 0
+    if decision == "refuse":
+        return 1
+
+    result = _run(
+        apply_v24_plan,
+        plane,
+        plan,
+        confirm=True,
+        command="system rollback %s" % revision,
+        summary="rollback configuration to revision %s" % revision,
+        snapshot_meta={"rollback_target_revision": revision},
+    )
+    if isinstance(result, dict) and result.get("cancelled"):
+        return 0
+    sys.stdout.write("Rollback result: APPLIED\n")
+    if isinstance(result, dict):
+        sys.stdout.write("New revision: %s\n" % result.get("revision"))
+    return 0
+
+
 def _system(plane: ControlPlane, rest):
     if not rest:
         raise SystemExit("Missing system operation.")
@@ -1341,19 +1447,23 @@ def _system(plane: ControlPlane, rest):
             raise SystemExit("Usage: system restore <PATH>")
         return _server_dr_restore(rest[1])
     if rest[0] == "revisions":
+        if len(rest) != 1:
+            raise SystemExit("Usage: system revisions")
         for row in plane.list_revisions():
             sys.stdout.write("%s %s %s\n" % (row["revision"], row["created_at"], row["command"]))
         return 0
     if rest[0] == "revision":
-        rows = [r for r in plane.list_revisions() if int(r["revision"]) == int(rest[1])]
-        sys.stdout.write(json.dumps(rows, indent=2) + "\n")
-        return 0
+        if len(rest) != 2:
+            raise SystemExit("Usage: system revision <REVISION>")
+        return _system_revision_show(plane, rest[1])
     if rest[0] == "diff":
-        a = plane.conn.execute("SELECT snapshot_json FROM revision_snapshots WHERE revision = ?", (int(rest[1]),)).fetchone()
-        b = plane.conn.execute("SELECT snapshot_json FROM revision_snapshots WHERE revision = ?", (int(rest[2]),)).fetchone()
-        sys.stdout.write("revision %s: %s\n" % (rest[1], a["snapshot_json"] if a else "-"))
-        sys.stdout.write("revision %s: %s\n" % (rest[2], b["snapshot_json"] if b else "-"))
-        return 0
+        if len(rest) != 3:
+            raise SystemExit("Usage: system diff <REVISION_A> <REVISION_B>")
+        return _system_revision_diff(plane, rest[1], rest[2])
+    if rest[0] == "rollback":
+        if len(rest) != 2:
+            raise SystemExit("Usage: system rollback <REVISION>")
+        return _system_revision_rollback(plane, rest[1])
     if rest[0] == "audit":
         kwargs = {}
         if len(rest) >= 3 and rest[1] == "revision":

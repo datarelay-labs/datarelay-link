@@ -127,6 +127,7 @@ CONTROL_PLANE_SYSTEM = frozenset(
         "revisions",
         "revision",
         "diff",
+        "rollback",
         "credential",
         "export",
         "apply",

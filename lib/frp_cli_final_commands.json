@@ -3699,6 +3699,98 @@
   {
     "path": [
       "system",
+      "revision"
+    ],
+    "roles": "server",
+    "category": "System",
+    "summary": "Show one control-plane revision",
+    "detail": "Show revision metadata and whether a rollback snapshot is available.",
+    "examples": [
+      "system revision 12"
+    ],
+    "args": [
+      {
+        "name": "<REVISION>",
+        "complete": null,
+        "required": true
+      }
+    ],
+    "tail": null,
+    "internal": null,
+    "aliases": [],
+    "destructive": false,
+    "hidden": false,
+    "risk": "none",
+    "confirmation": "none",
+    "surface": "",
+    "flags": []
+  },
+  {
+    "path": [
+      "system",
+      "diff"
+    ],
+    "roles": "server",
+    "category": "System",
+    "summary": "Diff two control-plane revisions",
+    "detail": "Show the canonical ConfigurationBundle difference between two rollback-capable revisions.",
+    "examples": [
+      "system diff 12 13"
+    ],
+    "args": [
+      {
+        "name": "<REVISION_A>",
+        "complete": null,
+        "required": true
+      },
+      {
+        "name": "<REVISION_B>",
+        "complete": null,
+        "required": true
+      }
+    ],
+    "tail": null,
+    "internal": null,
+    "aliases": [],
+    "destructive": false,
+    "hidden": false,
+    "risk": "none",
+    "confirmation": "none",
+    "surface": "",
+    "flags": []
+  },
+  {
+    "path": [
+      "system",
+      "rollback"
+    ],
+    "roles": "server",
+    "category": "System",
+    "summary": "Rollback configuration to a prior revision",
+    "detail": "Resolve the target revision snapshot, validate and diff it against current state, require interactive y/N confirmation for a real change, then apply through the normal runtime activation and rollback-on-failure pipeline. Revisions created before configuration snapshots fail closed.",
+    "examples": [
+      "system rollback 12"
+    ],
+    "args": [
+      {
+        "name": "<REVISION>",
+        "complete": null,
+        "required": true
+      }
+    ],
+    "tail": null,
+    "internal": null,
+    "aliases": [],
+    "destructive": true,
+    "hidden": false,
+    "risk": "outage",
+    "confirmation": "y_n",
+    "surface": "",
+    "flags": []
+  },
+  {
+    "path": [
+      "system",
       "credential",
       "rotate",
       "ai-principal"

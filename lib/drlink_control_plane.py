@@ -356,6 +356,20 @@ class ControlPlane:
     def _next_revision(self) -> int:
         return self.current_revision() + 1
 
+    def _capture_revision_configuration(self) -> tuple[Optional[str], Optional[str]]:
+        """Capture the canonical public ConfigurationBundle for rollback/diff.
+
+        Revision history must never claim rollback support from summary-only
+        metadata.  A snapshot is stored only when the canonical v2.4 exporter
+        can describe the current configurable state.
+        """
+        try:
+            from drlink_v24_bundle import export_configuration_v24
+
+            return export_configuration_v24(self), None
+        except Exception as exc:
+            return None, "%s: %s" % (type(exc).__name__, exc)
+
     def _write_revision(self, command: str, summary: str, snapshot: Optional[dict] = None) -> int:
         rev = self._next_revision()
         now = utc_now_iso()
@@ -364,12 +378,66 @@ class ControlPlane:
             "VALUES (?, ?, ?, ?, ?)",
             (rev, _actor(), command, now, summary),
         )
-        payload = json.dumps(snapshot if snapshot is not None else {"revision": rev}, sort_keys=True)
+        payload_obj = dict(snapshot or {})
+        payload_obj.setdefault("summary", summary)
+        config_text, snapshot_error = self._capture_revision_configuration()
+        if config_text:
+            payload_obj["snapshot_format"] = "drlink-revision-configuration-v1"
+            payload_obj["configuration_bundle"] = config_text
+        elif snapshot_error:
+            payload_obj["snapshot_unavailable"] = snapshot_error
+        payload = json.dumps(payload_obj, sort_keys=True)
         self.conn.execute(
             "INSERT INTO revision_snapshots(revision, snapshot_json) VALUES (?, ?)",
             (rev, payload),
         )
         return rev
+
+    def revision_record(self, revision: int) -> dict:
+        try:
+            revision = int(revision)
+        except (TypeError, ValueError) as exc:
+            raise ControlPlaneError("revision must be an integer") from exc
+        row = self.conn.execute(
+            "SELECT * FROM config_revisions WHERE revision = ?", (revision,)
+        ).fetchone()
+        if row is None:
+            raise ControlPlaneError("revision %s does not exist" % revision)
+        return dict(row)
+
+    def revision_snapshot(self, revision: int) -> dict:
+        self.revision_record(revision)
+        row = self.conn.execute(
+            "SELECT snapshot_json FROM revision_snapshots WHERE revision = ?",
+            (int(revision),),
+        ).fetchone()
+        if row is None:
+            raise ControlPlaneError(
+                "revision %s has no rollback snapshot" % int(revision)
+            )
+        try:
+            payload = json.loads(str(row["snapshot_json"] or "{}"))
+        except (TypeError, ValueError) as exc:
+            raise ControlPlaneError(
+                "revision %s rollback snapshot is unreadable" % int(revision)
+            ) from exc
+        if not isinstance(payload, dict):
+            raise ControlPlaneError(
+                "revision %s rollback snapshot is invalid" % int(revision)
+            )
+        return payload
+
+    def revision_configuration(self, revision: int) -> str:
+        payload = self.revision_snapshot(revision)
+        text = payload.get("configuration_bundle")
+        if not isinstance(text, str) or not text.strip():
+            reason = str(payload.get("snapshot_unavailable") or "").strip()
+            detail = (" (%s)" % reason) if reason else ""
+            raise ControlPlaneError(
+                "revision %s cannot be rolled back because it predates "
+                "configuration snapshots%s" % (int(revision), detail)
+            )
+        return text
 
     def _audit(
         self,

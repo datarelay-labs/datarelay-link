@@ -1109,7 +1109,12 @@ def to_internal(tokens):
         ("system", "diff", "configuration"),
     ):
         return list(work)
-    if path[:2] == ("system", "revisions") or path[:2] == ("system", "revision") or path[:2] == ("system", "diff"):
+    if path[:2] in (
+        ("system", "revisions"),
+        ("system", "revision"),
+        ("system", "diff"),
+        ("system", "rollback"),
+    ):
         return list(work)
 
     # --- Merged final-grammar specials (preserve distinct safety semantics) ---
@@ -1795,6 +1800,9 @@ def domain_help(topic, role):
                     "  system backup validate <PATH>",
                     "  system restore <PATH>",
                     "  system revisions",
+                    "  system revision <REVISION>",
+                    "  system diff <REVISION_A> <REVISION_B>",
+                    "  system rollback <REVISION>",
                     "  system audit",
                     "  system export configuration <PATH>",
                     "  test configuration <PATH|->",

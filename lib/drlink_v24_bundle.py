@@ -10,6 +10,7 @@ and rejects malformed Markdown/prose pastes atomically.
 """
 from __future__ import annotations
 
+import copy
 import io
 import json
 import os
@@ -1295,7 +1296,15 @@ def _resolve_plan_for_apply(plane: ControlPlane, plan: V24Plan) -> V24Plan:
     return plan
 
 
-def apply_v24_plan(plane: ControlPlane, plan: V24Plan, *, confirm: bool = False) -> dict:
+def apply_v24_plan(
+    plane: ControlPlane,
+    plan: V24Plan,
+    *,
+    confirm: bool = False,
+    command: str = "system apply configuration",
+    summary: str = "apply configuration bundle",
+    snapshot_meta: Optional[dict] = None,
+) -> dict:
     """Apply a prepared plan against *current* authoritative state.
 
     Canonical contract:
@@ -1374,18 +1383,21 @@ def apply_v24_plan(plane: ControlPlane, plan: V24Plan, *, confirm: bool = False)
                 plane._batch_mode = prev_batch
                 plane._batch_results = []
 
+            revision_snapshot = {"summary": summary}
+            if snapshot_meta:
+                revision_snapshot.update(dict(snapshot_meta))
             rev = plane._write_revision(
-                "system apply configuration",
-                "apply configuration bundle",
-                snapshot={"summary": "apply configuration bundle"},
+                command,
+                summary,
+                snapshot=revision_snapshot,
             )
             plane._audit(
                 revision=int(rev),
-                action="system apply configuration",
+                action=command,
                 entity_type="configuration-bundle",
                 entity_id=str(fresh.context or "bundle"),
-                operation="apply",
-                after="apply configuration bundle",
+                operation="rollback" if command.startswith("system rollback ") else "apply",
+                after=summary,
                 impact=json.dumps(
                     {
                         "base_revision": getattr(plan, "base_revision", None),
@@ -1642,6 +1654,97 @@ def _apply_one(plane: ControlPlane, change: dict) -> None:
             )
     else:
         raise ControlPlaneError("Unsupported bundle change: %s" % kind)
+
+
+def build_v24_rollback_bundle(plane: ControlPlane, target_text: str) -> str:
+    """Build exact desired state for a revision rollback.
+
+    ConfigurationBundle input is merge-oriented, so omissions normally
+    preserve current resources. Rollback instead materializes state: absent
+    entries for resources or rules that exist now but not in the target.
+    """
+    target = parse_v24_bundle(target_text)
+    current = parse_v24_bundle(export_configuration_v24(plane))
+    if target["context"] != current["context"]:
+        raise BundleError(
+            "ERROR:\nRollback snapshot role does not match the current host.\n\n"
+            "No changes were applied."
+        )
+
+    body = copy.deepcopy(target["body"])
+    current_body = current["body"]
+    context = target["context"]
+
+    def reconcile_named_list(key: str) -> None:
+        target_items = list(body.get(key) or [])
+        current_items = list(current_body.get(key) or [])
+        target_names = {
+            str(item.get("name") or "").strip().lower()
+            for item in target_items
+            if isinstance(item, dict)
+            and item.get("name")
+            and str(item.get("state") or "").strip().lower() != "absent"
+        }
+        extras = []
+        for item in current_items:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or "").strip()
+            if name and name.lower() not in target_names:
+                extras.append({"name": name, "state": "absent"})
+        if target_items or extras or key in body:
+            body[key] = target_items + extras
+
+    if context == "agent":
+        reconcile_named_list("remoteServices")
+    else:
+        for key in (
+            "networkObjects",
+            "networkGroups",
+            "serviceObjects",
+            "serviceGroups",
+            "permissionObjects",
+            "permissionGroups",
+        ):
+            reconcile_named_list(key)
+
+        for key in ("remoteAccess", "internetAccess", "aiAccess"):
+            target_section = body.get(key)
+            current_section = current_body.get(key)
+            if target_section is None:
+                if current_section is not None:
+                    body[key] = {"state": "absent"}
+                continue
+            if not isinstance(target_section, dict):
+                continue
+            if str(target_section.get("state") or "").strip().lower() == "absent":
+                continue
+            current_rules = []
+            if isinstance(current_section, dict):
+                current_rules = list(current_section.get("rules") or [])
+            target_rules = list(target_section.get("rules") or [])
+            target_names = {
+                str(item.get("name") or "").strip().lower()
+                for item in target_rules
+                if isinstance(item, dict)
+                and item.get("name")
+                and str(item.get("state") or "").strip().lower() != "absent"
+            }
+            extras = []
+            for item in current_rules:
+                if not isinstance(item, dict):
+                    continue
+                name = str(item.get("name") or "").strip()
+                if name and name.lower() not in target_names:
+                    extras.append({"name": name, "state": "absent"})
+            if target_rules or extras or "rules" in target_section:
+                target_section["rules"] = target_rules + extras
+
+    return _yaml().safe_dump(
+        {"configurationBundle": body},
+        sort_keys=False,
+        default_flow_style=False,
+    )
 
 
 def export_configuration_v24(plane: ControlPlane) -> str:
