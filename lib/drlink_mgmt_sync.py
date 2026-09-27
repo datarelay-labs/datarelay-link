@@ -166,11 +166,11 @@ def rewrite_legacy_backend_url(url: str, public_port: int) -> Optional[str]:
 
 
 def _public_port_for_wss_state(state: dict) -> Optional[int]:
-    """Public single-443 port, or None for Direct mode and unlabeled state.
+    """Public single-443 port only when explicit WSS evidence is present.
 
-    WSS uses whatever public port is stored. Older single-443 Agents kept the
-    default tcp label while frp_server_port was already 443. Missing transport
-    and any other tcp control port stay on the private allocator port.
+    TCP on port 443 is ambiguous: Direct mode may legitimately use FRPS on
+    443 while management remains on the allocator port. Never rewrite the
+    management origin from transport port alone.
     """
     transport = str(state.get("frp_transport") or "").strip().lower()
     try:
@@ -180,8 +180,6 @@ def _public_port_for_wss_state(state: dict) -> Optional[int]:
     if port < 1 or port > 65535 or port == LEGACY_ALLOCATOR_BACKEND_PORT:
         return None
     if transport == "wss":
-        return port
-    if transport == "tcp" and port == 443:
         return port
     return None
 

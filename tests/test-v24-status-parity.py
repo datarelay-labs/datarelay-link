@@ -630,7 +630,7 @@ class MacosRoleDetectionTests(unittest.TestCase):
         try:
             self.assertEqual(
                 v24.load_agent_server_endpoint("/nonexistent-root"),
-                ("221.139.249.113", 443),
+                ("221.139.249.113", 6099),
             )
             self.assertEqual(
                 mgmt.resolve_mgmt_base_url("/nonexistent-root"),

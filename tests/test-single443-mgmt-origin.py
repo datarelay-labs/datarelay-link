@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 
 import drlink_mgmt_sync as mgmt  # noqa: E402
+import drlink_v24 as v24  # noqa: E402
 
 
 def _write(path: Path, text: str, mode: int = 0o600) -> None:
@@ -114,21 +115,23 @@ class LegacyOriginTests(unittest.TestCase):
             self.assertEqual((root / "etc/frp/server-endpoint.json").read_text(encoding="utf-8"), endpoint_text)
             self.assertTrue(mgmt.legacy_single443_mgmt_origin_drift(str(root)))
 
-    def test_tcp_on_public_443_repairs_origin_and_direct_port_does_not(self):
+    def test_tcp_on_public_443_is_ambiguous_and_does_not_rewrite_origin(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            legacy = root / "tcp443"
+            direct = root / "tcp443-direct"
+            state = _state("https://129.225.184.60:6099/enroll", "tcp", 443)
             _write(
-                legacy / "etc/frp/client-state.json",
-                json.dumps(_state("https://129.225.184.60:6099/enroll", "tcp", 443), indent=2) + "\n",
+                direct / "etc/frp/client-state.json",
+                json.dumps(state, indent=2) + "\n",
             )
-            before_services = _state("https://129.225.184.60:6099/enroll", "tcp", 443)["services"]
-            self.assertTrue(mgmt.migrate_legacy_single443_agent_origin(str(legacy)))
-            migrated = json.loads((legacy / "etc/frp/client-state.json").read_text(encoding="utf-8"))
-            self.assertEqual(migrated["allocator_url"], "https://129.225.184.60/enroll")
-            self.assertEqual(migrated["frp_transport"], "tcp")
-            self.assertEqual(migrated["services"], before_services)
-            self.assertFalse(mgmt.migrate_legacy_single443_agent_origin(str(legacy)))
+            before = (direct / "etc/frp/client-state.json").read_bytes()
+            self.assertFalse(mgmt.legacy_single443_mgmt_origin_drift(str(direct)))
+            self.assertFalse(mgmt.migrate_legacy_single443_agent_origin(str(direct)))
+            self.assertEqual((direct / "etc/frp/client-state.json").read_bytes(), before)
+            self.assertEqual(
+                v24.load_agent_server_endpoint(str(direct)),
+                ("129.225.184.60", 6099),
+            )
             unlabeled = root / "unlabeled"
             _write(
                 unlabeled / "etc/frp/client-state.json",
@@ -146,6 +149,26 @@ class LegacyOriginTests(unittest.TestCase):
             unlabeled_before = (unlabeled / "etc/frp/client-state.json").read_bytes()
             self.assertFalse(mgmt.migrate_legacy_single443_agent_origin(str(unlabeled)))
             self.assertEqual((unlabeled / "etc/frp/client-state.json").read_bytes(), unlabeled_before)
+
+    def test_management_url_precedes_transport_host_port_in_endpoint_state(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write(
+                root / "etc/frp/server-endpoint.json",
+                json.dumps(
+                    {
+                        "mgmt_url": "https://remote.xdr.ooo:6099",
+                        "host": "129.225.184.60",
+                        "port": 443,
+                    },
+                    indent=2,
+                )
+                + "\n",
+            )
+            self.assertEqual(
+                v24.load_agent_server_endpoint(str(root)),
+                ("remote.xdr.ooo", 6099),
+            )
 
 
 def _install_fixture(root: Path, state: dict) -> None:
@@ -220,6 +243,21 @@ class UpgradeMigrationTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn("Management origin        : unchanged", result.stdout)
             self.assertEqual((root / "etc/frp/client-state.json").read_bytes(), before)
+
+    def test_direct_tcp443_update_preserves_allocator_management_origin(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = _state("https://remote.xdr.ooo:6099/enroll", "tcp", 443)
+            _install_fixture(root, state)
+            before = (root / "etc/frp/client-state.json").read_bytes()
+            result = _update(root)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("Management origin        : unchanged", result.stdout)
+            self.assertEqual((root / "etc/frp/client-state.json").read_bytes(), before)
+            self.assertEqual(
+                v24.load_agent_server_endpoint(str(root)),
+                ("remote.xdr.ooo", 6099),
+            )
 
     def test_same_bundle_repairs_legacy_origin_then_stays_idle(self):
         bundle = "ab" * 32

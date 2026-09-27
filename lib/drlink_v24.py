@@ -785,8 +785,15 @@ def load_agent_server_endpoint(root: Optional[str] = None) -> Optional[tuple[str
             except (OSError, json.JSONDecodeError):
                 data = None
             if isinstance(data, dict):
+                for key in ("mgmt_url", "management_url", "allocator_url", "url"):
+                    url = str(data.get(key) or "").strip()
+                    if not url:
+                        continue
+                    parsed = _parse_host_port_from_url(url)
+                    if parsed:
+                        return parsed
                 host = str(data.get("host") or data.get("server_addr") or data.get("addr") or "").strip()
-                port = data.get("port") or data.get("server_port") or data.get("allocator_port")
+                port = data.get("port") or data.get("allocator_port") or data.get("mgmt_port") or data.get("server_port")
                 if host and port:
                     try:
                         return host, int(port)
@@ -803,6 +810,23 @@ def load_agent_server_endpoint(root: Optional[str] = None) -> Optional[tuple[str
         except (OSError, json.JSONDecodeError):
             state = None
         if isinstance(state, dict):
+            # Management/allocator URLs are the authoritative Agent-to-Server
+            # management origin. The FRP transport endpoint may intentionally
+            # use another port, including tcp/443 in Direct mode.
+            for key in (
+                "allocator_url",
+                "allocator_public_url",
+                "mgmt_url",
+                "management_url",
+                "server_url",
+                "enroll_url",
+            ):
+                url = str(state.get(key) or "").strip()
+                if not url:
+                    continue
+                parsed = _parse_host_port_from_url(url)
+                if parsed:
+                    return parsed
             host = str(
                 state.get("server_addr")
                 or state.get("server_host")
@@ -819,20 +843,6 @@ def load_agent_server_endpoint(root: Optional[str] = None) -> Optional[tuple[str
                     return host, int(port)
                 except (TypeError, ValueError):
                     pass
-            for key in (
-                "allocator_url",
-                "allocator_public_url",
-                "mgmt_url",
-                "management_url",
-                "server_url",
-                "enroll_url",
-            ):
-                url = str(state.get(key) or "").strip()
-                if not url:
-                    continue
-                parsed = _parse_host_port_from_url(url)
-                if parsed:
-                    return parsed
     # frpc.toml / frpc.ini serverAddr + serverPort
     toml_paths = _agent_state_file_candidates("etc/frp/frpc.toml", "frpc.toml", root)
     toml_paths.extend(_agent_state_file_candidates("etc/frp/frpc.ini", "frpc.ini", root))
