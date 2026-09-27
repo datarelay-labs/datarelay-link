@@ -28,6 +28,8 @@ Historical documents and internal storage names never override the public SSOT.
 | Security / trust boundaries | `SECURITY.md` |
 | Version governance | `VERSION_POLICY.md` |
 | Release qualification | `RELEASE_CHECKLIST.md`, `RELEASE_VALIDATION.md` |
+| Exhaustive direct CLI audit | `CLI_EXHAUSTIVE_AUDIT.md` |
+| Exhaustive AI-assisted command audit | `AI_ASSISTED_COMMAND_EXHAUSTIVE_AUDIT.md` |
 | Internal control-plane/schema history | `CONTROL_PLANE_ARCHITECTURE.md` |
 
 ## Operator lifecycle documents
@@ -48,6 +50,8 @@ Historical documents and internal storage names never override the public SSOT.
 These documents are useful for qualification but do not redefine product semantics:
 
 - [`USER_E2E_SCENARIOS.md`](../USER_E2E_SCENARIOS.md) — canonical FULL_USER_E2E matrix and v2.4 operator manual runbook
+- `CLI_EXHAUSTIVE_AUDIT.md` — trigger-driven black-box audit of public CLI syntax, usability, safety, and workflow closure
+- `AI_ASSISTED_COMMAND_EXHAUSTIVE_AUDIT.md` — trigger-driven natural-language → AI-generated command/bundle/MCP audit with real execution and self-recovery checks
 - `HUMAN_UX_ADVERSARIAL_E2E.md`
 - `OCI_ACCEPTANCE.md`
 
@@ -100,3 +104,19 @@ A product behavior change is incomplete until the affected canonical document is
 A historical/internal document may retain implementation names only when the document clearly labels them as internal or historical and does not present them as current public CLI.
 
 Before release qualification, run a documentation consistency review against the exact candidate HEAD and verify that README, Product Master, CLI Reference, release documents, and generated/help output describe the same behavior.
+
+
+## Exhaustive audit trigger routing
+
+The following user requests are execution shortcuts:
+
+~~~text
+CLI 전수 감사해줘
+CLI 명령 전수 감사해줘
+AI 지원 명령 전수 감사해줘
+AI지원 전수 감사해줘
+CLI 및 AI지원 명령을 전수 감사해줘
+CLI와 AI 지원 명령 전수 감사
+~~~
+
+CLI-only requests execute `CLI_EXHAUSTIVE_AUDIT.md`. AI-only requests execute `AI_ASSISTED_COMMAND_EXHAUSTIVE_AUDIT.md`. Combined requests execute both against the same exact candidate. These audits are separate from FULL_USER_E2E: they focus specifically on human CLI usability and AI-assisted command usability, although findings may block release qualification.
