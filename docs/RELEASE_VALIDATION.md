@@ -23,6 +23,8 @@ PASS 2 = AI-assisted command and ConfigurationBundle execution through public dr
 PASS 3 = real forward, reverse, and full-duplex performance/resilience testing
 ~~~
 
+These PASS labels are evidence dimensions, not global execution barriers. Do not wait for every PASS 1 scenario to finish before starting ready PASS 2 work, and do not wait for every PASS 2 scenario to finish before starting ready PASS 3 work. Independent lanes across all three dimensions execute concurrently as soon as their own prerequisites exist.
+
 All three passes are exercised from real User, Operator, and Administrator perspectives across the product lifecycle. Real designated test servers and clients may be rebooted, interrupted, uninstalled, reinstalled, exhausted, or otherwise made temporarily unusable by the scenarios.
 
 During an active FULL_USER_E2E run, product defects are recorded but not fixed. A failing scenario does not stop unrelated scenarios. Dependent scenarios are marked BLOCKED_BY_PRIOR_FAILURE, all independent work continues, and implementation fixes are consolidated only after the planned run is exhausted.
