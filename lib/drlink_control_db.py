@@ -69,11 +69,50 @@ def resolve_root(root: Optional[str] = None) -> str:
     return ""
 
 
+def macos_agent_state_root(host_root: Path) -> Path:
+    """macOS Agent files live under Application Support, not /etc/frp.
+
+    ``FRP_MACOS_STATE_ROOT`` overrides the live host only. A staging root
+    keeps its own Application Support tree.
+    """
+    host = Path(host_root)
+    if str(host) in ("/", ""):
+        env = str(os.environ.get("FRP_MACOS_STATE_ROOT") or "").strip()
+        if env:
+            return Path(env)
+    return host / "Library/Application Support/drlink"
+
+
+def macos_agent_markers(state: Path) -> bool:
+    if (state / "client-state.json").is_file():
+        return True
+    return (state / "frpc.toml").is_file() and (state / "client-identity.key").is_file()
+
+
+def select_live_control_db(host_root: Path) -> Path:
+    """Pick the control DB for a live host.
+
+    A macOS Agent keeps ``drlink.db`` under Application Support/state. Opening
+    ``/var/lib/drlink/drlink.db`` there creates an empty database, so ``show
+    status`` misses the installed Agent and can report Role Unknown.
+    """
+    host = Path(host_root)
+    state = macos_agent_state_root(host)
+    linux_db = host / DEFAULT_DB_REL
+    if (
+        macos_agent_markers(state)
+        and not (host / "etc/frp/client-state.json").is_file()
+        and not (host / "etc/drlink/config.json").is_file()
+    ):
+        return state / "state" / "drlink.db"
+    return linux_db
+
+
 def db_path(root: Optional[str] = None) -> Path:
     base = resolve_root(root)
     if base:
         return Path(base) / DEFAULT_DB_REL
-    return Path("/") / DEFAULT_DB_REL
+    return select_live_control_db(Path("/"))
 
 
 def deploy_root_from_db_path(db_file) -> str:
@@ -81,13 +120,20 @@ def deploy_root_from_db_path(db_file) -> str:
 
     Real filesystem: ``/var/lib/drlink/drlink.db`` → ``/``.
     Staging/test: ``/tmp/test-root/var/lib/drlink/drlink.db`` → ``/tmp/test-root``.
+    macOS Agent: ``<ROOT>/Library/Application Support/drlink/state/drlink.db``.
 
     Do not walk a fixed number of parents: ``Path.parent`` × 3 on the real DB
     path stops at ``/var`` and would create ``/var/var/lib/drlink``.
     """
     path = Path(db_file)
-    rel_parts = Path(DEFAULT_DB_REL).parts
+    mac_tail = ("Library", "Application Support", "drlink", "state", "drlink.db")
     parts = path.parts
+    if len(parts) >= len(mac_tail) and parts[-len(mac_tail) :] == mac_tail:
+        prefix = parts[: -len(mac_tail)]
+        if not prefix or prefix == ("/",):
+            return "/"
+        return str(Path(*prefix))
+    rel_parts = Path(DEFAULT_DB_REL).parts
     if len(parts) >= len(rel_parts) and parts[-len(rel_parts) :] == rel_parts:
         prefix = parts[: -len(rel_parts)]
         if not prefix or prefix == ("/",):

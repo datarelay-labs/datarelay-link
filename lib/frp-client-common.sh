@@ -4339,20 +4339,9 @@ frp_client_stop() {
     return 0
   fi
   if frp_is_darwin; then
-    frp_macos_launchd_set_enabled disable || return 1
-    if frp_macos_launchd_running; then
-      # Kickstart after disable forces unload/stop; verify stopped.
-      frp_macos_launchd_kickstart || true
-      local i
-      for i in 1 2 3 4 5 6 7 8 9 10; do
-        frp_macos_launchd_running || break
-        sleep 0.2
-      done
-      if frp_macos_launchd_running; then
-        echo "ERROR: macOS Data Relay Link client is still running after stop." >&2
-        frp_emit_failure_class FRPC_STOP_FAILED 2>/dev/null || true
-        return 1
-      fi
+    if ! frp_macos_launchd_stop; then
+      frp_emit_failure_class FRPC_STOP_FAILED 2>/dev/null || true
+      return 1
     fi
     return 0
   fi

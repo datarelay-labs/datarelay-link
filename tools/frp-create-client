@@ -1042,10 +1042,27 @@ def print_manual(cfg, record, ttl, public_host, control_public, allocator, ca_fp
         print('CA SHA256: %s' % ca_fp)
 
     print()
-    if installer and allocator:
+    if installer and allocator and ca_fp:
+        env_parts = [
+            'FRP_ALLOCATOR_URL=%s' % shell_quote(allocator),
+            'FRP_ALLOCATOR_CA_SHA256=%s' % shell_quote(ca_fp),
+        ]
+        zt_mod = _zt()
+        if zt_mod is None:
+            fail('zero-touch helper is unavailable. No changes were applied.')
+        try:
+            command = zt_mod.pinned_ca_manual_linux_command(
+                installer, allocator, ca_fp, env_parts
+            )
+        except ValueError as exc:
+            fail('%s. No changes were applied.' % exc)
+        print('Client install:')
+        print(command)
+        print()
+        print('The enrollment code is entered interactively. It is not placed on the command line.')
+        print('The command retrieves the allocator CA, checks its SHA-256, then downloads the installer with that CA.')
+    elif installer and allocator:
         env_parts = ['FRP_ALLOCATOR_URL=%s' % shell_quote(allocator)]
-        if ca_fp:
-            env_parts.append('FRP_ALLOCATOR_CA_SHA256=%s' % shell_quote(ca_fp))
         print('Client install:')
         print(
             'curl -fsSL %s | sudo env %s bash'
@@ -1053,6 +1070,7 @@ def print_manual(cfg, record, ttl, public_host, control_public, allocator, ca_fp
         )
         print()
         print('The enrollment code is entered interactively. It is not placed on the command line.')
+        print('WARNING: CA SHA256 is not available, so this command cannot pin the allocator CA.')
     elif installer:
         print('Client install:')
         print('curl -fsSL %s | sudo bash' % shell_quote(installer))
@@ -1256,10 +1274,19 @@ def print_one_line(ticket, ttl, note, public_host, control_public, allocator, ca
             env_parts.append('FRP_SSH_PORT=%s' % shell_quote(str(int(ssh_port))))
         if management_only:
             env_parts.append('FRP_MANAGEMENT_ONLY=1')
-        command = 'curl -fsSL %s | sudo env %s bash' % (
-            shell_quote(installer),
-            ' '.join(env_parts),
-        )
+        zt_legacy = _zt()
+        if zt_legacy is not None:
+            try:
+                command = zt_legacy.pinned_ca_manual_linux_command(
+                    installer, allocator, ca_fp, env_parts
+                )
+            except ValueError:
+                command = ''
+        if not command:
+            command = 'curl -fsSL %s | sudo env %s bash' % (
+                shell_quote(installer),
+                ' '.join(env_parts),
+            )
 
     print()
     print('Zero-touch client command')

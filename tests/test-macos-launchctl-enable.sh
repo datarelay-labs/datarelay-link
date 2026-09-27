@@ -30,6 +30,21 @@ case "$cmd" in
     [[ "${FRP_TEST_LAUNCHCTL_BOOTSTRAP_FAIL:-}" == "1" ]] && exit 1
     exit 0
     ;;
+  print)
+    if [[ -f "${FRP_TEST_LAUNCHCTL_RUNNING_FLAG:-}" ]]; then
+      echo "pid = 4242"
+    fi
+    exit 0
+    ;;
+  bootout|unload)
+    rm -f "${FRP_TEST_LAUNCHCTL_RUNNING_FLAG:-}" 
+    echo "$*" >> "${FRP_TEST_LAUNCHCTL_LOG:-/dev/null}"
+    exit 0
+    ;;
+  kickstart)
+    echo "UNEXPECTED kickstart $*" >> "${FRP_TEST_LAUNCHCTL_LOG:-/dev/null}"
+    exit 0
+    ;;
   *)
     exit 0
     ;;
@@ -75,6 +90,26 @@ unset FRP_TEST_LAUNCHCTL_BOOTSTRAP_FAIL
 
 if grep -E 'launchctl (enable|disable).*\|[[:space:]]*true' "$ROOT/lib/frp-macos.sh"; then
   echo "FAIL: launchctl enable/disable still fail-open" >&2
+  exit 1
+fi
+
+export FRP_TEST_LAUNCHCTL_RUNNING_FLAG="$TMP/running"
+: >"$FRP_TEST_LAUNCHCTL_RUNNING_FLAG"
+: >"$FRP_TEST_LAUNCHCTL_LOG"
+frp_macos_launchd_stop
+if grep -q 'UNEXPECTED kickstart' "$FRP_TEST_LAUNCHCTL_LOG"; then
+  echo "FAIL: pause/stop restarted the agent with kickstart" >&2
+  exit 1
+fi
+grep -q 'bootout system/com.datarelay.drlink.frpc' "$FRP_TEST_LAUNCHCTL_LOG"
+if frp_macos_launchd_running; then
+  echo "FAIL: agent still running after launchd stop" >&2
+  exit 1
+fi
+stop_body="$(awk '/^frp_client_stop\(\)/,/^frp_client_install_ai_agent_unit\(\)/' "$ROOT/lib/frp-client-common.sh")"
+printf '%s\n' "$stop_body" | grep -q 'frp_macos_launchd_stop'
+if printf '%s\n' "$stop_body" | grep -q 'frp_macos_launchd_kickstart'; then
+  echo "FAIL: frp_client_stop still kickstarts on macOS" >&2
   exit 1
 fi
 

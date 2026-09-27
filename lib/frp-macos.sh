@@ -221,6 +221,24 @@ frp_macos_launchd_bootout() {
     frp_invoke launchctl unload -w "$(frp_macos_fs /etc/systemd/system/drlink-client.service)" >/dev/null 2>&1 || true
 }
 
+frp_macos_launchd_stop() {
+  # Disable autostart, then unload. kickstart -k restarts the job, so pause
+  # must not use it: a disabled-but-restarted agent stays active and reports
+  # FRPC_STOP_FAILED.
+  frp_macos_launchd_set_enabled disable || return 1
+  if ! frp_macos_launchd_running; then
+    return 0
+  fi
+  frp_macos_launchd_bootout || true
+  local i
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    frp_macos_launchd_running || return 0
+    sleep 0.2
+  done
+  echo "ERROR: macOS Data Relay Link client is still running after stop." >&2
+  return 1
+}
+
 frp_macos_launchd_bootstrap() {
   local plist
   frp_launchd_usable || return 0

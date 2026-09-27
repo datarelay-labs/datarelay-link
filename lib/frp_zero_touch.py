@@ -194,6 +194,33 @@ def ca_crt_url(allocator_url):
     return https_origin(allocator_url) + "/ca.crt"
 
 
+def _require_ca_fingerprint(ca_sha256):
+    fp = str(ca_sha256 or "").strip().lower()
+    if len(fp) != 64 or any(ch not in "0123456789abcdef" for ch in fp):
+        raise ValueError("invalid CA fingerprint")
+    return fp
+
+
+def _private_ca_pin_shell(allocator_url, ca_sha256):
+    """Shell that leaves a fingerprint-checked CA at ``$d/ca.crt``.
+
+    The only unverified fetch is ``/ca.crt``. Callers must use ``--cacert``
+    for every later download.
+    """
+    fp = _require_ca_fingerprint(ca_sha256)
+    ca_url = ca_crt_url(allocator_url)
+    return (
+        "set -euo pipefail; "
+        "d=$(mktemp -d /tmp/drlink-zt.XXXXXX); "
+        'trap "rm -rf $d" EXIT; '
+        "curl --fail --silent --show-error --max-time 30 --proto =https --insecure "
+        "-o $d/ca.crt %s; "
+        "openssl x509 -in $d/ca.crt -outform DER -out $d/ca.der >/dev/null; "
+        'fp=$(openssl dgst -sha256 $d/ca.der | awk "{print \\$NF}" | tr A-F a-f); '
+        'test "$fp" = %s; '
+    ) % (shell_quote(ca_url), shell_quote(fp))
+
+
 def pinned_ca_linux_command(installer_url, allocator_url, ca_sha256, package):
     """Pasteable Linux/macOS Zero-Touch command for a Private CA allocator.
 
@@ -203,31 +230,37 @@ def pinned_ca_linux_command(installer_url, allocator_url, ca_sha256, package):
     with ``--cacert``. Same bootstrap rule as ``frp_bootstrap_allocator_ca``.
     """
     installer = str(installer_url or "").strip()
-    fp = str(ca_sha256 or "").strip().lower()
     pkg = str(package or "").strip()
     if not installer.lower().startswith("https://"):
         raise ValueError("installer URL must be HTTPS")
-    if len(fp) != 64 or any(ch not in "0123456789abcdef" for ch in fp):
-        raise ValueError("invalid CA fingerprint")
     if not pkg.startswith("zt1."):
         raise ValueError("invalid zero-touch package")
-    ca_url = ca_crt_url(allocator_url)
-    inner = (
-        "set -euo pipefail; "
-        "d=$(mktemp -d /tmp/drlink-zt.XXXXXX); "
-        'trap "rm -rf $d" EXIT; '
-        "curl --fail --silent --show-error --max-time 30 --proto =https --insecure "
-        "-o $d/ca.crt %s; "
-        "openssl x509 -in $d/ca.crt -outform DER -out $d/ca.der >/dev/null; "
-        'fp=$(openssl dgst -sha256 $d/ca.der | awk "{print \\$NF}" | tr A-F a-f); '
-        "test \"$fp\" = %s; "
+    inner = _private_ca_pin_shell(allocator_url, ca_sha256) + (
         "curl -fsSL --proto =https --cacert $d/ca.crt %s | bash -s -- %s"
-    ) % (
-        shell_quote(ca_url),
-        shell_quote(fp),
-        shell_quote(installer),
-        shell_quote(pkg),
+        % (shell_quote(installer), shell_quote(pkg))
     )
+    return "sudo bash -c %s" % shell_quote(inner)
+
+
+def pinned_ca_manual_linux_command(installer_url, allocator_url, ca_sha256, env_parts):
+    """Manual or legacy enrollment command that pins the CA before the installer.
+
+    The enrollment code stays interactive. ``env_parts`` are already
+    shell-quoted ``KEY=value`` assignments passed to the installer.
+    """
+    installer = str(installer_url or "").strip()
+    parts = [str(part) for part in (env_parts or []) if str(part).strip()]
+    if not installer.lower().startswith("https://"):
+        raise ValueError("installer URL must be HTTPS")
+    if not parts:
+        raise ValueError("manual install environment is required")
+    inner = _private_ca_pin_shell(allocator_url, ca_sha256) + (
+        "curl -fsSL --proto =https --cacert $d/ca.crt %s | "
+        "env %s FRP_ALLOCATOR_CA_FILE=\"$d/ca.crt\" bash"
+        % (shell_quote(installer), " ".join(parts))
+    )
+    if inner.count("--insecure") != 1:
+        raise ValueError("manual command must fetch only the CA insecurely")
     return "sudo bash -c %s" % shell_quote(inner)
 
 
@@ -248,6 +281,10 @@ def pinned_ca_windows_inner(
         raise ValueError("SHA256SUMS URL must be HTTPS")
     if len(fp) != 64 or any(ch not in "0123456789abcdef" for ch in fp):
         raise ValueError("invalid CA fingerprint")
+    installer_host = (urlparse(installer).hostname or "").lower()
+    sums_host = (urlparse(sums).hostname or "").lower()
+    if not installer_host or installer_host != sums_host:
+        raise ValueError("SHA256SUMS URL must share the installer host")
     ca_url = ca_crt_url(allocator_url)
     return (
         "$ErrorActionPreference='Stop';"
@@ -266,14 +303,29 @@ def pinned_ca_windows_inner(
         "if($fp.ToLowerInvariant() -ne "
         + powershell_quote(fp)
         + "){throw 'CA fingerprint mismatch'};"
-        "& $curl.Source --fail --silent --show-error --max-time 60 --proto =https --cacert $ca --ssl-no-revoke -o $m "
+        "$script:caCert=New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($ca);"
+        "$script:want=$script:caCert.Thumbprint;"
+        "$script:pinHost="
+        + powershell_quote((urlparse(installer).hostname or "").lower())
+        + ";"
+        "[Net.ServicePointManager]::ServerCertificateValidationCallback={"
+        "param($snd,$cert,$chain,$pol)"
+        "if(-not $snd.RequestUri -or $snd.RequestUri.Host.ToLowerInvariant() -ne $script:pinHost){return $false};"
+        "$leaf=New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 $cert;"
+        "$chain.ChainPolicy.ExtraStore.Add($script:caCert)|Out-Null;"
+        "$chain.ChainPolicy.VerificationFlags=[Net.Security.X509Certificates.X509VerificationFlags]::AllowUnknownCertificateAuthority;"
+        "$chain.ChainPolicy.RevocationMode=[Net.Security.X509Certificates.X509RevocationMode]::NoCheck;"
+        "if(-not $chain.Build($leaf)){return $false};"
+        "$rootEl=$chain.ChainElements[$chain.ChainElements.Count-1].Certificate;"
+        "return ($rootEl.Thumbprint -eq $script:want)"
+        "};"
+        "$wc=New-Object Net.WebClient;"
+        "try{$wc.DownloadFile("
         + powershell_quote(sums)
-        + ";"
-        "if($LASTEXITCODE -ne 0){throw 'SHA256SUMS download failed'};"
-        "& $curl.Source --fail --silent --show-error --max-time 60 --proto =https --cacert $ca --ssl-no-revoke -o $p "
+        + ",$m)}catch{throw 'SHA256SUMS download failed'};"
+        "try{$wc.DownloadFile("
         + powershell_quote(installer)
-        + ";"
-        "if($LASTEXITCODE -ne 0){throw 'bootstrap-client.ps1 download failed'};"
+        + ",$p)}catch{throw 'bootstrap-client.ps1 download failed'};"
         "$w=$null;Get-Content -LiteralPath $m|ForEach-Object{"
         "if($_ -match '^([0-9a-fA-F]{64})\\s+(?:dist/bootstrap-client\\.ps1|agent/bootstrap-client\\.ps1|bootstrap-client\\.ps1)\\s*$'){"
         "if($w){throw 'duplicate bootstrap-client.ps1 hash'};"
@@ -294,7 +346,9 @@ def pinned_ca_windows_inner(
         "& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $p -ZeroTouch;"
         "$rc=$LASTEXITCODE;Remove-Item Env:FRP_BOOTSTRAP_TICKET -ErrorAction SilentlyContinue;"
         "if($rc -ne 0){exit $rc}"
-        "}finally{Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue}"
+        "}finally{"
+        "[Net.ServicePointManager]::ServerCertificateValidationCallback=$null;"
+        "Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue}"
     )
 
 

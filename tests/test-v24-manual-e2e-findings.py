@@ -106,6 +106,22 @@ class ZeroTouchCommandSecurityTests(unittest.TestCase):
         self.assertIn("a" * 64, cmd)
         self.assertIn(pkg, cmd)
 
+    def test_manual_install_pins_ca_before_installer_fetch(self):
+        installer = "https://203.0.113.10:6099/artifacts/agent/bootstrap-client.sh"
+        cmd = zt.pinned_ca_manual_linux_command(
+            installer,
+            "https://203.0.113.10:6099/enroll",
+            "a" * 64,
+            ["FRP_ALLOCATOR_URL='https://203.0.113.10:6099/enroll'", "FRP_ALLOCATOR_CA_SHA256='%s'" % ("a" * 64)],
+        )
+        self.assertTrue(cmd.startswith("sudo bash -c "))
+        self.assertEqual(cmd.count("--insecure"), 1)
+        self.assertIn("--cacert", cmd)
+        self.assertLess(cmd.index("--insecure"), cmd.index(installer))
+        self.assertLess(cmd.index("test "), cmd.index("--cacert"))
+        self.assertNotIn("curl -fsSL %s | sudo" % installer, cmd)
+        self.assertIn("FRP_ALLOCATOR_CA_SHA256", cmd)
+
     def test_short_url_bootstrap_script_keeps_checksum_gate(self):
         ticket = "bt1." + ("e" * 16) + "." + ("f" * 64)
         script = zt.render_short_url_bootstrap_script(

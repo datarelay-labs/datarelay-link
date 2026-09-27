@@ -571,6 +571,21 @@ class MacosRoleDetectionTests(unittest.TestCase):
         (state / "frpc.toml").write_text("[common]\n", encoding="utf-8")
         self.assertEqual(v24.detect_cli_role(tmp), "agent")
         self.assertEqual(v24.role_label(v24.detect_cli_role(tmp)), "Agent Host")
+        from drlink_control_db import deploy_root_from_db_path, select_live_control_db
+
+        prev = os.environ.pop("FRP_MACOS_STATE_ROOT", None)
+        try:
+            db = select_live_control_db(Path(tmp))
+        finally:
+            if prev is not None:
+                os.environ["FRP_MACOS_STATE_ROOT"] = prev
+        self.assertEqual(
+            db,
+            Path(tmp) / "Library/Application Support/drlink/state/drlink.db",
+        )
+        self.assertEqual(deploy_root_from_db_path(db), tmp)
+        self.assertEqual(v24.role_label("unknown"), "Unknown")
+        self.assertNotEqual(v24.role_label(v24.detect_cli_role(tmp)), "Unknown")
 
     def test_macos_env_state_root_is_agent(self):
         tmp = tempfile.mkdtemp(prefix="drlink-macos-env-")
