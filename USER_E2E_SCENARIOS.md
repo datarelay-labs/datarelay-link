@@ -786,6 +786,40 @@ If 2 hosts are available, run the parallel cases with 2. If 6 are available, use
 
 Use unique run prefixes for resources so independent lanes do not collide accidentally. Shared destructive state is coordinated intentionally; unrelated work continues in parallel.
 
+### 10.0.1 Cross-host repetition rule
+
+A successful host-scoped scenario is not considered sufficiently representative merely because it passed once on one machine. When at least two suitable hosts exist, repeat the same functional intent on **at least two distinct hosts**, preferably with different operating systems or runtime conditions.
+
+Examples:
+
+- create and use a client Remote Service on one Agent, then repeat equivalent service creation/use on a different Agent;
+- apply an Internet Access ALLOW/DENY workflow from one protected host, then repeat the equivalent policy/data-path validation from a different protected host;
+- exercise Remote Access from one source/Agent pair, then repeat with another source/Agent pair;
+- enroll one client, then perform another enrollment on a different host rather than treating the first enrollment as complete coverage;
+- pause/resume/restart one Agent, then repeat the lifecycle on another suitable Agent;
+- perform ConfigurationBundle or equivalent host-scoped configuration on more than one Agent when the feature applies.
+
+Where the feature is platform-sensitive, prefer heterogeneity over exact duplication. For example, after one Linux host passes a service workflow, repeat it on another Linux distribution, Windows, or macOS host when that feature is supported there.
+
+This is operational repetition, not synthetic loop-count inflation. The repeated execution must use a different real host and produce independent evidence.
+
+~~~text
+MIN_DISTINCT_HOSTS_PER_HOST_SCOPED_SCENARIO=2_IF_AVAILABLE
+REPEAT_SAME_FUNCTIONAL_INTENT_ON_DIFFERENT_HOST=YES
+PREFER_CROSS_PLATFORM_REPETITION=YES
+SINGLE_HOST_PASS_COUNTS_AS_FULL_HOST_COVERAGE=NO
+REPEAT_ON_SAME_HOST_ONLY=INSUFFICIENT_WHEN_SECOND_HOST_AVAILABLE
+~~~
+
+If only one suitable host exists for a host-scoped scenario, execute it there and record:
+
+~~~text
+HOST_REPETITION_STATUS=SINGLE_HOST_ONLY
+HOST_REPETITION_LIMITATION=<why no second suitable host was available>
+~~~
+
+Do not block unrelated testing merely because a second host is unavailable, but do not report the result as multi-host repetition evidence.
+
 ### 10.1 Continuous traffic backbone
 
 Once usable data paths exist, keep representative traffic running while Operator and Administrator scenarios continue.
@@ -824,6 +858,8 @@ The key invariant is that a change on one host/resource must not corrupt, rerout
 ### 10.2 Required parallel scenarios
 
 Execute each scenario with the maximum suitable host/resource count available at that moment.
+
+For host-scoped scenarios outside the explicit C-* list, the cross-host repetition rule still applies: after the first successful execution, repeat the same functional intent on another suitable real host before treating host diversity as covered.
 
 - C-001: all currently available applicable test hosts online simultaneously.
 - C-002: parallel enrollment across the available platforms/hosts.
@@ -1567,6 +1603,9 @@ PARALLEL_MULTI_HOST=
 PARALLELISM_EXCEPTIONS=
 AVAILABLE_HOST_COUNT=
 MAX_PARALLEL_HOSTS_USED=
+MIN_DISTINCT_HOSTS_PER_HOST_SCOPED_SCENARIO=
+HOST_SCOPED_SCENARIOS_REPEATED_ON_2PLUS_HOSTS=
+SINGLE_HOST_ONLY_SCENARIOS=
 MAX_REAL_SCALE_TESTED=
 UNTESTED_SCALE_CLAIMS=
 PLATFORM_COVERAGE_LIMITATIONS=
@@ -1632,6 +1671,7 @@ The GitHub Issue update must include at least:
 - evidence root and important evidence paths;
 - any continuation recovery performed, clearly separated from qualification evidence;
 - any scenario that remained sequential, with the concrete dependency or shared-state reason;
+- host-scoped scenarios that were repeated on two or more distinct hosts, plus any single-host-only exceptions and why;
 - remaining candidate blockers and the next fix/verify/rerun action.
 
 ~~~text
@@ -1672,6 +1712,7 @@ FULL_USER_E2E
 -> act as User, Operator, and Administrator through the full product lifecycle
 -> discover candidate hosts from the development server's ~/.ssh/config and use every suitable reachable host at run time; never block the base run for lack of an arbitrary host count
 -> run independent hosts/scenarios in parallel
+-> repeat each applicable host-scoped functional intent on at least two distinct real hosts when available, preferring different platforms/runtime conditions
 -> keep representative traffic active while policies, Agents, Remote Services, Bundles, and lifecycle state change
 -> break Server/Agent/target/network state where scenarios require it
 -> record defects, blockers, ambiguity, confusion, and improvements immediately
