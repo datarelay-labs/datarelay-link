@@ -1,12 +1,13 @@
 # Data Relay Link — User E2E Test Scenarios
 
-> **Document role:** Canonical role-based User E2E execution matrix
+> **Document role:** Single canonical final User E2E execution contract — role-based real operation + exhaustive Direct CLI + exhaustive AI-assisted parity + performance/concurrency
 > **Canonical path:** `docs/FULL_USER_E2E_SCENARIOS.md` (single canonical entry point)
 > **Operator runbook:** Appendix A retains the v2.4 manual operator procedure
 > **Product:** Data Relay Link
 > **Target:** v2.4 and later until superseded
 > **Primary CLI:** drlink
 > **CLI/AI authority:** docs/DATA_RELAY_LINK_CLI_AI_MASTER_v2.4_FINAL.md
+> **Integrated predecessors:** docs/CLI_EXHAUSTIVE_AUDIT.md + docs/AI_ASSISTED_COMMAND_EXHAUSTIVE_AUDIT.md (their mandatory coverage is absorbed here; they are not separate prerequisites for a User E2E run)
 > **Release validation:** docs/RELEASE_VALIDATION.md
 > **Release checklist:** docs/RELEASE_CHECKLIST.md
 > **Status:** Normative living document
@@ -99,6 +100,175 @@ If ChatGPT cannot execute a mandatory scenario because the real environment is u
 Historical PASS results, synthetic tests, unit tests, Docker-only results, Cursor-run results, or results from another Git HEAD do not replace a requested real User E2E run by ChatGPT.
 
 If product code, dependencies, generated runtime artifacts, or the tested build changes during a full pass, record the new HEAD/build identity and invalidate the affected pass. For final release qualification, the double-pass counter resets as defined by the release validation policy.
+
+## 1.2 Immediate-execution contract (hard gate)
+
+An unqualified User E2E trigger means **execute now**. Do not spend a turn reviewing the repository, proposing a plan, asking which hosts to use, re-auditing old evidence, or waiting for Cursor.
+
+~~~text
+FIRST_ACTION=DISCOVER_TEST_HOSTS_AND_EXECUTE
+PLAN_ONLY_RESPONSE=FORBIDDEN
+PRE_E2E_CODE_REVIEW=FORBIDDEN
+PRE_E2E_CURSOR_HANDOFF=FORBIDDEN
+HISTORICAL_PASS_AS_CURRENT_EVIDENCE=FORBIDDEN
+PRODUCT_CODE_FIX_DURING_RUN=DEFER
+TEST_RECOVERY_DURING_RUN=ALLOW
+CONTINUE_AFTER_INDEPENDENT_FAILURE=YES
+PARALLELIZE_INDEPENDENT_LANES=MAXIMUM_SAFE
+~~~
+
+Execution starts by reading the development server's `~/.ssh/config` and probing the configured hosts. Do not require the operator to restate hostnames already present there.
+
+Host assignment is dynamic:
+
+1. classify reachable SSH-config hosts by OS, installed DRLink role, network reachability, available target services, and whether destructive testing is safe;
+2. assign **two suitable hosts to server-side roles** when two usable server hosts exist: one primary control/server candidate and one secondary server-side target/recovery/upgrade/failover test host according to the scenario;
+3. assign all remaining suitable hosts to Agent, Relay Agent, protected client, external user, load generator, target-service, and cross-platform roles;
+4. use Linux, macOS, Windows, Rocky/Amazon Linux or other configured hosts wherever their platform makes a scenario applicable;
+5. mark only genuinely unavailable capabilities `BLOCKED_ENVIRONMENT`; never invent PASS.
+
+Host discovery itself is infrastructure setup, not product validation. Product configuration, lifecycle, inspection, policy, diagnostics, recovery, and PASS evidence remain public-`drlink`-CLI-only.
+
+## 1.3 One integrated test, three execution dimensions
+
+Every applicable functional/operational intent is exercised across these dimensions rather than treated as three unrelated audits.
+
+### Dimension A — Direct CLI role operation
+
+ChatGPT acts as **User, Operator, and Administrator** and performs realistic end-to-end work using only public `drlink` control-plane interfaces. During those workflows it must grade:
+
+- real functional result and real application traffic;
+- command discoverability from `?`, `help`, menu, Tab, wizard and error output;
+- shell one-shot vs persistent `drlink>` REPL behavior;
+- Server/Agent role placement and privilege guidance;
+- terminology clarity and consistency;
+- output/status consistency across related commands;
+- command-to-command workflow continuity: output from one step must provide usable identifiers/endpoints/next actions for the next;
+- confirmation, fail-closed behavior, reference protection and secret handling;
+- error quality and recovery without source inspection;
+- all documented **plus runtime-discovered** public command families.
+
+Build a fresh documented/runtime command union for the tested candidate and give **every inventory entry a disposition**. Completion requires:
+
+~~~text
+COMMANDS_WITHOUT_DISPOSITION=0
+PUBLIC_CLI_COMMAND_COVERAGE=100%
+PUBLIC_CLI_SURFACE_COVERAGE=100%
+~~~
+
+The integrated run must retain the semantic coverage formerly identified as CLI-001..CLI-020: status/version/diagnostics; Managed Host discovery; Remote Service lifecycle; Remote Access; Internet Access; enrollment; ConfigurationBundle; backup/restore; AI Identity/Permission/AI Access; MCP; Managed Host Group; terminology; error recovery; empty states; status consistency; help/menu/Tab/wizard discovery; role/privilege boundaries; destructive confirmation; cleanup/evidence. Existing U/O/A/S scenarios below add real user traffic and lifecycle depth and are not replaced by this list.
+
+### Dimension B — AI-assisted parity of the same work
+
+For **every applicable Direct CLI semantic intent**, repeat the same user goal through AI support. Give the AI the natural-language intent and public product documentation, not the expected syntax or source code.
+
+The AI's first answer is executed unedited when safe. Grade shell vs REPL context, privilege, role, terminology, dependency ordering, ConfigurationBundle correctness, secret safety and semantic intent—not merely command syntax.
+
+On failure, feed only the new user-visible CLI error/output back in the **same AI conversation** and allow at most the normal recovery attempts without hints. Unsafe AI output is recorded as FAIL and is not executed.
+
+For every paired intent record:
+
+~~~text
+DIRECT_CLI_RESULT=
+AI_FIRST_ANSWER_RESULT=
+AI_RECOVERY_RESULT=
+SEMANTIC_PARITY=
+NEW_AI_ONLY_FINDING=
+AI_MASKED_PRODUCT_DEFECT=YES|NO
+~~~
+
+The integrated run must retain the semantic coverage formerly identified as AI-001..AI-020, including AI status/diagnostics, discovery, Remote Service/Access, Internet Access, enrollment, Bundle, backup/restore, AI Access, MCP, Managed Host Group, terminology recovery, privilege/wrong-role recovery, empty/status-conflict interpretation, destructive confirmation, secret boundary, cleanup, and direct-CLI parity.
+
+A real MCP/ChatGPT Plugin lane is executed when the environment provides it. If unavailable, record `BLOCKED_ENVIRONMENT`; never simulate interoperability and call it PASS.
+
+### Dimension C — performance, concurrency and function-under-load
+
+Performance is not a final isolated benchmark. Run baseline performance first, then maintain controlled load while repeating representative and destructive-safe functional workflows.
+
+At minimum measure, where applicable:
+
+- TCP throughput and full-duplex throughput;
+- connection establishment rate/CPS and short-connection churn;
+- concurrent sessions/connections;
+- latency and tail latency;
+- Remote Service and Fixed TCP behavior;
+- control-plane CLI response time under data-plane load;
+- policy evaluation/change propagation under load;
+- Agent restart/reconnect and endpoint continuity under load;
+- multiple concurrent Agent/Relay traffic paths;
+- resource pressure and recovery;
+- sustained/soak behavior within the available test window.
+
+While load is active, re-run representative Direct CLI **and AI-assisted** workflows covering status/diagnostics, show/list, create/test/change/delete of namespaced resources, ALLOW↔DENY transitions, Remote Service traffic, Internet Access, AI/MCP authorization where available, and safe recovery operations.
+
+Required comparison:
+
+~~~text
+BASELINE_FUNCTIONAL_RESULT=
+UNDER_LOAD_FUNCTIONAL_RESULT=
+BASELINE_PERFORMANCE=
+UNDER_LOAD_PERFORMANCE=
+CONTROL_PLANE_RESPONSIVENESS=
+POLICY_PROPAGATION_UNDER_LOAD=
+ERROR_OR_TIMEOUT_DELTA=
+RESOURCE_PRESSURE=
+POST_LOAD_RECOVERY=
+~~~
+
+A performance number alone is not PASS if functionality, policy enforcement, control-plane responsiveness, or recovery degrades incorrectly under load.
+
+## 1.4 Failure handling during the final E2E
+
+The purpose of this run is to **finish discovery**, not to enter a fix/test loop at the first defect.
+
+When a product defect is found:
+
+1. preserve exact role/host/command/output/evidence and classify it;
+2. do **not** patch product code during the run;
+3. perform only the minimum test-environment recovery needed to isolate the failed resource or restore the lane;
+4. continue every independent scenario that can still produce valid evidence;
+5. if shared global state is damaged, recover through documented public product recovery where possible; if that cannot be done without product repair, mark only dependent scenarios blocked and continue other lanes;
+6. collect implementation fixes into a post-run batch for Cursor/engineering workflow.
+
+A failure may stop only the scenarios whose evidence would be invalid or unsafe. P0 safety findings stop the affected destructive path but do not erase unrelated coverage.
+
+## 1.5 Parallel execution scheduler
+
+Parallel execution is the default.
+
+At run start, create unique `RUN_ID` prefixes and partition resources/hosts into independent lanes. Run in parallel when state is isolated, including:
+
+- platform-specific Agent lifecycle;
+- independent Remote Service protocols;
+- Direct CLI vs AI-assisted scenarios using distinct resources;
+- external traffic validation;
+- Internet Access cases with isolated rules;
+- read-only discovery/diagnostics;
+- independent load generators;
+- MCP/plugin lane where it does not share destructive state.
+
+Serialize only operations that intentionally mutate shared global state: policy reset affecting other lanes, restore/rollback, uninstall/reinstall of a shared server, release-wide update, global allocator exhaustion, or coordinated race tests.
+
+Concurrency contamination is not a product result. Record `INVALIDATED_BY_CONCURRENT_STATE`, allocate fresh namespaced state and rerun that scenario.
+
+## 1.6 Final completion gate
+
+A User E2E run is not complete merely because the happy path worked. Before the final result, account for all role scenarios, command inventory rows, AI parity rows, security/failure cases, platform cases, performance cases, and under-load functional cases.
+
+~~~text
+ROLE_SCENARIO_DISPOSITION_COMPLETE=YES
+COMMANDS_WITHOUT_DISPOSITION=0
+AI_INTENTS_WITHOUT_DISPOSITION=0
+SECURITY_NEGATIVE_DISPOSITION_COMPLETE=YES
+PERFORMANCE_DISPOSITION_COMPLETE=YES
+FUNCTION_UNDER_LOAD_DISPOSITION_COMPLETE=YES
+CLEANUP_DISPOSITION_COMPLETE=YES
+~~~
+
+Use `PASS`, `FAIL`, `PARTIAL`, `BLOCKED_ENVIRONMENT`, `NOT_APPLICABLE`, or `INVALIDATED_BY_CONCURRENT_STATE` explicitly. Skipped work is never silently converted to PASS.
+
+For release qualification, execute the document's exact-HEAD double-pass requirement only after the complete integrated run is eligible for qualification.
+
 
 ## 2. Authority and conflict rules
 
