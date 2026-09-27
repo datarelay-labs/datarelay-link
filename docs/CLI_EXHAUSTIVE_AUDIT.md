@@ -97,6 +97,54 @@ For every applicable scenario, exercise all relevant public forms:
 
 A command that returns RC=0 but prints a user-visible ERROR is a UX/API-contract finding and must not be silently treated as success.
 
+## 4.1 Exhaustive command coverage ledger
+
+The scenario matrix is not sufficient by itself to claim an exhaustive audit. Before execution, build a **command coverage ledger** from the union of:
+
+1. every public command/resource/subcommand documented by `CLI_REFERENCE.md` and the CLI/AI Master;
+2. every command/resource/subcommand exposed by the installed candidate through `help`, `?`, role-specific completion/discovery, and command-specific help.
+
+For every inventory entry, record exactly one disposition:
+
+~~~text
+DOCUMENTED=YES|NO
+DISCOVERED_RUNTIME=YES|NO
+ROLE=SERVER|AGENT|BOTH
+EXECUTION_DISPOSITION=
+  EXECUTED_PASS
+  EXECUTED_FAIL
+  NOT_APPLICABLE_ROLE
+  NOT_RUN_SHARED_STATE
+  BLOCKED_ENVIRONMENT
+  DOC_RUNTIME_MISMATCH
+SCENARIO_ID=<CLI-xxx or dedicated command check>
+EVIDENCE=<path/reference>
+~~~
+
+Rules:
+
+- Every documented or runtime-discovered public command must receive a disposition. No blank entries are allowed.
+- `EXHAUSTIVE_AUDIT=PASS` is forbidden while any inventory entry lacks a disposition.
+- A documented command that is absent from runtime discovery is `DOC_RUNTIME_MISMATCH`, not `NOT_APPLICABLE`.
+- A runtime-discovered public command that is absent from canonical documentation is also `DOC_RUNTIME_MISMATCH`.
+- A command that exists in documentation but is rejected by the installed public CLI must be executed far enough to capture that mismatch; do not silently omit it from the audit.
+- Commands whose safe mutation cannot be executed because another active test owns shared state may use `NOT_RUN_SHARED_STATE`, but their help/discovery/safety contract must still be inspected.
+- The ledger must explicitly include System history/revision/audit/diff/apply/restore/update/certificate/credential/support paths and any compatibility command still exposed by the candidate.
+- Do not assume a plausible command such as `system rollback` exists merely because a document mentions it. If documentation lists it but exact runtime discovery does not, record `DOC_RUNTIME_MISMATCH` and preserve the contradiction as a finding.
+
+At finalization report:
+
+~~~text
+COMMAND_INVENTORY_TOTAL=
+COMMANDS_EXECUTED_PASS=
+COMMANDS_EXECUTED_FAIL=
+COMMANDS_DOC_RUNTIME_MISMATCH=
+COMMANDS_NOT_APPLICABLE_ROLE=
+COMMANDS_NOT_RUN_SHARED_STATE=
+COMMANDS_BLOCKED_ENVIRONMENT=
+COMMANDS_WITHOUT_DISPOSITION=0
+~~~
+
 ## 5. Mandatory scenario matrix
 
 ### CLI-001 — Entry, help, and discovery
@@ -372,6 +420,26 @@ During the audit:
 - use the active GitHub `[AI Work]` issue for consolidated findings.
 
 After the audit is exhausted, implementation fixes may be handed to Cursor in bounded slices. After every product change, re-run affected scenarios on the new exact candidate.
+
+## 7.1 Secret-safe evidence handling
+
+Audit evidence must not turn one-time or long-lived credentials into durable logs.
+
+Before collecting evidence:
+
+~~~text
+umask 077
+mkdir -m 700 <EVIDENCE_ROOT>
+~~~
+
+Rules:
+
+- Never store raw Zero-Touch tickets/install credentials, enrollment nonces, OAuth authorization codes, bearer tokens, client secrets, private keys, or raw protected backup contents in ordinary audit transcripts.
+- Redact secret material **before** writing durable evidence or GitHub comments. Preserve only non-secret metadata needed for proof, such as operation type, timestamp, expiry, resource name/ID when non-secret, exit status, and a one-way hash only when comparison is required.
+- If a public command displays a one-time credential, capture a redacted transcript such as `<REDACTED_ONE_TIME_CREDENTIAL>`; do not copy the credential into the final report.
+- Secret-bearing backup archives or temporary enrollment artifacts created solely for the audit must remain local with restrictive permissions and must be deleted after their scenario no longer requires them.
+- If raw secret-bearing evidence is temporarily unavoidable for a local test harness, keep it outside shareable logs under mode 0600/0700, never upload it to GitHub, and destroy it immediately after deriving redacted evidence.
+- Evidence retention requirements never override the product security boundary.
 
 ## 8. Historical evidence is not a substitute
 
