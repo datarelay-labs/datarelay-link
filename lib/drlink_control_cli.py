@@ -310,25 +310,19 @@ def _server_dr_validate(path: str) -> int:
     )
 
 
-def _server_dr_restore(path: str, *extra: str) -> int:
-    """Public system restore → unified Server DR archive (frp-restore)."""
+def _server_dr_restore(path: str) -> int:
+    """Public system restore → unified Server DR archive (frp-restore).
+
+    Public restore approval is interactive y/N only. Internal automation
+    confirmation environment variables are stripped at this boundary.
+    """
     import subprocess
 
     cmd = [sys.executable, str(_server_dr_tool_path("frp-restore")), path]
-    # Preserve automation confirm flags for the authoritative restore gate.
-    for token in extra:
-        if token in ("--yes", "-Yes") and "--yes" not in cmd:
-            cmd.insert(-1, "--yes")
-    if _confirm_requested_env() and "--yes" not in cmd:
-        cmd.insert(-1, "--yes")
-    return int(subprocess.run(cmd, check=False).returncode or 0)
-
-
-def _confirm_requested_env() -> bool:
-    env = str(os.environ.get("DRLINK_CONFIRM") or "").strip().lower()
-    if env in ("yes", "y", "1", "true"):
-        return True
-    return str(os.environ.get("FRP_RESTORE_YES") or "").strip() == "1"
+    env = os.environ.copy()
+    env.pop("DRLINK_CONFIRM", None)
+    env.pop("FRP_RESTORE_YES", None)
+    return int(subprocess.run(cmd, check=False, env=env).returncode or 0)
 
 
 def _run(fn, *args, **kwargs):
@@ -1343,11 +1337,9 @@ def _system(plane: ControlPlane, rest):
         path = rest[1] if len(rest) > 1 else ""
         return _server_dr_backup(path)
     if rest[0] == "restore":
-        if len(rest) < 2:
+        if len(rest) != 2:
             raise SystemExit("Usage: system restore <PATH>")
-        path = rest[1]
-        extra = [t for t in rest[2:] if t]
-        return _server_dr_restore(path, *extra)
+        return _server_dr_restore(rest[1])
     if rest[0] == "revisions":
         for row in plane.list_revisions():
             sys.stdout.write("%s %s %s\n" % (row["revision"], row["created_at"], row["command"]))

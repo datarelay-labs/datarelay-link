@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 
 import drlink_control_cli as cli
+import drlink_v24 as v24
 import frp_ctl_grammar as grammar
 import frp_doctor
 from drlink_control_plane import ControlPlane
@@ -296,28 +297,90 @@ class SliceADiagnosticsScopeTests(unittest.TestCase):
 
 
 class SliceARestorePreflightTests(unittest.TestCase):
-    def test_valid_archive_reaches_confirmation_without_loader_traceback(self):
+    def _seed_server_and_broadening_backup(self):
         tmp = Path(tempfile.mkdtemp(prefix="drlink-slice-a-restore-"))
-        archive = tmp / "backup.tar.gz"
-        manifest = {
-            "format": "data-relay-link-server-backup",
-            "project_version": "",
-            "role": "server",
-            "created_at": "2026-09-27T00:00:00Z",
-        }
-        with tarfile.open(archive, "w:gz") as tf:
-            payload = tmp / "manifest.json"
-            payload.write_text(json.dumps(manifest), encoding="utf-8")
-            tf.add(payload, arcname="manifest.json")
-        (tmp / "etc/drlink").mkdir(parents=True)
-        (tmp / "etc/drlink/config.json").write_text(
-            json.dumps({"role": "server"}) + "\n",
+        root = tmp / "root"
+        archive = tmp / "permissive.tar.gz"
+        for rel in (
+            "etc/drlink/pki",
+            "etc/frp",
+            "var/lib/drlink/enrollments",
+            "var/lib/drlink/bootstrap",
+            "var/lib/drlink/backups",
+            "var/log/drlink",
+        ):
+            (root / rel).mkdir(parents=True, exist_ok=True)
+        (root / "etc/drlink/config.json").write_text(
+            json.dumps({"role": "server", "public_hostname": "dr.example.test"}) + "\n",
             encoding="utf-8",
         )
+        (root / "etc/drlink/version").write_text(
+            "PROJECT_VERSION=2.4.0\nRELEASE_CHANNEL=dev\nSOURCE_REF=test\n",
+            encoding="utf-8",
+        )
+        for name in ("ca.key", "ca.crt", "server.key", "server.crt"):
+            (root / "etc/drlink/pki" / name).write_text(name + "\n", encoding="utf-8")
+        (root / "etc/frp/frps.toml").write_text("bindPort = 443\n", encoding="utf-8")
+        (root / "etc/frp/server_token").write_text("token\n", encoding="utf-8")
+
         env = os.environ.copy()
-        env["FRP_DEPLOY_TEST_ROOT"] = str(tmp)
-        env.pop("DRLINK_CONFIRM", None)
-        env.pop("FRP_RESTORE_YES", None)
+        env["FRP_DEPLOY_TEST_ROOT"] = str(root)
+        env["FRP_BACKUP_ALREADY_LOCKED"] = "1"
+        env["DRLINK_SKIP_ACTIVATION"] = "1"
+
+        old_root = os.environ.get("FRP_DEPLOY_TEST_ROOT")
+        old_skip = os.environ.get("DRLINK_SKIP_ACTIVATION")
+        try:
+            os.environ["FRP_DEPLOY_TEST_ROOT"] = str(root)
+            os.environ["DRLINK_SKIP_ACTIVATION"] = "1"
+            plane = ControlPlane(str(root))
+            v24.ensure_v2_schema(plane.conn)
+            plane.compile_runtime()
+            plane.close()
+
+            backup = subprocess.run(
+                [sys.executable, str(ROOT / "tools" / "frp-backup"), str(archive)],
+                cwd=str(ROOT),
+                capture_output=True,
+                text=True,
+                check=False,
+                env=env,
+            )
+            self.assertEqual(backup.returncode, 0, backup.stdout + backup.stderr)
+
+            plane = ControlPlane(str(root))
+            v24.ensure_v2_schema(plane.conn)
+            v24.set_network_object(plane, "src", type="ip", value="198.51.100.10", oneshot=True)
+            v24.set_network_object(plane, "dst", type="ip", value="198.51.100.20", oneshot=True)
+            v24.set_service_object(plane, "ssh", type="tcp", port=22, oneshot=True)
+            v24.set_access_rule(
+                plane,
+                "remote",
+                "allow-ssh",
+                mode="whitelist",
+                source="src",
+                destination="dst",
+                service="ssh",
+                enabled=True,
+                oneshot=True,
+            )
+            plane.close()
+        finally:
+            if old_root is None:
+                os.environ.pop("FRP_DEPLOY_TEST_ROOT", None)
+            else:
+                os.environ["FRP_DEPLOY_TEST_ROOT"] = old_root
+            if old_skip is None:
+                os.environ.pop("DRLINK_SKIP_ACTIVATION", None)
+            else:
+                os.environ["DRLINK_SKIP_ACTIVATION"] = old_skip
+        return tmp, root, archive, env
+
+    def test_valid_archive_reaches_confirmation_without_loader_traceback(self):
+        _tmp, root, archive, env = self._seed_server_and_broadening_backup()
+        env["DRLINK_CONFIRM"] = "yes"
+        env["FRP_RESTORE_YES"] = "1"
+        env["FRP_CTL_TEST_INPUT"] = "1"
         proc = subprocess.run(
             ["bash", str(ROOT / "tools" / "drlink"), "system", "restore", str(archive)],
             cwd=str(ROOT),
@@ -331,8 +394,56 @@ class SliceARestorePreflightTests(unittest.TestCase):
         self.assertNotIn("Traceback", combined)
         self.assertNotIn("AttributeError", combined)
         self.assertIn("Restore Data Relay Link", proc.stdout)
-        self.assertIn("Cancelled", proc.stdout)
+        self.assertIn("broaden", combined.lower())
+        self.assertIn("Cancelled", combined)
+        # User-declined restore is a clean cancellation in the public frpctl
+        # workflow; safety is proven by preserved authoritative state below.
         self.assertEqual(proc.returncode, 0)
+
+        old_root = os.environ.get("FRP_DEPLOY_TEST_ROOT")
+        try:
+            os.environ["FRP_DEPLOY_TEST_ROOT"] = str(root)
+            plane = ControlPlane(str(root))
+            self.assertEqual(v24.get_access_policy(plane, "remote")["mode"], "whitelist")
+            plane.close()
+        finally:
+            if old_root is None:
+                os.environ.pop("FRP_DEPLOY_TEST_ROOT", None)
+            else:
+                os.environ["FRP_DEPLOY_TEST_ROOT"] = old_root
+
+    def test_public_restore_rejects_undocumented_yes_option(self):
+        tmp = tempfile.mkdtemp(prefix="drlink-slice-a-restore-grammar-")
+        _server_root(tmp)
+        archive = Path(tmp) / "backup.tar.gz"
+        archive.write_bytes(b"not-used-because-grammar-must-reject-first")
+        env = os.environ.copy()
+        env["FRP_DEPLOY_TEST_ROOT"] = tmp
+        proc = subprocess.run(
+            [
+                "bash",
+                str(ROOT / "tools" / "drlink"),
+                "system",
+                "restore",
+                str(archive),
+                "--yes",
+            ],
+            cwd=str(ROOT),
+            input="",
+            capture_output=True,
+            text=True,
+            check=False,
+            env=env,
+        )
+        combined = proc.stdout + proc.stderr
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertTrue(
+            "do not use --options" in combined.lower()
+            or "unexpected arguments" in combined.lower()
+            or "usage: system restore <path>" in combined.lower(),
+            combined,
+        )
+        self.assertNotIn("Traceback", combined)
 
 
 if __name__ == "__main__":

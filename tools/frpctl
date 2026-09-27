@@ -3174,10 +3174,6 @@ frpctl_confirm_restore() {
   for pt in "${_frpctl_pt[@]+"${_frpctl_pt[@]}"}"; do
     [[ "$pt" == "--yes" ]] && yes=1
   done
-  # Hidden automation escape for fixtures/non-interactive callers.
-  if [[ "${FRP_RESTORE_YES:-}" == "1" ]]; then
-    yes=1
-  fi
   if [[ "$yes" == "1" ]]; then
     return 0
   fi
@@ -3187,8 +3183,8 @@ frpctl_confirm_restore() {
     :
   else
     echo "ERROR: restore requires confirmation." >&2
-    echo "Run interactively, or pass --yes for automation:" >&2
-    echo "  system restore ${archive} --yes" >&2
+    echo "Run interactively and answer y." >&2
+    echo "No changes were applied." >&2
     return 1
   fi
   case "$(printf '%s' "$ans" | tr '[:upper:]' '[:lower:]')" in

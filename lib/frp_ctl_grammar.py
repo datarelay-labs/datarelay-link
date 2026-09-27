@@ -3425,13 +3425,20 @@ def _match_update(tokens, role, names=None):
 
 
 def _match_restore(tokens, role, names=None):
+    rejection = public_option_rejection(tokens)
+    if rejection is not None:
+        return rejection
     if len(tokens) == 1 or (len(tokens) == 2 and tokens[1] == "backup"):
         if len(tokens) == 1:
             return incomplete("Missing resource.", ["restore backup <path>"], ["backup"])
         return incomplete("Missing backup path.", ["restore backup <path>"])
     if tokens[1] == "backup":
-        return {"status": "ok", "action": "restore_backup", "path": tokens[2], "passthrough": tokens[3:]}
-    return {"status": "ok", "action": "restore_backup", "path": tokens[1], "passthrough": tokens[2:]}
+        if len(tokens) != 3:
+            return incomplete("Unexpected arguments.", ["restore backup <path>"])
+        return {"status": "ok", "action": "restore_backup", "path": tokens[2], "passthrough": []}
+    if len(tokens) != 2:
+        return incomplete("Unexpected arguments.", ["system restore <PATH>"])
+    return {"status": "ok", "action": "restore_backup", "path": tokens[1], "passthrough": []}
 
 
 def _match_add(tokens, role, names=None):
