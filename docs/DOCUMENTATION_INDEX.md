@@ -45,6 +45,16 @@ Historical documents and internal storage names never override the public SSOT.
 | Windows Agent details | `WINDOWS_CLIENT.md` |
 | macOS Agent details | `MACOS_CLIENT.md` |
 
+## Audit execution documents
+
+| Trigger / audit | Canonical document |
+|---|---|
+| Direct public CLI exhaustive audit | `CLI_EXHAUSTIVE_AUDIT.md` |
+| AI-assisted command / ConfigurationBundle / MCP exhaustive audit | `AI_ASSISTED_COMMAND_EXHAUSTIVE_AUDIT.md` |
+| Combined request such as `CLI 및 AI지원 명령을 전수 감사해줘` | Read and execute both audit documents against the same exact candidate |
+
+These are executable audit contracts. An unqualified trigger starts execution immediately; it is not a request to merely summarize the documents. Direct CLI and AI-assisted lanes may run in parallel when they do not share destructive state. Findings from either lane can block candidate freeze.
+
 ## Qualification and evidence documents
 
 These documents are useful for qualification but do not redefine product semantics:
