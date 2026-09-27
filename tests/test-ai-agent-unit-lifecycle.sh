@@ -145,10 +145,11 @@ pass "PRODUCT_UPDATE_CONVERGES_MISSING_LINUX_UNITS"
 (
   # shellcheck disable=SC1091
   . "$ROOT/lib/frp-client-common.sh"
-  frp_client_upgrade_destinations | grep -qx \
-    'etc/systemd/system/drlink-ai-agent.service:0644:client/drlink-ai-agent.service'
-  frp_client_upgrade_destinations | grep -qx \
-    'etc/systemd/system/drlink-client.service:0644:client/drlink-client.service'
+  destinations="$(frp_client_upgrade_destinations)"
+  grep -qx 'etc/systemd/system/drlink-ai-agent.service:0644:client/drlink-ai-agent.service' \
+    <<<"$destinations"
+  grep -qx 'etc/systemd/system/drlink-client.service:0644:client/drlink-client.service' \
+    <<<"$destinations"
 ) || fail "Linux units missing from upgrade destinations"
 pass "UPGRADE_DESTINATIONS_INCLUDE_LINUX_UNITS"
 
