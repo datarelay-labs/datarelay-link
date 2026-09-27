@@ -62,6 +62,21 @@ PERFORMANCE_TEST_SERVER=frp-e2e-server
 
 The two Server lanes may run concurrently when their scenarios do not share destructive global state.
 
+This assignment is a normative routing rule, not merely a preference:
+
+~~~text
+DNS_DEPENDENT_PRIMARY_SERVER=frp-release-server
+DNS_DEPENDENT_PUBLIC_HOSTNAME=remote.xdr.ooo
+DNS_INDEPENDENT_PRIMARY_SERVER=frp-e2e-server
+PERFORMANCE_PRIMARY_SERVER=frp-e2e-server
+DNS_LANE_MAY_REPLACE_IP_LANE_FOR_PERFORMANCE=NO
+IP_LANE_MAY_REPLACE_DNS_LANE_FOR_DNS_QUALIFICATION=NO
+~~~
+
+Do not move a DNS-independent scenario onto `frp-release-server` merely because that Server is already healthy or convenient. In particular, throughput, latency, CPS, concurrency, saturation, soak, resource-pressure, and ordinary resilience measurements belong on `frp-e2e-server` by default. Likewise, an IP-only result from `frp-e2e-server` is not evidence for DNS/public-hostname/certificate behavior that belongs on `frp-release-server`.
+
+If one Server lane becomes unavailable, preserve the failure evidence and continue all scenarios whose intended semantics can still be preserved on the other lane. Do not silently substitute one topology for the other and count it as equivalent qualification evidence.
+
 Default behavior is execution, not explanation.
 
 When the user triggers FULL_USER_E2E, the first assistant action must begin real execution. Do not spend the first response restating this contract, proposing a plan, asking for confirmation, summarizing intended scenarios, or discussing what could be tested.
@@ -345,14 +360,21 @@ Continuation recovery must **not**:
 
 The original failing scenario remains `FAIL` when the observed problem is a product defect. Recovery does not convert that result to PASS. Post-recovery evidence applies only to scenarios executed after recovery, unless the recovery behavior itself is the scenario under test.
 
+Recovery is allowed only to restore the **test environment** so that later scenarios can execute. It is never permission to repair the candidate implementation. Rebooting a host, restarting a failed service, restoring SSH/OOB reachability, recreating a disposable target application, clearing test-only exhaustion, or reinstalling the same exact candidate is environment recovery. Editing source, patching installed product files, rebuilding altered product artifacts, changing the candidate SHA, or modifying authoritative product state to bypass the defect is product repair and is forbidden during the run.
+
 If a candidate path cannot be made executable without changing product code, leave that path `FAIL` or `BLOCKED_BY_PRIOR_FAILURE`, record the dependency, and continue every other platform, topology, recovery path, and non-dependent scenario that remains executable.
 
 ~~~text
 PRESERVE_FAILURE_EVIDENCE_FIRST=YES
 CHATGPT_MAY_RECOVER_TEST_ENVIRONMENT=YES
 RECOVERY_PURPOSE=CONTINUE_REMAINING_TESTS_ONLY
+RECOVER_HOST_SERVICE_NETWORK_STATE=YES
+REINSTALL_SAME_EXACT_CANDIDATE_TO_CONTINUE=YES
 RECOVERY_MAY_CHANGE_PRODUCT_CODE=NO
+RECOVERY_MAY_PATCH_INSTALLED_PRODUCT=NO
+RECOVERY_MAY_REBUILD_MODIFIED_PRODUCT_ARTIFACTS=NO
 RECOVERY_MAY_CHANGE_CANDIDATE=NO
+RECOVERY_MAY_BYPASS_AUTHORITATIVE_PRODUCT_STATE=NO
 FAILED_SCENARIO_RESULT_PRESERVED=YES
 CONTINUE_ALL_NONDEPENDENT_SCENARIOS=YES
 CURSOR_FIX_HANDOFF_DURING_ACTIVE_RUN=NO
@@ -842,6 +864,16 @@ Do not serialize merely because parallel execution is harder. Concurrency itself
 If a shared-state failure blocks one lane, continue every independent lane rather than stopping the run.
 
 Do not process independent scenarios sequentially merely because an earlier section was executed that way. Start independent lanes as soon as their prerequisites exist.
+
+Past sequential execution is not a precedent for later runs. From this contract revision forward, an executable scenario may remain serialized only when it has a real dependency or requires exclusive ownership of shared destructive state. Convenience, operator habit, or section order is not sufficient justification.
+
+~~~text
+PARALLEL_BY_DEFAULT=YES
+START_INDEPENDENT_LANES_AS_SOON_AS_READY=YES
+SERIALIZE_ONLY_FOR_REAL_DEPENDENCY_OR_SHARED_DESTRUCTIVE_STATE=YES
+SERIALIZE_FOR_CONVENIENCE=NO
+REPORT_PARALLELISM_EXCEPTIONS=YES
+~~~
 
 When both canonical Servers are available, use the Server role split concurrently where practical:
 
@@ -1532,6 +1564,7 @@ IP_BASED_GENERAL_SERVER=frp-e2e-server
 IP_BASED_GENERAL_RESULT=
 CONTINUATION_RECOVERY_ACTIONS=
 PARALLEL_MULTI_HOST=
+PARALLELISM_EXCEPTIONS=
 AVAILABLE_HOST_COUNT=
 MAX_PARALLEL_HOSTS_USED=
 MAX_REAL_SCALE_TESTED=
@@ -1598,6 +1631,7 @@ The GitHub Issue update must include at least:
 - P0/P1/P2/UX/DOC/PERF findings;
 - evidence root and important evidence paths;
 - any continuation recovery performed, clearly separated from qualification evidence;
+- any scenario that remained sequential, with the concrete dependency or shared-state reason;
 - remaining candidate blockers and the next fix/verify/rerun action.
 
 ~~~text
