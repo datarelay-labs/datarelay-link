@@ -44,7 +44,8 @@ if grep -q '203.0.113.10:443' "$OUT"; then
 fi
 grep -q 'Allocator: https://203.0.113.10:9443/enroll' "$OUT" || fail "allocator public URL"
 grep -q "CA SHA256: ${CA_FP}" "$OUT" || fail "CA fingerprint"
-grep -q 'sudo env FRP_ALLOCATOR_URL=' "$OUT" || fail "sudo env allocator URL"
+grep -q 'sudo bash -c ' "$OUT" || fail "pinned install command"
+grep -q -- '--cacert' "$OUT" || fail "installer fetch must use the pinned CA"
 grep -q 'FRP_ALLOCATOR_CA_SHA256=' "$OUT" || fail "CA fingerprint in install command"
 grep -q 'https://203.0.113.10:9443/enroll' "$OUT" || fail "allocator URL value"
 grep -q 'curl -fsSL' "$OUT" || fail "curl installer"
@@ -52,7 +53,7 @@ if grep -q 'FRP_ENROLLMENT' "$OUT"; then
   fail "enrollment secret must not appear in the env command name"
 fi
 code="$(awk '/^Enrollment Code:/{getline; print; exit}' "$OUT")"
-sudo_line="$(grep 'sudo env FRP_ALLOCATOR_URL=' "$OUT")"
+sudo_line="$(grep 'sudo bash -c ' "$OUT" | head -n 1)"
 if grep -F "$code" <<<"$sudo_line" >/dev/null; then
   fail "enrollment code leaked into sudo command"
 fi
@@ -89,16 +90,17 @@ python3 - "$WORKDIR/quoted.out" <<'PY'
 import re, subprocess, sys
 from pathlib import Path
 text = Path(sys.argv[1]).read_text()
-m = re.search(r"sudo env FRP_ALLOCATOR_URL=(.*)(?: FRP_ALLOCATOR_CA_SHA256=.*)? bash", text)
+line = next(ln for ln in text.splitlines() if ln.startswith("sudo bash -c "))
+import shlex
+parts = shlex.split(line)
+script = parts[parts.index("-c") + 1]
+m = re.search(r"FRP_ALLOCATOR_URL=('[^']*'|\S+)", script)
 if not m:
-    # Fall back: capture the first assignment.
-    m = re.search(r"sudo env FRP_ALLOCATOR_URL=(\S+)", text)
-if not m:
-    raise SystemExit('missing sudo env line')
+    raise SystemExit('missing allocator assignment in pinned command')
 assign = m.group(1)
 wanted = "https://203.0.113.10/enroll;id"
-script = f"FRP_ALLOCATOR_URL={assign}; printf '%s' \"${{FRP_ALLOCATOR_URL}}\""
-out = subprocess.check_output(['bash', '-c', script], text=True)
+decoded = f"FRP_ALLOCATOR_URL={assign}; printf '%s' \"$FRP_ALLOCATOR_URL\""
+out = subprocess.check_output(['bash', '-c', decoded], text=True)
 if out != wanted:
     raise SystemExit(f'quoted assignment decoded to {out!r}')
 if '\n' in out or out != wanted:
