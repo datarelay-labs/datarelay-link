@@ -47,6 +47,84 @@ print("OK")
 PY
 pass "LINT_CHECKOUT_FETCHES_HISTORICAL_TAGS"
 
+# CI efficiency / release-boundary policy.
+python3 - <<'PYCI' || fail "native CI dedup / expensive gate policy"
+from pathlib import Path
+
+EXPECTED_ON = """on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  pull_request:
+"""
+
+for rel in (
+    ".github/workflows/lint.yml",
+    ".github/workflows/macos-client.yml",
+    ".github/workflows/windows-client.yml",
+):
+    text = Path(rel).read_text(encoding="utf-8")
+    start = text.index("on:\n")
+    end = text.index("\npermissions:", start)
+    actual = text[start:end + 1]
+    if actual.strip() != EXPECTED_ON.strip():
+        raise SystemExit(f"{rel}: unexpected trigger block:\n{actual}")
+
+lint = Path(".github/workflows/lint.yml").read_text(encoding="utf-8")
+heavy_steps = (
+    "Install Full Suite OS Python deps",
+    "Provision pinned official MCP SDK",
+    "Full local non-Docker suite",
+    "Build standalone bundles",
+    "SHA256SUMS",
+    "SBOM binds to the checked-out commit",
+)
+for name in heavy_steps:
+    marker = f"      - name: {name}\n"
+    pos = lint.find(marker)
+    if pos < 0:
+        raise SystemExit(f"lint.yml missing heavy step: {name}")
+    tail = lint[pos + len(marker):].splitlines()
+    if not tail or tail[0].strip() != "if: github.event_name != 'pull_request'":
+        raise SystemExit(f"lint.yml heavy step not gated off PR: {name}")
+
+portability = "  portability-containers:\n    if: github.event_name != 'pull_request'\n"
+if portability not in lint:
+    raise SystemExit("lint.yml portability-containers must be gated off PR")
+
+tests = Path(".engineering/tests.yaml").read_text(encoding="utf-8")
+start = tests.index("  - id: ADOPTED-TEST-001\n")
+end = tests.index("\n  - id: ", start + 1)
+scenario = tests[start:end]
+required = (
+    "name: Project-native release qualification",
+    "      - release",
+    'command: "bash tests/run-all.sh"',
+    "release_gate: true",
+    '"project-native release qualification remains green"',
+)
+for needle in required:
+    if needle not in scenario:
+        raise SystemExit(f"ADOPTED-TEST-001 missing release-only contract: {needle}")
+if "      - affected" in scenario:
+    raise SystemExit("ADOPTED-TEST-001 must not be an affected/default PR gate")
+
+baseline = "a8969ac4e86465c9fda588a7c1cad7f96f7276c6"
+for rel in (
+    ".engineering/project.yaml",
+    ".github/workflows/engineering-release.yml",
+    ".github/workflows/engineering-system.yml",
+):
+    value = Path(rel).read_text(encoding="utf-8")
+    if baseline not in value:
+        raise SystemExit(f"{rel}: Engineering System baseline drift")
+
+print("OK")
+PYCI
+pass "CI_DEDUP_EXPENSIVE_GATE_POLICY"
+
 python3 tests/test-release-manifest-schema.py >/tmp/vg-schema.out 2>&1 || {
   cat /tmp/vg-schema.out >&2
   fail "manifest schema tests"

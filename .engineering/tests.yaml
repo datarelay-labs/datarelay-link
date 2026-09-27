@@ -18,19 +18,19 @@ paths:
 
 scenarios:
   - id: ADOPTED-TEST-001
-    name: Project-native affected tests
+    name: Project-native release qualification
     level: integration
     domains:
       - "server"
       - "client"
       - "shared"
     triggers:
-      - affected
+      - release
     platforms:
       - "linux"
     command: "bash tests/run-all.sh"
     invariants:
-      - "project-native tests remain green for affected changes"
+      - "project-native release qualification remains green"
     release_gate: true
 
   - id: ADOPTED-STATIC-001

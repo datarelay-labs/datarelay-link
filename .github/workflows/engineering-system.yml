@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   adoption-compliance:
-    uses: datarelay-labs/engineering-system/.github/workflows/adoption-compliance.yml@14150e424c922ff3a930b45dcf31d3a3d3ba28b2
+    uses: datarelay-labs/engineering-system/.github/workflows/adoption-compliance.yml@a8969ac4e86465c9fda588a7c1cad7f96f7276c6
 
   enforcement-reconcile:
-    uses: datarelay-labs/engineering-system/.github/workflows/enforcement-check.yml@14150e424c922ff3a930b45dcf31d3a3d3ba28b2
+    uses: datarelay-labs/engineering-system/.github/workflows/enforcement-check.yml@a8969ac4e86465c9fda588a7c1cad7f96f7276c6

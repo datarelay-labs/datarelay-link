@@ -1,6 +1,10 @@
 name: lint
 on:
   push:
+    branches:
+      - main
+    tags:
+      - 'v*'
   pull_request:
 
 permissions:
@@ -22,12 +26,14 @@ jobs:
       - name: Release governance
         run: ./scripts/check-release-governance.sh
       - name: Install Full Suite OS Python deps
+        if: github.event_name != 'pull_request'
         # python3-acme is required by AUTO_ACME (lib/drlink_mcp_tls.py). Previously
         # masked on GHA because the suite failed earlier on the undeclared MCP SDK.
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends python3-acme
       - name: Provision pinned official MCP SDK
+        if: github.event_name != 'pull_request'
         # VERSION_POLICY: MCP is included and release-blocking; do not skip.
         run: |
           SDK_PY="$(./tests/ensure-mcp-sdk-venv.sh | tail -n 1)"
@@ -37,23 +43,28 @@ jobs:
           fi
           echo "DRLINK_MCP_SDK_PYTHON=$SDK_PY" >> "$GITHUB_ENV"
       - name: Full local non-Docker suite
+        if: github.event_name != 'pull_request'
         run: ./tests/run-all.sh
       # Live distro containers cannot validate systemd unless PID 1 is systemd.
       # Package install + Bash/Python/CLI checks run in a separate matrix job.
       - name: Build standalone bundles
+        if: github.event_name != 'pull_request'
         run: |
           ./scripts/build-bundles.sh
           git diff --exit-code dist/
       - name: SHA256SUMS
+        if: github.event_name != 'pull_request'
         run: ./scripts/verify-sha256sums.sh
       # Same order as scripts/build-release-artifacts.sh: the SBOM is generated
       # after SHA256SUMS and verified against the checked-out commit.
       - name: SBOM binds to the checked-out commit
+        if: github.event_name != 'pull_request'
         run: |
           python3 ./scripts/generate-sbom.py -o dist/sbom.spdx.json
           ./scripts/verify-sbom.sh
 
   portability-containers:
+    if: github.event_name != 'pull_request'
     name: distro ${{ matrix.image }}
     runs-on: ubuntu-latest
     permissions:
