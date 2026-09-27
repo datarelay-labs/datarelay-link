@@ -1,12 +1,13 @@
 # Data Relay Link — User E2E Test Scenarios
 
-> **Document role:** Canonical role-based User E2E execution matrix
-> **Canonical path:** repository-root `USER_E2E_SCENARIOS.md` (single entry point; do not add a second copy under `docs/`)
+> **Document role:** Single canonical final User E2E execution contract — role-based real operation + exhaustive Direct CLI + exhaustive AI-assisted parity + performance/concurrency
+> **Canonical path:** `docs/FULL_USER_E2E_SCENARIOS.md` (single canonical entry point)
 > **Operator runbook:** Appendix A retains the v2.4 manual operator procedure
 > **Product:** Data Relay Link
 > **Target:** v2.4 and later until superseded
 > **Primary CLI:** drlink
 > **CLI/AI authority:** docs/DATA_RELAY_LINK_CLI_AI_MASTER_v2.4_FINAL.md
+> **Integrated predecessors:** docs/CLI_EXHAUSTIVE_AUDIT.md + docs/AI_ASSISTED_COMMAND_EXHAUSTIVE_AUDIT.md (their mandatory coverage is absorbed here; they are not separate prerequisites for a User E2E run)
 > **Release validation:** docs/RELEASE_VALIDATION.md
 > **Release checklist:** docs/RELEASE_CHECKLIST.md
 > **Status:** Normative living document
@@ -99,6 +100,175 @@ If ChatGPT cannot execute a mandatory scenario because the real environment is u
 Historical PASS results, synthetic tests, unit tests, Docker-only results, Cursor-run results, or results from another Git HEAD do not replace a requested real User E2E run by ChatGPT.
 
 If product code, dependencies, generated runtime artifacts, or the tested build changes during a full pass, record the new HEAD/build identity and invalidate the affected pass. For final release qualification, the double-pass counter resets as defined by the release validation policy.
+
+## 1.2 Immediate-execution contract (hard gate)
+
+An unqualified User E2E trigger means **execute now**. Do not spend a turn reviewing the repository, proposing a plan, asking which hosts to use, re-auditing old evidence, or waiting for Cursor.
+
+~~~text
+FIRST_ACTION=DISCOVER_TEST_HOSTS_AND_EXECUTE
+PLAN_ONLY_RESPONSE=FORBIDDEN
+PRE_E2E_CODE_REVIEW=FORBIDDEN
+PRE_E2E_CURSOR_HANDOFF=FORBIDDEN
+HISTORICAL_PASS_AS_CURRENT_EVIDENCE=FORBIDDEN
+PRODUCT_CODE_FIX_DURING_RUN=DEFER
+TEST_RECOVERY_DURING_RUN=ALLOW
+CONTINUE_AFTER_INDEPENDENT_FAILURE=YES
+PARALLELIZE_INDEPENDENT_LANES=MAXIMUM_SAFE
+~~~
+
+Execution starts by reading the development server's `~/.ssh/config` and probing the configured hosts. Do not require the operator to restate hostnames already present there.
+
+Host assignment is dynamic:
+
+1. classify reachable SSH-config hosts by OS, installed DRLink role, network reachability, available target services, and whether destructive testing is safe;
+2. assign **two suitable hosts to server-side roles** when two usable server hosts exist: one primary control/server candidate and one secondary server-side target/recovery/upgrade/failover test host according to the scenario;
+3. assign all remaining suitable hosts to Agent, Relay Agent, protected client, external user, load generator, target-service, and cross-platform roles;
+4. use Linux, macOS, Windows, Rocky/Amazon Linux or other configured hosts wherever their platform makes a scenario applicable;
+5. mark only genuinely unavailable capabilities `BLOCKED_ENVIRONMENT`; never invent PASS.
+
+Host discovery itself is infrastructure setup, not product validation. Product configuration, lifecycle, inspection, policy, diagnostics, recovery, and PASS evidence remain public-`drlink`-CLI-only.
+
+## 1.3 One integrated test, three execution dimensions
+
+Every applicable functional/operational intent is exercised across these dimensions rather than treated as three unrelated audits.
+
+### Dimension A — Direct CLI role operation
+
+ChatGPT acts as **User, Operator, and Administrator** and performs realistic end-to-end work using only public `drlink` control-plane interfaces. During those workflows it must grade:
+
+- real functional result and real application traffic;
+- command discoverability from `?`, `help`, menu, Tab, wizard and error output;
+- shell one-shot vs persistent `drlink>` REPL behavior;
+- Server/Agent role placement and privilege guidance;
+- terminology clarity and consistency;
+- output/status consistency across related commands;
+- command-to-command workflow continuity: output from one step must provide usable identifiers/endpoints/next actions for the next;
+- confirmation, fail-closed behavior, reference protection and secret handling;
+- error quality and recovery without source inspection;
+- all documented **plus runtime-discovered** public command families.
+
+Build a fresh documented/runtime command union for the tested candidate and give **every inventory entry a disposition**. Completion requires:
+
+~~~text
+COMMANDS_WITHOUT_DISPOSITION=0
+PUBLIC_CLI_COMMAND_COVERAGE=100%
+PUBLIC_CLI_SURFACE_COVERAGE=100%
+~~~
+
+The integrated run must retain the semantic coverage formerly identified as CLI-001..CLI-020: status/version/diagnostics; Managed Host discovery; Remote Service lifecycle; Remote Access; Internet Access; enrollment; ConfigurationBundle; backup/restore; AI Identity/Permission/AI Access; MCP; Managed Host Group; terminology; error recovery; empty states; status consistency; help/menu/Tab/wizard discovery; role/privilege boundaries; destructive confirmation; cleanup/evidence. Existing U/O/A/S scenarios below add real user traffic and lifecycle depth and are not replaced by this list.
+
+### Dimension B — AI-assisted parity of the same work
+
+For **every applicable Direct CLI semantic intent**, repeat the same user goal through AI support. Give the AI the natural-language intent and public product documentation, not the expected syntax or source code.
+
+The AI's first answer is executed unedited when safe. Grade shell vs REPL context, privilege, role, terminology, dependency ordering, ConfigurationBundle correctness, secret safety and semantic intent—not merely command syntax.
+
+On failure, feed only the new user-visible CLI error/output back in the **same AI conversation** and allow at most the normal recovery attempts without hints. Unsafe AI output is recorded as FAIL and is not executed.
+
+For every paired intent record:
+
+~~~text
+DIRECT_CLI_RESULT=
+AI_FIRST_ANSWER_RESULT=
+AI_RECOVERY_RESULT=
+SEMANTIC_PARITY=
+NEW_AI_ONLY_FINDING=
+AI_MASKED_PRODUCT_DEFECT=YES|NO
+~~~
+
+The integrated run must retain the semantic coverage formerly identified as AI-001..AI-020, including AI status/diagnostics, discovery, Remote Service/Access, Internet Access, enrollment, Bundle, backup/restore, AI Access, MCP, Managed Host Group, terminology recovery, privilege/wrong-role recovery, empty/status-conflict interpretation, destructive confirmation, secret boundary, cleanup, and direct-CLI parity.
+
+A real MCP/ChatGPT Plugin lane is executed when the environment provides it. If unavailable, record `BLOCKED_ENVIRONMENT`; never simulate interoperability and call it PASS.
+
+### Dimension C — performance, concurrency and function-under-load
+
+Performance is not a final isolated benchmark. Run baseline performance first, then maintain controlled load while repeating representative and destructive-safe functional workflows.
+
+At minimum measure, where applicable:
+
+- TCP throughput and full-duplex throughput;
+- connection establishment rate/CPS and short-connection churn;
+- concurrent sessions/connections;
+- latency and tail latency;
+- Remote Service and Fixed TCP behavior;
+- control-plane CLI response time under data-plane load;
+- policy evaluation/change propagation under load;
+- Agent restart/reconnect and endpoint continuity under load;
+- multiple concurrent Agent/Relay traffic paths;
+- resource pressure and recovery;
+- sustained/soak behavior within the available test window.
+
+While load is active, re-run representative Direct CLI **and AI-assisted** workflows covering status/diagnostics, show/list, create/test/change/delete of namespaced resources, ALLOW↔DENY transitions, Remote Service traffic, Internet Access, AI/MCP authorization where available, and safe recovery operations.
+
+Required comparison:
+
+~~~text
+BASELINE_FUNCTIONAL_RESULT=
+UNDER_LOAD_FUNCTIONAL_RESULT=
+BASELINE_PERFORMANCE=
+UNDER_LOAD_PERFORMANCE=
+CONTROL_PLANE_RESPONSIVENESS=
+POLICY_PROPAGATION_UNDER_LOAD=
+ERROR_OR_TIMEOUT_DELTA=
+RESOURCE_PRESSURE=
+POST_LOAD_RECOVERY=
+~~~
+
+A performance number alone is not PASS if functionality, policy enforcement, control-plane responsiveness, or recovery degrades incorrectly under load.
+
+## 1.4 Failure handling during the final E2E
+
+The purpose of this run is to **finish discovery**, not to enter a fix/test loop at the first defect.
+
+When a product defect is found:
+
+1. preserve exact role/host/command/output/evidence and classify it;
+2. do **not** patch product code during the run;
+3. perform only the minimum test-environment recovery needed to isolate the failed resource or restore the lane;
+4. continue every independent scenario that can still produce valid evidence;
+5. if shared global state is damaged, recover through documented public product recovery where possible; if that cannot be done without product repair, mark only dependent scenarios blocked and continue other lanes;
+6. collect implementation fixes into a post-run batch for Cursor/engineering workflow.
+
+A failure may stop only the scenarios whose evidence would be invalid or unsafe. P0 safety findings stop the affected destructive path but do not erase unrelated coverage.
+
+## 1.5 Parallel execution scheduler
+
+Parallel execution is the default.
+
+At run start, create unique `RUN_ID` prefixes and partition resources/hosts into independent lanes. Run in parallel when state is isolated, including:
+
+- platform-specific Agent lifecycle;
+- independent Remote Service protocols;
+- Direct CLI vs AI-assisted scenarios using distinct resources;
+- external traffic validation;
+- Internet Access cases with isolated rules;
+- read-only discovery/diagnostics;
+- independent load generators;
+- MCP/plugin lane where it does not share destructive state.
+
+Serialize only operations that intentionally mutate shared global state: policy reset affecting other lanes, restore/rollback, uninstall/reinstall of a shared server, release-wide update, global allocator exhaustion, or coordinated race tests.
+
+Concurrency contamination is not a product result. Record `INVALIDATED_BY_CONCURRENT_STATE`, allocate fresh namespaced state and rerun that scenario.
+
+## 1.6 Final completion gate
+
+A User E2E run is not complete merely because the happy path worked. Before the final result, account for all role scenarios, command inventory rows, AI parity rows, security/failure cases, platform cases, performance cases, and under-load functional cases.
+
+~~~text
+ROLE_SCENARIO_DISPOSITION_COMPLETE=YES
+COMMANDS_WITHOUT_DISPOSITION=0
+AI_INTENTS_WITHOUT_DISPOSITION=0
+SECURITY_NEGATIVE_DISPOSITION_COMPLETE=YES
+PERFORMANCE_DISPOSITION_COMPLETE=YES
+FUNCTION_UNDER_LOAD_DISPOSITION_COMPLETE=YES
+CLEANUP_DISPOSITION_COMPLETE=YES
+~~~
+
+Use `PASS`, `FAIL`, `PARTIAL`, `BLOCKED_ENVIRONMENT`, `NOT_APPLICABLE`, or `INVALIDATED_BY_CONCURRENT_STATE` explicitly. Skipped work is never silently converted to PASS.
+
+For release qualification, execute the document's exact-HEAD double-pass requirement only after the complete integrated run is eligible for qualification.
+
 
 ## 2. Authority and conflict rules
 
@@ -2784,8 +2954,9 @@ The invariant for future User E2E requests is:
 ~~~text
 USER_E2E_REQUEST
 -> ChatGPT is the executor and final auditor; do not delegate User E2E execution to Cursor
--> read exact repository state
--> pin exact candidate HEAD/build
+-> locate this canonical document at docs/FULL_USER_E2E_SCENARIOS.md
+-> capture candidate/build identity only; do not perform a pre-run code review
+-> discover ~/.ssh/config hosts, probe availability/roles, assign topology, and start independent lanes immediately
 -> execute this document's FULL_USER_E2E profile unless explicitly scoped
 -> use real public CLI and real traffic
 -> exercise ALLOW and DENY
@@ -2798,743 +2969,60 @@ USER_E2E_REQUEST
 -> report every skipped/blocked scenario honestly
 ~~~
 
-# Appendix A — v2.4 operator manual runbook
-
-This appendix retains the v2.4 manual operator procedure that previously occupied this root document. Tests A1 through the end-of-run summary stay in force as concrete public-CLI steps. They do not narrow FULL_USER_E2E. An unqualified User E2E request still means the matrix in sections 1–18, executed and audited by ChatGPT.
-
-# Data Relay Link v2.4.0 — Rick Manual E2E Runbook
-
-```text
-PHASE_AFTER=V2_4_0_DEVELOPMENT_COMPLETE_SCOPE_FREEZE_AND_RICK_MANUAL_E2E_READINESS
-PURPOSE=Human operator usability + real traffic validation BEFORE Final Qualification
-OPERATOR=Rick
-PUBLIC_TOOLS_ONLY=drlink, ?, help, menu, Tab, show, normal OS tools
-FORBIDDEN=source inspection for syntax, SQLite edits, runtime JSON edits, private APIs, hidden helpers
-```
-
-## Candidate freeze identity
-
-Fill these before starting:
-
-| Field | Value |
-|------|--------|
-| Branch | `feature/v2.4.0-final-product-closure` |
-| Exact HEAD | `<paste git rev-parse HEAD>` |
-| Worktree clean | YES / NO |
-| Install source | this exact HEAD (clean server install) |
-
-```bash
-git rev-parse HEAD
-git status --short --branch
-```
-
-Do **not** change product code during the run unless a P0 security issue or hard blocker stops most remaining tests.
-
-## Finding format (mandatory)
-
-```text
-FINDING_ID=RICK-XXX
-AREA=
-SEVERITY=P0|P1|P2|UX
-HOST=
-COMMAND_OR_ACTION=
-EXPECTED=
-ACTUAL=
-REPRODUCIBLE=YES|NO
-EVIDENCE=
-```
-
-Never paste Zero-Touch secrets, OAuth tokens, TLS private keys, or ACME account keys into findings.
-
-## Blind UX checklist (record throughout)
-
-For each section, note:
-
-```text
-Could syntax be discovered without source?
-Was terminology understandable?
-Did an error explain the next action?
-Did menu/help/Tab agree?
-Did any operation require hidden knowledge?
-```
-
-Target: `MANUAL_CLI_DEAD_ENDS=0`
-
-## Canonical menu (server)
-
-```text
-menu
-1) Managed Hosts
-2) Objects
-3) Remote Access
-4) Internet Access
-5) AI Access
-6) System
-```
-
-Discoverability tips:
-
-```text
-?
-help
-help managed-hosts | objects | remote-access | internet-access | ai-access | system | workflows | commands
-<command> ?
-Tab
-```
-
-ConfigurationBundle / MCP TLS live under **System** help and `system ?` / `show ?` / `set ?` — not as separate top-level menu domains.
-
----
-
-## Public MCP prerequisites (do before Section I)
-
-Current lab server is the SSH alias `frp-e2e-server`. Do not commit the live public IP.
-
-```text
-PUBLIC_IP=<server public IPv4; do not commit>
-SSH_ALIAS=frp-e2e-server
-```
-
-Rick must prepare a **project-controlled hostname** for real public MCP TLS:
-
-```text
-PUBLIC_MCP_REQUIRED_HOSTNAME=<choose, e.g. mcp.<your-domain>>
-PUBLIC_MCP_REQUIRED_DNS=A/AAAA -> current server public IP
-PUBLIC_MCP_REQUIRED_PORTS=TCP/80 (HTTP-01), TCP/443 (HTTPS /mcp)
-```
-
-Notes from readiness probe:
-
-```text
-fw.xdr.ooo        -> retired historical lab address (NOT this server; do not reuse blindly)
-mcp.xdr.ooo       -> docs/CDN CNAME today; NOT usable as MCP endpoint without DNS change
-TCP/80 on server  -> must be free/open for AUTO_ACME HTTP-01
-TCP/443           -> currently used by frps on the installed lab host; plan coexistence / DNAT carefully
-```
-
-Do not change external DNS unless authorized. Record exact hostname chosen before Section I.
-
----
-
-## Host availability worksheet
-
-Fill at start of run:
-
-| Host alias | Role | Reachable | Product installed | Safe disposable target | Notes |
-|------------|------|-----------|-------------------|------------------------|-------|
-| frp-e2e-server | Ubuntu 24 server | | | | |
-| frp-e2e-linux114 | Ubuntu 24 client | | | | |
-| frp-e2e-rocky8 | Rocky 8 client | | | | |
-| frp-e2e-rocky9-rescue | Rocky 9 | | | | rescue host; keep independent of product uninstall |
-| frp-e2e-aws | Amazon Linux 2023 client | | | | |
-| frp-e2e-macos | macOS Apple Silicon client | | | | |
-| frp-e2e-windows | Windows 10 client | | | | |
-| frp-e2e-client | Linux client | | | | may be flaky |
-
-Unavailable hosts: mark `SKIPPED_HOST_UNAVAILABLE` — do not invent PASS.
-
----
-
-# SECTION A — Clean server install
-
-### TEST A1 — Clean install
-
-```text
-TEST ID=A1
-Objective=Clean install of exact candidate HEAD on disposable server
-Precondition=Server has no prior DRLink state OR prior state purged per docs
-Exact public command / operator action=
-  Install using the documented server installer for this HEAD
-  (example shape; use the actual documented path for this branch):
-  curl -fsSL <immutable-installer-for-this-HEAD> | sudo bash
-Expected result=Install completes; services start; branding is Data Relay Link
-PASS/FAIL=
-Finding=
-```
-
-### TEST A2 — Service status + launch
-
-```text
-TEST ID=A2
-Objective=Services healthy; public CLI launches
-Exact public command / operator action=
-  systemctl status drlink-server --no-pager
-  sudo drlink
-Expected result=No traceback; prompt is Data Relay Link; no legacy FRP product UX
-PASS/FAIL=
-Finding=
-```
-
-### TEST A3 — Discovery surfaces
-
-```text
-TEST ID=A3
-Objective=?, help, menu, version, doctor work
-Exact public command / operator action=
-  ?
-  help
-  menu
-  system version
-  system diagnostics
-Expected result=
-  Canonical roots only (show/set/unset/test/system/menu/help/exit)
-  Menu matches Managed Hosts/Objects/Remote Access/Internet Access/AI Access/System
-  No help legacy advertisement
-  No traceback
-PASS/FAIL=
-Finding=
-```
-
----
-
-# SECTION B — Zero-Touch
-
-Prefer discovery via `menu → Managed Hosts → Connect a Managed Host` or `set enrollment zero-touch`.
-
-### TEST B1 — Issue one ticket (default TTL)
-
-```text
-TEST ID=B1
-Objective=Issue one Zero-Touch ticket; default TTL; one-time secret display
-Exact public command / operator action=
-  set enrollment zero-touch
-  (or menu → Managed Hosts → Connect a Managed Host)
-Expected result=
-  Ticket/command shown once with secret material
-  Default TTL accepted without inventing syntax from source
-PASS/FAIL=
-Finding=
-```
-
-### TEST B2 — Secret not re-shown
-
-```text
-TEST ID=B2
-Objective=Subsequent show does not reveal secret
-Exact public command / operator action=
-  show enrollments
-  show managed-hosts
-Expected result=No full secret/ticket reuse material displayed
-PASS/FAIL=
-Finding=
-```
-
-### TEST B3 — Redeem on real client
-
-```text
-TEST ID=B3
-Objective=Real client redeems ticket
-Precondition=Disposable Linux client host available
-Exact public command / operator action=
-  Run the one-line install/redeem command exactly as shown (once)
-Expected result=
-  Client created
-  Managed Host created
-  Ticket consumed
-PASS/FAIL=
-Finding=
-```
-
-### TEST B4 — Ticket reuse rejected
-
-```text
-TEST ID=B4
-Objective=Consumed ticket cannot be reused
-Exact public command / operator action=
-  Re-run the same redeem command on another host or same host
-Expected result=Rejected; no second client from same ticket
-PASS/FAIL=
-Finding=
-```
-
-### TEST B5 — Active-unused limit / revoke / capacity
-
-```text
-TEST ID=B5
-Objective=Bounded active-unused tickets; revoke restores capacity
-Exact public command / operator action=
-  Issue multiple tickets until active-unused limit (help says max 10)
-  unset enrollment <ID>   (or guided revoke)
-  Issue again after revoke
-Expected result=
-  Limit enforced with actionable error
-  Revoke unused restores capacity
-  No database inspection required
-PASS/FAIL=
-Finding=
-```
-
----
-
-# SECTION C — Client lifecycle
-
-Run on each available OS. Skip unavailable hosts explicitly.
-
-### TEST C1 — Lifecycle controls
-
-```text
-TEST ID=C1-<OS>
-Objective=status/pause/resume/restart/autostart where applicable
-Host=
-Exact public command / operator action=
-  (on client) show status
-  system pause
-  system resume
-  system restart
-  system autostart
-  system autostart disable   # if applicable
-  system autostart enable    # if applicable
-Expected result=Each command succeeds or explains OS limitation; identity unchanged
-PASS/FAIL=
-Finding=
-```
-
-### TEST C2 — Uninstall / reinstall identity
-
-```text
-TEST ID=C2-<OS>
-Objective=Uninstall/reinstall semantics without surprise re-enrollment
-Exact public command / operator action=
-  system uninstall
-  reinstall via documented path
-  show status / server show client <ID>
-Expected result=Documented identity/port semantics hold; record what survives
-PASS/FAIL=
-Finding=
-```
-
----
-
-# SECTION D — Remote Access (real traffic)
-
-### TEST D1 — Publish services
-
-```text
-TEST ID=D1
-Objective=Publish SSH/HTTP/HTTPS/Custom TCP as available
-Exact public command / operator action=
-  help workflows
-  set published-service <NAME>
-  show published-services
-Expected result=Services listed with ports; discoverable without source
-PASS/FAIL=
-Finding=
-```
-
-### TEST D2 — SELF / ROUTED traffic
-
-```text
-TEST ID=D2
-Objective=Real external traffic for SELF and ROUTED where configured
-Exact public command / operator action=
-  ssh -p <port> user@<public_hostname_or_ip>
-  curl -v http://...
-  curl -vk https://...
-  appropriate TCP probe for custom service
-Expected result=Traffic succeeds only when policy allows
-PASS/FAIL=
-Finding=
-```
-
-### TEST D3 — ALLOW → DENY mutation
-
-```text
-TEST ID=D3
-Objective=Policy mutation affects new connections
-Exact public command / operator action=
-  set remote-access <RULE> ... action allow
-  verify connect ALLOW
-  set remote-access <RULE> ... action deny   # or equivalent unset/edit
-  verify new connect DENY
-Expected result=
-  New connection reflects policy
-  Completed prior session semantics unchanged (document observed behavior)
-PASS/FAIL=
-Finding=
-```
-
----
-
-# SECTION E — Objects / Groups
-
-### TEST E1 — Network Object CRUD
-
-```text
-TEST ID=E1
-Objective=IP/CIDR/FQDN Network Objects create/show/edit/delete protection
-Exact public command / operator action=
-  set network-object <NAME>
-  show network-objects
-  show network-object <NAME>
-  show network-object <NAME> references
-  unset network-object <NAME>
-Expected result=No silent cascade; in-use delete protected with clear error; Managed Hosts remain lifecycle-managed through Managed Host commands
-PASS/FAIL=
-Finding=
-```
-
-### TEST E2 — Network Group
-
-```text
-TEST ID=E2
-Objective=Flat membership, context validation, and reference protection
-Exact public command / operator action=
-  set network-group <NAME>
-  show network-groups
-  show network-group <NAME>
-  show network-group <NAME> references
-  unset network-group <NAME>
-Expected result=Membership visible; invalid context rejected as a whole; delete protection when referenced
-PASS/FAIL=
-Finding=
-```
-
----
-
-# SECTION F — Internet Access (real apps)
-
-Do **not** widen policy just to make apps pass.
-
-### TEST F1 — Approved FQDN:port ALLOW
-
-```text
-TEST ID=F1
-Objective=Approved destination allows curl/wget/git/apt as environment permits
-Exact public command / operator action=
-  set network-object ... / set service-object ... / set internet-access <RULE> mode whitelist source <SRC> destination <DST> service <SVC> enabled
-  From authorized client source: curl/wget/git/apt to approved FQDN:port
-Expected result=ALLOW only for approved destination+port+source
-PASS/FAIL=
-Finding=
-```
-
-### TEST F2 — DENY matrix
-
-```text
-TEST ID=F2
-Objective=Unapproved dest / wrong port / wrong source / IP literal / private-metadata DENY
-Exact public command / operator action=
-  Attempt each deny class with real traffic or test internet-access
-Expected result=Each class DENY; error/audit understandable
-PASS/FAIL=
-Finding=
-```
-
----
-
-# SECTION G — Fixed TCP
-
-### TEST G1 — Lifecycle
-
-```text
-TEST ID=G1
-Objective=create disabled-by-default → enable → authorize → deny → disable → delete
-Exact public command / operator action=
-  set fixed-tcp <NAME> ...
-  show fixed-tcp
-  set fixed-tcp <NAME> enabled
-  probe from authorized source
-  probe from unauthorized source
-  unset fixed-tcp <NAME> enabled
-  unset fixed-tcp <NAME>
-Expected result=Disabled by default; probes match policy; delete clean
-PASS/FAIL=
-Finding=
-```
-
----
-
-# SECTION H — ConfigurationBundle (critical UX)
-
-### TEST H1 — Export / test / diff / apply
-
-```text
-TEST ID=H1
-Objective=Full Bundle loop including stdin paste
-Exact public command / operator action=
-  system export configuration /tmp/drlink-rick.yaml
-  test configuration /tmp/drlink-rick.yaml
-  system diff configuration /tmp/drlink-rick.yaml
-  system apply configuration /tmp/drlink-rick.yaml
-  system apply configuration -     # paste multi-resource Bundle via stdin
-Expected result=
-  Valid multi-resource Bundle works
-  Confirmation defaults to No until confirmed
-  No secrets in export
-PASS/FAIL=
-Finding=
-```
-
-### TEST H2 — NO CHANGE reapply / absent / omitted / broaden / secrets
-
-```text
-TEST ID=H2
-Objective=Semantics: NO CHANGE, state:absent, omitted unchanged, broaden confirm, secret reject
-Exact public command / operator action=
-  Re-apply identical Bundle
-  Apply Bundle with state: absent for one disposable resource
-  Apply Bundle omitting an existing resource
-  Apply access-broadening change (expect confirm)
-  Attempt Bundle containing a secret field
-Expected result=
-  NO CHANGE reapply is clean
-  absent removes only targeted resource
-  omitted resource unchanged
-  broadening requires confirmation
-  secrets rejected
-PASS/FAIL=
-Finding=
-```
-
----
-
-# SECTION I — MCP Public TLS (mandatory external)
-
-### TEST I1 — Configure + issue
-
-```text
-TEST ID=I1
-Objective=AUTO_ACME public certificate issuance
-Precondition=DNS A/AAAA + TCP/80 + TCP/443 ready for PUBLIC_MCP_REQUIRED_HOSTNAME
-Exact public command / operator action=
-  set mcp-tls hostname <PUBLIC_MCP_REQUIRED_HOSTNAME>
-  set mcp-tls mode auto-acme
-  set mcp-tls contact-email <ops-email>
-  system certificate preflight
-  system certificate issue
-  show mcp-tls
-  system diagnostics
-  system diagnostics mcp
-Expected result=Issue succeeds; show mcp-tls healthy; doctor clean for TLS
-PASS/FAIL=
-Finding=
-```
-
-### TEST I2 — External trust verification
-
-```text
-TEST ID=I2
-Objective=Publicly trusted cert; hostname match; /mcp and OAuth metadata reachable
-Exact public command / operator action=
-  curl -vI https://<hostname>/mcp
-  curl -fsS https://<hostname>/.well-known/oauth-authorization-server | head
-  openssl s_client -connect <hostname>:443 -servername <hostname> </dev/null 2>/dev/null | openssl x509 -noout -subject -issuer -dates
-Expected result=
-  REAL_PUBLIC_TLS=PASS
-  REAL_PUBLIC_ACME=PASS
-PASS/FAIL=
-Finding=
-```
-
----
-
-# SECTION J — Claude Remote MCP
-
-UI labels may vary. High-level sequence only:
-
-```text
-Add Custom Connector
-→ URL https://<hostname>/mcp
-→ OAuth authorize
-→ tools discovered
-```
-
-### TEST J1 — Connect + read tools
-
-```text
-TEST ID=J1
-Objective=Claude connector OAuth + tool discovery
-Exact public command / operator action=
-  Complete Claude custom connector flow against https://<hostname>/mcp
-  Invoke: list_hosts, get_host, get_system_info
-Expected result=CLAUDE_REMOTE_CONNECTOR=PASS OR exact platform error recorded
-PASS/FAIL=
-Finding=
-```
-
-### TEST J2 — Controlled allow/deny
-
-```text
-TEST ID=J2
-Objective=Policy ALLOW safe tools; DENY unauthorized
-Exact public command / operator action=
-  Configure AI Access for a disposable principal/host
-  ALLOW: safe exec, safe read_file, safe write_file (disposable path)
-  DENY: unauthorized host, unauthorized tool, read-only principal exec
-  Confirm DRLink audit attribution (system audit / show ai-activity)
-Expected result=Allow/deny match policy; audit names principal
-PASS/FAIL=
-Finding=
-```
-
-If Claude platform blocks: record exact platform error. Do **not** modify DRLink until a product-side defect is proven.
-
----
-
-# SECTION K — ChatGPT Remote MCP
-
-### TEST K1 — ChatGPT connector
-
-```text
-TEST ID=K1
-Objective=ChatGPT remote MCP as account/plan allows
-Exact public command / operator action=
-  Connect same https://<hostname>/mcp
-  OAuth + tool scan
-  list_hosts / get_system_info
-  AI Access DENY case
-  If plan allows writes: safe exec / write_file
-Expected result=Classify exactly one of:
-  PASS
-  READ_ONLY_PASS_WRITE_BLOCKED_PLATFORM
-  BLOCKED_EXTERNAL_PLAN
-  FAIL_PRODUCT
-PASS/FAIL=
-Finding=
-```
-
-Plan restrictions are **not** DRLink defects.
-
----
-
-# SECTION L — MCP security
-
-### TEST L1 — Principal/tool/host denies + policy flip
-
-```text
-TEST ID=L1
-Objective=unknown principal / read-only / wrong host / denied tool / ALLOW→DENY next call
-Exact public command / operator action=
-  Exercise each case via connector or test ai-access
-  Flip ALLOW→DENY; confirm next invocation denied
-  Check audit attribution
-Expected result=Fail closed; audit correct; no token leakage in UI/logs pasted to notes
-PASS/FAIL=
-Finding=
-```
-
----
-
-# SECTION M — Backup / Restore
-
-Use disposable state only.
-
-### TEST M1 — Backup mutate restore
-
-```text
-TEST ID=M1
-Objective=Backup → mutate/delete disposable state → restore → verify
-Exact public command / operator action=
-  system backup
-  Change/delete disposable Objects/policies/Remote Services/MCP TLS non-secret state/Zero-Touch non-secret lifecycle state
-  system restore <PATH>
-  system diagnostics
-  Functional spot-check
-Expected result=Restored state matches backup; secrets never displayed; doctor clean
-PASS/FAIL=
-Finding=
-```
-
----
-
-# SECTION N — Upgrade / Reboot
-
-### TEST N1 — Reboot persistence
-
-```text
-TEST ID=N1
-Objective=Server/client reboot persistence
-Exact public command / operator action=
-  reboot server; reboot client
-  verify autostart, identity, Remote Services, policies, MCP TLS, ACME timer
-Expected result=No unexpected re-enrollment; MCP TLS persists; timer active if AUTO_ACME
-PASS/FAIL=
-Finding=
-```
-
-### TEST N2 — Update workflow
-
-```text
-TEST ID=N2
-Objective=Documented update preserves identity
-Exact public command / operator action=
-  system update product   # and/or documented reinstall update path per OS
-Expected result=Identity/ports preserved; no surprise re-enrollment
-PASS/FAIL=
-Finding=
-```
-
----
-
-# SECTION O — Uninstall / Reinstall
-
-### TEST O1 — Preserve vs purge
-
-```text
-TEST ID=O1
-Objective=Documented uninstall preserving state vs purge
-Exact public command / operator action=
-  Follow documented uninstall paths
-  Explicitly record what survives vs removed
-  Reinstall
-Expected result=Matches docs; no inference
-PASS/FAIL=
-Finding=
-```
-
----
-
-# SECTION P — Doctor / Support Bundle
-
-### TEST P1 — Sanitized diagnostics
-
-```text
-TEST ID=P1
-Objective=doctor + support bundle useful and sanitized
-Exact public command / operator action=
-  system diagnostics
-  system support-bundle
-  Inspect bundle metadata only (do not exfiltrate)
-Expected result=
-  Useful diagnostics
-  No raw Zero-Touch ticket
-  No OAuth token
-  No TLS private key
-  No ACME account key
-  No sensitive file content
-PASS/FAIL=
-Finding=
-```
-
----
-
-# SECTION Q — Blind UX rollup
-
-```text
-TEST ID=Q1
-Objective=Roll up discoverability across the run
-Exact public command / operator action=Review notes from A–P
-Expected result=MANUAL_CLI_DEAD_ENDS=0
-PASS/FAIL=
-Finding=
-```
-
----
-
-## End-of-run summary template
-
-```text
-RICK_MANUAL_E2E_STATUS=PASS|PARTIAL|FAIL|BLOCKED
-CANDIDATE_HEAD=
-REAL_PUBLIC_TLS=
-REAL_PUBLIC_ACME=
-CLAUDE_REMOTE_CONNECTOR=
-CHATGPT_REMOTE_CONNECTOR=
-MANUAL_CLI_DEAD_ENDS=
-P0_COUNT=
-P1_COUNT=
-P2_COUNT=
-UX_COUNT=
-HOSTS_SKIPPED=
-NEXT=consolidate findings → fix batch (except immediate P0/hard blockers)
-```
+# Appendix A — historical v2.4 manual runbook status
+
+The former Rick/manual v2.4 runbook has been **fully absorbed into sections 1–18** of this canonical contract.
+
+It is intentionally not retained as a second executable procedure because its fixed hostnames, operator-preparation steps, manual worksheets, and pre-run prerequisites conflict with automatic host discovery and immediate execution.
+
+For FULL_USER_E2E:
+
+~~~text
+SECOND_EXECUTABLE_RUNBOOK=NO
+FIXED_HISTORICAL_HOSTNAMES=DO_NOT_USE
+ASK_OPERATOR_TO_FILL_WORKSHEET=NO
+ASK_OPERATOR_TO_CHOOSE_TEST_HOSTS=NO
+ASK_OPERATOR_TO_PREPARE_VALUES_ALREADY_DISCOVERABLE=NO
+CODE_CHANGE_DURING_ACTIVE_RUN=NO
+TEST_ENVIRONMENT_RECOVERY_ONLY=YES
+~~~
+
+If an external prerequisite cannot be discovered or safely satisfied automatically (for example an unavailable public DNS/TLS integration), classify only that dependent scenario as `BLOCKED_ENVIRONMENT` and continue all independent scenarios. Do not stop the full run to ask for setup unless the user explicitly asks to resolve that external prerequisite.
+
+# Appendix B — deterministic trigger lookup
+
+The canonical file name is deliberately stable:
+
+~~~text
+docs/FULL_USER_E2E_SCENARIOS.md
+~~~
+
+Treat these as direct execution triggers, case-insensitively and with equivalent Korean/English wording:
+
+~~~text
+사용자 E2E
+사용자 E2E 테스트
+Full User E2E
+FULL_USER_E2E
+User E2E
+전체 E2E
+전수 사용자 테스트
+full user e2e 수행해
+~~~
+
+On a trigger, the minimum startup sequence is:
+
+~~~text
+1. Open docs/FULL_USER_E2E_SCENARIOS.md.
+2. Capture current candidate/build identity without code review.
+3. Read the development host's ~/.ssh/config.
+4. Probe configured hosts in parallel.
+5. Classify/assign server, Agent/Relay, client, target and load-generator roles.
+6. Create RUN_ID-scoped evidence/resources.
+7. Start all independent Direct CLI, AI-assisted, real-traffic and baseline-performance lanes in parallel.
+8. Record failures; perform test recovery only; continue independent coverage.
+9. Run mixed function-under-load lanes.
+10. Finish disposition/cleanup/reporting; only then batch implementation findings.
+~~~
+
+No additional planning document, old audit document, historical evidence review, Cursor run, or human host-selection step is a prerequisite.
