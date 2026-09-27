@@ -2950,10 +2950,14 @@ except Exception as exc:
 
 def read_installed_version():
     version_path = root / "etc/drlink/version"
-    if not version_path.is_file():
+    try:
+        if not version_path.is_file():
+            return ""
+        text = version_path.read_text(encoding="utf-8")
+    except OSError:
         return ""
     data = {}
-    for line in version_path.read_text(encoding="utf-8").splitlines():
+    for line in text.splitlines():
         if "=" in line:
             k, v = line.split("=", 1)
             data[k.strip()] = v.strip()
@@ -3006,17 +3010,29 @@ def _load_restore_mod():
         seen.add(key)
         if not path.is_file():
             continue
-        lib = path.resolve().parent.parent / "lib"
-        if lib.is_dir() and str(lib) not in sys.path:
-            sys.path.insert(0, str(lib))
-        spec = importlib.util.spec_from_file_location("frp_restore_preflight", str(path))
+        # Source tree: ../lib. Installed layout: modules sit beside frp-restore.
+        for lib in (path.resolve().parent, path.resolve().parent.parent / "lib"):
+            if lib.is_dir() and str(lib) not in sys.path:
+                sys.path.insert(0, str(lib))
+        # frp-restore has no .py suffix. spec_from_file_location returns
+        # None for extensionless scripts and then crashes on spec.loader.
+        from importlib.machinery import SourceFileLoader
+        loader = SourceFileLoader("frp_restore_preflight", str(path))
+        spec = importlib.util.spec_from_loader("frp_restore_preflight", loader)
+        if spec is None or spec.loader is None:
+            continue
         mod = importlib.util.module_from_spec(spec)
-        assert spec.loader is not None
+        sys.modules[spec.name] = mod
         spec.loader.exec_module(mod)
         return mod
     return None
 
-restore_mod = _load_restore_mod()
+try:
+    restore_mod = _load_restore_mod()
+except Exception as exc:
+    print("Access security impact: unavailable (%s)" % exc)
+    print()
+    restore_mod = None
 if restore_mod is not None:
     tmp = None
     try:

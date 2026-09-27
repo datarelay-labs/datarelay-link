@@ -147,6 +147,39 @@ def _configuration_diff(plane: ControlPlane, rest):
     return 0
 
 
+def _stdin_is_interactive() -> bool:
+    try:
+        return sys.stdin is not None and not sys.stdin.closed and sys.stdin.isatty()
+    except Exception:
+        return False
+
+
+def _bundle_has_mutation(kind: str, plan) -> bool:
+    changes = getattr(plan, "mutating_changes", None) or []
+    if kind == "v24":
+        return bool(changes) and not bool(getattr(plan, "no_change", False))
+    return bool(changes)
+
+
+def _approve_configuration_mutation() -> str:
+    """Return apply, cancel, or refuse for a real ConfigurationBundle change.
+
+    NO CHANGE callers must not use this. Interactive TTY honors y/n.
+    Non-TTY fails closed.
+    """
+    if _stdin_is_interactive():
+        if _confirm_from_stdin("Apply these changes? [y/N]"):
+            return "apply"
+        sys.stdout.write("Cancelled.\nNo changes were applied.\n")
+        return "cancel"
+    sys.stderr.write(
+        "ERROR: system apply configuration requires confirmation.\n"
+        "Run interactively and answer y.\n"
+        "No changes were applied.\n"
+    )
+    return "refuse"
+
+
 def _configuration_apply(plane: ControlPlane, rest):
     if not rest:
         raise SystemExit("Missing configuration path.\n\nUsage:\n  system apply configuration <file|->")
@@ -159,7 +192,15 @@ def _configuration_apply(plane: ControlPlane, rest):
         from drlink_v24_bundle import apply_v24_plan, format_v24_plan
 
         sys.stdout.write(format_v24_plan(plan).replace("No changes were applied.\n", ""))
-        result = _run(apply_v24_plan, plane, plan)
+        confirm = False
+        if _bundle_has_mutation(kind, plan):
+            decision = _approve_configuration_mutation()
+            if decision == "cancel":
+                return 0
+            if decision == "refuse":
+                return 1
+            confirm = True
+        result = _run(apply_v24_plan, plane, plan, confirm=confirm)
         if isinstance(result, dict) and result.get("cancelled"):
             return 0
         if isinstance(result, dict) and result.get("status") == "NO_CHANGE":
@@ -174,7 +215,15 @@ def _configuration_apply(plane: ControlPlane, rest):
     except BundleError as exc:
         _exit_bundle_error(exc)
     sys.stdout.write(format_plan_review(plan))
-    result = _run(apply_change_plan, plane, plan)
+    confirm = False
+    if _bundle_has_mutation("legacy", plan):
+        decision = _approve_configuration_mutation()
+        if decision == "cancel":
+            return 0
+        if decision == "refuse":
+            return 1
+        confirm = True
+    result = _run(apply_change_plan, plane, plan, confirm=confirm)
     if isinstance(result, dict) and result.get("cancelled"):
         return 0
     if not isinstance(result, dict):
@@ -339,6 +388,146 @@ def _dispatch(plane: ControlPlane, verb: str, tokens, client_sel):
     raise SystemExit("Unknown command")
 
 
+def _show_internet_status(plane: ControlPlane) -> int:
+    """Product Internet Access status without the removed frp-egress tool."""
+    import json
+    from pathlib import Path
+
+    import drlink_v24 as v24
+    from frp_egress_control import listen_bind
+
+    pol = v24.get_access_policy(plane, "internet")
+    rules = plane.list_rules("internet")
+    enabled = sum(1 for rule in rules if rule.get("enabled"))
+    mode = pol.get("mode")
+    enforcement = str(pol.get("enforcement") or "enabled")
+    if mode is None or enforcement.lower() == "disabled":
+        default = "ALLOW ALL"
+        readiness = "NOT ENFORCING"
+    elif str(mode).lower() == "whitelist":
+        default = "DENY"
+        readiness = "READY"
+    else:
+        default = "ALLOW"
+        readiness = "READY"
+    cfg = {}
+    root = getattr(plane, "root", None) or ""
+    cfg_path = Path(str(root)) / "etc/drlink/config.json" if root else Path("/etc/drlink/config.json")
+    if cfg_path.is_file():
+        try:
+            loaded = json.loads(cfg_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                cfg = loaded
+        except (OSError, ValueError):
+            cfg = {}
+    try:
+        host, port = listen_bind(cfg or None)
+        proxy = "%s:%s" % (host, port)
+    except Exception as exc:
+        proxy = "unavailable (%s)" % exc
+    sys.stdout.write(
+        "\n".join(
+            [
+                "Internet Access",
+                "===============",
+                "",
+                "Readiness       : %s" % readiness,
+                "Policy mode     : %s" % (mode or "none"),
+                "Enforcement     : %s" % enforcement,
+                "Rules           : %s enabled / %s total" % (enabled, len(rules)),
+                "Implicit default: %s" % default,
+                "Proxy endpoint  : %s" % proxy,
+                "",
+            ]
+        )
+        + "\n"
+    )
+    return 0
+
+
+def _internet_dns(destination: str) -> dict:
+    """Resolve and safety-check a destination. Does not open a connection."""
+    import ipaddress
+    import socket
+
+    from frp_egress_control import validate_resolved_addresses
+
+    text = str(destination or "").strip()
+    try:
+        ipaddress.ip_address(text)
+        addresses = [text]
+        literal = True
+    except ValueError:
+        literal = False
+        addresses = []
+        try:
+            infos = socket.getaddrinfo(text, None)
+        except OSError as exc:
+            return {
+                "status": "FAILED",
+                "addresses": [],
+                "security": "DNS lookup failed: %s" % exc,
+                "safe": False,
+            }
+        for info in infos:
+            addr = info[4][0]
+            if addr not in addresses:
+                addresses.append(addr)
+    try:
+        safe = validate_resolved_addresses(addresses)
+    except Exception as exc:
+        return {
+            "status": "literal IP rejected" if literal else "resolved but rejected",
+            "addresses": addresses,
+            "security": str(exc),
+            "safe": False,
+        }
+    if literal:
+        status = "literal IP (no lookup)"
+    else:
+        status = "resolved"
+    return {
+        "status": status,
+        "addresses": list(safe),
+        "security": "all destination addresses passed safety checks",
+        "safe": True,
+    }
+
+
+def _test_internet(plane: ControlPlane, args) -> int:
+    _need(args, 3, "test internet <SOURCE-IP> <HOST> <PORT> [PROTOCOL]")
+    source, host, port_text = args[0], args[1], args[2]
+    protocol = ""
+    if len(args) >= 4 and not str(args[3]).startswith("-"):
+        protocol = str(args[3]).lower()
+        if protocol not in ("http", "https", "tcp"):
+            raise SystemExit(
+                "Invalid PROTOCOL %r.\n\nPROTOCOL must be one of: http, https, tcp" % args[3]
+            )
+    try:
+        port = int(port_text)
+    except (TypeError, ValueError) as exc:
+        raise SystemExit("Invalid PORT %r." % port_text) from exc
+    if port < 1 or port > 65535:
+        raise SystemExit("Invalid PORT %r." % port_text)
+    if not protocol:
+        if port == 443:
+            protocol = "https"
+        elif port == 80:
+            protocol = "http"
+        else:
+            protocol = "tcp"
+    result = plane.evaluate_internet_access(source, host, port, protocol)
+    dns = _internet_dns(host)
+    if not dns.get("safe"):
+        result = dict(result)
+        result["action"] = "DENY"
+        result["reason"] = "DNS safety check failed: %s" % dns.get("security")
+    sys.stdout.write(plane.format_internet_explain(result, dns=dns))
+    sys.stdout.write("Live connection performed: NO\n")
+    return 0
+
+
 def _show(plane: ControlPlane, rest):
     if not rest:
         raise SystemExit("Missing resource.")
@@ -448,6 +637,8 @@ def _show(plane: ControlPlane, rest):
             raise SystemExit("Rule not found")
         sys.stdout.write(plane.format_rule_impact("remote", rest[1]))
         return 0
+    if res == "internet":
+        return _show_internet_status(plane)
     if res == "internet-access":
         if len(rest) == 1:
             sys.stdout.write(plane.format_rulebase("internet"))
@@ -1083,6 +1274,8 @@ def _test(plane: ControlPlane, rest):
         result = plane.evaluate_remote_access(rest[1], rest[2], rest[3], int(rest[4]))
         sys.stdout.write(plane.format_remote_explain(result))
         return 0
+    if rest[0] == "internet":
+        return _test_internet(plane, rest[1:])
     if rest[0] == "internet-access":
         _need(rest, 5, "test internet-access <SOURCE_IP> <DESTINATION> <PORT> <PROTOCOL>")
         result = plane.evaluate_internet_access(rest[1], rest[2], int(rest[3]), rest[4])

@@ -401,20 +401,20 @@ PY
 
 frp_doctor_usage() {
   cat <<'EOF'
-Usage: drlink doctor [--json] [--verbose] [--quiet]
+Usage: system diagnostics [control-plane|runtime|mcp]
 
-Run read-only health and consistency checks. Doctor does not restart
+Run read-only health and consistency checks. Diagnostics do not restart
 services, rewrite config, consume a management nonce, release ports,
 revoke clients, re-enroll, or update software.
 
-  --json      Machine-readable report
-  --verbose   Include paths, certificate SAN summary, and extra detail
-  --quiet     Print summary and failures only
+  control-plane   Control-plane state, installation, and security checks
+  runtime         Service runtime and network checks
+  mcp             MCP public TLS checks
 EOF
 }
 
 frp_doctor_main() {
-  local fmt="human" verbose=0 quiet=0
+  local fmt="human" verbose=0 quiet=0 scope=""
   local arg py facts_file rc=0
   FRP_DOCTOR_VERBOSE=0
   for arg in "$@"; do
@@ -427,9 +427,18 @@ frp_doctor_main() {
       --verbose) verbose=1; FRP_DOCTOR_VERBOSE=1 ;;
       --quiet) quiet=1 ;;
       --skip-network) FRP_DOCTOR_SKIP_NETWORK=1 ;;
+      control-plane|runtime|mcp)
+        if [[ -n "$scope" ]]; then
+          echo "ERROR: only one diagnostics scope is allowed." >&2
+          echo "Scopes: control-plane, runtime, mcp" >&2
+          return 2
+        fi
+        scope="$arg"
+        ;;
       *)
-        echo "ERROR: unknown doctor option: ${arg}" >&2
-        frp_doctor_usage >&2
+        echo "ERROR: unknown diagnostics scope: ${arg}" >&2
+        echo "Scopes: control-plane, runtime, mcp" >&2
+        echo "Run: system diagnostics" >&2
         return 2
         ;;
     esac
@@ -454,6 +463,9 @@ frp_doctor_main() {
   fi
   if [[ "${FRP_DOCTOR_SKIP_NETWORK:-}" == "1" ]]; then
     extra+=(--skip-network)
+  fi
+  if [[ -n "$scope" ]]; then
+    extra+=(--scope "$scope")
   fi
 
   set +e

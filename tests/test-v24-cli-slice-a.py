@@ -1,0 +1,339 @@
+#!/usr/bin/env python3
+"""Slice A public CLI contracts: confirmation, internet parity, diagnostics scopes, restore preflight."""
+from __future__ import annotations
+
+import io
+import json
+import os
+import subprocess
+import sys
+import tarfile
+import tempfile
+import unittest
+from contextlib import redirect_stderr, redirect_stdout
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "lib"))
+
+import drlink_control_cli as cli
+import frp_ctl_grammar as grammar
+import frp_doctor
+from drlink_control_plane import ControlPlane
+
+
+BUNDLE = """configurationBundle:
+  context: server
+  networkObjects:
+    - name: uxverify-confirm
+      type: ip
+      value: 192.0.2.254
+"""
+
+
+class _Tty(io.StringIO):
+    def isatty(self):
+        return True
+
+
+def _server_root(tmp: str) -> None:
+    Path(tmp, "etc/drlink").mkdir(parents=True, exist_ok=True)
+    Path(tmp, "etc/drlink/config.json").write_text(
+        json.dumps({"role": "server", "egress_listen_addr": "127.0.0.1", "egress_listen_port": 6102})
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+class SliceAGrammarTests(unittest.TestCase):
+    def test_show_and_test_internet_use_control_plane(self):
+        show = grammar.match(["show", "internet"], "server")
+        self.assertEqual(show.get("status"), "ok")
+        self.assertEqual(show.get("action"), "control_plane")
+        self.assertEqual(show.get("tokens"), ["show", "internet"])
+        self.assertNotEqual(show.get("action"), "egress_cmd")
+
+        test = grammar.match(
+            ["test", "internet", "10.10.20.25", "archive.ubuntu.com", "443", "https"],
+            "server",
+        )
+        self.assertEqual(test.get("status"), "ok")
+        self.assertEqual(test.get("action"), "control_plane")
+        self.assertEqual(test.get("tokens")[0:2], ["test", "internet"])
+
+    def test_diagnostics_scopes_stay_on_doctor_action(self):
+        for scope in ("control-plane", "runtime", "mcp"):
+            for role in ("server", "client"):
+                result = grammar.match(["system", "diagnostics", scope], role)
+                self.assertEqual(result.get("status"), "ok", (role, scope, result))
+                self.assertEqual(result.get("action"), "doctor")
+                self.assertEqual(list(result.get("passthrough") or []), [scope])
+
+
+class SliceAConfigurationConfirmationTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="drlink-slice-a-")
+        _server_root(self.tmp)
+        os.environ["FRP_DEPLOY_TEST_ROOT"] = self.tmp
+        os.environ["DRLINK_SKIP_ACTIVATION"] = "1"
+        os.environ.pop("DRLINK_CONFIRM", None)
+        self.plane = ControlPlane(self.tmp)
+        self.path = Path(self.tmp, "bundle.yaml")
+        self.path.write_text(BUNDLE, encoding="utf-8")
+        self._stdin = sys.stdin
+
+    def tearDown(self):
+        sys.stdin = self._stdin
+        self.plane.close()
+        for key in ("FRP_DEPLOY_TEST_ROOT", "DRLINK_CONFIRM", "DRLINK_SKIP_ACTIVATION"):
+            os.environ.pop(key, None)
+
+    def _apply(self, args=None):
+        out = io.StringIO()
+        err = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            rc = cli.dispatch(
+                list(args or ["system", "apply", "configuration", str(self.path)]),
+                root=self.tmp,
+                plane=self.plane,
+            )
+        return rc, out.getvalue(), err.getvalue()
+
+    def test_non_tty_real_change_fails_closed(self):
+        from drlink_v24_bundle import prepare_v24_plan
+
+        plan = prepare_v24_plan(self.plane, self.path.read_text(encoding="utf-8"))
+        self.assertFalse(plan.no_change)
+        self.assertTrue(plan.mutating_changes)
+        self.assertFalse(plan.security_impact)
+        sys.stdin = io.StringIO("")
+        rev = self.plane.current_revision()
+        rc, out, err = self._apply()
+        self.assertEqual(rc, 1)
+        self.assertIn("requires confirmation", err)
+        self.assertNotIn("APPLIED", out)
+        self.assertEqual(self.plane.current_revision(), rev)
+        self.assertIsNone(self.plane.get_object("uxverify-confirm"))
+
+    def test_non_tty_stdin_bundle_fails_closed(self):
+        sys.stdin = io.StringIO(BUNDLE + ":end\n")
+        rc, out, err = self._apply(["system", "apply", "configuration", "-"])
+        self.assertEqual(rc, 1)
+        self.assertIn("requires confirmation", err)
+        self.assertNotIn("APPLIED", out)
+        self.assertIsNone(self.plane.get_object("uxverify-confirm"))
+
+    def test_tty_no_cancels(self):
+        sys.stdin = _Tty("n\n")
+        rc, out, err = self._apply()
+        self.assertEqual(rc, 0, err)
+        self.assertIn("Cancelled", out)
+        self.assertIsNone(self.plane.get_object("uxverify-confirm"))
+
+    def test_tty_yes_applies(self):
+        sys.stdin = _Tty("y\n")
+        rc, out, err = self._apply()
+        self.assertEqual(rc, 0, err + out)
+        self.assertIn("APPLIED", out)
+        self.assertIsNotNone(self.plane.get_object("uxverify-confirm"))
+
+    def test_no_change_does_not_require_confirmation(self):
+        sys.stdin = _Tty("y\n")
+        rc, out, err = self._apply()
+        self.assertEqual(rc, 0, err + out)
+        self.assertIn("APPLIED", out)
+        sys.stdin = io.StringIO("")
+        rc, out, err = self._apply()
+        self.assertEqual(rc, 0, err + out)
+        self.assertIn("NO CHANGE", out)
+        self.assertNotIn("requires confirmation", err)
+
+
+class SliceAInternetCommandTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="drlink-slice-a-inet-")
+        _server_root(self.tmp)
+        os.environ["FRP_DEPLOY_TEST_ROOT"] = self.tmp
+        os.environ["DRLINK_SKIP_ACTIVATION"] = "1"
+        self.plane = ControlPlane(self.tmp)
+
+    def tearDown(self):
+        self.plane.close()
+        for key in ("FRP_DEPLOY_TEST_ROOT", "DRLINK_SKIP_ACTIVATION"):
+            os.environ.pop(key, None)
+
+    def _run(self, args):
+        out = io.StringIO()
+        err = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            rc = cli.dispatch(list(args), root=self.tmp, plane=self.plane)
+        return rc, out.getvalue(), err.getvalue()
+
+    def test_show_internet_status_without_egress_tool(self):
+        rc, out, err = self._run(["show", "internet"])
+        self.assertEqual(rc, 0, err)
+        self.assertIn("Internet Access", out)
+        self.assertIn("Implicit default", out)
+        self.assertIn("Proxy endpoint", out)
+        self.assertIn("127.0.0.1:6102", out)
+        self.assertNotIn("frp-egress", out + err)
+
+    def test_test_internet_evaluates_policy_and_dns_without_connection(self):
+        real_getaddrinfo = __import__("socket").getaddrinfo
+
+        def _fake_getaddrinfo(host, port, *args, **kwargs):
+            if host == "archive.ubuntu.com":
+                return [(2, 1, 6, "", ("1.2.3.4", 0))]
+            return real_getaddrinfo(host, port, *args, **kwargs)
+
+        import socket
+
+        socket.getaddrinfo = _fake_getaddrinfo
+        try:
+            rc, out, err = self._run(
+                ["test", "internet", "10.10.20.25", "archive.ubuntu.com", "443", "https"]
+            )
+        finally:
+            socket.getaddrinfo = real_getaddrinfo
+        self.assertEqual(rc, 0, err + out)
+        self.assertIn("Internet Access Policy Evaluation", out)
+        self.assertIn("resolved", out)
+        self.assertIn("1.2.3.4", out)
+        self.assertIn("Live connection performed: NO", out)
+        self.assertNotIn("frp-egress", out + err)
+
+
+class SliceADiagnosticsScopeTests(unittest.TestCase):
+    def test_scope_filter_partitions_checks(self):
+        mcp = {"id": "mcp_tls_mode", "section": "security"}
+        runtime = {"id": "unit_frps", "section": "runtime"}
+        control = {"id": "server_config", "section": "installation"}
+        self.assertTrue(frp_doctor.public_scope_keeps(mcp, "mcp"))
+        self.assertFalse(frp_doctor.public_scope_keeps(mcp, "control-plane"))
+        self.assertTrue(frp_doctor.public_scope_keeps(runtime, "runtime"))
+        self.assertFalse(frp_doctor.public_scope_keeps(runtime, "mcp"))
+        self.assertTrue(frp_doctor.public_scope_keeps(control, "control-plane"))
+        self.assertFalse(frp_doctor.public_scope_keeps(control, "runtime"))
+
+    def _assert_scopes(self, root: str):
+        for scope in ("control-plane", "runtime", "mcp"):
+            out = io.StringIO()
+            err = io.StringIO()
+            with redirect_stdout(out), redirect_stderr(err):
+                rc = frp_doctor.main(["--root", root, "--scope", scope, "--skip-network"])
+            text = out.getvalue() + err.getvalue()
+            self.assertNotIn("unrecognized arguments", text)
+            self.assertNotIn("unknown doctor option", text)
+            self.assertNotIn("Traceback", text)
+            self.assertIn("Scope           : %s" % scope, text)
+            self.assertNotEqual(rc, 2, text)
+            _text, _code, report = frp_doctor.run_doctor(
+                root, {}, skip_network=True, scope=scope
+            )
+            ids = [c.get("id") for c in report.checks]
+            self.assertTrue(ids, (root, scope))
+            self.assertNotIn("scope_empty", ids)
+
+    def test_python_scope_does_not_emit_argparse_usage(self):
+        server = tempfile.mkdtemp(prefix="drlink-slice-a-doc-")
+        _server_root(server)
+        self._assert_scopes(server)
+
+    def test_scopes_execute_on_agent_host(self):
+        agent = tempfile.mkdtemp(prefix="drlink-slice-a-agent-")
+        Path(agent, "etc/frp").mkdir(parents=True)
+        Path(agent, "etc/frp/client-state.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "machine_id": "aabbccddeeff00112233445566778899",
+                    "hostname": "agent-1",
+                    "services": {},
+                }
+            ),
+            encoding="utf-8",
+        )
+        Path(agent, "etc/frp/frpc.toml").write_text("[common]\nserver_addr = 127.0.0.1\n", encoding="utf-8")
+        Path(agent, "etc/frp/client-identity.key").write_text("x", encoding="utf-8")
+        self._assert_scopes(agent)
+
+    def test_agent_scopes_are_public_diagnostics(self):
+        tmp = tempfile.mkdtemp(prefix="drlink-slice-a-agent-")
+        state = Path(tmp, "etc/frp")
+        state.mkdir(parents=True)
+        (state / "client-state.json").write_text(
+            json.dumps({"schema_version": 1, "services": []}) + "\n",
+            encoding="utf-8",
+        )
+        for scope in ("control-plane", "runtime", "mcp"):
+            out = io.StringIO()
+            err = io.StringIO()
+            with redirect_stdout(out), redirect_stderr(err):
+                rc = frp_doctor.main(["--root", tmp, "--scope", scope, "--skip-network"])
+            text = out.getvalue() + err.getvalue()
+            self.assertNotIn("Traceback", text)
+            self.assertNotIn("unknown doctor option", text)
+            self.assertNotIn("unrecognized arguments", text)
+            self.assertIn("Scope           : %s" % scope, text)
+            self.assertNotEqual(rc, 2, text)
+
+    def test_shell_unknown_scope_is_not_internal_usage(self):
+        proc = subprocess.run(
+            [
+                "bash",
+                "-c",
+                "source lib/frp-doctor-common.sh; frp_doctor_main not-a-scope",
+            ],
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("unknown diagnostics scope", proc.stderr)
+        self.assertNotIn("Usage: drlink doctor", proc.stderr)
+        self.assertNotIn("unknown doctor option", proc.stderr)
+
+
+class SliceARestorePreflightTests(unittest.TestCase):
+    def test_valid_archive_reaches_confirmation_without_loader_traceback(self):
+        tmp = Path(tempfile.mkdtemp(prefix="drlink-slice-a-restore-"))
+        archive = tmp / "backup.tar.gz"
+        manifest = {
+            "format": "data-relay-link-server-backup",
+            "project_version": "",
+            "role": "server",
+            "created_at": "2026-09-27T00:00:00Z",
+        }
+        with tarfile.open(archive, "w:gz") as tf:
+            payload = tmp / "manifest.json"
+            payload.write_text(json.dumps(manifest), encoding="utf-8")
+            tf.add(payload, arcname="manifest.json")
+        (tmp / "etc/drlink").mkdir(parents=True)
+        (tmp / "etc/drlink/config.json").write_text(
+            json.dumps({"role": "server"}) + "\n",
+            encoding="utf-8",
+        )
+        env = os.environ.copy()
+        env["FRP_DEPLOY_TEST_ROOT"] = str(tmp)
+        env.pop("DRLINK_CONFIRM", None)
+        env.pop("FRP_RESTORE_YES", None)
+        proc = subprocess.run(
+            ["bash", str(ROOT / "tools" / "drlink"), "system", "restore", str(archive)],
+            cwd=str(ROOT),
+            input="n\n",
+            capture_output=True,
+            text=True,
+            check=False,
+            env=env,
+        )
+        combined = proc.stdout + proc.stderr
+        self.assertNotIn("Traceback", combined)
+        self.assertNotIn("AttributeError", combined)
+        self.assertIn("Restore Data Relay Link", proc.stdout)
+        self.assertIn("Cancelled", proc.stdout)
+        self.assertEqual(proc.returncode, 0)
+
+
+if __name__ == "__main__":
+    unittest.main()

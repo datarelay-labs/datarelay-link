@@ -134,6 +134,7 @@ bash ./tests/test-installed-client-update.sh
 ./tests/test-create-zero-touch.sh
 python3 tests/test-bounded-zero-touch.py
 python3 tests/test-configuration-bundle.py
+python3 tests/test-v24-cli-slice-a.py
 ./tests/test-zero-touch-short-command.sh
 ./tests/test-zero-touch-short-url.sh
 python3 tests/test-zero-touch-windows-pin.py

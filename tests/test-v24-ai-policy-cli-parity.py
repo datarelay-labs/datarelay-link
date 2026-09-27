@@ -423,7 +423,17 @@ class AccessPolicyDispatch(unittest.TestCase):
         self.assertEqual(rc, 0, err)
         rc, _out, err = self._run("system", "diff", "configuration", str(path))
         self.assertEqual(rc, 0, err)
-        rc, _out, err = self._run("system", "apply", "configuration", str(path))
+
+        class _YesTty(io.StringIO):
+            def isatty(self):
+                return True
+
+        saved_stdin = sys.stdin
+        sys.stdin = _YesTty("y\n")
+        try:
+            rc, _out, err = self._run("system", "apply", "configuration", str(path))
+        finally:
+            sys.stdin = saved_stdin
         self.assertEqual(rc, 0, err)
         bundle_view = self._view("remote", "bundle-rule")
         for view in (human, ai, bundle_view):

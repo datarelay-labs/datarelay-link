@@ -1341,7 +1341,9 @@ def to_internal(tokens):
     if path == ("show", "access-rule"):
         return ["show", "access-list"] + rest
     if path == ("show", "internet"):
-        return ["show", "egress"] + rest
+        # Product status lives in the control plane. The legacy frp-egress
+        # management command is not installed.
+        return ["show", "internet"] + rest
     if path == ("show", "internet-profiles"):
         return ["show", "egress-profiles"] + rest
     if path == ("show", "internet-profile"):
@@ -1352,8 +1354,9 @@ def to_internal(tokens):
         return ["egress", "recipe", "show"] + rest
 
     if path == ("test", "internet"):
-        # Optional trailing PROTOCOL is remapped in the matcher.
-        return ["explain", "egress"] + rest
+        # Policy + DNS evaluation is a control-plane command. Optional
+        # PROTOCOL is interpreted there, not by the removed frp-egress tool.
+        return ["test", "internet"] + rest
     if path == ("test", "fixed-tcp"):
         return ["egress", "tcp", "explain"] + rest
     if path == ("test", "acl"):

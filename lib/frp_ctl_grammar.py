@@ -62,6 +62,7 @@ CONTROL_PLANE_SHOW = frozenset(
         "enrollment",
         "remote-access",
         "internet-access",
+        "internet",
         "ai-identities",
         "ai-identity",
         "ai-access",
@@ -116,7 +117,9 @@ CONTROL_PLANE_MUTATE = frozenset(
         "fixed-tcp",
     }
 )
-CONTROL_PLANE_TEST = frozenset({"remote-access", "internet-access", "ai-access", "configuration"})
+CONTROL_PLANE_TEST = frozenset(
+    {"remote-access", "internet-access", "internet", "ai-access", "configuration"}
+)
 CONTROL_PLANE_SYSTEM = frozenset(
     {
         "backup",
@@ -2443,7 +2446,6 @@ def _match_show(tokens, role, names=None):
         "acl": "access-list",
         "access-rules": "access-lists",
         "access-rule": "access-list",
-        "internet": "egress",
         "internet-profiles": "egress-profiles",
         "internet-profile": "egress-profile",
         "internet-templates": "egress-recipes",

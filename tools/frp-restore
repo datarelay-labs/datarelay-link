@@ -432,7 +432,12 @@ def _load_module(name, filename):
             if lib_dir not in sys.path:
                 sys.path.insert(0, lib_dir)
             spec = importlib.util.spec_from_file_location(name, str(path))
+            # A missing or extensionless candidate must not raise AttributeError
+            # on spec.loader before restore reaches its confirmation gate.
+            if spec is None or spec.loader is None:
+                continue
             module = importlib.util.module_from_spec(spec)
+            sys.modules[spec.name] = module
             spec.loader.exec_module(module)
             return module
     return None
@@ -493,7 +498,10 @@ def _load_allocator_validator():
             if installed not in sys.path:
                 sys.path.insert(0, installed)
             spec = importlib.util.spec_from_file_location("frp_port_allocator", str(path))
+            if spec is None or spec.loader is None:
+                continue
             module = importlib.util.module_from_spec(spec)
+            sys.modules[spec.name] = module
             spec.loader.exec_module(module)
             return module
     return None
