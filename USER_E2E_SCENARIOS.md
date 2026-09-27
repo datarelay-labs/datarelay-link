@@ -20,6 +20,8 @@ A user instruction equivalent to any of the following is sufficient to start the
 GitHub의 USER_E2E_SCENARIOS.md 수행해
 USER_E2E_SCENARIOS.md 실행해
 DRLink Full User E2E 시작
+사용자 E2E 시작해
+사용자 e2e 시작해
 ~~~
 
 When invoked this way, the executor must not ask the user to restate this document, copy scenarios into the chat, provide a separate run plan, or manually select hosts unless a fact cannot be discovered from the repository or test environment.
@@ -423,6 +425,18 @@ Cursor may implement fixes only after the run is consolidated and the engineerin
 ## 3. Three-pass test model
 
 Every applicable product workflow is tested in three passes.
+
+The PASS labels are **evidence dimensions, not global serialization barriers**. PASS 1, PASS 2, and PASS 3 do not require the entire preceding pass to finish before later-pass work starts. As soon as a lane has its own prerequisites, start it even if other PASS 1/2/3 lanes are still running.
+
+~~~text
+PASS_LABELS_ARE_GLOBAL_BARRIERS=NO
+PASS_1_MUST_FINISH_BEFORE_PASS_2=NO
+PASS_2_MUST_FINISH_BEFORE_PASS_3=NO
+START_ANY_READY_PASS_LANE_IMMEDIATELY=YES
+PARALLELIZE_ACROSS_PASS_DIMENSIONS_WHERE_INDEPENDENT=YES
+~~~
+
+Examples: once one Remote Service has a usable data path, its performance lane may begin while unrelated Direct CLI functional scenarios continue on other hosts; AI-assisted workflows may begin on already-qualified resources while other Direct CLI lanes are still executing.
 
 ### PASS 1 — Direct CLI operation
 
