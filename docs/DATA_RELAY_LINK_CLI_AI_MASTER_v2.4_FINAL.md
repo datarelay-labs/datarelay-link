@@ -2372,6 +2372,9 @@ show managed-host <HOST> agent
 show managed-host <HOST> addresses
 show managed-host <HOST> remote-services
 
+show groups
+show group <GROUP>
+
 show enrollments
 show enrollment <ENROLLMENT>
 
@@ -2424,6 +2427,9 @@ set enrollment zero-touch
 set enrollment manual
 set enrollment bulk
 
+set group <GROUP>
+set managed-host <HOST> group <GROUP>
+
 set network-object <OBJECT>
 set network-group <GROUP>
 
@@ -2450,12 +2456,16 @@ set ai-access disabled
 
 Human invocation enters Guided Create/Edit unless a complete one-shot form is supplied.
 
+A **Managed Host Group** is an inventory grouping for registered Managed Hosts and is not a **Network Group**. Network Groups are policy selectors built from Network Objects. Managed Host Group membership changes do not retire a host, alter Remote Services, reallocate public ports, or mutate Network Group policy state.
+
 ---
 
 ## 49.3 Unset
 
 ```text
 unset managed-host <HOST>
+unset managed-host <HOST> group <GROUP>
+unset group <GROUP>
 unset enrollment <ENROLLMENT>
 
 unset network-object <OBJECT>
@@ -2478,6 +2488,8 @@ unset permission-group <GROUP>
 unset ai-access <RULE>
 unset ai-access policy
 ```
+
+Bare `unset managed-host <HOST>` remains the reference-safe Managed Host retirement operation. `unset managed-host <HOST> group <GROUP>` removes only inventory membership. `unset group <GROUP>` requires interactive y/N confirmation and does not expose a public `--yes` bypass.
 
 ---
 

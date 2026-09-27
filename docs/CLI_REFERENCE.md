@@ -58,6 +58,9 @@ show managed-host <HOST> agent
 show managed-host <HOST> addresses
 show managed-host <HOST> remote-services
 
+show groups
+show group <GROUP>
+
 show enrollments
 show enrollment <ENROLLMENT>
 
@@ -104,6 +107,9 @@ show ai-access-log permission <PERMISSION>
 set enrollment zero-touch
 set enrollment manual
 set enrollment bulk
+
+set group <GROUP>
+set managed-host <HOST> group <GROUP>
 
 set network-object <OBJECT>
 set network-group <GROUP>
@@ -221,6 +227,8 @@ There is no public rule-order command and no per-rule `allow|deny` action field.
 
 ```text
 unset managed-host <HOST>
+unset managed-host <HOST> group <GROUP>
+unset group <GROUP>
 unset enrollment <ENROLLMENT>
 
 unset network-object <OBJECT>
@@ -245,6 +253,8 @@ unset ai-access policy
 ```
 
 Referenced Objects/Groups/Identities/Managed Hosts are protected from deletion until references are removed.
+
+A **Managed Host Group** is an inventory grouping of registered Managed Hosts. It is distinct from a **Network Group**, which is a reusable policy selector made from Network Objects. Adding or removing Managed Host Group membership does not retire the Managed Host, change Remote Services, reallocate public ports, or create/change a Network Group. Bare `unset managed-host <HOST>` remains the reference-safe Managed Host retirement operation. `unset group <GROUP>` requires interactive y/N confirmation; public `--yes` is not supported.
 
 ## 7. Policy test commands
 

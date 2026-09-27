@@ -123,7 +123,7 @@ if "$GSET" delete seoul </dev/null >"$WORKDIR/del-noninteractive.out" \
   echo "FAIL: non-interactive group delete without --yes succeeded" >&2
   exit 1
 fi
-grep -q -- '--yes' "$WORKDIR/del-noninteractive.err"
+grep -qi 'internal automation\|confirm' "$WORKDIR/del-noninteractive.err"
 group_exists seoul
 
 # Interactive default (empty answer) and explicit N both abort.
@@ -133,7 +133,7 @@ for answer in '' 'n'; do
     echo "FAIL: interactive group delete answered '$answer' deleted the group" >&2
     exit 1
   fi
-  grep -q 'Delete group "seoul" from 1 clients? \[y/N\]' "$WORKDIR/del-abort.out"
+  grep -q 'Delete Managed Host Group "seoul" from 1 Managed Host(s)? \[y/N\]' "$WORKDIR/del-abort.out"
   grep -qi 'services' "$WORKDIR/del-abort.out"
   grep -qi 'abort' "$WORKDIR/del-abort.out"
   group_exists seoul
@@ -141,7 +141,7 @@ done
 
 # Interactive y deletes; services and identity stay untouched.
 python3 "$WORKDIR/pty-answer.py" 'y' "$GSET" delete seoul >"$WORKDIR/del-yes.out" 2>&1
-grep -q 'Delete group "seoul" from 1 clients? \[y/N\]' "$WORKDIR/del-yes.out"
+grep -q 'Delete Managed Host Group "seoul" from 1 Managed Host(s)? \[y/N\]' "$WORKDIR/del-yes.out"
 grep -q 'Deleted group' "$WORKDIR/del-yes.out"
 ! group_exists seoul
 python3 - "$REG" <<'PY'
@@ -245,12 +245,35 @@ cp "$WORKDIR/good" "$REG"
 "$CTL" set group safe-group description 'literal $HOME `id` ; text'
 "$CTL" rename group safe-group safer-group
 "$CTL" set group safer-group description 'new description'
-"$CTL" add client cccccccc group safer-group
-"$CTL" remove client cccccccc group safer-group
+"$CTL" set managed-host cccccccc group safer-group
+"$CTL" unset managed-host cccccccc group safer-group
+"$CTL" system audit managed-host cccccccc >"$WORKDIR/audit-managed-host.out"
+grep -q 'group.member_added' "$WORKDIR/audit-managed-host.out"
+grep -q 'group.member_removed' "$WORKDIR/audit-managed-host.out"
+set +e
+"$CTL" system audit unknown-filter value >"$WORKDIR/audit-invalid.out" 2>&1
+audit_invalid_rc=$?
+set -e
+[[ "$audit_invalid_rc" -ne 0 ]] || { echo "FAIL: unknown audit filter must fail" >&2; exit 1; }
+grep -q 'system audit managed-host <HOST>' "$WORKDIR/audit-invalid.out"
+! grep -q 'system audit client <CLIENT>' "$WORKDIR/audit-invalid.out"
+# Bare Managed Host unset remains retirement, while the group form is membership-only.
+python3 - "$ROOT/lib/frp_ctl_grammar.py" <<'PY'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location('grammar_membership', sys.argv[1])
+g = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(g)
+added = g.match(['set', 'managed-host', 'cccccccc', 'group', 'safer-group'], 'server', names=['cccccccc'])
+removed = g.match(['unset', 'managed-host', 'cccccccc', 'group', 'safer-group'], 'server', names=['cccccccc'])
+retire = g.match(['unset', 'managed-host', 'cccccccc'], 'server', names=['cccccccc'])
+assert added.get('action') == 'add_group_member', added
+assert removed.get('action') == 'remove_group_member', removed
+assert retire.get('action') == 'control_plane', retire
+PY
 # Product-owned confirmation (no public --yes).
 export FRP_CTL_TEST_INPUT=$'y\n'
 set +e
-"$CTL" delete group safer-group >"$WORKDIR/del-cli.out" 2>&1
+"$CTL" unset group safer-group >"$WORKDIR/del-cli.out" 2>&1
 del_rc=$?
 set -e
 unset FRP_CTL_TEST_INPUT
@@ -295,13 +318,17 @@ roots = g.completion_candidates('', 'server', [], {}, [], groups=groups)
 assert 'group' not in roots
 assert 'show' in roots and 'set' in roots and 'unset' in roots
 assert 'groups' in g.completion_candidates('show ', 'server', [], {}, [], groups=groups)
-assert 'groups' in g.completion_candidates('show client aaaaaaaa ', 'server', ['aaaaaaaa'], {}, [], groups=groups)
 assert 'group' in g.completion_candidates(
-    'set client aaaaaaaa ', 'server', ['aaaaaaaa'], {}, [], groups=groups
+    'set managed-host aaaaaaaa ', 'server', ['aaaaaaaa'], {}, [], groups=groups
 )
-# Compatibility membership path still completes group IDs.
 assert 'grp_11111111' in g.completion_candidates(
-    'add client aaaaaaaa group ', 'server', ['aaaaaaaa'], {}, [], groups=groups
+    'set managed-host aaaaaaaa group ', 'server', ['aaaaaaaa'], {}, [], groups=groups
+)
+assert 'group' in g.completion_candidates(
+    'unset managed-host aaaaaaaa ', 'server', ['aaaaaaaa'], {}, [], groups=groups
+)
+assert 'grp_11111111' in g.completion_candidates(
+    'unset managed-host aaaaaaaa group ', 'server', ['aaaaaaaa'], {}, [], groups=groups
 )
 assert g.completion_candidates('group ', 'server', [], {}, [], groups=groups) == []
 assert 'group' not in g.canonical_verbs('server')

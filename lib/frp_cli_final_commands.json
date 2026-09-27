@@ -170,8 +170,8 @@
     ],
     "roles": "server",
     "category": "Inventory",
-    "summary": "List client groups",
-    "detail": "",
+    "summary": "List Managed Host Groups",
+    "detail": "List server-owned Managed Host Groups and their Managed Host membership counts.",
     "examples": [
       "show groups"
     ],
@@ -198,8 +198,8 @@
     ],
     "roles": "server",
     "category": "Inventory",
-    "summary": "Show one group and its members",
-    "detail": "",
+    "summary": "Show one Managed Host Group and its members",
+    "detail": "Show one Managed Host Group, its immutable group ID, description, and Managed Host membership count.",
     "examples": [
       "show group edge"
     ],
@@ -293,7 +293,7 @@
     "roles": "server",
     "category": "Policy",
     "summary": "Show recent authorization decisions",
-    "detail": "Requires a client and service. Guided menu: Recent access decisions \u2192 select client \u2192 select service.",
+    "detail": "Requires a client and service. Guided menu: Recent access decisions → select client → select service.",
     "examples": [
       "show access-log dp1 ssh"
     ],
@@ -454,8 +454,8 @@
     ],
     "roles": "server",
     "category": "Inventory",
-    "summary": "Create a group or change group name/description",
-    "detail": "Group IDs are immutable ('grp_' plus eight hex digits). Names and descriptions are mutable.",
+    "summary": "Create or update a Managed Host Group",
+    "detail": "Group IDs are immutable ('grp_' plus eight hex digits). Names and descriptions are mutable. Manage membership with 'set managed-host <HOST> group <GROUP>'.",
     "examples": [
       "set group edge",
       "set group edge name edge-sites"
@@ -1243,7 +1243,7 @@
     "roles": "server",
     "category": "Inventory",
     "summary": "Remove client metadata, trust, a service reservation, group membership, or the client",
-    "detail": "unset client <CLIENT-ID> trust\n  Block management trust / credential use.\n  Identity/trust: management blocked\n  Public ports: reserved (kept)\n  Confirmation follows revoke semantics\n\nunset client <CLIENT-ID> service <SERVICE-ID>\n  Release one published service reservation only.\n  Client identity: kept\n  Selected service port: released\n  Confirmation: type RELEASE\n\nunset client <CLIENT-ID>\n  Remove the client record/management identity and release ALL service ports.\n  WHAT WILL BE REMOVED\n    client registry record\n    management identity\n    ALL service reservations\n    ALL public ports\n  WHAT WILL NOT HAPPEN\n    no remote host deletion\n    no local software uninstall\n  Confirmation: type RELEASE\n\nDo not use unset client <CLIENT> <SERVICE> \u2014 require the explicit 'service' keyword.\nMetadata forms: unset client <CLIENT> label|note|tag \u2026\nGroup membership: unset client <CLIENT> group <GROUP>",
+    "detail": "unset client <CLIENT-ID> trust\n  Block management trust / credential use.\n  Identity/trust: management blocked\n  Public ports: reserved (kept)\n  Confirmation follows revoke semantics\n\nunset client <CLIENT-ID> service <SERVICE-ID>\n  Release one published service reservation only.\n  Client identity: kept\n  Selected service port: released\n  Confirmation: type RELEASE\n\nunset client <CLIENT-ID>\n  Remove the client record/management identity and release ALL service ports.\n  WHAT WILL BE REMOVED\n    client registry record\n    management identity\n    ALL service reservations\n    ALL public ports\n  WHAT WILL NOT HAPPEN\n    no remote host deletion\n    no local software uninstall\n  Confirmation: type RELEASE\n\nDo not use unset client <CLIENT> <SERVICE> — require the explicit 'service' keyword.\nMetadata forms: unset client <CLIENT> label|note|tag …\nGroup membership: unset client <CLIENT> group <GROUP>",
     "examples": [
       "unset client 24cd7856 label",
       "unset client 24cd7856 trust",
@@ -1315,8 +1315,8 @@
     ],
     "roles": "server",
     "category": "Inventory",
-    "summary": "Delete a group",
-    "detail": "Removes membership references. Client identity, services, and ports are unchanged. Requires interactive confirmation or confirmation.",
+    "summary": "Delete a Managed Host Group",
+    "detail": "Delete a Managed Host Group after interactive y/N confirmation. Membership references are removed; Managed Host identity, Remote Services, and public ports are unchanged. Managed Host Groups are inventory groupings and are distinct from Network Groups used by policy selectors.",
     "examples": [
       "unset group edge"
     ],
@@ -1327,7 +1327,7 @@
         "required": true
       }
     ],
-    "tail": "flags",
+    "tail": null,
     "internal": [
       "delete",
       "group"
@@ -1345,22 +1345,9 @@
     "destructive": true,
     "hidden": false,
     "risk": "irreversible",
-    "confirmation": "yes_flag",
+    "confirmation": "y_n",
     "surface": "",
-    "flags": [
-      {
-        "name": "--yes",
-        "arity": 0,
-        "choices": [],
-        "hidden": true,
-        "required": false,
-        "description": "Confirm without an interactive prompt (automation)",
-        "metavar": "",
-        "examples": [],
-        "effect": "Skips y/N confirmation when the backend requires it",
-        "risk": "security_widening"
-      }
-    ]
+    "flags": []
   },
   {
     "path": [
@@ -2164,11 +2151,11 @@
     "roles": "server",
     "category": "System",
     "summary": "Show recent Data Relay Link audit events",
-    "detail": "Default output is a concise human-readable table of recent events. Lightweight filters: last <N>, client <CLIENT>, event <EVENT>.",
+    "detail": "Default output is a concise human-readable table of recent events. Lightweight filters: last <N>, managed-host <HOST>, event <EVENT>.",
     "examples": [
       "system audit",
       "system audit last 20",
-      "system audit client dp1",
+      "system audit managed-host ubuntu-prod",
       "system audit event backup.created"
     ],
     "args": [],
@@ -4865,6 +4852,47 @@
   },
   {
     "path": [
+      "set",
+      "managed-host"
+    ],
+    "roles": "server",
+    "category": "Managed Hosts",
+    "summary": "Add a Managed Host to a Managed Host Group",
+    "detail": "Add one existing Managed Host to a Managed Host Group. This changes inventory membership only; it does not create a Network Group, alter policy selectors, remove identity, change Remote Services, or reallocate public ports.",
+    "examples": [
+      "set managed-host ubuntu-prod group edge"
+    ],
+    "args": [
+      {
+        "name": "HOST",
+        "complete": "clients",
+        "required": true
+      },
+      {
+        "name": "group",
+        "complete": [
+          "group"
+        ],
+        "required": true
+      },
+      {
+        "name": "<GROUP>",
+        "complete": "groups",
+        "required": true
+      }
+    ],
+    "tail": null,
+    "internal": null,
+    "aliases": [],
+    "destructive": false,
+    "hidden": false,
+    "risk": "metadata",
+    "confirmation": "none",
+    "surface": "",
+    "flags": []
+  },
+  {
+    "path": [
       "show",
       "managed-hosts"
     ],
@@ -4929,16 +4957,29 @@
     ],
     "roles": "server",
     "category": "Managed Hosts",
-    "summary": "Remove a Managed Host",
-    "detail": "Remove a Managed Host",
+    "summary": "Remove a Managed Host or remove its Managed Host Group membership",
+    "detail": "Bare unset managed-host <HOST> performs reference-safe Managed Host retirement. unset managed-host <HOST> group <GROUP> removes only that Managed Host Group membership; identity, Remote Services, and public ports are unchanged. Managed Host Groups are distinct from Network Groups.",
     "examples": [
-      "unset managed-host"
+      "unset managed-host ubuntu-prod",
+      "unset managed-host ubuntu-prod group edge"
     ],
     "args": [
       {
         "name": "HOST",
         "complete": "clients",
         "required": true
+      },
+      {
+        "name": "group",
+        "complete": [
+          "group"
+        ],
+        "required": false
+      },
+      {
+        "name": "<GROUP>",
+        "complete": "groups",
+        "required": false
       }
     ],
     "tail": null,

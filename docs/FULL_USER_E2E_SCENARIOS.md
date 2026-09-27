@@ -1185,10 +1185,16 @@ show managed-host <HOST>
 show managed-host <HOST> agent
 show managed-host <HOST> addresses
 show managed-host <HOST> remote-services
+show groups
+show group <GROUP>
+set group <GROUP>
+set managed-host <HOST> group <GROUP>
+unset managed-host <HOST> group <GROUP>
+unset group <GROUP>
 unset managed-host <HOST>
 ~~~
 
-Verify removal is reference-safe and displays impact before destructive cleanup.
+Verify Managed Host Group membership add/remove changes inventory membership only and preserves Managed Host identity, Remote Services, and public ports. Verify a Managed Host Group is not treated as a Network Group. Verify group deletion requires interactive y/N confirmation and does not teach or accept public `--yes`. Finally, verify bare Managed Host removal is reference-safe and displays impact before destructive cleanup.
 
 ## A-002 — Network Objects and Groups — MANDATORY
 
@@ -2492,6 +2498,9 @@ show managed-host <HOST> agent
 show managed-host <HOST> addresses
 show managed-host <HOST> remote-services
 
+show groups
+show group <GROUP>
+
 show enrollments
 show enrollment <ENROLLMENT>
 
@@ -2542,6 +2551,9 @@ set enrollment zero-touch
 set enrollment manual
 set enrollment bulk
 
+set group <GROUP>
+set managed-host <HOST> group <GROUP>
+
 set network-object <OBJECT>
 set network-group <GROUP>
 
@@ -2570,6 +2582,8 @@ set ai-access disabled
 
 ~~~text
 unset managed-host <HOST>
+unset managed-host <HOST> group <GROUP>
+unset group <GROUP>
 unset enrollment <ENROLLMENT>
 
 unset network-object <OBJECT>

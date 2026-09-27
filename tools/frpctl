@@ -3250,7 +3250,7 @@ PY
 
 frpctl_audit_tail() {
   # Default: human-readable recent events. Optional lightweight filters:
-  # last <N> | client <CLIENT> | event <EVENT>
+  # last <N> | managed-host <HOST> | event <EVENT>
   # Raw JSONL remains on disk; --json is an advanced escape hatch only.
   local root="${FRP_DEPLOY_TEST_ROOT:-${FRP_CTL_TEST_ROOT:-}}"
   python3 - "$root" "$@" <<'PY'
@@ -3285,7 +3285,8 @@ while i < len(args):
             raise SystemExit(2)
         i += 2
         continue
-    if tok == "client" and i + 1 < len(args):
+    if tok in ("managed-host", "client") and i + 1 < len(args):
+        # "client" is hidden compatibility only; public help teaches Managed Host.
         client_filter = str(args[i + 1]).strip().lower()
         i += 2
         continue
@@ -3296,7 +3297,7 @@ while i < len(args):
     print("ERROR: unsupported audit filter %r." % tok, file=sys.stderr)
     print(
         "Use: system audit | system audit last <N> | "
-        "system audit client <CLIENT> | system audit event <EVENT>",
+        "system audit managed-host <HOST> | system audit event <EVENT>",
         file=sys.stderr,
     )
     raise SystemExit(2)
@@ -4138,30 +4139,21 @@ frpctl_dispatch_canonical() {
       frpctl_require_server || return 1
       _del_group="$(frpctl_json_get "$result" group)"
       frpctl_load_passthrough "$result"
-      # Product-owned confirmation. Public --yes (when present) skips the prompt;
-      # backend still receives --yes only after confirmation here.
+      # Product-owned confirmation. Public group deletion is interactive only;
+      # backend --yes is internal and is used only after this public y/N gate.
       _del_ans=""
-      _del_yes=0
-      for _pt in "${_frpctl_pt[@]+"${_frpctl_pt[@]}"}"; do
-        [[ "$_pt" == "--yes" ]] && _del_yes=1
-      done
-      if [[ "$_del_yes" == "1" ]]; then
-        _del_ans="y"
-      elif [[ -n "${FRP_CTL_TEST_INPUT:-}" || -t 0 ]]; then
+      if [[ -n "${FRP_CTL_TEST_INPUT:-}" || -t 0 ]]; then
         echo
-        echo "Delete group \"${_del_group}\"?"
-        echo "Group membership is removed. Client identity, services, and ports"
+        echo "Delete Managed Host Group \"${_del_group}\"?"
+        echo "Group membership is removed. Managed Host identity, Remote Services, and public ports"
         echo "are not changed."
-        _del_ans="$(frpctl_read "Delete group? [y/N]: " "N")" || {
+        _del_ans="$(frpctl_read "Delete Managed Host Group? [y/N]: " "N")" || {
           _FRP_CTL_RC=1
           return 0
         }
-      elif IFS= read -r _del_ans; then
-        :
       else
-        echo "ERROR: deleting a group requires confirmation." >&2
-        echo "Run interactively, or pass --yes:" >&2
-        echo "  unset group ${_del_group} --yes" >&2
+        echo "ERROR: deleting a Managed Host Group requires interactive confirmation." >&2
+        echo "Run this command interactively and answer y/N." >&2
         _FRP_CTL_RC=1
         return 0
       fi

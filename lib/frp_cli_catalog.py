@@ -1118,6 +1118,16 @@ def to_internal(tokens):
         return list(work)
 
     # --- Merged final-grammar specials (preserve distinct safety semantics) ---
+    if path == ("set", "managed-host"):
+        if len(rest) >= 3 and rest[1] == "group":
+            return ["add", "client", rest[0], "group", rest[2]] + rest[3:]
+        return list(work)
+
+    if path == ("unset", "managed-host"):
+        if len(rest) >= 3 and rest[1] == "group":
+            return ["remove", "client", rest[0], "group", rest[2]] + rest[3:]
+        return list(work)
+
     if path == ("set", "client"):
         if not rest:
             return ["create", "zero-touch"]
