@@ -281,9 +281,11 @@ Target matrix:
 MCP_SPEC_VERSION=2026-07-28
 OFFICIAL_SPEC_SOURCE=https://modelcontextprotocol.io/specification/2026-07-28/
 REFERENCE_SDK=Python mcp 2.2.0 Streamable HTTP
-ChatGPT=not claimed (no custom MCP developer surface in this environment)
-Claude=not claimed (no remote custom connector UI/account in this environment)
-Cursor=not claimed (this Cursor agent session has no remote HTTP MCP namespace; live host is Direct mode without a Data Relay Link 443 /mcp frontend)
+ChatGPT Plus=REQUIRED_REAL_USER_ACCEPTANCE (interactive OAuth Authorization Code / consent through owner UI)
+ChatGPT Plus current status=BLOCKED_PENDING_OWNER_UI_AUTH
+Machine-side OAuth/MCP qualification=REQUIRED_BUT_NOT_SUFFICIENT for the ChatGPT Plus user-auth gate
+Claude=not claimed unless separately qualified with real host/account evidence
+Cursor=not claimed unless separately qualified with real remote MCP host evidence
 Official SDK E2E=PASS (HTTPS /mcp through product frontend in tests)
 ```
 
@@ -301,6 +303,11 @@ expired credential denied where applicable
 disabled AI Identity denied
 AI Identity attribution stable
 authenticated transport required
+real ChatGPT Plus owner/UI OAuth authentication and consent succeeds
+ChatGPT tool discovery succeeds after authentication
+one authorized ChatGPT operation succeeds
+one intentionally out-of-scope ChatGPT operation is denied
+machine-side protocol success alone does not satisfy the owner/UI gate
 ```
 
 ## 17. MCP authorization tests
