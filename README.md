@@ -26,7 +26,7 @@
 
 ---
 
-> **User E2E qualification:** [docs/FULL_USER_E2E_SCENARIOS.md](docs/FULL_USER_E2E_SCENARIOS.md) — canonical FULL_USER_E2E execution matrix (role, security, and performance scenarios) plus the v2.4 operator manual runbook.
+> **User E2E:** [docs/FULL_USER_E2E_SCENARIOS.md](docs/FULL_USER_E2E_SCENARIOS.md) — canonical functional FULL_USER_E2E execution contract for real role-based operation, failure/recovery, AI-assisted parity, and performance/concurrency. On `dev-drlink`, resolve the active repository through `/home/aella/datarelay-link-current` rather than the shell's initial working directory.
 
 > **License — Source Available:** Data Relay Link is free for personal use and for an organization's own internal commercial operations. Internal source modifications are allowed. Resale, commercial redistribution, OEM/white-label use, competing or derivative commercial products, and SaaS/hosted/managed-service offerings require a separate written commercial license. See [LICENSE](LICENSE) and [LICENSING.md](LICENSING.md).
 

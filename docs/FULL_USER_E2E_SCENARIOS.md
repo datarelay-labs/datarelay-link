@@ -3527,6 +3527,8 @@ FINAL_AUDITOR=ChatGPT
 CURSOR_EXECUTED_USER_E2E=NO
 FINAL_STATUS=PASS|PARTIAL|FAIL
 
+ACTIVE_WORKTREE=
+WORKTREE_RESOLUTION=PASS|FAIL
 TEST_CONTRACT_HEAD=
 PRE_RUN_CLEAN_STATE=PASS|FAIL
 ALL_REACHABLE_ASSIGNED_HOSTS_CLEAN=PASS|FAIL
@@ -3669,11 +3671,14 @@ If an external prerequisite cannot be discovered or safely satisfied automatical
 
 # Appendix B — deterministic trigger lookup
 
-The canonical file name is deliberately stable:
+The canonical file name is deliberately stable. On `dev-drlink`, the machine-level active-worktree pointer is also stable:
 
 ~~~text
-docs/FULL_USER_E2E_SCENARIOS.md
+ACTIVE_WORKTREE_POINTER=/home/aella/datarelay-link-current
+CANONICAL_CONTRACT=/home/aella/datarelay-link-current/docs/FULL_USER_E2E_SCENARIOS.md
 ~~~
+
+The process's initial current working directory is not authoritative. In particular, `/home/aella/datarelay-link-dev` is the historical Git main worktree and may intentionally remain on an older branch. Its branch/HEAD must not be used to decide whether FULL_USER_E2E can start.
 
 Treat these as direct execution triggers, case-insensitively and with equivalent Korean/English wording:
 
@@ -3691,24 +3696,25 @@ full user e2e 수행해
 On a trigger, the minimum startup sequence is:
 
 ~~~text
-1. Open docs/FULL_USER_E2E_SCENARIOS.md as the execution contract; all embedded command examples and section 14 are auditor expectations only and are not used as the acting user's memorized command script.
-2. Capture current candidate/build identity without code review.
-3. Read the development host's ~/.ssh/config and apply the section 5.1 canonical SSH port rules.
-4. Probe configured hosts in parallel.
-5. Classify every reachable configured host, assign every suitable host an intended Server/Agent/Relay/client/target/load-generator/recovery role, and record any unused reachable host with a concrete reason.
-6. Execute the section 5.3 clean-room gate on every assigned host: inventory old state, use supported product uninstall for fresh lanes, stop previous E2E/load runtimes, remove disposable old artifacts and stale/broken product service-unit links, verify product listeners/state are gone, verify the source/worktree is clean, and explicitly record preserved management-access infrastructure.
-7. Do not start product discovery or create PASS-eligible state until ALL_REACHABLE_ASSIGNED_HOSTS_CLEAN=PASS. Then create the new RUN_ID/current-run test state.
-8. On every freshly installed/assigned Server/Agent role, start public command discovery in parallel with drlink, ?, help, help commands, menu, Tab and visible wizard/error guidance.
-9. Build the runtime command/variant ledger and map discovered capabilities to realistic use-case lanes; section 14 is auditor-only omission detection.
-10. Before each lane, assign ChatGPT an explicit End User, Agent Operator, DRLink Administrator, Incident Responder, or Platform Maintainer persona plus a production-style mission; create RUN_ID-scoped namespaced resources and immediately start every independent use-case lane whose prerequisites are discovered.
-11. Run Direct CLI, guided/TTY, adversarial, multi-platform enrollment, real-traffic, AI-assisted mirror and performance lanes concurrently at maximum safe real-host utilization; progressively ramp performance toward the selected target or practical saturation boundary.
-12. Behave like a real operator: pursue the mission, follow product output/next actions, copy/paste generated commands, make realistic mistakes, recover only from user-visible guidance, and continuously record terminology/clarity/cross-surface inconsistencies.
-13. Continue discovery and use-case execution together until no discovered/oracle command or behavior-changing public variant lacks disposition.
-14. Execute each applicable use case again through AI assistance from the same goal and equivalent namespaced starting state.
-15. If one lane is blocked by tooling/environment, record only that lane as BLOCKED_TOOLING/BLOCKED_ENVIRONMENT and continue every independent lane immediately.
-16. Do not inspect product source, test source, internal DB/state, or harness implementation during active discovery.
-17. Run mixed function-under-load, policy-mutation, restart/reconnect, outage, race and all-host scenarios, then execute P-023 maximum-topology mixed stress with multiple load generators where available and verify post-saturation recovery.
-18. Finish command/use-case/AI-mirror disposition, cleanup and reporting; only then begin implementation/harness diagnosis and batch engineering findings.
+1. Resolve `/home/aella/datarelay-link-current` and immediately use that directory as the active Data Relay Link worktree. If it contains `AGENTS.md`, `.engineering/project.yaml`, and `docs/FULL_USER_E2E_SCENARIOS.md`, record `WORKTREE_RESOLUTION=PASS` and continue. Do not inspect the initial cwd's branch, compare historical worktrees, fetch GitHub, or compare a GitHub copy of this document merely to decide where to start.
+2. Open `/home/aella/datarelay-link-current/docs/FULL_USER_E2E_SCENARIOS.md` as the execution contract; all embedded command examples and section 14 are auditor expectations only and are not used as the acting user's memorized command script.
+3. Capture current candidate/build identity without code review. The active worktree's test-contract HEAD and the installed candidate/build identity may differ and must be recorded separately; that difference is not a reason to search for another worktree.
+4. Read the development host's ~/.ssh/config and apply the section 5.1 canonical SSH port rules.
+5. Probe configured hosts in parallel.
+6. Classify every reachable configured host, assign every suitable host an intended Server/Agent/Relay/client/target/load-generator/recovery role, and record any unused reachable host with a concrete reason.
+7. Execute the section 5.3 clean-room gate on every assigned host: inventory old state, use supported product uninstall for fresh lanes, stop previous E2E/load runtimes, remove disposable old artifacts and stale/broken product service-unit links, verify product listeners/state are gone, verify the source/worktree is clean, and explicitly record preserved management-access infrastructure.
+8. Do not start product discovery or create PASS-eligible state until ALL_REACHABLE_ASSIGNED_HOSTS_CLEAN=PASS. Then create the new RUN_ID/current-run test state.
+9. On every freshly installed/assigned Server/Agent role, start public command discovery in parallel with drlink, ?, help, help commands, menu, Tab and visible wizard/error guidance.
+10. Build the runtime command/variant ledger and map discovered capabilities to realistic use-case lanes; section 14 is auditor-only omission detection.
+11. Before each lane, assign ChatGPT an explicit End User, Agent Operator, DRLink Administrator, Incident Responder, or Platform Maintainer persona plus a production-style mission; create RUN_ID-scoped namespaced resources and immediately start every independent use-case lane whose prerequisites are discovered.
+12. Run Direct CLI, guided/TTY, adversarial, multi-platform enrollment, real-traffic, AI-assisted mirror and performance lanes concurrently at maximum practical real-host utilization; progressively ramp performance toward the selected target or practical saturation boundary.
+13. Behave like a real operator: pursue the mission, follow product output/next actions, copy/paste generated commands, make realistic mistakes, recover only from user-visible guidance, and continuously record terminology/clarity/cross-surface inconsistencies.
+14. Continue discovery and use-case execution together until no discovered/oracle command or behavior-changing public variant lacks disposition.
+15. Execute each applicable use case again through AI assistance from the same goal and equivalent namespaced starting state.
+16. If one lane is blocked by tooling/environment, record only that lane as BLOCKED_TOOLING/BLOCKED_ENVIRONMENT and continue every independent lane immediately.
+17. Do not inspect product source, test source, internal DB/state, or harness implementation during active discovery.
+18. Run mixed function-under-load, policy-mutation, restart/reconnect, outage, race and all-host scenarios, then execute P-023 maximum-topology mixed stress with multiple load generators where available and verify post-saturation recovery.
+19. Finish command/use-case/AI-mirror disposition, cleanup and reporting; only then begin implementation/harness diagnosis and batch engineering findings.
 ~~~
 
 No additional planning document, old audit document, historical evidence review, Cursor run, or human host-selection step is a prerequisite.
