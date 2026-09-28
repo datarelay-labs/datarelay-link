@@ -323,7 +323,9 @@ A display name alone is never authentication.
 
 Authentication and AI Access authorization are separate.
 
-If an MCP or other remote automation adapter is part of a qualified build, it is an integration layer over this identity and permission model; it does not introduce a separate public `AI Principal` model.
+For the v2.4.0 target, the server-side MCP Bridge is included as part of AI Access. MCP is an integration layer over this identity and permission model; it does not introduce a separate public `AI Principal` model.
+
+Stable v2.4.0 qualification is blocked until real ChatGPT Plus interactive user authentication is proven end to end. The required owner/UI evidence is: OAuth Authorization Code/consent completes through the public MCP endpoint, ChatGPT discovers the exposed tools, one authorized operation succeeds, and one intentionally out-of-scope operation is denied by current AI Access policy. Machine-side SDK/HTTP conformance alone does not satisfy this gate.
 
 ## 16. Human, AI, and ConfigurationBundle convergence
 
