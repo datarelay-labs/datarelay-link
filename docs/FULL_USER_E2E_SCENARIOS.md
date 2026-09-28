@@ -419,6 +419,9 @@ Concurrency contamination is not a product result. Record `INVALIDATED_BY_CONCUR
 A User E2E run is not complete merely because the happy path worked. Before the final result, account for all role scenarios, command inventory rows, AI parity rows, security/failure cases, platform cases, performance cases, and under-load functional cases.
 
 ~~~text
+PRE_RUN_CLEAN_STATE=PASS
+ALL_REACHABLE_ASSIGNED_HOSTS_CLEAN=PASS
+UNEXPLAINED_PRESERVED_STATE=0
 ROLE_SCENARIO_DISPOSITION_COMPLETE=YES
 COMMANDS_WITHOUT_DISPOSITION=0
 DISCOVERED_COMMANDS_WITHOUT_DISPOSITION=0
@@ -690,6 +693,66 @@ ALL_SUITABLE_HOSTS_UTILIZED=PASS|FAIL
 A reachable suitable host left unused without a concrete isolation/platform/safety reason prevents a clean FULL_USER_E2E PASS. `BLOCKED_ENVIRONMENT` is appropriate only for a genuinely unavailable capability/host, not for voluntarily testing a smaller topology.
 
 Performance and concurrency testing must progressively increase utilization from baseline to the maximum practical real topology available in the test environment. The run must include a period where all suitable Agent/client/load/target hosts that can participate safely are active concurrently.
+
+### 5.3 Mandatory pre-run clean-room state gate
+
+Before any FULL_USER_E2E product workflow begins, prepare every assigned test host so results cannot be contaminated by a previous run. **Historical product state, stale test services, cached endpoints, prior enrollment state, leftover load generators, or old temporary artifacts must never be accepted as the starting state of a new Full User E2E.**
+
+The cleanup step happens after host reachability discovery but before fresh Server/Agent installation, enrollment, command-discovery personas, baseline traffic, or performance measurement.
+
+For each reachable assigned host:
+
+1. inventory whether Data Relay Link is installed/running and preserve this only as pre-clean evidence;
+2. when the host is intended for a fresh-install/fresh-enrollment lane, remove the existing Data Relay Link role through the supported public uninstall workflow where available;
+3. verify no prior DRLink Server/Agent/Relay process remains, including product-owned FRP runtime;
+4. stop/disable prior E2E-only load/target services such as iperf listeners, temporary HTTP/HTTPS/TCP targets, transient systemd units, launch agents, scheduled tasks, or Windows services created by an earlier run;
+5. remove only disposable previous-run test artifacts such as RUN_ID-scoped files, `drlink*`/`e2e*`/`fe2e*`/`finale2e*` temporary files, generated test certificates, temporary Bundles, stale PID/log files and test output;
+6. clear stale failed/transient service state where the OS exposes it;
+7. verify prior product-reserved listeners/endpoints are no longer active and no previous Remote Service/load target can answer traffic;
+8. retain SSH access, OS/network configuration, required package dependencies, test accounts, base DNS, and explicit test-management infrastructure needed to reach the hosts. Do not destroy the laboratory itself in the name of cleanup.
+
+Management-access exception: reverse SSH/tunnel services used solely to keep a test host reachable may remain active when they are outside the DRLink product/data path. Record them explicitly as `PRESERVED_TEST_MANAGEMENT_INFRA` so they cannot be mistaken for a DRLink runtime process. For example, the Rocky 9 rescue reverse-SSH service may remain when it is only the management path.
+
+Dedicated upgrade/restore exceptions must still begin from a known state created or freshly staged for **this run**:
+
+- an A-019 prior-stable upgrade host may contain the supported prior stable product only after the general cleanup gate, installed/staged specifically for the current RUN_ID;
+- backup/restore/revision scenarios may restore only state created or intentionally captured by the current run unless the scenario explicitly tests migration of a named historical artifact;
+- no host may inherit an unexplained previous RUN_ID, Managed Host identity, endpoint reservation, policy, enrollment, AI credential, Bundle, certificate, or runtime process.
+
+Required clean-state evidence per host:
+
+~~~text
+HOST=
+OS_PLATFORM=
+PRE_CLEAN_DRLINK_STATE=
+PUBLIC_UNINSTALL_USED=YES|NO|NOT_APPLICABLE
+POST_CLEAN_DRLINK_INSTALLED=YES|NO
+POST_CLEAN_DRLINK_RUNTIME_PROCESSES=
+POST_CLEAN_PRODUCT_FRP_PROCESSES=
+POST_CLEAN_TEST_LOAD_PROCESSES=
+POST_CLEAN_E2E_TARGET_SERVICES=
+POST_CLEAN_TEMP_ARTIFACTS=
+POST_CLEAN_PRODUCT_STATE_PATHS=
+POST_CLEAN_PRODUCT_RESERVED_LISTENERS=
+PRESERVED_TEST_MANAGEMENT_INFRA=
+CLEAN_STATE_RESULT=PASS|FAIL|BLOCKED_ENVIRONMENT
+~~~
+
+Aggregate hard gate before the active User E2E begins:
+
+~~~text
+ALL_REACHABLE_ASSIGNED_HOSTS_CLEAN=PASS
+PREVIOUS_RUN_PRODUCT_STATE=0
+PREVIOUS_RUN_E2E_TARGET_SERVICES=0
+PREVIOUS_RUN_LOAD_PROCESSES=0
+PREVIOUS_RUN_TEMP_ARTIFACTS=0
+UNEXPLAINED_PRODUCT_LISTENERS=0
+UNEXPLAINED_PRESERVED_STATE=0
+~~~
+
+If any assigned host fails this gate, clean/recover that host before using it. Do not silently continue and later interpret inherited state as a product PASS. If cleanup cannot be completed, mark only scenarios depending on that host `BLOCKED_ENVIRONMENT` and continue independent clean hosts.
+
+After this gate passes, create the new RUN_ID and all subsequent product/test state from scratch. Every enrollment, endpoint allocation, Object/Group/Rule, AI identity, certificate/config override, temporary target, load process, Bundle and evidence artifact used for PASS must be attributable to the current RUN_ID or an explicitly documented current-run prerequisite.
 
 ## 6. Common preflight
 
@@ -3681,6 +3744,9 @@ CURSOR_EXECUTED_USER_E2E=NO
 FINAL_STATUS=PASS|PARTIAL|FAIL
 
 TEST_CONTRACT_HEAD=
+PRE_RUN_CLEAN_STATE=PASS|FAIL
+ALL_REACHABLE_ASSIGNED_HOSTS_CLEAN=PASS|FAIL
+PRESERVED_TEST_MANAGEMENT_INFRA=
 SOURCE_HEAD=
 PRODUCT_VERSION=
 RELEASE_CHANNEL=
@@ -3774,6 +3840,7 @@ USER_E2E_REQUEST
 -> ChatGPT is the executor and final auditor; do not delegate User E2E execution to Cursor
 -> locate this canonical document at docs/FULL_USER_E2E_SCENARIOS.md
 -> capture candidate/build identity only; do not perform a pre-run code review
+-> probe all configured test hosts, remove previous-run DRLink state/test services/load processes/temp artifacts, preserve only explicit management access infrastructure, and require the section 5.3 clean-room gate before fresh product activity
 -> execute as a human black-box operator; do not reinterpret the request as release qualification
 -> discover ~/.ssh/config hosts, apply the section 5.1 SSH port mapping, probe availability/roles, assign topology, and start independent lanes immediately
 -> use automated harnesses only as supplemental evidence, never as the User E2E executor
@@ -3844,18 +3911,20 @@ On a trigger, the minimum startup sequence is:
 2. Capture current candidate/build identity without code review.
 3. Read the development host's ~/.ssh/config and apply the section 5.1 canonical SSH port rules.
 4. Probe configured hosts in parallel.
-5. Classify every reachable configured host, assign every suitable host an active Server/Agent/Relay/client/target/load-generator/recovery role, and record any unused reachable host with a concrete reason.
-6. On every available Server/Agent role, start public command discovery in parallel with drlink, ?, help, help commands, menu, Tab and visible wizard/error guidance.
-7. Build the runtime command/variant ledger and map discovered capabilities to realistic use-case lanes; section 14 is auditor-only omission detection.
-8. Before each lane, assign ChatGPT an explicit End User, Agent Operator, DRLink Administrator, Incident Responder, or Platform Maintainer persona plus a production-style mission; then create RUN_ID-scoped namespaced resources and immediately start every independent use-case lane whose prerequisites are discovered.
-9. Run Direct CLI, guided/TTY, adversarial, multi-platform enrollment, real-traffic, AI-assisted mirror and performance lanes concurrently at maximum safe real-host utilization; progressively ramp performance toward the selected target or practical saturation boundary.
-10. Behave like a real operator: pursue the mission, follow product output/next actions, copy/paste generated commands, make realistic mistakes, recover only from user-visible guidance, and continuously record terminology/clarity/cross-surface inconsistencies.
-11. Continue discovery and use-case execution together until no discovered/oracle command or behavior-changing public variant lacks disposition.
-12. Execute each applicable use case again through AI assistance from the same goal and equivalent namespaced starting state.
-13. If one lane is blocked by tooling/environment, record only that lane as BLOCKED_TOOLING/BLOCKED_ENVIRONMENT and continue every independent lane immediately.
-14. Do not inspect product source, test source, internal DB/state, or harness implementation during active discovery.
-15. Run mixed function-under-load, policy-mutation, restart/reconnect, outage, race and all-host scenarios, then execute P-023 maximum-topology mixed stress with multiple load generators where available and verify post-saturation recovery.
-16. Finish command/use-case/AI-mirror disposition, cleanup and reporting; only then begin implementation/harness diagnosis and batch engineering findings.
+5. Classify every reachable configured host, assign every suitable host an intended Server/Agent/Relay/client/target/load-generator/recovery role, and record any unused reachable host with a concrete reason.
+6. Execute the section 5.3 clean-room gate on every assigned host: inventory old state, use supported product uninstall for fresh lanes, stop previous E2E/load runtimes, remove disposable old artifacts, verify product listeners/state are gone, and explicitly record preserved management-access infrastructure.
+7. Do not start product discovery or create PASS-eligible state until ALL_REACHABLE_ASSIGNED_HOSTS_CLEAN=PASS. Then create the new RUN_ID/current-run test state.
+8. On every freshly installed/assigned Server/Agent role, start public command discovery in parallel with drlink, ?, help, help commands, menu, Tab and visible wizard/error guidance.
+9. Build the runtime command/variant ledger and map discovered capabilities to realistic use-case lanes; section 14 is auditor-only omission detection.
+10. Before each lane, assign ChatGPT an explicit End User, Agent Operator, DRLink Administrator, Incident Responder, or Platform Maintainer persona plus a production-style mission; create RUN_ID-scoped namespaced resources and immediately start every independent use-case lane whose prerequisites are discovered.
+11. Run Direct CLI, guided/TTY, adversarial, multi-platform enrollment, real-traffic, AI-assisted mirror and performance lanes concurrently at maximum safe real-host utilization; progressively ramp performance toward the selected target or practical saturation boundary.
+12. Behave like a real operator: pursue the mission, follow product output/next actions, copy/paste generated commands, make realistic mistakes, recover only from user-visible guidance, and continuously record terminology/clarity/cross-surface inconsistencies.
+13. Continue discovery and use-case execution together until no discovered/oracle command or behavior-changing public variant lacks disposition.
+14. Execute each applicable use case again through AI assistance from the same goal and equivalent namespaced starting state.
+15. If one lane is blocked by tooling/environment, record only that lane as BLOCKED_TOOLING/BLOCKED_ENVIRONMENT and continue every independent lane immediately.
+16. Do not inspect product source, test source, internal DB/state, or harness implementation during active discovery.
+17. Run mixed function-under-load, policy-mutation, restart/reconnect, outage, race and all-host scenarios, then execute P-023 maximum-topology mixed stress with multiple load generators where available and verify post-saturation recovery.
+18. Finish command/use-case/AI-mirror disposition, cleanup and reporting; only then begin implementation/harness diagnosis and batch engineering findings.
 ~~~
 
 No additional planning document, old audit document, historical evidence review, Cursor run, or human host-selection step is a prerequisite.
