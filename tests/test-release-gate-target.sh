@@ -126,6 +126,22 @@ if ! grep -q 'PASS1' "$ROOT/tests/run-release-qualification-pass.sh" \
   || ! grep -q 'PASS2' "$ROOT/tests/run-release-qualification-pass.sh"; then
   fail "qualification pass entry does not name both passes"
 fi
+python3 - "$ROOT/tests/run-release-qualification-pass.sh" <<'PY'
+import sys
+from pathlib import Path
+lines = Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()
+pass1 = next(i for i, line in enumerate(lines) if 'run-production-realistic-qualification.sh" PASS1' in line)
+advance = next(i for i, line in enumerate(lines) if "NEXT=PASS2" in line and "printf" in line)
+head_check = next(i for i, line in enumerate(lines) if "PASS1 changed HEAD" in line)
+mv_state = next(i for i, line in enumerate(lines) if 'mv "$state_tmp" "$STATE"' in line)
+if advance <= pass1:
+    raise SystemExit("qualification state advances before PASS1 completes")
+if advance <= head_check:
+    raise SystemExit("qualification state advances before PASS1 HEAD validation")
+if mv_state <= advance:
+    raise SystemExit("qualification state is not atomically installed after write")
+print("PASS PASS1_STATE_ADVANCE_ORDER")
+PY
 python3 - "$ROOT/tests/run-production-realistic-qualification.sh" <<'PY'
 import sys
 from pathlib import Path

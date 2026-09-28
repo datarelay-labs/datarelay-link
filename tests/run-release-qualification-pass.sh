@@ -15,7 +15,9 @@ STATE="$STATE_DIR/state.env"
 mkdir -p "$STATE_DIR"
 
 if [[ ! -f "$STATE" ]]; then
-  printf 'QUALIFIED_HEAD=%s\nNEXT=PASS2\n' "$HEAD" >"$STATE"
+  # Advance to PASS2 only after PASS1 has completed successfully and the
+  # qualified HEAD is still unchanged. A controller/session interruption
+  # during PASS1 must cause the next invocation to rerun PASS1.
   if ! bash "$ROOT/tests/run-production-realistic-qualification.sh" PASS1; then
     rm -f "$STATE"
     exit 1
@@ -26,6 +28,9 @@ if [[ ! -f "$STATE" ]]; then
     rm -f "$STATE"
     exit 1
   fi
+  state_tmp="${STATE}.tmp.$$"
+  printf 'QUALIFIED_HEAD=%s\nNEXT=PASS2\n' "$HEAD" >"$state_tmp"
+  mv "$state_tmp" "$STATE"
   echo "PASS1_HEAD=$HEAD"
   exit 0
 fi
