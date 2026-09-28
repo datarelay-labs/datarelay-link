@@ -276,15 +276,15 @@ artifact names/sizes/SHA256
 qualification evidence for stable
 ```
 
-For the final qualified v2.4.0 artifact:
+For every v2.4.0 candidate whose bytes contain MCP Bridge/AI Access:
 
 ```text
 features.mcp_included=true
 ```
 
-only after MCP Bridge/AI Access are actually present and qualified.
+`features.mcp_included` records artifact content, not release qualification. It remains `true` while the ChatGPT Plus owner/UI user-authentication gate is blocked. Stable release readiness is tracked separately and remains blocked until that gate passes with retained evidence.
 
-Before implementation completes, the development manifest may reflect current code truth rather than future target scope; it must not be used to claim release readiness.
+Before implementation completes, a development manifest may reflect current code truth rather than future target scope; it must not be used to claim release readiness.
 
 ## 13. Governance guardrails
 
@@ -299,7 +299,8 @@ INSTALLER_SOURCE_REF_IMMUTABLE
 RELEASE_MANIFEST_VALID
 HISTORICAL_TAG_IMMUTABILITY
 CONTROL_PLANE_SCHEMA_COMPATIBLE
-MCP_V2_4_INCLUDED_AND_QUALIFIED
+MCP_V2_4_INCLUDED
+CHATGPT_PLUS_USER_AUTH_ACCEPTANCE
 ```
 
 The old `MCP_V2_4_EXCLUSION` guard is retired during the implementation phase, not carried into candidate qualification.

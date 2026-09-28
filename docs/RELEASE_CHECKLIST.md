@@ -378,7 +378,7 @@ Any change resets the pass counter.
 - [ ] artifacts built from `FINAL_QUALIFIED_HEAD`.
 - [ ] artifact SHA256 recorded.
 - [ ] manifest exact source HEAD/ref/FRP version/features correct.
-- [ ] `features.mcp_included=true` for final v2.4.0 candidate only after qualification.
+- [ ] `features.mcp_included=true` whenever the v2.4.0 candidate bytes contain MCP Bridge/AI Access; this flag records feature presence, not qualification status.
 - [ ] no secret/private lab metadata.
 - [ ] final stable artifacts immutable.
 
@@ -436,6 +436,9 @@ REVISION_AUDIT=
 RUNTIME_GENERATION_CONSISTENCY=
 BACKUP_RESTORE=
 MCP_REAL_E2E=
+MCP_INCLUDED_IN_V2_4_0=YES
+CHATGPT_PLUS_USER_AUTH_ACCEPTANCE=REQUIRED
+CHATGPT_PLUS_USER_AUTH_STATUS=PASS|BLOCKED
 CONFIGURATION_BUNDLE=
 CONFIGURATION_DIRECT_CLI_PARITY=
 CONFIGURATION_AI_COPY_PASTE_REAL_E2E=

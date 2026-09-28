@@ -834,7 +834,7 @@ Repeat the same intent using canonical direct CLI and verify equivalent final au
 
 The guided flow must not require knowledge of hidden backend commands, must not repeat already-collected identification unnecessarily, and invalid input must keep the user on the correct step with prior valid draft values preserved.
 
-## U-011 — AI/MCP capability matrix and file transfer — MANDATORY when candidate includes AI/MCP
+## U-011 — AI/MCP capability matrix and file transfer — MANDATORY for v2.4.0
 
 Configure AI Identity, target, Permission Objects/Groups, and AI Access only through the Server CLI.
 
@@ -1278,7 +1278,7 @@ test internet-access source <SOURCE> destination <DESTINATION> service <SERVICE>
 
 Exercise real traffic plus all mandatory security-negative cases in section 10.
 
-## A-006 — AI Identity, permissions, AI Access, and logs — MANDATORY when feature included
+## A-006 — AI Identity, permissions, AI Access, and logs — MANDATORY for v2.4.0
 
 ~~~text
 show ai-identities
@@ -1943,7 +1943,7 @@ Generate approved and denied outbound traffic concurrently from multiple protect
 
 Verify source-specific policy isolation, destination/port enforcement, and absence of cross-source policy leakage.
 
-## C-006 — Parallel AI/MCP identities and calls — MANDATORY when feature included
+## C-006 — Parallel AI/MCP identities and calls — MANDATORY for v2.4.0
 
 Use multiple authenticated AI identities/sessions concurrently against different and overlapping target/permission scopes.
 

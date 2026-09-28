@@ -1493,4 +1493,4 @@ If implementation changes make commands or state references in those files stale
 
 ### Release metadata after MCP implementation
 
-The old `MCP_V2_4_EXCLUSION` / `features.mcp_included=false` guard is retired. Qualified v2.4.0 candidate metadata uses `MCP_V2_4_INCLUDED_AND_QUALIFIED` and `features.mcp_included=true` only when the MCP Bridge and AI Access plane are present in the candidate bytes.
+The old `MCP_V2_4_EXCLUSION` / `features.mcp_included=false` guard is retired. v2.4.0 candidate metadata uses `MCP_V2_4_INCLUDED` and `features.mcp_included=true` whenever the MCP Bridge and AI Access plane are present in the candidate bytes. ChatGPT Plus owner/UI user-authentication qualification is a separate stable-release gate and must not be encoded by changing the feature-presence flag.

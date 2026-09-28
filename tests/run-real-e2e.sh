@@ -16,8 +16,9 @@ PUBLIC_HOSTNAME="${FRP_E2E_PUBLIC_HOSTNAME:-}"
 SSH_USER="${FRP_E2E_SSH_USER:-aella}"
 TUNNEL_SSH_USER="${FRP_E2E_TUNNEL_SSH_USER:-}"
 SSH_KEY="${FRP_E2E_SSH_KEY:-$HOME/.ssh/frp_e2e_ed25519}"
-EXPECTED_SERVER_HOST="${FRP_E2E_SERVER_HOSTNAME:-frp-server}"
+EXPECTED_SERVER_HOST="${FRP_E2E_SERVER_HOSTNAME:-}"
 EXPECTED_CLIENT_HOST="${FRP_E2E_CLIENT_HOSTNAME:-}"
+CONTROLLER_HOST="$(hostname 2>/dev/null || true)"
 FORBIDDEN_HOST="${FRP_E2E_FORBIDDEN_HOSTNAME:-dev-dp-mirror}"
 # Retired lab host — never a Real E2E / release-gate target.
 EXCLUDED_SERVER_IP="${FRP_E2E_EXCLUDED_SERVER_IP:-221.139.249.112}"
@@ -324,7 +325,12 @@ assert_host_identity() {
   local alias="$1" expected="$2" role="$3"
   local got
   got="$(ssh "${SSH_OPTS[@]}" "$alias" 'hostname' 2>/dev/null || echo unreachable)"
-  note "$role hostname=$got expected=$expected"
+  note "$role hostname=$got expected=${expected:-<explicit target only>}"
+  if [[ -n "$CONTROLLER_HOST" && "$got" == "$CONTROLLER_HOST" ]]; then
+    note "ABORT: SSH target resolves to this E2E controller host $CONTROLLER_HOST"
+    record "identity-$role" ABORT 2 0
+    return 2
+  fi
   if [[ "$got" == "$FORBIDDEN_HOST" ]]; then
     note "ABORT: SSH target is forbidden controller host $FORBIDDEN_HOST"
     record "identity-$role" ABORT 2 0

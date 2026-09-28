@@ -159,5 +159,18 @@ if seen < 3:
     raise SystemExit("expected matrix, macos retry, and fleet-keep invocations, saw %s" % seen)
 print("PASS ALIAS_PROPAGATION")
 PY
+python3 - "$ROOT/tests/run-real-e2e.sh" <<'PY'
+import sys
+from pathlib import Path
+real = Path(sys.argv[1]).read_text(encoding="utf-8")
+if 'EXPECTED_SERVER_HOST="${FRP_E2E_SERVER_HOSTNAME:-frp-server}"' in real:
+    raise SystemExit("stale frp-server hostname default remains")
+if 'EXPECTED_SERVER_HOST="${FRP_E2E_SERVER_HOSTNAME:-}"' not in real:
+    raise SystemExit("server hostname override is not explicit-only")
+if 'SSH target resolves to this E2E controller host' not in real:
+    raise SystemExit("dynamic controller-host protection missing")
+print("PASS SERVER_HOSTNAME_EXPLICIT_ONLY")
+print("PASS CONTROLLER_HOST_DYNAMIC_GUARD")
+PY
 echo "PASS RELEASE_GATE_TARGET"
 echo "RELEASE_GATE_TARGET_TEST=PASS"

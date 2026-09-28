@@ -8,7 +8,7 @@
 #   INSTALLER_SOURCE_REF_IMMUTABLE
 #   RELEASE_MANIFEST_VALID
 #   SOURCE_DIST_PARITY (client upgrade destinations ⊆ client bootstrap)
-#   MCP_V2_4_INCLUDED_AND_QUALIFIED
+#   MCP_V2_4_INCLUDED
 #   CONTROL_PLANE_SCHEMA_COMPATIBLE
 #   HISTORICAL_TAG_IMMUTABILITY (documentation + no rewrite of known tags)
 #   STABLE_WITHOUT_TAG (fail if manifest claims stable before tag exists)
@@ -122,12 +122,12 @@ if [[ "$TAG_EXISTS" -eq 0 ]]; then
   fi
 fi
 
-# --- MCP included and qualified for 2.4.x ----------------------------------
+# --- MCP feature presence for 2.4.x; user-auth qualification is separate ---
 if [[ "$PROJECT_VERSION" == 2.4.* ]]; then
   if [[ "$MCP" == "True" || "$MCP" == "true" ]]; then
-    pass "MCP_V2_4_INCLUDED_AND_QUALIFIED"
+    pass "MCP_V2_4_INCLUDED"
   else
-    fail "MCP_V2_4_INCLUDED_AND_QUALIFIED: features.mcp_included=$MCP"
+    fail "MCP_V2_4_INCLUDED: features.mcp_included=$MCP"
   fi
   missing=0
   for req in \
@@ -159,7 +159,7 @@ if [[ "$PROJECT_VERSION" == 2.4.* ]]; then
     fail "CONTROL_PLANE_SCHEMA_COMPATIBLE"
   fi
 else
-  pass "MCP_V2_4_INCLUDED_AND_QUALIFIED (n/a)"
+  pass "MCP_V2_4_INCLUDED (n/a)"
   pass "CONTROL_PLANE_SCHEMA_COMPATIBLE (n/a)"
 fi
 
