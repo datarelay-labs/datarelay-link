@@ -709,9 +709,12 @@ For each reachable assigned host:
 5. remove only disposable previous-run test artifacts such as RUN_ID-scoped files, `drlink*`/`e2e*`/`fe2e*`/`finale2e*` temporary files, generated test certificates, temporary Bundles, stale PID/log files and test output;
 6. clear stale failed/transient service state where the OS exposes it;
 7. verify prior product-reserved listeners/endpoints are no longer active and no previous Remote Service/load target can answer traffic;
-8. retain SSH access, OS/network configuration, required package dependencies, test accounts, base DNS, and explicit test-management infrastructure needed to reach the hosts. Do not destroy the laboratory itself in the name of cleanup.
+8. retain SSH access, OS/network configuration, required package dependencies, test accounts, base DNS, and explicit test-management infrastructure needed to reach the hosts. Do not destroy the laboratory itself in the name of cleanup;
+9. verify the selected repository/worktree/candidate source has no unintended local modifications, stale generated artifacts, or previous-run output that could alter the candidate or contaminate evidence.
 
 Management-access exception: reverse SSH/tunnel services used solely to keep a test host reachable may remain active when they are outside the DRLink product/data path. Record them explicitly as `PRESERVED_TEST_MANAGEMENT_INFRA` so they cannot be mistaken for a DRLink runtime process. For example, the Rocky 9 rescue reverse-SSH service may remain when it is only the management path.
+
+On systemd hosts, a historical unit name that appears only as `LoadState=not-found`, `ActiveState=inactive`, `SubState=dead`, with empty `FragmentPath`/`UnitFileState`, no process, and no listener is manager-side cache rather than an installed/running product service. Record it as `SYSTEMD_NOT_FOUND_CACHE_ONLY` and do not fail the clean gate solely for that name. Any real unit file, enabled/active service, process, or listener remains contamination.
 
 Dedicated upgrade/restore exceptions must still begin from a known state created or freshly staged for **this run**:
 
@@ -735,6 +738,8 @@ POST_CLEAN_TEMP_ARTIFACTS=
 POST_CLEAN_PRODUCT_STATE_PATHS=
 POST_CLEAN_PRODUCT_RESERVED_LISTENERS=
 PRESERVED_TEST_MANAGEMENT_INFRA=
+SYSTEMD_NOT_FOUND_CACHE_ONLY=
+SOURCE_WORKTREE_CLEAN=PASS|FAIL
 CLEAN_STATE_RESULT=PASS|FAIL|BLOCKED_ENVIRONMENT
 ~~~
 
@@ -748,6 +753,7 @@ PREVIOUS_RUN_LOAD_PROCESSES=0
 PREVIOUS_RUN_TEMP_ARTIFACTS=0
 UNEXPLAINED_PRODUCT_LISTENERS=0
 UNEXPLAINED_PRESERVED_STATE=0
+SOURCE_WORKTREE_CLEAN=PASS
 ~~~
 
 If any assigned host fails this gate, clean/recover that host before using it. Do not silently continue and later interpret inherited state as a product PASS. If cleanup cannot be completed, mark only scenarios depending on that host `BLOCKED_ENVIRONMENT` and continue independent clean hosts.
