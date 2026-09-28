@@ -113,6 +113,9 @@ class OwnerAcceptanceTests(unittest.TestCase):
             "pass1_head": PROVENANCE,
             "pass2_head": PROVENANCE,
             "final_qualified_head": PROVENANCE,
+            "qualification_evidence_sha256": "e" * 64,
+            "trusted_qualification_review": "PASS",
+            "trusted_qualification_evidence_sha256": "e" * 64,
         }
         errs = PROJECT.evidence_errors(
             release_evidence,

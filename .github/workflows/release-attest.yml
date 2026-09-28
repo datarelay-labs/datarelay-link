@@ -19,18 +19,8 @@ on:
         required: false
         type: boolean
         default: true
-      qualification_pass1_head:
-        description: PASS1_HEAD; required when ref is the stable tag
-        required: false
-        type: string
-        default: ''
-      qualification_pass2_head:
-        description: PASS2_HEAD; required when ref is the stable tag
-        required: false
-        type: string
-        default: ''
-      qualification_final_head:
-        description: FINAL_QUALIFIED_HEAD; must equal the tagged commit
+      qualification_evidence_b64:
+        description: Base64-encoded PASS1/PASS2 qualification evidence package; required for stable tags
         required: false
         type: string
         default: ''
@@ -44,8 +34,105 @@ permissions:
   contents: read
 
 jobs:
+  qualification-evidence-validation:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      is_stable: ${{ steps.classify.outputs.is_stable }}
+      pass1_head: ${{ steps.validate.outputs.pass1_head }}
+      pass2_head: ${{ steps.validate.outputs.pass2_head }}
+      final_head: ${{ steps.validate.outputs.final_head }}
+      sha256: ${{ steps.validate.outputs.sha256 }}
+    steps:
+      - name: Reject mutable ref input
+        env:
+          INPUT_REF: ${{ inputs.ref }}
+        run: |
+          set -euo pipefail
+          if [[ "$INPUT_REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+            || [[ "$INPUT_REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$ ]] \
+            || [[ "$INPUT_REF" =~ ^[0-9a-f]{40}$ ]]; then
+            exit 0
+          fi
+          echo "ERROR: ref must be an immutable release/RC tag or full 40-hex commit SHA" >&2
+          exit 1
+
+      # actions/checkout@v4.2.2
+      - name: Checkout immutable ref for qualification validation
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+
+      - name: Classify stable tag execution
+        id: classify
+        env:
+          WORKFLOW_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^PROJECT_VERSION=//p' VERSION | head -n1)"
+          expected="v$version"
+          head="$(git rev-parse HEAD)"
+          tag_head="$(git rev-parse --verify "refs/tags/$expected^{commit}" 2>/dev/null || true)"
+          if [[ -n "$tag_head" && "$tag_head" == "$head" && "$WORKFLOW_REF" == "refs/tags/$expected" ]]; then
+            echo "is_stable=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "is_stable=false" >>"$GITHUB_OUTPUT"
+          fi
+
+      - name: Validate retained Full Real E2E qualification evidence
+        id: validate
+        env:
+          IS_STABLE: ${{ steps.classify.outputs.is_stable }}
+          QUALIFICATION_EVIDENCE_B64: ${{ inputs.qualification_evidence_b64 }}
+        run: |
+          set -euo pipefail
+          if [[ "$IS_STABLE" != "true" ]]; then
+            echo "pass1_head=" >>"$GITHUB_OUTPUT"
+            echo "pass2_head=" >>"$GITHUB_OUTPUT"
+            echo "final_head=" >>"$GITHUB_OUTPUT"
+            echo "sha256=" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          [[ -n "$QUALIFICATION_EVIDENCE_B64" ]] || {
+            echo "ERROR: retained PASS1/PASS2 qualification evidence is required for stable attestation" >&2
+            exit 1
+          }
+          evidence="$RUNNER_TEMP/release-qualification-evidence.json"
+          result="$RUNNER_TEMP/release-qualification-evidence.check"
+          printf '%s' "$QUALIFICATION_EVIDENCE_B64" | base64 --decode >"$evidence"
+          ./scripts/check-release-qualification-evidence.py \
+            --root . --evidence "$evidence" | tee "$result"
+          echo "pass1_head=$(sed -n 's/^QUALIFICATION_PASS1_HEAD=//p' "$result")" >>"$GITHUB_OUTPUT"
+          echo "pass2_head=$(sed -n 's/^QUALIFICATION_PASS2_HEAD=//p' "$result")" >>"$GITHUB_OUTPUT"
+          echo "final_head=$(sed -n 's/^QUALIFICATION_FINAL_HEAD=//p' "$result")" >>"$GITHUB_OUTPUT"
+          echo "sha256=$(sed -n 's/^QUALIFICATION_EVIDENCE_SHA256=//p' "$result")" >>"$GITHUB_OUTPUT"
+
+  stable-qualification-approval:
+    needs: qualification-evidence-validation
+    if: ${{ needs.qualification-evidence-validation.outputs.is_stable == 'true' }}
+    runs-on: ubuntu-latest
+    environment:
+      name: stable-release-qualification
+    permissions:
+      contents: read
+    outputs:
+      trusted_qualification_review: ${{ steps.record.outputs.trusted_qualification_review }}
+      reviewed_sha256: ${{ steps.record.outputs.reviewed_sha256 }}
+    steps:
+      - name: Record protected qualification approval
+        id: record
+        env:
+          QUALIFICATION_EVIDENCE_SHA256: ${{ needs.qualification-evidence-validation.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          [[ "$QUALIFICATION_EVIDENCE_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          echo "trusted_qualification_review=PASS" >>"$GITHUB_OUTPUT"
+          echo "reviewed_sha256=$QUALIFICATION_EVIDENCE_SHA256" >>"$GITHUB_OUTPUT"
+
   stable-owner-ui-approval:
-    if: ${{ inputs.ref == 'v2.4.0' }}
+    if: ${{ github.ref == 'refs/tags/v2.4.0' }}
     runs-on: ubuntu-latest
     environment:
       name: stable-release-owner-ui
@@ -59,8 +146,11 @@ jobs:
         run: echo "trusted_owner_ui_review=PASS" >>"$GITHUB_OUTPUT"
 
   build-attest:
-    needs: stable-owner-ui-approval
-    if: ${{ always() && (needs.stable-owner-ui-approval.result == 'success' || needs.stable-owner-ui-approval.result == 'skipped') }}
+    needs:
+      - qualification-evidence-validation
+      - stable-qualification-approval
+      - stable-owner-ui-approval
+    if: ${{ always() && needs.qualification-evidence-validation.result == 'success' && (needs.stable-qualification-approval.result == 'success' || needs.stable-qualification-approval.result == 'skipped') && (needs.stable-owner-ui-approval.result == 'success' || needs.stable-owner-ui-approval.result == 'skipped') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -73,12 +163,13 @@ jobs:
         run: |
           set -euo pipefail
           # Shape check only; the authoritative binding happens after checkout.
-          if [[ "$INPUT_REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          if [[ "$INPUT_REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+            || [[ "$INPUT_REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$ ]]; then
             echo "ref_kind=tag"
           elif [[ "$INPUT_REF" =~ ^[0-9a-f]{40}$ ]]; then
             echo "ref_kind=commit"
           else
-            echo "ERROR: ref must be a release tag vX.Y.Z or a full 40-hex commit SHA" >&2
+            echo "ERROR: ref must be a release/RC tag or a full 40-hex commit SHA" >&2
             echo "       got: ${INPUT_REF}" >&2
             echo "       branches and short SHAs are mutable and are not accepted" >&2
             exit 1
@@ -90,6 +181,45 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
           fetch-depth: 0
+
+      - name: Validate Full Real E2E qualification evidence
+        id: qualification_evidence
+        env:
+          QUALIFICATION_EVIDENCE_B64: ${{ inputs.qualification_evidence_b64 }}
+          PREVALIDATED_PASS1_HEAD: ${{ needs.qualification-evidence-validation.outputs.pass1_head }}
+          PREVALIDATED_PASS2_HEAD: ${{ needs.qualification-evidence-validation.outputs.pass2_head }}
+          PREVALIDATED_FINAL_HEAD: ${{ needs.qualification-evidence-validation.outputs.final_head }}
+          PREVALIDATED_SHA256: ${{ needs.qualification-evidence-validation.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$QUALIFICATION_EVIDENCE_B64" ]]; then
+            echo "pass1_head=" >>"$GITHUB_OUTPUT"
+            echo "pass2_head=" >>"$GITHUB_OUTPUT"
+            echo "final_head=" >>"$GITHUB_OUTPUT"
+            echo "sha256=" >>"$GITHUB_OUTPUT"
+            echo "path=" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          evidence="$RUNNER_TEMP/release-qualification-evidence.json"
+          result="$RUNNER_TEMP/release-qualification-evidence.check"
+          printf '%s' "$QUALIFICATION_EVIDENCE_B64" | base64 --decode >"$evidence"
+          ./scripts/check-release-qualification-evidence.py \
+            --root . --evidence "$evidence" | tee "$result"
+          pass1_head="$(sed -n 's/^QUALIFICATION_PASS1_HEAD=//p' "$result")"
+          pass2_head="$(sed -n 's/^QUALIFICATION_PASS2_HEAD=//p' "$result")"
+          final_head="$(sed -n 's/^QUALIFICATION_FINAL_HEAD=//p' "$result")"
+          evidence_sha="$(sed -n 's/^QUALIFICATION_EVIDENCE_SHA256=//p' "$result")"
+          if [[ -n "$PREVALIDATED_SHA256" ]]; then
+            [[ "$pass1_head" == "$PREVALIDATED_PASS1_HEAD" ]]
+            [[ "$pass2_head" == "$PREVALIDATED_PASS2_HEAD" ]]
+            [[ "$final_head" == "$PREVALIDATED_FINAL_HEAD" ]]
+            [[ "$evidence_sha" == "$PREVALIDATED_SHA256" ]]
+          fi
+          echo "pass1_head=$pass1_head" >>"$GITHUB_OUTPUT"
+          echo "pass2_head=$pass2_head" >>"$GITHUB_OUTPUT"
+          echo "final_head=$final_head" >>"$GITHUB_OUTPUT"
+          echo "sha256=$evidence_sha" >>"$GITHUB_OUTPUT"
+          echo "path=$evidence" >>"$GITHUB_OUTPUT"
 
       - name: Validate ChatGPT owner/UI evidence payload
         id: owner_evidence
@@ -118,9 +248,12 @@ jobs:
           INPUT_REF: ${{ inputs.ref }}
           WORKFLOW_REF: ${{ github.ref }}
           WORKFLOW_SHA: ${{ github.sha }}
-          QUALIFICATION_PASS1_HEAD: ${{ inputs.qualification_pass1_head }}
-          QUALIFICATION_PASS2_HEAD: ${{ inputs.qualification_pass2_head }}
-          QUALIFICATION_FINAL_HEAD: ${{ inputs.qualification_final_head }}
+          QUALIFICATION_PASS1_HEAD: ${{ steps.qualification_evidence.outputs.pass1_head }}
+          QUALIFICATION_PASS2_HEAD: ${{ steps.qualification_evidence.outputs.pass2_head }}
+          QUALIFICATION_FINAL_HEAD: ${{ steps.qualification_evidence.outputs.final_head }}
+          QUALIFICATION_EVIDENCE_SHA256: ${{ steps.qualification_evidence.outputs.sha256 }}
+          QUALIFICATION_TRUSTED_REVIEW: ${{ needs.stable-qualification-approval.outputs.trusted_qualification_review }}
+          QUALIFICATION_TRUSTED_REVIEW_SHA256: ${{ needs.stable-qualification-approval.outputs.reviewed_sha256 }}
           QUALIFICATION_CHATGPT_OWNER_UI_ACCEPTANCE: ${{ steps.owner_evidence.outputs.acceptance }}
           QUALIFICATION_CHATGPT_OWNER_EVIDENCE_SHA256: ${{ steps.owner_evidence.outputs.sha256 }}
           QUALIFICATION_CHATGPT_OWNER_EVIDENCE_PROVENANCE_HEAD: ${{ steps.owner_evidence.outputs.provenance_head }}
@@ -176,9 +309,10 @@ jobs:
         id: subjects
         env:
           INPUT_REF: ${{ inputs.ref }}
-          PASS1: ${{ inputs.qualification_pass1_head }}
-          PASS2: ${{ inputs.qualification_pass2_head }}
-          FINAL: ${{ inputs.qualification_final_head }}
+          QUALIFICATION_EVIDENCE_PATH: ${{ steps.qualification_evidence.outputs.path }}
+          QUALIFICATION_EVIDENCE_SHA256: ${{ steps.qualification_evidence.outputs.sha256 }}
+          TRUSTED_QUALIFICATION_REVIEW: ${{ needs.stable-qualification-approval.outputs.trusted_qualification_review }}
+          TRUSTED_QUALIFICATION_SHA256: ${{ needs.stable-qualification-approval.outputs.reviewed_sha256 }}
           CHATGPT_OWNER_UI: ${{ steps.owner_evidence.outputs.acceptance }}
           CHATGPT_EVIDENCE_SHA256: ${{ steps.owner_evidence.outputs.sha256 }}
           CHATGPT_EVIDENCE_HEAD: ${{ steps.owner_evidence.outputs.provenance_head }}
@@ -191,9 +325,38 @@ jobs:
              dist/sbom.spdx.json SHA256SUMS release-manifest.json \
              release-subjects/
           # A stable tag keeps the qualified Git HEAD. Publication identity is
-          # projected here and must not be committed back.
+          # projected here and must not be committed back. PASS1/PASS2 values
+          # come only from the validated retained qualification evidence.
           if [[ "$INPUT_REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            python3 -c 'import json,os; open("qualification-evidence.json","w").write(json.dumps({"status":"PASS","pass1_head":os.environ["PASS1"],"pass2_head":os.environ["PASS2"],"final_qualified_head":os.environ["FINAL"],"chatgpt_plus_owner_ui_acceptance":os.environ["CHATGPT_OWNER_UI"],"chatgpt_owner_evidence_sha256":os.environ["CHATGPT_EVIDENCE_SHA256"],"chatgpt_owner_evidence_provenance_head":os.environ["CHATGPT_EVIDENCE_HEAD"],"trusted_owner_ui_review":os.environ["TRUSTED_OWNER_UI_REVIEW"]})+"\n")'
+            [[ -n "$QUALIFICATION_EVIDENCE_PATH" && -s "$QUALIFICATION_EVIDENCE_PATH" ]] || {
+              echo "ERROR: validated qualification evidence is required for stable publication" >&2
+              exit 1
+            }
+            cp "$QUALIFICATION_EVIDENCE_PATH" release-subjects/qualification-evidence.source.json
+            python3 - "$QUALIFICATION_EVIDENCE_PATH" <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          source = Path(sys.argv[1])
+          data = json.loads(source.read_text(encoding="utf-8"))
+          data.update(
+              {
+                  "qualification_evidence_sha256": os.environ["QUALIFICATION_EVIDENCE_SHA256"],
+                  "trusted_qualification_review": os.environ["TRUSTED_QUALIFICATION_REVIEW"],
+                  "trusted_qualification_evidence_sha256": os.environ["TRUSTED_QUALIFICATION_SHA256"],
+                  "chatgpt_plus_owner_ui_acceptance": os.environ["CHATGPT_OWNER_UI"],
+                  "chatgpt_owner_evidence_sha256": os.environ["CHATGPT_EVIDENCE_SHA256"],
+                  "chatgpt_owner_evidence_provenance_head": os.environ["CHATGPT_EVIDENCE_HEAD"],
+                  "trusted_owner_ui_review": os.environ["TRUSTED_OWNER_UI_REVIEW"],
+              }
+          )
+          Path("qualification-evidence.json").write_text(
+              json.dumps(data, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          PY
             python3 ./scripts/project-stable-release.py \
               --evidence qualification-evidence.json \
               --output release-subjects/release-manifest.json

@@ -375,6 +375,14 @@ Windows 10=
 - [ ] `FULL_REAL_E2E_PASS_2=PASS`
 - [ ] `PASS1_HEAD==PASS2_HEAD`
 - [ ] `PASS1_HEAD==FINAL_QUALIFIED_HEAD`
+- [ ] PASS1 terminal `summary.json` records `final_status=PASS`, exact unchanged HEAD, required evidence paths, and no mandatory FAIL/BLOCKED/NOT_RUN gate.
+- [ ] PASS2 terminal `summary.json` records the same guarantees independently on the same exact HEAD.
+- [ ] PASS1/PASS2 summary SHA256 values are retained in `qualification-evidence.json`.
+- [ ] `scripts/check-release-qualification-evidence.py` revalidates the combined package on the exact tag/provenance HEAD.
+- [ ] stable release-attest derives PASS1/PASS2/final HEAD and qualification evidence SHA256 from the validated package; there are no caller-supplied free-form PASS HEAD inputs.
+- [ ] protected GitHub Environment `stable-release-qualification` has at least one required reviewer and administrator bypass is disabled.
+- [ ] protected qualification approval records `PASS` and the exact prevalidated qualification evidence SHA256 from the same workflow run.
+- [ ] stable binding rejects missing protected qualification approval or any reviewed/package SHA256 mismatch.
 - [ ] no product/dependency change between passes.
 - [ ] no tracked commit is created after PASS2; the immutable tag is that same provenance HEAD.
 

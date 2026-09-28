@@ -63,6 +63,8 @@ v2.4.0 remains a development target. The following is approved architecture scop
 - MCP operations require authenticated AI Identity and per-invocation AI Access authorization; authentication remains mandatory even when AI Access enforcement is disabled.
 - True read-only AI policy requires `exec=false`.
 - Stable v2.4.0 owner/UI evidence is no longer terminal authority by caller input alone; release attestation additionally requires the protected `stable-release-owner-ui` GitHub Environment approval signal.
+- Stable PASS1/PASS2 qualification is no longer accepted from caller-supplied HEAD strings: each Full Real E2E pass records terminal summary evidence, the two summaries are SHA256-bound into one qualification package, and release attestation revalidates that package before deriving PASS1/PASS2/final HEADs.
+- Because the qualification package is implementer-produced evidence, stable publication additionally requires the protected `stable-release-qualification` GitHub Environment; its approval is bound to the exact prevalidated package SHA256 and administrator bypass is disabled.
 
 ### Removed from target public model
 

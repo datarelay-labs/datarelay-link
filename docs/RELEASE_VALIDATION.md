@@ -598,9 +598,10 @@ Record:
 ```text
 FULL_REAL_E2E_PASS_1=PASS|FAIL
 PASS1_HEAD=<40-char SHA>
+PASS1_SUMMARY_SHA256=<64-char SHA256>
 ```
 
-It includes Remote Access + Internet Access + AI/MCP + lifecycle + backup/restore + supported platform matrix applicable to the release claim.
+It includes Remote Access + Internet Access + AI/MCP + lifecycle + backup/restore + supported platform matrix applicable to the release claim. The terminal `summary.json` must be written only after the PASS1 gate is recorded and must show `final_status=PASS`, `FROZEN_HEAD==PASS1_HEAD==END_HEAD`, `HEAD_UNCHANGED=YES`, retained `summary.txt` and `matrix.log`, and no release-blocking `FAIL`, `BLOCKED`, or `NOT_RUN` gate.
 
 ## 28. Full Real E2E pass 2
 
@@ -609,8 +610,17 @@ Repeat independently on the exact same HEAD:
 ```text
 FULL_REAL_E2E_PASS_2=PASS|FAIL
 PASS2_HEAD=<40-char SHA>
+PASS2_SUMMARY_SHA256=<64-char SHA256>
 PASS1_HEAD==PASS2_HEAD
 ```
+
+After PASS2, `run-release-qualification-pass.sh` creates
+`e2e-reports/release-qualification/qualification-evidence.json` containing
+both validated terminal summaries and their SHA256 digests. The package must
+itself revalidate with `scripts/check-release-qualification-evidence.py` on
+the unchanged exact HEAD. Stable attestation derives the PASS1/PASS2/final
+HEADs and qualification evidence SHA256 from this package; caller-supplied HEAD
+strings are not terminal qualification evidence.
 
 Any product/dependency/generated artifact change resets the count.
 
@@ -626,9 +636,23 @@ platform
 result
 failure classification
 release manifest/checksum
+PASS1 terminal summary + SHA256
+PASS2 terminal summary + SHA256
+combined qualification evidence package + SHA256
 ```
 
-Do not claim PASS from memory or a different HEAD.
+Do not claim PASS from memory, a different HEAD, or manually repeated
+PASS1/PASS2 HEAD strings. A stable release-attest run must revalidate the
+retained qualification package and fail closed when either embedded summary,
+digest, exact-HEAD binding, terminal status, or mandatory gate is invalid.
+
+The validated package is still implementer-produced evidence and therefore is
+not terminal release authority by itself. Stable attestation additionally
+requires protected GitHub Environment `stable-release-qualification`
+approval, with a required reviewer and administrator bypass disabled. The
+protected approval must carry the exact prevalidated qualification evidence
+SHA256, and the stable binding must fail when that reviewed SHA256 differs from
+the package SHA256.
 
 ## 30. Final result format
 

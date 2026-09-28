@@ -72,6 +72,9 @@ class BindingFacts:
     pass1_head: str = ""
     pass2_head: str = ""
     final_qualified_head: str = ""
+    qualification_evidence_sha256: str = ""
+    trusted_qualification_review: str = ""
+    trusted_qualification_evidence_sha256: str = ""
     chatgpt_owner_ui_acceptance: str = ""
     chatgpt_owner_evidence_sha256: str = ""
     chatgpt_owner_evidence_provenance_head: str = ""
@@ -171,6 +174,15 @@ def load_facts(
         pass1_head=os.environ.get("QUALIFICATION_PASS1_HEAD", "").strip().lower(),
         pass2_head=os.environ.get("QUALIFICATION_PASS2_HEAD", "").strip().lower(),
         final_qualified_head=os.environ.get("QUALIFICATION_FINAL_HEAD", "").strip().lower(),
+        qualification_evidence_sha256=os.environ.get(
+            "QUALIFICATION_EVIDENCE_SHA256", ""
+        ).strip().lower(),
+        trusted_qualification_review=os.environ.get(
+            "QUALIFICATION_TRUSTED_REVIEW", ""
+        ).strip(),
+        trusted_qualification_evidence_sha256=os.environ.get(
+            "QUALIFICATION_TRUSTED_REVIEW_SHA256", ""
+        ).strip().lower(),
         chatgpt_owner_ui_acceptance=os.environ.get(
             "QUALIFICATION_CHATGPT_OWNER_UI_ACCEPTANCE", ""
         ).strip(),
@@ -197,6 +209,23 @@ def _require_qualified_tag_heads(facts: BindingFacts, errors: list[str]) -> None
         errors.append(
             "PASS1_HEAD, PASS2_HEAD, and FINAL_QUALIFIED_HEAD must equal tag HEAD %s"
             % facts.head
+        )
+    if not SHA256_RE.fullmatch(facts.qualification_evidence_sha256):
+        errors.append(
+            "qualification evidence SHA256 must be 64 hex characters"
+        )
+    if facts.trusted_qualification_review != "PASS":
+        errors.append("protected qualification review must be PASS")
+    if not SHA256_RE.fullmatch(facts.trusted_qualification_evidence_sha256):
+        errors.append(
+            "protected qualification review SHA256 must be 64 hex characters"
+        )
+    elif (
+        facts.trusted_qualification_evidence_sha256
+        != facts.qualification_evidence_sha256
+    ):
+        errors.append(
+            "protected qualification review SHA256 must match qualification evidence SHA256"
         )
 
 

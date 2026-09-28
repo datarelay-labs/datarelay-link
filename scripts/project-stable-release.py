@@ -87,6 +87,20 @@ def evidence_errors(
             "PASS1_HEAD, PASS2_HEAD, and FINAL_QUALIFIED_HEAD must equal tag HEAD %s"
             % head
         )
+    qualification_evidence_sha = str(evidence.get("qualification_evidence_sha256") or "").lower()
+    if not SHA256.fullmatch(qualification_evidence_sha):
+        errs.append("qualification evidence SHA256 must be 64 hex characters")
+    if evidence.get("trusted_qualification_review") != "PASS":
+        errs.append("protected qualification review must be PASS")
+    trusted_qualification_sha = str(
+        evidence.get("trusted_qualification_evidence_sha256") or ""
+    ).lower()
+    if not SHA256.fullmatch(trusted_qualification_sha):
+        errs.append("protected qualification review SHA256 must be 64 hex characters")
+    elif trusted_qualification_sha != qualification_evidence_sha:
+        errs.append(
+            "protected qualification review SHA256 must match qualification evidence SHA256"
+        )
     if require_chatgpt_owner:
         if evidence.get("chatgpt_plus_owner_ui_acceptance") != "PASS":
             errs.append("ChatGPT Plus owner/UI acceptance must be PASS")
@@ -127,6 +141,11 @@ def project_manifest(repo: Path, evidence: dict) -> dict:
         "pass1_head": head,
         "pass2_head": head,
         "final_qualified_head": head,
+        "qualification_evidence_sha256": evidence["qualification_evidence_sha256"],
+        "trusted_qualification_review": "PASS",
+        "trusted_qualification_evidence_sha256": evidence[
+            "trusted_qualification_evidence_sha256"
+        ],
     }
     if require_chatgpt_owner:
         projected["qualification"].update(

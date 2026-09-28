@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import os
@@ -14,6 +15,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "check-release-attest-binding.py"
+QUALIFICATION_SCRIPT = ROOT / "scripts" / "check-release-qualification-evidence.py"
 
 
 def load_checker():
@@ -132,6 +134,9 @@ def run_cli(
                 "QUALIFICATION_PASS1_HEAD": qualified_head,
                 "QUALIFICATION_PASS2_HEAD": qualified_head,
                 "QUALIFICATION_FINAL_HEAD": qualified_head,
+                "QUALIFICATION_EVIDENCE_SHA256": "e" * 64,
+                "QUALIFICATION_TRUSTED_REVIEW": "PASS",
+                "QUALIFICATION_TRUSTED_REVIEW_SHA256": "e" * 64,
             }
         )
     if qualified_head and input_ref == "v2.4.0":
@@ -167,6 +172,12 @@ def test_workflow_uses_checker() -> None:
         fail("release-attest.yml does not project the stable manifest")
     if "QUALIFICATION_FINAL_HEAD" not in text:
         fail("release-attest.yml does not bind qualification evidence to the tag")
+    if "qualification_evidence_b64" not in text:
+        fail("release-attest.yml does not accept retained qualification evidence")
+    if "scripts/check-release-qualification-evidence.py" not in text:
+        fail("release-attest.yml does not validate retained qualification evidence")
+    if "QUALIFICATION_EVIDENCE_SHA256" not in text:
+        fail("release-attest.yml does not bind qualification evidence SHA256")
     if "QUALIFICATION_CHATGPT_OWNER_UI_ACCEPTANCE" not in text:
         fail("release-attest.yml does not bind ChatGPT owner/UI acceptance")
     if "QUALIFICATION_CHATGPT_OWNER_EVIDENCE_SHA256" not in text:
@@ -175,6 +186,12 @@ def test_workflow_uses_checker() -> None:
         fail("release-attest.yml does not accept the actual owner/UI evidence payload")
     if "scripts/check-chatgpt-owner-acceptance.py" not in text:
         fail("release-attest.yml does not revalidate owner/UI evidence")
+    if "stable-release-qualification" not in text:
+        fail("release-attest.yml lacks protected qualification environment")
+    if "QUALIFICATION_TRUSTED_REVIEW" not in text:
+        fail("release-attest.yml does not bind protected qualification review")
+    if "needs.stable-qualification-approval.outputs.reviewed_sha256" not in text:
+        fail("release-attest.yml does not bind protected qualification review SHA256")
     if "stable-release-owner-ui" not in text:
         fail("release-attest.yml lacks protected owner/UI environment")
     if "QUALIFICATION_TRUSTED_OWNER_UI_REVIEW" not in text:
@@ -186,6 +203,11 @@ def test_workflow_uses_checker() -> None:
         "inputs.qualification_chatgpt_owner_evidence_sha256",
         "inputs.qualification_chatgpt_owner_evidence_provenance_head",
         "inputs.qualification_trusted_owner_ui_review",
+        "inputs.qualification_pass1_head",
+        "inputs.qualification_pass2_head",
+        "inputs.qualification_final_head",
+        "inputs.qualification_trusted_review",
+        "inputs.qualification_trusted_review_sha256",
     ):
         if forbidden in text:
             fail("release-attest.yml still trusts free-form owner gate input %s" % forbidden)
@@ -358,6 +380,61 @@ def test_validated_stable_tag_exposes_effective_channel() -> None:
     print("PASS EFFECTIVE_STABLE_TAG_CHANNEL")
 
 
+def test_stable_requires_protected_qualification_review() -> None:
+    head = "a" * 40
+    parent = "b" * 40
+    base = dict(
+        project_version="1.2.3",
+        manifest_version="1.2.3",
+        channel="stable",
+        git_ref="v1.2.3",
+        source_head=parent,
+        immutable_source_ref="v1.2.3",
+        head=head,
+        parent=parent,
+        input_ref="v1.2.3",
+        workflow_ref="refs/tags/v1.2.3",
+        workflow_sha=head,
+        changed_paths=("release-manifest.json",),
+        tag_commits={"v1.2.3": head},
+        clean=True,
+        pass1_head=head,
+        pass2_head=head,
+        final_qualified_head=head,
+        qualification_evidence_sha256="e" * 64,
+    )
+    try:
+        checker.evaluate(checker.BindingFacts(**base))
+    except checker.BindingError as exc:
+        if not any("protected qualification review must be PASS" in err for err in exc.errors):
+            fail("missing protected qualification review error: %s" % exc.errors)
+    else:
+        fail("stable tag accepted without protected qualification review")
+
+    bad_sha = dict(
+        base,
+        trusted_qualification_review="PASS",
+        trusted_qualification_evidence_sha256="f" * 64,
+    )
+    try:
+        checker.evaluate(checker.BindingFacts(**bad_sha))
+    except checker.BindingError as exc:
+        if not any("must match qualification evidence SHA256" in err for err in exc.errors):
+            fail("review/evidence digest mismatch error not reported: %s" % exc.errors)
+    else:
+        fail("stable tag accepted with mismatched reviewed qualification SHA256")
+
+    approved = dict(
+        base,
+        trusted_qualification_review="PASS",
+        trusted_qualification_evidence_sha256="e" * 64,
+    )
+    result = checker.evaluate(checker.BindingFacts(**approved))
+    if result.get("channel") != "stable":
+        fail("protected qualification review did not permit stable binding: %s" % result)
+    print("PASS STABLE_REQUIRES_PROTECTED_QUALIFICATION_REVIEW")
+
+
 def test_v240_stable_requires_chatgpt_owner_evidence() -> None:
     head = "a" * 40
     parent = "b" * 40
@@ -379,6 +456,9 @@ def test_v240_stable_requires_chatgpt_owner_evidence() -> None:
         pass1_head=head,
         pass2_head=head,
         final_qualified_head=head,
+        qualification_evidence_sha256="e" * 64,
+        trusted_qualification_review="PASS",
+        trusted_qualification_evidence_sha256="e" * 64,
     )
     try:
         checker.evaluate(checker.BindingFacts(**base))
@@ -420,6 +500,9 @@ def test_v240_stable_requires_protected_owner_review() -> None:
         pass1_head=head,
         pass2_head=head,
         final_qualified_head=head,
+        qualification_evidence_sha256="e" * 64,
+        trusted_qualification_review="PASS",
+        trusted_qualification_evidence_sha256="e" * 64,
         chatgpt_owner_ui_acceptance="PASS",
         chatgpt_owner_evidence_sha256="c" * 64,
         chatgpt_owner_evidence_provenance_head=head,
@@ -432,6 +515,98 @@ def test_v240_stable_requires_protected_owner_review() -> None:
     else:
         fail("protected owner/UI review was not required")
     print("PASS V240_STABLE_REQUIRES_PROTECTED_OWNER_REVIEW")
+
+
+def test_release_qualification_evidence_binding() -> None:
+    head = git(ROOT, "rev-parse", "HEAD")
+
+    def summary(pass_name: str) -> dict:
+        return {
+            "schema_version": 1,
+            "pass_name": pass_name,
+            "git_head": head,
+            "gates": {
+                "FROZEN_HEAD": head,
+                f"{pass_name}_HEAD": head,
+                "END_HEAD": head,
+                "HEAD_UNCHANGED": "YES",
+                "FUNCTIONAL_FULL_MATRIX": "PASS",
+                "RUN_ALL": "PASS",
+                pass_name: "PASS",
+            },
+            "evidence_paths": {
+                "summary.txt": True,
+                "matrix.log": True,
+                "perf/baseline.json": True,
+            },
+            "final_status": "PASS",
+        }
+
+    def digest(value: dict) -> str:
+        raw = (json.dumps(value, indent=2, sort_keys=True) + "\n").encode("utf-8")
+        return hashlib.sha256(raw).hexdigest()
+
+    pass1 = summary("PASS1")
+    pass2 = summary("PASS2")
+    evidence = {
+        "schema_version": 1,
+        "status": "PASS",
+        "pass1_head": head,
+        "pass2_head": head,
+        "final_qualified_head": head,
+        "pass1_summary_sha256": digest(pass1),
+        "pass2_summary_sha256": digest(pass2),
+        "pass1_summary": pass1,
+        "pass2_summary": pass2,
+    }
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "qualification-evidence.json"
+
+        def check(doc: dict) -> subprocess.CompletedProcess[str]:
+            path.write_text(
+                json.dumps(doc, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            return subprocess.run(
+                [
+                    sys.executable,
+                    str(QUALIFICATION_SCRIPT),
+                    "--root",
+                    str(ROOT),
+                    "--evidence",
+                    str(path),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+        ok = check(evidence)
+        if ok.returncode != 0 or "QUALIFICATION_EVIDENCE=PASS" not in ok.stdout:
+            fail("valid qualification evidence rejected: %s" % ok.stderr)
+
+        no_summaries = dict(evidence)
+        no_summaries.pop("pass1_summary")
+        no_summaries.pop("pass2_summary")
+        rejected = check(no_summaries)
+        if rejected.returncode == 0:
+            fail("caller HEAD strings without retained summaries were accepted")
+
+        failed_gate = json.loads(json.dumps(evidence))
+        failed_gate["pass2_summary"]["gates"]["RUN_ALL"] = "FAIL"
+        failed_gate["pass2_summary_sha256"] = digest(failed_gate["pass2_summary"])
+        rejected = check(failed_gate)
+        if rejected.returncode == 0 or "terminal blocking gate RUN_ALL=FAIL" not in rejected.stderr:
+            fail("FAIL gate evidence was accepted: %s" % rejected.stderr)
+
+        tampered = json.loads(json.dumps(evidence))
+        tampered["pass1_summary"]["evidence_paths"]["matrix.log"] = False
+        rejected = check(tampered)
+        if rejected.returncode == 0 or "does not match embedded pass1_summary" not in rejected.stderr:
+            fail("tampered summary digest was accepted: %s" % rejected.stderr)
+
+    print("PASS RELEASE_QUALIFICATION_EVIDENCE_BINDING")
 
 
 def test_self_reference_is_rejected() -> None:
@@ -470,8 +645,10 @@ def main() -> int:
     test_rejects_non_parent_and_wrong_dispatch()
     test_stable_and_rc_tags_point_at_provenance_commit()
     test_validated_stable_tag_exposes_effective_channel()
+    test_stable_requires_protected_qualification_review()
     test_v240_stable_requires_chatgpt_owner_evidence()
     test_v240_stable_requires_protected_owner_review()
+    test_release_qualification_evidence_binding()
     test_self_reference_is_rejected()
     print("RELEASE_ATTEST_BINDING_TEST=PASS")
     return 0

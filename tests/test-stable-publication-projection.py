@@ -84,6 +84,9 @@ def evidence(head: str, **overrides: str) -> dict:
         "pass1_head": head,
         "pass2_head": head,
         "final_qualified_head": head,
+        "qualification_evidence_sha256": "e" * 64,
+        "trusted_qualification_review": "PASS",
+        "trusted_qualification_evidence_sha256": "e" * 64,
     }
     data.update(overrides)
     return data
@@ -193,6 +196,9 @@ def main() -> int:
                 "QUALIFICATION_PASS1_HEAD": provenance,
                 "QUALIFICATION_PASS2_HEAD": provenance,
                 "QUALIFICATION_FINAL_HEAD": provenance,
+                "QUALIFICATION_EVIDENCE_SHA256": "e" * 64,
+                "QUALIFICATION_TRUSTED_REVIEW": "PASS",
+                "QUALIFICATION_TRUSTED_REVIEW_SHA256": "e" * 64,
             }
         )
         bound = subprocess.run(

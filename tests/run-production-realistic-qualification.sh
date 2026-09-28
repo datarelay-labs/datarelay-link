@@ -388,8 +388,10 @@ else
   pq_gate DISTRO_MATRIX NOT_RUN
 fi
 
-# Write machine-readable summary pointing only at existing evidence.
-python3 - "$OUT" "$(pq_head_sha)" "$PASS_NAME" <<'PY' || true
+# Write machine-readable summary only after the terminal PASS/FAIL gate exists.
+# A pre-terminal summary can otherwise report UNKNOWN while the shell exits 0.
+pq_write_summary() {
+  python3 - "$OUT" "$(pq_head_sha)" "$PASS_NAME" <<'PY' || true
 import json, sys
 from pathlib import Path
 out, head, pass_name = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
@@ -417,6 +419,7 @@ doc = {
 }
 (out / "summary.json").write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 PY
+}
 
 # Final HEAD check
 END_HEAD="$(pq_head_sha)"
@@ -440,13 +443,16 @@ FAIL_COUNT="$(grep -E '=(FAIL|BLOCKED|NOT_RUN)$' "$PROD_QUAL_GATES" \
   | grep -Ev '^(UBUNTU|ROCKY|AWS_LINUX|WINDOWS|MACOS|UBUNTU24)_SSH=' \
   | grep -Ev '=HEADROOM_LIMIT$' \
   | wc -l | tr -d ' ')"
+FINAL_RC=0
 if [[ "${FAIL_COUNT:-0}" -eq 0 ]]; then
   pq_gate "$PASS_NAME" PASS
   pq_note "FINAL_${PASS_NAME}=PASS"
-  exit 0
 else
   pq_gate "$PASS_NAME" FAIL
   pq_note "FINAL_${PASS_NAME}=FAIL FAIL_COUNT=$FAIL_COUNT"
   grep -E '=(FAIL|BLOCKED|NOT_RUN)$' "$PROD_QUAL_GATES" | grep -Ev '^(UBUNTU|ROCKY|AWS_LINUX|WINDOWS|MACOS|UBUNTU24)_SSH=' | tee "$OUT/failures.txt" || true
-  exit 1
+  FINAL_RC=1
 fi
+
+pq_write_summary
+exit "$FINAL_RC"

@@ -196,14 +196,41 @@ The attest-time SBOM is generated, not committed: `gitCommit` is the provenance
 commit and `gitRef` is manifest `git_ref`.
 
 Stable publication does not add a Git commit. PASS1 and PASS2 run on the
-provenance commit. The immutable tag is that same commit. `scripts/project-stable-release.py`
-then builds a deterministic publication manifest from that tagged tree plus
-retained PASS1/PASS2 evidence. The projection may change only release
-metadata: `channel=stable`, `git_ref` = the tag, and qualification whose
-`pass1_head`, `pass2_head`, and `final_qualified_head` all equal the tag
-commit. It must not rewrite product or source payload hashes, accept
-`pending` evidence, or move the tag. Committed `source_head` stays the
-content parent of the tagged provenance commit.
+provenance commit. The immutable tag is that same commit. Each
+`run-production-realistic-qualification.sh` pass writes its machine-readable
+`summary.json` only after the terminal PASS/FAIL gate has been recorded.
+`run-release-qualification-pass.sh` validates the exact HEAD, terminal
+`final_status=PASS`, required retained evidence paths, and absence of
+release-blocking FAIL/BLOCKED/NOT_RUN gates; after PASS2 it embeds both
+validated summaries and their SHA256 digests into
+`e2e-reports/release-qualification/qualification-evidence.json`.
+
+Stable `release-attest.yml` accepts that qualification evidence package,
+revalidates it against the checked-out tag HEAD with
+`scripts/check-release-qualification-evidence.py`, and derives
+`PASS1_HEAD`, `PASS2_HEAD`, `FINAL_QUALIFIED_HEAD`, and the qualification
+evidence SHA256 from the validated payload. Those values are not
+`workflow_dispatch` free-form HEAD inputs.
+
+Because the retained package is produced by the implementation/qualification
+context, it is not terminal trust evidence by itself. Stable attestation also
+requires approval through the independently administered protected GitHub
+Environment `stable-release-qualification`. That environment must have a
+required reviewer configured and administrator bypass disabled. The protected
+job emits `trusted_qualification_review=PASS` together with the exact
+qualification evidence SHA256 that was prevalidated in the same workflow run.
+The release binding must reject a missing review or any reviewed/package SHA256
+mismatch.
+
+`scripts/project-stable-release.py` then builds a deterministic publication
+manifest from that tagged tree plus validated retained qualification evidence.
+The projection may change only release metadata: `channel=stable`, `git_ref`
+= the tag, and qualification whose `pass1_head`, `pass2_head`, and
+`final_qualified_head` all equal the tag commit and whose
+`qualification_evidence_sha256` identifies the retained PASS1/PASS2 package.
+It must not rewrite product or source payload hashes, accept `pending`
+evidence, or move the tag. Committed `source_head` stays the content parent of
+the tagged provenance commit.
 
 ## 9. Installer/bootstrap references
 
