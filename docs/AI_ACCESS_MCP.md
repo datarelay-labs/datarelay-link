@@ -49,6 +49,20 @@ Automation/custom AI may use OAuth Client Credentials where supported.
 
 The exact public MCP/OAuth endpoint design and host interoperability must remain consistent with `SECURITY.md` and exact-HEAD qualification evidence.
 
+### v2.4.0 release status
+
+MCP Bridge is included in the v2.4.0 target. The current stable-release blocker is the real ChatGPT Plus user authentication path, not MCP protocol implementation itself.
+
+The release gate requires retained owner/UI evidence that a real ChatGPT Plus user can:
+
+1. connect to the public Data Relay Link MCP endpoint;
+2. complete OAuth Authorization Code and consent successfully;
+3. discover the expected MCP tools;
+4. execute one operation that current AI Access policy allows; and
+5. receive a policy denial for one intentionally out-of-scope operation.
+
+Machine-side OAuth discovery, token exchange, MCP initialize, tools/list, and direct allow/deny tests remain required evidence, but they do not replace this real-user acceptance gate.
+
 ## 3. Permission Objects
 
 Permission Objects contain reusable DRLink operation permissions such as:
