@@ -421,6 +421,8 @@ A User E2E run is not complete merely because the happy path worked. Before the 
 ~~~text
 PRE_RUN_CLEAN_STATE=PASS
 ALL_REACHABLE_ASSIGNED_HOSTS_CLEAN=PASS
+STALE_PRODUCT_UNIT_LINKS=0
+SOURCE_WORKTREE_CLEAN=PASS
 UNEXPLAINED_PRESERVED_STATE=0
 ROLE_SCENARIO_DISPOSITION_COMPLETE=YES
 COMMANDS_WITHOUT_DISPOSITION=0
@@ -705,7 +707,7 @@ For each reachable assigned host:
 1. inventory whether Data Relay Link is installed/running and preserve this only as pre-clean evidence;
 2. when the host is intended for a fresh-install/fresh-enrollment lane, remove the existing Data Relay Link role through the supported public uninstall workflow where available;
 3. verify no prior DRLink Server/Agent/Relay process remains, including product-owned FRP runtime;
-4. stop/disable prior E2E-only load/target services such as iperf listeners, temporary HTTP/HTTPS/TCP targets, transient systemd units, launch agents, scheduled tasks, or Windows services created by an earlier run;
+4. stop/disable prior E2E-only load/target services such as iperf listeners, temporary HTTP/HTTPS/TCP targets, transient systemd units, launch agents, scheduled tasks, or Windows services created by an earlier run; remove stale product service/unit files and broken enable/wants symlinks left by uninstall, then reload/reset the service manager so old unit names cannot appear as active product state;
 5. remove only disposable previous-run test artifacts such as RUN_ID-scoped files, `drlink*`/`e2e*`/`fe2e*`/`finale2e*` temporary files, generated test certificates, temporary Bundles, stale PID/log files and test output;
 6. clear stale failed/transient service state where the OS exposes it;
 7. verify prior product-reserved listeners/endpoints are no longer active and no previous Remote Service/load target can answer traffic;
@@ -732,6 +734,8 @@ PUBLIC_UNINSTALL_USED=YES|NO|NOT_APPLICABLE
 POST_CLEAN_DRLINK_INSTALLED=YES|NO
 POST_CLEAN_DRLINK_RUNTIME_PROCESSES=
 POST_CLEAN_PRODUCT_FRP_PROCESSES=
+POST_CLEAN_PRODUCT_SERVICE_UNITS=
+POST_CLEAN_STALE_PRODUCT_UNIT_LINKS=
 POST_CLEAN_TEST_LOAD_PROCESSES=
 POST_CLEAN_E2E_TARGET_SERVICES=
 POST_CLEAN_TEMP_ARTIFACTS=
@@ -748,6 +752,8 @@ Aggregate hard gate before the active User E2E begins:
 ~~~text
 ALL_REACHABLE_ASSIGNED_HOSTS_CLEAN=PASS
 PREVIOUS_RUN_PRODUCT_STATE=0
+PREVIOUS_RUN_PRODUCT_SERVICE_UNITS=0
+STALE_PRODUCT_UNIT_LINKS=0
 PREVIOUS_RUN_E2E_TARGET_SERVICES=0
 PREVIOUS_RUN_LOAD_PROCESSES=0
 PREVIOUS_RUN_TEMP_ARTIFACTS=0
@@ -3918,7 +3924,7 @@ On a trigger, the minimum startup sequence is:
 3. Read the development host's ~/.ssh/config and apply the section 5.1 canonical SSH port rules.
 4. Probe configured hosts in parallel.
 5. Classify every reachable configured host, assign every suitable host an intended Server/Agent/Relay/client/target/load-generator/recovery role, and record any unused reachable host with a concrete reason.
-6. Execute the section 5.3 clean-room gate on every assigned host: inventory old state, use supported product uninstall for fresh lanes, stop previous E2E/load runtimes, remove disposable old artifacts, verify product listeners/state are gone, and explicitly record preserved management-access infrastructure.
+6. Execute the section 5.3 clean-room gate on every assigned host: inventory old state, use supported product uninstall for fresh lanes, stop previous E2E/load runtimes, remove disposable old artifacts and stale/broken product service-unit links, verify product listeners/state are gone, verify the source/worktree is clean, and explicitly record preserved management-access infrastructure.
 7. Do not start product discovery or create PASS-eligible state until ALL_REACHABLE_ASSIGNED_HOSTS_CLEAN=PASS. Then create the new RUN_ID/current-run test state.
 8. On every freshly installed/assigned Server/Agent role, start public command discovery in parallel with drlink, ?, help, help commands, menu, Tab and visible wizard/error guidance.
 9. Build the runtime command/variant ledger and map discovered capabilities to realistic use-case lanes; section 14 is auditor-only omission detection.
