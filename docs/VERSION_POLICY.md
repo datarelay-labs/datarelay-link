@@ -249,24 +249,16 @@ Current authoritative product decision:
 ```text
 MCP_INCLUDED_IN_V2_4_0=YES
 MCP_RELEASE_BLOCKER=YES
+CHATGPT_PLUS_USER_AUTH_ACCEPTANCE=REQUIRED
+CHATGPT_PLUS_USER_AUTH_STATUS=BLOCKED_PENDING_OWNER_UI_AUTH
 features.mcp_included=true   # on the development candidate once MCP Bridge/AI Access are present
 ```
 
 The final v2.4.0 target includes the Control Plane/Object/Policy/MCP behavior frozen by `PRODUCT_MASTER.md` and `DATA_RELAY_LINK_CLI_AI_MASTER_v2.4_FINAL.md`; `CONTROL_PLANE_ARCHITECTURE.md` remains an internal schema/history reference.
 
-The earlier exclusion rule is obsolete historical decision text only (do not treat as current scope):
+The earlier decision to exclude MCP from v2.4.0 is superseded historical context only and is not a valid current release rule. No current checklist, test expectation, release manifest, generated artifact, or support statement may encode MCP exclusion as the expected v2.4.0 behavior.
 
-```text
-MCP_COMMANDS_INCLUDED=NO
-MCP_RUNTIME_DEPENDENCY=NO
-MCP_INSTALLER_PAYLOAD_INCLUDED=NO
-MCP_ENABLED_CODE_PATH=NO
-features.mcp_included=false
-```
-
-That earlier rule is superseded as a product decision.
-
-Before v2.4.0 candidate qualification, all implementation/governance artifacts must remain consistent with MCP inclusion. Do not revive MCP-exclusion wording as current release scope.
+Before v2.4.0 candidate qualification, all implementation/governance artifacts must remain consistent with MCP inclusion. Machine-side MCP protocol and policy tests are necessary but do not clear the release blocker by themselves. Stable qualification also requires a real ChatGPT Plus user to complete the interactive OAuth Authorization Code/consent flow against the public MCP endpoint, discover tools, complete one authorized operation, and observe one policy-denied operation with retained evidence.
 
 ## 12. Release manifest
 
