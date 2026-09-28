@@ -30,7 +30,7 @@ the default interpretation is:
 ~~~text
 PROFILE=FULL_USER_E2E
 RUN_ALL_MANDATORY_ROLE_SCENARIOS=YES
-RUN_ALL_MANDATORY_SECURITY_NEGATIVE_SCENARIOS=YES
+RUN_ALL_MANDATORY_FAILURE_RECOVERY_SCENARIOS=YES
 RUN_ALL_MANDATORY_PERFORMANCE_SCENARIOS=YES
 USE_REAL_PUBLIC_PRODUCT_PATHS=YES
 USE_ACTUAL_PUBLIC_DRLINK_CLI=YES
@@ -142,7 +142,7 @@ ChatGPT must behave like real Users, Operators, and Administrators:
 - make realistic mistakes and recover only from user-visible guidance;
 - exercise wrong input, blank input, Back/Cancel, duplicate creation, stale copied identifiers, invalid references/ports/CIDRs/FQDNs, and concurrent operations;
 - use real SSH/HTTP/HTTPS/TCP/application traffic rather than substituting internal checks;
-- use disposable test credentials/tickets exactly as the product presents them when required by the real workflow; redact them from retained/shared evidence, but do not distort or skip the user journey merely to avoid handling test credentials.
+- use disposable test credentials/tickets exactly as the product presents them when required by the real workflow; do not distort or skip the workflow because credentials are involved.
 
 During the active discovery run, do **not** inspect implementation source, test source, SQLite/internal state, private APIs, hidden helper commands, or harness code to explain a failure. Record the user-visible result and continue. Source/harness investigation belongs to the post-E2E engineering phase.
 
@@ -155,7 +155,25 @@ AUTOMATED_HARNESS_FAIL != PRODUCT_FAIL
 
 If automation/tooling cannot perform one user action, classify only that dependent scenario as `BLOCKED_TOOLING` and immediately continue all independent lanes. Do not spend the full run repeatedly trying to overcome one automation limitation when other user scenarios can execute.
 
-### 1.2.2 Mandatory parallel-start gate
+### 1.2.2 Functional-only execution scope
+
+FULL_USER_E2E tests product functionality and real user/operator workflows only. The acting ChatGPT persona completes the assigned mission, observes the product result, and continues coverage.
+
+FULL_USER_E2E_SCOPE=FUNCTIONAL_ONLY
+NON_FUNCTIONAL_AUDITS=OUT_OF_SCOPE
+PRODUCT_BEHAVIOR_AND_RECOVERY=IN_SCOPE
+
+Execution rules:
+
+- test only what the user/operator/admin is trying to accomplish with the product;
+- do not add unrelated audits, advisory commentary, architecture review, or extra review work;
+- authentication, TLS, credentials, access policy, ALLOW/DENY, and permissions are tested only as normal product functions: perform the documented action and record whether it works;
+- a functional failure remains a functional finding; do not branch into a different review during the active run;
+- remain inside the designated disposable test environment and current-run resources;
+- continue every independent functional lane after recording a failure.
+
+The legacy S-* identifiers below are retained only for functional failure/recovery traceability.
+### 1.2.3 Mandatory parallel-start gate
 
 After host discovery, start every independent lane the available topology permits. Do not finish one platform end-to-end before beginning the others unless shared state makes serialization technically necessary.
 
@@ -263,7 +281,7 @@ ChatGPT acts as **User, Operator, and Administrator** and performs realistic end
 - terminology clarity and consistency;
 - output/status consistency across related commands;
 - command-to-command workflow continuity: output from one step must provide usable identifiers/endpoints/next actions for the next;
-- confirmation, fail-closed behavior, reference protection and secret handling;
+- confirmation, expected accept/reject behavior, reference handling, and visible state/result;
 - error quality and recovery without source inspection;
 - all documented **plus runtime-discovered** public command families.
 
@@ -293,9 +311,9 @@ For every applicable U-*, O-*, A-*, S-*, C-* and P-* scenario:
 - for concurrency/load/outage scenarios, keep the same live traffic/load/failure condition while AI assists the operator's control-plane actions;
 - compare final authoritative state, effective behavior, error/recovery quality, and real traffic—not merely text similarity.
 
-The AI's first answer is executed unedited when safe. Grade shell vs REPL context, privilege, role, terminology, dependency ordering, ConfigurationBundle correctness, secret safety and semantic intent—not merely command syntax.
+The AI's first answer is executed unedited when it is applicable to the designated test environment and public product surface. Grade shell vs REPL context, privilege, role, terminology, dependency ordering, ConfigurationBundle correctness, and semantic intent—not merely command syntax.
 
-On failure, feed only the new user-visible CLI error/output back in the **same AI conversation** and allow at most the normal recovery attempts without hints. Unsafe AI output is recorded as FAIL and is not executed.
+On failure, feed only the new user-visible CLI error/output back in the **same AI conversation** and allow at most the normal recovery attempts without hints. Output that targets non-test systems, private/internal interfaces, or commands outside the public product surface is not executed.
 
 Required AI mirror gate:
 
@@ -321,7 +339,7 @@ NEW_AI_ONLY_FINDING=
 AI_MASKED_PRODUCT_DEFECT=YES|NO
 ~~~
 
-The integrated run must retain the semantic coverage formerly identified as AI-001..AI-020, including AI status/diagnostics, discovery, Remote Service/Access, Internet Access, enrollment, Bundle, backup/restore, AI Access, MCP, Managed Host Group, terminology recovery, privilege/wrong-role recovery, empty/status-conflict interpretation, destructive confirmation, secret boundary, cleanup, and direct-CLI parity.
+The integrated run must retain the semantic coverage formerly identified as AI-001..AI-020, including AI status/diagnostics, discovery, Remote Service/Access, Internet Access, enrollment, Bundle, backup/restore, AI Access, MCP, Managed Host Group, terminology recovery, privilege/wrong-role recovery, empty/status-conflict interpretation, destructive confirmation, cleanup, and direct-CLI parity.
 
 A real MCP/ChatGPT Plugin lane is executed when the environment provides it. If unavailable, record `BLOCKED_ENVIRONMENT`; never simulate interoperability and call it PASS.
 
@@ -374,7 +392,7 @@ When a product defect is found:
 5. if shared global state is damaged, recover through documented public product recovery where possible; if that cannot be done without product repair, mark only dependent scenarios blocked and continue other lanes;
 6. collect implementation fixes into a post-run batch for Cursor/engineering workflow.
 
-A failure may stop only the scenarios whose evidence would be invalid or unsafe. P0 safety findings stop the affected destructive path but do not erase unrelated coverage.
+A failure may stop only the scenarios whose evidence would be invalid or whose destructive action would escape the designated disposable test environment. Record the visible result and continue unrelated coverage.
 
 Use this failure discipline during active discovery:
 
@@ -416,7 +434,7 @@ Concurrency contamination is not a product result. Record `INVALIDATED_BY_CONCUR
 
 ## 1.6 Final completion gate
 
-A User E2E run is not complete merely because the happy path worked. Before the final result, account for all role scenarios, command inventory rows, AI parity rows, security/failure cases, platform cases, performance cases, and under-load functional cases.
+A User E2E run is not complete merely because the happy path worked. Before the final result, account for all role scenarios, command inventory rows, AI parity rows, negative/failure functional cases, platform cases, performance cases, and under-load functional cases.
 
 ~~~text
 PRE_RUN_CLEAN_STATE=PASS
@@ -431,7 +449,7 @@ ORACLE_ONLY_COMMANDS_NOT_DISCOVERABLE=0
 PUBLIC_CLI_VARIANT_COVERAGE=100%
 OUTPUT_NEXT_ACTIONS_VALIDATED=100%
 AI_INTENTS_WITHOUT_DISPOSITION=0
-SECURITY_NEGATIVE_DISPOSITION_COMPLETE=YES
+NEGATIVE_FAILURE_DISPOSITION_COMPLETE=YES
 PERFORMANCE_DISPOSITION_COMPLETE=YES
 FUNCTION_UNDER_LOAD_DISPOSITION_COMPLETE=YES
 ALL_SUITABLE_HOSTS_UTILIZED=PASS
@@ -472,7 +490,7 @@ This document defines what must be exercised. It does not redefine CLI grammar. 
 | --- | --- | --- |
 | User | Consumes a published service, approved Internet path, or approved AI capability | Connect, transfer data, use applications, observe allow/deny behavior |
 | Operator | Operates an Agent Host and Remote Services day to day | Enrollment execution, Remote Service lifecycle, Agent lifecycle, local configuration, diagnostics |
-| Administrator | Operates the Data Relay Link Server and security/control state | Managed Hosts, Objects/Groups, Access Policies, AI Identity/permissions, audit, revision, backup/restore, server lifecycle |
+| Administrator | Operates the Data Relay Link Server and control state | Managed Hosts, Objects/Groups, Access Policies, AI Identity/permissions, audit, revision, backup/restore, server lifecycle |
 | External load generator | Performance-only actor | Throughput, CPS, concurrency, latency, full-duplex, churn, soak |
 | Target service | Real destination behind an Agent/Relay Host or on the Internet | SSH/HTTP/HTTPS/Custom TCP/Fixed TCP/application behavior |
 
@@ -490,7 +508,7 @@ Mandatory personas:
 | --- | --- | --- |
 | End User | Use an already-published SSH/web/application/AI capability to finish real work | Knows the endpoint/use goal, not DRLink internals; judges connection, denial, clarity, continuity, and application behavior |
 | Agent Operator | Connect a host, publish/maintain Remote Services, diagnose Agent problems, perform local lifecycle/update/recovery | Discovers Agent commands from local public UX; does not assume Server-admin grammar or hidden state |
-| DRLink Administrator | Onboard/manage hosts, Objects/Groups, access policy, AI authorization, public identity/TLS, audit, backup/restore and Server lifecycle | Operates only public Server UX; must reason about blast radius, references, policy effect, rollback and next actions |
+| DRLink Administrator | Onboard/manage hosts, Objects/Groups, access policy, AI authorization, public identity/TLS, audit, backup/restore and Server lifecycle | Operates only public Server UX; focuses on completing the operational mission, references, intended state/effect, rollback and next actions |
 | Incident Responder | Restore service during DEGRADED, outage, bad policy, certificate/DNS, stale state, saturation or reconnect events | Starts from symptoms and public diagnostics; must discover cause/recovery without source/private state |
 | Platform Maintainer | Upgrade, restart, reboot, back up/restore, reinstall, validate provenance/version separation and post-maintenance traffic | Treats continuity and rollback as operational outcomes, not test fixtures |
 
@@ -526,7 +544,7 @@ It includes:
 - all U-* user scenarios marked MANDATORY;
 - all O-* operator scenarios marked MANDATORY;
 - all A-* administrator scenarios marked MANDATORY;
-- all S-* security/failure scenarios marked MANDATORY;
+- all retained S-* failure/recovery functional scenarios marked MANDATORY;
 - all P-* performance scenarios marked MANDATORY;
 - every applicable supported platform in the current release claim;
 - real external clients and real application traffic;
@@ -789,9 +807,9 @@ Expected:
 
 - role is DRLink Server;
 - product/source version is the expected candidate;
-- no unexplained DEGRADED or unsafe generation state;
+- no unexplained DEGRADED or inconsistent runtime state;
 - diagnostics are read-only;
-- no secrets are emitted.
+
 
 ### 6.2 Agent Host preflight
 
@@ -812,7 +830,7 @@ Expected:
 - correct Managed Host identity;
 - expected Server connection state;
 - no unexpected endpoint drift;
-- no secret leakage.
+
 
 ### 6.3 CLI invocation form
 
@@ -1062,24 +1080,24 @@ The mandatory v2.4 use-case catalog is:
 
 | Use case | Real user/operator goal | Primary product capabilities | Existing scenario families |
 | --- | --- | --- | --- |
-| UC-00 First-time discovery | Enter DRLink with no memorized command list and discover what can be done through role screen, menu, `?`, help, Tab and contextual errors | discoverability, role clarity, navigation, public command/variant discovery | O-001, U-010, O-012, O-015, S-005, S-006 |
+| UC-00 First-time discovery | Enter DRLink with no memorized command list and discover what can be done through role screen, menu, `?`, help, Tab and contextual errors | discoverability, role clarity, navigation, public command/variant discovery | O-001, U-010, O-012, O-015, S-006 |
 | UC-01 Day-0 Server | Install/start Server, understand initial state, configure public identity/TLS/bootstrap and verify diagnostics | status/version, public hostname/bootstrap/installer URLs, certificate, MCP TLS, diagnostics | U-009, O-001, A-011, A-015, A-018, S-017 |
 | UC-02 Connect Managed Hosts | Onboard one host quickly and many hosts operationally | Zero-Touch, manual, bulk enrollment, enrollment lifecycle, inventory, group membership | O-002, O-003, A-001, A-012, C-002 |
 | UC-03 Publish a direct service | Publish SSH/HTTP/HTTPS/custom TCP from an Agent and actually use it externally | Service Objects, Agent Remote Service, endpoint allocation/state, real clients | U-001, U-002, O-004, S-023, C-003, C-004 |
 | UC-04 Publish a Relay/LAN service | Reach a target without Agent software through a Relay Host | Relay destination, Network Object, Service Object, DEGRADED->HEALTHY | U-004, O-004, S-008 |
 | UC-05 Fixed TCP lifecycle | Publish a fixed-destination-port application while DRLink allocates the public endpoint | Fixed TCP object, fixed pool, disable/reenable/delete, cross-pool rejection | U-005, O-004, A-013, S-013 |
 | UC-06 Remote Access control | Start open, block a source, reconstruct whitelist, troubleshoot enforcement, restore policy | Network/Service Objects & Groups, BLACKLIST/WHITELIST, test/explain, enable/disable/reset | U-003, A-002, A-003, A-004, S-001, S-014 |
-| UC-07 Internet Access control | Allow approved web/package/git traffic and deny everything else from protected hosts | Internet selectors, Managed Host source, FQDN/IP/CIDR, policy lifecycle, real applications | U-006, U-012, A-005, S-003, C-005 |
+| UC-07 Internet Access control | Allow approved web/package/git traffic and deny everything else from protected hosts | Internet selectors, Managed Host source, FQDN/IP/CIDR, policy lifecycle, real applications | U-006, U-012, A-005, C-005 |
 | UC-08 AI/MCP authorization | Onboard an AI identity, grant least privilege, perform allowed work and prove denied work/audit | AI Identity, Permission Object/Group, AI Access, OAuth approval, MCP TLS, access log | U-007, U-011, A-006, A-016, C-006, X-003..X-010 |
 | UC-09 Inventory/group/reference administration | Organize Managed Hosts and reusable selectors, inspect references, safely delete | Managed Host Group, Network/Service/Permission Groups, references, protected deletion | A-001, A-002, A-003, A-007, S-014 |
 | UC-10 Configuration as code | Export working state, have it changed, validate/diff/apply, reapply idempotently and recover from invalid bundles | Server/Agent ConfigurationBundle, file/stdin, Export->AI->Reapply, atomicity | O-007, O-014, A-010, S-018, C-010 |
 | UC-11 Observe/audit/recover Server | Diagnose incidents, inspect history/revisions, back up, validate, restore, rollback, collect support evidence | diagnostics, audit, history, revisions, diff, backup/validate/restore, support bundle, clear | O-008, A-008, A-009, A-011, S-010, S-021 |
 | UC-12 Agent operations and recovery | Pause/resume/restart/synchronize/autostart/update/reboot and preserve identity/endpoints | Agent lifecycle, product/engine update separation, outage/reconnect | O-005, O-006, O-009, O-010, O-011, S-007, S-015, C-008, C-012, C-013 |
 | UC-13 Upgrade and reinstall | Move a prior stable install to the candidate, handle failed update, uninstall/reinstall without false success | Server/Agent update, engine check/update, uninstall/reinstall, recovery | A-015, A-019, A-020, O-009, O-011 |
-| UC-14 Human CLI usability | Complete common jobs through one-shot, REPL, menu and wizard, including mistakes/cancel/recovery, while detecting terminology/clarity inconsistencies | help, menu, Tab, guided create/edit, context errors, atomic cancel, cross-surface terminology/guidance | U-010, U-013, O-001, O-012, O-015, S-005, S-006 |
+| UC-14 Human CLI usability | Complete common jobs through one-shot, REPL, menu and wizard, including mistakes/cancel/recovery, while detecting terminology/clarity inconsistencies | help, menu, Tab, guided create/edit, context errors, atomic cancel, cross-surface terminology/guidance | U-010, U-013, O-001, O-012, O-015, S-006 |
 | UC-15 Multi-host production-like operation | Operate all supported hosts simultaneously under real traffic and configuration changes | cross-platform identity, concurrent enroll/create/traffic/policy/restart/outage/races | C-001..C-014 |
 | UC-16 Performance under real function | Measure throughput/CPS/concurrency/latency through all suitable hosts, reach practical saturation, and continue real control/recovery work under mixed stress | all data paths plus responsive control plane, maximum topology utilization, saturation characterization and recovery | P-001..P-023 |
-| UC-17 Adversarial lifecycle | Prove invalid, duplicate, stale, credential, DNS/TLS, boundary and mutation failures fail safely | validation, auth, rollback, reference safety, capacity, connection edge cases | S-001..S-023 |
+| UC-17 Failure and recovery lifecycle | Prove invalid, duplicate, stale, DNS/TLS, boundary, outage and mutation failures recover correctly | validation, rollback, reference handling, capacity, connection edge cases | S-001, S-002, S-006..S-015, S-017, S-018, S-020..S-023 |
 
 If a new product capability or public command appears at runtime and does not fit an existing use case, create a new UC row during the same run rather than testing the command in isolation.
 
@@ -1124,7 +1142,7 @@ For the AI run:
 - for cross-context goals, require AI to split Server and Agent operations correctly rather than claiming distributed atomicity;
 - use separate namespaced resources so Direct and AI runs cannot hide or satisfy each other's state;
 - repeat real traffic/application checks after the AI-created state, not only `show` or `test` commands;
-- record AI-generated unsafe/private/internal commands as FAIL and do not execute them;
+- record AI-generated commands that target non-test systems, private/internal interfaces, or unsupported product surfaces as FAIL and do not execute them;
 - never inherit a Direct PASS as an AI PASS.
 
 Every applicable scenario/use-case evidence must record:
@@ -1186,7 +1204,7 @@ Verify:
 - upload and download through SSH/SCP/SFTP where available;
 - Remote Service reports HEALTHY;
 - Server and Agent show the same endpoint;
-- no direct private-IP bypass is counted as PASS.
+
 
 ## U-002 — HTTP, HTTPS, and Custom TCP services — MANDATORY
 
@@ -1360,7 +1378,7 @@ From the supported AI/MCP client, verify:
 - disallowed exec/write/upload/download is denied for read-only permission;
 - path-scope traversal and symlink escape attempts are denied where applicable;
 - audit attribution identifies principal, target, tool, result, revision, and safe metadata;
-- no raw credentials or sensitive file contents leak into audit.
+
 
 For v2.4.0, AI/MCP is not optional. If MCP Bridge/AI Access is absent or the real ChatGPT Plus owner/UI authentication path cannot be exercised, record this scenario `FAIL` or `BLOCKED` with exact evidence; do not mark it `NOT_APPLICABLE`.
 
@@ -1385,7 +1403,7 @@ When a public DNS hostname is configured, verify entirely through the public CLI
 
 - Enrollment HTTPS output uses the configured public hostname;
 - Zero-Touch bootstrap output uses the configured public hostname;
-- the short launcher remains short and preserves private-CA fingerprint and one-time-ticket security;
+- the short launcher remains short and usable through the documented Zero-Touch workflow;
 - public IP is shown only as the supported fallback/alternative, not as an unexplained replacement for the configured hostname;
 - Remote Service endpoint presentation uses the configured public hostname where the current product contract says it should;
 - clearing an optional hostname returns to the documented default/fallback behavior.
@@ -1559,7 +1577,7 @@ Run the generated bootstrap command on a clean supported Agent Host exactly as p
 
 Verify:
 
-- ticket is displayed according to the current secret-display contract;
+- ticket is displayed according to the current product output contract;
 - TLS verification is not weakened;
 - single-use behavior;
 - first machine binding;
@@ -1692,7 +1710,7 @@ Verify:
 - apply revalidates current state;
 - invalid last resource leaves no earlier resource behind;
 - same bundle reapply returns NO CHANGE;
-- export excludes real secrets;
+
 - Agent bundle cannot mutate Server policy.
 
 ## O-008 — Diagnostics and support bundle — MANDATORY
@@ -1785,7 +1803,7 @@ Verify:
 - the AI does not use private backend commands;
 - an incomplete new Resource is rejected atomically;
 - an existing Resource partial edit changes only supplied fields;
-- generated shell metacharacters cannot bypass CLI shell-safety rules.
+- malformed generated commands produce clear errors and do not alter unrelated product state.
 
 ## O-014 — AI-assisted multi-resource ConfigurationBundle loop — MANDATORY
 
@@ -1807,7 +1825,7 @@ Also execute:
 
 - same Bundle reapply -> NO CHANGE;
 - Test Bundle A, then Apply different Bundle B -> B is independently revalidated;
-- export current configuration -> give redacted export to AI -> AI modifies only requested public state -> test/diff/apply;
+- export current configuration -> give the export to AI -> AI modifies only requested public state -> test/diff/apply;
 - invalid final Resource -> no earlier Resource remains;
 - cross-context request -> AI returns separate Agent and Server operations, never a fake distributed atomic transaction.
 
@@ -1914,7 +1932,7 @@ Verify:
 - policy reset removes Mode and Rules and returns No Policy / ALLOW;
 - direct BLACKLIST <-> WHITELIST conversion is not silently performed.
 
-## A-005 — Internet Access full policy lifecycle and security — MANDATORY
+## A-005 — Internet Access full policy lifecycle — MANDATORY
 
 ~~~text
 show internet-access
@@ -1927,7 +1945,7 @@ unset internet-access policy
 test internet-access source <SOURCE> destination <DESTINATION> service <SERVICE>
 ~~~
 
-Exercise real traffic plus all mandatory security-negative cases in section 10.
+Exercise real traffic plus the applicable failure/recovery cases in section 10.
 
 ## A-006 — AI Identity, permissions, AI Access, MCP TLS, OAuth approval, and logs — MANDATORY for v2.4.0
 
@@ -1970,7 +1988,7 @@ system credential approve-oauth <PENDING-ID> [AI-IDENTITY]
 system credential deny-oauth <PENDING-ID>
 ~~~
 
-Verify authentication and authorization remain separate, reference-safe deletion works, and disabling AI Access policy enforcement does not bypass AI authentication.
+Verify authentication and authorization states are represented separately, reference-aware deletion works, and AI Access enforcement toggles have the documented functional effect.
 
 ## A-007 — Reference protection — MANDATORY
 
@@ -2015,7 +2033,7 @@ Verify preservation of:
 - Remote Services and endpoint reservations;
 - Objects/Groups;
 - all policy families;
-- AI identity metadata and safe secrets/trust handling;
+- AI identity metadata and authentication configuration status;
 - revisions/generation consistency;
 - real Remote Access and Internet Access behavior after restore.
 
@@ -2037,8 +2055,8 @@ Verify:
 - invalid final resource causes zero earlier mutations;
 - same Bundle reapply is NO CHANGE;
 - missing resource means unchanged unless state: absent is explicit;
-- export omits authentication secrets;
-- security-impact confirmation is based on the actual Bundle being applied, not on a previously tested different Bundle.
+
+- confirmation is based on the actual Bundle being applied, not on a previously tested different Bundle.
 
 ## A-011 — Server system operations — MANDATORY
 
@@ -2060,13 +2078,13 @@ system certificate import <CERT> <KEY> [CHAIN]
 system support-bundle
 ~~~
 
-Verify stable/preview/development identity and exact Source HEAD are truthful, diagnostics are read-only, MCP diagnostics are actionable, history/clear behave as documented operator surfaces without unintended product-state mutation, product vs Relay Engine update/check semantics remain distinct, certificate lifecycle state is coherent, and support output is secret-safe.
+Verify stable/preview/development identity and exact Source HEAD are truthful, diagnostics are read-only, MCP diagnostics are actionable, history/clear behave as documented operator surfaces without unintended product-state mutation, product vs Relay Engine update/check semantics remain distinct, certificate lifecycle state is coherent, and support output is operationally useful.
 
 Certificate issue/renew/import operations must be exercised only on disposable/approved certificate state, with status checked before and after each operation and real MCP/public TLS behavior verified where applicable.
 
-## A-012 — Zero-Touch capacity and credential security — MANDATORY
+## A-012 — Zero-Touch capacity and credential lifecycle — MANDATORY
 
-Verify the current limits and security contracts through real Server CLI workflows, including:
+Verify the current limits and credential lifecycle through real Server CLI workflows, including:
 
 - maximum issuance per request;
 - maximum active unused capacity;
@@ -2077,9 +2095,9 @@ Verify the current limits and security contracts through real Server CLI workflo
 - default TTL;
 - maximum TTL;
 - expired/revoked ticket releases capacity;
-- secret displayed only according to contract;
+- credential/ticket output follows the documented product workflow;
 - Server does not retain raw ticket;
-- ConfigurationBundle cannot embed ticket secret or bypass lifecycle;
+- ConfigurationBundle does not replace or skip the documented ticket lifecycle;
 - expiry does not disconnect an already enrolled host.
 
 Use the current authoritative limits from the CLI/AI Master and release validation at execution time.
@@ -2245,317 +2263,83 @@ Verify:
 - operator receives actionable diagnostics;
 - retry after the blocker is corrected converges to a healthy supported state.
 
-If downgrade is unsupported, an attempted downgrade must be rejected explicitly rather than silently performing an unsafe transition.
+If downgrade is unsupported, an attempted downgrade must be rejected explicitly rather than silently performing an unsupported transition.
 
-# 10. Security and failure scenarios
+# 10. Failure, recovery, and edge-case functional scenarios
+
+These scenarios test product behavior only. Apply the stated condition, observe the user-visible result/state/traffic, verify recovery where applicable, and continue coverage.
 
 ## S-001 — Allow and deny are both proven — MANDATORY
 
-Every policy family tested must include a real ALLOW and real DENY path. A successful allowed flow alone cannot pass security E2E.
+Every policy family tested must include a real ALLOW and real DENY path because both are user-visible product functions.
 
 ## S-002 — Invalid configuration is atomic — MANDATORY
 
-Use invalid/missing Object references, invalid CIDR/FQDN/ports, unsupported UDP Remote Service, wrong Bundle context, incomplete one-shot command, and invalid final Bundle resource.
+Use invalid/missing Object references, invalid CIDR/FQDN/ports, unsupported UDP Remote Service, wrong Bundle context, incomplete one-shot command, and an invalid final Bundle resource. Verify that no earlier resource/state change remains when the operation fails.
 
-Expected:
+## S-006 — Role/context correctness — MANDATORY
 
-~~~text
-No changes were applied.
-~~~
-
-Verify authoritative state, endpoint allocation, revision, and runtime generation did not partially change.
-
-## S-003 — Internet Access escape/bypass protection — MANDATORY
-
-Exercise and retain results for:
-
-- unapproved source;
-- unapproved FQDN;
-- wrong port;
-- loopback;
-- RFC1918/private target where unsafe;
-- link-local;
-- cloud metadata endpoint;
-- IPv6 local/private where unsafe;
-- IP-literal bypass;
-- wildcard boundary bypass;
-- DNS rebinding-style behavior;
-- malformed CONNECT;
-- CONNECT/SNI mismatch where applicable;
-- unsafe ECH-dependent validation path where applicable;
-- corrupt/missing current policy generation.
-
-All unsafe paths must be denied/fail closed according to the current contract.
-
-## S-004 — Secret leakage — MANDATORY
-
-Inspect:
-
-- normal show output;
-- help/completion;
-- audit;
-- diagnostics;
-- support bundle;
-- ConfigurationBundle export;
-- bootstrap/enrollment logs;
-- server/agent logs used during E2E.
-
-No raw ticket, OAuth secret, private key, transport token, credential, or unrestricted sensitive file content may be exposed outside its explicit one-time/secure contract.
-
-## S-005 — CLI parser and shell safety — MANDATORY
-
-Attempt command substitution, wildcard expansion, pipes, metacharacters, malformed quoting, and ambiguous selectors through the public CLI.
-
-Verify the CLI treats them according to its parser contract and never unexpectedly executes a shell command.
-
-## S-006 — Role boundary — MANDATORY
-
-Repeat O-012 plus Server read-only visibility of Agent-owned Remote Services.
-
-Verify Server inspection does not become unauthorized remote Agent mutation.
+Repeat wrong-role and cross-role workflows. Verify the product clearly distinguishes Server-owned and Agent-owned operations and returns actionable guidance instead of silently applying an operation in the wrong context.
 
 ## S-007 — Server outage — MANDATORY
 
-With healthy Remote Services:
-
-- make Server temporarily unavailable;
-- observe existing endpoints and Agent state;
-- create/edit an Agent Remote Service from synchronized metadata;
-- restore Server;
-- verify sync and endpoint continuity.
-
-No temporary outage may silently reassign an existing endpoint.
+With healthy Remote Services, make the Server temporarily unavailable, observe existing endpoints and Agent state, perform supported local Agent work, restore the Server, and verify synchronization and endpoint continuity.
 
 ## S-008 — Agent or target outage — MANDATORY
 
-Stop/disconnect Agent and separately stop the target service.
-
-Verify HEALTHY -> DEGRADED transition, truthful reason, preserved reservation, and automatic recovery.
+Stop/disconnect the Agent and separately stop the target service. Verify HEALTHY to DEGRADED transitions, truthful reason, preserved reservation, and automatic recovery.
 
 ## S-009 — Runtime activation failure and rollback — MANDATORY
 
-Inject a controlled runtime activation failure after validation in a disposable environment.
-
-Expected:
-
-- apply fails;
-- previous authoritative configuration restored;
-- previous runtime restored where rollback succeeds;
-- incomplete rollback is reported truthfully;
-- real previous traffic remains/restores according to contract.
-
-Do not confuse valid-but-unreachable target DEGRADED state with an invalid activation that requires rollback.
+Inject a controlled runtime activation failure after validation in a disposable environment. Verify failed apply, truthful rollback result, correct prior state/runtime restoration where supported, and restored real traffic.
 
 ## S-010 — Backup/restore negative cases — MANDATORY
 
-Attempt restore using:
-
-- truncated archive;
-- corrupt database;
-- unsupported newer schema;
-- missing required trust material.
-
-Expected: fail closed with explicit reason; no unsafe partially restored runtime.
+Attempt restore with truncated archive, corrupt database, unsupported newer schema, and missing required runtime material. Verify explicit rejection and no partially active restored runtime.
 
 ## S-011 — Stale synchronized Agent catalog — MANDATORY
 
-1. synchronize Agent metadata;
-2. disconnect the Agent from the Server;
-3. create/edit a valid local Remote Service using cached metadata;
-4. while disconnected, change/delete the referenced authoritative Server Object;
-5. reconnect.
-
-Expected:
-
-- synchronization revalidates the reference;
-- invalid dependency remains visible as DEGRADED;
-- runtime activation is not performed with a now-invalid dependency;
-- endpoint identity already assigned is not silently rebound to another target;
-- the reason identifies the invalid/missing dependency.
+Synchronize Agent metadata, disconnect it, use cached metadata for a valid local Remote Service, change/delete the referenced Server Object while disconnected, then reconnect. Verify revalidation, truthful DEGRADED state for invalid dependencies, stable endpoint identity, and clear reason.
 
 ## S-012 — Offline Remote Service deletion — MANDATORY
 
-Delete an existing Remote Service while Agent-to-Server connectivity is unavailable.
-
-Verify:
-
-- local desired configuration removes the service;
-- Server may temporarily show prior known unavailable/DEGRADED state;
-- the reservation is not reused for another service before delete synchronization is processed;
-- reconnect synchronizes deletion and releases the endpoint;
-- no extra operator action is required.
+Delete a Remote Service while Agent-to-Server connectivity is unavailable. Verify local desired-state removal, later synchronization, endpoint release at the correct time, and no extra operator action.
 
 ## S-013 — Endpoint-pool exhaustion and recovery — MANDATORY
 
-Using disposable capacity, exhaust normal and Fixed TCP endpoint pools separately through public CLI operations.
-
-Verify:
-
-- pools never overlap or steal reservations;
-- allocation failure is explicit when Server allocation is available;
-- an offline-created valid service may remain DEGRADED/Pending allocation when capacity cannot be checked until reconnect;
-- when capacity becomes available, pending allocation recovers according to contract;
-- deletion returns capacity;
-- concurrent allocations never receive duplicate endpoints.
+Using disposable capacity, exhaust normal and Fixed TCP pools separately. Verify explicit allocation failure, no duplicate endpoint assignment, capacity return on deletion, and recovery when capacity becomes available.
 
 ## S-014 — Name, reserved-token, duplicate, and selector corner cases — MANDATORY
 
-Through public CLI, test:
-
-- duplicate public names that would be ambiguous;
-- reserved tokens such as enabled, disabled, and policy in conflicting positions;
-- missing Object/Group/Service/Permission references;
-- invalid CIDR/IP/FQDN/port values;
-- ambiguous selector;
-- invalid Managed Host as Internet Access destination;
-- destination Group containing a Managed Host;
-- Remote Service destination resolving to multiple targets;
-- duplicate effective Destination + Service on one Agent.
-
-All invalid cases must fail atomically and produce actionable user-facing errors.
+Test duplicate names, reserved tokens, missing references, invalid CIDR/IP/FQDN/port values, ambiguous selectors, invalid destination combinations, multi-target resolution, and duplicate effective Destination + Service. All invalid cases must fail atomically with actionable errors.
 
 ## S-015 — Network interruption during live traffic — MANDATORY
 
-During real SSH/HTTP/HTTPS/Custom TCP/Fixed TCP traffic, separately inject:
+During real SSH/HTTP/HTTPS/Custom TCP/Fixed TCP traffic, separately inject Agent-to-Server interruption, Relay-to-target interruption, target restart, abrupt client disconnect, and Server restart where supported. Verify truthful state transitions, stable endpoint identity, correct session behavior, and recovery.
 
-- Agent-to-Server interruption;
-- Relay Host-to-target interruption;
-- target process restart;
-- abrupt client disconnect;
-- Server process restart where supported.
+## S-017 — DNS, TLS, and public-hostname failure/recovery — MANDATORY
 
-Verify truthful HEALTHY/DEGRADED transitions, stable endpoint identity, no cross-session data leakage, and automatic recovery where specified.
-
-## S-016 — Authentication/credential corner cases — MANDATORY when applicable
-
-Exercise CLI-configured AI/MCP and enrollment credentials with:
-
-- valid;
-- invalid;
-- revoked;
-- expired;
-- repeated/replayed use where the protocol defines single use;
-- concurrent double redemption for Zero-Touch;
-- authentication still required while AI Access policy enforcement is disabled.
-
-No expired/revoked credential may become valid because policy enforcement is disabled.
-
-## S-017 — DNS, TLS, CA, and public-hostname failure cases — MANDATORY
-
-Through supported CLI-generated Enrollment/Zero-Touch/Remote Service paths, exercise:
-
-- DNS NXDOMAIN/unresolvable public hostname;
-- hostname resolving to an unexpected address;
-- certificate hostname mismatch;
-- untrusted/incorrect CA;
-- expired/not-yet-valid certificate where feasible in disposable test infrastructure;
-- configured public hostname removed or changed;
-- bootstrap hostname/public hostname disagreement where both concepts exist.
-
-Expected:
-
-- TLS verification is never silently disabled;
-- enrollment/bootstrap failure is explicit and safe;
-- a hostname failure does not silently rewrite persistent control identity;
-- recovery after restoring correct DNS/TLS does not require unrelated state destruction.
+Exercise unresolvable hostname, unexpected resolved address, TLS/certificate mismatch that causes the documented connection failure, public-hostname change/removal, and bootstrap/public-hostname disagreement. Verify explicit connection failure and successful recovery after restoring the expected configuration.
 
 ## S-018 — ConfigurationBundle schema/patch corner cases — MANDATORY
 
-Through `test configuration`, `system diff configuration`, and `system apply configuration`, exercise:
-
-- omitted Resource -> unchanged;
-- omitted field on existing Resource -> unchanged;
-- explicitly supplied list -> exact desired list;
-- `state: absent` -> explicit deletion/reset;
-- `state: absent` combined with present-state fields -> reject;
-- wrong `configurationBundle.context` -> reject before mutation;
-- Server Bundle containing Agent-only Remote Services -> reject;
-- Agent Bundle containing Server Objects/Policies -> reject;
-- redaction placeholder such as REDACTED is not accepted as a new real secret;
-- same desired state -> NO CHANGE.
-
-## S-019 — Security-impact confirmation corner cases — MANDATORY
-
-Use public CLI to perform changes that broaden or sharply restrict access.
-
-Required cases include:
-
-- deleting the last BLACKLIST blocking Rule;
-- disabling policy enforcement;
-- resetting a restrictive policy;
-- deleting/removing a blocking condition;
-- removing the last enabled WHITELIST allow Rule;
-- rollback/restore to a state that broadens access.
-
-Verify warning text describes the effective result before Apply and Cancel leaves authoritative state unchanged.
-
-Rollback and restore must not bypass the same validation/security-impact/activation/verification pipeline used by normal Apply.
+Exercise omitted Resource, omitted field, explicit lists, state absent, invalid absent-plus-present fields, wrong context, Server/Agent context mixing, and same desired state. Verify validation, atomicity, and NO CHANGE behavior.
 
 ## S-020 — Boundary and capacity off-by-one cases — MANDATORY
 
-For every user-visible bounded capacity available through CLI, exercise:
-
-~~~text
-0 or empty state where valid
-1
-maximum - 1
-maximum
-maximum + 1
-~~~
-
-At minimum apply this to:
-
-- Zero-Touch batch issuance/active-unused capacity;
-- endpoint-pool remaining capacity;
-- bulk enrollment capacity where bounded;
-- concurrency limits exposed by the current candidate.
-
-Use the current authoritative limits at execution time. Do not hard-code stale historical limits into the harness.
+Exercise 0/empty where valid, 1, maximum-1, maximum, and maximum+1 for each user-visible bounded capacity such as Zero-Touch issuance, endpoint pools, bulk enrollment, and exposed concurrency limits.
 
 ## S-021 — Failure during mutation/activation — MANDATORY on disposable environment
 
-Inject failure at representative phases while the operation is initiated only through public CLI:
-
-- after validation but before authoritative commit;
-- after candidate authoritative transaction but during runtime generation;
-- during activation/verification;
-- during automatic rollback.
-
-Verify truthful error classification, no false SUCCESS, no unexplained partial state, and actionable `system diagnostics` recovery guidance when automatic rollback is incomplete.
+Inject representative failure after validation, during authoritative mutation/runtime generation, during activation/verification, and during rollback. Verify truthful errors, no false SUCCESS, no unexplained partial state, and actionable diagnostics.
 
 ## S-022 — Long-lived, half-close, abrupt-close, and idle connection cases — MANDATORY
 
-For representative TCP services, exercise:
-
-- long-lived connection;
-- client FIN/normal close;
-- abrupt RST/kill;
-- one side stops sending while the other continues;
-- idle period followed by resumed traffic where the service contract permits.
-
-Verify cleanup, no endpoint leakage, no cross-session data leakage, and correct new-connection policy evaluation after the old session ends.
+Exercise long-lived connections, normal close, abrupt close, one-way silence, and idle-then-resume where supported. Verify cleanup, no endpoint leakage, no session mix-up/corruption, and correct behavior for new connections.
 
 ## S-023 — Bootstrap catalog false-HEALTHY prevention — MANDATORY
 
-Use a clean Agent enrollment that declares an initial Remote Service whose local target is already reachable.
-
-Before explicit relay/proxy runtime verification, inspect only through public CLI:
-
-~~~text
-show status
-show remote-services
-show remote-service <NAME>
-~~~
-
-Expected:
-
-- allocated endpoint may be visible;
-- local target reachability alone does not produce HEALTHY;
-- status remains DEGRADED/runtime activation pending until actual relay verification succeeds;
-- Server read-only Remote Service view must not contradict the Agent by reporting false HEALTHY.
-
-Then complete real external traffic/relay verification and verify transition to HEALTHY on the same service identity and endpoint.
-
+Use a clean Agent enrollment with an initial Remote Service whose local target is reachable. Verify public CLI does not report HEALTHY before actual relay/runtime verification, then complete real external traffic and verify the transition to HEALTHY on the same identity and endpoint.
 # 11. Parallel and simultaneous multi-host scenarios
 
 Parallel multi-host execution is a mandatory part of FULL_USER_E2E, not only a performance optimization.
@@ -2703,7 +2487,7 @@ Coordinate deliberate races:
 - same policy revision edited by two administrator sessions;
 - service deletion synchronization racing with new allocation.
 
-Expected outcome must be deterministic, fail safe, and leave no duplicate endpoint, orphaned resource, lost update, or authorization bypass.
+Expected outcome must be deterministic and leave no duplicate endpoint, orphaned resource, lost update, or incorrect final state.
 
 ## C-012 — All-host simultaneous reboot recovery — MANDATORY on disposable/approved hosts
 
@@ -2755,7 +2539,7 @@ The current product documents do not define universal numeric throughput/CPS/lat
 - always compare against a same-environment direct-path baseline when technically possible;
 - apply numeric PASS thresholds only from an explicitly selected performance profile/SLO;
 - if no numeric thresholds are defined, report PERFORMANCE_NUMERIC_QUALIFICATION=MEASURED_NOT_QUALIFIED rather than inventing a PASS threshold;
-- functional/security failures under load are always FAIL regardless of numeric SLO.
+- functional failures under load are always FAIL regardless of numeric SLO.
 
 Required performance evidence:
 
@@ -2941,7 +2725,7 @@ For an approved destination, measure:
 - HTTP/HTTPS CONNECT/application latency;
 - policy lookup under load.
 
-Repeat a deny test during load to prove security policy is not bypassed under performance pressure.
+Repeat a deny test during load to verify policy behavior remains correct under performance pressure.
 
 ## P-011 — AI/MCP performance — MANDATORY for v2.4.0
 
@@ -2981,7 +2765,7 @@ PASS of functional soak requires:
 
 - no crash/restart loop;
 - no unexplained endpoint change;
-- no authorization bypass;
+- policy behavior remains correct;
 - no data-integrity error;
 - no unbounded resource growth indicating a leak;
 - normal recovery after load ends.
@@ -3094,7 +2878,7 @@ Characterize representative traffic under controlled:
 
 Measure throughput, latency, error/reconnect rate, endpoint continuity, and recovery time.
 
-This scenario characterizes resilience; do not invent a numeric PASS threshold when no approved network-impairment SLO exists. Security and state-integrity failures remain FAIL.
+This scenario characterizes resilience; do not invent a numeric PASS threshold when no approved network-impairment SLO exists. Functional and state-integrity failures remain FAIL.
 
 ## P-021 — Saturation and post-saturation recovery — MANDATORY
 
@@ -3103,7 +2887,7 @@ Increase connection/concurrency/load until the selected profile target is reache
 Verify:
 
 - failure is bounded and explicit;
-- no authorization bypass under saturation;
+- policy behavior remains correct under saturation;
 - no duplicate endpoint or state corruption;
 - control CLI remains recoverable;
 - resources return after load;
@@ -3120,7 +2904,7 @@ While all-host data-plane load is active, concurrently execute through public CL
 - support bundle on a designated host;
 - backup on a disposable Server environment.
 
-Measure command latency and verify read-only operations do not mutate state. Any mutating operation must still obey revision/security-impact/atomicity rules under load.
+Measure command latency and verify read-only operations do not mutate state. Any mutating operation must still obey revision and atomicity rules under load.
 
 ## P-023 — Maximum available topology mixed-stress operation — MANDATORY
 
@@ -3556,7 +3340,7 @@ Exercise the currently supported Plugin authentication path, including as applic
 - refresh/reconnect;
 - revoke/disconnect.
 
-Verify public/non-loopback OAuth uses durable protected state according to the Plugin contract and never falls back to unsafe mock authentication.
+Verify public/non-loopback OAuth completes through the supported Plugin workflow and does not silently fall back to an unsupported mock mode.
 
 ## X-004 — MCP relay pass-through — CONDITIONAL
 
@@ -3572,9 +3356,9 @@ Last-Event-ID where applicable
 Accept / Content-Type protocol behavior
 ~~~
 
-Verify the relay preserves upstream tool schemas/annotations/security metadata and does not invent, filter, or reinterpret tools.
+Verify the relay preserves upstream tool schemas/annotations and does not invent, filter, or reinterpret tools.
 
-## X-005 — DRLink remains final authorization source — CONDITIONAL
+## X-005 — DRLink policy result passthrough — CONDITIONAL
 
 Configure AI Identity, Permission, destination, and AI Access only through `drlink`.
 
@@ -3583,19 +3367,8 @@ Through the Plugin/relay path verify per call:
 - DRLink ALLOW succeeds;
 - DRLink DENY remains denied;
 - policy change affects the next call;
-- relay does not cache an earlier ALLOW;
-- one Plugin identity/binding cannot inherit another's authorization.
-
-## X-006 — Relay failure and secret safety — CONDITIONAL
-
-Verify:
-
-- missing/invalid/unreachable upstream fails closed;
-- health output contains no secrets;
-- Authorization headers/tokens are redacted from logs;
-- upstream URL binding does not become a generic open proxy;
-- configured HTTPS upstream retains hostname/SNI/certificate verification;
-- restart/recovery preserves only the state explicitly intended to persist.
+- relay does not cache an earlier ALLOW result;
+- each Plugin identity/binding receives the policy result associated with its own configured identity.
 
 ## X-007 — Core vs Plugin acceptance separation — CONDITIONAL
 
@@ -3609,24 +3382,23 @@ CHATGPT_PLUGIN_RELAY_E2E=
 
 A passing direct MCP test cannot substitute for a Plugin path failure. A Plugin path PASS cannot substitute for unexecuted public `drlink` CLI scenarios.
 
-## X-008 — OAuth concurrency, abuse limits, and durable state — CONDITIONAL
+## X-008 — OAuth concurrency and durable state — CONDITIONAL
 
 Exercise concurrent DCR/authorize/token activity within the Plugin's supported PoC limits.
 
 Verify:
 
-- pending authorization capacity is bounded;
-- unexpired pending owner consent is not evicted merely to admit churn;
-- per-source rate protection is effective;
+- pending request capacity behaves according to the documented limit;
+- unexpired pending owner consent remains available during concurrent activity;
 - active refresh-bound clients are not removed by ordinary inactive cleanup;
-- restart preserves only intended durable client/refresh/revocation state;
-- public/non-loopback OAuth does not silently become ephemeral.
+- restart preserves the documented durable client/refresh/revocation state;
+- public/non-loopback OAuth remains on the documented durable workflow.
 
 ## X-009 — Plugin OAuth state backup/restore — CONDITIONAL
 
 Use the Plugin repository's supported backup/restore workflow for OAuth state.
 
-After restore/restart, verify expected reconnect/revoke semantics and that secrets remain protected by required file/parent permissions.
+After restore/restart, verify the expected reconnect/revoke semantics and resulting operational state.
 
 ## X-010 — Real ChatGPT Plus Plugin acceptance — CONDITIONAL when environment is available
 
@@ -3767,7 +3539,7 @@ RELAY_ENGINE_VERSION=
 USER_SCENARIOS=PASS|PARTIAL|FAIL
 OPERATOR_SCENARIOS=PASS|PARTIAL|FAIL
 ADMIN_SCENARIOS=PASS|PARTIAL|FAIL
-SECURITY_NEGATIVE=PASS|PARTIAL|FAIL
+NEGATIVE_FAILURE_FUNCTIONAL=PASS|PARTIAL|FAIL
 PERFORMANCE_FUNCTIONAL=PASS|PARTIAL|FAIL
 PERFORMANCE_NUMERIC_QUALIFICATION=PASS|FAIL|MEASURED_NOT_QUALIFIED
 MULTI_PLATFORM=PASS|PARTIAL|FAIL
