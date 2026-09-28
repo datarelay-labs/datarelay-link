@@ -228,7 +228,7 @@ Technical capability name: **Controlled Egress**. Normal CLI/resource name: **In
 
 ### AI Access / MCP
 
-MCP Bridge is included in the v2.4.0 **target** and must be qualified before any stable release. It is not an already released stable capability.
+MCP Bridge is included in the v2.4.0 **target** and must be qualified before any stable release. It is not an already released stable capability. The current release blocker is real ChatGPT Plus user OAuth/consent acceptance through the public MCP endpoint; machine-side MCP conformance alone is not sufficient.
 
 ```text
 AI Host / tool
