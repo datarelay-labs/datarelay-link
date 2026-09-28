@@ -782,7 +782,7 @@ start drlink
 
 When the public UI reveals a new command, subcommand, setting, view, or operation, append it to the current-run `DISCOVERED_PUBLIC_COMMANDS` ledger and assign it to a realistic use case. Do not execute it merely to mark it covered. The user must use it for the purpose suggested by the product's own help/menu/output and verify the resulting state or real application behavior.
 
-Section 14 is an **auditor reconciliation checklist**, not the user's instruction sheet. The operator persona may not consult section 14, source code, test code, or private implementation details to decide what command to type next. After discovery-driven execution is underway, the auditor compares the runtime-discovered surface with section 14 and the CLI/AI Master to catch documentation/runtime drift and any public surface that discovery failed to expose.
+Section 14 is an **auditor reconciliation checklist**, not the user's instruction sheet. The same rule applies to command snippets/examples anywhere else in this E2E document: they define expected coverage and evidence, but they are not prior command knowledge for the Direct operator persona. The operator persona may not consult scenario command blocks, section 14, source code, test code, or private implementation details to decide what command to type next. After discovery-driven execution is underway, the auditor compares the runtime-discovered surface with the scenario expectations, section 14 and the CLI/AI Master to catch documentation/runtime drift and any public surface that discovery failed to expose.
 
 At the start of every FULL_USER_E2E, build a **fresh runtime command/variant union** from the installed candidate itself:
 
@@ -801,6 +801,7 @@ Required gate:
 
 ~~~text
 DISCOVERY_STARTED_FROM_PUBLIC_UI_ONLY=YES
+SCENARIO_COMMAND_EXAMPLES_USED_AS_OPERATOR_SCRIPT=NO
 SECTION_14_USED_AS_OPERATOR_SCRIPT=NO
 RUNTIME_HELP_COMMANDS_CAPTURED=YES
 RUNTIME_PUBLIC_COMMAND_UNION_BUILT=YES
@@ -1680,6 +1681,8 @@ Verify:
 - first human rule selects BLACKLIST/WHITELIST;
 - first one-shot rule requires mode;
 - matching and non-matching behavior;
+- overlapping/multiple matching Rules resolve deterministically according to the documented no-order policy semantics;
+- rule creation/order is not used as a hidden priority mechanism;
 - disabled Rule does not match;
 - deleting last rule preserves Mode;
 - last WHITELIST rule removal yields DENY ALL;
@@ -1735,7 +1738,12 @@ unset ai-access <RULE>
 unset ai-access policy
 
 test ai-access source <AI_IDENTITY> destination <DESTINATION> permission <PERMISSION>
+system credential configure ai-identity <IDENTITY> authentication static-bearer
+system credential configure ai-identity <IDENTITY> authentication oauth
+system credential rotate ai-identity <IDENTITY>
+system credential revoke ai-identity <IDENTITY>
 system credential approve-oauth <PENDING-ID> [AI-IDENTITY]
+system credential deny-oauth <PENDING-ID>
 ~~~
 
 Verify authentication and authorization remain separate, reference-safe deletion works, and disabling AI Access policy enforcement does not bypass AI authentication.
