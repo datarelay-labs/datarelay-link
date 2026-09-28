@@ -117,6 +117,63 @@ CONTINUE_AFTER_INDEPENDENT_FAILURE=YES
 PARALLELIZE_INDEPENDENT_LANES=MAXIMUM_SAFE
 ~~~
 
+### 1.2.1 Human black-box execution lock
+
+FULL_USER_E2E is a **real human-operation black-box exercise**. It is not a release audit, code audit, source review, or automated-harness run.
+
+For an unqualified FULL_USER_E2E request:
+
+~~~text
+FULL_USER_E2E_MODE=HUMAN_BLACK_BOX
+REINTERPRET_AS_RELEASE_QUALIFICATION=FORBIDDEN
+AUTOMATED_HARNESS_ROLE=SUPPLEMENTAL_ONLY
+SOURCE_INSPECTION_DURING_ACTIVE_DISCOVERY=FORBIDDEN
+HARNESS_DEBUGGING_DURING_ACTIVE_DISCOVERY=FORBIDDEN
+SERIAL_HAPPY_PATH_FIRST=FORBIDDEN
+REALISTIC_OPERATOR_MISTAKES=REQUIRED
+REAL_MULTI_HOST_PARALLELISM=REQUIRED
+~~~
+
+ChatGPT must behave like real Users, Operators, and Administrators:
+
+- launch the installed public `drlink` surface and use menu, `?`, `help`, Tab, one-shot commands, REPL, and guided wizards as an operator would;
+- copy identifiers/endpoints/commands from product output and use them in the next step;
+- paste product-generated install/bootstrap commands as a real user would;
+- make realistic mistakes and recover only from user-visible guidance;
+- exercise wrong input, blank input, Back/Cancel, duplicate creation, stale copied identifiers, invalid references/ports/CIDRs/FQDNs, and concurrent operations;
+- use real SSH/HTTP/HTTPS/TCP/application traffic rather than substituting internal checks;
+- use disposable test credentials/tickets exactly as the product presents them when required by the real workflow; redact them from retained/shared evidence, but do not distort or skip the user journey merely to avoid handling test credentials.
+
+During the active discovery run, do **not** inspect implementation source, test source, SQLite/internal state, private APIs, hidden helper commands, or harness code to explain a failure. Record the user-visible result and continue. Source/harness investigation belongs to the post-E2E engineering phase.
+
+Automated test suites may run concurrently as supporting evidence, but never as the User E2E executor:
+
+~~~text
+AUTOMATED_HARNESS_PASS != USER_E2E_PASS
+AUTOMATED_HARNESS_FAIL != PRODUCT_FAIL
+~~~
+
+If automation/tooling cannot perform one user action, classify only that dependent scenario as `BLOCKED_TOOLING` and immediately continue all independent lanes. Do not spend the full run repeatedly trying to overcome one automation limitation when other user scenarios can execute.
+
+### 1.2.2 Mandatory parallel-start gate
+
+After host discovery, start every independent lane the available topology permits. Do not finish one platform end-to-end before beginning the others unless shared state makes serialization technically necessary.
+
+At minimum, attempt these lanes in parallel when applicable:
+
+- C-001 all available supported hosts online;
+- C-002 multi-host enrollment;
+- Server read/discovery through public `drlink`;
+- Agent read/discovery through public `drlink`;
+- guided/menu/TTY usability;
+- invalid-input, duplicate-name, reserved-token, and reference corner cases;
+- platform-specific installation/enrollment;
+- baseline real application traffic;
+- AI-assisted parity;
+- independent baseline performance/load generation.
+
+"Parallel" means concurrent real execution on separate hosts/resources, not merely planning multiple scenarios or running them sequentially under one wrapper.
+
 Execution starts by reading the development server's `~/.ssh/config` and probing the configured hosts. Do not require the operator to restate hostnames already present there.
 
 Host assignment is dynamic:
@@ -232,11 +289,30 @@ When a product defect is found:
 
 A failure may stop only the scenarios whose evidence would be invalid or unsafe. P0 safety findings stop the affected destructive path but do not erase unrelated coverage.
 
+Use this failure discipline during active discovery:
+
+~~~text
+RECORD_USER_VISIBLE_EVIDENCE
+-> CLASSIFY
+-> CONTINUE_INDEPENDENT_LANES
+~~~
+
+Do not change the active run into:
+
+~~~text
+READ_SOURCE
+-> DEBUG_HARNESS
+-> PATCH
+-> RETEST
+~~~
+
+Implementation/source/harness diagnosis starts only after the current discovery pass has exhausted all independent user scenarios.
+
 ## 1.5 Parallel execution scheduler
 
-Parallel execution is the default.
+Parallel execution is the default and is a completion requirement, not an optimization.
 
-At run start, create unique `RUN_ID` prefixes and partition resources/hosts into independent lanes. Run in parallel when state is isolated, including:
+At run start, create unique `RUN_ID` prefixes and partition resources/hosts into independent lanes. Start those lanes immediately instead of waiting for a single-platform happy path to complete. Run in parallel when state is isolated, including:
 
 - platform-specific Agent lifecycle;
 - independent Remote Service protocols;
@@ -265,7 +341,7 @@ FUNCTION_UNDER_LOAD_DISPOSITION_COMPLETE=YES
 CLEANUP_DISPOSITION_COMPLETE=YES
 ~~~
 
-Use `PASS`, `FAIL`, `PARTIAL`, `BLOCKED_ENVIRONMENT`, `NOT_APPLICABLE`, or `INVALIDATED_BY_CONCURRENT_STATE` explicitly. Skipped work is never silently converted to PASS.
+Use `PASS`, `FAIL`, `PARTIAL`, `BLOCKED_ENVIRONMENT`, `BLOCKED_TOOLING`, `NOT_APPLICABLE`, or `INVALIDATED_BY_CONCURRENT_STATE` explicitly. Skipped or tooling-blocked work is never silently converted to PASS.
 
 For release qualification, execute the document's exact-HEAD double-pass requirement only after the complete integrated run is eligible for qualification.
 
@@ -407,6 +483,33 @@ AI_CLIENTS=
 ~~~
 
 Before testing, capture the exact build identity from the installed product, not only from Git.
+
+### 5.1 Canonical SSH access rule for current real-E2E hosts
+
+Host discovery must automatically apply the following SSH port rule for direct public-IP access. Do not ask the operator to restate these ports.
+
+~~~text
+221.139.249.96/27 -> SSH 4022
+
+Examples:
+221.139.249.113 -> 4022
+221.139.249.114 -> 4022
+
+Any other public IP -> SSH 22
+
+Examples:
+54.116.47.145   -> 22
+129.225.184.60  -> 22
+~~~
+
+Operational rule:
+
+1. if the destination public IPv4 address is inside `221.139.249.96/27`, use TCP/4022 for SSH;
+2. otherwise use TCP/22 for direct public-IP SSH;
+3. an explicit host-specific `~/.ssh/config` entry may still supply user/key/hostname aliases, but the current real-E2E port mapping above is authoritative for the listed direct public-IP paths;
+4. reverse tunnels or loopback aliases are test-management fallbacks only; they must not replace validation of the real public product/data path when that path is part of the scenario.
+
+Record the actual SSH route used for every host in the run evidence.
 
 ## 6. Common preflight
 
@@ -2842,6 +2945,7 @@ Every scenario result must be one of:
 PASS
 FAIL
 BLOCKED_ENVIRONMENT
+BLOCKED_TOOLING
 NOT_APPLICABLE
 NOT_RUN_BY_SCOPE
 ~~~
@@ -2850,9 +2954,10 @@ Rules:
 
 - PASS requires current-run evidence from the exact candidate build.
 - BLOCKED_ENVIRONMENT is not PASS.
+- BLOCKED_TOOLING means the test executor/tooling could not perform the real user action; it is not PASS and must block aggregate FULL_USER_E2E PASS for a mandatory applicable scenario.
 - NOT_APPLICABLE requires an explicit product/platform reason.
 - NOT_RUN_BY_SCOPE is allowed only for an explicitly narrowed request.
-- A FULL_USER_E2E aggregate PASS is invalid if any mandatory applicable scenario is FAIL, BLOCKED_ENVIRONMENT, or NOT_RUN.
+- A FULL_USER_E2E aggregate PASS is invalid if any mandatory applicable scenario is FAIL, BLOCKED_ENVIRONMENT, BLOCKED_TOOLING, or NOT_RUN.
 - A numeric performance PASS is invalid when no approved numeric performance profile/SLO is defined; use MEASURED_NOT_QUALIFIED for the numeric qualification while still reporting functional load-test results.
 - A release PASS additionally follows all exact-HEAD and double-pass requirements in docs/RELEASE_VALIDATION.md.
 
@@ -2884,6 +2989,7 @@ SCENARIO_TOTAL=
 SCENARIO_PASS=
 SCENARIO_FAIL=
 SCENARIO_BLOCKED=
+SCENARIO_BLOCKED_TOOLING=
 SCENARIO_NOT_APPLICABLE=
 PUBLIC_CLI_COMMANDS_TOTAL=
 PUBLIC_CLI_COMMANDS_EXECUTED=
@@ -2972,7 +3078,9 @@ USER_E2E_REQUEST
 -> ChatGPT is the executor and final auditor; do not delegate User E2E execution to Cursor
 -> locate this canonical document at docs/FULL_USER_E2E_SCENARIOS.md
 -> capture candidate/build identity only; do not perform a pre-run code review
--> discover ~/.ssh/config hosts, probe availability/roles, assign topology, and start independent lanes immediately
+-> execute as a human black-box operator; do not reinterpret the request as release qualification
+-> discover ~/.ssh/config hosts, apply the section 5.1 SSH port mapping, probe availability/roles, assign topology, and start independent lanes immediately
+-> use automated harnesses only as supplemental evidence, never as the User E2E executor
 -> execute this document's FULL_USER_E2E profile unless explicitly scoped
 -> use real public CLI and real traffic
 -> exercise ALLOW and DENY
@@ -3035,10 +3143,12 @@ On a trigger, the minimum startup sequence is:
 4. Probe configured hosts in parallel.
 5. Classify/assign server, Agent/Relay, client, target and load-generator roles.
 6. Create RUN_ID-scoped evidence/resources.
-7. Start all independent Direct CLI, AI-assisted, real-traffic and baseline-performance lanes in parallel.
-8. Record failures; perform test recovery only; continue independent coverage.
-9. Run mixed function-under-load lanes.
-10. Finish disposition/cleanup/reporting; only then batch implementation findings.
+7. Start all independent Direct CLI, guided/TTY, adversarial, multi-platform enrollment, real-traffic, AI-assisted and baseline-performance lanes in parallel.
+8. Behave like a real operator: use product output, copy/paste generated commands, make realistic mistakes, and recover only from user-visible guidance.
+9. If one lane is blocked by tooling/environment, record only that lane as BLOCKED_TOOLING/BLOCKED_ENVIRONMENT and continue every independent lane immediately.
+10. Do not inspect product source, test source, internal DB/state, or harness implementation during active discovery.
+11. Run mixed function-under-load, policy-mutation, restart/reconnect, outage, race, and simultaneous multi-host scenarios.
+12. Finish disposition/cleanup/reporting; only then begin implementation/harness diagnosis and batch engineering findings.
 ~~~
 
 No additional planning document, old audit document, historical evidence review, Cursor run, or human host-selection step is a prerequisite.
