@@ -190,6 +190,68 @@ Host discovery itself is infrastructure setup, not product validation. Product c
 
 Every applicable functional/operational intent is exercised across these dimensions rather than treated as three unrelated audits.
 
+### 1.3.1 Use-case coverage contract — feature-complete, not command-sweep testing
+
+FULL_USER_E2E is organized around **real product use cases**. Executing a command once only to satisfy a checklist does not count as feature coverage.
+
+Every current product capability and every applicable public CLI command/variant must be exercised inside at least one end-to-end use case with observable user value, authoritative state verification, and real behavior/traffic where applicable.
+
+Required traceability for every use case:
+
+~~~text
+PRODUCT_CAPABILITY
+-> USER/OPERATOR/ADMIN_GOAL
+-> SCENARIO_ID
+-> PRECONDITION/TOPOLOGY
+-> PUBLIC_CLI_COMMANDS_AND_VARIANTS
+-> STATE_TRANSITIONS
+-> REAL_TRAFFIC_OR_REAL_EFFECT
+-> NEGATIVE/RECOVERY_VARIANTS
+-> DIRECT_CLI_RESULT
+-> AI_ASSISTED_MIRROR_RESULT
+-> EVIDENCE
+~~~
+
+Canonical use-case families for the current v2.4 product include at minimum:
+
+~~~text
+UC-01  Fresh Server deployment, identity, public hostname/bootstrap identity, diagnostics
+UC-02  Managed Host onboarding: Zero-Touch, Manual Enrollment, Bulk Enrollment, multi-platform
+UC-03  Direct-host Remote Access: SSH plus SCP/SFTP and endpoint discovery
+UC-04  Application publishing: HTTP, HTTPS, Custom TCP, Fixed TCP
+UC-05  Relay Host to LAN target without Agent
+UC-06  Remote Access policy lifecycle: No Policy, BLACKLIST, WHITELIST, disable/re-enable
+UC-07  Internet Access policy and real applications: curl/wget/git/apt/vendor API
+UC-08  AI/MCP onboarding, authentication, TLS, authorization, ALLOW/DENY, file/exec capabilities
+UC-09  Objects/Groups/Managed Host Groups, references, duplicate/ambiguous selectors
+UC-10  Day-2 Remote Service lifecycle: create/show/edit/disable/enable/delete/synchronize
+UC-11  Configuration-as-Code: export/test/diff/apply/idempotence/cross-context split
+UC-12  Revisions/audit/history/rollback and concurrent administrator changes
+UC-13  Backup/validate/restore and disaster recovery
+UC-14  Product update, Relay Engine check/update, prior-version upgrade, failed-update recovery
+UC-15  Agent pause/resume/restart/autostart/uninstall/reinstall/offline edits/reconnect
+UC-16  MCP public TLS/certificate lifecycle and OAuth credential approval/revoke/rotate/configure
+UC-17  Support/diagnostics/support-bundle and operator troubleshooting
+UC-18  Multi-host concurrency, races, endpoint allocation contention, restart/reconnect storm
+UC-19  Performance/load/soak while control-plane operations and policy mutation continue
+UC-20  Failure/adversarial operation: invalid input, DNS/TLS/network/target/server/runtime failures
+~~~
+
+These families are an index over the detailed U-*, O-*, A-*, S-*, C-* and P-* scenarios below; they do not replace those scenarios.
+
+Required completion gate:
+
+~~~text
+PRODUCT_CAPABILITY_COVERAGE=100%
+USE_CASE_COVERAGE=100%
+COMMANDS_WITHOUT_USE_CASE=0
+PUBLIC_COMMAND_VARIANTS_WITHOUT_USE_CASE=0
+USE_CASES_WITHOUT_REAL_EFFECT_VERIFICATION=0
+USE_CASES_WITHOUT_NEGATIVE_OR_RECOVERY_VARIANT=0
+~~~
+
+If runtime discovery reveals a public capability not represented by the catalog above or detailed scenarios below, add it to the current run as a runtime-discovered use case immediately. Do not defer execution merely because the document is stale.
+
 ### Dimension A — Direct CLI role operation
 
 ChatGPT acts as **User, Operator, and Administrator** and performs realistic end-to-end work using only public `drlink` control-plane interfaces. During those workflows it must grade:
@@ -217,11 +279,36 @@ The integrated run must retain the semantic coverage formerly identified as CLI-
 
 ### Dimension B — AI-assisted parity of the same work
 
-For **every applicable Direct CLI semantic intent**, repeat the same user goal through AI support. Give the AI the natural-language intent and public product documentation, not the expected syntax or source code.
+For **every applicable Direct CLI semantic intent and every applicable end-to-end use case**, repeat the **same user goal** through AI support. Give the AI the natural-language intent and public product documentation, not the expected syntax or source code.
+
+The AI mirror is not a separate toy example. It must reproduce the same scenario outcome under equivalent starting conditions/topology. Use isolated namespaced resources or reset to the same baseline so Direct and AI executions do not contaminate each other.
+
+For every applicable U-*, O-*, A-*, S-*, C-* and P-* scenario:
+
+- execute the Direct CLI/user workflow;
+- execute an AI-assisted mirror of the same goal;
+- preserve the same role, intended topology, policy semantics, expected real traffic/effect, negative condition, and recovery objective;
+- allow the AI to choose one-shot CLI, guided CLI guidance, or ConfigurationBundle only through public product surfaces;
+- for multi-step workflows, require AI support for the whole workflow rather than grading one generated command;
+- for concurrency/load/outage scenarios, keep the same live traffic/load/failure condition while AI assists the operator's control-plane actions;
+- compare final authoritative state, effective behavior, error/recovery quality, and real traffic—not merely text similarity.
 
 The AI's first answer is executed unedited when safe. Grade shell vs REPL context, privilege, role, terminology, dependency ordering, ConfigurationBundle correctness, secret safety and semantic intent—not merely command syntax.
 
 On failure, feed only the new user-visible CLI error/output back in the **same AI conversation** and allow at most the normal recovery attempts without hints. Unsafe AI output is recorded as FAIL and is not executed.
+
+Required AI mirror gate:
+
+~~~text
+DIRECT_USE_CASES_TOTAL=
+AI_MIRROR_USE_CASES_TOTAL=
+DIRECT_USE_CASES_WITHOUT_AI_MIRROR=0
+AI_MIRRORS_WITHOUT_DIRECT_BASELINE=0
+AI_MIRROR_SEMANTIC_PARITY=100%
+AI_MIRROR_REAL_EFFECT_PARITY=100%
+~~~
+
+A scenario is not complete merely because its Direct CLI half passed. If the AI-assisted mirror is applicable but unexecuted, the scenario remains incomplete for FULL_USER_E2E.
 
 For every paired intent record:
 
@@ -334,10 +421,19 @@ A User E2E run is not complete merely because the happy path worked. Before the 
 ~~~text
 ROLE_SCENARIO_DISPOSITION_COMPLETE=YES
 COMMANDS_WITHOUT_DISPOSITION=0
+DISCOVERED_COMMANDS_WITHOUT_DISPOSITION=0
+ORACLE_ONLY_COMMANDS_NOT_DISCOVERABLE=0
+PUBLIC_CLI_VARIANT_COVERAGE=100%
+OUTPUT_NEXT_ACTIONS_VALIDATED=100%
 AI_INTENTS_WITHOUT_DISPOSITION=0
 SECURITY_NEGATIVE_DISPOSITION_COMPLETE=YES
 PERFORMANCE_DISPOSITION_COMPLETE=YES
 FUNCTION_UNDER_LOAD_DISPOSITION_COMPLETE=YES
+UNMAPPED_PRODUCT_CAPABILITIES=0
+PUBLIC_COMMANDS_WITHOUT_USE_CASE=0
+PUBLIC_COMMANDS_WITHOUT_DIRECT_USE=0
+PUBLIC_COMMANDS_WITHOUT_AI_ASSISTED_USE=0
+USE_CASES_WITHOUT_AI_MIRROR=0
 CLEANUP_DISPOSITION_COMPLETE=YES
 ~~~
 
@@ -608,6 +704,53 @@ PRIVATE_MANAGEMENT_API_USED=NO
 
 ### 6.5 CLI surface parity and 100% command execution
 
+#### 6.5.1 Discovery-first real-user rule
+
+The operator is assumed to **not know the command set in advance**. Scenario command snippets in this document are an auditor coverage oracle, not a cheat sheet to feed to the acting user before discovery.
+
+Every Server and Agent role begins command discovery from the installed product itself:
+
+~~~text
+drlink
+?
+help
+help commands
+menu
+Tab
+~~~
+
+Then follow visible product guidance recursively:
+
+~~~text
+DISCOVER command/resource
+-> open relevant help/menu/wizard
+-> learn required arguments/variants from public output
+-> map the discovered capability to a real use case
+-> execute the use case
+-> return to discovery until no undisposed public command/variant remains
+~~~
+
+Rules:
+
+- do not start a scenario by copying syntax from section 14 when the same syntax is discoverable from the product;
+- section 14 and the CLI/AI Master are used by the auditor to detect omissions, not by the acting user as prior command knowledge;
+- use `?`, `help`, nested help, menu labels, wizard prompts, error guidance, Tab completion, and output-provided next actions as the normal discovery path;
+- if a user-visible output teaches a next command, actually follow it and grade whether that continuation works;
+- if a command exists in the auditor oracle but cannot be discovered through public UX, execute it for completeness **and record a discoverability finding**;
+- if runtime discovery exposes an undocumented public command, use it in a realistic use case and record documentation drift;
+- discovery is repeated independently on Server and each materially different Agent platform/role because role-specific command surfaces may differ.
+
+Required discovery gate:
+
+~~~text
+SERVER_DISCOVERY_FROM_PUBLIC_UX=PASS
+AGENT_DISCOVERY_FROM_PUBLIC_UX=PASS
+DISCOVERED_COMMANDS_WITHOUT_DISPOSITION=0
+ORACLE_ONLY_COMMANDS_NOT_DISCOVERABLE=
+RUNTIME_ONLY_COMMANDS_DISCOVERED=
+OUTPUT_NEXT_ACTIONS_VALIDATED=100%
+~~~
+
 FULL_USER_E2E must exercise all applicable public CLI surfaces, not merely list them:
 
 - shell one-shot form;
@@ -620,21 +763,92 @@ FULL_USER_E2E must exercise all applicable public CLI surfaces, not merely list 
 - file ConfigurationBundle input;
 - stdin ConfigurationBundle input.
 
-Every public command family listed in section 14 must map to at least one executed scenario and current-run evidence.
+The Direct human/operator lane must **not** begin from section 14 or from a preloaded command inventory. A real user does not know every command in advance. The operator starts only from the installed product entry point and public discovery surfaces, then discovers the product progressively.
+
+Use this discovery ladder on every role:
+
+~~~text
+start drlink
+-> observe role / initial screen
+-> menu
+-> ?
+-> help
+-> help commands
+-> Tab completion
+-> nested help / contextual error guidance
+-> choose a real goal
+-> discover the next command needed for that goal
+~~~
+
+When the public UI reveals a new command, subcommand, setting, view, or operation, append it to the current-run `DISCOVERED_PUBLIC_COMMANDS` ledger and assign it to a realistic use case. Do not execute it merely to mark it covered. The user must use it for the purpose suggested by the product's own help/menu/output and verify the resulting state or real application behavior.
+
+Section 14 is an **auditor reconciliation checklist**, not the user's instruction sheet. The operator persona may not consult section 14, source code, test code, or private implementation details to decide what command to type next. After discovery-driven execution is underway, the auditor compares the runtime-discovered surface with section 14 and the CLI/AI Master to catch documentation/runtime drift and any public surface that discovery failed to expose.
+
+At the start of every FULL_USER_E2E, build a **fresh runtime command/variant union** from the installed candidate itself:
+
+1. discover commands through `menu`, `?`, `help`, `help commands`, Tab, contextual/nested help and user-visible errors on the Server;
+2. after enrollment, repeat the same discovery process independently on Agent Hosts;
+3. continuously union those runtime-discovered commands and public variants into the coverage ledger;
+4. begin executing independent use cases as soon as their needed capabilities are discovered—do not wait until discovery is complete;
+5. only as an auditor reconciliation step, compare the discovered union with section 14 and the CLI/AI Master;
+6. any applicable command/variant found by runtime, documentation, or reconciliation must be assigned to a real use case and executed there;
+7. if runtime exposes a public command/variant missing from docs, record `DOC_RUNTIME_COMMAND_DRIFT=YES` and still execute it during this run;
+8. if docs list a command that cannot be discovered from public product surfaces, record `DISCOVERABILITY_DEFECT=YES` and test it only after preserving that finding.
+
+A command family is not fully covered when only its top-level verb parses. Public subcommands/settings/operations that change behavior are variants and require disposition too. Examples include Server setting keys, MCP TLS settings, certificate operations, credential operations, update/check operations, and role-specific views.
 
 Required gate:
 
 ~~~text
+DISCOVERY_STARTED_FROM_PUBLIC_UI_ONLY=YES
+SECTION_14_USED_AS_OPERATOR_SCRIPT=NO
+RUNTIME_HELP_COMMANDS_CAPTURED=YES
+RUNTIME_PUBLIC_COMMAND_UNION_BUILT=YES
 PUBLIC_CLI_COMMAND_COVERAGE=100%
+PUBLIC_CLI_VARIANT_COVERAGE=100%
 PUBLIC_CLI_SURFACE_COVERAGE=100%
 UNEXERCISED_PUBLIC_COMMANDS=0
+UNEXERCISED_PUBLIC_VARIANTS=0
+COMMANDS_WITHOUT_USE_CASE=0
+PUBLIC_COMMANDS_WITHOUT_DIRECT_USE=0
+PUBLIC_COMMANDS_WITHOUT_AI_ASSISTED_USE=0
 ~~~
 
-Commands that are genuinely not applicable to the tested role/platform must be listed individually with a reason; they may not silently disappear from coverage.
+Commands or variants that are genuinely not applicable to the tested role/platform must be listed individually with a reason; they may not silently disappear from coverage.
 
 ### 6.6 Parallel execution rules
 
-Independent scenario lanes should run in parallel when doing so does not destroy shared state needed by another lane. Use unique test prefixes for Objects, Rules, Remote Services, enrollment records, files, and AI identities so parallel tests cannot collide accidentally.
+Independent scenario lanes must run in parallel whenever their required state is isolated. Parallelism is part of the user scenario itself, not only a speed optimization. Use unique `RUN_ID` prefixes for Objects, Rules, Remote Services, enrollment records, files, AI identities, and temporary target services so lanes cannot collide accidentally.
+
+The scheduler is discovery-driven: as soon as public help/menu discovery exposes enough capability to start a use case, enqueue it immediately on an available independent host/session instead of waiting for command discovery or another scenario to finish.
+
+A typical full run should overlap lanes such as:
+
+~~~text
+Lane A  Day-0 Server / public identity / diagnostics
+Lane B  multi-host enrollment and inventory
+Lane C  direct SSH/HTTP/HTTPS/Custom TCP publication + real traffic
+Lane D  Relay Host and Fixed TCP lifecycle
+Lane E  Remote Access policy lifecycle + real allow/deny traffic
+Lane F  Internet Access application use cases
+Lane G  AI Identity / Permission / AI Access / MCP
+Lane H  ConfigurationBundle / Export -> AI -> Reapply
+Lane I  backup/revision/audit/recovery on isolated state
+Lane J  Agent lifecycle/update/reconnect on spare hosts
+Lane K  adversarial/invalid/corner cases
+Lane L  baseline load, then function-under-load
+~~~
+
+Do not force these exact lane letters or host assignments; dynamically use the maximum safe concurrency supported by the current topology. If one lane is waiting on enrollment, a reboot, an outage window, AI response, or a long-running traffic/load step, continue other independent lanes rather than idling.
+
+Required scheduler evidence:
+
+~~~text
+PARALLEL_LANES_STARTED=
+MAX_SIMULTANEOUS_ACTIVE_LANES=
+SERIALIZED_OPERATIONS_WITH_REASON=
+IDLE_WHILE_INDEPENDENT_WORK_AVAILABLE=NO
+~~~
 
 Serial execution is allowed only where the test intentionally mutates shared global state, for example:
 
@@ -671,6 +885,108 @@ If the requested E2E scope includes the Plugin stack:
 - report Plugin acceptance separately from core CLI coverage.
 
 A Plugin failure must not be hidden by a passing direct MCP client, and a Plugin PASS must not be used as evidence that the core public CLI commands were exercised.
+
+### 6.8 Use-case-driven functional completeness and mandatory AI mirror
+
+FULL_USER_E2E is not a command smoke test. Every product capability and every applicable public command must be exercised **inside a realistic operator/user use case** that proves the intended outcome, lifecycle, and recovery behavior.
+
+A command receives coverage only when its product purpose is exercised. Merely invoking a command with `--help`, producing a parse error, or listing it in section 14 does not count as functional command coverage unless help/error behavior is the capability under test.
+
+Each use case should cover, where applicable:
+
+~~~text
+DISCOVER -> CREATE/CONFIGURE -> INSPECT -> TEST/EXPLAIN -> REAL USE
+-> EDIT/CHANGE -> FAILURE/RECOVERY -> CLEANUP
+~~~
+
+The mandatory v2.4 use-case catalog is:
+
+| Use case | Real user/operator goal | Primary product capabilities | Existing scenario families |
+| --- | --- | --- | --- |
+| UC-00 First-time discovery | Enter DRLink with no memorized command list and discover what can be done through role screen, menu, `?`, help, Tab and contextual errors | discoverability, role clarity, navigation, public command/variant discovery | O-001, U-010, O-012, O-015, S-005, S-006 |
+| UC-01 Day-0 Server | Install/start Server, understand initial state, configure public identity/TLS/bootstrap and verify diagnostics | status/version, public hostname/bootstrap/installer URLs, certificate, MCP TLS, diagnostics | U-009, O-001, A-011, A-015, A-018, S-017 |
+| UC-02 Connect Managed Hosts | Onboard one host quickly and many hosts operationally | Zero-Touch, manual, bulk enrollment, enrollment lifecycle, inventory, group membership | O-002, O-003, A-001, A-012, C-002 |
+| UC-03 Publish a direct service | Publish SSH/HTTP/HTTPS/custom TCP from an Agent and actually use it externally | Service Objects, Agent Remote Service, endpoint allocation/state, real clients | U-001, U-002, O-004, S-023, C-003, C-004 |
+| UC-04 Publish a Relay/LAN service | Reach a target without Agent software through a Relay Host | Relay destination, Network Object, Service Object, DEGRADED->HEALTHY | U-004, O-004, S-008 |
+| UC-05 Fixed TCP lifecycle | Publish a fixed-destination-port application while DRLink allocates the public endpoint | Fixed TCP object, fixed pool, disable/reenable/delete, cross-pool rejection | U-005, O-004, A-013, S-013 |
+| UC-06 Remote Access control | Start open, block a source, reconstruct whitelist, troubleshoot enforcement, restore policy | Network/Service Objects & Groups, BLACKLIST/WHITELIST, test/explain, enable/disable/reset | U-003, A-002, A-003, A-004, S-001, S-014 |
+| UC-07 Internet Access control | Allow approved web/package/git traffic and deny everything else from protected hosts | Internet selectors, Managed Host source, FQDN/IP/CIDR, policy lifecycle, real applications | U-006, U-012, A-005, S-003, C-005 |
+| UC-08 AI/MCP authorization | Onboard an AI identity, grant least privilege, perform allowed work and prove denied work/audit | AI Identity, Permission Object/Group, AI Access, OAuth approval, MCP TLS, access log | U-007, U-011, A-006, A-016, C-006, X-003..X-010 |
+| UC-09 Inventory/group/reference administration | Organize Managed Hosts and reusable selectors, inspect references, safely delete | Managed Host Group, Network/Service/Permission Groups, references, protected deletion | A-001, A-002, A-003, A-007, S-014 |
+| UC-10 Configuration as code | Export working state, have it changed, validate/diff/apply, reapply idempotently and recover from invalid bundles | Server/Agent ConfigurationBundle, file/stdin, Export->AI->Reapply, atomicity | O-007, O-014, A-010, S-018, C-010 |
+| UC-11 Observe/audit/recover Server | Diagnose incidents, inspect history/revisions, back up, validate, restore, rollback, collect support evidence | diagnostics, audit, history, revisions, diff, backup/validate/restore, support bundle, clear | O-008, A-008, A-009, A-011, S-010, S-021 |
+| UC-12 Agent operations and recovery | Pause/resume/restart/synchronize/autostart/update/reboot and preserve identity/endpoints | Agent lifecycle, product/engine update separation, outage/reconnect | O-005, O-006, O-009, O-010, O-011, S-007, S-015, C-008, C-012, C-013 |
+| UC-13 Upgrade and reinstall | Move a prior stable install to the candidate, handle failed update, uninstall/reinstall without false success | Server/Agent update, engine check/update, uninstall/reinstall, recovery | A-015, A-019, A-020, O-009, O-011 |
+| UC-14 Human CLI usability | Complete common jobs through one-shot, REPL, menu and wizard, including mistakes/cancel/recovery | help, menu, Tab, guided create/edit, context errors, atomic cancel | U-010, O-001, O-012, O-015, S-005, S-006 |
+| UC-15 Multi-host production-like operation | Operate all supported hosts simultaneously under real traffic and configuration changes | cross-platform identity, concurrent enroll/create/traffic/policy/restart/outage/races | C-001..C-014 |
+| UC-16 Performance under real function | Measure throughput/CPS/concurrency/latency while real control workflows continue | all data paths plus responsive control plane and recovery | P-001..P-022 |
+| UC-17 Adversarial lifecycle | Prove invalid, duplicate, stale, credential, DNS/TLS, boundary and mutation failures fail safely | validation, auth, rollback, reference safety, capacity, connection edge cases | S-001..S-023 |
+
+If a new product capability or public command appears at runtime and does not fit an existing use case, create a new UC row during the same run rather than testing the command in isolation.
+
+Required functional coverage ledger:
+
+~~~text
+PRODUCT_CAPABILITY -> USE_CASE_ID -> SCENARIO_ID -> PUBLIC_COMMANDS
+-> DIRECT_EVIDENCE -> AI_EVIDENCE -> REAL_TRAFFIC_OR_OBSERVED_OUTCOME -> RESULT
+~~~
+
+Completion gates:
+
+~~~text
+UNMAPPED_PRODUCT_CAPABILITIES=0
+PUBLIC_COMMANDS_WITHOUT_USE_CASE=0
+PUBLIC_COMMANDS_WITHOUT_DIRECT_USE=0
+PUBLIC_COMMANDS_WITHOUT_AI_ASSISTED_USE=0
+USE_CASES_WITHOUT_DIRECT_EXECUTION=0
+USE_CASES_WITHOUT_AI_MIRROR=0
+SCENARIOS_REQUIRING_AI_MIRROR_UNCOVERED=0
+~~~
+
+#### 6.8.1 Same use case must be executed again with AI assistance
+
+Every applicable use case above must be executed twice from equivalent clean/namespaced starting state:
+
+~~~text
+RUN A = Human/operator executes the use case directly through public drlink
+RUN B = Human/operator states the same goal to AI and executes AI-generated public drlink guidance
+~~~
+
+The AI mirror is not a different synthetic test. It must preserve the same user goal, prerequisites, expected policy semantics, real traffic/application verification, mutation/recovery steps, and final state as the Direct run.
+
+For the AI run:
+
+- provide the user goal and public documentation, not the expected command syntax, section-14 answer key, or source code;
+- when the AI needs product-specific syntax or discovers ambiguity, give it the same public `?`/`help`/menu/error output a real user could obtain; do not resolve the ambiguity from source or the auditor oracle;
+- grade whether the AI correctly asks for or uses discoverable public guidance instead of hallucinating hidden syntax;
+- execute the AI's first answer unedited when safe;
+- when it fails, return only user-visible CLI/output to the same AI conversation and grade recovery;
+- allow AI to choose one-shot CLI or ConfigurationBundle where both are legitimate, but require the same resulting semantics and outcome;
+- for cross-context goals, require AI to split Server and Agent operations correctly rather than claiming distributed atomicity;
+- use separate namespaced resources so Direct and AI runs cannot hide or satisfy each other's state;
+- repeat real traffic/application checks after the AI-created state, not only `show` or `test` commands;
+- record AI-generated unsafe/private/internal commands as FAIL and do not execute them;
+- never inherit a Direct PASS as an AI PASS.
+
+Every applicable scenario/use-case evidence must record:
+
+~~~text
+USE_CASE_ID=
+DIRECT_SCENARIO_IDS=
+DIRECT_COMMANDS=
+DIRECT_RESULT=
+AI_USER_GOAL=
+AI_FIRST_ANSWER=
+AI_FIRST_ANSWER_RESULT=
+AI_RECOVERY_RESULT=
+AI_COMMANDS_EXECUTED=
+AI_RESULT=
+SEMANTIC_FINAL_STATE_EQUIVALENCE=PASS|FAIL
+REAL_TRAFFIC_EQUIVALENCE=PASS|FAIL|NOT_APPLICABLE
+AI_NOT_APPLICABLE_REASON=
+~~~
+
+`AI_NOT_APPLICABLE_REASON` is permitted only when the scenario is intrinsically machine-generated fault injection/measurement with no meaningful operator intent to mirror, or when the scenario itself is already the AI/Plugin transport under test. Read-only, lifecycle, recovery, backup, update, policy, enrollment, and configuration tasks are **not** exempt merely because they are operational rather than configuration changes.
 
 # 7. User scenarios
 
@@ -839,7 +1155,10 @@ set network-object approved-site
 set service-object https
 set internet-access approved-https mode whitelist source <SOURCE> destination approved-site service https enabled
 test internet-access source <SOURCE> destination approved-site service https
+test internet <SOURCE-IP> <HOST> <PORT> [<PROTOCOL>]
 ~~~
+
+`test internet` is policy + DNS evaluation only and must never be mistaken for live connectivity evidence.
 
 From the protected host, use real applications as applicable:
 
@@ -983,23 +1302,23 @@ In addition to U-006, explicitly exercise every currently supported Internet Acc
 - representative vendor/API HTTPS;
 - real package/update workflow.
 
-For each allowed path include a paired denied path using wrong source, destination, or port.
+For each allowed path include a paired denied path using wrong source, destination, or port. Discover and use the public connectivity/explain helper when exposed by runtime help (currently `test internet <SOURCE-IP> <HOST> <PORT> [<PROTOCOL>]`) and then prove the same outcome with the real application client; a passing `test internet` result alone is not traffic evidence.
 
 # 8. Operator scenarios
 
 ## O-001 — First-use discovery and role correctness — MANDATORY
 
-Agent Host:
+Start from the bare installed entry point with no memorized command list:
 
 ~~~text
-show status
-show agent
-show remote-services
-system info
-system version
+drlink
 ~~~
 
-Verify role-aware help/menu and that Server-only mutation commands return a clear role error rather than Unknown command.
+On both Server and Agent roles, use the visible menu, `?`, `help`, `help commands`, Tab completion, nested help, and contextual error guidance to discover the available workflow. Record the order in which commands/variants become discoverable.
+
+Then use the discovered read-only commands to identify role, status, inventory, services/capabilities, connection information, and version. Current runtime examples include Server `show status`, `show services`, `show internet`, `system status`, `system version` and Agent `show status`, `show agent`, `show remote-services`, `system info`, `system version`, but these examples are audit expectations rather than the operator's starting script.
+
+Verify the user can reach the major product jobs from public discovery alone and that wrong-role mutation attempts return a clear role correction rather than an unexplained Unknown command.
 
 ## O-002 — Zero-Touch enrollment — MANDATORY
 
@@ -1166,12 +1485,13 @@ Verify support output identifies Agent Host role, includes useful provenance, an
 Agent Host:
 
 ~~~text
+system update check-engine
 system update product
 system update engine
 system version
 ~~~
 
-Verify product and upstream engine versions remain separate, update does not require ordinary re-enrollment, and endpoint/identity/state are preserved.
+Verify product and upstream engine versions remain separate, check-engine is read-only, product update and engine update are independently discoverable/actions, update does not require ordinary re-enrollment, and endpoint/identity/state are preserved.
 
 ## O-010 — Reboot/autostart recovery — MANDATORY
 
@@ -1382,9 +1702,10 @@ test internet-access source <SOURCE> destination <DESTINATION> service <SERVICE>
 
 Exercise real traffic plus all mandatory security-negative cases in section 10.
 
-## A-006 — AI Identity, permissions, AI Access, and logs — MANDATORY for v2.4.0
+## A-006 — AI Identity, permissions, AI Access, MCP TLS, OAuth approval, and logs — MANDATORY for v2.4.0
 
 ~~~text
+show mcp-tls
 show ai-identities
 show ai-identity <IDENTITY>
 show permission-objects
@@ -1398,6 +1719,7 @@ show ai-access-log identity <IDENTITY>
 show ai-access-log destination <DESTINATION>
 show ai-access-log permission <PERMISSION>
 
+set mcp-tls <SETTING> ...
 set ai-identity <IDENTITY>
 set permission-object <PERMISSION>
 set permission-group <GROUP>
@@ -1405,6 +1727,7 @@ set ai-access <RULE>
 set ai-access enabled
 set ai-access disabled
 
+unset mcp-tls [<PURGE>]
 unset ai-identity <IDENTITY>
 unset permission-object <PERMISSION>
 unset permission-group <GROUP>
@@ -1412,6 +1735,7 @@ unset ai-access <RULE>
 unset ai-access policy
 
 test ai-access source <AI_IDENTITY> destination <DESTINATION> permission <PERMISSION>
+system credential approve-oauth <PENDING-ID> [AI-IDENTITY]
 ~~~
 
 Verify authentication and authorization remain separate, reference-safe deletion works, and disabling AI Access policy enforcement does not bypass AI authentication.
@@ -1443,9 +1767,12 @@ Verify revision history, diff correctness, audit attribution, rollback safety, r
 
 ~~~text
 system backup
+system backup validate <FILE>
 system restore <FILE>
 system diagnostics
 ~~~
+
+Validate the newly created backup before restore. Exercise at least one invalid/corrupt backup through `system backup validate` and require a clear failure before any restore mutation.
 
 Restore into the supported clean/recovery topology.
 
@@ -1487,13 +1814,23 @@ Verify:
 system status
 system version
 system diagnostics
+system diagnostics mcp
 system audit
-system certificate
-system update
+system history
+system clear
+system update product
+system update check-engine
+system update engine
+system certificate status
+system certificate issue
+system certificate renew
+system certificate import <CERT> <KEY> [CHAIN]
 system support-bundle
 ~~~
 
-Verify stable/preview/development identity and exact Source HEAD are truthful, certificate state is coherent, diagnostics are read-only, update follows candidate/release rules, and support output is secret-safe.
+Verify stable/preview/development identity and exact Source HEAD are truthful, diagnostics are read-only, MCP diagnostics are actionable, history/clear behave as documented operator surfaces without unintended product-state mutation, product vs Relay Engine update/check semantics remain distinct, certificate lifecycle state is coherent, and support output is secret-safe.
+
+Certificate issue/renew/import operations must be exercised only on disposable/approved certificate state, with status checked before and after each operation and real MCP/public TLS behavior verified where applicable.
 
 ## A-012 — Zero-Touch capacity and credential security — MANDATORY
 
@@ -1552,10 +1889,16 @@ Prove:
 At the end of FULL_USER_E2E, produce a machine-readable or clearly auditable mapping:
 
 ~~~text
-PUBLIC_CLI_COMMAND -> SCENARIO_ID -> HOST/ROLE -> RESULT -> EVIDENCE
+PUBLIC_CLI_COMMAND_OR_VARIANT
+-> DISCOVERY_SOURCE(menu|?|help|Tab|error|doc-reconciliation)
+-> USE_CASE_ID
+-> SCENARIO_ID
+-> HOST/ROLE
+-> DIRECT_RESULT/EVIDENCE
+-> AI_ASSISTED_RESULT/EVIDENCE
 ~~~
 
-Every applicable command in section 14 must have at least one current-run execution record.
+Every applicable runtime-discovered/reconciled public command and behavior-changing variant must have at least one current-run Direct execution record **inside a real use case** and one AI-assisted use-case record unless an explicit permitted AI_NOT_APPLICABLE reason is retained. Section 14 is reconciled after public discovery; it is not the human operator's command script.
 
 Separately map every canonical CLI/AI Master scenario relevant to the current candidate, including:
 
@@ -1608,18 +1951,36 @@ Expected:
 - audit/revision order remains explainable;
 - CLI remains responsive after contention.
 
-## A-018 — Public hostname/bootstrap configuration lifecycle — MANDATORY
+## A-018 — Public hostname/bootstrap/installer configuration lifecycle — MANDATORY
 
-Using only public Server CLI, exercise set/change/clear behavior for public/bootstrap hostname configuration supported by the candidate.
+Using only public Server CLI, exercise set/change/clear behavior for every current published-host and installer setting:
 
-After each change, regenerate or inspect:
+~~~text
+set server public-hostname <FQDN>
+set server bootstrap-hostname <FQDN>
+set server installer-url <URL>
+set server windows-installer-url <URL>
+set installer-url <URL>
+set windows-installer-url <URL>
+
+unset server public-hostname
+unset server bootstrap-hostname
+unset server installer-url
+unset server windows-installer-url
+~~~
+
+Exercise both the `set server ...` form and the public sibling installer-URL aliases where both are exposed by runtime help.
+
+After each relevant change, regenerate or inspect:
 
 - Enrollment endpoint;
-- Zero-Touch short URL;
+- Zero-Touch launcher/short URL;
+- Linux installer URL;
+- Windows installer URL;
 - Remote Service endpoint presentation where applicable;
 - diagnostics/version/support evidence.
 
-Verify no change to an optional friendly hostname silently changes control/allocator identity unless the current product contract explicitly says so.
+Verify no change to an optional friendly hostname silently changes control/allocator identity unless the current product contract explicitly says so. Verify Linux and Windows onboarding receive the intended platform-specific installer URL and that clearing optional overrides returns to the supported default.
 
 ## A-019 — Prior-stable upgrade to candidate — MANDATORY when an upgrade path is claimed
 
@@ -2597,6 +2958,9 @@ FULL_USER_E2E requires every applicable entry below to be executed through the p
 
 ~~~text
 show status
+show services
+show internet
+show mcp-tls
 
 show managed-hosts
 show managed-host <HOST>
@@ -2657,6 +3021,18 @@ set enrollment zero-touch
 set enrollment manual
 set enrollment bulk
 
+set server public-hostname <value>
+set server bootstrap-hostname <value>
+set server installer-url <value>
+set server windows-installer-url <value>
+set installer-url <url>
+set windows-installer-url <url>
+set mcp-tls hostname <FQDN>
+set mcp-tls mode <MODE>
+set mcp-tls contact-email <EMAIL>
+set mcp-tls acme-environment <ENVIRONMENT>
+set mcp-tls acme-directory <URL>
+
 set group <GROUP>
 set managed-host <HOST> group <GROUP>
 
@@ -2691,6 +3067,11 @@ unset managed-host <HOST>
 unset managed-host <HOST> group <GROUP>
 unset group <GROUP>
 unset enrollment <ENROLLMENT>
+unset server public-hostname
+unset server bootstrap-hostname
+unset server installer-url
+unset server windows-installer-url
+unset mcp-tls [<PURGE>]
 
 unset network-object <OBJECT>
 unset network-group <GROUP>
@@ -2716,6 +3097,7 @@ unset ai-access policy
 ## 14.4 Server test
 
 ~~~text
+test internet <SOURCE-IP> <HOST> <PORT> [<PROTOCOL>]
 test remote-access source <SOURCE> destination <DESTINATION> service <SERVICE>
 test internet-access source <SOURCE> destination <DESTINATION> service <SERVICE>
 test ai-access source <AI_IDENTITY> destination <DESTINATION> permission <PERMISSION>
@@ -2736,15 +3118,34 @@ system diff <REVISION_A> <REVISION_B>
 system rollback <REVISION>
 
 system backup
+system backup validate <FILE>
 system restore <FILE>
 
 system export configuration <FILE>
 system diff configuration <FILE|->
 system apply configuration <FILE|->
 
-system certificate
-system update
+system diagnostics mcp
+
+system certificate status
+system certificate issue
+system certificate renew
+system certificate import <CERT> <KEY> [CHAIN]
+
+system update product
+system update engine
+system update check-engine
+
+system credential rotate ai-identity <NAME>
+system credential revoke ai-identity <NAME>
+system credential configure ai-identity <NAME> authentication static-bearer
+system credential configure ai-identity <NAME> authentication oauth
+system credential approve-oauth <PENDING-ID> [AI-IDENTITY]
+system credential deny-oauth <PENDING-ID>
+
 system support-bundle
+system history
+system clear
 system uninstall
 ~~~
 
@@ -2769,6 +3170,7 @@ system autostart enable
 system autostart disable
 
 system update product
+system update check-engine
 system update engine
 system synchronize
 
@@ -2786,7 +3188,22 @@ system uninstall
 
 When an Agent help/diagnostic surface recommends system synchronize, the command must parse and be role-correct.
 
-## 14.7 External user/application commands
+## 14.7 Universal CLI navigation/discovery
+
+These public surfaces must be exercised on both Server and Agent roles where available:
+
+~~~text
+menu
+help
+help commands
+?
+Tab completion
+exit
+~~~
+
+Navigation/discovery coverage counts only when exercised interactively in the role-appropriate CLI; printing static help text from documentation is not execution evidence.
+
+## 14.8 External user/application commands
 
 These are not DRLink grammar, but FULL_USER_E2E must use real clients appropriate to the service:
 
@@ -2966,13 +3383,20 @@ Per scenario retain:
 
 ~~~text
 SCENARIO_ID=
+USE_CASE_ID=
+PARALLEL_LANE=
 ROLE=
 HOST=
 START_UTC=
 END_UTC=
 SOURCE_HEAD=
 PRODUCT_VERSION=
+DISCOVERY_PATH=
+PUBLIC_GUIDANCE_USED=
+DISCOVERED_COMMANDS_VARIANTS=
 COMMANDS_EXECUTED=
+AI_MIRROR_REQUIRED=YES|NO
+AI_MIRROR_RESULT=
 EXPECTED=
 OBSERVED=
 RESULT=
@@ -2992,18 +3416,32 @@ SCENARIO_FAIL=
 SCENARIO_BLOCKED=
 SCENARIO_BLOCKED_TOOLING=
 SCENARIO_NOT_APPLICABLE=
+USE_CASES_TOTAL=
+USE_CASES_EXECUTED_DIRECT=
+USE_CASES_EXECUTED_AI_MIRROR=
+USE_CASES_UNEXECUTED=
+USE_CASES_WITHOUT_AI_MIRROR=
+DISCOVERED_PUBLIC_COMMANDS_TOTAL=
+DISCOVERED_PUBLIC_VARIANTS_TOTAL=
+ORACLE_ONLY_COMMANDS_NOT_DISCOVERABLE=
 PUBLIC_CLI_COMMANDS_TOTAL=
 PUBLIC_CLI_COMMANDS_EXECUTED=
 PUBLIC_CLI_COMMANDS_UNEXERCISED=
+PUBLIC_CLI_VARIANTS_UNEXERCISED=
+PUBLIC_COMMANDS_WITHOUT_USE_CASE=
+PUBLIC_COMMANDS_WITHOUT_DIRECT_USE=
+PUBLIC_COMMANDS_WITHOUT_AI_ASSISTED_USE=
 PUBLIC_CLI_SURFACES_TOTAL=
 PUBLIC_CLI_SURFACES_EXECUTED=
+DISCOVERABILITY_DEFECTS=
+DOC_RUNTIME_COMMAND_DRIFT=
 CANONICAL_MASTER_SCENARIOS_TOTAL=
 CANONICAL_MASTER_SCENARIOS_EXECUTED=
 ALL_TEST_HOSTS_EXPECTED=
 ALL_TEST_HOSTS_SIMULTANEOUSLY_ONLINE=
 ~~~
 
-Any non-zero unexercised applicable public CLI command or canonical mandatory scenario prevents FULL_USER_E2E PASS.
+Any non-zero unexercised applicable use case, public CLI command/variant, command without a real use case, command without Direct functional use, command without required AI-assisted use, applicable use case without its AI mirror, undisposed discovered command, or canonical mandatory scenario prevents FULL_USER_E2E PASS. A command that only parsed or displayed help does not count as functional use unless discovery/help is the capability being tested. A command that exists in the auditor oracle but cannot be discovered through public product UX is a discoverability defect and prevents a clean PASS until dispositioned.
 
 # 17. Final FULL_USER_E2E report
 
@@ -3032,10 +3470,24 @@ MULTI_PLATFORM=PASS|PARTIAL|FAIL
 TOPOLOGY_MATRIX=PASS|PARTIAL|FAIL
 ALL_TEST_HOSTS_SIMULTANEOUSLY_ONLINE=PASS|PARTIAL|FAIL
 PARALLEL_MULTI_HOST=PASS|PARTIAL|FAIL
+USE_CASE_COVERAGE=
+DISCOVERY_FROM_PUBLIC_UX=PASS|PARTIAL|FAIL
 PUBLIC_CLI_COMMAND_COVERAGE=
+PUBLIC_CLI_VARIANT_COVERAGE=
 PUBLIC_CLI_SURFACE_COVERAGE=
+COMMANDS_WITHOUT_USE_CASE=
+PUBLIC_COMMANDS_WITHOUT_DIRECT_USE=
+PUBLIC_COMMANDS_WITHOUT_AI_ASSISTED_USE=
+USE_CASES_WITHOUT_AI_MIRROR=
+ORACLE_ONLY_COMMANDS_NOT_DISCOVERABLE=
+DISCOVERABILITY_DEFECTS=
+DOC_RUNTIME_COMMAND_DRIFT=
+PARALLEL_LANES_STARTED=
+MAX_SIMULTANEOUS_ACTIVE_LANES=
+IDLE_WHILE_INDEPENDENT_WORK_AVAILABLE=YES|NO
 DRLINK_CONTROL_PLANE_CLI_ONLY=PASS|FAIL
 AI_ASSISTED_CLI=PASS|PARTIAL|FAIL
+AI_USE_CASE_MIRROR_COVERAGE=
 CHATGPT_PLUGIN_INTEGRATION=PASS|PARTIAL|FAIL|NOT_APPLICABLE
 CANONICAL_MASTER_SCENARIO_COVERAGE=
 UNEXERCISED_PUBLIC_COMMANDS=
@@ -3088,8 +3540,12 @@ USER_E2E_REQUEST
 -> exercise ALLOW and DENY
 -> execute performance in every required direction
 -> bring all applicable test hosts online simultaneously and execute parallel multi-host gates
--> exercise every applicable public CLI command and CLI surface
+-> begin each role as a user who does not know the command set: discover through drlink, ?, help, help commands, menu, Tab, wizard/error guidance
+-> treat scenario/section-14 command syntax as an auditor oracle, not prior knowledge for the acting user
+-> map every discovered/oracle command and behavior-changing variant into a real use case and exhaust the command ledger through those use cases
+-> start each independent use-case lane as soon as enough public UX has been discovered; do not wait for serial happy-path completion
 -> keep all DRLink control/configuration/lifecycle actions CLI-only
+-> execute every applicable use case again through AI assistance from the same natural-language goal, using only public docs and user-visible CLI/help/error output for recovery
 -> exercise AI one-shot, AI error-correction, AI ConfigurationBundle, Export->AI->Reapply, and cross-context split workflows
 -> retain evidence
 -> report every skipped/blocked scenario honestly
@@ -3139,18 +3595,22 @@ full user e2e 수행해
 On a trigger, the minimum startup sequence is:
 
 ~~~text
-1. Open docs/FULL_USER_E2E_SCENARIOS.md.
+1. Open docs/FULL_USER_E2E_SCENARIOS.md as the execution contract; section 14 remains auditor-only and is not used as the acting user's memorized command script.
 2. Capture current candidate/build identity without code review.
-3. Read the development host's ~/.ssh/config.
+3. Read the development host's ~/.ssh/config and apply the section 5.1 canonical SSH port rules.
 4. Probe configured hosts in parallel.
 5. Classify/assign server, Agent/Relay, client, target and load-generator roles.
-6. Create RUN_ID-scoped evidence/resources.
-7. Start all independent Direct CLI, guided/TTY, adversarial, multi-platform enrollment, real-traffic, AI-assisted and baseline-performance lanes in parallel.
-8. Behave like a real operator: use product output, copy/paste generated commands, make realistic mistakes, and recover only from user-visible guidance.
-9. If one lane is blocked by tooling/environment, record only that lane as BLOCKED_TOOLING/BLOCKED_ENVIRONMENT and continue every independent lane immediately.
-10. Do not inspect product source, test source, internal DB/state, or harness implementation during active discovery.
-11. Run mixed function-under-load, policy-mutation, restart/reconnect, outage, race, and simultaneous multi-host scenarios.
-12. Finish disposition/cleanup/reporting; only then begin implementation/harness diagnosis and batch engineering findings.
+6. On every available Server/Agent role, start public command discovery in parallel with drlink, ?, help, help commands, menu, Tab and visible wizard/error guidance.
+7. Build the runtime command/variant ledger and map discovered capabilities to realistic use-case lanes; section 14 is auditor-only omission detection.
+8. Create RUN_ID-scoped namespaced evidence/resources and immediately start every independent use-case lane whose commands/prerequisites are already discovered.
+9. Run Direct CLI, guided/TTY, adversarial, multi-platform enrollment, real-traffic, AI-assisted mirror and baseline-performance lanes concurrently where shared state permits.
+10. Behave like a real operator: follow product output/next actions, copy/paste generated commands, make realistic mistakes, and recover only from user-visible guidance.
+11. Continue discovery and use-case execution together until no discovered/oracle command or behavior-changing public variant lacks disposition.
+12. Execute each applicable use case again through AI assistance from the same goal and equivalent namespaced starting state.
+13. If one lane is blocked by tooling/environment, record only that lane as BLOCKED_TOOLING/BLOCKED_ENVIRONMENT and continue every independent lane immediately.
+14. Do not inspect product source, test source, internal DB/state, or harness implementation during active discovery.
+15. Run mixed function-under-load, policy-mutation, restart/reconnect, outage, race, and simultaneous multi-host scenarios.
+16. Finish command/use-case/AI-mirror disposition, cleanup and reporting; only then begin implementation/harness diagnosis and batch engineering findings.
 ~~~
 
 No additional planning document, old audit document, historical evidence review, Cursor run, or human host-selection step is a prerequisite.
