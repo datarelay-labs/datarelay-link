@@ -754,7 +754,7 @@ Verify:
 - removing a destination required by an application makes that application fail through policy;
 - broad wildcard expansion is not used just to obtain PASS.
 
-## U-007 — AI/MCP authorized and denied use — MANDATORY when candidate includes AI/MCP
+## U-007 — AI/MCP authorized and denied use — MANDATORY for v2.4.0
 
 Server creates/binds the AI Identity using the supported authentication workflow, then configures permissions and AI Access.
 
@@ -768,6 +768,8 @@ test ai-access source <IDENTITY> destination <DESTINATION> permission read-only
 show ai-access-log identity <IDENTITY>
 ~~~
 
+For v2.4.0 ChatGPT acceptance, first use a real ChatGPT Plus owner/UI session to complete OAuth Authorization Code/consent through the public MCP endpoint and confirm tool discovery. Machine-side SDK/HTTP conformance remains required evidence but cannot satisfy this owner/UI gate by itself.
+
 From the supported AI/MCP client, verify:
 
 - valid authenticated identity succeeds only inside policy;
@@ -778,7 +780,7 @@ From the supported AI/MCP client, verify:
 - audit attribution identifies principal, target, tool, result, revision, and safe metadata;
 - no raw credentials or sensitive file contents leak into audit.
 
-If AI/MCP is explicitly excluded from the candidate being tested, record this scenario NOT_APPLICABLE with exact feature evidence. Do not silently skip it.
+For v2.4.0, AI/MCP is not optional. If MCP Bridge/AI Access is absent or the real ChatGPT Plus owner/UI authentication path cannot be exercised, record this scenario `FAIL` or `BLOCKED` with exact evidence; do not mark it `NOT_APPLICABLE`.
 
 ## U-008 — User continuity across restart and policy change — MANDATORY
 
@@ -2244,7 +2246,7 @@ For an approved destination, measure:
 
 Repeat a deny test during load to prove security policy is not bypassed under performance pressure.
 
-## P-011 — AI/MCP performance — MANDATORY when feature included
+## P-011 — AI/MCP performance — MANDATORY for v2.4.0
 
 Measure representative allowed operations:
 
@@ -2257,7 +2259,7 @@ Measure representative allowed operations:
 
 Also verify denied operations remain denied under concurrent load.
 
-If the candidate excludes AI/MCP, record NOT_APPLICABLE with feature evidence.
+For v2.4.0, MCP absence is a release failure rather than a `NOT_APPLICABLE` condition. Performance measurement may use the qualified machine-side MCP client after the real ChatGPT Plus owner/UI authentication gate is satisfied, but it does not replace U-007 owner/UI acceptance.
 
 ## P-012 — Connection churn and reconnect storm — MANDATORY
 
