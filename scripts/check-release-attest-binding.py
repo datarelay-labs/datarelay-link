@@ -75,6 +75,7 @@ class BindingFacts:
     chatgpt_owner_ui_acceptance: str = ""
     chatgpt_owner_evidence_sha256: str = ""
     chatgpt_owner_evidence_provenance_head: str = ""
+    trusted_owner_ui_review: str = ""
 
 
 def _git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -179,6 +180,9 @@ def load_facts(
         chatgpt_owner_evidence_provenance_head=os.environ.get(
             "QUALIFICATION_CHATGPT_OWNER_EVIDENCE_PROVENANCE_HEAD", ""
         ).strip().lower(),
+        trusted_owner_ui_review=os.environ.get(
+            "QUALIFICATION_TRUSTED_OWNER_UI_REVIEW", ""
+        ).strip(),
     )
 
 
@@ -202,6 +206,10 @@ def _require_chatgpt_owner_gate(facts: BindingFacts, errors: list[str]) -> None:
         return
     if facts.chatgpt_owner_ui_acceptance != "PASS":
         errors.append("ChatGPT Plus owner/UI acceptance must be PASS for stable v2.4.0")
+    if facts.trusted_owner_ui_review != "PASS":
+        errors.append(
+            "protected owner/UI review must be PASS for stable v2.4.0"
+        )
     if not SHA256_RE.fullmatch(facts.chatgpt_owner_evidence_sha256):
         errors.append("ChatGPT owner/UI evidence SHA256 must be 64 hex characters")
     if facts.chatgpt_owner_evidence_provenance_head != facts.head:

@@ -140,6 +140,7 @@ def run_cli(
                 "QUALIFICATION_CHATGPT_OWNER_UI_ACCEPTANCE": "PASS",
                 "QUALIFICATION_CHATGPT_OWNER_EVIDENCE_SHA256": "d" * 64,
                 "QUALIFICATION_CHATGPT_OWNER_EVIDENCE_PROVENANCE_HEAD": qualified_head,
+                "QUALIFICATION_TRUSTED_OWNER_UI_REVIEW": "PASS",
             }
         )
     return subprocess.run(
@@ -174,10 +175,17 @@ def test_workflow_uses_checker() -> None:
         fail("release-attest.yml does not accept the actual owner/UI evidence payload")
     if "scripts/check-chatgpt-owner-acceptance.py" not in text:
         fail("release-attest.yml does not revalidate owner/UI evidence")
+    if "stable-release-owner-ui" not in text:
+        fail("release-attest.yml lacks protected owner/UI environment")
+    if "QUALIFICATION_TRUSTED_OWNER_UI_REVIEW" not in text:
+        fail("release-attest.yml does not bind protected owner/UI review")
+    if "needs.stable-owner-ui-approval.outputs.trusted_owner_ui_review" not in text:
+        fail("release-attest.yml does not source owner/UI review from protected job")
     for forbidden in (
         "inputs.qualification_chatgpt_owner_ui_acceptance",
         "inputs.qualification_chatgpt_owner_evidence_sha256",
         "inputs.qualification_chatgpt_owner_evidence_provenance_head",
+        "inputs.qualification_trusted_owner_ui_review",
     ):
         if forbidden in text:
             fail("release-attest.yml still trusts free-form owner gate input %s" % forbidden)
@@ -383,11 +391,47 @@ def test_v240_stable_requires_chatgpt_owner_evidence() -> None:
         chatgpt_owner_ui_acceptance="PASS",
         chatgpt_owner_evidence_sha256="c" * 64,
         chatgpt_owner_evidence_provenance_head=head,
+        trusted_owner_ui_review="PASS",
     )
     result = checker.evaluate(checker.BindingFacts(**base))
     if result.get("channel") != "stable":
         fail("owner evidence did not permit validated stable publication: %s" % result)
     print("PASS V240_STABLE_REQUIRES_CHATGPT_OWNER_EVIDENCE")
+
+
+def test_v240_stable_requires_protected_owner_review() -> None:
+    head = "a" * 40
+    parent = "b" * 40
+    facts = checker.BindingFacts(
+        project_version="2.4.0",
+        manifest_version="2.4.0",
+        channel="development",
+        git_ref=parent,
+        source_head=parent,
+        immutable_source_ref=parent,
+        head=head,
+        parent=parent,
+        input_ref="v2.4.0",
+        workflow_ref="refs/tags/v2.4.0",
+        workflow_sha=head,
+        changed_paths=("release-manifest.json",),
+        tag_commits={"v2.4.0": head},
+        clean=True,
+        pass1_head=head,
+        pass2_head=head,
+        final_qualified_head=head,
+        chatgpt_owner_ui_acceptance="PASS",
+        chatgpt_owner_evidence_sha256="c" * 64,
+        chatgpt_owner_evidence_provenance_head=head,
+    )
+    try:
+        checker.evaluate(facts)
+    except checker.BindingError as exc:
+        if not any("protected owner/UI review" in err for err in exc.errors):
+            fail("protected owner/UI review error not reported: %s" % exc.errors)
+    else:
+        fail("protected owner/UI review was not required")
+    print("PASS V240_STABLE_REQUIRES_PROTECTED_OWNER_REVIEW")
 
 
 def test_self_reference_is_rejected() -> None:
@@ -427,6 +471,7 @@ def main() -> int:
     test_stable_and_rc_tags_point_at_provenance_commit()
     test_validated_stable_tag_exposes_effective_channel()
     test_v240_stable_requires_chatgpt_owner_evidence()
+    test_v240_stable_requires_protected_owner_review()
     test_self_reference_is_rejected()
     print("RELEASE_ATTEST_BINDING_TEST=PASS")
     return 0

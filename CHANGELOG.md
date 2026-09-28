@@ -62,6 +62,7 @@ v2.4.0 remains a development target. The following is approved architecture scop
 - Internet Access retains server-side DNS, DNS-rebinding resistance, SSRF/special-address protection, and validated exact-destination connection.
 - MCP operations require authenticated AI Identity and per-invocation AI Access authorization; authentication remains mandatory even when AI Access enforcement is disabled.
 - True read-only AI policy requires `exec=false`.
+- Stable v2.4.0 owner/UI evidence is no longer terminal authority by caller input alone; release attestation additionally requires the protected `stable-release-owner-ui` GitHub Environment approval signal.
 
 ### Removed from target public model
 

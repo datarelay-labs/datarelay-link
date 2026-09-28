@@ -90,6 +90,8 @@ def evidence_errors(
     if require_chatgpt_owner:
         if evidence.get("chatgpt_plus_owner_ui_acceptance") != "PASS":
             errs.append("ChatGPT Plus owner/UI acceptance must be PASS")
+        if evidence.get("trusted_owner_ui_review") != "PASS":
+            errs.append("protected owner/UI review must be PASS")
         evidence_sha = str(evidence.get("chatgpt_owner_evidence_sha256") or "")
         if not SHA256.fullmatch(evidence_sha):
             errs.append("ChatGPT owner/UI evidence SHA256 must be 64 hex characters")
@@ -132,6 +134,7 @@ def project_manifest(repo: Path, evidence: dict) -> dict:
                 "chatgpt_plus_owner_ui_acceptance": "PASS",
                 "chatgpt_owner_evidence_sha256": evidence["chatgpt_owner_evidence_sha256"],
                 "chatgpt_owner_evidence_provenance_head": head,
+                "trusted_owner_ui_review": "PASS",
             }
         )
     if projected.get("artifacts") != artifacts:

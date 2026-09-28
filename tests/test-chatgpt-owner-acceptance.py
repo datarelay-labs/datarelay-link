@@ -127,6 +127,13 @@ class OwnerAcceptanceTests(unittest.TestCase):
                 "chatgpt_owner_evidence_provenance_head": PROVENANCE,
             }
         )
+        errs = PROJECT.evidence_errors(
+            release_evidence,
+            PROVENANCE,
+            require_chatgpt_owner=True,
+        )
+        self.assertTrue(any("protected owner/UI review" in err for err in errs), errs)
+        release_evidence["trusted_owner_ui_review"] = "PASS"
         self.assertEqual(
             PROJECT.evidence_errors(
                 release_evidence,

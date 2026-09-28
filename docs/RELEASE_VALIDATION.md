@@ -322,6 +322,14 @@ owner/UI evidence JSON as a base64 workflow input, revalidates it against the
 checked-out release HEAD, and derives PASS/hash/HEAD values from that payload;
 free-form owner acceptance/hash inputs are not authoritative.
 
+The JSON payload is still external/self-reported evidence and therefore cannot
+be terminal release authority on its own. Stable v2.4.0 attestation must also
+pass the protected GitHub Environment `stable-release-owner-ui`, configured
+with a required reviewer and administrator bypass disabled. The workflow may
+consume `trusted_owner_ui_review=PASS` only from that environment-gated job
+output; there is no caller-supplied workflow input for this value. A denied,
+cancelled, or missing protected review blocks stable attestation.
+
 A claim is not made merely because a generic MCP test client works.
 
 ## 16. MCP authentication tests

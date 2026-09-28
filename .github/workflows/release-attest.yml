@@ -44,7 +44,23 @@ permissions:
   contents: read
 
 jobs:
+  stable-owner-ui-approval:
+    if: ${{ inputs.ref == 'v2.4.0' }}
+    runs-on: ubuntu-latest
+    environment:
+      name: stable-release-owner-ui
+    permissions:
+      contents: read
+    outputs:
+      trusted_owner_ui_review: ${{ steps.record.outputs.trusted_owner_ui_review }}
+    steps:
+      - name: Record protected owner/UI approval
+        id: record
+        run: echo "trusted_owner_ui_review=PASS" >>"$GITHUB_OUTPUT"
+
   build-attest:
+    needs: stable-owner-ui-approval
+    if: ${{ always() && (needs.stable-owner-ui-approval.result == 'success' || needs.stable-owner-ui-approval.result == 'skipped') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -108,6 +124,7 @@ jobs:
           QUALIFICATION_CHATGPT_OWNER_UI_ACCEPTANCE: ${{ steps.owner_evidence.outputs.acceptance }}
           QUALIFICATION_CHATGPT_OWNER_EVIDENCE_SHA256: ${{ steps.owner_evidence.outputs.sha256 }}
           QUALIFICATION_CHATGPT_OWNER_EVIDENCE_PROVENANCE_HEAD: ${{ steps.owner_evidence.outputs.provenance_head }}
+          QUALIFICATION_TRUSTED_OWNER_UI_REVIEW: ${{ needs.stable-owner-ui-approval.outputs.trusted_owner_ui_review }}
         run: |
           set -euo pipefail
           ./scripts/check-release-attest-binding.py >>"$GITHUB_OUTPUT"
@@ -165,6 +182,7 @@ jobs:
           CHATGPT_OWNER_UI: ${{ steps.owner_evidence.outputs.acceptance }}
           CHATGPT_EVIDENCE_SHA256: ${{ steps.owner_evidence.outputs.sha256 }}
           CHATGPT_EVIDENCE_HEAD: ${{ steps.owner_evidence.outputs.provenance_head }}
+          TRUSTED_OWNER_UI_REVIEW: ${{ needs.stable-owner-ui-approval.outputs.trusted_owner_ui_review }}
         run: |
           set -euo pipefail
           mkdir -p release-subjects
@@ -175,7 +193,7 @@ jobs:
           # A stable tag keeps the qualified Git HEAD. Publication identity is
           # projected here and must not be committed back.
           if [[ "$INPUT_REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            python3 -c 'import json,os; open("qualification-evidence.json","w").write(json.dumps({"status":"PASS","pass1_head":os.environ["PASS1"],"pass2_head":os.environ["PASS2"],"final_qualified_head":os.environ["FINAL"],"chatgpt_plus_owner_ui_acceptance":os.environ["CHATGPT_OWNER_UI"],"chatgpt_owner_evidence_sha256":os.environ["CHATGPT_EVIDENCE_SHA256"],"chatgpt_owner_evidence_provenance_head":os.environ["CHATGPT_EVIDENCE_HEAD"]})+"\n")'
+            python3 -c 'import json,os; open("qualification-evidence.json","w").write(json.dumps({"status":"PASS","pass1_head":os.environ["PASS1"],"pass2_head":os.environ["PASS2"],"final_qualified_head":os.environ["FINAL"],"chatgpt_plus_owner_ui_acceptance":os.environ["CHATGPT_OWNER_UI"],"chatgpt_owner_evidence_sha256":os.environ["CHATGPT_EVIDENCE_SHA256"],"chatgpt_owner_evidence_provenance_head":os.environ["CHATGPT_EVIDENCE_HEAD"],"trusted_owner_ui_review":os.environ["TRUSTED_OWNER_UI_REVIEW"]})+"\n")'
             python3 ./scripts/project-stable-release.py \
               --evidence qualification-evidence.json \
               --output release-subjects/release-manifest.json

@@ -231,6 +231,9 @@ DB_CORRUPTION_FAIL_CLOSED=
 - [ ] owner/UI evidence capture time is at/after the exact provenance commit and not implausibly in the future.
 - [ ] qualification rejects missing/stale/incomplete ChatGPT owner/UI evidence before destructive Real E2E begins.
 - [ ] stable attestation revalidates the actual owner/UI evidence payload and derives acceptance/hash/HEAD instead of trusting free-form PASS/hash inputs.
+- [ ] stable v2.4.0 attestation requires protected GitHub Environment `stable-release-owner-ui` approval; caller input cannot synthesize `trusted_owner_ui_review=PASS`.
+- [ ] `stable-release-owner-ui` has at least one required reviewer and administrator bypass is disabled.
+- [ ] denied, cancelled, skipped, or unconfigured protected owner/UI review fails closed before stable attestation proceeds.
 - [ ] Claude interoperability tested if claimed supported.
 - [ ] Cursor interoperability tested if claimed supported.
 
