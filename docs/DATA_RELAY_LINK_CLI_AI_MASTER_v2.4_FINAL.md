@@ -784,6 +784,8 @@ OAuth Client Credentials
 
 AI authentication and AI Access policy evaluation are separate steps.
 
+For the v2.4.0 target, MCP Bridge is included. Stable qualification additionally requires real ChatGPT Plus owner/UI validation of the interactive OAuth Authorization Code/consent path, successful tool discovery, one authorized operation, and one expected AI Access denial. SDK or machine-side protocol tests do not replace this user-authentication acceptance gate.
+
 ```text
 Authentication
 → identify the AI
