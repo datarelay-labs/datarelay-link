@@ -31,10 +31,16 @@ if [[ -z "${FRP_COMMON_LOADED:-}" ]]; then
     . '/Library/Application Support/drlink/lib/frp-common.sh'
   fi
 fi
-if [[ -z "${FRP_CLIENT_UPDATE_URL:-}" ]]; then
+_FRP_CLIENT_UPDATE_URL_EXPLICIT=0
+_FRP_CLIENT_UPDATE_METADATA_URL_EXPLICIT=0
+if [[ -n "${FRP_CLIENT_UPDATE_URL:-}" ]]; then
+  _FRP_CLIENT_UPDATE_URL_EXPLICIT=1
+else
   FRP_CLIENT_UPDATE_URL="$(frp_default_client_update_url)"
 fi
-if [[ -z "${FRP_CLIENT_UPDATE_METADATA_URL:-}" ]]; then
+if [[ -n "${FRP_CLIENT_UPDATE_METADATA_URL:-}" ]]; then
+  _FRP_CLIENT_UPDATE_METADATA_URL_EXPLICIT=1
+else
   FRP_CLIENT_UPDATE_METADATA_URL="$(frp_default_client_update_metadata_url)"
 fi
 
@@ -5924,16 +5930,18 @@ frp_client_apply_upgrade() {
 frp_verify_client_update_artifact() {
   local archive="$1"
   local sums_file="${2:-}"
+  local artifact_name="${3:-dist/bootstrap-client.sh}"
+  local manifest_expected="${4:-}"
   local expected=""
   expected="${FRP_CLIENT_UPDATE_SHA256:-}"
   if [[ -z "$expected" && -n "${FRP_RELEASE_SHA256SUMS_FILE:-}" ]]; then
     sums_file="${FRP_RELEASE_SHA256SUMS_FILE}"
   fi
   if [[ -z "$expected" && -n "$sums_file" && -f "$sums_file" ]]; then
-    expected="$(awk '$2=="dist/bootstrap-client.sh" {print $1; exit}' "$sums_file")"
+    expected="$(awk -v name="$artifact_name" '$2==name {print $1; exit}' "$sums_file")"
   fi
   if [[ -z "$expected" ]]; then
-    echo "ERROR: update integrity metadata does not contain dist/bootstrap-client.sh" >&2
+    echo "ERROR: update integrity metadata does not contain ${artifact_name}" >&2
     frp_emit_failure_class INTEGRITY_FAILED
     return 1
   fi
@@ -5942,6 +5950,14 @@ frp_verify_client_update_artifact() {
     echo "ERROR: malformed SHA256 in client update integrity metadata" >&2
     frp_emit_failure_class INTEGRITY_FAILED
     return 1
+  fi
+  if [[ -n "$manifest_expected" ]]; then
+    manifest_expected="$(printf '%s' "$manifest_expected" | tr '[:upper:]' '[:lower:]')"
+    if [[ ! "$manifest_expected" =~ ^[0-9a-f]{64}$ || "$expected" != "$manifest_expected" ]]; then
+      echo "ERROR: qualified artifact manifest and SHA256SUMS disagree for ${artifact_name}" >&2
+      frp_emit_failure_class INTEGRITY_FAILED
+      return 1
+    fi
   fi
   if ! frp_verify_sha256 "$expected" "$archive" >/dev/null; then
     echo "ERROR: downloaded client update failed SHA256 verification" >&2
@@ -5952,10 +5968,73 @@ frp_verify_client_update_artifact() {
   return 0
 }
 
+frp_client_server_local_update_origin() {
+  local state allocator_url origin ca
+  state="$(frp_client_state_path)"
+  [[ -f "$state" ]] || return 1
+  allocator_url="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1],encoding="utf-8")).get("allocator_url") or "")' "$state" 2>/dev/null || true)"
+  [[ -n "$allocator_url" ]] || return 1
+  origin="$(frp_allocator_origin_url "$allocator_url" 2>/dev/null)" || return 1
+  ca="$(frp_allocator_ca_path)"
+  [[ -f "$ca" ]] || return 1
+  printf '%s\t%s\n' "$origin" "$ca"
+}
+
+frp_client_parse_qualified_update_manifest() {
+  local manifest="$1"
+  python3 - "$manifest" <<'PY'
+import json, re, sys
+from pathlib import Path
+
+try:
+    data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+except Exception as exc:
+    raise SystemExit(f"ERROR: invalid qualified artifact manifest: {exc}")
+
+if data.get("qualification_status") != "PASS":
+    raise SystemExit("ERROR: qualified artifact manifest is not PASS")
+
+channel = str(data.get("channel") or "").strip().lower()
+if channel == "dev":
+    channel = "development"
+if channel not in {"development", "preview", "stable"}:
+    raise SystemExit("ERROR: qualified artifact manifest has invalid release channel")
+
+source_ref = str(
+    data.get("immutable_source_ref")
+    or data.get("git_ref")
+    or data.get("source_head")
+    or ""
+).strip()
+if not re.fullmatch(r"[0-9a-fA-F]{40}|v[0-9]+\.[0-9]+\.[0-9]+(?:-rc\.[0-9]+)?", source_ref):
+    raise SystemExit("ERROR: qualified artifact manifest has invalid immutable source ref")
+
+artifact = None
+for item in data.get("artifacts") or []:
+    if isinstance(item, dict) and item.get("relative_path") == "agent/bootstrap-client.sh":
+        artifact = item
+        break
+if artifact is None:
+    raise SystemExit("ERROR: qualified artifact manifest is missing agent/bootstrap-client.sh")
+
+sha = str(artifact.get("sha256") or "").lower()
+if not re.fullmatch(r"[0-9a-f]{64}", sha):
+    raise SystemExit("ERROR: qualified artifact manifest has invalid Agent SHA256")
+
+artifact_head = str(artifact.get("source_head") or "").strip()
+if artifact_head and re.fullmatch(r"[0-9a-fA-F]{40}", source_ref):
+    if artifact_head.lower() != source_ref.lower():
+        raise SystemExit("ERROR: qualified Agent artifact source HEAD does not match manifest source ref")
+
+print(f"{channel}\t{source_ref}\t{sha}")
+PY
+}
+
 frp_client_fetch_and_upgrade() {
   local source="${1:-}"
   local check_only="${2:-0}"
-  local tmp archive metadata channel source_ref explicit_channel=""
+  local tmp archive metadata manifest channel source_ref explicit_channel=""
+  local server_local=0 origin="" ca="" manifest_expected="" manifest_info="" installed_channel="" local_info=""
   if [[ -n "$source" ]]; then
     _FRP_CLIENT_UPDATE_KIND=source frp_client_apply_upgrade "$source" "$check_only"
     return $?
@@ -5968,18 +6047,8 @@ frp_client_fetch_and_upgrade() {
     echo "ERROR: run with sudo" >&2
     return 1
   fi
-  if ! frp_validate_https_url "$FRP_CLIENT_UPDATE_URL"; then
-    echo "ERROR: client update URL must be a valid HTTPS URL" >&2
-    return 1
-  fi
-  if ! frp_validate_https_url "$FRP_CLIENT_UPDATE_METADATA_URL"; then
-    echo "ERROR: client update metadata URL must be a valid HTTPS URL" >&2
-    return 1
-  fi
+
   explicit_channel="$(frp_client_explicit_expected_channel || true)"
-  # Enrolled local state, even if the current CLI/service payload is incomplete,
-  # still requires the verified update bridge. Completeness is a bootstrap
-  # classifier, not an excuse to skip identity-preserving upgrade gates.
   if frp_client_has_enrolled_local_state; then
     if ! frp_client_has_trustworthy_release_line && [[ -z "$explicit_channel" ]]; then
       frp_client_report_identity \
@@ -5991,49 +6060,124 @@ frp_client_fetch_and_upgrade() {
       return 1
     fi
   fi
-  if [[ -n "$explicit_channel" ]]; then
-    channel="$explicit_channel"
-  elif frp_client_has_trustworthy_release_line; then
-    channel="$(frp_client_known_release_channel "$(frp_client_installed_release_channel)")"
-  else
-    channel="$(frp_release_channel)"
-  fi
-  if [[ -n "${FRP_EXPECTED_SOURCE_REF:-}" ]]; then
-    source_ref="$FRP_EXPECTED_SOURCE_REF"
-  elif [[ "$channel" == "development" || "$channel" == "dev" ]]; then
-    source_ref="main"
-  elif [[ "$channel" == "preview" ]]; then
-    source_ref="v${PROJECT_VERSION}-rc.1"
-  else
-    source_ref="v${PROJECT_VERSION}"
-  fi
-  if ! frp_url_has_source_ref "$FRP_CLIENT_UPDATE_URL" "$source_ref" \
-    || ! frp_url_has_source_ref "$FRP_CLIENT_UPDATE_METADATA_URL" "$source_ref"; then
-    echo "ERROR: client update artifact and metadata URLs must use source ref ${source_ref}" >&2
-    return 1
-  fi
+
   tmp="$(mktemp -d)"
   archive="${tmp}/bootstrap-client.sh"
   metadata="${tmp}/SHA256SUMS"
+  manifest="${tmp}/manifest.json"
   trap 'rm -rf "'"$tmp"'"' RETURN
-  echo "Downloading Data Relay Link client update bundle..."
-  curl -fL --retry 3 --connect-timeout 10 --max-time 120 -o "$metadata" "$FRP_CLIENT_UPDATE_METADATA_URL" || {
-    echo "ERROR: failed to download client update integrity metadata" >&2
-    frp_emit_failure_class INTEGRITY_FAILED
-    return 1
-  }
-  curl -fL --retry 3 --connect-timeout 10 --max-time 120 -o "$archive" "$FRP_CLIENT_UPDATE_URL" || {
-    echo "ERROR: failed to download the client update bundle" >&2
-    frp_emit_failure_class DOWNLOAD_FAILED
-    return 1
-  }
-  if ! frp_verify_client_update_artifact "$archive" "$metadata"; then
-    return 1
+
+  if [[ "${_FRP_CLIENT_UPDATE_URL_EXPLICIT:-0}" == "0" \
+        && "${_FRP_CLIENT_UPDATE_METADATA_URL_EXPLICIT:-0}" == "0" ]] \
+      && frp_client_has_enrolled_local_state; then
+    local_info="$(frp_client_server_local_update_origin)" || {
+      echo "ERROR: enrolled Agent cannot resolve its Server-local qualified artifact origin" >&2
+      frp_emit_failure_class INTEGRITY_FAILED
+      return 1
+    }
+    IFS=$'\t' read -r origin ca <<<"$local_info"
+
+    echo "Downloading qualified update metadata from DRLink Server..."
+    curl -fL --retry 3 --connect-timeout 10 --max-time 120 --cacert "$ca" \
+      -o "$manifest" "${origin}/artifacts/manifest.json" || {
+      echo "ERROR: failed to download Server-local qualified artifact manifest" >&2
+      frp_emit_failure_class INTEGRITY_FAILED
+      return 1
+    }
+    manifest_info="$(frp_client_parse_qualified_update_manifest "$manifest")" || {
+      frp_emit_failure_class INTEGRITY_FAILED
+      return 1
+    }
+    IFS=$'\t' read -r channel source_ref manifest_expected <<<"$manifest_info"
+
+    installed_channel="$(frp_client_known_release_channel "$(frp_client_installed_release_channel)" 2>/dev/null || true)"
+    if [[ -n "$installed_channel" && "$installed_channel" != "$channel" ]]; then
+      echo "ERROR: Server-local qualified artifact channel ${channel} does not match installed channel ${installed_channel}" >&2
+      frp_emit_failure_class INTEGRITY_FAILED
+      return 1
+    fi
+    if [[ -n "$explicit_channel" && "$explicit_channel" != "$channel" ]]; then
+      echo "ERROR: Server-local qualified artifact channel ${channel} does not match expected channel ${explicit_channel}" >&2
+      frp_emit_failure_class INTEGRITY_FAILED
+      return 1
+    fi
+    if [[ -n "${FRP_EXPECTED_SOURCE_REF:-}" ]] \
+        && ! frp_client_provenance_token_equal "$FRP_EXPECTED_SOURCE_REF" "$source_ref"; then
+      echo "ERROR: Server-local qualified artifact source ref ${source_ref} does not match expected ${FRP_EXPECTED_SOURCE_REF}" >&2
+      frp_emit_failure_class INTEGRITY_FAILED
+      return 1
+    fi
+
+    curl -fL --retry 3 --connect-timeout 10 --max-time 120 --cacert "$ca" \
+      -o "$metadata" "${origin}/artifacts/SHA256SUMS" || {
+      echo "ERROR: failed to download Server-local update integrity metadata" >&2
+      frp_emit_failure_class INTEGRITY_FAILED
+      return 1
+    }
+    curl -fL --retry 3 --connect-timeout 10 --max-time 120 --cacert "$ca" \
+      -o "$archive" "${origin}/artifacts/agent/bootstrap-client.sh" || {
+      echo "ERROR: failed to download Server-local client update bundle" >&2
+      frp_emit_failure_class DOWNLOAD_FAILED
+      return 1
+    }
+    if ! frp_verify_client_update_artifact \
+      "$archive" "$metadata" "agent/bootstrap-client.sh" "$manifest_expected"; then
+      return 1
+    fi
+    server_local=1
+  else
+    if ! frp_validate_https_url "$FRP_CLIENT_UPDATE_URL"; then
+      echo "ERROR: client update URL must be a valid HTTPS URL" >&2
+      return 1
+    fi
+    if ! frp_validate_https_url "$FRP_CLIENT_UPDATE_METADATA_URL"; then
+      echo "ERROR: client update metadata URL must be a valid HTTPS URL" >&2
+      return 1
+    fi
+    if [[ -n "$explicit_channel" ]]; then
+      channel="$explicit_channel"
+    elif frp_client_has_trustworthy_release_line; then
+      channel="$(frp_client_known_release_channel "$(frp_client_installed_release_channel)")"
+    else
+      channel="$(frp_release_channel)"
+    fi
+    if [[ -n "${FRP_EXPECTED_SOURCE_REF:-}" ]]; then
+      source_ref="$FRP_EXPECTED_SOURCE_REF"
+    elif [[ "$channel" == "development" || "$channel" == "dev" ]]; then
+      source_ref="main"
+    elif [[ "$channel" == "preview" ]]; then
+      source_ref="v${PROJECT_VERSION}-rc.1"
+    else
+      source_ref="v${PROJECT_VERSION}"
+    fi
+    if ! frp_url_has_source_ref "$FRP_CLIENT_UPDATE_URL" "$source_ref" \
+      || ! frp_url_has_source_ref "$FRP_CLIENT_UPDATE_METADATA_URL" "$source_ref"; then
+      echo "ERROR: client update artifact and metadata URLs must use source ref ${source_ref}" >&2
+      return 1
+    fi
+
+    echo "Downloading Data Relay Link client update bundle..."
+    curl -fL --retry 3 --connect-timeout 10 --max-time 120 -o "$metadata" "$FRP_CLIENT_UPDATE_METADATA_URL" || {
+      echo "ERROR: failed to download client update integrity metadata" >&2
+      frp_emit_failure_class INTEGRITY_FAILED
+      return 1
+    }
+    curl -fL --retry 3 --connect-timeout 10 --max-time 120 -o "$archive" "$FRP_CLIENT_UPDATE_URL" || {
+      echo "ERROR: failed to download the client update bundle" >&2
+      frp_emit_failure_class DOWNLOAD_FAILED
+      return 1
+    }
+    if ! frp_verify_client_update_artifact "$archive" "$metadata"; then
+      return 1
+    fi
   fi
+
   chmod 0755 "$archive"
-  echo "Applying update from downloaded bundle..."
-  # The bundle extracts a source tree and runs install-client.sh --upgrade.
-  # FRP_BUNDLE_SHA256 is the externally verified digest from SHA256SUMS.
+  if [[ "$server_local" == "1" ]]; then
+    echo "Applying qualified update from DRLink Server..."
+  else
+    echo "Applying update from downloaded bundle..."
+  fi
   if [[ "$check_only" == "1" ]]; then
     FRP_BUNDLE_SHA256="$FRP_VERIFIED_CLIENT_UPDATE_SHA256" \
       FRP_BUNDLE_FILE="$archive" FRP_RELEASE_CHANNEL="$channel" \

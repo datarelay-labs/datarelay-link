@@ -45,6 +45,18 @@ system update engine
 
 The product update and Relay Engine update are separate lifecycle operations.
 
+On an enrolled Agent Host, the normal `system update product` path obtains the
+qualified Agent manifest, `SHA256SUMS`, and Agent bundle from that Agent's
+enrolled Data Relay Link Server. The persisted enrollment CA is used for HTTPS
+verification. The manifest must be qualified, its release channel must match the
+installed channel, its source identity must be immutable, and its Agent digest
+must agree with `SHA256SUMS` before the bundle can execute.
+
+If the Server-local qualified artifact path is missing, invalid, or inconsistent,
+the update fails closed. It does not silently fall back to a public GitHub
+artifact. Explicit engineering update URL overrides remain a separate
+compatibility/testing mechanism rather than the normal operator workflow.
+
 ## 4. Development and pre-release updates
 
 Before an immutable stable tag exists, candidate validation must use an exact immutable SHA or qualified candidate artifact.

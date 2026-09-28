@@ -206,18 +206,22 @@ out="" url=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -o) out="$2"; shift 2 ;;
-    --retry|--connect-timeout|--max-time) shift 2 ;;
+    --retry|--connect-timeout|--max-time|--cacert) shift 2 ;;
     -*) shift ;;
     *) url="$1"; shift ;;
   esac
 done
 printf '%s\n' "$url" >>"$MOCK_CURL_LOG"
 case "$url" in
-  */SHA256SUMS)
+  */artifacts/manifest.json)
+    [[ "${MOCK_CURL_FAIL_MANIFEST:-0}" != 1 && -f "$MOCK_REMOTE_DIR/manifest.json" ]] || exit 22
+    cp "$MOCK_REMOTE_DIR/manifest.json" "$out"
+    ;;
+  */artifacts/SHA256SUMS|*/SHA256SUMS)
     [[ "${MOCK_CURL_FAIL_METADATA:-0}" != 1 && -f "$MOCK_REMOTE_DIR/SHA256SUMS" ]] || exit 22
     cp "$MOCK_REMOTE_DIR/SHA256SUMS" "$out"
     ;;
-  */dist/bootstrap-client.sh)
+  */artifacts/agent/bootstrap-client.sh|*/dist/bootstrap-client.sh)
     [[ "${MOCK_CURL_FAIL_ARTIFACT:-0}" != 1 && -f "$MOCK_REMOTE_DIR/bootstrap-client.sh" ]] || exit 22
     cp "$MOCK_REMOTE_DIR/bootstrap-client.sh" "$out"
     ;;
@@ -291,7 +295,9 @@ pass "NO_ALLOCATOR_MUTATION"
 pass "NO_UNNECESSARY_RESTART"
 pass "BUILD_INFO_PERSISTENCE"
 
-# A stable installed client resolves both artifact and metadata at vPROJECT_VERSION.
+# Stable enrolled Agents still use the Server-local qualified artifact path.
+# A development artifact served to a stable install must fail closed before the
+# bundle is downloaded, with no public fallback.
 # shellcheck source=../VERSION
 . "$ROOT/VERSION"
 cp "$CLIENT/etc/drlink/version" "$WORKDIR/dev-version"
@@ -305,27 +311,145 @@ text = text.replace("SOURCE_REF=main", "SOURCE_REF=v%s" % ver)
 p.write_text(text)
 PY
 unset FRP_CLIENT_UPDATE_URL FRP_CLIENT_UPDATE_METADATA_URL
-# Load a fresh installed process so defaults are derived from persisted stable state.
 stable_urls="$(
   FRP_CLIENT_LIB="$CLIENT/usr/local/lib/drlink/frp-client-common.sh" \
-    bash -c '. "$FRP_CLIENT_LIB"; printf "%s\n%s\n" "$FRP_CLIENT_UPDATE_URL" "$FRP_CLIENT_UPDATE_METADATA_URL"'
+    bash -c '. "$FRP_CLIENT_LIB"; printf "%s\\n%s\\n" "$FRP_CLIENT_UPDATE_URL" "$FRP_CLIENT_UPDATE_METADATA_URL"'
 )"
-grep -q "/v${PROJECT_VERSION}/dist/bootstrap-client.sh" <<<"$stable_urls" || fail "stable artifact URL mutable"
-grep -q "/v${PROJECT_VERSION}/SHA256SUMS" <<<"$stable_urls" || fail "stable metadata URL mutable"
+grep -q "/v${PROJECT_VERSION}/dist/bootstrap-client.sh" <<<"$stable_urls" || fail "stable default artifact URL mutable"
+grep -q "/v${PROJECT_VERSION}/SHA256SUMS" <<<"$stable_urls" || fail "stable default metadata URL mutable"
+pass "STABLE_IMMUTABLE_DEFAULT_URLS"
+
 : >"$MOCK_CURL_LOG"
-if "$CLIENT/usr/local/bin/drlink" update product --check >"$WORKDIR/stable-check.out" 2>"$WORKDIR/stable-check.err"; then
-  fail "stable expected channel must not accept a dev candidate"
+if FRP_CLIENT_LIB="$CLIENT/usr/local/lib/drlink/frp-client-common.sh" \
+  "$CLIENT/usr/local/bin/drlink" update product --check \
+  >"$WORKDIR/stable-check.out" 2>"$WORKDIR/stable-check.err"; then
+  fail "stable expected channel must not accept a dev Server-local candidate"
 fi
-grep -q "/v${PROJECT_VERSION}/SHA256SUMS" "$MOCK_CURL_LOG" || fail "stable metadata was not fetched from tag"
-grep -q "/v${PROJECT_VERSION}/dist/bootstrap-client.sh" "$MOCK_CURL_LOG" || fail "stable artifact was not fetched from tag"
-grep -Eqi 'channel mismatch|source ref mismatch|WRONG_METADATA' \
+grep -q "/artifacts/manifest.json" "$MOCK_CURL_LOG" || fail "stable Server-local manifest not fetched"
+if grep -Eq 'raw\.githubusercontent\.com|/dist/bootstrap-client\.sh' "$MOCK_CURL_LOG"; then
+  fail "stable mismatch fell back to public update path"
+fi
+grep -Eqi 'does not match installed channel|channel.*stable|RELEASE_IDENTITY_MISMATCH|INTEGRITY_FAILED' \
   "$WORKDIR/stable-check.out" "$WORKDIR/stable-check.err" ||
-  fail "stable/dev candidate mismatch not reported"
+  fail "stable/dev Server-local candidate mismatch not reported"
 assert_preserved_state "$CLIENT" "$WORKDIR/runtime.before"
 cp "$WORKDIR/dev-version" "$CLIENT/etc/drlink/version"
 export FRP_CLIENT_UPDATE_URL="https://updates.example.test/main/dist/bootstrap-client.sh"
 export FRP_CLIENT_UPDATE_METADATA_URL="https://updates.example.test/main/SHA256SUMS"
-pass "STABLE_IMMUTABLE_UPDATE"
+pass "STABLE_SERVER_LOCAL_CHANNEL_GUARD"
+
+# Enrolled Agent updates must prefer the DRLink Server-local qualified artifact
+# endpoint, verify it with the persisted allocator CA, and never fall back to
+# public GitHub when the Server-local path is unavailable or inconsistent.
+cp "$REMOTE/bootstrap-client.sh" "$WORKDIR/explicit-bundle"
+LOCAL_SRC="$WORKDIR/server-local-src"
+frp_test_copy_repo_tree "$ROOT" "$LOCAL_SRC"
+LOCAL_REF=1234567890abcdef1234567890abcdef12345678
+python3 - "$LOCAL_SRC/release-manifest.json" "$LOCAL_REF" <<'PY'
+import json, sys
+from pathlib import Path
+p = Path(sys.argv[1])
+ref = sys.argv[2]
+d = json.loads(p.read_text())
+d["channel"] = "development"
+d["git_ref"] = ref
+d["source_head"] = ref
+p.write_text(json.dumps(d, indent=2) + "\n")
+PY
+python3 "$LOCAL_SRC/scripts/build-bundles.py" >/dev/null
+cp "$LOCAL_SRC/dist/bootstrap-client.sh" "$REMOTE/bootstrap-client.sh"
+LOCAL_SHA="$(sha "$REMOTE/bootstrap-client.sh")"
+printf '%s  agent/bootstrap-client.sh\n' "$LOCAL_SHA" >"$REMOTE/SHA256SUMS"
+python3 - "$REMOTE/manifest.json" "$LOCAL_REF" "$LOCAL_SHA" <<'PY'
+import json, sys
+from pathlib import Path
+out, ref, sha = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+out.write_text(json.dumps({
+    "schema_version": 1,
+    "qualification_status": "PASS",
+    "channel": "development",
+    "source_head": ref,
+    "git_ref": ref,
+    "immutable_source_ref": ref,
+    "artifacts": [{
+        "artifact_type": "agent-installer",
+        "platform": "linux",
+        "architecture": "any",
+        "relative_path": "agent/bootstrap-client.sh",
+        "sha256": sha,
+        "source_head": ref,
+    }],
+}, indent=2) + "\n")
+PY
+unset FRP_CLIENT_UPDATE_URL FRP_CLIENT_UPDATE_METADATA_URL FRP_EXPECTED_SOURCE_REF \
+  FRP_EXPECTED_RELEASE_CHANNEL FRP_RELEASE_CHANNEL FRP_CLIENT_UPDATE_SHA256 \
+  FRP_RELEASE_SHA256SUMS_FILE
+: >"$MOCK_CURL_LOG"
+FRP_CLIENT_LIB="$CLIENT/usr/local/lib/drlink/frp-client-common.sh" \
+  "$CLIENT/usr/local/bin/drlink" update product --check \
+  >"$WORKDIR/server-local-check.out" 2>"$WORKDIR/server-local-check.err"
+grep -q 'Update                    : available' "$WORKDIR/server-local-check.out" || fail "server-local check availability"
+grep -q "Target source ref         : ${LOCAL_REF}" "$WORKDIR/server-local-check.out" || fail "server-local exact source ref"
+grep -q '/artifacts/manifest.json' "$MOCK_CURL_LOG" || fail "server-local manifest not fetched"
+grep -q '/artifacts/SHA256SUMS' "$MOCK_CURL_LOG" || fail "server-local sums not fetched"
+grep -q '/artifacts/agent/bootstrap-client.sh' "$MOCK_CURL_LOG" || fail "server-local Agent bundle not fetched"
+if grep -q 'raw.githubusercontent.com' "$MOCK_CURL_LOG"; then
+  fail "server-local check fell back to public GitHub"
+fi
+pass "SERVER_LOCAL_CLIENT_UPDATE_CHECK"
+
+: >"$MOCK_CURL_LOG"
+FRP_CLIENT_LIB="$CLIENT/usr/local/lib/drlink/frp-client-common.sh" \
+  "$CLIENT/usr/local/bin/drlink" update product \
+  >"$WORKDIR/server-local-update.out" 2>"$WORKDIR/server-local-update.err"
+grep -q "SOURCE_REF=${LOCAL_REF}" "$CLIENT/etc/drlink/version" || fail "server-local source ref not persisted"
+grep -q "SOURCE_HEAD=${LOCAL_REF}" "$CLIENT/etc/drlink/version" || fail "server-local source head not persisted"
+grep -q "BUNDLE_SHA256=${LOCAL_SHA}" "$CLIENT/etc/drlink/version" || fail "server-local bundle sha not persisted"
+if grep -q 'raw.githubusercontent.com' "$MOCK_CURL_LOG"; then
+  fail "server-local apply fell back to public GitHub"
+fi
+pass "SERVER_LOCAL_CLIENT_UPDATE_APPLY"
+pass "SERVER_LOCAL_NO_PUBLIC_FALLBACK"
+
+python3 - "$REMOTE/manifest.json" <<'PY'
+import json, sys
+from pathlib import Path
+p = Path(sys.argv[1])
+d = json.loads(p.read_text())
+d["artifacts"][0]["sha256"] = "0" * 64
+p.write_text(json.dumps(d, indent=2) + "\n")
+PY
+: >"$MOCK_CURL_LOG"
+if FRP_CLIENT_LIB="$CLIENT/usr/local/lib/drlink/frp-client-common.sh" \
+  "$CLIENT/usr/local/bin/drlink" update product \
+  >"$WORKDIR/server-local-bad.out" 2>"$WORKDIR/server-local-bad.err"; then
+  fail "server-local manifest/SHA mismatch accepted"
+fi
+grep -q 'qualified artifact manifest and SHA256SUMS disagree' \
+  "$WORKDIR/server-local-bad.out" "$WORKDIR/server-local-bad.err" || fail "server-local mismatch error"
+if grep -q 'raw.githubusercontent.com' "$MOCK_CURL_LOG"; then
+  fail "server-local mismatch fell back to public GitHub"
+fi
+pass "SERVER_LOCAL_MANIFEST_SUMS_BINDING"
+
+export MOCK_CURL_FAIL_MANIFEST=1
+: >"$MOCK_CURL_LOG"
+if FRP_CLIENT_LIB="$CLIENT/usr/local/lib/drlink/frp-client-common.sh" \
+  "$CLIENT/usr/local/bin/drlink" update product \
+  >"$WORKDIR/server-local-missing.out" 2>"$WORKDIR/server-local-missing.err"; then
+  fail "missing Server-local manifest accepted"
+fi
+unset MOCK_CURL_FAIL_MANIFEST
+grep -q "INTEGRITY_FAILED" "$WORKDIR/server-local-missing.out" "$WORKDIR/server-local-missing.err" || fail "missing Server-local manifest failure class"
+if grep -q "raw.githubusercontent.com" "$MOCK_CURL_LOG"; then
+  fail "missing Server-local manifest fell back to public GitHub"
+fi
+pass "SERVER_LOCAL_MISSING_MANIFEST_FAIL_CLOSED"
+
+cp "$WORKDIR/explicit-bundle" "$REMOTE/bootstrap-client.sh"
+printf '%s  dist/bootstrap-client.sh\n' "$B_SHA" >"$REMOTE/SHA256SUMS"
+export FRP_CLIENT_UPDATE_URL="https://updates.example.test/main/dist/bootstrap-client.sh"
+export FRP_CLIENT_UPDATE_METADATA_URL="https://updates.example.test/main/SHA256SUMS"
 
 # Integrity failures occur before any live replacement.
 LIVE_SHA="$(sha "$CLIENT/usr/local/bin/drlink")"
