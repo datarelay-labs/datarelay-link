@@ -429,6 +429,11 @@ AI_INTENTS_WITHOUT_DISPOSITION=0
 SECURITY_NEGATIVE_DISPOSITION_COMPLETE=YES
 PERFORMANCE_DISPOSITION_COMPLETE=YES
 FUNCTION_UNDER_LOAD_DISPOSITION_COMPLETE=YES
+ALL_SUITABLE_HOSTS_UTILIZED=PASS
+OPERATIONAL_PERSONA_COVERAGE=PASS
+TERMINOLOGY_CLARITY_CROSS_SURFACE=PASS
+MAXIMUM_TOPOLOGY_STRESS=PASS
+POST_STRESS_FUNCTIONAL_RECHECK=PASS
 UNMAPPED_PRODUCT_CAPABILITIES=0
 PUBLIC_COMMANDS_WITHOUT_USE_CASE=0
 PUBLIC_COMMANDS_WITHOUT_DIRECT_USE=0
@@ -467,6 +472,43 @@ This document defines what must be exercised. It does not redefine CLI grammar. 
 | Target service | Real destination behind an Agent/Relay Host or on the Internet | SSH/HTTP/HTTPS/Custom TCP/Fixed TCP/application behavior |
 
 The same person may perform more than one role, but evidence must identify which role and host executed each step.
+
+### 3.1 ChatGPT operational persona contract
+
+ChatGPT must not execute FULL_USER_E2E as a generic "tester" who already knows the answer. Before each use-case lane, assign an explicit operational persona and mission. The persona receives only the information that role would reasonably have in production: the business/operational goal, accessible hosts, credentials/permissions appropriate to the role, and product-visible documentation/output.
+
+The auditor remains logically separate from the acting persona. Auditor expectations, scenario command examples, source code, test code, hidden state, and expected command syntax must not leak into the persona's decision process.
+
+Mandatory personas:
+
+| Persona | Production-style mission | Knowledge/behavior boundary |
+| --- | --- | --- |
+| End User | Use an already-published SSH/web/application/AI capability to finish real work | Knows the endpoint/use goal, not DRLink internals; judges connection, denial, clarity, continuity, and application behavior |
+| Agent Operator | Connect a host, publish/maintain Remote Services, diagnose Agent problems, perform local lifecycle/update/recovery | Discovers Agent commands from local public UX; does not assume Server-admin grammar or hidden state |
+| DRLink Administrator | Onboard/manage hosts, Objects/Groups, access policy, AI authorization, public identity/TLS, audit, backup/restore and Server lifecycle | Operates only public Server UX; must reason about blast radius, references, policy effect, rollback and next actions |
+| Incident Responder | Restore service during DEGRADED, outage, bad policy, certificate/DNS, stale state, saturation or reconnect events | Starts from symptoms and public diagnostics; must discover cause/recovery without source/private state |
+| Platform Maintainer | Upgrade, restart, reboot, back up/restore, reinstall, validate provenance/version separation and post-maintenance traffic | Treats continuity and rollback as operational outcomes, not test fixtures |
+
+For every lane, record:
+
+~~~text
+PERSONA=
+MISSION=
+WHAT_THE_PERSONA_KNOWS=
+WHAT_THE_PERSONA_DISCOVERED=
+DECISIONS_FROM_PUBLIC_EVIDENCE=
+~~~
+
+Persona behavior requirements:
+
+- pursue the operational mission rather than mechanically executing a command checklist;
+- use public menu/help/Tab/wizard/error/status output to decide the next action;
+- notice and record anything that would confuse a real operator even when the underlying function succeeds;
+- make plausible operational mistakes, including wrong role/context, wrong selector, stale copied value, blank/invalid input, duplicate resource and incorrect assumption about current state;
+- verify the final business outcome with real application traffic or observable operational state;
+- when switching persona, explicitly change the role/mission and do not carry hidden syntax knowledge from the prior persona as if the new persona knew it.
+
+A scenario cannot receive a clean UX PASS merely because ChatGPT eventually found a working command through trial-and-error. Excessive guessing, contradictory guidance, ambiguous terminology, misleading success/status, or required undocumented knowledge is a product finding.
 
 ## 4. Test profiles
 
@@ -607,6 +649,47 @@ Operational rule:
 4. reverse tunnels or loopback aliases are test-management fallbacks only; they must not replace validation of the real public product/data path when that path is part of the scenario.
 
 Record the actual SSH route used for every host in the run evidence.
+
+### 5.2 Maximum real-host utilization gate
+
+FULL_USER_E2E must use the available real test estate aggressively. A reachable suitable test host may not remain idle merely because a smaller topology is sufficient to demonstrate the happy path.
+
+After discovery, classify **every reachable configured test host** and assign one or more real roles such as:
+
+~~~text
+primary Server
+secondary/recovery Server-side host
+Direct Agent
+a Relay Agent
+protected Internet Access source
+external User/client
+AI/MCP client
+load generator
+target service
+failure-injection/recovery host
+upgrade/reinstall host
+~~~
+
+Prefer role combinations that increase independent concurrency without invalidating evidence. Spread load generators and target services across distinct machines/platforms/network paths where possible; do not concentrate every load source on the same host when additional real hosts are available.
+
+Required host-utilization evidence:
+
+~~~text
+DISCOVERED_TEST_HOSTS=
+REACHABLE_TEST_HOSTS=
+ASSIGNED_ACTIVE_TEST_HOSTS=
+UNUSED_REACHABLE_HOSTS=
+UNUSED_HOST_REASON=
+LOAD_GENERATOR_HOSTS=
+TARGET_SERVICE_HOSTS=
+MAX_SIMULTANEOUS_ACTIVE_HOSTS=
+MAX_SIMULTANEOUS_ACTIVE_LANES=
+ALL_SUITABLE_HOSTS_UTILIZED=PASS|FAIL
+~~~
+
+A reachable suitable host left unused without a concrete isolation/platform/safety reason prevents a clean FULL_USER_E2E PASS. `BLOCKED_ENVIRONMENT` is appropriate only for a genuinely unavailable capability/host, not for voluntarily testing a smaller topology.
+
+Performance and concurrency testing must progressively increase utilization from baseline to the maximum practical real topology available in the test environment. The run must include a period where all suitable Agent/client/load/target hosts that can participate safely are active concurrently.
 
 ## 6. Common preflight
 
@@ -918,9 +1001,9 @@ The mandatory v2.4 use-case catalog is:
 | UC-11 Observe/audit/recover Server | Diagnose incidents, inspect history/revisions, back up, validate, restore, rollback, collect support evidence | diagnostics, audit, history, revisions, diff, backup/validate/restore, support bundle, clear | O-008, A-008, A-009, A-011, S-010, S-021 |
 | UC-12 Agent operations and recovery | Pause/resume/restart/synchronize/autostart/update/reboot and preserve identity/endpoints | Agent lifecycle, product/engine update separation, outage/reconnect | O-005, O-006, O-009, O-010, O-011, S-007, S-015, C-008, C-012, C-013 |
 | UC-13 Upgrade and reinstall | Move a prior stable install to the candidate, handle failed update, uninstall/reinstall without false success | Server/Agent update, engine check/update, uninstall/reinstall, recovery | A-015, A-019, A-020, O-009, O-011 |
-| UC-14 Human CLI usability | Complete common jobs through one-shot, REPL, menu and wizard, including mistakes/cancel/recovery | help, menu, Tab, guided create/edit, context errors, atomic cancel | U-010, O-001, O-012, O-015, S-005, S-006 |
+| UC-14 Human CLI usability | Complete common jobs through one-shot, REPL, menu and wizard, including mistakes/cancel/recovery, while detecting terminology/clarity inconsistencies | help, menu, Tab, guided create/edit, context errors, atomic cancel, cross-surface terminology/guidance | U-010, U-013, O-001, O-012, O-015, S-005, S-006 |
 | UC-15 Multi-host production-like operation | Operate all supported hosts simultaneously under real traffic and configuration changes | cross-platform identity, concurrent enroll/create/traffic/policy/restart/outage/races | C-001..C-014 |
-| UC-16 Performance under real function | Measure throughput/CPS/concurrency/latency while real control workflows continue | all data paths plus responsive control plane and recovery | P-001..P-022 |
+| UC-16 Performance under real function | Measure throughput/CPS/concurrency/latency through all suitable hosts, reach practical saturation, and continue real control/recovery work under mixed stress | all data paths plus responsive control plane, maximum topology utilization, saturation characterization and recovery | P-001..P-023 |
 | UC-17 Adversarial lifecycle | Prove invalid, duplicate, stale, credential, DNS/TLS, boundary and mutation failures fail safely | validation, auth, rollback, reference safety, capacity, connection edge cases | S-001..S-023 |
 
 If a new product capability or public command appears at runtime and does not fit an existing use case, create a new UC row during the same run rather than testing the command in isolation.
@@ -1304,6 +1387,72 @@ In addition to U-006, explicitly exercise every currently supported Internet Acc
 - real package/update workflow.
 
 For each allowed path include a paired denied path using wrong source, destination, or port. Discover and use the public connectivity/explain helper when exposed by runtime help (currently `test internet <SOURCE-IP> <HOST> <PORT> [<PROTOCOL>]`) and then prove the same outcome with the real application client; a passing `test internet` result alone is not traffic evidence.
+
+## U-013 — Cross-surface terminology, clarity, and operator-guidance consistency — MANDATORY
+
+Treat **every user-visible output encountered in the run** as UX evidence, not only whether the command succeeded. Compare terminology and guidance across Server/Agent REPL, one-shot output, menus, `?`, help topics, Tab completion, wizards, errors, status/detail views, diagnostics, generated enrollment/bootstrap commands, ConfigurationBundle plans, update/recovery output, and AI-generated guidance.
+
+Continuously look for and record:
+
+- the same concept having different names without an explicit reason;
+- one term being used for two different concepts;
+- stale/legacy terminology that conflicts with the current product model;
+- Server vs Agent ownership/context not stated clearly;
+- Managed Host vs Agent Host vs host/client ambiguity;
+- Managed Host Group vs Network Group ambiguity;
+- Remote Service vs Remote Access ambiguity;
+- Service Object vs published Remote Service ambiguity;
+- policy Mode vs policy Enforcement vs Rule enabled/disabled ambiguity;
+- ALLOW/DENY/default behavior described differently across surfaces;
+- HEALTHY/DEGRADED/DISABLED or connected/disconnected language that contradicts real runtime state;
+- public hostname vs bootstrap hostname vs public IP/endpoint ambiguity;
+- Data Relay Link product update vs Relay Engine update ambiguity;
+- AI Identity authentication vs AI Access authorization ambiguity;
+- destructive vs read-only operation not obvious before execution;
+- confirmation text that does not explain impact/blast radius;
+- output that reports SUCCESS while a required runtime step is still pending/degraded;
+- generated command/example that is stale, invalid, incomplete, not copy/paste safe, or points to the wrong role;
+- an error that states what failed but not what the operator can do next;
+- help/menu/wizard paths that contradict each other or omit a public command needed to finish the job;
+- wording that forces the operator to infer hidden implementation concepts rather than product concepts;
+- ambiguous subject such as “it”, “host”, “service”, “policy”, “server”, or “client” where multiple candidates exist in the current workflow.
+
+Maintain a cross-surface terminology ledger throughout the run:
+
+~~~text
+CONCEPT=
+CANONICAL_PRODUCT_TERM=
+SERVER_MENU_TERM=
+SERVER_HELP_TERM=
+SERVER_OUTPUT_TERM=
+AGENT_MENU_TERM=
+AGENT_HELP_TERM=
+AGENT_OUTPUT_TERM=
+WIZARD_TERM=
+ERROR_TERM=
+GENERATED_GUIDANCE_TERM=
+AI_TERM=
+CONSISTENT=PASS|FAIL
+AMBIGUITY_NOTES=
+~~~
+
+Do not require identical wording where different context genuinely needs clarification, but require the underlying product concept and ownership to remain unmistakable. Singular/plural, capitalization, abbreviations, aliases, and legacy synonyms must not create a different apparent meaning.
+
+For each exercised command/flow, grade:
+
+~~~text
+TERMINOLOGY_CONSISTENT=PASS|FAIL
+ROLE_CONTEXT_CLEAR=PASS|FAIL
+STATE_SEMANTICS_CLEAR=PASS|FAIL
+ACTION_IMPACT_CLEAR=PASS|FAIL
+NEXT_ACTION_CLEAR=PASS|FAIL
+GENERATED_GUIDANCE_EXECUTABLE=PASS|FAIL|NOT_APPLICABLE
+CROSS_SURFACE_CONSISTENCY=PASS|FAIL
+~~~
+
+When two surfaces disagree, preserve both outputs and treat the disagreement itself as a finding even if one surface is technically correct. Do not silently normalize terminology in the report.
+
+The Incident Responder and first-time Operator personas must be able to recover from representative failures using only visible status/diagnostic/error/help guidance. If ChatGPT must guess hidden syntax or consult auditor-only knowledge to continue, record a discoverability/clarity defect.
 
 # 8. Operator scenarios
 
@@ -2898,6 +3047,67 @@ While all-host data-plane load is active, concurrently execute through public CL
 
 Measure command latency and verify read-only operations do not mutate state. Any mutating operation must still obey revision/security-impact/atomicity rules under load.
 
+## P-023 — Maximum available topology mixed-stress operation — MANDATORY
+
+This is the final production-uncertainty stress gate. Use **all suitable reachable test hosts** and the maximum practical independent load sources/targets available in the current environment. The purpose is not to produce a marketing benchmark; it is to discover failures that appear only when multiple real operational activities collide.
+
+Ramp progressively from the measured baseline until either:
+
+1. the selected performance profile target is reached and sustained; or
+2. a practical saturation boundary is observed in Server, Agent, network, target, or load-generator capacity.
+
+At the high-load stage, overlap as many applicable activities as the real topology supports:
+
+- forward, reverse, and full-duplex Remote Service traffic;
+- SSH/SCP/SFTP, HTTP, HTTPS and Custom TCP sessions;
+- Fixed TCP and Relay Host traffic;
+- high connection churn/CPS plus long-lived connections;
+- all-host simultaneous traffic;
+- Internet Access allowed and denied application traffic;
+- concurrent AI/MCP requests including allowed and denied operations;
+- new enrollment and Agent reconnect activity;
+- Remote Service create/edit/disable/enable/delete on independent hosts;
+- Remote/Internet/AI Access policy reads/tests and selected isolated mutations;
+- ConfigurationBundle test/diff and isolated apply;
+- diagnostics/audit/history/support-bundle reads;
+- backup on the designated disposable Server state;
+- one or more controlled Agent restart/reconnect events;
+- target-service flap/network impairment on an isolated lane;
+- external clients continuing real application work throughout the disturbance.
+
+Do not serialize these merely to make results cleaner when their state is independent. Preserve per-lane evidence so a failure on one path is not hidden by aggregate success.
+
+Record at minimum:
+
+~~~text
+MAX_STRESS_ACTIVE_HOSTS=
+MAX_STRESS_ACTIVE_LANES=
+MAX_STRESS_LOAD_GENERATORS=
+MAX_STRESS_TARGETS=
+MAX_STRESS_REMOTE_SERVICES=
+MAX_STRESS_CONCURRENT_CONNECTIONS=
+MAX_STRESS_CPS=
+MAX_STRESS_AGGREGATE_THROUGHPUT=
+SATURATION_LIMITER=DRLINK_SERVER|AGENT|NETWORK|TARGET|LOAD_GENERATOR|UNKNOWN
+SATURATION_EVIDENCE=
+MAX_STRESS_AI_MCP_CONCURRENCY=
+MAX_STRESS_SERVER_CPU_RSS_FD=
+MAX_STRESS_AGENT_RESOURCE_PEAKS=
+MAX_STRESS_CONTROL_CLI_P95_P99=
+MAX_STRESS_POLICY_PROPAGATION=
+MAX_STRESS_ERRORS_TIMEOUTS=
+MAX_STRESS_DATA_INTEGRITY_ERRORS=
+MAX_STRESS_ENDPOINT_COLLISIONS=
+MAX_STRESS_AUTHORIZATION_ERRORS=
+POST_SATURATION_RECOVERY_TIME=
+POST_STRESS_RESOURCE_RETURN=PASS|FAIL
+POST_STRESS_FUNCTIONAL_RECHECK=PASS|FAIL
+~~~
+
+Use multiple independent load generators whenever available so the measured boundary is not trivially capped by one generator. When a boundary is observed, identify the limiting component using host/network/resource evidence; do not attribute generator, target, or network saturation to DRLink without evidence.
+
+A saturation boundary is acceptable as a measured characteristic only if failure remains bounded/truthful, authorization and data isolation remain correct, state is not corrupted, endpoints are not duplicated/reassigned incorrectly, the control plane remains recoverable, and the product returns to normal operation after pressure is removed. Any correctness, isolation, integrity, authorization, or recovery failure under stress is a product FAIL regardless of whether a numeric SLO exists.
+
 # 13. Platform matrix
 
 For FULL_USER_E2E, test every platform currently claimed by the candidate at its actual qualification level.
@@ -3394,6 +3604,8 @@ SCENARIO_ID=
 USE_CASE_ID=
 PARALLEL_LANE=
 ROLE=
+PERSONA=
+MISSION=
 HOST=
 START_UTC=
 END_UTC=
@@ -3405,6 +3617,12 @@ DISCOVERED_COMMANDS_VARIANTS=
 COMMANDS_EXECUTED=
 AI_MIRROR_REQUIRED=YES|NO
 AI_MIRROR_RESULT=
+TERMINOLOGY_CONSISTENT=
+ROLE_CONTEXT_CLEAR=
+STATE_SEMANTICS_CLEAR=
+ACTION_IMPACT_CLEAR=
+NEXT_ACTION_CLEAR=
+GENERATED_GUIDANCE_EXECUTABLE=
 EXPECTED=
 OBSERVED=
 RESULT=
@@ -3477,7 +3695,12 @@ PERFORMANCE_NUMERIC_QUALIFICATION=PASS|FAIL|MEASURED_NOT_QUALIFIED
 MULTI_PLATFORM=PASS|PARTIAL|FAIL
 TOPOLOGY_MATRIX=PASS|PARTIAL|FAIL
 ALL_TEST_HOSTS_SIMULTANEOUSLY_ONLINE=PASS|PARTIAL|FAIL
+ALL_SUITABLE_HOSTS_UTILIZED=PASS|FAIL
+REACHABLE_TEST_HOSTS=
+ASSIGNED_ACTIVE_TEST_HOSTS=
+UNUSED_REACHABLE_HOSTS=
 PARALLEL_MULTI_HOST=PASS|PARTIAL|FAIL
+OPERATIONAL_PERSONA_COVERAGE=PASS|PARTIAL|FAIL
 USE_CASE_COVERAGE=
 DISCOVERY_FROM_PUBLIC_UX=PASS|PARTIAL|FAIL
 PUBLIC_CLI_COMMAND_COVERAGE=
@@ -3490,6 +3713,10 @@ USE_CASES_WITHOUT_AI_MIRROR=
 ORACLE_ONLY_COMMANDS_NOT_DISCOVERABLE=
 DISCOVERABILITY_DEFECTS=
 DOC_RUNTIME_COMMAND_DRIFT=
+TERMINOLOGY_CLARITY_CROSS_SURFACE=PASS|PARTIAL|FAIL
+TERMINOLOGY_MISMATCHES=
+AMBIGUOUS_GUIDANCE_FINDINGS=
+INVALID_GENERATED_GUIDANCE_FINDINGS=
 PARALLEL_LANES_STARTED=
 MAX_SIMULTANEOUS_ACTIVE_LANES=
 IDLE_WHILE_INDEPENDENT_WORK_AVAILABLE=YES|NO
@@ -3519,6 +3746,13 @@ CONNECT_P95=
 CONNECT_P99=
 SOAK=
 RESOURCE_STABILITY=
+MAXIMUM_TOPOLOGY_STRESS=PASS|PARTIAL|FAIL
+MAX_STRESS_ACTIVE_HOSTS=
+MAX_STRESS_ACTIVE_LANES=
+MAX_STRESS_AGGREGATE_THROUGHPUT=
+SATURATION_LIMITER=
+POST_SATURATION_RECOVERY_TIME=
+POST_STRESS_FUNCTIONAL_RECHECK=PASS|FAIL
 
 UNRESOLVED_P0=
 UNRESOLVED_P1=
@@ -3546,8 +3780,10 @@ USER_E2E_REQUEST
 -> execute this document's FULL_USER_E2E profile unless explicitly scoped
 -> use real public CLI and real traffic
 -> exercise ALLOW and DENY
--> execute performance in every required direction
+-> execute performance in every required direction, ramp to the selected target or practical saturation boundary, use multiple load generators where available, identify the actual saturation limiter, and recheck recovery after stress
+-> classify every reachable configured test host, assign every suitable host an active role, and use the maximum practical real topology rather than a minimal sufficient topology
 -> bring all applicable test hosts online simultaneously and execute parallel multi-host gates
+-> assign ChatGPT an explicit production persona/mission (End User, Agent Operator, DRLink Administrator, Incident Responder, or Platform Maintainer) for every use-case lane
 -> begin each role as a user who does not know the command set: discover through drlink, ?, help, help commands, menu, Tab, wizard/error guidance
 -> treat every command snippet in this scenario document and section 14 as an auditor oracle, not prior knowledge for the acting user
 -> map every discovered/oracle command and behavior-changing variant into a real use case and exhaust the command ledger through those use cases
@@ -3555,6 +3791,7 @@ USER_E2E_REQUEST
 -> keep all DRLink control/configuration/lifecycle actions CLI-only
 -> execute every applicable use case again through AI assistance from the same natural-language goal, using only public docs and user-visible CLI/help/error output for recovery
 -> exercise AI one-shot, AI error-correction, AI ConfigurationBundle, Export->AI->Reapply, and cross-context split workflows
+-> continuously audit every user-visible surface for terminology drift, ambiguity, role/context confusion, misleading state, invalid/stale generated guidance, unclear impact, and missing next actions
 -> retain evidence
 -> report every skipped/blocked scenario honestly
 ~~~
@@ -3607,17 +3844,17 @@ On a trigger, the minimum startup sequence is:
 2. Capture current candidate/build identity without code review.
 3. Read the development host's ~/.ssh/config and apply the section 5.1 canonical SSH port rules.
 4. Probe configured hosts in parallel.
-5. Classify/assign server, Agent/Relay, client, target and load-generator roles.
+5. Classify every reachable configured host, assign every suitable host an active Server/Agent/Relay/client/target/load-generator/recovery role, and record any unused reachable host with a concrete reason.
 6. On every available Server/Agent role, start public command discovery in parallel with drlink, ?, help, help commands, menu, Tab and visible wizard/error guidance.
 7. Build the runtime command/variant ledger and map discovered capabilities to realistic use-case lanes; section 14 is auditor-only omission detection.
-8. Create RUN_ID-scoped namespaced evidence/resources and immediately start every independent use-case lane whose commands/prerequisites are already discovered.
-9. Run Direct CLI, guided/TTY, adversarial, multi-platform enrollment, real-traffic, AI-assisted mirror and baseline-performance lanes concurrently where shared state permits.
-10. Behave like a real operator: follow product output/next actions, copy/paste generated commands, make realistic mistakes, and recover only from user-visible guidance.
+8. Before each lane, assign ChatGPT an explicit End User, Agent Operator, DRLink Administrator, Incident Responder, or Platform Maintainer persona plus a production-style mission; then create RUN_ID-scoped namespaced resources and immediately start every independent use-case lane whose prerequisites are discovered.
+9. Run Direct CLI, guided/TTY, adversarial, multi-platform enrollment, real-traffic, AI-assisted mirror and performance lanes concurrently at maximum safe real-host utilization; progressively ramp performance toward the selected target or practical saturation boundary.
+10. Behave like a real operator: pursue the mission, follow product output/next actions, copy/paste generated commands, make realistic mistakes, recover only from user-visible guidance, and continuously record terminology/clarity/cross-surface inconsistencies.
 11. Continue discovery and use-case execution together until no discovered/oracle command or behavior-changing public variant lacks disposition.
 12. Execute each applicable use case again through AI assistance from the same goal and equivalent namespaced starting state.
 13. If one lane is blocked by tooling/environment, record only that lane as BLOCKED_TOOLING/BLOCKED_ENVIRONMENT and continue every independent lane immediately.
 14. Do not inspect product source, test source, internal DB/state, or harness implementation during active discovery.
-15. Run mixed function-under-load, policy-mutation, restart/reconnect, outage, race, and simultaneous multi-host scenarios.
+15. Run mixed function-under-load, policy-mutation, restart/reconnect, outage, race and all-host scenarios, then execute P-023 maximum-topology mixed stress with multiple load generators where available and verify post-saturation recovery.
 16. Finish command/use-case/AI-mirror disposition, cleanup and reporting; only then begin implementation/harness diagnosis and batch engineering findings.
 ~~~
 
