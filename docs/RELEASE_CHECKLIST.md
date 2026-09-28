@@ -222,7 +222,11 @@ DB_CORRUPTION_FAIL_CLOSED=
 - [ ] each new tool call evaluates current policy.
 - [ ] running operation not implicitly killed by policy edit.
 - [ ] AI activity audit attributable to principal/target/rule/revision.
-- [ ] ChatGPT interoperability tested if claimed supported.
+- [ ] real ChatGPT Plus owner/UI OAuth Authorization Code / consent completes through the public MCP endpoint.
+- [ ] ChatGPT Plus tool discovery succeeds after authentication.
+- [ ] one AI Access policy-allowed operation succeeds through ChatGPT Plus.
+- [ ] one intentionally out-of-scope operation is denied through ChatGPT Plus.
+- [ ] machine-side MCP/OAuth conformance evidence is retained separately and does not substitute for owner/UI acceptance.
 - [ ] Claude interoperability tested if claimed supported.
 - [ ] Cursor interoperability tested if claimed supported.
 
@@ -236,6 +240,9 @@ MCP_CAPABILITY_ENFORCEMENT=
 MCP_FILE_SCOPE=
 MCP_AUDIT=
 MCP_REAL_E2E=
+CHATGPT_PLUS_USER_AUTH=
+CHATGPT_PLUS_TOOL_DISCOVERY=
+CHATGPT_PLUS_ALLOW_DENY=
 ```
 
 ## 14.1 ConfigurationBundle / AI-assisted configuration
