@@ -3549,7 +3549,7 @@ USER_E2E_REQUEST
 -> execute performance in every required direction
 -> bring all applicable test hosts online simultaneously and execute parallel multi-host gates
 -> begin each role as a user who does not know the command set: discover through drlink, ?, help, help commands, menu, Tab, wizard/error guidance
--> treat scenario/section-14 command syntax as an auditor oracle, not prior knowledge for the acting user
+-> treat every command snippet in this scenario document and section 14 as an auditor oracle, not prior knowledge for the acting user
 -> map every discovered/oracle command and behavior-changing variant into a real use case and exhaust the command ledger through those use cases
 -> start each independent use-case lane as soon as enough public UX has been discovered; do not wait for serial happy-path completion
 -> keep all DRLink control/configuration/lifecycle actions CLI-only
@@ -3603,7 +3603,7 @@ full user e2e 수행해
 On a trigger, the minimum startup sequence is:
 
 ~~~text
-1. Open docs/FULL_USER_E2E_SCENARIOS.md as the execution contract; section 14 remains auditor-only and is not used as the acting user's memorized command script.
+1. Open docs/FULL_USER_E2E_SCENARIOS.md as the execution contract; all embedded command examples and section 14 are auditor expectations only and are not used as the acting user's memorized command script.
 2. Capture current candidate/build identity without code review.
 3. Read the development host's ~/.ssh/config and apply the section 5.1 canonical SSH port rules.
 4. Probe configured hosts in parallel.
