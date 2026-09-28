@@ -173,7 +173,10 @@ run_client() {
     if [[ -n "$ticket" ]]; then
       export FRP_BOOTSTRAP_TICKET="$ticket"
       export FRP_ZERO_TOUCH=1
-      export FRP_SSH_USER="$SSH_USER"
+      # This suite validates enrollment transaction recovery, not local SSH
+      # reachability. SSH username is optional metadata, so keep it blank to
+      # avoid making the recovery test depend on host sshd/listen-port state.
+      export FRP_SSH_USER=""
       export FRP_SSH_PORT=22
     else
       unset FRP_BOOTSTRAP_TICKET FRP_ZERO_TOUCH FRP_SSH_USER FRP_SSH_PORT 2>/dev/null || true
