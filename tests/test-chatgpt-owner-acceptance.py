@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -26,6 +27,8 @@ PROJECT_SPEC.loader.exec_module(PROJECT)
 PROVENANCE = "a" * 40
 SOURCE = "b" * 40
 BUNDLE = "c" * 64
+PROVENANCE_TIME = datetime(2026, 9, 28, 11, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 9, 28, 12, 0, tzinfo=timezone.utc)
 
 
 def manifest():
@@ -43,13 +46,13 @@ def evidence():
         "client_surface": "ChatGPT Plus owner/UI",
         "core_provenance_head": PROVENANCE,
         "core_source_head": SOURCE,
-        "bundle_sha256": BUNDLE,
+        "bootstrap_server_sha256": BUNDLE,
         "mcp_endpoint": "https://drlink.example.com/mcp",
         "oauth_authorization_code_consent": "PASS",
         "tool_discovery": "PASS",
         "policy_allowed_operation": "PASS",
         "policy_denied_operation": "PASS",
-        "captured_at": "2026-09-28T12:00:00+09:00",
+        "captured_at": "2026-09-28T20:30:00+09:00",
         "evidence_refs": ["owner-ui-session.txt"],
     }
 
@@ -60,6 +63,8 @@ class OwnerAcceptanceTests(unittest.TestCase):
             data if data is not None else evidence(),
             provenance_head=head,
             manifest=mf if mf is not None else manifest(),
+            provenance_committed_at=PROVENANCE_TIME,
+            now=NOW,
         )
 
     def test_valid_exact_candidate_evidence(self):
@@ -83,6 +88,16 @@ class OwnerAcceptanceTests(unittest.TestCase):
         mf = manifest()
         mf["features"]["mcp_included"] = False
         self.assertIn("release manifest does not include MCP", self.check(mf=mf))
+
+    def test_pre_candidate_capture_rejected(self):
+        data = evidence()
+        data["captured_at"] = "2026-09-28T10:59:59+00:00"
+        self.assertIn("captured_at predates current provenance commit", self.check(data))
+
+    def test_far_future_capture_rejected(self):
+        data = evidence()
+        data["captured_at"] = "2026-09-28T12:11:00+00:00"
+        self.assertIn("captured_at is more than 10 minutes in the future", self.check(data))
 
     def test_evidence_refs_required(self):
         data = evidence()

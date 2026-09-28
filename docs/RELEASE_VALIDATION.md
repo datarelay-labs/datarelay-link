@@ -301,7 +301,7 @@ status=PASS
 client_surface=ChatGPT Plus owner/UI
 core_provenance_head=<exact qualification HEAD>
 core_source_head=<release-manifest source_head>
-bundle_sha256=<release-manifest bootstrap-server.sh SHA256>
+bootstrap_server_sha256=<release-manifest bootstrap-server.sh artifact SHA256>
 mcp_endpoint=https://<public-dns-name>/mcp
 oauth_authorization_code_consent=PASS
 tool_discovery=PASS
@@ -312,7 +312,15 @@ evidence_refs=<one or more retained owner/UI evidence references>
 ```
 
 Missing, stale, machine-only, loopback/raw-IP, or incomplete evidence blocks
-qualification before the destructive multi-host matrix begins.
+qualification before the destructive multi-host matrix begins. For this gate,
+`stale` includes evidence whose `captured_at` predates the exact provenance
+commit; timestamps more than 10 minutes in the future are also rejected.
+The qualification report records `MCP_REAL_E2E`, `CHATGPT_PLUS_USER_AUTH`,
+`CHATGPT_PLUS_TOOL_DISCOVERY`, and `CHATGPT_PLUS_ALLOW_DENY` separately in
+addition to the aggregate owner/UI gate. Stable attestation receives the same
+owner/UI evidence JSON as a base64 workflow input, revalidates it against the
+checked-out release HEAD, and derives PASS/hash/HEAD values from that payload;
+free-form owner acceptance/hash inputs are not authoritative.
 
 A claim is not made merely because a generic MCP test client works.
 

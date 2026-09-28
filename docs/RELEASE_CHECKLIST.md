@@ -227,8 +227,10 @@ DB_CORRUPTION_FAIL_CLOSED=
 - [ ] one AI Access policy-allowed operation succeeds through ChatGPT Plus.
 - [ ] one intentionally out-of-scope operation is denied through ChatGPT Plus.
 - [ ] machine-side MCP/OAuth conformance evidence is retained separately and does not substitute for owner/UI acceptance.
-- [ ] retained ChatGPT Plus owner/UI evidence is bound to the exact provenance HEAD, source HEAD, bootstrap-server bundle SHA256, and public HTTPS `/mcp` endpoint.
+- [ ] retained ChatGPT Plus owner/UI evidence is bound to the exact provenance HEAD, source HEAD, bootstrap-server artifact SHA256, and public HTTPS `/mcp` endpoint.
+- [ ] owner/UI evidence capture time is at/after the exact provenance commit and not implausibly in the future.
 - [ ] qualification rejects missing/stale/incomplete ChatGPT owner/UI evidence before destructive Real E2E begins.
+- [ ] stable attestation revalidates the actual owner/UI evidence payload and derives acceptance/hash/HEAD instead of trusting free-form PASS/hash inputs.
 - [ ] Claude interoperability tested if claimed supported.
 - [ ] Cursor interoperability tested if claimed supported.
 

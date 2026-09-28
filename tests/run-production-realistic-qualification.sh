@@ -58,9 +58,17 @@ if python3 "$ROOT/scripts/check-chatgpt-owner-acceptance.py" \
     --root "$ROOT" --evidence "$CHATGPT_OWNER_EVIDENCE" >"$CHATGPT_OWNER_LOG" 2>&1; then
   cat "$CHATGPT_OWNER_LOG"
   pq_gate CHATGPT_PLUS_OWNER_UI_ACCEPTANCE PASS
+  pq_gate MCP_REAL_E2E PASS
+  pq_gate CHATGPT_PLUS_USER_AUTH PASS
+  pq_gate CHATGPT_PLUS_TOOL_DISCOVERY PASS
+  pq_gate CHATGPT_PLUS_ALLOW_DENY PASS
 else
   cat "$CHATGPT_OWNER_LOG" >&2 || true
   pq_gate CHATGPT_PLUS_OWNER_UI_ACCEPTANCE BLOCKED
+  pq_gate MCP_REAL_E2E BLOCKED
+  pq_gate CHATGPT_PLUS_USER_AUTH BLOCKED
+  pq_gate CHATGPT_PLUS_TOOL_DISCOVERY BLOCKED
+  pq_gate CHATGPT_PLUS_ALLOW_DENY BLOCKED
   pq_note "ERROR: real ChatGPT Plus owner/UI acceptance evidence is required before destructive qualification"
   exit 1
 fi

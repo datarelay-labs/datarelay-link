@@ -170,6 +170,17 @@ def test_workflow_uses_checker() -> None:
         fail("release-attest.yml does not bind ChatGPT owner/UI acceptance")
     if "QUALIFICATION_CHATGPT_OWNER_EVIDENCE_SHA256" not in text:
         fail("release-attest.yml does not bind ChatGPT owner/UI evidence SHA256")
+    if "qualification_chatgpt_owner_evidence_b64" not in text:
+        fail("release-attest.yml does not accept the actual owner/UI evidence payload")
+    if "scripts/check-chatgpt-owner-acceptance.py" not in text:
+        fail("release-attest.yml does not revalidate owner/UI evidence")
+    for forbidden in (
+        "inputs.qualification_chatgpt_owner_ui_acceptance",
+        "inputs.qualification_chatgpt_owner_evidence_sha256",
+        "inputs.qualification_chatgpt_owner_evidence_provenance_head",
+    ):
+        if forbidden in text:
+            fail("release-attest.yml still trusts free-form owner gate input %s" % forbidden)
     if "source_head '$SOURCE_HEAD' != checked-out HEAD" in text:
         fail("release-attest.yml still rejects a content source_head")
     print("PASS WORKFLOW_CALLS_BINDING_CHECKER")

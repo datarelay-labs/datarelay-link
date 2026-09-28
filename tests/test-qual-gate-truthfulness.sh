@@ -159,9 +159,17 @@ owner = text.index("check-chatgpt-owner-acceptance.py")
 matrix = text.index('pq_note "==== REAL E2E MATRIX ===="')
 assert owner < matrix, (owner, matrix)
 assert "CHATGPT_PLUS_OWNER_UI_ACCEPTANCE BLOCKED" in text
+for gate in (
+    "MCP_REAL_E2E",
+    "CHATGPT_PLUS_USER_AUTH",
+    "CHATGPT_PLUS_TOOL_DISCOVERY",
+    "CHATGPT_PLUS_ALLOW_DENY",
+):
+    assert f"pq_gate {gate} PASS" in text, gate
+    assert f"pq_gate {gate} BLOCKED" in text, gate
 print("ok")
 PY
-pass "ChatGPT owner/UI evidence blocks before destructive matrix"
+pass "ChatGPT owner/UI evidence blocks before destructive matrix and records detailed gates"
 
 # --- Finding E/F inventory ---
 python3 - "$ROOT" <<'PY' || fail "tcp egress missing from UNIT_NAMES"
