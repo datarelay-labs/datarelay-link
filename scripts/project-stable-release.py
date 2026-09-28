@@ -15,6 +15,7 @@ import sys
 from pathlib import Path
 
 SHA = __import__("re").compile(r"^[0-9a-fA-F]{40}$")
+SHA256 = __import__("re").compile(r"^[0-9a-fA-F]{64}$")
 
 
 def git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -62,7 +63,12 @@ def placement(repo: Path) -> tuple[str, str, str, list[str]]:
     return tag, head, source_head, errs
 
 
-def evidence_errors(evidence: dict, head: str) -> list[str]:
+def evidence_errors(
+    evidence: dict,
+    head: str,
+    *,
+    require_chatgpt_owner: bool = False,
+) -> list[str]:
     errs: list[str] = []
     if str(evidence.get("status") or "") != "PASS":
         errs.append("qualification status must be PASS")
@@ -81,15 +87,34 @@ def evidence_errors(evidence: dict, head: str) -> list[str]:
             "PASS1_HEAD, PASS2_HEAD, and FINAL_QUALIFIED_HEAD must equal tag HEAD %s"
             % head
         )
+    if require_chatgpt_owner:
+        if evidence.get("chatgpt_plus_owner_ui_acceptance") != "PASS":
+            errs.append("ChatGPT Plus owner/UI acceptance must be PASS")
+        evidence_sha = str(evidence.get("chatgpt_owner_evidence_sha256") or "")
+        if not SHA256.fullmatch(evidence_sha):
+            errs.append("ChatGPT owner/UI evidence SHA256 must be 64 hex characters")
+        evidence_head = str(evidence.get("chatgpt_owner_evidence_provenance_head") or "").lower()
+        if evidence_head != head:
+            errs.append("ChatGPT owner/UI evidence provenance HEAD must equal tag HEAD %s" % head)
     return errs
 
 
 def project_manifest(repo: Path, evidence: dict) -> dict:
     tag, head, _source, errs = placement(repo)
-    errs.extend(evidence_errors(evidence, head))
+    committed = json.loads((repo / "release-manifest.json").read_text(encoding="utf-8"))
+    require_chatgpt_owner = (
+        str(committed.get("project_version") or "") == "2.4.0"
+        and (committed.get("features") or {}).get("mcp_included") is True
+    )
+    errs.extend(
+        evidence_errors(
+            evidence,
+            head,
+            require_chatgpt_owner=require_chatgpt_owner,
+        )
+    )
     if errs:
         raise SystemExit("\n".join("ERROR: %s" % err for err in errs))
-    committed = json.loads((repo / "release-manifest.json").read_text(encoding="utf-8"))
     projected = json.loads(json.dumps(committed))
     artifacts = json.loads(json.dumps(committed.get("artifacts") or {}))
     projected["channel"] = "stable"
@@ -101,6 +126,14 @@ def project_manifest(repo: Path, evidence: dict) -> dict:
         "pass2_head": head,
         "final_qualified_head": head,
     }
+    if require_chatgpt_owner:
+        projected["qualification"].update(
+            {
+                "chatgpt_plus_owner_ui_acceptance": "PASS",
+                "chatgpt_owner_evidence_sha256": evidence["chatgpt_owner_evidence_sha256"],
+                "chatgpt_owner_evidence_provenance_head": head,
+            }
+        )
     if projected.get("artifacts") != artifacts:
         raise SystemExit("ERROR: projection changed artifact payload hashes")
     return projected

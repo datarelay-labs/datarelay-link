@@ -289,6 +289,31 @@ Cursor=not claimed unless separately qualified with real remote MCP host evidenc
 Official SDK E2E=PASS (HTTPS /mcp through product frontend in tests)
 ```
 
+Real ChatGPT Plus owner/UI acceptance is retained as JSON evidence. By default the
+qualification harness reads `e2e-reports/chatgpt-owner-acceptance.json`; an
+external evidence path may be supplied with `FRP_E2E_CHATGPT_OWNER_EVIDENCE`.
+The evidence is valid only when it binds all of the following to the candidate
+being qualified:
+
+```text
+schema_version=1
+status=PASS
+client_surface=ChatGPT Plus owner/UI
+core_provenance_head=<exact qualification HEAD>
+core_source_head=<release-manifest source_head>
+bundle_sha256=<release-manifest bootstrap-server.sh SHA256>
+mcp_endpoint=https://<public-dns-name>/mcp
+oauth_authorization_code_consent=PASS
+tool_discovery=PASS
+policy_allowed_operation=PASS
+policy_denied_operation=PASS
+captured_at=<offset-aware ISO-8601 timestamp>
+evidence_refs=<one or more retained owner/UI evidence references>
+```
+
+Missing, stale, machine-only, loopback/raw-IP, or incomplete evidence blocks
+qualification before the destructive multi-host matrix begins.
+
 A claim is not made merely because a generic MCP test client works.
 
 ## 16. MCP authentication tests

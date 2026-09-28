@@ -34,6 +34,21 @@ on:
         required: false
         type: string
         default: ''
+      qualification_chatgpt_owner_ui_acceptance:
+        description: Must be PASS for stable v2.4.0
+        required: false
+        type: string
+        default: ''
+      qualification_chatgpt_owner_evidence_sha256:
+        description: SHA256 of retained ChatGPT owner/UI evidence JSON
+        required: false
+        type: string
+        default: ''
+      qualification_chatgpt_owner_evidence_provenance_head:
+        description: Provenance HEAD bound by the ChatGPT owner/UI evidence
+        required: false
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -79,6 +94,9 @@ jobs:
           QUALIFICATION_PASS1_HEAD: ${{ inputs.qualification_pass1_head }}
           QUALIFICATION_PASS2_HEAD: ${{ inputs.qualification_pass2_head }}
           QUALIFICATION_FINAL_HEAD: ${{ inputs.qualification_final_head }}
+          QUALIFICATION_CHATGPT_OWNER_UI_ACCEPTANCE: ${{ inputs.qualification_chatgpt_owner_ui_acceptance }}
+          QUALIFICATION_CHATGPT_OWNER_EVIDENCE_SHA256: ${{ inputs.qualification_chatgpt_owner_evidence_sha256 }}
+          QUALIFICATION_CHATGPT_OWNER_EVIDENCE_PROVENANCE_HEAD: ${{ inputs.qualification_chatgpt_owner_evidence_provenance_head }}
         run: |
           set -euo pipefail
           ./scripts/check-release-attest-binding.py >>"$GITHUB_OUTPUT"
@@ -133,6 +151,9 @@ jobs:
           PASS1: ${{ inputs.qualification_pass1_head }}
           PASS2: ${{ inputs.qualification_pass2_head }}
           FINAL: ${{ inputs.qualification_final_head }}
+          CHATGPT_OWNER_UI: ${{ inputs.qualification_chatgpt_owner_ui_acceptance }}
+          CHATGPT_EVIDENCE_SHA256: ${{ inputs.qualification_chatgpt_owner_evidence_sha256 }}
+          CHATGPT_EVIDENCE_HEAD: ${{ inputs.qualification_chatgpt_owner_evidence_provenance_head }}
         run: |
           set -euo pipefail
           mkdir -p release-subjects
@@ -143,7 +164,7 @@ jobs:
           # A stable tag keeps the qualified Git HEAD. Publication identity is
           # projected here and must not be committed back.
           if [[ "$INPUT_REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            python3 -c 'import json,os; open("qualification-evidence.json","w").write(json.dumps({"status":"PASS","pass1_head":os.environ["PASS1"],"pass2_head":os.environ["PASS2"],"final_qualified_head":os.environ["FINAL"]})+"\n")'
+            python3 -c 'import json,os; open("qualification-evidence.json","w").write(json.dumps({"status":"PASS","pass1_head":os.environ["PASS1"],"pass2_head":os.environ["PASS2"],"final_qualified_head":os.environ["FINAL"],"chatgpt_plus_owner_ui_acceptance":os.environ["CHATGPT_OWNER_UI"],"chatgpt_owner_evidence_sha256":os.environ["CHATGPT_EVIDENCE_SHA256"],"chatgpt_owner_evidence_provenance_head":os.environ["CHATGPT_EVIDENCE_HEAD"]})+"\n")'
             python3 ./scripts/project-stable-release.py \
               --evidence qualification-evidence.json \
               --output release-subjects/release-manifest.json

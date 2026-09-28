@@ -48,6 +48,23 @@ if ! pq_precheck_hosts; then
   pq_note "ERROR: host precheck failed; refusing matrix and destructive qualification paths"
   exit 1
 fi
+
+# v2.4 stable qualification requires retained real ChatGPT Plus owner/UI
+# acceptance evidence bound to this exact provenance/content bundle. Fail before
+# any matrix install/reboot when the evidence is missing, stale, or incomplete.
+CHATGPT_OWNER_EVIDENCE="${FRP_E2E_CHATGPT_OWNER_EVIDENCE:-$ROOT/e2e-reports/chatgpt-owner-acceptance.json}"
+CHATGPT_OWNER_LOG="$OUT/chatgpt-owner-acceptance.log"
+if python3 "$ROOT/scripts/check-chatgpt-owner-acceptance.py" \
+    --root "$ROOT" --evidence "$CHATGPT_OWNER_EVIDENCE" >"$CHATGPT_OWNER_LOG" 2>&1; then
+  cat "$CHATGPT_OWNER_LOG"
+  pq_gate CHATGPT_PLUS_OWNER_UI_ACCEPTANCE PASS
+else
+  cat "$CHATGPT_OWNER_LOG" >&2 || true
+  pq_gate CHATGPT_PLUS_OWNER_UI_ACCEPTANCE BLOCKED
+  pq_note "ERROR: real ChatGPT Plus owner/UI acceptance evidence is required before destructive qualification"
+  exit 1
+fi
+
 # macOS reverse SSH is intermittent; wait before matrix so we do not claim PASS on BLOCKED.
 if ! pq_ssh frp-e2e-macos 'echo ok' >/dev/null 2>&1; then
   # Short wait: Linux matrix profiles run first and give the tunnel more time.
@@ -408,9 +425,10 @@ fi
 if grep -q '^MACOS_REAL_E2E=PASS$' "$PROD_QUAL_GATES" && grep -q '^MACOS_SSH=FAIL$' "$PROD_QUAL_GATES"; then
   pq_gate MACOS_SSH PASS
 fi
-# Prior-stable upgrade gates are mandatory when an upgrade path is claimed.
-# BLOCKED and FAIL both count. Do not exclude them and do not invent a pass.
-FAIL_COUNT="$(grep -E '=(FAIL|BLOCKED)$' "$PROD_QUAL_GATES" \
+# Mandatory gates may never disappear into NOT_RUN. FAIL, BLOCKED, and NOT_RUN
+# all prevent a qualification PASS; HEADROOM_LIMIT remains an explicitly bounded
+# capacity outcome handled separately.
+FAIL_COUNT="$(grep -E '=(FAIL|BLOCKED|NOT_RUN)$' "$PROD_QUAL_GATES" \
   | grep -Ev '^(UBUNTU|ROCKY|AWS_LINUX|WINDOWS|MACOS|UBUNTU24)_SSH=' \
   | grep -Ev '=HEADROOM_LIMIT$' \
   | wc -l | tr -d ' ')"
@@ -421,6 +439,6 @@ if [[ "${FAIL_COUNT:-0}" -eq 0 ]]; then
 else
   pq_gate "$PASS_NAME" FAIL
   pq_note "FINAL_${PASS_NAME}=FAIL FAIL_COUNT=$FAIL_COUNT"
-  grep -E '=(FAIL|BLOCKED)$' "$PROD_QUAL_GATES" | grep -Ev '^(UBUNTU|ROCKY|AWS_LINUX|WINDOWS|MACOS|UBUNTU24)_SSH=' | tee "$OUT/failures.txt" || true
+  grep -E '=(FAIL|BLOCKED|NOT_RUN)$' "$PROD_QUAL_GATES" | grep -Ev '^(UBUNTU|ROCKY|AWS_LINUX|WINDOWS|MACOS|UBUNTU24)_SSH=' | tee "$OUT/failures.txt" || true
   exit 1
 fi

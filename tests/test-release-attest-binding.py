@@ -134,6 +134,14 @@ def run_cli(
                 "QUALIFICATION_FINAL_HEAD": qualified_head,
             }
         )
+    if qualified_head and input_ref == "v2.4.0":
+        env.update(
+            {
+                "QUALIFICATION_CHATGPT_OWNER_UI_ACCEPTANCE": "PASS",
+                "QUALIFICATION_CHATGPT_OWNER_EVIDENCE_SHA256": "d" * 64,
+                "QUALIFICATION_CHATGPT_OWNER_EVIDENCE_PROVENANCE_HEAD": qualified_head,
+            }
+        )
     return subprocess.run(
         [sys.executable, str(SCRIPT), "--root", str(repo)],
         check=False,
@@ -158,6 +166,10 @@ def test_workflow_uses_checker() -> None:
         fail("release-attest.yml does not project the stable manifest")
     if "QUALIFICATION_FINAL_HEAD" not in text:
         fail("release-attest.yml does not bind qualification evidence to the tag")
+    if "QUALIFICATION_CHATGPT_OWNER_UI_ACCEPTANCE" not in text:
+        fail("release-attest.yml does not bind ChatGPT owner/UI acceptance")
+    if "QUALIFICATION_CHATGPT_OWNER_EVIDENCE_SHA256" not in text:
+        fail("release-attest.yml does not bind ChatGPT owner/UI evidence SHA256")
     if "source_head '$SOURCE_HEAD' != checked-out HEAD" in text:
         fail("release-attest.yml still rejects a content source_head")
     print("PASS WORKFLOW_CALLS_BINDING_CHECKER")
@@ -327,6 +339,46 @@ def test_validated_stable_tag_exposes_effective_channel() -> None:
     print("PASS EFFECTIVE_STABLE_TAG_CHANNEL")
 
 
+def test_v240_stable_requires_chatgpt_owner_evidence() -> None:
+    head = "a" * 40
+    parent = "b" * 40
+    base = dict(
+        project_version="2.4.0",
+        manifest_version="2.4.0",
+        channel="development",
+        git_ref=parent,
+        source_head=parent,
+        immutable_source_ref=parent,
+        head=head,
+        parent=parent,
+        input_ref="v2.4.0",
+        workflow_ref="refs/tags/v2.4.0",
+        workflow_sha=head,
+        changed_paths=("release-manifest.json",),
+        tag_commits={"v2.4.0": head},
+        clean=True,
+        pass1_head=head,
+        pass2_head=head,
+        final_qualified_head=head,
+    )
+    try:
+        checker.evaluate(checker.BindingFacts(**base))
+    except checker.BindingError as exc:
+        if not any("owner/UI acceptance" in err for err in exc.errors):
+            fail("missing owner/UI evidence error not reported: %s" % exc.errors)
+    else:
+        fail("v2.4.0 stable tag accepted without ChatGPT owner/UI evidence")
+    base.update(
+        chatgpt_owner_ui_acceptance="PASS",
+        chatgpt_owner_evidence_sha256="c" * 64,
+        chatgpt_owner_evidence_provenance_head=head,
+    )
+    result = checker.evaluate(checker.BindingFacts(**base))
+    if result.get("channel") != "stable":
+        fail("owner evidence did not permit validated stable publication: %s" % result)
+    print("PASS V240_STABLE_REQUIRES_CHATGPT_OWNER_EVIDENCE")
+
+
 def test_self_reference_is_rejected() -> None:
     head = "a" * 40
     parent = "b" * 40
@@ -363,6 +415,7 @@ def main() -> int:
     test_rejects_non_parent_and_wrong_dispatch()
     test_stable_and_rc_tags_point_at_provenance_commit()
     test_validated_stable_tag_exposes_effective_channel()
+    test_v240_stable_requires_chatgpt_owner_evidence()
     test_self_reference_is_rejected()
     print("RELEASE_ATTEST_BINDING_TEST=PASS")
     return 0

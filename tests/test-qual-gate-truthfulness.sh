@@ -149,6 +149,20 @@ print("ok")
 PY
 pass "production reboot gate requires evidence files"
 
+# --- ChatGPT Plus owner/UI evidence must gate destructive qualification ---
+python3 - "$ROOT/tests/run-production-realistic-qualification.sh" <<'PY' \
+  || fail "ChatGPT owner/UI evidence gate ordering"
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+owner = text.index("check-chatgpt-owner-acceptance.py")
+matrix = text.index('pq_note "==== REAL E2E MATRIX ===="')
+assert owner < matrix, (owner, matrix)
+assert "CHATGPT_PLUS_OWNER_UI_ACCEPTANCE BLOCKED" in text
+print("ok")
+PY
+pass "ChatGPT owner/UI evidence blocks before destructive matrix"
+
 # --- Finding E/F inventory ---
 python3 - "$ROOT" <<'PY' || fail "tcp egress missing from UNIT_NAMES"
 import sys
@@ -174,6 +188,15 @@ if grep -E '=(PASS)$' "$GATES" | grep -Eq 'ABSENT_FEATURE|UPGRADE_CASE'; then
   fail "NOT_RUN/BLOCKED mutated to PASS"
 fi
 pass "NOT_RUN and BLOCKED stay non-PASS"
+
+# Mandatory NOT_RUN must count as a final qualification failure.
+: >"$GATES"
+pq_gate LINT_CI NOT_RUN
+fail_count="$(grep -E '=(FAIL|BLOCKED|NOT_RUN)$' "$GATES" | wc -l | tr -d ' ')"
+[[ "$fail_count" -eq 1 ]] || fail "mandatory NOT_RUN did not count as failure"
+grep -q "FAIL|BLOCKED|NOT_RUN" "$ROOT/tests/run-production-realistic-qualification.sh" \
+  || fail "production final gate does not count NOT_RUN"
+pass "mandatory NOT_RUN prevents qualification PASS"
 
 # Simulate orchestrator HEAD check semantics
 echo "HEAD_UNCHANGED=NO" >"$WORKDIR/head.env"
