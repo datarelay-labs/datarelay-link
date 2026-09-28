@@ -49,7 +49,8 @@ CONTROL_DB_SCHEMA_VERSION=
 - [ ] Agent-owned Remote Service model implemented.
 - [ ] Remote Access BLACKLIST / WHITELIST policy implemented.
 - [ ] Internet Access BLACKLIST / WHITELIST policy implemented.
-- [ ] AI Access/MCP included and implemented.
+- [ ] AI Access/MCP included and implemented (`MCP_INCLUDED_IN_V2_4_0=YES`).
+- [ ] Real ChatGPT Plus user authentication is a mandatory v2.4.0 release gate.
 - [ ] ConfigurationBundle included in the v2.4.0 stable target.
 - [ ] direct CLI, AI-generated CLI, and ConfigurationBundle share one Change Plan/mutation engine.
 - [ ] ConfigurationBundle is an idempotent change set, not a second SSOT.
@@ -336,6 +337,12 @@ MCP_REAL_E2E=
 - [ ] denied Internet traffic cannot escape.
 - [ ] multi-host matrix.
 - [ ] MCP real operation on private/closed target.
+- [ ] real ChatGPT Plus owner/UI connects to the public MCP endpoint.
+- [ ] ChatGPT Plus OAuth Authorization Code / consent completes successfully.
+- [ ] ChatGPT Plus tool discovery succeeds.
+- [ ] one policy-allowed operation succeeds through ChatGPT Plus.
+- [ ] one intentionally out-of-scope operation is denied through ChatGPT Plus.
+- [ ] machine-side MCP/OAuth evidence and owner/UI evidence are both retained; neither is substituted for the other.
 
 Platform evidence:
 
