@@ -651,7 +651,7 @@ def validate_staged_control_db(db_path: Path, manifest_path: Path | None = None)
         conn.close()
 
 
-def post_restore_reconcile(root: Path) -> None:
+def post_restore_reconcile(root: Path, payload_source: Path | None = None) -> None:
     """Rebuild derived runtime from restored DB and fail-closed AI job state.
 
     Restore intentionally purges non-authoritative projections (including the
@@ -659,21 +659,42 @@ def post_restore_reconcile(root: Path) -> None:
     must both be regenerated from the restored SQLite control DB before service
     restart/health gates run; otherwise allocator /healthz stays 503 and both
     restore and automatic rollback fail closed into RECOVERY_REQUIRED.
+
+    Management-auth identity fields are not stored in SQLite. When
+    ``payload_source`` points at the staged backup/rollback extract, management
+    identity is merged from that extract's forensic inventory by machine id.
     """
     lib_dir = str(Path(__file__).resolve().parent.parent / "lib")
     if lib_dir not in sys.path:
         sys.path.insert(0, lib_dir)
     try:
         from drlink_control_plane import ControlPlane
-        from drlink_upgrade_reconcile import project_client_inventory_from_control_plane
+        from drlink_upgrade_reconcile import (
+            MgmtIdentityError,
+            load_forensic_client_inventory,
+            project_client_inventory_from_control_plane,
+        )
     except Exception as exc:
         raise RestoreError("control-plane unavailable after restore: %s" % exc) from exc
+    forensic = None
+    if payload_source is not None:
+        try:
+            forensic = load_forensic_client_inventory(Path(payload_source) / "payload")
+        except MgmtIdentityError as exc:
+            raise RestoreError(str(exc)) from exc
     plane = ControlPlane(str(root))
     try:
         plane.reconcile_ai_jobs_after_disaster_recovery()
         plane.compile_runtime()
         try:
-            project_client_inventory_from_control_plane(plane, root=str(root))
+            project_client_inventory_from_control_plane(
+                plane,
+                root=str(root),
+                forensic_inventory=forensic,
+                require_mgmt_identity=True,
+            )
+        except MgmtIdentityError as exc:
+            raise RestoreError(str(exc)) from exc
         except Exception as exc:
             raise RestoreError(
                 "client inventory projection rebuild failed after restore: %s" % exc
@@ -1303,7 +1324,7 @@ def main() -> int:
             _write_txn(root, snapshot, rollback_kind=rollback_kind)
             try:
                 apply_payload(root, candidate)
-                post_restore_reconcile(root)
+                post_restore_reconcile(root, payload_source=candidate)
                 _reapply_egress_permissions_after_restore(root)
                 restart_services(root, expect_client_role=expect_client_role)
                 verify_restored_control_state(root, expect_client_role=expect_client_role)
@@ -1311,7 +1332,7 @@ def main() -> int:
                 if rollback_kind == "VALIDATED" and rollback is not None:
                     try:
                         apply_payload(root, rollback, allow_hook=False)
-                        post_restore_reconcile(root)
+                        post_restore_reconcile(root, payload_source=rollback)
                         _reapply_egress_permissions_after_restore(root)
                         restart_services(root, allow_hook=False, expect_client_role=expect_client_role)
                         verify_restored_control_state(

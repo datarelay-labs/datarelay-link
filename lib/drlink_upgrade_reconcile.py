@@ -1913,13 +1913,230 @@ def invariant_reservations_match_registry(plane: ControlPlane, registry: dict) -
     return problems
 
 
+# Management authentication / continuity fields live in the allocator inventory
+# projection and are NOT stored in SQLite. SQLite remains authority for which
+# clients/services/reservations exist; forensic backup inventory is authority
+# for machine-id-matched management identity material across disaster recovery.
+MGMT_IDENTITY_FIELDS = (
+    "mgmt_pubkey",
+    "mgmt_mac_key",
+    "mgmt_fingerprint",
+    "mgmt_alg",
+    "mgmt_status",
+    "mgmt_enrolled_at",
+    "mgmt_revoked_at",
+    "created_at",
+    "first_seen_ip",
+    "last_source_ip",
+    "last_seen_at",
+    "last_enrolled_at",
+)
+
+
+class MgmtIdentityError(ControlPlaneError):
+    """Management identity cannot be restored safely from available sources."""
+
+
+def load_forensic_client_inventory(payload_dir: Path) -> Optional[dict]:
+    """Load forensic client inventory from a staged backup/rollback payload.
+
+    Returns None when the backup does not contain a forensic inventory file.
+    Raises MgmtIdentityError when a present file is unreadable or structurally
+    invalid.
+    """
+    payload = Path(payload_dir)
+    candidates = (
+        payload / "var/lib/drlink/runtime/client-inventory.json",
+        payload / "var/lib/drlink/registry.json",
+    )
+    present = [path for path in candidates if path.is_file()]
+    if not present:
+        return None
+    last_error = None
+    for path in present:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            last_error = "forensic client inventory unreadable at %s" % path.name
+            del exc
+            continue
+        if not isinstance(data, dict):
+            raise MgmtIdentityError(
+                "forensic client inventory is not an object (%s)" % path.name
+            )
+        clients = data.get("clients")
+        if clients is None:
+            clients = {}
+        if not isinstance(clients, dict):
+            raise MgmtIdentityError(
+                "forensic client inventory clients map is invalid (%s)" % path.name
+            )
+        return data
+    raise MgmtIdentityError(last_error or "forensic client inventory is unusable")
+
+
+def extract_mgmt_identity(rec: dict) -> dict:
+    """Copy management-identity fields only; never services/runtime projection."""
+    out: dict[str, Any] = {}
+    if not isinstance(rec, dict):
+        return out
+    for key in MGMT_IDENTITY_FIELDS:
+        if key not in rec:
+            continue
+        value = rec.get(key)
+        if value is None:
+            continue
+        out[key] = value
+    return out
+
+
+def _normalized_mgmt_status(identity: dict) -> str:
+    status = str(identity.get("mgmt_status") or "").strip().lower()
+    if status in ("enrolled", "legacy", "revoked"):
+        return status
+    if str(identity.get("mgmt_pubkey") or "").strip():
+        return "enrolled"
+    return "legacy"
+
+
+def validate_mgmt_identity(identity: dict, *, machine_id: str) -> None:
+    """Fail closed on incomplete enrolled/revoked management identity material."""
+    short = str(machine_id or "")[:12] or "unknown"
+    status = _normalized_mgmt_status(identity)
+    identity["mgmt_status"] = status
+    if status == "enrolled":
+        if not str(identity.get("mgmt_pubkey") or "").strip():
+            raise MgmtIdentityError(
+                "enrolled management identity for client %s is missing mgmt_pubkey"
+                % short
+            )
+        if not str(identity.get("mgmt_mac_key") or "").strip():
+            raise MgmtIdentityError(
+                "enrolled management identity for client %s is missing mgmt_mac_key"
+                % short
+            )
+        if not str(identity.get("mgmt_fingerprint") or "").strip():
+            raise MgmtIdentityError(
+                "enrolled management identity for client %s is missing mgmt_fingerprint"
+                % short
+            )
+        alg = str(identity.get("mgmt_alg") or "").strip()
+        if not alg:
+            raise MgmtIdentityError(
+                "enrolled management identity for client %s is missing mgmt_alg" % short
+            )
+    elif status == "revoked":
+        # Revoked identities must retain enough material to stay revoked and
+        # fail closed on management auth rather than silently becoming anonymous.
+        if not str(identity.get("mgmt_status") or "").strip():
+            raise MgmtIdentityError(
+                "revoked management identity for client %s is missing mgmt_status"
+                % short
+            )
+
+
+def merge_mgmt_identity_from_forensic(
+    projected: dict,
+    forensic: Optional[dict],
+    *,
+    require_when_clients: bool = False,
+) -> dict:
+    """Merge machine-id-matched management identity into a SQLite projection.
+
+    Authority split:
+    - SQLite projection owns clients/services/reserved/policy continuity.
+    - Forensic backup inventory owns management-auth identity fields that are
+      not stored in SQLite.
+    - Forensic services/runtime maps are never reinstated as authority.
+    """
+    if not isinstance(projected, dict):
+        raise MgmtIdentityError("projected client inventory is not an object")
+    clients = projected.get("clients")
+    if clients is None:
+        clients = {}
+    if not isinstance(clients, dict):
+        raise MgmtIdentityError("projected client inventory clients map is invalid")
+
+    if forensic is None:
+        if require_when_clients and clients:
+            raise MgmtIdentityError(
+                "restored Managed Hosts exist but the backup forensic client "
+                "inventory is missing; management identity cannot be "
+                "reconstructed from SQLite alone"
+            )
+        return projected
+
+    fclients = forensic.get("clients")
+    if fclients is None:
+        fclients = {}
+    if not isinstance(fclients, dict):
+        raise MgmtIdentityError("forensic client inventory clients map is invalid")
+
+    for cid, entry in clients.items():
+        if not isinstance(entry, dict):
+            raise MgmtIdentityError("projected client record is not an object")
+        frec = fclients.get(cid)
+        if not isinstance(frec, dict):
+            continue
+        identity = extract_mgmt_identity(frec)
+        if not identity:
+            continue
+        validate_mgmt_identity(identity, machine_id=str(cid))
+        # Overlay identity only; keep SQLite-derived services/label/hostname.
+        entry.update(identity)
+
+    # Fail closed when forensic enrolled/revoked identity for a restored client
+    # did not survive the merge.
+    for cid, frec in fclients.items():
+        if cid not in clients or not isinstance(frec, dict):
+            continue
+        identity = extract_mgmt_identity(frec)
+        if not identity:
+            continue
+        status = _normalized_mgmt_status(identity)
+        if status not in ("enrolled", "revoked"):
+            continue
+        merged = clients[cid]
+        if status == "enrolled":
+            if str(merged.get("mgmt_status") or "") != "enrolled":
+                raise MgmtIdentityError(
+                    "management identity for client %s was not preserved as enrolled"
+                    % str(cid)[:12]
+                )
+            if str(merged.get("mgmt_pubkey") or "").strip() != str(
+                identity.get("mgmt_pubkey") or ""
+            ).strip():
+                raise MgmtIdentityError(
+                    "management public key mismatch after restore for client %s"
+                    % str(cid)[:12]
+                )
+            if str(merged.get("mgmt_mac_key") or "").strip() != str(
+                identity.get("mgmt_mac_key") or ""
+            ).strip():
+                raise MgmtIdentityError(
+                    "management mac key mismatch after restore for client %s"
+                    % str(cid)[:12]
+                )
+        elif status == "revoked":
+            if str(merged.get("mgmt_status") or "") != "revoked":
+                raise MgmtIdentityError(
+                    "revoked management identity for client %s was not preserved"
+                    % str(cid)[:12]
+                )
+    return projected
+
+
 def build_client_inventory_from_control_plane(plane: ControlPlane) -> dict:
     """Build derived allocator inventory projection from SQLite authority.
 
     Disaster-recovery restore intentionally purges client-inventory.json because it
     is not policy authority. The allocator still requires a valid projection for
     /healthz and endpoint bookkeeping, so post-restore reconciliation must rebuild
-    it from the restored control DB.
+    client/service/reservation maps from the restored control DB.
+
+    Management-auth identity fields are NOT in SQLite; callers that perform
+    disaster recovery must merge them from validated forensic inventory via
+    ``merge_mgmt_identity_from_forensic``.
     """
     clients: dict[str, dict] = {}
     reserved: set[int] = set()
@@ -1998,7 +2215,6 @@ def build_client_inventory_from_control_plane(plane: ControlPlane) -> dict:
             "label": label,
             "note": note,
             "services": services,
-            "mgmt_status": "enrolled",
         }
         if tags:
             entry["tags"] = tags
@@ -2026,13 +2242,25 @@ def project_client_inventory_from_control_plane(
     plane: ControlPlane,
     *,
     root: Optional[str] = None,
+    forensic_inventory: Optional[dict] = None,
+    require_mgmt_identity: bool = False,
 ) -> Path:
-    """Atomically write derived client-inventory.json from the restored control DB."""
+    """Atomically write derived client-inventory.json from the restored control DB.
+
+    When ``require_mgmt_identity`` is true (disaster-recovery restore/rollback),
+    management identity is merged from ``forensic_inventory`` and missing /
+    corrupt identity fails closed.
+    """
     deploy = root if root is not None else getattr(plane, "root", None)
     path = Path(deploy) / "var/lib/drlink/runtime/client-inventory.json" if deploy else (
         Path("/") / "var/lib/drlink/runtime/client-inventory.json"
     )
     state = build_client_inventory_from_control_plane(plane)
+    state = merge_mgmt_identity_from_forensic(
+        state,
+        forensic_inventory,
+        require_when_clients=require_mgmt_identity,
+    )
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")

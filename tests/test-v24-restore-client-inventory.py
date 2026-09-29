@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""P0: post-restore rebuild of allocator client-inventory from SQLite."""
+"""P0: post-restore rebuild of allocator client-inventory from SQLite + mgmt identity."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
 import sys
+import tarfile
 import tempfile
 import unittest
 from pathlib import Path
@@ -21,6 +23,42 @@ BACKUP = ROOT / "tools" / "frp-backup"
 RESTORE = ROOT / "tools" / "frp-restore"
 MID = "cccccccccccccccccccccccccccccccc"
 MID2 = "dddddddddddddddddddddddddddddddd"
+REVOKED = "ffffffffffffffffffffffffffffffff"
+
+# Synthetic fixture tokens only — never real product secrets.
+MGMT_A = {
+    "mgmt_status": "enrolled",
+    "mgmt_alg": "ecdsa-p256-sha256",
+    "mgmt_pubkey": "TEST-MGMT-PUBKEY-A",
+    "mgmt_mac_key": "TEST-MGMT-MAC-A",
+    "mgmt_fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "mgmt_enrolled_at": "2026-09-28T14:38:30Z",
+    "first_seen_ip": "192.0.2.10",
+    "last_source_ip": "192.0.2.10",
+    "last_seen_at": "2026-09-28T15:00:00Z",
+    "last_enrolled_at": "2026-09-28T14:38:30Z",
+}
+MGMT_B = {
+    "mgmt_status": "enrolled",
+    "mgmt_alg": "ecdsa-p256-sha256",
+    "mgmt_pubkey": "TEST-MGMT-PUBKEY-B",
+    "mgmt_mac_key": "TEST-MGMT-MAC-B",
+    "mgmt_fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "mgmt_enrolled_at": "2026-09-28T14:40:00Z",
+}
+MGMT_REVOKED = {
+    "mgmt_status": "revoked",
+    "mgmt_alg": "ecdsa-p256-sha256",
+    "mgmt_pubkey": "TEST-MGMT-PUBKEY-REVOKED",
+    "mgmt_mac_key": "TEST-MGMT-MAC-REVOKED",
+    "mgmt_fingerprint": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "mgmt_enrolled_at": "2026-09-28T12:00:00Z",
+    "mgmt_revoked_at": "2026-09-28T13:00:00Z",
+}
+
+
+def _fp(value: str) -> str:
+    return hashlib.sha256(str(value).encode("utf-8")).hexdigest()
 
 
 def seed_server(tree: Path, marker: str = "orig") -> ControlPlane:
@@ -78,6 +116,34 @@ def run_tool(tool: Path, *args: str, env: dict | None = None) -> subprocess.Comp
     )
 
 
+def rewrite_archive(source: Path, dest: Path, mutate) -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        with tarfile.open(source, "r:gz") as tar:
+            tar.extractall(root)
+        mutate(root)
+        manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+        files = []
+        lines = []
+        for path in sorted((root / "payload").rglob("*")):
+            if not path.is_file():
+                continue
+            rel = path.relative_to(root / "payload").as_posix()
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            mode = path.stat().st_mode & 0o777
+            files.append({"path": rel, "sha256": digest, "mode": mode})
+            lines.append("%s  payload/%s" % (digest, rel))
+        manifest["files"] = files
+        (root / "manifest.json").write_text(
+            json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        (root / "checksums.sha256").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        with tarfile.open(dest, "w:gz") as tar:
+            tar.add(root / "manifest.json", arcname="manifest.json")
+            tar.add(root / "checksums.sha256", arcname="checksums.sha256")
+            tar.add(root / "payload", arcname="payload")
+
+
 class RestoreClientInventoryTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -102,12 +168,13 @@ class RestoreClientInventoryTests(unittest.TestCase):
             os.environ.pop(key, None)
         self.tmp.cleanup()
 
-    def _seed_clients_and_services(self) -> None:
+    def _seed_clients_and_services(self, *, with_revoked: bool = False) -> None:
         self.plane.upsert_client(MID, label="host-a", hostname="host-a", connected=True)
         self.plane.upsert_client(MID2, label="host-b", hostname="host-b", connected=True)
+        if with_revoked:
+            self.plane.upsert_client(REVOKED, label="host-revoked", hostname="host-revoked", connected=False)
         v24.set_service_object(self.plane, "ssh", type="tcp", port=22, oneshot=True)
         v24.set_service_object(self.plane, "web", type="tcp", port=8080, oneshot=True)
-        # Legacy-style enrolled service (no service_object binding).
         self.plane.set_published_service(
             MID,
             "ssh",
@@ -119,7 +186,6 @@ class RestoreClientInventoryTests(unittest.TestCase):
             public_port=6001,
             from_preset="ssh",
         )
-        # v2.4 Remote Service with Service Object binding.
         self.plane.set_published_service(
             MID2,
             "web",
@@ -158,6 +224,34 @@ class RestoreClientInventoryTests(unittest.TestCase):
         self.plane.compile_runtime()
         UR.project_client_inventory_from_control_plane(self.plane, root=str(self.tree))
 
+    def _inject_mgmt_identity(self, mapping: dict[str, dict]) -> None:
+        path = self.tree / "var/lib/drlink/runtime/client-inventory.json"
+        state = json.loads(path.read_text(encoding="utf-8"))
+        for cid, identity in mapping.items():
+            self.assertIn(cid, state["clients"])
+            # Keep SQLite-derived services; overlay management identity only.
+            stale_services = {"evil-stale": {"remote_port": 5999, "enabled": True}}
+            state["clients"][cid].setdefault("services", {}).update(stale_services)
+            state["clients"][cid].update(identity)
+        path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        os.chmod(path, 0o600)
+
+    def _assert_mgmt_preserved(self, client: dict, expected: dict) -> None:
+        self.assertEqual(client.get("mgmt_status"), expected["mgmt_status"])
+        self.assertEqual(client.get("mgmt_alg"), expected["mgmt_alg"])
+        self.assertEqual(client.get("mgmt_fingerprint"), expected["mgmt_fingerprint"])
+        # Compare digests so failure output does not echo fixture secret material.
+        self.assertEqual(_fp(client.get("mgmt_pubkey") or ""), _fp(expected["mgmt_pubkey"]))
+        self.assertEqual(_fp(client.get("mgmt_mac_key") or ""), _fp(expected["mgmt_mac_key"]))
+        if "mgmt_enrolled_at" in expected:
+            self.assertEqual(client.get("mgmt_enrolled_at"), expected["mgmt_enrolled_at"])
+        if "mgmt_revoked_at" in expected:
+            self.assertEqual(client.get("mgmt_revoked_at"), expected["mgmt_revoked_at"])
+        if "last_source_ip" in expected:
+            self.assertEqual(client.get("last_source_ip"), expected["last_source_ip"])
+        # Forensic service maps must not override SQLite service authority.
+        self.assertNotIn("evil-stale", client.get("services") or {})
+
     def test_project_rebuilds_inventory_from_sqlite(self):
         self._seed_clients_and_services()
         inv_path = self.tree / "var/lib/drlink/runtime/client-inventory.json"
@@ -175,6 +269,9 @@ class RestoreClientInventoryTests(unittest.TestCase):
         self.assertTrue(web["rs-web"]["v24_remote_service"])
         self.assertEqual(web["rs-web"]["remote_port"], 6010)
         self.assertEqual(sorted(state["reserved"]), [6001, 6010])
+        # SQLite projection alone must not invent enrolled management identity.
+        self.assertNotEqual(state["clients"][MID].get("mgmt_status"), "enrolled")
+        self.assertFalse(state["clients"][MID].get("mgmt_pubkey"))
 
     def test_restore_rebuilds_purged_inventory(self):
         self._seed_clients_and_services()
@@ -182,7 +279,6 @@ class RestoreClientInventoryTests(unittest.TestCase):
         proc = run_tool(BACKUP, str(archive))
         self.assertEqual(proc.returncode, 0, proc.stderr)
 
-        # Mutate live DB + leave a stale inventory that restore must purge/rebuild.
         self.plane.conn.execute("UPDATE clients SET label='mutated' WHERE id=?", (MID,))
         self.plane.conn.commit()
         stale = self.tree / "var/lib/drlink/runtime/client-inventory.json"
@@ -213,21 +309,44 @@ class RestoreClientInventoryTests(unittest.TestCase):
             (self.tree / "var/lib/drlink/runtime/remote-access.json").is_file()
         )
 
-    def test_activation_failure_rollback_restores_inventory(self):
-        self._seed_clients_and_services()
-        archive = self.outdir / "rb.tar.gz"
+    def test_restore_preserves_mgmt_identity_from_forensic_inventory(self):
+        self._seed_clients_and_services(with_revoked=True)
+        self._inject_mgmt_identity({MID: MGMT_A, MID2: MGMT_B, REVOKED: MGMT_REVOKED})
+        archive = self.outdir / "mgmt.tar.gz"
         proc = run_tool(BACKUP, str(archive))
         self.assertEqual(proc.returncode, 0, proc.stderr)
 
-        # Live mutation after backup becomes the validated pre-restore snapshot.
+        # Destroy live management identity before restore.
+        UR.project_client_inventory_from_control_plane(self.plane, root=str(self.tree))
+        wiped = json.loads(
+            (self.tree / "var/lib/drlink/runtime/client-inventory.json").read_text(encoding="utf-8")
+        )
+        self.assertFalse(wiped["clients"][MID].get("mgmt_pubkey"))
+        self.plane.close()
+
+        proc = run_tool(RESTORE, str(archive))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        after = json.loads(
+            (self.tree / "var/lib/drlink/runtime/client-inventory.json").read_text(encoding="utf-8")
+        )
+        self._assert_mgmt_preserved(after["clients"][MID], MGMT_A)
+        self._assert_mgmt_preserved(after["clients"][MID2], MGMT_B)
+        self._assert_mgmt_preserved(after["clients"][REVOKED], MGMT_REVOKED)
+        self.assertEqual(after["clients"][MID]["services"]["ssh"]["remote_port"], 6001)
+        self.plane = ControlPlane(str(self.tree))
+
+    def test_rollback_preserves_mgmt_identity(self):
+        self._seed_clients_and_services()
+        self._inject_mgmt_identity({MID: MGMT_A, MID2: MGMT_B})
+        archive = self.outdir / "rb-mgmt.tar.gz"
+        proc = run_tool(BACKUP, str(archive))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+        # Pre-restore live state keeps management identity and an extra client.
         extra = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
         self.plane.upsert_client(extra, label="temp", hostname="temp", connected=True)
         UR.project_client_inventory_from_control_plane(self.plane, root=str(self.tree))
-        pre_restore = json.loads(
-            (self.tree / "var/lib/drlink/runtime/client-inventory.json").read_text(encoding="utf-8")
-        )
-        self.assertIn(extra, pre_restore["clients"])
-        # Release the live DB handle before the restore tool replaces files.
+        self._inject_mgmt_identity({MID: MGMT_A, MID2: MGMT_B})
         self.plane.close()
 
         proc = run_tool(
@@ -240,16 +359,98 @@ class RestoreClientInventoryTests(unittest.TestCase):
         after = json.loads(
             (self.tree / "var/lib/drlink/runtime/client-inventory.json").read_text(encoding="utf-8")
         )
-        # Automatic rollback must rebuild inventory from the restored prior DB,
-        # including live clients that existed immediately before the failed restore.
+        self.assertIn(extra, after["clients"])
+        self._assert_mgmt_preserved(after["clients"][MID], MGMT_A)
+        self._assert_mgmt_preserved(after["clients"][MID2], MGMT_B)
+        self.plane = ControlPlane(str(self.tree))
+
+    def test_corrupt_forensic_mgmt_identity_fails_closed(self):
+        self._seed_clients_and_services()
+        self._inject_mgmt_identity({MID: MGMT_A, MID2: MGMT_B})
+        archive = self.outdir / "corrupt-mgmt.tar.gz"
+        proc = run_tool(BACKUP, str(archive))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+        broken = self.outdir / "corrupt-mgmt-broken.tar.gz"
+
+        def mutate(root: Path) -> None:
+            path = root / "payload/var/lib/drlink/runtime/client-inventory.json"
+            state = json.loads(path.read_text(encoding="utf-8"))
+            # Enrolled without required material.
+            state["clients"][MID]["mgmt_status"] = "enrolled"
+            state["clients"][MID].pop("mgmt_pubkey", None)
+            state["clients"][MID].pop("mgmt_mac_key", None)
+            path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+        rewrite_archive(archive, broken, mutate)
+        before = (self.tree / "etc/frp/server_token").read_text(encoding="utf-8")
+        self.plane.close()
+        proc = run_tool(RESTORE, str(broken))
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("management identity", (proc.stderr or "").lower())
+        self.assertEqual((self.tree / "etc/frp/server_token").read_text(encoding="utf-8"), before)
+        self.plane = ControlPlane(str(self.tree))
+
+    def test_missing_forensic_inventory_with_clients_fails_closed(self):
+        self._seed_clients_and_services()
+        archive = self.outdir / "missing-inv.tar.gz"
+        proc = run_tool(BACKUP, str(archive))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+        stripped = self.outdir / "missing-inv-stripped.tar.gz"
+
+        def mutate(root: Path) -> None:
+            for rel in (
+                "payload/var/lib/drlink/runtime/client-inventory.json",
+                "payload/var/lib/drlink/registry.json",
+            ):
+                path = root / rel
+                if path.is_file():
+                    path.unlink()
+
+        rewrite_archive(archive, stripped, mutate)
+        before = (self.tree / "etc/frp/server_token").read_text(encoding="utf-8")
+        self.plane.close()
+        proc = run_tool(RESTORE, str(stripped))
+        self.assertNotEqual(proc.returncode, 0)
+        combined = (proc.stderr or "").lower()
+        self.assertTrue(
+            "management identity" in combined or "forensic client inventory" in combined,
+            proc.stderr,
+        )
+        self.assertEqual((self.tree / "etc/frp/server_token").read_text(encoding="utf-8"), before)
+        self.plane = ControlPlane(str(self.tree))
+
+    def test_activation_failure_rollback_restores_inventory(self):
+        self._seed_clients_and_services()
+        archive = self.outdir / "rb.tar.gz"
+        proc = run_tool(BACKUP, str(archive))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+        extra = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        self.plane.upsert_client(extra, label="temp", hostname="temp", connected=True)
+        UR.project_client_inventory_from_control_plane(self.plane, root=str(self.tree))
+        pre_restore = json.loads(
+            (self.tree / "var/lib/drlink/runtime/client-inventory.json").read_text(encoding="utf-8")
+        )
+        self.assertIn(extra, pre_restore["clients"])
+        self.plane.close()
+
+        proc = run_tool(
+            RESTORE,
+            str(archive),
+            env={"FRP_RESTORE_HOOK_FAIL_AFTER": "2"},
+        )
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("previous state was restored", proc.stderr)
+        after = json.loads(
+            (self.tree / "var/lib/drlink/runtime/client-inventory.json").read_text(encoding="utf-8")
+        )
         self.assertIn(extra, after["clients"])
         self.assertEqual(after["clients"][extra]["label"], "temp")
         self.assertEqual(
             after["clients"][MID]["services"]["ssh"]["remote_port"],
             pre_restore["clients"][MID]["services"]["ssh"]["remote_port"],
-        )
-        self.assertTrue(
-            (self.tree / "var/lib/drlink/runtime/client-inventory.json").is_file()
         )
         self.plane = ControlPlane(str(self.tree))
 
