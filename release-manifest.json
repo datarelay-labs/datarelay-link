@@ -3,7 +3,7 @@
   "project_version": "2.4.0",
   "frp_version": "0.71.0",
   "channel": "development",
-  "git_ref": "57f189d192a4486415a983926161aafa02f97780",
+  "git_ref": "0ad7ffce8603ef3fb1a136a2258cfd58109807df",
   "owner": "datarelay-labs",
   "repo": "datarelay-link",
   "https_raw_base": "https://raw.githubusercontent.com/datarelay-labs/datarelay-link",
@@ -89,9 +89,9 @@
       "sha256": "e49f8fbf55301fb00ce456cb880fb0e3083e216f7e44404f406e9de8362671c7"
     }
   },
-  "source_head": "57f189d192a4486415a983926161aafa02f97780",
+  "source_head": "0ad7ffce8603ef3fb1a136a2258cfd58109807df",
   "features": {
     "mcp_included": true
   },
-  "immutable_source_ref": "57f189d192a4486415a983926161aafa02f97780"
+  "immutable_source_ref": "0ad7ffce8603ef3fb1a136a2258cfd58109807df"
 }
