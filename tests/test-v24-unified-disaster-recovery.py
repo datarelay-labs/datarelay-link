@@ -32,6 +32,7 @@ def seed_server(tree: Path, marker: str = "orig") -> ControlPlane:
         "var/lib/drlink/enrollments",
         "var/lib/drlink/bootstrap",
         "var/lib/drlink/backups",
+        "var/lib/drlink/runtime",
         "var/log/drlink",
     ):
         (tree / rel).mkdir(parents=True, exist_ok=True)
@@ -77,6 +78,11 @@ def seed_server(tree: Path, marker: str = "orig") -> ControlPlane:
     )
     plane.conn.commit()
     plane.compile_runtime()
+    # Forensic inventory must membership-match SQLite clients for supported DR.
+    # Prefer the derived client-inventory projection over contradictory legacy registry.
+    import drlink_upgrade_reconcile as UR
+
+    UR.project_client_inventory_from_control_plane(plane, root=str(tree))
     return plane
 
 

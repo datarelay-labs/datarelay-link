@@ -23,6 +23,7 @@ import hashlib
 import ipaddress
 import json
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -33,6 +34,7 @@ from drlink_control_plane import ControlPlane
 LOOPBACK = {"127.0.0.1", "::1", "localhost"}
 THIS_HOST = {"this-host", "this_host", "self"}
 V24_PREFIX = "rs-"
+MGMT_MAC_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
 # Tests may assign a callable(stage: str). Production leaves this unset.
 _MIGRATION_CHECKPOINT = None
 
@@ -2000,39 +2002,62 @@ def _normalized_mgmt_status(identity: dict) -> str:
 
 
 def validate_mgmt_identity(identity: dict, *, machine_id: str) -> None:
-    """Fail closed on incomplete enrolled/revoked management identity material."""
+    """Fail closed on incomplete or cryptographically invalid management identity."""
+    import frp_mgmt_auth as MGMT
+
     short = str(machine_id or "")[:12] or "unknown"
     status = _normalized_mgmt_status(identity)
     identity["mgmt_status"] = status
+    if status not in ("enrolled", "revoked"):
+        return
+
+    alg = str(identity.get("mgmt_alg") or "").strip().lower()
+    if alg != MGMT.MGMT_ALG:
+        raise MgmtIdentityError(
+            "management identity for client %s has unsupported mgmt_alg" % short
+        )
+    identity["mgmt_alg"] = MGMT.MGMT_ALG
+
+    raw_pem = str(identity.get("mgmt_pubkey") or "")
+    if not raw_pem.strip():
+        raise MgmtIdentityError(
+            "management identity for client %s is missing mgmt_pubkey" % short
+        )
+    try:
+        canon = MGMT.canonicalize_pubkey_pem(raw_pem)
+        expected_fp = MGMT.pubkey_fingerprint(canon)
+    except Exception as exc:
+        raise MgmtIdentityError(
+            "management identity for client %s has an invalid mgmt_pubkey" % short
+        ) from exc
+    identity["mgmt_pubkey"] = canon
+
+    stored_fp = str(identity.get("mgmt_fingerprint") or "").strip().lower()
+    if not stored_fp:
+        raise MgmtIdentityError(
+            "management identity for client %s is missing mgmt_fingerprint" % short
+        )
+    if stored_fp != expected_fp:
+        raise MgmtIdentityError(
+            "management identity for client %s has a mismatched mgmt_fingerprint"
+            % short
+        )
+    identity["mgmt_fingerprint"] = expected_fp
+
+    mac = str(identity.get("mgmt_mac_key") or "").strip().lower()
     if status == "enrolled":
-        if not str(identity.get("mgmt_pubkey") or "").strip():
+        if not MGMT_MAC_KEY_RE.fullmatch(mac):
             raise MgmtIdentityError(
-                "enrolled management identity for client %s is missing mgmt_pubkey"
+                "management identity for client %s has an invalid mgmt_mac_key" % short
+            )
+        identity["mgmt_mac_key"] = mac
+    elif mac:
+        if not MGMT_MAC_KEY_RE.fullmatch(mac):
+            raise MgmtIdentityError(
+                "revoked management identity for client %s has an invalid mgmt_mac_key"
                 % short
             )
-        if not str(identity.get("mgmt_mac_key") or "").strip():
-            raise MgmtIdentityError(
-                "enrolled management identity for client %s is missing mgmt_mac_key"
-                % short
-            )
-        if not str(identity.get("mgmt_fingerprint") or "").strip():
-            raise MgmtIdentityError(
-                "enrolled management identity for client %s is missing mgmt_fingerprint"
-                % short
-            )
-        alg = str(identity.get("mgmt_alg") or "").strip()
-        if not alg:
-            raise MgmtIdentityError(
-                "enrolled management identity for client %s is missing mgmt_alg" % short
-            )
-    elif status == "revoked":
-        # Revoked identities must retain enough material to stay revoked and
-        # fail closed on management auth rather than silently becoming anonymous.
-        if not str(identity.get("mgmt_status") or "").strip():
-            raise MgmtIdentityError(
-                "revoked management identity for client %s is missing mgmt_status"
-                % short
-            )
+        identity["mgmt_mac_key"] = mac
 
 
 def merge_mgmt_identity_from_forensic(
@@ -2048,6 +2073,9 @@ def merge_mgmt_identity_from_forensic(
     - Forensic backup inventory owns management-auth identity fields that are
       not stored in SQLite.
     - Forensic services/runtime maps are never reinstated as authority.
+
+    When ``require_when_clients`` is true (supported same-version DR), every
+    restored SQLite client must have a matching forensic inventory record.
     """
     if not isinstance(projected, dict):
         raise MgmtIdentityError("projected client inventory is not an object")
@@ -2077,9 +2105,16 @@ def merge_mgmt_identity_from_forensic(
             raise MgmtIdentityError("projected client record is not an object")
         frec = fclients.get(cid)
         if not isinstance(frec, dict):
+            if require_when_clients:
+                raise MgmtIdentityError(
+                    "restored client %s is missing from forensic client inventory; "
+                    "refusing to drop management identity continuity"
+                    % str(cid)[:12]
+                )
             continue
         identity = extract_mgmt_identity(frec)
         if not identity:
+            # Forensic record exists but has no management material (legacy).
             continue
         validate_mgmt_identity(identity, machine_id=str(cid))
         # Overlay identity only; keep SQLite-derived services/label/hostname.
@@ -2096,6 +2131,8 @@ def merge_mgmt_identity_from_forensic(
         status = _normalized_mgmt_status(identity)
         if status not in ("enrolled", "revoked"):
             continue
+        # Re-validate so canonicalization matches what merge stored.
+        validate_mgmt_identity(identity, machine_id=str(cid))
         merged = clients[cid]
         if status == "enrolled":
             if str(merged.get("mgmt_status") or "") != "enrolled":
@@ -2117,6 +2154,13 @@ def merge_mgmt_identity_from_forensic(
                     "management mac key mismatch after restore for client %s"
                     % str(cid)[:12]
                 )
+            if str(merged.get("mgmt_fingerprint") or "").strip().lower() != str(
+                identity.get("mgmt_fingerprint") or ""
+            ).strip().lower():
+                raise MgmtIdentityError(
+                    "management fingerprint mismatch after restore for client %s"
+                    % str(cid)[:12]
+                )
         elif status == "revoked":
             if str(merged.get("mgmt_status") or "") != "revoked":
                 raise MgmtIdentityError(
@@ -2124,6 +2168,33 @@ def merge_mgmt_identity_from_forensic(
                     % str(cid)[:12]
                 )
     return projected
+
+
+def validate_restore_mgmt_identity_consistency(
+    deploy_root: Path,
+    *,
+    require_when_clients: bool = True,
+) -> dict:
+    """Preflight: SQLite clients vs forensic management identity must be consistent.
+
+    ``deploy_root`` is a staged backup/rollback payload root (contains
+    ``var/lib/drlink/drlink.db`` and optional forensic inventory).
+    """
+    root = Path(deploy_root)
+    plane = ControlPlane(str(root))
+    try:
+        projected = build_client_inventory_from_control_plane(plane)
+        forensic = load_forensic_client_inventory(root)
+        return merge_mgmt_identity_from_forensic(
+            projected,
+            forensic,
+            require_when_clients=require_when_clients,
+        )
+    finally:
+        try:
+            plane.close()
+        except Exception:
+            pass
 
 
 def build_client_inventory_from_control_plane(plane: ControlPlane) -> dict:

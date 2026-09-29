@@ -56,11 +56,6 @@ def seed_valid_tree(root: Path, marker: str) -> None:
         (root / "etc/drlink/pki" / name).write_text("%s-%s\n" % (marker, name), encoding="utf-8")
     (root / "etc/frp/frps.toml").write_text("bindPort = 443\n", encoding="utf-8")
     (root / "etc/frp/server_token").write_text("token-%s\n" % marker, encoding="utf-8")
-    (root / "var/lib/drlink/registry.json").write_text(
-        json.dumps({"schema_version": 2, "clients": {}, "reserved": [], "marker": marker})
-        + "\n",
-        encoding="utf-8",
-    )
     (root / "var/lib/drlink/access-control.json").write_text(
         json.dumps({"schema_version": 1, "access_lists": {}, "service_access": {}}) + "\n",
         encoding="utf-8",
@@ -84,6 +79,7 @@ def seed_valid_tree(root: Path, marker: str) -> None:
         "drlink_control_db.py",
         "drlink_control_plane.py",
         "drlink_v24.py",
+        "drlink_upgrade_reconcile.py",
     ):
         src = ROOT / "lib" / name
         if src.is_file():
@@ -92,17 +88,35 @@ def seed_valid_tree(root: Path, marker: str) -> None:
     os.environ.setdefault("DRLINK_SKIP_ACTIVATION", "1")
     sys.path.insert(0, str(ROOT / "lib"))
     from drlink_control_plane import ControlPlane
+    import drlink_upgrade_reconcile as UR
     import drlink_v24 as v24
 
+    client_id = "client-" + marker
     plane = ControlPlane(str(root))
     try:
         v24.ensure_v2_schema(plane.conn)
         plane.conn.execute(
             "INSERT OR REPLACE INTO clients(id, label, hostname, created_at, updated_at) "
             "VALUES (?, ?, 'host', datetime('now'), datetime('now'))",
-            ("client-" + marker, marker),
+            (client_id, marker),
         )
         plane.conn.commit()
+        # Forensic inventory must list every SQLite client (membership). Legacy
+        # records without management-auth fields remain valid; empty clients map
+        # must not pass same-version DR preflight.
+        UR.project_client_inventory_from_control_plane(plane, root=str(root))
+        (root / "var/lib/drlink/registry.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 2,
+                    "clients": {client_id: {"label": marker, "hostname": "host", "services": {}}},
+                    "reserved": [],
+                    "marker": marker,
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
     finally:
         plane.close()
 
