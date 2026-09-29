@@ -40,6 +40,67 @@ echo "PASS_NAME=$PASS_NAME" >>"$PROD_QUAL_GATES"
 echo "FROZEN_HEAD=$FROZEN_HEAD" >>"$PROD_QUAL_GATES"
 echo "${PASS_NAME}_HEAD=$FROZEN_HEAD" >>"$PROD_QUAL_GATES"
 
+# A-019 prior-stable upgrade evidence is a mandatory exact-HEAD prerequisite.
+# It is produced only by a clean run of run-v230-to-v240-upgrade-e2e.sh.
+A019_EVIDENCE="${FRP_E2E_A019_EVIDENCE:-$ROOT/e2e-reports/release-qualification/a019-v230-to-v240.json}"
+A019_LOG="$OUT/a019-upgrade-evidence.log"
+if python3 - "$A019_EVIDENCE" "$FROZEN_HEAD" >"$A019_LOG" 2>&1 <<'PY'
+import json, sys
+from pathlib import Path
+path, expected = Path(sys.argv[1]), sys.argv[2].lower()
+if not path.is_file():
+    raise SystemExit("A-019 evidence missing: %s" % path)
+doc = json.loads(path.read_text(encoding="utf-8"))
+if doc.get("schema_version") != 1:
+    raise SystemExit("A-019 evidence schema_version must be 1")
+if str(doc.get("git_head") or "").lower() != expected:
+    raise SystemExit("A-019 git_head does not match frozen HEAD")
+if str(doc.get("end_head") or "").lower() != expected or doc.get("head_unchanged") is not True:
+    raise SystemExit("A-019 did not finish on the same HEAD")
+if doc.get("worktree_clean_start") is not True or doc.get("worktree_clean_end") is not True:
+    raise SystemExit("A-019 canonical evidence must come from a clean worktree")
+if doc.get("final_status") != "PASS":
+    raise SystemExit("A-019 final_status is not PASS")
+gates = doc.get("gates")
+if not isinstance(gates, dict):
+    raise SystemExit("A-019 gates are missing")
+required = (
+    "V230_VERSION_IDENTITY",
+    "V230_LEGACY_LAYOUT_RUNTIME",
+    "V230_STATE_SEED",
+    "V230_NO_EGRESS_FIXTURE",
+    "V230_BACKUP",
+    "V230_GOLDEN_EVIDENCE",
+    "UPGRADE_CLIENT_ID_PRESERVED",
+    "UPGRADE_PUBLIC_PORT_PRESERVED",
+    "UPGRADE_GROUP_TAG_STATE_PRESERVED",
+    "UPGRADE_METADATA_MIGRATION_MARKED",
+    "UPGRADE_RESTRICTIVE_POLICY_PRESERVED",
+    "UPGRADE_RUNTIME_HEALTH",
+    "UPGRADE_REBOOT_RECOVERY",
+    "UPGRADE_FIXED_TCP_AVAILABLE",
+    "A019_HEAD_UNCHANGED",
+    "LIVE_V230_TO_V240_UPGRADE",
+)
+for key in required:
+    if gates.get(key) != "PASS":
+        raise SystemExit("A-019 required gate %s=%s" % (key, gates.get(key)))
+for key, value in gates.items():
+    if value in {"FAIL", "BLOCKED", "NOT_RUN"}:
+        raise SystemExit("A-019 blocking gate %s=%s" % (key, value))
+print("A019_EVIDENCE=PASS")
+print("A019_HEAD=%s" % expected)
+PY
+then
+  cat "$A019_LOG"
+  pq_gate UPGRADE_V230_TO_V240 PASS
+else
+  cat "$A019_LOG" >&2 || true
+  pq_gate UPGRADE_V230_TO_V240 BLOCKED
+  pq_note "ERROR: clean exact-HEAD A-019 evidence is required before production-realistic qualification"
+  exit 1
+fi
+
 # --- Precheck ---
 # Fail closed before the matrix, macOS retry, fleet rebuild, reboot, or any
 # other destructive path. A failed host precheck must not be ignored.

@@ -266,24 +266,29 @@ pq_gate SOAK_TEST FAIL
 grep -qx 'SOAK_TEST=FAIL' "$GATES" || fail "soak fail not recorded"
 pass "soak traffic failure fails"
 
-# --- Wrong upgrade version → BLOCKED, and that BLOCKED counts as a pass failure ---
+# --- A-019 exact-HEAD evidence is mandatory, and BLOCKED counts as failure ---
+python3 - "$ROOT/tests/run-production-realistic-qualification.sh" <<'PY' || fail "A-019 exact-head prerequisite missing"
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+assert 'a019-v230-to-v240.json' in text
+assert 'doc.get("worktree_clean_start") is not True' in text
+assert 'doc.get("worktree_clean_end") is not True' in text
+assert 'doc.get("head_unchanged") is not True' in text
+assert 'UPGRADE_V230_TO_V240 PASS' in text
+assert 'UPGRADE_V230_TO_V240 BLOCKED' in text
+assert 'clean exact-HEAD A-019 evidence is required' in text
+print("ok")
+PY
 : >"$GATES"
-installed_ver="2.4.0"
-if [[ "$installed_ver" != "2.3.0" ]]; then
-  pq_gate GOLDEN_V230_UPGRADE_BASELINE BLOCKED
-else
-  pq_gate GOLDEN_V230_UPGRADE_BASELINE CREATED
-fi
-grep -qx 'GOLDEN_V230_UPGRADE_BASELINE=BLOCKED' "$GATES" || fail "wrong version not BLOCKED"
-if grep -q 'GOLDEN_V230_UPGRADE_BASELINE|UPGRADE_V230_TO_V240' "$ROOT/tests/run-production-realistic-qualification.sh"; then
-  fail "prior-stable upgrade gate is still excluded from FAIL_COUNT"
-fi
+pq_gate UPGRADE_V230_TO_V240 BLOCKED
+grep -qx 'UPGRADE_V230_TO_V240=BLOCKED' "$GATES" || fail "A-019 BLOCKED not recorded"
 if grep -q 'excluded from FAIL_COUNT' "$ROOT/tests/run-production-realistic-qualification.sh"; then
   fail "qualification still excludes a gate from FAIL_COUNT"
 fi
 fail_count="$(grep -E '=(FAIL|BLOCKED)$' "$GATES" | wc -l | tr -d ' ')"
-[[ "$fail_count" -eq 1 ]] || fail "BLOCKED prior-stable gate did not count (fail_count=$fail_count)"
-pass "wrong upgrade version is BLOCKED and counts"
+[[ "$fail_count" -eq 1 ]] || fail "BLOCKED A-019 gate did not count (fail_count=$fail_count)"
+pass "A-019 exact-head evidence BLOCKED counts"
 
 # --- Unrelated :2222 ownership ---
 PROD_QUAL_MACOS_SSH_PID=""
