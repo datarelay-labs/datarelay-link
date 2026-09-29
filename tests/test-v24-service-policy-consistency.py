@@ -191,19 +191,20 @@ class ServicePolicyConsistency(unittest.TestCase):
             enabled=True,
             oneshot=True,
         )
-        plan = prepare_v24_plan(
-            self.plane,
-            """configurationBundle:
+        with self.assertRaises(ControlPlaneError) as ctx:
+            prepare_v24_plan(
+                self.plane,
+                """configurationBundle:
   context: server
   serviceGroups:
     - name: admin-services
       state: absent
 """,
-        )
-        with self.assertRaises(ControlPlaneError) as ctx:
-            apply_v24_plan(self.plane, plan, confirm=True)
+            )
         self.assertIn("still referenced", str(ctx.exception))
         self.assertIsNotNone(v24.get_service_group(self.plane, "admin-services"))
+        after = self.plane.evaluate_remote_access("198.51.100.10", "198.51.100.20", "tcp", 22)
+        self.assertEqual(after["action"], "DENY")
 
     def test_same_name_recreate_after_delete_does_not_reconnect(self):
         v24.set_network_object(self.plane, "src", type="ip", value="198.51.100.10", oneshot=True)
