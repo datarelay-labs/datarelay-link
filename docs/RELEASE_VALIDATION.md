@@ -469,16 +469,26 @@ FEATURE_INVENTORY_TOTAL=<n>
 FEATURE_NO_CLI_GAPS=0
 RUNTIME_ONLY_CLI_COUNT=0
 DUPLICATE_PUBLIC_PATH_COUNT=0
+PUBLIC_ALIAS_PATH_COUNT=<n>
 LEGACY_COMPATIBILITY_PATH_COUNT=0
 ROOT_BYPASS_ALIAS_COUNT=0
 HIDDEN_EXECUTABLE_PATH_COUNT=0
+DISCOVERY_GAP_COUNT=0
+INSTALLER_GUIDANCE_MISMATCH_COUNT=0
+DESTRUCTIVE_CONFIRMATION_GAP_COUNT=0
+ERROR_WITH_ZERO_RC_COUNT=0
 SCENARIO_BLOCKED_COUNT=0
 STATUS_DOC_RUNTIME_MISMATCH_COUNT=0
+CLEANUP_RESIDUE_COUNT=0
 ```
 
 For an unreleased/greenfield major CLI surface, compatibility-only aliases and executable obsolete hidden grammar are not accepted as release justification. If a future released version requires compatibility, each exception must be explicit, documented, bounded, and separately tested.
 
-Any CLI/product change after this PASS invalidates the gate and requires a fresh reconciliation before Full User E2E PASS1/PASS2 can count as final stable evidence.
+The reconciliation must treat installer completion output, generated enrollment instructions, contextual help, completion, diagnostics/update recommendations, and recovery text as part of the public CLI surface. A feature is not considered reachable when its command exists but its required lifecycle variant is undiscoverable, when the advertised next action is obsolete/hidden, or when a recovery message does not name an actionable supported path.
+
+Every destructive subvariant must be reconciled against actual effect, catalog risk/confirmation metadata, interactive confirmation, and non-TTY fail-closed behavior. Privilege/readability errors must return non-zero and must not be misreported as role errors. Cleanup evidence must cover every mutated Server and Agent and prove zero audit residue.
+
+Any CLI/product/documentation change that affects product surface after this PASS invalidates the gate and requires a fresh reconciliation before Full User E2E PASS1/PASS2 can count as final stable evidence.
 
 ## 22. CLI/PTy validation
 
