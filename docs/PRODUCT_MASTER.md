@@ -447,11 +447,10 @@ Exit
 Agent Host main menu:
 
 ```text
-Status
 Remote Services
 Agent
 Configuration
-Diagnostics
+System
 Help
 Exit
 ```
@@ -474,17 +473,17 @@ Minimum layers:
 static/unit
 targeted regression
 CLI/PTY
+feature ↔ canonical CLI ↔ runtime ↔ scenario reconciliation (independent release gate)
 integration
 Agent lifecycle
 offline/reconnect
 runtime activation/rollback
-Feature ↔ CLI ↔ scenario product-surface reconciliation
 real public CLI scenarios
 multi-host Real E2E
 double full Real E2E on the same exact HEAD before stable
 ```
 
-The Feature ↔ CLI ↔ scenario product-surface reconciliation is an independent pre-release gate from Full User E2E. It starts from the product model, proves every operator capability has one coherent and discoverable public path, rejects orphan/duplicate/legacy runtime grammar on the unreleased greenfield surface, verifies installer/help/recovery guidance, destructive confirmation, privilege/exit-status semantics, cross-surface state consistency, and zero audit residue across all mutated hosts.
+The product-surface reconciliation is independent from Full User E2E. It inventories every supported feature from this Product Master, maps it to the canonical public CLI/menu/installer lifecycle, reconciles the installed runtime (including executable aliases/hidden grammar), and proves representative workflows are discoverable and close without legacy or duplicate paths. The unreleased/greenfield v2.4 surface requires zero unjustified compatibility aliases, duplicate mutation paths, discovery/dead-end gaps, destructive confirmation drift, privilege/exit-status ambiguity, noncanonical active-document examples, cross-surface state contradictions, and audit residue across all mutated hosts.
 
 Critical v2.4 CLI/AI acceptance includes:
 
