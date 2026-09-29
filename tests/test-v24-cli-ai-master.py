@@ -430,6 +430,295 @@ configurationBundle:
         apply_v24_plan(self.plane, plan3, confirm=True)
         self.assertEqual(v24.get_access_policy(self.plane, "internet")["mode"], "blacklist")
 
+    def test_AN_dependency_parity_validates_group_members_before_apply(self):
+        rev_before = self.plane.current_revision()
+        bad_bundles = (
+            (
+                "Network Object",
+                """configurationBundle:
+  context: server
+  networkGroups:
+    - name: admins
+      members: [missing-network]
+""",
+            ),
+            (
+                "Service Object",
+                """configurationBundle:
+  context: server
+  serviceGroups:
+    - name: admin-services
+      members: [missing-service]
+""",
+            ),
+            (
+                "Permission Object",
+                """configurationBundle:
+  context: server
+  permissionGroups:
+    - name: operators
+      members: [missing-permission]
+""",
+            ),
+        )
+        for label, raw in bad_bundles:
+            with self.subTest(label=label):
+                with self.assertRaises(Exception) as ctx:
+                    prepare_v24_plan(self.plane, raw, role="server")
+                self.assertIn(label, str(ctx.exception))
+                self.assertIn("does not exist", str(ctx.exception))
+                self.assertEqual(self.plane.current_revision(), rev_before)
+
+        good = """configurationBundle:
+  context: server
+  networkObjects:
+    - name: admin-net
+      type: ip
+      value: 198.51.100.10
+  networkGroups:
+    - name: admins
+      members: [admin-net]
+  serviceObjects:
+    - name: ssh-alt
+      type: tcp
+      port: 2222
+  serviceGroups:
+    - name: admin-services
+      members: [ssh-alt]
+  permissionObjects:
+    - name: read-basic
+      permissions: [host-info]
+  permissionGroups:
+    - name: readers
+      members: [read-basic]
+"""
+        rev_before_good = self.plane.current_revision()
+        audit_before_good = int(
+            self.plane.conn.execute("SELECT COUNT(*) AS c FROM audit_events").fetchone()["c"]
+        )
+        plan = prepare_v24_plan(self.plane, good, role="server")
+        self.assertFalse(plan.no_change)
+        # Dry-run applyability validation must leave no authoritative residue.
+        self.assertEqual(self.plane.current_revision(), rev_before_good)
+        self.assertEqual(
+            int(self.plane.conn.execute("SELECT COUNT(*) AS c FROM audit_events").fetchone()["c"]),
+            audit_before_good,
+        )
+        self.assertIsNone(self.plane.get_object("admin-net"))
+        self.assertIsNone(self.plane.get_object_group("admins"))
+        self.assertIsNone(v24.get_service_object(self.plane, "ssh-alt"))
+        self.assertIsNone(v24.get_permission_object(self.plane, "read-basic"))
+
+        result = apply_v24_plan(self.plane, plan, confirm=True)
+        self.assertEqual(result["status"], "APPLIED")
+        self.assertIsNotNone(self.plane.get_object_group("admins"))
+        self.assertIsNotNone(v24.get_service_group(self.plane, "admin-services"))
+        self.assertIsNotNone(v24.get_permission_group(self.plane, "readers"))
+
+    def test_AO_post_bundle_catalog_rejects_rule_reference_to_deleted_dependency(self):
+        v24.set_network_object(
+            self.plane, "src", type="ip", value="198.51.100.20", oneshot=True
+        )
+        v24.set_network_object(
+            self.plane, "dst", type="ip", value="198.51.100.21", oneshot=True
+        )
+        v24.set_service_object(self.plane, "ssh-alt", type="tcp", port=2222, oneshot=True)
+        rev_before = self.plane.current_revision()
+        raw = """configurationBundle:
+  context: server
+  serviceObjects:
+    - name: ssh-alt
+      state: absent
+  remoteAccess:
+    mode: blacklist
+    enforcement: enabled
+    rules:
+      - name: block-alt
+        source: src
+        destination: dst
+        service: ssh-alt
+        enabled: true
+"""
+        with self.assertRaises(Exception) as ctx:
+            prepare_v24_plan(self.plane, raw, role="server")
+        self.assertIn("Required Service Object 'ssh-alt' does not exist", str(ctx.exception))
+        self.assertEqual(self.plane.current_revision(), rev_before)
+        self.assertIsNotNone(v24.get_service_object(self.plane, "ssh-alt"))
+
+    def test_AP_deleted_network_dependency_rejected_before_test_diff_apply(self):
+        v24.set_network_object(
+            self.plane, "src-p0d", type="ip", value="198.51.100.31", oneshot=True
+        )
+        v24.set_network_object(
+            self.plane, "dst-p0d", type="ip", value="198.51.100.32", oneshot=True
+        )
+        v24.set_service_object(self.plane, "ssh-p0d", type="tcp", port=2223, oneshot=True)
+        rev_before = self.plane.current_revision()
+        raw = """configurationBundle:
+  context: server
+  networkObjects:
+    - name: dst-p0d
+      state: absent
+  remoteAccess:
+    mode: whitelist
+    enforcement: enabled
+    rules:
+      - name: allow-p0d
+        source: src-p0d
+        destination: dst-p0d
+        service: ssh-p0d
+        enabled: true
+"""
+        path = Path(self.tmp, "p0d-dependency.yaml")
+        path.write_text(raw, encoding="utf-8")
+        for tokens in (
+            ("test", "configuration", str(path)),
+            ("system", "diff", "configuration", str(path)),
+        ):
+            with self.subTest(tokens=tokens):
+                with self.assertRaises(SystemExit) as ctx:
+                    self._run(*tokens)
+                self.assertIn("Required Network Object 'dst-p0d' does not exist", str(ctx.exception))
+                self.assertEqual(self.plane.current_revision(), rev_before)
+                self.assertIsNotNone(self.plane.get_object("dst-p0d"))
+
+    def test_AQ_internal_network_storage_types_rejected_by_bundle_validator(self):
+        rev_before = self.plane.current_revision()
+        for token, value in (
+            ("host", "198.51.100.40"),
+            ("network", "198.51.100.0/24"),
+        ):
+            with self.subTest(type=token):
+                raw = """configurationBundle:
+  context: server
+  networkObjects:
+    - name: internal-alias-%s
+      type: %s
+      value: %s
+""" % (token, token, value)
+                with self.assertRaises(Exception) as ctx:
+                    prepare_v24_plan(self.plane, raw, role="server")
+                self.assertIn("Accepted: ip, cidr, fqdn", str(ctx.exception))
+                self.assertEqual(self.plane.current_revision(), rev_before)
+                self.assertIsNone(self.plane.get_object("internal-alias-%s" % token))
+
+    def test_AP_public_test_and_apply_reject_same_live_dependency(self):
+        v24.set_network_object(
+            self.plane, "src-parity", type="ip", value="198.51.100.31", oneshot=True
+        )
+        v24.set_network_object(
+            self.plane, "dst-parity", type="ip", value="198.51.100.32", oneshot=True
+        )
+        v24.set_service_object(
+            self.plane, "svc-parity", type="tcp", port=2233, oneshot=True
+        )
+        v24.set_access_rule(
+            self.plane,
+            "remote",
+            "rule-parity",
+            mode="blacklist",
+            source="src-parity",
+            destination="dst-parity",
+            service="svc-parity",
+            enabled=True,
+            oneshot=True,
+        )
+        rev_before = self.plane.current_revision()
+        bundle = Path(self.tmp, "dependency-parity.yaml")
+        bundle.write_text(
+            """configurationBundle:
+  context: server
+  serviceObjects:
+    - name: svc-parity
+      state: absent
+""",
+            encoding="utf-8",
+        )
+
+        messages = []
+        for args in (
+            ("test", "configuration", str(bundle)),
+            ("system", "apply", "configuration", str(bundle)),
+        ):
+            with self.subTest(args=args):
+                with self.assertRaises(SystemExit) as ctx:
+                    self._run(*args)
+                msg = str(ctx.exception)
+                self.assertIn("still referenced", msg.lower())
+                self.assertIn("rule-parity", msg)
+                self.assertIn("No changes were applied", msg)
+                messages.append(msg)
+                self.assertEqual(self.plane.current_revision(), rev_before)
+                self.assertIsNotNone(v24.get_service_object(self.plane, "svc-parity"))
+                self.assertIsNotNone(self.plane._get_rule("remote", "rule-parity"))
+
+        self.assertEqual(messages[0], messages[1])
+
+    def test_AP_public_test_diff_reject_unapplyable_bundle_and_internal_types(self):
+        v24.set_network_object(
+            self.plane, "src", type="ip", value="198.51.100.30", oneshot=True
+        )
+        v24.set_network_object(
+            self.plane, "dst", type="ip", value="198.51.100.31", oneshot=True
+        )
+        v24.set_service_object(
+            self.plane, "ssh-parity", type="tcp", port=2223, oneshot=True
+        )
+        rev_before = self.plane.current_revision()
+
+        dependency_bad = """configurationBundle:
+  context: server
+  serviceObjects:
+    - name: ssh-parity
+      state: absent
+  remoteAccess:
+    mode: blacklist
+    enforcement: enabled
+    rules:
+      - name: block-parity
+        source: src
+        destination: dst
+        service: ssh-parity
+        enabled: true
+"""
+        dep_path = Path(self.tmp, "dependency-bad.yaml")
+        dep_path.write_text(dependency_bad, encoding="utf-8")
+
+        for tokens in (
+            ("test", "configuration", str(dep_path)),
+            ("system", "diff", "configuration", str(dep_path)),
+        ):
+            with self.subTest(tokens=tokens):
+                with self.assertRaises(SystemExit) as ctx:
+                    cli.dispatch(list(tokens), root=self.tmp, plane=self.plane)
+                self.assertIn(
+                    "Required Service Object 'ssh-parity' does not exist",
+                    str(ctx.exception),
+                )
+                self.assertEqual(self.plane.current_revision(), rev_before)
+                self.assertIsNotNone(v24.get_service_object(self.plane, "ssh-parity"))
+
+        for internal_type in ("host", "network"):
+            with self.subTest(internal_type=internal_type):
+                type_bad = """configurationBundle:
+  context: server
+  networkObjects:
+    - name: internal-type
+      type: %s
+      value: 198.51.100.40
+""" % internal_type
+                type_path = Path(self.tmp, "type-%s.yaml" % internal_type)
+                type_path.write_text(type_bad, encoding="utf-8")
+                for tokens in (
+                    ("test", "configuration", str(type_path)),
+                    ("system", "diff", "configuration", str(type_path)),
+                ):
+                    with self.assertRaises(SystemExit) as ctx:
+                        cli.dispatch(list(tokens), root=self.tmp, plane=self.plane)
+                    self.assertIn("Accepted: ip, cidr, fqdn", str(ctx.exception))
+                    self.assertEqual(self.plane.current_revision(), rev_before)
+                    self.assertIsNone(self.plane.get_object("internal-type"))
+
     def test_AO_malformed_markdown_reject(self):
         bad = "```yaml\nconfigurationBundle:\n  context: server\n```\n"
         with self.assertRaises(Exception) as ctx:

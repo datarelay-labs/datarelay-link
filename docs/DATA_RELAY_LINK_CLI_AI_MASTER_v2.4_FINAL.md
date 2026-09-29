@@ -3109,6 +3109,8 @@ If `approved-admins` previously also contained `partner-admin`, applying this Bu
 
 If `members` is omitted on an existing Group, membership is unchanged.
 
+`test configuration`, `system diff configuration`, and `system apply configuration` validate Group members against the same **post-Bundle dependency catalog** before mutation. A Network Group member must resolve to a Network Object that will exist after the Bundle, a Service Group member to a Service Object, and a Permission Group member to a Permission Object. A missing member, or a member explicitly deleted by the same Bundle, is rejected before Apply so Test/Diff cannot report VALID for a dependency set that Apply would later reject.
+
 The same rule applies to:
 
 ```text

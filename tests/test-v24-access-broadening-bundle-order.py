@@ -215,8 +215,32 @@ class AccessBroadeningBundleOrder(unittest.TestCase):
         self.assertIn("broadens", text.lower())
         self.assertIn("last BLACKLIST", text)
 
-    def test_bundle_indirect_po_delete_while_blacklist_referenced_reports_impact(self):
+    def test_bundle_referenced_permission_delete_fails_during_prepare(self):
         self._seed_ai_blacklist()
+        rev_before = self.plane.current_revision()
+        with self.assertRaises(ControlPlaneError) as ctx:
+            prepare_v24_plan(
+                self.plane,
+                """configurationBundle:
+  context: server
+  permissionObjects:
+    - name: exec-only
+      state: absent
+""",
+            )
+        self.assertIn("still referenced", str(ctx.exception).lower())
+        self.assertIn("block-exec", str(ctx.exception))
+        self.assertEqual(self.plane.current_revision(), rev_before)
+        self.assertIsNotNone(v24.get_permission_object(self.plane, "exec-only"))
+        self.assertIsNotNone(
+            self.plane.conn.execute(
+                "SELECT id FROM ai_policy_rules WHERE name='block-exec'"
+            ).fetchone()
+        )
+
+    def test_bundle_rule_and_permission_dependency_delete_ordered(self):
+        self._seed_ai_blacklist()
+        rev_before = self.plane.current_revision()
         plan = prepare_v24_plan(
             self.plane,
             """configurationBundle:
@@ -224,15 +248,26 @@ class AccessBroadeningBundleOrder(unittest.TestCase):
   permissionObjects:
     - name: exec-only
       state: absent
+  aiAccess:
+    mode: blacklist
+    enforcement: enabled
+    rules:
+      - name: block-exec
+        state: absent
 """,
         )
-        text = "\n".join(plan.security_impact)
-        self.assertIn("broadens", text.lower())
-        self.assertIn("exec-only", text)
-        # Apply still refuses referenced delete (Packet 1) after confirm
-        with self.assertRaises(ControlPlaneError) as ctx:
-            apply_v24_plan(self.plane, plan, confirm=True)
-        self.assertIn("still referenced", str(ctx.exception).lower())
+        ops = [(c["op"], c["kind"], c["name"]) for c in plan.mutating_changes]
+        self.assertIn(("DELETE", "ai-access-rule", "block-exec"), ops)
+        self.assertIn(("DELETE", "permission-object", "exec-only"), ops)
+        result = apply_v24_plan(self.plane, plan, confirm=True)
+        self.assertEqual(result["status"], "APPLIED")
+        self.assertIsNone(v24.get_permission_object(self.plane, "exec-only"))
+        self.assertIsNone(
+            self.plane.conn.execute(
+                "SELECT id FROM ai_policy_rules WHERE name='block-exec'"
+            ).fetchone()
+        )
+        self.assertGreater(self.plane.current_revision(), rev_before)
 
     def test_bundle_permission_group_and_member_object_delete_ordered(self):
         v24.set_permission_object(

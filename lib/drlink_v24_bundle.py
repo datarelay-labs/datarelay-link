@@ -183,7 +183,7 @@ def _validate_network_object_item(item: dict) -> dict:
     if str(item.get("state") or "").lower() == "absent":
         return {"name": name, "state": "absent"}
     ntype = str(item.get("type") or "").strip().lower()
-    if ntype not in ("ip", "cidr", "fqdn", "host", "network"):
+    if ntype not in ("ip", "cidr", "fqdn"):
         _bundle_error(
             "Network Object '%s' has invalid type '%s'.\n\nAccepted: ip, cidr, fqdn."
             % (name, item.get("type"))
@@ -333,10 +333,6 @@ def _validate_access_section(section: Any, *, key: str, family: str) -> dict:
     return out
 
 
-def _desired_name_set(items: list[dict]) -> set[str]:
-    return {str(i.get("name") or "").lower() for i in items if i.get("state") != "absent" and i.get("name")}
-
-
 def _effective_public_name_set(db_names: Iterable[str], items: list[dict]) -> set[str]:
     """Post-apply public-name set after Bundle creates/updates/absent deletes."""
     names = {str(n or "").lower() for n in db_names if n}
@@ -372,23 +368,27 @@ def _reject_cross_kind_public_name_overlap(
     )
 
 
-def _ref_exists_in_bundle_or_db(
-    plane: ControlPlane,
+def _validate_bundle_group_members(
+    items: list[dict],
     *,
-    name: str,
-    bundle_names: set[str],
-    db_lookup,
-    label: str,
+    available_members: set[str],
+    group_kind: str,
+    member_kind: str,
 ) -> None:
-    if name.lower() in bundle_names:
-        return
-    if db_lookup(name):
-        return
-    _bundle_error(
-        "Required %s '%s' does not exist.\n\n"
-        "Create it in the same ConfigurationBundle\n"
-        "or create it before applying the Rule." % (label, name)
-    )
+    """Validate Group members against the post-Bundle dependency catalog."""
+    for item in items:
+        if item.get("state") == "absent":
+            continue
+        group_name = str(item.get("name") or "")
+        for member in item.get("members") or []:
+            if str(member).lower() in available_members:
+                continue
+            _bundle_error(
+                "Required %s '%s' does not exist for %s '%s'.\n\n"
+                "Create it in the same ConfigurationBundle\n"
+                "or create it before applying the Group."
+                % (member_kind, member, group_kind, group_name)
+            )
 
 
 def _ai_rule_view(plane: ControlPlane, row) -> dict:
@@ -739,6 +739,85 @@ class V24Plan:
         return [c for c in self.changes if c.get("op") != "NO_CHANGE"]
 
 
+_APPLY_CREATE_ORDER = {
+    "network-object": 10,
+    "network-group": 20,
+    "service-object": 30,
+    "service-group": 40,
+    "permission-object": 50,
+    "permission-group": 60,
+    "remote-access": 70,
+    "internet-access": 70,
+    "ai-access": 70,
+    "remote-access-rule": 80,
+    "internet-access-rule": 80,
+    "ai-access-rule": 80,
+    "remote-service": 90,
+}
+_APPLY_DELETE_ORDER = {
+    "remote-service": 10,
+    "remote-access-rule": 20,
+    "internet-access-rule": 20,
+    "ai-access-rule": 20,
+    "remote-access": 30,
+    "internet-access": 30,
+    "ai-access": 30,
+    "permission-group": 40,
+    "permission-object": 50,
+    "service-group": 60,
+    "service-object": 70,
+    "network-group": 80,
+    "network-object": 90,
+}
+
+
+def _ordered_v24_changes(changes: Iterable[dict]) -> list[dict]:
+    """Return the exact dependency order used by dry-run and real Apply."""
+    items = list(changes)
+    delete_first = [c for c in items if c.get("op") in ("DELETE", "RESET")]
+    delete_first.sort(key=lambda c: _APPLY_DELETE_ORDER.get(c.get("kind"), 100))
+    others = [c for c in items if c.get("op") not in ("DELETE", "RESET")]
+    others.sort(key=lambda c: _APPLY_CREATE_ORDER.get(c.get("kind"), 100))
+    return delete_first + others
+
+
+def _validate_server_plan_applyability(
+    plane: ControlPlane, changes: Iterable[dict]
+) -> None:
+    """Dry-run Server mutations using the same CRUD/order as real Apply.
+
+    Validation runs inside a SQLite savepoint with batch mode enabled, so the
+    exact authoritative CRUD dependency checks execute but every mutation is
+    rolled back and no revision/audit/runtime activation is produced. This
+    keeps test/diff/apply dependency semantics aligned.
+    """
+    ordered = _ordered_v24_changes(changes)
+    if not ordered:
+        return
+
+    savepoint = "drlink_bundle_applyability"
+    previous_batch = plane._batch_mode
+    previous_results = plane._batch_results
+    plane.conn.execute("SAVEPOINT %s" % savepoint)
+    plane._batch_mode = True
+    plane._batch_results = []
+    try:
+        for change in ordered:
+            _apply_one(plane, change)
+    finally:
+        # _apply_one() uses batch-aware control-plane mutations for Server
+        # Bundle resources, so the savepoint remains valid on ordinary
+        # validation failures. Be defensive if an unexpected path ended the
+        # transaction.
+        if plane.conn.in_transaction:
+            try:
+                plane.conn.execute("ROLLBACK TO SAVEPOINT %s" % savepoint)
+            finally:
+                plane.conn.execute("RELEASE SAVEPOINT %s" % savepoint)
+        plane._batch_mode = previous_batch
+        plane._batch_results = previous_results
+
+
 def _strip_end_terminator(text: str) -> str:
     lines = text.replace("\r\n", "\n").split("\n")
     while lines and lines[-1] == "":
@@ -925,30 +1004,45 @@ def prepare_v24_plan(plane: ControlPlane, raw_text: str, *, role: Optional[str] 
         validated_body["permissionObjects"] = pos
         validated_body["permissionGroups"] = pgs
 
-        no_names = _desired_name_set(nos) | {
-            r["name"].lower()
-            for r in plane.conn.execute("SELECT name FROM objects")
-        }
-        ng_names = _desired_name_set(ngs) | {
-            r["name"].lower()
-            for r in plane.conn.execute("SELECT name FROM object_groups")
-        }
-        so_names = _desired_name_set(sos) | {
-            r["name"].lower()
-            for r in plane.conn.execute("SELECT name FROM service_objects")
-        }
-        sg_names = _desired_name_set(sgs) | {
-            r["name"].lower()
-            for r in plane.conn.execute("SELECT name FROM service_groups")
-        }
-        po_names = _desired_name_set(pos) | {
-            r["name"].lower()
-            for r in plane.conn.execute("SELECT name FROM permission_objects")
-        }
-        pg_names = _desired_name_set(pgs) | {
-            r["name"].lower()
-            for r in plane.conn.execute("SELECT name FROM permission_groups")
-        }
+        # Build the post-Bundle catalog, not "DB union desired". A same-Bundle
+        # state: absent must be removed before dependency validation.
+        no_names = _effective_public_name_set(
+            (r["name"] for r in plane.conn.execute("SELECT name FROM objects")), nos
+        )
+        ng_names = _effective_public_name_set(
+            (r["name"] for r in plane.conn.execute("SELECT name FROM object_groups")), ngs
+        )
+        so_names = _effective_public_name_set(
+            (r["name"] for r in plane.conn.execute("SELECT name FROM service_objects")), sos
+        )
+        sg_names = _effective_public_name_set(
+            (r["name"] for r in plane.conn.execute("SELECT name FROM service_groups")), sgs
+        )
+        po_names = _effective_public_name_set(
+            (r["name"] for r in plane.conn.execute("SELECT name FROM permission_objects")), pos
+        )
+        pg_names = _effective_public_name_set(
+            (r["name"] for r in plane.conn.execute("SELECT name FROM permission_groups")), pgs
+        )
+
+        _validate_bundle_group_members(
+            ngs,
+            available_members=no_names,
+            group_kind="Network Group",
+            member_kind="Network Object",
+        )
+        _validate_bundle_group_members(
+            sgs,
+            available_members=so_names,
+            group_kind="Service Group",
+            member_kind="Service Object",
+        )
+        _validate_bundle_group_members(
+            pgs,
+            available_members=po_names,
+            group_kind="Permission Group",
+            member_kind="Permission Object",
+        )
 
         # Fail closed on Object/Group public-name collisions that Bundle would create
         # or retain after apply (case-insensitive).
@@ -1248,8 +1342,10 @@ def prepare_v24_plan(plane: ControlPlane, raw_text: str, *, role: Optional[str] 
                     continue
             changes.append({"op": "SET", "kind": "remote-service", "name": name, "item": item})
 
-    impact = _security_impact_for_plan(plane, context, validated_body, changes)
     mutating = [c for c in changes if c.get("op") != "NO_CHANGE"]
+    if context == "server" and mutating:
+        _validate_server_plan_applyability(plane, mutating)
+    impact = _security_impact_for_plan(plane, context, validated_body, changes)
     return V24Plan(
         context=context,
         changes=changes,
@@ -1355,37 +1451,6 @@ def apply_v24_plan(
     relevant state between the final security-impact decision and mutation.
     """
     confirmed = _confirm_requested(confirm)
-    order = {
-        "network-object": 10,
-        "network-group": 20,
-        "service-object": 30,
-        "service-group": 40,
-        "permission-object": 50,
-        "permission-group": 60,
-        "remote-access": 70,
-        "internet-access": 70,
-        "ai-access": 70,
-        "remote-access-rule": 80,
-        "internet-access-rule": 80,
-        "ai-access-rule": 80,
-        "remote-service": 90,
-    }
-    # Deletes must reverse create dependencies: Rules before Groups before Objects.
-    delete_order = {
-        "remote-service": 10,
-        "remote-access-rule": 20,
-        "internet-access-rule": 20,
-        "ai-access-rule": 20,
-        "remote-access": 30,
-        "internet-access": 30,
-        "ai-access": 30,
-        "permission-group": 40,
-        "permission-object": 50,
-        "service-group": 60,
-        "service-object": 70,
-        "network-group": 80,
-        "network-object": 90,
-    }
 
     is_agent = str(plan.context or "").lower() == "agent"
     compile_runtime = not is_agent
@@ -1409,16 +1474,11 @@ def apply_v24_plan(
                 plane._rollback_open_transaction()
                 _raise_plan_confirmation(fresh)
 
-            delete_first = [c for c in fresh.mutating_changes if c["op"] in ("DELETE", "RESET")]
-            delete_first.sort(key=lambda c: delete_order.get(c["kind"], 100))
-            others = [c for c in fresh.mutating_changes if c["op"] not in ("DELETE", "RESET")]
-            others.sort(key=lambda c: order.get(c["kind"], 100))
-
             prev_batch = plane._batch_mode
             plane._batch_mode = True
             plane._batch_results = []
             try:
-                for c in delete_first + others:
+                for c in _ordered_v24_changes(fresh.mutating_changes):
                     _apply_one(plane, c)
             finally:
                 plane._batch_mode = prev_batch
