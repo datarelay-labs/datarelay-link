@@ -207,6 +207,15 @@ class UnifiedDisasterRecoveryTests(unittest.TestCase):
         runtime = self.tree / "var/lib/drlink/runtime"
         self.assertTrue((runtime / "generation.json").is_file())
         self.assertTrue((runtime / "remote-access.json").is_file())
+        inv_path = runtime / "client-inventory.json"
+        self.assertTrue(inv_path.is_file(), "post-restore must rebuild client-inventory")
+        inv = json.loads(inv_path.read_text(encoding="utf-8"))
+        self.assertEqual(inv.get("schema_version"), 2)
+        self.assertIn("cccccccccccccccccccccccccccccccc", inv.get("clients") or {})
+        self.assertEqual(
+            (inv["clients"]["cccccccccccccccccccccccccccccccc"].get("label") or ""),
+            "orig",
+        )
 
     def test_02_db_required_and_tamper_rejected(self):
         archive = self._backup()

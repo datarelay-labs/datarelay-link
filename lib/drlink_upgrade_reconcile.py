@@ -1911,3 +1911,131 @@ def invariant_reservations_match_registry(plane: ControlPlane, registry: dict) -
                 % (port, cid[:8], name, str(owner.get("client_id") or "")[:8], owner.get("service_id"))
             )
     return problems
+
+
+def build_client_inventory_from_control_plane(plane: ControlPlane) -> dict:
+    """Build derived allocator inventory projection from SQLite authority.
+
+    Disaster-recovery restore intentionally purges client-inventory.json because it
+    is not policy authority. The allocator still requires a valid projection for
+    /healthz and endpoint bookkeeping, so post-restore reconciliation must rebuild
+    it from the restored control DB.
+    """
+    clients: dict[str, dict] = {}
+    reserved: set[int] = set()
+
+    for client in plane.conn.execute("SELECT * FROM clients ORDER BY id"):
+        cid = str(client["id"])
+        hostname = str(client["hostname"] or "")
+        label = str(client["label"] or hostname or "")
+        note = str(client["description"] or "")
+        services: dict[str, dict] = {}
+        for svc in plane.conn.execute(
+            "SELECT * FROM published_services "
+            "WHERE client_id = ? AND released = 0 ORDER BY name COLLATE NOCASE",
+            (cid,),
+        ):
+            name = str(svc["name"] or "").strip()
+            if not name:
+                continue
+            try:
+                remote_port = int(svc["public_port"]) if svc["public_port"] is not None else None
+            except (TypeError, ValueError):
+                remote_port = None
+            try:
+                local_port = int(svc["target_port"] or 0)
+            except (TypeError, ValueError):
+                local_port = 0
+            local_ip = str(svc["target_host"] or "127.0.0.1") or "127.0.0.1"
+            meta = _remote_meta(plane, svc)
+            is_v24 = bool(meta is not None and str(meta["service_object_id"] or "").strip())
+            if is_v24:
+                sid = remote_service_proxy_id(name)
+                pool = str(meta["pool_class"] or "normal").strip().lower()
+                if pool not in ("normal", "fixed-tcp"):
+                    pool = "normal"
+                rec = {
+                    "name": name,
+                    "protocol": "tcp",
+                    "local_ip": local_ip,
+                    "local_port": local_port,
+                    "preset": "custom",
+                    "enabled": bool(svc["enabled"]),
+                    "v24_remote_service": True,
+                    "pool_class": pool,
+                }
+            else:
+                sid = name
+                preset = str(svc["preset_name"] or svc["service_type"] or "tcp").lower()
+                rec = {
+                    "name": name,
+                    "protocol": "tcp",
+                    "local_ip": local_ip,
+                    "local_port": local_port,
+                    "preset": preset if preset in ("ssh", "http", "https", "tcp", "custom") else "tcp",
+                    "enabled": bool(svc["enabled"]),
+                }
+            if remote_port is not None:
+                rec["remote_port"] = remote_port
+                reserved.add(remote_port)
+            elif not bool(svc["enabled"]):
+                # Disabled/pending services may legitimately lack an endpoint.
+                pass
+            else:
+                # Enabled service without a public port cannot be projected as live.
+                continue
+            services[sid] = rec
+
+        tags = {
+            str(row["key"]): str(row["value"])
+            for row in plane.conn.execute(
+                "SELECT key, value FROM client_tags WHERE client_id = ? ORDER BY key",
+                (cid,),
+            )
+        }
+        entry = {
+            "hostname": hostname,
+            "label": label,
+            "note": note,
+            "services": services,
+            "mgmt_status": "enrolled",
+        }
+        if tags:
+            entry["tags"] = tags
+        clients[cid] = entry
+
+    for res in plane.conn.execute(
+        "SELECT public_port FROM port_reservations WHERE released = 0"
+    ):
+        try:
+            reserved.add(int(res["public_port"]))
+        except (TypeError, ValueError):
+            continue
+
+    # Registry groups use grp_<hex> ids owned by the FRP inventory surface.
+    # SQLite client_groups use a different id space (cgrp-...) and must not be
+    # projected here — doing so fails allocator registry invariants.
+    return {
+        "schema_version": 2,
+        "reserved": sorted(reserved),
+        "clients": clients,
+    }
+
+
+def project_client_inventory_from_control_plane(
+    plane: ControlPlane,
+    *,
+    root: Optional[str] = None,
+) -> Path:
+    """Atomically write derived client-inventory.json from the restored control DB."""
+    deploy = root if root is not None else getattr(plane, "root", None)
+    path = Path(deploy) / "var/lib/drlink/runtime/client-inventory.json" if deploy else (
+        Path("/") / "var/lib/drlink/runtime/client-inventory.json"
+    )
+    state = build_client_inventory_from_control_plane(plane)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    os.chmod(tmp, 0o600)
+    tmp.replace(path)
+    return path
