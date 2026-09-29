@@ -9,6 +9,8 @@
 
 This document is derived from the v2.4 CLI/AI Master. If this document, older screenshots, tests, examples, or implementation disagree with the Master, the Master wins.
 
+**Snapshot warning:** older external/project/chat copies with the same or similar title are not authoritative. Pre-v2.4 copies using the retired Clients/Services root model or retired direct-command families must not be used for current behavior.
+
 The previous intermediate model based on `Clients / Objects / Published Services / Service Presets / ordered ALLOW-DENY rulebases / AI Principals` is superseded and is not the v2.4 public CLI contract.
 
 ## 2. Core mental model

@@ -47,6 +47,26 @@ Once that file exists, execute it immediately according to its trigger rules.
 
 For FULL_USER_E2E, that document's `FULL_USER_E2E_SCOPE=FUNCTIONAL_ONLY` contract takes precedence over the generic implementation/change-classification rules below. A User E2E request is not an implementation task and must not be delayed by engineering-change classification, branch archaeology, GitHub document comparison, source review, or release-qualification work unless the user explicitly requests those activities.
 
+## CLI authority hard gate
+
+Current v2.4 public direct CLI grammar is action-first:
+
+~~~text
+drlink <ACTION> <RESOURCE> [TARGET] [VALUE]
+~~~
+
+Current top-level action families are `show`, `set`, `unset`, `test`, and `system`, plus `menu`, `help`, and `exit`.
+
+For current CLI truth, use this order only:
+1. exact candidate runtime `drlink help commands`;
+2. `docs/DATA_RELAY_LINK_CLI_AI_MASTER_v2.4_FINAL.md`;
+3. `docs/CLI_REFERENCE.md`;
+4. repository `docs/Data Relay Link CLI Information Architecture.md` for current guided-menu/UX structure only.
+
+Project/chat attachments, copied snapshots, archived docs, old screenshots, and same-named documents outside the active repository are **never CLI authority** unless they are explicitly proven to match the current repository HEAD. Pre-v2.4 snapshots that use the retired Clients/Services root model or retired client/create/revoke/release/top-level diagnostic command families must be ignored for product decisions, audits, and E2E expectations.
+
+If an external snapshot conflicts with the current runtime or repository SSOT, fail closed against the snapshot rather than reinterpreting the product.
+
 ## Execution rules
 
 - Classify the change and affected domains/contracts/security/operations.

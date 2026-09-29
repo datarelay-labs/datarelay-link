@@ -15,6 +15,8 @@ When documents disagree, use this order:
 
 Historical documents and internal storage names never override the public SSOT.
 
+External copies, Project/chat attachments, exported snapshots, and same-named documents outside the active repository are reference-only and never override the repository SSOT or exact-candidate runtime. Pre-v2.4 CLI snapshots using the retired Clients/Services root model or retired direct-command families are not valid v2.4 validation inputs.
+
 ## Canonical product and CLI specifications
 
 | Area | Canonical document |
@@ -63,9 +65,10 @@ These documents are useful for qualification but do not redefine product semanti
 - `CLI_EXHAUSTIVE_AUDIT.md` — trigger-driven black-box audit of public CLI syntax, usability, safety, and workflow closure
 - `AI_ASSISTED_COMMAND_EXHAUSTIVE_AUDIT.md` — trigger-driven natural-language → AI-generated command/bundle/MCP audit with real execution and self-recovery checks
 - `HUMAN_UX_ADVERSARIAL_E2E.md`
-- `OCI_ACCEPTANCE.md`
 
 ## Historical / internal compatibility documents
+
+- `OCI_ACCEPTANCE.md` — retired v2.1.1-era operator plan kept only as a tombstone for old links; it is not executable qualification and contains no current CLI contract.
 
 - `SCHEMA_V2_DEPLOYMENT.md` — historical JSON registry schema-v2 deployment material. It is not v2.4 control-plane authority.
 - `FRP_UPGRADE.md` — Relay Engine/upstream compatibility and migration detail. FRP/internal helper names in this file are not public Data Relay Link CLI vocabulary.
