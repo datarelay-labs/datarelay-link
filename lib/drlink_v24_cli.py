@@ -355,7 +355,8 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         if view == "remote-services":
             sys.stdout.write("%-18s %-14s %-10s %-24s %s\n" % ("NAME", "DESTINATION", "SERVICE", "ENDPOINT", "STATUS"))
             for s in plane.conn.execute(
-                "SELECT s.name, s.public_port, s.enabled, m.destination_name, m.status, m.service_object_id, m.pending_allocation "
+                "SELECT s.name, s.public_port, s.enabled, m.destination_name, m.status, "
+                "m.service_object_id, m.pending_allocation, m.runtime_verified "
                 "FROM published_services s LEFT JOIN remote_service_meta m ON m.service_id = s.id "
                 "WHERE s.client_id = ? AND s.released = 0 ORDER BY s.name",
                 (client["id"],),
@@ -374,11 +375,16 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
                         else "-"
                     )
                 )
+                try:
+                    verified = bool(s["runtime_verified"])
+                except (KeyError, IndexError, TypeError):
+                    verified = False
                 status = v24.inventory_remote_service_status(
                     plane,
                     client,
                     enabled=bool(s["enabled"]),
                     stored_status=s["status"] or "",
+                    runtime_verified=verified,
                 )
                 sys.stdout.write(
                     "%-18s %-14s %-10s %-24s %s\n"

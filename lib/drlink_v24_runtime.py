@@ -531,8 +531,10 @@ def mark_runtime_status(plane_db, *, ok: bool, reason: str = "", generation: int
     if ok:
         # Only promote rows that were waiting on runtime (or already healthy).
         # Never overwrite destination-unreachable or other non-runtime DEGRADED reasons.
+        # verify_runtime_proxies success is the verification event for runtime_verified.
         plane_db.conn.execute(
-            "UPDATE agent_remote_services SET status = 'HEALTHY', reason = '', updated_at = ? "
+            "UPDATE agent_remote_services SET status = 'HEALTHY', reason = '', "
+            "runtime_verified = 1, updated_at = ? "
             "WHERE delete_pending = 0 AND endpoint_port IS NOT NULL AND pending_allocation = 0 "
             "AND enabled = 1 AND ("
             "  reason = '' OR lower(reason) LIKE 'runtime%' OR lower(reason) LIKE '%activation%'"
@@ -545,7 +547,7 @@ def mark_runtime_status(plane_db, *, ok: bool, reason: str = "", generation: int
             brief = brief.split("\n", 2)[0]
         plane_db.conn.execute(
             "UPDATE agent_remote_services SET status = CASE WHEN enabled = 0 THEN 'DISABLED' ELSE 'DEGRADED' END, "
-            "reason = ?, updated_at = ? WHERE delete_pending = 0 AND enabled = 1 "
+            "runtime_verified = 0, reason = ?, updated_at = ? WHERE delete_pending = 0 AND enabled = 1 "
             "AND endpoint_port IS NOT NULL AND pending_allocation = 0",
             (brief[:500], now),
         )

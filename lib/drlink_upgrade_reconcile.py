@@ -1122,8 +1122,8 @@ def _release_stale_port(plane: ControlPlane, port: int, pub=None, meta=None, rea
         )
         if meta is not None:
             plane.conn.execute(
-                "UPDATE remote_service_meta SET status = 'DEGRADED', pending_allocation = 1, reason = ? "
-                "WHERE service_id = ?",
+                "UPDATE remote_service_meta SET status = 'DEGRADED', pending_allocation = 1, "
+                "runtime_verified = 0, reason = ? WHERE service_id = ?",
                 (reason or "Stale endpoint reservation released.", pub["id"]),
             )
 
@@ -1134,11 +1134,22 @@ def _apply_health(plane: ControlPlane, pub, meta, status: str, reason: str) -> N
     current = str(meta["status"] or "")
     current_reason = str(meta["reason"] or "")
     pending = 1 if status == "DEGRADED" and pub["public_port"] is None else int(meta["pending_allocation"] or 0)
-    if current == status and current_reason == (reason or "") and int(meta["pending_allocation"] or 0) == pending:
+    verified = 1 if status == "HEALTHY" else 0
+    try:
+        current_verified = int(meta["runtime_verified"] or 0)
+    except (KeyError, IndexError, TypeError):
+        current_verified = 0
+    if (
+        current == status
+        and current_reason == (reason or "")
+        and int(meta["pending_allocation"] or 0) == pending
+        and current_verified == verified
+    ):
         return
     plane.conn.execute(
-        "UPDATE remote_service_meta SET status = ?, reason = ?, pending_allocation = ? WHERE service_id = ?",
-        (status, reason or "", pending, pub["id"]),
+        "UPDATE remote_service_meta SET status = ?, reason = ?, pending_allocation = ?, "
+        "runtime_verified = ? WHERE service_id = ?",
+        (status, reason or "", pending, verified, pub["id"]),
     )
 
 

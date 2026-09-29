@@ -193,6 +193,7 @@ CREATE TABLE IF NOT EXISTS remote_service_meta (
   pending_allocation INTEGER NOT NULL DEFAULT 0,
   delete_pending INTEGER NOT NULL DEFAULT 0,
   reason TEXT NOT NULL DEFAULT '',
+  runtime_verified INTEGER NOT NULL DEFAULT 0,
   FOREIGN KEY (service_id) REFERENCES published_services(id) ON DELETE CASCADE
 );
 
@@ -209,6 +210,7 @@ CREATE TABLE IF NOT EXISTS agent_remote_services (
   delete_pending INTEGER NOT NULL DEFAULT 0,
   pool_class TEXT NOT NULL DEFAULT 'normal',
   reason TEXT NOT NULL DEFAULT '',
+  runtime_verified INTEGER NOT NULL DEFAULT 0,
   updated_at TEXT NOT NULL
 );
 
@@ -350,9 +352,17 @@ def ensure_v2_schema(conn: sqlite3.Connection) -> None:
     meta_cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(remote_service_meta)")}
     if "destination_client_id" not in meta_cols:
         conn.execute("ALTER TABLE remote_service_meta ADD COLUMN destination_client_id TEXT")
+    if "runtime_verified" not in meta_cols:
+        conn.execute(
+            "ALTER TABLE remote_service_meta ADD COLUMN runtime_verified INTEGER NOT NULL DEFAULT 0"
+        )
     agent_cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(agent_remote_services)")}
     if "destination_client_id" not in agent_cols:
         conn.execute("ALTER TABLE agent_remote_services ADD COLUMN destination_client_id TEXT")
+    if "runtime_verified" not in agent_cols:
+        conn.execute(
+            "ALTER TABLE agent_remote_services ADD COLUMN runtime_verified INTEGER NOT NULL DEFAULT 0"
+        )
     now = utc_now_iso()
     for plane in POLICY_PLANES:
         row = conn.execute("SELECT plane FROM access_policies WHERE plane = ?", (plane,)).fetchone()
@@ -530,7 +540,8 @@ def _agent_remote_service_mgmt_snapshot(
         "target_port": target_port,
         "target_mode": target_mode,
         "endpoint_port": endpoint_port,
-        "runtime_verified": status == "HEALTHY",
+        # Compensation/replay must not invent verification from persisted HEALTHY.
+        "runtime_verified": bool(_row_get(row, "runtime_verified")),
     }
 
 
@@ -5326,7 +5337,9 @@ def _push_agent_remote_service_status(plane_db, *, root: Optional[str] = None, n
                 "name": row["name"],
                 "status": status,
                 "reason": str(row["reason"] or ""),
-                "runtime_verified": status == "HEALTHY",
+                # runtime_verified must come from a real verification event column,
+                # never from persisted HEALTHY status text alone.
+                "runtime_verified": bool(_row_get(row, "runtime_verified")) and status == "HEALTHY",
                 "endpoint_port": row["endpoint_port"],
             }
         )
@@ -5391,6 +5404,15 @@ def _reconcile_agent_from_server_status(plane_db, result: dict) -> int:
             if status in ("HEALTHY", "DEGRADED", "DISABLED") and str(row["status"] or "") != status:
                 assignments.append("status = ?")
                 values.append(status)
+                # Server authority: HEALTHY only remains verified when Server says HEALTHY.
+                # Status push never invents verification; Server DEGRADED clears the flag.
+                want_verified = 1 if status == "HEALTHY" and bool(item.get("runtime_verified")) else 0
+                if int(_row_get(row, "runtime_verified") or 0) != want_verified:
+                    assignments.append("runtime_verified = ?")
+                    values.append(want_verified)
+            elif status == "DEGRADED" and int(_row_get(row, "runtime_verified") or 0):
+                assignments.append("runtime_verified = ?")
+                values.append(0)
         if "reason" in item:
             reason = str(item.get("reason") or "")
             if str(row["reason"] or "") != reason:
@@ -5499,7 +5521,8 @@ def synchronize_agent_remote_services(plane_db, *, root: Optional[str] = None) -
                 unset_remote_service_agent(plane_db, row["name"], root=root, server_reachable=True)
             except ControlPlaneError as exc:
                 plane_db.conn.execute(
-                    "UPDATE agent_remote_services SET status = 'DEGRADED', reason = ?, updated_at = ? "
+                    "UPDATE agent_remote_services SET status = 'DEGRADED', runtime_verified = 0, "
+                    "reason = ?, updated_at = ? "
                     "WHERE name = ?",
                     (str(exc).split("\n", 2)[1] if "\n" in str(exc) else str(exc), utc_now_iso(), row["name"]),
                 )
@@ -5525,7 +5548,8 @@ def synchronize_agent_remote_services(plane_db, *, root: Optional[str] = None) -
             reason = dest_reason or svc_reason
             if reason:
                 plane_db.conn.execute(
-                    "UPDATE agent_remote_services SET status = 'DEGRADED', reason = ?, updated_at = ? "
+                    "UPDATE agent_remote_services SET status = 'DEGRADED', runtime_verified = 0, "
+                    "reason = ?, updated_at = ? "
                     "WHERE name = ?",
                     (reason, utc_now_iso(), row["name"]),
                 )
@@ -5550,7 +5574,8 @@ def synchronize_agent_remote_services(plane_db, *, root: Optional[str] = None) -
                 if msg.startswith("ERROR:\n"):
                     brief = msg[7:].split("\n\n")[0]
                 plane_db.conn.execute(
-                    "UPDATE agent_remote_services SET status = 'DEGRADED', reason = ?, updated_at = ? "
+                    "UPDATE agent_remote_services SET status = 'DEGRADED', runtime_verified = 0, "
+                    "reason = ?, updated_at = ? "
                     "WHERE name = ?",
                     (brief, utc_now_iso(), row["name"]),
                 )
@@ -6204,9 +6229,11 @@ def set_remote_service_agent(
         raise
 
     def _persist_status(next_status: str, next_reason: str) -> None:
+        verified = 1 if str(next_status or "").upper() == "HEALTHY" else 0
         plane_db.conn.execute(
-            "UPDATE agent_remote_services SET status = ?, reason = ?, updated_at = ? WHERE name = ?",
-            (next_status, next_reason, utc_now_iso(), name),
+            "UPDATE agent_remote_services SET status = ?, reason = ?, runtime_verified = ?, "
+            "updated_at = ? WHERE name = ?",
+            (next_status, next_reason, verified, utc_now_iso(), name),
         )
         _commit_if_autonomous(plane_db)
 
@@ -6624,12 +6651,19 @@ def probe_agent_runtime_unit(*, root: Optional[str] = None) -> dict:
     return {"level": "Unknown", "detail": "drlink-client.service status could not be read"}
 
 
-def inventory_remote_service_status(plane_db, client, *, enabled: bool, stored_status: str) -> str:
+def inventory_remote_service_status(
+    plane_db,
+    client,
+    *,
+    enabled: bool,
+    stored_status: str,
+    runtime_verified: bool = False,
+) -> str:
     """Operator-facing Remote Service status.
 
     Explicit disable and an offline Managed Host override a stored HEALTHY
-    value. A connected, enabled service keeps a reported HEALTHY or DEGRADED
-    status. Missing runtime evidence stays DEGRADED.
+    value. HEALTHY requires current runtime verification evidence — stored
+    HEALTHY plus Managed Host connected alone must not display HEALTHY.
     """
     if not enabled:
         return "DISABLED"
@@ -6640,12 +6674,11 @@ def inventory_remote_service_status(plane_db, client, *, enabled: bool, stored_s
     if connectivity != "connected":
         return "DEGRADED"
     stored = str(stored_status or "").strip().upper()
-    if stored == "HEALTHY":
+    if stored == "HEALTHY" and runtime_verified:
         return "HEALTHY"
-    if stored == "DEGRADED":
-        return "DEGRADED"
+    if stored == "DISABLED":
+        return "DISABLED"
     return "DEGRADED"
-
 
 def _load_enrolled_client_state(root: Optional[str], state: Optional[dict]) -> Optional[dict]:
     if isinstance(state, dict):
@@ -6826,7 +6859,8 @@ def activate_enrolled_services_as_remote_services(
             if not name or not view.get("enabled") or view.get("endpoint_port") is None:
                 continue
             plane.conn.execute(
-                "UPDATE agent_remote_services SET status = 'HEALTHY', reason = '', updated_at = ? "
+                "UPDATE agent_remote_services SET status = 'HEALTHY', reason = '', "
+                "runtime_verified = 1, updated_at = ? "
                 "WHERE name = ? COLLATE NOCASE AND delete_pending = 0 AND enabled = 1 "
                 "AND endpoint_port IS NOT NULL AND pending_allocation = 0 "
                 "AND reason = 'Runtime activation pending.'",

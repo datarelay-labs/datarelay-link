@@ -670,7 +670,7 @@ class FalseHealthyFailClosedTests(unittest.TestCase):
         self.tmp = tempfile.mkdtemp(prefix="drlink-false-healthy-")
         Path(self.tmp, "etc/drlink").mkdir(parents=True, exist_ok=True)
         Path(self.tmp, "etc/drlink/config.json").write_text(
-            '{"role":"server"}\n', encoding="utf-8"
+            '{"role":"server","public_ip":"203.0.113.10"}\n', encoding="utf-8"
         )
         os.environ["DRLINK_SKIP_ACTIVATION"] = "1"
         os.environ["DRLINK_CONFIRM"] = "yes"
@@ -847,6 +847,172 @@ class FalseHealthyFailClosedTests(unittest.TestCase):
         self.assertIn("verification", reason.lower())
         self.assertNotIn("target", reason.lower())
         self.assertNotIn("health_check", reason.lower())
+
+    def test_inventory_connected_stored_healthy_without_verification_not_healthy(self):
+        # Comment 5883033202: show managed-host remote-services uses inventory,
+        # not effective_remote_service_status. Stored HEALTHY + connected alone
+        # must not display HEALTHY without current runtime verification.
+        pub, meta = self._seed_stored_healthy()
+        client = self.plane.conn.execute(
+            "SELECT * FROM clients WHERE id = ?", (MACHINE,)
+        ).fetchone()
+        self.assertEqual(self.plane.managed_host_connectivity(client), "connected")
+        shown = v24.inventory_remote_service_status(
+            self.plane,
+            client,
+            enabled=True,
+            stored_status="HEALTHY",
+            runtime_verified=False,
+        )
+        self.assertNotEqual(shown, "HEALTHY")
+        self.assertEqual(shown, "DEGRADED")
+        # Verified evidence may display HEALTHY.
+        self.assertEqual(
+            v24.inventory_remote_service_status(
+                self.plane,
+                client,
+                enabled=True,
+                stored_status="HEALTHY",
+                runtime_verified=True,
+            ),
+            "HEALTHY",
+        )
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = cli.dispatch(
+                ["show", "managed-host", "agent-a", "remote-services"],
+                root=self.tmp,
+                plane=self.plane,
+            )
+        self.assertEqual(rc, 0, buf.getvalue())
+        listing = buf.getvalue()
+        self.assertIn("ssh-access", listing)
+        self.assertNotIn("HEALTHY", listing)
+        self.assertIn("DEGRADED", listing)
+
+
+class AgentPushFalseHealthyTests(unittest.TestCase):
+    """P0-B: Agent status push must not manufacture runtime_verified from HEALTHY."""
+
+    def setUp(self):
+        self.server_tmp = tempfile.mkdtemp(prefix="drlink-push-srv-")
+        self.agent_tmp = tempfile.mkdtemp(prefix="drlink-push-agt-")
+        Path(self.server_tmp, "etc/drlink").mkdir(parents=True, exist_ok=True)
+        Path(self.server_tmp, "etc/drlink/config.json").write_text(
+            '{"role":"server"}\n', encoding="utf-8"
+        )
+        os.environ["DRLINK_SKIP_ACTIVATION"] = "1"
+        os.environ["DRLINK_CONFIRM"] = "yes"
+        os.environ.pop("DRLINK_MGMT_TOKEN", None)
+        self.server = ControlPlane(self.server_tmp)
+        v24.ensure_v2_schema(self.server.conn)
+        v24.set_service_object(self.server, "ssh", type="tcp", port=22, oneshot=True)
+        self.key, self.pub, self.mac = _write_identity(Path(self.agent_tmp), MACHINE, "agent-a")
+        self.server.upsert_client(MACHINE, label="agent-a", hostname="agent-a")
+        self.verifier = mgmt.InMemoryMgmtVerifier()
+        self.verifier.enroll(MACHINE, self.pub, mac_key=self.mac, hostname="agent-a")
+        self.httpd, self.base, _ = mgmt.start_mgmt_server(self.server, verifier=self.verifier)
+        os.environ["DRLINK_MGMT_URL"] = self.base
+        Path(self.agent_tmp, "etc/frp/server-endpoint.json").write_text(
+            '{"mgmt_url":"%s"}\n' % self.base, encoding="utf-8"
+        )
+        self.agent = ControlPlane(self.agent_tmp)
+        v24.ensure_v2_schema(self.agent.conn)
+
+    def tearDown(self):
+        mgmt.stop_mgmt_server(self.httpd)
+        self.server.close()
+        self.agent.close()
+        for key in ("DRLINK_SKIP_ACTIVATION", "DRLINK_CONFIRM", "DRLINK_MGMT_URL"):
+            os.environ.pop(key, None)
+
+    def _server_status(self, name: str):
+        return self.server.conn.execute(
+            "SELECT m.status, m.reason, m.runtime_verified, s.public_port FROM published_services s "
+            "JOIN remote_service_meta m ON m.service_id = s.id WHERE s.name = ?",
+            (name,),
+        ).fetchone()
+
+    def test_push_persisted_healthy_without_verification_cannot_make_server_healthy(self):
+        # Comment 5883013721: preserve Agent local HEALTHY text but remove current
+        # runtime verification evidence; status push must not promote Server HEALTHY.
+        created = mgmt.upsert_remote_service_on_server(
+            root=self.agent_tmp,
+            name="ssh-access",
+            destination="this-host",
+            service="ssh",
+            enabled=True,
+            pool_class="normal",
+            target_host="127.0.0.1",
+            target_port=22,
+            target_mode="self",
+            runtime_verified=True,
+        )
+        self.assertEqual(created["status"], "HEALTHY")
+        port = int(created["endpoint_port"])
+        now = "2026-09-18T00:00:00Z"
+        self.agent.conn.execute(
+            "INSERT OR REPLACE INTO agent_remote_services"
+            "(name, destination, service_object, enabled, status, endpoint_host, endpoint_port, "
+            "pending_allocation, delete_pending, pool_class, reason, runtime_verified, updated_at) "
+            "VALUES ('ssh-access', 'this-host', 'ssh', 1, 'HEALTHY', 'drlink.local', ?, 0, 0, "
+            "'normal', '', 0, ?)",
+            (port, now),
+        )
+        self.agent.conn.commit()
+        row = self.agent.conn.execute(
+            "SELECT status, runtime_verified FROM agent_remote_services WHERE name = 'ssh-access'"
+        ).fetchone()
+        self.assertEqual(row["status"], "HEALTHY")
+        self.assertEqual(int(row["runtime_verified"] or 0), 0)
+
+        pushed = v24._push_agent_remote_service_status(self.agent, root=self.agent_tmp)
+        self.assertGreaterEqual(pushed, 1)
+        server = self._server_status("ssh-access")
+        self.assertNotEqual(server["status"], "HEALTHY")
+        self.assertEqual(server["status"], "DEGRADED")
+        self.assertEqual(int(server["runtime_verified"] or 0), 0)
+
+        client = self.server.conn.execute(
+            "SELECT * FROM clients WHERE id = ?", (MACHINE,)
+        ).fetchone()
+        shown = v24.inventory_remote_service_status(
+            self.server,
+            client,
+            enabled=True,
+            stored_status=server["status"],
+            runtime_verified=bool(server["runtime_verified"]),
+        )
+        self.assertNotEqual(shown, "HEALTHY")
+
+    def test_push_after_real_verification_may_keep_healthy(self):
+        created = mgmt.upsert_remote_service_on_server(
+            root=self.agent_tmp,
+            name="ssh-access",
+            destination="this-host",
+            service="ssh",
+            enabled=True,
+            pool_class="normal",
+            target_host="127.0.0.1",
+            target_port=22,
+            target_mode="self",
+            runtime_verified=True,
+        )
+        port = int(created["endpoint_port"])
+        now = "2026-09-18T00:00:00Z"
+        self.agent.conn.execute(
+            "INSERT OR REPLACE INTO agent_remote_services"
+            "(name, destination, service_object, enabled, status, endpoint_host, endpoint_port, "
+            "pending_allocation, delete_pending, pool_class, reason, runtime_verified, updated_at) "
+            "VALUES ('ssh-access', 'this-host', 'ssh', 1, 'HEALTHY', 'drlink.local', ?, 0, 0, "
+            "'normal', '', 1, ?)",
+            (port, now),
+        )
+        self.agent.conn.commit()
+        v24._push_agent_remote_service_status(self.agent, root=self.agent_tmp)
+        server = self._server_status("ssh-access")
+        self.assertEqual(server["status"], "HEALTHY")
+        self.assertEqual(int(server["runtime_verified"] or 0), 1)
 
 
 if __name__ == "__main__":

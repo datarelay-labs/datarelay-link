@@ -1280,8 +1280,8 @@ def server_upsert_remote_service(plane, auth: MgmtAuthContext, body: dict) -> di
             plane.conn.execute(
                 "INSERT OR REPLACE INTO remote_service_meta"
                 "(service_id, status, pool_class, service_object_id, destination_name, "
-                "destination_client_id, pending_allocation, delete_pending, reason) "
-                "VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?)",
+                "destination_client_id, pending_allocation, delete_pending, reason, runtime_verified) "
+                "VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, ?)",
                 (
                     pub["id"],
                     status,
@@ -1290,6 +1290,7 @@ def server_upsert_remote_service(plane, auth: MgmtAuthContext, body: dict) -> di
                     destination,
                     destination_client_id,
                     reason,
+                    1 if status == "HEALTHY" and runtime_verified else 0,
                 ),
             )
             if endpoint_port is not None:
@@ -1578,14 +1579,21 @@ def server_report_remote_service_status(plane, auth: MgmtAuthContext, body: dict
                     extra = "%s (generation %s)" % (extra, generation)
                 projection = _canonical_status_projection(name, pub, meta, status, extra or "")
                 pending = int(projection["pending_allocation"])
+                verified_flag = 1 if status == "HEALTHY" else 0
+                try:
+                    current_verified = int(meta["runtime_verified"] or 0)
+                except (KeyError, IndexError, TypeError):
+                    current_verified = 0
                 if (
                     str(meta["status"] or "") != status
                     or str(meta["reason"] or "") != (extra or "")
                     or int(meta["pending_allocation"] or 0) != pending
+                    or current_verified != verified_flag
                 ):
                     plane.conn.execute(
-                        "UPDATE remote_service_meta SET status = ?, reason = ?, pending_allocation = ? WHERE service_id = ?",
-                        (status, extra or "", pending, pub["id"]),
+                        "UPDATE remote_service_meta SET status = ?, reason = ?, pending_allocation = ?, "
+                        "runtime_verified = ? WHERE service_id = ?",
+                        (status, extra or "", pending, verified_flag, pub["id"]),
                     )
                 updated.append(projection)
             return {
