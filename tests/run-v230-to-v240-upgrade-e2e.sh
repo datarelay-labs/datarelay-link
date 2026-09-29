@@ -29,6 +29,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=lib/prod-qual-common.sh
 source "$ROOT/tests/lib/prod-qual-common.sh"
+# shellcheck source=lib/require-release-target.sh
+source "$ROOT/tests/lib/require-release-target.sh"
 
 OUT="${FRP_E2E_OUT_DIR:-$ROOT/e2e-reports/v230-to-v240-upgrade-$(date -u +%Y%m%dT%H%M%SZ)}"
 mkdir -p "$OUT"
@@ -694,14 +696,20 @@ else
 fi
 pq_note "WORKTREE_CLEAN_END=$WORKTREE_CLEAN_END"
 
+RELEASE_TARGET_QUALIFIED=NO
+if frp_require_release_target >"$OUT/release-target-check.log" 2>&1; then
+  RELEASE_TARGET_QUALIFIED=YES
+fi
+pq_note "RELEASE_TARGET_QUALIFIED=$RELEASE_TARGET_QUALIFIED"
+
 if [[ "$up_cmp" -eq 0 ]] && ! grep -q '=FAIL$' "$PROD_QUAL_GATES"; then
   pq_gate LIVE_V230_TO_V240_UPGRADE PASS
   pq_note "LIVE_V230_TO_V240_UPGRADE=PASS"
-  python3 - "$OUT" "$HEAD" "$END_HEAD" "$WORKTREE_CLEAN_START" "$WORKTREE_CLEAN_END" <<'PY'
+  python3 - "$OUT" "$HEAD" "$END_HEAD" "$WORKTREE_CLEAN_START" "$WORKTREE_CLEAN_END" "$RELEASE_TARGET_QUALIFIED" <<'PY'
 import json, sys
 from pathlib import Path
 out = Path(sys.argv[1])
-head, end_head, clean_start, clean_end = sys.argv[2:]
+head, end_head, clean_start, clean_end, release_target = sys.argv[2:]
 gates = {}
 for line in (out / "gates.env").read_text().splitlines():
     if "=" in line:
@@ -714,6 +722,7 @@ doc = {
     "head_unchanged": end_head == head,
     "worktree_clean_start": clean_start == "YES",
     "worktree_clean_end": clean_end == "YES",
+    "release_target_qualified": release_target == "YES",
     "gates": gates,
     "final_status": gates.get("LIVE_V230_TO_V240_UPGRADE"),
     "evidence": {
@@ -725,10 +734,12 @@ doc = {
 }
 (out / "summary.json").write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
 PY
-  if [[ "$WORKTREE_CLEAN_START" == "YES" && "$WORKTREE_CLEAN_END" == "YES" ]]; then
+  if [[ "$WORKTREE_CLEAN_START" == "YES" && "$WORKTREE_CLEAN_END" == "YES" && "$RELEASE_TARGET_QUALIFIED" == "YES" ]]; then
     mkdir -p "$(dirname "$A019_CANONICAL_EVIDENCE")"
     cp "$OUT/summary.json" "$A019_CANONICAL_EVIDENCE"
     pq_note "A019_CANONICAL_EVIDENCE=$A019_CANONICAL_EVIDENCE"
+  elif [[ "$RELEASE_TARGET_QUALIFIED" != "YES" ]]; then
+    pq_note "A019_CANONICAL_EVIDENCE=NOT_PUBLISHED_NON_RELEASE_TARGET"
   else
     pq_note "A019_CANONICAL_EVIDENCE=NOT_PUBLISHED_DIRTY_WORKTREE"
   fi

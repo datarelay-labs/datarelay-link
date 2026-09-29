@@ -274,7 +274,9 @@ text = Path(sys.argv[1]).read_text(encoding="utf-8")
 assert 'a019-v230-to-v240.json' in text
 assert 'doc.get("worktree_clean_start") is not True' in text
 assert 'doc.get("worktree_clean_end") is not True' in text
+assert 'doc.get("release_target_qualified") is not True' in text
 assert 'doc.get("head_unchanged") is not True' in text
+assert 'approved release target' in text
 assert 'UPGRADE_V230_TO_V240 PASS' in text
 assert 'UPGRADE_V230_TO_V240 BLOCKED' in text
 assert 'clean exact-HEAD A-019 evidence is required' in text

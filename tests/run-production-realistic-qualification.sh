@@ -59,6 +59,8 @@ if str(doc.get("end_head") or "").lower() != expected or doc.get("head_unchanged
     raise SystemExit("A-019 did not finish on the same HEAD")
 if doc.get("worktree_clean_start") is not True or doc.get("worktree_clean_end") is not True:
     raise SystemExit("A-019 canonical evidence must come from a clean worktree")
+if doc.get("release_target_qualified") is not True:
+    raise SystemExit("A-019 canonical evidence must come from an approved release target")
 if doc.get("final_status") != "PASS":
     raise SystemExit("A-019 final_status is not PASS")
 gates = doc.get("gates")
