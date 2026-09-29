@@ -179,6 +179,12 @@ DISPOSITION=
   CLI_LEGACY_OR_COMPATIBILITY_PATH
   CLI_SCENARIO_BLOCKED
   DOC_RUNTIME_MISMATCH
+  DISCOVERY_GAP
+  SCENARIO_DEAD_END
+  CONFIRMATION_METADATA_DRIFT
+  STATE_SEMANTICS_DRIFT
+  DOC_EXAMPLE_NONCANONICAL
+  ROLE_SURFACE_DRIFT
 EVIDENCE=
 ~~~
 
@@ -188,21 +194,26 @@ Mandatory reconciliation rules:
 - Every runtime public command must map to exactly one current product capability.
 - Duplicate commands for the same operation require an explicit product reason; compatibility alone is not sufficient for a greenfield/unreleased surface.
 - Hidden commands and aliases are part of the audit if a user can execute them.
-- Count all aliases, root-bypass aliases, hidden parser entries, and executable obsolete resources.
-- Compare `show`, `set`, `unset`, and `test` symmetry where the resource model implies it.
+- Count all aliases, root-bypass aliases, hidden parser entries, and executable obsolete resources. For an unreleased/greenfield CLI, the required compatibility-only count is zero.
+- After black-box discovery has been preserved, perform a post-hoc catalog/parser enumeration to find executable hidden or alias paths that public help does not reveal. This source inspection is reconciliation evidence only; it must never be used to make a user scenario pass.
+- Compare `show`, `set`, `unset`, and `test` symmetry where the resource model implies it, including policy-wide enable/disable/reset variants and role-specific lifecycle variants.
+- Treat every behavior-changing setting/subcommand as a separate inventory item. A family is not covered merely because its top-level command parses.
 - Compare direct CLI, guided menu, help, completion, and role-specific surfaces.
-- A command's suggested next step must itself be a current canonical command or a precise documented installer/lifecycle action.
+- A command's suggested next step must itself be a current canonical command or a precise documented installer/lifecycle action. If the user is told to reconfigure or recover, execute/discover that next step far enough to prove the workflow is not a dead end.
 - Fresh installer completion text, generated enrollment instructions, diagnostics recommendations, update recommendations, and error recovery text are public discovery surfaces and must use only current canonical commands.
+- Root help, `?`, Tab completion, menu, `help commands`, command-specific help, and error recovery must all lead to the same supported command set. A command that only works when memorized is a discovery gap.
 - Contextual help must expose all supported lifecycle variants needed to finish a feature, including enable/disable, reset/remove, credential lifecycle, and role-specific recovery.
 - Empty lists must explicitly report that no items exist.
-- Status/version/provenance surfaces may differ in detail, but must not contradict one another.
-- Obsolete product terms or semantics must not leak through hidden commands, diagnostics, errors, examples, compatibility paths, or installer output.
+- Status/version/provenance surfaces may differ in detail, but must not contradict one another or mix retired state models/terminology with the current control plane.
+- Extract active documentation command examples and verify that examples use only canonical public grammar or an explicitly documented installer-only action. Executable legacy aliases do not make a stale example canonical.
+- Obsolete product terms or semantics must not leak through hidden commands, diagnostics, errors, examples, compatibility paths, installer output, or active documentation.
 - For a greenfield/unreleased CLI, compatibility-only aliases, root-bypass aliases, and executable obsolete hidden grammar must be zero unless an explicit product decision documents the exception.
-- For destructive commands, audit every destructive subvariant, not only the parent command. Cancellation/no-confirmation must never be reported as successful mutation; exit status must be automation-safe.
+- Compare destructive-command catalog metadata (`risk`, confirmation contract, TTY/non-TTY behavior) with actual effect. Audit every destructive subvariant, not only the parent command; a secret/key/certificate purge is destructive even when the parent family also has non-destructive forms.
+- Cancellation/no-confirmation must never be reported as successful mutation; exit status must be automation-safe.
 - A privilege failure must identify the privilege problem, not masquerade as a wrong-role or unknown-command failure. User-visible ERROR output must return a non-zero automation-safe status.
 - A recovery message such as “reconfigure” must name the exact supported public CLI/menu/installer action required to continue.
 - Exercise at least one complete workflow per major capability: discover → create/change → show → test/explain where applicable → reference/safety failure → cleanup.
-- Cleanup is cross-host: verify the audit prefix, temporary enrollments, generated identities, Remote Services, Objects/Groups, policies, and test credentials are absent from every mutated Server and Agent.
+- Cleanup is cross-host: verify the audit prefix, temporary enrollments, generated identities, Remote Services, Objects/Groups, policies, test credentials, and non-prefixed resources created by guided defaults are absent from every mutated Server and Agent.
 - `FULL_USER_E2E` does not substitute for this reconciliation. Full User E2E validates real journeys and traffic; this gate validates product-model-to-CLI completeness and uniqueness.
 
 At finalization report:
@@ -211,6 +222,8 @@ At finalization report:
 CLI_PRODUCT_SURFACE_RECONCILIATION=PASS|FAIL
 FEATURE_INVENTORY_TOTAL=
 FEATURE_NO_CLI_GAPS=
+FEATURE_WITHOUT_DISCOVERABLE_CLI_COUNT=
+CLI_WITHOUT_PRODUCT_FEATURE_COUNT=
 RUNTIME_ONLY_CLI_COUNT=
 DUPLICATE_PUBLIC_PATH_COUNT=
 PUBLIC_ALIAS_PATH_COUNT=
@@ -222,11 +235,16 @@ INSTALLER_GUIDANCE_MISMATCH_COUNT=
 DESTRUCTIVE_CONFIRMATION_GAP_COUNT=
 ERROR_WITH_ZERO_RC_COUNT=
 SCENARIO_BLOCKED_COUNT=
+SCENARIO_DEAD_END_COUNT=
+CONFIRMATION_METADATA_DRIFT_COUNT=
+STATE_SEMANTICS_DRIFT_COUNT=
+DOC_EXAMPLE_NONCANONICAL_COUNT=
+ROLE_SURFACE_DRIFT_COUNT=
 STATUS_DOC_RUNTIME_MISMATCH_COUNT=
 CLEANUP_RESIDUE_COUNT=
 ~~~
 
-A stable candidate requires `CLI_PRODUCT_SURFACE_RECONCILIATION=PASS`. Any P0/P1 or user-blocking P2 found here blocks candidate freeze even if Full User E2E is otherwise green.
+A stable candidate requires `CLI_PRODUCT_SURFACE_RECONCILIATION=PASS`. For the unreleased/greenfield v2.4 CLI, every applicable gap/mismatch/duplicate/compatibility/discovery/dead-end/confirmation/document-example/cleanup counter above must be zero unless the entry is an explicitly justified installer-only lifecycle. Any P0/P1 or user-blocking P2 found here blocks candidate freeze even if Full User E2E is otherwise green.
 
 ## 5. Mandatory scenario matrix
 
