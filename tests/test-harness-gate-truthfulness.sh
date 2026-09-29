@@ -205,24 +205,34 @@ PROD_QUAL_MACOS_SSH_PID=$$
 pq_macos_listener_owned "$$" || fail "recorded PID should be owned"
 pass "unrelated :2222 ownership proof"
 
-# --- Golden upgrade: wrong version → BLOCKED; backup not || true ---
-python3 - "$ROOT/tests/run-prod-qual-extended.sh" <<'PY' || fail "golden upgrade truthfulness"
+# --- Dedicated A-019: real v2.3 state, backup, clean exact-HEAD evidence ---
+python3 - "$ROOT/tests/run-v230-to-v240-upgrade-e2e.sh" <<'PY' || fail "A-019 harness truthfulness"
 from pathlib import Path
 import sys
 text = Path(sys.argv[1]).read_text(encoding="utf-8")
-idx = text.find("phase_golden_baseline")
-end = text.find("\nphase_", idx + 10)
-body = text[idx:end if end > 0 else idx + 5000]
-assert "installed_project_version" in body or "/etc/drlink/version" in body
-assert "GOLDEN_V230_UPGRADE_BASELINE BLOCKED" in body
-assert "expected=2.3.0" in body
-assert "2.3.1" not in body
-assert "2.2.1" not in body
-assert "backup create" in body
-assert "|| true" not in body.split("backup create")[1][:80]
+assert "/etc/frp-auto-deploy/version" in text
+assert "/var/lib/frp-auto-deploy/registry.json" in text
+assert "V230_NO_EGRESS_FIXTURE" in text
+assert "/usr/local/sbin/frp-backup" in text
+assert "V230_BACKUP FAIL" in text
+assert "WORKTREE_CLEAN_START" in text and "WORKTREE_CLEAN_END" in text
+assert "A019_HEAD_UNCHANGED" in text
+assert "A019_CANONICAL_EVIDENCE=NOT_PUBLISHED_DIRTY_WORKTREE" in text
+assert "2.3.1" not in text
 print("ok")
 PY
-pass "golden upgrade version/BLOCKED"
+pass "A-019 prior-stable/backup/exact-head truthfulness"
+
+python3 - "$ROOT/tests/run-prod-qual-extended.sh" <<'PY' || fail "A-019 golden ownership"
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+main = text[text.find("\nmain()"):]
+assert "phase_golden_baseline" not in main
+assert "A019_GOLDEN_OWNER=tests/run-v230-to-v240-upgrade-e2e.sh" in main
+print("ok")
+PY
+pass "A-019 golden owned by dedicated harness"
 
 # --- Docs-free / wrong-ops: every invalid RC asserted ---
 python3 - "$ROOT/tests/run-prod-qual-extended.sh" <<'PY' || fail "invalid RC asserts incomplete"

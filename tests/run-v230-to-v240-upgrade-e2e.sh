@@ -6,16 +6,21 @@
 # v2.3.1 was not manufactured and is not an upgrade baseline.
 #
 # Requires:
-#   - e2e-reports/v2.3.0-golden-upgrade-baseline/ (evidence of prior golden capture)
 #   - The immutable v2.3.0 tree (FRP_V230_TREE, a checkout whose VERSION is
 #     PROJECT_VERSION=2.3.0, or git archive of tag v2.3.0)
 #   - SSH to FRP_E2E_SERVER_ALIAS (default frp-e2e-server)
 #
 # Flow:
-#   1. Install v2.3.0 from that immutable tree (not merely rename VERSION strings)
-#   2. Seed minimal Remote Access + Egress state with stable IDs/ports
-#   3. Upgrade to the current (v2.4 candidate) tree via bootstrap --upgrade
-#   4. Verify identity/port/egress preservation + schema migration + new runtime
+#   1. Purge both canonical v2.4 and legacy v2.3 product state
+#   2. Install immutable v2.3.0 and prove its real legacy paths/runtime
+#   3. Seed non-empty v2.3 Remote Access, identity, group/tag and Access Control state
+#   4. Create a v2.3 backup and sanitized same-run golden fingerprint
+#   5. Upgrade to the current v2.4 candidate via bootstrap --upgrade
+#   6. Verify SQLite migration, identity/port/metadata/policy preservation and
+#      availability of new v2.4 functionality
+#
+# Immutable v2.3.0 did not include Controlled Egress. This harness must not
+# manufacture v2.4-era egress-control.json as prior-stable state.
 #
 # A missing prior-stable tree or a version mismatch fails closed. Do not
 # report that result as an excluded BLOCKED pass.
@@ -36,7 +41,7 @@ PROD_QUAL_FAILS=0
 SERVER="${FRP_E2E_SERVER_ALIAS:-frp-e2e-server}"
 PRIOR_STABLE_VERSION=2.3.0
 PRIOR_STABLE_TAG="v${PRIOR_STABLE_VERSION}"
-GOLDEN="${FRP_E2E_GOLDEN_BASELINE:-$ROOT/e2e-reports/${PRIOR_STABLE_TAG}-golden-upgrade-baseline}"
+GOLDEN="${FRP_E2E_GOLDEN_BASELINE:-$OUT/golden/${PRIOR_STABLE_TAG}-upgrade-baseline}"
 V230_TREE="${FRP_V230_TREE:-${FRP_PRIOR_STABLE_TREE:-}}"
 if [[ -z "$V230_TREE" ]]; then
   for cand in \
@@ -55,6 +60,11 @@ if [[ -z "$V230_TREE" ]] && git -C "$ROOT" rev-parse --verify "refs/tags/${PRIOR
   git -C "$ROOT" archive "$PRIOR_STABLE_TAG" | tar -x -C "$V230_TREE"
 fi
 HEAD="$(pq_head_sha)"
+WORKTREE_CLEAN_START=NO
+if git -C "$ROOT" diff --quiet && git -C "$ROOT" diff --cached --quiet; then
+  WORKTREE_CLEAN_START=YES
+fi
+A019_CANONICAL_EVIDENCE="${FRP_E2E_A019_CANONICAL_EVIDENCE:-$ROOT/e2e-reports/release-qualification/a019-v230-to-v240.json}"
 PROJECT_VERSION="$(awk -F= '/^PROJECT_VERSION=/{print $2}' "$ROOT/VERSION")"
 PUBLIC_HOSTNAME="${FRP_E2E_PUBLIC_HOSTNAME:-221.139.249.113.nip.io}"
 PUBLIC_IP="${FRP_E2E_SERVER_IP:-221.139.249.113}"
@@ -79,7 +89,6 @@ fail_out() {
   exit 1
 }
 
-[[ -d "$GOLDEN" ]] || fail_out "golden baseline missing: $GOLDEN"
 [[ -n "$V230_TREE" && -f "$V230_TREE/dist/bootstrap-server.sh" ]] || fail_out "v2.3.0 tree missing (set FRP_V230_TREE to the immutable v2.3.0 tree)"
 grep -q "^PROJECT_VERSION=${PRIOR_STABLE_VERSION}$" "$V230_TREE/VERSION" || fail_out "prior-stable tree is not PROJECT_VERSION=${PRIOR_STABLE_VERSION}"
 [[ "$PROJECT_VERSION" == "2.4.0" ]] || fail_out "current tree must be PROJECT_VERSION=2.4.0 (got $PROJECT_VERSION)"
@@ -89,65 +98,32 @@ V240_CHANNEL="$(tree_channel "$ROOT")"
 pq_note "LIVE_V230_TO_V240_UPGRADE start HEAD=$HEAD PROJECT_VERSION=$PROJECT_VERSION"
 pq_note "OUT=$OUT GOLDEN=$GOLDEN V230_TREE=$V230_TREE"
 pq_note "V230_CHANNEL=$V230_CHANNEL V240_CHANNEL=$V240_CHANNEL"
+pq_note "WORKTREE_CLEAN_START=$WORKTREE_CLEAN_START"
 
-# Record golden evidence into this run
-mkdir -p "$OUT/golden"
-cp -a "$GOLDEN/." "$OUT/golden/" 2>/dev/null || true
-pq_gate GOLDEN_BASELINE_PRESENT PASS
-
-# Clear stale lifecycle lock left by interrupted install/upgrade (holder PID dead).
-pq_note "Clearing stale server-lifecycle lock if holder is dead"
-pq_ssh "$SERVER" 'sudo python3 -' >"$OUT/stale-lock-cleanup.log" 2>&1 <<'PY' || true
-from pathlib import Path
-import os
-lock = Path("/var/lib/drlink/server-lifecycle.lock")
-pidf = Path("/var/lib/drlink/server-lifecycle.lock.pid")
-pid = None
-if pidf.is_file():
-    try:
-        pid = int(pidf.read_text(encoding="utf-8").strip() or "0")
-    except Exception:
-        pid = None
-alive = False
-if pid and pid > 0:
-    try:
-        os.kill(pid, 0)
-        alive = True
-    except OSError:
-        alive = False
-if alive:
-    print("LOCK_HOLDER_ALIVE pid=%s" % pid)
-else:
-    if lock.exists() or pidf.exists():
-        lock.unlink(missing_ok=True)
-        pidf.unlink(missing_ok=True)
-        print("CLEARED_STALE_LIFECYCLE_LOCK pid=%s" % pid)
-    else:
-        print("NO_LIFECYCLE_LOCK")
-PY
+# --- 0) Purge both generations so v2.3.0 is a genuine clean prior-stable install ---
+pq_note "Purging canonical v2.4 and legacy v2.3 server state"
+pq_ssh "$SERVER" 'sudo rm -f /var/lib/drlink/server-lifecycle.lock /var/lib/drlink/server-lifecycle.lock.pid /var/lib/frp-auto-deploy/server-lifecycle.lock /var/lib/frp-auto-deploy/server-lifecycle.lock.pid' \
+  >"$OUT/stale-lock-cleanup.log" 2>&1 || true
 pq_gate STALE_LIFECYCLE_LOCK_CLEANUP PASS
 
-# --- 0) Purge existing server so starting side is a real v2.3.0 install ---
-pq_note "Purging existing server install for clean v2.3.0 baseline"
 set +e
 pq_ssh "$SERVER" "sudo bash -s -- --purge --yes" \
-  <"$ROOT/dist/uninstall-server.sh" >"$OUT/server-purge.log" 2>&1
-purge_rc=$?
+  <"$ROOT/dist/uninstall-server.sh" >"$OUT/server-purge-v240.log" 2>&1
+purge_v240_rc=$?
+pq_ssh "$SERVER" "sudo bash -s -- --purge --yes" \
+  <"$V230_TREE/dist/uninstall-server.sh" >"$OUT/server-purge-v230.log" 2>&1
+purge_v230_rc=$?
 set -uo pipefail
-# purge may return non-zero if already absent; require config gone afterward
-if pq_ssh "$SERVER" 'sudo test -f /etc/drlink/config.json'; then
-  # One more stale-lock clear + purge retry (interrupted ops leave lock behind)
-  pq_ssh "$SERVER" 'sudo rm -f /var/lib/drlink/server-lifecycle.lock /var/lib/drlink/server-lifecycle.lock.pid' || true
-  set +e
-  pq_ssh "$SERVER" "sudo bash -s -- --purge --yes" \
-    <"$ROOT/dist/uninstall-server.sh" >>"$OUT/server-purge.log" 2>&1
-  purge_rc=$?
-  set -uo pipefail
-fi
-if pq_ssh "$SERVER" 'sudo test -f /etc/drlink/config.json'; then
+
+if ! pq_ssh "$SERVER" 'sudo test ! -e /etc/drlink && sudo test ! -e /var/lib/drlink && sudo test ! -e /etc/frp-auto-deploy && sudo test ! -e /var/lib/frp-auto-deploy && sudo test ! -e /etc/systemd/system/drlink-server.service && sudo test ! -e /etc/systemd/system/drlink-allocator.service && sudo test ! -e /etc/systemd/system/frps.service && sudo test ! -e /etc/systemd/system/frp-port-allocator.service'; then
   pq_gate V230_PURGE FAIL
-  tail -40 "$OUT/server-purge.log" | tee -a "$PROD_QUAL_SUMMARY" || true
-  fail_out "server still installed after purge (rc=$purge_rc)"
+  {
+    echo "v2.4 purge rc=$purge_v240_rc"
+    tail -40 "$OUT/server-purge-v240.log" || true
+    echo "v2.3 purge rc=$purge_v230_rc"
+    tail -40 "$OUT/server-purge-v230.log" || true
+  } | tee -a "$PROD_QUAL_SUMMARY"
+  fail_out "server still has canonical or legacy product state after dual purge"
 fi
 pq_gate V230_PURGE PASS
 
@@ -169,36 +145,36 @@ if [[ "$inst_rc" -ne 0 ]]; then
 fi
 pq_gate V230_INSTALL PASS
 
-# Confirm installed version identity
-v230_ver="$(pq_ssh "$SERVER" 'sudo cat /etc/drlink/version 2>/dev/null || true')"
+# Confirm installed version identity and immutable v2.3 runtime/layout.
+v230_ver="$(pq_ssh "$SERVER" 'sudo cat /etc/frp-auto-deploy/version 2>/dev/null || true')"
 printf '%s\n' "$v230_ver" >"$OUT/v230-version.txt"
-if ! grep -q '2\.3\.0' <<<"$v230_ver"; then
+if ! grep -q 'PROJECT_VERSION=2\.3\.0' <<<"$v230_ver"; then
   pq_gate V230_VERSION_IDENTITY FAIL
-  fail_out "installed version file missing 2.3.0: $v230_ver"
+  fail_out "legacy v2.3 version file missing PROJECT_VERSION=2.3.0: $v230_ver"
 fi
 pq_gate V230_VERSION_IDENTITY PASS
 
-# --- 2) Seed stable Remote Access + Egress state ---
-# IMPORTANT: registry schema must remain v2 (allocator reject schema 1).
-# Mutate the installer-created registry rather than replacing with a legacy shape.
+if ! pq_ssh "$SERVER" 'sudo test -f /etc/frp-auto-deploy/config.json && sudo test -f /var/lib/frp-auto-deploy/registry.json && sudo test -f /var/lib/frp-auto-deploy/access-control.json && sudo test ! -e /etc/drlink/config.json && sudo test ! -e /var/lib/drlink/drlink.db && systemctl is-active --quiet frps.service && systemctl is-active --quiet frp-port-allocator.service && systemctl is-active --quiet frp-access-plugin.service'; then
+  pq_gate V230_LEGACY_LAYOUT_RUNTIME FAIL
+  fail_out "immutable v2.3.0 did not start from its real legacy paths/services"
+fi
+pq_gate V230_LEGACY_LAYOUT_RUNTIME PASS
+
+# --- 2) Seed stable v2.3 Remote Access + identity/group/tag state ---
+# IMPORTANT: registry schema must remain v2 (allocator rejects schema 1).
+# Immutable v2.3.0 has no Controlled Egress; do not manufacture egress state.
 pq_ssh "$SERVER" 'sudo python3 -' >"$OUT/seed.log" 2>&1 <<'PY'
 import json, os, time
 from pathlib import Path
 
-reg_path = Path("/var/lib/drlink/registry.json")
-eg_path = Path("/var/lib/drlink/egress-control.json")
-acl_path = Path("/var/lib/drlink/access-control.json")
+reg_path = Path("/var/lib/frp-auto-deploy/registry.json")
+acl_path = Path("/var/lib/frp-auto-deploy/access-control.json")
 
 now = int(time.time())
-machine_id = "upgrade-e2e-machine-001"
-client_id = "upgclid01deadbeef"
+machine_id = "aabbccdd00112233445566778899aabb"
 service_id = "ssh"
 remote_port = 6010
-# Canonical egress IDs are prefix + 12 hex chars (see ENTRY_ID_HEX_LEN).
-import secrets
-profile_id = "egp_" + secrets.token_hex(6)
-source_id = "egs_" + secrets.token_hex(6)
-dest_id = "egd_" + secrets.token_hex(6)
+group_id = "grp_00112233"
 
 if reg_path.is_file():
     reg = json.loads(reg_path.read_text(encoding="utf-8"))
@@ -206,89 +182,49 @@ else:
     reg = {"schema_version": 2, "reserved": [], "clients": {}}
 if not isinstance(reg, dict):
     raise SystemExit("registry.json is not an object")
-# Fresh v2.3.0 installs use schema 2. Never seed schema 1.
 reg["schema_version"] = 2
 reg.setdefault("reserved", [])
 if not isinstance(reg.get("reserved"), list):
-    reg["reserved"] = []
+    raise SystemExit("registry reserved must be an array")
+# Owned service ports are represented by the service record, not duplicated in reserved.
+reg["reserved"] = [p for p in reg["reserved"] if p != remote_port]
+reg["groups"] = {
+    group_id: {
+        "name": "upgrade-lab",
+        "description": "legacy v2.3 upgrade group",
+        "created_at": now,
+        "updated_at": now,
+    }
+}
 clients = reg.get("clients")
 if not isinstance(clients, dict):
     clients = {}
     reg["clients"] = clients
 clients[machine_id] = {
-    "client_id": client_id,
-    "machine_id": machine_id,
     "hostname": "upgrade-e2e-client",
     "label": "v230-upgrade-seed",
-    "labels": {"role": "upgrade-seed"},
-    "tags": {"qual": "v230-to-v240"},
-    "groups": ["upgrade-lab"],
-    "notes": "seeded for live upgrade qualification",
-    "mgmt_status": "enrolled",
+    "note": "seeded for live upgrade qualification",
+    "tags": {"qual": "v230-to-v240", "site": "lab"},
+    "group_ids": [group_id],
+    "mgmt_status": "legacy",
     "services": {
         service_id: {
-            "service_id": service_id,
-            "id": service_id,
+            "name": "SSH",
+            "protocol": "tcp",
             "remote_port": remote_port,
             "local_port": 22,
             "local_ip": "127.0.0.1",
-            "type": "tcp",
+            "preset": "ssh",
+            "ssh_user": "aella",
             "enabled": True,
         }
     },
     "created_at": now,
     "updated_at": now,
 }
-if remote_port not in reg["reserved"]:
-    reg["reserved"].append(remote_port)
 reg_path.parent.mkdir(parents=True, exist_ok=True)
 reg_path.write_text(json.dumps(reg, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 os.chmod(reg_path, 0o600)
-
-# Minimal v2 egress policy (HTTP/HTTPS only; Fixed TCP arrives after upgrade migration)
-if eg_path.is_file():
-    eg = json.loads(eg_path.read_text(encoding="utf-8"))
-    if not isinstance(eg, dict):
-        eg = {"schema_version": 2, "egress_profiles": {}}
-else:
-    eg = {"schema_version": 2, "egress_profiles": {}}
-eg["schema_version"] = 2
-profiles = eg.get("egress_profiles")
-if not isinstance(profiles, dict):
-    profiles = {}
-    eg["egress_profiles"] = profiles
-# Drop any previous invalid seed ids from interrupted runs.
-for bad in list(profiles):
-    if bad.startswith("egp_") and (
-        bad == "egp_upgrade_seed" or (profiles.get(bad) or {}).get("name") == "upgrade-seed"
-    ):
-        profiles.pop(bad, None)
-profiles[profile_id] = {
-    "id": profile_id,
-    "name": "upgrade-seed",
-    "description": "seeded profile for upgrade",
-    "enabled": True,
-    "sources": [
-        {
-            "id": source_id,
-            "cidr": "10.20.30.0/24",
-            "description": "lab",
-        }
-    ],
-    "destinations": [
-        {
-            "id": dest_id,
-            "host": "example.com",
-            "port": 443,
-            "protocol": "https",
-            "match": "exact",
-        }
-    ],
-    "created_at": now,
-    "updated_at": now,
-}
-eg_path.write_text(json.dumps(eg, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-os.chmod(eg_path, 0o600)
 
 list_id = "acl_001122334455"
 entry_id = "ace_001122334455"
@@ -320,9 +256,31 @@ acl = {
 acl_path.write_text(json.dumps(acl, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 os.chmod(acl_path, 0o600)
 
-# Prove allocator accepts seeded registry before upgrade.
+# Validate with the immutable v2.3 implementation before restarting runtime.
+import sys
+sys.path.insert(0, "/usr/local/lib/frp-auto-deploy")
+import frp_client_registry as creg
+import frp_access_control as access
+groups = creg.ensure_groups_map(reg)
+for gid, group in groups.items():
+    creg.validate_group_id(gid)
+    if not isinstance(group, dict):
+        raise SystemExit("invalid v2.3 group record: %s" % gid)
+    creg.validate_group_name(group.get("name"))
+    creg.validate_group_description(group.get("description") or "")
+for cid, client in (reg.get("clients") or {}).items():
+    if not isinstance(client, dict):
+        raise SystemExit("invalid v2.3 client record: %s" % cid)
+    for key, value in (client.get("tags") or {}).items():
+        creg.validate_tag_key(key)
+        creg.validate_tag_value(value)
+    for gid in creg.client_group_ids(client):
+        if gid not in groups:
+            raise SystemExit("client %s references unknown group %s" % (cid[:12], gid))
+access.validate_access_state(acl)
+
 import subprocess
-subprocess.check_call(["systemctl", "restart", "drlink-allocator"])
+subprocess.check_call(["systemctl", "restart", "frp-port-allocator"])
 ok = False
 for _ in range(30):
     rc = subprocess.call(
@@ -335,19 +293,77 @@ for _ in range(30):
         break
     time.sleep(0.5)
 if not ok:
-    raise SystemExit("allocator unhealthy after schema-v2 seed")
+    raise SystemExit("v2.3 allocator unhealthy after seed")
 
 print("SEED_OK")
 print(json.dumps({
-    "client_id": client_id,
+    "client_id": machine_id,
     "service_id": service_id,
     "remote_port": remote_port,
+    "group_id": group_id,
     "registry_schema": 2,
-    "egress_profile_id": profile_id,
 }))
 PY
 grep -q SEED_OK "$OUT/seed.log" || fail_out "state seed failed"
 pq_gate V230_STATE_SEED PASS
+
+if pq_ssh "$SERVER" 'sudo test ! -e /var/lib/frp-auto-deploy/egress-control.json'; then
+  pq_gate V230_NO_EGRESS_FIXTURE PASS
+else
+  fail_out "immutable v2.3.0 fixture unexpectedly contains egress-control.json"
+fi
+
+# Retain real prior-stable backup evidence without copying secrets off the test host,
+# and prove that the v2.3 archive can restore the seeded state in an isolated root.
+V230_BACKUP_REMOTE="/var/tmp/drlink-a019-v230-backup.tar.gz"
+set +e
+pq_ssh "$SERVER" "sudo /usr/local/sbin/frp-backup '$V230_BACKUP_REMOTE'" >"$OUT/v230-backup.log" 2>&1
+backup_rc=$?
+set -uo pipefail
+if [[ "$backup_rc" -ne 0 ]]; then
+  pq_gate V230_BACKUP FAIL
+  cat "$OUT/v230-backup.log" | tee -a "$PROD_QUAL_SUMMARY" || true
+  fail_out "v2.3.0 backup failed rc=$backup_rc"
+fi
+pq_ssh "$SERVER" "sudo sha256sum '$V230_BACKUP_REMOTE'; sudo tar -tzf '$V230_BACKUP_REMOTE' | sort" >"$OUT/v230-backup-evidence.txt"
+pq_gate V230_BACKUP PASS
+
+set +e
+pq_ssh "$SERVER" "sudo env FRP_DEPLOY_TEST_ROOT=/tmp/drlink-a019-v230-restore FRP_SKIP_SYSTEMD=1 bash -s -- '$V230_BACKUP_REMOTE'" >"$OUT/v230-restore-proof.log" 2>&1 <<'EOF'
+set -euo pipefail
+backup="$1"
+root="$FRP_DEPLOY_TEST_ROOT"
+rm -rf "$root"
+mkdir -p "$root/etc" "$root/var/lib" "$root/var/log"
+cp -a /etc/frp-auto-deploy "$root/etc/"
+cp -a /etc/frp "$root/etc/"
+cp -a /var/lib/frp-auto-deploy "$root/var/lib/"
+if [[ -d /var/log/frp-auto-deploy ]]; then
+  cp -a /var/log/frp-auto-deploy "$root/var/log/"
+fi
+before="$(sha256sum /var/lib/frp-auto-deploy/registry.json | awk '{print $1}')"
+python3 - "$root/var/lib/frp-auto-deploy/registry.json" <<'PY'
+import json, sys
+from pathlib import Path
+p = Path(sys.argv[1])
+data = json.loads(p.read_text(encoding="utf-8"))
+data["clients"] = {}
+p.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+/usr/local/sbin/frp-restore "$backup"
+after="$(sha256sum "$root/var/lib/frp-auto-deploy/registry.json" | awk '{print $1}')"
+test "$before" = "$after"
+echo V230_BACKUP_RESTORE_PROOF=PASS
+rm -rf "$root"
+EOF
+restore_rc=$?
+set -uo pipefail
+if [[ "$restore_rc" -ne 0 ]] || ! grep -q '^V230_BACKUP_RESTORE_PROOF=PASS$' "$OUT/v230-restore-proof.log"; then
+  pq_gate V230_BACKUP_RESTORABLE FAIL
+  cat "$OUT/v230-restore-proof.log" | tee -a "$PROD_QUAL_SUMMARY" || true
+  fail_out "v2.3.0 backup restore proof failed rc=$restore_rc"
+fi
+pq_gate V230_BACKUP_RESTORABLE PASS
 
 # Pre-upgrade fingerprint
 pq_ssh "$SERVER" 'sudo python3 -' >"$OUT/pre-upgrade-fingerprint.json" <<'PY'
@@ -360,9 +376,9 @@ def load(path):
         return None
     return json.loads(p.read_text(encoding="utf-8"))
 
-reg = load("/var/lib/drlink/registry.json") or {}
-eg = load("/var/lib/drlink/egress-control.json") or {}
-acl = load("/var/lib/drlink/access-control.json") or {}
+reg = load("/var/lib/frp-auto-deploy/registry.json") or {}
+acl = load("/var/lib/frp-auto-deploy/access-control.json") or {}
+groups = reg.get("groups") or {}
 clients = []
 for mid, c in (reg.get("clients") or {}).items():
     if not isinstance(c, dict):
@@ -375,26 +391,31 @@ for mid, c in (reg.get("clients") or {}).items():
                 "remote_port": svc.get("remote_port"),
                 "local_port": svc.get("local_port"),
             })
+    group_names = []
+    for gid in c.get("group_ids") or []:
+        group = groups.get(gid) or {}
+        group_names.append(group.get("name") or gid)
     clients.append({
         "machine_id": mid,
-        "client_id": c.get("client_id") or c.get("id") or mid,
-        "labels": c.get("labels") or {},
+        "client_id": mid,
         "tags": c.get("tags") or {},
-        "groups": c.get("groups") or c.get("group"),
+        "groups": sorted(group_names),
         "services": services,
     })
 doc = {
     "registry_schema": reg.get("schema_version"),
-    "egress_schema": eg.get("schema_version"),
-    "access_lists": sorted((acl.get("access_lists") or acl.get("lists") or {}).keys()),
+    "access_lists": sorted((acl.get("access_lists") or {}).keys()),
     "clients": clients,
-    "egress_profiles": sorted((eg.get("egress_profiles") or {}).keys()),
-    "tcp_relays": sorted((eg.get("tcp_relays") or {}).keys()),
-    "version_file": Path("/etc/drlink/version").read_text(encoding="utf-8")
-        if Path("/etc/drlink/version").is_file() else "",
+    "version_file": Path("/etc/frp-auto-deploy/version").read_text(encoding="utf-8")
+        if Path("/etc/frp-auto-deploy/version").is_file() else "",
 }
 print(json.dumps(doc, indent=2, sort_keys=True))
 PY
+mkdir -p "$GOLDEN"
+cp "$OUT/pre-upgrade-fingerprint.json" "$GOLDEN/pre-upgrade-fingerprint.json"
+cp "$OUT/v230-version.txt" "$GOLDEN/version.txt"
+cp "$OUT/v230-backup-evidence.txt" "$GOLDEN/backup-evidence.txt"
+pq_gate V230_GOLDEN_EVIDENCE PASS
 
 # --- 3) Upgrade to current v2.4 tree ---
 # Prefer stdin bootstrap from the candidate tree so we do not depend on an unpublished tag.
@@ -416,76 +437,65 @@ if [[ "$up_rc" -ne 0 ]]; then
 fi
 pq_gate UPGRADE_SERVER PASS
 
-# Ensure egress schema migrates to v3 (load persists migration under lock).
-pq_ssh "$SERVER" 'sudo python3 -' >"$OUT/egress-migrate.log" 2>&1 <<'PY'
-import sys
-sys.path.insert(0, "/usr/local/lib/drlink")
-import frp_egress_control as eg
-state = eg.load_egress_state()
-print("LOADED_SCHEMA=%s" % state.get("schema_version"))
-print("TCP_RELAYS=%s" % type(state.get("tcp_relays")).__name__)
-PY
-grep -q 'LOADED_SCHEMA=3' "$OUT/egress-migrate.log" || {
-  pq_gate UPGRADE_EGRESS_MIGRATE FAIL
-  cat "$OUT/egress-migrate.log" | tee -a "$PROD_QUAL_SUMMARY" || true
-  fail_out "egress schema did not migrate to v3 after upgrade"
-}
-pq_gate UPGRADE_EGRESS_MIGRATE PASS
-
 # Post-upgrade fingerprint
 pq_ssh "$SERVER" 'sudo python3 -' >"$OUT/post-upgrade-fingerprint.json" <<'PY'
 import json
+import sqlite3
 from pathlib import Path
 
-def load(path):
-    p = Path(path)
-    if not p.is_file():
-        return None
-    return json.loads(p.read_text(encoding="utf-8"))
-
-reg = load("/var/lib/drlink/registry.json") or {}
-eg = load("/var/lib/drlink/egress-control.json") or {}
-acl = load("/var/lib/drlink/access-control.json") or {}
+db_path = Path("/var/lib/drlink/drlink.db")
+if not db_path.is_file():
+    raise SystemExit("missing canonical v2.4 control DB")
+conn = sqlite3.connect(str(db_path))
+conn.row_factory = sqlite3.Row
 clients = []
-for mid, c in (reg.get("clients") or {}).items():
-    if not isinstance(c, dict):
-        continue
-    services = []
-    for sid, svc in (c.get("services") or {}).items():
-        if isinstance(svc, dict):
-            services.append({
-                "service_id": sid,
-                "remote_port": svc.get("remote_port"),
-                "local_port": svc.get("local_port"),
-            })
+for c in conn.execute("SELECT id FROM clients ORDER BY id"):
+    cid = str(c["id"])
+    services = [
+        {
+            "service_id": str(s["name"]),
+            "remote_port": s["public_port"],
+            "local_port": s["target_port"],
+        }
+        for s in conn.execute(
+            "SELECT name, public_port, target_port FROM published_services "
+            "WHERE client_id = ? AND released = 0 ORDER BY name",
+            (cid,),
+        )
+    ]
+    tags = {
+        str(t["key"]): str(t["value"])
+        for t in conn.execute(
+            "SELECT key, value FROM client_tags WHERE client_id = ? ORDER BY key", (cid,)
+        )
+    }
+    groups = [
+        str(g["name"])
+        for g in conn.execute(
+            "SELECT g.name FROM client_group_members m "
+            "JOIN client_groups g ON g.id = m.group_id "
+            "WHERE m.client_id = ? ORDER BY g.name",
+            (cid,),
+        )
+    ]
     clients.append({
-        "machine_id": mid,
-        "client_id": c.get("client_id") or c.get("id") or mid,
-        "labels": c.get("labels") or {},
-        "tags": c.get("tags") or {},
-        "groups": c.get("groups") or c.get("group"),
+        "machine_id": cid,
+        "client_id": cid,
+        "tags": tags,
+        "groups": groups,
         "services": services,
     })
-relays = []
-for rid, r in (eg.get("tcp_relays") or {}).items():
-    if isinstance(r, dict):
-        relays.append({
-            "id": rid,
-            "name": r.get("name"),
-            "listen_port": r.get("listen_port"),
-            "enabled": r.get("enabled"),
-        })
+marker = conn.execute(
+    "SELECT value FROM system_meta WHERE key = 'legacy_v23_client_metadata_migrated'"
+).fetchone()
 doc = {
-    "registry_schema": reg.get("schema_version"),
-    "egress_schema": eg.get("schema_version"),
-    "access_lists": sorted((acl.get("access_lists") or acl.get("lists") or {}).keys()),
     "clients": clients,
-    "egress_profiles": sorted((eg.get("egress_profiles") or {}).keys()),
-    "tcp_relays": relays,
+    "metadata_marker": marker["value"] if marker else "",
     "version_file": Path("/etc/drlink/version").read_text(encoding="utf-8")
         if Path("/etc/drlink/version").is_file() else "",
     "tcp_unit": Path("/etc/systemd/system/drlink-tcp-egress.service").is_file()
         or Path("/lib/systemd/system/drlink-tcp-egress.service").is_file(),
+    "legacy_state_path_present": Path("/var/lib/frp-auto-deploy").exists(),
 }
 print(json.dumps(doc, indent=2, sort_keys=True))
 PY
@@ -529,9 +539,8 @@ def meta(doc):
     return sorted(rows)
 
 gate("UPGRADE_GROUP_TAG_STATE_PRESERVED", meta(pre) == meta(post))
-gate("UPGRADE_EGRESS_STATE_PRESERVED", pre.get("egress_profiles") == post.get("egress_profiles"))
-gate("UPGRADE_ACCESS_STATE_PRESERVED", pre.get("access_lists") == post.get("access_lists"))
-gate("UPGRADE_EGRESS_SCHEMA_V3", post.get("egress_schema") == 3)
+gate("UPGRADE_METADATA_MIGRATION_MARKED", post.get("metadata_marker") == "1")
+gate("UPGRADE_LEGACY_STATE_PATH_RETIRED", not bool(post.get("legacy_state_path_present")))
 gate("UPGRADE_VERSION_FILE", want_ver in str(post.get("version_file") or ""))
 gate("UPGRADE_TCP_UNIT_PRESENT", bool(post.get("tcp_unit")))
 print("COMPARE_OK=%s" % ("PASS" if ok else "FAIL"))
@@ -550,34 +559,29 @@ plane = ControlPlane(None)
 host = "v230-upgrade-seed"
 remote_allow = plane.evaluate_remote_access("198.51.100.10", host, "tcp", 22)
 remote_deny = plane.evaluate_remote_access("203.0.113.99", host, "tcp", 22)
-inet_allow = plane.evaluate_internet_access("10.20.30.5", "example.com", 443, "https")
-inet_src = plane.evaluate_internet_access("203.0.113.9", "example.com", 443, "https")
-inet_dst = plane.evaluate_internet_access("10.20.30.5", "other.example", 443, "https")
 remote_rules = plane.conn.execute(
     "SELECT COUNT(*) FROM policy_rules WHERE plane = 'remote'"
 ).fetchone()[0]
 internet_rules = plane.conn.execute(
     "SELECT COUNT(*) FROM policy_rules WHERE plane = 'internet'"
 ).fetchone()[0]
+remote_mode = v24.get_access_policy(plane, "remote").get("mode")
+internet_mode = v24.get_access_policy(plane, "internet").get("mode")
 print("REMOTE_ALLOW=%s" % remote_allow.get("action"))
 print("REMOTE_DENY=%s" % remote_deny.get("action"))
 print("REMOTE_DENY_REASON=%s" % remote_deny.get("reason"))
-print("INET_ALLOW=%s" % inet_allow.get("action"))
-print("INET_WRONG_SRC=%s" % inet_src.get("action"))
-print("INET_WRONG_DST=%s" % inet_dst.get("action"))
 print("REMOTE_RULES=%s" % remote_rules)
 print("INTERNET_RULES=%s" % internet_rules)
-print("REMOTE_MODE=%s" % v24.get_access_policy(plane, "remote").get("mode"))
-print("INTERNET_MODE=%s" % v24.get_access_policy(plane, "internet").get("mode"))
+print("REMOTE_MODE=%s" % remote_mode)
+print("INTERNET_MODE=%s" % internet_mode)
 ok = (
     remote_allow.get("action") == "ALLOW"
     and remote_deny.get("action") == "DENY"
     and "No Policy (ALLOW)" not in str(remote_deny.get("reason"))
-    and inet_allow.get("action") == "ALLOW"
-    and inet_src.get("action") == "DENY"
-    and inet_dst.get("action") == "DENY"
     and int(remote_rules) > 0
-    and int(internet_rules) > 0
+    and remote_mode == "whitelist"
+    and int(internet_rules) == 0
+    and internet_mode is None
 )
 print("POLICY_PRESERVED=%s" % ("PASS" if ok else "FAIL"))
 raise SystemExit(0 if ok else 1)
@@ -592,7 +596,7 @@ fi
 
 # Runtime health after upgrade
 set +e
-pq_ssh "$SERVER" 'sudo drlink doctor >/tmp/drlink-doctor-upgrade.txt 2>&1; sudo drlink status >/tmp/drlink-status-upgrade.txt 2>&1; systemctl is-active drlink-server drlink-allocator drlink-access drlink-egress; systemctl cat drlink-tcp-egress >/dev/null 2>&1; echo TCP_UNIT_RC=$?'
+pq_ssh "$SERVER" 'sudo drlink doctor >/tmp/drlink-doctor-upgrade.txt 2>&1; sudo drlink show status >/tmp/drlink-status-upgrade.txt 2>&1; systemctl is-active drlink-server drlink-allocator drlink-access drlink-egress; systemctl cat drlink-tcp-egress >/dev/null 2>&1; echo TCP_UNIT_RC=$?'
 rt_rc=$?
 set -uo pipefail
 pq_ssh "$SERVER" 'sudo cat /tmp/drlink-doctor-upgrade.txt' >"$OUT/doctor.txt" || true
@@ -604,26 +608,77 @@ else
   up_cmp=1
 fi
 
-# Fixed TCP feature available after upgrade (create disabled)
+# The prior-stable product backup is lab evidence and must survive the upgrade
+# byte-for-byte. Same-version restore was already proven before mutation.
+v230_backup_sha="$(awk 'NR==1 {print $1}' "$OUT/v230-backup-evidence.txt")"
+post_backup_sha="$(pq_ssh "$SERVER" "sudo sha256sum '$V230_BACKUP_REMOTE'" 2>/dev/null | awk 'NR==1 {print $1}')"
+if [[ -n "$v230_backup_sha" && "$post_backup_sha" == "$v230_backup_sha" ]]; then
+  pq_gate UPGRADE_V230_BACKUP_RETAINED PASS
+else
+  pq_gate UPGRADE_V230_BACKUP_RETAINED FAIL
+  up_cmp=1
+fi
+
+# A-019 requires post-upgrade reboot recovery. Require a real boot-id change,
+# successful reconnect, and healthy v2.4 runtime after boot.
+boot_before="$(pq_ssh "$SERVER" 'cat /proc/sys/kernel/random/boot_id')"
 set +e
-pq_ssh "$SERVER" 'sudo drlink egress tcp list >/tmp/tcp-list.txt 2>&1; echo EC=$?'
-tcp_list_rc=$?
+pq_ssh "$SERVER" 'sudo systemctl reboot' >/dev/null 2>&1
 set -uo pipefail
-pq_ssh "$SERVER" 'sudo cat /tmp/tcp-list.txt' >"$OUT/tcp-list.txt" || true
-if [[ "$tcp_list_rc" -eq 0 ]]; then
+reboot_ok=0
+for _ in $(seq 1 60); do
+  sleep 5
+  boot_after="$(pq_ssh "$SERVER" 'cat /proc/sys/kernel/random/boot_id' 2>/dev/null || true)"
+  if [[ -n "$boot_after" && "$boot_after" != "$boot_before" ]] \
+    && pq_ssh "$SERVER" 'sudo drlink doctor >/tmp/drlink-doctor-a019-reboot.txt 2>&1 && systemctl is-active --quiet drlink-server drlink-allocator drlink-access drlink-egress'; then
+    reboot_ok=1
+    break
+  fi
+done
+pq_ssh "$SERVER" 'sudo cat /tmp/drlink-doctor-a019-reboot.txt 2>/dev/null || true' >"$OUT/doctor-after-reboot.txt" || true
+if [[ "$reboot_ok" -eq 1 ]]; then
+  pq_gate UPGRADE_REBOOT_RECOVERY PASS
+else
+  pq_gate UPGRADE_REBOOT_RECOVERY FAIL
+  up_cmp=1
+fi
+
+# Fixed TCP is a v2.4 Service Object subtype. Prove the new capability
+# is usable after upgrade, then remove the temporary test object.
+set +e
+pq_ssh "$SERVER" 'sudo drlink set service-object a019-fixed type fixed-tcp port 1521 >/tmp/fixed-tcp.txt 2>&1 && sudo drlink show service-object a019-fixed >>/tmp/fixed-tcp.txt 2>&1'
+fixed_tcp_rc=$?
+set -uo pipefail
+pq_ssh "$SERVER" 'sudo cat /tmp/fixed-tcp.txt' >"$OUT/fixed-tcp.txt" || true
+pq_ssh "$SERVER" 'sudo drlink unset service-object a019-fixed >/dev/null 2>&1 || true' || true
+if [[ "$fixed_tcp_rc" -eq 0 ]]; then
   pq_gate UPGRADE_FIXED_TCP_AVAILABLE PASS
 else
   pq_gate UPGRADE_FIXED_TCP_AVAILABLE FAIL
   up_cmp=1
 fi
 
+END_HEAD="$(pq_head_sha)"
+WORKTREE_CLEAN_END=NO
+if git -C "$ROOT" diff --quiet && git -C "$ROOT" diff --cached --quiet; then
+  WORKTREE_CLEAN_END=YES
+fi
+if [[ "$END_HEAD" == "$HEAD" ]]; then
+  pq_gate A019_HEAD_UNCHANGED PASS
+else
+  pq_gate A019_HEAD_UNCHANGED FAIL
+  up_cmp=1
+fi
+pq_note "WORKTREE_CLEAN_END=$WORKTREE_CLEAN_END"
+
 if [[ "$up_cmp" -eq 0 ]] && ! grep -q '=FAIL$' "$PROD_QUAL_GATES"; then
   pq_gate LIVE_V230_TO_V240_UPGRADE PASS
   pq_note "LIVE_V230_TO_V240_UPGRADE=PASS"
-  python3 - "$OUT" "$HEAD" <<'PY'
+  python3 - "$OUT" "$HEAD" "$END_HEAD" "$WORKTREE_CLEAN_START" "$WORKTREE_CLEAN_END" <<'PY'
 import json, sys
 from pathlib import Path
-out, head = Path(sys.argv[1]), sys.argv[2]
+out = Path(sys.argv[1])
+head, end_head, clean_start, clean_end = sys.argv[2:]
 gates = {}
 for line in (out / "gates.env").read_text().splitlines():
     if "=" in line:
@@ -632,6 +687,10 @@ for line in (out / "gates.env").read_text().splitlines():
 doc = {
     "schema_version": 1,
     "git_head": head,
+    "end_head": end_head,
+    "head_unchanged": end_head == head,
+    "worktree_clean_start": clean_start == "YES",
+    "worktree_clean_end": clean_end == "YES",
     "gates": gates,
     "final_status": gates.get("LIVE_V230_TO_V240_UPGRADE"),
     "evidence": {
@@ -643,6 +702,13 @@ doc = {
 }
 (out / "summary.json").write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
 PY
+  if [[ "$WORKTREE_CLEAN_START" == "YES" && "$WORKTREE_CLEAN_END" == "YES" ]]; then
+    mkdir -p "$(dirname "$A019_CANONICAL_EVIDENCE")"
+    cp "$OUT/summary.json" "$A019_CANONICAL_EVIDENCE"
+    pq_note "A019_CANONICAL_EVIDENCE=$A019_CANONICAL_EVIDENCE"
+  else
+    pq_note "A019_CANONICAL_EVIDENCE=NOT_PUBLISHED_DIRTY_WORKTREE"
+  fi
   exit 0
 fi
 pq_gate LIVE_V230_TO_V240_UPGRADE FAIL

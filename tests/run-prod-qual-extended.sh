@@ -1920,7 +1920,9 @@ main() {
   phase_wrong_ops
   phase_fixed_tcp_egress
   phase_soak
-  phase_golden_baseline
+  # Prior-stable capture is owned by the dedicated A-019 harness. This suite
+  # runs on the current v2.4 candidate and must not attempt a v2.3 capture here.
+  pq_note "A019_GOLDEN_OWNER=tests/run-v230-to-v240-upgrade-e2e.sh"
   pq_note "EXTENDED_FINISHED=$(date -u +%Y-%m-%dT%H:%M:%SZ) FAILS=$PROD_QUAL_FAILS"
   if [[ "${PROD_QUAL_FAILS:-0}" -gt 0 ]]; then
     exit 1

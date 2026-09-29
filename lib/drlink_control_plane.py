@@ -1968,7 +1968,15 @@ class ControlPlane:
 
     # --- client groups ----------------------------------------------------
     def set_client_group(self, name: str, description: Optional[str] = None) -> dict:
-        name = _validate_name(name, "Client Group name")
+        # Client Group names predate the v2.4 generic object namespace and
+        # historically allow an alphanumeric first character. Preserve that
+        # compatibility so valid v2.3 groups remain manageable after upgrade.
+        import frp_client_registry as creg
+
+        try:
+            name = creg.validate_group_name(name)
+        except ValueError as exc:
+            raise ControlPlaneError(str(exc)) from exc
 
         def write():
             existing = self.conn.execute(

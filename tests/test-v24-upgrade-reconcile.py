@@ -13,6 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 
+from drlink_control_db import ControlPlaneError
 from drlink_control_plane import ControlPlane
 import drlink_runtime_policy as RP
 import drlink_upgrade_reconcile as UR
@@ -422,6 +423,73 @@ class UpgradeReconcileTests(unittest.TestCase):
         ).fetchone()
         self.assertTrue(fresh["last_seen"])
         self.assertNotEqual(fresh["last_seen"], stale)
+
+    def test_UPGRADE_LEGACY_TAGS_AND_GROUPS_PRESERVED_ONCE(self):
+        gid = "grp_1234abcd"
+        cid = IDS["ubuntu24"]
+        self.registry["groups"] = {
+            gid: {"name": "1st-wave", "description": "legacy v2.3 group"}
+        }
+        self.registry["clients"][cid]["tags"] = {"env": "prod", "site": "seoul"}
+        self.registry["clients"][cid]["group_ids"] = [gid]
+
+        first = self._apply()
+        self.assertTrue(first["applied"])
+        tags = {
+            row["key"]: row["value"]
+            for row in self.plane.conn.execute(
+                "SELECT key, value FROM client_tags WHERE client_id = ?", (cid,)
+            )
+        }
+        self.assertEqual(tags, {"env": "prod", "site": "seoul"})
+        group = self.plane.conn.execute(
+            "SELECT * FROM client_groups WHERE name = '1st-wave'"
+        ).fetchone()
+        self.assertIsNotNone(group)
+        self.assertEqual(group["description"], "legacy v2.3 group")
+        self.assertIsNotNone(
+            self.plane.conn.execute(
+                "SELECT 1 FROM client_group_members WHERE group_id = ? AND client_id = ?",
+                (group["id"], cid),
+            ).fetchone()
+        )
+        marker = self.plane.conn.execute(
+            "SELECT value FROM system_meta WHERE key = ?",
+            (UR.LEGACY_CLIENT_METADATA_MARKER,),
+        ).fetchone()
+        self.assertEqual(marker["value"], "1")
+
+        # Once migrated, legacy JSON must not resurrect metadata changed in v2.4.
+        self.plane.set_client_tag(cid, "env", "stage")
+        self.plane.unset_client_group_member("1st-wave", cid)
+        second = self._apply()
+        self.assertTrue(second["skipped"])
+        self.assertEqual(
+            self.plane.conn.execute(
+                "SELECT value FROM client_tags WHERE client_id = ? AND key = 'env'", (cid,)
+            ).fetchone()["value"],
+            "stage",
+        )
+        self.assertIsNone(
+            self.plane.conn.execute(
+                "SELECT 1 FROM client_group_members WHERE group_id = ? AND client_id = ?",
+                (group["id"], cid),
+            ).fetchone()
+        )
+
+    def test_UPGRADE_INVALID_LEGACY_GROUP_METADATA_FAILS_CLOSED(self):
+        cid = IDS["ubuntu24"]
+        self.registry["clients"][cid]["group_ids"] = ["grp_deadbeef"]
+        before = self.plane.current_revision()
+        with self.assertRaises(ControlPlaneError):
+            UR.apply_upgrade_reconciliation(self.plane, self.registry)
+        self.assertEqual(self.plane.current_revision(), before)
+        self.assertIsNone(
+            self.plane.conn.execute(
+                "SELECT value FROM system_meta WHERE key = ?",
+                (UR.LEGACY_CLIENT_METADATA_MARKER,),
+            ).fetchone()
+        )
 
     def test_corrupt_registry_does_not_mutate(self):
         bad = {"not": "clients"}

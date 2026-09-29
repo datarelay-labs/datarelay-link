@@ -199,10 +199,12 @@ older published release for historical and rollback evidence. `v2.3.1` was not
 manufactured and is not an upgrade baseline. Do not exclude a prior-stable
 upgrade gate from a final PASS.
 
-Use the sanitized golden baseline produced by production-realistic
-qualification (`e2e-reports/v2.3.0-golden-upgrade-baseline/`) plus a full
-server backup retained in the lab (not committed). The live harness is
-`tests/run-v230-to-v240-upgrade-e2e.sh`.
+Use the dedicated live A-019 harness
+`tests/run-v230-to-v240-upgrade-e2e.sh`. It installs immutable `v2.3.0`,
+creates meaningful non-empty prior-stable state, captures a same-run sanitized
+golden fingerprint, creates and restore-proves a v2.3 backup, and then upgrades
+that exact fixture to the v2.4 candidate. The backup archive remains lab-only
+and is never committed.
 
 ### Scenarios (EVERY next release)
 
@@ -223,5 +225,5 @@ ports unchanged
 services unchanged
 groups/tags unchanged
 Access unchanged
-Egress unchanged
+no v2.4-only Egress state invented as v2.3 input
 ```

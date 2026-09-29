@@ -37,6 +37,7 @@ V24_PREFIX = "rs-"
 MGMT_MAC_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
 # Tests may assign a callable(stage: str). Production leaves this unset.
 _MIGRATION_CHECKPOINT = None
+LEGACY_CLIENT_METADATA_MARKER = "legacy_v23_client_metadata_migrated"
 
 
 def _truthy(value: Any) -> bool:
@@ -169,6 +170,120 @@ def _client_public_name(rec: dict, client_id: str) -> str:
     label = str(rec.get("label") or "").strip()
     hostname = str(rec.get("hostname") or "").strip()
     return label or hostname or str(client_id)[:8]
+
+
+def _legacy_metadata_error(detail: str) -> ControlPlaneError:
+    return ControlPlaneError(
+        "Upgrade cannot preserve v2.3 client metadata safely.\n\n%s\n\n"
+        "Client tags/groups were not changed. Correct the legacy registry and retry."
+        % detail
+    )
+
+
+def _legacy_client_metadata_plan(plane: ControlPlane, registry: dict) -> dict:
+    marker = plane.conn.execute(
+        "SELECT value FROM system_meta WHERE key = ?", (LEGACY_CLIENT_METADATA_MARKER,)
+    ).fetchone()
+    if marker is not None and str(marker["value"] or "") == "1":
+        return {"pending": False, "groups": [], "clients": {}}
+
+    import frp_client_registry as creg
+
+    issues = creg.group_invariant_issues(registry)
+    if issues:
+        raise _legacy_metadata_error("; ".join(issues))
+    groups = []
+    group_names = {}
+    for gid, rec in (registry.get("groups") or {}).items():
+        if not isinstance(rec, dict):
+            raise _legacy_metadata_error("group %s record is not an object." % gid)
+        try:
+            name = creg.validate_group_name(rec.get("name"))
+            description = creg.validate_group_description(rec.get("description") or "")
+        except ValueError as exc:
+            raise _legacy_metadata_error(
+                "group %s has invalid metadata (%s)." % (gid, exc)
+            ) from exc
+        group_names[str(gid)] = name
+        groups.append({"legacy_id": str(gid), "name": name, "description": description})
+
+    clients = {}
+    for cid, rec in (registry.get("clients") or {}).items():
+        if not isinstance(rec, dict):
+            continue
+        raw_tags = rec.get("tags")
+        if raw_tags is None:
+            raw_tags = {}
+        if not isinstance(raw_tags, dict):
+            raise _legacy_metadata_error("client %s tags must be an object." % str(cid)[:12])
+        tags = {}
+        for key, value in raw_tags.items():
+            try:
+                valid_key = creg.validate_tag_key(key)
+                valid_value = creg.validate_tag_value(value)
+            except ValueError as exc:
+                raise _legacy_metadata_error(
+                    "client %s has invalid tag metadata (%s)." % (str(cid)[:12], exc)
+                ) from exc
+            tags[valid_key] = valid_value
+        try:
+            gids = creg.client_group_ids(rec)
+        except ValueError as exc:
+            raise _legacy_metadata_error(
+                "client %s has invalid group membership (%s)." % (str(cid)[:12], exc)
+            ) from exc
+        clients[str(cid)] = {
+            "tags": tags,
+            "groups": [group_names[gid] for gid in gids],
+        }
+
+    pending = bool(groups or any(v["tags"] or v["groups"] for v in clients.values()))
+    return {"pending": pending, "groups": groups, "clients": clients}
+
+
+def _apply_legacy_client_metadata(plane: ControlPlane, plan: dict) -> None:
+    if not plan.get("pending"):
+        return
+    for group in plan.get("groups") or []:
+        existing = plane.conn.execute(
+            "SELECT * FROM client_groups WHERE name = ? COLLATE NOCASE", (group["name"],)
+        ).fetchone()
+        if existing is not None and str(existing["description"] or "") != group["description"]:
+            raise _legacy_metadata_error(
+                "Client Group '%s' already exists with different metadata." % group["name"]
+            )
+        if existing is None:
+            plane.set_client_group(group["name"], group["description"])
+
+    for cid, metadata in (plan.get("clients") or {}).items():
+        if plane.conn.execute("SELECT 1 FROM clients WHERE id = ?", (cid,)).fetchone() is None:
+            raise _legacy_metadata_error("client %s was not imported." % cid[:12])
+        for key, value in (metadata.get("tags") or {}).items():
+            existing = plane.conn.execute(
+                "SELECT value FROM client_tags WHERE client_id = ? AND key = ?", (cid, key)
+            ).fetchone()
+            if existing is not None and str(existing["value"]) != value:
+                raise _legacy_metadata_error(
+                    "client %s tag '%s' already has a different canonical value." % (cid[:12], key)
+                )
+            if existing is None:
+                plane.set_client_tag(cid, key, value)
+        for group_name in metadata.get("groups") or []:
+            grp = plane.conn.execute(
+                "SELECT id FROM client_groups WHERE name = ? COLLATE NOCASE", (group_name,)
+            ).fetchone()
+            if grp is None:
+                raise _legacy_metadata_error("Client Group '%s' was not imported." % group_name)
+            member = plane.conn.execute(
+                "SELECT 1 FROM client_group_members WHERE group_id = ? AND client_id = ?",
+                (grp["id"], cid),
+            ).fetchone()
+            if member is None:
+                plane.set_client_group_member(group_name, cid)
+    plane.conn.execute(
+        "INSERT OR REPLACE INTO system_meta(key, value) VALUES (?, '1')",
+        (LEGACY_CLIENT_METADATA_MARKER,),
+    )
 
 
 def _managed_host_row(plane: ControlPlane, client_id: str):
@@ -1036,6 +1151,7 @@ def preview_upgrade_reconciliation(plane: ControlPlane, registry: dict) -> dict:
                 }
             )
 
+    legacy_metadata = _legacy_client_metadata_plan(plane, registry)
     has_work = bool(
         missing_clients
         or missing_hosts
@@ -1043,6 +1159,7 @@ def preview_upgrade_reconciliation(plane: ControlPlane, registry: dict) -> dict:
         or duplicate_projections
         or stale_reservations
         or health_repairs
+        or legacy_metadata.get("pending")
     )
     return {
         "registry_clients": len(clients),
@@ -1058,6 +1175,7 @@ def preview_upgrade_reconciliation(plane: ControlPlane, registry: dict) -> dict:
         "stale_reservations": stale_reservations,
         "health_repairs": health_repairs,
         "preserved_endpoints": preserved_endpoints,
+        "legacy_client_metadata": legacy_metadata,
         "has_work": has_work,
         "endpoint_owners": {str(k): v for k, v in owners.items()},
     }
@@ -1694,6 +1812,10 @@ def apply_upgrade_reconciliation(
                     connected=connected if existing_row is None else bool(existing_row["connected"]),
                     addresses=_observed_addresses(rec) or None,
                 )
+
+            _apply_legacy_client_metadata(
+                plane, plan.get("legacy_client_metadata") or {"pending": False}
+            )
 
             owners = registry_endpoint_owners(registry)
             for cid, rec in clients.items():
