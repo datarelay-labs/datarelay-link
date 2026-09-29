@@ -204,7 +204,11 @@ Use the dedicated live A-019 harness
 creates meaningful non-empty prior-stable state, captures a same-run sanitized
 golden fingerprint, creates and restore-proves a v2.3 backup, and then upgrades
 that exact fixture to the v2.4 candidate. The backup archive remains lab-only
-and is never committed.
+and is never committed. A successful run from a clean worktree publishes
+ignored canonical evidence at
+`e2e-reports/release-qualification/a019-v230-to-v240.json`; PASS1/PASS2 reject
+missing, dirty, stale-HEAD, or incomplete A-019 evidence before destructive
+production-realistic qualification begins.
 
 ### Scenarios (EVERY next release)
 

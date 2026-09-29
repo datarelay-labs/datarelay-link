@@ -218,7 +218,8 @@ assert "V230_BACKUP FAIL" in text
 assert "WORKTREE_CLEAN_START" in text and "WORKTREE_CLEAN_END" in text
 assert "A019_HEAD_UNCHANGED" in text
 assert "A019_CANONICAL_EVIDENCE=NOT_PUBLISHED_DIRTY_WORKTREE" in text
-assert "2.3.1" not in text
+assert "PRIOR_STABLE_VERSION=2.3.0" in text
+assert "PRIOR_STABLE_VERSION=2.3.1" not in text
 print("ok")
 PY
 pass "A-019 prior-stable/backup/exact-head truthfulness"
