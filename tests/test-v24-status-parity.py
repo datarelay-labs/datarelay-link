@@ -748,6 +748,77 @@ class FalseHealthyFailClosedTests(unittest.TestCase):
         self.assertIn("verification", reason.lower())
         self.assertNotEqual(status, "HEALTHY")
 
+    def test_previously_verified_bit_cleared_on_disconnect_reconnect(self):
+        # Audit #41 re-audit at 19cca2c: seed runtime_verified=1, disconnect,
+        # reconnect with no fresh Agent report — operator display must stay
+        # non-HEALTHY and the persisted verification bit must not survive.
+        pub, _meta = self._seed_stored_healthy(connected=True)
+        self.plane.conn.execute(
+            "UPDATE remote_service_meta SET runtime_verified = 1, status = 'HEALTHY', "
+            "reason = '' WHERE service_id = ?",
+            (pub["id"],),
+        )
+        self.plane.conn.commit()
+        client = self.plane.conn.execute(
+            "SELECT * FROM clients WHERE id = ?", (MACHINE,)
+        ).fetchone()
+        meta = self.plane.conn.execute(
+            "SELECT * FROM remote_service_meta WHERE service_id = ?", (pub["id"],)
+        ).fetchone()
+        self.assertEqual(int(meta["runtime_verified"] or 0), 1)
+        self.assertEqual(
+            v24.inventory_remote_service_status(
+                self.plane,
+                client,
+                enabled=True,
+                stored_status=meta["status"],
+                runtime_verified=bool(meta["runtime_verified"]),
+            ),
+            "HEALTHY",
+        )
+
+        self.plane.upsert_client(MACHINE, label="agent-a", hostname="agent-a", connected=False)
+        meta = self.plane.conn.execute(
+            "SELECT * FROM remote_service_meta WHERE service_id = ?", (pub["id"],)
+        ).fetchone()
+        self.assertEqual(int(meta["runtime_verified"] or 0), 0)
+        client = self.plane.conn.execute(
+            "SELECT * FROM clients WHERE id = ?", (MACHINE,)
+        ).fetchone()
+        self.assertNotEqual(
+            v24.inventory_remote_service_status(
+                self.plane,
+                client,
+                enabled=True,
+                stored_status=meta["status"],
+                runtime_verified=bool(meta["runtime_verified"]),
+            ),
+            "HEALTHY",
+        )
+
+        self.plane.upsert_client(MACHINE, label="agent-a", hostname="agent-a", connected=True)
+        meta = self.plane.conn.execute(
+            "SELECT * FROM remote_service_meta WHERE service_id = ?", (pub["id"],)
+        ).fetchone()
+        self.assertEqual(int(meta["runtime_verified"] or 0), 0)
+        client = self.plane.conn.execute(
+            "SELECT * FROM clients WHERE id = ?", (MACHINE,)
+        ).fetchone()
+        shown = v24.inventory_remote_service_status(
+            self.plane,
+            client,
+            enabled=True,
+            stored_status=meta["status"],
+            runtime_verified=bool(meta["runtime_verified"]),
+        )
+        self.assertEqual(shown, "DEGRADED")
+        self.assertNotEqual(shown, "HEALTHY")
+        status, reason, _ = UR.effective_remote_service_status(
+            self.plane, pub, meta, {}, registry_available=False
+        )
+        self.assertEqual(status, "DEGRADED")
+        self.assertIn("verification", reason.lower())
+
     def test_listener_delay_unverified_healthy_claim_is_degraded(self):
         pub, meta = self._seed_stored_healthy()
         status, reason, _ = UR.effective_remote_service_status(
@@ -1013,6 +1084,53 @@ class AgentPushFalseHealthyTests(unittest.TestCase):
         server = self._server_status("ssh-access")
         self.assertEqual(server["status"], "HEALTHY")
         self.assertEqual(int(server["runtime_verified"] or 0), 1)
+
+    def test_synchronize_clears_verification_before_pre_apply_push(self):
+        # Audit #41: synchronize must not replay persisted runtime_verified=1
+        # on the pre-apply status push before fresh runtime verification.
+        created = mgmt.upsert_remote_service_on_server(
+            root=self.agent_tmp,
+            name="ssh-access",
+            destination="this-host",
+            service="ssh",
+            enabled=True,
+            pool_class="normal",
+            target_host="127.0.0.1",
+            target_port=22,
+            target_mode="self",
+            runtime_verified=True,
+        )
+        port = int(created["endpoint_port"])
+        now = "2026-09-18T00:00:00Z"
+        self.agent.conn.execute(
+            "INSERT OR REPLACE INTO agent_remote_services"
+            "(name, destination, service_object, enabled, status, endpoint_host, endpoint_port, "
+            "pending_allocation, delete_pending, pool_class, reason, runtime_verified, updated_at) "
+            "VALUES ('ssh-access', 'this-host', 'ssh', 1, 'HEALTHY', 'drlink.local', ?, 0, 0, "
+            "'normal', '', 1, ?)",
+            (port, now),
+        )
+        self.agent.conn.commit()
+
+        seen_verified = []
+        real_push = v24._push_agent_remote_service_status
+
+        def spy_push(plane_db, *, root=None, names=None):
+            row = plane_db.conn.execute(
+                "SELECT runtime_verified FROM agent_remote_services WHERE name = 'ssh-access'"
+            ).fetchone()
+            seen_verified.append(int(row["runtime_verified"] or 0))
+            return real_push(plane_db, root=root, names=names)
+
+        original = v24._push_agent_remote_service_status
+        v24._push_agent_remote_service_status = spy_push
+        try:
+            v24.synchronize_agent_remote_services(self.agent, root=self.agent_tmp)
+        finally:
+            v24._push_agent_remote_service_status = original
+
+        self.assertGreaterEqual(len(seen_verified), 1)
+        self.assertEqual(seen_verified[0], 0)
 
 
 if __name__ == "__main__":

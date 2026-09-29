@@ -5472,6 +5472,22 @@ def format_synchronize_result(result: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _invalidate_agent_remote_service_runtime_verification(plane_db) -> int:
+    """Clear persisted Agent runtime_verified before a fresh runtime apply.
+
+    Reconnect/synchronize and runtime restart must not replay a prior verification
+    bit to the Server via the pre-apply status push.
+    """
+    now = utc_now_iso()
+    cur = plane_db.conn.execute(
+        "UPDATE agent_remote_services SET runtime_verified = 0, updated_at = ? "
+        "WHERE delete_pending = 0 AND runtime_verified != 0",
+        (now,),
+    )
+    _commit_if_autonomous(plane_db)
+    return int(cur.rowcount or 0)
+
+
 def synchronize_agent_remote_services(plane_db, *, root: Optional[str] = None) -> dict:
     """Reconnect synchronization: allocate pending endpoints, apply deletes, revalidate deps."""
     # Enrollment projection is a lifecycle write. show/status must not do it.
@@ -5583,6 +5599,9 @@ def synchronize_agent_remote_services(plane_db, *, root: Optional[str] = None) -
             updated += 1
     finally:
         plane_db._batch_mode = prev_batch
+    # Lifecycle boundary: prior verification is stale until apply_agent_runtime
+    # succeeds. Clear before the pre-apply push so reconnect cannot replay it.
+    _invalidate_agent_remote_service_runtime_verification(plane_db)
     # Reconcile endpoint ownership with Server before runtime projection so a
     # stale Agent claim cannot keep advertising or activating a revoked port.
     _push_agent_remote_service_status(plane_db, root=root)

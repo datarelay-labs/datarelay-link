@@ -1528,6 +1528,7 @@ class ControlPlane:
         endpoint_name = (label or (existing["label"] if existing else None) or client_id[:8]).strip()
 
         presence = "connected" if connected else "disconnected"
+        was_connected = bool(int(existing["connected"] or 0)) if existing is not None else False
 
         def write():
             if existing:
@@ -1555,6 +1556,12 @@ class ControlPlane:
                         now,
                     ),
                 )
+            # Disconnect or reconnect invalidates prior runtime verification. A
+            # previously verified HEALTHY bit must not survive reboot/reconnect
+            # and make operator display HEALTHY before a fresh runtime report.
+            now_connected = bool(connected)
+            if existing is not None and was_connected != now_connected:
+                self._invalidate_client_remote_service_runtime_verification(client_id, now=now)
             obj = self.conn.execute(
                 "SELECT o.* FROM objects o JOIN managed_endpoints e ON e.object_id = o.id WHERE e.client_id = ?",
                 (client_id,),
@@ -1604,6 +1611,24 @@ class ControlPlane:
             return {"entity": {"type": "client", "id": client_id, "name": endpoint_name}, "operation": "upsert"}
 
         return self._mutate("upsert client %s" % client_id[:8], "upsert client/endpoint", write)
+
+    def _invalidate_client_remote_service_runtime_verification(
+        self, client_id: str, *, now: Optional[str] = None
+    ) -> None:
+        """Clear persisted runtime_verified for a Managed Host's Remote Services.
+
+        Connectivity lifecycle transitions (disconnect/reconnect) mean prior
+        Agent runtime verification is no longer current. Operator display and
+        fail-closed HEALTHY gates must wait for a fresh verified report.
+        """
+        del now  # remote_service_meta has no updated_at column
+        self.conn.execute(
+            "UPDATE remote_service_meta SET runtime_verified = 0 "
+            "WHERE runtime_verified != 0 AND service_id IN ("
+            "  SELECT id FROM published_services WHERE client_id = ? AND released = 0"
+            ")",
+            (client_id,),
+        )
 
     def _replace_addresses(self, object_id: str, addresses: list[dict], now: str) -> None:
         self.conn.execute("DELETE FROM endpoint_addresses WHERE endpoint_object_id = ?", (object_id,))

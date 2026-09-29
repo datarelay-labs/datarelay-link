@@ -402,6 +402,23 @@ def apply_agent_runtime(
     if not runtime_should_apply():
         return {"ok": True, "skipped": True, "applied": [], "removed": [], "generation": 0}
 
+    # Restarting runtime invalidates prior verification until mark_runtime_status
+    # records a fresh successful verification event. Clear only the verification
+    # bit; do not rewrite status/reason here (apply may still succeed).
+    try:
+        plane_db.conn.execute(
+            "UPDATE agent_remote_services SET runtime_verified = 0, updated_at = ? "
+            "WHERE delete_pending = 0 AND runtime_verified != 0",
+            (utc_now_iso(),),
+        )
+        commit = getattr(plane_db, "commit_if_autonomous", None)
+        if callable(commit):
+            commit()
+        elif not getattr(plane_db, "_batch_mode", False):
+            plane_db.conn.commit()
+    except Exception:
+        pass
+
     state = load_client_state(root)
     if not state:
         return {
