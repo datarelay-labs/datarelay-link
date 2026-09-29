@@ -163,7 +163,12 @@ PRODUCT_AUTHORITY=
 EXPECTED_ROLE=SERVER|AGENT|BOTH|INSTALLER
 CANONICAL_CLI=
 RUNTIME_CLI=
+DISCOVERY_PATH=help|?|completion|menu|installer-output
 MENU_PATH=
+SCENARIO_ENTRYPOINT=
+EXPECTED_NEXT_ACTION=
+PRIVILEGE_CONTRACT=
+DESTRUCTIVE_VARIANTS=
 DISPOSITION=
   FEATURE_WITH_CANONICAL_CLI
   FEATURE_INSTALLER_ONLY_JUSTIFIED
@@ -187,11 +192,17 @@ Mandatory reconciliation rules:
 - Compare `show`, `set`, `unset`, and `test` symmetry where the resource model implies it.
 - Compare direct CLI, guided menu, help, completion, and role-specific surfaces.
 - A command's suggested next step must itself be a current canonical command or a precise documented installer/lifecycle action.
+- Fresh installer completion text, generated enrollment instructions, diagnostics recommendations, update recommendations, and error recovery text are public discovery surfaces and must use only current canonical commands.
+- Contextual help must expose all supported lifecycle variants needed to finish a feature, including enable/disable, reset/remove, credential lifecycle, and role-specific recovery.
 - Empty lists must explicitly report that no items exist.
 - Status/version/provenance surfaces may differ in detail, but must not contradict one another.
-- Obsolete product terms or semantics must not leak through hidden commands, diagnostics, errors, examples, or compatibility paths.
-- For destructive commands, cancellation/no-confirmation must never be reported as successful mutation; exit status must be automation-safe.
+- Obsolete product terms or semantics must not leak through hidden commands, diagnostics, errors, examples, compatibility paths, or installer output.
+- For a greenfield/unreleased CLI, compatibility-only aliases, root-bypass aliases, and executable obsolete hidden grammar must be zero unless an explicit product decision documents the exception.
+- For destructive commands, audit every destructive subvariant, not only the parent command. Cancellation/no-confirmation must never be reported as successful mutation; exit status must be automation-safe.
+- A privilege failure must identify the privilege problem, not masquerade as a wrong-role or unknown-command failure. User-visible ERROR output must return a non-zero automation-safe status.
+- A recovery message such as “reconfigure” must name the exact supported public CLI/menu/installer action required to continue.
 - Exercise at least one complete workflow per major capability: discover → create/change → show → test/explain where applicable → reference/safety failure → cleanup.
+- Cleanup is cross-host: verify the audit prefix, temporary enrollments, generated identities, Remote Services, Objects/Groups, policies, and test credentials are absent from every mutated Server and Agent.
 - `FULL_USER_E2E` does not substitute for this reconciliation. Full User E2E validates real journeys and traffic; this gate validates product-model-to-CLI completeness and uniqueness.
 
 At finalization report:
@@ -202,11 +213,17 @@ FEATURE_INVENTORY_TOTAL=
 FEATURE_NO_CLI_GAPS=
 RUNTIME_ONLY_CLI_COUNT=
 DUPLICATE_PUBLIC_PATH_COUNT=
+PUBLIC_ALIAS_PATH_COUNT=
 LEGACY_COMPATIBILITY_PATH_COUNT=
 ROOT_BYPASS_ALIAS_COUNT=
 HIDDEN_EXECUTABLE_PATH_COUNT=
+DISCOVERY_GAP_COUNT=
+INSTALLER_GUIDANCE_MISMATCH_COUNT=
+DESTRUCTIVE_CONFIRMATION_GAP_COUNT=
+ERROR_WITH_ZERO_RC_COUNT=
 SCENARIO_BLOCKED_COUNT=
 STATUS_DOC_RUNTIME_MISMATCH_COUNT=
+CLEANUP_RESIDUE_COUNT=
 ~~~
 
 A stable candidate requires `CLI_PRODUCT_SURFACE_RECONCILIATION=PASS`. Any P0/P1 or user-blocking P2 found here blocks candidate freeze even if Full User E2E is otherwise green.
@@ -270,18 +287,17 @@ For each:
 
 Verify Managed Host Group and Network Group are not conflated.
 
-### CLI-005 — Agent local service and Remote Service
+### CLI-005 — Agent Remote Service and runtime-only local-service surface
 
 On Agent:
 
-- compare `show services` and `show remote-services`;
-- create a Remote Service;
+- create a canonical Remote Service;
 - observe public endpoint allocation;
 - test duplicate destination/service protection;
 - delete the Remote Service;
-- create a pending local service through the guided service wizard;
-- verify pending changes are visible enough to review;
-- discard without apply.
+- inspect `show services`, `set/unset service`, and `system services ...` only if runtime discovery exposes them;
+- reconcile any such local-service surface against the Product Master and CLI/AI Master rather than assuming it is supported merely because it parses;
+- for an unreleased greenfield surface, classify obsolete/duplicate local-service workflows as release-blocking runtime-only CLI unless an explicit product decision justifies them.
 
 ### CLI-006 — Remote Access
 
@@ -291,7 +307,7 @@ Create namespaced source, destination, and service objects; create whitelist rul
 
 Repeat the same intent for Internet Access.
 
-Also verify every advertised `show internet` / `test internet` compatibility or management path is executable if it remains public.
+If runtime advertises `show internet` / `test internet` in addition to canonical `*-access` commands, compare semantics and vocabulary. For an unreleased greenfield CLI, a second compatibility/legacy policy surface is a reconciliation failure unless a current product decision explicitly requires it. Ordered-rule or first-match vocabulary is forbidden when the current policy model has no rule ordering.
 
 ### CLI-008 — Enrollment
 
