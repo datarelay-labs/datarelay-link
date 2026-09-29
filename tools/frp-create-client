@@ -436,11 +436,11 @@ def load_server_config():
 
 
 def short_url_host_for_cfg(cfg, bootstrap_hostname='', public_hostname=''):
-    """Resolve Zero-Touch short URL hostname from install-time public identity.
+    """Resolve the explicit publicly trusted Zero-Touch bootstrap hostname.
 
-    Prefer frp_server_config.short_url_hostname(cfg): advanced bootstrap_hostname
-    override, else DNS public_url_host. IP-selected public identity does not
-    invent a short URL from a separate public_hostname alias.
+    public_url_host/public_hostname identify product endpoints, not necessarily
+    a publicly trusted HTTPS listener on port 443. Short URL mode therefore
+    requires bootstrap_hostname; otherwise callers use pinned-CA zt1 fallback.
     """
     scfg = load_server_config()
     if scfg is not None and isinstance(cfg, dict):
@@ -448,10 +448,8 @@ def short_url_host_for_cfg(cfg, bootstrap_hostname='', public_hostname=''):
             host = scfg.short_url_hostname(cfg)
         except Exception:
             host = ''
-        if host:
-            return str(host).strip().lower()
-        return ''
-    return str(bootstrap_hostname or public_hostname or '').strip().lower()
+        return str(host or '').strip().lower()
+    return str(bootstrap_hostname or '').strip().lower()
 
 
 _ZT = None
@@ -982,45 +980,6 @@ def resolve_zero_touch_ssh(ssh_user, ssh_port, port_explicit, user_explicit=Fals
     return prompt_zero_touch_ssh('', ssh_port, port_explicit)
 
 
-def _allocator_hostname(cfg):
-    if not isinstance(cfg, dict):
-        return ''
-    try:
-        return (urlparse(str(cfg.get('allocator_public_url') or '')).hostname or '').lower().rstrip('.')
-    except Exception:
-        return ''
-
-
-def _short_url_needs_embedded_ca(cfg):
-    """True when the short URL host is this server's private-CA identity.
-
-    A distinct bootstrap_hostname is an operator public-TLS edge and keeps
-    stock curl. The enrollment hostname itself presents the project private CA.
-    """
-    boot = str((cfg or {}).get('bootstrap_hostname') or '').strip().lower().rstrip('.')
-    if not boot:
-        return True
-    alloc_host = _allocator_hostname(cfg)
-    return bool(alloc_host) and boot == alloc_host
-
-
-def _public_ca_pem(cfg):
-    """Return the public allocator CA PEM, never a private key."""
-    if not isinstance(cfg, dict):
-        return ''
-    raw = str(cfg.get('tls_ca_cert') or '').strip()
-    if not raw:
-        return ''
-    path = remap(raw)
-    try:
-        text = path.read_text(encoding='utf-8')
-    except OSError:
-        return ''
-    if 'PRIVATE KEY' in text or 'BEGIN CERTIFICATE' not in text:
-        return ''
-    return text.strip() + '\n'
-
-
 def print_manual(cfg, record, ttl, public_host, control_public, allocator, ca_fp, installer):
     print()
     print('Enrollment ID: %s' % record['id'])
@@ -1212,10 +1171,9 @@ def print_one_line(ticket, ttl, note, public_host, control_public, allocator, ca
         if zt_id is not None:
             tracking_id = zt_id.bootstrap_record_id(ticket)
 
-    # DNS public_url_host still uses /i/<ticket>, but that host presents the
-    # project private CA. Embed the public CA in the one-liner and verify TLS.
-    # A distinct bootstrap_hostname is the operator public-TLS edge and keeps
-    # stock curl. Never fall through to curl --insecure for this path.
+    # Short URL mode is explicit and assumes bootstrap_hostname terminates
+    # publicly trusted HTTPS. Without it, use the pinned allocator-CA zt1 path;
+    # never infer port-443 trust from public_url_host/public_hostname.
     command = ''
     bootstrap_host = short_url_host_for_cfg(
         cfg, bootstrap_hostname=bootstrap_hostname, public_hostname=public_hostname
@@ -1225,24 +1183,8 @@ def print_one_line(ticket, ttl, note, public_host, control_public, allocator, ca
             zt = _zt()
             if zt is None:
                 raise ValueError('zero-touch helper is unavailable')
-            if _short_url_needs_embedded_ca(cfg):
-                pem = _public_ca_pem(cfg)
-                if not pem:
-                    fail(
-                        'allocator CA certificate is not available; '
-                        'cannot generate a fresh-client Zero-Touch command'
-                    )
-                command = zt.private_ca_fresh_client_command(
-                    bootstrap_host, short_handle or ticket, pem
-                )
-            else:
-                command = zt.short_url_command(bootstrap_host, short_handle or ticket)
+            command = zt.short_url_command(bootstrap_host, short_handle or ticket)
         except ValueError:
-            if _short_url_needs_embedded_ca(cfg):
-                fail(
-                    'cannot generate a fresh-client Zero-Touch command '
-                    'without disabling TLS verification'
-                )
             command = ''
 
     if not command:

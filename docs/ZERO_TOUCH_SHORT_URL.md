@@ -25,15 +25,16 @@ stage-1 SHA256, then runs `powershell.exe -File`. It does not use `irm | iex`.
 On `remote.xdr.ooo` that launcher is 420 characters. The expected digest is
 frozen with the non-secret renderer inputs at issuance.
 
-When `bootstrap_hostname` is unset, the enrollment hostname presents the
-project private CA. The advertised command still fetches
-`https://<public-url-host>/i/<token>` in one line, but it embeds that public
-CA and verifies TLS with `--cacert`. It does not use `--insecure`, and a fresh
-client does not need a preinstalled CA. A distinct `bootstrap_hostname` remains
-the publicly trusted edge and keeps the stock one-liner above.
+Short URL mode is **opt-in** through `bootstrap_hostname`. When it is unset,
+Data Relay Link does not assume that `public_url_host` or `public_hostname`
+terminates publicly trusted HTTPS on port 443. The generated Linux/macOS and
+Windows Zero-Touch commands instead use the `zt1` / pinned-CA bootstrap path:
+the allocator CA is fingerprint-checked first and every subsequent private-CA
+download is verified against that pinned certificate.
 
-IP-only public identity, with no DNS short-URL host, still uses the `zt1`
-package command.
+This fallback applies to both DNS and IP public identities. A configured
+`bootstrap_hostname` remains the explicitly operator-owned, publicly trusted
+HTTPS edge that enables the stock short URL above.
 
 ## Trust boundary
 

@@ -126,7 +126,7 @@ if grep -q '/i/' "$OUT_ZT1"; then
 fi
 pass "ZT1_FALLBACK_ABSENT_HOSTNAME"
 
-# Install-time DNS public_url_host enables short URL without a second bootstrap hostname.
+# DNS public_url_host alone must stay on the pinned-CA zt1 fallback.
 python3 - "$TREE/etc/drlink/config.json" <<'PY' || fail "set public_url_host domain"
 import json, sys
 from pathlib import Path
@@ -140,29 +140,34 @@ cfg['allocator_public_url'] = 'https://remote.xdr.ooo:%s/enroll' % (
 )
 path.write_text(json.dumps(cfg, indent=2) + "\n")
 PY
-OUT_DOMAIN="$WORKDIR/domain-short.out"
-python3 "$ROOT/tools/frp-create-client" --one-line --client-name domain-short --note 'dns' \
+OUT_DOMAIN="$WORKDIR/domain-fallback.out"
+python3 "$ROOT/tools/frp-create-client" --one-line --client-name domain-fallback --note 'dns' \
   >"$OUT_DOMAIN" || fail "one-line with public_url_host domain"
-CMD_DOMAIN="$(grep -E 'sudo bash -c ' "$OUT_DOMAIN" | head -n1)"
-[[ -n "$CMD_DOMAIN" ]] || { cat "$OUT_DOMAIN"; fail "domain public_url_host missing fresh-client command"; }
-printf '%s\n' "$CMD_DOMAIN" | grep -q 'https://remote\.xdr\.ooo/i/' \
-  || { cat "$OUT_DOMAIN"; fail "domain command missing short URL"; }
-printf '%s\n' "$CMD_DOMAIN" | grep -q -- '--cacert' \
-  || { cat "$OUT_DOMAIN"; fail "domain command missing CA pin"; }
-printf '%s\n' "$CMD_DOMAIN" | grep -q 'FRP_ALLOCATOR_CA_FILE' \
-  || { cat "$OUT_DOMAIN"; fail "domain command missing CA file export"; }
-if printf '%s\n' "$CMD_DOMAIN" | grep -q -- '--insecure\|curl -k'; then
+grep -q "curl -fsSL --proto =https --cacert" "$OUT_DOMAIN" \
+  || { cat "$OUT_DOMAIN"; fail "domain public_url_host missing pinned-CA fallback"; }
+grep -q 'zt1\.' "$OUT_DOMAIN" \
+  || { cat "$OUT_DOMAIN"; fail "domain public_url_host missing zt1 package"; }
+if grep -q '/i/' "$OUT_DOMAIN"; then
   cat "$OUT_DOMAIN"
-  fail "domain fresh-client command disables TLS verification"
+  fail "public_url_host incorrectly enabled short URL without bootstrap_hostname"
 fi
-if printf '%s\n' "$CMD_DOMAIN" | grep -E -q '^curl -fsSL https://remote\.xdr\.ooo/i/'; then
-  cat "$OUT_DOMAIN"
-  fail "stock curl cannot trust the private enrollment CA"
+pass "PUBLIC_URL_HOST_DOMAIN_ZT1_FALLBACK"
+
+OUT_DOMAIN_WINDOWS="$WORKDIR/domain-windows-fallback.out"
+python3 "$ROOT/tools/frp-create-client" --one-line --platform windows --rdp \
+  --client-name domain-win-fallback --note 'dns-win' >"$OUT_DOMAIN_WINDOWS" \
+  || fail "Windows one-line with public_url_host domain"
+grep -q 'powershell.exe -NoProfile -ExecutionPolicy Bypass -Command' "$OUT_DOMAIN_WINDOWS" \
+  || { cat "$OUT_DOMAIN_WINDOWS"; fail "Windows private-CA fallback missing pinned command"; }
+grep -q 'CA fingerprint mismatch' "$OUT_DOMAIN_WINDOWS" \
+  || { cat "$OUT_DOMAIN_WINDOWS"; fail "Windows private-CA fallback missing CA fingerprint gate"; }
+grep -q 'FRP_ALLOCATOR_CA_SHA256' "$OUT_DOMAIN_WINDOWS" \
+  || { cat "$OUT_DOMAIN_WINDOWS"; fail "Windows private-CA fallback missing CA pin environment"; }
+if grep -q '/i/' "$OUT_DOMAIN_WINDOWS"; then
+  cat "$OUT_DOMAIN_WINDOWS"
+  fail "Windows public_url_host incorrectly enabled short URL without bootstrap_hostname"
 fi
-if grep -q 'zt1\.' "$OUT_DOMAIN"; then
-  fail "domain short URL still printed zt1"
-fi
-pass "PUBLIC_URL_HOST_DOMAIN_SHORT_URL"
+pass "WINDOWS_PUBLIC_URL_HOST_PINNED_CA_FALLBACK"
 
 # IP-selected public_url_host must not invent short URL from public_hostname.
 python3 - "$TREE/etc/drlink/config.json" <<'PY' || fail "set public_url_host IP"

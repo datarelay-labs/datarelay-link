@@ -11,10 +11,10 @@ public_hostname is an optional DNS alias for published-service access and may
 also be selected as public_url_host. It must never become the default FRP
 control destination or PKI identity by itself.
 
-bootstrap_hostname is an optional advanced override for a publicly trusted
-Zero-Touch edge. When unset, a DNS public_url_host is still the short-URL
-host, but that host presents the project private CA. The advertised command
-must carry that CA; stock curl cannot validate it on a fresh client.
+bootstrap_hostname is an optional explicit hostname for a publicly trusted
+Zero-Touch edge. When unset, short-URL mode is disabled and Zero-Touch falls
+back to the pinned-CA zt1 installer path. public_url_host/public_hostname are
+never assumed to terminate publicly trusted HTTPS on port 443.
 """
 from __future__ import annotations
 
@@ -189,22 +189,14 @@ def public_url_host(cfg):
 
 
 def short_url_hostname(cfg):
-    """Hostname for Zero-Touch short URL commands.
+    """Explicit publicly trusted hostname for Zero-Touch short URL commands.
 
-    Advanced bootstrap_hostname wins when set. Otherwise use public_url_host
-    when it is a DNS name. IP-selected public URL identity does not invent a
-    short-URL hostname from a separate public_hostname alias.
+    Short URL mode is opt-in. Enrollment/public URL hostnames can terminate a
+    private-CA allocator on a non-443 port and therefore do not prove that
+    https://<host>/i/... is publicly trusted. Without bootstrap_hostname,
+    callers must use the pinned-CA zt1 fallback.
     """
-    boot = bootstrap_hostname(cfg)
-    if boot:
-        return boot
-    host = public_url_host(cfg)
-    if not host or is_ip_literal(host):
-        return ''
-    try:
-        return validate_public_hostname(host, required=True)
-    except ConfigError:
-        return ''
+    return bootstrap_hostname(cfg)
 
 
 def access_host(cfg):

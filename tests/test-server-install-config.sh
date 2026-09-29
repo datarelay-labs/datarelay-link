@@ -521,25 +521,23 @@ domain_cfg = json.loads(Path(sys.argv[2]).read_text())
 ip_cfg = json.loads(Path(sys.argv[3]).read_text())
 ticket = 'bt1.' + ('a' * 16) + '.' + ('b' * 64)
 
-assert S.short_url_hostname(domain_cfg) == 'remote.xdr.ooo'
-assert mod.short_url_host_for_cfg(domain_cfg) == 'remote.xdr.ooo'
-cmd = zt.short_url_command(mod.short_url_host_for_cfg(domain_cfg), ticket)
-assert "https://remote.xdr.ooo/i/" in cmd, cmd
-assert 'bootstrap' not in cmd
-
+# public_url_host/public_hostname alone do not prove publicly trusted 443.
+assert S.short_url_hostname(domain_cfg) == ''
+assert mod.short_url_host_for_cfg(domain_cfg) == ''
 assert S.short_url_hostname(ip_cfg) == ''
 assert mod.short_url_host_for_cfg(ip_cfg) == ''
-# IP identity + public_hostname must not invent short URL.
 assert ip_cfg.get('public_hostname') == 'remote.xdr.ooo'
-assert mod.short_url_host_for_cfg(ip_cfg) == ''
 
-# Advanced bootstrap override still wins when explicitly set.
+# Explicit publicly trusted bootstrap edge enables the short URL.
 override = dict(ip_cfg)
 override['bootstrap_hostname'] = 'bootstrap.example.com'
+assert S.short_url_hostname(override) == 'bootstrap.example.com'
 assert mod.short_url_host_for_cfg(override) == 'bootstrap.example.com'
+cmd = zt.short_url_command(mod.short_url_host_for_cfg(override), ticket)
+assert "https://bootstrap.example.com/i/" in cmd, cmd
 print('ok')
 PY
-pass "ZT_SHORT_URL_FOLLOWS_PUBLIC_URL_HOST"
+pass "ZT_SHORT_URL_REQUIRES_BOOTSTRAP_HOST"
 
 echo
 echo "SERVER_INSTALL_CONFIG_TEST=PASS"

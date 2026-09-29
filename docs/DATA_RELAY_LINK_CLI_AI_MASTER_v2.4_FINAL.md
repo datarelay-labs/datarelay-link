@@ -3825,12 +3825,17 @@ Server:
 set enrollment zero-touch
 ```
 
-When a public DNS hostname is configured, Enrollment HTTPS and Zero-Touch
-bootstrap URLs use that hostname (public IP may still be shown as fallback).
-The operator-facing Zero-Touch install command is a short HTTPS launcher
-(`curl … https://<host>/i/<ticket> | sudo bash` or equivalent) that preserves
-private-CA fingerprint verification and one-time ticket semantics inside the
-maintained bootstrap artifact—not a long inline shell program.
+Enrollment HTTPS may use the configured public URL hostname (public IP may
+still be shown as fallback), but that hostname does **not** by itself enable a
+Zero-Touch short URL on port 443. Short URL mode requires an explicit
+`bootstrap_hostname` that the operator provides with publicly trusted HTTPS.
+Without it, Linux/macOS and Windows Zero-Touch commands use the pinned-CA
+`zt1` bootstrap path so the allocator CA fingerprint is verified before
+private-CA downloads. With `bootstrap_hostname`, the operator-facing command
+may use the short HTTPS launcher
+(`curl … https://<bootstrap-host>/i/<ticket> | sudo bash` or equivalent).
+The operator is responsible for making that explicitly configured bootstrap
+hostname resolve to a publicly trusted HTTPS edge as documented.
 
 SSH connection-example username is optional metadata for the hint only; it is
 not required for Agent install/enrollment. Prefer a verified local account, or
