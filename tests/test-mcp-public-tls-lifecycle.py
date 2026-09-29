@@ -981,6 +981,86 @@ spec:
         m2 = grammar.match(["system", "certificate", "status"], role="server")
         self.assertEqual(m2.get("action"), "control_plane")
 
+    def test_mcp_tls_purge_requires_interactive_confirmation(self):
+        import io
+        from contextlib import redirect_stderr, redirect_stdout
+        import frp_cli_catalog as catalog
+
+        base_cmd = catalog.find(["unset", "mcp-tls"], role="server")
+        purge_cmd = catalog.find(["unset", "mcp-tls", "purge"], role="server")
+        self.assertIsNotNone(base_cmd)
+        self.assertIsNotNone(purge_cmd)
+        self.assertFalse(base_cmd["destructive"])
+        self.assertEqual(base_cmd["confirmation"], "none")
+        self.assertTrue(purge_cmd["destructive"])
+        self.assertEqual(purge_cmd["risk"], "irreversible")
+        self.assertEqual(purge_cmd["confirmation"], "y_n")
+
+        tree = mcp_tls.tls_tree(self.tmp)
+        tree.mkdir(parents=True, exist_ok=True)
+        marker_file = tree / "audit-marker"
+        marker_file.write_text("keep-until-confirmed", encoding="utf-8")
+        mcp_tls.configure_intent(self.plane, hostname="mcp.example.test")
+
+        # Non-destructive unset clears intent but preserves certificate/account material.
+        out = io.StringIO()
+        with redirect_stdout(out):
+            rc = dispatch(["unset", "mcp-tls"], root=self.tmp, plane=self.plane)
+        self.assertEqual(rc, 0)
+        self.assertTrue(marker_file.exists())
+        self.assertIn("Certificate files retained", out.getvalue())
+
+        # Compatibility spelling is not accepted on the greenfield v2.4 surface.
+        with self.assertRaises(SystemExit):
+            dispatch(["unset", "mcp-tls", "--purge"], root=self.tmp, plane=self.plane)
+        self.assertTrue(marker_file.exists())
+
+        # Non-TTY automation fails closed and does not delete secrets.
+        old_stdin = sys.stdin
+        try:
+            sys.stdin = io.StringIO("")
+            out = io.StringIO()
+            err = io.StringIO()
+            with redirect_stdout(out), redirect_stderr(err):
+                rc = dispatch(["unset", "mcp-tls", "purge"], root=self.tmp, plane=self.plane)
+        finally:
+            sys.stdin = old_stdin
+        self.assertEqual(rc, 1)
+        self.assertTrue(marker_file.exists())
+        self.assertIn("requires interactive confirmation", err.getvalue())
+        self.assertIn("No changes were applied", err.getvalue())
+
+        class FakeTty(io.StringIO):
+            def isatty(self):
+                return True
+
+        # Explicit No is cancellation, not success, and preserves material.
+        old_stdin = sys.stdin
+        try:
+            sys.stdin = FakeTty("n\n")
+            out = io.StringIO()
+            with redirect_stdout(out):
+                rc = dispatch(["unset", "mcp-tls", "purge"], root=self.tmp, plane=self.plane)
+        finally:
+            sys.stdin = old_stdin
+        self.assertEqual(rc, 1)
+        self.assertTrue(marker_file.exists())
+        self.assertIn("Cancelled.", out.getvalue())
+        self.assertIn("No changes were applied.", out.getvalue())
+
+        # Explicit Yes is the only public path that removes the TLS tree.
+        old_stdin = sys.stdin
+        try:
+            sys.stdin = FakeTty("y\n")
+            out = io.StringIO()
+            with redirect_stdout(out):
+                rc = dispatch(["unset", "mcp-tls", "purge"], root=self.tmp, plane=self.plane)
+        finally:
+            sys.stdin = old_stdin
+        self.assertEqual(rc, 0)
+        self.assertFalse(tree.exists())
+        self.assertIn("ACME account material removed", out.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()
