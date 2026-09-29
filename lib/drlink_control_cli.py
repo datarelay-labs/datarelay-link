@@ -1243,7 +1243,27 @@ def _unset(plane: ControlPlane, rest, client_sel):
         plane.conn.execute("DELETE FROM enrollments WHERE id = ?", (rest[1],))
         return 0
     if res == "mcp-tls":
-        purge = len(rest) > 1 and rest[1] in ("purge", "--purge")
+        if len(rest) > 2 or (len(rest) == 2 and rest[1] != "purge"):
+            raise SystemExit("Usage:\n  unset mcp-tls\n  unset mcp-tls purge")
+        purge = len(rest) == 2
+        if purge:
+            if not _stdin_is_interactive():
+                sys.stderr.write(
+                    "ERROR: unset mcp-tls purge requires interactive confirmation.\n"
+                    "This removes DRLink-owned MCP TLS certificate and ACME account material.\n"
+                    "Run interactively and answer y.\n"
+                    "No changes were applied.\n"
+                )
+                return 1
+            sys.stdout.write(
+                "Purge MCP TLS secrets\n"
+                "=====================\n\n"
+                "This will permanently remove DRLink-owned MCP TLS certificate and ACME account material.\n"
+                "MCP TLS intent will also be cleared.\n\n"
+            )
+            if not _confirm_from_stdin("Continue? [y/N]:"):
+                sys.stdout.write("Cancelled.\nNo changes were applied.\n")
+                return 1
         mcp_tls.clear_tls(plane, plane.root, purge_secrets=purge)
         sys.stdout.write("MCP TLS configuration cleared.\n")
         if purge:
