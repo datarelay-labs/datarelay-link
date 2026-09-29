@@ -55,6 +55,8 @@ full local automated suite
 build/dist/source parity
 ```
 
+After the exact candidate is installed, run `CLI_PRODUCT_SURFACE_RECONCILIATION` before counting any final Full User E2E pass. A later CLI/product change invalidates both the reconciliation and any downstream final E2E evidence.
+
 Do not change product behavior merely to satisfy a stale test. First decide which contract is authoritative.
 
 ## 3. SQLite tests
@@ -453,6 +455,31 @@ safe metadata
 
 Verify they do not contain raw credentials, full sensitive file contents, or unrestricted command output.
 
+## 21.1 CLI product-surface reconciliation — independent release gate
+
+Before Full User E2E candidate freeze, execute the product-feature ↔ CLI reconciliation in `CLI_EXHAUSTIVE_AUDIT.md` section 4.2 against the installed exact candidate.
+
+This gate is intentionally separate from Full User E2E. Full User E2E answers whether representative real journeys work. Product-surface reconciliation answers whether the complete supported product model has one coherent, discoverable, non-duplicated CLI surface.
+
+Required evidence:
+
+```text
+CLI_PRODUCT_SURFACE_RECONCILIATION=PASS
+FEATURE_INVENTORY_TOTAL=<n>
+FEATURE_NO_CLI_GAPS=0
+RUNTIME_ONLY_CLI_COUNT=0
+DUPLICATE_PUBLIC_PATH_COUNT=0
+LEGACY_COMPATIBILITY_PATH_COUNT=0
+ROOT_BYPASS_ALIAS_COUNT=0
+HIDDEN_EXECUTABLE_PATH_COUNT=0
+SCENARIO_BLOCKED_COUNT=0
+STATUS_DOC_RUNTIME_MISMATCH_COUNT=0
+```
+
+For an unreleased/greenfield major CLI surface, compatibility-only aliases and executable obsolete hidden grammar are not accepted as release justification. If a future released version requires compatibility, each exception must be explicit, documented, bounded, and separately tested.
+
+Any CLI/product change after this PASS invalidates the gate and requires a fresh reconciliation before Full User E2E PASS1/PASS2 can count as final stable evidence.
+
 ## 22. CLI/PTy validation
 
 Protect:
@@ -688,6 +715,8 @@ CONFIGURATION_BUNDLE=
 CONFIGURATION_DIRECT_CLI_PARITY=
 CONFIGURATION_AI_COPY_PASTE_REAL_E2E=
 ZERO_TOUCH_BOUNDED_BATCH=
+CLI_PRODUCT_SURFACE_RECONCILIATION=PASS|FAIL
+CLI_PRODUCT_SURFACE_EVIDENCE=
 SQLITE_MIGRATION_FRAMEWORK=
 REVISION_AUDIT=
 RUNTIME_GENERATION_CONSISTENCY=

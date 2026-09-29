@@ -145,6 +145,72 @@ COMMANDS_BLOCKED_ENVIRONMENT=
 COMMANDS_WITHOUT_DISPOSITION=0
 ~~~
 
+## 4.2 Product feature ↔ CLI surface reconciliation — mandatory release gate
+
+Before scenario execution, build a second ledger from the **product feature model**, not from the CLI. This prevents an internally consistent CLI from passing while product functionality is missing, duplicated, obsolete, or unreachable.
+
+Use the union of:
+1. Product Master features and supported lifecycle operations;
+2. CLI/AI Master public behavior;
+3. current Server and Agent menu/workflow surfaces;
+4. installed candidate runtime discovery.
+
+For every product capability, record:
+
+~~~text
+FEATURE=
+PRODUCT_AUTHORITY=
+EXPECTED_ROLE=SERVER|AGENT|BOTH|INSTALLER
+CANONICAL_CLI=
+RUNTIME_CLI=
+MENU_PATH=
+DISPOSITION=
+  FEATURE_WITH_CANONICAL_CLI
+  FEATURE_INSTALLER_ONLY_JUSTIFIED
+  FEATURE_NO_CLI_GAP
+  CLI_RUNTIME_ONLY
+  CLI_WITHOUT_PRODUCT_FEATURE
+  CLI_DUPLICATE_PATH
+  CLI_LEGACY_OR_COMPATIBILITY_PATH
+  CLI_SCENARIO_BLOCKED
+  DOC_RUNTIME_MISMATCH
+EVIDENCE=
+~~~
+
+Mandatory reconciliation rules:
+
+- A product feature requiring normal operator control must have an actionable public path or an explicitly justified non-CLI lifecycle such as installation.
+- Every runtime public command must map to exactly one current product capability.
+- Duplicate commands for the same operation require an explicit product reason; compatibility alone is not sufficient for a greenfield/unreleased surface.
+- Hidden commands and aliases are part of the audit if a user can execute them.
+- Count all aliases, root-bypass aliases, hidden parser entries, and executable obsolete resources.
+- Compare `show`, `set`, `unset`, and `test` symmetry where the resource model implies it.
+- Compare direct CLI, guided menu, help, completion, and role-specific surfaces.
+- A command's suggested next step must itself be a current canonical command or a precise documented installer/lifecycle action.
+- Empty lists must explicitly report that no items exist.
+- Status/version/provenance surfaces may differ in detail, but must not contradict one another.
+- Obsolete product terms or semantics must not leak through hidden commands, diagnostics, errors, examples, or compatibility paths.
+- For destructive commands, cancellation/no-confirmation must never be reported as successful mutation; exit status must be automation-safe.
+- Exercise at least one complete workflow per major capability: discover → create/change → show → test/explain where applicable → reference/safety failure → cleanup.
+- `FULL_USER_E2E` does not substitute for this reconciliation. Full User E2E validates real journeys and traffic; this gate validates product-model-to-CLI completeness and uniqueness.
+
+At finalization report:
+
+~~~text
+CLI_PRODUCT_SURFACE_RECONCILIATION=PASS|FAIL
+FEATURE_INVENTORY_TOTAL=
+FEATURE_NO_CLI_GAPS=
+RUNTIME_ONLY_CLI_COUNT=
+DUPLICATE_PUBLIC_PATH_COUNT=
+LEGACY_COMPATIBILITY_PATH_COUNT=
+ROOT_BYPASS_ALIAS_COUNT=
+HIDDEN_EXECUTABLE_PATH_COUNT=
+SCENARIO_BLOCKED_COUNT=
+STATUS_DOC_RUNTIME_MISMATCH_COUNT=
+~~~
+
+A stable candidate requires `CLI_PRODUCT_SURFACE_RECONCILIATION=PASS`. Any P0/P1 or user-blocking P2 found here blocks candidate freeze even if Full User E2E is otherwise green.
+
 ## 5. Mandatory scenario matrix
 
 ### CLI-001 — Entry, help, and discovery

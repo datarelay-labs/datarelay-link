@@ -292,16 +292,25 @@ CHATGPT_PLUS_ALLOW_DENY=
 - [ ] release manifest generator/checkers/tests aligned to target.
 - [ ] generated candidate manifest says `mcp_included=true` only when feature is actually included.
 
-## 16. CLI UX
+## 16. CLI UX and product-surface reconciliation
 
+- [ ] `CLI_PRODUCT_SURFACE_RECONCILIATION=PASS` using `CLI_EXHAUSTIVE_AUDIT.md` section 4.2; this is a separate release gate from Full User E2E.
+- [ ] every Product Master capability has a justified public CLI/menu/installer lifecycle mapping.
+- [ ] every installed runtime command maps to a current product capability and canonical documentation.
+- [ ] no duplicate public mutation path exists for the same operation without an explicit product reason.
+- [ ] unreleased/greenfield v2.4 exposes no compatibility-only root-bypass alias or executable obsolete hidden grammar.
+- [ ] command suggestions and recovery text point only to current canonical commands or exact documented installer actions.
+- [ ] empty-list output explicitly distinguishes zero items from failure.
+- [ ] destructive/non-TTY cancellation is automation-safe and never returns success for an unapplied mutation.
 - [ ] Server root = Managed Hosts / Network Objects / Service Objects / Remote Access / Internet Access / AI Access / System / Help / Exit.
-- [ ] Agent Host root = Status / Remote Services / Agent / Configuration / Diagnostics / Help / Exit.
+- [ ] Agent Host root = Remote Services / Agent / Configuration / System / Help / Exit.
 - [ ] Direct roots = show/set/unset/test/system/menu/help/exit.
 - [ ] Managed Host / Network Object terminology consistent.
 - [ ] Remote Service terminology consistent.
 - [ ] Service Object Wizard presets are clear and are not exposed as standalone public resources.
 - [ ] BLACKLIST / WHITELIST Mode and Enforcement state are visible.
 - [ ] `test` explains effective policy outcome without ordered-rule semantics.
+- [ ] status/version/provenance surfaces are mutually consistent.
 - [ ] Tab context filters invalid Object types.
 - [ ] broadening confirmation visible.
 - [ ] stale edit failure visible.
@@ -371,6 +380,8 @@ Windows 10=
 
 ## 20. Double Full Real E2E
 
+- [ ] `CLI_PRODUCT_SURFACE_RECONCILIATION=PASS` on the same exact candidate before PASS1 starts.
+- [ ] no CLI/product change occurred after the surface reconciliation; otherwise rerun it before PASS1/PASS2 count.
 - [ ] `FULL_REAL_E2E_PASS_1=PASS`
 - [ ] `FULL_REAL_E2E_PASS_2=PASS`
 - [ ] `PASS1_HEAD==PASS2_HEAD`
@@ -458,6 +469,8 @@ CONFIGURATION_BUNDLE=
 CONFIGURATION_DIRECT_CLI_PARITY=
 CONFIGURATION_AI_COPY_PASTE_REAL_E2E=
 ZERO_TOUCH_BOUNDED_BATCH=
+CLI_PRODUCT_SURFACE_RECONCILIATION=PASS|FAIL
+CLI_PRODUCT_SURFACE_EVIDENCE=
 FULL_REAL_E2E_PASS_1=
 FULL_REAL_E2E_PASS_2=
 
