@@ -1933,6 +1933,17 @@ MGMT_IDENTITY_FIELDS = (
     "last_seen_at",
     "last_enrolled_at",
 )
+MGMT_CRYPTO_FIELDS = (
+    "mgmt_pubkey",
+    "mgmt_mac_key",
+    "mgmt_fingerprint",
+    "mgmt_alg",
+)
+MGMT_ENROLLMENT_MARKERS = (
+    "mgmt_enrolled_at",
+    "mgmt_revoked_at",
+    "last_enrolled_at",
+)
 
 
 class MgmtIdentityError(ControlPlaneError):
@@ -2001,13 +2012,42 @@ def _normalized_mgmt_status(identity: dict) -> str:
     return "legacy"
 
 
+def _has_mgmt_crypto(identity: dict) -> bool:
+    return any(str(identity.get(key) or "").strip() for key in MGMT_CRYPTO_FIELDS)
+
+
+def _has_enrollment_markers(identity: dict) -> bool:
+    return any(str(identity.get(key) or "").strip() for key in MGMT_ENROLLMENT_MARKERS)
+
+
 def validate_mgmt_identity(identity: dict, *, machine_id: str) -> None:
     """Fail closed on incomplete or cryptographically invalid management identity."""
     import frp_mgmt_auth as MGMT
 
     short = str(machine_id or "")[:12] or "unknown"
+    raw_status = str(identity.get("mgmt_status") or "").strip().lower()
     status = _normalized_mgmt_status(identity)
     identity["mgmt_status"] = status
+
+    if status == "legacy":
+        # Intentional legacy must be explicit. Inferred "legacy" with residual
+        # enrolled crypto/markers is treated as identity-loss corruption.
+        if raw_status != "legacy":
+            if _has_mgmt_crypto(identity) or _has_enrollment_markers(identity):
+                raise MgmtIdentityError(
+                    "management identity for client %s looks like a stripped "
+                    "enrolled record; refusing to infer legacy status" % short
+                )
+            identity["mgmt_status"] = "legacy"
+            return
+        if _has_mgmt_crypto(identity):
+            raise MgmtIdentityError(
+                "legacy management identity for client %s must not include "
+                "enrolled crypto material" % short
+            )
+        identity["mgmt_status"] = "legacy"
+        return
+
     if status not in ("enrolled", "revoked"):
         return
 
@@ -2114,7 +2154,9 @@ def merge_mgmt_identity_from_forensic(
             continue
         identity = extract_mgmt_identity(frec)
         if not identity:
-            # Forensic record exists but has no management material (legacy).
+            # Membership-only forensic record (never enrolled). Mark legacy so
+            # restore does not leave an ambiguous blank management status.
+            entry["mgmt_status"] = "legacy"
             continue
         validate_mgmt_identity(identity, machine_id=str(cid))
         # Overlay identity only; keep SQLite-derived services/label/hostname.
@@ -2127,8 +2169,20 @@ def merge_mgmt_identity_from_forensic(
             continue
         identity = extract_mgmt_identity(frec)
         if not identity:
+            if str(clients[cid].get("mgmt_status") or "") != "legacy":
+                raise MgmtIdentityError(
+                    "legacy management identity for client %s was not preserved"
+                    % str(cid)[:12]
+                )
             continue
         status = _normalized_mgmt_status(identity)
+        if status == "legacy":
+            if str(clients[cid].get("mgmt_status") or "") != "legacy":
+                raise MgmtIdentityError(
+                    "legacy management identity for client %s was not preserved"
+                    % str(cid)[:12]
+                )
+            continue
         if status not in ("enrolled", "revoked"):
             continue
         # Re-validate so canonicalization matches what merge stored.

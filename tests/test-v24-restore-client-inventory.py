@@ -531,7 +531,7 @@ class RestoreClientInventoryTests(unittest.TestCase):
         self.plane = ControlPlane(str(self.tree))
 
     def test_legacy_forensic_membership_without_mgmt_fields_ok(self):
-        """Supported legacy: forensic client record exists but has no mgmt material."""
+        """Membership-only forensic record (never enrolled) restores as legacy."""
         self._seed_clients_and_services()
         archive = self.outdir / "legacy-no-mgmt.tar.gz"
         proc = run_tool(BACKUP, str(archive))
@@ -544,8 +544,87 @@ class RestoreClientInventoryTests(unittest.TestCase):
         )
         self.assertIn(MID, after["clients"])
         self.assertIn(MID2, after["clients"])
-        self.assertNotEqual(after["clients"][MID].get("mgmt_status"), "enrolled")
+        self.assertEqual(after["clients"][MID].get("mgmt_status"), "legacy")
+        self.assertEqual(after["clients"][MID2].get("mgmt_status"), "legacy")
         self.assertFalse(after["clients"][MID].get("mgmt_pubkey"))
+        self.plane = ControlPlane(str(self.tree))
+
+    def test_explicit_legacy_identity_preserved(self):
+        """Explicit mgmt_status=legacy survives restore for one-time migration path."""
+        self._seed_clients_and_services()
+        legacy = {"mgmt_status": "legacy"}
+        self._inject_mgmt_identity({MID: legacy, MID2: legacy})
+        archive = self.outdir / "explicit-legacy.tar.gz"
+        proc = run_tool(BACKUP, str(archive))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        # Wipe live status before restore.
+        UR.project_client_inventory_from_control_plane(self.plane, root=str(self.tree))
+        self.plane.close()
+        proc = run_tool(RESTORE, str(archive))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        after = json.loads(
+            (self.tree / "var/lib/drlink/runtime/client-inventory.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(after["clients"][MID].get("mgmt_status"), "legacy")
+        self.assertEqual(after["clients"][MID2].get("mgmt_status"), "legacy")
+        self.assertFalse(after["clients"][MID].get("mgmt_pubkey"))
+        self.assertFalse(after["clients"][MID].get("mgmt_mac_key"))
+        self.plane = ControlPlane(str(self.tree))
+
+    def test_preflight_rejects_stripped_enrolled_as_legacy(self):
+        """Orphan enrolled residue without explicit legacy must fail before mutation."""
+        self._seed_clients_and_services()
+        self._inject_mgmt_identity({MID: self.MGMT_A, MID2: self.MGMT_B})
+        archive = self.outdir / "stripped.tar.gz"
+        proc = run_tool(BACKUP, str(archive))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.plane.close()
+        self._capture_live_baseline()
+        broken = self.outdir / "stripped-broken.tar.gz"
+
+        def mutate(root: Path) -> None:
+            path = root / "payload/var/lib/drlink/runtime/client-inventory.json"
+            state = json.loads(path.read_text(encoding="utf-8"))
+            # Strip pubkey/status but leave fingerprint — looks like corrupted enrolled.
+            for key in ("mgmt_status", "mgmt_pubkey", "mgmt_mac_key", "mgmt_alg"):
+                state["clients"][MID].pop(key, None)
+            state["clients"][MID]["mgmt_fingerprint"] = "ab" * 32
+            path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+        rewrite_archive(archive, broken, mutate)
+        proc = run_tool(RESTORE, str(broken))
+        self.assertNotEqual(proc.returncode, 0)
+        err = (proc.stderr or "").lower()
+        self.assertTrue("stripped" in err or "legacy" in err or "management identity" in err, proc.stderr)
+        self._assert_no_live_mutation()
+        self.plane = ControlPlane(str(self.tree))
+
+    def test_preflight_rejects_non_pem_enrolled_identity(self):
+        """Exact 185eca5 audit repro A: enrolled + NOT-A-PEM must not restore."""
+        self._seed_clients_and_services()
+        self._inject_mgmt_identity({MID: self.MGMT_A, MID2: self.MGMT_B})
+        archive = self.outdir / "not-pem.tar.gz"
+        proc = run_tool(BACKUP, str(archive))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.plane.close()
+        self._capture_live_baseline()
+        broken = self.outdir / "not-pem-broken.tar.gz"
+
+        def mutate(root: Path) -> None:
+            path = root / "payload/var/lib/drlink/runtime/client-inventory.json"
+            state = json.loads(path.read_text(encoding="utf-8"))
+            state["clients"][MID]["mgmt_status"] = "enrolled"
+            state["clients"][MID]["mgmt_alg"] = "ecdsa-p256-sha256"
+            state["clients"][MID]["mgmt_pubkey"] = "NOT-A-PEM"
+            state["clients"][MID]["mgmt_fingerprint"] = "deadbeef" * 8
+            state["clients"][MID]["mgmt_mac_key"] = "not-a-valid-mac-key"
+            path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+        rewrite_archive(archive, broken, mutate)
+        proc = run_tool(RESTORE, str(broken))
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("mgmt_pubkey", (proc.stderr or "").lower())
+        self._assert_no_live_mutation()
         self.plane = ControlPlane(str(self.tree))
 
     def test_missing_forensic_inventory_with_clients_fails_closed(self):
