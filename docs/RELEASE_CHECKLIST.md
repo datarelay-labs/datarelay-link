@@ -298,16 +298,19 @@ CHATGPT_PLUS_ALLOW_DENY=
 - [ ] every Product Master capability has a justified public CLI/menu/installer lifecycle mapping.
 - [ ] every installed runtime command maps to a current product capability and canonical documentation.
 - [ ] every required lifecycle variant is discoverable from public help/?/completion/menu without memorized hidden syntax.
+- [ ] root help, `?`, Tab, menu, `help commands`, command-specific help, and errors expose the same supported surface; no supported command requires memorization.
+- [ ] every behavior-changing setting/subcommand has an explicit disposition; family-level parsing alone does not count as coverage.
 - [ ] no duplicate public mutation path exists for the same operation without an explicit product reason.
 - [ ] unreleased/greenfield v2.4 exposes no compatibility-only root-bypass alias or executable obsolete hidden grammar.
 - [ ] installer completion text, enrollment instructions, diagnostics, update recommendations, and recovery text point only to current canonical commands or exact documented installer actions.
-- [ ] destructive subvariants have effect-appropriate risk metadata, interactive confirmation, and non-TTY fail-closed behavior.
-- [ ] privilege/readability ERROR paths return non-zero and are not misreported as wrong-role errors.
-- [ ] empty list surfaces explicitly report zero items rather than silent RC=0 success.
-- [ ] status/version/provenance surfaces do not contradict each other.
-- [ ] final reconciliation cleanup proves zero audit residue on every mutated Server and Agent.
-- [ ] empty-list output explicitly distinguishes zero items from failure.
+- [ ] active documentation examples use canonical public grammar or an explicitly justified installer-only lifecycle.
+- [ ] no supported workflow ends with a non-actionable recovery instruction or legacy alias.
+- [ ] destructive subvariants have effect-appropriate `risk`/confirmation metadata, interactive confirmation, and non-TTY fail-closed behavior.
 - [ ] destructive/non-TTY cancellation is automation-safe and never returns success for an unapplied mutation.
+- [ ] privilege/readability ERROR paths return non-zero and are not misreported as wrong-role errors.
+- [ ] empty-list output explicitly distinguishes zero items from failure rather than silent RC=0 success.
+- [ ] status/version/provenance surfaces are mutually consistent and do not expose retired state models as current.
+- [ ] final reconciliation cleanup proves zero audit residue on every mutated Server and Agent, including non-prefixed resources created by guided defaults.
 - [ ] Server root = Managed Hosts / Network Objects / Service Objects / Remote Access / Internet Access / AI Access / System / Help / Exit.
 - [ ] Agent Host root = Remote Services / Agent / Configuration / System / Help / Exit.
 - [ ] Direct roots = show/set/unset/test/system/menu/help/exit.
@@ -316,7 +319,6 @@ CHATGPT_PLUS_ALLOW_DENY=
 - [ ] Service Object Wizard presets are clear and are not exposed as standalone public resources.
 - [ ] BLACKLIST / WHITELIST Mode and Enforcement state are visible.
 - [ ] `test` explains effective policy outcome without ordered-rule semantics.
-- [ ] status/version/provenance surfaces are mutually consistent.
 - [ ] Tab context filters invalid Object types.
 - [ ] broadening confirmation visible.
 - [ ] stale edit failure visible.
@@ -387,7 +389,7 @@ Windows 10=
 ## 20. Double Full Real E2E
 
 - [ ] `CLI_PRODUCT_SURFACE_RECONCILIATION=PASS` on the same exact candidate before PASS1 starts.
-- [ ] reconciliation evidence records zero feature/CLI gaps, runtime-only CLI, duplicate/legacy paths, discovery gaps, installer-guidance mismatches, destructive-confirmation gaps, ERROR-with-RC0 cases, scenario blockers, status/doc/runtime mismatches, and cleanup residue.
+- [ ] reconciliation evidence records zero feature/CLI gaps, runtime-only CLI, duplicate/legacy/hidden paths, discovery/dead-end gaps, installer-guidance mismatches, destructive-confirmation/metadata drift, ERROR-with-RC0 cases, state/doc/example/role mismatches, scenario blockers, and cleanup residue.
 - [ ] no CLI/product/documentation surface change occurred after the reconciliation; otherwise rerun it before PASS1/PASS2 count.
 - [ ] `FULL_REAL_E2E_PASS_1=PASS`
 - [ ] `FULL_REAL_E2E_PASS_2=PASS`
