@@ -3402,8 +3402,7 @@ class ControlPlane:
     def rotate_ai_credential(self, name: str) -> dict:
         principal = self.get_principal(name)
         if principal is None:
-            self.set_ai_principal(name)
-            principal = self.get_principal(name)
+            raise ControlPlaneError("AI Identity not found: %s" % name)
         token = "drk_" + secrets.token_urlsafe(32)
         digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
         fp = digest[:12]
