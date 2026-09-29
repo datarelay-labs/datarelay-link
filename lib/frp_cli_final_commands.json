@@ -4109,7 +4109,7 @@
   },
   {
     "roles": "server",
-    "detail": "Clear MCP TLS intent. Optional purge removes DRLink-owned certificate and ACME account keys.",
+    "detail": "Clear MCP TLS intent while retaining DRLink-owned certificate and ACME account material.",
     "aliases": [],
     "destructive": false,
     "hidden": false,
@@ -4126,18 +4126,33 @@
     "category": "System",
     "summary": "Clear MCP public TLS configuration",
     "examples": [
-      "unset mcp-tls",
+      "unset mcp-tls"
+    ],
+    "args": []
+  },
+  {
+    "roles": "server",
+    "detail": "Permanently remove DRLink-owned MCP TLS certificate and ACME account material and clear MCP TLS intent.",
+    "aliases": [],
+    "destructive": true,
+    "hidden": false,
+    "risk": "irreversible",
+    "confirmation": "y_n",
+    "surface": "",
+    "flags": [],
+    "internal": null,
+    "tail": null,
+    "path": [
+      "unset",
+      "mcp-tls",
+      "purge"
+    ],
+    "category": "System",
+    "summary": "Purge MCP TLS certificate and ACME account material",
+    "examples": [
       "unset mcp-tls purge"
     ],
-    "args": [
-      {
-        "name": "<PURGE>",
-        "complete": [
-          "purge"
-        ],
-        "required": false
-      }
-    ]
+    "args": []
   },
   {
     "roles": "server",
