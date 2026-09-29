@@ -1508,10 +1508,7 @@ def _system(plane: ControlPlane, rest):
             )
         if rest[1] == "approve-oauth":
             # system credential approve-oauth <PENDING-ID> [AI-IDENTITY]
-            # or system credential approve-oauth ai-identity|ai-principal <PENDING-ID> [AI-IDENTITY]
             args = rest[2:]
-            if args and args[0] in ("ai-principal", "ai-identity"):
-                args = args[1:]
             if not args:
                 raise SystemExit(
                     "usage: system credential approve-oauth <PENDING-ID> [AI-IDENTITY]\n"
@@ -1534,9 +1531,7 @@ def _system(plane: ControlPlane, rest):
             return 0
         if rest[1] == "deny-oauth":
             args = rest[2:]
-            if args and args[0] in ("ai-principal", "ai-identity"):
-                args = args[1:]
-            if not args:
+            if len(args) != 1:
                 raise SystemExit("usage: system credential deny-oauth <PENDING-ID>")
             pending_id = args[0]
             _run(plane.deny_oauth_pending, pending_id)
@@ -1549,7 +1544,7 @@ def _system(plane: ControlPlane, rest):
                 "usage: system credential rotate|revoke|configure ai-identity <NAME> ..."
             )
         noun = rest[2]
-        if noun not in ("ai-identity", "ai-principal"):
+        if noun != "ai-identity":
             raise SystemExit(
                 "usage: system credential rotate|revoke|configure ai-identity <NAME> ..."
             )
