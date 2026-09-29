@@ -844,7 +844,15 @@ try:
             print("CONTROL_DB_RECONCILE_SKIPPED")
         elif not rec.get("ok"):
             print("CONTROL_DB_RECONCILE_WARNING %s" % rec.get("error"))
+    # Legacy reconciliation can advance the authoritative DB revision after
+    # the initial control-plane bootstrap. Compile runtime *after* reconciliation
+    # so access/egress health checks never restart against the previous revision.
     st = plane.status()
+    if st.get("mismatch"):
+        plane.compile_runtime()
+        st = plane.status()
+    if st.get("mismatch"):
+        raise SystemExit("runtime generation mismatch after upgrade reconciliation")
     print("CONTROL_PLANE_ROOT=%s" % deploy)
     print("CONTROL_DB_OK revision=%s mismatch=%s clients=%s" % (
         st.get("revision"), st.get("mismatch"), st.get("clients")))

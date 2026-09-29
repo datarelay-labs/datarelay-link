@@ -513,6 +513,80 @@ class UpgradeHookRootTests(unittest.TestCase):
         self.assertTrue(db.is_file())
         self.assertFalse((Path(tmp) / "var" / "var").exists())
 
+    def test_UPGRADE_HOOK_RECOMPILES_RUNTIME_AFTER_POPULATED_LEGACY_RECONCILE(self):
+        tmp = tempfile.mkdtemp(prefix="drlink-hook-populated-")
+        plane = ControlPlane(tmp)
+        v24.ensure_v2_schema(plane.conn)
+        v24.set_service_object(plane, "ssh", type="tcp", port=22, oneshot=True)
+        plane.compile_runtime()
+        self.assertFalse(plane.status().get("mismatch"))
+        plane.close()
+
+        mid = "a019a019a019a019a019a019a019a019"
+        registry = {
+            "schema_version": 2,
+            "reserved": [6002],
+            "clients": {
+                mid: {
+                    "hostname": "a019-upgrade-client",
+                    "label": "a019-upgrade-client",
+                    "services": {
+                        "ssh": {
+                            "id": "ssh",
+                            "preset": "ssh",
+                            "local_ip": "127.0.0.1",
+                            "local_port": 22,
+                            "remote_port": 6001,
+                            "enabled": True,
+                        }
+                    },
+                }
+            },
+        }
+        inventory = Path(tmp) / "var/lib/drlink/runtime/client-inventory.json"
+        _write_json(inventory, registry)
+        db = Path(tmp) / "var/lib/drlink/drlink.db"
+        py_src = _extract_ensure_control_plane_python()
+        proc = subprocess.run(
+            [
+                sys.executable,
+                "-",
+                str(db),
+                str(ROOT / "lib" / "drlink_control_db.py"),
+                str(ROOT / "lib" / "drlink_control_plane.py"),
+            ],
+            input=py_src,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stdout + "\n" + proc.stderr)
+        self.assertIn("CONTROL_DB_RECONCILED clients=1 hosts=1", proc.stdout)
+        self.assertIn("mismatch=False", proc.stdout)
+
+        plane = ControlPlane(tmp)
+        try:
+            status = plane.status()
+            self.assertFalse(status.get("mismatch"), status)
+            client = plane.conn.execute(
+                "SELECT id, label FROM clients WHERE id = ?", (mid,)
+            ).fetchone()
+            self.assertIsNotNone(client)
+            self.assertEqual(client["label"], "a019-upgrade-client")
+            service = plane.conn.execute(
+                "SELECT public_port FROM published_services "
+                "WHERE client_id = ? AND name = 'ssh' AND released = 0",
+                (mid,),
+            ).fetchone()
+            self.assertIsNotNone(service)
+            self.assertEqual(int(service["public_port"]), 6001)
+            rev = status["revision"]
+            for row in (status.get("generations") or {}).values():
+                self.assertEqual(int(row["generation"]), int(rev))
+                self.assertEqual(int(row["db_revision"]), int(rev))
+        finally:
+            plane.close()
+
 
 if __name__ == "__main__":
     unittest.main()
