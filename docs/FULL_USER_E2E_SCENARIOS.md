@@ -556,7 +556,9 @@ A User E2E run is not complete merely because the happy path worked. Before the 
 PRE_RUN_CLEAN_STATE=PASS
 ALL_REACHABLE_ASSIGNED_HOSTS_CLEAN=PASS
 STALE_PRODUCT_UNIT_LINKS=0
-SOURCE_WORKTREE_CLEAN=PASS
+SOURCE_WORKTREE_STATE=RECORDED
+TESTED_CANDIDATE_IDENTITY_PINNED=PASS
+DIRTY_SOURCE_USED_TO_BUILD_OR_INSTALL=NO
 UNEXPLAINED_PRESERVED_STATE=0
 ROLE_SCENARIO_DISPOSITION_COMPLETE=YES
 COMMANDS_WITHOUT_DISPOSITION=0
@@ -849,7 +851,7 @@ For each reachable assigned host:
 6. clear stale failed/transient service state where the OS exposes it;
 7. verify prior product-reserved listeners/endpoints are no longer active and no previous Remote Service/load target can answer traffic;
 8. retain SSH access, OS/network configuration, required package dependencies, test accounts, base DNS, and explicit test-management infrastructure needed to reach the hosts. Do not destroy the laboratory itself in the name of cleanup;
-9. verify the selected repository/worktree/candidate source has no unintended local modifications, stale generated artifacts, or previous-run output that could alter the candidate or contaminate evidence.
+9. record the selected repository/worktree state and independently pin the installed candidate/build identity. If the development worktree is dirty, do not build, package, reinstall, or update the tested product from that dirty source; continue independent black-box runtime scenarios against the already installed pinned candidate.
 
 Management-access exception: reverse SSH/tunnel services used solely to keep a test host reachable may remain active when they are outside the DRLink product/data path. Record them explicitly as `PRESERVED_TEST_MANAGEMENT_INFRA` so they cannot be mistaken for a DRLink runtime process. A failure confined to that out-of-band management path is `BLOCKED_MANAGEMENT_PATH`; it is not automatically a product Agent connection or data-plane FAIL, and it must not be counted as product PASS either.
 
@@ -880,7 +882,9 @@ POST_CLEAN_PRODUCT_STATE_PATHS=
 POST_CLEAN_PRODUCT_RESERVED_LISTENERS=
 PRESERVED_TEST_MANAGEMENT_INFRA=
 SYSTEMD_NOT_FOUND_CACHE_ONLY=
-SOURCE_WORKTREE_CLEAN=PASS|FAIL
+SOURCE_WORKTREE_STATE=CLEAN|DIRTY_RECORDED
+INSTALLED_CANDIDATE_IDENTITY_PINNED=PASS|FAIL
+DIRTY_SOURCE_USED_TO_BUILD_OR_INSTALL=NO
 CLEAN_STATE_RESULT=PASS|FAIL|BLOCKED_ENVIRONMENT
 ~~~
 
@@ -896,8 +900,11 @@ PREVIOUS_RUN_LOAD_PROCESSES=0
 PREVIOUS_RUN_TEMP_ARTIFACTS=0
 UNEXPLAINED_PRODUCT_LISTENERS=0
 UNEXPLAINED_PRESERVED_STATE=0
-SOURCE_WORKTREE_CLEAN=PASS
+INSTALLED_CANDIDATE_IDENTITY_PINNED=PASS
+DIRTY_SOURCE_USED_TO_BUILD_OR_INSTALL=NO
 ~~~
+
+Development-worktree dirtiness is **not** test-host contamination by itself and must not stop independent black-box runtime testing. Record it, freeze the installed candidate identity, and forbid building/installing from the dirty source during the run. A scenario that specifically requires a fresh candidate build/reinstall from source may be `BLOCKED_ENVIRONMENT` if no immutable candidate artifact is available; all independent runtime scenarios continue.
 
 If any assigned host fails this gate, clean/recover that host before using it. Do not silently continue and later interpret inherited state as a product PASS. If cleanup cannot be completed, mark only scenarios depending on that host `BLOCKED_ENVIRONMENT` and continue independent clean hosts.
 
@@ -3994,7 +4001,7 @@ On a trigger, the minimum startup sequence is:
 4. Read the development host's ~/.ssh/config and any untracked local run inventory; resolve SSH routes per section 5.1 without using lab literals from this tracked contract.
 5. Probe configured hosts in parallel.
 6. Classify every reachable configured host, assign every suitable host an intended Server/Agent/Relay/client/target/load-generator/recovery role, and record any unused reachable host with a concrete reason.
-7. Execute the section 5.3 clean-room gate on every assigned host: inventory old state, use supported product uninstall for fresh lanes, stop previous E2E/load runtimes, remove disposable old artifacts and stale/broken product service-unit links, verify product listeners/state are gone, verify the source/worktree is clean, and explicitly record preserved management-access infrastructure.
+7. Execute the section 5.3 clean-room gate on every assigned host: inventory old state, use supported product uninstall for fresh lanes when an immutable candidate artifact is available, stop previous E2E/load runtimes, remove disposable old artifacts and stale/broken product service-unit links, verify product listeners/state are gone, record the development worktree state, pin the installed candidate identity, never build/install from dirty source, and explicitly record preserved management-access infrastructure.
 8. Do not start product discovery or create PASS-eligible state until ALL_REACHABLE_ASSIGNED_HOSTS_CLEAN=PASS. Then create the new RUN_ID/current-run test state and open the section 5.4 process/session registry.
 9. On every freshly installed/assigned Server/Agent role, start public command discovery in parallel with drlink, ?, help, help commands, menu, Tab and visible wizard/error guidance.
 10. Build the runtime command/variant ledger and map discovered capabilities to realistic use-case lanes; section 14 is auditor-only omission detection.
