@@ -215,6 +215,8 @@ assert "/var/lib/frp-auto-deploy/registry.json" in text
 assert "V230_NO_EGRESS_FIXTURE" in text
 assert "/usr/local/sbin/frp-backup" in text
 assert "V230_BACKUP FAIL" in text
+assert "V230_BOOTSTRAP_STAGED" in text
+assert "staged v2.3.0 bootstrap sha256 mismatch" in text
 assert "V240_BOOTSTRAP_STAGED" in text
 assert "sha256sum" in text and "staged v2.4 bootstrap sha256 mismatch" in text
 assert "require-release-target.sh" in text and "RELEASE_TARGET_QUALIFIED" in text

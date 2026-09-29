@@ -67,6 +67,7 @@ gates = doc.get("gates")
 if not isinstance(gates, dict):
     raise SystemExit("A-019 gates are missing")
 required = (
+    "V230_BOOTSTRAP_STAGED",
     "V230_VERSION_IDENTITY",
     "V230_LEGACY_LAYOUT_RUNTIME",
     "V230_STATE_SEED",

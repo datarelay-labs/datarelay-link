@@ -130,16 +130,39 @@ fi
 pq_gate V230_PURGE PASS
 
 # --- 1) Fresh v2.3.0 install on server ---
-pq_note "Installing release-equivalent v2.3.0 from $V230_TREE (FRP_RELEASE_CHANNEL=$V230_CHANNEL)"
+# Stage the prior-stable bundle as a remote file. The installer itself may read
+# stdin, so executing the large self-contained bootstrap through \`bash -s\`
+# can let installer input consume bytes from the script stream.
+V230_BOOTSTRAP_REMOTE="/var/tmp/drlink-a019-v230-bootstrap.sh"
+V230_BOOTSTRAP_SHA="$(sha256sum "$V230_TREE/dist/bootstrap-server.sh" | awk '{print $1}')"
+pq_note "Staging immutable v2.3.0 bootstrap (sha256=$V230_BOOTSTRAP_SHA)"
+set +e
+pq_ssh "$SERVER" "cat > '$V230_BOOTSTRAP_REMOTE' && chmod 700 '$V230_BOOTSTRAP_REMOTE'" \
+  <"$V230_TREE/dist/bootstrap-server.sh" >"$OUT/v230-bootstrap-stage.log" 2>&1
+stage_v230_rc=$?
+set -uo pipefail
+if [[ "$stage_v230_rc" -ne 0 ]]; then
+  pq_gate V230_BOOTSTRAP_STAGED FAIL
+  fail_out "failed to stage v2.3.0 bootstrap rc=$stage_v230_rc"
+fi
+remote_v230_bootstrap_sha="$(pq_ssh "$SERVER" "sha256sum '$V230_BOOTSTRAP_REMOTE'" | awk 'NR==1 {print $1}')"
+if [[ "$remote_v230_bootstrap_sha" != "$V230_BOOTSTRAP_SHA" ]]; then
+  pq_gate V230_BOOTSTRAP_STAGED FAIL
+  fail_out "staged v2.3.0 bootstrap sha256 mismatch"
+fi
+pq_gate V230_BOOTSTRAP_STAGED PASS
+
+pq_note "Installing release-equivalent v2.3.0 from staged immutable bundle (FRP_RELEASE_CHANNEL=$V230_CHANNEL)"
 set +e
 pq_ssh "$SERVER" "sudo env \
   FRP_PUBLIC_HOSTNAME='$PUBLIC_HOSTNAME' \
   FRP_PUBLIC_IP='$PUBLIC_IP' \
   FRP_RELEASE_CHANNEL='$V230_CHANNEL' \
-  bash -s --" \
-  <"$V230_TREE/dist/bootstrap-server.sh" >"$OUT/v230-install.log" 2>&1
+  bash '$V230_BOOTSTRAP_REMOTE'" \
+  >"$OUT/v230-install.log" 2>&1
 inst_rc=$?
 set -uo pipefail
+pq_ssh "$SERVER" "rm -f '$V230_BOOTSTRAP_REMOTE'" >/dev/null 2>&1 || true
 if [[ "$inst_rc" -ne 0 ]]; then
   pq_gate V230_INSTALL FAIL
   tail -80 "$OUT/v230-install.log" | tee -a "$PROD_QUAL_SUMMARY" || true
