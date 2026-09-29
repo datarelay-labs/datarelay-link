@@ -2652,8 +2652,6 @@ import importlib.util
 import sys
 from pathlib import Path
 root = Path(sys.argv[1])
-# Deploy root is parent of var/
-deploy = root.parent.parent if root.name == "drlink" else root
 db_mod = Path(sys.argv[2])
 plane_mod = Path(sys.argv[3])
 lib_dir = str(db_mod.parent)
@@ -2663,13 +2661,24 @@ spec = importlib.util.spec_from_file_location("drlink_control_db", str(db_mod))
 db = importlib.util.module_from_spec(spec)
 sys.modules["drlink_control_db"] = db
 spec.loader.exec_module(db)
+deploy = Path(db.deploy_root_from_db_path(root / "drlink.db"))
 spec = importlib.util.spec_from_file_location("drlink_control_plane", str(plane_mod))
 plane_mod_obj = importlib.util.module_from_spec(spec)
 sys.modules["drlink_control_plane"] = plane_mod_obj
 spec.loader.exec_module(plane_mod_obj)
 plane = plane_mod_obj.ControlPlane(str(deploy))
 try:
-    plane.status()
+    status = plane.status()
+    if not status.get("db_healthy"):
+        raise SystemExit("control DB unhealthy after init")
+    # Re-running the installer may advance schema/config revision without going
+    # through a normal control-plane mutation. Runtime policy generations must
+    # never be left one revision behind when access/egress services restart.
+    if status.get("mismatch"):
+        plane.compile_runtime()
+        status = plane.status()
+    if status.get("mismatch"):
+        raise SystemExit("runtime generation mismatch after init")
 finally:
     plane.close()
 print("CONTROL_DB_OK")

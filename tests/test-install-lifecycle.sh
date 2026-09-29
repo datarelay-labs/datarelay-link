@@ -381,6 +381,21 @@ PY
 chmod 600 "$SRV/var/lib/drlink/runtime/client-inventory.json"
 REG_SHA="$(frp_file_sha256 "$SRV/var/lib/drlink/runtime/client-inventory.json")"
 
+# Reinstall/upgrade must heal a control-plane runtime generation mismatch. A
+# schema/config migration may advance DB revision outside a normal policy
+# mutation, but access/egress services must never restart against stale runtime.
+PYTHONPATH="$ROOT/lib" python3 - "$SRV" <<'PY' || fail "seed runtime generation mismatch"
+import sys
+from drlink_control_plane import ControlPlane
+plane = ControlPlane(sys.argv[1])
+try:
+    plane.force_generation_mismatch("remote")
+    plane.conn.commit()
+    assert plane.status().get("mismatch") is True
+finally:
+    plane.close()
+PY
+
 # Reinstall must preserve CA/token/registry and skip unnecessary restart.
 cp "$WORKDIR/fresh-server.out" "$WORKDIR/before-reinstall.out"
 if ! frp_server_main >"$WORKDIR/reinstall-server.out" 2>"$WORKDIR/reinstall-server.err"; then
@@ -401,6 +416,21 @@ PY
 [[ "$CA_FP" == "$CA_FP2" ]] || fail "CA rotated on reinstall"
 [[ "$(frp_file_sha256 "$SRV/etc/frp/server_token")" == "$TOKEN_SHA" ]] || fail "token rotated on reinstall"
 [[ "$(frp_file_sha256 "$SRV/var/lib/drlink/runtime/client-inventory.json")" == "$REG_SHA" ]] || fail "registry rewritten on reinstall"
+PYTHONPATH="$ROOT/lib" python3 - "$SRV" <<'PY' || fail "runtime generation mismatch survived reinstall"
+import sys
+from drlink_control_plane import ControlPlane
+plane = ControlPlane(sys.argv[1])
+try:
+    status = plane.status()
+    assert status.get("db_healthy") is True, status
+    assert status.get("mismatch") is False, status
+    rev = status.get("revision")
+    for name, row in (status.get("generations") or {}).items():
+        assert row.get("generation") == rev, (name, row, rev)
+        assert row.get("db_revision") == rev, (name, row, rev)
+finally:
+    plane.close()
+PY
 grep -q 'Existing allocator CA preserved' "$WORKDIR/reinstall-server.out" || fail "CA preserved message"
 if grep -q 'restart drlink-server' "$SRV/var/lib/drlink/install-actions.log"; then
   # first install records restart; reinstall of same binary/config should not add another after the last success
@@ -449,8 +479,12 @@ assert cfg['allocator_listen_port']==6099
 assert cfg['allocator_public_url']=='https://203.0.113.10/enroll'
 PY
 grep -q 'Deployment mode   : single443' "$WORKDIR/s443.out" || fail "s443 summary mode"
-grep -q 'healthz|enroll|bootstrap/redeem|i/' "$S443/etc/drlink/frontend.conf" \
-  || fail "s443 allocator path allowlist"
+grep -Fq 'enroll(?:/preflight)?' "$S443/etc/drlink/frontend.conf" \
+  || fail "s443 enrollment/preflight allowlist"
+grep -Fq 'bootstrap/redeem' "$S443/etc/drlink/frontend.conf" \
+  || fail "s443 bootstrap allowlist"
+grep -Fq 'healthz' "$S443/etc/drlink/frontend.conf" \
+  || fail "s443 health allowlist"
 grep -q 'return 404;' "$S443/etc/drlink/frontend.conf" || fail "s443 default 404"
 grep -q 'proxy_ssl_verify on' "$S443/etc/drlink/frontend.conf" || fail "s443 proxy_ssl_verify"
 grep -q 'proxy_ssl_name localhost;' "$S443/etc/drlink/frontend.conf" || fail "s443 proxy_ssl_name localhost"
