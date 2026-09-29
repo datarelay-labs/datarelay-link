@@ -2,7 +2,7 @@
 
 > **Document role:** Single canonical final User E2E execution contract — role-based real operation + exhaustive Direct CLI + exhaustive AI-assisted parity + performance/concurrency
 > **Canonical path:** `docs/FULL_USER_E2E_SCENARIOS.md` (single canonical entry point)
-> **Operator runbook:** Appendix A retains the v2.4 manual operator procedure
+> **Operator runbook:** Acting personas do not consult manuals/runbooks during FULL_USER_E2E; Appendix A is historical-only and the auditor may use canonical documents only after runtime discovery to reconcile omissions.
 > **Product:** Data Relay Link
 > **Target:** v2.4 and later until superseded
 > **Primary CLI:** drlink
@@ -21,6 +21,7 @@ When the user asks for any of the following without explicitly narrowing scope:
 - 사용자 E2E
 - 사용자 E2E 테스트
 - Full User E2E
+- Full User E2E 테스트 시작
 - User E2E
 - 전체 E2E
 - 전수 사용자 테스트
@@ -35,6 +36,11 @@ RUN_ALL_MANDATORY_PERFORMANCE_SCENARIOS=YES
 USE_REAL_PUBLIC_PRODUCT_PATHS=YES
 USE_ACTUAL_PUBLIC_DRLINK_CLI=YES
 RETAIN_EVIDENCE=YES
+CURRENT_CONFIGURED_TEST_HOSTS_ONLY=YES
+NEW_TEST_HOST_PROVISIONING_REQUIRED=NO
+ACTING_PERSONA_MANUAL_FREE=YES
+MANDATORY_REPEAT_AND_SEQUENCE_PERMUTATION=YES
+FUNCTION_UNDER_LOAD_COLLISION=MANDATORY
 ~~~
 
 A targeted E2E request may run a subset only when the user explicitly names the scope.
@@ -111,8 +117,11 @@ PLAN_ONLY_RESPONSE=FORBIDDEN
 PRE_E2E_CODE_REVIEW=FORBIDDEN
 PRE_E2E_CURSOR_HANDOFF=FORBIDDEN
 HISTORICAL_PASS_AS_CURRENT_EVIDENCE=FORBIDDEN
-PRODUCT_CODE_FIX_DURING_RUN=DEFER
+PRODUCT_CODE_FIX_DURING_RUN=FORBIDDEN
+PRODUCT_DOC_OR_TEST_CONTRACT_EDIT_DURING_ACTIVE_RUN=FORBIDDEN
+CANDIDATE_REBUILD_DURING_RUN=FORBIDDEN
 TEST_RECOVERY_DURING_RUN=ALLOW
+TEST_HOST_STATE_RECOVERY_ONLY=YES
 CONTINUE_AFTER_INDEPENDENT_FAILURE=YES
 PARALLELIZE_INDEPENDENT_LANES=MAXIMUM_SAFE
 ~~~
@@ -155,22 +164,23 @@ AUTOMATED_HARNESS_FAIL != PRODUCT_FAIL
 
 If automation/tooling cannot perform one user action, classify only that dependent scenario as `BLOCKED_TOOLING` and immediately continue all independent lanes. Do not spend the full run repeatedly trying to overcome one automation limitation when other user scenarios can execute.
 
-### 1.2.2 Functional-only execution scope
+### 1.2.2 Product-test-only execution scope
 
-FULL_USER_E2E tests product functionality and real user/operator workflows only. The acting ChatGPT persona completes the assigned mission, observes the product result, and continues coverage.
+FULL_USER_E2E tests product functionality, resilience, concurrency, and performance through real user/operator/admin workflows. It is deliberately broad as a **product test**, while code review, implementation diagnosis, security/compliance audit, and unrelated engineering review remain outside the active run.
 
-FULL_USER_E2E_SCOPE=FUNCTIONAL_ONLY
-NON_FUNCTIONAL_AUDITS=OUT_OF_SCOPE
-PRODUCT_BEHAVIOR_AND_RECOVERY=IN_SCOPE
+FULL_USER_E2E_SCOPE=PRODUCT_FUNCTIONAL_PERFORMANCE_OPERATIONAL
+ENGINEERING_CODE_AUDIT=OUT_OF_SCOPE
+SECURITY_COMPLIANCE_AUDIT=OUT_OF_SCOPE
+PRODUCT_BEHAVIOR_RECOVERY_PERFORMANCE=IN_SCOPE
 
 Execution rules:
 
 - test only what the user/operator/admin is trying to accomplish with the product;
 - do not add unrelated audits, advisory commentary, architecture review, or extra review work;
-- authentication, TLS, credentials, access policy, ALLOW/DENY, and permissions are tested only as normal product functions: perform the documented action and record whether it works;
-- a functional failure remains a functional finding; do not branch into a different review during the active run;
+- authentication, TLS, credentials, access policy, ALLOW/DENY, and permissions are tested only as normal product functions: discover and perform the public product action through CLI/AI-visible guidance and record whether it works;
+- a product functional, recovery, concurrency, or performance failure remains a product-test finding; do not branch into code/security/compliance review during the active run;
 - remain inside the designated disposable test environment and current-run resources;
-- continue every independent functional lane after recording a failure.
+- continue every independent functional/performance/recovery lane after recording a failure.
 
 The legacy S-* identifiers below are retained only for functional failure/recovery traceability.
 ### 1.2.3 Mandatory parallel-start gate
@@ -194,7 +204,7 @@ At minimum, attempt these lanes in parallel when applicable:
 
 Execution starts by reading the development server's `~/.ssh/config` and probing the configured hosts. Do not require the operator to restate hostnames already present there.
 
-Host assignment is dynamic:
+Host assignment is dynamic. The currently configured/reachable test estate is the hard resource budget: FULL_USER_E2E must not require provisioning a new VM, cloud instance, physical host, or external load generator to become executable or PASS-eligible. Additional isolated processes/services on existing hosts may increase pressure only when they remain faithful to the product behavior being measured; logical clients must never be reported as distinct physical hosts.
 
 1. classify reachable SSH-config hosts by OS, installed DRLink role, network reachability, available target services, and whether destructive testing is safe;
 2. assign **two suitable hosts to server-side roles** when two usable server hosts exist: one primary control/server candidate and one secondary server-side target/recovery/upgrade/failover test host according to the scenario;
@@ -208,9 +218,9 @@ Host discovery itself is infrastructure setup, not product validation. Product c
 
 Every applicable functional/operational intent is exercised across these dimensions rather than treated as three unrelated audits.
 
-### 1.3.1 Use-case coverage contract — feature-complete, not command-sweep testing
+### 1.3.1 Use-case and command exhaustion contract — feature-complete and command-complete
 
-FULL_USER_E2E is organized around **real product use cases**. Executing a command once only to satisfy a checklist does not count as feature coverage.
+FULL_USER_E2E is organized around **real product use cases**, but it is also explicitly command-complete. Executing a command once only to satisfy a checklist does not count as feature coverage; every applicable public command and behavior-changing variant must be functionally used inside a real scenario and receive a final disposition.
 
 Every current product capability and every applicable public CLI command/variant must be exercised inside at least one end-to-end use case with observable user value, authoritative state verification, and real behavior/traffic where applicable.
 
@@ -270,6 +280,65 @@ USE_CASES_WITHOUT_NEGATIVE_OR_RECOVERY_VARIANT=0
 
 If runtime discovery reveals a public capability not represented by the catalog above or detailed scenarios below, add it to the current run as a runtime-discovered use case immediately. Do not defer execution merely because the document is stale.
 
+### 1.3.2 Mandatory repetition and sequence-permutation contract
+
+A single successful execution never closes a high-risk state-changing workflow. FULL_USER_E2E must repeat operations with different starting state, order, concurrency, and recovery conditions so accidental one-shot success cannot hide stale-state, idempotency, race, or lifecycle defects.
+
+Minimum repetition policy, constrained to the currently configured test hosts:
+
+~~~text
+READ_ONLY_COMMANDS=AT_LEAST_2_CONTEXTS: IDLE + UNDER_LOAD_OR_CONCURRENT_MUTATION
+STATE_CHANGING_COMMANDS=AT_LEAST_3_EXECUTIONS_FROM_NAMESPACED_OR_RESET_STATE
+CREATE_EDIT_DISABLE_ENABLE_DELETE_LIFECYCLE=AT_LEAST_3_CYCLES
+ENROLLMENT_FLOWS=AT_LEAST_2_FRESH + 1_INVALID_RETRY_REUSE_OR_EXPIRY_VARIANT
+RESTART_RECONNECT_RECOVERY=AT_LEAST_3_CYCLES_WHERE_SAFE
+RACE_CONTENTION_CASES=AT_LEAST_3_ROUNDS
+FAILURE_INJECTION_RECOVERY=AT_LEAST_2_INJECT_RECOVER_CYCLES
+PERFORMANCE_POINT_SAMPLES=AT_LEAST_3_AFTER_WARMUP_WHERE_MEASURABLE
+AI_HIGH_RISK_WORKFLOW_MIRROR=AT_LEAST_2_EQUIVALENT_STARTING_STATES_WHERE_APPLICABLE
+~~~
+
+Repetition must vary at least one meaningful dimension rather than replaying identical commands blindly: fresh/existing/stale state; alternate lifecycle order; one-shot/REPL/wizard surface; Direct/AI execution; idle/loaded system; single/concurrent writer; host/platform/role; normal/cancel/interrupted/retry path; or valid boundary/invalid boundary+1.
+
+Every repeated state-changing scenario records `REPEAT_INDEX`, `STARTING_STATE`, `SEQUENCE_VARIANT`, `CONCURRENT_BACKGROUND_ACTIVITY`, and whether the final authoritative state matches intent.
+
+Required gate:
+
+~~~text
+MANDATORY_REPEAT_COVERAGE=100%
+STATE_CHANGING_COMMANDS_BELOW_REPEAT_MINIMUM=0
+LIFECYCLE_REPEAT_GAPS=0
+RACE_ROUNDS_BELOW_MINIMUM=0
+RECOVERY_REPEAT_GAPS=0
+~~~
+
+### 1.3.3 Manual-free operator and deliberate-mistake contract
+
+The acting User, Operator, Administrator, Incident Responder, and Platform Maintainer must complete the run without consulting the product manual, runbook, scenario command examples, CLI/AI Master, source code, test code, or hidden state. They may use only the installed product's public UX plus AI assistance grounded in the same user-visible information.
+
+~~~text
+ACTING_PERSONA_MANUAL_ACCESS=FORBIDDEN
+ACTING_PERSONA_RUNBOOK_ACCESS=FORBIDDEN
+ACTING_PERSONA_SOURCE_ACCESS=FORBIDDEN
+ACTING_PERSONA_ALLOWED_DISCOVERY=DRLINK_ENTRY|MENU|QUESTION_MARK|HELP|HELP_COMMANDS|TAB|WIZARD|ERROR_OUTPUT|STATUS_OUTPUT
+AI_INPUT_DEFAULT=NATURAL_LANGUAGE_GOAL_PLUS_USER_VISIBLE_CLI_OUTPUT_ONLY
+AUDITOR_CANONICAL_DOC_RECONCILIATION=POST_HOC_ONLY
+~~~
+
+Deliberately inject realistic mistakes across all roles. At minimum, when the relevant surface exists, cover wrong role/context, shell-vs-REPL/menu/wizard confusion, privilege mistakes, blank/typo/case/reserved/duplicate/ambiguous/stale selectors, malformed or out-of-range addresses/ports/URLs/TTLs/files/Bundles/stdin, wrong dependency/order, referenced-object deletion, repeated apply/delete/create, stale revisions, cancel/back/interruption, expired/reused enrollment, wrong hostname/server URL, omitted optional fields, wrong SSH username assumption, revoked credentials, wrong AI permission, DNS/TLS/target/Agent/Server/network failures, and concurrent same-name/same-object/last-slot/delete-vs-traffic/edit-vs-traffic/restart-vs-mutation races.
+
+Mistakes must stay inside the designated test estate. Recovery must come from public CLI guidance and/or AI assistance using only user-visible output; source-level knowledge does not count.
+
+Required gate:
+
+~~~text
+DELIBERATE_MISTAKE_CLASSES_APPLICABLE=
+DELIBERATE_MISTAKE_CLASSES_EXECUTED=
+DELIBERATE_MISTAKE_COVERAGE=100%
+RECOVERY_USING_ONLY_CLI_OR_AI=100%
+UNDOCUMENTED_KNOWLEDGE_REQUIRED=0
+~~~
+
 ### Dimension A — Direct CLI role operation
 
 ChatGPT acts as **User, Operator, and Administrator** and performs realistic end-to-end work using only public `drlink` control-plane interfaces. During those workflows it must grade:
@@ -297,7 +366,7 @@ The integrated run must retain the semantic coverage formerly identified as CLI-
 
 ### Dimension B — AI-assisted parity of the same work
 
-For **every applicable Direct CLI semantic intent and every applicable end-to-end use case**, repeat the **same user goal** through AI support. Give the AI the natural-language intent and public product documentation, not the expected syntax or source code.
+For **every applicable Direct CLI semantic intent and every applicable end-to-end use case**, repeat the **same user goal** through AI support. Give the AI the natural-language intent first; when product-specific detail is needed, provide only the same user-visible CLI/help/menu/wizard/error/status output available to the acting operator. Do not give the AI the manual, runbook, CLI/AI Master, expected syntax, scenario oracle, source code, or test code.
 
 The AI mirror is not a separate toy example. It must reproduce the same scenario outcome under equivalent starting conditions/topology. Use isolated namespaced resources or reset to the same baseline so Direct and AI executions do not contaminate each other.
 
@@ -458,7 +527,7 @@ Performance and function-under-load stop/continuation rules:
 3. independent hosts/lanes whose functional prerequisites still hold continue at maximum practical concurrency;
 4. post-stress functional recheck remains required only for lanes that actually ran stress, plus a short global control-plane responsiveness sample.
 
-Keep `FULL_USER_E2E_SCOPE=FUNCTIONAL_ONLY`. Do not reintroduce separate security/compliance audit work during the active run.
+Keep `FULL_USER_E2E_SCOPE=PRODUCT_FUNCTIONAL_PERFORMANCE_OPERATIONAL`. Do not reintroduce source-level implementation diagnosis or separate security/compliance audit work during the active run.
 
 ## 1.5 Parallel execution scheduler
 
@@ -494,6 +563,11 @@ COMMANDS_WITHOUT_DISPOSITION=0
 DISCOVERED_COMMANDS_WITHOUT_DISPOSITION=0
 ORACLE_ONLY_COMMANDS_NOT_DISCOVERABLE=0
 PUBLIC_CLI_VARIANT_COVERAGE=100%
+MANDATORY_REPEAT_COVERAGE=100%
+DELIBERATE_MISTAKE_COVERAGE=100%
+FUNCTION_UNDER_LOAD_COLLISION_COVERAGE=100%
+ACTING_PERSONA_MANUAL_FREE=PASS
+CURRENT_CONFIGURED_TEST_HOSTS_ONLY=PASS
 OUTPUT_NEXT_ACTIONS_VALIDATED=100%
 AI_INTENTS_WITHOUT_DISPOSITION=0
 NEGATIVE_FAILURE_DISPOSITION_COMPLETE=YES
@@ -546,7 +620,7 @@ The same person may perform more than one role, but evidence must identify which
 
 ### 3.1 ChatGPT operational persona contract
 
-ChatGPT must not execute FULL_USER_E2E as a generic "tester" who already knows the answer. Before each use-case lane, assign an explicit operational persona and mission. The persona receives only the information that role would reasonably have in production: the business/operational goal, accessible hosts, credentials/permissions appropriate to the role, and product-visible documentation/output.
+ChatGPT must not execute FULL_USER_E2E as a generic "tester" who already knows the answer. Before each use-case lane, assign an explicit operational persona and mission. The persona receives only the information that role would reasonably have in production: the business/operational goal, accessible hosts, credentials/permissions appropriate to the role, and user-visible CLI/menu/help/wizard/error/status output. The acting persona does not consult manuals/runbooks during FULL_USER_E2E.
 
 The auditor remains logically separate from the acting persona. Auditor expectations, scenario command examples, source code, test code, hidden state, and expected command syntax must not leak into the persona's decision process.
 
@@ -756,6 +830,8 @@ ALL_SUITABLE_HOSTS_UTILIZED=PASS|FAIL
 A reachable suitable host left unused without a concrete isolation/platform/safety reason prevents a clean FULL_USER_E2E PASS. `BLOCKED_ENVIRONMENT` is appropriate only for a genuinely unavailable capability/host, not for voluntarily testing a smaller topology.
 
 Performance and concurrency testing must progressively increase utilization from baseline to the maximum practical real topology available in the test environment. The run must include a period where all suitable Agent/client/load/target hosts that can participate safely are active concurrently.
+
+The current configured estate is sufficient by contract: do not stop a run or ask the operator to provision hypothetical 5/10/30/50-host tiers. Record the actual physical-host ceiling and stress that topology aggressively with isolated roles, services, sessions, and load processes. Missing larger lab tiers are characterization limits, not `BLOCKED_ENVIRONMENT` for FULL_USER_E2E.
 
 ### 5.3 Mandatory pre-run clean-room state gate
 
@@ -1204,7 +1280,7 @@ The AI mirror is not a different synthetic test. It must preserve the same user 
 
 For the AI run:
 
-- provide the user goal and public documentation, not the expected command syntax, section-14 answer key, or source code;
+- provide the user goal first and, only when needed, the same user-visible CLI/help/menu/wizard/error/status output available to the operator; do not provide manuals/runbooks, the CLI/AI Master, expected command syntax, section-14 answer key, source code, or test code;
 - when the AI needs product-specific syntax or discovers ambiguity, give it the same public `?`/`help`/menu/error output a real user could obtain; do not resolve the ambiguity from source or the auditor oracle;
 - grade whether the AI correctly asks for or uses discoverable public guidance instead of hallucinating hidden syntax;
 - execute the AI's first answer unedited when safe;
@@ -2455,6 +2531,19 @@ Exercise long-lived connections, normal close, abrupt close, one-way silence, an
 ## S-023 — Bootstrap catalog false-HEALTHY prevention — MANDATORY
 
 Use a clean Agent enrollment with an initial Remote Service whose local target is reachable. Verify public CLI does not report HEALTHY before actual relay/runtime verification, then complete real external traffic and verify the transition to HEALTHY on the same identity and endpoint.
+
+## S-024 — Human/operator/admin misconfiguration and recovery matrix — MANDATORY
+
+Execute the deliberate-mistake classes from section 1.3.3 across realistic User, Agent Operator, Administrator, Incident Responder, and Platform Maintainer missions. Each mistake must occur inside a real task, not as isolated parser fuzzing, and recovery must use only public CLI guidance and/or AI assistance grounded in user-visible output.
+
+For each applicable mistake class, verify truthful/atomic failure, actionable recovery guidance, no duplicate/ghost state, preservation of prior valid state, successful corrected retry, and real traffic/effect matching the intended final state.
+
+## S-025 — Repetition, idempotency, and sequence permutation — MANDATORY
+
+Apply section 1.3.2 to every high-risk mutating workflow: create/edit/disable/enable/delete, enrollment, ConfigurationBundle, revision/rollback, backup/restore, update/restart, policy mutation, endpoint allocation, and credential/certificate lifecycle.
+
+At minimum include repeated desired-state apply, alternate lifecycle ordering, cancel/interruption followed by retry, stale identifier/revision followed by rediscovery, repeated delete/revoke/rollback, conflicting independent mutation before retry, and selected operations while representative traffic is active. Any duplicate resource, leaked reservation, stale success, silent overwrite, false idempotence, or non-deterministic authoritative state is FAIL.
+
 # 11. Parallel and simultaneous multi-host scenarios
 
 Parallel multi-host execution is a mandatory part of FULL_USER_E2E, not only a performance optimization.
@@ -2646,6 +2735,12 @@ Across different Agent Hosts at the same time perform a controlled mix of:
 
 Verify isolation between hosts and deterministic final state. A lifecycle operation on one host must not release, rename, or reassign another host's endpoint.
 
+## C-015 — Parallel role-and-mistake storm — MANDATORY
+
+Use the maximum safe concurrency available on the current hosts and overlap independent real-world mistakes and recovery work: stale/conflicting Administrator changes, wrong-selector Agent Operator recovery, long-lived/short-lived End User traffic during independent service lifecycle changes, Incident Responder outage diagnosis while normal work continues elsewhere, and AI-assisted work in parallel with a Direct lane on isolated namespaced state.
+
+Run at least three rounds with rotated roles/hosts when topology allows. Per-lane timestamps must prove the overlap rather than infer it.
+
 # 12. Performance test contract
 
 Performance testing is part of FULL_USER_E2E.
@@ -2808,19 +2903,19 @@ Verify one hot service does not corrupt endpoint identity or policy behavior of 
 
 ## P-009 — Multi-host scale — MANDATORY
 
-Exercise the product operating range using Managed/Agent Host tiers:
+Exercise the product across the **currently configured real test estate only**. Do not require or request new VMs/hosts merely to satisfy a synthetic fleet-size tier.
+
+Mandatory physical-topology points are:
 
 ~~~text
-1
-5
-10
-30
-50
+1_HOST_BASELINE
+2_HOST_SIMULTANEOUS_WHEN_AT_LEAST_2_SUITABLE_HOSTS_EXIST
+N_HOST_MAXIMUM = EVERY_SUITABLE_REACHABLE_CURRENT_TEST_HOST
 ~~~
 
-Where full physical/VM capacity for a tier is unavailable, use the maximum real-host tier available and record the missing tier as BLOCKED_ENVIRONMENT, not PASS.
+If the product can safely create additional independent logical services/sessions/clients on those same hosts, use them to increase connection/service pressure, but report them separately from physical host scale. A missing hypothetical 5/10/30/50-host lab is not a FULL_USER_E2E blocker.
 
-At each tier measure:
+At each available physical-topology point measure:
 
 - healthy Agent connectivity;
 - inventory/show response time;
@@ -3095,6 +3190,39 @@ POST_STRESS_FUNCTIONAL_RECHECK=PASS|FAIL
 Use multiple independent load generators whenever available so the measured boundary is not trivially capped by one generator. When a boundary is observed, identify the limiting component using host/network/resource evidence; do not attribute generator, target, or network saturation to DRLink without evidence.
 
 A saturation boundary is acceptable as a measured characteristic only if failure remains bounded/truthful, authorization and data isolation remain correct, state is not corrupted, endpoints are not duplicated/reassigned incorrectly, the control plane remains recoverable, and the product returns to normal operation after pressure is removed. Any correctness, isolation, integrity, authorization, or recovery failure under stress is a product FAIL regardless of whether a numeric SLO exists.
+
+## P-024 — Continuous function-under-load collision matrix — MANDATORY
+
+Performance work must not be isolated into a quiet benchmark phase. After baseline measurement, keep representative load running while functional scenarios continue on independent resources, using only the currently configured hosts.
+
+Mandatory collision rows when prerequisites hold:
+
+~~~text
+THROUGHPUT + SHOW/DIAGNOSTICS/AUDIT
+THROUGHPUT + REMOTE_SERVICE_CREATE_EDIT_DISABLE_ENABLE_DELETE_ON_INDEPENDENT_SERVICE
+THROUGHPUT + REMOTE_ACCESS_POLICY_ALLOW_DENY_MUTATION_AND_REAL_TRAFFIC_VERIFY
+THROUGHPUT + INTERNET_ACCESS_ALLOW_DENY_APPLICATION_CHECK
+THROUGHPUT + CONFIG_BUNDLE_TEST_DIFF_AND_ISOLATED_APPLY
+THROUGHPUT + BACKUP
+THROUGHPUT + AGENT_RESTART_RECONNECT_ON_ISOLATED_HOST
+CPS_CHURN + LONG_LIVED_CONNECTIONS + FILE_TRANSFER
+CPS_CHURN + ENDPOINT_ALLOCATION_CONTENTION
+NETWORK_IMPAIRMENT + READ_ONLY_CONTROL_OPERATIONS + TRAFFIC_RECOVERY
+MIXED_PROTOCOL_LOAD + DELIBERATE_INVALID_OPERATOR_INPUT_AND_RECOVERY
+MIXED_PROTOCOL_LOAD + AI_ASSISTED_CONTROL_OPERATION_ON_ISOLATED_STATE
+~~~
+
+For every row capture idle/baseline behavior, background load/resource state, the concurrent functional or recovery action, command latency and authoritative final state, real traffic effect during/after the action, and post-load recovery/resource return. A row may share a continuous load window with another row, but each functional assertion requires distinct evidence.
+
+Required gate:
+
+~~~text
+FUNCTION_UNDER_LOAD_COLLISION_ROWS_APPLICABLE=
+FUNCTION_UNDER_LOAD_COLLISION_ROWS_EXECUTED=
+FUNCTION_UNDER_LOAD_COLLISION_COVERAGE=100%
+FUNCTION_UNDER_LOAD_CORRECTNESS_FAILURES=0_FOR_PASS
+POST_COLLISION_RECOVERY=PASS
+~~~
 
 # 13. Platform matrix
 
@@ -3556,8 +3684,12 @@ Every scenario result must be one of:
 ~~~text
 PASS
 FAIL
+PARTIAL
+FAIL_PRECONDITION
 BLOCKED_ENVIRONMENT
 BLOCKED_TOOLING
+BLOCKED_MANAGEMENT_PATH
+INVALIDATED_BY_CONCURRENT_STATE
 NOT_APPLICABLE
 NOT_RUN_BY_SCOPE
 ~~~
@@ -3569,7 +3701,7 @@ Rules:
 - BLOCKED_TOOLING means the test executor/tooling could not perform the real user action; it is not PASS and must block aggregate FULL_USER_E2E PASS for a mandatory applicable scenario.
 - NOT_APPLICABLE requires an explicit product/platform reason.
 - NOT_RUN_BY_SCOPE is allowed only for an explicitly narrowed request.
-- A FULL_USER_E2E aggregate PASS is invalid if any mandatory applicable scenario is FAIL, BLOCKED_ENVIRONMENT, BLOCKED_TOOLING, or NOT_RUN.
+- A FULL_USER_E2E aggregate PASS is invalid if any mandatory applicable scenario is FAIL, PARTIAL, FAIL_PRECONDITION, BLOCKED_ENVIRONMENT, BLOCKED_TOOLING, BLOCKED_MANAGEMENT_PATH, INVALIDATED_BY_CONCURRENT_STATE, or NOT_RUN. `INVALIDATED_BY_CONCURRENT_STATE` must be rerun from isolated/namespaced state before final completion.
 - A numeric performance PASS is invalid when no approved numeric performance profile/SLO is defined; use MEASURED_NOT_QUALIFIED for the numeric qualification while still reporting functional load-test results.
 - A release PASS additionally follows all exact-HEAD and double-pass requirements in docs/RELEASE_VALIDATION.md.
 
@@ -3593,6 +3725,13 @@ DISCOVERED_COMMANDS_VARIANTS=
 COMMANDS_EXECUTED=
 AI_MIRROR_REQUIRED=YES|NO
 AI_MIRROR_RESULT=
+REPEAT_INDEX=
+STARTING_STATE=
+SEQUENCE_VARIANT=
+CONCURRENT_BACKGROUND_ACTIVITY=
+MISTAKE_INJECTED=
+RECOVERY_SOURCE=CLI|AI|TEST_HOST_STATE_RECOVERY|NOT_APPLICABLE
+MANUAL_OR_RUNBOOK_CONSULTED=NO
 TERMINOLOGY_CONSISTENT=
 ROLE_CONTEXT_CLEAR=
 STATE_SEMANTICS_CLEAR=
@@ -3623,6 +3762,13 @@ USE_CASES_EXECUTED_DIRECT=
 USE_CASES_EXECUTED_AI_MIRROR=
 USE_CASES_UNEXECUTED=
 USE_CASES_WITHOUT_AI_MIRROR=
+MANDATORY_REPEAT_COVERAGE=
+STATE_CHANGING_COMMANDS_BELOW_REPEAT_MINIMUM=
+DELIBERATE_MISTAKE_COVERAGE=
+RECOVERY_USING_ONLY_CLI_OR_AI=
+FUNCTION_UNDER_LOAD_COLLISION_COVERAGE=
+ACTING_PERSONA_MANUAL_FREE=PASS|FAIL
+CURRENT_CONFIGURED_TEST_HOSTS_ONLY=PASS|FAIL
 DISCOVERED_PUBLIC_COMMANDS_TOTAL=
 DISCOVERED_PUBLIC_VARIANTS_TOTAL=
 ORACLE_ONLY_COMMANDS_NOT_DISCOVERABLE=
@@ -3693,6 +3839,11 @@ COMMANDS_WITHOUT_USE_CASE=
 PUBLIC_COMMANDS_WITHOUT_DIRECT_USE=
 PUBLIC_COMMANDS_WITHOUT_AI_ASSISTED_USE=
 USE_CASES_WITHOUT_AI_MIRROR=
+MANDATORY_REPEAT_COVERAGE=
+DELIBERATE_MISTAKE_COVERAGE=
+FUNCTION_UNDER_LOAD_COLLISION_COVERAGE=
+ACTING_PERSONA_MANUAL_FREE=PASS|FAIL
+CURRENT_CONFIGURED_TEST_HOSTS_ONLY=PASS|FAIL
 ORACLE_ONLY_COMMANDS_NOT_DISCOVERABLE=
 DISCOVERABILITY_DEFECTS=
 DOC_RUNTIME_COMMAND_DRIFT=
@@ -3733,6 +3884,7 @@ CONNECT_P99=
 SOAK=
 RESOURCE_STABILITY=
 MAXIMUM_TOPOLOGY_STRESS=PASS|PARTIAL|FAIL
+FUNCTION_UNDER_LOAD_COLLISION_MATRIX=PASS|PARTIAL|FAIL
 MAX_STRESS_ACTIVE_HOSTS=
 MAX_STRESS_ACTIVE_LANES=
 MAX_STRESS_AGGREGATE_THROUGHPUT=
@@ -3768,15 +3920,17 @@ USER_E2E_REQUEST
 -> use real public CLI and real traffic
 -> exercise ALLOW and DENY
 -> execute performance in every required direction, ramp to the selected target or practical saturation boundary, use multiple load generators where available, identify the actual saturation limiter, and recheck recovery after stress
--> classify every reachable configured test host, assign every suitable host an active role, and use the maximum practical real topology rather than a minimal sufficient topology
+-> classify every reachable configured test host, assign every suitable host an active role, and use the maximum practical real topology rather than a minimal sufficient topology; never require provisioning additional hosts for FULL_USER_E2E
 -> bring all applicable test hosts online simultaneously and execute parallel multi-host gates
 -> assign ChatGPT an explicit production persona/mission (End User, Agent Operator, DRLink Administrator, Incident Responder, or Platform Maintainer) for every use-case lane
 -> begin each role as a user who does not know the command set: discover through drlink, ?, help, help commands, menu, Tab, wizard/error guidance
 -> treat every command snippet in this scenario document and section 14 as an auditor oracle, not prior knowledge for the acting user
 -> map every discovered/oracle command and behavior-changing variant into a real use case and exhaust the command ledger through those use cases
+-> repeat high-risk state-changing workflows and vary state/order/concurrency/recovery according to section 1.3.2; one successful execution is not sufficient
+-> inject realistic User/Operator/Administrator mistakes from section 1.3.3 and recover only through CLI/AI-visible guidance or minimum test-host/test-state recovery
 -> start each independent use-case lane as soon as enough public UX has been discovered; do not wait for serial happy-path completion
 -> keep all DRLink control/configuration/lifecycle actions CLI-only
--> execute every applicable use case again through AI assistance from the same natural-language goal, using only public docs and user-visible CLI/help/error output for recovery
+-> execute every applicable use case again through AI assistance from the same natural-language goal, using only user-visible CLI/menu/help/wizard/error/status output for recovery; acting personas do not consult manuals/runbooks
 -> exercise AI one-shot, AI error-correction, AI ConfigurationBundle, Export->AI->Reapply, and cross-context split workflows
 -> continuously audit every user-visible surface for terminology drift, ambiguity, role/context confusion, misleading state, invalid/stale generated guidance, unclear impact, and missing next actions
 -> retain evidence
@@ -3798,7 +3952,10 @@ ASK_OPERATOR_TO_FILL_WORKSHEET=NO
 ASK_OPERATOR_TO_CHOOSE_TEST_HOSTS=NO
 ASK_OPERATOR_TO_PREPARE_VALUES_ALREADY_DISCOVERABLE=NO
 CODE_CHANGE_DURING_ACTIVE_RUN=NO
+DOC_OR_TEST_CONTRACT_CHANGE_DURING_ACTIVE_RUN=NO
+CANDIDATE_REBUILD_DURING_ACTIVE_RUN=NO
 TEST_ENVIRONMENT_RECOVERY_ONLY=YES
+CONTINUE_INDEPENDENT_TESTS_TO_EXHAUSTION=YES
 ~~~
 
 If an external prerequisite cannot be discovered or safely satisfied automatically (for example an unavailable public DNS/TLS integration), classify only that dependent scenario as `BLOCKED_ENVIRONMENT` and continue all independent scenarios. Do not stop the full run to ask for setup unless the user explicitly asks to resolve that external prerequisite.
@@ -3820,6 +3977,7 @@ Treat these as direct execution triggers, case-insensitively and with equivalent
 사용자 E2E
 사용자 E2E 테스트
 Full User E2E
+Full User E2E 테스트 시작
 FULL_USER_E2E
 User E2E
 전체 E2E
@@ -3841,14 +3999,14 @@ On a trigger, the minimum startup sequence is:
 9. On every freshly installed/assigned Server/Agent role, start public command discovery in parallel with drlink, ?, help, help commands, menu, Tab and visible wizard/error guidance.
 10. Build the runtime command/variant ledger and map discovered capabilities to realistic use-case lanes; section 14 is auditor-only omission detection.
 11. Before each lane, assign ChatGPT an explicit End User, Agent Operator, DRLink Administrator, Incident Responder, or Platform Maintainer persona plus a production-style mission; create RUN_ID-scoped namespaced resources and immediately start every independent use-case lane whose prerequisites are discovered.
-12. Run Direct CLI, guided/TTY, adversarial, multi-platform enrollment, real-traffic, AI-assisted mirror and performance lanes concurrently at maximum practical real-host utilization; progressively ramp performance toward the selected target or practical saturation boundary. Apply section 1.4.1 prerequisite, evidence-reuse, FAIL_PRECONDITION, and bounded performance-stop rules.
-13. Behave like a real operator: pursue the mission, follow product output/next actions, copy/paste generated commands, make realistic mistakes, recover only from user-visible guidance, and continuously record terminology/clarity/cross-surface inconsistencies.
+12. Run Direct CLI, guided/TTY, adversarial, multi-platform enrollment, real-traffic, AI-assisted mirror and performance lanes concurrently at maximum practical utilization of the currently configured hosts; never pause to request new test hosts. Progressively ramp performance toward the selected target or practical saturation boundary. Apply section 1.4.1 prerequisite, evidence-reuse, FAIL_PRECONDITION, and bounded performance-stop rules.
+13. Behave like a real operator who has not read the manual: pursue the mission, follow product output/next actions, copy/paste generated commands, make realistic mistakes from section 1.3.3, recover only from user-visible CLI/AI guidance or minimum test-host/test-state recovery, and continuously record terminology/clarity/cross-surface inconsistencies.
 14. Continue discovery and use-case execution together until no discovered/oracle command or behavior-changing public variant lacks disposition.
-15. Execute each applicable use case again through AI assistance from the same goal and equivalent namespaced starting state.
+15. Execute each applicable use case again through AI assistance from the same goal and equivalent namespaced starting state, then satisfy the repetition/sequence-permutation minimums from section 1.3.2 for high-risk workflows.
 16. If one lane is blocked by tooling/environment/management-path or fails a functional prerequisite, record only that lane as BLOCKED_TOOLING/BLOCKED_ENVIRONMENT/BLOCKED_MANAGEMENT_PATH/FAIL_PRECONDITION as applicable and continue every independent lane immediately.
 17. Do not inspect product source, test source, internal DB/state, or harness implementation during active discovery.
-18. Run mixed function-under-load, policy-mutation, restart/reconnect, outage, race and all-host scenarios, then execute P-023 maximum-topology mixed stress with multiple load generators where available and verify post-saturation recovery, without redundant saturation against already-failed functional paths.
-19. Finish command/use-case/AI-mirror disposition, process-registry cleanup and reporting; only then begin implementation/harness diagnosis and batch engineering findings.
+18. Run mixed function-under-load, policy-mutation, restart/reconnect, outage, race and all-host scenarios continuously; execute P-024 collision rows while representative load is active, then execute P-023 maximum-topology mixed stress with multiple load processes/generators on the existing test hosts where available and verify post-saturation recovery without redundant saturation against already-failed functional paths.
+19. Finish command/use-case/AI-mirror/repetition/mistake/function-under-load disposition, process-registry cleanup and reporting. Do not modify product code, rebuild the candidate, or start Cursor as part of this trigger. Any implementation/harness diagnosis is a separate post-run engineering action.
 ~~~
 
 No additional planning document, old audit document, historical evidence review, Cursor run, or human host-selection step is a prerequisite.
