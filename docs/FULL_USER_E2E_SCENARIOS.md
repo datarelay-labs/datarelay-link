@@ -1439,7 +1439,7 @@ test ai-access source <IDENTITY> destination <DESTINATION> permission read-only
 show ai-access-log identity <IDENTITY>
 ~~~
 
-For v2.4.0 ChatGPT acceptance, first use a real ChatGPT Plus owner/UI session to complete OAuth Authorization Code/consent through the public MCP endpoint and confirm tool discovery. Machine-side SDK/HTTP conformance remains required evidence but cannot satisfy this owner/UI gate by itself.
+For v2.4.0 ChatGPT acceptance, first use a currently supported ChatGPT full-MCP owner/UI environment (Business or Enterprise/Edu at the time of this contract) to complete OAuth Authorization Code/consent through the public MCP endpoint and confirm tool discovery. Record the actual ChatGPT plan, surface, and date in run evidence rather than hard-coding a consumer plan name. Machine-side SDK/HTTP conformance remains required evidence but cannot satisfy this owner/UI gate by itself.
 
 From the supported AI/MCP client, verify:
 
@@ -1451,7 +1451,7 @@ From the supported AI/MCP client, verify:
 - audit attribution identifies principal, target, tool, result, revision, and safe metadata;
 
 
-For v2.4.0, AI/MCP is not optional. If MCP Bridge/AI Access is absent or the real ChatGPT Plus owner/UI authentication path cannot be exercised, record this scenario `FAIL` or `BLOCKED` with exact evidence; do not mark it `NOT_APPLICABLE`. When the public MCP endpoint/certificate/bridge path is not functionally serving authenticated calls, gate dependent scenarios (C-006, P-011, and AI-mirror work that requires live MCP) on that same functional prerequisite and do not repeat unavailable-endpoint probes.
+For v2.4.0, AI/MCP is not optional. If MCP Bridge/AI Access is absent or a currently supported ChatGPT full-MCP owner/UI authentication path cannot be exercised, record this scenario `FAIL` or `BLOCKED` with exact evidence (including attempted plan/surface/date when known); do not mark it `NOT_APPLICABLE`. When the public MCP endpoint/certificate/bridge path is not functionally serving authenticated calls, gate dependent scenarios (C-006, P-011, and AI-mirror work that requires live MCP) on that same functional prerequisite and do not repeat unavailable-endpoint probes.
 
 ## U-008 — User continuity across restart and policy change — MANDATORY
 
@@ -2847,7 +2847,7 @@ When the prerequisite holds, measure representative allowed operations:
 
 Also verify denied operations remain denied under concurrent load.
 
-For v2.4.0, MCP absence is a release failure rather than a `NOT_APPLICABLE` condition. Performance measurement may use the qualified machine-side MCP client after the real ChatGPT Plus owner/UI authentication gate is satisfied, but it does not replace U-007 owner/UI acceptance.
+For v2.4.0, MCP absence is a release failure rather than a `NOT_APPLICABLE` condition. Performance measurement may use the qualified machine-side MCP client after the currently supported ChatGPT full-MCP owner/UI authentication gate is satisfied, but it does not replace U-007 owner/UI acceptance.
 
 ## P-012 — Connection churn and reconnect storm — MANDATORY
 
@@ -3690,6 +3690,9 @@ IDLE_WHILE_INDEPENDENT_WORK_AVAILABLE=YES|NO
 DRLINK_CONTROL_PLANE_CLI_ONLY=PASS|FAIL
 AI_ASSISTED_CLI=PASS|PARTIAL|FAIL
 AI_USE_CASE_MIRROR_COVERAGE=
+CHATGPT_FULL_MCP_OWNER_UI_PLAN=
+CHATGPT_FULL_MCP_OWNER_UI_SURFACE=
+CHATGPT_FULL_MCP_OWNER_UI_DATE=
 CHATGPT_PLUGIN_INTEGRATION=PASS|PARTIAL|FAIL|NOT_APPLICABLE
 CANONICAL_MASTER_SCENARIO_COVERAGE=
 UNEXERCISED_PUBLIC_COMMANDS=
