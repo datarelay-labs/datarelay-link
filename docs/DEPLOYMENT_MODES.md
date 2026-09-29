@@ -225,7 +225,7 @@ fresh install with no `config.json` does not require that confirmation.
 Recommended sequence:
 
 1. Upgrade client software to 2.1.0+ while the server is still Direct
-   (`sudo drlink update`). This does not re-enroll or change ports.
+   (`sudo drlink system update product`). This does not re-enroll or change ports.
 2. Schedule a window. Re-run the server installer with
    `FRP_DEPLOYMENT_MODE=single443` and `FRP_CONFIRM_MODE_SWITCH=yes`
    (or type `SWITCH` on a TTY).
