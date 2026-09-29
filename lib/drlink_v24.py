@@ -5488,6 +5488,49 @@ def _invalidate_agent_remote_service_runtime_verification(plane_db) -> int:
     return int(cur.rowcount or 0)
 
 
+def invalidate_runtime_verification_for_restart(*, root: Optional[str] = None) -> dict:
+    """Public restart / service-start boundary for Remote Service verification.
+
+    Clears local runtime_verified, demotes persisted HEALTHY rows so a status
+    push cannot keep Server HEALTHY, and reports the unverified state when a
+    live management path exists. Safe to call from ``system restart`` and from
+    Agent unit ExecStartPre before frpc comes up.
+    """
+    from drlink_control_plane import ControlPlane
+
+    target_root = root
+    if target_root is None or str(target_root).strip() in ("", "/"):
+        plane = ControlPlane(None)
+        target_root = getattr(plane, "root", None)
+    else:
+        plane = ControlPlane(target_root)
+    try:
+        ensure_v2_schema(plane.conn)
+        cleared = _invalidate_agent_remote_service_runtime_verification(plane)
+        now = utc_now_iso()
+        demoted = plane.conn.execute(
+            "UPDATE agent_remote_services SET status = 'DEGRADED', "
+            "reason = ?, updated_at = ? "
+            "WHERE delete_pending = 0 AND enabled = 1 AND upper(status) = 'HEALTHY'",
+            ("Runtime activation pending.", now),
+        )
+        _commit_if_autonomous(plane)
+        pushed = 0
+        try:
+            pushed = _push_agent_remote_service_status(plane, root=target_root)
+        except Exception:
+            pushed = 0
+        return {
+            "cleared": int(cleared),
+            "demoted": int(demoted.rowcount or 0),
+            "pushed": int(pushed),
+        }
+    finally:
+        close = getattr(plane, "close", None)
+        if callable(close):
+            close()
+
+
 def synchronize_agent_remote_services(plane_db, *, root: Optional[str] = None) -> dict:
     """Reconnect synchronization: allocate pending endpoints, apply deletes, revalidate deps."""
     # Enrollment projection is a lifecycle write. show/status must not do it.

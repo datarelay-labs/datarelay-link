@@ -4776,6 +4776,22 @@ frp_client_resume_cmd() {
   echo "Identity   : preserved"
 }
 
+frp_client_invalidate_runtime_verification_for_restart() {
+  # Clear persisted Agent runtime_verified and push unverified status before a
+  # public runtime restart / unit start so Server cannot stay HEALTHY on a
+  # stale verification bit. Best-effort: missing DB or offline mgmt must not
+  # block restart itself.
+  local root lib_dir
+  root="$(frp_client_mgmt_origin_root)"
+  lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  PYTHONPATH="${lib_dir}${PYTHONPATH:+:$PYTHONPATH}" python3 - "$root" <<'PY' >/dev/null
+import sys
+from drlink_v24 import invalidate_runtime_verification_for_restart
+
+invalidate_runtime_verification_for_restart(root=sys.argv[1])
+PY
+}
+
 frp_client_restart_runtime_cmd() {
   # Restart local relay runtime only; do not change autostart enablement.
   frp_client_hook_log restart-runtime
@@ -4784,6 +4800,9 @@ frp_client_restart_runtime_cmd() {
     echo "ERROR: simulated service restart failure" >&2
     return 1
   fi
+  # Invalidate before the process boundary so persisted verification cannot
+  # survive the public `drlink system restart` shell path.
+  frp_client_invalidate_runtime_verification_for_restart || true
   FRP_PROXY_WAIT_CURSOR="$(frp_client_journal_cursor 2>/dev/null || true)"
   export FRP_PROXY_WAIT_CURSOR
   if [[ "${FRP_SKIP_SYSTEMD:-}" == "1" || -n "${FRP_CLIENT_TEST_ROOT:-}" ]]; then

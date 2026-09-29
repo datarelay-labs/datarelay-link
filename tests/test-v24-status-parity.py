@@ -1132,6 +1132,112 @@ class AgentPushFalseHealthyTests(unittest.TestCase):
         self.assertGreaterEqual(len(seen_verified), 1)
         self.assertEqual(seen_verified[0], 0)
 
+    def test_public_restart_invalidation_clears_verified_and_server_healthy(self):
+        # Comment 5883274697: public system restart shell path must invalidate
+        # local verification and must not leave Server HEALTHY.
+        created = mgmt.upsert_remote_service_on_server(
+            root=self.agent_tmp,
+            name="ssh-access",
+            destination="this-host",
+            service="ssh",
+            enabled=True,
+            pool_class="normal",
+            target_host="127.0.0.1",
+            target_port=22,
+            target_mode="self",
+            runtime_verified=True,
+        )
+        port = int(created["endpoint_port"])
+        now = "2026-09-18T00:00:00Z"
+        self.agent.conn.execute(
+            "INSERT OR REPLACE INTO agent_remote_services"
+            "(name, destination, service_object, enabled, status, endpoint_host, endpoint_port, "
+            "pending_allocation, delete_pending, pool_class, reason, runtime_verified, updated_at) "
+            "VALUES ('ssh-access', 'this-host', 'ssh', 1, 'HEALTHY', 'drlink.local', ?, 0, 0, "
+            "'normal', '', 1, ?)",
+            (port, now),
+        )
+        self.agent.conn.commit()
+        self.agent.close()
+
+        result = v24.invalidate_runtime_verification_for_restart(root=self.agent_tmp)
+        self.assertGreaterEqual(int(result.get("cleared") or 0), 1)
+
+        self.agent = ControlPlane(self.agent_tmp)
+        v24.ensure_v2_schema(self.agent.conn)
+        row = self.agent.conn.execute(
+            "SELECT status, runtime_verified FROM agent_remote_services WHERE name = 'ssh-access'"
+        ).fetchone()
+        self.assertEqual(int(row["runtime_verified"] or 0), 0)
+        self.assertNotEqual(str(row["status"] or "").upper(), "HEALTHY")
+
+        server = self._server_status("ssh-access")
+        self.assertNotEqual(server["status"], "HEALTHY")
+        self.assertEqual(int(server["runtime_verified"] or 0), 0)
+
+
+class PublicRestartShellPathTests(unittest.TestCase):
+    """P0-B: frp_client_restart_runtime_cmd must invalidate verification."""
+
+    def test_shell_restart_cmd_clears_agent_runtime_verified(self):
+        import subprocess
+
+        with tempfile.TemporaryDirectory(prefix="drlink-restart-shell-") as tmp:
+            root = Path(tmp)
+            (root / "etc/drlink").mkdir(parents=True)
+            (root / "etc/drlink/config.json").write_text(
+                '{"role":"agent"}\n', encoding="utf-8"
+            )
+            (root / "var/lib/drlink").mkdir(parents=True)
+            agent = ControlPlane(str(root))
+            v24.ensure_v2_schema(agent.conn)
+            agent.conn.execute(
+                "INSERT OR REPLACE INTO agent_remote_services"
+                "(name, destination, service_object, enabled, status, endpoint_host, endpoint_port, "
+                "pending_allocation, delete_pending, pool_class, reason, runtime_verified, updated_at) "
+                "VALUES ('ssh-access', 'this-host', 'ssh', 1, 'HEALTHY', 'drlink.local', 6012, 0, 0, "
+                "'normal', '', 1, '2026-09-18T00:00:00Z')"
+            )
+            agent.conn.commit()
+            agent.close()
+
+            env = os.environ.copy()
+            env["FRP_CLIENT_TEST_ROOT"] = str(root)
+            env["FRP_SKIP_SYSTEMD"] = "1"
+            env["PYTHONPATH"] = str(ROOT / "lib") + (
+                (os.pathsep + env["PYTHONPATH"]) if env.get("PYTHONPATH") else ""
+            )
+            script = r"""
+set -euo pipefail
+. lib/frp-common.sh
+. lib/frp-client-common.sh
+frp_client_restart_runtime_cmd
+"""
+            proc = subprocess.run(
+                ["bash", "-c", script],
+                cwd=str(ROOT),
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr + proc.stdout)
+            self.assertIn("Client restarted.", proc.stdout)
+
+            plane = ControlPlane(str(root))
+            v24.ensure_v2_schema(plane.conn)
+            row = plane.conn.execute(
+                "SELECT status, runtime_verified FROM agent_remote_services WHERE name = 'ssh-access'"
+            ).fetchone()
+            plane.close()
+            self.assertEqual(int(row["runtime_verified"] or 0), 0)
+            self.assertNotEqual(str(row["status"] or "").upper(), "HEALTHY")
+
+    def test_linux_unit_has_verification_invalidation_prestart(self):
+        text = (ROOT / "client" / "drlink-client.service").read_text(encoding="utf-8")
+        self.assertIn("ExecStartPre=", text)
+        self.assertIn("invalidate_runtime_verification_for_restart", text)
+
 
 if __name__ == "__main__":
     unittest.main()
