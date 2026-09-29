@@ -478,10 +478,13 @@ integration
 Agent lifecycle
 offline/reconnect
 runtime activation/rollback
+Feature ↔ CLI ↔ scenario product-surface reconciliation
 real public CLI scenarios
 multi-host Real E2E
 double full Real E2E on the same exact HEAD before stable
 ```
+
+The Feature ↔ CLI ↔ scenario product-surface reconciliation is an independent pre-release gate from Full User E2E. It starts from the product model, proves every operator capability has one coherent and discoverable public path, rejects orphan/duplicate/legacy runtime grammar on the unreleased greenfield surface, verifies installer/help/recovery guidance, destructive confirmation, privilege/exit-status semantics, cross-surface state consistency, and zero audit residue across all mutated hosts.
 
 Critical v2.4 CLI/AI acceptance includes:
 
