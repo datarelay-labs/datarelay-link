@@ -243,9 +243,12 @@ Audit:
 - `system ?`
 - `help commands`
 - `help workflows`
-- every area-specific help page used below.
+- every area-specific help page used below;
+- fresh Server/Agent installer completion guidance;
+- diagnostics/update recovery recommendations;
+- generated enrollment lifecycle instructions.
 
-Verify that discovery exposes every supported canonical path and does not advertise dead commands.
+Verify that discovery exposes every supported canonical path, every required lifecycle variant, and does not advertise dead, hidden-compatibility, or obsolete commands as the next action.
 
 ### CLI-002 — Version, status, diagnostics, and role
 
@@ -320,8 +323,8 @@ Audit all supported modes:
 Verify:
 
 - `set enrollment ?` discovery;
-- mode-specific help;
-- one-hour default/TTL semantics;
+- `set enrollment zero-touch ?` and manual/bulk mode-specific help;
+- Zero-Touch default 1 hour / maximum 24 hour semantics without generic/manual TTL leakage;
 - optional SSH username behavior;
 - one-time command presentation;
 - inventory/listing after issue;
@@ -346,6 +349,8 @@ Expected: clear recovery, no traceback, no unintended mutation, and return to a 
 Using namespaced resources:
 
 - create/connect an AI Identity far enough to exercise the selected auth path;
+- verify `system credential ?` discovers every supported credential lifecycle operation advertised by System help, including approve/deny OAuth and rotate/revoke/configure where supported;
+- verify credential rotate/configure/revoke on a nonexistent AI Identity fails without creating an identity or issuing a credential;
 - do not invent external OAuth approval;
 - create permission object/group;
 - attempt authorization with unverified identity and confirm fail-closed behavior;
@@ -392,7 +397,9 @@ Audit:
 - MCP TLS status;
 - MCP-specific diagnostics if advertised;
 - certificate status/preflight;
-- endpoint/authentication reporting.
+- endpoint/authentication reporting;
+- Direct-mode fail-closed behavior plus an actionable, exact supported path to transition to the deployment mode required for public MCP;
+- every destructive TLS/certificate subvariant, including secret/certificate purge, for confirmation metadata and fail-closed non-TTY behavior.
 
 Do not issue/import/renew a real certificate during shared active E2E unless the host is dedicated for that mutation.
 
@@ -400,7 +407,7 @@ Do not issue/import/renew a real certificate during shared active E2E unless the
 
 Audit help and fail-closed behavior for:
 
-- update;
+- update, including that check/recommendation output points only to canonical update commands;
 - pause/resume/restart on Agent;
 - autostart;
 - support bundle;
@@ -447,20 +454,24 @@ Do not require identical formatting, but flag semantics that make an active/heal
 
 Run representative Server-only commands on Agent and Agent-only commands on Server. Repeat once without required privilege when safe.
 
-Expected: the error tells the user what role/privilege is actually required and does not misidentify the current host.
+Expected: the error tells the user what role/privilege is actually required and does not misidentify the current host. A privilege/readability ERROR must return non-zero and must not be translated into an unrelated wrong-role error.
 
 ### CLI-019 — Destructive confirmation contract
 
-For every public command whose help declares `Risk` or `Confirmation`:
+For every public destructive operation and every destructive subvariant — whether or not its catalog currently declares `Risk` or `Confirmation`:
 
+- compare catalog metadata with actual effect;
 - verify interactive confirmation;
 - verify negative/cancel path;
 - verify non-TTY fails closed unless an explicit public approval mechanism is documented;
-- verify no mutation precedes confirmation.
+- verify no mutation precedes confirmation;
+- treat secret/key/certificate purge and credential-destroying variants as destructive even when the parent command also has non-destructive forms.
 
 ### CLI-020 — Cleanup and audit evidence
 
 Remove only resources owned by this audit and only when no concurrent lane still references them.
+
+Cleanup is not complete until every mutated Server and Agent is checked for the audit prefix and for non-prefixed resources created by a guided flow (for example a default-named Remote Service). The final residue count must be zero, or each retained resource must have an explicit pre-existing-state proof and disposition.
 
 Record:
 
@@ -501,7 +512,7 @@ During the audit:
 - preserve evidence;
 - use the active GitHub `[AI Work]` issue for consolidated findings.
 
-After the audit is exhausted, implementation fixes may be handed to Cursor in bounded slices. After every product change, re-run affected scenarios on the new exact candidate.
+After the audit is exhausted, implementation fixes follow the active Engineering System / Work Packet execution contract. After every product change, re-run affected scenarios on the new exact candidate.
 
 ## 7.1 Secret-safe evidence handling
 
