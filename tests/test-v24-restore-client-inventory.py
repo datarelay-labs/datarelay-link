@@ -27,7 +27,9 @@ MID2 = "dddddddddddddddddddddddddddddddd"
 REVOKED = "ffffffffffffffffffffffffffffffff"
 
 
-def _fp_digest(value: str) -> str:
+def _fp_digest(value: str | bytes) -> str:
+    if isinstance(value, bytes):
+        return hashlib.sha256(value).hexdigest()
     return hashlib.sha256(str(value).encode("utf-8")).hexdigest()
 
 
@@ -163,6 +165,8 @@ class RestoreClientInventoryTests(unittest.TestCase):
         self.plane = seed_server(self.tree, "orig")
         self.token_before = (self.tree / "etc/frp/server_token").read_text(encoding="utf-8")
         self.inv_before = None
+        self.clients_before = []
+        self.snapshots_before = set()
 
     def tearDown(self):
         try:
@@ -179,6 +183,26 @@ class RestoreClientInventoryTests(unittest.TestCase):
         ):
             os.environ.pop(key, None)
         self.tmp.cleanup()
+
+    def _capture_live_baseline(self) -> None:
+        """Capture live markers used to prove staged preflight did not mutate."""
+        inv = self.tree / "var/lib/drlink/runtime/client-inventory.json"
+        self.inv_before = inv.read_text(encoding="utf-8") if inv.is_file() else None
+        backup_dir = self.tree / "var/lib/drlink/backups"
+        self.snapshots_before = (
+            {p.name for p in backup_dir.glob("pre-restore-*.tar.gz")}
+            if backup_dir.is_dir()
+            else set()
+        )
+        # Logical DB state (raw sqlite bytes can change when backup opens the DB).
+        plane = ControlPlane(str(self.tree))
+        try:
+            rows = plane.conn.execute(
+                "SELECT id, label, hostname FROM clients ORDER BY id"
+            ).fetchall()
+            self.clients_before = [(str(r[0]), str(r[1]), str(r[2])) for r in rows]
+        finally:
+            plane.close()
 
     def _seed_clients_and_services(self, *, with_revoked: bool = False) -> None:
         self.plane.upsert_client(MID, label="host-a", hostname="host-a", connected=True)
@@ -266,10 +290,35 @@ class RestoreClientInventoryTests(unittest.TestCase):
         self.assertNotIn("evil-stale", client.get("services") or {})
 
     def _assert_no_live_mutation(self) -> None:
+        """Prove staged preflight rejection never started restore cutover."""
         self.assertEqual(
             (self.tree / "etc/frp/server_token").read_text(encoding="utf-8"),
             self.token_before,
         )
+        self.assertFalse(
+            (self.tree / "var/lib/drlink/server-update-pending.json").exists(),
+            "restore transaction marker must not exist after preflight rejection",
+        )
+        backup_dir = self.tree / "var/lib/drlink/backups"
+        snaps_after = (
+            {p.name for p in backup_dir.glob("pre-restore-*.tar.gz")}
+            if backup_dir.is_dir()
+            else set()
+        )
+        self.assertEqual(
+            snaps_after,
+            self.snapshots_before,
+            "pre-restore snapshot must not be created when staged identity preflight fails",
+        )
+        plane = ControlPlane(str(self.tree))
+        try:
+            rows = plane.conn.execute(
+                "SELECT id, label, hostname FROM clients ORDER BY id"
+            ).fetchall()
+            clients_after = [(str(r[0]), str(r[1]), str(r[2])) for r in rows]
+        finally:
+            plane.close()
+        self.assertEqual(clients_after, self.clients_before)
         if self.inv_before is not None:
             after = (self.tree / "var/lib/drlink/runtime/client-inventory.json").read_text(
                 encoding="utf-8"
@@ -356,12 +405,11 @@ class RestoreClientInventoryTests(unittest.TestCase):
     def test_preflight_rejects_corrupt_identity_before_mutation(self):
         self._seed_clients_and_services()
         self._inject_mgmt_identity({MID: self.MGMT_A, MID2: self.MGMT_B})
-        self.inv_before = (
-            self.tree / "var/lib/drlink/runtime/client-inventory.json"
-        ).read_text(encoding="utf-8")
         archive = self.outdir / "corrupt-mgmt.tar.gz"
         proc = run_tool(BACKUP, str(archive))
         self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.plane.close()
+        self._capture_live_baseline()
 
         broken = self.outdir / "corrupt-mgmt-broken.tar.gz"
 
@@ -383,12 +431,11 @@ class RestoreClientInventoryTests(unittest.TestCase):
     def test_preflight_rejects_missing_machine_id_membership(self):
         self._seed_clients_and_services()
         self._inject_mgmt_identity({MID: self.MGMT_A, MID2: self.MGMT_B})
-        self.inv_before = (
-            self.tree / "var/lib/drlink/runtime/client-inventory.json"
-        ).read_text(encoding="utf-8")
         archive = self.outdir / "missing-member.tar.gz"
         proc = run_tool(BACKUP, str(archive))
         self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.plane.close()
+        self._capture_live_baseline()
 
         broken = self.outdir / "missing-member-broken.tar.gz"
 
@@ -411,12 +458,11 @@ class RestoreClientInventoryTests(unittest.TestCase):
     def test_preflight_rejects_invalid_pubkey_before_mutation(self):
         self._seed_clients_and_services()
         self._inject_mgmt_identity({MID: self.MGMT_A, MID2: self.MGMT_B})
-        self.inv_before = (
-            self.tree / "var/lib/drlink/runtime/client-inventory.json"
-        ).read_text(encoding="utf-8")
         archive = self.outdir / "bad-pub.tar.gz"
         proc = run_tool(BACKUP, str(archive))
         self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.plane.close()
+        self._capture_live_baseline()
         broken = self.outdir / "bad-pub-broken.tar.gz"
 
         def mutate(root: Path) -> None:
@@ -435,15 +481,81 @@ class RestoreClientInventoryTests(unittest.TestCase):
         self._assert_no_live_mutation()
         self.plane = ControlPlane(str(self.tree))
 
+    def test_preflight_rejects_unsupported_alg_before_mutation(self):
+        self._seed_clients_and_services()
+        self._inject_mgmt_identity({MID: self.MGMT_A, MID2: self.MGMT_B})
+        archive = self.outdir / "bad-alg.tar.gz"
+        proc = run_tool(BACKUP, str(archive))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.plane.close()
+        self._capture_live_baseline()
+        broken = self.outdir / "bad-alg-broken.tar.gz"
+
+        def mutate(root: Path) -> None:
+            path = root / "payload/var/lib/drlink/runtime/client-inventory.json"
+            state = json.loads(path.read_text(encoding="utf-8"))
+            state["clients"][MID]["mgmt_alg"] = "not-supported-alg"
+            path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+        rewrite_archive(archive, broken, mutate)
+        self.plane.close()
+        proc = run_tool(RESTORE, str(broken))
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("mgmt_alg", (proc.stderr or "").lower())
+        self._assert_no_live_mutation()
+        self.plane = ControlPlane(str(self.tree))
+
+    def test_preflight_rejects_invalid_mac_key_before_mutation(self):
+        self._seed_clients_and_services()
+        self._inject_mgmt_identity({MID: self.MGMT_A, MID2: self.MGMT_B})
+        archive = self.outdir / "bad-mac.tar.gz"
+        proc = run_tool(BACKUP, str(archive))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.plane.close()
+        self._capture_live_baseline()
+        broken = self.outdir / "bad-mac-broken.tar.gz"
+
+        def mutate(root: Path) -> None:
+            path = root / "payload/var/lib/drlink/runtime/client-inventory.json"
+            state = json.loads(path.read_text(encoding="utf-8"))
+            # Digest assertions never print the raw key; use a clearly invalid format.
+            state["clients"][MID]["mgmt_mac_key"] = "not-64-hex"
+            path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+        rewrite_archive(archive, broken, mutate)
+        self.plane.close()
+        proc = run_tool(RESTORE, str(broken))
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("mgmt_mac_key", (proc.stderr or "").lower())
+        self._assert_no_live_mutation()
+        self.plane = ControlPlane(str(self.tree))
+
+    def test_legacy_forensic_membership_without_mgmt_fields_ok(self):
+        """Supported legacy: forensic client record exists but has no mgmt material."""
+        self._seed_clients_and_services()
+        archive = self.outdir / "legacy-no-mgmt.tar.gz"
+        proc = run_tool(BACKUP, str(archive))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.plane.close()
+        proc = run_tool(RESTORE, str(archive))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        after = json.loads(
+            (self.tree / "var/lib/drlink/runtime/client-inventory.json").read_text(encoding="utf-8")
+        )
+        self.assertIn(MID, after["clients"])
+        self.assertIn(MID2, after["clients"])
+        self.assertNotEqual(after["clients"][MID].get("mgmt_status"), "enrolled")
+        self.assertFalse(after["clients"][MID].get("mgmt_pubkey"))
+        self.plane = ControlPlane(str(self.tree))
+
     def test_missing_forensic_inventory_with_clients_fails_closed(self):
         self._seed_clients_and_services()
         self._inject_mgmt_identity({MID: self.MGMT_A, MID2: self.MGMT_B})
-        self.inv_before = (
-            self.tree / "var/lib/drlink/runtime/client-inventory.json"
-        ).read_text(encoding="utf-8")
         archive = self.outdir / "missing-inv.tar.gz"
         proc = run_tool(BACKUP, str(archive))
         self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.plane.close()
+        self._capture_live_baseline()
         stripped = self.outdir / "missing-inv-stripped.tar.gz"
 
         def mutate(root: Path) -> None:
