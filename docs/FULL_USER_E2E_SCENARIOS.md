@@ -413,6 +413,53 @@ READ_SOURCE
 
 Implementation/source/harness diagnosis starts only after the current discovery pass has exhausted all independent user scenarios.
 
+### 1.4.1 Scenario prerequisites, evidence reuse, and bounded stop rules
+
+Every scenario must declare or inherit the functional prerequisites it needs (reachable host role, enrolled Agent, live data-plane path, functional MCP/auth, prior-stable fixture state, capacity remaining, and so on). Before heavy or destructive work, check those prerequisites against current-run evidence.
+
+Disposition rules for unmet prerequisites:
+
+~~~text
+FAIL_PRECONDITION
+  Use when a required product functional path has already persistently failed in this
+  same RUN_ID under the same TEST_CONTRACT_HEAD + PRODUCT_SOURCE_HEAD, and repeating
+  the dependent scenario cannot produce PASS. Record the blocking scenario IDs and the
+  minimum diagnostic/recovery evidence; do not re-run equivalent saturation/soak work
+  only to obtain a second label.
+
+BLOCKED_ENVIRONMENT
+  Use when an external/environment capability is unavailable and is not itself a
+  product defect under test.
+
+BLOCKED_TOOLING
+  Use when the executor/automation cannot safely perform an otherwise available
+  product action.
+
+BLOCKED_MANAGEMENT_PATH
+  Use when only the out-of-band test-controller / reverse-SSH / lab management path
+  failed. Evaluate product Agent connection and data-plane separately; do not convert
+  a management-path outage into a product FAIL or PASS.
+~~~
+
+Same-run evidence reuse is required when all of the following hold:
+
+1. same `RUN_ID`;
+2. same `TEST_CONTRACT_HEAD`;
+3. same `PRODUCT_SOURCE_HEAD`;
+4. the earlier evidence still describes compatible, unchanged product/test state for the overlapping assertion;
+5. the reused evidence is linked explicitly from the later scenario disposition.
+
+Do **not** repeat equivalent destructive, enrollment, restore, or load work solely to attach a second scenario label. Independent assertions that need distinct mutation, timing, or recovery proof still require their own evidence.
+
+Performance and function-under-load stop/continuation rules:
+
+1. once a persistent functional failure makes PASS impossible for a dependent performance scenario, collect the minimum diagnostic and recovery evidence, classify `FAIL_PRECONDITION` or inherit the blocking FAIL, and continue independent lanes;
+2. do not repeat redundant saturation, soak, or all-host throughput attempts against already-failed data paths;
+3. independent hosts/lanes whose functional prerequisites still hold continue at maximum practical concurrency;
+4. post-stress functional recheck remains required only for lanes that actually ran stress, plus a short global control-plane responsiveness sample.
+
+Keep `FULL_USER_E2E_SCOPE=FUNCTIONAL_ONLY`. Do not reintroduce separate security/compliance audit work during the active run.
+
 ## 1.5 Parallel execution scheduler
 
 Parallel execution is the default and is a completion requirement, not an optimization.
@@ -463,9 +510,10 @@ PUBLIC_COMMANDS_WITHOUT_DIRECT_USE=0
 PUBLIC_COMMANDS_WITHOUT_AI_ASSISTED_USE=0
 USE_CASES_WITHOUT_AI_MIRROR=0
 CLEANUP_DISPOSITION_COMPLETE=YES
+PROCESS_CLEANUP=PASS
 ~~~
 
-Use `PASS`, `FAIL`, `PARTIAL`, `BLOCKED_ENVIRONMENT`, `BLOCKED_TOOLING`, `NOT_APPLICABLE`, or `INVALIDATED_BY_CONCURRENT_STATE` explicitly. Skipped or tooling-blocked work is never silently converted to PASS.
+Use `PASS`, `FAIL`, `PARTIAL`, `FAIL_PRECONDITION`, `BLOCKED_ENVIRONMENT`, `BLOCKED_TOOLING`, `BLOCKED_MANAGEMENT_PATH`, `NOT_APPLICABLE`, or `INVALIDATED_BY_CONCURRENT_STATE` explicitly. Skipped, precondition-failed, management-path-blocked, or tooling-blocked work is never silently converted to PASS.
 
 For release qualification, execute the document's exact-HEAD double-pass requirement only after the complete integrated run is eligible for qualification.
 
@@ -623,6 +671,7 @@ TEST_RUN_ID=
 START_UTC=
 END_UTC=
 TEST_CONTRACT_HEAD=
+PRODUCT_SOURCE_HEAD=
 REPOSITORY=
 BRANCH=
 SOURCE_HEAD=
@@ -644,34 +693,28 @@ INTERNET_ACCESS_CLIENTS=
 AI_CLIENTS=
 ~~~
 
+`TEST_CONTRACT_HEAD` is the Git identity of this execution contract/worktree. `PRODUCT_SOURCE_HEAD` (also recorded as installed `SOURCE_HEAD` when they match) is the immutable product/content identity under test. They may differ; both must be recorded. Do not treat that difference as a worktree-selection defect.
+
 Before testing, capture the exact build identity from the installed product, not only from Git.
 
-### 5.1 Canonical SSH access rule for current real-E2E hosts
+### 5.1 Host inventory and SSH access resolution (no lab literals in this contract)
 
-Host discovery must automatically apply the following SSH port rule for direct public-IP access. Do not ask the operator to restate these ports.
+Tracked public documentation must **not** embed lab-specific live IPv4/IPv6 addresses, DNS names used only by the current laboratory, or operator-private routing tables. Per-run host inventory and SSH routing come from local discovery inputs only.
 
-~~~text
-221.139.249.96/27 -> SSH 4022
+Resolve hosts and SSH routes in this order:
 
-Examples:
-221.139.249.113 -> 4022
-221.139.249.114 -> 4022
+1. development host `~/.ssh/config` Host entries (HostName, User, Port, ProxyJump/ProxyCommand, IdentityFile);
+2. optional untracked local inventory/evidence input for the current run (for example under the run evidence directory or an operator-local config path outside the repository);
+3. live probe results recorded into the current RUN_ID evidence.
 
-Any other public IP -> SSH 22
+Operational rules:
 
-Examples:
-54.116.47.145   -> 22
-129.225.184.60  -> 22
-~~~
+1. use the Port/Proxy settings discovered for each host; do not ask the operator to restate ports already present in SSH config or the local inventory;
+2. when a direct public-IP SSH path is part of a scenario, validate that real public path; reverse tunnels or loopback aliases are test-management fallbacks only and must not replace product/data-path validation;
+3. record the actual SSH route used for every host in the run evidence (`HOST`, `SSH_ALIAS`, `RESOLVED_TARGET`, `SSH_PORT`, `ROUTE_CLASS=PRODUCT_PATH|MANAGEMENT_PATH`);
+4. if only the management path fails while the product path is independently observable, classify `BLOCKED_MANAGEMENT_PATH` for management-dependent actions and continue product-path evaluation separately.
 
-Operational rule:
-
-1. if the destination public IPv4 address is inside `221.139.249.96/27`, use TCP/4022 for SSH;
-2. otherwise use TCP/22 for direct public-IP SSH;
-3. an explicit host-specific `~/.ssh/config` entry may still supply user/key/hostname aliases, but the current real-E2E port mapping above is authoritative for the listed direct public-IP paths;
-4. reverse tunnels or loopback aliases are test-management fallbacks only; they must not replace validation of the real public product/data path when that path is part of the scenario.
-
-Record the actual SSH route used for every host in the run evidence.
+Lab CIDR/port conventions that change between environments belong in untracked local inventory, not in this tracked contract.
 
 ### 5.2 Maximum real-host utilization gate
 
@@ -732,7 +775,7 @@ For each reachable assigned host:
 8. retain SSH access, OS/network configuration, required package dependencies, test accounts, base DNS, and explicit test-management infrastructure needed to reach the hosts. Do not destroy the laboratory itself in the name of cleanup;
 9. verify the selected repository/worktree/candidate source has no unintended local modifications, stale generated artifacts, or previous-run output that could alter the candidate or contaminate evidence.
 
-Management-access exception: reverse SSH/tunnel services used solely to keep a test host reachable may remain active when they are outside the DRLink product/data path. Record them explicitly as `PRESERVED_TEST_MANAGEMENT_INFRA` so they cannot be mistaken for a DRLink runtime process. For example, the Rocky 9 rescue reverse-SSH service may remain when it is only the management path.
+Management-access exception: reverse SSH/tunnel services used solely to keep a test host reachable may remain active when they are outside the DRLink product/data path. Record them explicitly as `PRESERVED_TEST_MANAGEMENT_INFRA` so they cannot be mistaken for a DRLink runtime process. A failure confined to that out-of-band management path is `BLOCKED_MANAGEMENT_PATH`; it is not automatically a product Agent connection or data-plane FAIL, and it must not be counted as product PASS either.
 
 On systemd hosts, a historical unit name that appears only as `LoadState=not-found`, `ActiveState=inactive`, `SubState=dead`, with empty `FragmentPath`/`UnitFileState`, no process, and no listener is manager-side cache rather than an installed/running product service. Record it as `SYSTEMD_NOT_FOUND_CACHE_ONLY` and do not fail the clean gate solely for that name. Any real unit file, enabled/active service, process, or listener remains contamination.
 
@@ -783,6 +826,34 @@ SOURCE_WORKTREE_CLEAN=PASS
 If any assigned host fails this gate, clean/recover that host before using it. Do not silently continue and later interpret inherited state as a product PASS. If cleanup cannot be completed, mark only scenarios depending on that host `BLOCKED_ENVIRONMENT` and continue independent clean hosts.
 
 After this gate passes, create the new RUN_ID and all subsequent product/test state from scratch. Every enrollment, endpoint allocation, Object/Group/Rule, AI identity, certificate/config override, temporary target, load process, Bundle and evidence artifact used for PASS must be attributable to the current RUN_ID or an explicitly documented current-run prerequisite.
+
+### 5.4 Spawned-process and session registry / cleanup gate
+
+Every FULL_USER_E2E run maintains a RUN_ID-scoped registry of executor-owned processes and sessions so leftover helpers cannot be mistaken for product lifecycle locks or contaminate later scenarios.
+
+Register at creation time:
+
+~~~text
+REGISTRY_ENTRY_ID=
+RUN_ID=
+HOST=
+PURPOSE=installer|ssh_tty_helper|expect_helper|load_generator|temp_target|ai_client|other
+PID_OR_SESSION=
+COMMAND_SUMMARY=
+STARTED_UTC=
+OWNER_LANE=
+PRODUCT_PATH_OR_MANAGEMENT_PATH=PRODUCT|MANAGEMENT
+~~~
+
+Rules:
+
+1. installers, SSH/TTY/expect helpers, iperf/load generators, temporary HTTP/TCP targets, and similar helpers must be entered in the registry before use;
+2. do not treat an executor-owned helper lock, leftover expect session, or stale load process as a product update/lifecycle FAIL without first confirming it is product-owned;
+3. before starting a new destructive/update/restore lane on a host, scan for registry and unregistered stale helpers on that host and stop or account for them;
+4. at lane end and at final cleanup, stop registry entries that are no longer required, verify they are gone, and record `PROCESS_CLEANUP=PASS|FAIL` with residual PIDs/listeners;
+5. management-path helpers are labeled `MANAGEMENT` and follow the `BLOCKED_MANAGEMENT_PATH` / `PRESERVED_TEST_MANAGEMENT_INFRA` rules; product-path helpers must not remain after cleanup unless explicitly required for an in-flight lane.
+
+A final FULL_USER_E2E PASS requires `PROCESS_CLEANUP=PASS` for executor-owned product-path helpers on assigned hosts.
 
 ## 6. Common preflight
 
@@ -1380,7 +1451,7 @@ From the supported AI/MCP client, verify:
 - audit attribution identifies principal, target, tool, result, revision, and safe metadata;
 
 
-For v2.4.0, AI/MCP is not optional. If MCP Bridge/AI Access is absent or the real ChatGPT Plus owner/UI authentication path cannot be exercised, record this scenario `FAIL` or `BLOCKED` with exact evidence; do not mark it `NOT_APPLICABLE`.
+For v2.4.0, AI/MCP is not optional. If MCP Bridge/AI Access is absent or the real ChatGPT Plus owner/UI authentication path cannot be exercised, record this scenario `FAIL` or `BLOCKED` with exact evidence; do not mark it `NOT_APPLICABLE`. When the public MCP endpoint/certificate/bridge path is not functionally serving authenticated calls, gate dependent scenarios (C-006, P-011, and AI-mirror work that requires live MCP) on that same functional prerequisite and do not repeat unavailable-endpoint probes.
 
 ## U-008 — User continuity across restart and policy change — MANDATORY
 
@@ -1508,7 +1579,9 @@ Continuously look for and record:
 - an error that states what failed but not what the operator can do next;
 - help/menu/wizard paths that contradict each other or omit a public command needed to finish the job;
 - wording that forces the operator to infer hidden implementation concepts rather than product concepts;
-- ambiguous subject such as “it”, “host”, “service”, “policy”, “server”, or “client” where multiple candidates exist in the current workflow.
+- ambiguous subject such as “it”, “host”, “service”, “policy”, “server”, or “client” where multiple candidates exist in the current workflow;
+- a public CLI command emitting an implementation traceback when stdout closes early (for example a normal pipeline such as `show ... | head`); broken-pipe/EPIPE handling must terminate cleanly without a Python traceback;
+- Server inventory reporting a host or service as connected/HEALTHY when independently observable product control/data-path state contradicts it; keep test-management reachability separate from product reachability.
 
 Maintain a cross-surface terminology ledger throughout the run:
 
@@ -2121,7 +2194,12 @@ Verify:
 
 Using two administrator sessions, attempt conflicting edits to the same authoritative configuration/revision.
 
-Verify stale edit/revision conflict is surfaced, no last-writer corruption occurs, and subsequent state/audit is deterministic.
+First determine whether the public product surface exposes an optimistic precondition, revision/token, ETag, or equivalent stale-guard that callers can observe and must honor.
+
+- If such a guard is part of the product contract: prepare two edits from the same prior revision/token, apply the first successfully, then apply the stale second edit. The stale apply must be rejected explicitly; silent overwrite is FAIL. Subsequent state/audit must remain deterministic.
+- If no optimistic precondition/revision token is exposed: do **not** label plain last-writer serialization as “stale protection.” Record `STALE_GUARD=NOT_EXPOSED`, prove whatever serialization/locking behavior the product actually provides (including lost-update risk if present), and treat missing stale rejection as an explicit functional finding rather than an implied PASS.
+
+In all cases verify no last-writer corruption of unrelated fields, no partial generation, and explainable audit/revision order.
 
 ## A-015 — Fresh Server install / uninstall / reinstall — MANDATORY on disposable server
 
@@ -2236,6 +2314,15 @@ Verify no change to an optional friendly hostname silently changes control/alloc
 
 On each applicable real platform, start from the actual currently supported prior stable release and update using only the supported public CLI/install path.
 
+An empty prior-stable Server is **insufficient** for full PASS. Before upgrade, the prior-stable fixture must contain meaningful non-empty state created or freshly staged for this RUN_ID, including at least:
+
+1. preserved identity material (Server and/or enrolled client/Managed Host identity as applicable);
+2. at least one Service/Remote Service or equivalent endpoint reservation;
+3. at least one representative policy/object/config artifact;
+4. a product backup captured where backup is supported on that role.
+
+Record pre-upgrade identifiers and state hashes/exports, perform the supported upgrade to the candidate, then compare post-upgrade identifiers/state.
+
 Verify:
 
 - Managed Host identity preserved;
@@ -2249,17 +2336,22 @@ Verify:
 - reboot after upgrade succeeds;
 - real Remote Access and Internet Access traffic succeeds after upgrade.
 
-Historical upgrade evidence from another HEAD does not satisfy the current requested run.
+If only an empty prior-stable install can be staged, the maximum disposition is `PARTIAL` with `PRIOR_STABLE_FIXTURE=EMPTY`, not PASS. Historical upgrade evidence from another HEAD does not satisfy the current requested run.
 
 ## A-020 — Update failure and recovery — MANDATORY on disposable environment
 
-Initiate the supported product update through public CLI and inject/observe representative failures such as unavailable artifact, integrity mismatch, activation failure, or restart failure where the harness can safely reproduce them.
+Initiate the supported product update through public CLI and inject/observe representative failures such as unavailable artifact, integrity mismatch, activation failure, restart failure, and an interrupted installer/lifecycle session where the harness can safely reproduce them.
+
+For interruption testing, include at least one loss of the invoking SSH/TTY or deliberate termination while an install/update is between preparation and final commit. Track only RUN_ID-owned test processes and do not hand-edit product lock/transaction state to recover.
 
 Verify:
 
 - failed update is not reported as success;
 - old working state is preserved/restored where the update contract promises atomic recovery;
-- identity and endpoint reservations are not silently recreated;
+- an incomplete attempt does not prematurely change the committed product version/channel/source identity or leave both old and new CLI identities unusable;
+- no orphan installer/lifecycle child can indefinitely hold the operation lock after its invoking session/process is gone;
+- retry through the same supported public path either resumes/reconciles the interrupted transaction or gives an actionable recovery instruction;
+- identity, trust roots, and endpoint reservations are not silently recreated;
 - operator receives actionable diagnostics;
 - retry after the blocker is corrected converges to a healthy supported state.
 
@@ -2307,7 +2399,16 @@ Delete a Remote Service while Agent-to-Server connectivity is unavailable. Verif
 
 ## S-013 — Endpoint-pool exhaustion and recovery — MANDATORY
 
-Using disposable capacity, exhaust normal and Fixed TCP pools separately. Verify explicit allocation failure, no duplicate endpoint assignment, capacity return on deletion, and recovery when capacity becomes available.
+Using disposable capacity, exercise normal and Fixed TCP pools separately with a deterministic procedure:
+
+1. identify the pool/range under test from public product status/config (not from memorized lab values);
+2. allocate until maximum capacity is reached and record the exact max live allocations;
+3. attempt max+1 and verify explicit rejection with no duplicate live allocation;
+4. delete exactly one owner/reservation;
+5. prove capacity returned and that a retry reuses the freed capacity without creating a duplicate live allocation;
+6. distinguish stale Server inventory/presentation from live Agent allocation: inventory alone is not proof of a live data-plane endpoint.
+
+Verify explicit allocation failure, no duplicate endpoint assignment, capacity return on deletion, and recovery when capacity becomes available.
 
 ## S-014 — Name, reserved-token, duplicate, and selector corner cases — MANDATORY
 
@@ -2328,6 +2429,8 @@ Exercise omitted Resource, omitted field, explicit lists, state absent, invalid 
 ## S-020 — Boundary and capacity off-by-one cases — MANDATORY
 
 Exercise 0/empty where valid, 1, maximum-1, maximum, and maximum+1 for each user-visible bounded capacity such as Zero-Touch issuance, endpoint pools, bulk enrollment, and exposed concurrency limits.
+
+For endpoint pools, follow the same deterministic identify-range → max → max+1 → delete-one-owner → reuse procedure as S-013, and distinguish stale inventory from live allocation. Same-run evidence that already closed an identical pool assertion under section 1.4.1 may be reused instead of repeating exhaustion.
 
 ## S-021 — Failure during mutation/activation — MANDATORY on disposable environment
 
@@ -2426,7 +2529,9 @@ Verify source-specific policy isolation, destination/port enforcement, and absen
 
 ## C-006 — Parallel AI/MCP identities and calls — MANDATORY for v2.4.0
 
-Use multiple authenticated AI identities/sessions concurrently against different and overlapping target/permission scopes.
+Prerequisite gate: the public MCP/auth path must be functionally serving authenticated calls for this RUN_ID. If the public MCP endpoint, certificate/bridge activation, or authentication prerequisite is not functional, classify C-006 (and dependent AI concurrency work) with the blocking functional disposition without repeated probes. Do not thrash unavailable MCP connectivity to manufacture additional evidence.
+
+When the prerequisite holds, use multiple authenticated AI identities/sessions concurrently against different and overlapping target/permission scopes.
 
 Verify:
 
@@ -2729,7 +2834,9 @@ Repeat a deny test during load to verify policy behavior remains correct under p
 
 ## P-011 — AI/MCP performance — MANDATORY for v2.4.0
 
-Measure representative allowed operations:
+Prerequisite gate: same functional MCP/auth prerequisite as C-006/U-007. If the public MCP endpoint is not functional for this RUN_ID, do not repeat probes; inherit the blocking disposition and continue independent non-AI lanes.
+
+When the prerequisite holds, measure representative allowed operations:
 
 - host-info/process-read request rate and latency;
 - file read/download throughput;
@@ -2785,7 +2892,9 @@ Verify no corrupted authoritative state and that post-recovery traffic/policy ma
 
 ## P-015 — Aggregate all-host throughput and fairness — MANDATORY
 
-With C-001/C-004 topology active, run simultaneous throughput from all available test hosts.
+Prerequisite: C-001/C-004 topology with healthy functional data-plane paths on the hosts included in the aggregate measurement. If required host data paths have already persistently failed in this RUN_ID, classify `FAIL_PRECONDITION` (or inherit the blocking FAIL), retain the minimum diagnostic evidence, and do not run another full all-host saturation pass solely for this label.
+
+When prerequisites hold, with C-001/C-004 topology active, run simultaneous throughput from all available test hosts.
 
 Record:
 
@@ -2800,7 +2909,9 @@ A high aggregate number does not pass if one host is starved, misrouted, or sile
 
 ## P-016 — CPS while throughput and policy load are active — MANDATORY
 
-Run new-connection CPS load while sustained throughput and representative policy checks are already active.
+Prerequisite: sustained all-host throughput/policy load prerequisites from P-015 (or equivalent) must hold. If those functional data paths already failed persistently, use `FAIL_PRECONDITION` / evidence reuse per section 1.4.1 rather than inventing a CPS run against broken paths.
+
+When prerequisites hold, run new-connection CPS load while sustained throughput and representative policy checks are already active.
 
 Verify:
 
@@ -2909,6 +3020,8 @@ Measure command latency and verify read-only operations do not mutate state. Any
 ## P-023 — Maximum available topology mixed-stress operation — MANDATORY
 
 This is the final production-uncertainty stress gate. Use **all suitable reachable test hosts** and the maximum practical independent load sources/targets available in the current environment. The purpose is not to produce a marketing benchmark; it is to discover failures that appear only when multiple real operational activities collide.
+
+If persistent functional data-path failures already make an all-host PASS impossible, collect the minimum mixed-stress diagnostic sample needed to characterize control-plane responsiveness under residual load, classify dependent saturation claims with `FAIL_PRECONDITION` / inherited FAIL per section 1.4.1, and do not repeat full-topology soak/saturation solely for this label. AI/MCP stress elements remain gated on the functional MCP prerequisite.
 
 Ramp progressively from the measured baseline until either:
 
@@ -3530,9 +3643,11 @@ FINAL_STATUS=PASS|PARTIAL|FAIL
 ACTIVE_WORKTREE=
 WORKTREE_RESOLUTION=PASS|FAIL
 TEST_CONTRACT_HEAD=
+PRODUCT_SOURCE_HEAD=
 PRE_RUN_CLEAN_STATE=PASS|FAIL
 ALL_REACHABLE_ASSIGNED_HOSTS_CLEAN=PASS|FAIL
 PRESERVED_TEST_MANAGEMENT_INFRA=
+PROCESS_CLEANUP=PASS|FAIL
 SOURCE_HEAD=
 PRODUCT_VERSION=
 RELEASE_CHANNEL=
@@ -3628,7 +3743,7 @@ USER_E2E_REQUEST
 -> capture candidate/build identity only; do not perform a pre-run code review
 -> probe all configured test hosts, remove previous-run DRLink state/test services/load processes/temp artifacts, preserve only explicit management access infrastructure, and require the section 5.3 clean-room gate before fresh product activity
 -> execute as a human black-box operator; do not reinterpret the request as release qualification
--> discover ~/.ssh/config hosts, apply the section 5.1 SSH port mapping, probe availability/roles, assign topology, and start independent lanes immediately
+-> discover ~/.ssh/config hosts and untracked local inventory, resolve SSH routes per section 5.1, probe availability/roles, assign topology, and start independent lanes immediately
 -> use automated harnesses only as supplemental evidence, never as the User E2E executor
 -> execute this document's FULL_USER_E2E profile unless explicitly scoped
 -> use real public CLI and real traffic
@@ -3699,22 +3814,22 @@ On a trigger, the minimum startup sequence is:
 1. Resolve `/home/aella/datarelay-link-current` and immediately use that directory as the active Data Relay Link worktree. If it contains `AGENTS.md`, `.engineering/project.yaml`, and `docs/FULL_USER_E2E_SCENARIOS.md`, record `WORKTREE_RESOLUTION=PASS` and continue. Do not inspect the initial cwd's branch, compare historical worktrees, fetch GitHub, or compare a GitHub copy of this document merely to decide where to start.
 2. Open `/home/aella/datarelay-link-current/docs/FULL_USER_E2E_SCENARIOS.md` as the execution contract; all embedded command examples and section 14 are auditor expectations only and are not used as the acting user's memorized command script.
 3. Capture current candidate/build identity without code review. The active worktree's test-contract HEAD and the installed candidate/build identity may differ and must be recorded separately; that difference is not a reason to search for another worktree.
-4. Read the development host's ~/.ssh/config and apply the section 5.1 canonical SSH port rules.
+4. Read the development host's ~/.ssh/config and any untracked local run inventory; resolve SSH routes per section 5.1 without using lab literals from this tracked contract.
 5. Probe configured hosts in parallel.
 6. Classify every reachable configured host, assign every suitable host an intended Server/Agent/Relay/client/target/load-generator/recovery role, and record any unused reachable host with a concrete reason.
 7. Execute the section 5.3 clean-room gate on every assigned host: inventory old state, use supported product uninstall for fresh lanes, stop previous E2E/load runtimes, remove disposable old artifacts and stale/broken product service-unit links, verify product listeners/state are gone, verify the source/worktree is clean, and explicitly record preserved management-access infrastructure.
-8. Do not start product discovery or create PASS-eligible state until ALL_REACHABLE_ASSIGNED_HOSTS_CLEAN=PASS. Then create the new RUN_ID/current-run test state.
+8. Do not start product discovery or create PASS-eligible state until ALL_REACHABLE_ASSIGNED_HOSTS_CLEAN=PASS. Then create the new RUN_ID/current-run test state and open the section 5.4 process/session registry.
 9. On every freshly installed/assigned Server/Agent role, start public command discovery in parallel with drlink, ?, help, help commands, menu, Tab and visible wizard/error guidance.
 10. Build the runtime command/variant ledger and map discovered capabilities to realistic use-case lanes; section 14 is auditor-only omission detection.
 11. Before each lane, assign ChatGPT an explicit End User, Agent Operator, DRLink Administrator, Incident Responder, or Platform Maintainer persona plus a production-style mission; create RUN_ID-scoped namespaced resources and immediately start every independent use-case lane whose prerequisites are discovered.
-12. Run Direct CLI, guided/TTY, adversarial, multi-platform enrollment, real-traffic, AI-assisted mirror and performance lanes concurrently at maximum practical real-host utilization; progressively ramp performance toward the selected target or practical saturation boundary.
+12. Run Direct CLI, guided/TTY, adversarial, multi-platform enrollment, real-traffic, AI-assisted mirror and performance lanes concurrently at maximum practical real-host utilization; progressively ramp performance toward the selected target or practical saturation boundary. Apply section 1.4.1 prerequisite, evidence-reuse, FAIL_PRECONDITION, and bounded performance-stop rules.
 13. Behave like a real operator: pursue the mission, follow product output/next actions, copy/paste generated commands, make realistic mistakes, recover only from user-visible guidance, and continuously record terminology/clarity/cross-surface inconsistencies.
 14. Continue discovery and use-case execution together until no discovered/oracle command or behavior-changing public variant lacks disposition.
 15. Execute each applicable use case again through AI assistance from the same goal and equivalent namespaced starting state.
-16. If one lane is blocked by tooling/environment, record only that lane as BLOCKED_TOOLING/BLOCKED_ENVIRONMENT and continue every independent lane immediately.
+16. If one lane is blocked by tooling/environment/management-path or fails a functional prerequisite, record only that lane as BLOCKED_TOOLING/BLOCKED_ENVIRONMENT/BLOCKED_MANAGEMENT_PATH/FAIL_PRECONDITION as applicable and continue every independent lane immediately.
 17. Do not inspect product source, test source, internal DB/state, or harness implementation during active discovery.
-18. Run mixed function-under-load, policy-mutation, restart/reconnect, outage, race and all-host scenarios, then execute P-023 maximum-topology mixed stress with multiple load generators where available and verify post-saturation recovery.
-19. Finish command/use-case/AI-mirror disposition, cleanup and reporting; only then begin implementation/harness diagnosis and batch engineering findings.
+18. Run mixed function-under-load, policy-mutation, restart/reconnect, outage, race and all-host scenarios, then execute P-023 maximum-topology mixed stress with multiple load generators where available and verify post-saturation recovery, without redundant saturation against already-failed functional paths.
+19. Finish command/use-case/AI-mirror disposition, process-registry cleanup and reporting; only then begin implementation/harness diagnosis and batch engineering findings.
 ~~~
 
 No additional planning document, old audit document, historical evidence review, Cursor run, or human host-selection step is a prerequisite.
