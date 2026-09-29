@@ -39,6 +39,7 @@ from drlink_mcp_bridge import (  # noqa: E402
     ThreadingHTTPServer,
 )
 import drlink_v24 as v24  # noqa: E402
+import drlink_upgrade_reconcile as upgrade_reconcile  # noqa: E402
 import frp_frontend  # noqa: E402
 import frp_pki  # noqa: E402
 
@@ -147,6 +148,11 @@ class PublicMcpEndpointTests(unittest.TestCase):
         self.vendor.mkdir(parents=True, exist_ok=True)
         (self.vendor / "app.log").write_text("log-ok\n", encoding="utf-8")
         self.plane.upsert_client("client-prod-aaaaaaaa", label="Expernet-DP1")
+        # Restore fail-closed validation requires forensic inventory membership
+        # whenever the authoritative DB contains Managed Hosts.
+        upgrade_reconcile.project_client_inventory_from_control_plane(
+            self.plane, root=self.tmp
+        )
         dispatch(["set", "client-group", "production-linux"], root=self.tmp)
         dispatch(["set", "client-group", "production-linux", "member", "Expernet-DP1"], root=self.tmp)
         dispatch(["set", "ai-principal", "chatgpt-support"], root=self.tmp)

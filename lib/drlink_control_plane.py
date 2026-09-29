@@ -5587,6 +5587,15 @@ class ControlPlane:
         return {}
 
     def mcp_public_url(self, cfg: Optional[dict] = None) -> str:
+        data = cfg if cfg is not None else self._read_server_config()
+        raw_mode = str(data.get("deployment_mode") or "").strip()
+        mode = raw_mode.lower().replace("-", "").replace("_", "")
+        # Public MCP is served only by the single-443 HTTPS frontend. A stale
+        # TLS intent from an earlier configuration must never make Direct mode
+        # advertise https://<host>/mcp, because TCP/443 is the FRP listener
+        # there rather than an HTTP MCP endpoint.
+        if raw_mode and mode not in ("single443", "enterprise", "enterprisesingle443"):
+            return "Not configured"
         override = (os.environ.get("DRLINK_MCP_PUBLIC_URL") or "").strip().rstrip("/")
         if override:
             return override if override.endswith("/mcp") else override + "/mcp"
@@ -5600,8 +5609,6 @@ class ControlPlane:
                 return "https://%s/mcp" % host
         except Exception:
             pass
-        data = cfg if cfg is not None else self._read_server_config()
-        mode = str(data.get("deployment_mode") or "direct").strip().lower().replace("-", "").replace("_", "")
         if mode not in ("single443", "enterprise", "enterprisesingle443"):
             return "Not configured"
         try:
@@ -5651,10 +5658,16 @@ class ControlPlane:
             (OAUTH_UNBOUND_PRINCIPAL,),
         ).fetchone():
             modes.append("OAuth")
+        raw_mode = str(cfg.get("deployment_mode") or "").strip().lower().replace("-", "").replace("_", "")
+        deployment_mode = (
+            "single443" if raw_mode in ("single443", "enterprise", "enterprisesingle443")
+            else ("direct" if raw_mode else "unknown")
+        )
         return {
             "backend": backend,
             "bind": bind,
             "public_url": public_url,
+            "deployment_mode": deployment_mode,
             "protocol": "2026-07-28",
             "transport": "Streamable HTTP",
             "authentication": " / ".join(modes) or "Not configured",
@@ -5667,7 +5680,10 @@ class ControlPlane:
         mcp = self.mcp_endpoint_status()
         lines = ["MCP diagnostics", "===============", ""]
         public_ok = mcp["public_url"] != "Not configured" and mcp["frontend_routed"]
-        if not mcp["frontend_routed"]:
+        if mcp.get("deployment_mode") == "direct":
+            lines.append("MCP Public Endpoint : Warning")
+            lines.append("Reason              : Direct mode has no public HTTPS MCP frontend; reconfigure Server to single443")
+        elif not mcp["frontend_routed"]:
             lines.append("MCP Public Endpoint : Critical")
             lines.append("Reason              : /mcp is not routed by HTTPS frontend")
         elif mcp["public_url"] == "Not configured":

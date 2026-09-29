@@ -1099,6 +1099,7 @@ def _set_mcp_tls(plane: ControlPlane, rest):
         )
     prop = rest[0]
     try:
+        mcp_tls.require_public_frontend(plane.root)
         if prop == "hostname":
             _need(rest, 2, "set mcp-tls hostname <fqdn>")
             state = mcp_tls.configure_intent(plane, hostname=rest[1])
@@ -1578,6 +1579,8 @@ def _system_certificate(plane: ControlPlane, rest):
     op = rest[0]
     root = plane.root
     try:
+        if op != "status":
+            mcp_tls.require_public_frontend(root)
         if op == "status":
             view = mcp_tls.status_view(plane, root)
             sys.stdout.write(mcp_tls.format_status(view))

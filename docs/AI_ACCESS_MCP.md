@@ -49,6 +49,8 @@ Automation/custom AI may use OAuth Client Credentials where supported.
 
 The exact public MCP/OAuth endpoint design and host interoperability must remain consistent with `SECURITY.md` and exact-HEAD qualification evidence.
 
+Public MCP is served only through the `single443` HTTPS frontend. `direct` deployment mode uses its public control port for the FRP listener and therefore must not advertise or activate `https://<host>/mcp`; `set mcp-tls` and certificate mutation commands fail closed until the Server is reconfigured to `single443`. A stale TLS intent or certificate from an earlier configuration does not make Direct mode MCP-capable.
+
 ### v2.4.0 release status
 
 MCP Bridge is included in the v2.4.0 target. The current stable-release blocker is the real ChatGPT Plus user authentication path, not MCP protocol implementation itself.

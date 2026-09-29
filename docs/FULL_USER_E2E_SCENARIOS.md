@@ -1521,7 +1521,9 @@ test ai-access source <IDENTITY> destination <DESTINATION> permission read-only
 show ai-access-log identity <IDENTITY>
 ~~~
 
-For v2.4.0 ChatGPT acceptance, first use a currently supported ChatGPT full-MCP owner/UI environment (Business or Enterprise/Edu at the time of this contract) to complete OAuth Authorization Code/consent through the public MCP endpoint and confirm tool discovery. Record the actual ChatGPT plan, surface, and date in run evidence rather than hard-coding a consumer plan name. Machine-side SDK/HTTP conformance remains required evidence but cannot satisfy this owner/UI gate by itself.
+For v2.4.0 ChatGPT acceptance, first verify that the Server is in `single443` deployment mode and that `show mcp-tls`/MCP diagnostics identify the same externally reachable HTTPS MCP hostname. Direct mode is not a valid public-MCP test topology: TCP/443 may be the FRP control listener, so a TLS hostname/certificate alone must never be treated as proof that `/mcp` exists. If Direct mode advertises an MCP URL or permits MCP TLS/certificate activation without requiring `single443`, record a product `FAIL` rather than continuing connector probes.
+
+Then use a currently supported ChatGPT full-MCP owner/UI environment (Business or Enterprise/Edu at the time of this contract) to complete OAuth Authorization Code/consent through the public MCP endpoint and confirm tool discovery. Record the actual ChatGPT plan, surface, and date in run evidence rather than hard-coding a consumer plan name. Machine-side SDK/HTTP conformance remains required evidence but cannot satisfy this owner/UI gate by itself.
 
 From the supported AI/MCP client, verify:
 

@@ -107,6 +107,28 @@ def _root(root: Optional[str | Path] = None) -> Path:
     return Path("/")
 
 
+def explicit_deployment_mode(root: Optional[str | Path] = None) -> str:
+    """Return explicit server deployment mode, or empty when no config exists."""
+    path = _root(root) / "etc/drlink/config.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return ""
+    return str(data.get("deployment_mode") or "").strip().lower().replace("-", "").replace("_", "")
+
+
+def require_public_frontend(root: Optional[str | Path] = None) -> None:
+    """Fail closed when MCP public TLS is requested on explicit Direct mode."""
+    mode = explicit_deployment_mode(root)
+    if mode and mode not in ("single443", "enterprise", "enterprisesingle443"):
+        raise McpTlsError(
+            "MCP public access requires the single-443 HTTPS frontend; "
+            "current deployment mode is direct. Reconfigure the Server to "
+            "single443 before configuring MCP TLS or certificates.",
+            failure_class="MCP_FRONTEND_REQUIRED",
+        )
+
+
 def tls_tree(root: Optional[str | Path] = None) -> Path:
     return _root(root) / STATE_TREE_REL
 
@@ -1595,6 +1617,14 @@ def renew_if_due(
     """Renew before expiry. On failure keep current valid certificate."""
     root = _root(root)
     state = load_state(plane)
+    deployment_mode = explicit_deployment_mode(root)
+    if deployment_mode and deployment_mode not in ("single443", "enterprise", "enterprisesingle443"):
+        return {
+            "renewed": False,
+            "reason": "frontend_required",
+            "failure_class": "MCP_FRONTEND_REQUIRED",
+            "state": state,
+        }
     mode = state.get("mode") or ""
     if mode not in (MODE_AUTO_ACME, MODE_PRIVATE_CA):
         return {"renewed": False, "reason": "renewal_not_applicable", "state": state}
@@ -1689,9 +1719,21 @@ def status_view(plane, root=None) -> dict:
         state["status"] = compute_status(state)
     mode = state.get("mode") or ""
     host = state.get("hostname") or ""
-    url = "https://%s/mcp" % host if host else "Not configured"
+    deployment_mode = explicit_deployment_mode(root)
+    frontend_available = (
+        not deployment_mode
+        or deployment_mode in ("single443", "enterprise", "enterprisesingle443")
+    )
+    if host and frontend_available:
+        url = "https://%s/mcp" % host
+    elif host:
+        url = "Not available (requires single443)"
+    else:
+        url = "Not configured"
     return {
         "url": url,
+        "frontend_available": frontend_available,
+        "deployment_mode": deployment_mode or "unknown",
         "mode": mode or "Not configured",
         "hostname": host or "Not configured",
         "certificate": state.get("status") or STATUS_ABSENT,
@@ -1733,6 +1775,15 @@ def format_status(view: dict) -> str:
         "Auto renewal:",
         "  %s" % view.get("auto_renewal"),
     ]
+    if not view.get("frontend_available", True):
+        lines.extend(
+            [
+                "",
+                "Warning:",
+                "  MCP public access is unavailable in Direct deployment mode.",
+                "  Reconfigure the Server to single443 before using MCP TLS.",
+            ]
+        )
     if view.get("private_ca_warning"):
         lines.extend(
             [

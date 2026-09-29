@@ -201,10 +201,8 @@ class AiAccessReferenceIntegrity(unittest.TestCase):
     - name: ops
       state: absent
 """
-        plan = prepare_v24_plan(self.plane, yaml_text)
-        self.assertFalse(plan.no_change)
         with self.assertRaises(ControlPlaneError) as ctx:
-            apply_v24_plan(self.plane, plan, confirm=True)
+            prepare_v24_plan(self.plane, yaml_text)
         self.assertIn("still referenced", str(ctx.exception))
         self.assertIsNotNone(v24.get_permission_group(self.plane, "ops"))
         after = v24.evaluate_ai_access_v24(
@@ -220,9 +218,8 @@ class AiAccessReferenceIntegrity(unittest.TestCase):
     - name: exec-only
       state: absent
 """
-        plan = prepare_v24_plan(self.plane, yaml_text)
         with self.assertRaises(ControlPlaneError) as ctx:
-            apply_v24_plan(self.plane, plan, confirm=True)
+            prepare_v24_plan(self.plane, yaml_text)
         self.assertIn("still referenced", str(ctx.exception))
         self.assertIsNotNone(v24.get_permission_object(self.plane, "exec-only"))
         after = v24.evaluate_ai_access_v24(

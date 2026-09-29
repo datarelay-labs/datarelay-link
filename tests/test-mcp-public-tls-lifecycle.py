@@ -396,6 +396,60 @@ class McpTlsLifecycleTests(unittest.TestCase):
         self.assertTrue(mcp_tls.cloud_compatible_for_mode(mcp_tls.MODE_USER_CERTIFICATE))
         self.assertFalse(mcp_tls.cloud_compatible_for_mode(mcp_tls.MODE_PRIVATE_CA))
 
+    def test_direct_mode_refuses_public_mcp_and_hides_stale_tls_url(self):
+        cfg_dir = Path(self.tmp) / "etc/drlink"
+        cfg_dir.mkdir(parents=True, exist_ok=True)
+        (cfg_dir / "config.json").write_text(
+            json.dumps({
+                "deployment_mode": "direct",
+                "public_host": "203.0.113.10",
+                "frp_control_public_port": 443,
+            }),
+            encoding="utf-8",
+        )
+
+        # Simulate stale intent created before the deployment-mode guard.
+        mcp_tls.configure_intent(self.plane, hostname="mcp.example.test")
+        mcp_tls.configure_intent(self.plane, mode="private-ca")
+        view = mcp_tls.status_view(self.plane, self.tmp)
+        self.assertEqual(view["url"], "Not available (requires single443)")
+        self.assertFalse(view["frontend_available"])
+        self.assertEqual(self.plane.mcp_public_url(), "Not configured")
+
+        import io
+        from contextlib import redirect_stdout
+        shown = io.StringIO()
+        with redirect_stdout(shown):
+            dispatch(["show", "mcp-tls"], root=self.tmp)
+        shown_text = shown.getvalue()
+        self.assertIn("Not available (requires single443)", shown_text)
+        self.assertIn("unavailable in Direct deployment mode", shown_text)
+        self.assertNotIn("https://mcp.example.test/mcp", shown_text)
+
+        diag = self.plane.diagnostics_mcp()
+        self.assertIn("MCP Public Endpoint : Warning", diag)
+        self.assertIn("Direct mode has no public HTTPS MCP frontend", diag)
+        self.assertIn("Public URL          : Not configured", diag)
+
+        os.environ["DRLINK_MCP_PUBLIC_URL"] = "https://override.example.test/mcp"
+        try:
+            self.assertEqual(self.plane.mcp_public_url(), "Not configured")
+        finally:
+            os.environ.pop("DRLINK_MCP_PUBLIC_URL", None)
+
+        with self.assertRaises(SystemExit) as ctx:
+            dispatch(["set", "mcp-tls", "hostname", "new.example.test"], root=self.tmp)
+        self.assertIn("single-443 HTTPS frontend", str(ctx.exception))
+
+        with self.assertRaises(SystemExit) as ctx:
+            dispatch(["system", "certificate", "preflight"], root=self.tmp)
+        self.assertIn("MCP_FRONTEND_REQUIRED", str(ctx.exception))
+
+        renewal = mcp_tls.renew_if_due(self.plane, self.tmp, force=True, reload=False)
+        self.assertFalse(renewal["renewed"])
+        self.assertEqual(renewal["reason"], "frontend_required")
+        self.assertEqual(renewal["failure_class"], "MCP_FRONTEND_REQUIRED")
+
     def test_user_certificate_import_match_and_rejects(self):
         host = "mcp.example.test"
         dispatch(["set", "mcp-tls", "hostname", host], root=self.tmp)
