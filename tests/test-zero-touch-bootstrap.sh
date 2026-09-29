@@ -624,6 +624,93 @@ if grep -q 'FRP_ZERO_TOUCH' "$WORKDIR/manual.out"; then
 fi
 pass "NORMAL_INTERACTIVE_REGRESSION_CREATE"
 
+# Client-side preflight must sign exactly timestamp + newline + body, matching
+# the allocator's Enrollment Code HMAC contract.
+ROOT_PATH="$ROOT" bash -c '
+set -euo pipefail
+. "$ROOT_PATH/lib/frp-client-common.sh"
+frp_allocator_curl() {
+  local ts="" sig="" body="" url="" header
+  while (($#)); do
+    case "$1" in
+      -H)
+        header="$2"
+        case "$header" in
+          "X-Timestamp: "*) ts="${header#X-Timestamp: }" ;;
+          "X-Signature: "*) sig="${header#X-Signature: }" ;;
+        esac
+        shift 2
+        ;;
+      --data) body="$2"; shift 2 ;;
+      https://*) url="$1"; shift ;;
+      *) shift ;;
+    esac
+  done
+  [[ "$url" == "https://allocator.example/enroll/preflight" ]]
+  PREFLIGHT_TS="$ts" PREFLIGHT_SIG="$sig" PREFLIGHT_BODY="$body" python3 - <<'PY'
+import hashlib, hmac, os
+ts=os.environ["PREFLIGHT_TS"]
+sig=os.environ["PREFLIGHT_SIG"]
+body=os.environ["PREFLIGHT_BODY"]
+want=hmac.new(b"preflight-secret",(ts+"\n"+body).encode(),hashlib.sha256).hexdigest()
+if not hmac.compare_digest(sig,want):
+    raise SystemExit("preflight signature mismatch")
+PY
+  printf "%s\n" "{\"valid\":true,\"status\":\"ready\"}"
+}
+frp_enrollment_preflight \
+  "https://allocator.example/enroll" \
+  "0123456789abcdef" \
+  "preflight-secret" \
+  "manual-preflight-machine"
+' || fail "manual enrollment preflight wire signature"
+pass "MANUAL_ENROLLMENT_PREFLIGHT_HMAC"
+
+# A fresh manual install must validate the Enrollment Code before opening the
+# service-selection wizard. This is the uninstall/reinstall UX boundary: a
+# consumed code must fail immediately instead of appearing reusable.
+MANUAL_PREFLIGHT_ROOT="$WORKDIR/manual-preflight-client"
+set +e
+ROOT_PATH="$ROOT" TEST_ROOT="$MANUAL_PREFLIGHT_ROOT" USED_CODE="used-id.used-secret" \
+  bash -c '
+set -euo pipefail
+export FRP_CLIENT_TEST_ROOT="$TEST_ROOT"
+export FRP_ALLOCATOR_URL="https://allocator.example/enroll"
+export FRP_TEST_MACHINE_ID="manual-preflight-machine"
+. "$ROOT_PATH/install-client.sh"
+frp_pending_enroll_exists_for() { return 1; }
+frp_client_has_existing_install() { return 1; }
+frp_client_has_partial_install() { return 1; }
+frp_zero_touch_active() { return 1; }
+frp_bootstrap_allocator_ca() { return 0; }
+frp_detect_os() { return 0; }
+frp_detect_architecture() { FRP_ARCH=amd64; export FRP_ARCH; return 0; }
+frp_ux_intro() { :; }
+frp_ux_enrollment_help() { :; }
+prompt_secret() { printf -v "$2" "%s" "$USED_CODE"; }
+frp_enrollment_preflight() {
+  echo "PREFLIGHT_USED_REJECTED" >&2
+  return 1
+}
+collect_services() {
+  echo "COLLECT_SERVICES_CALLED"
+  return 0
+}
+frp_client_main
+' >"$WORKDIR/manual-preflight.out" 2>"$WORKDIR/manual-preflight.err"
+manual_preflight_rc=$?
+set -e
+if [[ "$manual_preflight_rc" -eq 0 ]]; then
+  cat "$WORKDIR/manual-preflight.out" "$WORKDIR/manual-preflight.err" >&2
+  fail "used manual Enrollment Code preflight unexpectedly succeeded"
+fi
+grep -q 'PREFLIGHT_USED_REJECTED' "$WORKDIR/manual-preflight.err" \
+  || fail "manual enrollment preflight was not executed"
+if grep -q 'COLLECT_SERVICES_CALLED' "$WORKDIR/manual-preflight.out"; then
+  fail "service wizard ran before used-code preflight rejection"
+fi
+pass "USED_MANUAL_CODE_REJECTED_BEFORE_SERVICE_WIZARD"
+
 # ---------------------------------------------------------------------------
 # Live allocator + client zero-touch
 # ---------------------------------------------------------------------------
@@ -668,6 +755,74 @@ pki = root / 'pki'
 }, indent=2) + '\n')
 PY
 start_allocator "$ALLOC_ROOT/config.json"
+
+# Manual Enrollment Code preflight is a signed, read-only check. It must accept
+# a fresh code without binding/consuming it, then reject the same record once
+# consumed. This exercises the real client helper + allocator HTTPS endpoint.
+PREFLIGHT_ID="feedfacecafebeef"
+PREFLIGHT_SECRET="manual-preflight-secret-feedface"
+python3 - "$ALLOC_ROOT/enrollments/$PREFLIGHT_ID.json" "$PREFLIGHT_ID" "$PREFLIGHT_SECRET" <<'PY'
+import json, sys, time
+from pathlib import Path
+path=Path(sys.argv[1])
+path.write_text(json.dumps({
+    'id': sys.argv[2],
+    'secret': sys.argv[3],
+    'expires_at': int(time.time()) + 600,
+    'bound_machine_id': None,
+    'used_at': None,
+}, indent=2) + '\n')
+path.chmod(0o600)
+PY
+PREFLIGHT_CLIENT_ROOT="$WORKDIR/preflight-client"
+mkdir -p "$PREFLIGHT_CLIENT_ROOT/etc/drlink"
+cp "$ALLOC_ROOT/pki/ca.crt" "$PREFLIGHT_CLIENT_ROOT/etc/drlink/allocator-ca.crt"
+FRP_CLIENT_TEST_ROOT="$PREFLIGHT_CLIENT_ROOT" \
+  ROOT_PATH="$ROOT" ALLOC_URL="https://127.0.0.1:${ALLOC_PORT}/enroll" \
+  PREFLIGHT_ID="$PREFLIGHT_ID" PREFLIGHT_SECRET="$PREFLIGHT_SECRET" \
+  bash -c '
+set -euo pipefail
+. "$ROOT_PATH/lib/frp-common.sh"
+. "$ROOT_PATH/lib/frp-client-common.sh"
+frp_enrollment_preflight "$ALLOC_URL" "$PREFLIGHT_ID" "$PREFLIGHT_SECRET" "manual-preflight-live"
+' >"$WORKDIR/preflight-fresh.out" 2>"$WORKDIR/preflight-fresh.err" \
+  || { cat "$WORKDIR/preflight-fresh.err" >&2; fail "fresh manual preflight"; }
+python3 - "$ALLOC_ROOT/enrollments/$PREFLIGHT_ID.json" <<'PY'
+import json, sys
+d=json.load(open(sys.argv[1]))
+assert d.get('used_at') in (None, ''), d
+assert d.get('bound_machine_id') in (None, ''), d
+PY
+pass "MANUAL_PREFLIGHT_FRESH_READ_ONLY"
+
+python3 - "$ALLOC_ROOT/enrollments/$PREFLIGHT_ID.json" <<'PY'
+import json, sys
+from datetime import datetime, timezone
+p=sys.argv[1]
+d=json.load(open(p))
+d['used_at']=datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00','Z')
+d['bound_machine_id']='manual-preflight-live'
+open(p,'w').write(json.dumps(d,indent=2)+'\n')
+PY
+set +e
+FRP_CLIENT_TEST_ROOT="$PREFLIGHT_CLIENT_ROOT" \
+  ROOT_PATH="$ROOT" ALLOC_URL="https://127.0.0.1:${ALLOC_PORT}/enroll" \
+  PREFLIGHT_ID="$PREFLIGHT_ID" PREFLIGHT_SECRET="$PREFLIGHT_SECRET" \
+  bash -c '
+set -euo pipefail
+. "$ROOT_PATH/lib/frp-common.sh"
+. "$ROOT_PATH/lib/frp-client-common.sh"
+frp_enrollment_preflight "$ALLOC_URL" "$PREFLIGHT_ID" "$PREFLIGHT_SECRET" "manual-preflight-live"
+' >"$WORKDIR/preflight-used.out" 2>"$WORKDIR/preflight-used.err"
+preflight_used_rc=$?
+set -e
+if [[ "$preflight_used_rc" -eq 0 ]]; then
+  fail "used manual preflight unexpectedly succeeded"
+fi
+grep -q 'already been used' "$WORKDIR/preflight-used.err" \
+  || { cat "$WORKDIR/preflight-used.err" >&2; fail "used preflight error not actionable"; }
+pass "MANUAL_PREFLIGHT_USED_REJECT"
+
 start_listener "$LISTEN_PORT"
 SSH_USER="$(id -un)"
 

@@ -2630,14 +2630,16 @@ frp_pending_enroll_write() {
   local phase="$1" machine_id="$2" hostname_value="$3" allocator_url="$4"
   local enroll_id="$5" enroll_secret="$6" services_file="$7"
   local allocated_file="${8:-}" meta_file="${9:-}"
-  local dest mgmt_fp
+  local dest mgmt_fp operation_id
   dest="$(frp_pending_enroll_path)"
   mkdir -p "$(dirname "$dest")"
   mgmt_fp="$(frp_identity_public_fingerprint 2>/dev/null || true)"
+  operation_id="${FRP_CLIENT_OPERATION_ID:-}"
   # NOTE: use a private env var name for the secret, not ENROLL_SECRET -
   # callers hold their own global ENROLL_SECRET and `unset ENROLL_SECRET`
   # below would otherwise clobber it (no `local` scope for env assignments).
-  _FRP_PENDING_ENROLL_SECRET="$enroll_secret" python3 - "$dest" "$phase" "$machine_id" "$hostname_value" \
+  _FRP_PENDING_ENROLL_SECRET="$enroll_secret" _FRP_PENDING_OPERATION_ID="$operation_id" \
+  python3 - "$dest" "$phase" "$machine_id" "$hostname_value" \
     "$allocator_url" "$enroll_id" "$services_file" "$mgmt_fp" \
     "$allocated_file" "$meta_file" <<'PY'
 import hashlib, json, os, sys, tempfile, time
@@ -2654,6 +2656,7 @@ mgmt_fp = sys.argv[8]
 allocated_file = sys.argv[9]
 meta_file = sys.argv[10]
 secret = os.environ.get('_FRP_PENDING_ENROLL_SECRET', '')
+operation_id = os.environ.get('_FRP_PENDING_OPERATION_ID', '').strip().lower()
 
 services = []
 if services_file:
@@ -2690,6 +2693,10 @@ record['enroll_id'] = enroll_id
 record['enroll_secret'] = secret
 record['services'] = services
 record['services_digest'] = digest
+if operation_id:
+    record['operation_id'] = operation_id
+else:
+    record.pop('operation_id', None)
 if mgmt_fp:
     record['mgmt_fingerprint'] = mgmt_fp
 else:
@@ -2727,7 +2734,7 @@ except Exception:
         pass
     raise
 PY
-  unset _FRP_PENDING_ENROLL_SECRET
+  unset _FRP_PENDING_ENROLL_SECRET _FRP_PENDING_OPERATION_ID
 }
 
 frp_pending_enroll_load() {
@@ -2739,6 +2746,7 @@ frp_pending_enroll_load() {
   # replay via /enroll) when the cached response is missing or incomplete.
   local machine_id="$1" services_out="$2" allocated_out="$3" meta_out="$4"
   local phase_var="$5" enroll_id_var="$6" enroll_secret_var="$7"
+  local operation_id_var="${8:-}"
   local path parsed
   path="$(frp_pending_enroll_path)"
   [[ -f "$path" ]] || return 1
@@ -2759,6 +2767,7 @@ if not isinstance(data, dict) or str(data.get('machine_id') or '') != machine_id
 phase = str(data.get('phase') or '')
 enroll_id = str(data.get('enroll_id') or '')
 enroll_secret = str(data.get('enroll_secret') or '')
+operation_id = str(data.get('operation_id') or '').strip().lower()
 if phase not in ('redeemed', 'enrolled') or not enroll_id or not enroll_secret:
     print('ERR')
     raise SystemExit(0)
@@ -2785,17 +2794,21 @@ if phase == 'enrolled':
         # Cached response is incomplete; fall back to an exact /enroll replay.
         phase = 'redeemed'
 
-print('OK\t%s\t%s\t%s' % (phase, enroll_id, enroll_secret))
+print('OK\t%s\t%s\t%s\t%s' % (phase, enroll_id, enroll_secret, operation_id))
 PY
 )"
   [[ "$parsed" == OK$'\t'* ]] || return 1
-  local p e s
+  local p e s o
   p="$(printf '%s' "$parsed" | awk -F'\t' 'NR==1{print $2}')"
   e="$(printf '%s' "$parsed" | awk -F'\t' 'NR==1{print $3}')"
   s="$(printf '%s' "$parsed" | awk -F'\t' 'NR==1{print $4}')"
+  o="$(printf '%s' "$parsed" | awk -F'\t' 'NR==1{print $5}')"
   printf -v "$phase_var" '%s' "$p"
   printf -v "$enroll_id_var" '%s' "$e"
   printf -v "$enroll_secret_var" '%s' "$s"
+  if [[ -n "$operation_id_var" ]]; then
+    printf -v "$operation_id_var" '%s' "$o"
+  fi
   return 0
 }
 
@@ -3417,6 +3430,95 @@ PY
     FRP_RECONCILE_STATUS=FAILURE
     return 1
   fi
+}
+
+frp_enrollment_preflight() {
+  local allocator_url="$1" enroll_id="$2" enroll_secret="$3" machine_id="$4"
+  local preflight_url request timestamp signature response curl_err parsed
+
+  preflight_url="$(python3 - "$allocator_url" <<'PY'
+import sys
+from urllib.parse import urlsplit, urlunsplit
+raw = str(sys.argv[1] or '').strip()
+try:
+    p = urlsplit(raw)
+except ValueError:
+    raise SystemExit(1)
+if p.scheme.lower() != 'https' or not p.netloc or p.query or p.fragment:
+    raise SystemExit(1)
+path = p.path.rstrip('/')
+if path != '/enroll':
+    raise SystemExit(1)
+print(urlunsplit((p.scheme, p.netloc, '/enroll/preflight', '', '')))
+PY
+)" || {
+    echo "ERROR: allocator enrollment URL is invalid for preflight" >&2
+    return 1
+  }
+
+  request="$(python3 - "$machine_id" <<'PY'
+import json, sys
+print(json.dumps({
+    'machine_id': sys.argv[1],
+    'purpose': 'fresh-manual-enrollment',
+}, separators=(',', ':')))
+PY
+)"
+  timestamp="$(date +%s)"
+  signature="$(ENROLL_SECRET="$enroll_secret" TS="$timestamp" BODY="$request" python3 - <<'PY'
+import hashlib, hmac, os
+secret=os.environ['ENROLL_SECRET'].encode()
+message=(os.environ['TS']+'\n'+os.environ['BODY']).encode()
+print(hmac.new(secret,message,hashlib.sha256).hexdigest())
+PY
+)"
+
+  curl_err="$(mktemp)"
+  if ! response="$(frp_allocator_curl \
+    -X POST \
+    -H 'Content-Type: application/json' \
+    -H "X-Enrollment-ID: $enroll_id" \
+    -H "X-Timestamp: $timestamp" \
+    -H "X-Signature: $signature" \
+    --data "$request" \
+    "$preflight_url" 2>"$curl_err")"; then
+    frp_explain_allocator_curl_error "$curl_err"
+    rm -f "$curl_err"
+    return 1
+  fi
+  rm -f "$curl_err"
+
+  if RESPONSE="$response" python3 - <<'PYJSON'
+import json, os, sys
+try:
+    data=json.loads(os.environ.get('RESPONSE') or '')
+except json.JSONDecodeError:
+    print('ERROR: invalid enrollment preflight response', file=sys.stderr)
+    raise SystemExit(1)
+if not isinstance(data, dict):
+    print('ERROR: invalid enrollment preflight response', file=sys.stderr)
+    raise SystemExit(1)
+if data.get('valid') is True:
+    raise SystemExit(0)
+
+error_class=str(data.get('error_class') or 'AUTH_FAILED')
+error=str(data.get('error') or 'enrollment preflight failed')
+print('ERROR: %s' % error, file=sys.stderr)
+if error_class == 'ENROLLMENT_CODE_USED':
+    print('This Enrollment Code has already been used.', file=sys.stderr)
+    print('Create a new Enrollment Code on the Data Relay Link server and retry.', file=sys.stderr)
+elif error_class == 'ENROLLMENT_CODE_EXPIRED':
+    print('This Enrollment Code has expired. Create a new Enrollment Code and retry.', file=sys.stderr)
+elif error_class == 'ENROLLMENT_CODE_REVOKED':
+    print('This Enrollment Code was revoked. Create a new Enrollment Code and retry.', file=sys.stderr)
+elif error_class == 'ENROLLMENT_CODE_BOUND':
+    print('This Enrollment Code is already bound to another machine.', file=sys.stderr)
+raise SystemExit(1)
+PYJSON
+  then
+    return 0
+  fi
+  return 1
 }
 
 frp_enroll_services() {

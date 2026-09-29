@@ -173,7 +173,8 @@ function Invoke-FrpEnroll {
         [Parameter(Mandatory = $true)][string]$MachineId,
         [Parameter(Mandatory = $true)][string]$Hostname,
         [Parameter(Mandatory = $true)]$Services,
-        [string]$PublicPem
+        [string]$PublicPem,
+        [string]$OperationId
     )
     $enrollServices = Get-FrpEnrollServiceList -Services $Services
     $payload = [ordered]@{
@@ -184,6 +185,9 @@ function Invoke-FrpEnroll {
     if ($PublicPem) {
         $payload['mgmt_pubkey'] = $PublicPem
         $payload['mgmt_alg'] = 'ecdsa-p256-sha256'
+    }
+    if (-not [string]::IsNullOrWhiteSpace($OperationId)) {
+        $payload['operation_id'] = ([string]$OperationId).Trim().ToLowerInvariant()
     }
     $body = Get-FrpCanonicalJson -Object $payload
     $ts = [int64]([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())
@@ -1217,12 +1221,14 @@ function Invoke-FrpZeroTouch {
         $enrollmentSecret = $null
         $services = $null
         $publicPem = $null
+        $operationId = $null
 
         if ($resumePending) {
             Write-Host 'A previous enrollment did not finish (response lost or interrupted).'
             Write-Host 'Resuming from local crash-safe recovery state; the Bootstrap Ticket is not reused.'
             $enrollmentId = $pending.EnrollmentId
             $enrollmentSecret = $pending.EnrollmentSecret
+            $operationId = [string]$pending.OperationId
             if ([string]::IsNullOrWhiteSpace($enrollmentSecret)) {
                 throw 'ERROR: local recovery state is present but unusable. Create a new Enrollment Code and re-enroll this client.'
             }
@@ -1258,6 +1264,7 @@ function Invoke-FrpZeroTouch {
 
             $enrollmentId = $redeem.EnrollmentId
             $enrollmentSecret = $redeem.EnrollmentSecret
+            $operationId = [guid]::NewGuid().ToString('N').ToLowerInvariant()
         }
 
         $enrollResult = $null
@@ -1285,12 +1292,13 @@ function Invoke-FrpZeroTouch {
             # by an exact replay instead of requiring a new Enrollment Code.
             Save-FrpPendingEnroll -Phase 'redeemed' -MachineId $machineId -Hostname $Hostname `
                 -AllocatorUrl $AllocatorUrl -EnrollmentId $enrollmentId -EnrollmentSecret $enrollmentSecret `
-                -Services $services | Out-Null
+                -Services $services -OperationId $operationId | Out-Null
 
             Write-Host 'Enrolling with allocator...'
             $enrollResult = Invoke-FrpEnroll -AllocatorUrl $AllocatorUrl `
                 -EnrollmentId $enrollmentId -EnrollmentSecret $enrollmentSecret `
-                -MachineId $machineId -Hostname $Hostname -Services $services -PublicPem $publicPem
+                -MachineId $machineId -Hostname $Hostname -Services $services -PublicPem $publicPem `
+                -OperationId $operationId
 
             $enrollMeta = @{
                 frp_server       = $enrollResult.FrpServer
@@ -1303,7 +1311,7 @@ function Invoke-FrpZeroTouch {
             }
             Save-FrpPendingEnroll -Phase 'enrolled' -MachineId $machineId -Hostname $Hostname `
                 -AllocatorUrl $AllocatorUrl -EnrollmentId $enrollmentId -EnrollmentSecret $enrollmentSecret `
-                -Services $services -EnrollMeta $enrollMeta -AllocatedServices $enrollResult.Services | Out-Null
+                -Services $services -OperationId $operationId -EnrollMeta $enrollMeta -AllocatedServices $enrollResult.Services | Out-Null
 
             if ($env:FRP_WINDOWS_HOOK_CRASH_AFTER_ENROLL -eq '1') {
                 # Test-only: simulate a crash/lost response after the

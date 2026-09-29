@@ -425,11 +425,20 @@ def test_enroll_reuses_existing_and_note():
         if code != 200:
             fail('redeem before enroll', result)
             return
-        body = json.dumps({
+
+        key1 = env.root / 'machine-a.key'
+        pub1 = env.root / 'machine-a.pub'
+        MOD.MGMT.generate_keypair(key1, pub1)
+        pub1_pem = pub1.read_text()
+        body_obj = {
             'machine_id': 'machine-a',
             'hostname': 'host-a',
             'services': env.ssh_services(),
-        }, separators=(',', ':')).encode()
+            'mgmt_pubkey': pub1_pem,
+            'mgmt_alg': MOD.MGMT.MGMT_ALG,
+            'operation_id': '1234567890abcdef1234567890abcdef',
+        }
+        body = json.dumps(body_obj, separators=(',', ':')).encode()
         ts = str(int(time.time()))
         sig = hmac.new(
             enroll['secret'].encode(),
@@ -446,6 +455,10 @@ def test_enroll_reuses_existing_and_note():
             fail('note not copied', client)
             return
         port1 = client['services']['ssh']['remote_port']
+
+        # Exact lost-response recovery keeps the same management identity and
+        # request semantics, so the already-consumed code may replay once or
+        # many times without reallocating authority/state.
         ecode2, eresult2 = env.allocator.enroll(enroll['id'], ts, sig, body)
         if ecode2 != 200:
             fail('enroll retry', eresult2)
@@ -461,6 +474,75 @@ def test_enroll_reuses_existing_and_note():
         pass_('NORMAL_ENROLLMENT_REUSED')
         pass_('NO_DUPLICATE_PORT_ALLOCATION')
         pass_('LOST_RESPONSE_RETRY_SAFE')
+
+        # Same machine/key/services but a *new* install/apply operation is not
+        # the original lost response and must not reuse the consumed code.
+        new_operation_obj = dict(body_obj)
+        new_operation_obj['operation_id'] = '2' * 32
+        new_operation_body = json.dumps(
+            new_operation_obj, separators=(',', ':')
+        ).encode()
+        ts_op = str(int(time.time()))
+        new_operation_sig = hmac.new(
+            enroll['secret'].encode(),
+            (ts_op + '\n' + new_operation_body.decode()).encode(),
+            hashlib.sha256,
+        ).hexdigest()
+        ocode, oresult = env.allocator.enroll(
+            enroll['id'], ts_op, new_operation_sig, new_operation_body
+        )
+        if ocode != 403 or 'already used' not in str(oresult.get('error') or ''):
+            fail('consumed code accepted for a new operation', oresult)
+            return
+        pass_('CONSUMED_CODE_NEW_OPERATION_REJECTED')
+
+        # Public uninstall removes the local management identity. A reinstall
+        # therefore either presents no identity yet or a newly generated key;
+        # neither may reuse the consumed Enrollment Code.
+        no_key_obj = dict(body_obj)
+        no_key_obj.pop('mgmt_pubkey', None)
+        no_key_obj.pop('mgmt_alg', None)
+        no_key_body = json.dumps(no_key_obj, separators=(',', ':')).encode()
+        ts2 = str(int(time.time()))
+        no_key_sig = hmac.new(
+            enroll['secret'].encode(),
+            (ts2 + '\n' + no_key_body.decode()).encode(),
+            hashlib.sha256,
+        ).hexdigest()
+        ncode, nresult = env.allocator.enroll(
+            enroll['id'], ts2, no_key_sig, no_key_body
+        )
+        if ncode != 403 or 'already used' not in str(nresult.get('error') or ''):
+            fail('consumed code accepted without identity after uninstall', nresult)
+            return
+
+        key2 = env.root / 'machine-a-reinstall.key'
+        pub2 = env.root / 'machine-a-reinstall.pub'
+        MOD.MGMT.generate_keypair(key2, pub2)
+        new_key_obj = dict(body_obj)
+        new_key_obj['mgmt_pubkey'] = pub2.read_text()
+        new_key_body = json.dumps(new_key_obj, separators=(',', ':')).encode()
+        ts3 = str(int(time.time()))
+        new_key_sig = hmac.new(
+            enroll['secret'].encode(),
+            (ts3 + '\n' + new_key_body.decode()).encode(),
+            hashlib.sha256,
+        ).hexdigest()
+        rcode, rresult = env.allocator.enroll(
+            enroll['id'], ts3, new_key_sig, new_key_body
+        )
+        if rcode != 403 or 'already used' not in str(rresult.get('error') or ''):
+            fail('consumed code accepted with replacement identity after uninstall', rresult)
+            return
+
+        final_client = env.allocator.load_registry()['clients']['machine-a']
+        if MOD.MGMT.canonicalize_pubkey_pem(final_client.get('mgmt_pubkey')) != MOD.MGMT.canonicalize_pubkey_pem(pub1_pem):
+            fail('rejected reinstall changed management identity')
+            return
+        if final_client['services']['ssh']['remote_port'] != port1:
+            fail('rejected reinstall changed endpoint')
+            return
+        pass_('CONSUMED_CODE_POST_UNINSTALL_REJECTED')
     finally:
         env.cleanup()
 
@@ -589,12 +671,18 @@ def test_bootstrap_completion_fail_closed():
         env.cleanup()
 
 
-def _enroll_as(env, enroll, machine_id, services, hostname='host-a'):
-    body = json.dumps({
+def _enroll_as(
+    env, enroll, machine_id, services, hostname='host-a', mgmt_pubkey=None
+):
+    payload = {
         'machine_id': machine_id,
         'hostname': hostname,
         'services': services,
-    }, separators=(',', ':')).encode()
+    }
+    if mgmt_pubkey:
+        payload['mgmt_pubkey'] = mgmt_pubkey
+        payload['mgmt_alg'] = MOD.MGMT.MGMT_ALG
+    body = json.dumps(payload, separators=(',', ':')).encode()
     ts = str(int(time.time()))
     sig = hmac.new(
         enroll['secret'].encode(),
@@ -653,13 +741,24 @@ def test_enroll_enforces_ticket_scope():
         pass_('SCOPE_SSH_TICKET_REJECTS_OTHER_SERVICES')
 
         # The exact authorized set enrolls, and an exact lost-response replay
-        # (same machine, same request) still recovers the committed response.
-        code, result = _enroll_as(env, enroll, 'machine-ssh', env.ssh_services())
+        # (same machine, same request, same management identity) still recovers
+        # the committed response.
+        scope_key = env.root / 'machine-ssh.key'
+        scope_pub = env.root / 'machine-ssh.pub'
+        MOD.MGMT.generate_keypair(scope_key, scope_pub)
+        scope_pub_pem = scope_pub.read_text()
+        code, result = _enroll_as(
+            env, enroll, 'machine-ssh', env.ssh_services(),
+            mgmt_pubkey=scope_pub_pem,
+        )
         if code != 200:
             fail('authorized services rejected', '%s %s' % (code, result))
             return
         allocated = result.get('services')
-        code, replay = _enroll_as(env, enroll, 'machine-ssh', env.ssh_services())
+        code, replay = _enroll_as(
+            env, enroll, 'machine-ssh', env.ssh_services(),
+            mgmt_pubkey=scope_pub_pem,
+        )
         if code != 200 or replay.get('services') != allocated:
             fail('exact replay rejected', '%s %s' % (code, replay))
             return

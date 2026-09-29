@@ -701,7 +701,7 @@ frp_client_main() {
   chmod 600 "$SERVICES_FILE" "$ALLOCATED_FILE" "$ENROLL_META_FILE"
   _frp_client_enroll_tmp_cleanup() {
     rm -rf "$TMPDIR" "$SERVICES_FILE" "$ALLOCATED_FILE" "$ENROLL_META_FILE"
-    unset FRP_TOKEN ENROLL_SECRET FRP_ENROLLMENT_CODE TOKEN_CIPHERTEXT FRP_BOOTSTRAP_TICKET
+    unset FRP_TOKEN ENROLL_SECRET FRP_ENROLLMENT_CODE TOKEN_CIPHERTEXT FRP_BOOTSTRAP_TICKET FRP_CLIENT_OPERATION_ID
   }
   # Sourced callers (tests, frpctl wrappers) already own EXIT. Replacing or
   # chaining that trap leaks test allocators or SIGSEGVs bash on restore.
@@ -710,11 +710,12 @@ frp_client_main() {
   fi
 
   RESUME_PHASE=""
+  unset FRP_CLIENT_OPERATION_ID 2>/dev/null || true
   if [[ "$FRP_RESUME_PENDING" == "1" ]]; then
     echo "A previous enrollment did not finish (response lost or interrupted)." >&2
     echo "Resuming from local crash-safe recovery state; the Bootstrap Ticket is not reused." >&2
     if ! frp_pending_enroll_load "$MACHINE_ID" "$SERVICES_FILE" "$ALLOCATED_FILE" "$ENROLL_META_FILE" \
-      RESUME_PHASE ENROLL_ID ENROLL_SECRET; then
+      RESUME_PHASE ENROLL_ID ENROLL_SECRET FRP_CLIENT_OPERATION_ID; then
       echo "ERROR: local recovery state is present but unusable." >&2
       echo "Create a new Enrollment Code and re-enroll this client." >&2
       frp_emit_failure_class RECOVERY_REQUIRED
@@ -738,7 +739,24 @@ frp_client_main() {
     fi
     ENROLL_ID="${FRP_ENROLLMENT_CODE%%.*}"
     ENROLL_SECRET="${FRP_ENROLLMENT_CODE#*.}"
+    if ! frp_enrollment_preflight "$ALLOCATOR_URL" "$ENROLL_ID" "$ENROLL_SECRET" "$MACHINE_ID"; then
+      unset FRP_ENROLLMENT_CODE ENROLL_SECRET
+      return 1
+    fi
     collect_services
+  fi
+
+  if [[ "$FRP_RESUME_PENDING" == "1" ]]; then
+    if [[ -n "${FRP_CLIENT_OPERATION_ID:-}" ]]; then
+      export FRP_CLIENT_OPERATION_ID
+    else
+      # Backward-compatible recovery for pending state created before
+      # operation-bound enrollment replay was introduced.
+      unset FRP_CLIENT_OPERATION_ID
+    fi
+  else
+    FRP_CLIENT_OPERATION_ID="$(openssl rand -hex 16)"
+    export FRP_CLIENT_OPERATION_ID
   fi
 
   HOSTNAME_VALUE="$(frp_short_hostname)"

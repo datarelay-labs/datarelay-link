@@ -771,6 +771,7 @@ function Save-FrpPendingEnroll {
         [Parameter(Mandatory = $true)][string]$EnrollmentId,
         [Parameter(Mandatory = $true)][string]$EnrollmentSecret,
         [Parameter(Mandatory = $true)]$Services,
+        [string]$OperationId,
         [hashtable]$EnrollMeta,
         $AllocatedServices
     )
@@ -797,6 +798,18 @@ function Save-FrpPendingEnroll {
         enroll_id       = $EnrollmentId
         services        = $servicesPlain
         services_digest = $digest
+    }
+    $operationValue = ''
+    if (-not [string]::IsNullOrWhiteSpace($OperationId)) {
+        $operationValue = ([string]$OperationId).Trim().ToLowerInvariant()
+    } elseif ($existing -and $existing.operation_id) {
+        $operationValue = ([string]$existing.operation_id).Trim().ToLowerInvariant()
+    }
+    if ($operationValue) {
+        if ($operationValue -notmatch '^[0-9a-f]{32}$') {
+            throw 'ERROR: enrollment operation id must be 32 lowercase hexadecimal characters'
+        }
+        $record['operation_id'] = $operationValue
     }
     $fp = Get-FrpIdentityPublicFingerprint
     if ($fp) { $record['mgmt_fingerprint'] = $fp }
@@ -860,6 +873,7 @@ function Read-FrpPendingEnroll {
         AllocatorUrl      = [string]$raw.allocator_url
         EnrollmentId      = [string]$raw.enroll_id
         EnrollmentSecret  = $secret
+        OperationId       = [string]$raw.operation_id
         Services          = @($raw.services)
         EnrollMeta        = $raw.enroll_meta
         AllocatedServices = @($raw.allocated_services)

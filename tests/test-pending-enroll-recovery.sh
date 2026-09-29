@@ -218,6 +218,8 @@ fi
 [[ -f "$(pending_path "$T1_TREE")" ]] || fail "pending file missing after redeemed-phase crash"
 PENDING1_PHASE="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["phase"])' "$(pending_path "$T1_TREE")")"
 [[ "$PENDING1_PHASE" == "redeemed" ]] || fail "expected phase=redeemed, got $PENDING1_PHASE"
+PENDING1_OPERATION_ID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("operation_id") or "")' "$(pending_path "$T1_TREE")")"
+[[ "$PENDING1_OPERATION_ID" =~ ^[0-9a-f]{32}$ ]] || fail "pending operation id missing/invalid"
 [[ ! -f "$T1_TREE/etc/frp/client-state.json" ]] || fail "client-state.json must not exist yet"
 grep -q bootstrap_redeem "$WORKDIR/t1-a.out.hook" || fail "attempt 1 did not redeem"
 grep -q '^enroll$' "$WORKDIR/t1-a.out.hook" || fail "attempt 1 did not attempt enroll"
@@ -344,6 +346,7 @@ pass "PENDING_FILE_SECRET_NEVER_IN_CLIENT_STATE"
   mkdir -p "$FRP_CLIENT_TEST_ROOT/etc/frp"
   SVC_FILE="$WORKDIR/helper-services.json"
   printf '%s' '[{"id":"web","name":"web","preset":"custom","local_ip":"127.0.0.1","local_port":8080}]' >"$SVC_FILE"
+  export FRP_CLIENT_OPERATION_ID="0123456789abcdef0123456789abcdef"
   frp_pending_enroll_write redeemed "unit-machine-id" "unit-host" "https://example.test/enroll" \
     "abc123" "s3cr3t-value" "$SVC_FILE"
   [[ -f "$(frp_pending_enroll_path)" ]] || { echo "FAIL helper write did not create file" >&2; exit 1; }
@@ -360,10 +363,11 @@ pass "PENDING_FILE_SECRET_NEVER_IN_CLIENT_STATE"
   : >"$OUT_ALLOC"
   : >"$OUT_META"
   frp_pending_enroll_load "unit-machine-id" "$OUT_SVC" "$OUT_ALLOC" "$OUT_META" \
-    LOADED_PHASE LOADED_ID LOADED_SECRET
+    LOADED_PHASE LOADED_ID LOADED_SECRET LOADED_OPERATION_ID
   [[ "$LOADED_PHASE" == "redeemed" ]] || { echo "FAIL loaded phase $LOADED_PHASE" >&2; exit 1; }
   [[ "$LOADED_ID" == "abc123" ]] || { echo "FAIL loaded id $LOADED_ID" >&2; exit 1; }
   [[ "$LOADED_SECRET" == "s3cr3t-value" ]] || { echo "FAIL loaded secret mismatch" >&2; exit 1; }
+  [[ "$LOADED_OPERATION_ID" == "$FRP_CLIENT_OPERATION_ID" ]] || { echo "FAIL loaded operation id mismatch" >&2; exit 1; }
   python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d[0]["id"]=="web"' "$OUT_SVC"
   frp_pending_enroll_clear
   [[ ! -f "$(frp_pending_enroll_path)" ]] || { echo "FAIL clear did not remove file" >&2; exit 1; }

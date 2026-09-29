@@ -43,6 +43,7 @@ MAX_HOST_LEN = 253
 ALLOWED_PRESETS = ('ssh', 'http', 'https', 'custom')
 ALLOWED_PROTOCOLS = ('tcp',)
 NONCE_RE = re.compile(r'^[0-9a-f]{64}$')
+ENROLL_OPERATION_ID_RE = re.compile(r'^[0-9a-f]{32}$')
 BOOTSTRAP_TICKET_PREFIX = 'bt1'
 BOOTSTRAP_ID_HEX_LEN = 16
 BOOTSTRAP_SECRET_HEX_LEN = 64
@@ -2755,32 +2756,113 @@ class Allocator:
         # exact lost-response idempotent retry from authority-changing reuse.
         return record, path, None
 
-    def _used_enrollment_idempotent_replay(self, client, payload, requested):
-        """Allow exact lost-response retry of an already-consumed Enrollment Code.
+    def preflight_enrollment(self, enrollment_id, timestamp, signature, body):
+        """Validate a Manual Enrollment Code without consuming or binding it.
 
-        Requires same machine (caller), same management public key, and the same
-        enabled service set. Rejects any authority / identity change.
-        Returns (allocated_list, error_message).
+        Fresh interactive installs call this before service selection. Crash-safe
+        pending recovery intentionally bypasses this endpoint and uses the exact
+        committed-request replay path in enroll(), so a lost response remains
+        recoverable without making a consumed code reusable as a new credential.
+        """
+        record, _path, error = self.verify_request(
+            enrollment_id, timestamp, signature, body
+        )
+        if error:
+            lowered = str(error).lower()
+            if 'expired' in lowered:
+                cls = 'ENROLLMENT_CODE_EXPIRED'
+            elif 'revoked' in lowered:
+                cls = 'ENROLLMENT_CODE_REVOKED'
+            else:
+                cls = 'AUTH_FAILED'
+            return 403, api_error(error, cls)
+        try:
+            payload = json.loads(body.decode('utf-8'))
+            if not isinstance(payload, dict):
+                raise ValueError('invalid preflight payload')
+            if str(payload.get('purpose') or '') != 'fresh-manual-enrollment':
+                raise ValueError('invalid preflight purpose')
+            raw_machine_id = str(payload.get('machine_id') or '').strip()
+            if MID is not None:
+                machine_id = MID.validate_machine_id(raw_machine_id, required=True)
+            else:
+                if not raw_machine_id:
+                    raise ValueError('machine_id is required')
+                if (
+                    len(raw_machine_id) > MACHINE_ID_MAX_LEN
+                    or any(c in raw_machine_id for c in '\r\n/\\')
+                    or any(ord(c) < 0x20 or (0x7F <= ord(c) <= 0x9F) for c in raw_machine_id)
+                ):
+                    raise ValueError('invalid machine_id')
+                machine_id = raw_machine_id
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            return 400, api_error(str(exc) or 'invalid preflight payload', 'AUTH_FAILED')
+        except Exception as exc:
+            # Machine-id validators use their own exception type. Treat any
+            # validation failure as a bounded input error, never a 500.
+            return 400, api_error(str(exc) or 'invalid machine_id', 'AUTH_FAILED')
+
+        # A consumed Enrollment Code is never a fresh-install credential. Exact
+        # lost-response recovery is handled only by enroll() with the already
+        # committed registry identity/request.
+        if record.get('used_at'):
+            return 403, api_error(
+                'enrollment code already used', 'ENROLLMENT_CODE_USED'
+            )
+        bound_machine_id = str(record.get('bound_machine_id') or '').strip()
+        if bound_machine_id and bound_machine_id != machine_id:
+            return 403, api_error(
+                'enrollment code is already bound to another machine',
+                'ENROLLMENT_CODE_BOUND',
+            )
+        return 200, {'valid': True, 'status': 'ready'}
+
+    def _used_enrollment_idempotent_replay(self, client, record, payload, requested):
+        """Allow only the original enrollment operation to replay after commit.
+
+        New clients bind the first successful enrollment to operation_id. A
+        consumed code may replay only when that same operation_id, management
+        identity, and enabled service set are presented again. Legacy records
+        without an operation_id keep the older same-key/same-services fallback
+        solely for crash recovery compatibility.
         """
         if not isinstance(client, dict):
             return None, 'enrollment code already used'
         raw = payload.get('mgmt_pubkey')
         stored_pem = client.get('mgmt_pubkey')
-        if raw not in (None, ''):
-            try:
-                presented = MGMT.canonicalize_pubkey_pem(raw)
-            except Exception:
-                return None, 'invalid management public key'
-            if not stored_pem:
+        presented_operation_id = str(payload.get('operation_id') or '').strip().lower()
+        stored_operation_id = str((record or {}).get('operation_id') or '').strip().lower()
+
+        if stored_operation_id:
+            if (
+                not ENROLL_OPERATION_ID_RE.fullmatch(presented_operation_id)
+                or presented_operation_id != stored_operation_id
+            ):
                 return None, 'enrollment code already used'
-            try:
-                stored = MGMT.canonicalize_pubkey_pem(stored_pem)
-            except Exception:
-                return None, 'enrollment code already used'
-            if presented != stored:
-                return None, 'enrollment code already used'
-        elif stored_pem:
-            # Prior enrollment established an identity; retry must present it.
+        elif presented_operation_id:
+            # The consumed legacy record cannot prove that this new operation
+            # id belonged to the original successful request.
+            return None, 'enrollment code already used'
+
+        # A consumed Enrollment Code is no longer an authorization credential.
+        # The only permitted exception is exact lost-response recovery by the
+        # management identity that was established by the successful request.
+        #
+        # Legacy/no-key clients cannot prove that distinction: after public
+        # uninstall the same machine_id and service set may be recreated, so
+        # accepting "no key == no key" would make a consumed code reusable.
+        if raw in (None, '') or not stored_pem:
+            return None, 'enrollment code already used'
+        try:
+            presented = MGMT.canonicalize_pubkey_pem(raw)
+            stored = MGMT.canonicalize_pubkey_pem(stored_pem)
+        except Exception:
+            return None, 'enrollment code already used'
+        if presented != stored:
+            return None, 'enrollment code already used'
+        presented_alg = str(payload.get('mgmt_alg') or MGMT.MGMT_ALG).strip().lower()
+        stored_alg = str(client.get('mgmt_alg') or MGMT.MGMT_ALG).strip().lower()
+        if presented_alg != MGMT.MGMT_ALG or stored_alg != MGMT.MGMT_ALG:
             return None, 'enrollment code already used'
 
         existing = client.get('services') or {}
@@ -2904,6 +2986,12 @@ class Allocator:
 
         machine_id = str(payload.get('machine_id', '')).strip()
         hostname = str(payload.get('hostname', '')).strip()
+        operation_id = str(payload.get('operation_id') or '').strip().lower()
+        if operation_id and not ENROLL_OPERATION_ID_RE.fullmatch(operation_id):
+            return 400, api_error(
+                'operation_id must be 32 lowercase hexadecimal characters',
+                'AUTH_FAILED',
+            )
         if MID is not None:
             try:
                 machine_id = MID.validate_machine_id(machine_id, required=True)
@@ -2978,7 +3066,7 @@ class Allocator:
                                 'enrollment code already used', 'AUTH_FAILED'
                             )
                         allocated, replay_error = self._used_enrollment_idempotent_replay(
-                            client, payload, requested
+                            client, record, payload, requested
                         )
                         if replay_error:
                             return 403, api_error(replay_error, 'AUTH_FAILED')
@@ -3218,6 +3306,10 @@ class Allocator:
                             record['bound_machine_id'] = machine_id
                             record['used_at'] = record.get('used_at') or now_iso
                             record['last_used_at'] = now_iso
+                            if operation_id:
+                                record['operation_id'] = operation_id
+                            else:
+                                record.pop('operation_id', None)
                             try:
                                 self.save_enrollment(enroll_path, record)
                             except Exception:
@@ -3614,6 +3706,15 @@ def make_handler(allocator):
                     )
                     return
                 try:
+                    if path == '/enroll/preflight':
+                        code, result = allocator.preflight_enrollment(
+                            self.headers.get('X-Enrollment-ID', ''),
+                            self.headers.get('X-Timestamp', ''),
+                            self.headers.get('X-Signature', ''),
+                            body,
+                        )
+                        self.send_json(code, result)
+                        return
                     if path == '/enroll':
                         peer_host = ''
                         try:

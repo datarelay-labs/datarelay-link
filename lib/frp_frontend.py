@@ -438,7 +438,7 @@ def allocator_proxy_locations(allocator_listen_port, ca_cert):
     )
     return (
         _allocator_https_proxy_location(
-            'location ~ ^/(ca\\.crt|healthz|enroll|bootstrap/redeem|i/[^/?#]+|artifacts(?:/.*)?)$',
+            'location ~ ^/(ca\\.crt|healthz|enroll(?:/preflight)?|bootstrap/redeem|i/[^/?#]+|artifacts(?:/.*)?)$',
             allocator_listen_port,
             ca_cert,
         )
