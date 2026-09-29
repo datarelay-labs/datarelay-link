@@ -3432,7 +3432,7 @@ class ControlPlane:
                 "after": "credential rotated fingerprint=%s" % fp,
             }
 
-        result = self._mutate("system credential rotate ai-principal %s" % name, "rotate credential", write)
+        result = self._mutate("system credential rotate ai-identity %s" % name, "rotate credential", write)
         if isinstance(result, dict):
             result["token"] = token
         return result
@@ -3456,7 +3456,7 @@ class ControlPlane:
             self._revoke_oauth_tokens(principal["id"], now)
             return {"entity": {"type": "ai-principal", "id": principal["id"], "name": name}, "operation": "revoke"}
 
-        return self._mutate("system credential revoke ai-principal %s" % name, "revoke credential", write)
+        return self._mutate("system credential revoke ai-identity %s" % name, "revoke credential", write)
 
     def _revoke_oauth_tokens(self, principal_id: str, now: Optional[str] = None) -> None:
         stamp = now or utc_now_iso()
@@ -3919,7 +3919,7 @@ class ControlPlane:
                 "after": "authentication=%s" % normalized,
             }
 
-        return self._mutate("system credential configure ai-principal %s" % name, "configure credential", write)
+        return self._mutate("system credential configure ai-identity %s" % name, "configure credential", write)
 
     def add_oauth_redirect(self, name: str, uri: str) -> dict:
         principal = self.get_principal(name)
@@ -3953,7 +3953,7 @@ class ControlPlane:
                 "operation": "configure-oauth-redirect",
             }
 
-        return self._mutate("system credential configure ai-principal %s oauth-redirect" % name, "configure credential", write)
+        return self._mutate("system credential configure ai-identity %s oauth-redirect" % name, "configure credential", write)
 
     def create_oauth_pending(
         self,
