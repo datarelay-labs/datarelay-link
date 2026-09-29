@@ -297,9 +297,15 @@ CHATGPT_PLUS_ALLOW_DENY=
 - [ ] `CLI_PRODUCT_SURFACE_RECONCILIATION=PASS` using `CLI_EXHAUSTIVE_AUDIT.md` section 4.2; this is a separate release gate from Full User E2E.
 - [ ] every Product Master capability has a justified public CLI/menu/installer lifecycle mapping.
 - [ ] every installed runtime command maps to a current product capability and canonical documentation.
+- [ ] every required lifecycle variant is discoverable from public help/?/completion/menu without memorized hidden syntax.
 - [ ] no duplicate public mutation path exists for the same operation without an explicit product reason.
 - [ ] unreleased/greenfield v2.4 exposes no compatibility-only root-bypass alias or executable obsolete hidden grammar.
-- [ ] command suggestions and recovery text point only to current canonical commands or exact documented installer actions.
+- [ ] installer completion text, enrollment instructions, diagnostics, update recommendations, and recovery text point only to current canonical commands or exact documented installer actions.
+- [ ] destructive subvariants have effect-appropriate risk metadata, interactive confirmation, and non-TTY fail-closed behavior.
+- [ ] privilege/readability ERROR paths return non-zero and are not misreported as wrong-role errors.
+- [ ] empty list surfaces explicitly report zero items rather than silent RC=0 success.
+- [ ] status/version/provenance surfaces do not contradict each other.
+- [ ] final reconciliation cleanup proves zero audit residue on every mutated Server and Agent.
 - [ ] empty-list output explicitly distinguishes zero items from failure.
 - [ ] destructive/non-TTY cancellation is automation-safe and never returns success for an unapplied mutation.
 - [ ] Server root = Managed Hosts / Network Objects / Service Objects / Remote Access / Internet Access / AI Access / System / Help / Exit.
@@ -381,7 +387,8 @@ Windows 10=
 ## 20. Double Full Real E2E
 
 - [ ] `CLI_PRODUCT_SURFACE_RECONCILIATION=PASS` on the same exact candidate before PASS1 starts.
-- [ ] no CLI/product change occurred after the surface reconciliation; otherwise rerun it before PASS1/PASS2 count.
+- [ ] reconciliation evidence records zero feature/CLI gaps, runtime-only CLI, duplicate/legacy paths, discovery gaps, installer-guidance mismatches, destructive-confirmation gaps, ERROR-with-RC0 cases, scenario blockers, status/doc/runtime mismatches, and cleanup residue.
+- [ ] no CLI/product/documentation surface change occurred after the reconciliation; otherwise rerun it before PASS1/PASS2 count.
 - [ ] `FULL_REAL_E2E_PASS_1=PASS`
 - [ ] `FULL_REAL_E2E_PASS_2=PASS`
 - [ ] `PASS1_HEAD==PASS2_HEAD`
