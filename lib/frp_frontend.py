@@ -257,6 +257,7 @@ def render_nginx_conf(
     public_mcp = bool(mcp_host and mcp_cert and mcp_key)
 
     mcp_block = _mcp_location_block(mcp_bridge_port)
+    allocator_block = allocator_proxy_locations(allocator_listen_port, ca_cert)
 
     # When a dedicated MCP public certificate is active, keep /mcp on the
     # private-CA server only when the MCP hostname equals the control host
@@ -298,11 +299,12 @@ def render_nginx_conf(
         ssl_protocols TLSv1.2 TLSv1.3;
         ssl_prefer_server_ciphers off;
 %s
+%s
         location / {
             return 404;
         }
     }
-''' % (frontend_port, mcp_host, mcp_cert, mcp_key, mcp_block)
+''' % (frontend_port, mcp_host, mcp_cert, mcp_key, mcp_block, allocator_block)
     elif public_mcp and mcp_host == host:
         # Same hostname: present the public MCP certificate on the control
         # server block instead of the private CA leaf for this server_name.
@@ -389,7 +391,7 @@ http {
         server_key,
         websocket_path,
         control_listen_port,
-        allocator_proxy_locations(allocator_listen_port, ca_cert),
+        allocator_block,
         control_mcp,
         public_mcp_server,
     )

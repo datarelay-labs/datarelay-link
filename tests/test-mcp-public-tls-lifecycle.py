@@ -961,6 +961,12 @@ spec:
         self.assertIn("server_name mcp.example.com;", conf)
         self.assertIn("ssl_certificate /var/lib/drlink/tls/mcp/active/fullchain.pem;", conf)
         self.assertIn("acme-challenge", conf)
+        # The public MCP hostname may also be the advertised enrollment /
+        # management hostname. Keep allocator public routes on both TLS SNI
+        # blocks while FRP WSS remains private-CA/control-host only.
+        self.assertEqual(conf.count("enroll(?:/preflight)?"), 2)
+        self.assertEqual(conf.count("bootstrap/redeem"), 2)
+        self.assertEqual(conf.count('location = "/~!frp"'), 1)
         self.assertIn("return 404;", conf)
 
     def test_grammar_discovers_mcp_tls(self):
