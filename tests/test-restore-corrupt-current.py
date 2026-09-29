@@ -33,6 +33,7 @@ def seed_valid_tree(root: Path, marker: str) -> None:
         "etc/drlink/pki",
         "etc/frp",
         "var/lib/drlink",
+        "var/lib/drlink/runtime",
         "var/lib/drlink/backups",
         "var/log/drlink",
         "usr/local/lib/drlink",
@@ -56,6 +57,13 @@ def seed_valid_tree(root: Path, marker: str) -> None:
         (root / "etc/drlink/pki" / name).write_text("%s-%s\n" % (marker, name), encoding="utf-8")
     (root / "etc/frp/frps.toml").write_text("bindPort = 443\n", encoding="utf-8")
     (root / "etc/frp/server_token").write_text("token-%s\n" % marker, encoding="utf-8")
+    # Legacy registry may be empty/stale; F02 corrupts the *live* copy after backup.
+    # DR membership comes from canonical runtime client-inventory projected below.
+    (root / "var/lib/drlink/registry.json").write_text(
+        json.dumps({"schema_version": 2, "clients": {}, "reserved": [], "marker": marker})
+        + "\n",
+        encoding="utf-8",
+    )
     (root / "var/lib/drlink/access-control.json").write_text(
         json.dumps({"schema_version": 1, "access_lists": {}, "service_access": {}}) + "\n",
         encoding="utf-8",
@@ -101,22 +109,8 @@ def seed_valid_tree(root: Path, marker: str) -> None:
             (client_id, marker),
         )
         plane.conn.commit()
-        # Forensic inventory must list every SQLite client (membership). Legacy
-        # records without management-auth fields remain valid; empty clients map
-        # must not pass same-version DR preflight.
+        # Canonical forensic membership for same-version DR (not the legacy registry).
         UR.project_client_inventory_from_control_plane(plane, root=str(root))
-        (root / "var/lib/drlink/registry.json").write_text(
-            json.dumps(
-                {
-                    "schema_version": 2,
-                    "clients": {client_id: {"label": marker, "hostname": "host", "services": {}}},
-                    "reserved": [],
-                    "marker": marker,
-                }
-            )
-            + "\n",
-            encoding="utf-8",
-        )
     finally:
         plane.close()
 
@@ -145,6 +139,24 @@ class CorruptCurrentRestoreTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def _make_valid_backup(self) -> Path:
+        # Re-project inventory from the seeded DB so the archive carries
+        # canonical forensic membership even when legacy registry clients={}.
+        sys.path.insert(0, str(ROOT / "lib"))
+        from drlink_control_plane import ControlPlane
+        import drlink_upgrade_reconcile as UR
+
+        plane = ControlPlane(str(self.root))
+        try:
+            inv = UR.project_client_inventory_from_control_plane(plane, root=str(self.root))
+            state = json.loads(inv.read_text(encoding="utf-8"))
+            self.assertIn(
+                "client-good",
+                state.get("clients") or {},
+                "canonical inventory must include seeded SQLite client before backup",
+            )
+        finally:
+            plane.close()
+
         archive = Path(self.tmp.name) / "valid.tar.gz"
         proc = subprocess.run(
             [sys.executable, str(self.backup_tool), str(archive)],
@@ -200,6 +212,8 @@ class CorruptCurrentRestoreTests(unittest.TestCase):
 
     def test_valid_backup_corrupted_registry(self):
         archive = self._make_valid_backup()
+        # F02 condition: only the *live* legacy registry is corrupt. The valid
+        # backup already carries canonical runtime client-inventory membership.
         (self.root / "var/lib/drlink/registry.json").write_text("{not-json", encoding="utf-8")
         proc = subprocess.run(
             [sys.executable, str(self.restore_tool), str(archive)],
@@ -208,6 +222,7 @@ class CorruptCurrentRestoreTests(unittest.TestCase):
             text=True,
         )
         combined = proc.stdout + proc.stderr
+        self.assertEqual(proc.returncode, 0, combined)
         self.assertNotIn("staged registry failed invariant", combined)
         self.assertNotRegex(combined, r"staged registry failed")
         # Candidate DB applied; legacy registry purged.
@@ -226,6 +241,7 @@ class CorruptCurrentRestoreTests(unittest.TestCase):
             text=True,
         )
         combined = proc.stdout + proc.stderr
+        self.assertEqual(proc.returncode, 0, combined)
         self.assertNotIn("staged registry failed invariant", combined)
         self.assertEqual(self._client_label(), "good")
 
