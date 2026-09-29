@@ -17,9 +17,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 
-from drlink_control_plane import ConfirmationRequired, ControlPlane
+from drlink_control_plane import ConcurrencyError, ConfirmationRequired, ControlPlane
 import drlink_v24 as v24
-from drlink_v24_bundle import apply_v24_plan, prepare_v24_plan
+from drlink_v24_bundle import apply_v24_plan, export_configuration_v24, prepare_v24_plan
 
 
 def _server_root(tmp: str) -> None:
@@ -40,7 +40,7 @@ class BundleStalePlanSafety(unittest.TestCase):
         for key in ("FRP_DEPLOY_TEST_ROOT", "DRLINK_CONFIRM"):
             os.environ.pop(key, None)
 
-    def test_stale_no_change_plan_applies_current_desired_state(self):
+    def test_stale_no_change_plan_is_rejected_without_overwrite(self):
         v24.set_network_object(
             self.plane, "office", type="ip", value="198.51.100.10", oneshot=True
         )
@@ -63,18 +63,15 @@ class BundleStalePlanSafety(unittest.TestCase):
         )
         concurrent_rev = self.plane.current_revision()
         self.assertGreater(concurrent_rev, prepared_rev)
+
+        with self.assertRaises(ConcurrencyError) as ctx:
+            apply_v24_plan(self.plane, plan)
+        self.assertIn("REVISION_CONFLICT", str(ctx.exception))
+        self.assertEqual(self.plane.current_revision(), concurrent_rev)
         self.assertEqual(
             self.plane._object_values(self.plane.get_object("office")["id"])[:1],
             ["198.51.100.20"],
         )
-
-        result = apply_v24_plan(self.plane, plan)
-        self.assertEqual(result["status"], "APPLIED")
-        self.assertEqual(
-            self.plane._object_values(self.plane.get_object("office")["id"])[:1],
-            ["198.51.100.10"],
-        )
-        self.assertGreater(self.plane.current_revision(), concurrent_rev)
 
     def test_true_no_change_remains_idempotent(self):
         v24.set_network_object(
@@ -116,6 +113,48 @@ class BundleStalePlanSafety(unittest.TestCase):
             self.plane._object_values(self.plane.get_object("office")["id"])[:1],
             ["198.51.100.30"],
         )
+
+    def test_exported_bundle_pins_source_revision_and_rejects_stale_apply(self):
+        v24.set_network_object(
+            self.plane, "office", type="ip", value="198.51.100.10", oneshot=True
+        )
+        exported_rev = self.plane.current_revision()
+        exported = export_configuration_v24(self.plane)
+        self.assertIn("sourceRevision: %s" % exported_rev, exported)
+
+        edited = exported.replace("198.51.100.10", "198.51.100.30", 1)
+        plan = prepare_v24_plan(self.plane, edited)
+        self.assertEqual(plan.base_revision, exported_rev)
+        self.assertFalse(plan.no_change)
+
+        v24.set_network_object(
+            self.plane, "office", type="ip", value="198.51.100.20", oneshot=True
+        )
+        concurrent_rev = self.plane.current_revision()
+
+        with self.assertRaises(ConcurrencyError) as ctx:
+            apply_v24_plan(self.plane, plan, confirm=True)
+        self.assertIn("REVISION_CONFLICT", str(ctx.exception))
+        self.assertEqual(self.plane.current_revision(), concurrent_rev)
+        self.assertEqual(
+            self.plane._object_values(self.plane.get_object("office")["id"])[:1],
+            ["198.51.100.20"],
+        )
+
+    def test_source_revision_validation_fails_closed(self):
+        for token in ("-1", "not-a-revision", "true"):
+            with self.subTest(source_revision=token):
+                raw = """configurationBundle:
+  context: server
+  sourceRevision: %s
+  networkObjects:
+    - name: office
+      type: ip
+      value: 198.51.100.10
+""" % token
+                with self.assertRaises(Exception) as ctx:
+                    prepare_v24_plan(self.plane, raw)
+                self.assertIn("sourceRevision", str(ctx.exception))
 
     def test_stale_plan_cannot_bypass_last_blacklist_confirmation(self):
         v24.set_network_object(self.plane, "src", type="ip", value="198.51.100.1", oneshot=True)
@@ -165,15 +204,20 @@ class BundleStalePlanSafety(unittest.TestCase):
         self.assertFalse(bool(self.plane._get_rule("remote", "deny2")["enabled"]))
 
         rev_before = self.plane.current_revision()
-        with self.assertRaises(ConfirmationRequired) as ctx:
+        with self.assertRaises(ConcurrencyError) as ctx:
             apply_v24_plan(self.plane, plan, confirm=False)
-        self.assertTrue(ctx.exception.impact.get("access_broadened"))
+        self.assertIn("REVISION_CONFLICT", str(ctx.exception))
         self.assertEqual(self.plane.current_revision(), rev_before)
         self.assertTrue(bool(self.plane._get_rule("remote", "deny1")["enabled"]))
         self.assertFalse(bool(self.plane._get_rule("remote", "deny2")["enabled"]))
 
-        # Fresh confirmation against current state is still required and works.
-        result = apply_v24_plan(self.plane, plan, confirm=True)
+        # The operator must re-review current state. The fresh plan now exposes
+        # the broadened-access confirmation that the stale plan could not bypass.
+        fresh = prepare_v24_plan(self.plane, plan.source_text)
+        with self.assertRaises(ConfirmationRequired) as fresh_ctx:
+            apply_v24_plan(self.plane, fresh, confirm=False)
+        self.assertTrue(fresh_ctx.exception.impact.get("access_broadened"))
+        result = apply_v24_plan(self.plane, fresh, confirm=True)
         self.assertEqual(result["status"], "APPLIED")
         self.assertFalse(bool(self.plane._get_rule("remote", "deny1")["enabled"]))
 

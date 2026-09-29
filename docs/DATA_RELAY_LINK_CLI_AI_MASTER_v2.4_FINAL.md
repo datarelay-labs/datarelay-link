@@ -3530,6 +3530,18 @@ Agent CLI
 
 The exported document uses the same canonical schema accepted by `test`, `diff`, and `apply`.
 
+Every exported Bundle also carries:
+
+```yaml
+configurationBundle:
+  context: server
+  sourceRevision: <revision at export time>
+```
+
+(`context: agent` uses the same `sourceRevision` field.)
+
+`sourceRevision` is the optimistic-concurrency guard for reviewed/exported configuration. A mutating `apply` succeeds only while the authoritative DB revision still matches the Bundle's reviewed source revision. If another User/Operator/Administrator changes authoritative state first, Apply fails closed with `REVISION_CONFLICT`, makes no mutation, and the operator must re-export/review/rebase against current state. User-authored Bundles may omit `sourceRevision`; in that case the CLI binds the plan to the authoritative revision observed when that invocation prepares it, so a concurrent mutation during the review/confirmation window is still rejected.
+
 Runtime-only values such as current health, temporary reachability failures, and allocated endpoint status are not treated as desired-configuration fields.
 
 ---

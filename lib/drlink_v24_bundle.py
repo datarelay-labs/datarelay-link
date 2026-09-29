@@ -846,7 +846,11 @@ def prepare_v24_plan(plane: ControlPlane, raw_text: str, *, role: Optional[str] 
             "No changes were applied."
         )
     if context == "server":
-        bad = [k for k in body.keys() if k not in SERVER_SECTIONS and k != "context"]
+        bad = [
+            k
+            for k in body.keys()
+            if k not in SERVER_SECTIONS and k not in ("context", "sourceRevision")
+        ]
         if "remoteServices" in body:
             raise BundleError(
                 "ERROR:\nServer ConfigurationBundle cannot contain remoteServices.\n\n"
@@ -855,7 +859,11 @@ def prepare_v24_plan(plane: ControlPlane, raw_text: str, *, role: Optional[str] 
         if bad:
             _bundle_error("Unknown Server Bundle sections: %s" % ", ".join(sorted(bad)))
     else:
-        bad = [k for k in body.keys() if k not in AGENT_SECTIONS and k != "context"]
+        bad = [
+            k
+            for k in body.keys()
+            if k not in AGENT_SECTIONS and k not in ("context", "sourceRevision")
+        ]
         for section in SERVER_SECTIONS:
             if section in body:
                 raise BundleError(
@@ -864,6 +872,22 @@ def prepare_v24_plan(plane: ControlPlane, raw_text: str, *, role: Optional[str] 
                 )
         if bad:
             _bundle_error("Unknown Agent Bundle sections: %s" % ", ".join(sorted(bad)))
+
+    source_revision = body.get("sourceRevision")
+    if source_revision is None or source_revision == "":
+        base_revision = int(plane.current_revision())
+    else:
+        if isinstance(source_revision, bool):
+            _bundle_error("configurationBundle.sourceRevision must be a non-negative integer.")
+        try:
+            base_revision = int(source_revision)
+        except (TypeError, ValueError) as exc:
+            raise BundleError(
+                "ERROR:\nconfigurationBundle.sourceRevision must be a non-negative integer.\n\n"
+                "No changes were applied."
+            ) from exc
+        if base_revision < 0:
+            _bundle_error("configurationBundle.sourceRevision must be a non-negative integer.")
 
     changes: list[dict] = []
     validated_body: dict[str, Any] = {"context": context}
@@ -1232,7 +1256,7 @@ def prepare_v24_plan(plane: ControlPlane, raw_text: str, *, role: Optional[str] 
         no_change=not mutating,
         security_impact=impact,
         raw=validated_body,
-        base_revision=int(plane.current_revision()),
+        base_revision=base_revision,
         source_text=str(raw_text or ""),
     )
 
@@ -1279,20 +1303,37 @@ def _raise_plan_confirmation(plan: V24Plan) -> None:
 
 
 def _resolve_plan_for_apply(plane: ControlPlane, plan: V24Plan) -> V24Plan:
-    """Re-diff against authoritative state, or fail closed on stale base revision."""
-    source = str(getattr(plan, "source_text", "") or "")
-    if source.strip():
-        return prepare_v24_plan(plane, source)
+    """Fail closed on stale review state, then re-diff under the write lock.
+
+    The plan's base revision is the revision the operator/AI actually reviewed.
+    Never silently "freshen" that revision during apply: doing so turns an
+    exported stale Bundle into a last-writer-wins overwrite.
+    """
     base = getattr(plan, "base_revision", None)
-    if base is not None and int(plane.current_revision()) != int(base):
+    current = int(plane.current_revision())
+    if base is not None and current != int(base):
         raise ConcurrencyError(
             "REVISION_CONFLICT\n"
             "Base revision: %s\n"
             "Current revision: %s\n"
             "No changes were applied.\n"
-            "Re-run diff/test against current state."
-            % (base, plane.current_revision())
+            "Re-export/review the Bundle against current state."
+            % (base, current)
         )
+    source = str(getattr(plan, "source_text", "") or "")
+    if source.strip():
+        fresh = prepare_v24_plan(plane, source)
+        resolved_base = getattr(fresh, "base_revision", None)
+        if resolved_base is not None and int(resolved_base) != current:
+            raise ConcurrencyError(
+                "REVISION_CONFLICT\n"
+                "Base revision: %s\n"
+                "Current revision: %s\n"
+                "No changes were applied.\n"
+                "Re-export/review the Bundle against current state."
+                % (resolved_base, current)
+            )
+        return fresh
     return plan
 
 
@@ -1674,6 +1715,10 @@ def build_v24_rollback_bundle(plane: ControlPlane, target_text: str) -> str:
     body = copy.deepcopy(target["body"])
     current_body = current["body"]
     context = target["context"]
+    # This rollback Bundle is generated from current authoritative state.
+    # Bind its optimistic-concurrency guard to the current revision rather
+    # than to the historical snapshot's exported sourceRevision.
+    body["sourceRevision"] = int(plane.current_revision())
 
     def reconcile_named_list(key: str) -> None:
         target_items = list(body.get(key) or [])
@@ -1762,9 +1807,18 @@ def export_configuration_v24(plane: ControlPlane) -> str:
                     "enabled": bool(row["enabled"]),
                 }
             )
-        doc = {"configurationBundle": {"context": "agent", "remoteServices": services}}
+        doc = {
+            "configurationBundle": {
+                "context": "agent",
+                "sourceRevision": int(plane.current_revision()),
+                "remoteServices": services,
+            }
+        }
     else:
-        body: dict[str, Any] = {"context": "server"}
+        body: dict[str, Any] = {
+            "context": "server",
+            "sourceRevision": int(plane.current_revision()),
+        }
         nos = []
         for row in v24.list_network_objects(plane):
             if row["type"] == "Managed Host":
