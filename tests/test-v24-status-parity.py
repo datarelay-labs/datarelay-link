@@ -17,6 +17,7 @@ sys.path.insert(0, str(ROOT / "lib"))
 from drlink_control_plane import ControlPlane
 import drlink_control_cli as cli
 import drlink_mgmt_sync as mgmt
+import drlink_upgrade_reconcile as UR
 import drlink_v24 as v24
 import frp_mgmt_auth as MGMT
 
@@ -660,6 +661,192 @@ class MacosRoleDetectionTests(unittest.TestCase):
                 os.environ.pop("FRP_MACOS_STATE_ROOT", None)
             else:
                 os.environ["FRP_MACOS_STATE_ROOT"] = prev
+
+
+class FalseHealthyFailClosedTests(unittest.TestCase):
+    """P0-B: Server HEALTHY requires current verified runtime evidence."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="drlink-false-healthy-")
+        Path(self.tmp, "etc/drlink").mkdir(parents=True, exist_ok=True)
+        Path(self.tmp, "etc/drlink/config.json").write_text(
+            '{"role":"server"}\n', encoding="utf-8"
+        )
+        os.environ["DRLINK_SKIP_ACTIVATION"] = "1"
+        os.environ["DRLINK_CONFIRM"] = "yes"
+        self.plane = ControlPlane(self.tmp)
+        v24.ensure_v2_schema(self.plane.conn)
+        v24.set_service_object(self.plane, "ssh", type="tcp", port=22, oneshot=True)
+        self.plane.upsert_client(MACHINE, label="agent-a", hostname="agent-a", connected=True)
+
+    def tearDown(self):
+        self.plane.close()
+        for key in ("DRLINK_SKIP_ACTIVATION", "DRLINK_CONFIRM"):
+            os.environ.pop(key, None)
+
+    def _seed_stored_healthy(self, *, port: int = 6012, connected: bool = True):
+        self.plane.upsert_client(
+            MACHINE, label="agent-a", hostname="agent-a", connected=connected
+        )
+        self.plane.set_published_service(
+            MACHINE,
+            "ssh-access",
+            service_type="tcp",
+            target_mode="self",
+            target_host="127.0.0.1",
+            target_port=22,
+            enabled=True,
+            public_port=port,
+        )
+        pub = self.plane.conn.execute(
+            "SELECT * FROM published_services WHERE name = 'ssh-access'"
+        ).fetchone()
+        sobj = v24.get_service_object(self.plane, "ssh")
+        self.plane.conn.execute(
+            "INSERT OR REPLACE INTO remote_service_meta"
+            "(service_id, status, pool_class, service_object_id, destination_name, "
+            "pending_allocation, delete_pending, reason) "
+            "VALUES (?, 'HEALTHY', 'normal', ?, 'this-host', 0, 0, '')",
+            (pub["id"], sobj["id"]),
+        )
+        self.plane.conn.commit()
+        meta = self.plane.conn.execute(
+            "SELECT * FROM remote_service_meta WHERE service_id = ?", (pub["id"],)
+        ).fetchone()
+        return pub, meta
+
+    def test_stored_healthy_without_runtime_is_degraded(self):
+        pub, meta = self._seed_stored_healthy()
+        status, reason, stale = UR.effective_remote_service_status(
+            self.plane, pub, meta, {}, registry_available=False
+        )
+        self.assertEqual(status, "DEGRADED")
+        self.assertIn("verification", reason.lower())
+        self.assertFalse(stale)
+
+    def test_reboot_reconnect_without_verified_runtime_not_healthy(self):
+        # Simulate reboot: prior HEALTHY remains stored while the host reconnects,
+        # before any current verified runtime report arrives.
+        pub, meta = self._seed_stored_healthy(connected=False)
+        status, reason, _ = UR.effective_remote_service_status(
+            self.plane, pub, meta, {}, registry_available=False
+        )
+        self.assertEqual(status, "DEGRADED")
+        self.assertIn("offline", reason.lower())
+
+        self.plane.upsert_client(MACHINE, label="agent-a", hostname="agent-a", connected=True)
+        pub = self.plane.conn.execute(
+            "SELECT * FROM published_services WHERE name = 'ssh-access'"
+        ).fetchone()
+        meta = self.plane.conn.execute(
+            "SELECT * FROM remote_service_meta WHERE service_id = ?", (pub["id"],)
+        ).fetchone()
+        status, reason, _ = UR.effective_remote_service_status(
+            self.plane, pub, meta, {}, registry_available=False
+        )
+        self.assertEqual(status, "DEGRADED")
+        self.assertIn("verification", reason.lower())
+        self.assertNotEqual(status, "HEALTHY")
+
+    def test_listener_delay_unverified_healthy_claim_is_degraded(self):
+        pub, meta = self._seed_stored_healthy()
+        status, reason, _ = UR.effective_remote_service_status(
+            self.plane,
+            pub,
+            meta,
+            {},
+            agent_runtime={
+                "status": "HEALTHY",
+                "runtime_verified": False,
+                "reason": "",
+            },
+            registry_available=False,
+        )
+        self.assertEqual(status, "DEGRADED")
+        self.assertIn("verification", reason.lower())
+
+    def test_stale_runtime_evidence_without_current_report_is_degraded(self):
+        pub, meta = self._seed_stored_healthy()
+        # First a current verified report may produce HEALTHY.
+        status, reason, _ = UR.effective_remote_service_status(
+            self.plane,
+            pub,
+            meta,
+            {},
+            agent_runtime={
+                "status": "HEALTHY",
+                "runtime_verified": True,
+                "reason": "",
+            },
+            registry_available=False,
+        )
+        self.assertEqual(status, "HEALTHY")
+        self.assertEqual(reason, "")
+
+        # Later evaluation without a current verified report must not keep HEALTHY
+        # from stored meta alone (no invented verification TTL).
+        status, reason, _ = UR.effective_remote_service_status(
+            self.plane, pub, meta, {}, registry_available=False
+        )
+        self.assertEqual(status, "DEGRADED")
+        self.assertIn("verification", reason.lower())
+
+    def test_verified_runtime_report_may_be_healthy(self):
+        pub, meta = self._seed_stored_healthy()
+        # Verified HEALTHY still requires an endpoint reservation.
+        self.plane.conn.execute(
+            "UPDATE published_services SET public_port = NULL WHERE name = 'ssh-access'"
+        )
+        self.plane.conn.commit()
+        pub = self.plane.conn.execute(
+            "SELECT * FROM published_services WHERE name = 'ssh-access'"
+        ).fetchone()
+        meta = self.plane.conn.execute(
+            "SELECT * FROM remote_service_meta WHERE service_id = ?", (pub["id"],)
+        ).fetchone()
+        status, reason, _ = UR.effective_remote_service_status(
+            self.plane,
+            pub,
+            meta,
+            {},
+            agent_runtime={
+                "status": "HEALTHY",
+                "runtime_verified": True,
+                "reason": "",
+            },
+            registry_available=False,
+        )
+        self.assertEqual(status, "DEGRADED")
+        self.assertTrue(reason)
+
+        pub, meta = self._seed_stored_healthy(port=6015)
+        status, reason, _ = UR.effective_remote_service_status(
+            self.plane,
+            pub,
+            meta,
+            {},
+            agent_runtime={
+                "status": "HEALTHY",
+                "runtime_verified": True,
+                "reason": "",
+            },
+            registry_available=False,
+        )
+        self.assertEqual(status, "HEALTHY")
+        self.assertEqual(reason, "")
+
+    def test_target_outage_without_agent_report_does_not_invent_target_health(self):
+        # Without a configured target health_check, Server has no target-health
+        # signal. Re-evaluation without an Agent runtime report must fail closed
+        # for missing runtime verification, not invent a target-health verdict.
+        pub, meta = self._seed_stored_healthy()
+        status, reason, _ = UR.effective_remote_service_status(
+            self.plane, pub, meta, {}, registry_available=False
+        )
+        self.assertEqual(status, "DEGRADED")
+        self.assertIn("verification", reason.lower())
+        self.assertNotIn("target", reason.lower())
+        self.assertNotIn("health_check", reason.lower())
 
 
 if __name__ == "__main__":

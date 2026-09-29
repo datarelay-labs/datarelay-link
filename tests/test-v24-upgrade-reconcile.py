@@ -366,7 +366,7 @@ class UpgradeReconcileTests(unittest.TestCase):
         self.assertEqual(listed_f["real-e2e-al2023"], "Managed Host")
         plane.close()
 
-    def test_UPGRADE_PRESERVES_EXISTING_HOSTNAME_AND_HEALTHY_SELF_DEST(self):
+    def test_UPGRADE_PRESERVES_EXISTING_HOSTNAME_AND_SELF_DEST_WITHOUT_FALSE_HEALTHY(self):
         # Live lineage: SQLite hostname is the OS name; registry label is the public MH name.
         self.plane.conn.execute(
             "UPDATE clients SET hostname = 'ip-10-0-19-146', label = 'ip-10-0-19-146' WHERE id = ?",
@@ -385,11 +385,14 @@ class UpgradeReconcileTests(unittest.TestCase):
         self.assertEqual(client["label"], "real-e2e-al2023")
         self.assertIsNotNone(self.plane.get_object("real-e2e-al2023"))
         ssh = self.plane.conn.execute(
-            "SELECT s.public_port, m.status, m.destination_name FROM published_services s "
+            "SELECT s.public_port, m.status, m.reason, m.destination_name FROM published_services s "
             "JOIN remote_service_meta m ON m.service_id = s.id WHERE s.name = 'e2e-ssh'"
         ).fetchone()
         self.assertEqual(int(ssh["public_port"]), 6005)
-        self.assertEqual(ssh["status"], "HEALTHY")
+        # Upgrade reconcile has no current verified Agent runtime report, so
+        # stored HEALTHY must fail closed rather than survive as false HEALTHY.
+        self.assertEqual(ssh["status"], "DEGRADED")
+        self.assertIn("verification", (ssh["reason"] or "").lower())
         self.assertEqual(ssh["destination_name"], "ip-10-0-19-146")
 
     def test_UPGRADE_RECONCILE_PRESERVES_STALE_LAST_SEEN(self):

@@ -849,6 +849,11 @@ def effective_remote_service_status(
     Status synchronization passes ``missing_registry_port_is_stale=False`` so a
     newly allocated port that the allocator has not yet persisted is not
     revoked. Upgrade reconciliation keeps the stricter default.
+
+    HEALTHY requires a current runtime-verified Agent report plus an endpoint.
+    Stored meta status, endpoint reservation, and Managed Host connectivity alone
+    must not produce HEALTHY; missing or unverified runtime evidence fails closed
+    to DEGRADED with an actionable reason.
     """
     if pub is None:
         return "DEGRADED", "Published Service is missing.", False
@@ -929,7 +934,9 @@ def effective_remote_service_status(
         ).fetchone()
         if owner is None or plane.managed_host_connectivity(owner) != "connected":
             return "DEGRADED", "Managed Host is offline.", False
-        return "HEALTHY", "", False
+        # Fail closed: stored HEALTHY + endpoint + connected is not current
+        # runtime verification (reboot, reconnect, or delayed listener).
+        return "DEGRADED", "Runtime verification is missing.", False
     if stored == "DISABLED":
         return "DISABLED", "", False
     reason = str(meta["reason"] if meta else "") or "Runtime activation pending."
