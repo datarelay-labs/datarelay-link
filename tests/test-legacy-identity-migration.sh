@@ -214,4 +214,27 @@ grep -q 'Usage: drlink' <<<"$out" || fail "drlink help"
 grep -q 'Data Relay Link' <<<"$out" || fail "product name"
 pass "CLEAN_INSTALL_DRLINK_ONLY"
 
+TREE_CFG="$WORK/config-paths"
+mkdir -p "$TREE_CFG/etc/frp-auto-deploy" "$TREE_CFG/var/lib/frp-auto-deploy" "$TREE_CFG/var/log/frp-auto-deploy" "$TREE_CFG/usr/local/lib/frp-auto-deploy"
+cat >"$TREE_CFG/etc/frp-auto-deploy/config.json" <<'JSON'
+{
+  "enrollments_dir": "/var/lib/frp-auto-deploy/enrollments",
+  "access_conn_log_file": "/var/log/frp-auto-deploy/access-conn.jsonl",
+  "tls_ca_cert": "/etc/frp-auto-deploy/pki/ca.crt",
+  "nested": {"paths": ["/usr/local/lib/frp-auto-deploy/helper.py", "/run/frp-auto-deploy/x"]},
+  "client_installer_url": "https://example.invalid/xdr-labs/frp-auto-deploy/v2.3.0/bootstrap.sh"
+}
+JSON
+FRP_SERVER_TEST_ROOT="$TREE_CFG" frp_migrate_legacy_product_paths >/dev/null
+python3 - "$TREE_CFG/etc/drlink/config.json" <<'PY'
+import json, sys
+d=json.load(open(sys.argv[1]))
+assert d["enrollments_dir"] == "/var/lib/drlink/enrollments"
+assert d["access_conn_log_file"] == "/var/log/drlink/access-conn.jsonl"
+assert d["tls_ca_cert"] == "/etc/drlink/pki/ca.crt"
+assert d["nested"]["paths"] == ["/usr/local/lib/drlink/helper.py", "/run/drlink/x"]
+assert "frp-auto-deploy" in d["client_installer_url"]
+PY
+echo "PASS LEGACY_CONFIG_PATH_CANONICALIZATION"
+
 echo "LEGACY_IDENTITY_MIGRATION_TEST=PASS"

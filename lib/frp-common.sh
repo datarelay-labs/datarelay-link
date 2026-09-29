@@ -746,12 +746,68 @@ frp_migrate_legacy_tree() {
   return 1
 }
 
+frp_migrate_legacy_config_paths() {
+  local config root
+  root="${FRP_SERVER_TEST_ROOT:-${FRP_CLIENT_TEST_ROOT:-${FRP_DEPLOY_TEST_ROOT:-${FRP_UPDATE_ROOT:-}}}}"
+  config="${root}/etc/drlink/config.json"
+  [[ -f "$config" ]] || return 0
+  # Very old fixtures/installations may contain a non-JSON placeholder.
+  # Path canonicalization is only applicable to structured server config.
+  python3 -m json.tool "$config" >/dev/null 2>&1 || return 0
+  python3 - "$config" <<'PY'
+import json, os, sys, tempfile
+path = sys.argv[1]
+mapping = (
+    ("/etc/frp-auto-deploy", "/etc/drlink"),
+    ("/var/lib/frp-auto-deploy", "/var/lib/drlink"),
+    ("/var/log/frp-auto-deploy", "/var/log/drlink"),
+    ("/usr/local/lib/frp-auto-deploy", "/usr/local/lib/drlink"),
+    ("/run/frp-auto-deploy", "/run/drlink"),
+)
+with open(path, encoding="utf-8") as fh:
+    data = json.load(fh)
+changed = False
+def rewrite(value):
+    global changed
+    if isinstance(value, dict):
+        return {k: rewrite(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [rewrite(v) for v in value]
+    if isinstance(value, str):
+        for old, new in mapping:
+            if value == old or value.startswith(old + "/"):
+                changed = True
+                return new + value[len(old):]
+    return value
+data = rewrite(data)
+if changed:
+    st = os.stat(path)
+    fd, tmp = tempfile.mkstemp(prefix=".config.json.", dir=os.path.dirname(path))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, indent=2, sort_keys=True)
+            fh.write("\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.chmod(tmp, st.st_mode & 0o7777)
+        try:
+            os.chown(tmp, st.st_uid, st.st_gid)
+        except PermissionError:
+            pass
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+PY
+}
+
 frp_migrate_legacy_product_paths() {
   frp_migrate_legacy_tree /etc/frp-auto-deploy /etc/drlink config || return 1
   frp_migrate_legacy_tree /var/lib/frp-auto-deploy /var/lib/drlink state || return 1
   frp_migrate_legacy_tree /var/log/frp-auto-deploy /var/log/drlink logs || return 1
   frp_migrate_legacy_tree /usr/local/lib/frp-auto-deploy /usr/local/lib/drlink lib || return 1
   frp_migrate_legacy_tree /run/frp-auto-deploy /run/drlink runtime || return 1
+  frp_migrate_legacy_config_paths || return 1
   return 0
 }
 
