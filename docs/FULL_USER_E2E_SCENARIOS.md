@@ -1370,8 +1370,7 @@ Verify:
 - current Agent Host is the Relay Host;
 - target host does not require a DRLink Agent;
 - real application traffic succeeds;
-- temporary target outage changes status to DEGRADED without losing the endpoint reservation;
-- recovery returns to HEALTHY without recreation.
+- temporary target outage: when target health_check is configured/enabled, status transitions HEALTHY -> DEGRADED without losing the endpoint reservation and recovers to HEALTHY without recreation; when target health_check is not configured, require real external traffic failure/recovery and ensure CLI does not claim that target health was verified (record whether health_check was enabled in evidence).
 
 ## U-005 — Fixed TCP user path — MANDATORY
 
@@ -2379,7 +2378,18 @@ With healthy Remote Services, make the Server temporarily unavailable, observe e
 
 ## S-008 — Agent or target outage — MANDATORY
 
-Stop/disconnect the Agent and separately stop the target service. Verify HEALTHY to DEGRADED transitions, truthful reason, preserved reservation, and automatic recovery.
+Prove Agent/runtime outage and target-service outage as separate cases. Target Health Check is optional and disabled by default; status transitions from target outage are only required when it is configured/enabled.
+
+1. Agent/runtime outage
+- Stop/disconnect the Agent while Remote Services were HEALTHY.
+- Verify HEALTHY -> DEGRADED with a truthful reason, preserved endpoint reservation, and automatic recovery after reconnect/runtime verification.
+- Do not accept HEALTHY from stored status + endpoint + Managed Host connected alone before current runtime verification.
+
+2. Target-service outage
+- Separately stop the target service while the Agent remains connected.
+- If target health_check is configured/enabled: require HEALTHY -> DEGRADED and automatic recovery according to configured health-check behavior; preserve the endpoint reservation.
+- If target health_check is not configured: do not require a status transition based on unavailable target-health evidence. Require real external traffic failure/recovery and ensure CLI does not claim that target health was verified.
+- Record whether health_check was enabled in evidence.
 
 ## S-009 — Runtime activation failure and rollback — MANDATORY
 
@@ -2417,6 +2427,8 @@ Test duplicate names, reserved tokens, missing references, invalid CIDR/IP/FQDN/
 ## S-015 — Network interruption during live traffic — MANDATORY
 
 During real SSH/HTTP/HTTPS/Custom TCP/Fixed TCP traffic, separately inject Agent-to-Server interruption, Relay-to-target interruption, target restart, abrupt client disconnect, and Server restart where supported. Verify truthful state transitions, stable endpoint identity, correct session behavior, and recovery.
+
+For Relay-to-target interruption and target restart: when target health_check is configured/enabled, require HEALTHY -> DEGRADED (or equivalent configured health-check behavior) with recovery; when it is not configured, use real traffic failure/recovery as the truth source and do not require or claim a verified target-health status transition. Record whether health_check was enabled in evidence.
 
 ## S-017 — DNS, TLS, and public-hostname failure/recovery — MANDATORY
 
@@ -2932,6 +2944,8 @@ Measure time to recover after:
 - target-service flap;
 - endpoint capacity becoming available.
 
+For target-service flap, apply the same health_check distinction as S-008: status-transition timing to HEALTHY/DEGRADED is in scope only when target health_check is configured/enabled; otherwise measure traffic failure/recovery timing and do not claim verified target-health status.
+
 Record time to:
 
 ~~~text
@@ -2941,6 +2955,8 @@ endpoint active
 Remote Service HEALTHY
 first successful user connection
 ~~~
+
+Remote Service HEALTHY above requires current runtime verification after Agent restart/reconnect; do not count stored HEALTHY before verification.
 
 ## P-018 — Operational commands under load — MANDATORY
 
