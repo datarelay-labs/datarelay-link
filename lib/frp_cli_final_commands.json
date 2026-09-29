@@ -3780,18 +3780,18 @@
       "system",
       "credential",
       "rotate",
-      "ai-principal"
+      "ai-identity"
     ],
     "roles": "server",
     "category": "AI Access",
     "summary": "Rotate an AI Identity credential",
-    "detail": "Rotate an AI Identity credential",
+    "detail": "Rotate the credential for an existing AI Identity. The new credential is displayed once; this command never creates an AI Identity.",
     "examples": [
-      "system credential rotate ai-principal"
+      "system credential rotate ai-identity automation-ai"
     ],
     "args": [
       {
-        "name": "<PRINCIPAL>",
+        "name": "<IDENTITY>",
         "complete": "ai-principals",
         "required": true
       }
@@ -3800,7 +3800,7 @@
     "internal": null,
     "aliases": [],
     "destructive": false,
-    "hidden": true,
+    "hidden": false,
     "risk": "none",
     "confirmation": "none",
     "surface": "",
@@ -3811,18 +3811,18 @@
       "system",
       "credential",
       "revoke",
-      "ai-principal"
+      "ai-identity"
     ],
     "roles": "server",
     "category": "AI Access",
     "summary": "Revoke an AI Identity credential",
-    "detail": "Revoke an AI Identity credential",
+    "detail": "Revoke active credential material for an existing AI Identity without deleting the AI Identity.",
     "examples": [
-      "system credential revoke ai-principal"
+      "system credential revoke ai-identity automation-ai"
     ],
     "args": [
       {
-        "name": "<PRINCIPAL>",
+        "name": "<IDENTITY>",
         "complete": "ai-principals",
         "required": true
       }
@@ -3831,7 +3831,7 @@
     "internal": null,
     "aliases": [],
     "destructive": false,
-    "hidden": true,
+    "hidden": false,
     "risk": "none",
     "confirmation": "none",
     "surface": "",
@@ -3842,26 +3842,29 @@
       "system",
       "credential",
       "configure",
-      "ai-principal"
+      "ai-identity"
     ],
     "roles": "server",
     "category": "AI Access",
     "summary": "Configure AI Identity authentication",
-    "detail": "Set Static Bearer or OAuth authentication for an AI Identity, or register an OAuth redirect URI. Authentication type names the protocol; Static Bearer is not OAuth.",
+    "detail": "Configure Static Bearer or OAuth authentication for an existing AI Identity, or register an OAuth redirect URI.",
     "examples": [
-      "system credential configure ai-principal lab authentication static-bearer",
-      "system credential configure ai-principal lab authentication oauth",
-      "system credential configure ai-principal lab oauth-redirect https://localhost/callback"
+      "system credential configure ai-identity automation-ai authentication static-bearer",
+      "system credential configure ai-identity interactive-ai authentication oauth",
+      "system credential configure ai-identity interactive-ai oauth-redirect https://localhost/callback"
     ],
     "args": [
       {
-        "name": "<PRINCIPAL>",
+        "name": "<IDENTITY>",
         "complete": "ai-principals",
         "required": true
       },
       {
         "name": "<FIELD>",
-        "complete": null,
+        "complete": [
+          "authentication",
+          "oauth-redirect"
+        ],
         "required": true
       },
       {
@@ -3874,7 +3877,37 @@
     "internal": null,
     "aliases": [],
     "destructive": false,
-    "hidden": true,
+    "hidden": false,
+    "risk": "none",
+    "confirmation": "none",
+    "surface": "",
+    "flags": []
+  },
+  {
+    "path": [
+      "system",
+      "credential",
+      "deny-oauth"
+    ],
+    "roles": "server",
+    "category": "AI Access",
+    "summary": "Deny a pending OAuth authorization request",
+    "detail": "Deny operator consent for one pending OAuth authorization request. The browser continuation receives access_denied.",
+    "examples": [
+      "system credential deny-oauth <PENDING-ID>"
+    ],
+    "args": [
+      {
+        "name": "<PENDING-ID>",
+        "complete": null,
+        "required": true
+      }
+    ],
+    "tail": null,
+    "internal": null,
+    "aliases": [],
+    "destructive": false,
+    "hidden": false,
     "risk": "none",
     "confirmation": "none",
     "surface": "",
