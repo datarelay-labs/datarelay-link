@@ -215,6 +215,8 @@ assert "/var/lib/frp-auto-deploy/registry.json" in text
 assert "V230_NO_EGRESS_FIXTURE" in text
 assert "/usr/local/sbin/frp-backup" in text
 assert "V230_BACKUP FAIL" in text
+assert "V240_BOOTSTRAP_STAGED" in text
+assert "sha256sum" in text and "staged v2.4 bootstrap sha256 mismatch" in text
 assert "WORKTREE_CLEAN_START" in text and "WORKTREE_CLEAN_END" in text
 assert "A019_HEAD_UNCHANGED" in text
 assert "A019_CANONICAL_EVIDENCE=NOT_PUBLISHED_DIRTY_WORKTREE" in text

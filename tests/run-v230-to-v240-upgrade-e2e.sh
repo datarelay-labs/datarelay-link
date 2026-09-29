@@ -418,18 +418,41 @@ cp "$OUT/v230-backup-evidence.txt" "$GOLDEN/backup-evidence.txt"
 pq_gate V230_GOLDEN_EVIDENCE PASS
 
 # --- 3) Upgrade to current v2.4 tree ---
-# Prefer stdin bootstrap from the candidate tree so we do not depend on an unpublished tag.
+# Stage the large candidate bootstrap as a file before execution. Feeding the
+# ~80 MB self-contained bundle to `bash -s` makes Bash consume the SSH pipe one
+# byte at a time and can turn qualification into a CPU-bound multi-minute parse.
+# File staging preserves the exact candidate while avoiding that transport artifact.
+V240_BOOTSTRAP_REMOTE="/var/tmp/drlink-a019-v240-bootstrap.sh"
+V240_BOOTSTRAP_SHA="$(sha256sum "$ROOT/dist/bootstrap-server.sh" | awk '{print $1}')"
+pq_note "Staging v2.4 bootstrap for upgrade (sha256=$V240_BOOTSTRAP_SHA)"
+set +e
+pq_ssh "$SERVER" "cat > '$V240_BOOTSTRAP_REMOTE' && chmod 700 '$V240_BOOTSTRAP_REMOTE'" \
+  <"$ROOT/dist/bootstrap-server.sh" >"$OUT/v240-bootstrap-stage.log" 2>&1
+stage_rc=$?
+set -uo pipefail
+if [[ "$stage_rc" -ne 0 ]]; then
+  pq_gate V240_BOOTSTRAP_STAGED FAIL
+  fail_out "failed to stage v2.4 bootstrap rc=$stage_rc"
+fi
+remote_bootstrap_sha="$(pq_ssh "$SERVER" "sha256sum '$V240_BOOTSTRAP_REMOTE'" | awk 'NR==1 {print $1}')"
+if [[ "$remote_bootstrap_sha" != "$V240_BOOTSTRAP_SHA" ]]; then
+  pq_gate V240_BOOTSTRAP_STAGED FAIL
+  fail_out "staged v2.4 bootstrap sha256 mismatch"
+fi
+pq_gate V240_BOOTSTRAP_STAGED PASS
+
 # Match FRP_RELEASE_CHANNEL to the candidate tree manifest (same rule as short-url E2E).
-pq_note "Upgrading server to v2.4 candidate from current tree (FRP_RELEASE_CHANNEL=$V240_CHANNEL)"
+pq_note "Upgrading server to v2.4 candidate from staged current tree (FRP_RELEASE_CHANNEL=$V240_CHANNEL)"
 set +e
 pq_ssh "$SERVER" "sudo env \
   FRP_PUBLIC_HOSTNAME='$PUBLIC_HOSTNAME' \
   FRP_PUBLIC_IP='$PUBLIC_IP' \
   FRP_RELEASE_CHANNEL='$V240_CHANNEL' \
-  bash -s -- --upgrade" \
-  <"$ROOT/dist/bootstrap-server.sh" >"$OUT/server-upgrade.log" 2>&1
+  bash '$V240_BOOTSTRAP_REMOTE' --upgrade" \
+  >"$OUT/server-upgrade.log" 2>&1
 up_rc=$?
 set -uo pipefail
+pq_ssh "$SERVER" "rm -f '$V240_BOOTSTRAP_REMOTE'" >/dev/null 2>&1 || true
 if [[ "$up_rc" -ne 0 ]]; then
   pq_gate UPGRADE_SERVER FAIL
   tail -80 "$OUT/server-upgrade.log" | tee -a "$PROD_QUAL_SUMMARY" || true
