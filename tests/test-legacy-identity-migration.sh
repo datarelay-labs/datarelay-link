@@ -4,6 +4,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=../lib/frp-common.sh
 . "$ROOT/lib/frp-common.sh"
+# shellcheck source=../lib/frp-server-upgrade.sh
+. "$ROOT/lib/frp-server-upgrade.sh"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -144,6 +146,47 @@ frp_legacy_server_unit_is_product_owned "$PROD_S" || fail "product frps not owne
 frp_legacy_server_unit_is_product_owned "$ADMIN_S/etc/systemd/system/frps.service" \
   && fail "admin frps incorrectly owned"
 pass "UNRELATED_ADMIN_FRPS_PRESERVED"
+
+# Prior-stable server cutover must preserve frontend enablement by deployment mode.
+# The helper is exercised in installer test mode so no host systemd is touched.
+frp_server_fs() { printf '%s' "${FRP_SERVER_TEST_ROOT:-}$1"; }
+frp_server_skip_systemd() { return 0; }
+frp_server_test_mode() { return 0; }
+frp_legacy_server_unit_is_product_owned() { return 0; }
+
+run_frontend_cutover_fixture() {
+  local tree="$1" mode="$2"
+  mkdir -p "$tree/etc/systemd/system" "$tree/etc/drlink" "$tree/var/lib/drlink"
+  printf '{"deployment_mode":"%s"}\n' "$mode" >"$tree/etc/drlink/config.json"
+  printf 'legacy\n' >"$tree/etc/systemd/system/frp-frontend.service"
+  printf 'canonical\n' >"$tree/etc/systemd/system/drlink-frontend.service"
+  : >"$tree/actions.log"
+  frp_server_record_action() { printf '%s\n' "$1" >>"$tree/actions.log"; }
+  FRP_SERVER_TEST_ROOT="$tree" frp_server_upgrade_retire_legacy_server_units \
+    || fail "frontend cutover ${mode}"
+}
+
+CUT_DIRECT="$WORK/cutover-direct"
+run_frontend_cutover_fixture "$CUT_DIRECT" direct
+grep -qx 'disable --now frp-frontend' "$CUT_DIRECT/actions.log" \
+  || fail "direct legacy frontend not disabled"
+grep -qx 'disable --now drlink-frontend' "$CUT_DIRECT/actions.log" \
+  || fail "direct canonical frontend not kept disabled"
+if grep -qx 'enable drlink-frontend' "$CUT_DIRECT/actions.log"; then
+  fail "direct canonical frontend incorrectly enabled"
+fi
+pass "LEGACY_CUTOVER_DIRECT_FRONTEND_DISABLED"
+
+CUT_443="$WORK/cutover-single443"
+run_frontend_cutover_fixture "$CUT_443" single443
+grep -qx 'disable --now frp-frontend' "$CUT_443/actions.log" \
+  || fail "single443 legacy frontend not disabled"
+grep -qx 'enable drlink-frontend' "$CUT_443/actions.log" \
+  || fail "single443 canonical frontend not enabled"
+if grep -qx 'disable --now drlink-frontend' "$CUT_443/actions.log"; then
+  fail "single443 canonical frontend incorrectly disabled"
+fi
+pass "LEGACY_CUTOVER_SINGLE443_FRONTEND_ENABLED"
 
 # Clean install layout: drlink on PATH, frpctl only as internal backend.
 CLEAN="$WORK/clean"

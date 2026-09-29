@@ -286,11 +286,16 @@ PY
 }
 
 frp_server_upgrade_allocator_port() {
+  local cfg
   if [[ -n "${FRP_ALLOCATOR_LISTEN_PORT:-}" ]]; then
     printf '%s' "$FRP_ALLOCATOR_LISTEN_PORT"
     return 0
   fi
-  python3 - "$(frp_server_fs /etc/drlink/config.json)" <<'PY'
+  cfg="$(frp_server_fs /etc/drlink/config.json)"
+  if [[ ! -f "$cfg" && -f "$(frp_server_fs /etc/frp-auto-deploy/config.json)" ]]; then
+    cfg="$(frp_server_fs /etc/frp-auto-deploy/config.json)"
+  fi
+  python3 - "$cfg" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -500,6 +505,192 @@ for rel in meta.get("absent") or []:
 PY
 }
 
+frp_server_upgrade_has_legacy_server_units() {
+  [[ -f "$(frp_server_fs /etc/systemd/system/frps.service)" ]] ||
+  [[ -f "$(frp_server_fs /etc/systemd/system/frp-port-allocator.service)" ]] ||
+  [[ -f "$(frp_server_fs /etc/systemd/system/frp-access-plugin.service)" ]] ||
+  [[ -f "$(frp_server_fs /etc/systemd/system/frp-egress-gateway.service)" ]] ||
+  [[ -f "$(frp_server_fs /etc/systemd/system/frp-frontend.service)" ]]
+}
+
+frp_server_upgrade_legacy_path_pairs() {
+  cat <<'EOF'
+/etc/frp-auto-deploy:/etc/drlink
+/var/lib/frp-auto-deploy:/var/lib/drlink
+/var/log/frp-auto-deploy:/var/log/drlink
+/usr/local/lib/frp-auto-deploy:/usr/local/lib/drlink
+EOF
+}
+
+frp_server_upgrade_ensure_legacy_path_compat() {
+  local pair legacy_rel canonical_rel legacy canonical legacy_real canonical_real
+  while IFS=: read -r legacy_rel canonical_rel; do
+    [[ -n "$legacy_rel" && -n "$canonical_rel" ]] || continue
+    legacy="$(frp_server_fs "$legacy_rel")"
+    canonical="$(frp_server_fs "$canonical_rel")"
+    canonical_real="$(readlink -f "$canonical" 2>/dev/null || true)"
+    if [[ -z "$canonical_real" || ! -e "$canonical" ]]; then
+      echo "ERROR: canonical path is missing while restoring legacy compatibility: ${canonical_rel}" >&2
+      return 1
+    fi
+    if [[ -L "$legacy" ]]; then
+      legacy_real="$(readlink -f "$legacy" 2>/dev/null || true)"
+      if [[ "$legacy_real" != "$canonical_real" ]]; then
+        echo "ERROR: refusing to replace unrelated legacy compatibility symlink: ${legacy_rel}" >&2
+        return 1
+      fi
+      continue
+    fi
+    if [[ -e "$legacy" ]]; then
+      echo "ERROR: legacy path unexpectedly exists beside canonical state: ${legacy_rel}" >&2
+      return 1
+    fi
+    mkdir -p "$(dirname "$legacy")"
+    ln -s "$canonical" "$legacy" || return 1
+  done < <(frp_server_upgrade_legacy_path_pairs)
+  return 0
+}
+
+frp_server_upgrade_remove_legacy_path_compat() {
+  local pair legacy_rel canonical_rel legacy canonical legacy_real canonical_real
+  while IFS=: read -r legacy_rel canonical_rel; do
+    [[ -n "$legacy_rel" && -n "$canonical_rel" ]] || continue
+    legacy="$(frp_server_fs "$legacy_rel")"
+    canonical="$(frp_server_fs "$canonical_rel")"
+    [[ -L "$legacy" ]] || continue
+    legacy_real="$(readlink -f "$legacy" 2>/dev/null || true)"
+    canonical_real="$(readlink -f "$canonical" 2>/dev/null || true)"
+    if [[ -z "$canonical_real" || "$legacy_real" != "$canonical_real" ]]; then
+      echo "ERROR: refusing to remove unrelated legacy compatibility symlink: ${legacy_rel}" >&2
+      return 1
+    fi
+    rm -f "$legacy" || return 1
+  done < <(frp_server_upgrade_legacy_path_pairs)
+  return 0
+}
+
+frp_server_upgrade_retire_legacy_server_units() {
+  local pair old new old_unit new_unit changed=0
+  for pair in \
+    "frp-access-plugin:drlink-access" \
+    "frp-port-allocator:drlink-allocator" \
+    "frp-egress-gateway:drlink-egress" \
+    "frp-frontend:drlink-frontend" \
+    "frps:drlink-server"; do
+    old="${pair%%:*}"
+    new="${pair##*:}"
+    old_unit="$(frp_server_fs "/etc/systemd/system/${old}.service")"
+    new_unit="$(frp_server_fs "/etc/systemd/system/${new}.service")"
+    [[ -f "$old_unit" && -f "$new_unit" ]] || continue
+
+    if [[ "$old" == "frps" ]] && ! frp_legacy_server_unit_is_product_owned "$old_unit"; then
+      echo "ERROR: refusing to retire non-product frps.service during upgrade" >&2
+      return 1
+    fi
+
+    if ! frp_server_skip_systemd && ! frp_server_test_mode; then
+      frp_server_systemctl disable --now "$old" >/dev/null 2>&1 || {
+        echo "ERROR: failed to stop/disable legacy ${old}.service during upgrade" >&2
+        return 1
+      }
+      if [[ "$old" == "frp-frontend" ]] && ! frp_server_upgrade_is_single443; then
+        frp_server_systemctl disable --now "$new" >/dev/null 2>&1 || {
+          echo "ERROR: failed to keep canonical ${new}.service disabled in Direct mode" >&2
+          return 1
+        }
+      else
+        frp_server_systemctl enable "$new" >/dev/null 2>&1 || {
+          echo "ERROR: failed to enable canonical ${new}.service during upgrade" >&2
+          return 1
+        }
+      fi
+    else
+      frp_server_record_action "disable --now ${old}"
+      if [[ "$old" == "frp-frontend" ]] && ! frp_server_upgrade_is_single443; then
+        frp_server_record_action "disable --now ${new}"
+      else
+        frp_server_record_action "enable ${new}"
+      fi
+    fi
+    rm -f "$old_unit" || return 1
+    changed=1
+  done
+
+  if [[ "$changed" == "1" ]]; then
+    if ! frp_server_skip_systemd && ! frp_server_test_mode; then
+      frp_server_systemctl daemon-reload || return 1
+    else
+      frp_server_record_action "daemon-reload"
+    fi
+  fi
+  return 0
+}
+
+frp_server_upgrade_legacy_single443() {
+  local cfg
+  cfg="$(frp_server_fs /etc/frp-auto-deploy/config.json)"
+  python3 - "$cfg" <<'PY'
+import json, sys
+from pathlib import Path
+try:
+    data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+mode = str(data.get("deployment_mode") or "").strip().lower()
+raise SystemExit(0 if mode in {"single443", "single-443", "single_443"} else 1)
+PY
+}
+
+frp_server_upgrade_health_legacy_allocator() {
+  local port ca url attempt
+  port="$(frp_server_upgrade_allocator_port)"
+  ca="$(frp_server_fs /etc/frp-auto-deploy/pki/ca.crt)"
+  frp_wait_unit_active frp-port-allocator || return 1
+  url="https://127.0.0.1:${port}/healthz"
+  for attempt in 1 2 3 4 5 6 7 8 9 10; do
+    if frp_server_curl -fsS --cacert "$ca" --connect-timeout 2 --max-time 5 "$url" >/dev/null 2>&1; then
+      return 0
+    fi
+    frp_server_sleep 0.5
+  done
+  echo "ERROR: legacy allocator /healthz did not become ready on port ${port}" >&2
+  return 1
+}
+
+frp_server_upgrade_health_legacy_access() {
+  local cfg addr url code body attempt
+  cfg="$(frp_server_fs /etc/frp-auto-deploy/config.json)"
+  addr="${FRP_ACCESS_PLUGIN_ADDR:-127.0.0.1:6101}"
+  frp_wait_unit_active frp-access-plugin || return 1
+  if [[ -r "$cfg" ]]; then
+    addr="$(python3 - "$cfg" <<'PY' 2>/dev/null || true
+import json, sys
+from pathlib import Path
+try:
+    cfg = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(0)
+print(str(cfg.get("access_plugin_addr") or "127.0.0.1:6101").strip())
+PY
+)"
+  fi
+  [[ -n "$addr" ]] || addr="127.0.0.1:6101"
+  url="http://${addr}/healthz"
+  code="000"
+  body=""
+  for attempt in 1 2 3 4 5 6 7 8 9 10; do
+    body="$(frp_server_curl -sS --connect-timeout 2 --max-time 5 "$url" 2>/dev/null || true)"
+    code="$(frp_server_curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 2 --max-time 5 "$url" 2>/dev/null || echo 000)"
+    if [[ "$code" == "200" ]]; then
+      return 0
+    fi
+    frp_server_sleep 0.5
+  done
+  echo "ERROR: legacy access plugin /healthz returned ${code} (expected 200)" >&2
+  [[ -z "$body" ]] || echo "ERROR: legacy access plugin /healthz body: ${body}" >&2
+  return 1
+}
+
 frp_server_upgrade_verify_rollback_health() {
   if [[ "${FRP_SERVER_UPGRADE_HOOK_ROLLBACK_HEALTH:-}" == "1" ]]; then
     echo "ERROR: simulated rollback health verification failure" >&2
@@ -508,6 +699,20 @@ frp_server_upgrade_verify_rollback_health() {
   if frp_server_skip_systemd || frp_server_test_mode; then
     return 0
   fi
+
+  # A prior-stable rollback restores the legacy supervisor generation. Verify
+  # that generation directly instead of calling canonical drlink-* helpers.
+  if [[ -f "$(frp_server_fs /etc/systemd/system/frp-access-plugin.service)" && \
+        ! -f "$(frp_server_fs /etc/systemd/system/drlink-access.service)" ]]; then
+    frp_wait_unit_active frps || return 1
+    frp_server_upgrade_health_legacy_allocator || return 1
+    frp_server_upgrade_health_legacy_access || return 1
+    if frp_server_upgrade_legacy_single443; then
+      frp_wait_unit_active frp-frontend || return 1
+    fi
+    return 0
+  fi
+
   frp_server_health_frps || return 1
   frp_server_health_allocator "$(frp_server_upgrade_allocator_port)" || return 1
   frp_server_health_access || return 1
@@ -539,11 +744,43 @@ _frp_server_upgrade_err() {
   return "$ec"
 }
 
+frp_server_upgrade_snapshot_has_legacy_units() {
+  local snapshot="$1"
+  python3 - "$snapshot/metadata.json" <<'PY'
+import json, sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+if not path.is_file():
+    raise SystemExit(1)
+data = json.loads(path.read_text(encoding="utf-8"))
+legacy = {
+    "frps.service",
+    "frp-port-allocator.service",
+    "frp-access-plugin.service",
+    "frp-egress-gateway.service",
+    "frp-frontend.service",
+}
+for item in ((data.get("services") or {}).get("units") or []):
+    if item.get("unit") in legacy and item.get("existed") is True:
+        raise SystemExit(0)
+present = {
+    str(item.get("path") or "")
+    for item in (data.get("present") or [])
+    if isinstance(item, dict)
+}
+if any("etc/systemd/system/%s" % unit in present for unit in legacy):
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
 frp_server_upgrade_restore_snapshot_files() {
-  # File-only restore for project-update rollback. Avoid --apply-services here:
-  # mid-upgrade unit state is often transitional on live systemd hosts and can
-  # fail strict enable/active replay even when files restore cleanly. Health is
-  # re-checked separately after an explicit unit restart.
+  # Prior-stable v2.3 snapshots contain legacy supervisor names. For those
+  # snapshots restore the captured service generation atomically; the txn helper
+  # stops snapshot-absent drlink-* units before restarting the legacy units.
+  # Current-generation snapshots retain the established file-only rollback plus
+  # explicit runtime restart path to avoid widening project-update semantics.
   local dest="${1:-${FRP_INSTALL_SNAPSHOT:-}}" py
   [[ -n "$dest" && -d "$dest" ]] || return 0
   if [[ "${FRP_SERVER_UPGRADE_HOOK_ROLLBACK_SYSTEMD:-}" == "1" ]]; then
@@ -556,13 +793,25 @@ frp_server_upgrade_restore_snapshot_files() {
   else
     py="$(frp_server_fs /usr/local/lib/drlink/frp_install_txn.py)"
   fi
+
+  if frp_server_upgrade_snapshot_has_legacy_units "$dest"; then
+    # Path migration happens before the transaction snapshot, so protected
+    # v2.3 state now lives at canonical paths while restored v2.3 units still
+    # reference /etc|/var|/usr/local/.../frp-auto-deploy. Recreate only the
+    # exact product compatibility links before the txn helper restarts them.
+    frp_server_upgrade_ensure_legacy_path_compat || return 1
+    if { ! frp_server_skip_systemd && ! frp_server_test_mode; } || [[ -n "${FRP_INSTALL_TXN_HOOK_SYSTEMCTL:-}" ]]; then
+      python3 "$py" restore --root "$(frp_server_snapshot_root)" --dest "$dest" --apply-services || return 1
+    else
+      python3 "$py" restore --root "$(frp_server_snapshot_root)" --dest "$dest" || return 1
+    fi
+    return 0
+  fi
+
   python3 "$py" restore --root "$(frp_server_snapshot_root)" --dest "$dest" || return 1
   if ! frp_server_skip_systemd && ! frp_server_test_mode; then
     frp_server_systemctl daemon-reload || true
   fi
-  # Restart every project-owned runtime that may already be running post-cutover
-  # code, so disk restore cannot leave old files with new in-memory processes.
-  # Test mode records the restart and refreshes the runtime generation stamp.
   frp_server_restart_unit drlink-access || return 1
   frp_server_restart_unit drlink-egress || return 1
   if [[ -f "$(frp_server_fs /etc/systemd/system/drlink-tcp-egress.service)" ]]; then
@@ -968,6 +1217,12 @@ frp_server_apply_project_upgrade() {
   fi
   # Upgrade from pre-rename installs must migrate paths before presence checks.
   frp_migrate_legacy_product_paths || return 1
+  # v2.3 supervisors keep running until canonical units are staged. Preserve
+  # their historical absolute paths during that window so an update check or
+  # failed preflight does not strand the prior-stable runtime.
+  if frp_server_upgrade_has_legacy_server_units; then
+    frp_server_upgrade_ensure_legacy_path_compat || return 1
+  fi
   [[ -f "$(frp_server_fs /etc/drlink/config.json)" ]] &&
   [[ -s "$(frp_server_fs /etc/frp/server_token)" ]] &&
   [[ -f "$(frp_server_fs /var/lib/drlink/registry.json)" ]] &&
@@ -1203,6 +1458,17 @@ frp_server_apply_project_upgrade() {
       frp_server_record_action "daemon-reload"
     fi
   fi
+
+  # Prior-stable v2.3 supervisors keep allocator/access ports open until
+  # cutover. Retire server units only; do not touch a dual-role legacy frpc
+  # here. Client-unit migration remains a post-success compatibility cleanup.
+  if frp_server_upgrade_has_legacy_server_units; then
+    if ! frp_server_upgrade_retire_legacy_server_units; then
+      frp_server_upgrade_rollback "$snapshot"
+      return 1
+    fi
+  fi
+
   if [[ "$restart_access" == "1" ]]; then
     frp_server_restart_unit drlink-access || { frp_server_upgrade_rollback "$snapshot"; return 1; }
     frp_server_health_access || { frp_server_upgrade_rollback "$snapshot"; return 1; }
@@ -1260,6 +1526,15 @@ frp_server_apply_project_upgrade() {
     echo "ERROR: simulated runtime convergence failure" >&2
     frp_server_upgrade_rollback "$snapshot"
     frp_emit_failure_class HEALTH_CHECK_FAILED
+    return 1
+  fi
+
+  # Canonical runtime is healthy; legacy path aliases are no longer needed.
+  # A later version-write failure can still recreate them from the legacy
+  # snapshot before service-state rollback.
+  if ! frp_server_upgrade_remove_legacy_path_compat; then
+    frp_server_upgrade_rollback "$snapshot"
+    frp_emit_failure_class FILE_COMMIT_FAILED
     return 1
   fi
 
