@@ -179,6 +179,7 @@ frp_macos_render_plist() {
     return 1
   }
   FRP_PLIST_LABEL="$FRP_MACOS_LAUNCHD_LABEL" \
+  FRP_PLIST_LAUNCHER="$(frp_macos_fs /usr/local/lib/drlink/drlink-frpc-launch)" \
   FRP_PLIST_FRPC="$(frp_macos_fs /usr/local/bin/frpc)" \
   FRP_PLIST_CONFIG="$(frp_macos_fs /etc/frp/frpc.toml)" \
   FRP_PLIST_STDOUT="$(frp_macos_fs /etc/frp)/logs/frpc.out.log" \
@@ -187,7 +188,9 @@ frp_macos_render_plist() {
 import os,plistlib,sys
 from pathlib import Path
 with open(sys.argv[1],'rb') as f: data=plistlib.load(f)
-subs={'@LABEL@':os.environ['FRP_PLIST_LABEL'],'@FRPC@':os.environ['FRP_PLIST_FRPC'],
+subs={'@LABEL@':os.environ['FRP_PLIST_LABEL'],
+'@LAUNCHER@':os.environ['FRP_PLIST_LAUNCHER'],
+'@FRPC@':os.environ['FRP_PLIST_FRPC'],
 '@CONFIG@':os.environ['FRP_PLIST_CONFIG'],'@STDOUT@':os.environ['FRP_PLIST_STDOUT'],
 '@STDERR@':os.environ['FRP_PLIST_STDERR']}
 def expand(v):
@@ -199,7 +202,9 @@ def expand(v):
 data=expand(data)
 if any(t in repr(data) for t in subs): raise SystemExit('ERROR: unresolved placeholder in launchd plist')
 if data.get('Label') != subs['@LABEL@']: raise SystemExit('ERROR: launchd plist Label does not match')
-if data.get('ProgramArguments') != [subs['@FRPC@'],'-c',subs['@CONFIG@']]:
+# Pinned boot path: wrapper invalidates verification, then execs frpc -c config.
+want = [subs['@LAUNCHER@'], subs['@FRPC@'], '-c', subs['@CONFIG@']]
+if data.get('ProgramArguments') != want:
     raise SystemExit('ERROR: launchd plist ProgramArguments are not the pinned frpc invocation')
 out=Path(sys.argv[2]); out.parent.mkdir(parents=True,exist_ok=True)
 tmp=out.with_name(out.name+'.tmp')

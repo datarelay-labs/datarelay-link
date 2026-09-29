@@ -95,14 +95,32 @@ def select_live_control_db(host_root: Path) -> Path:
     A macOS Agent keeps ``drlink.db`` under Application Support/state. Opening
     ``/var/lib/drlink/drlink.db`` there creates an empty database, so ``show
     status`` misses the installed Agent and can report Role Unknown.
+
+    ``FRP_MACOS_STATE_ROOT`` is an explicit live-host override. When it points
+    at a valid macOS Agent state tree, honor it before probing Linux role
+    markers under ``/etc``; this also keeps non-root diagnostics/tests from
+    failing on unreadable host paths.
     """
     host = Path(host_root)
     state = macos_agent_state_root(host)
     linux_db = host / DEFAULT_DB_REL
+    mac_override = (
+        str(host) in ("/", "")
+        and bool(str(os.environ.get("FRP_MACOS_STATE_ROOT") or "").strip())
+    )
+    if mac_override and macos_agent_markers(state):
+        return state / "state" / "drlink.db"
+
+    def _is_file(path: Path) -> bool:
+        try:
+            return path.is_file()
+        except OSError:
+            return False
+
     if (
         macos_agent_markers(state)
-        and not (host / "etc/frp/client-state.json").is_file()
-        and not (host / "etc/drlink/config.json").is_file()
+        and not _is_file(host / "etc/frp/client-state.json")
+        and not _is_file(host / "etc/drlink/config.json")
     ):
         return state / "state" / "drlink.db"
     return linux_db

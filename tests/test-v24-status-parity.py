@@ -1238,6 +1238,16 @@ frp_client_restart_runtime_cmd
         self.assertIn("ExecStartPre=", text)
         self.assertIn("invalidate_runtime_verification_for_restart", text)
 
+    def test_macos_plist_uses_frpc_launch_wrapper(self):
+        text = (ROOT / "client" / "com.datarelay.drlink.frpc.plist").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("@LAUNCHER@", text)
+        self.assertIn("drlink-frpc-launch", (ROOT / "client" / "drlink-frpc-launch").read_text(encoding="utf-8"))
+        launcher = ROOT / "client" / "drlink-frpc-launch"
+        self.assertTrue(launcher.is_file())
+        self.assertIn("invalidate_runtime_verification_for_restart", launcher.read_text(encoding="utf-8"))
+
 
 if __name__ == "__main__":
     unittest.main()

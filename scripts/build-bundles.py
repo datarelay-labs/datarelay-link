@@ -217,6 +217,7 @@ client_files=[
  'tools/frp-support-bundle',
  'tools/frp-update',
  'client/com.datarelay.drlink.frpc.plist',
+ 'client/drlink-frpc-launch',
  'client/drlink-client.service',
  'client/drlink-ai-agent.service',
 ]

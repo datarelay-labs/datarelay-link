@@ -5103,6 +5103,10 @@ frp_client_install_management_files() {
     install -m 0644 "${source}/client/${FRP_MACOS_LAUNCHD_LABEL}.plist" \
       "${libdir}/${FRP_MACOS_LAUNCHD_LABEL}.plist"
   fi
+  if [[ -f "${source}/client/drlink-frpc-launch" ]]; then
+    install -m 0755 "${source}/client/drlink-frpc-launch" \
+      "${libdir}/drlink-frpc-launch"
+  fi
   frp_client_write_runtime_lineage "${source}/lib" || return 1
   frp_client_upgrade_source_version "$source"
   frp_infer_expected_source_ref_from_git_source "$source"
@@ -5118,6 +5122,7 @@ frp_client_upgrade_destinations() {
   done < <(frp_agent_lib_payload_files)
   printf '%s\n' \
     "usr/local/lib/drlink/com.datarelay.drlink.frpc.plist:0644:client/com.datarelay.drlink.frpc.plist" \
+    "usr/local/lib/drlink/drlink-frpc-launch:0755:client/drlink-frpc-launch" \
     "usr/local/lib/drlink/uninstall-client.sh:0755:uninstall-client.sh" \
     "usr/local/bin/frp-client:0755:tools/frp-client" \
     "usr/local/bin/drlink:0755:tools/drlink" \

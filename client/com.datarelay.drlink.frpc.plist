@@ -6,6 +6,7 @@
   <string>@LABEL@</string>
   <key>ProgramArguments</key>
   <array>
+    <string>@LAUNCHER@</string>
     <string>@FRPC@</string>
     <string>-c</string>
     <string>@CONFIG@</string>
