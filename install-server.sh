@@ -3016,14 +3016,14 @@ Everyday management (start here):
   sudo drlink
   Then type help or ? inside the CLI.
 
-Enroll the first client (Zero-Touch preferred):
-  sudo drlink set client
-  # or: sudo drlink create enrollment
+Connect the first Managed Host (Zero-Touch preferred):
+  sudo drlink set enrollment zero-touch
+  # or: sudo drlink set enrollment manual
 
 Useful checks:
   sudo drlink show status
   sudo drlink system diagnostics
-  sudo drlink show clients
+  sudo drlink show managed-hosts
   sudo drlink help
 
 Backup:
