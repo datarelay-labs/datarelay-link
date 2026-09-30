@@ -473,7 +473,7 @@ Minimum layers:
 static/unit
 targeted regression
 CLI/PTY
-feature ↔ canonical CLI ↔ operator-scenario reconciliation via `CLI_FEATURE_SCENARIO_RECONCILIATION.md` (product-surface audit; no environment provisioning)
+feature ↔ canonical CLI ↔ operator-workflow reconciliation via `CLI_FEATURE_SCENARIO_RECONCILIATION.md` (runtime non-destructive product-surface audit)
 integration
 Agent lifecycle
 offline/reconnect
@@ -483,7 +483,7 @@ multi-host Real E2E
 double full Real E2E on the same exact HEAD before stable
 ```
 
-The product-surface reconciliation is executed by `CLI_FEATURE_SCENARIO_RECONCILIATION.md` and is independent from Full User E2E. It inventories every supported feature from this Product Master, maps it to the canonical public CLI/menu lifecycle, reconciles already-available runtime surfaces (including executable aliases/hidden grammar), and proves representative operator workflows are discoverable and close without legacy or duplicate paths. It does not install, upgrade, reboot, platform-qualify, or provision Server/Agent hosts. Those lifecycle/environment responsibilities belong to Full User E2E and release qualification.
+The product-surface reconciliation is executed by `CLI_FEATURE_SCENARIO_RECONCILIATION.md` and is independent from Full User E2E. It inventories every supported feature from this Product Master, maps it to the canonical public CLI/menu lifecycle, reconciles read-only runtime discovery with catalog/parser/docs/isolated tests, and proves representative operator workflows are discoverable and coherent without legacy or duplicate paths. The reconciliation never changes assigned runtime product state; create/edit/delete/apply/rollback/restore/update/restart/reboot and real traffic belong to Full User E2E and release qualification.
 
 Stable release may require a reconciliation PASS bound to the final candidate, but the release workflow must prepare that candidate environment before invoking the reconciliation. Full User E2E remains responsible for install/reinstall, reboot, platform/lifecycle and real-traffic proof.
 

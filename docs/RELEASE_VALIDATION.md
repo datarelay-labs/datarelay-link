@@ -481,7 +481,7 @@ CI may run earlier as advisory feedback, but it is not a blocking wait point for
 
 ## 21.1 CLI product-surface reconciliation — independent release gate
 
-For release qualification, the release workflow first prepares the installed exact candidate environment, then invokes `CLI_FEATURE_SCENARIO_RECONCILIATION.md` against that already-prepared Server/Agent surface. The reconciliation audit itself must not provision, install, upgrade, reboot, or search for replacement hosts. `CLI_EXHAUSTIVE_AUDIT.md` may invoke the same product-surface audit, but it is not a substitute for the dedicated reconciliation contract.
+For release qualification, the release workflow may first prepare the installed exact candidate environment for correlation, then invokes `CLI_FEATURE_SCENARIO_RECONCILIATION.md`. The reconciliation itself remains runtime non-destructive: it may use read-only discovery/status/help/test-explain evidence, but it does not create/edit/delete/apply/rollback/restore/update/restart/reboot product state, provision hosts, or search for replacements. `CLI_EXHAUSTIVE_AUDIT.md` may invoke the same product-surface audit, but it is not a substitute for the dedicated reconciliation contract.
 
 This gate is intentionally separate from Full User E2E. Full User E2E answers whether representative real journeys work. Product-surface reconciliation answers whether the complete supported product model has one coherent, discoverable, non-duplicated CLI surface.
 
@@ -512,17 +512,18 @@ DOC_EXAMPLE_NONCANONICAL_COUNT=0
 ROLE_SURFACE_DRIFT_COUNT=0
 STATUS_DOC_RUNTIME_MISMATCH_COUNT=0
 CLEANUP_RESIDUE_COUNT=0
+RUNTIME_MUTATION_ATTEMPT_COUNT=0
 ```
 
 For the unreleased/greenfield v2.4 CLI, compatibility-only aliases, root-bypass aliases, duplicate mutation routes, and executable obsolete hidden grammar are not accepted as release justification. If a future released version requires compatibility, each exception must be explicit, documented, bounded, and separately tested.
 
 The reconciliation must treat installer completion output, generated enrollment instructions, contextual help, completion, diagnostics/update recommendations, error recovery, and active documentation command examples as part of the public surface. A feature is not considered reachable when its command exists but its required lifecycle variant is undiscoverable, when the advertised next action is obsolete/hidden, or when a recovery message does not name an actionable supported path.
 
-After black-box discovery is retained, perform post-hoc executable catalog/parser enumeration to prove that hidden/alias paths do not escape the public model. This source inspection is reconciliation evidence only and cannot be used to make a user scenario pass.
+After black-box discovery is retained, perform post-hoc executable catalog/parser enumeration to prove that hidden/alias paths do not escape the public model. This source inspection is reconciliation evidence for operator-workflow coherence; it does not authorize execution of hidden or mutation-bearing runtime paths.
 
-Every behavior-changing setting/subcommand and destructive subvariant must receive its own disposition. Reconcile actual effect against catalog risk/confirmation metadata, interactive confirmation, and non-TTY fail-closed behavior. Privilege/readability errors must return non-zero and must not be misreported as role errors. Status/version/provenance surfaces must not contradict the current control-plane model.
+Every behavior-changing setting/subcommand and destructive subvariant must receive its own disposition. Reconcile intended effect against catalog/parser/source risk/confirmation metadata and deterministic isolated-test coverage; do not execute destructive confirmation probes on assigned runtime state. Privilege/readability errors for read-only probes must return non-zero and must not be misreported as role errors. Status/version/provenance surfaces must not contradict the current control-plane model.
 
-Cleanup evidence must cover every already-assigned Server and Agent actually mutated by the reconciliation, including non-prefixed resources created by guided defaults, and prove zero audit residue. Environment provisioning and host lifecycle cleanup remain responsibilities of the enclosing release/FULL_USER_E2E workflow.
+The reconciliation must record `RUNTIME_MUTATION_ATTEMPT_COUNT=0`. Its cleanup evidence covers only audit-owned temporary processes/files because the audit must not create product resources. Environment provisioning, product-resource cleanup, and host lifecycle cleanup remain responsibilities of the enclosing release/FULL_USER_E2E workflow.
 
 Any CLI/product/documentation surface change after this PASS invalidates the gate and requires a fresh reconciliation before Full User E2E PASS1/PASS2 can count as final stable evidence.
 

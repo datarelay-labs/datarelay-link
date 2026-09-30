@@ -154,9 +154,9 @@ COMMANDS_WITHOUT_DISPOSITION=0
 
 ## 4.2 Product feature ↔ CLI surface reconciliation — product-surface audit (release-consumable)
 
-`CLI_FEATURE_SCENARIO_RECONCILIATION.md` is the canonical executable contract for this product-surface audit. When the user explicitly requests CLI ↔ Feature ↔ Scenario reconciliation, execute that document directly. Do not convert that trigger into candidate provisioning, host discovery, installation, upgrade, reboot, OS/platform qualification, or CI/release work. When this exhaustive CLI audit reaches this gate, execute the dedicated document against the same already-available assigned runtime/evidence surface; its feature matrix, terminology/procedure/structure checks, cleanup, counters, and PASS criteria govern.
+`CLI_FEATURE_SCENARIO_RECONCILIATION.md` is the canonical non-destructive contract for this product-surface audit. When the user explicitly requests CLI ↔ Feature ↔ Scenario reconciliation, deterministically resolve `datarelay-labs/datarelay-link/docs/CLI_FEATURE_SCENARIO_RECONCILIATION.md` and execute it directly without broad search or environment preparation. `Scenario` means operator-workflow coherence, not live mutation. Runtime use is read-only; mutation-bearing lifecycle steps are reconciled from discovery/catalog/parser/docs/isolated tests. Findings accumulate without pausing, and the active Work Packet is updated once after the audit is exhausted.
 
-Before scenario execution, build a second ledger from the **product feature model**, not from the CLI. This prevents an internally consistent CLI from passing while product functionality is missing, duplicated, obsolete, or unreachable.
+Before operator-workflow reconciliation, build a second ledger from the **product feature model**, not from the CLI. This prevents an internally consistent CLI from passing while product functionality is missing, duplicated, obsolete, or unreachable.
 
 Use the union of:
 1. Product Master features and supported lifecycle operations;

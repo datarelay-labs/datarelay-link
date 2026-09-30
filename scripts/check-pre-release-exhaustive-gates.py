@@ -29,6 +29,7 @@ CLI_ZERO_COUNTERS = (
     "scenario_blocked_count",
     "scenario_dead_end_count",
     "cleanup_residue_count",
+    "runtime_mutation_attempt_count",
 )
 FULL_PASS_FIELDS = (
     "pre_run_clean_state",

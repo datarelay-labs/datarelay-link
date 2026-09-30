@@ -294,7 +294,7 @@ CHATGPT_PLUS_ALLOW_DENY=
 
 ## 16. CLI UX and product-surface reconciliation
 
-- [ ] `CLI_FEATURE_SCENARIO_RECONCILIATION=PASS` using `CLI_FEATURE_SCENARIO_RECONCILIATION.md`; this is a product-surface audit separate from Full User E2E. The release workflow prepares the candidate environment first; the audit itself does not install/upgrade/reboot or search for hosts.
+- [ ] `CLI_FEATURE_SCENARIO_RECONCILIATION=PASS` using `CLI_FEATURE_SCENARIO_RECONCILIATION.md`; this is a runtime non-destructive Feature ↔ CLI ↔ Operator Workflow audit separate from Full User E2E. It uses read-only runtime evidence plus catalog/parser/docs/isolated tests and never changes assigned product state.
 - [ ] `CLI_PRODUCT_SURFACE_RECONCILIATION=PASS` is satisfied by the same exact-candidate reconciliation evidence.
 - [ ] every Product Master capability has a justified public CLI/menu/installer lifecycle mapping.
 - [ ] every installed runtime command maps to a current product capability and canonical documentation.
@@ -306,12 +306,12 @@ CHATGPT_PLUS_ALLOW_DENY=
 - [ ] installer completion text, enrollment instructions, diagnostics, update recommendations, and recovery text point only to current canonical commands or exact documented installer actions.
 - [ ] active documentation examples use canonical public grammar or an explicitly justified installer-only lifecycle.
 - [ ] no supported workflow ends with a non-actionable recovery instruction or legacy alias.
-- [ ] destructive subvariants have effect-appropriate `risk`/confirmation metadata, interactive confirmation, and non-TTY fail-closed behavior.
-- [ ] destructive/non-TTY cancellation is automation-safe and never returns success for an unapplied mutation.
+- [ ] destructive subvariants have effect-appropriate `risk`/confirmation metadata and isolated regression coverage for interactive/default-No/non-TTY fail-closed behavior; the reconciliation itself does not execute them on assigned runtime state.
+- [ ] destructive/non-TTY cancellation contract is automation-safe and never returns success for an unapplied mutation.
 - [ ] privilege/readability ERROR paths return non-zero and are not misreported as wrong-role errors.
 - [ ] empty-list output explicitly distinguishes zero items from failure rather than silent RC=0 success.
 - [ ] status/version/provenance surfaces are mutually consistent and do not expose retired state models as current.
-- [ ] final reconciliation cleanup proves zero audit-owned resource residue on every already-assigned Server and Agent actually mutated by the audit, including non-prefixed resources created by guided defaults.
+- [ ] final reconciliation records `RUNTIME_MUTATION_ATTEMPT_COUNT=0`; cleanup proves zero audit-owned temporary process/file residue and does not remove pre-existing product resources.
 - [ ] Server root = Managed Hosts / Network Objects / Service Objects / Remote Access / Internet Access / AI Access / System / Help / Exit.
 - [ ] Agent Host root = Remote Services / Agent / Configuration / System / Help / Exit.
 - [ ] Direct roots = show/set/unset/test/system/menu/help/exit.
@@ -418,7 +418,7 @@ CI may run earlier as advisory feedback, but it is not a blocking wait point for
 - [ ] `python3 scripts/check-pre-release-exhaustive-gates.py --gate all` passes before automated release qualification starts.
 - [ ] `.engineering/release.yaml` has `preflight_required: true` and uses the same exhaustive-gate validator.
 - [ ] `CLI_PRODUCT_SURFACE_RECONCILIATION=PASS` on that same reconciliation evidence.
-- [ ] reconciliation evidence records zero feature/CLI gaps, runtime-only CLI, duplicate/legacy/hidden paths, discovery/dead-end gaps, installer-guidance mismatches, destructive-confirmation/metadata drift, ERROR-with-RC0 cases, state/doc/example/role mismatches, scenario blockers, and cleanup residue.
+- [ ] reconciliation evidence records zero feature/CLI gaps, runtime-only CLI, duplicate/legacy/hidden paths, discovery/dead-end gaps, installer-guidance mismatches, destructive-confirmation/metadata drift, ERROR-with-RC0 cases, state/doc/example/role mismatches, workflow blockers, audit-owned cleanup residue, and `RUNTIME_MUTATION_ATTEMPT_COUNT=0`.
 - [ ] no CLI/product/documentation surface change occurred after the reconciliation; otherwise rerun it before PASS1/PASS2 count.
 - [ ] `FULL_REAL_E2E_PASS_1=PASS`
 - [ ] `FULL_REAL_E2E_PASS_2=PASS`

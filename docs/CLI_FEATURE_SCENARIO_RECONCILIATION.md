@@ -1,56 +1,103 @@
-# Data Relay Link — CLI ↔ Feature ↔ Scenario Reconciliation
+# Data Relay Link — Feature ↔ CLI ↔ Operator Workflow Reconciliation
 
-> **Document role:** Canonical executable audit contract for product capability ↔ public CLI ↔ operator scenario reconciliation
+> **Document role:** Canonical non-destructive audit contract for product capability ↔ public CLI ↔ operator workflow coherence
 > **Executor:** ChatGPT
-> **Scope:** feature/CLI/scenario completeness, uniqueness, discoverability, terminology, procedure, structure, safety, recovery, and cleanup
+> **Scope:** feature/CLI/workflow completeness, uniqueness, discoverability, terminology, procedure, structure, safety contract, recovery guidance, and audit cleanup
 > **Target:** v2.4 and later until superseded
-> **Execution boundary:** this audit does **not** install, upgrade, uninstall, reboot, platform-qualify, provision, or search for Server/Agent hosts
+> **Execution boundary:** this audit is **runtime non-destructive**. It never changes Data Relay Link product state.
 > **Release relationship:** release qualification may consume a completed reconciliation result, but candidate installation/lifecycle qualification belongs to release/FULL_USER_E2E workflows
 > **Companion:** `CLI_EXHAUSTIVE_AUDIT.md`
 
 ## 1. Exact execution trigger
 
-The following request is an **immediate execution command**, not a request for a plan:
+The following requests are **immediate execution commands**, not requests for a plan:
 
 ~~~text
 CLI, 기능, 시나리오의 연계성을 테스트 진행
-~~~
-
-Equivalent requests include:
-
-~~~text
 CLI 기능 시나리오 연계성 테스트
 CLI-기능-시나리오 연계 테스트
 기능과 CLI와 시나리오 매핑 테스트
 Feature CLI Scenario reconciliation
+Feature CLI Operator Workflow reconciliation
 CLI product-surface reconciliation
+GitHub에서 CLI_FEATURE_SCENARIO_RECONCILIATION 문서 찾아서 테스트 진행해
+Github에서 CLI_FEATURE_SCENARIO_RECONCILIATION 찾아서 테스트 진행해
+CLI_FEATURE_SCENARIO_RECONCILIATION 테스트 진행해
 ~~~
 
-When triggered, resolve this file from the active repository and execute it immediately.
+### Deterministic document resolution
 
-"Execute immediately" means: build the feature inventory, discover the current public CLI surface, and run the feature-linked operator scenarios on already-available assigned runtime surfaces where safe.
+Do not begin with broad/global GitHub code search, unrelated repository search, host discovery, CI inspection, or release preparation.
 
-Do **not** turn this trigger into environment preparation. Do not install or upgrade Data Relay Link, search a host inventory for a clean machine, select a new OS/platform, reboot/uninstall a host, wait for CI, or start release qualification unless the user explicitly requested that separate work.
+~~~text
+CANONICAL_REPO=datarelay-labs/datarelay-link
+CANONICAL_PATH=docs/CLI_FEATURE_SCENARIO_RECONCILIATION.md
+ACTIVE_WORKTREE=/home/aella/datarelay-link-current
+~~~
+
+Resolution order:
+
+1. identify `datarelay-labs/datarelay-link`;
+2. resolve `/home/aella/datarelay-link-current`;
+3. read the exact canonical path from the active branch/worktree;
+4. if that exact path is absent locally, resolve the same path from Git history or the same GitHub repository;
+5. only if the canonical repository/path itself changed may repository history be used to locate its successor.
+
+Do **not** wander through unrelated repositories, hosts, similarly named files, or broad GitHub code search results.
+
+Once this document resolves, start the audit immediately. Do not stop to propose a plan.
+
+### Meaning of Scenario
+
+`Scenario` means an **operator workflow audit scenario**: verify that a user can discover and understand the complete CLI lifecycle from one step to the next.
+
+It does **not** mean executing live state-changing operations.
+
+### Hard non-destructive boundary
+
+Runtime use is read-only. Do not execute commands that create, modify, delete, reset, revoke, release, apply, rollback, restore, update, uninstall, restart, pause/resume, synchronize, issue credentials/tickets, change policy, change endpoint allocation, or otherwise persist product state.
+
+Mutation-bearing workflow steps are audited through public help/`?`/Tab/menu, catalog/parser/source enumeration, active documentation, and deterministic isolated tests.
+
+Do not install, upgrade, uninstall, reboot, provision, repair, recover, or search for replacement Server/Agent hosts.
 
 Do not substitute FULL_USER_E2E, an installation/lifecycle test, a generic CLI smoke test, or historical evidence.
 
 ### Continuous execution / finding accumulation rule
 
-Do **not** stop the reconciliation when an individual finding, mismatch, or test failure is discovered. Record it in the finding ledger with its evidence and disposition, then immediately continue every remaining check that is safe and independent of that failure. Findings are accumulated and reported together after the audit has exhausted all executable checks.
+A finding is **not a stop condition**.
 
-Stop early only when continuing would be unsafe, would corrupt or invalidate shared state/evidence, requires an unavailable mandatory dependency or explicit owner action, or when the failed prerequisite makes a specific downstream check technically impossible. In that case, mark only the affected check `BLOCKED` or `NOT_RUN` with the exact reason and continue all other independent checks.
+For every finding:
 
-During an audit with `PRODUCT_SOURCE_EDITS_DURING_AUDIT=NO`, do not remediate findings inline. Preserve the candidate, retain the finding, finish the complete audit, and perform remediation only in the subsequent remediation phase.
+1. preserve evidence;
+2. classify it;
+3. add it to the current run finding ledger;
+4. remember it for final reporting;
+5. immediately continue every remaining independent non-destructive check.
+
+Do not patch product code during the active audit.
+
+Do not stop to update GitHub Issue when a finding appears. Intermediate findings remain in the run evidence ledger.
+
+Stop only the specific check that cannot safely continue. Mark only that check `BLOCKED` or `NOT_RUN` with the exact reason and continue all other independent checks.
+
+Update the active `[AI Work]` GitHub Issue **once, after the audit has exhausted all executable checks and final counters/summary are complete**.
 
 ~~~text
 AUDIT_PROFILE=CLI_FEATURE_SCENARIO_RECONCILIATION
+AUDIT_SEMANTICS=FEATURE_CLI_OPERATOR_WORKFLOW
 FIRST_ACTION=EXECUTE
+CANONICAL_REPO=datarelay-labs/datarelay-link
+CANONICAL_PATH=docs/CLI_FEATURE_SCENARIO_RECONCILIATION.md
 PUBLIC_DRLINK_ONLY_FOR_USER_SCENARIOS=YES
 BLACK_BOX_FIRST=YES
 POST_HOC_HIDDEN_SURFACE_ENUMERATION=YES
+RUNTIME_MUTATION_DURING_AUDIT=NO
+DESTRUCTIVE_COMMAND_EXECUTION=NO
 PRODUCT_SOURCE_EDITS_DURING_AUDIT=NO
+INTERMEDIATE_GITHUB_ISSUE_UPDATE=NO
+FINAL_GITHUB_ISSUE_UPDATE=YES
 RETAIN_EVIDENCE=YES
-UPDATE_ACTIVE_AI_WORK_ISSUE=YES
 FULL_USER_E2E_SUBSTITUTE=NO
 ENVIRONMENT_PROVISIONING=NO
 HOST_INVENTORY_DISCOVERY=NO
@@ -59,22 +106,29 @@ INSTALL_OR_UPGRADE_DURING_AUDIT=NO
 
 ## 2. What this test proves
 
-FULL_USER_E2E asks whether representative users can complete real journeys with real traffic.
+FULL_USER_E2E asks whether representative users can complete real journeys with real traffic and real state changes.
 
-This reconciliation asks whether **every supported product capability** has one coherent, current, discoverable public CLI lifecycle and a complete operator scenario.
+This reconciliation asks whether **every supported product capability has one coherent, current, discoverable public CLI lifecycle and a complete operator workflow** without changing assigned runtime product state.
 
 It must find defects such as:
 
 - feature exists but no usable CLI exists;
 - CLI exists but no current product feature justifies it;
-- two public commands mutate the same thing;
-- hidden/legacy compatibility grammar still executes;
+- two public commands claim the same operation;
+- hidden/legacy compatibility grammar remains parser/backend reachable;
 - correct command exists but help/menu/completion cannot discover it;
-- installer/doctor/update/error output recommends an obsolete command;
-- create works but inspect/test/delete/recovery cannot be completed;
+- installer/diagnostics/update/error output recommends obsolete syntax;
+- create/configure syntax exists but inspect/test/delete/recovery is not coherently discoverable;
 - Server and Agent use conflicting nouns or lifecycle ownership;
-- state/status/version surfaces contradict each other;
-- destructive subvariants bypass confirmation.
+- state/status/version surfaces contradict one another;
+- destructive subvariants have missing or unsafe confirmation/risk contracts;
+- a workflow requires memorized syntax, hidden selectors, or backend knowledge.
+
+The target question is:
+
+> **Does every supported Data Relay Link capability map to one current, discoverable, non-duplicated public CLI lifecycle that an operator can follow from discovery through recovery without relying on legacy or hidden grammar?**
+
+This audit proves **workflow-contract coherence**. Live mutation behavior belongs to FULL_USER_E2E or dedicated isolated regression tests.
 
 ## 3. Authority and conflict rule
 
@@ -102,7 +156,7 @@ On `dev-drlink`, resolve the active worktree from:
 /home/aella/datarelay-link-current
 ~~~
 
-Before mutation:
+Before audit execution:
 
 1. read `AGENTS.md`;
 2. read `.engineering/project.yaml`;
@@ -137,7 +191,7 @@ AGENT_SOURCE_HEAD=<if available>
 
 Runtime HEAD equality is informative for correlation, not a reason to install a different candidate during this audit.
 
-If an applicable Server or Agent runtime is unavailable, mark only runtime-dependent checks `BLOCKED_RUNTIME_UNAVAILABLE` and continue the feature/CLI/document/scenario reconciliation that remains executable.
+If an applicable Server or Agent runtime is unavailable, mark only runtime-dependent checks `BLOCKED_RUNTIME_UNAVAILABLE` and continue the feature/CLI/document/operator-workflow reconciliation that remains executable.
 
 Create:
 
@@ -145,21 +199,24 @@ Create:
 e2e-reports/cli-feature-scenario-reconciliation-<UTC-RUN-ID>/
 ~~~
 
-Use mode 0700, secret-bearing files 0600, and a unique audit resource prefix.
+Use mode 0700, secret-bearing files 0600, and a unique audit run identifier. Do not use the audit identifier to create product resources.
 
-## 6. Collision / ownership gate
+## 6. Runtime non-destructive gate
 
-Only for an already-assigned runtime that a scenario will mutate:
+Runtime observation is supporting evidence, not an environment-preparation task.
 
-1. check whether another audit/test currently owns the same mutable product state;
-2. capture pre-existing state for the specific assigned runtime to be mutated;
-3. use namespaced resources wherever possible;
-4. record non-prefixed resources that guided flows may create;
-5. never delete a resource only because its name looks temporary.
+For each already-assigned runtime used by this audit:
 
-Do not scan unrelated hosts or processes to find an alternative environment.
+1. identify role/availability without discovering or repurposing hosts;
+2. execute only read-only discovery/status/help/test-explain operations whose non-mutating contract is known;
+3. do not execute mutation-bearing commands merely to prove existence, rejection, confirmation, or cleanup;
+4. do not create audit-prefixed product resources;
+5. do not alter shared product state to obtain cleaner evidence;
+6. when non-destructive behavior is uncertain, inspect help/catalog/parser/source/tests instead of running the command.
 
-When another run owns the same mutable state, mark only that step `NOT_RUN_SHARED_STATE` and continue independent checks.
+Runtime health warnings, stale installed HEAD, disconnected Agent state, pending transactions, or unrelated pre-existing resources do **not** stop the reconciliation and do not authorize repair/recovery.
+
+If another test owns a runtime, continue source/document/read-only checks and mark only conflicting runtime observations `NOT_RUN_SHARED_STATE`.
 
 ## 7. Build the feature inventory first
 
@@ -203,19 +260,20 @@ INSTALLER_OR_GENERATED_PATH=
 EXPECTED_SCENARIO=
 ~~~
 
-Expected lifecycle normally covers:
+Expected **operator workflow contract** normally covers:
 
 ~~~text
 DISCOVER
-CREATE_OR_CONFIGURE
+CREATE_OR_CONFIGURE_SYNTAX
 SHOW_OR_INSPECT
 TEST_OR_EXPLAIN
-EDIT_OR_ENABLE_DISABLE
+EDIT_OR_ENABLE_DISABLE_SYNTAX
 REFERENCES_OR_DEPENDENCIES
-DELETE_RESET_REVOKE
-RECOVER
-CLEANUP
+DELETE_RESET_REVOKE_SYNTAX
+RECOVER_GUIDANCE
 ~~~
+
+State-changing stages are verified through discoverability, grammar, role ownership, confirmation/risk metadata, dependency semantics, failure guidance, and isolated tests. They are not executed on assigned runtime state.
 
 A feature is not complete merely because one mutation command exists.
 
@@ -246,7 +304,7 @@ Also capture:
 - update recommendations;
 - role/privilege error recovery text.
 
-Every runtime command/variant gets:
+Every discovered runtime/public command or variant gets:
 
 ~~~text
 CLI_PATH=
@@ -257,7 +315,8 @@ PRODUCT_FEATURE=
 RUNTIME_ONLY=YES|NO
 DUPLICATE_OF=
 LEGACY_OR_COMPATIBILITY=YES|NO
-EXECUTABLE=YES|NO
+RUNTIME_OBSERVABLE=YES|NO
+MUTATION_PATH_AUDIT=DISCOVERY_ONLY|READ_ONLY_EXECUTED|ISOLATED_TEST_EVIDENCE
 SCENARIO_ID=
 EVIDENCE=
 ~~~
@@ -301,13 +360,13 @@ HIDDEN_EXECUTABLE_OBSOLETE_PATH_COUNT=0
 
 unless an explicit current product decision says otherwise.
 
-## 10. Feature ↔ CLI ↔ Scenario ledger
+## 10. Feature ↔ CLI ↔ Operator Workflow ledger
 
-For every feature reconcile all three dimensions.
+For every feature reconcile all three dimensions. `Scenario` here means an operator workflow contract, not a live mutation sequence.
 
-| Feature | Canonical CLI | Runtime CLI | Discovery | Real scenario | Result |
+| Feature | Canonical CLI | Runtime/read-only evidence | Discovery | Operator workflow audit | Result |
 |---|---|---|---|---|---|
-| Internet Access rule | set/show/test/unset internet-access | runtime paths | help/?/menu | create → show → explain → reset → cleanup | PASS/FAIL |
+| Internet Access rule | set/show/test/unset internet-access | read-only runtime + source/tests | help/?/menu | discover create syntax → show → explain → discover edit/reset/recovery | PASS/FAIL |
 
 Allowed dispositions:
 
@@ -362,28 +421,30 @@ Flag obsolete nouns, ambiguous selectors, two names for one current object, one 
 
 ## 12. Procedure consistency
 
-For each major capability prove:
+For each major capability prove that the operator can discover and understand this workflow contract:
 
 ~~~text
 DISCOVER
-→ CREATE / CONFIGURE
+→ CREATE / CONFIGURE SYNTAX
 → SHOW / INSPECT
 → TEST / EXPLAIN
-→ EDIT / ENABLE / DISABLE
-→ REFERENCE / DEPENDENCY FAILURE
-→ DELETE / RESET / REVOKE
-→ RECOVER
-→ CLEANUP
+→ EDIT / ENABLE / DISABLE SYNTAX
+→ REFERENCE / DEPENDENCY FAILURE GUIDANCE
+→ DELETE / RESET / REVOKE SYNTAX
+→ RECOVER GUIDANCE
 ~~~
 
-A workflow is a dead end when help says what failed but not how to continue, the required next variant is undiscoverable, or output points to legacy/internal syntax.
+Read-only stages may be exercised on an assigned runtime. State-changing stages are **not executed there**; validate them through help/`?`/menu/completion, catalog/parser/source reconciliation, active documentation, and deterministic isolated tests.
+
+A workflow is a dead end when the next required step is undiscoverable, output points to legacy/internal syntax, or a later lifecycle stage requires information earlier public surfaces never expose.
 
 Also flag:
 
-- create succeeds but no usable selector for show/delete is exposed;
-- delete requires an ID that list/show does not expose;
+- create/configure syntax exists but no usable selector for show/delete is exposed;
+- delete/revoke syntax requires an ID list/show does not expose;
 - recovery exists only in source/internal tooling;
-- “reconfigure” is shown without the exact supported CLI/menu/installer action.
+- “reconfigure” is shown without an exact supported public action;
+- a state-changing step can be understood only by actually running it on live product state.
 
 ## 13. Structure consistency
 
@@ -467,13 +528,15 @@ Credential/certificate behavior-changing subcommands are separate inventory entr
 
 ## 16. Role and privilege
 
-Run representative Server-only commands on Agent and Agent-only commands on Server.
+Run representative **read-only** Server-only commands on Agent and Agent-only commands on Server when assigned surfaces are available.
 
 Expected: correct role, no traceback, no mutation.
 
-Run selected commands without required privilege where safe.
+Run selected read-only commands without required privilege where safe.
 
 Expected: privilege/readability error is identified as such, canonical next action is given, and user-visible ERROR returns non-zero.
+
+For mutation-bearing wrong-role or privilege cases, inspect parser/catalog/error contracts and isolated tests instead of executing them on assigned runtime state.
 
 Wrong-role, unknown-command, or RC=0 for a privilege ERROR is a defect.
 
@@ -483,10 +546,16 @@ Every major empty list must visibly say none/zero configured.
 
 RC=0 with no output is a defect unless silence is explicitly defined.
 
-Mutation success must say what changed.
-Cancellation must say no change.
-Failure must be non-zero.
-`ERROR` + RC=0 is a defect.
+For read-only runtime commands, verify success/failure exit status directly.
+
+For mutation commands, verify success/cancel/failure messaging and exit-status contracts through catalog/parser/source and deterministic isolated tests. Do not create or delete live state merely to observe those messages.
+
+Required contract:
+
+- mutation success says what changed;
+- cancellation says no change;
+- failure is non-zero;
+- `ERROR` + RC=0 is a defect.
 
 ## 18. Status / version / provenance consistency
 
@@ -509,120 +578,86 @@ Formatting may differ. Meaning must not contradict.
 
 ## 19. Safety / destructive confirmation
 
-Inventory every operation that can:
-
-- delete state;
-- reset policy;
-- widen access;
-- narrow to outage/DENY ALL;
-- remove credentials;
-- remove keys/certificates;
-- restore/rollback;
-- uninstall;
-- release reservations.
+Inventory every operation that can delete/reset state, widen access, cause DENY ALL/outage, remove credentials/keys/certificates, restore/rollback, uninstall, or release reservations.
 
 For every destructive subvariant record:
 
 ~~~text
 COMMAND=
-ACTUAL_EFFECT=
+INTENDED_EFFECT=
 CATALOG_DESTRUCTIVE=
 CATALOG_RISK=
 CATALOG_CONFIRMATION=
-TTY_YES_BEHAVIOR=
-TTY_NO_BEHAVIOR=
-NON_TTY_BEHAVIOR=
-MUTATION_BEFORE_CONFIRMATION=
+DOCUMENTED_TTY_YES_CONTRACT=
+DOCUMENTED_TTY_NO_CONTRACT=
+DOCUMENTED_NON_TTY_CONTRACT=
+ISOLATED_TEST_COVERAGE=
 EXIT_STATUS_CONTRACT=
 ~~~
 
 Do not trust parent-command metadata for a destructive child variant.
 
-Required:
+**Do not execute destructive variants on assigned runtime during this audit, including "answer No" probes.** Audit confirmation behavior from catalog/parser/source plus deterministic isolated test coverage.
 
-- explicit TTY confirmation;
+Required contract:
+
+- explicit TTY confirmation where applicable;
 - default No;
 - No/cancel applies no change;
 - non-TTY fails closed unless documented automation approval exists;
 - no mutation before confirmation;
 - automation-safe exit status.
 
-## 20. Mandatory scenario catalog
+Missing isolated regression coverage for a security-sensitive/destructive contract may itself be a finding.
 
-#
+## 20. Mandatory operator workflow audit scenarios
+
+These FCS entries are **workflow-reconciliation scenarios**, not live state-changing E2E scenarios.
 
 ## FCS-001 — First Server discovery
-Enter the already-available Server CLI → help/menu/status/version → discover Server settings → verify current next actions and feature reachability.
-
-This scenario does not install or reinstall the Server.
-
-#
+Read-only help/menu/status/version → discover Server settings → verify next actions and feature reachability.
 
 ## FCS-002 — Enrollment / Managed Host
-Discover enrollment → Zero-Touch and Manual semantics → issue safely → inspect enrollment/Managed Host → revoke/remove → cleanup.
-
-#
+Discover Zero-Touch / Manual / Bulk syntax and semantics → verify list/show selectors and Managed Host inspection → audit revoke/remove syntax, confirmation, references, and recovery guidance. Do not issue/revoke enrollment.
 
 ## FCS-003 — Objects / Groups
-Network, Service, Permission: create → list/show → group → references → protected delete → dependency cleanup → delete.
-
-#
+Discover Network/Service/Permission create/edit syntax → list/show → group/reference model → protected delete/dependency contract → recovery guidance. Do not create/delete Objects or Groups.
 
 ## FCS-004 — Agent Remote Service
-Discover Agent → create → inspect endpoint/state → duplicate protection → edit/disable where supported → delete.
-
-#
+Discover Agent surface → create/edit/disable/delete syntax → inspect existing read-only state if available → verify duplicate/dependency/endpoint semantics through docs/source/tests. Do not mutate Remote Services.
 
 ## FCS-005 — Remote Access
-Dependencies → mode/rule → show → test/explain → enforcement toggle → reset → cleanup.
-
-#
+Discover dependencies → mode/rule grammar → show → read-only test/explain → discover enforcement/edit/reset syntax → verify dependency/recovery contract. Do not modify policy.
 
 ## FCS-006 — Internet Access
-Same lifecycle plus object/protocol validity and no ordered-rule semantics.
-
-#
+Same non-destructive workflow audit plus object/protocol validity, BLACKLIST/WHITELIST semantics, and absence of ordered-rule semantics. Do not modify policy.
 
 ## FCS-007 — AI Identity / Credential / Permission / AI Access
-Identity → credential lifecycle discovery → reject nonexistent Identity mutation → permissions → rule → test → log → cleanup.
-
-#
+Discover identity/credential lifecycle → Permission/AI Access grammar → read-only show/test/log → inspect rejection/recovery contracts from parser/tests. Do not create/rotate/revoke credentials or identities.
 
 ## FCS-008 — MCP TLS / Certificate / OAuth
-Topology prerequisite → TLS/certificate status/preflight → OAuth approve/deny discovery → actionable Direct→single443 recovery → destructive purge confirmation.#
+Read-only TLS/certificate status/preflight discovery → OAuth approve/deny grammar → recovery guidance → purge/renew/import/issue risk and confirmation from source/tests. Do not mutate certificate/OAuth state.
 
 ## FCS-009 — ConfigurationBundle
-Export → test → diff → changing apply with confirmation → same-state NO CHANGE → invalid bundle fail closed → cleanup.
-
-#
+Discover export/test/diff/apply grammar → run only non-mutating validation/diff when safe → audit apply/NO CHANGE/stale/invalid/fail-closed behavior through isolated tests. Do not apply a changing bundle.
 
 ## FCS-010 — Revision / Audit / Rollback
-Mutation → revision/audit → inspect/diff → rollback safety → no cross-plane divergence.
-
-#
+Read-only revision/audit/show/diff → discover rollback syntax/confirmation → verify rollback safety through isolated tests. Do not create a mutation or rollback.
 
 ## FCS-011 — Backup / Restore
-Backup → validate → restore preflight → TTY/non-TTY confirmation → no mutation on refusal.
-
-#
+Discover backup/validate/restore grammar → read-only readiness/preflight where safe → audit restore confirmation/fail-closed contract through source/tests. Do not create backups or restore state solely for this audit.
 
 ## FCS-012 — Agent lifecycle
-Pause → status → resume → synchronize → autostart discovery → diagnostics/update guidance.
-
-#
+Discover pause/resume/restart/synchronize/autostart grammar and ownership → inspect status/info/diagnostics/version → verify transitions through isolated tests. Do not change Agent lifecycle state.
 
 ## FCS-013 — Update / recovery guidance
-Product update and Relay Engine check/update distinct; every recommendation uses canonical grammar.
-
-#
+Verify Product update and Relay Engine check/update are distinct and discoverable; every recommendation uses canonical grammar. Do not perform state/network-changing update checks.
 
 ## FCS-014 — Cross-surface consistency
-Server/Agent/menu/help/status/diagnostics/version describe one current model.
+Server/Agent/menu/help/status/diagnostics/version describe one current model using read-only evidence.
 
-#
-
-## FCS-015 — Legacy / alias negative testing
-Probe retired natural guesses and source-enumerated hidden paths. Obsolete grammar must reject with canonical guidance rather than execute compatibility behavior.
+## FCS-015 — Legacy / alias negative reconciliation
+Find retired guesses from docs/catalog/source and prove they are absent from public discovery and rejected by parser/isolated tests with canonical guidance. **Do not execute source-enumerated legacy mutation paths on assigned runtime state.**
 
 ## 21. Active documentation / generated-output scan
 
@@ -668,7 +703,7 @@ Classify examples as `CANONICAL_PUBLIC`, `INSTALLER_ONLY_JUSTIFIED`, `INTERNAL_E
   findings/P1-*.txt
   findings/P2-*.txt
   findings/P3-*.txt
-  cleanup/
+  cleanup/                 # audit-owned temp/process cleanup only; no product-resource cleanup expected
   summary.txt
 ~~~
 
@@ -716,7 +751,8 @@ NEXT_ACTION_STALE_COUNT=
 DOC_EXAMPLE_NONCANONICAL_COUNT=
 ROLE_SURFACE_DRIFT_COUNT=
 STATUS_DOC_RUNTIME_MISMATCH_COUNT=
-CLEANUP_RESIDUE_COUNT=
+CLEANUP_RESIDUE_COUNT=            # audit-owned temp/process residue only
+RUNTIME_MUTATION_ATTEMPT_COUNT=
 UNRESOLVED_P0=
 UNRESOLVED_P1=
 UNRESOLVED_USER_BLOCKING_P2=
@@ -756,7 +792,8 @@ Minimum JSON contract:
     "error_with_zero_rc_count": 0,
     "scenario_blocked_count": 0,
     "scenario_dead_end_count": 0,
-    "cleanup_residue_count": 0
+    "cleanup_residue_count": 0,
+    "runtime_mutation_attempt_count": 0
   },
   "evidence_root": "<retained evidence directory>"
 }
@@ -771,22 +808,25 @@ For unreleased greenfield v2.4, every applicable gap/drift/legacy/duplicate/dead
 
 PASS requires:
 
-1. every supported feature has one actionable justified public lifecycle;
-2. every runtime public command maps to a current feature;
+1. every supported feature has one actionable justified public CLI lifecycle;
+2. every runtime/public command maps to a current feature;
 3. no unjustified duplicate mutation path;
 4. no compatibility/root-bypass/obsolete hidden executable grammar;
 5. every required lifecycle variant is publicly discoverable;
 6. no terminology/procedure/structure contradiction affecting user understanding;
-7. no scenario dead end;
-8. destructive variants fail closed correctly;
+7. no operator workflow dead end;
+8. destructive variants have coherent fail-closed confirmation/risk contracts with isolated regression evidence;
 9. ERROR exit statuses are automation-safe;
 10. empty states are explicit;
 11. status/version/provenance is coherent;
 12. active docs/generated guidance are canonical;
-13. cleanup residue is zero;
-14. unresolved P0/P1/user-blocking P2 = 0.
+13. `RUNTIME_MUTATION_ATTEMPT_COUNT=0`;
+14. audit-owned temporary process/file residue is zero;
+15. unresolved P0/P1/user-blocking P2 = 0.
 
 Anything else is FAIL or explicitly BLOCKED.
+
+A workflow is not `BLOCKED` merely because this audit refuses to execute its mutation. Mutation is intentionally out of scope; judge that workflow step from discoverability/contract/test evidence.
 
 ## 26. Failure continuation
 
@@ -802,40 +842,30 @@ Stop only when continuing creates unacceptable safety/security/environment risk.
 
 ## 27. Offboarding — mandatory
 
-Offboarding is part of the test.
+Offboarding must remain non-destructive to product state.
 
-On every mutated Server and Agent:
+Because this audit must not create product resources, there is no product-resource cleanup phase.
 
-1. enumerate audit-prefixed resources;
-2. enumerate non-prefixed resources created by guided defaults;
-3. remove in safe dependency order;
-4. remove temporary bundles/backups after evidence derivation;
-5. delete secret-bearing temporary artifacts;
-6. verify no audit-owned endpoint reservation remains.
+Before completion:
 
-Then verify no audit `drlink` process, pending update/restore transaction, test listener/service, or audit lock/pid remains.
+1. verify `RUNTIME_MUTATION_ATTEMPT_COUNT=0`;
+2. terminate only audit-owned transient CLI/PTY helper processes;
+3. remove only audit-owned temporary local files not retained as evidence;
+4. verify no audit-owned test listener/service/lock/pid remains;
+5. preserve the evidence directory;
+6. do **not** delete/reset/revoke/release/rollback/restore any pre-existing product state.
 
-Capture final state:
+Capture final read-only state only where useful for correlation.
 
-~~~text
-show status
-show managed-hosts
-show remote-services on each mutated Agent
-show remote-access
-show internet-access
-show ai-identities
-show network-objects / groups
-show service-objects / groups
-show permission-objects / groups
-system diagnostics
-~~~
+`CLEANUP_RESIDUE_COUNT` refers only to audit-owned temporary process/file residue. It never authorizes product-resource cleanup.
 
-Audit-prefix residue count must be zero.
-For any retained shared resource, preserve proof it existed before the run.
+## 28. GitHub reporting — mandatory, final only
 
-## 28. GitHub reporting — mandatory
+Do not update the active `[AI Work]` Issue while the audit is still executing merely because a finding was discovered.
 
-Update the active `[AI Work]` issue before declaring completion.
+Keep findings in the current run evidence ledger and continue all independent checks.
+
+After the audit has exhausted every executable non-destructive check, final counters are computed, and evidence is frozen, update the active `[AI Work]` Issue once with the consolidated result.
 
 Include:
 
@@ -847,12 +877,13 @@ INSTALLED_AGENT_HEAD=
 FINAL_STATUS=
 EVIDENCE_ROOT=
 CLEANUP_STATUS=
+RUNTIME_MUTATION_ATTEMPT_COUNT=
 RELEASE_BLOCKERS=
 COUNTER_SUMMARY=
 NEXT_ACTION=
 ~~~
 
-For each P0/P1/P2 include feature, CLI path/output, role/host, inconsistency, user impact, evidence, and remediation boundary.
+For each P0/P1/P2 include feature, CLI path/output or source contract, role/host if applicable, inconsistency, user impact, evidence, and remediation boundary.
 
 Never paste secrets.
 
@@ -869,40 +900,57 @@ After the audit is exhausted:
 
 ## 30. Relationship to other tests
 
-#
-
 ## CLI_EXHAUSTIVE_AUDIT
 
-This document is the canonical deep **Feature ↔ CLI ↔ Scenario** reconciliation contract.
+This document is the canonical deep **Feature ↔ CLI ↔ Operator Workflow** non-destructive reconciliation contract.
 
-`CLI_EXHAUSTIVE_AUDIT.md` may invoke this document for its structural/product-surface gate while adding broader human CLI UX/adversarial coverage.
-
-#
+`CLI_EXHAUSTIVE_AUDIT.md` may invoke it for structural/product-surface reconciliation while adding broader CLI UX/adversarial coverage.
 
 ## FULL_USER_E2E
 
 FULL_USER_E2E remains separate.
 
-Responsibility boundary:
-
 ~~~text
 CLI_FEATURE_SCENARIO_RECONCILIATION
-= audit Feature ↔ CLI ↔ operator-scenario coherence on available assigned surfaces
+= non-destructive Feature ↔ CLI ↔ operator-workflow audit
+= read-only runtime discovery + source/catalog/parser/docs + isolated deterministic tests
 
 FULL_USER_E2E / release qualification
-= provision/freeze exact candidates, install/reinstall, reboot, platform/lifecycle qualification, real traffic, final release evidence
+= live state-changing user journeys
+= create/edit/delete/apply/rollback/restore/update/restart/reboot
+= real traffic, lifecycle, install/reinstall, platform qualification
 ~~~
 
-A release workflow may require a fresh reconciliation result after a CLI/product/documentation-surface change, but it must prepare the candidate environment before invoking this audit.
+A release workflow may prepare an exact candidate runtime for correlation, but this reconciliation still does not mutate it.
 
 ## 31. Minimal operator trigger
 
-The human only needs to say:
+The human may say simply:
+
+~~~text
+GitHub에서 CLI_FEATURE_SCENARIO_RECONCILIATION 문서 찾아서 테스트 진행해
+~~~
+
+or:
 
 ~~~text
 CLI, 기능, 시나리오의 연계성을 테스트 진행
 ~~~
 
-The executor must find this document in the active repository and immediately start Section 7 feature inventory, Section 8 public CLI discovery, and the linked FCS scenarios using already-available assigned runtime surfaces.
+Resolve `datarelay-labs/datarelay-link/docs/CLI_FEATURE_SCENARIO_RECONCILIATION.md` deterministically and start immediately.
 
-Do not perform host discovery, installation, upgrade, platform qualification, CI waiting, or release-candidate preparation as part of this trigger.
+Execution order is fixed:
+
+~~~text
+FEATURE INVENTORY
+→ PUBLIC CLI DISCOVERY
+→ OPERATOR WORKFLOW RECONCILIATION
+→ POST-HOC HIDDEN/PARSER/DOC ENUMERATION
+→ COMPLETE ALL INDEPENDENT CHECKS
+→ FREEZE EVIDENCE AND COUNTERS
+→ ONE FINAL GITHUB ISSUE UPDATE
+~~~
+
+Do not turn findings into pauses. Record them and continue.
+
+Do not perform product-state mutation, host discovery, installation, upgrade, uninstall, restart, pause/resume, synchronization, rollback/restore, platform qualification, CI waiting, or release-candidate preparation as part of this trigger.

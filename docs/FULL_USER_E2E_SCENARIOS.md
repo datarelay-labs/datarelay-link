@@ -3932,7 +3932,7 @@ Release qualification validates these records with:
 python3 scripts/check-pre-release-exhaustive-gates.py --gate full-user-e2e-all
 ~~~
 
-Both FULL_USER_E2E passes and `CLI_FEATURE_SCENARIO_RECONCILIATION=PASS` are mandatory pre-release exhaustive tests. Neither substitutes for the other, and a product/CLI/documentation-surface change invalidates previously retained exact-HEAD evidence.
+Both FULL_USER_E2E passes and `CLI_FEATURE_SCENARIO_RECONCILIATION=PASS` are mandatory pre-release exhaustive tests. The reconciliation is a runtime non-destructive Feature ↔ CLI ↔ Operator Workflow audit; FULL_USER_E2E owns live state-changing journeys and real traffic. Neither substitutes for the other, and a product/CLI/documentation-surface change invalidates previously retained exact-HEAD evidence.
 
 # 18. Maintenance rule
 

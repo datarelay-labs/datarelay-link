@@ -58,6 +58,12 @@ class PreReleaseExhaustiveGateTests(unittest.TestCase):
         errors = MOD.validate_cli_feature(data, HEAD)
         self.assertTrue(any("public_alias_path_count" in item for item in errors))
 
+    def test_cli_feature_runtime_mutation_attempt_blocks(self):
+        data = cli_evidence()
+        data["counters"]["runtime_mutation_attempt_count"] = 1
+        errors = MOD.validate_cli_feature(data, HEAD)
+        self.assertTrue(any("runtime_mutation_attempt_count" in item for item in errors))
+
     def test_cli_feature_stale_head_blocks(self):
         data = cli_evidence()
         data["end_head"] = "0" * 40
