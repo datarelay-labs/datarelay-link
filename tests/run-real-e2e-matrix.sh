@@ -264,7 +264,7 @@ PY
     FAILED=$((FAILED + 1))
   fi
   ssh "${SSH_OPTS[@]}" "$SERVER_ALIAS" \
-    "sudo /usr/local/bin/drlink set server hostname '$PUBLIC_HOSTNAME' || true; sudo python3 -c \"import json; c=json.load(open('/etc/drlink/config.json')); print(c.get('public_hostname'))\"" \
+    "sudo /usr/local/bin/drlink set server public-hostname '$PUBLIC_HOSTNAME' || true; sudo python3 -c \"import json; c=json.load(open('/etc/drlink/config.json')); print(c.get('public_hostname'))\"" \
     | tee "$OUT_ROOT/fleet-hostname-before-restore.txt"
   # Mutate then restore.
   ssh "${SSH_OPTS[@]}" "$SERVER_ALIAS" 'sudo /usr/local/bin/drlink set client $(sudo python3 -c "import json; print(next(iter(json.load(open(\"/var/lib/drlink/registry.json\"))[\"clients\"])))") label fleet-mutated' || true

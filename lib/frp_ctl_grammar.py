@@ -3041,8 +3041,6 @@ def _match_unset(tokens, role, names=None):
                 tip="drlink help unset",
             )
         setting = tokens[2]
-        if setting == "hostname":
-            setting = "public-hostname"
         if setting not in settings:
             return incomplete(
                 "Unknown server setting.",

@@ -2372,8 +2372,6 @@ set server public-hostname <FQDN>
 set server bootstrap-hostname <FQDN>
 set server installer-url <URL>
 set server windows-installer-url <URL>
-set installer-url <URL>
-set windows-installer-url <URL>
 
 unset server public-hostname
 unset server bootstrap-hostname
@@ -2381,7 +2379,7 @@ unset server installer-url
 unset server windows-installer-url
 ~~~
 
-Exercise both the `set server ...` form and the public sibling installer-URL aliases where both are exposed by runtime help.
+Exercise only the canonical `set server ...` forms; standalone installer-URL aliases are not part of the v2.4 public surface.
 
 After each relevant change, regenerate or inspect:
 
@@ -3368,8 +3366,6 @@ set server public-hostname <value>
 set server bootstrap-hostname <value>
 set server installer-url <value>
 set server windows-installer-url <value>
-set installer-url <url>
-set windows-installer-url <url>
 set mcp-tls hostname <FQDN>
 set mcp-tls mode <MODE>
 set mcp-tls contact-email <EMAIL>

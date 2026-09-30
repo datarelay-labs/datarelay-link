@@ -75,6 +75,19 @@ if c.find(legacy, role="server") is not None:
 legacy_match = g.match(legacy, role="server")
 if legacy_match.get("status") == "ok":
     raise SystemExit("standalone installer-url still executes: %r" % legacy_match)
+
+server_unset = c.find(["unset", "server"], role="server")
+server_unset_values = tuple((server_unset or {}).get("args", ({},))[0].get("complete") or ())
+if "hostname" in server_unset_values:
+    raise SystemExit("hostname compatibility spelling remains discoverable: %r" % (server_unset_values,))
+
+for legacy_hostname in (
+    ["unset", "server", "hostname"],
+    ["set", "server", "hostname", "example.com"],
+):
+    legacy_hostname_match = g.match(legacy_hostname, role="server")
+    if legacy_hostname_match.get("status") == "ok":
+        raise SystemExit("legacy server hostname spelling still executes: %r" % legacy_hostname_match)
 print("ok")
 PY
 pass "SERVER_INSTALLER_URL_SINGLE_CANONICAL_PATH"

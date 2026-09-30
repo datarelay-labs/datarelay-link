@@ -290,9 +290,7 @@ def preflight_installer_url(url, *, label='Client installer'):
                     'HTTP status: 404\n\n'
                     'Fix:\n'
                     '  set server installer-url <URL>\n'
-                    '  set server windows-installer-url <URL>\n'
-                    '  set installer-url <URL>\n'
-                    '  set windows-installer-url <URL>\n\n'
+                    '  set server windows-installer-url <URL>\n\n'
                     'No enrollment ticket was created.' % (label, url)
                 )
             return
@@ -304,9 +302,7 @@ def preflight_installer_url(url, *, label='Client installer'):
                     'HTTP status: 404\n\n'
                     'Fix:\n'
                     '  set server installer-url <URL>\n'
-                    '  set server windows-installer-url <URL>\n'
-                    '  set installer-url <URL>\n'
-                    '  set windows-installer-url <URL>\n\n'
+                    '  set server windows-installer-url <URL>\n\n'
                     'No enrollment ticket was created.' % (label, url)
                 ) from None
         # Non-404 HTTP: inconclusive for destroyer semantics.
@@ -1038,11 +1034,11 @@ def print_manual(cfg, record, ttl, public_host, control_public, allocator, ca_fp
         print('Set FRP_ALLOCATOR_URL on the client, or re-run the server installer.')
     else:
         print('Set the client installer URL, then re-run this command:')
-        print('  sudo drlink set installer-url <URL>')
+        print('  sudo drlink set server installer-url <URL>')
         suggested = default_client_installer_url(cfg)
         if suggested and not _is_forbidden_public_installer_url(suggested):
             print('Example:')
-            print('  sudo drlink set installer-url %s' % suggested)
+            print('  sudo drlink set server installer-url %s' % suggested)
         if not allocator:
             print()
             print('WARNING: allocator public URL is not configured.')
@@ -1378,11 +1374,11 @@ def main(argv=None):
         if platform == 'windows':
             fail(
                 'Windows client installer URL is not configured; '
-                'set windows-installer-url <URL> before creating a Windows Zero-Touch client'
+                'set server windows-installer-url <URL> before creating a Windows Zero-Touch client'
             )
         fail(
             'client installer URL is not configured; '
-            'run: set installer-url <URL>'
+            'run: set server installer-url <URL>'
         )
     if not allocator:
         fail('allocator public URL is not configured; cannot generate a zero-touch command')

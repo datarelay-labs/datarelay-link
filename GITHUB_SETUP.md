@@ -19,17 +19,12 @@ Then configure the installed server so Zero-Touch enrollment prints the correct 
 
 The published prior stable is immutable tag `v2.3.0`. `v2.2.1` is an older published release. `v2.3.1` was not manufactured. There is no stable `v2.4.0` tag yet. Until that tag exists, candidate installs use an exact 40-character commit SHA. A future tag URL such as `v2.4.0/dist/bootstrap-server.sh` would 404 until the tag is created. Do not install from mutable `main`.
 
-Stable baseline:
-
-```bash
-sudo drlink set installer-url \
-  https://raw.githubusercontent.com/datarelay-labs/datarelay-link/v2.3.0/dist/bootstrap-client.sh
-```
+The prior stable `v2.3.0` uses its historical CLI contract; use the documentation shipped with that immutable tag when operating a v2.3.0 installation.
 
 Development candidate (replace `<40-char-sha>` with the exact commit):
 
 ```bash
-sudo drlink set installer-url \
+sudo drlink set server installer-url \
   https://raw.githubusercontent.com/datarelay-labs/datarelay-link/<40-char-sha>/dist/bootstrap-client.sh
 ```
 

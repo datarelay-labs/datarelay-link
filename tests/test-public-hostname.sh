@@ -98,9 +98,9 @@ import frp_ctl_grammar as G
 ok = G.match(['set', 'server', 'public-hostname', 'frp.example.com'], 'server')
 assert ok['status'] == 'ok' and ok['action'] == 'set_server_hostname'
 assert ok['value'] == 'frp.example.com'
-# Hidden compatibility alias still resolves.
+# Greenfield v2.4 exposes only the canonical public-hostname spelling.
 alias = G.match(['set', 'server', 'hostname', 'frp.example.com'], 'server')
-assert alias['status'] == 'ok' and alias['action'] == 'set_server_hostname'
+assert alias['status'] != 'ok'
 bad = G.match(['set', 'server', 'public-hostname', 'https://evil'], 'server')
 # Grammar accepts token; tool validates. Ensure match is still ok action.
 assert bad['status'] == 'ok'
@@ -191,7 +191,7 @@ svc = reg['clients']['aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 assert svc['remote_port'] == 6000
 print('set ok')
 PY
-pass 'set server hostname'
+pass 'set server public-hostname behavior'
 
 # Invalid hostnames rejected
 for bad in 'https://x.com' 'x.com:443' 'x.com/path' 'user@x.com' 'foo;bar' '203.0.113.10'; do
@@ -342,7 +342,7 @@ STATUS2="$(
     "$ROOT/tools/frp-server-status" 2>/dev/null || true
 )"
 echo "$STATUS2" | grep -q 'Public hostname : not configured' || fail "status after unset: $STATUS2"
-pass 'unset server hostname'
+pass 'unset server public-hostname behavior'
 
 # Installer fresh IP validation + hostname persistence helpers
 # shellcheck disable=SC1091
