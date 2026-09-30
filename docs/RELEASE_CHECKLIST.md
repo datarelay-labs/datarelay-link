@@ -294,7 +294,8 @@ CHATGPT_PLUS_ALLOW_DENY=
 
 ## 16. CLI UX and product-surface reconciliation
 
-- [ ] `CLI_PRODUCT_SURFACE_RECONCILIATION=PASS` using `CLI_EXHAUSTIVE_AUDIT.md` section 4.2; this is a separate release gate from Full User E2E.
+- [ ] `CLI_FEATURE_SCENARIO_RECONCILIATION=PASS` using `CLI_FEATURE_SCENARIO_RECONCILIATION.md`; this is a separate release gate from Full User E2E.
+- [ ] `CLI_PRODUCT_SURFACE_RECONCILIATION=PASS` is satisfied by the same exact-candidate reconciliation evidence.
 - [ ] every Product Master capability has a justified public CLI/menu/installer lifecycle mapping.
 - [ ] every installed runtime command maps to a current product capability and canonical documentation.
 - [ ] every required lifecycle variant is discoverable from public help/?/completion/menu without memorized hidden syntax.
@@ -388,7 +389,8 @@ Windows 10=
 
 ## 20. Double Full Real E2E
 
-- [ ] `CLI_PRODUCT_SURFACE_RECONCILIATION=PASS` on the same exact candidate before PASS1 starts.
+- [ ] `CLI_FEATURE_SCENARIO_RECONCILIATION=PASS` on the same exact candidate before PASS1 starts.
+- [ ] `CLI_PRODUCT_SURFACE_RECONCILIATION=PASS` on that same reconciliation evidence.
 - [ ] reconciliation evidence records zero feature/CLI gaps, runtime-only CLI, duplicate/legacy/hidden paths, discovery/dead-end gaps, installer-guidance mismatches, destructive-confirmation/metadata drift, ERROR-with-RC0 cases, state/doc/example/role mismatches, scenario blockers, and cleanup residue.
 - [ ] no CLI/product/documentation surface change occurred after the reconciliation; otherwise rerun it before PASS1/PASS2 count.
 - [ ] `FULL_REAL_E2E_PASS_1=PASS`
