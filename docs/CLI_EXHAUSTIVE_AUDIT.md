@@ -5,7 +5,7 @@
 > **Scope:** Human-operated CLI usability, syntax, discoverability, workflow closure, safety, recovery, and cross-surface consistency
 > **Target:** v2.4 and later until superseded
 > **Product authority:** `DATA_RELAY_LINK_CLI_AI_MASTER_v2.4_FINAL.md`, `CLI_REFERENCE.md`, `Data Relay Link CLI Information Architecture.md`
-> **Companion:** `AI_ASSISTED_COMMAND_EXHAUSTIVE_AUDIT.md`
+> **Companions:** `CLI_FEATURE_SCENARIO_RECONCILIATION.md`, `AI_ASSISTED_COMMAND_EXHAUSTIVE_AUDIT.md`
 
 ## 1. Execution triggers
 
@@ -146,6 +146,8 @@ COMMANDS_WITHOUT_DISPOSITION=0
 ~~~
 
 ## 4.2 Product feature ↔ CLI surface reconciliation — mandatory release gate
+
+`CLI_FEATURE_SCENARIO_RECONCILIATION.md` is the canonical executable contract for this gate. When the user explicitly requests CLI ↔ Feature ↔ Scenario reconciliation, execute that document directly. When this exhaustive CLI audit reaches this gate, execute the dedicated document against the same candidate and evidence estate; the stricter dedicated onboarding, matrix, terminology/procedure/structure checks, offboarding, counters, and PASS criteria govern.
 
 Before scenario execution, build a second ledger from the **product feature model**, not from the CLI. This prevents an internally consistent CLI from passing while product functionality is missing, duplicated, obsolete, or unreachable.
 
