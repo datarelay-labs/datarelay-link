@@ -20,6 +20,7 @@ When resuming a workstream, resolve this repository first, load only its single 
 
 ## Execution rules
 
+- **Execute useful work continuously.** Implement in coherent small/medium batches, validate locally with the cheapest relevant tests, and keep going while a safe authorized next action exists. Use fast CI for quick integration feedback when useful; reserve full qualification/release CI for a stable candidate. If waiting on an external condition, work on the highest-priority independent roadmap item instead of polling. Stop only for a real owner decision/credential, an irreconcilable blocker, a status-only request, or a completed bounded outcome.
 - Classify the change and affected domains/contracts/security/operations.
 - Apply `standards/DESIGN.md` for material design-bearing changes.
 - Apply `standards/OPERATIONS.md` for production-impacting failures and preserve evidence before mutation.
