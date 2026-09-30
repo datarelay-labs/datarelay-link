@@ -52,6 +52,7 @@ scenarios:
       - "completed product-surface reconciliation evidence is bound to the exact release HEAD"
       - "all release-blocking reconciliation counters are zero"
       - "the reconciliation is runtime non-destructive and validates operator-workflow coherence"
+      - "independent reconciliation lanes use maximum-safe parallel execution with no avoidable serial wait"
       - "this validator does not provision or execute Server/Agent lifecycle qualification"
     release_gate: true
 

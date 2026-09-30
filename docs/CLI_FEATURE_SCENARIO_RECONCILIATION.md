@@ -83,6 +83,47 @@ Stop only the specific check that cannot safely continue. Mark only that check `
 
 Update the active `[AI Work]` GitHub Issue **once, after the audit has exhausted all executable checks and final counters/summary are complete**.
 
+### Maximum-safe parallel execution — hard gate
+
+Independent checks must run in parallel whenever their prerequisites are satisfied and they do not share unsafe mutable state.
+
+Do not wait for one slow isolated suite, document scan, parser/catalog enumeration, or read-only runtime probe to finish when other independent checks are runnable.
+
+Preserve the `BLACK_BOX_FIRST` phase boundary: retain public/runtime discovery evidence before post-hoc source/parser enumeration. Within each allowed phase, start all independent lanes immediately.
+
+Parallelize at minimum when applicable:
+
+- independent read-only `drlink` help/`?`/show/status/version/diagnostic/test-explain probes;
+- FCS workflow audits that depend only on already-captured discovery and do not mutate runtime state;
+- active-document/example/terminology scans;
+- catalog, parser, hidden/alias, destructive-metadata, and role-surface enumeration after black-box evidence is frozen;
+- independent deterministic isolated test files/suites, including long-running MCP/TLS/configuration/recovery suites;
+- evidence classification and ledger construction that write to separate lane files.
+
+Serialize only when technically required by:
+
+- the black-box-before-source phase dependency;
+- a true test prerequisite;
+- a shared temporary path, port, fixture, database, lock, or other state that the isolated tests themselves do not safely namespace;
+- one interactive TTY/session that cannot be used concurrently without corrupting evidence;
+- final aggregation of counters/evidence.
+
+A blocked or slow lane does not pause other lanes. Tool/safety rejection in one lane must be recorded there while equivalent or independent lanes continue.
+
+Each parallel lane writes separate evidence first; merge only after the lane completes so concurrent writers cannot corrupt the finding ledger.
+
+Required execution evidence:
+
+~~~text
+PARALLEL_EXECUTION=MAXIMUM_SAFE
+PARALLEL_LANES_STARTED=
+MAX_SIMULTANEOUS_ACTIVE_LANES=
+SERIAL_IDLE_WITH_RUNNABLE_WORK=NO
+AVOIDABLE_SERIAL_WAIT_COUNT=0
+~~~
+
+A run that intentionally leaves independent runnable checks idle while waiting on another check is execution-incomplete and must not claim terminal PASS until those checks are exhausted.
+
 ~~~text
 AUDIT_PROFILE=CLI_FEATURE_SCENARIO_RECONCILIATION
 AUDIT_SEMANTICS=FEATURE_CLI_OPERATOR_WORKFLOW
@@ -97,6 +138,8 @@ DESTRUCTIVE_COMMAND_EXECUTION=NO
 PRODUCT_SOURCE_EDITS_DURING_AUDIT=NO
 INTERMEDIATE_GITHUB_ISSUE_UPDATE=NO
 FINAL_GITHUB_ISSUE_UPDATE=YES
+PARALLELIZE_INDEPENDENT_CHECKS=MAXIMUM_SAFE
+SERIAL_IDLE_WITH_RUNNABLE_WORK=FORBIDDEN
 RETAIN_EVIDENCE=YES
 FULL_USER_E2E_SUBSTITUTE=NO
 ENVIRONMENT_PROVISIONING=NO
@@ -753,6 +796,10 @@ ROLE_SURFACE_DRIFT_COUNT=
 STATUS_DOC_RUNTIME_MISMATCH_COUNT=
 CLEANUP_RESIDUE_COUNT=            # audit-owned temp/process residue only
 RUNTIME_MUTATION_ATTEMPT_COUNT=
+PARALLEL_LANES_STARTED=
+MAX_SIMULTANEOUS_ACTIVE_LANES=
+SERIAL_IDLE_WITH_RUNNABLE_WORK=YES|NO
+AVOIDABLE_SERIAL_WAIT_COUNT=
 UNRESOLVED_P0=
 UNRESOLVED_P1=
 UNRESOLVED_USER_BLOCKING_P2=
@@ -793,8 +840,12 @@ Minimum JSON contract:
     "scenario_blocked_count": 0,
     "scenario_dead_end_count": 0,
     "cleanup_residue_count": 0,
-    "runtime_mutation_attempt_count": 0
+    "runtime_mutation_attempt_count": 0,
+    "avoidable_serial_wait_count": 0
   },
+  "parallel_execution": "MAXIMUM_SAFE",
+  "parallel_lanes_started": 1,
+  "serial_idle_with_runnable_work": false,
   "evidence_root": "<retained evidence directory>"
 }
 ~~~
@@ -822,8 +873,9 @@ PASS requires:
 12. active docs/generated guidance are canonical;
 13. `RUNTIME_MUTATION_ATTEMPT_COUNT=0`;
 14. audit-owned temporary process/file residue is zero;
-15. unresolved P0/P1/user-blocking P2 = 0;
-16. no unresolved actionable usability/product-improvement finding remains. A P2/P3 observation may remain only when it is explicitly dispositioned as non-actionable for the current supported product scope.
+15. `PARALLEL_EXECUTION=MAXIMUM_SAFE`, `SERIAL_IDLE_WITH_RUNNABLE_WORK=NO`, and `AVOIDABLE_SERIAL_WAIT_COUNT=0`;
+16. unresolved P0/P1/user-blocking P2 = 0;
+17. no unresolved actionable usability/product-improvement finding remains. A P2/P3 observation may remain only when it is explicitly dispositioned as non-actionable for the current supported product scope.
 
 Anything else is FAIL or explicitly BLOCKED.
 
@@ -958,9 +1010,9 @@ Execution order is fixed:
 
 ~~~text
 FEATURE INVENTORY
-→ PUBLIC CLI DISCOVERY
-→ OPERATOR WORKFLOW RECONCILIATION
-→ POST-HOC HIDDEN/PARSER/DOC ENUMERATION
+→ PUBLIC CLI DISCOVERY (independent read-only probes in parallel)
+→ OPERATOR WORKFLOW RECONCILIATION (independent FCS lanes in parallel)
+→ POST-HOC HIDDEN/PARSER/DOC ENUMERATION + ISOLATED SUITES (maximum-safe parallel)
 → COMPLETE ALL INDEPENDENT CHECKS
 → FREEZE EVIDENCE AND COUNTERS
 → ONE FINAL GITHUB ISSUE UPDATE

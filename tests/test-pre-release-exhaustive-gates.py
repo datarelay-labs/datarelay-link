@@ -28,6 +28,9 @@ def cli_evidence():
         "head_unchanged": True,
         "cleanup_status": "PASS",
         "feature_inventory_total": 25,
+        "parallel_execution": "MAXIMUM_SAFE",
+        "parallel_lanes_started": 4,
+        "serial_idle_with_runnable_work": False,
         "counters": {key: 0 for key in MOD.CLI_ZERO_COUNTERS},
         "evidence_root": "e2e-reports/cli-feature-scenario-test",
     }
@@ -63,6 +66,16 @@ class PreReleaseExhaustiveGateTests(unittest.TestCase):
         data["counters"]["runtime_mutation_attempt_count"] = 1
         errors = MOD.validate_cli_feature(data, HEAD)
         self.assertTrue(any("runtime_mutation_attempt_count" in item for item in errors))
+
+    def test_cli_feature_parallel_execution_required(self):
+        data = cli_evidence()
+        data["parallel_execution"] = "SERIAL"
+        data["serial_idle_with_runnable_work"] = True
+        data["counters"]["avoidable_serial_wait_count"] = 1
+        errors = MOD.validate_cli_feature(data, HEAD)
+        self.assertTrue(any("parallel_execution" in item for item in errors))
+        self.assertTrue(any("serial_idle_with_runnable_work" in item for item in errors))
+        self.assertTrue(any("avoidable_serial_wait_count" in item for item in errors))
 
     def test_cli_feature_stale_head_blocks(self):
         data = cli_evidence()

@@ -30,6 +30,7 @@ CLI_ZERO_COUNTERS = (
     "scenario_dead_end_count",
     "cleanup_residue_count",
     "runtime_mutation_attempt_count",
+    "avoidable_serial_wait_count",
 )
 FULL_PASS_FIELDS = (
     "pre_run_clean_state",
@@ -133,6 +134,16 @@ def validate_cli_feature(data: dict, head: str) -> list[str]:
         errors.append(f"{label}: cleanup_status must be PASS")
     if int(data.get("feature_inventory_total") or 0) <= 0:
         errors.append(f"{label}: feature_inventory_total must be > 0")
+    if str(data.get("parallel_execution") or "").strip().upper() != "MAXIMUM_SAFE":
+        errors.append(f"{label}: parallel_execution must be MAXIMUM_SAFE")
+    try:
+        parallel_lanes_started = int(data.get("parallel_lanes_started") or 0)
+    except (TypeError, ValueError):
+        parallel_lanes_started = 0
+    if parallel_lanes_started <= 0:
+        errors.append(f"{label}: parallel_lanes_started must be > 0")
+    if data.get("serial_idle_with_runnable_work") is not False:
+        errors.append(f"{label}: serial_idle_with_runnable_work must be false")
     counters = data.get("counters")
     if not isinstance(counters, dict):
         errors.append(f"{label}: counters must be an object")
