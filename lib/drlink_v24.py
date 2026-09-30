@@ -5859,6 +5859,17 @@ def set_remote_service_agent(
             and existing_dest_client_id
             and dest_token.lower() != existing_dest_name.lower()
         )
+        # Editing only the Service Object or enabled state of an existing
+        # self-bound Remote Service must preserve its immutable self bind.
+        # The stored display destination is the host name, while the bind is
+        # carried by destination_client_id == local machine_id.
+        if (
+            explicit_retarget
+            and self_machine_id
+            and existing_dest_client_id == self_machine_id
+            and destination is None
+        ):
+            explicit_retarget = False
         if existing_dest_client_id and not explicit_retarget:
             destination_client_id = existing_dest_client_id
             bound_inventory = _managed_host_inventory_by_client_id(plane_db, destination_client_id)
