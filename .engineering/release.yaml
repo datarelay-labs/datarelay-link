@@ -4,8 +4,8 @@ artifact_hash_required: true
 provenance_required: true
 sbom_required: true
 setup_command: ''
-preflight_required: false
-preflight_command: ''
+preflight_required: true
+preflight_command: python3 scripts/check-pre-release-exhaustive-gates.py --gate all
 qualification_command: bash scripts/check-release-governance.sh
 artifact_hash_command: bash scripts/verify-sha256sums.sh
 provenance_command: python3 scripts/sync-release-manifest-provenance.py --check

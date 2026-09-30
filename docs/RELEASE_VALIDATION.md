@@ -502,6 +502,32 @@ Cleanup evidence must cover every mutated Server and Agent, including non-prefix
 
 Any CLI/product/documentation surface change after this PASS invalidates the gate and requires a fresh reconciliation before Full User E2E PASS1/PASS2 can count as final stable evidence.
 
+### 21.2 Mandatory pre-release exhaustive evidence hard gate
+
+Stable release qualification requires both independent exhaustive test families on the same exact HEAD:
+
+```text
+CLI_FEATURE_SCENARIO_RECONCILIATION=PASS
+FULL_USER_E2E_PASS1=PASS
+FULL_USER_E2E_PASS2=PASS
+```
+
+The release preflight and direct release-pass entry validate retained machine-readable evidence with:
+
+```bash
+python3 scripts/check-pre-release-exhaustive-gates.py --gate all
+```
+
+Default evidence paths are:
+
+```text
+e2e-reports/release-qualification/cli-feature-scenario.json
+e2e-reports/release-qualification/full-user-e2e-pass1.json
+e2e-reports/release-qualification/full-user-e2e-pass2.json
+```
+
+Missing, stale, different-HEAD, partial, blocked, non-cleanup, or counter-nonzero evidence fails closed. These gates are mandatory in addition to the automated production-realistic PASS1/PASS2 qualification; no one test substitutes for another.
+
 ## 22. CLI/PTy validation
 
 Protect:

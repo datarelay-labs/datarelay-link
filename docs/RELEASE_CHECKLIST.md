@@ -387,9 +387,12 @@ macOS Apple Silicon=
 Windows 10=
 ```
 
-## 20. Double Full Real E2E
+## 20. Mandatory pre-release exhaustive gates and Double Full Real E2E
 
 - [ ] `CLI_FEATURE_SCENARIO_RECONCILIATION=PASS` on the same exact candidate before PASS1 starts.
+- [ ] `FULL_USER_E2E PASS1=PASS` and `FULL_USER_E2E PASS2=PASS` are both retained on that same exact HEAD.
+- [ ] `python3 scripts/check-pre-release-exhaustive-gates.py --gate all` passes before automated release qualification starts.
+- [ ] `.engineering/release.yaml` has `preflight_required: true` and uses the same exhaustive-gate validator.
 - [ ] `CLI_PRODUCT_SURFACE_RECONCILIATION=PASS` on that same reconciliation evidence.
 - [ ] reconciliation evidence records zero feature/CLI gaps, runtime-only CLI, duplicate/legacy/hidden paths, discovery/dead-end gaps, installer-guidance mismatches, destructive-confirmation/metadata drift, ERROR-with-RC0 cases, state/doc/example/role mismatches, scenario blockers, and cleanup residue.
 - [ ] no CLI/product/documentation surface change occurred after the reconciliation; otherwise rerun it before PASS1/PASS2 count.

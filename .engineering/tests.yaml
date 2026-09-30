@@ -33,6 +33,40 @@ scenarios:
       - "project-native release qualification remains green"
     release_gate: true
 
+  - id: DRLINK-CLI-FEATURE-SCENARIO-RELEASE
+    name: CLI feature scenario reconciliation evidence
+    level: e2e
+    domains:
+      - "server"
+      - "client"
+      - "shared"
+    triggers:
+      - release
+    platforms:
+      - "linux"
+    command: "python3 scripts/check-pre-release-exhaustive-gates.py --gate cli-feature-scenario"
+    invariants:
+      - "CLI feature scenario reconciliation passed on the exact release HEAD"
+      - "all release-blocking reconciliation counters are zero"
+    release_gate: true
+
+  - id: DRLINK-FULL-USER-E2E-RELEASE
+    name: Full User E2E double-pass evidence
+    level: e2e
+    domains:
+      - "server"
+      - "client"
+      - "shared"
+    triggers:
+      - release
+    platforms:
+      - "linux"
+    command: "python3 scripts/check-pre-release-exhaustive-gates.py --gate full-user-e2e-all"
+    invariants:
+      - "FULL_USER_E2E PASS1 and PASS2 both passed on the exact release HEAD"
+      - "no mandatory scenario, public command, or required AI-assisted mirror is unexercised"
+    release_gate: true
+
   - id: ADOPTED-STATIC-001
     name: Git whitespace validation
     level: static

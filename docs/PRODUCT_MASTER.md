@@ -485,6 +485,8 @@ double full Real E2E on the same exact HEAD before stable
 
 The product-surface reconciliation is executed by `CLI_FEATURE_SCENARIO_RECONCILIATION.md` and is independent from Full User E2E. It inventories every supported feature from this Product Master, maps it to the canonical public CLI/menu/installer lifecycle, reconciles the installed runtime (including executable aliases/hidden grammar), and proves representative workflows are discoverable and close without legacy or duplicate paths. The unreleased/greenfield v2.4 surface requires zero unjustified compatibility aliases, duplicate mutation paths, discovery/dead-end gaps, destructive confirmation drift, privilege/exit-status ambiguity, noncanonical active-document examples, cross-surface state contradictions, and audit residue across all mutated hosts.
 
+Stable release requires **both** exhaustive test families: exact-HEAD `CLI_FEATURE_SCENARIO_RECONCILIATION=PASS` and two independent `FULL_USER_E2E` passes on that same unchanged HEAD. The Engineering System release preflight validates their retained machine-readable evidence before automated release qualification begins.
+
 Critical v2.4 CLI/AI acceptance includes:
 
 - Guided Wizard implementation and Cancel atomicity;

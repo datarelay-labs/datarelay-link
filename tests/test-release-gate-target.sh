@@ -180,5 +180,42 @@ if 'SSH target resolves to this E2E controller host' not in real:
 print("PASS SERVER_HOSTNAME_EXPLICIT_ONLY")
 print("PASS CONTROLLER_HOST_DYNAMIC_GUARD")
 PY
+python3 - "$ROOT" <<'PY'
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+release = (root / ".engineering/release.yaml").read_text(encoding="utf-8")
+tests = (root / ".engineering/tests.yaml").read_text(encoding="utf-8")
+runner = (root / "tests/run-release-qualification-pass.sh").read_text(encoding="utf-8")
+
+required_release = (
+    "preflight_required: true",
+    "preflight_command: python3 scripts/check-pre-release-exhaustive-gates.py --gate all",
+)
+for needle in required_release:
+    if needle not in release:
+        raise SystemExit("missing mandatory exhaustive release preflight: %s" % needle)
+
+for scenario in (
+    "DRLINK-CLI-FEATURE-SCENARIO-RELEASE",
+    "DRLINK-FULL-USER-E2E-RELEASE",
+):
+    if scenario not in tests:
+        raise SystemExit("missing release-gate scenario: %s" % scenario)
+
+for needle in (
+    "require_pre_release_exhaustive_gates PASS1",
+    "require_pre_release_exhaustive_gates PASS2",
+    "--gate cli-feature-scenario",
+    "--gate full-user-e2e-pass1",
+    "--gate full-user-e2e-pass2",
+):
+    if needle not in runner:
+        raise SystemExit("direct qualification bypass remains: %s" % needle)
+
+print("PASS PRE_RELEASE_EXHAUSTIVE_GATES_REQUIRED")
+PY
+
 echo "PASS RELEASE_GATE_TARGET"
 echo "RELEASE_GATE_TARGET_TEST=PASS"

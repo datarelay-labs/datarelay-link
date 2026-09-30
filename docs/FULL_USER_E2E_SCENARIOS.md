@@ -3906,6 +3906,23 @@ EVIDENCE_ROOT=
 
 If FINAL_STATUS is not PASS, list the exact failing/blocking scenario IDs.
 
+For stable release qualification, FULL_USER_E2E is a mandatory exhaustive gate and is executed twice on the same exact HEAD. Retain machine-readable records at:
+
+~~~text
+e2e-reports/release-qualification/full-user-e2e-pass1.json
+e2e-reports/release-qualification/full-user-e2e-pass2.json
+~~~
+
+Each record must use `gate=FULL_USER_E2E`, `pass_name=PASS1|PASS2`, `final_status=PASS`, exact `git_head=end_head`, and `head_unchanged=true`. It must also carry PASS for the mandatory scenario families and real-traffic/lifecycle gates, zero unexercised public commands/use cases/discoverability defects, and an `evidence_root` pointing to retained evidence.
+
+Release qualification validates these records with:
+
+~~~bash
+python3 scripts/check-pre-release-exhaustive-gates.py --gate full-user-e2e-all
+~~~
+
+Both FULL_USER_E2E passes and `CLI_FEATURE_SCENARIO_RECONCILIATION=PASS` are mandatory pre-release exhaustive tests. Neither substitutes for the other, and a product/CLI/documentation-surface change invalidates previously retained exact-HEAD evidence.
+
 # 18. Maintenance rule
 
 Whenever a public CLI command, supported platform, topology, Access Policy semantic, Remote Service lifecycle, Internet Access behavior, AI/MCP capability, enrollment workflow, backup/restore behavior, or release gate changes, this document must be reviewed in the same change.

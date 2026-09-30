@@ -700,7 +700,52 @@ CLEANUP_RESIDUE_COUNT=
 UNRESOLVED_P0=
 UNRESOLVED_P1=
 UNRESOLVED_USER_BLOCKING_P2=
-~~~For unreleased greenfield v2.4, every applicable gap/drift/legacy/duplicate/dead-end/cleanup counter must be zero for PASS.
+~~~
+
+For release qualification, also write the machine-readable exact-HEAD record:
+
+~~~text
+e2e-reports/release-qualification/cli-feature-scenario.json
+~~~
+
+Minimum JSON contract:
+
+~~~json
+{
+  "schema_version": 1,
+  "gate": "CLI_FEATURE_SCENARIO_RECONCILIATION",
+  "final_status": "PASS",
+  "repo_head": "<40-char exact HEAD>",
+  "end_head": "<same HEAD>",
+  "head_unchanged": true,
+  "cleanup_status": "PASS",
+  "feature_inventory_total": 1,
+  "counters": {
+    "feature_no_cli_gaps": 0,
+    "feature_without_discoverable_cli_count": 0,
+    "cli_without_product_feature_count": 0,
+    "runtime_only_cli_count": 0,
+    "duplicate_public_path_count": 0,
+    "public_alias_path_count": 0,
+    "legacy_compatibility_path_count": 0,
+    "root_bypass_alias_count": 0,
+    "hidden_executable_path_count": 0,
+    "discovery_gap_count": 0,
+    "installer_guidance_mismatch_count": 0,
+    "destructive_confirmation_gap_count": 0,
+    "error_with_zero_rc_count": 0,
+    "scenario_blocked_count": 0,
+    "scenario_dead_end_count": 0,
+    "cleanup_residue_count": 0
+  },
+  "evidence_root": "<retained evidence directory>"
+}
+~~~
+
+`scripts/check-pre-release-exhaustive-gates.py --gate cli-feature-scenario`
+must validate this record against the current Git HEAD before release qualification can proceed.
+
+For unreleased greenfield v2.4, every applicable gap/drift/legacy/duplicate/dead-end/cleanup counter must be zero for PASS.
 
 ## 25. PASS / FAIL
 

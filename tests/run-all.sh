@@ -208,6 +208,7 @@ python3 tests/test-single443-mgmt-origin.py
 ./tests/test-immutable-release-channel.sh
 ./tests/test-exact-sha-installer-provenance.sh
 ./tests/test-version-governance.sh
+python3 tests/test-pre-release-exhaustive-gates.py
 python3 tests/test-release-attest-binding.py
 python3 tests/test-stable-publication-projection.py
 ./tests/test-release-gate-target.sh

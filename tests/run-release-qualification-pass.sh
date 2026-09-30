@@ -15,7 +15,18 @@ STATE="$STATE_DIR/state.env"
 PASS1_OUT="$STATE_DIR/pass1"
 PASS2_OUT="$STATE_DIR/pass2"
 EVIDENCE="$STATE_DIR/qualification-evidence.json"
+PRE_RELEASE_EXHAUSTIVE_CHECK="$ROOT/scripts/check-pre-release-exhaustive-gates.py"
 mkdir -p "$STATE_DIR"
+
+require_pre_release_exhaustive_gates() {
+  local pass_name="$1"
+  python3 "$PRE_RELEASE_EXHAUSTIVE_CHECK" --root "$ROOT" --gate cli-feature-scenario
+  case "$pass_name" in
+    PASS1) python3 "$PRE_RELEASE_EXHAUSTIVE_CHECK" --root "$ROOT" --gate full-user-e2e-pass1 ;;
+    PASS2) python3 "$PRE_RELEASE_EXHAUSTIVE_CHECK" --root "$ROOT" --gate full-user-e2e-pass2 ;;
+    *) echo "ERROR: unknown pre-release exhaustive pass: $pass_name" >&2; return 1 ;;
+  esac
+}
 
 validate_summary_file() {
   local pass_name="$1" summary="$2" expected_head="$3"
@@ -67,6 +78,9 @@ PY
 }
 
 if [[ ! -f "$STATE" ]]; then
+  # Human black-box/product-surface exhaustive gates are mandatory release
+  # prerequisites and must bind to this exact HEAD before automated PASS1.
+  require_pre_release_exhaustive_gates PASS1
   # Advance to PASS2 only after PASS1 has completed successfully and terminal
   # summary evidence has been validated on the exact unchanged HEAD.
   rm -rf "$PASS1_OUT" "$PASS2_OUT"
@@ -109,6 +123,9 @@ if [[ "${NEXT:-}" != "PASS2" ]]; then
 fi
 
 # PASS2 may proceed only if retained PASS1 terminal evidence is still intact.
+# Revalidate the CLI/feature/scenario gate and require an independent
+# FULL_USER_E2E PASS2 record on the same unchanged HEAD.
+require_pre_release_exhaustive_gates PASS2
 pass1_sha="$(validate_summary_file PASS1 "$PASS1_OUT/summary.json" "$HEAD")" || exit 1
 if [[ "$pass1_sha" != "${PASS1_SUMMARY_SHA256:-}" ]]; then
   echo "ERROR: retained PASS1 summary digest changed" >&2
