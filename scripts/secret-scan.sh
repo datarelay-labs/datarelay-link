@@ -44,7 +44,7 @@ fi
 if git grep -nF 'xdr-labs/frp-auto-deploy' \
   -- ':!scripts/secret-scan.sh' ':!CHANGELOG.md' \
   ':!tests/test-user-facing-branding.sh' ':!tests/test-create-client.sh' \
-  ':!tests/test-server-install-config.sh' >/dev/null; then
+  ':!tests/test-server-install-config.sh' ':!tests/test-legacy-identity-migration.sh' >/dev/null; then
   fail "stale repository URL xdr-labs/frp-auto-deploy is tracked"
 fi
 if git grep -nF 'frp.xdr.ooo' \
