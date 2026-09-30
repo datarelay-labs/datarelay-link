@@ -1,8 +1,8 @@
-# Data Relay Link — Feature ↔ CLI ↔ Operator Workflow Reconciliation
+# Data Relay Link — Feature ↔ CLI/AI ↔ Operator Workflow Reconciliation
 
-> **Document role:** Canonical non-destructive audit contract for product capability ↔ public CLI ↔ operator workflow coherence
-> **Executor:** ChatGPT
-> **Scope:** feature/CLI/workflow completeness, uniqueness, discoverability, terminology, procedure, structure, safety contract, recovery guidance, and audit cleanup
+> **Document role:** Canonical non-destructive audit contract for product capability ↔ public CLI + AI-assisted operator support ↔ operator workflow coherence
+> **Executor:** ChatGPT acting as real operator/user personas plus a logically separate auditor
+> **Scope:** feature/CLI/AI-assisted workflow completeness, uniqueness, discoverability, terminology, procedure, structure, safety contract, recovery guidance, and audit cleanup
 > **Target:** v2.4 and later until superseded
 > **Execution boundary:** this audit is **runtime non-destructive**. It never changes Data Relay Link product state.
 > **Release relationship:** release qualification may consume a completed reconciliation result, but candidate installation/lifecycle qualification belongs to release/FULL_USER_E2E workflows
@@ -49,7 +49,14 @@ Once this document resolves, start the audit immediately. Do not stop to propose
 
 ### Meaning of Scenario
 
-`Scenario` means an **operator workflow audit scenario**: verify that a user can discover and understand the complete CLI lifecycle from one step to the next.
+`Scenario` means an **operator workflow audit scenario**: verify that a user can discover and understand the complete CLI lifecycle from one step to the next, both directly and with AI assistance.
+
+Every applicable feature/FCS must have two audit lanes:
+
+~~~text
+DIRECT_USER_LANE = operator pursues the goal through public drlink UX
+AI_ASSISTED_USER_LANE = the same operator states the same natural-language goal to AI and follows AI guidance grounded only in user-visible product output
+~~~
 
 It does **not** mean executing live state-changing operations.
 
@@ -83,13 +90,50 @@ Stop only the specific check that cannot safely continue. Mark only that check `
 
 Update the active `[AI Work]` GitHub Issue **once, after the audit has exhausted all executable checks and final counters/summary are complete**.
 
+### User-role execution and AI-assisted parity — hard gate
+
+The primary executor is always a **realistic operator/user persona**, never a shell/Python test wrapper.
+
+For each applicable Feature and FCS:
+
+1. assign an explicit role/mission such as first-time Server Operator, Agent Operator, DRLink Administrator, Incident Responder, or Platform Maintainer;
+2. run the Direct lane from the public `drlink` entry point and user-visible discovery surfaces;
+3. run an AI-assisted mirror from the same natural-language goal;
+4. give the AI only information a real operator could see: public CLI/menu/help/wizard/error/status output and the operator's goal;
+5. do not give the acting persona or AI the CLI/AI Master, scenario oracle, source code, test code, parser/catalog internals, hidden commands, or expected syntax before the lane is dispositioned;
+6. for mutation-bearing steps, ask the AI/operator to discover and explain the supported public action, expected confirmation/risk/recovery path, but do **not** execute the mutation on assigned runtime state;
+7. compare whether Direct and AI-assisted lanes reach the same canonical feature/workflow model and actionable next steps.
+
+AI may recommend a complete one-shot CLI command or ConfigurationBundle when that is the supported public product model. In this non-destructive audit, mutation-bearing output is inspected for canonical grammar/semantics and is not applied.
+
+Scripts, test harnesses, grep/parser scanners, and isolated automated suites are **auditor/supporting-evidence tools only**. They may collect evidence, enumerate static surfaces, verify contracts, or run deterministic isolated tests, but they must never:
+
+- impersonate the acting User/Operator/Admin lane;
+- preload the persona with the command sequence;
+- generate the primary FCS result by replaying a scripted command list;
+- substitute for an AI conversation with a natural-language operator goal;
+- convert automated PASS into Direct-user or AI-assisted PASS.
+
+Parallel execution means multiple independent **persona-led audit lanes** plus separate auditor/supporting-evidence lanes. It does not mean replacing user-role testing with one wrapper script that runs everything.
+
+~~~text
+USER_ROLE_EXECUTION=REQUIRED
+SCRIPTED_USER_SCENARIO_EXECUTION=FORBIDDEN
+AUTOMATED_HARNESS_ROLE=SUPPLEMENTAL_ONLY
+DIRECT_USER_FEATURE_COVERAGE=100%
+AI_ASSISTED_FEATURE_COVERAGE=100%
+DIRECT_USER_FCS_COVERAGE=100%
+AI_ASSISTED_FCS_COVERAGE=100%
+AI_INPUT=NATURAL_LANGUAGE_GOAL_PLUS_USER_VISIBLE_OUTPUT_ONLY
+~~~
+
 ### Maximum-safe parallel execution — hard gate
 
 Independent checks must run in parallel whenever their prerequisites are satisfied and they do not share unsafe mutable state.
 
 Do not wait for one slow isolated suite, document scan, parser/catalog enumeration, or read-only runtime probe to finish when other independent checks are runnable.
 
-Preserve the `BLACK_BOX_FIRST` phase boundary: retain public/runtime discovery evidence before post-hoc source/parser enumeration. Within each allowed phase, start all independent lanes immediately.
+Preserve `BLACK_BOX_FIRST` as a **per-surface evidence boundary, not a global serial barrier**. For a feature/command family, retain its Direct/AI public-discovery evidence before using source/parser internals to reconcile that same surface. Once that surface's black-box evidence is frozen, its post-hoc source/parser lane may start immediately while unrelated feature/FCS discovery continues in parallel. Source/internal findings must never be fed back into an acting persona lane as prior knowledge.
 
 Parallelize at minimum when applicable:
 
@@ -102,7 +146,7 @@ Parallelize at minimum when applicable:
 
 Serialize only when technically required by:
 
-- the black-box-before-source phase dependency;
+- the per-surface black-box-before-source evidence dependency;
 - a true test prerequisite;
 - a shared temporary path, port, fixture, database, lock, or other state that the isolated tests themselves do not safely namespace;
 - one interactive TTY/session that cannot be used concurrently without corrupting evidence;
@@ -126,8 +170,15 @@ A run that intentionally leaves independent runnable checks idle while waiting o
 
 ~~~text
 AUDIT_PROFILE=CLI_FEATURE_SCENARIO_RECONCILIATION
-AUDIT_SEMANTICS=FEATURE_CLI_OPERATOR_WORKFLOW
+AUDIT_SEMANTICS=FEATURE_CLI_AI_OPERATOR_WORKFLOW
 FIRST_ACTION=EXECUTE
+USER_ROLE_EXECUTION=REQUIRED
+SCRIPTED_USER_SCENARIO_EXECUTION=FORBIDDEN
+AUTOMATED_HARNESS_ROLE=SUPPLEMENTAL_ONLY
+DIRECT_USER_FEATURE_COVERAGE_REQUIRED=100%
+AI_ASSISTED_FEATURE_COVERAGE_REQUIRED=100%
+DIRECT_USER_FCS_COVERAGE_REQUIRED=100%
+AI_ASSISTED_FCS_COVERAGE_REQUIRED=100%
 CANONICAL_REPO=datarelay-labs/datarelay-link
 CANONICAL_PATH=docs/CLI_FEATURE_SCENARIO_RECONCILIATION.md
 PUBLIC_DRLINK_ONLY_FOR_USER_SCENARIOS=YES
@@ -301,6 +352,11 @@ CANONICAL_CLI=
 MENU_PATH=
 INSTALLER_OR_GENERATED_PATH=
 EXPECTED_SCENARIO=
+DIRECT_USER_GOAL=
+DIRECT_USER_RESULT=
+AI_ASSISTED_USER_GOAL=
+AI_ASSISTED_GUIDANCE=
+AI_ASSISTED_RESULT=
 ~~~
 
 Expected **operator workflow contract** normally covers:
@@ -318,7 +374,7 @@ RECOVER_GUIDANCE
 
 State-changing stages are verified through discoverability, grammar, role ownership, confirmation/risk metadata, dependency semantics, failure guidance, and isolated tests. They are not executed on assigned runtime state.
 
-A feature is not complete merely because one mutation command exists.
+A feature is not complete merely because one mutation command exists. It is also incomplete when the Direct public workflow is coherent but the same operator goal cannot be supported through AI assistance using only user-visible product information.
 
 ## 8. Build the runtime CLI inventory independently
 
@@ -364,11 +420,13 @@ SCENARIO_ID=
 EVIDENCE=
 ~~~
 
-## 9. Black-box first, source enumeration second
+## 9. Black-box first, source enumeration second — per surface
 
-Preserve public discovery results before source inspection.
+Preserve Direct-user and AI-assisted public discovery results for each feature/command family before inspecting source/parser internals for that same surface. This is an information-isolation rule, not a whole-audit synchronization barrier.
 
-After that, perform post-hoc catalog/parser enumeration for:
+As soon as one surface's black-box evidence is frozen, its post-hoc enumeration may run concurrently with black-box discovery of other surfaces.
+
+Then perform post-hoc catalog/parser enumeration for:
 
 - public aliases;
 - root-bypass aliases;
@@ -403,13 +461,13 @@ HIDDEN_EXECUTABLE_OBSOLETE_PATH_COUNT=0
 
 unless an explicit current product decision says otherwise.
 
-## 10. Feature ↔ CLI ↔ Operator Workflow ledger
+## 10. Feature ↔ CLI/AI ↔ Operator Workflow ledger
 
-For every feature reconcile all three dimensions. `Scenario` here means an operator workflow contract, not a live mutation sequence.
+For every feature reconcile Direct public CLI and AI-assisted operator support against the same workflow contract. `Scenario` here means an operator workflow contract, not a live mutation sequence.
 
-| Feature | Canonical CLI | Runtime/read-only evidence | Discovery | Operator workflow audit | Result |
-|---|---|---|---|---|---|
-| Internet Access rule | set/show/test/unset internet-access | read-only runtime + source/tests | help/?/menu | discover create syntax → show → explain → discover edit/reset/recovery | PASS/FAIL |
+| Feature | Canonical CLI | Runtime/read-only evidence | Direct user discovery | AI-assisted support | Operator workflow audit | Result |
+|---|---|---|---|---|---|---|
+| Internet Access rule | set/show/test/unset internet-access | read-only runtime + source/tests | help/?/menu | natural-language goal → canonical CLI guidance from visible output | discover create syntax → show → explain → discover edit/reset/recovery | PASS/FAIL |
 
 Allowed dispositions:
 
@@ -424,6 +482,11 @@ CLI_LEGACY_OR_COMPATIBILITY_PATH
 DISCOVERY_GAP
 SCENARIO_BLOCKED
 SCENARIO_DEAD_END
+AI_FEATURE_SUPPORT_GAP
+AI_SCENARIO_SUPPORT_GAP
+AI_NONCANONICAL_GUIDANCE
+AI_HIDDEN_OR_INTERNAL_SYNTAX_LEAK
+AI_ROLE_OR_CONTEXT_DRIFT
 TERMINOLOGY_DRIFT
 PROCEDURE_DRIFT
 STRUCTURE_DRIFT
@@ -653,9 +716,18 @@ Required contract:
 
 Missing isolated regression coverage for a security-sensitive/destructive contract may itself be a finding.
 
-## 20. Mandatory operator workflow audit scenarios
+## 20. Mandatory Direct + AI-assisted operator workflow audit scenarios
 
 These FCS entries are **workflow-reconciliation scenarios**, not live state-changing E2E scenarios.
+
+Every applicable FCS is executed twice as separate persona-led lanes:
+
+~~~text
+FCS-xxx-DIRECT = operator pursues the scenario through public drlink discovery
+FCS-xxx-AI = operator gives AI the same natural-language goal and only user-visible product output, then evaluates the AI guidance against the same workflow contract
+~~~
+
+The AI lane must cover the whole scenario lifecycle contract, including discovery, prerequisites, role/context, supported create/edit/delete/reset/recovery syntax, confirmation/risk semantics, and actionable next steps. Mutation-bearing guidance is inspected but not executed.
 
 ## FCS-001 — First Server discovery
 Read-only help/menu/status/version → discover Server settings → verify next actions and feature reachability.
@@ -739,8 +811,13 @@ Classify examples as `CANONICAL_PUBLIC`, `INSTALLER_ONLY_JUSTIFIED`, `INTERNAL_E
     feature-ledger.tsv
     cli-ledger.tsv
     feature-cli-scenario.tsv
+    ai-feature-parity.tsv
+    ai-fcs-parity.tsv
     hidden-alias-enumeration.tsv
     docs-example-ledger.tsv
+  personas/
+    direct-*.txt
+    ai-assisted-*.txt
   scenarios/FCS-*.txt
   findings/P0-*.txt
   findings/P1-*.txt
@@ -782,6 +859,17 @@ DOC_ONLY_PATH_COUNT=
 DISCOVERY_GAP_COUNT=
 SCENARIO_BLOCKED_COUNT=
 SCENARIO_DEAD_END_COUNT=
+DIRECT_USER_FEATURE_COVERAGE=
+AI_ASSISTED_FEATURE_COVERAGE=
+DIRECT_USER_FCS_COVERAGE=
+AI_ASSISTED_FCS_COVERAGE=
+FEATURES_WITHOUT_AI_SUPPORT_COUNT=
+FCS_WITHOUT_AI_SUPPORT_COUNT=
+AI_NONCANONICAL_GUIDANCE_COUNT=
+AI_HIDDEN_INTERNAL_SYNTAX_LEAK_COUNT=
+AI_ROLE_CONTEXT_DRIFT_COUNT=
+SCRIPTED_USER_SCENARIO_EXECUTION_COUNT=
+AUTOMATED_HARNESS_USER_SUBSTITUTION_COUNT=
 TERMINOLOGY_DRIFT_COUNT=
 PROCEDURE_DRIFT_COUNT=
 STRUCTURE_DRIFT_COUNT=
@@ -839,10 +927,24 @@ Minimum JSON contract:
     "error_with_zero_rc_count": 0,
     "scenario_blocked_count": 0,
     "scenario_dead_end_count": 0,
+    "features_without_ai_support_count": 0,
+    "fcs_without_ai_support_count": 0,
+    "ai_noncanonical_guidance_count": 0,
+    "ai_hidden_internal_syntax_leak_count": 0,
+    "ai_role_context_drift_count": 0,
+    "scripted_user_scenario_execution_count": 0,
+    "automated_harness_user_substitution_count": 0,
     "cleanup_residue_count": 0,
     "runtime_mutation_attempt_count": 0,
     "avoidable_serial_wait_count": 0
   },
+  "user_role_execution": "PASS",
+  "scripted_user_scenario_execution": false,
+  "automated_harness_role": "SUPPLEMENTAL_ONLY",
+  "direct_user_feature_coverage": 100,
+  "ai_assisted_feature_coverage": 100,
+  "direct_user_fcs_coverage": 100,
+  "ai_assisted_fcs_coverage": 100,
   "parallel_execution": "MAXIMUM_SAFE",
   "parallel_lanes_started": 1,
   "serial_idle_with_runnable_work": false,
@@ -872,10 +974,13 @@ PASS requires:
 11. status/version/provenance is coherent;
 12. active docs/generated guidance are canonical;
 13. `RUNTIME_MUTATION_ATTEMPT_COUNT=0`;
-14. audit-owned temporary process/file residue is zero;
-15. `PARALLEL_EXECUTION=MAXIMUM_SAFE`, `SERIAL_IDLE_WITH_RUNNABLE_WORK=NO`, and `AVOIDABLE_SERIAL_WAIT_COUNT=0`;
-16. unresolved P0/P1/user-blocking P2 = 0;
-17. no unresolved actionable usability/product-improvement finding remains. A P2/P3 observation may remain only when it is explicitly dispositioned as non-actionable for the current supported product scope.
+14. Direct-user Feature/FCS coverage = 100% and AI-assisted Feature/FCS coverage = 100%;
+15. `FEATURES_WITHOUT_AI_SUPPORT_COUNT=0`, `FCS_WITHOUT_AI_SUPPORT_COUNT=0`, and all AI guidance drift/leak counters are zero;
+16. `USER_ROLE_EXECUTION=PASS`, `SCRIPTED_USER_SCENARIO_EXECUTION_COUNT=0`, and `AUTOMATED_HARNESS_USER_SUBSTITUTION_COUNT=0`;
+17. audit-owned temporary process/file residue is zero;
+18. `PARALLEL_EXECUTION=MAXIMUM_SAFE`, `SERIAL_IDLE_WITH_RUNNABLE_WORK=NO`, and `AVOIDABLE_SERIAL_WAIT_COUNT=0`;
+19. unresolved P0/P1/user-blocking P2 = 0;
+20. no unresolved actionable usability/product-improvement finding remains. A P2/P3 observation may remain only when it is explicitly dispositioned as non-actionable for the current supported product scope.
 
 Anything else is FAIL or explicitly BLOCKED.
 
@@ -955,7 +1060,7 @@ After the audit is exhausted:
 
 ## CLI_EXHAUSTIVE_AUDIT
 
-This document is the canonical deep **Feature ↔ CLI ↔ Operator Workflow** non-destructive reconciliation contract.
+This document is the canonical deep **Feature ↔ CLI/AI ↔ Operator Workflow** non-destructive reconciliation contract.
 
 `CLI_EXHAUSTIVE_AUDIT.md` may invoke it for structural/product-surface reconciliation while adding broader CLI UX/adversarial coverage.
 
@@ -965,7 +1070,7 @@ FULL_USER_E2E remains separate.
 
 ~~~text
 CLI_FEATURE_SCENARIO_RECONCILIATION
-= non-destructive Feature ↔ CLI ↔ operator-workflow audit
+= non-destructive Feature ↔ CLI/AI ↔ operator-workflow audit
 = read-only runtime discovery + source/catalog/parser/docs + isolated deterministic tests
 
 FULL_USER_E2E / release qualification
@@ -1010,9 +1115,9 @@ Execution order is fixed:
 
 ~~~text
 FEATURE INVENTORY
-→ PUBLIC CLI DISCOVERY (independent read-only probes in parallel)
-→ OPERATOR WORKFLOW RECONCILIATION (independent FCS lanes in parallel)
-→ POST-HOC HIDDEN/PARSER/DOC ENUMERATION + ISOLATED SUITES (maximum-safe parallel)
+→ DIRECT USER + AI-ASSISTED PUBLIC DISCOVERY (independent persona lanes in parallel)
+→ DIRECT + AI OPERATOR WORKFLOW RECONCILIATION (independent FCS persona lanes in parallel)
+→ PER-SURFACE POST-HOC HIDDEN/PARSER/DOC ENUMERATION + ISOLATED SUITES (supporting evidence; maximum-safe parallel)
 → COMPLETE ALL INDEPENDENT CHECKS
 → FREEZE EVIDENCE AND COUNTERS
 → ONE FINAL GITHUB ISSUE UPDATE

@@ -28,6 +28,13 @@ def cli_evidence():
         "head_unchanged": True,
         "cleanup_status": "PASS",
         "feature_inventory_total": 25,
+        "user_role_execution": "PASS",
+        "scripted_user_scenario_execution": False,
+        "automated_harness_role": "SUPPLEMENTAL_ONLY",
+        "direct_user_feature_coverage": 100,
+        "ai_assisted_feature_coverage": 100,
+        "direct_user_fcs_coverage": 100,
+        "ai_assisted_fcs_coverage": 100,
         "parallel_execution": "MAXIMUM_SAFE",
         "parallel_lanes_started": 4,
         "serial_idle_with_runnable_work": False,
@@ -76,6 +83,18 @@ class PreReleaseExhaustiveGateTests(unittest.TestCase):
         self.assertTrue(any("parallel_execution" in item for item in errors))
         self.assertTrue(any("serial_idle_with_runnable_work" in item for item in errors))
         self.assertTrue(any("avoidable_serial_wait_count" in item for item in errors))
+
+    def test_cli_feature_ai_and_user_role_required(self):
+        data = cli_evidence()
+        data["user_role_execution"] = "FAIL"
+        data["scripted_user_scenario_execution"] = True
+        data["ai_assisted_feature_coverage"] = 99
+        data["counters"]["features_without_ai_support_count"] = 1
+        errors = MOD.validate_cli_feature(data, HEAD)
+        self.assertTrue(any("user_role_execution" in item for item in errors))
+        self.assertTrue(any("scripted_user_scenario_execution" in item for item in errors))
+        self.assertTrue(any("ai_assisted_feature_coverage" in item for item in errors))
+        self.assertTrue(any("features_without_ai_support_count" in item for item in errors))
 
     def test_cli_feature_stale_head_blocks(self):
         data = cli_evidence()

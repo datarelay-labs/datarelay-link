@@ -31,6 +31,13 @@ CLI_ZERO_COUNTERS = (
     "cleanup_residue_count",
     "runtime_mutation_attempt_count",
     "avoidable_serial_wait_count",
+    "features_without_ai_support_count",
+    "fcs_without_ai_support_count",
+    "ai_noncanonical_guidance_count",
+    "ai_hidden_internal_syntax_leak_count",
+    "ai_role_context_drift_count",
+    "scripted_user_scenario_execution_count",
+    "automated_harness_user_substitution_count",
 )
 FULL_PASS_FIELDS = (
     "pre_run_clean_state",
@@ -134,6 +141,24 @@ def validate_cli_feature(data: dict, head: str) -> list[str]:
         errors.append(f"{label}: cleanup_status must be PASS")
     if int(data.get("feature_inventory_total") or 0) <= 0:
         errors.append(f"{label}: feature_inventory_total must be > 0")
+    if str(data.get("user_role_execution") or "").strip().upper() != "PASS":
+        errors.append(f"{label}: user_role_execution must be PASS")
+    if data.get("scripted_user_scenario_execution") is not False:
+        errors.append(f"{label}: scripted_user_scenario_execution must be false")
+    if str(data.get("automated_harness_role") or "").strip().upper() != "SUPPLEMENTAL_ONLY":
+        errors.append(f"{label}: automated_harness_role must be SUPPLEMENTAL_ONLY")
+    for coverage_key in (
+        "direct_user_feature_coverage",
+        "ai_assisted_feature_coverage",
+        "direct_user_fcs_coverage",
+        "ai_assisted_fcs_coverage",
+    ):
+        try:
+            coverage = int(data.get(coverage_key))
+        except (TypeError, ValueError):
+            coverage = -1
+        if coverage != 100:
+            errors.append(f"{label}: {coverage_key} must be 100")
     if str(data.get("parallel_execution") or "").strip().upper() != "MAXIMUM_SAFE":
         errors.append(f"{label}: parallel_execution must be MAXIMUM_SAFE")
     try:

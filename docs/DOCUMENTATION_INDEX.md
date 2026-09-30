@@ -30,7 +30,7 @@ External copies, Project/chat attachments, exported snapshots, and same-named do
 | Security / trust boundaries | `SECURITY.md` |
 | Version governance | `VERSION_POLICY.md` |
 | Release qualification | `RELEASE_CHECKLIST.md`, `RELEASE_VALIDATION.md` |
-| Feature ↔ CLI ↔ Operator Workflow reconciliation | `CLI_FEATURE_SCENARIO_RECONCILIATION.md` |
+| Feature ↔ CLI/AI ↔ Operator Workflow reconciliation | `CLI_FEATURE_SCENARIO_RECONCILIATION.md` |
 | Exhaustive direct CLI audit | `CLI_EXHAUSTIVE_AUDIT.md` |
 | Exhaustive AI-assisted command audit | `AI_ASSISTED_COMMAND_EXHAUSTIVE_AUDIT.md` |
 | Internal control-plane/schema history | `CONTROL_PLANE_ARCHITECTURE.md` |
@@ -53,7 +53,7 @@ External copies, Project/chat attachments, exported snapshots, and same-named do
 | Trigger / audit | Canonical document |
 |---|---|
 | Full real-user E2E / `FULL_USER_E2E` | `FULL_USER_E2E_SCENARIOS.md` |
-| Feature ↔ CLI ↔ Operator Workflow reconciliation | `CLI_FEATURE_SCENARIO_RECONCILIATION.md` |
+| Feature ↔ CLI/AI ↔ Operator Workflow reconciliation | `CLI_FEATURE_SCENARIO_RECONCILIATION.md` |
 | Direct public CLI exhaustive audit | `CLI_EXHAUSTIVE_AUDIT.md` |
 | AI-assisted command / ConfigurationBundle / MCP exhaustive audit | `AI_ASSISTED_COMMAND_EXHAUSTIVE_AUDIT.md` |
 | Combined request such as `CLI 및 AI지원 명령을 전수 감사해줘` | Read and execute both audit documents against the same exact candidate |
@@ -65,7 +65,7 @@ These are executable audit contracts. An unqualified trigger starts execution im
 These documents are useful for qualification but do not redefine product semantics:
 
 - [`FULL_USER_E2E_SCENARIOS.md`](FULL_USER_E2E_SCENARIOS.md) — canonical real-user black-box product-quality contract. It resolves deterministically from `datarelay-labs/datarelay-link/docs/FULL_USER_E2E_SCENARIOS.md`, starts immediately on an unqualified trigger, exercises novice/manual-free user workflows with real traffic/lifecycle/failure/recovery/performance/concurrency, accumulates findings without pausing, and updates the active Work Packet once after the run is exhausted.
-- `CLI_FEATURE_SCENARIO_RECONCILIATION.md` — canonical non-destructive Product feature ↔ canonical CLI ↔ operator-workflow coherence audit. It deterministically resolves the Data Relay Link canonical path, uses runtime only for read-only evidence, never mutates product state, accumulates findings without pausing, and updates the active Work Packet only after the audit is fully exhausted. State-changing lifecycle qualification remains FULL_USER_E2E scope.
+- `CLI_FEATURE_SCENARIO_RECONCILIATION.md` — canonical non-destructive Product feature ↔ canonical CLI + AI-assisted support ↔ operator-workflow coherence audit. It deterministically resolves the Data Relay Link canonical path, uses runtime only for read-only evidence, never mutates product state, accumulates findings without pausing, and updates the active Work Packet only after the audit is fully exhausted. State-changing lifecycle qualification remains FULL_USER_E2E scope.
 - `CLI_EXHAUSTIVE_AUDIT.md` — trigger-driven black-box audit of public CLI syntax, usability, safety, workflow closure; it invokes the dedicated reconciliation contract when structural product-surface qualification is required
 - `AI_ASSISTED_COMMAND_EXHAUSTIVE_AUDIT.md` — trigger-driven natural-language → AI-generated command/bundle/MCP audit with real execution and self-recovery checks
 - `HUMAN_UX_ADVERSARIAL_E2E.md`

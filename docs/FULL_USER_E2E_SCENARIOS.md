@@ -166,6 +166,9 @@ For an unqualified FULL_USER_E2E request:
 ~~~text
 FULL_USER_E2E_MODE=HUMAN_BLACK_BOX
 REINTERPRET_AS_RELEASE_QUALIFICATION=FORBIDDEN
+USER_ROLE_EXECUTION=REQUIRED
+SCRIPTED_USER_SCENARIO_EXECUTION=FORBIDDEN
+WRAPPER_SCRIPT_AS_PERSONA=FORBIDDEN
 AUTOMATED_HARNESS_ROLE=SUPPLEMENTAL_ONLY
 SOURCE_INSPECTION_DURING_ACTIVE_DISCOVERY=FORBIDDEN
 HARNESS_DEBUGGING_DURING_ACTIVE_DISCOVERY=FORBIDDEN
@@ -186,11 +189,12 @@ ChatGPT must behave like real Users, Operators, and Administrators:
 
 During the active discovery run, do **not** inspect implementation source, test source, SQLite/internal state, private APIs, hidden helper commands, or harness code to explain a failure. Record the user-visible result and continue. Source/harness investigation belongs to the post-E2E engineering phase.
 
-Automated test suites may run concurrently as supporting evidence, but never as the User E2E executor:
+Automated test suites and orchestration scripts may run concurrently as supporting evidence, process management, or metric collection, but never as the User E2E executor. Parallelism means concurrent persona-led user/operator/admin lanes; a shell/Python wrapper that replays scenario commands is not a persona and cannot produce User E2E PASS evidence:
 
 ~~~text
 AUTOMATED_HARNESS_PASS != USER_E2E_PASS
 AUTOMATED_HARNESS_FAIL != PRODUCT_FAIL
+SCRIPT_OR_WRAPPER_PASS != USER_PERSONA_PASS
 ~~~
 
 If automation/tooling cannot perform one user action, classify only that dependent scenario as `BLOCKED_TOOLING` and immediately continue all independent lanes. Do not spend the full run repeatedly trying to overcome one automation limitation when other user scenarios can execute.
@@ -2852,6 +2856,8 @@ STEADY_STATE_EACH_CASE=300s
 SOAK=3600s
 ~~~
 
+The mandatory soak is a quality gate, but it is **not a serial end-of-run wait**. Start it as soon as a stable representative traffic/topology baseline exists and overlap independent persona, recovery, read-only, AI-assisted, and isolated-load lanes whenever state isolation permits. Do not leave runnable work idle merely because the soak clock is running.
+
 Preferred test data profiles:
 
 ~~~text
@@ -4005,7 +4011,7 @@ Release qualification validates these records with:
 python3 scripts/check-pre-release-exhaustive-gates.py --gate full-user-e2e-all
 ~~~
 
-Both FULL_USER_E2E passes and `CLI_FEATURE_SCENARIO_RECONCILIATION=PASS` are mandatory pre-release exhaustive tests. The reconciliation is a runtime non-destructive Feature ↔ CLI ↔ Operator Workflow audit; FULL_USER_E2E owns live state-changing journeys and real traffic. Neither substitutes for the other, and a product/CLI/documentation-surface change invalidates previously retained exact-HEAD evidence.
+Both FULL_USER_E2E passes and `CLI_FEATURE_SCENARIO_RECONCILIATION=PASS` are mandatory pre-release exhaustive tests. The reconciliation is a runtime non-destructive Feature ↔ CLI/AI ↔ Operator Workflow audit; FULL_USER_E2E owns live state-changing journeys and real traffic. Neither substitutes for the other, and a product/CLI/documentation-surface change invalidates previously retained exact-HEAD evidence.
 
 # 18. Maintenance rule
 

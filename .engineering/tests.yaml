@@ -51,7 +51,9 @@ scenarios:
     invariants:
       - "completed product-surface reconciliation evidence is bound to the exact release HEAD"
       - "all release-blocking reconciliation counters are zero"
-      - "the reconciliation is runtime non-destructive and validates operator-workflow coherence"
+      - "the reconciliation is runtime non-destructive and validates Direct + AI-assisted operator-workflow coherence"
+      - "every applicable feature and FCS has 100% Direct-user and AI-assisted persona coverage"
+      - "scripted/harness execution is supplemental evidence and never substitutes for a user-role lane"
       - "independent reconciliation lanes use maximum-safe parallel execution with no avoidable serial wait"
       - "this validator does not provision or execute Server/Agent lifecycle qualification"
     release_gate: true

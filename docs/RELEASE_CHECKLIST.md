@@ -294,7 +294,7 @@ CHATGPT_PLUS_ALLOW_DENY=
 
 ## 16. CLI UX and product-surface reconciliation
 
-- [ ] `CLI_FEATURE_SCENARIO_RECONCILIATION=PASS` using `CLI_FEATURE_SCENARIO_RECONCILIATION.md`; this is a runtime non-destructive Feature ↔ CLI ↔ Operator Workflow audit separate from Full User E2E. It uses read-only runtime evidence plus catalog/parser/docs/isolated tests and never changes assigned product state.
+- [ ] `CLI_FEATURE_SCENARIO_RECONCILIATION=PASS` using `CLI_FEATURE_SCENARIO_RECONCILIATION.md`; this is a runtime non-destructive Feature ↔ CLI/AI ↔ Operator Workflow audit separate from Full User E2E. Every applicable feature/FCS requires 100% Direct-user and AI-assisted persona coverage; scripts/harnesses are supplemental evidence only. The audit uses read-only runtime evidence plus catalog/parser/docs/isolated tests and never changes assigned product state.
 - [ ] `CLI_PRODUCT_SURFACE_RECONCILIATION=PASS` is satisfied by the same exact-candidate reconciliation evidence.
 - [ ] every Product Master capability has a justified public CLI/menu/installer lifecycle mapping.
 - [ ] every installed runtime command maps to a current product capability and canonical documentation.

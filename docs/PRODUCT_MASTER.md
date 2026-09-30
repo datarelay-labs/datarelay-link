@@ -473,7 +473,7 @@ Minimum layers:
 static/unit
 targeted regression
 CLI/PTY
-feature ↔ canonical CLI ↔ operator-workflow reconciliation via `CLI_FEATURE_SCENARIO_RECONCILIATION.md` (runtime non-destructive product-surface audit)
+feature ↔ canonical CLI/AI-assisted support ↔ operator-workflow reconciliation via `CLI_FEATURE_SCENARIO_RECONCILIATION.md` (runtime non-destructive product-surface audit)
 integration
 Agent lifecycle
 offline/reconnect
@@ -483,7 +483,7 @@ multi-host Real E2E
 double full Real E2E on the same exact HEAD before stable
 ```
 
-The product-surface reconciliation is executed by `CLI_FEATURE_SCENARIO_RECONCILIATION.md` and is independent from Full User E2E. It inventories every supported feature from this Product Master, maps it to the canonical public CLI/menu lifecycle, reconciles read-only runtime discovery with catalog/parser/docs/isolated tests, and proves representative operator workflows are discoverable and coherent without legacy or duplicate paths. The reconciliation never changes assigned runtime product state; create/edit/delete/apply/rollback/restore/update/restart/reboot and real traffic belong to Full User E2E.
+The product-surface reconciliation is executed by `CLI_FEATURE_SCENARIO_RECONCILIATION.md` and is independent from Full User E2E. It inventories every supported feature from this Product Master, maps it to the canonical public CLI/menu lifecycle and AI-assisted operator support, reconciles Direct-user/AI-assisted read-only discovery with catalog/parser/docs/isolated tests, and proves representative operator workflows are discoverable and coherent without legacy, duplicate, or AI-only/direct-only gaps. The reconciliation never changes assigned runtime product state; create/edit/delete/apply/rollback/restore/update/restart/reboot and real traffic belong to Full User E2E.
 
 `FULL_USER_E2E_SCENARIOS.md` is the complementary real-user black-box quality contract. It validates that users who do not know the product or command set in advance can discover, configure, operate, troubleshoot, recover, upgrade, stress, and use the product through supported public UX and real traffic across the claimed platforms/topologies.
 
