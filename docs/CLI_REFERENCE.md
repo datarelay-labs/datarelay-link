@@ -108,6 +108,11 @@ set enrollment zero-touch
 set enrollment manual
 set enrollment bulk
 
+set server public-hostname <FQDN>
+set server bootstrap-hostname <FQDN>
+set server installer-url <URL>
+set server windows-installer-url <URL>
+
 set managed-host-group <GROUP>
 set managed-host <HOST> group <GROUP>
 
@@ -141,7 +146,7 @@ set mcp-tls acme-environment <production|staging>
 set mcp-tls acme-directory <URL>
 ```
 
-Bare named `set` enters Guided Create/Edit. A complete one-shot form skips the Wizard.
+Bare named `set` enters Guided Create/Edit. A complete one-shot form skips the Wizard. Server settings remain action-first under `set server ...` / `unset server ...`; the guided menu places the same settings under System → Server Settings.
 
 Examples:
 
@@ -236,6 +241,11 @@ unset managed-host <HOST>
 unset managed-host <HOST> group <GROUP>
 unset managed-host-group <GROUP>
 unset enrollment <ENROLLMENT>
+
+unset server public-hostname
+unset server bootstrap-hostname
+unset server installer-url
+unset server windows-installer-url
 
 unset network-object <OBJECT>
 unset network-group <GROUP>

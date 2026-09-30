@@ -34,6 +34,25 @@ pass "README_VERSION"
 [[ -f docs/RELEASE_VALIDATION.md ]] || fail "docs/RELEASE_VALIDATION.md missing"
 pass "RELEASE_DOCS_PRESENT"
 
+for doc in docs/CLI_REFERENCE.md docs/DATA_RELAY_LINK_CLI_AI_MASTER_v2.4_FINAL.md; do
+  for cmd in \
+    'set server public-hostname <FQDN>' \
+    'set server bootstrap-hostname <FQDN>' \
+    'set server installer-url <URL>' \
+    'set server windows-installer-url <URL>' \
+    'unset server public-hostname' \
+    'unset server bootstrap-hostname' \
+    'unset server installer-url' \
+    'unset server windows-installer-url'; do
+    grep -qF "$cmd" "$doc" || fail "$doc missing canonical Server setting: $cmd"
+  done
+done
+if grep -nE '^[[:space:]]*set (installer-url|windows-installer-url)[[:space:]]' \
+  docs/CLI_REFERENCE.md docs/DATA_RELAY_LINK_CLI_AI_MASTER_v2.4_FINAL.md; then
+  fail "canonical docs advertise duplicate standalone installer URL setters"
+fi
+pass "SERVER_SETTINGS_CANONICAL_DOCS"
+
 if grep -nE "FRP_ALLOCATOR_URL=['\"]http://" README.md docs/*.md examples/*.md 2>/dev/null; then
   fail "docs recommend an http:// allocator URL"
 fi

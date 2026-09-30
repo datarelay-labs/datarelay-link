@@ -2429,6 +2429,11 @@ set enrollment zero-touch
 set enrollment manual
 set enrollment bulk
 
+set server public-hostname <FQDN>
+set server bootstrap-hostname <FQDN>
+set server installer-url <URL>
+set server windows-installer-url <URL>
+
 set managed-host-group <GROUP>
 set managed-host <HOST> group <GROUP>
 
@@ -2462,7 +2467,7 @@ set mcp-tls acme-environment <production|staging>
 set mcp-tls acme-directory <URL>
 ```
 
-Human invocation enters Guided Create/Edit unless a complete one-shot form is supplied.
+Human invocation enters Guided Create/Edit unless a complete one-shot form is supplied. Server settings remain action-first under `set server ...` / `unset server ...`; the guided placement is System → Server Settings.
 
 A **Managed Host Group** is an inventory grouping for registered Managed Hosts and is not a **Network Group**. Network Groups are policy selectors built from Network Objects. Managed Host Group membership changes do not retire a host, alter Remote Services, reallocate public ports, or mutate Network Group policy state.
 
@@ -2475,6 +2480,11 @@ unset managed-host <HOST>
 unset managed-host <HOST> group <GROUP>
 unset managed-host-group <GROUP>
 unset enrollment <ENROLLMENT>
+
+unset server public-hostname
+unset server bootstrap-hostname
+unset server installer-url
+unset server windows-installer-url
 
 unset network-object <OBJECT>
 unset network-group <GROUP>
