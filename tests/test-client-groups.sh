@@ -142,7 +142,7 @@ done
 # Interactive y deletes; services and identity stay untouched.
 python3 "$WORKDIR/pty-answer.py" 'y' "$GSET" delete seoul >"$WORKDIR/del-yes.out" 2>&1
 grep -q 'Delete Managed Host Group "seoul" from 1 Managed Host(s)? \[y/N\]' "$WORKDIR/del-yes.out"
-grep -q 'Deleted group' "$WORKDIR/del-yes.out"
+grep -q 'Deleted Managed Host Group' "$WORKDIR/del-yes.out"
 ! group_exists seoul
 python3 - "$REG" <<'PY'
 import json, sys
@@ -155,7 +155,7 @@ assert not any(g.get('name') == 'seoul' for g in state['groups'].values())
 PY
 
 # --yes deletes non-interactively.
-"$GSET" delete pilot --yes </dev/null | grep -q 'Deleted group'
+"$GSET" delete pilot --yes </dev/null | grep -q 'Deleted Managed Host Group'
 ! group_exists pilot
 
 python3 - "$REG" "$GID" <<'PY'
