@@ -457,7 +457,7 @@ Verify they do not contain raw credentials, full sensitive file contents, or unr
 
 ## 21.1 CLI product-surface reconciliation — independent release gate
 
-Before Full User E2E candidate freeze, execute the product-feature ↔ CLI reconciliation in `CLI_EXHAUSTIVE_AUDIT.md` section 4.2 against the installed exact candidate.
+Before Full User E2E candidate freeze, execute `CLI_FEATURE_SCENARIO_RECONCILIATION.md` against the installed exact candidate. `CLI_EXHAUSTIVE_AUDIT.md` may invoke the same gate, but it is not a substitute for the dedicated onboarding/offboarding contract.
 
 This gate is intentionally separate from Full User E2E. Full User E2E answers whether representative real journeys work. Product-surface reconciliation answers whether the complete supported product model has one coherent, discoverable, non-duplicated CLI surface.
 
@@ -465,6 +465,7 @@ Required evidence:
 
 ```text
 CLI_PRODUCT_SURFACE_RECONCILIATION=PASS
+CLI_FEATURE_SCENARIO_RECONCILIATION=PASS
 FEATURE_INVENTORY_TOTAL=<n>
 FEATURE_NO_CLI_GAPS=0
 FEATURE_WITHOUT_DISCOVERABLE_CLI_COUNT=0
