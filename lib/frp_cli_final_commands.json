@@ -513,8 +513,8 @@
     ],
     "roles": "server",
     "category": "Onboarding",
-    "summary": "Create a Manual Enrollment Code",
-    "detail": "Generates a Manual Enrollment Code for an interactive client install. Lifetime maximum is 30d (2592000 seconds). For Zero-Touch prefer 'set enrollment zero-touch' or 'set client'.",
+    "summary": "Create an Enrollment",
+    "detail": "Manual Enrollment Code: interactive install, maximum lifetime 30d. Zero-Touch: explicit zero-touch mode, default lifetime 1h and maximum 24h.",
     "examples": [
       "set enrollment",
       "set enrollment zero-touch",
