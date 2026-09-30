@@ -276,6 +276,12 @@ assert 'doc.get("worktree_clean_start") is not True' in text
 assert 'doc.get("worktree_clean_end") is not True' in text
 assert 'doc.get("release_target_qualified") is not True' in text
 assert 'doc.get("head_unchanged") is not True' in text
+assert 'doc.get("provenance_head")' in text
+assert 'doc.get("source_head")' in text
+assert 'release-manifest source_head' in text
+assert '"A019_RELEASE_TARGET_PREFLIGHT"' in text
+assert '"A019_SOURCE_PROVENANCE_BINDING"' in text
+assert '"A019_DISPOSABLE_TARGET_PRECHECK"' in text
 assert 'approved release target' in text
 assert 'UPGRADE_V230_TO_V240 PASS' in text
 assert 'UPGRADE_V230_TO_V240 BLOCKED' in text
