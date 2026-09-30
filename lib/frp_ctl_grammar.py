@@ -1331,7 +1331,6 @@ def context_help(tokens, role, names=None, clients=None):
                 rows.extend(
                     [
                         ("client", "Configure registered client metadata"),
-                        ("installer-url", "Configure client installer URL"),
                         ("server", "Configure server access settings"),
                     ]
                 )
@@ -1380,8 +1379,6 @@ def context_help(tokens, role, names=None, clients=None):
                     ("health-path", "HTTP health path (http only)"),
                 ]
             )
-        if tokens[1] == "installer-url":
-            return "Usage:\n  set installer-url <url>\n"
         if tokens[1] == "server":
             if len(tokens) == 2:
                 return _fmt_available(
@@ -4104,7 +4101,6 @@ def _tab_desc_map(line, role, names=None, clients=None):
         rows = {}
         if server:
             rows["client"] = "Configure registered client metadata"
-            rows["installer-url"] = "Configure client installer URL"
             rows["server"] = "Configure server access settings"
         if client:
             rows["service"] = "Configure a local service"
@@ -4114,6 +4110,8 @@ def _tab_desc_map(line, role, names=None, clients=None):
             return {
                 "public-hostname": "Optional public DNS hostname for published services",
                 "bootstrap-hostname": "Optional Zero-Touch public TLS bootstrap hostname",
+                "installer-url": "Linux/macOS client installer URL",
+                "windows-installer-url": "Windows client installer URL",
             }, "named"
     if verb == "set" and len(filled) >= 2 and filled[1] == "client":
         if len(filled) == 2:
