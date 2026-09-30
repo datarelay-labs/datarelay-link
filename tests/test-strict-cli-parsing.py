@@ -41,6 +41,32 @@ class StrictCliParsingTests(unittest.TestCase):
             "system credential approve-oauth <PENDING-ID> [AI-IDENTITY]",
         )
 
+    def test_ai_identity_credential_lifecycle_is_canonical(self):
+        canonical = [
+            ["system", "credential", "rotate", "ai-identity", "example-ai"],
+            ["system", "credential", "revoke", "ai-identity", "example-ai"],
+            ["system", "credential", "configure", "ai-identity", "example-ai", "authentication", "oauth"],
+            ["system", "credential", "approve-oauth", "pending-example"],
+            ["system", "credential", "deny-oauth", "pending-example"],
+        ]
+        for tokens in canonical:
+            cmd = self.cat.find(tokens, role="server")
+            self.assertIsNotNone(cmd, tokens)
+            self.assertFalse(cmd["hidden"], tokens)
+            self.assertIsNone(self.cat.strict_error(tokens), tokens)
+
+        self.assertIsNone(
+            self.cat.find(
+                ["system", "credential", "rotate", "ai-principal", "example-ai"],
+                role="server",
+            )
+        )
+        self.assertIsNotNone(
+            self.cat.strict_error(
+                ["system", "credential", "deny-oauth", "pending-example", "extra"]
+            )
+        )
+
     def test_guided_menu_categories(self):
         text = self.cat.render_guided_menu("server")
         self.assertIn("Managed Hosts", text)
