@@ -595,12 +595,12 @@ pin_linux_installer_urls() {
   # Untagged RC: pin exact-commit installer URLs through the canonical CLI.
   local url="https://raw.githubusercontent.com/datarelay-labs/datarelay-link/${INSTALLER_SHA:-$HEAD_SHA}/dist/bootstrap-client.sh"
   local win="https://raw.githubusercontent.com/datarelay-labs/datarelay-link/${INSTALLER_SHA:-$HEAD_SHA}/dist/bootstrap-client.ps1"
-  run_server pin-installer-urls "sudo /usr/local/bin/drlink set installer-url '$url' && sudo /usr/local/bin/drlink set windows-installer-url '$win' && sudo systemctl restart drlink-allocator && sleep 1 && systemctl is-active drlink-allocator && echo '$url' && echo '$win'"
+  run_server pin-installer-urls "sudo /usr/local/bin/drlink set server installer-url '$url' && sudo /usr/local/bin/drlink set server windows-installer-url '$win' && sudo systemctl restart drlink-allocator && sleep 1 && systemctl is-active drlink-allocator && echo '$url' && echo '$win'"
 }
 
 pin_windows_installer_url() {
   local url="https://raw.githubusercontent.com/datarelay-labs/datarelay-link/${INSTALLER_SHA:-$HEAD_SHA}/dist/bootstrap-client.ps1"
-  run_server win-pin-installer "sudo /usr/local/bin/drlink set windows-installer-url '$url' && sudo systemctl restart drlink-allocator && sleep 1 && systemctl is-active drlink-allocator && echo '$url'"
+  run_server win-pin-installer "sudo /usr/local/bin/drlink set server windows-installer-url '$url' && sudo systemctl restart drlink-allocator && sleep 1 && systemctl is-active drlink-allocator && echo '$url'"
 }
 
 scenario_windows_full() {

@@ -253,9 +253,9 @@ pass "CLIENT_STOCK_OS_TRUST_HEALTHZ"
 # Canonical operator surface is drlink (legacy /usr/local/sbin helpers are retired).
 ssh_server "sudo /usr/local/bin/drlink set server bootstrap-hostname '$BOOTSTRAP_HOST'" \
   >"$OUT_DIR/set-bootstrap.log" 2>&1 || fail "set bootstrap-hostname"
-# Canonical grammar is resource-first: set installer-url <url>
-# (not "set server installer-url", which is not a server setting).
-ssh_server "sudo /usr/local/bin/drlink set installer-url '$INSTALLER_URL'" \
+# Canonical grammar is action-first under the Server settings resource.
+# Installer URL is a Server setting and uses only the canonical set server path.
+ssh_server "sudo /usr/local/bin/drlink set server installer-url '$INSTALLER_URL'" \
   >"$OUT_DIR/set-installer.log" 2>&1 || fail "set installer url"
 ssh_server 'sudo systemctl daemon-reload; sudo systemctl restart drlink-allocator' \
   >"$OUT_DIR/restart-allocator.log" 2>&1 || fail "restart allocator after config"
