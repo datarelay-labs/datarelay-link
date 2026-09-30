@@ -415,6 +415,7 @@ CI may run earlier as advisory feedback, but it is not a blocking wait point for
 
 - [ ] `CLI_FEATURE_SCENARIO_RECONCILIATION=PASS` on the same exact candidate before PASS1 starts.
 - [ ] `FULL_USER_E2E PASS1=PASS` and `FULL_USER_E2E PASS2=PASS` are both retained on that same exact HEAD.
+- [ ] `PRODUCT_QUALITY_CLOSURE=PASS`: the reconciliation and FULL_USER_E2E have no known in-scope product defect and no unresolved actionable product/usability improvement. This closes product-quality work only; it does not mean `RELEASE_READY=YES`.
 - [ ] `python3 scripts/check-pre-release-exhaustive-gates.py --gate all` passes before automated release qualification starts.
 - [ ] `.engineering/release.yaml` has `preflight_required: true` and uses the same exhaustive-gate validator.
 - [ ] `CLI_PRODUCT_SURFACE_RECONCILIATION=PASS` on that same reconciliation evidence.
@@ -509,6 +510,7 @@ CONFIGURATION_AI_COPY_PASTE_REAL_E2E=
 ZERO_TOUCH_BOUNDED_BATCH=
 CLI_PRODUCT_SURFACE_RECONCILIATION=PASS|FAIL
 CLI_PRODUCT_SURFACE_EVIDENCE=
+PRODUCT_QUALITY_CLOSURE=PASS|FAIL
 FULL_REAL_E2E_PASS_1=
 FULL_REAL_E2E_PASS_2=
 

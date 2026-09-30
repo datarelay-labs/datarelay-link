@@ -483,9 +483,19 @@ multi-host Real E2E
 double full Real E2E on the same exact HEAD before stable
 ```
 
-The product-surface reconciliation is executed by `CLI_FEATURE_SCENARIO_RECONCILIATION.md` and is independent from Full User E2E. It inventories every supported feature from this Product Master, maps it to the canonical public CLI/menu lifecycle, reconciles read-only runtime discovery with catalog/parser/docs/isolated tests, and proves representative operator workflows are discoverable and coherent without legacy or duplicate paths. The reconciliation never changes assigned runtime product state; create/edit/delete/apply/rollback/restore/update/restart/reboot and real traffic belong to Full User E2E and release qualification.
+The product-surface reconciliation is executed by `CLI_FEATURE_SCENARIO_RECONCILIATION.md` and is independent from Full User E2E. It inventories every supported feature from this Product Master, maps it to the canonical public CLI/menu lifecycle, reconciles read-only runtime discovery with catalog/parser/docs/isolated tests, and proves representative operator workflows are discoverable and coherent without legacy or duplicate paths. The reconciliation never changes assigned runtime product state; create/edit/delete/apply/rollback/restore/update/restart/reboot and real traffic belong to Full User E2E.
 
-Stable release may require a reconciliation PASS bound to the final candidate, but the release workflow must prepare that candidate environment before invoking the reconciliation. Full User E2E remains responsible for install/reinstall, reboot, platform/lifecycle and real-traffic proof.
+`FULL_USER_E2E_SCENARIOS.md` is the complementary real-user black-box quality contract. It validates that users who do not know the product or command set in advance can discover, configure, operate, troubleshoot, recover, upgrade, stress, and use the product through supported public UX and real traffic across the claimed platforms/topologies.
+
+A clean PASS from both exhaustive quality contracts on the same supported product candidate establishes:
+
+```text
+PRODUCT_QUALITY_CLOSURE=PASS
+NO_KNOWN_IN_SCOPE_PRODUCT_DEFECTS=YES
+NO_FURTHER_PRODUCT_CHANGE_REQUIRED_BY_CURRENT_QUALITY_GATES=YES
+```
+
+This means product-quality work is closed for the covered scope; it does **not** mean the release process is complete. Stable release still follows `RELEASE_VALIDATION.md` and `RELEASE_CHECKLIST.md`, including their exact-HEAD repetition, CI, artifact, provenance, governance, attestation, approval, tagging, and publication requirements.
 
 Critical v2.4 CLI/AI acceptance includes:
 

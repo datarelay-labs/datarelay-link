@@ -822,7 +822,8 @@ PASS requires:
 12. active docs/generated guidance are canonical;
 13. `RUNTIME_MUTATION_ATTEMPT_COUNT=0`;
 14. audit-owned temporary process/file residue is zero;
-15. unresolved P0/P1/user-blocking P2 = 0.
+15. unresolved P0/P1/user-blocking P2 = 0;
+16. no unresolved actionable usability/product-improvement finding remains. A P2/P3 observation may remain only when it is explicitly dispositioned as non-actionable for the current supported product scope.
 
 Anything else is FAIL or explicitly BLOCKED.
 
@@ -922,6 +923,20 @@ FULL_USER_E2E / release qualification
 ~~~
 
 A release workflow may prepare an exact candidate runtime for correlation, but this reconciliation still does not mutate it.
+
+## Product-quality relationship
+
+This reconciliation is one of two product-quality closure tests. Together with a complete `FULL_USER_E2E=PASS` on the same supported product candidate, it means the product has no known in-scope feature/CLI/workflow defect or unresolved actionable usability improvement under these exhaustive contracts.
+
+~~~text
+CLI_FEATURE_SCENARIO_RECONCILIATION=PASS
+FULL_USER_E2E=PASS
+=> PRODUCT_QUALITY_CLOSURE=PASS
+=> NO_KNOWN_IN_SCOPE_PRODUCT_DEFECTS=YES
+=> NO_FURTHER_PRODUCT_CHANGE_REQUIRED_BY_CURRENT_QUALITY_GATES=YES
+~~~
+
+`PRODUCT_QUALITY_CLOSURE=PASS` is **not** `RELEASE_READY=YES`. Actual release qualification, CI, artifacts, provenance, governance, attestation, approvals, tagging, and publication remain governed by `RELEASE_VALIDATION.md` and `RELEASE_CHECKLIST.md`.
 
 ## 31. Minimal operator trigger
 

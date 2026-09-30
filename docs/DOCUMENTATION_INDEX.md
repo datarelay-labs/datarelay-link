@@ -52,6 +52,7 @@ External copies, Project/chat attachments, exported snapshots, and same-named do
 
 | Trigger / audit | Canonical document |
 |---|---|
+| Full real-user E2E / `FULL_USER_E2E` | `FULL_USER_E2E_SCENARIOS.md` |
 | Feature ↔ CLI ↔ Operator Workflow reconciliation | `CLI_FEATURE_SCENARIO_RECONCILIATION.md` |
 | Direct public CLI exhaustive audit | `CLI_EXHAUSTIVE_AUDIT.md` |
 | AI-assisted command / ConfigurationBundle / MCP exhaustive audit | `AI_ASSISTED_COMMAND_EXHAUSTIVE_AUDIT.md` |
@@ -63,11 +64,13 @@ These are executable audit contracts. An unqualified trigger starts execution im
 
 These documents are useful for qualification but do not redefine product semantics:
 
-- [`FULL_USER_E2E_SCENARIOS.md`](FULL_USER_E2E_SCENARIOS.md) — canonical FULL_USER_E2E matrix and v2.4 operator manual runbook
+- [`FULL_USER_E2E_SCENARIOS.md`](FULL_USER_E2E_SCENARIOS.md) — canonical real-user black-box product-quality contract. It resolves deterministically from `datarelay-labs/datarelay-link/docs/FULL_USER_E2E_SCENARIOS.md`, starts immediately on an unqualified trigger, exercises novice/manual-free user workflows with real traffic/lifecycle/failure/recovery/performance/concurrency, accumulates findings without pausing, and updates the active Work Packet once after the run is exhausted.
 - `CLI_FEATURE_SCENARIO_RECONCILIATION.md` — canonical non-destructive Product feature ↔ canonical CLI ↔ operator-workflow coherence audit. It deterministically resolves the Data Relay Link canonical path, uses runtime only for read-only evidence, never mutates product state, accumulates findings without pausing, and updates the active Work Packet only after the audit is fully exhausted. State-changing lifecycle qualification remains FULL_USER_E2E scope.
 - `CLI_EXHAUSTIVE_AUDIT.md` — trigger-driven black-box audit of public CLI syntax, usability, safety, workflow closure; it invokes the dedicated reconciliation contract when structural product-surface qualification is required
 - `AI_ASSISTED_COMMAND_EXHAUSTIVE_AUDIT.md` — trigger-driven natural-language → AI-generated command/bundle/MCP audit with real execution and self-recovery checks
 - `HUMAN_UX_ADVERSARIAL_E2E.md`
+
+Together, a clean `CLI_FEATURE_SCENARIO_RECONCILIATION=PASS` and `FULL_USER_E2E=PASS` on the same supported product candidate constitute `PRODUCT_QUALITY_CLOSURE=PASS`: no known in-scope product defect and no unresolved actionable product/usability improvement remains under the two exhaustive quality contracts. This is not a release declaration; `RELEASE_VALIDATION.md` and `RELEASE_CHECKLIST.md` still govern the existing release procedure.
 
 ## Historical / internal compatibility documents
 
@@ -130,6 +133,8 @@ The following user requests are execution shortcuts:
 CLI, 기능, 시나리오의 연계성을 테스트 진행
 CLI 기능 시나리오 연계성 테스트
 GitHub에서 CLI_FEATURE_SCENARIO_RECONCILIATION 문서 찾아서 테스트 진행해
+FULL_USER_E2E 수행해
+GitHub에서 FULL_USER_E2E 문서 찾아서 수행해
 CLI 전수 감사해줘
 CLI 명령 전수 감사해줘
 AI 지원 명령 전수 감사해줘
@@ -138,4 +143,8 @@ CLI 및 AI지원 명령을 전수 감사해줘
 CLI와 AI 지원 명령 전수 감사
 ~~~
 
-`CLI, 기능, 시나리오의 연계성을 테스트 진행`, `GitHub에서 CLI_FEATURE_SCENARIO_RECONCILIATION 문서 찾아서 테스트 진행해`, and equivalent wording execute `CLI_FEATURE_SCENARIO_RECONCILIATION.md` immediately. Resolve `datarelay-labs/datarelay-link/docs/CLI_FEATURE_SCENARIO_RECONCILIATION.md` deterministically instead of broad-searching GitHub. Immediate execution means feature inventory → public CLI discovery → operator-workflow reconciliation → post-hoc hidden/parser/doc enumeration. Runtime use is read-only; state-changing commands are audited via contract/source/isolated tests. Findings are accumulated and execution continues; GitHub Issue reporting happens once after all executable checks finish. CLI-only exhaustive requests execute `CLI_EXHAUSTIVE_AUDIT.md`. AI-only requests execute `AI_ASSISTED_COMMAND_EXHAUSTIVE_AUDIT.md`. FULL_USER_E2E remains responsible for live state-changing journeys.
+`CLI, 기능, 시나리오의 연계성을 테스트 진행`, `GitHub에서 CLI_FEATURE_SCENARIO_RECONCILIATION 문서 찾아서 테스트 진행해`, and equivalent wording execute `CLI_FEATURE_SCENARIO_RECONCILIATION.md` immediately. Resolve `datarelay-labs/datarelay-link/docs/CLI_FEATURE_SCENARIO_RECONCILIATION.md` deterministically instead of broad-searching GitHub. Immediate execution means feature inventory → public CLI discovery → operator-workflow reconciliation → post-hoc hidden/parser/doc enumeration. Runtime use is read-only; state-changing commands are audited via contract/source/isolated tests. Findings are accumulated and execution continues; GitHub Issue reporting happens once after all executable checks finish.
+
+`FULL_USER_E2E 수행해`, `GitHub에서 FULL_USER_E2E 문서 찾아서 수행해`, and equivalent wording execute `FULL_USER_E2E_SCENARIOS.md` immediately. Resolve `datarelay-labs/datarelay-link/docs/FULL_USER_E2E_SCENARIOS.md` deterministically, use the active-worktree pointer first, do not broad-search unrelated repositories, and execute the full `PRODUCT_FUNCTIONAL_PERFORMANCE_OPERATIONAL` profile unless the user explicitly narrows scope. Findings accumulate while all independent lanes continue; the active Work Packet is updated once after the run is exhausted.
+
+CLI-only exhaustive requests execute `CLI_EXHAUSTIVE_AUDIT.md`. AI-only requests execute `AI_ASSISTED_COMMAND_EXHAUSTIVE_AUDIT.md`. FULL_USER_E2E remains responsible for live state-changing journeys.

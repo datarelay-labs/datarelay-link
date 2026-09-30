@@ -37,15 +37,20 @@ For Data Relay Link work, especially any User E2E trigger:
 4. do not stop to ask which worktree is current when the pointer resolves successfully;
 5. only perform fallback discovery when the pointer is missing, broken, or lacks the requested canonical file.
 
-For `FULL_USER_E2E`, the canonical contract must resolve at:
+For `FULL_USER_E2E`, resolve the canonical contract deterministically:
 
 ~~~text
-/home/aella/datarelay-link-current/docs/FULL_USER_E2E_SCENARIOS.md
+CANONICAL_REPO=datarelay-labs/datarelay-link
+CANONICAL_PATH=docs/FULL_USER_E2E_SCENARIOS.md
+ACTIVE_WORKTREE=/home/aella/datarelay-link-current
+CANONICAL_CONTRACT=/home/aella/datarelay-link-current/docs/FULL_USER_E2E_SCENARIOS.md
 ~~~
 
-Once that file exists, execute it immediately according to its trigger rules.
+If the active-worktree path exists, use it immediately. If it is absent, resolve the same path in the same GitHub repository/branch before any broader fallback. Do not wander through unrelated repositories or similarly named files.
 
-For FULL_USER_E2E, that document's `FULL_USER_E2E_SCOPE=FUNCTIONAL_ONLY` contract takes precedence over the generic implementation/change-classification rules below. A User E2E request is not an implementation task and must not be delayed by engineering-change classification, branch archaeology, GitHub document comparison, source review, or release-qualification work unless the user explicitly requests those activities.
+Requests such as `FULL_USER_E2E 수행해`, `Full User E2E`, `GitHub에서 FULL_USER_E2E 문서 찾아서 수행해`, and equivalent wording are immediate execution triggers. Once the canonical document resolves, execute it without a plan-only pause.
+
+For FULL_USER_E2E, that document's `FULL_USER_E2E_SCOPE=PRODUCT_FUNCTIONAL_PERFORMANCE_OPERATIONAL` contract takes precedence over the generic implementation/change-classification rules below. A User E2E request is not an implementation task and must not be delayed by engineering-change classification, branch archaeology, broad GitHub search, source review, or release-qualification work unless the user explicitly requests those activities. Record findings during the run and continue all independent checks; do not update the active Work Packet for each intermediate finding. Update it once after the full executable run is exhausted and final evidence/counters are frozen.
 
 ## CLI authority hard gate
 

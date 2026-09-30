@@ -13,7 +13,7 @@ The canonical role-based real-user execution matrix is:
 
 - docs/FULL_USER_E2E_SCENARIOS.md
 
-An unqualified request for "User E2E", "사용자 E2E", "Full User E2E", or "전체 E2E" means the FULL_USER_E2E profile in that document: all mandatory User, Operator, Administrator, security/failure, and performance scenarios using the actual public drlink CLI and real traffic. ChatGPT is the executor and final auditor for that profile.
+An unqualified request for `User E2E`, `사용자 E2E`, `Full User E2E`, `전체 E2E`, `FULL_USER_E2E 수행해`, `GitHub에서 FULL_USER_E2E 문서 찾아서 수행해`, or equivalent wording means immediate execution of the `FULL_USER_E2E` profile in `datarelay-labs/datarelay-link/docs/FULL_USER_E2E_SCENARIOS.md`. Resolve the active-worktree canonical path first and avoid broad repository search. The profile is `PRODUCT_FUNCTIONAL_PERFORMANCE_OPERATIONAL`: all mandatory User, Operator, Administrator, functional failure/recovery, real-traffic, AI-assisted parity, platform/topology, concurrency, and performance scenarios. ChatGPT is the executor and final auditor for that profile.
 
 Appendix A of the same file retains the v2.4 operator manual runbook. It does not replace FULL_USER_E2E and it is not a second canonical document.
 
@@ -479,6 +479,20 @@ Use this order for v2.4 release closure:
 
 CI may run earlier as advisory feedback, but it is not a blocking wait point for independent semantic/user qualification. Only the final exact-head CI on the unchanged release candidate counts as terminal CI evidence. If final CI forces a source/product/doc change, invalidate and rerun every affected qualification pass before release.
 
+### Product-quality closure vs release qualification
+
+The two exhaustive product-quality contracts answer whether the product still needs product fixes/improvements; they do not replace release qualification.
+
+```text
+CLI_FEATURE_SCENARIO_RECONCILIATION=PASS
+FULL_USER_E2E=PASS
+=> PRODUCT_QUALITY_CLOSURE=PASS
+=> NO_KNOWN_IN_SCOPE_PRODUCT_DEFECTS=YES
+=> NO_FURTHER_PRODUCT_CHANGE_REQUIRED_BY_CURRENT_QUALITY_GATES=YES
+```
+
+`PRODUCT_QUALITY_CLOSURE=PASS` does **not** set `RELEASE_READY=YES`. Continue the existing release procedure in this document: exact-HEAD repeat/evidence rules where required, release-specific qualification, final CI/automated regressions, artifacts, SHA/SBOM/provenance, governance/attestation, protected approvals, final audit, tag, publication, and stable-channel update.
+
 ## 21.1 CLI product-surface reconciliation — independent release gate
 
 For release qualification, the release workflow may first prepare the installed exact candidate environment for correlation, then invokes `CLI_FEATURE_SCENARIO_RECONCILIATION.md`. The reconciliation itself remains runtime non-destructive: it may use read-only discovery/status/help/test-explain evidence, but it does not create/edit/delete/apply/rollback/restore/update/restart/reboot product state, provision hosts, or search for replacements. `CLI_EXHAUSTIVE_AUDIT.md` may invoke the same product-surface audit, but it is not a substitute for the dedicated reconciliation contract.
@@ -790,6 +804,7 @@ CONFIGURATION_AI_COPY_PASTE_REAL_E2E=
 ZERO_TOUCH_BOUNDED_BATCH=
 CLI_PRODUCT_SURFACE_RECONCILIATION=PASS|FAIL
 CLI_PRODUCT_SURFACE_EVIDENCE=
+PRODUCT_QUALITY_CLOSURE=PASS|FAIL
 SQLITE_MIGRATION_FRAMEWORK=
 REVISION_AUDIT=
 RUNTIME_GENERATION_CONSISTENCY=

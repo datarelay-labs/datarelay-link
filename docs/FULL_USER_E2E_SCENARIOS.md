@@ -1,7 +1,9 @@
 # Data Relay Link — User E2E Test Scenarios
 
 > **Document role:** Single canonical final User E2E execution contract — role-based real operation + exhaustive Direct CLI + exhaustive AI-assisted parity + performance/concurrency
+> **Canonical repository:** `datarelay-labs/datarelay-link`
 > **Canonical path:** `docs/FULL_USER_E2E_SCENARIOS.md` (single canonical entry point)
+> **Active worktree:** `/home/aella/datarelay-link-current`
 > **Operator runbook:** Acting personas do not consult manuals/runbooks during FULL_USER_E2E; Appendix A is historical-only and the auditor may use canonical documents only after runtime discovery to reconcile omissions.
 > **Product:** Data Relay Link
 > **Target:** v2.4 and later until superseded
@@ -32,11 +34,17 @@ When the user asks for any of the following without explicitly narrowing scope:
 - User E2E
 - 전체 E2E
 - 전수 사용자 테스트
+- FULL_USER_E2E 수행해
+- GitHub에서 FULL_USER_E2E 문서 찾아서 수행해
+- Github에서 FULL_USER_E2E 찾아서 테스트 진행해
 
 the default interpretation is:
 
 ~~~text
 PROFILE=FULL_USER_E2E
+CANONICAL_REPO=datarelay-labs/datarelay-link
+CANONICAL_PATH=docs/FULL_USER_E2E_SCENARIOS.md
+FULL_USER_E2E_SCOPE=PRODUCT_FUNCTIONAL_PERFORMANCE_OPERATIONAL
 RUN_ALL_MANDATORY_ROLE_SCENARIOS=YES
 RUN_ALL_MANDATORY_FAILURE_RECOVERY_SCENARIOS=YES
 RUN_ALL_MANDATORY_PERFORMANCE_SCENARIOS=YES
@@ -67,35 +75,32 @@ CURSOR_MAY_EXECUTE_FULL_USER_E2E=NO
 CURSOR_MAY_DECLARE_USER_E2E_PASS=NO
 ~~~
 
-Cursor may be used only after ChatGPT identifies an implementation defect or missing product behavior and the engineering workflow requires code changes.
+FULL_USER_E2E never chooses or starts an implementation agent. Product remediation is a separate post-run Engineering workflow and must use the implementer authorized by the active Work Packet and `AGENTS.md`. The repository default is ChatGPT Chat; Cursor remains disabled unless the owner explicitly reactivates it for that Work Packet.
 
 The required loop is:
 
 ~~~text
 ChatGPT
 → pin exact candidate HEAD/build
-→ execute FULL_USER_E2E
-→ collect evidence
-→ identify/classify failures
+→ execute FULL_USER_E2E to exhaustion
+→ freeze evidence and final findings
+→ update the active Work Packet once
 
-If implementation change is required:
-  ChatGPT
-  → create/update the engineering Work Packet
-  → hand the product fix to Cursor
-
-Cursor
-→ implement the requested fix
-→ run implementation-level deterministic tests
-→ report exact branch/HEAD/evidence
+If implementation change is required after the run:
+  Engineering workflow
+  → use the currently authorized implementer from AGENTS.md / Work Packet
+  → implement the bounded fix
+  → run implementation-level deterministic tests
+  → report exact branch/HEAD/evidence
 
 ChatGPT
-→ independently verify the Cursor result
+→ independently verify the implementation result
 → rerun every affected User E2E scenario
 → rerun any invalidated broader/full pass required by this document
 → make the final E2E PASS/PARTIAL/FAIL determination
 ~~~
 
-Cursor-produced test output may be supporting evidence for implementation verification, but it does **not** substitute for ChatGPT's requested User E2E execution.
+Implementation-agent output may be supporting evidence for remediation verification, but it does **not** substitute for ChatGPT's requested User E2E execution.
 
 A Cursor session must never be treated as the executor of an unqualified request such as:
 
@@ -118,6 +123,23 @@ If product code, dependencies, generated runtime artifacts, or the tested build 
 
 An unqualified User E2E trigger means **execute now**. Do not spend a turn reviewing the repository, proposing a plan, asking which hosts to use, re-auditing old evidence, or waiting for Cursor.
 
+Resolve the execution contract deterministically before any test work:
+
+~~~text
+CANONICAL_REPO=datarelay-labs/datarelay-link
+CANONICAL_PATH=docs/FULL_USER_E2E_SCENARIOS.md
+ACTIVE_WORKTREE=/home/aella/datarelay-link-current
+~~~
+
+Resolution order:
+
+1. use `/home/aella/datarelay-link-current/docs/FULL_USER_E2E_SCENARIOS.md` when present;
+2. if absent, resolve `docs/FULL_USER_E2E_SCENARIOS.md` in `datarelay-labs/datarelay-link` on the active branch/ref;
+3. only if the canonical repository/path itself changed may repository history be used to locate its successor;
+4. never begin with broad GitHub search, unrelated repository discovery, historical-worktree comparison, CI inspection, or release preparation.
+
+Once the canonical document resolves, start execution immediately.
+
 ~~~text
 FIRST_ACTION=DISCOVER_TEST_HOSTS_AND_EXECUTE
 PLAN_ONLY_RESPONSE=FORBIDDEN
@@ -131,6 +153,8 @@ TEST_RECOVERY_DURING_RUN=ALLOW
 TEST_HOST_STATE_RECOVERY_ONLY=YES
 CONTINUE_AFTER_INDEPENDENT_FAILURE=YES
 PARALLELIZE_INDEPENDENT_LANES=MAXIMUM_SAFE
+INTERMEDIATE_GITHUB_ISSUE_UPDATE=NO
+FINAL_GITHUB_ISSUE_UPDATE=YES
 ~~~
 
 ### 1.2.1 Human black-box execution lock
@@ -592,6 +616,16 @@ PUBLIC_COMMANDS_WITHOUT_USE_CASE=0
 PUBLIC_COMMANDS_WITHOUT_DIRECT_USE=0
 PUBLIC_COMMANDS_WITHOUT_AI_ASSISTED_USE=0
 USE_CASES_WITHOUT_AI_MIRROR=0
+UNDOCUMENTED_KNOWLEDGE_REQUIRED_COUNT=0
+WORKFLOW_DEAD_END_COUNT=0
+NON_ACTIONABLE_ERROR_COUNT=0
+INVALID_OR_STALE_NEXT_ACTION_COUNT=0
+ROLE_CONTEXT_CONFUSION_COUNT=0
+AMBIGUOUS_TERMINOLOGY_COUNT=0
+MISLEADING_SUCCESS_OR_STATE_COUNT=0
+MANUAL_REQUIRED_FOR_NORMAL_WORKFLOW_COUNT=0
+UNRESOLVED_PRODUCT_DEFECTS=0
+UNRESOLVED_ACTIONABLE_USABILITY_FINDINGS=0
 CLEANUP_DISPOSITION_COMPLETE=YES
 PROCESS_CLEANUP=PASS
 ~~~
@@ -3911,11 +3945,50 @@ POST_STRESS_FUNCTIONAL_RECHECK=PASS|FAIL
 UNRESOLVED_P0=
 UNRESOLVED_P1=
 UNRESOLVED_P2=
+UNDOCUMENTED_KNOWLEDGE_REQUIRED_COUNT=
+WORKFLOW_DEAD_END_COUNT=
+NON_ACTIONABLE_ERROR_COUNT=
+INVALID_OR_STALE_NEXT_ACTION_COUNT=
+ROLE_CONTEXT_CONFUSION_COUNT=
+AMBIGUOUS_TERMINOLOGY_COUNT=
+MISLEADING_SUCCESS_OR_STATE_COUNT=
+MANUAL_REQUIRED_FOR_NORMAL_WORKFLOW_COUNT=
+UNRESOLVED_ACTIONABLE_USABILITY_FINDINGS=
+UNRESOLVED_PRODUCT_DEFECTS=
+NO_KNOWN_IN_SCOPE_PRODUCT_DEFECTS=YES|NO
+NO_FURTHER_PRODUCT_CHANGE_REQUIRED_BY_CURRENT_QUALITY_GATES=YES|NO
 BLOCKERS=
 EVIDENCE_ROOT=
 ~~~
 
 If FINAL_STATUS is not PASS, list the exact failing/blocking scenario IDs.
+
+A clean `FULL_USER_E2E=PASS` also requires no unresolved product defect or actionable usability improvement discovered by the suite. Cosmetic/non-actionable observations may remain only when explicitly dispositioned as non-actionable for the current supported product scope.
+
+### 17.1 GitHub reporting — final only
+
+Do not update the active `[AI Work]` Issue for each intermediate finding. Keep findings in the current RUN_ID evidence while continuing every independent scenario.
+
+After all executable scenarios, command/use-case/AI-mirror coverage, performance/concurrency lanes, recovery checks, and cleanup are exhausted and the final report is frozen, update the active `[AI Work]` Issue once with the consolidated result, evidence root, counters, blockers, and next remediation action if any.
+
+~~~text
+INTERMEDIATE_GITHUB_ISSUE_UPDATE=NO
+FINAL_GITHUB_ISSUE_UPDATE=YES
+~~~
+
+### 17.2 Product-quality closure relationship
+
+FULL_USER_E2E is one of two product-quality closure tests. When the same supported product candidate also has `CLI_FEATURE_SCENARIO_RECONCILIATION=PASS`, the combined result means there is no known in-scope product defect and no unresolved actionable product/usability improvement under the two exhaustive quality contracts.
+
+~~~text
+CLI_FEATURE_SCENARIO_RECONCILIATION=PASS
+FULL_USER_E2E=PASS
+=> PRODUCT_QUALITY_CLOSURE=PASS
+=> NO_KNOWN_IN_SCOPE_PRODUCT_DEFECTS=YES
+=> NO_FURTHER_PRODUCT_CHANGE_REQUIRED_BY_CURRENT_QUALITY_GATES=YES
+~~~
+
+This is a **product-quality closure**, not a release declaration. `PRODUCT_QUALITY_CLOSURE=PASS` does not mean `RELEASE_READY=YES` and does not replace any existing release procedure.
 
 For stable release qualification, FULL_USER_E2E is a mandatory exhaustive gate and is executed twice on the same exact HEAD. Retain machine-readable records at:
 
@@ -3998,6 +4071,8 @@ If an external prerequisite cannot be discovered or safely satisfied automatical
 The canonical file name is deliberately stable. On `dev-drlink`, the machine-level active-worktree pointer is also stable:
 
 ~~~text
+CANONICAL_REPO=datarelay-labs/datarelay-link
+CANONICAL_PATH=docs/FULL_USER_E2E_SCENARIOS.md
 ACTIVE_WORKTREE_POINTER=/home/aella/datarelay-link-current
 CANONICAL_CONTRACT=/home/aella/datarelay-link-current/docs/FULL_USER_E2E_SCENARIOS.md
 ~~~
@@ -4016,13 +4091,15 @@ User E2E
 전체 E2E
 전수 사용자 테스트
 full user e2e 수행해
+GitHub에서 FULL_USER_E2E 문서 찾아서 수행해
+Github에서 FULL_USER_E2E 찾아서 테스트 진행해
 ~~~
 
 On a trigger, the minimum startup sequence is:
 
 ~~~text
-1. Resolve `/home/aella/datarelay-link-current` and immediately use that directory as the active Data Relay Link worktree. If it contains `AGENTS.md`, `.engineering/project.yaml`, and `docs/FULL_USER_E2E_SCENARIOS.md`, record `WORKTREE_RESOLUTION=PASS` and continue. Do not inspect the initial cwd's branch, compare historical worktrees, fetch GitHub, or compare a GitHub copy of this document merely to decide where to start.
-2. Open `/home/aella/datarelay-link-current/docs/FULL_USER_E2E_SCENARIOS.md` as the execution contract; all embedded command examples and section 14 are auditor expectations only and are not used as the acting user's memorized command script.
+1. Resolve `/home/aella/datarelay-link-current` and immediately use that directory as the active Data Relay Link worktree when it contains `AGENTS.md`, `.engineering/project.yaml`, and `docs/FULL_USER_E2E_SCENARIOS.md`; record `WORKTREE_RESOLUTION=PASS` and continue. Do not inspect the initial cwd's branch or compare historical worktrees merely to decide where to start. If the exact local canonical file is absent, resolve `datarelay-labs/datarelay-link/docs/FULL_USER_E2E_SCENARIOS.md` on the active branch/ref before any broader fallback; do not perform broad GitHub search or unrelated repository discovery.
+2. Open the resolved canonical `docs/FULL_USER_E2E_SCENARIOS.md` as the execution contract; all embedded command examples and section 14 are auditor expectations only and are not used as the acting user's memorized command script.
 3. Capture current candidate/build identity without code review. The active worktree's test-contract HEAD and the installed candidate/build identity may differ and must be recorded separately; that difference is not a reason to search for another worktree.
 4. Read the development host's ~/.ssh/config and any untracked local run inventory; resolve SSH routes per section 5.1 without using lab literals from this tracked contract.
 5. Probe configured hosts in parallel.
@@ -4039,7 +4116,8 @@ On a trigger, the minimum startup sequence is:
 16. If one lane is blocked by tooling/environment/management-path or fails a functional prerequisite, record only that lane as BLOCKED_TOOLING/BLOCKED_ENVIRONMENT/BLOCKED_MANAGEMENT_PATH/FAIL_PRECONDITION as applicable and continue every independent lane immediately.
 17. Do not inspect product source, test source, internal DB/state, or harness implementation during active discovery.
 18. Run mixed function-under-load, policy-mutation, restart/reconnect, outage, race and all-host scenarios continuously; execute P-024 collision rows while representative load is active, then execute P-023 maximum-topology mixed stress with multiple load processes/generators on the existing test hosts where available and verify post-saturation recovery without redundant saturation against already-failed functional paths.
-19. Finish command/use-case/AI-mirror/repetition/mistake/function-under-load disposition, process-registry cleanup and reporting. Do not modify product code, rebuild the candidate, or start Cursor as part of this trigger. Any implementation/harness diagnosis is a separate post-run engineering action.
+19. Finish command/use-case/AI-mirror/repetition/mistake/function-under-load disposition, process-registry cleanup and final reporting. Do not modify product code, rebuild the candidate, or start Cursor as part of this trigger. Any implementation/harness diagnosis is a separate post-run engineering action.
+20. After the full executable run is exhausted and evidence/counters are frozen, update the active `[AI Work]` Issue once with the consolidated result. Do not perform intermediate per-finding Issue updates.
 ~~~
 
 No additional planning document, old audit document, historical evidence review, Cursor run, or human host-selection step is a prerequisite.
