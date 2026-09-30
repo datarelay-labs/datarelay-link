@@ -380,7 +380,7 @@ run_ctl() {
   export FRP_CLIENT_TEST_ROOT="$tree"
   export FRP_DEPLOY_TEST_ROOT="$tree"
   set +e
-  "$CTL" doctor "$@" >"$out" 2>"${out}.err"
+  "$CTL" system diagnostics "$@" >"$out" 2>"${out}.err"
   local rc=$?
   set -e
   return "$rc"
@@ -866,7 +866,7 @@ cp -a "$SRV" "$RST"
   export PATH="$MOCK:$PATH"
   export FRP_CTL_TEST_ROOT="$RST"
   export FRP_DOCTOR_SKIP_NETWORK=1
-  "$CTL" doctor --json >"$WORKDIR/restart.json" 2>"$WORKDIR/restart.err" || true
+  "$CTL" system diagnostics --json >"$WORKDIR/restart.json" 2>"$WORKDIR/restart.err" || true
 )
 if awk '{print $1}' "$FRP_DOCTOR_SYSTEMCTL_LOG" | grep -qxE 'start|stop|restart|enable|disable|daemon-reload'; then
   cat "$FRP_DOCTOR_SYSTEMCTL_LOG"
@@ -913,7 +913,7 @@ PY
 pass "DOCTOR_STABLE_CHECK_IDS"
 
 set +e
-"$CTL" doctor --nope >"$WORKDIR/badopt.out" 2>"$WORKDIR/badopt.err"
+"$CTL" system diagnostics --nope >"$WORKDIR/badopt.out" 2>"$WORKDIR/badopt.err"
 opt_rc=$?
 set -e
 [[ "$opt_rc" -eq 2 ]] || fail "invalid option should exit 2, got $opt_rc"
@@ -924,7 +924,7 @@ pass "DOCTOR_EXIT_CODES"
 # ---------------------------------------------------------------------------
 export FRP_CTL_TEST_ROOT="$CL"
 export FRP_CLIENT_TEST_ROOT="$CL"
-export FRP_CTL_TEST_INPUT="$(printf '%s\n' doctor exit)"
+export FRP_CTL_TEST_INPUT="$(printf '%s\n' 'system diagnostics' exit)"
 set +e
 "$CTL" >"$WORKDIR/repl.out" 2>"$WORKDIR/repl.err"
 set -e

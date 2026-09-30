@@ -336,7 +336,7 @@ if have frpctl; then
   fi
   echo "----- frpctl doctor (read-only) -----"
   set +e
-  frpctl doctor >"$WORKDIR/doctor.out" 2>"$WORKDIR/doctor.err"
+  drlink system diagnostics >"$WORKDIR/doctor.out" 2>"$WORKDIR/doctor.err"
   doctor_rc=$?
   set -e
   redact_status <"$WORKDIR/doctor.out"

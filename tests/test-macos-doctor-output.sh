@@ -369,9 +369,9 @@ export HOME="$WORKDIR/home"
 mkdir -p "$HOME"
 
 set +e
-"$ROOT/tools/frpctl" doctor --json >"$WORKDIR/darwin.json" 2>"$WORKDIR/darwin.json.err"
+"$ROOT/tools/frpctl" system diagnostics --json >"$WORKDIR/darwin.json" 2>"$WORKDIR/darwin.json.err"
 json_rc=$?
-"$ROOT/tools/frpctl" doctor >"$WORKDIR/darwin.human" 2>"$WORKDIR/darwin.human.err"
+"$ROOT/tools/frpctl" system diagnostics >"$WORKDIR/darwin.human" 2>"$WORKDIR/darwin.human.err"
 human_rc=$?
 set -e
 
