@@ -191,22 +191,28 @@ def build_desired_runtime_services(
 ) -> dict:
     """Merge legacy client-state services with v2.4 Remote Services."""
     services = {}
+    rows = list(
+        plane_db.conn.execute(
+            "SELECT * FROM agent_remote_services WHERE delete_pending = 0 ORDER BY name"
+        )
+    )
+    canonical_names = {str(row["name"]).strip().lower() for row in rows}
     raw = state.get("services") if isinstance(state.get("services"), dict) else {}
     for sid, rec in raw.items():
         if not isinstance(rec, dict):
             continue
         sid_s = str(sid)
+        # Once an enrolled/bootstrap service has been projected into the
+        # canonical Agent Remote Service catalog, the DB row owns runtime
+        # generation. Emitting both forms would bind the same public port twice.
+        if sid_s.strip().lower() in canonical_names:
+            continue
         # Drop prior v2.4 projections; rebuild from desired DB.
         if sid_s.startswith(V24_SERVICE_PREFIX) or rec.get("v24_remote_service"):
             continue
         services[sid_s] = dict(rec)
         services[sid_s]["id"] = services[sid_s].get("id") or sid_s
 
-    rows = list(
-        plane_db.conn.execute(
-            "SELECT * FROM agent_remote_services WHERE delete_pending = 0 ORDER BY name"
-        )
-    )
     for row in rows:
         name = str(row["name"])
         proxy_id = remote_service_proxy_id(name)

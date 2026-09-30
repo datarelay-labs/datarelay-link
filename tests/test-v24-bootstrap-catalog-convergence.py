@@ -18,6 +18,7 @@ sys.path.insert(0, str(ROOT / "lib"))
 
 import drlink_mgmt_sync as mgmt  # noqa: E402
 import drlink_runtime_policy as RP  # noqa: E402
+import drlink_v24_runtime as V24R  # noqa: E402
 import drlink_upgrade_reconcile as UR  # noqa: E402
 import drlink_v24 as v24  # noqa: E402
 from drlink_control_cli import dispatch  # noqa: E402
@@ -155,6 +156,17 @@ class BootstrapCatalogConvergenceTests(unittest.TestCase):
         self.assertIn(":6000", listed)
         self.assertIn("DEGRADED", listed)
         self.assertNotIn("HEALTHY", listed)
+
+        # The projected canonical Remote Service owns runtime generation.
+        # Do not emit the enrollment-era `ssh` proxy alongside `rs-ssh`,
+        # otherwise both bind the same allocator port (6000).
+        agent_runtime = ControlPlane(self.agent_tmp)
+        state = json.loads((Path(self.agent_tmp) / "etc/frp/client-state.json").read_text())
+        desired = V24R.build_desired_runtime_services(agent_runtime, state, root=self.agent_tmp)
+        self.assertNotIn("ssh", desired)
+        self.assertIn("rs-ssh", desired)
+        self.assertEqual(int(desired["rs-ssh"]["remote_port"]), 6000)
+        agent_runtime.close()
 
         agent = ControlPlane(self.agent_tmp)
         agent.conn.execute("DELETE FROM agent_remote_services")
