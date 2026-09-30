@@ -481,7 +481,7 @@ CI may run earlier as advisory feedback, but it is not a blocking wait point for
 
 ## 21.1 CLI product-surface reconciliation — independent release gate
 
-Before Full User E2E candidate freeze, execute `CLI_FEATURE_SCENARIO_RECONCILIATION.md` against the installed exact candidate. `CLI_EXHAUSTIVE_AUDIT.md` may invoke the same gate, but it is not a substitute for the dedicated onboarding/offboarding contract.
+For release qualification, the release workflow first prepares the installed exact candidate environment, then invokes `CLI_FEATURE_SCENARIO_RECONCILIATION.md` against that already-prepared Server/Agent surface. The reconciliation audit itself must not provision, install, upgrade, reboot, or search for replacement hosts. `CLI_EXHAUSTIVE_AUDIT.md` may invoke the same product-surface audit, but it is not a substitute for the dedicated reconciliation contract.
 
 This gate is intentionally separate from Full User E2E. Full User E2E answers whether representative real journeys work. Product-surface reconciliation answers whether the complete supported product model has one coherent, discoverable, non-duplicated CLI surface.
 
@@ -522,7 +522,7 @@ After black-box discovery is retained, perform post-hoc executable catalog/parse
 
 Every behavior-changing setting/subcommand and destructive subvariant must receive its own disposition. Reconcile actual effect against catalog risk/confirmation metadata, interactive confirmation, and non-TTY fail-closed behavior. Privilege/readability errors must return non-zero and must not be misreported as role errors. Status/version/provenance surfaces must not contradict the current control-plane model.
 
-Cleanup evidence must cover every mutated Server and Agent, including non-prefixed resources created by guided defaults, and prove zero audit residue.
+Cleanup evidence must cover every already-assigned Server and Agent actually mutated by the reconciliation, including non-prefixed resources created by guided defaults, and prove zero audit residue. Environment provisioning and host lifecycle cleanup remain responsibilities of the enclosing release/FULL_USER_E2E workflow.
 
 Any CLI/product/documentation surface change after this PASS invalidates the gate and requires a fresh reconciliation before Full User E2E PASS1/PASS2 can count as final stable evidence.
 

@@ -37,8 +37,8 @@ scenarios:
     release_gate: true
 
   - id: DRLINK-CLI-FEATURE-SCENARIO-RELEASE
-    name: CLI feature scenario reconciliation evidence
-    level: e2e
+    name: CLI feature scenario reconciliation evidence validation
+    level: static
     domains:
       - "server"
       - "client"
@@ -49,8 +49,9 @@ scenarios:
       - "linux"
     command: "python3 scripts/check-pre-release-exhaustive-gates.py --gate cli-feature-scenario"
     invariants:
-      - "CLI feature scenario reconciliation passed on the exact release HEAD"
+      - "completed product-surface reconciliation evidence is bound to the exact release HEAD"
       - "all release-blocking reconciliation counters are zero"
+      - "this validator does not provision or execute Server/Agent lifecycle qualification"
     release_gate: true
 
   - id: DRLINK-FULL-USER-E2E-RELEASE

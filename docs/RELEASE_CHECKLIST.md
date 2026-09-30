@@ -294,7 +294,7 @@ CHATGPT_PLUS_ALLOW_DENY=
 
 ## 16. CLI UX and product-surface reconciliation
 
-- [ ] `CLI_FEATURE_SCENARIO_RECONCILIATION=PASS` using `CLI_FEATURE_SCENARIO_RECONCILIATION.md`; this is a separate release gate from Full User E2E.
+- [ ] `CLI_FEATURE_SCENARIO_RECONCILIATION=PASS` using `CLI_FEATURE_SCENARIO_RECONCILIATION.md`; this is a product-surface audit separate from Full User E2E. The release workflow prepares the candidate environment first; the audit itself does not install/upgrade/reboot or search for hosts.
 - [ ] `CLI_PRODUCT_SURFACE_RECONCILIATION=PASS` is satisfied by the same exact-candidate reconciliation evidence.
 - [ ] every Product Master capability has a justified public CLI/menu/installer lifecycle mapping.
 - [ ] every installed runtime command maps to a current product capability and canonical documentation.
@@ -311,7 +311,7 @@ CHATGPT_PLUS_ALLOW_DENY=
 - [ ] privilege/readability ERROR paths return non-zero and are not misreported as wrong-role errors.
 - [ ] empty-list output explicitly distinguishes zero items from failure rather than silent RC=0 success.
 - [ ] status/version/provenance surfaces are mutually consistent and do not expose retired state models as current.
-- [ ] final reconciliation cleanup proves zero audit residue on every mutated Server and Agent, including non-prefixed resources created by guided defaults.
+- [ ] final reconciliation cleanup proves zero audit-owned resource residue on every already-assigned Server and Agent actually mutated by the audit, including non-prefixed resources created by guided defaults.
 - [ ] Server root = Managed Hosts / Network Objects / Service Objects / Remote Access / Internet Access / AI Access / System / Help / Exit.
 - [ ] Agent Host root = Remote Services / Agent / Configuration / System / Help / Exit.
 - [ ] Direct roots = show/set/unset/test/system/menu/help/exit.

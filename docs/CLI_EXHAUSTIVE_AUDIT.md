@@ -152,9 +152,9 @@ COMMANDS_BLOCKED_ENVIRONMENT=
 COMMANDS_WITHOUT_DISPOSITION=0
 ~~~
 
-## 4.2 Product feature ↔ CLI surface reconciliation — mandatory release gate
+## 4.2 Product feature ↔ CLI surface reconciliation — product-surface audit (release-consumable)
 
-`CLI_FEATURE_SCENARIO_RECONCILIATION.md` is the canonical executable contract for this gate. When the user explicitly requests CLI ↔ Feature ↔ Scenario reconciliation, execute that document directly. When this exhaustive CLI audit reaches this gate, execute the dedicated document against the same candidate and evidence estate; the stricter dedicated onboarding, matrix, terminology/procedure/structure checks, offboarding, counters, and PASS criteria govern.
+`CLI_FEATURE_SCENARIO_RECONCILIATION.md` is the canonical executable contract for this product-surface audit. When the user explicitly requests CLI ↔ Feature ↔ Scenario reconciliation, execute that document directly. Do not convert that trigger into candidate provisioning, host discovery, installation, upgrade, reboot, OS/platform qualification, or CI/release work. When this exhaustive CLI audit reaches this gate, execute the dedicated document against the same already-available assigned runtime/evidence surface; its feature matrix, terminology/procedure/structure checks, cleanup, counters, and PASS criteria govern.
 
 Before scenario execution, build a second ledger from the **product feature model**, not from the CLI. This prevents an internally consistent CLI from passing while product functionality is missing, duplicated, obsolete, or unreachable.
 
@@ -162,7 +162,7 @@ Use the union of:
 1. Product Master features and supported lifecycle operations;
 2. CLI/AI Master public behavior;
 3. current Server and Agent menu/workflow surfaces;
-4. installed candidate runtime discovery.
+4. runtime discovery from the already-assigned available Server/Agent surfaces.
 
 For every product capability, record:
 
@@ -209,7 +209,7 @@ Mandatory reconciliation rules:
 - Treat every behavior-changing setting/subcommand as a separate inventory item. A family is not covered merely because its top-level command parses.
 - Compare direct CLI, guided menu, help, completion, and role-specific surfaces.
 - A command's suggested next step must itself be a current canonical command or a precise documented installer/lifecycle action. If the user is told to reconfigure or recover, execute/discover that next step far enough to prove the workflow is not a dead end.
-- Fresh installer completion text, generated enrollment instructions, diagnostics recommendations, update recommendations, and error recovery text are public discovery surfaces and must use only current canonical commands.
+- Installer help/source text, already-available completion text, generated enrollment instructions, diagnostics recommendations, update recommendations, and error recovery text are public discovery surfaces and must use only current canonical commands. Do not run a fresh install merely to obtain installer output during this audit.
 - Root help, `?`, Tab completion, menu, `help commands`, command-specific help, and error recovery must all lead to the same supported command set. A command that only works when memorized is a discovery gap.
 - Contextual help must expose all supported lifecycle variants needed to finish a feature, including enable/disable, reset/remove, credential lifecycle, and role-specific recovery.
 - Empty lists must explicitly report that no items exist.
@@ -271,7 +271,7 @@ Audit:
 - `help commands`
 - `help workflows`
 - every area-specific help page used below;
-- fresh Server/Agent installer completion guidance;
+- installer guidance from current source/help or already-available retained output (do not run a fresh install for this audit);
 - diagnostics/update recovery recommendations;
 - generated enrollment lifecycle instructions.
 

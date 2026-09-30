@@ -1,10 +1,11 @@
 # Data Relay Link — CLI ↔ Feature ↔ Scenario Reconciliation
 
-> **Document role:** Canonical executable test contract for product capability ↔ public CLI ↔ real operator scenario reconciliation
+> **Document role:** Canonical executable audit contract for product capability ↔ public CLI ↔ operator scenario reconciliation
 > **Executor:** ChatGPT
-> **Scope:** completeness, uniqueness, discoverability, terminology, procedure, structure, safety, recovery, evidence, and cleanup
+> **Scope:** feature/CLI/scenario completeness, uniqueness, discoverability, terminology, procedure, structure, safety, recovery, and cleanup
 > **Target:** v2.4 and later until superseded
-> **Release gate:** independent from FULL_USER_E2E and mandatory before final Full User E2E PASS1/PASS2
+> **Execution boundary:** this audit does **not** install, upgrade, uninstall, reboot, platform-qualify, provision, or search for Server/Agent hosts
+> **Release relationship:** release qualification may consume a completed reconciliation result, but candidate installation/lifecycle qualification belongs to release/FULL_USER_E2E workflows
 > **Companion:** `CLI_EXHAUSTIVE_AUDIT.md`
 
 ## 1. Exact execution trigger
@@ -27,7 +28,11 @@ CLI product-surface reconciliation
 
 When triggered, resolve this file from the active repository and execute it immediately.
 
-Do not substitute FULL_USER_E2E, a generic CLI smoke test, or historical evidence.
+"Execute immediately" means: build the feature inventory, discover the current public CLI surface, and run the feature-linked operator scenarios on already-available assigned runtime surfaces where safe.
+
+Do **not** turn this trigger into environment preparation. Do not install or upgrade Data Relay Link, search a host inventory for a clean machine, select a new OS/platform, reboot/uninstall a host, wait for CI, or start release qualification unless the user explicitly requested that separate work.
+
+Do not substitute FULL_USER_E2E, an installation/lifecycle test, a generic CLI smoke test, or historical evidence.
 
 ### Continuous execution / finding accumulation rule
 
@@ -47,6 +52,9 @@ PRODUCT_SOURCE_EDITS_DURING_AUDIT=NO
 RETAIN_EVIDENCE=YES
 UPDATE_ACTIVE_AI_WORK_ISSUE=YES
 FULL_USER_E2E_SUBSTITUTE=NO
+ENVIRONMENT_PROVISIONING=NO
+HOST_INVENTORY_DISCOVERY=NO
+INSTALL_OR_UPGRADE_DURING_AUDIT=NO
 ~~~
 
 ## 2. What this test proves
@@ -78,8 +86,8 @@ Primary inputs:
 2. `DATA_RELAY_LINK_CLI_AI_MASTER_v2.4_FINAL.md` — canonical CLI/AI behavior.
 3. `CLI_REFERENCE.md` — canonical direct grammar.
 4. `Data Relay Link CLI Information Architecture.md` — current menu/UX.
-5. active operator docs, installer output, generated guidance, diagnostics/update/recovery text.
-6. installed exact-candidate runtime discovery and behavior.
+5. active operator docs, installer/help text, generated guidance, diagnostics/update/recovery text.
+6. current already-available Server/Agent runtime discovery and behavior, when assigned and reachable.
 
 Runtime existence does not make a command canonical.
 A hidden parser path is not acceptable merely because it works.
@@ -98,13 +106,13 @@ Before mutation:
 
 1. read `AGENTS.md`;
 2. read `.engineering/project.yaml`;
-3. load the single active matching GitHub `[AI Work]` Work Packet;
-4. verify repository, branch, HEAD, remote sync, and worktree status;
-5. read this document from the active worktree;
-6. record installed Server/Agent candidate identities;
-7. inspect exact-head CI, but never substitute CI for this audit.
+3. resolve the active worktree and record repository/branch/HEAD for documentation/source correlation;
+4. read this document from the active worktree;
+5. identify only the Server/Agent runtime surfaces that are already assigned and available for this audit;
+6. do not discover, provision, install, upgrade, or repurpose additional hosts;
+7. do not inspect or wait for CI unless the user separately requested release/CI work.
 
-## 5. Candidate preflight
+## 5. Audit context
 
 Record:
 
@@ -116,21 +124,20 @@ BRANCH=
 REPO_HEAD=
 WORKTREE=
 WORKTREE_CLEAN=
-PR=
 ACTIVE_WORK_PACKET=
-SERVER_HOST=
-AGENT_HOST=
-SERVER_PRODUCT_VERSION=
-SERVER_SOURCE_HEAD=
-AGENT_PRODUCT_VERSION=
-AGENT_SOURCE_HEAD=
-DEPLOYMENT_MODE=
-RELEASE_CHANNEL=
+SERVER_RUNTIME=AVAILABLE|UNAVAILABLE
+SERVER_HOST=<assigned existing host or N/A>
+SERVER_PRODUCT_VERSION=<if available>
+SERVER_SOURCE_HEAD=<if available>
+AGENT_RUNTIME=AVAILABLE|UNAVAILABLE
+AGENT_HOST=<assigned existing host or N/A>
+AGENT_PRODUCT_VERSION=<if available>
+AGENT_SOURCE_HEAD=<if available>
 ~~~
 
-Prefer one Server and one Agent on the same installed content.
+Runtime HEAD equality is informative for correlation, not a reason to install a different candidate during this audit.
 
-If installed content differs from repository HEAD, record it explicitly. Findings remain useful but must not be presented as exact-HEAD findings for a newer candidate.
+If an applicable Server or Agent runtime is unavailable, mark only runtime-dependent checks `BLOCKED_RUNTIME_UNAVAILABLE` and continue the feature/CLI/document/scenario reconciliation that remains executable.
 
 Create:
 
@@ -142,16 +149,17 @@ Use mode 0700, secret-bearing files 0600, and a unique audit resource prefix.
 
 ## 6. Collision / ownership gate
 
-Before mutation:
+Only for an already-assigned runtime that a scenario will mutate:
 
-1. list active E2E/audit processes;
-2. identify shared-state tests;
-3. capture pre-existing state for any shared host to be mutated;
-4. use namespaced resources wherever possible;
-5. record non-prefixed resources that guided flows may create;
-6. never delete a resource only because its name looks temporary.
+1. check whether another audit/test currently owns the same mutable product state;
+2. capture pre-existing state for the specific assigned runtime to be mutated;
+3. use namespaced resources wherever possible;
+4. record non-prefixed resources that guided flows may create;
+5. never delete a resource only because its name looks temporary.
 
-When a concurrent test owns mutable state, mark that step `NOT_RUN_SHARED_STATE` and continue independent checks.
+Do not scan unrelated hosts or processes to find an alternative environment.
+
+When another run owns the same mutable state, mark only that step `NOT_RUN_SHARED_STATE` and continue independent checks.
 
 ## 7. Build the feature inventory first
 
@@ -544,7 +552,9 @@ Required:
 #
 
 ## FCS-001 — First Server discovery
-Install/inspect Server → help/menu/status/version → discover Server settings → verify current next actions.
+Enter the already-available Server CLI → help/menu/status/version → discover Server settings → verify current next actions and feature reachability.
+
+This scenario does not install or reinstall the Server.
 
 #
 
@@ -615,6 +625,8 @@ Server/Agent/menu/help/status/diagnostics/version describe one current model.
 Probe retired natural guesses and source-enumerated hidden paths. Obsolete grammar must reject with canonical guidance rather than execute compatibility behavior.
 
 ## 21. Active documentation / generated-output scan
+
+Installer content is inspected as a public guidance surface only. Do not execute a fresh install merely to obtain installer completion text; use current source/help/generated text or already-retained output from the assigned runtime when available.
 
 Scan at minimum:
 
@@ -710,7 +722,7 @@ UNRESOLVED_P1=
 UNRESOLVED_USER_BLOCKING_P2=
 ~~~
 
-For release qualification, also write the machine-readable exact-HEAD record:
+When this audit is explicitly being consumed by a separate release-qualification workflow, that workflow may additionally write the machine-readable exact-HEAD record below. A normal reconciliation trigger does not install/freeze a candidate merely to satisfy this record:
 
 ~~~text
 e2e-reports/release-qualification/cli-feature-scenario.json
@@ -849,12 +861,11 @@ Never paste secrets.
 After the audit is exhausted:
 
 1. freeze evidence;
-2. update Work Packet;
+2. update the active Work Packet with the reconciliation findings;
 3. create remediation slices P0 → P1 → user-blocking P2 → P3;
-4. add durable regression tests;
-5. install a clean exact Server + Agent candidate;
-6. rerun this document with a **new RUN_ID**;
-7. only a fresh PASS on the changed candidate clears the gate.
+4. add durable regression coverage where appropriate;
+5. after remediation, rerun the affected reconciliation scenarios with a **new RUN_ID** against already-assigned applicable runtime surfaces;
+6. if release qualification later requires clean exact-candidate installation, that provisioning is performed by the release/FULL_USER_E2E workflow before invoking this audit.
 
 ## 30. Relationship to other tests
 
@@ -872,23 +883,17 @@ This document is the canonical deep **Feature ↔ CLI ↔ Scenario** reconciliat
 
 FULL_USER_E2E remains separate.
 
-Final qualification order:
+Responsibility boundary:
 
 ~~~text
-install/freeze candidate
-→ CLI_FEATURE_SCENARIO_RECONCILIATION PASS1 (finding discovery)
-→ batch remediation if required; freeze a new candidate
-→ CLI_FEATURE_SCENARIO_RECONCILIATION PASS2=PASS
-→ FULL_USER_E2E PASS1
-→ batch remediation if required; invalidate and rerun affected qualification
-→ FULL_USER_E2E PASS2=PASS on the unchanged final candidate
-→ A-019 and remaining release-specific qualification
-→ final exact-head CI / automated regression / provenance / attestation gates
-→ final release audit
-→ release
+CLI_FEATURE_SCENARIO_RECONCILIATION
+= audit Feature ↔ CLI ↔ operator-scenario coherence on available assigned surfaces
+
+FULL_USER_E2E / release qualification
+= provision/freeze exact candidates, install/reinstall, reboot, platform/lifecycle qualification, real traffic, final release evidence
 ~~~
 
-Any CLI/product/documentation-surface change after reconciliation PASS invalidates that PASS.
+A release workflow may require a fresh reconciliation result after a CLI/product/documentation-surface change, but it must prepare the candidate environment before invoking this audit.
 
 ## 31. Minimal operator trigger
 
@@ -898,4 +903,6 @@ The human only needs to say:
 CLI, 기능, 시나리오의 연계성을 테스트 진행
 ~~~
 
-The executor must find this document in the active repository and immediately start Section 4 onboarding and Section 5 preflight.
+The executor must find this document in the active repository and immediately start Section 7 feature inventory, Section 8 public CLI discovery, and the linked FCS scenarios using already-available assigned runtime surfaces.
+
+Do not perform host discovery, installation, upgrade, platform qualification, CI waiting, or release-candidate preparation as part of this trigger.

@@ -64,7 +64,7 @@ These are executable audit contracts. An unqualified trigger starts execution im
 These documents are useful for qualification but do not redefine product semantics:
 
 - [`FULL_USER_E2E_SCENARIOS.md`](FULL_USER_E2E_SCENARIOS.md) — canonical FULL_USER_E2E matrix and v2.4 operator manual runbook
-- `CLI_FEATURE_SCENARIO_RECONCILIATION.md` — canonical executable onboarding/offboarding contract for Product feature ↔ canonical CLI ↔ runtime discovery ↔ real scenario closure; this is an independent pre-release gate from FULL_USER_E2E
+- `CLI_FEATURE_SCENARIO_RECONCILIATION.md` — canonical executable Product feature ↔ canonical CLI ↔ operator-scenario coherence audit. It uses already-assigned available runtime surfaces and does not provision/install/upgrade hosts. Release qualification may consume its result, but environment/lifecycle qualification remains separate.
 - `CLI_EXHAUSTIVE_AUDIT.md` — trigger-driven black-box audit of public CLI syntax, usability, safety, workflow closure; it invokes the dedicated reconciliation contract when structural product-surface qualification is required
 - `AI_ASSISTED_COMMAND_EXHAUSTIVE_AUDIT.md` — trigger-driven natural-language → AI-generated command/bundle/MCP audit with real execution and self-recovery checks
 - `HUMAN_UX_ADVERSARIAL_E2E.md`
@@ -137,4 +137,4 @@ CLI 및 AI지원 명령을 전수 감사해줘
 CLI와 AI 지원 명령 전수 감사
 ~~~
 
-`CLI, 기능, 시나리오의 연계성을 테스트 진행` and equivalent wording executes `CLI_FEATURE_SCENARIO_RECONCILIATION.md` immediately. CLI-only exhaustive requests execute `CLI_EXHAUSTIVE_AUDIT.md`. AI-only requests execute `AI_ASSISTED_COMMAND_EXHAUSTIVE_AUDIT.md`. Combined requests execute both against the same exact candidate. These audits are separate from FULL_USER_E2E: they focus specifically on human CLI usability and AI-assisted command usability, although findings may block release qualification.
+`CLI, 기능, 시나리오의 연계성을 테스트 진행` and equivalent wording executes `CLI_FEATURE_SCENARIO_RECONCILIATION.md` immediately. Immediate execution means feature inventory → CLI discovery → operator-scenario reconciliation on already-available assigned surfaces; it does not imply host inventory discovery, installation, upgrade, reboot, platform qualification, CI waiting, or release-candidate preparation. CLI-only exhaustive requests execute `CLI_EXHAUSTIVE_AUDIT.md`. AI-only requests execute `AI_ASSISTED_COMMAND_EXHAUSTIVE_AUDIT.md`. Combined requests execute both against the same available product surface. These audits are separate from FULL_USER_E2E: they focus specifically on human CLI usability and AI-assisted command usability, although findings may block later release qualification.
