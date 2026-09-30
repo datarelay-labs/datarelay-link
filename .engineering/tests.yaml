@@ -25,8 +25,7 @@ scenarios:
       - "client"
       - "shared"
     triggers:
-      - rc
-      - release
+      - affected
     platforms:
       - "linux"
     command: "bash tests/run-all.sh"
