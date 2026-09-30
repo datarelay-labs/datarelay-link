@@ -935,7 +935,7 @@
     "roles": "server",
     "category": "Server",
     "summary": "Change server settings",
-    "detail": "public-hostname is a published-service alias only; never allocator identity. Installer URLs may be set with set server installer-url / set server windows-installer-url or the sibling commands set installer-url / set windows-installer-url.",
+    "detail": "Configure Server public/bootstrap hostnames and Linux/macOS or Windows client installer URLs.",
     "examples": [
       "set server public-hostname frp.example.com",
       "set server bootstrap-hostname bootstrap.example.com",
@@ -961,98 +961,7 @@
     ],
     "tail": "any",
     "internal": null,
-    "aliases": [
-      [
-        "server",
-        "set"
-      ]
-    ],
-    "destructive": false,
-    "hidden": false,
-    "risk": "none",
-    "confirmation": "none",
-    "surface": "",
-    "flags": []
-  },
-  {
-    "path": [
-      "set",
-      "installer-url"
-    ],
-    "roles": "server",
-    "category": "Server",
-    "summary": "Set the Linux client installer URL",
-    "detail": "installer-url is the client installer URL handed to new Linux clients.",
-    "examples": [
-      "set installer-url https://example.com/install-client.sh"
-    ],
-    "args": [
-      {
-        "name": "<url>",
-        "complete": null,
-        "required": true
-      }
-    ],
-    "tail": "none",
-    "internal": [
-      "set",
-      "installer-url"
-    ],
-    "aliases": [
-      [
-        "server",
-        "set",
-        "installer-url"
-      ],
-      [
-        "set",
-        "server",
-        "installer-url"
-      ]
-    ],
-    "destructive": false,
-    "hidden": false,
-    "risk": "none",
-    "confirmation": "none",
-    "surface": "",
-    "flags": []
-  },
-  {
-    "path": [
-      "set",
-      "windows-installer-url"
-    ],
-    "roles": "server",
-    "category": "Server",
-    "summary": "Set the Windows client installer URL",
-    "detail": "windows-installer-url is handed to new Windows clients.",
-    "examples": [
-      "set windows-installer-url https://example.com/install-client.ps1"
-    ],
-    "args": [
-      {
-        "name": "<url>",
-        "complete": null,
-        "required": true
-      }
-    ],
-    "tail": "none",
-    "internal": [
-      "set",
-      "windows-installer-url"
-    ],
-    "aliases": [
-      [
-        "server",
-        "set",
-        "windows-installer-url"
-      ],
-      [
-        "set",
-        "server",
-        "windows-installer-url"
-      ]
-    ],
+    "aliases": [],
     "destructive": false,
     "hidden": false,
     "risk": "none",
@@ -1473,12 +1382,7 @@
     ],
     "tail": null,
     "internal": null,
-    "aliases": [
-      [
-        "server",
-        "unset"
-      ]
-    ],
+    "aliases": [],
     "destructive": false,
     "hidden": false,
     "risk": "none",
