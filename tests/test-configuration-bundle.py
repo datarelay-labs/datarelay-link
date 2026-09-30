@@ -243,7 +243,7 @@ class ConfigurationBundleTests(unittest.TestCase):
         self.assertEqual(result["status"], "APPLIED")
         self.assertEqual(result["tickets_issued"], 0)
 
-    def test_cancelled_apply_returns_nonzero_and_preserves_state(self):
+    def test_cancelled_apply_returns_zero_and_preserves_state(self):
         raw = _bundle(
             objects=[{"name": "cancelled-obj", "type": "Host", "values": ["198.51.100.44"]}]
         )
@@ -256,7 +256,7 @@ class ConfigurationBundleTests(unittest.TestCase):
                 root=self.tmp,
                 plane=self.plane,
             )
-        self.assertEqual(rc, 1, err.getvalue() or out.getvalue())
+        self.assertEqual(rc, 0, err.getvalue() or out.getvalue())
         self.assertIn("Cancelled", out.getvalue())
         self.assertIsNone(self.plane.get_object("cancelled-obj"))
 

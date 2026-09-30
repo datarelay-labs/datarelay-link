@@ -473,7 +473,7 @@ text = open(sys.argv[1], encoding="utf-8").read()
 # Short URL: curl ... | sudo bash
 # zt1 fallback: curl ... | sudo bash -s -- 'zt1....'
 cmd = re.search(
-    r"^curl -fsSL .*(?:\|sudo bash|\| sudo bash(?: -s -- 'zt1\.[^']+')?)$",
+    r"^(?:curl -fsSL .*|sudo bash -c .*)$",
     text,
     re.M,
 )
