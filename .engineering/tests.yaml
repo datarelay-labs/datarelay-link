@@ -18,19 +18,22 @@ paths:
 
 scenarios:
   - id: ADOPTED-TEST-001
-    name: Project-native release qualification
+    name: Project-native affected tests
     level: integration
     domains:
       - "server"
       - "client"
       - "shared"
     triggers:
-      - release
+      - affected
+    cost: medium
+    estimated_seconds: 420
+    timeout_seconds: 900
     platforms:
       - "linux"
     command: "bash tests/run-all.sh"
     invariants:
-      - "project-native release qualification remains green"
+      - "project-native tests remain green for affected changes"
     release_gate: true
 
   - id: DRLINK-CLI-FEATURE-SCENARIO-RELEASE

@@ -43,7 +43,6 @@ jobs:
           fi
           echo "DRLINK_MCP_SDK_PYTHON=$SDK_PY" >> "$GITHUB_ENV"
       - name: Full local non-Docker suite
-        if: github.event_name != 'pull_request'
         run: ./tests/run-all.sh
       # Live distro containers cannot validate systemd unless PID 1 is systemd.
       # Package install + Bash/Python/CLI checks run in a separate matrix job.
