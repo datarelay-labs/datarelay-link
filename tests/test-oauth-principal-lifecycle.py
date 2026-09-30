@@ -342,6 +342,14 @@ class OAuthPrincipalLifecycleTests(unittest.TestCase):
         self.assertEqual(status, 401, payload)
         self.assertIsNone(self.plane.authenticate_oauth_token(issued["access_token"], resource=self.resource))
 
+    def test_missing_identity_cannot_rotate_credential(self):
+        name = "missing-identity"
+        self.assertIsNone(self.plane.get_principal(name))
+        with self.assertRaises(ControlPlaneError) as ctx:
+            self.plane.rotate_ai_credential(name)
+        self.assertIn("AI Identity not found", str(ctx.exception))
+        self.assertIsNone(self.plane.get_principal(name))
+
     def test_client_credentials_active_token_authenticates(self):
         rotated = self.plane.rotate_ai_credential("plain-ai")
         self.assertEqual(str(self.plane.get_principal("plain-ai")["credential_status"]).lower(), "active")
