@@ -4006,7 +4006,7 @@ frpctl_dispatch_canonical() {
       frpctl_load_passthrough "$result"
       frpctl_system_uninstall
       ;;
-    create_zero_touch) frpctl_require_server || return 1; frpctl_guided_client_onboarding ;;
+    create_zero_touch) frpctl_require_server || return 1; frpctl_guided_zero_touch ;;
     create_enrollment)
       frpctl_require_server || return 1
       frpctl_load_passthrough "$result"

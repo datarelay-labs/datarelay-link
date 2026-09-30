@@ -1162,10 +1162,23 @@ def _catalog_context_help(tokens, role, names=None, clients=None):
         if nxt:
             return _fmt_available([(tok, "") for tok in nxt])
         return None
-    # Exact path is also a prefix of longer public commands (system update …).
+    # Exact path may also expose positional enum choices and longer public
+    # children. Merge both so set enrollment ? discovers zero-touch,
+    # manual, and bulk instead of hiding the positional modes behind bulk.
     nxt = _catalog_next_path_tokens(probe, role)
-    if nxt and len(probe) == len(cmd["path"]):
-        return _fmt_available([(tok, "") for tok in nxt])
+    if len(probe) == len(cmd["path"]):
+        available = []
+        if cmd["args"]:
+            complete = cmd["args"][0]["complete"]
+            if isinstance(complete, (list, tuple)):
+                available.extend(str(item) for item in complete)
+        available.extend(str(tok) for tok in nxt)
+        if available:
+            merged = []
+            for item in available:
+                if item not in merged:
+                    merged.append(item)
+            return _fmt_available([(tok, "") for tok in merged])
     index = len(probe) - len(cmd["path"])
     if index < len(cmd["args"]):
         arg = cmd["args"][index]
@@ -1186,74 +1199,72 @@ def context_help(tokens, role, names=None, clients=None):
     hidden_roots = {
         "create": (
             '"create" is not a current public root.\n\n'
-            "Current commands:\n"
-            "  set client\n"
-            "  set enrollment\n"
-            "  set client-group <NAME>\n"
-            "  set object <NAME>\n"
-            "  set object-group <NAME>\n"
-            "  set published-service <NAME>\n"
-            "  set service-preset <NAME>\n"
-            "  set remote-access <NAME>\n"
-            "  set internet-access <NAME>\n"
-            "  set fixed-tcp <NAME>\n"
-            "  system backup\n"
-            "  system support-bundle\n\n"
-            "Use:\n"
-            "  ?\n"
-            "  help managed-hosts\n"
-            "  help commands\n"
+            "Use current set/system commands, for example:\n"
+            "  set enrollment zero-touch\n"
+            "  set enrollment manual\n"
+            "  set managed-host-group <GROUP>\n"
+            "  set network-object <NAME> ...\n"
+            "  set service-object <NAME> ...\n"
+            "  set remote-service <NAME> ...   (Agent Host)\n"
+            "  set remote-access <RULE> ...\n"
+            "  set internet-access <RULE> ...\n"
+            "  set ai-access <RULE> ...\n"
+            "  system backup [PATH]\n\n"
+            "See: help commands\n"
         ),
         "add": (
             '"add" is not a current public root.\n\n'
-            "Current commands:\n"
-            "  set published-service …\n"
-            "  set client <CLIENT> group <GROUP>\n"
-            "  set internet-access …\n"
-            "  set remote-access …\n\n"
-            "Use:\n"
-            "  ?\n"
-            "  help commands\n"
+            "Use set to change membership or create/update resources, for example:\n"
+            "  set managed-host <HOST> group <GROUP>\n"
+            "  set network-group <GROUP> members <OBJECT>[,<OBJECT>...]\n"
+            "  set service-group <GROUP> members <SERVICE>[,<SERVICE>...]\n"
+            "  set permission-group <GROUP> members <PERMISSION>[,<PERMISSION>...]\n\n"
+            "See: help commands\n"
         ),
         "remove": (
             '"remove" is not a current public root.\n\n'
-            "Prefer unset … forms. See: help commands\n"
+            "Use unset <resource> ... for removal. See: help commands\n"
         ),
         "enable": (
             '"enable" is not a current public root.\n\n'
-            "Prefer:\n"
-            "  set published-service <SERVICE> enabled\n"
-            "  set fixed-tcp <ENTRY> enabled\n\n"
+            "Use the resource's set command with enabled, for example:\n"
+            "  set remote-access <RULE> enabled\n"
+            "  set internet-access <RULE> enabled\n"
+            "  set ai-access <RULE> enabled\n"
+            "  set remote-service <NAME> ... enabled   (Agent Host)\n\n"
             "See: help commands\n"
         ),
         "disable": (
             '"disable" is not a current public root.\n\n'
-            "Prefer:\n"
-            "  unset published-service <SERVICE> enabled\n"
-            "  unset fixed-tcp <ENTRY> enabled\n\n"
+            "Use the resource's set command with disabled, for example:\n"
+            "  set remote-access <RULE> disabled\n"
+            "  set internet-access <RULE> disabled\n"
+            "  set ai-access <RULE> disabled\n"
+            "  set remote-service <NAME> ... disabled   (Agent Host)\n\n"
             "See: help commands\n"
         ),
         "delete": (
             '"delete" is not a current public root.\n\n'
-            "Prefer unset …. See: help commands\n"
+            "Use unset <resource> ... for deletion. See: help commands\n"
         ),
         "revoke": (
             '"revoke" is not a current public root.\n\n'
-            "Prefer:\n"
-            "  unset client <CLIENT> trust\n"
-            "  unset enrollment <ENROLLMENT>\n\n"
+            "Use:\n"
+            "  unset enrollment <ENROLLMENT>\n"
+            "  unset managed-host <HOST>\n"
+            "  system credential revoke ai-identity <IDENTITY>\n\n"
             "See: help commands\n"
         ),
         "release": (
             '"release" is not a current public root.\n\n'
-            "Prefer:\n"
-            "  unset client <CLIENT>\n"
-            "  unset published-service <SERVICE>\n\n"
+            "Use:\n"
+            "  unset remote-service <NAME>   (Agent Host)\n"
+            "  unset managed-host <HOST>\n\n"
             "See: help commands\n"
         ),
         "update": (
             '"update" is not a current public root.\n\n'
-            "Prefer:\n"
+            "Use:\n"
             "  system update product\n"
             "  system update engine\n"
             "  system update check-engine\n\n"
@@ -1261,80 +1272,90 @@ def context_help(tokens, role, names=None, clients=None):
         ),
         "doctor": (
             '"doctor" is not a current public root.\n\n'
-            "Prefer:\n"
-            "  system diagnostics\n\n"
-            "See: help commands\n"
+            "Use: system diagnostics\n"
         ),
         "history": (
             '"history" is not a current public root.\n\n'
-            "Prefer:\n"
-            "  system history\n"
+            "Use: system history\n"
         ),
         "clear": (
             '"clear" is not a current public root.\n\n'
-            "Prefer:\n"
-            "  system clear\n"
+            "Use: system clear\n"
         ),
         "access": (
             '"access" is not a current public root.\n\n'
-            "Prefer Remote Access commands:\n"
+            "Use Remote Access:\n"
             "  show remote-access\n"
-            "  set remote-access …\n"
-            "  test remote-access …\n\n"
-            "See: help remote-access / help commands\n"
+            "  set remote-access <RULE> ...\n"
+            "  test remote-access source <SRC> destination <DST> service <SERVICE>\n\n"
+            "See: help remote-access\n"
         ),
         "egress": (
             '"egress" is not a current public root.\n\n'
-            "Prefer Internet Access commands:\n"
+            "Use Internet Access and Service Objects:\n"
             "  show internet-access\n"
-            "  set internet-access …\n"
-            "  set fixed-tcp …\n"
-            "  test internet-access …\n\n"
-            "See: help internet-access / help commands\n"
+            "  set internet-access <RULE> ...\n"
+            "  test internet-access source <SRC> destination <DST> service <SERVICE>\n"
+            "  set service-object <NAME> type fixed-tcp port <PORT>\n\n"
+            "See: help internet-access\n"
         ),
         "client": (
             '"client" is not a current public root.\n\n'
-            "Prefer:\n"
-            "  show managed-hosts / show managed-host …\n"
-            "  set enrollment\n"
-            "  unset managed-host …\n\n"
-            "See: help managed-hosts / help commands\n"
+            "Use Managed Hosts and Enrollment:\n"
+            "  show managed-hosts\n"
+            "  show managed-host <HOST>\n"
+            "  set enrollment zero-touch|manual\n"
+            "  set managed-host <HOST> group <GROUP>\n"
+            "  unset managed-host <HOST>\n\n"
+            "See: help managed-hosts\n"
         ),
         "service": (
             '"service" is not a current public root.\n\n'
-            "Prefer set published-service / show published-services.\n"
+            "Use Service Objects on the Server and Remote Services on the Agent Host:\n"
+            "  show service-objects\n"
+            "  set service-object <NAME> ...\n"
+            "  show remote-services\n"
+            "  set remote-service <NAME> ...\n\n"
             "See: help commands\n"
         ),
         "group": (
             '"group" is not a current public root.\n\n'
-            "Prefer show client-groups / set client-group ….\n"
+            "Use the explicit group resource:\n"
+            "  show managed-host-groups\n"
+            "  set managed-host-group <GROUP>\n"
+            "  show network-groups\n"
+            "  show service-groups\n"
+            "  show permission-groups\n\n"
             "See: help commands\n"
         ),
         "enrollment": (
             '"enrollment" is not a current public root.\n\n'
-            "Prefer set enrollment / show enrollments / unset enrollment.\n"
-            "See: help managed-hosts / help commands\n"
+            "Use:\n"
+            "  set enrollment zero-touch|manual\n"
+            "  set enrollment bulk\n"
+            "  show enrollments\n"
+            "  unset enrollment <ENROLLMENT>\n"
         ),
         "apply": (
             '"apply" is not a current public root.\n\n'
-            "Prefer: system synchronize\n"
-            "Or ConfigurationBundle: system apply configuration <PATH|->\n"
+            "Use system synchronize on an Agent Host, or:\n"
+            "  system apply configuration <PATH|->\n"
         ),
         "discard": (
             '"discard" is not a current public root.\n\n'
-            "Prefer: system services discard\n"
+            "Remove unwanted Agent state with unset remote-service <NAME>, then use system synchronize.\n"
         ),
         "sync": (
             '"sync" is not a current public root.\n\n'
-            "Prefer: system synchronize\n"
+            "Use: system synchronize\n"
         ),
         "restore": (
             '"restore" is not a current public root.\n\n'
-            "Prefer: system restore <PATH>\n"
+            "Use: system restore <PATH>\n"
         ),
         "support-bundle": (
             '"support-bundle" is not a current public root.\n\n'
-            "Prefer: system support-bundle\n"
+            "Use: system support-bundle\n"
         ),
     }
     if tokens and tokens[0] in hidden_roots:

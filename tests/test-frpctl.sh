@@ -371,6 +371,25 @@ for tokens in (
 ):
     result = g.match(tokens, "server")
     assert result.get("status") != "ok", (tokens, result)
+
+stale_recovery = (
+    "set client",
+    "unset client",
+    "show clients",
+    "published-service",
+    "service-preset",
+    "set fixed-tcp",
+    "client-groups",
+    "system services discard",
+    "create zero-touch",
+)
+for root_token in (
+    "create", "add", "remove", "enable", "disable", "delete",
+    "revoke", "release", "egress", "client", "service", "group", "discard",
+):
+    message = g.context_help([root_token], "server", names=[], clients=[])
+    for stale in stale_recovery:
+        assert stale not in message, (root_token, stale, message)
 PY
 pass "FRPCTL_GREENFIELD_SURFACE"
 

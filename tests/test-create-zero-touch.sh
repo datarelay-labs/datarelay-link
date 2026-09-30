@@ -74,37 +74,34 @@ write_server_tree "$SERVER"
 export FRP_CTL_TEST_ROOT="$SERVER"
 export FRP_CTL_DRY_RUN=1
 
-# --- Discoverability: Tab + incomplete Available ---
+# --- Discoverability: set enrollment → zero-touch | manual | bulk ---
 FRP_CTL_SOURCED=1 source "$CTL"
-create_cands="$(cands "create ")"
-echo "$create_cands" | grep -qx 'zero-touch' || fail "create Tab missing zero-touch"
-echo "$create_cands" | grep -qx 'enrollment' || fail "create Tab missing enrollment"
-echo "$create_cands" | grep -qx 'enrollments' || fail "create Tab missing enrollments"
-echo "$create_cands" | grep -qx 'backup' || fail "create Tab missing backup"
-first="$(printf '%s\n' "$create_cands" | head -n1)"
-[[ "$first" == "zero-touch" ]] || fail "create Tab first candidate is not zero-touch (got: $first)"
-pass "CREATE_ZERO_TOUCH_DISCOVERABLE"
+enrollment_cands="$(cands "set enrollment ")"
+echo "$enrollment_cands" | grep -qx 'zero-touch' || fail "set enrollment Tab missing zero-touch"
+echo "$enrollment_cands" | grep -qx 'manual' || fail "set enrollment Tab missing manual"
+echo "$enrollment_cands" | grep -qx 'bulk' || fail "set enrollment Tab missing bulk"
+first="$(printf '%s\n' "$enrollment_cands" | head -n1)"
+[[ "$first" == "zero-touch" ]] || fail "set enrollment first candidate is not zero-touch (got: $first)"
+pass "SET_ENROLLMENT_ZERO_TOUCH_DISCOVERABLE"
 
-# Secret-like tokens must never appear as create candidates
-if echo "$create_cands" | grep -qiE 'ticket|secret|bootstrap|token|password'; then
-  fail "secret-like create Tab candidates"
+# Secret-like tokens must never appear as enrollment candidates
+if echo "$enrollment_cands" | grep -qiE 'ticket|secret|bootstrap|token|password'; then
+  fail "secret-like set enrollment Tab candidates"
 fi
 pass "ZERO_TOUCH_SECRET_NOT_COMPLETED"
 
-# --- help create is not a public topic; prefer set client / help clients ---
-help_create="$(frpctl_grammar_call help '{"tokens":["create"]}')"
-echo "$help_create" | grep -qiE 'Unknown help topic: create|help commands|not a current public root|set enrollment|set client' \
+# --- obsolete help topics fail closed; current Managed Hosts help teaches enrollment ---
+help_create="$(frpctl_grammar_call help '{"tokens":["create"]}' || true)"
+echo "$help_create" | grep -qiE 'Unknown help topic: create|help commands|not a current public root|set enrollment' \
   || fail "help create should redirect away from a create topic"
-! echo "$help_create" | grep -qiE 'Current grammar is resource-first' \
-  || fail "help create still says resource-first is current"
-! echo "$help_create" | grep -qiE 'help legacy' \
-  || fail "help create must not advertise help legacy"
-help_legacy="$(frpctl_grammar_call help '{"tokens":["legacy"]}')"
+! echo "$help_create" | grep -qiE 'Current grammar is resource-first|help legacy' \
+  || fail "help create advertised obsolete guidance"
+help_legacy="$(frpctl_grammar_call help '{"tokens":["legacy"]}' || true)"
 echo "$help_legacy" | grep -qiE "help legacy.*removed|help commands|Canonical roots" \
   || fail "help legacy must report removal and point to help commands"
-help_clients="$(frpctl_grammar_call help '{"tokens":["clients"]}')"
-echo "$help_clients" | grep -qiE 'set enrollment|set client|Connect a Managed Host|zero-touch|Zero-Touch|Managed Hosts' \
-  || fail "help clients missing onboarding path"
+help_managed="$(frpctl_grammar_call help '{"tokens":["managed-hosts"]}')"
+echo "$help_managed" | grep -qiE 'set enrollment|zero-touch|Zero-Touch|Managed Hosts' \
+  || fail "help managed-hosts missing onboarding path"
 root_help="$(frpctl_grammar_call help '{"tokens":[]}')"
 echo "$root_help" | grep -qE '^[[:space:]]*set([[:space:]]|$)' || fail "root help missing set"
 echo "$root_help" | grep -qE '^[[:space:]]*show([[:space:]]|$)' || fail "root help missing show"
@@ -120,7 +117,7 @@ import json, sys
 msg = json.loads(sys.argv[1]).get("message", "")
 if "not a current public root" not in msg.lower() and "legacy" not in msg.lower():
     raise SystemExit("create ? should identify non-current root")
-if "set enrollment" not in msg and "set client" not in msg:
+if "set enrollment" not in msg:
     raise SystemExit("create ? missing set enrollment current command")
 if "help legacy" in msg:
     raise SystemExit("create ? must not advertise help legacy")
@@ -129,11 +126,15 @@ if "service-profile" in msg or "internet-profile" in msg or "access-rule" in msg
 if "help commands" not in msg:
     raise SystemExit("create ? missing help commands pointer")
 PY
-ctx_zt="$(frpctl_grammar_call match '{"tokens":["create","zero-touch","?"],"role":"server"}')"
-echo "$ctx_zt" | grep -qiE 'Zero-Touch|zero-touch|Guided|set client|not a current public root' || fail "create zero-touch ? heading"
-ctx_en="$(frpctl_grammar_call match '{"tokens":["create","enrollment","?"],"role":"server"}')"
-echo "$ctx_en" | grep -qiE 'Manual Enrollment|enrollment|set enrollment|not a current public root' || fail "create enrollment ? heading"
-pass "CREATE_ZERO_TOUCH_CONTEXT_HELP"
+ctx_enrollment="$(frpctl_grammar_call match '{"tokens":["set","enrollment","?"],"role":"server"}')"
+echo "$ctx_enrollment" | grep -q 'zero-touch' || fail "set enrollment ? missing zero-touch"
+echo "$ctx_enrollment" | grep -q 'manual' || fail "set enrollment ? missing manual"
+echo "$ctx_enrollment" | grep -q 'bulk' || fail "set enrollment ? missing bulk"
+ctx_zt="$(frpctl_grammar_call match '{"tokens":["set","enrollment","zero-touch","?"],"role":"server"}')"
+echo "$ctx_zt" | grep -qiE 'Zero-Touch|zero-touch|set enrollment' || fail "set enrollment zero-touch ? heading"
+ctx_en="$(frpctl_grammar_call match '{"tokens":["set","enrollment","manual","?"],"role":"server"}')"
+echo "$ctx_en" | grep -qiE 'Manual Enrollment|enrollment|set enrollment' || fail "set enrollment manual ? heading"
+pass "SET_ENROLLMENT_CONTEXT_HELP"
 
 # --- Public contract: set enrollment zero-touch / manual ---
 zt_set="$(frpctl_grammar_call match '{"tokens":["set","enrollment","zero-touch"],"role":"server"}')"
@@ -145,9 +146,9 @@ echo "$manual_set" | grep -q '"action": "create_enrollment"' \
 pass "SET_ENROLLMENT_ZERO_TOUCH_PUBLIC"
 
 # --- Guided: SSH only ---
-# create zero-touch → method(Zero-Touch) → platform(Linux) → identity → SSH only
+# set enrollment zero-touch → platform(Linux) → identity → SSH only
 run_repl "$SERVER" "$WORKDIR/zt-ssh.out" \
-  "create zero-touch" 1 1 office-ssh "Seoul office" 1 aella 22 exit \
+  "set enrollment zero-touch" 1 office-ssh "Seoul office" 1 aella 22 exit \
   || fail "zero-touch ssh guided"
 grep -qiE 'Connect a Managed Host|Managed Host details|zero-touch|Zero-Touch' "$WORKDIR/zt-ssh.out" || fail "zero-touch heading"
 grep -q '1) SSH only' "$WORKDIR/zt-ssh.out" || fail "ssh only option"
@@ -157,7 +158,7 @@ pass "ZERO_TOUCH_SSH_GUIDED"
 
 # --- Guided: macOS uses the real bash Zero-Touch path (same installer as Linux) ---
 run_repl "$SERVER" "$WORKDIR/zt-macos.out" \
-  "create zero-touch" 1 3 office-mac "Mac lab" 1 aella 22 exit \
+  "set enrollment zero-touch" 3 office-mac "Mac lab" 1 aella 22 exit \
   || fail "zero-touch macOS guided"
 grep -q '3) macOS' "$WORKDIR/zt-macos.out" || fail "macOS platform option missing"
 grep -q '4) Back' "$WORKDIR/zt-macos.out" || fail "platform Back must be option 4"
@@ -168,7 +169,7 @@ pass "MACOS_MENU_DEAD_END_NO"
 
 # --- Guided: Windows RDP custom TCP preset ---
 run_repl "$SERVER" "$WORKDIR/zt-rdp.out" \
-  "create zero-touch" 1 2 office-rdp "Windows desktop" 1 3389 exit \
+  "set enrollment zero-touch" 2 office-rdp "Windows desktop" 1 3389 exit \
   || fail "zero-touch Windows RDP guided"
 grep -qiE 'Windows|Connect a Managed Host|RDP|Managed Host details' "$WORKDIR/zt-rdp.out" \
   || fail "Windows platform menu"
@@ -178,7 +179,7 @@ pass "ZERO_TOUCH_WINDOWS_RDP_GUIDED"
 
 # --- Guided menu: management-only initial onboarding removed ---
 run_repl "$SERVER" "$WORKDIR/zt-mgmt-menu.out" \
-  "create zero-touch" 1 1 zt-back "optional note" 3 exit \
+  "set enrollment zero-touch" 1 zt-back "optional note" 3 exit \
   || fail "zero-touch back option"
 grep -q '1) SSH only' "$WORKDIR/zt-mgmt-menu.out" || fail "ssh only option missing"
 grep -q '2) Choose services' "$WORKDIR/zt-mgmt-menu.out" || fail "choose services option missing"
@@ -192,7 +193,7 @@ if grep -q 'DISPATCH frp-create-client --one-line' "$WORKDIR/zt-mgmt-menu.out"; 
 fi
 # Blank description accepted without a second Managed Host details prompt.
 run_repl "$SERVER" "$WORKDIR/zt-blank-note.out" \
-  "create zero-touch" 1 1 blank-desc "" 1 aella 22 exit \
+  "set enrollment zero-touch" 1 blank-desc "" 1 aella 22 exit \
   || fail "blank description guided"
 ident_count="$(grep -c 'Managed Host details' "$WORKDIR/zt-blank-note.out" || true)"
 [[ "$ident_count" == "1" ]] || fail "CLIENT_IDENTIFICATION_PROMPT_COUNT expected 1 got $ident_count"
@@ -207,7 +208,7 @@ pass "ZERO_TOUCH_SINGLE_IDENTIFICATION_PROMPT"
 
 # Blank optional SSH username is collected once, then passed explicitly.
 run_repl "$SERVER" "$WORKDIR/zt-blank-user.out" \
-  "create zero-touch" 1 1 blank-ssh "" 1 "" 22 exit \
+  "set enrollment zero-touch" 1 blank-ssh "" 1 "" 22 exit \
   || fail "blank ssh username guided"
 user_prompts="$(grep -c 'SSH username is optional connection-example metadata.' "$WORKDIR/zt-blank-user.out" || true)"
 [[ "$user_prompts" == "1" ]] || fail "SSH username prompt count expected 1 got $user_prompts"
@@ -229,7 +230,7 @@ pass "SSH_USERNAME_PROMPTED_ONCE"
 
 # --- Guided: multi-service SSH+HTTP ---
 run_repl "$SERVER" "$WORKDIR/zt-multi-http.out" \
-  "create zero-touch" 1 1 multi-http "" \
+  "set enrollment zero-touch" 1 multi-http "" \
   2 \
   1 "" "" "" aella \
   2 "" "" "" \
@@ -264,7 +265,7 @@ pass "ZERO_TOUCH_MULTI_SERVICE_SSH_HTTP"
 
 # --- Guided: multi-service SSH+HTTPS ---
 run_repl "$SERVER" "$WORKDIR/zt-multi-https.out" \
-  "create zero-touch" 1 1 multi-https "" \
+  "set enrollment zero-touch" 1 multi-https "" \
   2 \
   1 "" "" "" aella \
   3 "" "" "" \
@@ -286,7 +287,7 @@ pass "ZERO_TOUCH_MULTI_SERVICE_SSH_HTTPS"
 
 # --- Remote LAN target hosts ---
 run_repl "$SERVER" "$WORKDIR/zt-lan.out" \
-  "create zero-touch" 1 1 lan-client "lan note" \
+  "set enrollment zero-touch" 1 lan-client "lan note" \
   2 \
   1 ssh 10.10.10.20 22 ops \
   2 web 10.10.10.30 80 \
@@ -336,7 +337,7 @@ grep -qi 'do not use --options' "$WORKDIR/manual-compat.err" \
   || fail "create enrollment flag rejection message"
 ! grep -qi 'frp-create-client' "$WORKDIR/manual-compat.err" \
   || fail "create enrollment leaked backend on rejected flags"
-run_repl "$SERVER" "$WORKDIR/manual-repl.out" "create enrollment" exit \
+run_repl "$SERVER" "$WORKDIR/manual-repl.out" "set enrollment manual" exit \
   || fail "create enrollment repl"
 # Guided path should solicit prompts rather than immediately dispatch one-line.
 if grep -q 'DISPATCH frp-create-client --one-line' "$WORKDIR/manual-repl.out"; then
@@ -360,14 +361,14 @@ grep -qiE 'do not use --options|Unknown input|Unknown set resource|obsolete|not 
   || fail "enroll --one-line should explain rejection"
 pass "LEGACY_ONE_LINE_COMPAT"
 
-# --- History must not store secret-looking lines; create zero-touch itself is fine ---
+# --- History must not store secret-looking lines; canonical Zero-Touch command is safe ---
 run_repl "$SERVER" "$WORKDIR/zt-hist.out" \
-  "create zero-touch" 3 \
+  "set enrollment zero-touch" 4 \
   "FRP_BOOTSTRAP_TICKET=abc.def" \
-  history \
+  "system history" \
   exit || fail "history secret filter"
-hist_body="$(sed -n '/^\(frpctl\|drlink\)> history$/,/^\(frpctl\|drlink\)>/p' "$WORKDIR/zt-hist.out" || true)"
-echo "$hist_body" | grep -q 'create zero-touch' || fail "create zero-touch missing from history"
+hist_body="$(sed -n '/^\(frpctl\|drlink\)> system history$/,/^\(frpctl\|drlink\)>/p' "$WORKDIR/zt-hist.out" || true)"
+echo "$hist_body" | grep -q 'set enrollment zero-touch' || fail "canonical zero-touch command missing from history"
 if echo "$hist_body" | grep -qiE 'FRP_BOOTSTRAP_TICKET|ticket=|bootstrap'; then
   fail "secret-like line stored in history"
 fi
@@ -375,8 +376,8 @@ pass "ZERO_TOUCH_SECRET_NOT_HISTORY"
 
 unset FRP_CTL_DRY_RUN
 
-# --- Real GNU readline PTY: create <Tab> ---
-python3 - "$CTL" "$SERVER" "$WORKDIR/pty-zt-home" <<'PY' || fail "PTY create zero-touch tab"
+# --- Real GNU readline PTY: set enrollment <Tab> ---
+python3 - "$CTL" "$SERVER" "$WORKDIR/pty-zt-home" <<'PY' || fail "PTY set enrollment tab"
 import errno
 import os
 import pty
@@ -458,7 +459,7 @@ def fail_pty(msg, extra=b""):
 if not wait_prompt():
     fail_pty("PTY: no initial prompt", bytes(buf))
 
-os.write(fd, b"create ")
+os.write(fd, b"set enrollment ")
 read_more(0.3)
 before = len(buf)
 os.write(fd, b"\t")
@@ -466,33 +467,25 @@ read_more(1.2)
 chunk = bytes(buf[before:])
 vis = visible(chunk)
 
-for token in (b"zero-touch", b"enrollment", b"enrollments", b"backup"):
+for token in (b"zero-touch", b"manual", b"bulk"):
     if token not in vis:
-        fail_pty("PTY: create tab missing %s" % token.decode(), chunk)
-
-# Descriptions on first press
-if b"zero-touch" not in vis.lower():
-    fail_pty("PTY: create tab missing zero-touch description", chunk)
-if b"Manual Enrollment Code" not in vis:
-    fail_pty("PTY: create tab missing enrollment description", chunk)
-
-# Domain-grouped Tab lists Clients before System; zero-touch remains discoverable.
-if b"zero-touch" not in vis.lower():
-    fail_pty("PTY: create tab missing zero-touch candidate", chunk)
-if b"enrollment" not in vis.lower():
-    fail_pty("PTY: create tab missing enrollment candidate", chunk)
+        fail_pty("PTY: set enrollment tab missing %s" % token.decode(), chunk)
 
 if b"Missing resource" in chunk or b"Unknown command" in chunk:
-    fail_pty("PTY: create tab dispatched", chunk)
+    fail_pty("PTY: set enrollment tab dispatched", chunk)
 if CLEAR_RE.search(chunk):
-    fail_pty("PTY: create tab cleared screen", chunk)
+    fail_pty("PTY: set enrollment tab cleared screen", chunk)
 
-# Buffer preserved: prompt + "create " restored
+# Buffer preserved: prompt + "set enrollment " restored
 read_more(0.5)
 tail = visible(bytes(buf[before:]))
-if b"frpctl> create" not in tail and b"drlink> create" not in tail and not tail.rstrip().endswith(b"create "):
-    if b"create " not in tail:
-        fail_pty("PTY: create buffer not preserved", chunk)
+if (
+    b"frpctl> set enrollment" not in tail
+    and b"drlink> set enrollment" not in tail
+    and not tail.rstrip().endswith(b"set enrollment ")
+):
+    if b"set enrollment " not in tail:
+        fail_pty("PTY: set enrollment buffer not preserved", chunk)
 
 # Repeat Tab must not spam
 desc_before = visible(bytes(buf)).count(b"zero-touch")
@@ -500,13 +493,13 @@ os.write(fd, b"\t")
 read_more(0.8)
 desc_after = visible(bytes(buf)).count(b"zero-touch")
 if desc_after > desc_before:
-    fail_pty("PTY: repeated create tab duplicated list", bytes(buf[-500:]))
+    fail_pty("PTY: repeated set enrollment tab duplicated list", bytes(buf[-500:]))
 
 # No secret candidates
 if re.search(br"(?i)ticket|bootstrap|password|server_token|BEGIN .*PRIVATE", vis):
-    fail_pty("PTY: secret-like create candidates", chunk)
+    fail_pty("PTY: secret-like enrollment candidates", chunk)
 
-print("CREATE_ZERO_TOUCH_TAB_FIRST_PRESS")
+print("SET_ENROLLMENT_TAB_FIRST_PRESS")
 print("FIRST_PRESS")
 print("BUFFER_PRESERVED")
 print("PROMPT_RESTORED")
@@ -525,7 +518,7 @@ _, status = os.waitpid(pid, 0)
 if os.WIFEXITED(status) and os.WEXITSTATUS(status) not in (0,):
     raise SystemExit(1)
 PY
-pass "CREATE_ZERO_TOUCH_TAB_FIRST_PRESS"
+pass "SET_ENROLLMENT_TAB_FIRST_PRESS"
 pass "PTY_CLI_TEST"
 pass "FRPCTL_COMPLETION"
 
