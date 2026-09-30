@@ -5,10 +5,18 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 E2E="$ROOT/tests/run-real-e2e.sh"
+HARNESS_FILES=(
+  "$ROOT/tests/run-real-e2e.sh"
+  "$ROOT/tests/run-real-e2e-matrix.sh"
+  "$ROOT/tests/run-production-realistic-qualification.sh"
+  "$ROOT/tests/run-prod-qual-extended.sh"
+)
 fail() { echo "FAIL $1" >&2; exit 1; }
 pass() { echo "PASS $1"; }
 
-[[ -f "$E2E" ]] || fail "missing run-real-e2e.sh"
+for file in "${HARNESS_FILES[@]}"; do
+  [[ -f "$file" ]] || fail "missing release harness: $file"
+done
 
 # Forbidden: direct backend management used as the operator path.
 if grep -nE \
@@ -42,7 +50,7 @@ pass "NO_DIRECT_INSTALLER_JSON_PATCH"
 # Required: canonical installer pin + guided zero-touch via the public CLI.
 grep -q "set server installer-url" "$E2E" || fail "missing canonical set server installer-url pin"
 grep -q "set server windows-installer-url" "$E2E" || fail "missing canonical set server windows-installer-url pin"
-grep -q 'drlink set client"' "$E2E" || fail "missing public set client onboarding"
+grep -q 'drlink set enrollment zero-touch"' "$E2E" || fail "missing canonical set enrollment zero-touch onboarding"
 grep -q "FRP_CTL_TEST_INPUT" "$E2E" || fail "zero-touch must use FRP_CTL_TEST_INPUT under sudo use_pty"
 grep -q "base64" "$E2E" || fail "zero-touch TEST_INPUT must be base64-safe across remote shells"
 # Guided answers must include the post-identity service-mode choice (SSH only).
@@ -50,6 +58,18 @@ grep -Fq '\"$note_text\" '\''1'\'' \"$TUNNEL_SSH_USER\"' "$E2E" \
   || grep -Fq "\"\$note_text\" '1' \"\$TUNNEL_SSH_USER\"" "$E2E" \
   || fail "zero-touch guided answers missing SSH-only step"
 pass "CANONICAL_INSTALLER_AND_ZERO_TOUCH"
+
+# Release qualification harnesses must not exercise removed v2.4 public roots.
+# Match complete resource tokens so current nouns such as service-object do not
+# become false positives.
+STALE_PUBLIC_RE='drlink[[:space:]]+(status([[:space:];|]|$)|doctor([[:space:];|]|$)|clients([[:space:];|]|$)|services([[:space:];|]|$)|info([[:space:];|]|$)|version([[:space:];|]|$)|sync([[:space:];|]|$)|client([[:space:];|]|$)|egress([[:space:];|]|$)|access([[:space:];|]|$)|enrollment[[:space:]]+create|create[[:space:]]+(zero-touch|enrollment|backup)([[:space:];|]|$)|revoke[[:space:]]+client|release[[:space:]]+(client|service)|show[[:space:]]+(clients|client|services|internet|mcp-tls)([[:space:];|]|$)|set[[:space:]]+(client|service)([[:space:];|]|$)|unset[[:space:]]+service([[:space:];|]|$)|system[[:space:]]+services([[:space:];|]|$))'
+if grep -nE "$STALE_PUBLIC_RE" "${HARNESS_FILES[@]}" >/tmp/drlink-stale-release-cli.$$.txt; then
+  cat /tmp/drlink-stale-release-cli.$$.txt >&2
+  rm -f /tmp/drlink-stale-release-cli.$$.txt
+  fail "release harness still contains retired public CLI"
+fi
+rm -f /tmp/drlink-stale-release-cli.$$.txt
+pass "RELEASE_HARNESS_CANONICAL_PUBLIC_CLI"
 
 # Server installer URLs have one canonical public path; standalone compatibility
 # spellings must not parse on the unreleased v2.4 surface.

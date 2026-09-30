@@ -1485,10 +1485,9 @@ set network-object approved-site
 set service-object https
 set internet-access approved-https mode whitelist source <SOURCE> destination approved-site service https enabled
 test internet-access source <SOURCE> destination approved-site service https
-test internet <SOURCE-IP> <HOST> <PORT> [<PROTOCOL>]
 ~~~
 
-`test internet` is policy + DNS evaluation only and must never be mistaken for live connectivity evidence.
+`test internet-access` is policy/explain evaluation only and must never be mistaken for live connectivity evidence.
 
 From the protected host, use real applications as applicable:
 
@@ -1634,7 +1633,7 @@ In addition to U-006, explicitly exercise every currently supported Internet Acc
 - representative vendor/API HTTPS;
 - real package/update workflow.
 
-For each allowed path include a paired denied path using wrong source, destination, or port. Discover and use the public connectivity/explain helper when exposed by runtime help (currently `test internet <SOURCE-IP> <HOST> <PORT> [<PROTOCOL>]`) and then prove the same outcome with the real application client; a passing `test internet` result alone is not traffic evidence.
+For each allowed path include a paired denied path using wrong source, destination, or service. Discover and use the public policy/explain helper (`test internet-access source <SOURCE> destination <DESTINATION> service <SERVICE>`) and then prove the same outcome with the real application client; a passing explain result alone is not traffic evidence.
 
 ## U-013 — Cross-surface terminology, clarity, and operator-guidance consistency — MANDATORY
 
@@ -1716,7 +1715,7 @@ drlink
 
 On both Server and Agent roles, use the visible menu, `?`, `help`, `help commands`, Tab completion, nested help, and contextual error guidance to discover the available workflow. Record the order in which commands/variants become discoverable.
 
-Then use the discovered read-only commands to identify role, status, inventory, services/capabilities, connection information, and version. Current runtime examples include Server `show status`, `show services`, `show internet`, `system status`, `system version` and Agent `show status`, `show agent`, `show remote-services`, `system info`, `system version`, but these examples are audit expectations rather than the operator's starting script.
+Then use the discovered read-only commands to identify role, status, inventory, services/capabilities, connection information, and version. Current runtime examples include Server `show status`, `show managed-hosts`, `show remote-access`, `show internet-access`, `system certificate status`, `system version` and Agent `show status`, `show agent`, `show remote-services`, `system info`, `system version`, but these examples are audit expectations rather than the operator's starting script.
 
 Verify the user can reach the major product jobs from public discovery alone and that wrong-role mutation attempts return a clear role correction rather than an unexplained Unknown command.
 
@@ -3441,7 +3440,6 @@ unset ai-access policy
 ## 14.4 Server test
 
 ~~~text
-test internet <SOURCE-IP> <HOST> <PORT> [<PROTOCOL>]
 test remote-access source <SOURCE> destination <DESTINATION> service <SERVICE>
 test internet-access source <SOURCE> destination <DESTINATION> service <SERVICE>
 test ai-access source <AI_IDENTITY> destination <DESTINATION> permission <PERMISSION>

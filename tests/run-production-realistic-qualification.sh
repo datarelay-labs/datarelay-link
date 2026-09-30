@@ -238,7 +238,7 @@ for profile in macos-arm64 windows-10; do
     bash "$ROOT/tests/run-real-e2e.sh" \
     | tee "$OUT/fleet-keep-$profile.log"
 done
-pq_ssh "$PROD_QUAL_SERVER" 'sudo drlink show clients' | tee "$OUT/live-fleet-clients.txt"
+pq_ssh "$PROD_QUAL_SERVER" 'sudo drlink show managed-hosts' | tee "$OUT/live-fleet-clients.txt"
 ONLINE_N="$(grep -ci ONLINE "$OUT/live-fleet-clients.txt" || true)"
 pq_note "REAL_CLIENTS_ONLINE=$ONLINE_N"
 if [[ "${ONLINE_N:-0}" -ge 3 ]]; then
@@ -337,7 +337,7 @@ else
 fi
 
 # Status/doctor truthfulness after fleet
-if pq_ssh "$PROD_QUAL_SERVER" 'sudo drlink status >/dev/null && sudo drlink doctor >/dev/null'; then
+if pq_ssh "$PROD_QUAL_SERVER" 'sudo drlink show status >/dev/null && sudo drlink system diagnostics >/dev/null'; then
   pq_gate STATUS_TRUTHFULNESS PASS
   pq_gate DOCTOR_TRUTHFULNESS PASS
 else
@@ -370,14 +370,14 @@ if [[ "${FRP_E2E_QUAL_SERVER_REBOOT:-1}" == "1" ]]; then
     sleep 5
   done
   sleep 20
-  if pq_ssh "$PROD_QUAL_SERVER" 'sudo drlink doctor >/dev/null && sudo systemctl is-active drlink-server drlink-allocator drlink-access drlink-egress drlink-tcp-egress'; then
+  if pq_ssh "$PROD_QUAL_SERVER" 'sudo drlink system diagnostics >/dev/null && sudo systemctl is-active drlink-server drlink-allocator drlink-access drlink-egress drlink-tcp-egress'; then
     pq_gate SERVER_REBOOT_RECOVERY PASS
   else
     pq_gate SERVER_REBOOT_RECOVERY FAIL
   fi
   # Client reconnect convergence
   sleep 30
-  if pq_ssh "$PROD_QUAL_SERVER" 'sudo drlink show clients' | tee "$OUT/after-server-reboot-clients.txt" | grep -qi ONLINE; then
+  if pq_ssh "$PROD_QUAL_SERVER" 'sudo drlink show managed-hosts' | tee "$OUT/after-server-reboot-clients.txt" | grep -qi ONLINE; then
     pq_gate CLIENT_RESTART_RECOVERY PASS
     pq_gate RECONNECT_STORM PASS
   else

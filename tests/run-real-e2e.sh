@@ -395,6 +395,8 @@ discover_client_identity() {
   note "ACCESS_HOST=$ACCESS_HOST"
   printf '%s\n' "$CLIENT_MID" >"$OUT_DIR/client-mid.txt"
   printf '%s\n' "$SSH_PUBLIC_PORT" >"$OUT_DIR/ssh-public-port.txt"
+  printf '%s\n' "$TUNNEL_SSH_USER" >"$OUT_DIR/ssh-user.txt"
+  printf '%s\n' "$CLIENT_ALIAS" >"$OUT_DIR/client-alias.txt"
   record discover-client-identity PASS 0 "$elapsed"
 }
 
@@ -449,8 +451,8 @@ create_zero_touch() {
   local start rc=0 payload platform_choice=1
   start="$(date +%s)"
   set +e
-  # Public guided onboarding (set client):
-  #   method(Zero-Touch) → platform → name → note → SSH only → user → port
+  # Public guided Zero-Touch onboarding:
+  #   set enrollment zero-touch → platform → name → note → SSH only → user → port
   # Platform: 1=Linux, 3=macOS (same bash installer path).
   case "$PLATFORM_KIND" in
     macos) platform_choice=3 ;;
@@ -458,9 +460,9 @@ create_zero_touch() {
   esac
   # Guided create under sudo use_pty cannot consume a pipe. Deliver answers via
   # FRP_CTL_TEST_INPUT using base64 so remote /bin/sh does not mangle newlines.
-  payload="$(printf '%s\n' '1' "$platform_choice" "$CLIENT_LABEL" "$note_text" '1' "$TUNNEL_SSH_USER" '22' | base64 -w0 2>/dev/null || printf '%s\n' '1' "$platform_choice" "$CLIENT_LABEL" "$note_text" '1' "$TUNNEL_SSH_USER" '22' | base64)"
+  payload="$(printf '%s\n' "$platform_choice" "$CLIENT_LABEL" "$note_text" '1' "$TUNNEL_SSH_USER" '22' | base64 -w0 2>/dev/null || printf '%s\n' "$platform_choice" "$CLIENT_LABEL" "$note_text" '1' "$TUNNEL_SSH_USER" '22' | base64)"
   ssh "${SSH_OPTS[@]}" "$SERVER_ALIAS" \
-    "sudo env FRP_CTL_TEST_INPUT=\"\$(printf '%s' '$payload' | base64 -d)\" /usr/local/bin/drlink set client" \
+    "sudo env FRP_CTL_TEST_INPUT=\"\$(printf '%s' '$payload' | base64 -d)\" /usr/local/bin/drlink set enrollment zero-touch" \
     >"$out" 2>&1
   rc=$?
   set -uo pipefail
@@ -496,10 +498,10 @@ create_zero_touch_windows() {
   local start rc=0 payload
   start="$(date +%s)"
   set +e
-  # Windows Zero-Touch SSH: method → Windows → name → note → SSH only → user → port
-  payload="$(printf '%s\n' '1' '2' "$CLIENT_LABEL" "$note_text" '2' "$TUNNEL_SSH_USER" '22' | base64 -w0 2>/dev/null || printf '%s\n' '1' '2' "$CLIENT_LABEL" "$note_text" '2' "$TUNNEL_SSH_USER" '22' | base64)"
+  # Windows Zero-Touch SSH: set enrollment zero-touch → Windows → name → note → SSH only → user → port
+  payload="$(printf '%s\n' '2' "$CLIENT_LABEL" "$note_text" '2' "$TUNNEL_SSH_USER" '22' | base64 -w0 2>/dev/null || printf '%s\n' '2' "$CLIENT_LABEL" "$note_text" '2' "$TUNNEL_SSH_USER" '22' | base64)"
   ssh "${SSH_OPTS[@]}" "$SERVER_ALIAS" \
-    "sudo env FRP_CTL_TEST_INPUT=\"\$(printf '%s' '$payload' | base64 -d)\" /usr/local/bin/drlink set client" \
+    "sudo env FRP_CTL_TEST_INPUT=\"\$(printf '%s' '$payload' | base64 -d)\" /usr/local/bin/drlink set enrollment zero-touch" \
     >"$out" 2>&1
   rc=$?
   set -uo pipefail
@@ -556,6 +558,8 @@ discover_client_identity_windows() {
   note "ACCESS_HOST=$ACCESS_HOST"
   printf '%s\n' "$CLIENT_MID" >"$OUT_DIR/client-mid.txt"
   printf '%s\n' "$SSH_PUBLIC_PORT" >"$OUT_DIR/ssh-public-port.txt"
+  printf '%s\n' "$TUNNEL_SSH_USER" >"$OUT_DIR/ssh-user.txt"
+  printf '%s\n' "$CLIENT_ALIAS" >"$OUT_DIR/client-alias.txt"
   record discover-client-identity PASS 0 "$elapsed"
 }
 
@@ -588,6 +592,8 @@ discover_client_identity_macos() {
   note "ACCESS_HOST=$ACCESS_HOST"
   printf '%s\n' "$CLIENT_MID" >"$OUT_DIR/client-mid.txt"
   printf '%s\n' "$SSH_PUBLIC_PORT" >"$OUT_DIR/ssh-public-port.txt"
+  printf '%s\n' "$TUNNEL_SSH_USER" >"$OUT_DIR/ssh-user.txt"
+  printf '%s\n' "$CLIENT_ALIAS" >"$OUT_DIR/client-alias.txt"
   record discover-client-identity PASS 0 "$elapsed"
 }
 
@@ -622,28 +628,12 @@ scenario_windows_full() {
   run_client 08-zero-touch-run "powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand $enc" || fail_stop
   redact "$OUT_DIR/08-zero-touch-run.log"
   discover_client_identity_windows || fail_stop
-  run_server 09-server-enrollment "sudo /usr/local/bin/drlink show clients; echo ====; sudo /usr/local/bin/drlink show client '$CLIENT_MID_PREFIX'" || fail_stop
+  run_server 09-server-enrollment "sudo /usr/local/bin/drlink show managed-hosts; echo ====; sudo /usr/local/bin/drlink show managed-host '$CLIENT_MID_PREFIX'" || fail_stop
   wait_external_ssh 09b-external-ssh || fail_stop
   MATRIX_ENROLL=PASS
 
   run_client 10-client-info "powershell.exe -NoProfile -Command \"& 'C:\\ProgramData\\drlink\\tools\\frp-client.cmd' info\"" || fail_stop
-  run_server 11-proxy-mapped "sudo python3 - <<'PY'
-import json, sys
-sys.path.insert(0, '/usr/local/lib/drlink')
-from frp_access_control import authorize, expected_proxy_name
-from pathlib import Path
-reg = json.loads(Path('/var/lib/drlink/registry.json').read_text())
-acl = json.loads(Path('/var/lib/drlink/access-control.json').read_text())
-mid = '$CLIENT_MID'
-client = (reg.get('clients') or {}).get(mid) or {}
-host = str(client.get('hostname') or '')
-name = expected_proxy_name(host, mid, 'ssh')
-v = authorize(acl, reg, proxy_name=name, source_ip='127.0.0.1')
-print('proxy_name', name, 'decision', v.get('decision'), 'reason', v.get('reason'))
-if v.get('decision') != 'ALLOW':
-    raise SystemExit('expected mapped PUBLIC allow')
-print('PROXY_MAPPED_OK')
-PY" || fail_stop
+  run_server 11-remote-service-inventory "sudo /usr/local/bin/drlink show managed-host '$CLIENT_MID_PREFIX' remote-services | tee /tmp/windows-e2e-remote-services.txt; grep -qi 'ssh' /tmp/windows-e2e-remote-services.txt; grep -Eq 'ssh.*[0-9]+|[0-9]+.*(HEALTHY|DEGRADED|DISABLED)' /tmp/windows-e2e-remote-services.txt" || fail_stop
   MATRIX_SERVICE=PASS
   MATRIX_REBOOT=SKIP
   MATRIX_DNS=SKIP
@@ -657,7 +647,7 @@ PY" || fail_stop
   run_client 52-client-uninstall "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"& 'C:\\ProgramData\\drlink\\tools\\frp-client.cmd' uninstall; if (Test-Path 'C:\\ProgramData\\drlink') { exit 1 }; Write-Output UNINSTALL_OK\"" || fail_stop
   # Local uninstall preserves server reservations by design; release so matrix fleet
   # DNS does not probe a dead Windows proxy after the profile completes.
-  run_server 53-release-client "printf 'RELEASE\n' | sudo /usr/local/bin/drlink release client '$CLIENT_MID_PREFIX'" || fail_stop
+  run_server 53-release-client "printf 'y\n' | sudo /usr/local/bin/drlink unset managed-host '$CLIENT_MID_PREFIX'" || fail_stop
   MATRIX_UNINSTALL=PASS
 }
 
@@ -677,37 +667,28 @@ scenario_macos_full() {
   run_local 08-zero-touch-run bash -lc "ssh ${SSH_OPTS[*]} '$CLIENT_ALIAS' 'bash -s' < '$OUT_DIR/07-zero-touch-command.sh'" || fail_stop
   redact "$OUT_DIR/08-zero-touch-run.log"
   discover_client_identity_macos || fail_stop
-  run_server 09-server-enrollment "sudo /usr/local/bin/drlink show clients; echo ====; sudo /usr/local/bin/drlink show client '$CLIENT_MID_PREFIX'" || fail_stop
+  run_server 09-server-enrollment "sudo /usr/local/bin/drlink show managed-hosts; echo ====; sudo /usr/local/bin/drlink show managed-host '$CLIENT_MID_PREFIX'" || fail_stop
   wait_external_ssh 09b-external-ssh || fail_stop
   MATRIX_ENROLL=PASS
 
-  run_client 10-client-doctor "sudo /usr/local/bin/drlink doctor" || fail_stop
-  run_server 11-proxy-mapped "sudo python3 - <<'PY'
-import json, sys
-sys.path.insert(0, '/usr/local/lib/drlink')
-from frp_access_control import authorize, expected_proxy_name
-from pathlib import Path
-reg = json.loads(Path('/var/lib/drlink/registry.json').read_text())
-acl = json.loads(Path('/var/lib/drlink/access-control.json').read_text())
-mid = '$CLIENT_MID'
-client = (reg.get('clients') or {}).get(mid) or {}
-host = str(client.get('hostname') or '')
-name = expected_proxy_name(host, mid, 'ssh')
-v = authorize(acl, reg, proxy_name=name, source_ip='127.0.0.1')
-print('proxy_name', name, 'decision', v.get('decision'), 'reason', v.get('reason'))
-if v.get('decision') != 'ALLOW':
-    raise SystemExit('expected mapped PUBLIC allow')
-print('PROXY_MAPPED_OK')
-PY" || fail_stop
+  run_client 10-client-doctor "sudo /usr/local/bin/drlink system diagnostics" || fail_stop
+  # Verify current Remote Access policy semantics through the public CLI.
+  run_server 11-remote-policy-probe "sudo /usr/local/bin/drlink unset network-object real-e2e-loopback >/dev/null 2>&1 || true; sudo /usr/local/bin/drlink set network-object real-e2e-loopback type ip value 127.0.0.1; sudo /usr/local/bin/drlink test remote-access source real-e2e-loopback destination '$CLIENT_LABEL' service ssh | tee /tmp/real-e2e-remote-policy.txt; grep -q 'Effective Result.*ALLOW' /tmp/real-e2e-remote-policy.txt; sudo /usr/local/bin/drlink unset network-object real-e2e-loopback" || fail_stop
 
   run_client 12-http-fixtures 'mkdir -p /tmp/frp-e2e-http && printf "macos-web\n" >/tmp/frp-e2e-http/index.html; nohup python3 -m http.server 18080 --bind 127.0.0.1 -d /tmp/frp-e2e-http >/tmp/frp-http.log 2>&1 </dev/null & sleep 1; curl -fsS http://127.0.0.1:18080' || fail_stop
-  run_client 13-http-add 'sudo /usr/local/bin/drlink add service --preset http --id web --name Web --target-host 127.0.0.1 --target-port 18080 && sudo /usr/local/bin/drlink system services apply && sudo /usr/local/bin/drlink show services' || fail_stop
+  run_client 12b-http-cleanup "sudo /usr/local/bin/drlink unset remote-service web >/dev/null 2>&1 || true" || fail_stop
+  run_server 12c-http-object-cleanup "sudo /usr/local/bin/drlink unset service-object macos-e2e-http >/dev/null 2>&1 || true" || fail_stop
+  run_server 13-http-object-create "sudo /usr/local/bin/drlink set service-object macos-e2e-http type tcp port 18080" || fail_stop
+  run_client 13b-http-sync "sudo /usr/local/bin/drlink system synchronize" || fail_stop
+  run_client 13c-http-add "sudo /usr/local/bin/drlink set remote-service web destination this-host service macos-e2e-http enabled && sudo /usr/local/bin/drlink show remote-service web" || fail_stop
   local http_port
   http_port="$(ssh "${SSH_OPTS[@]}" "$CLIENT_ALIAS" \
-    "sudo python3 -c \"import json; d=json.load(open('$state_root/client-state.json')); print(((d.get('services') or {}).get('web') or {}).get('remote_port') or '')\"" | tr -d '\r\n')"
+    "sudo /usr/local/bin/drlink show remote-service web | sed -n 's/^Endpoint[[:space:]]*: .*:\\([0-9][0-9]*\\)$/\\1/p' | tail -n1" | tr -d '\r\n')"
   [[ -n "$http_port" ]] || fail_stop
   note "HTTP_PUBLIC_PORT=$http_port"
-  run_server 14-http-external "curl -fsS 'http://127.0.0.1:$http_port'" || fail_stop
+  run_server 14-http-external "curl -fsS 'http://127.0.0.1:$http_port' | grep -q macos-web" || fail_stop
+  run_client 14b-http-delete "sudo /usr/local/bin/drlink unset remote-service web" || fail_stop
+  run_server 14c-http-object-delete "sudo /usr/local/bin/drlink unset service-object macos-e2e-http" || fail_stop
   MATRIX_SERVICE=PASS
   MATRIX_REBOOT=SKIP
   MATRIX_DNS=SKIP
@@ -720,7 +701,7 @@ PY" || fail_stop
   fi
   run_local 52-client-uninstall bash -lc "ssh ${SSH_OPTS[*]} '$CLIENT_ALIAS' 'sudo bash -s --' < '$ROOT/dist/uninstall-client.sh'" || fail_stop
   run_client 52b-client-gone "test ! -d '$state_root' && echo LOCAL_GONE" || fail_stop
-  run_server 53-release-client "printf 'RELEASE\n' | sudo /usr/local/bin/drlink release client '$CLIENT_MID_PREFIX'" || fail_stop
+  run_server 53-release-client "printf 'y\n' | sudo /usr/local/bin/drlink unset managed-host '$CLIENT_MID_PREFIX'" || fail_stop
   MATRIX_UNINSTALL=PASS
 }
 
@@ -743,9 +724,9 @@ scenario_dns_checks() {
     record dns-skipped SKIP 0 0
     return 0
   fi
-  run_server dns-01-doctor-hostname "sudo /usr/local/bin/drlink doctor | tee /tmp/frp-dns-doctor.txt; grep -E 'public_hostname_dn' /tmp/frp-dns-doctor.txt | grep -E 'PASS|WARN'" || fail_stop
+  run_server dns-01-doctor-hostname "sudo /usr/local/bin/drlink system diagnostics | tee /tmp/frp-dns-doctor.txt; grep -E 'public_hostname_dn' /tmp/frp-dns-doctor.txt | grep -E 'PASS|WARN'" || fail_stop
   run_server dns-02-status "sudo /usr/local/bin/drlink show status | tee /tmp/frp-dns-status.txt; grep -F '$PUBLIC_HOSTNAME' /tmp/frp-dns-status.txt" || fail_stop
-  run_client dns-03-access-info "sudo /usr/local/bin/drlink show services; echo ====; sudo python3 - <<'PY'
+  run_client dns-03-access-info "sudo /usr/local/bin/drlink show remote-services; echo ====; sudo python3 - <<'PY'
 from pathlib import Path
 text = Path('/etc/frp/access-info.txt').read_text(encoding='utf-8', errors='replace')
 print(text)
@@ -778,7 +759,7 @@ scenario_install() {
     record 05-server-install SKIP 0 0
     MATRIX_INSTALL=PASS
   fi
-  run_server 06-server-doctor "sudo /usr/local/bin/drlink show status; echo ====; sudo /usr/local/bin/drlink doctor" || fail_stop
+  run_server 06-server-doctor "sudo /usr/local/bin/drlink show status; echo ====; sudo /usr/local/bin/drlink system diagnostics" || fail_stop
 
   pin_linux_installer_urls || fail_stop
 
@@ -786,66 +767,51 @@ scenario_install() {
   run_local 08-zero-touch-run bash -lc "ssh ${SSH_OPTS[*]} '$CLIENT_ALIAS' 'bash -s' < '$OUT_DIR/07-zero-touch-command.sh'" || fail_stop
   redact "$OUT_DIR/08-zero-touch-run.log"
   discover_client_identity || fail_stop
-  run_server 09-server-enrollment "sudo /usr/local/bin/drlink show clients; echo ====; sudo /usr/local/bin/drlink show client '$CLIENT_MID_PREFIX'" || fail_stop
+  run_server 09-server-enrollment "sudo /usr/local/bin/drlink show managed-hosts; echo ====; sudo /usr/local/bin/drlink show managed-host '$CLIENT_MID_PREFIX'" || fail_stop
   wait_external_ssh 09b-external-ssh || fail_stop
   MATRIX_ENROLL=PASS
 }
 
 scenario_services() {
-  run_client 10-http-fixtures "rm -rf /tmp/frp-e2e-http-a /tmp/frp-e2e-http-b; mkdir -p /tmp/frp-e2e-http-a /tmp/frp-e2e-http-b; printf 'web-a\n' >/tmp/frp-e2e-http-a/index.html; printf 'web-b\n' >/tmp/frp-e2e-http-b/index.html; nohup python3 -m http.server 18080 --bind 127.0.0.1 -d /tmp/frp-e2e-http-a >/tmp/frp-http-a.log 2>&1 </dev/null & nohup python3 -m http.server 18081 --bind 127.0.0.1 -d /tmp/frp-e2e-http-b >/tmp/frp-http-b.log 2>&1 </dev/null & sleep 1; curl -fsS http://127.0.0.1:18080; echo ====; curl -fsS http://127.0.0.1:18081" || fail_stop
-  run_client 11-http-add "sudo /usr/local/bin/drlink add service --preset http --id web --name Web --target-host 127.0.0.1 --target-port 18080 && sudo /usr/local/bin/drlink system services apply && sudo /usr/local/bin/drlink show services" || fail_stop
-  # Discover HTTP port from client state (not hardcoded 6001 when other clients exist).
+  local service_object="real-e2e-http"
+  local remote_service="web"
+
+  run_client 10-http-fixtures "rm -rf /tmp/frp-e2e-http-a /tmp/frp-e2e-http-b; mkdir -p /tmp/frp-e2e-http-a /tmp/frp-e2e-http-b; printf 'web-a\\n' >/tmp/frp-e2e-http-a/index.html; printf 'web-b\\n' >/tmp/frp-e2e-http-b/index.html; nohup python3 -m http.server 18080 --bind 127.0.0.1 -d /tmp/frp-e2e-http-a >/tmp/frp-http-a.log 2>&1 </dev/null & nohup python3 -m http.server 18081 --bind 127.0.0.1 -d /tmp/frp-e2e-http-b >/tmp/frp-http-b.log 2>&1 </dev/null & sleep 1; curl -fsS http://127.0.0.1:18080; echo ====; curl -fsS http://127.0.0.1:18081" || fail_stop
+
+  # Canonical v2.4 model: the Server owns the Service Object definition and
+  # the Agent owns the Remote Service that binds it to this-host.
+  run_client 10b-http-cleanup "sudo /usr/local/bin/drlink unset remote-service '$remote_service' >/dev/null 2>&1 || true" || fail_stop
+  run_server 10c-http-object-cleanup "sudo /usr/local/bin/drlink unset service-object '$service_object' >/dev/null 2>&1 || true" || fail_stop
+  run_server 11-http-object-create "sudo /usr/local/bin/drlink set service-object '$service_object' type tcp port 18080 && sudo /usr/local/bin/drlink show service-object '$service_object'" || fail_stop
+  run_client 11b-http-sync "sudo /usr/local/bin/drlink system synchronize" || fail_stop
+  run_client 11c-http-add "sudo /usr/local/bin/drlink set remote-service '$remote_service' destination this-host service '$service_object' enabled && sudo /usr/local/bin/drlink show remote-service '$remote_service'" || fail_stop
+
   local http_port
-  http_port="$(ssh "${SSH_OPTS[@]}" "$CLIENT_ALIAS" \
-    'sudo python3 -c "import json; d=json.load(open(\"/etc/frp/client-state.json\")); print(((d.get(\"services\") or {}).get(\"web\") or {}).get(\"remote_port\") or \"\")"')"
+  http_port="$(ssh "${SSH_OPTS[@]}" "$CLIENT_ALIAS"     "sudo /usr/local/bin/drlink show remote-service '$remote_service' | sed -n 's/^Endpoint[[:space:]]*: .*:\\([0-9][0-9]*\\)$/\\1/p' | tail -n1" | tr -d '\r\n')"
   [[ -n "$http_port" ]] || fail_stop
   note "HTTP_PUBLIC_PORT=$http_port"
+
   run_server 12-http-external "curl -fsS 'http://127.0.0.1:$http_port'" || fail_stop
-  run_client 13-http-edit "sudo /usr/local/bin/drlink set service web target-port 18081 && sudo /usr/local/bin/drlink system services apply && sudo /usr/local/bin/drlink show services" || fail_stop
-  run_server 14-http-external-edited "curl -fsS 'http://127.0.0.1:$http_port'" || fail_stop
-  run_client 15-http-disable "sudo /usr/local/bin/drlink unset service web enabled && sudo /usr/local/bin/drlink system services apply && sudo /usr/local/bin/drlink show services" || fail_stop
+
+  # Edit the referenced Service Object, synchronize catalog, and re-apply the
+  # same Remote Service. Endpoint allocation must stay coherent.
+  run_server 13-http-object-edit "sudo /usr/local/bin/drlink set service-object '$service_object' port 18081 && sudo /usr/local/bin/drlink show service-object '$service_object'" || fail_stop
+  run_client 13b-http-sync "sudo /usr/local/bin/drlink system synchronize" || fail_stop
+  run_client 13c-http-edit "sudo /usr/local/bin/drlink set remote-service '$remote_service' service '$service_object' enabled && sudo /usr/local/bin/drlink show remote-service '$remote_service'" || fail_stop
+  run_server 14-http-external-edited "curl -fsS 'http://127.0.0.1:$http_port' | grep -q web-b" || fail_stop
+
+  run_client 15-http-disable "sudo /usr/local/bin/drlink set remote-service '$remote_service' enabled disabled && sudo /usr/local/bin/drlink show remote-service '$remote_service'" || fail_stop
   run_server 16-http-disabled "! curl -fsS --max-time 5 'http://127.0.0.1:$http_port'" || fail_stop
-  run_client 17-http-enable "sudo /usr/local/bin/drlink set service web enabled && sudo /usr/local/bin/drlink system services apply && sudo /usr/local/bin/drlink show services" || fail_stop
-  run_server 18-http-reenabled "curl -fsS 'http://127.0.0.1:$http_port'" || fail_stop
-  run_client 19-http-disable-again "sudo /usr/local/bin/drlink unset service web enabled && sudo /usr/local/bin/drlink system services apply >/dev/null" || fail_stop
-  run_server 20-release "printf 'RELEASE\n' | sudo /usr/local/bin/drlink release service '$CLIENT_MID_PREFIX' web" || fail_stop
-  run_server 21-http-released "! curl -fsS --max-time 5 'http://127.0.0.1:$http_port'" || fail_stop
 
-  python_remote "$SERVER_ALIAS" 22-server-after-release <<PY || fail_stop
-import json
-from pathlib import Path
+  run_client 17-http-enable "sudo /usr/local/bin/drlink set remote-service '$remote_service' enabled enabled && sudo /usr/local/bin/drlink show remote-service '$remote_service'" || fail_stop
+  run_server 18-http-reenabled "curl -fsS 'http://127.0.0.1:$http_port' | grep -q web-b" || fail_stop
 
-d = json.loads(Path('/var/lib/drlink/registry.json').read_text(encoding='utf-8'))
-prefix = '$CLIENT_MID_PREFIX'
-match = None
-for mid, client in (d.get('clients') or {}).items():
-    if str(mid).startswith(prefix):
-        match = (mid, client)
-        break
-if not match:
-    raise SystemExit('client not found in registry for mid prefix %r' % prefix)
-mid, client = match
-services = client.get('services') or {}
-if 'web' in services:
-    raise SystemExit('released service web still present in server registry for %s' % mid)
-print('server registry: web removed for %s' % mid)
-PY
+  run_client 19-http-delete "sudo /usr/local/bin/drlink unset remote-service '$remote_service' && sudo /usr/local/bin/drlink show remote-services" || fail_stop
+  run_server 20-http-released "! curl -fsS --max-time 5 'http://127.0.0.1:$http_port'" || fail_stop
+  run_server 21-server-remote-services "sudo /usr/local/bin/drlink show managed-host '$CLIENT_MID_PREFIX' remote-services | tee /tmp/real-e2e-remote-services.txt; ! grep -q '$remote_service' /tmp/real-e2e-remote-services.txt" || fail_stop
+  run_server 22-http-object-delete "sudo /usr/local/bin/drlink unset service-object '$service_object'" || fail_stop
+  run_client 23-client-show-services "sudo /usr/local/bin/drlink show remote-services" || fail_stop
 
-  # Server release does not mutate client-state.json; explicit sync reconciles.
-  run_client 23-client-sync "sudo /usr/local/bin/drlink sync" || fail_stop
-  run_client 23b-client-show-services "sudo /usr/local/bin/drlink show services" || fail_stop
-  python_remote "$CLIENT_ALIAS" 24-client-state-assert <<'PY' || fail_stop
-import json
-from pathlib import Path
-
-state = json.loads(Path('/etc/frp/client-state.json').read_text(encoding='utf-8'))
-services = state.get('services') or {}
-if 'web' in services:
-    raise SystemExit('released service web still present in client-state.json')
-if 'ssh' not in services:
-    raise SystemExit('ssh service missing (unexpected)')
-print('client state: web removed; ssh present')
-PY
   wait_external_ssh 24b-ssh-unaffected || fail_stop
   MATRIX_SERVICE=PASS
 }
@@ -862,35 +828,40 @@ scenario_reboots() {
     run_local "34-server-reboot-$i" bash -lc "ssh ${SSH_OPTS[*]} '$SERVER_ALIAS' 'sudo reboot' || true"
     wait_host "$SERVER_ALIAS" "35-server-reconnect-$i" || fail_stop
     wait_external_ssh "36-server-reboot-ssh-$i" || fail_stop
-    run_server "37-server-registry-after-reboot-$i" "sudo /usr/local/bin/drlink show client '$CLIENT_MID_PREFIX'; sudo /usr/local/bin/drlink doctor" || fail_stop
+    run_server "37-server-registry-after-reboot-$i" "sudo /usr/local/bin/drlink show managed-host '$CLIENT_MID_PREFIX'; sudo /usr/local/bin/drlink system diagnostics" || fail_stop
   done
   MATRIX_REBOOT=PASS
 }
 
 scenario_backup_repeat() {
   local i
+  local marker="real-e2e-restore-marker"
   for i in $(seq 1 "$BACKUP_REPEAT"); do
-    run_server "40-backup-$i" "sudo /usr/local/bin/drlink create backup /var/lib/drlink/backups/real-e2e-backup-$i.tar.gz" || fail_stop
-    run_server "41-mutate-$i" "sudo /usr/local/bin/drlink set client '$CLIENT_MID_PREFIX' label mutated-label-$i && sudo /usr/local/bin/drlink set client '$CLIENT_MID_PREFIX' note 'mutated note $i' && sudo /usr/local/bin/drlink set client '$CLIENT_MID_PREFIX' tag env e2e$i && sudo /usr/local/bin/drlink show client '$CLIENT_MID_PREFIX'" || fail_stop
+    run_server "39-backup-clean-$i" "sudo /usr/local/bin/drlink unset network-object '$marker' >/dev/null 2>&1 || true" || fail_stop
+    run_server "40-backup-$i" "sudo /usr/local/bin/drlink system backup /var/lib/drlink/backups/real-e2e-backup-$i.tar.gz" || fail_stop
+
+    # Mutate canonical v2.4 control-plane state after the backup. A successful
+    # restore must remove this post-backup marker while preserving the Managed Host.
+    run_server "41-mutate-$i" "sudo /usr/local/bin/drlink set network-object '$marker' type ip value 198.51.100.10 && sudo /usr/local/bin/drlink show network-object '$marker'" || fail_stop
     run_local "42-restore-$i" bash -lc "cat '$ROOT/tools/frp-restore' | ssh ${SSH_OPTS[*]} '$SERVER_ALIAS' 'sudo tee /tmp/frp-restore >/dev/null && sudo chmod 755 /tmp/frp-restore'; cat '$ROOT/tools/frp-backup' | ssh ${SSH_OPTS[*]} '$SERVER_ALIAS' 'sudo tee /tmp/frp-backup >/dev/null && sudo chmod 755 /tmp/frp-backup'; ssh ${SSH_OPTS[*]} '$SERVER_ALIAS' 'sudo python3 /tmp/frp-restore /var/lib/drlink/backups/real-e2e-backup-$i.tar.gz'" || fail_stop
-    run_server "43-restore-verify-$i" "sudo /usr/local/bin/drlink show client '$CLIENT_MID_PREFIX'; echo ====; sudo /usr/local/bin/drlink doctor; echo ====; sudo test ! -f /var/lib/drlink/server-update-pending.json && sudo test ! -f /var/lib/drlink/client-update-pending.json && echo PENDING_MARKER_CLEARED=YES; echo ====; sudo python3 -c \"import json; c=json.load(open('/etc/drlink/config.json')); print('public_hostname='+str(c.get('public_hostname') or ''))\"" || fail_stop
+    run_server "43-restore-verify-$i" "! sudo /usr/local/bin/drlink show network-object '$marker' >/tmp/restore-marker.txt 2>&1; sudo /usr/local/bin/drlink show managed-host '$CLIENT_MID_PREFIX'; echo ====; sudo /usr/local/bin/drlink system diagnostics; echo ====; sudo test ! -f /var/lib/drlink/server-update-pending.json && sudo test ! -f /var/lib/drlink/client-update-pending.json && echo PENDING_MARKER_CLEARED=YES; echo ====; sudo python3 -c \"import json; c=json.load(open('/etc/drlink/config.json')); print('public_hostname='+str(c.get('public_hostname') or ''))\"" || fail_stop
     wait_external_ssh "44-restore-ssh-$i" || fail_stop
   done
 }
 
 scenario_uninstall_reinstall() {
-  run_server 50-pre-uninstall-server "sudo /usr/local/bin/drlink show client '$CLIENT_MID_PREFIX'" || fail_stop
-  run_client 51-pre-uninstall-client "sudo /usr/local/bin/drlink show services; sudo /usr/local/bin/drlink show status" || fail_stop
+  run_server 50-pre-uninstall-server "sudo /usr/local/bin/drlink show managed-host '$CLIENT_MID_PREFIX'" || fail_stop
+  run_client 51-pre-uninstall-client "sudo /usr/local/bin/drlink show remote-services; sudo /usr/local/bin/drlink show status" || fail_stop
   run_local 52-client-uninstall bash -lc "ssh ${SSH_OPTS[*]} '$CLIENT_ALIAS' 'sudo bash -s --' < '$ROOT/dist/uninstall-client.sh'" || fail_stop
   run_client 53-post-uninstall-local "echo frpc=\$(systemctl is-active drlink-client 2>/dev/null || echo inactive); ls /etc/frp 2>/dev/null || echo NO_ETC_FRP; ls /usr/local/bin/frp* 2>/dev/null || echo NO_FRP_BIN; test ! -f /etc/frp/client-state.json && echo CLIENT_STATE_GONE=YES || echo CLIENT_STATE_GONE=NO; ps -eo comm= | grep -E '^(frpc|frp-client)\$' || echo NO_FRP_PROCESS" || fail_stop
-  run_server 54-post-uninstall-server "sudo /usr/local/bin/drlink show client '$CLIENT_MID_PREFIX'" || fail_stop
+  run_server 54-post-uninstall-server "sudo /usr/local/bin/drlink show managed-host '$CLIENT_MID_PREFIX'" || fail_stop
 
   create_zero_touch "$OUT_DIR/55-zero-touch-create.log" "$OUT_DIR/55-zero-touch-command.sh" 55-zero-touch-create "uninstall-reinstall-$PROFILE" || fail_stop
   run_local 56-reinstall bash -lc "ssh ${SSH_OPTS[*]} '$CLIENT_ALIAS' 'bash -s' < '$OUT_DIR/55-zero-touch-command.sh'" || fail_stop
   redact "$OUT_DIR/56-reinstall.log"
   discover_client_identity || fail_stop
-  run_client 57-post-reinstall "sudo /usr/local/bin/drlink show services; sudo /usr/local/bin/drlink show status" || fail_stop
-  run_server 58-post-reinstall-server "sudo /usr/local/bin/drlink show clients; sudo /usr/local/bin/drlink show client '$CLIENT_MID_PREFIX'" || fail_stop
+  run_client 57-post-reinstall "sudo /usr/local/bin/drlink show remote-services; sudo /usr/local/bin/drlink show status" || fail_stop
+  run_server 58-post-reinstall-server "sudo /usr/local/bin/drlink show managed-hosts; sudo /usr/local/bin/drlink show managed-host '$CLIENT_MID_PREFIX'" || fail_stop
   wait_external_ssh 59-reinstall-ssh || fail_stop
   MATRIX_UNINSTALL=PASS
 }
@@ -921,7 +892,7 @@ scenario_dns_only() {
   run_server dns-change-reset "sudo /usr/local/bin/drlink set server public-hostname '$PUBLIC_HOSTNAME'" || fail_stop
   ACCESS_HOST="$PUBLIC_HOSTNAME"
   wait_external_ssh dns-after-reset "$EXT_TRIES" "$EXT_DELAY" "$PUBLIC_HOSTNAME" "$SSH_PUBLIC_PORT" "$TUNNEL_SSH_USER" || fail_stop
-  run_server dns-ports-unchanged "sudo /usr/local/bin/drlink show client '$CLIENT_MID_PREFIX'" || fail_stop
+  run_server dns-ports-unchanged "sudo /usr/local/bin/drlink show managed-host '$CLIENT_MID_PREFIX'" || fail_stop
   MATRIX_DNS=PASS
 }
 

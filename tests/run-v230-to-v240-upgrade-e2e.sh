@@ -644,7 +644,7 @@ fi
 
 # Runtime health after upgrade
 set +e
-pq_ssh "$SERVER" 'sudo drlink doctor >/tmp/drlink-doctor-upgrade.txt 2>&1; sudo drlink show status >/tmp/drlink-status-upgrade.txt 2>&1; systemctl is-active drlink-server drlink-allocator drlink-access drlink-egress; systemctl cat drlink-tcp-egress >/dev/null 2>&1; echo TCP_UNIT_RC=$?'
+pq_ssh "$SERVER" 'sudo drlink system diagnostics >/tmp/drlink-doctor-upgrade.txt 2>&1; sudo drlink show status >/tmp/drlink-status-upgrade.txt 2>&1; systemctl is-active drlink-server drlink-allocator drlink-access drlink-egress; systemctl cat drlink-tcp-egress >/dev/null 2>&1; echo TCP_UNIT_RC=$?'
 rt_rc=$?
 set -uo pipefail
 pq_ssh "$SERVER" 'sudo cat /tmp/drlink-doctor-upgrade.txt' >"$OUT/doctor.txt" || true
@@ -678,7 +678,7 @@ for _ in $(seq 1 60); do
   sleep 5
   boot_after="$(pq_ssh "$SERVER" 'cat /proc/sys/kernel/random/boot_id' 2>/dev/null || true)"
   if [[ -n "$boot_after" && "$boot_after" != "$boot_before" ]] \
-    && pq_ssh "$SERVER" 'sudo drlink doctor >/tmp/drlink-doctor-a019-reboot.txt 2>&1 && systemctl is-active --quiet drlink-server drlink-allocator drlink-access drlink-egress'; then
+    && pq_ssh "$SERVER" 'sudo drlink system diagnostics >/tmp/drlink-doctor-a019-reboot.txt 2>&1 && systemctl is-active --quiet drlink-server drlink-allocator drlink-access drlink-egress'; then
     reboot_ok=1
     break
   fi

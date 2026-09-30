@@ -240,6 +240,16 @@ for obsolete in \
 done
 pass "PRIOR_STABLE_V230_AND_DOC_HYGIENE"
 
+# FULL_USER_E2E is a mandatory release test and its executable command ledger
+# must never drift back to retired greenfield-v2.4 grammar.
+FULL_E2E_DOC="$ROOT/docs/FULL_USER_E2E_SCENARIOS.md"
+if grep -nE '^[[:space:]]*(show services|show internet([[:space:]]|$)|show mcp-tls|test internet[[:space:]]|set client[[:space:]]|show clients([[:space:]]|$)|show client[[:space:]]|add service[[:space:]]|set service[[:space:]]|unset service[[:space:]]|system services([[:space:]]|$)|release client[[:space:]]|release service[[:space:]]|create zero-touch([[:space:]]|$)|create enrollment([[:space:]]|$))' "$FULL_E2E_DOC"; then
+  fail "FULL_USER_E2E command ledger contains retired public CLI"
+fi
+grep -q 'test internet-access source <SOURCE> destination <DESTINATION> service <SERVICE>' "$FULL_E2E_DOC"   || fail "FULL_USER_E2E missing canonical Internet Access explain path"
+grep -q 'system certificate status' "$FULL_E2E_DOC"   || fail "FULL_USER_E2E missing canonical MCP TLS/certificate status path"
+pass "FULL_USER_E2E_CANONICAL_CLI_LEDGER"
+
 grep -q 'REAL_ENTERPRISE_RESTRICTED_NETWORK_E2E=PASS' docs/RELEASE_VALIDATION.md || fail "missing enterprise-network evidence"
 grep -q 'REAL_SSH_SERVICE_E2E=PASS' docs/RELEASE_VALIDATION.md || fail "missing SSH E2E evidence"
 grep -q 'REAL_END_TO_END_REBOOT_RECOVERY=PASS' docs/RELEASE_VALIDATION.md || fail "missing reboot-recovery evidence"

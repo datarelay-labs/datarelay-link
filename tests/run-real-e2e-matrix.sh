@@ -122,56 +122,64 @@ for profile in "${PROFILE_LIST[@]}"; do
   esac
 done
 
-# Fleet simultaneous-state checks for Linux clients that enrolled.
+# Fleet simultaneous-state checks for profiles that completed enrollment.
 if [[ "$INCLUDE_FLEET" == "1" && "$first_linux" -eq 0 ]]; then
   note "==== FLEET simultaneous enrollment checks ===="
-  set +e
-  ssh "${SSH_OPTS[@]}" "$SERVER_ALIAS" 'sudo /usr/local/bin/drlink show clients' \
-    | tee "$OUT_ROOT/fleet-clients.txt"
-  python3 - "$OUT_ROOT/fleet-clients.txt" "$OUT_ROOT/fleet-assert.log" <<'PY'
-import re, sys
-text = open(sys.argv[1], encoding="utf-8", errors="replace").read()
-# Collect machine id prefixes / ids from show clients output.
-ids = sorted(set(re.findall(r'\b([0-9a-f]{8,64})\b', text, flags=re.I)))
-open(sys.argv[2], "w", encoding="utf-8").write("IDS=%s\nCOUNT=%d\n" % (",".join(ids), len(ids)))
-if len(ids) < 2:
-    raise SystemExit("expected at least 2 enrolled clients in fleet output, got %d" % len(ids))
-print("FLEET_CLIENT_IDS_OK count=%d" % len(ids))
-PY
-  fleet_rc=$?
-  set -uo pipefail
-  note "FLEET_ASSERT_RC=$fleet_rc"
-  if [[ "$fleet_rc" -ne 0 ]]; then
+  fleet_profiles=()
+  for profile in "${PROFILE_LIST[@]}"; do
+    profile="$(echo "$profile" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+    [[ -n "$profile" ]] || continue
+    case "$profile" in macos|macos-arm64|windows|windows-10) continue ;; esac
+    if [[ -f "$OUT_ROOT/$profile/client-mid.txt" && -f "$OUT_ROOT/$profile/ssh-public-port.txt" && -f "$OUT_ROOT/$profile/ssh-user.txt" && -f "$OUT_ROOT/$profile/client-alias.txt" ]]; then
+      fleet_profiles+=("$profile")
+    fi
+  done
+  note "FLEET_PROFILE_COUNT=${#fleet_profiles[@]}"
+  if [[ "${#fleet_profiles[@]}" -lt 2 ]]; then
+    note "FLEET_ASSERT=FAIL need at least two enrolled Linux profiles"
     FAILED=$((FAILED + 1))
   fi
 
-  # Cross-client isolation: release must not affect other clients' SSH ports.
+  set +e
+  ssh "${SSH_OPTS[@]}" "$SERVER_ALIAS" 'sudo /usr/local/bin/drlink show managed-hosts' | tee "$OUT_ROOT/fleet-clients.txt"
+  fleet_cli_rc=${PIPESTATUS[0]}
+  set -uo pipefail
+  if [[ "$fleet_cli_rc" -ne 0 ]] || grep -q "^No Managed Hosts enrolled" "$OUT_ROOT/fleet-clients.txt"; then
+    note "FLEET_MANAGED_HOSTS=FAIL"
+    FAILED=$((FAILED + 1))
+  else
+    note "FLEET_MANAGED_HOSTS=PASS"
+  fi
+
+  # Snapshot authoritative published endpoints before reboot.
+  ssh "${SSH_OPTS[@]}" "$SERVER_ALIAS" "sudo python3 -c \"import json,sqlite3; c=sqlite3.connect('/var/lib/drlink/drlink.db'); rows=c.execute(\'SELECT client_id,name,public_port FROM published_services WHERE released=0 ORDER BY client_id,name\').fetchall(); print(json.dumps(rows))\"" | tee "$OUT_ROOT/fleet-ports-before-reboot.json"
+
   note "==== FLEET server reboot ===="
   set +e
-  # Snapshot ports before reboot.
-  ssh "${SSH_OPTS[@]}" "$SERVER_ALIAS" \
-    "sudo python3 -c \"import json; d=json.load(open('/var/lib/drlink/registry.json'));
-print(json.dumps({mid[:8]: ((c.get('services') or {}).get('ssh') or {}).get('remote_port') for mid,c in (d.get('clients') or {}).items()}))\"" \
-    | tee "$OUT_ROOT/fleet-ports-before-reboot.json"
   ssh "${SSH_OPTS[@]}" "$SERVER_ALIAS" 'sudo reboot' || true
   for i in $(seq 1 36); do
-    if ssh "${SSH_OPTS[@]}" "$SERVER_ALIAS" 'hostname' >/dev/null 2>&1; then
-      break
-    fi
+    if ssh "${SSH_OPTS[@]}" "$SERVER_ALIAS" 'hostname' >/dev/null 2>&1; then break; fi
     sleep 5
   done
-  # Bounded wait for published SSH proxies to recover after frps restart.
-  for i in $(seq 1 24); do
-    if ssh "${SSH_OPTS[@]}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-      -o IdentitiesOnly=yes -i "$SSH_KEY" -p 6000 "aella@$SERVER_IP" 'hostname' >/dev/null 2>&1; then
-      break
-    fi
-    sleep 5
-  done
-  ssh "${SSH_OPTS[@]}" "$SERVER_ALIAS" 'sudo /usr/local/bin/drlink show clients; sudo /usr/local/bin/drlink doctor' \
-    | tee "$OUT_ROOT/fleet-after-reboot.txt"
-  # Explicit recovery evidence — log headings alone must never imply PASS.
-  if grep -qi ONLINE "$OUT_ROOT/fleet-after-reboot.txt" 2>/dev/null; then
+
+  # Bounded external recovery check using retained per-profile evidence.
+  if [[ "${#fleet_profiles[@]}" -gt 0 ]]; then
+    first_profile="${fleet_profiles[0]}"
+    first_port="$(cat "$OUT_ROOT/$first_profile/ssh-public-port.txt")"
+    first_user="$(cat "$OUT_ROOT/$first_profile/ssh-user.txt")"
+    for i in $(seq 1 24); do
+      if ssh "${SSH_OPTS[@]}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes -i "$SSH_KEY" -p "$first_port" "$first_user@$SERVER_IP" 'hostname' >/dev/null 2>&1; then break; fi
+      sleep 5
+    done
+  fi
+
+  set +e
+  ssh "${SSH_OPTS[@]}" "$SERVER_ALIAS" 'sudo /usr/local/bin/drlink show managed-hosts; sudo /usr/local/bin/drlink system diagnostics' | tee "$OUT_ROOT/fleet-after-reboot.txt"
+  fleet_reboot_cli_rc=${PIPESTATUS[0]}
+  ssh "${SSH_OPTS[@]}" "$SERVER_ALIAS" "sudo python3 -c \"import json,sqlite3; c=sqlite3.connect('/var/lib/drlink/drlink.db'); rows=c.execute(\'SELECT client_id,name,public_port FROM published_services WHERE released=0 ORDER BY client_id,name\').fetchall(); print(json.dumps(rows))\"" >"$OUT_ROOT/fleet-ports-after-reboot.json"
+  fleet_ports_rc=$?
+  set -uo pipefail
+  if [[ "$fleet_reboot_cli_rc" -eq 0 && "$fleet_ports_rc" -eq 0 ]] && cmp -s "$OUT_ROOT/fleet-ports-before-reboot.json" "$OUT_ROOT/fleet-ports-after-reboot.json"; then
     echo "FLEET_REBOOT_RECOVERY=PASS" | tee "$OUT_ROOT/fleet-reboot-recovery.env"
     note "FLEET_REBOOT_RECOVERY=PASS"
   else
@@ -179,115 +187,93 @@ print(json.dumps({mid[:8]: ((c.get('services') or {}).get('ssh') or {}).get('rem
     note "FLEET_REBOOT_RECOVERY=FAIL"
     FAILED=$((FAILED + 1))
   fi
-  set -uo pipefail
 
-  # External SSH via DNS hostname for each discovered ssh port from registry.
+  # External SSH via DNS hostname using profile-retained port/user evidence.
   if [[ "$DNS_OK" -eq 1 ]]; then
     note "==== FLEET DNS access ===="
     set +e
-    python3 - "$OUT_ROOT" "$SERVER_ALIAS" "$PUBLIC_HOSTNAME" "$SSH_KEY" <<'PY'
-import json, subprocess, sys, time
+    python3 - "$OUT_ROOT" "$PUBLIC_HOSTNAME" "$SSH_KEY" "${fleet_profiles[@]}" <<'PY'
+import subprocess, sys, time
 from pathlib import Path
-out, alias, host, key = sys.argv[1:5]
-raw = subprocess.check_output(
-    ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", alias,
-     "sudo python3 -c \"import json; print(json.dumps(json.load(open('/var/lib/drlink/registry.json'))))\""],
-    text=True,
-)
-reg = json.loads(raw)
-ports = []
-for mid, client in (reg.get("clients") or {}).items():
-    ssh_svc = (client.get("services") or {}).get("ssh") or {}
-    port = ssh_svc.get("remote_port")
-    user = ssh_svc.get("ssh_user") or "aella"
-    if port:
-        ports.append((mid[:8], int(port), user))
-Path(out, "fleet-ports.json").write_text(json.dumps(ports, indent=2), encoding="utf-8")
+out, host, key, *profiles = sys.argv[1:]
 fails = 0
-for mid, port, user in ports:
+for profile in profiles:
+    base = Path(out) / profile
+    mid = (base / "client-mid.txt").read_text().strip()
+    port = int((base / "ssh-public-port.txt").read_text().strip())
+    user = (base / "ssh-user.txt").read_text().strip()
     ok = False
     for _ in range(12):
-        cmd = [
-            "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8",
-            "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
-            "-o", "IdentitiesOnly=yes", "-i", key, "-p", str(port),
-            f"{user}@{host}", "hostname",
-        ]
+        cmd = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8",
+               "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
+               "-o", "IdentitiesOnly=yes", "-i", key, "-p", str(port),
+               f"{user}@{host}", "hostname"]
         try:
             subprocess.check_call(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             ok = True
             break
         except Exception:
             time.sleep(5)
-    if ok:
-        print(f"PASS dns-ssh {mid} {user}@{host}:{port}")
-    else:
-        print(f"FAIL dns-ssh {mid} {user}@{host}:{port}")
-        fails += 1
+    print(("PASS" if ok else "FAIL"), "dns-ssh", profile, mid[:8], f"{user}@{host}:{port}")
+    if not ok: fails += 1
 raise SystemExit(fails)
 PY
     fleet_dns_rc=$?
     set -uo pipefail
     note "FLEET_DNS_RC=$fleet_dns_rc"
-    if [[ "$fleet_dns_rc" -ne 0 ]]; then
+    if [[ "$fleet_dns_rc" -ne 0 ]]; then FAILED=$((FAILED + 1)); fi
+  fi
+
+  # Cross-client isolation: disable one Agent Remote Service and prove another
+  # profile endpoint stays reachable. No backend frp-client mutation is allowed.
+  if [[ "${#fleet_profiles[@]}" -ge 2 ]]; then
+    note "==== FLEET cross-client isolation ===="
+    isolate_profile="${fleet_profiles[0]}"
+    survivor_profile="${fleet_profiles[1]}"
+    isolate_alias="$(cat "$OUT_ROOT/$isolate_profile/client-alias.txt")"
+    survivor_port="$(cat "$OUT_ROOT/$survivor_profile/ssh-public-port.txt")"
+    survivor_user="$(cat "$OUT_ROOT/$survivor_profile/ssh-user.txt")"
+    set +e
+    ssh "${SSH_OPTS[@]}" "$isolate_alias" 'sudo /usr/local/bin/drlink set remote-service ssh enabled disabled' | tee "$OUT_ROOT/fleet-isolation-disable.txt"
+    isolate_disable_rc=${PIPESTATUS[0]}
+    sleep 3
+    ssh "${SSH_OPTS[@]}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes -i "$SSH_KEY" -p "$survivor_port" "$survivor_user@$PUBLIC_HOSTNAME" 'hostname' >/dev/null 2>&1
+    survivor_rc=$?
+    ssh "${SSH_OPTS[@]}" "$isolate_alias" 'sudo /usr/local/bin/drlink set remote-service ssh enabled enabled' | tee "$OUT_ROOT/fleet-isolation-enable.txt"
+    isolate_enable_rc=${PIPESTATUS[0]}
+    set -uo pipefail
+    if [[ "$isolate_disable_rc" -eq 0 && "$survivor_rc" -eq 0 && "$isolate_enable_rc" -eq 0 ]]; then
+      note "CROSS_CLIENT_ISOLATION=PASS"
+    else
+      note "CROSS_CLIENT_ISOLATION=FAIL"
       FAILED=$((FAILED + 1))
     fi
   fi
 
-  # Cross-client isolation: disable one SSH must not drop another client's port.
-  note "==== FLEET cross-client isolation ===="
-  set +e
-  ssh "${SSH_OPTS[@]}" frp-e2e-client 'sudo /usr/local/bin/frp-client disable-service ssh && sudo /usr/local/bin/frp-client apply-pending' \
-    | tee "$OUT_ROOT/fleet-isolation-disable.txt"
-  sleep 3
-  if ssh "${SSH_OPTS[@]}" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-    -o IdentitiesOnly=yes -i "$SSH_KEY" -p 6001 "ec2-user@$PUBLIC_HOSTNAME" 'hostname' >/dev/null 2>&1; then
-    note "CROSS_CLIENT_ISOLATION=PASS"
-  else
-    note "CROSS_CLIENT_ISOLATION=FAIL"
-    FAILED=$((FAILED + 1))
-  fi
-  ssh "${SSH_OPTS[@]}" frp-e2e-client 'sudo /usr/local/bin/frp-client enable-service ssh && sudo /usr/local/bin/frp-client apply-pending' \
-    | tee "$OUT_ROOT/fleet-isolation-enable.txt"
-  set -uo pipefail
-
-  # Fleet backup/restore once — RCs are authoritative (must fail the matrix).
+  # Fleet backup/restore once using canonical control-plane mutation evidence.
   note "==== FLEET backup/restore ===="
   set +e
-  ssh "${SSH_OPTS[@]}" "$SERVER_ALIAS" \
-    'sudo /usr/local/bin/drlink create backup /var/lib/drlink/backups/matrix-fleet-backup.tar.gz' \
-    | tee "$OUT_ROOT/fleet-backup.txt"
-  backup_rc=$?
+  ssh "${SSH_OPTS[@]}" "$SERVER_ALIAS" 'sudo /usr/local/bin/drlink unset network-object matrix-restore-marker >/dev/null 2>&1 || true; sudo /usr/local/bin/drlink system backup /var/lib/drlink/backups/matrix-fleet-backup.tar.gz' | tee "$OUT_ROOT/fleet-backup.txt"
+  backup_rc=${PIPESTATUS[0]}
   note "FLEET_BACKUP_RC=$backup_rc"
-  if [[ "$backup_rc" -ne 0 ]]; then
-    note "FLEET_BACKUP=FAIL"
-    FAILED=$((FAILED + 1))
-  fi
-  ssh "${SSH_OPTS[@]}" "$SERVER_ALIAS" \
-    "sudo /usr/local/bin/drlink set server public-hostname '$PUBLIC_HOSTNAME' || true; sudo python3 -c \"import json; c=json.load(open('/etc/drlink/config.json')); print(c.get('public_hostname'))\"" \
-    | tee "$OUT_ROOT/fleet-hostname-before-restore.txt"
-  # Mutate then restore.
-  ssh "${SSH_OPTS[@]}" "$SERVER_ALIAS" 'sudo /usr/local/bin/drlink set client $(sudo python3 -c "import json; print(next(iter(json.load(open(\"/var/lib/drlink/registry.json\"))[\"clients\"])))") label fleet-mutated' || true
+  ssh "${SSH_OPTS[@]}" "$SERVER_ALIAS" 'sudo /usr/local/bin/drlink set network-object matrix-restore-marker type ip value 198.51.100.22' | tee "$OUT_ROOT/fleet-mutate.txt"
+  mutate_rc=${PIPESTATUS[0]}
   cat "$ROOT/tools/frp-restore" | ssh "${SSH_OPTS[@]}" "$SERVER_ALIAS" 'sudo tee /tmp/frp-restore >/dev/null && sudo chmod 755 /tmp/frp-restore'
   cat "$ROOT/tools/frp-backup" | ssh "${SSH_OPTS[@]}" "$SERVER_ALIAS" 'sudo tee /tmp/frp-backup >/dev/null && sudo chmod 755 /tmp/frp-backup'
-  ssh "${SSH_OPTS[@]}" "$SERVER_ALIAS" 'sudo python3 /tmp/frp-restore /var/lib/drlink/backups/matrix-fleet-backup.tar.gz' \
-    | tee "$OUT_ROOT/fleet-restore.txt"
-  restore_rc=$?
-  note "FLEET_RESTORE_RC=$restore_rc"
-  ssh "${SSH_OPTS[@]}" "$SERVER_ALIAS" \
-    "sudo python3 -c \"import json; c=json.load(open('/etc/drlink/config.json')); print('public_hostname='+str(c.get('public_hostname') or ''))\"" \
-    | tee "$OUT_ROOT/fleet-hostname-after-restore.txt"
+  ssh "${SSH_OPTS[@]}" "$SERVER_ALIAS" 'sudo python3 /tmp/frp-restore /var/lib/drlink/backups/matrix-fleet-backup.tar.gz' | tee "$OUT_ROOT/fleet-restore.txt"
+  restore_rc=${PIPESTATUS[0]}
+  ssh "${SSH_OPTS[@]}" "$SERVER_ALIAS" '! sudo /usr/local/bin/drlink show network-object matrix-restore-marker >/dev/null 2>&1; sudo /usr/local/bin/drlink show managed-hosts >/dev/null'
   post_restore_rc=$?
-  note "FLEET_POST_RESTORE_RC=$post_restore_rc"
-  if [[ "$restore_rc" -ne 0 || "$post_restore_rc" -ne 0 ]]; then
-    note "FLEET_RESTORE=FAIL"
-    FAILED=$((FAILED + 1))
-  elif [[ "$backup_rc" -eq 0 ]]; then
-    note "FLEET_BACKUP_RESTORE=PASS"
-  fi
   set -uo pipefail
+  note "FLEET_RESTORE_RC=$restore_rc"
+  note "FLEET_POST_RESTORE_RC=$post_restore_rc"
+  if [[ "$backup_rc" -eq 0 && "$mutate_rc" -eq 0 && "$restore_rc" -eq 0 && "$post_restore_rc" -eq 0 ]]; then
+    note "FLEET_BACKUP_RESTORE=PASS"
+  else
+    note "FLEET_BACKUP_RESTORE=FAIL"
+    FAILED=$((FAILED + 1))
+  fi
 fi
-
 # Targeted IP fallback on the first Linux profile that enrolled (not a hard-coded
 # baseline-linux host which may be absent from the release matrix).
 if [[ "$INCLUDE_DNS_IP_FALLBACK" == "1" && "$DNS_OK" -eq 1 ]]; then

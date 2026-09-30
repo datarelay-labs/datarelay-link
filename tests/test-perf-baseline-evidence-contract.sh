@@ -73,7 +73,7 @@ doc = {
       "p50": None, "p95": None, "p99": None,
     },
   },
-  "fixed_tcp_egress": {
+  "fixed_tcp_remote_service": {
     "sample_count": None, "attempt_count": None, "success_count": None,
     "failure_count": None, "failure_rate": None,
     "setup_p50": None, "setup_p95": None, "setup_p99": None,
@@ -93,7 +93,7 @@ grep -Eq 'PERF_BASELINE_(CONNECT|HTTP)_METRICS=FAIL' "$WORKDIR/null-metrics.out"
 pass "null HTTP/connect metrics fail"
 
 # Case 3: TCP qual PASS + null Fixed TCP metrics → FAIL
-echo 'TCP_EGRESS_QUALIFICATION=PASS' >>"$PROD_QUAL_GATES"
+echo 'FIXED_TCP_REMOTE_SERVICE_QUALIFICATION=PASS' >>"$PROD_QUAL_GATES"
 python3 - "$baseline_out" <<'PY'
 import json, sys
 from pathlib import Path
@@ -115,7 +115,7 @@ set +e
 python3 "$VALIDATOR" "$baseline_out" "$HEAD" "$OUT" >"$WORKDIR/tcp-null.out" 2>&1
 rc=$?
 set -e
-[[ "$rc" -ne 0 ]] || fail "null Fixed TCP metrics passed while TCP_EGRESS_QUALIFICATION=PASS"
+[[ "$rc" -ne 0 ]] || fail "null Fixed TCP metrics passed while FIXED_TCP_REMOTE_SERVICE_QUALIFICATION=PASS"
 grep -q 'PERF_BASELINE_FIXED_TCP_METRICS=FAIL' "$WORKDIR/tcp-null.out" \
   || { cat "$WORKDIR/tcp-null.out"; fail "missing Fixed TCP metrics FAIL"; }
 pass "null Fixed TCP metrics fail when TCP qual PASS"
@@ -126,7 +126,7 @@ import json, sys
 from pathlib import Path
 p = Path(sys.argv[1])
 d = json.loads(p.read_text(encoding="utf-8"))
-d["fixed_tcp_egress"].update({
+d["fixed_tcp_remote_service"].update({
   "sample_count": 4, "attempt_count": 4, "success_count": 4,
   "failure_count": 0, "failure_rate": 0.0,
   "setup_p50": 5.0, "setup_p95": 6.0, "setup_p99": 7.0,

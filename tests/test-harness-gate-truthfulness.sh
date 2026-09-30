@@ -149,11 +149,12 @@ assert '= "403"' in text or "='403'" in text
 # Reject the old permissive pattern accepting transport failures as deny success
 assert '000" -o' not in text
 assert "deny\" = \"000\"" not in text and "deny' = '000'" not in text
-assert "egress_profiles" in text
-assert "st.get('profiles')" not in text
+assert "set internet-access" in text
+assert "egress_profiles" not in text
+assert "egress-control.json" not in text
 print("ok")
 PY
-pass "DENY requires 403; egress_profiles key"
+pass "DENY requires 403; SQLite Internet Access authority"
 
 # --- Soak decisive probes must not be || true'd ---
 python3 - "$ROOT/tests/run-prod-qual-extended.sh" <<'PY' || fail "soak still || true on traffic"
@@ -246,7 +247,7 @@ python3 - "$ROOT/tests/run-prod-qual-extended.sh" <<'PY' || fail "invalid RC ass
 from pathlib import Path
 import sys
 text = Path(sys.argv[1]).read_text(encoding="utf-8")
-docs = text[text.find("phase_docs_free_ux"):text.find("phase_fixed_tcp_egress")]
+docs = text[text.find("phase_docs_free_ux"):text.find("phase_fixed_tcp_remote_service")]
 assert 'test "$rc1" -ne 0' in docs
 assert 'test "$rc2" -ne 0' in docs
 assert 'test "$rc3" -ne 0' in docs

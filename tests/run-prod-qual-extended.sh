@@ -44,7 +44,6 @@ cfg_path = Path("/etc/drlink/config.json")
 cfg = json.loads(cfg_path.read_text())
 cfg["egress_listen_addr"] = "0.0.0.0"
 cfg["egress_listen_port"] = ${EGRESS_PORT}
-cfg.setdefault("egress_control_file", "/var/lib/drlink/egress-control.json")
 cfg.setdefault("egress_conn_log_file", "/var/log/drlink/egress/connections.jsonl")
 fd, tmp_name = tempfile.mkstemp(prefix=".config.", dir=str(cfg_path.parent), text=True)
 try:
@@ -101,23 +100,61 @@ EOF
 # ---------------------------------------------------------------------------
 phase_egress_allow_deny() {
   pq_note "==== MULTI_OS_EGRESS_ALLOW_DENY ===="
-  local profile="qual-egress-$(date -u +%H%M%S)"
-  local unique_host="qual-disable-${profile}.example"
+  local source_obj="pq-any-source"
+  local destination_obj="pq-example-com"
+  local http_obj="pq-http"
+  local https_obj="pq-https"
+  local service_group="pq-web"
+  local rule="pq-example-web"
   ensure_egress_listener || { pq_gate MULTI_OS_EGRESS_ALLOW_DENY FAIL; return 1; }
 
-  pq_ssh "$SERVER" "sudo bash -s" <<EOF
+  # Qualification owns a clean Internet Access policy on the disposable
+  # release Server. Build the policy only through the canonical SQLite-backed CLI.
+  set +e
+  pq_ssh "$SERVER" "sudo bash -s" >"$OUT/extended/internet-policy-setup.log" 2>&1 <<EOF
 set -euo pipefail
-# Reset to a known profile: disabled create → sources → destinations → enable
-drlink egress delete '$profile' --yes 2>/dev/null || true
-drlink egress create '$profile' --description 'prod-qual allow-deny'
-drlink egress add-source '$profile' 0.0.0.0/0 --name any
-drlink egress add-destination '$profile' example.com 80 --protocol http
-drlink egress add-destination '$profile' example.com 443 --protocol https
-  # Unique FQDN only in this profile (reserved for disable-isolation experiments).
-drlink egress add-destination '$profile' '$unique_host' 80 --protocol http || true
-drlink egress enable '$profile'
-drlink egress show '$profile' || drlink egress list
+# Do not destroy or normalize pre-existing operator policy. Production
+# qualification owns only a clean disposable Internet Access surface.
+drlink show internet-access | tee /tmp/pq-internet-initial.txt
+if ! grep -q "Mode[[:space:]]*: No Policy" /tmp/pq-internet-initial.txt; then
+  python3 - <<'PY'
+import sqlite3
+c = sqlite3.connect("/var/lib/drlink/drlink.db")
+names = [str(r[0]) for r in c.execute("SELECT name FROM policy_rules WHERE plane='internet'")]
+foreign = [name for name in names if not name.startswith("pq-")]
+if foreign:
+    raise SystemExit(
+        "refusing qualification: non-qualification Internet Access rules exist: %s"
+        % ",".join(foreign)
+    )
+if not names:
+    raise SystemExit("refusing qualification: configured Internet Access has no qualification-owned rules")
+PY
+  # Interrupted prior qualification: remove only the qualification-owned policy.
+  printf 'y\n' | drlink unset internet-access policy
+fi
+# Clean only qualification-owned residue from an interrupted prior run.
+drlink unset service-group "$service_group" >/dev/null 2>&1 || true
+drlink unset service-object "$http_obj" >/dev/null 2>&1 || true
+drlink unset service-object "$https_obj" >/dev/null 2>&1 || true
+drlink unset network-object "$destination_obj" >/dev/null 2>&1 || true
+drlink unset network-object "$source_obj" >/dev/null 2>&1 || true
+drlink set network-object "$source_obj" type cidr value 0.0.0.0/0
+drlink set network-object "$destination_obj" type fqdn value example.com
+drlink set service-object "$http_obj" type tcp port 80
+drlink set service-object "$https_obj" type tcp port 443
+drlink set service-group "$service_group" members "$http_obj,$https_obj"
+drlink set internet-access "$rule" mode whitelist source "$source_obj" destination "$destination_obj" service "$service_group" enabled
+drlink show internet-access
+drlink test internet-access source "$source_obj" destination "$destination_obj" service "$http_obj"
 EOF
+  local setup_rc=$?
+  set -uo pipefail
+  if [[ "$setup_rc" -ne 0 ]]; then
+    pq_gate MULTI_OS_EGRESS_ALLOW_DENY FAIL
+    pq_gate EGRESS_REAL_E2E FAIL
+    return 1
+  fi
 
   local fails=0
   local host
@@ -126,8 +163,6 @@ EOF
     set +e
     pq_ssh "$host" "bash -s" >"$log" 2>&1 <<EOF
 set -euo pipefail
-# curl honors lowercase http_proxy/https_proxy; uppercase alone can be ignored,
-# which makes DENY probes go direct and falsely report 200 as policy allow.
 export http_proxy=http://${SERVER_IP}:${EGRESS_PORT}
 export https_proxy=http://${SERVER_IP}:${EGRESS_PORT}
 export HTTP_PROXY=http://${SERVER_IP}:${EGRESS_PORT}
@@ -135,107 +170,62 @@ export HTTPS_PROXY=http://${SERVER_IP}:${EGRESS_PORT}
 export no_proxy=127.0.0.1,localhost
 export NO_PROXY=127.0.0.1,localhost
 echo HOST=\$(hostname)
-# ALLOW HTTP
-code=\$(curl -sS -o /tmp/pq-allow.body -w '%{http_code}' --max-time 25 http://example.com/ || true)
+code=\$(curl -sS -o /tmp/pq-allow.body -w "%{http_code}" --max-time 25 http://example.com/ || true)
 echo ALLOW_HTTP=\$code
 test "\$code" = "200"
-# DENY blocked FQDN — use a resolvable host that is NOT in the allowlist.
-# Never use a non-resolving name: client-side DNS failure (000) is infrastructure,
-# not policy DENY. example.com is allowed; example.org must be denied with 403.
-deny=\$(curl -sS -o /tmp/pq-deny.body -w '%{http_code}' --max-time 12 http://example.org/ || true)
+deny=\$(curl -sS -o /tmp/pq-deny.body -w "%{http_code}" --max-time 12 http://example.org/ || true)
 echo DENY_FQDN=\$deny
 test "\$deny" = "403"
-# DENY blocked port — policy denial must be real (403), not transport failure.
-# Some curl builds surface a CONNECT-method 403 as http_code=000 with
-# "response 403" on stderr; treat that as authoritative policy DENY too.
-wrong=\$(curl -sS -o /dev/null -w '%{http_code}' --max-time 12 https://example.com:8443/ 2>/tmp/pq-wrong.err || true)
+wrong=\$(curl -sS -o /dev/null -w "%{http_code}" --max-time 12 https://example.com:8443/ 2>/tmp/pq-wrong.err || true)
 echo DENY_PORT=\$wrong
 if [[ "\$wrong" != "403" ]]; then
-  if [[ "\$wrong" == "000" ]] && grep -Eq '403|CONNECT tunnel failed' /tmp/pq-wrong.err; then
-    echo DENY_PORT_CONNECT_403_VIA_STDERR=1
-    wrong=403
-  fi
+  if [[ "\$wrong" == "000" ]] && grep -Eq "403|CONNECT tunnel failed" /tmp/pq-wrong.err; then wrong=403; fi
 fi
 test "\$wrong" = "403"
-# ALLOW HTTPS CONNECT
-https=\$(curl -sS -o /tmp/pq-https.body -w '%{http_code}' --max-time 30 https://example.com/ || true)
+https=\$(curl -sS -o /tmp/pq-https.body -w "%{http_code}" --max-time 30 https://example.com/ || true)
 echo ALLOW_HTTPS=\$https
 test "\$https" = "200"
-echo OS_EGRESS_MATRIX=PASS
+echo INTERNET_ACCESS_MATRIX=PASS
 EOF
     local rc=$?
     set -uo pipefail
     if [[ "$rc" -eq 0 ]]; then
-      pq_note "EGRESS_OS_$host=PASS"
+      pq_note "INTERNET_OS_$host=PASS"
     else
-      pq_note "EGRESS_OS_$host=FAIL"
+      pq_note "INTERNET_OS_$host=FAIL"
       fails=$((fails + 1))
     fi
   done
 
-  # Windows via curl.exe if present
+  # Windows via curl.exe if present.
   set +e
-  pq_ssh frp-e2e-windows "cmd.exe /c curl.exe -sS -o NUL -w %{http_code} --max-time 25 -x http://${SERVER_IP}:${EGRESS_PORT} http://example.com/" \
-    >"$OUT/extended/egress-windows.log" 2>&1
+  pq_ssh frp-e2e-windows "cmd.exe /c curl.exe -sS -o NUL -w %{http_code} --max-time 25 -x http://${SERVER_IP}:${EGRESS_PORT} http://example.com/" >"$OUT/extended/egress-windows.log" 2>&1
   local wrc=$?
   set -uo pipefail
-  if [[ "$wrc" -eq 0 ]] && grep -q '200' "$OUT/extended/egress-windows.log"; then
-    pq_note "EGRESS_OS_windows=PASS"
+  if [[ "$wrc" -eq 0 ]] && grep -q "200" "$OUT/extended/egress-windows.log"; then
+    pq_note "INTERNET_OS_windows=PASS"
+  elif grep -Eq "403|000|502|curl" "$OUT/extended/egress-windows.log"; then
+    pq_note "INTERNET_OS_windows=FAIL"
+    fails=$((fails + 1))
   else
-    # Soft-fail windows egress if curl.exe/proxy path unavailable; mark FAIL only if SSH worked but policy wrong
-    if grep -Eq '403|000|502|curl' "$OUT/extended/egress-windows.log"; then
-      pq_note "EGRESS_OS_windows=FAIL"
-      fails=$((fails + 1))
-    else
-      pq_note "EGRESS_OS_windows=BLOCKED"
-    fi
+    pq_note "INTERNET_OS_windows=BLOCKED"
   fi
 
-  # Disabled profile must DENY. Other lab profiles may also allow example.com, so
-  # temporarily disable every other enabled profile for this check, then restore.
-  local other_enabled
-  other_enabled="$(pq_ssh "$SERVER" "sudo python3 - <<'PY'
-import json
-from pathlib import Path
-st=json.loads(Path('/var/lib/drlink/egress-control.json').read_text())
-mine='${profile}'
-for p in (st.get('egress_profiles') or {}).values():
-    name=str(p.get('name') or '')
-    if name and name != mine and p.get('enabled'):
-        print(name)
-PY")"
-  local restore_fail=0
-  while IFS= read -r op; do
-    [[ -z "$op" ]] && continue
-    if ! pq_ssh "$SERVER" "sudo drlink egress disable '$op'" >/dev/null 2>&1; then
-      pq_note "EGRESS_OTHER_DISABLE_FAIL profile=$op"
-      restore_fail=$((restore_fail + 1))
-    fi
-  done <<<"$other_enabled"
-  pq_ssh "$SERVER" "sudo drlink egress disable '$profile'" >/dev/null 2>&1 || true
-  sleep 1
-  local disabled
-  disabled="$(pq_ssh frp-e2e-client "curl -sS -o /dev/null -w '%{http_code}' --max-time 10 -x http://${SERVER_IP}:${EGRESS_PORT} http://example.com/ || true")"
-  # Disabled profile must yield policy denial (403), not proxy-unavailable codes.
-  if [[ "$disabled" == "403" ]]; then
-    pq_note "EGRESS_DISABLED_DENY=PASS code=$disabled"
+  # v2.4 enforcement disable preserves rules but makes Internet Access ALLOW ALL.
+  set +e
+  pq_ssh "$SERVER" "sudo drlink set internet-access disabled" >"$OUT/extended/internet-disabled.log" 2>&1
+  local disable_rc=$?
+  local disabled_code
+  disabled_code="$(pq_ssh frp-e2e-client "curl -sS -o /dev/null -w '%{http_code}' --max-time 15 -x http://${SERVER_IP}:${EGRESS_PORT} http://example.org/ || true")"
+  pq_ssh "$SERVER" "sudo drlink set internet-access enabled" >"$OUT/extended/internet-enabled.log" 2>&1
+  local enable_rc=$?
+  local reenabled_code
+  reenabled_code="$(pq_ssh frp-e2e-client "curl -sS -o /dev/null -w '%{http_code}' --max-time 15 -x http://${SERVER_IP}:${EGRESS_PORT} http://example.org/ || true")"
+  set -uo pipefail
+  if [[ "$disable_rc" -eq 0 && "$enable_rc" -eq 0 && "$disabled_code" =~ ^[23][0-9][0-9]$ && "$reenabled_code" == "403" ]]; then
+    pq_note "INTERNET_ENFORCEMENT_TOGGLE=PASS disabled=$disabled_code reenabled=$reenabled_code"
   else
-    pq_note "EGRESS_DISABLED_DENY=FAIL code=$disabled"
-    fails=$((fails + 1))
-  fi
-  if ! pq_ssh "$SERVER" "sudo drlink egress enable '$profile'" >/dev/null 2>&1; then
-    pq_note "EGRESS_PROFILE_RESTORE_FAIL profile=$profile"
-    restore_fail=$((restore_fail + 1))
-  fi
-  while IFS= read -r op; do
-    [[ -z "$op" ]] && continue
-    if ! pq_ssh "$SERVER" "sudo drlink egress enable '$op'" >/dev/null 2>&1; then
-      pq_note "EGRESS_OTHER_RESTORE_FAIL profile=$op"
-      restore_fail=$((restore_fail + 1))
-    fi
-  done <<<"$other_enabled"
-  if [[ "$restore_fail" -ne 0 ]]; then
-    pq_note "EGRESS_POLICY_RESTORE=FAIL count=$restore_fail"
+    pq_note "INTERNET_ENFORCEMENT_TOGGLE=FAIL disable_rc=$disable_rc enable_rc=$enable_rc disabled=$disabled_code reenabled=$reenabled_code"
     fails=$((fails + 1))
   fi
 
@@ -406,16 +396,19 @@ phase_noisy_neighbor() {
   # External SSH to AWS client if port known
   local aws_port
   aws_port="$(pq_ssh "$SERVER" 'sudo python3 -' <<'PY'
-import json
-d = json.load(open("/var/lib/drlink/registry.json"))
-port = ""
-for c in (d.get("clients") or {}).values():
-    label = str(c.get("label") or "").lower()
-    host = str(c.get("hostname") or "").lower()
-    if "al2023" in label or "aws" in label or "ip-10" in host:
-        port = str(((c.get("services") or {}).get("ssh") or {}).get("remote_port") or "")
-        break
-print(port)
+import sqlite3
+c = sqlite3.connect("/var/lib/drlink/drlink.db")
+c.row_factory = sqlite3.Row
+row = c.execute(
+    "SELECT s.public_port FROM published_services s "
+    "JOIN clients c ON c.id=s.client_id "
+    "WHERE s.released=0 AND lower(s.name)='ssh' "
+    "AND (lower(coalesce(c.label,'')) LIKE '%aws%' "
+    "OR lower(coalesce(c.label,'')) LIKE '%al2023%' "
+    "OR lower(coalesce(c.hostname,'')) LIKE '%ip-10%') "
+    "ORDER BY s.public_port LIMIT 1"
+).fetchone()
+print(row["public_port"] if row and row["public_port"] else "")
 PY
 )"
   if [[ -n "$aws_port" ]]; then
@@ -429,7 +422,7 @@ PY
   else
     pq_note "NOISY_VICTIM_AWS_ACCESS=SKIP"
   fi
-  if pq_ssh "$SERVER" 'sudo drlink status >/dev/null && sudo drlink doctor >/dev/null'; then
+  if pq_ssh "$SERVER" 'sudo drlink show status >/dev/null && sudo drlink system diagnostics >/dev/null'; then
     pq_note "NOISY_STATUS_DOCTOR=PASS"
   else
     fails=$((fails + 1))
@@ -539,16 +532,14 @@ PY
 phase_failure_load() {
   pq_note "==== FAILURE LOAD ===="
   ensure_egress_listener || true
-  local profile="qual-fail-$(date -u +%H%M%S)"
+  local blackhole_obj="pq-blackhole"
+  local blackhole_rule="pq-blackhole-https"
   pq_ssh "$SERVER" "sudo bash -s" <<EOF
 set -euo pipefail
-drlink egress delete '$profile' --yes 2>/dev/null || true
-drlink egress create '$profile' --description 'unreachable upstream'
-drlink egress add-source '$profile' 0.0.0.0/0 --name any
-# blackhole / non-routable TEST-NET destination often times out
-drlink egress add-destination '$profile' example.com 81 --protocol http || true
-drlink egress add-destination '$profile' 198.51.100.1 443 --protocol https || true
-drlink egress enable '$profile'
+drlink unset internet-access "$blackhole_rule" >/dev/null 2>&1 || true
+drlink unset network-object "$blackhole_obj" >/dev/null 2>&1 || true
+drlink set network-object "$blackhole_obj" type ip value 198.51.100.1
+drlink set internet-access "$blackhole_rule" source pq-any-source destination "$blackhole_obj" service pq-https enabled
 EOF
   pq_sample_server_resources "$OUT/resources/fail-before.json"
   # Generate ~250 concurrent failed connections across hosts
@@ -576,9 +567,14 @@ print('failstorm-host-done')
   local recover
   recover="$(pq_ssh frp-e2e-client "curl -sS -o /dev/null -w '%{http_code}' --max-time 25 -x http://${SERVER_IP}:${EGRESS_PORT} https://example.com/ || true")"
   local status_ok=0 doctor_ok=0
-  pq_ssh "$SERVER" 'sudo drlink status >/dev/null' && status_ok=1
-  pq_ssh "$SERVER" 'sudo drlink doctor >/dev/null' && doctor_ok=1
+  pq_ssh "$SERVER" 'sudo drlink show status >/dev/null' && status_ok=1
+  pq_ssh "$SERVER" 'sudo drlink system diagnostics >/dev/null' && doctor_ok=1
   pq_note "POST_FAIL_HTTPS=$recover STATUS=$status_ok DOCTOR=$doctor_ok"
+  pq_ssh "$SERVER" "sudo bash -s" >/dev/null 2>&1 <<EOF || true
+set -euo pipefail
+printf 'y\n' | drlink unset internet-access "$blackhole_rule" >/dev/null 2>&1 || true
+drlink unset network-object "$blackhole_obj" >/dev/null 2>&1 || true
+EOF
   if [[ "$recover" == "200" && "$status_ok" -eq 1 && "$doctor_ok" -eq 1 ]]; then
     pq_gate FAILURE_LOAD_RESOURCE_BOUND PASS
     pq_gate POST_FAILURE_RECOVERY PASS
@@ -614,37 +610,37 @@ phase_simultaneous_mutation() {
   child_names+=("traffic")
   # Concurrent mutations — each background job RC is captured (no wait-or-true).
   (
-    pq_ssh "$SERVER" 'sudo drlink status' >/dev/null
+    pq_ssh "$SERVER" 'sudo drlink show status' >/dev/null
   ) &
   child_pids+=($!)
   child_names+=("status")
   (
-    pq_ssh "$SERVER" 'sudo drlink doctor' >/dev/null
+    pq_ssh "$SERVER" 'sudo drlink system diagnostics' >/dev/null
   ) &
   child_pids+=($!)
   child_names+=("doctor")
   (
-    pq_ssh "$SERVER" "sudo bash -c 'cid=\$(python3 -c \"import json;print(next(iter(json.load(open(\\\"/var/lib/drlink/registry.json\\\"))[\\\"clients\\\"])))\"); drlink client set \$cid tag qual=\$(date +%s)'" >/dev/null 2>&1
+    pq_ssh "$SERVER" "sudo drlink set network-object qual-live-mutation type ip value 198.51.100.31 >/dev/null && sudo drlink show network-object qual-live-mutation >/dev/null && sudo drlink unset network-object qual-live-mutation >/dev/null" 2>&1
   ) &
   child_pids+=($!)
-  child_names+=("client_set")
+  child_names+=("control_plane_mutation")
   (
-    pq_ssh "$SERVER" 'sudo drlink client list' >/dev/null
+    pq_ssh "$SERVER" 'sudo drlink show managed-hosts' >/dev/null
   ) &
   child_pids+=($!)
-  child_names+=("client_list")
+  child_names+=("managed_hosts")
   (
-    pq_ssh "$SERVER" 'sudo drlink egress list' >/dev/null 2>&1
+    pq_ssh "$SERVER" 'sudo drlink show internet-access' >/dev/null 2>&1
   ) &
   child_pids+=($!)
-  child_names+=("egress_list")
+  child_names+=("internet_access")
   (
-    pq_ssh "$SERVER" 'sudo drlink access list' >/dev/null 2>&1
+    pq_ssh "$SERVER" 'sudo drlink show remote-access' >/dev/null 2>&1
   ) &
   child_pids+=($!)
-  child_names+=("access_list")
+  child_names+=("remote_access")
   (
-    pq_ssh "$SERVER" 'sudo drlink backup create /var/lib/drlink/backups/qual-live-mut.tar.gz' >/dev/null 2>&1
+    pq_ssh "$SERVER" 'sudo drlink system backup /var/lib/drlink/backups/qual-live-mut.tar.gz' >/dev/null 2>&1
   ) &
   child_pids+=($!)
   child_names+=("backup")
@@ -658,7 +654,7 @@ phase_simultaneous_mutation() {
     pq_note "SIM_CHILD_${child_names[$i]}_RC=$rc"
     case "${child_names[$i]}" in
       # Optional inventory commands: record RC but do not alone fail the suite.
-      egress_list|access_list)
+      internet_access|remote_access)
         ;;
       backup)
         if [[ "$rc" -eq 0 ]]; then backup_ok=1; else fails=$((fails + 1)); fi
@@ -671,11 +667,12 @@ phase_simultaneous_mutation() {
         ;;
     esac
   done
-  # Registry integrity is necessary but not sufficient for PASS.
-  if pq_ssh "$SERVER" 'sudo python3 -c "import json; json.load(open(\"/var/lib/drlink/registry.json\")); print(\"ok\")"' | grep -q ok; then
-    pq_note "REGISTRY_CORRUPTION=0"
+  # SQLite is the v2.4 control-plane authority; a legacy registry file is not
+  # accepted as an integrity oracle.
+  if pq_ssh "$SERVER" 'sudo python3 -c "import sqlite3; c=sqlite3.connect(\"/var/lib/drlink/drlink.db\"); r=c.execute(\"PRAGMA quick_check\").fetchone()[0]; print(r); assert r == \"ok\""' | grep -qx ok; then
+    pq_note "CONTROL_DB_INTEGRITY=PASS"
   else
-    pq_note "REGISTRY_CORRUPTION=1"
+    pq_note "CONTROL_DB_INTEGRITY=FAIL"
     fails=$((fails + 1))
   fi
   if [[ "$fails" -eq 0 && "$backup_ok" -eq 1 && "$traffic_ok" -eq 1 ]]; then
@@ -746,8 +743,7 @@ EOF
   done
   # SSH command latency via published port if available
   local ssh_port
-  ssh_port="$(pq_ssh "$SERVER" "sudo python3 -c \"import json;d=json.load(open('/var/lib/drlink/registry.json'));
-print(next((((c.get('services') or {}).get('ssh') or {}).get('remote_port') or 0) for c in (d.get('clients') or {}).values()), 0)\"")"
+  ssh_port="$(pq_ssh "$SERVER" "sudo python3 -c \"import sqlite3; c=sqlite3.connect('/var/lib/drlink/drlink.db'); r=c.execute('SELECT public_port FROM published_services WHERE released=0 AND lower(name)=\\\"ssh\\\" AND public_port IS NOT NULL ORDER BY public_port LIMIT 1').fetchone(); print(r[0] if r else 0)\"")"
   if [[ -n "$ssh_port" && "$ssh_port" != "0" ]]; then
     local i lat
     for i in 1 2 3 4 5; do
@@ -981,7 +977,7 @@ doc = {
             connect_failure_rate if connect_failure_rate is not None else 0.0
         ),
     },
-    "fixed_tcp_egress": {
+    "fixed_tcp_remote_service": {
         "concurrency": max(fixed_tcp_conc) if fixed_tcp_conc else None,
         "concurrency_levels": sorted(set(fixed_tcp_conc)) if fixed_tcp_conc else [],
         "sample_count": len(fixed_tcp_setup),
@@ -1128,9 +1124,9 @@ tcp_pass = False
 gates = out_root / "gates.env"
 if gates.is_file():
     for line in gates.read_text(encoding="utf-8", errors="replace").splitlines():
-        if line.strip() in ("FIXED_TCP_EGRESS_REAL=PASS", "TCP_EGRESS_QUALIFICATION=PASS"):
+        if line.strip() in ("FIXED_TCP_REMOTE_SERVICE_REAL=PASS", "FIXED_TCP_REMOTE_SERVICE_QUALIFICATION=PASS"):
             tcp_pass = True
-ft = d.get("fixed_tcp_egress") or {}
+ft = d.get("fixed_tcp_remote_service") or {}
 if tcp_pass:
     _require_metrics(
         "PERF_BASELINE_FIXED_TCP_METRICS",
@@ -1176,34 +1172,58 @@ phase_policy_and_ports() {
   pq_note "==== POLICY SCALE + PORT ALLOCATOR ===="
   set +e
   pq_ssh "$SERVER" "sudo python3 -" >"$OUT/extended/policy-scale.log" 2>&1 <<'PY'
-import importlib.util, time, json
-from pathlib import Path
-spec = importlib.util.spec_from_file_location("eg", "/usr/local/lib/drlink/frp_egress_control.py")
-eg = importlib.util.module_from_spec(spec); spec.loader.exec_module(eg)
-path = Path("/var/lib/drlink/egress-control.json")
-state = eg.load_egress_state(path=path) if path.is_file() else eg.empty_egress_state()
+import sys, time
+sys.path.insert(0, "/usr/local/lib/drlink")
+from drlink_control_plane import ControlPlane
+import drlink_v24 as v24
+
+plane = ControlPlane(None)
+created_objects = []
+created_rules = []
 t0 = time.time()
-created = []
-for i in range(25):
-    name = f"qual-scale-{i}"
-    try:
-        pid, _ = eg.create_profile(state, name, enabled=False)
-        for j in range(4):
-            eg.add_destination(state, pid, f"scale{i}-{j}.example.com", 443, protocol="https")
-        created.append(pid)
-    except Exception as e:
-        print("create_err", i, e)
-eg.save_egress_state(state, path=path)
-dt = (time.time() - t0) * 1000
-print(f"POLICY_PROFILES=25 DEST_PER=4 SAVE_MS={dt:.1f}")
-# cleanup
-for pid in created:
-    try:
-        eg.delete_profile(state, pid)
-    except Exception:
-        pass
-eg.save_egress_state(state, path=path)
-print("POLICY_SCALE_CLEANUP=OK")
+try:
+    if plane.get_object("pq-any-source") is None:
+        raise SystemExit("missing qualification source object pq-any-source")
+    if v24.get_service_object(plane, "pq-https") is None:
+        raise SystemExit("missing qualification service object pq-https")
+    for i in range(25):
+        obj = f"pq-scale-{i:02d}"
+        rule = f"pq-scale-rule-{i:02d}"
+        v24.set_network_object(
+            plane, obj, type="fqdn", value=f"scale{i}.example.com", oneshot=True
+        )
+        created_objects.append(obj)
+        v24.set_access_rule(
+            plane,
+            "internet",
+            rule,
+            source="pq-any-source",
+            destination=obj,
+            service="pq-https",
+            enabled=True,
+            oneshot=True,
+        )
+        created_rules.append(rule)
+    dt = (time.time() - t0) * 1000.0
+    count = plane.conn.execute(
+        "SELECT COUNT(*) FROM policy_rules "
+        "WHERE plane='internet' AND name LIKE 'pq-scale-rule-%'"
+    ).fetchone()[0]
+    print(f"POLICY_RULES_CREATED={count} APPLY_MS={dt:.1f}")
+    if int(count) != 25:
+        raise SystemExit("policy scale count mismatch")
+finally:
+    for rule in reversed(created_rules):
+        try:
+            v24.unset_access_rule(plane, "internet", rule)
+        except Exception as exc:
+            print("cleanup_rule", rule, exc)
+    for obj in reversed(created_objects):
+        try:
+            v24.unset_network_object(plane, obj)
+        except Exception as exc:
+            print("cleanup_object", obj, exc)
+    plane.close()
 PY
   local prc=$?
   set -uo pipefail
@@ -1213,22 +1233,16 @@ PY
     pq_gate POLICY_SCALE_STABILITY FAIL
   fi
 
-  # Concurrent port allocation via allocator enroll API is heavy; use registry simulation lock test locally if present
+  # Keep the dedicated allocator concurrency suite, then verify live endpoint
+  # uniqueness from the authoritative SQLite published_services table.
   set +e
   (cd "$ROOT" && python3 tests/test-allocator.py 2>/dev/null | tee "$OUT/extended/allocator-case.log" | tail -20)
   local arc=$?
   set -uo pipefail
   if [[ "$arc" -eq 0 ]] || grep -q 'CASE K' "$OUT/extended/allocator-case.log" 2>/dev/null; then
-    # Even if full file has other cases, targeted concurrency unit is acceptable evidence with Real E2E fleet ports unique
     pq_gate PORT_ALLOCATOR_CONCURRENCY PASS
   else
-    # Fallback: verify unique ports in live registry
-    if pq_ssh "$SERVER" 'sudo python3 -c "import json;d=json.load(open(\"/var/lib/drlink/registry.json\"));ports=[];
-for c in (d.get(\"clients\") or {}).values():
-  for s in (c.get(\"services\") or {}).values():
-    p=s.get(\"remote_port\");
-    if p: ports.append(int(p))
-print(len(ports), len(set(ports))); assert len(ports)==len(set(ports))"'; then
+    if pq_ssh "$SERVER" 'sudo python3 -c "import sqlite3; c=sqlite3.connect(\"/var/lib/drlink/drlink.db\"); ports=[int(r[0]) for r in c.execute(\"SELECT public_port FROM published_services WHERE released=0 AND public_port IS NOT NULL\")]; print(len(ports),len(set(ports))); assert len(ports)==len(set(ports))"'; then
       pq_gate PORT_ALLOCATOR_CONCURRENCY PASS
     else
       pq_gate PORT_ALLOCATOR_CONCURRENCY FAIL
@@ -1249,12 +1263,25 @@ phase_enrollment_burst() {
   set +e
   pq_ssh "$SERVER" "sudo bash -s" >"$OUT/extended/enroll-burst-server.log" 2>&1 <<'EOF'
 set -euo pipefail
-for i in $(seq 1 10); do
-  drlink enrollment create --ttl 5m >/tmp/pq-enroll-$i.txt
-done
+drlink show enrollments | awk 'NR>2 && $1 !~ /^\\(/ {print $1}' | sort -u >/tmp/pq-enroll-pre.ids
+drlink set enrollment bulk --count 10 --ttl 1h --label-prefix pq-burst >/tmp/pq-enroll-bulk.txt
+grep -q . /tmp/pq-enroll-bulk.txt
+drlink show enrollments | tee /tmp/pq-enroll-after.txt
+awk 'NR>2 && $1 !~ /^\\(/ {print $1}' /tmp/pq-enroll-after.txt | sort -u >/tmp/pq-enroll-post.ids
+comm -13 /tmp/pq-enroll-pre.ids /tmp/pq-enroll-post.ids >/tmp/pq-enroll-new.ids
+test "$(wc -l </tmp/pq-enroll-new.ids)" -eq 10
 echo ENROLL_CREATE_10=OK
-# cleanup: expire naturally; list
-drlink enrollment list | head -40 || true
+while IFS= read -r id; do
+  [ -n "$id" ] || continue
+  drlink unset enrollment "$id" >/dev/null
+  drlink unset enrollment "$id" >/dev/null
+done </tmp/pq-enroll-new.ids
+drlink show enrollments | awk 'NR>2 && $1 !~ /^\\(/ {print $1}' | sort -u >/tmp/pq-enroll-final.ids
+if comm -12 /tmp/pq-enroll-new.ids /tmp/pq-enroll-final.ids | grep -q .; then
+  echo 'bulk enrollment cleanup residue' >&2
+  exit 1
+fi
+echo ENROLL_CLEANUP=PASS
 EOF
   local src=$?
   set -uo pipefail
@@ -1280,7 +1307,7 @@ phase_component_restart() {
     pq_ssh "$SERVER" "systemctl is-active $unit" | grep -q active || fails=$((fails + 1))
   done
   sleep 5
-  if pq_ssh "$SERVER" 'sudo drlink doctor >/dev/null' && pq_ssh "$SERVER" 'sudo drlink status >/dev/null'; then
+  if pq_ssh "$SERVER" 'sudo drlink system diagnostics >/dev/null' && pq_ssh "$SERVER" 'sudo drlink show status >/dev/null'; then
     :
   else
     fails=$((fails + 1))
@@ -1315,7 +1342,7 @@ EOF
   set -uo pipefail
   sleep 10
   # identity preserved?
-  if pq_ssh "$SERVER" 'sudo drlink show clients' | tee "$OUT/extended/after-flap-clients.txt" | grep -q .; then
+  if pq_ssh "$SERVER" 'sudo drlink show managed-hosts' | tee "$OUT/extended/after-flap-clients.txt" | grep -q .; then
     if [[ "$frc" -eq 0 ]]; then
       pq_gate NETWORK_FLAP_RECOVERY PASS
     else
@@ -1337,36 +1364,36 @@ set -euo pipefail
 export TERM=xterm
 drlink help >/tmp/pq-help.txt
 drlink help workflows >/tmp/pq-workflows.txt 2>/dev/null || true
-drlink help egress >/tmp/pq-help-egress.txt
-drlink help access >/tmp/pq-help-access.txt
-drlink help backup >/tmp/pq-help-backup.txt
-# Attempt representative tasks using only help guidance
-# create enrollment
-drlink enrollment create --ttl 10m >/tmp/pq-enroll.txt
-# list clients
-drlink client list >/tmp/pq-clients.txt || drlink show clients >/tmp/pq-clients.txt
-# doctor / status / support
-drlink status >/tmp/pq-status.txt
-drlink doctor >/tmp/pq-doctor.txt
-# intentional mistakes
+drlink help managed-hosts >/tmp/pq-help-hosts.txt
+drlink help internet-access >/tmp/pq-help-internet.txt
+drlink help remote-access >/tmp/pq-help-remote.txt
+drlink help system >/tmp/pq-help-system.txt
+# Representative current tasks using only public help/discovery.
+drlink show enrollments >/tmp/pq-enrollments.txt
+drlink show managed-hosts >/tmp/pq-hosts.txt
+drlink show status >/tmp/pq-status.txt
+drlink system diagnostics >/tmp/pq-doctor.txt
+drlink set network-object pq-docs-free type ip value 198.51.100.40 >/tmp/pq-create.txt
+drlink show network-object pq-docs-free >>/tmp/pq-create.txt
+drlink unset network-object pq-docs-free >>/tmp/pq-create.txt
+# Intentional mistakes must fail with current-resource guidance.
 set +e
-drlink client show does-not-exist-xyz >/tmp/pq-wrong.txt 2>&1
+drlink show managed-host does-not-exist-xyz >/tmp/pq-wrong.txt 2>&1
 rc1=$?
-drlink egress create '' >/tmp/pq-bad-egress.txt 2>&1
+drlink set network-object pq-bad type cidr value not-a-cidr >/tmp/pq-bad-object.txt 2>&1
 rc2=$?
-drlink access add-source nosuch --source not-a-cidr --name x >/tmp/pq-bad-cidr.txt 2>&1
+drlink test internet-access source nosuch destination nosuch service https >/tmp/pq-bad-internet.txt 2>&1
 rc3=$?
 set -e
-# mistakes must fail clearly — every captured invalid-command RC must be non-zero
 test "$rc1" -ne 0
 test "$rc2" -ne 0
 test "$rc3" -ne 0
 echo "UX_INVALID_RC rc1=$rc1 rc2=$rc2 rc3=$rc3"
 grep -Eqi 'not found|unknown|no such|ambiguous|error|invalid' /tmp/pq-wrong.txt
+grep -Eqi 'internet-access|source|destination|service|error|unknown' /tmp/pq-bad-internet.txt
+grep -Eqi 'show|set|test|system|managed-host|internet-access' /tmp/pq-help.txt
 echo UX_MISTAKES=PASS
-# help must mention next steps for egress
-grep -Eqi 'create|add-source|add-destination|enable' /tmp/pq-help-egress.txt
-echo UX_EGRESS_HELP=PASS
+echo UX_CURRENT_HELP=PASS
 echo DOCS_FREE_OPERATOR_UX=PASS
 EOF
   local urc=$?
@@ -1381,185 +1408,122 @@ EOF
 # ---------------------------------------------------------------------------
 # Fixed TCP Egress qualification (v2.4 product capability)
 # ---------------------------------------------------------------------------
-phase_fixed_tcp_egress() {
-  pq_note "==== FIXED_TCP_EGRESS ===="
-  local stamp
-  stamp="$(date -u +%H%M%S)"
-  local profile="qual-tcp-${stamp}"
-  local relay="qual-tcp-relay-${stamp}"
-  # Public destination required: loopback/private IPs are fail-closed by design.
-  local fqdn="example.com"
-  local dport=80
-  local evidence="$OUT/extended/fixed-tcp-egress.log"
-  : >"$evidence"
-  pq_sample_server_resources "$OUT/resources/tcp-egress-before.json"
-
-  set +e
-  pq_ssh "$SERVER" "sudo bash -s" >"$evidence" 2>&1 <<EOF
-set -euo pipefail
-drlink egress delete '$profile' --yes 2>/dev/null || true
-drlink egress tcp delete '$relay' --yes 2>/dev/null || true
-drlink egress create '$profile' --description 'prod-qual fixed tcp'
-drlink egress show '$profile' | tee /tmp/qual-tcp-show-disabled.txt
-drlink egress add-source '$profile' 0.0.0.0/0 --name any
-drlink egress add-destination '$profile' '$fqdn' $dport --protocol tcp
-out="\$(drlink egress tcp create '$relay' --profile '$profile' --destination '$fqdn:$dport')"
-printf '%s\n' "\$out" | tee /tmp/qual-tcp-create.txt
-echo "\$out" | grep -qi disabled
-listen_port="\$(echo "\$out" | sed -n 's/.*Listen[[:space:]]*:[[:space:]]*[^:]*:\\([0-9][0-9]*\\).*/\\1/p' | head -n1)"
-[[ -n "\$listen_port" ]]
-echo "\$listen_port" >/tmp/qual-tcp-listen-port.txt
-drlink egress enable '$profile'
-drlink egress tcp enable '$relay'
-systemctl restart drlink-tcp-egress
-sleep 2
-systemctl is-active drlink-tcp-egress
-drlink egress tcp show '$relay' | tee /tmp/qual-tcp-show.txt
-# Raw IP / metadata destinations must fail closed for tcp protocol
-set +e
-drlink egress add-destination '$profile' 169.254.169.254 80 --protocol tcp >/tmp/qual-tcp-dns-deny.txt 2>&1
-dns_rc=\$?
-set -e
-test "\$dns_rc" -ne 0
-echo FIXED_TCP_SETUP=OK
-EOF
-  local setup_rc=$?
-  set -uo pipefail
-
-  local relay_port=""
-  relay_port="$(pq_ssh "$SERVER" 'cat /tmp/qual-tcp-listen-port.txt 2>/dev/null' || true)"
-  local byte_ok=1 deny_ok=1
+phase_fixed_tcp_remote_service() {
+  pq_note "==== FIXED_TCP_REMOTE_SERVICE ===="
+  local fixed_obj="pq-fixed-target"
+  local normal_obj="pq-normal-target"
+  local fixed_rs="pq-fixed-service"
+  local normal_rs="pq-normal-service"
+  local fixed_target_port=18152
+  local normal_target_port=18153
+  local evidence="$OUT/extended/fixed-tcp-remote-service.log"
   local tcp_perf_raw="$OUT/perf/raw/fixed-tcp-setup.txt"
   mkdir -p "$OUT/perf/raw"
+  : >"$evidence"
   : >"$tcp_perf_raw"
-  if [[ "$setup_rc" -eq 0 && -n "$relay_port" && "$relay_port" =~ ^[0-9]+$ ]]; then
+  pq_sample_server_resources "$OUT/resources/tcp-egress-before.json"
+
+  # Prepare real target services on the Agent and clean any residue from a prior run.
+  set +e
+  pq_ssh frp-e2e-client "sudo /usr/local/bin/drlink unset remote-service '$fixed_rs' >/dev/null 2>&1 || true; sudo /usr/local/bin/drlink unset remote-service '$normal_rs' >/dev/null 2>&1 || true; pkill -f 'http.server $fixed_target_port' >/dev/null 2>&1 || true; pkill -f 'http.server $normal_target_port' >/dev/null 2>&1 || true; mkdir -p /tmp/pq-fixed-target /tmp/pq-normal-target; printf 'fixed-tcp-ok\\n' >/tmp/pq-fixed-target/index.html; printf 'normal-tcp-ok\\n' >/tmp/pq-normal-target/index.html; nohup python3 -m http.server $fixed_target_port --bind 127.0.0.1 -d /tmp/pq-fixed-target >/tmp/pq-fixed-http.log 2>&1 </dev/null & nohup python3 -m http.server $normal_target_port --bind 127.0.0.1 -d /tmp/pq-normal-target >/tmp/pq-normal-http.log 2>&1 </dev/null & sleep 1; curl -fsS http://127.0.0.1:$fixed_target_port/; curl -fsS http://127.0.0.1:$normal_target_port/" >>"$evidence" 2>&1
+  local target_rc=$?
+  pq_ssh "$SERVER" "sudo /usr/local/bin/drlink unset service-object '$fixed_obj' >/dev/null 2>&1 || true; sudo /usr/local/bin/drlink unset service-object '$normal_obj' >/dev/null 2>&1 || true; sudo /usr/local/bin/drlink set service-object '$fixed_obj' type fixed-tcp port $fixed_target_port; sudo /usr/local/bin/drlink set service-object '$normal_obj' type tcp port $normal_target_port" >>"$evidence" 2>&1
+  local object_rc=$?
+  pq_ssh frp-e2e-client "sudo /usr/local/bin/drlink system synchronize && sudo /usr/local/bin/drlink set remote-service '$fixed_rs' destination this-host service '$fixed_obj' enabled && sudo /usr/local/bin/drlink set remote-service '$normal_rs' destination this-host service '$normal_obj' enabled && sudo /usr/local/bin/drlink show remote-service '$fixed_rs' && sudo /usr/local/bin/drlink show remote-service '$normal_rs'" >>"$evidence" 2>&1
+  local create_rc=$?
+  set -uo pipefail
+
+  local fixed_port="" normal_port=""
+  if [[ "$create_rc" -eq 0 ]]; then
+    fixed_port="$(pq_ssh frp-e2e-client "sudo /usr/local/bin/drlink show remote-service '$fixed_rs' | sed -n 's/^Endpoint[[:space:]]*: .*:\\([0-9][0-9]*\\)$/\\1/p' | tail -n1" | tr -d '\r\n')"
+    normal_port="$(pq_ssh frp-e2e-client "sudo /usr/local/bin/drlink show remote-service '$normal_rs' | sed -n 's/^Endpoint[[:space:]]*: .*:\\([0-9][0-9]*\\)$/\\1/p' | tail -n1" | tr -d '\r\n')"
+  fi
+  pq_note "FIXED_TCP_ENDPOINT=$fixed_port NORMAL_TCP_ENDPOINT=$normal_port"
+
+  local setup_rc=1 pool_ok=1 byte_ok=1 disable_ok=1 cross_pool_ok=1 cleanup_rc=1
+  if [[ "$target_rc" -eq 0 && "$object_rc" -eq 0 && "$create_rc" -eq 0 && "$fixed_port" =~ ^[0-9]+$ && "$normal_port" =~ ^[0-9]+$ ]]; then
+    setup_rc=0
     set +e
-    pq_ssh frp-e2e-client "python3 -" >>"$evidence" 2>&1 <<PY
-import socket, time, json
-req = b"GET / HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n"
-t0 = time.time()
-s = socket.create_connection(("${SERVER_IP}", int("${relay_port}")), 15)
-s.sendall(req)
-s.settimeout(15)
-chunks = []
-while True:
-    try:
-        data = s.recv(65536)
-    except Exception:
-        break
-    if not data:
-        break
-    chunks.append(data)
-    if len(b"".join(chunks)) > 64:
-        break
-s.close()
-body = b"".join(chunks)
-dt = (time.time() - t0) * 1000.0
-ok = body.startswith(b"HTTP/")
-print(json.dumps({"ok": bool(ok), "ms": round(dt, 2), "recv": body[:80].decode("latin1", "replace")}))
-raise SystemExit(0 if ok else 1)
-PY
+    pq_ssh "$SERVER" "sudo python3 -c \"import sqlite3; c=sqlite3.connect('/var/lib/drlink/drlink.db'); rows=c.execute(\'SELECT s.name,s.public_port,m.pool_class FROM published_services s JOIN remote_service_meta m ON m.service_id=s.id WHERE s.name IN (?,?) AND s.released=0 ORDER BY s.name\', (\'$fixed_rs\',\'$normal_rs\')).fetchall(); print(rows); d={r[0]:r for r in rows}; assert d[\'$fixed_rs\'][2]==\'fixed-tcp\'; assert d[\'$normal_rs\'][2]==\'normal\'; assert d[\'$fixed_rs\'][1] != d[\'$normal_rs\'][1]\"" >>"$evidence" 2>&1
+    pool_ok=$?
+
+    pq_ssh frp-e2e-aws "curl -fsS --max-time 15 http://${SERVER_IP}:$fixed_port/ | grep -q fixed-tcp-ok" >>"$evidence" 2>&1
     byte_ok=$?
-    # Lightweight Fixed TCP setup timing at product concurrency levels (1/10/25/50; optional 100).
-    pq_ssh frp-e2e-client "python3 -" >"$tcp_perf_raw" 2>>"$evidence" <<PY
-import concurrent.futures, socket, statistics, time
-HOST, PORT = "${SERVER_IP}", int("${relay_port}")
-REQ = b"GET / HTTP/1.0\\r\\nHost: example.com\\r\\n\\r\\n"
+
+    # Capture latency/concurrency evidence while the Fixed TCP endpoint is live.
+    pq_ssh frp-e2e-aws "python3 -" >"$tcp_perf_raw" 2>>"$evidence" <<PY
+import concurrent.futures, socket, time
+HOST, PORT = "${SERVER_IP}", int("${fixed_port}")
+REQ = b"GET / HTTP/1.0\r\nHost: fixed.test\r\n\r\n"
 LEVELS = [1, 10, 25, 50]
 if "${FRP_E2E_FIXED_TCP_PERF_100:-0}" == "1":
     LEVELS.append(100)
-
 def one():
-    t0 = time.time()
+    t0=time.time()
     try:
-        s = socket.create_connection((HOST, PORT), 8)
-        s.sendall(REQ)
-        s.settimeout(8)
-        s.recv(64)
-        s.close()
-        return (True, (time.time() - t0) * 1000.0)
+        s=socket.create_connection((HOST,PORT),8); s.sendall(REQ); s.settimeout(8); data=s.recv(64); s.close()
+        return (data.startswith(b"HTTP/"), (time.time()-t0)*1000.0)
     except Exception:
-        return (False, (time.time() - t0) * 1000.0)
-
+        return (False, (time.time()-t0)*1000.0)
 for n in LEVELS:
-    vals = []
-    ok = fail = 0
+    vals=[]; ok=fail=0
     with concurrent.futures.ThreadPoolExecutor(max_workers=n) as ex:
-        for success, ms in ex.map(lambda _: one(), range(n)):
-            vals.append(ms)
-            print(f"FIXED_TCP_SAMPLE_MS={ms:.1f}")
-            if success:
-                ok += 1
-            else:
-                fail += 1
+        for success,ms in ex.map(lambda _: one(), range(n)):
+            vals.append(ms); print(f"FIXED_TCP_SAMPLE_MS={ms:.1f}"); ok += int(success); fail += int(not success)
     vals.sort()
     def pct(p):
-        if not vals:
-            return 0.0
-        return vals[min(len(vals) - 1, max(0, int(round((p / 100.0) * (len(vals) - 1)))))]
+        return vals[min(len(vals)-1,max(0,int(round((p/100.0)*(len(vals)-1)))))] if vals else 0.0
     print(f"FIXED_TCP_SETUP_N={n} ok={ok} fail={fail} p50={pct(50):.1f} p95={pct(95):.1f} p99={pct(99):.1f}")
 PY
-    pq_ssh "$SERVER" "sudo bash -s" >>"$evidence" 2>&1 <<EOF
-set -euo pipefail
-drlink egress remove-source '$profile' any --yes 2>/dev/null || true
-drlink egress add-source '$profile' 198.51.100.0/24 --name lab-only
-EOF
-    if pq_ssh frp-e2e-client "python3 -c \"
-import socket
-s=socket.socket(); s.settimeout(3)
-try:
-  s.connect(('${SERVER_IP}', int('${relay_port}'))); s.sendall(b'GET / HTTP/1.0\\r\\n\\r\\n'); s.recv(16); raise SystemExit(1)
-except Exception:
-  raise SystemExit(0)
-\"" >>"$evidence" 2>&1; then
-      deny_ok=0
-    else
-      deny_ok=1
-    fi
-    pq_ssh "$SERVER" "sudo bash -s" >>"$evidence" 2>&1 <<EOF
-set -euo pipefail
-drlink egress remove-source '$profile' lab-only --yes 2>/dev/null || true
-drlink egress add-source '$profile' 0.0.0.0/0 --name any
-EOF
+    local perf_rc=$?
+    if [[ "$perf_rc" -ne 0 ]]; then byte_ok=1; fi
+
+    # Disable must close the endpoint; re-enable must retain the same allocation.
+    pq_ssh frp-e2e-client "sudo /usr/local/bin/drlink set remote-service '$fixed_rs' enabled disabled" >>"$evidence" 2>&1
+    local disable_cmd_rc=$?
+    pq_ssh frp-e2e-aws "curl -fsS --max-time 4 http://${SERVER_IP}:$fixed_port/" >>"$evidence" 2>&1
+    local disabled_traffic_rc=$?
+    pq_ssh frp-e2e-client "sudo /usr/local/bin/drlink set remote-service '$fixed_rs' enabled enabled" >>"$evidence" 2>&1
+    local enable_cmd_rc=$?
+    local fixed_port_after
+    fixed_port_after="$(pq_ssh frp-e2e-client "sudo /usr/local/bin/drlink show remote-service '$fixed_rs' | sed -n 's/^Endpoint[[:space:]]*: .*:\\([0-9][0-9]*\\)$/\\1/p' | tail -n1" | tr -d '\r\n')"
+    if [[ "$disable_cmd_rc" -eq 0 && "$disabled_traffic_rc" -ne 0 && "$enable_cmd_rc" -eq 0 && "$fixed_port_after" == "$fixed_port" ]]; then disable_ok=0; fi
+
+    # Existing normal Remote Service must reject an in-place move to Fixed TCP.
+    pq_ssh frp-e2e-client "sudo /usr/local/bin/drlink set remote-service '$normal_rs' service '$fixed_obj' enabled" >>"$evidence" 2>&1
+    local cross_rc=$?
+    if [[ "$cross_rc" -ne 0 ]]; then cross_pool_ok=0; fi
     set -uo pipefail
-  else
-    pq_note "WARN fixed tcp setup incomplete; byte-relay skipped (setup_rc=$setup_rc port=$relay_port)"
   fi
 
   set +e
-  pq_ssh "$SERVER" "sudo bash -s" >>"$evidence" 2>&1 <<EOF
-set -euo pipefail
-drlink egress tcp disable '$relay' || true
-drlink egress disable '$profile' || true
-systemctl restart drlink-tcp-egress
-sleep 1
-systemctl is-active drlink-tcp-egress
-drlink egress tcp delete '$relay' --yes 2>/dev/null || true
-drlink egress delete '$profile' --yes 2>/dev/null || true
-echo FIXED_TCP_CLEANUP=OK
-EOF
-  local cleanup_rc=$?
+  pq_ssh frp-e2e-client "sudo /usr/local/bin/drlink unset remote-service '$fixed_rs' >/dev/null 2>&1 || true; sudo /usr/local/bin/drlink unset remote-service '$normal_rs' >/dev/null 2>&1 || true; pkill -f 'http.server $fixed_target_port' >/dev/null 2>&1 || true; pkill -f 'http.server $normal_target_port' >/dev/null 2>&1 || true" >>"$evidence" 2>&1
+  local agent_cleanup_rc=$?
+  pq_ssh "$SERVER" "sudo /usr/local/bin/drlink unset service-object '$fixed_obj' >/dev/null 2>&1 || true; sudo /usr/local/bin/drlink unset service-object '$normal_obj' >/dev/null 2>&1 || true" >>"$evidence" 2>&1
+  local server_cleanup_rc=$?
   set -uo pipefail
+  if [[ "$agent_cleanup_rc" -eq 0 && "$server_cleanup_rc" -eq 0 ]]; then cleanup_rc=0; fi
 
   pq_sample_server_resources "$OUT/resources/tcp-egress-after.json"
-  echo "FIXED_TCP_EGRESS_SETUP_RC=$setup_rc" | tee -a "$PROD_QUAL_GATES"
-  echo "FIXED_TCP_EGRESS_BYTE_RC=$byte_ok" | tee -a "$PROD_QUAL_GATES"
-  echo "FIXED_TCP_EGRESS_DENY_RC=$deny_ok" | tee -a "$PROD_QUAL_GATES"
-  echo "FIXED_TCP_EGRESS_CLEANUP_RC=$cleanup_rc" | tee -a "$PROD_QUAL_GATES"
-  if [[ "$setup_rc" -eq 0 && "$cleanup_rc" -eq 0 && "$byte_ok" -eq 0 && "$deny_ok" -eq 0 ]]; then
-    pq_gate FIXED_TCP_EGRESS_REAL PASS
-    pq_gate FIXED_TCP_EGRESS_ALLOW_DENY PASS
-    pq_gate FIXED_TCP_EGRESS_DNS_SAFETY PASS
-    pq_gate FIXED_TCP_EGRESS_SERVICE_RESTART PASS
-    pq_gate TCP_EGRESS_QUALIFICATION PASS
+  echo "FIXED_TCP_SETUP_RC=$setup_rc" | tee -a "$PROD_QUAL_GATES"
+  echo "FIXED_TCP_POOL_RC=$pool_ok" | tee -a "$PROD_QUAL_GATES"
+  echo "FIXED_TCP_BYTE_RC=$byte_ok" | tee -a "$PROD_QUAL_GATES"
+  echo "FIXED_TCP_DISABLE_RC=$disable_ok" | tee -a "$PROD_QUAL_GATES"
+  echo "FIXED_TCP_CROSS_POOL_RC=$cross_pool_ok" | tee -a "$PROD_QUAL_GATES"
+  echo "FIXED_TCP_CLEANUP_RC=$cleanup_rc" | tee -a "$PROD_QUAL_GATES"
+  if [[ "$setup_rc" -eq 0 && "$pool_ok" -eq 0 && "$byte_ok" -eq 0 && "$disable_ok" -eq 0 && "$cross_pool_ok" -eq 0 && "$cleanup_rc" -eq 0 ]]; then
+    pq_gate FIXED_TCP_REMOTE_SERVICE_REAL PASS
+    pq_gate FIXED_TCP_POOL_SEPARATION PASS
+    pq_gate FIXED_TCP_DISABLE_REENABLE PASS
+    pq_gate FIXED_TCP_CROSS_POOL_REJECT PASS
+    pq_gate FIXED_TCP_REMOTE_SERVICE_QUALIFICATION PASS
   else
-    pq_gate FIXED_TCP_EGRESS_REAL FAIL
-    pq_gate FIXED_TCP_EGRESS_ALLOW_DENY FAIL
-    pq_gate FIXED_TCP_EGRESS_DNS_SAFETY FAIL
-    pq_gate FIXED_TCP_EGRESS_SERVICE_RESTART FAIL
-    pq_gate TCP_EGRESS_QUALIFICATION FAIL
+    pq_gate FIXED_TCP_REMOTE_SERVICE_REAL FAIL
+    pq_gate FIXED_TCP_POOL_SEPARATION FAIL
+    pq_gate FIXED_TCP_DISABLE_REENABLE FAIL
+    pq_gate FIXED_TCP_CROSS_POOL_REJECT FAIL
+    pq_gate FIXED_TCP_REMOTE_SERVICE_QUALIFICATION FAIL
   fi
-
   # Merge Fixed TCP timing into baseline; null metrics must not PASS when TCP qual PASS.
   local baseline_out="$OUT/perf/baseline.json"
   if [[ -f "$tcp_perf_raw" && -s "$tcp_perf_raw" && -f "$baseline_out" ]]; then
@@ -1593,7 +1557,7 @@ rel = "perf/raw/fixed-tcp-setup.txt"
 if rel not in paths:
     paths.append(rel)
 doc["raw_evidence_paths"] = paths
-doc["fixed_tcp_egress"] = {
+doc["fixed_tcp_remote_service"] = {
     "concurrency": max(levels) if levels else None,
     "concurrency_levels": sorted(set(levels)),
     "sample_count": len(samples),
@@ -1606,15 +1570,15 @@ doc["fixed_tcp_egress"] = {
     "throughput": None,
     "churn": None,
     "failure_rate": (failure / attempt) if attempt else 0.0,
-    "note": "Fixed TCP setup timing from prod-qual phase_fixed_tcp_egress",
+    "note": "Fixed TCP Remote Service setup timing from production qualification",
 }
 base.write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 print("FIXED_TCP_BASELINE_MERGED samples=%d levels=%s" % (len(samples), levels))
 PY
     set -uo pipefail
   fi
-  if grep -qx 'TCP_EGRESS_QUALIFICATION=PASS' "$PROD_QUAL_GATES" 2>/dev/null \
-    || grep -qx 'FIXED_TCP_EGRESS_REAL=PASS' "$PROD_QUAL_GATES" 2>/dev/null; then
+  if grep -qx 'FIXED_TCP_REMOTE_SERVICE_QUALIFICATION=PASS' "$PROD_QUAL_GATES" 2>/dev/null \
+    || grep -qx 'FIXED_TCP_REMOTE_SERVICE_REAL=PASS' "$PROD_QUAL_GATES" 2>/dev/null; then
     set +e
     python3 - "$baseline_out" <<'PY'
 import json, sys
@@ -1623,7 +1587,7 @@ p = Path(sys.argv[1])
 if not p.is_file() or not p.stat().st_size:
     raise SystemExit(2)
 d = json.loads(p.read_text(encoding="utf-8"))
-ft = d.get("fixed_tcp_egress") or {}
+ft = d.get("fixed_tcp_remote_service") or {}
 need = ("sample_count", "attempt_count", "success_count", "setup_p50", "setup_p95", "setup_p99")
 for k in need:
     v = ft.get(k)
@@ -1671,7 +1635,7 @@ phase_soak() {
       pids+=($!)
     done
     # Diagnostic status probe may soft-fail; traffic probes are authoritative.
-    pq_ssh "$SERVER" 'sudo drlink status >/dev/null' >/dev/null 2>&1 || true
+    pq_ssh "$SERVER" 'sudo drlink show status >/dev/null' >/dev/null 2>&1 || true
     local pid rc
     for pid in "${pids[@]}"; do
       set +e
@@ -1738,6 +1702,72 @@ PY
 # canonical evidence before invoking this extended suite.
 
 # ---------------------------------------------------------------------------
+# Qualification-owned cleanup
+# ---------------------------------------------------------------------------
+phase_extended_cleanup() {
+  pq_note "==== EXTENDED QUALIFICATION CLEANUP ===="
+  set +e
+  pq_ssh "$SERVER" "sudo bash -s" >"$OUT/extended/cleanup.log" 2>&1 <<'EOF'
+set -euo pipefail
+python3 - <<'PY'
+import sqlite3
+c = sqlite3.connect("/var/lib/drlink/drlink.db")
+names = [str(r[0]) for r in c.execute("SELECT name FROM policy_rules WHERE plane='internet'")]
+foreign = [name for name in names if not name.startswith("pq-")]
+if foreign:
+    raise SystemExit("refusing cleanup: non-qualification Internet Access rules exist: %s" % ",".join(foreign))
+PY
+if ! drlink show internet-access | grep -q "Mode[[:space:]]*: No Policy"; then
+  printf 'y\n' | drlink unset internet-access policy
+fi
+drlink unset service-group pq-web >/dev/null 2>&1 || true
+for name in pq-http pq-https pq-fixed-target pq-normal-target; do
+  drlink unset service-object "$name" >/dev/null 2>&1 || true
+done
+for name in pq-example-com pq-any-source pq-blackhole qual-live-mutation; do
+  drlink unset network-object "$name" >/dev/null 2>&1 || true
+done
+python3 - <<'PY'
+import sqlite3
+c = sqlite3.connect("/var/lib/drlink/drlink.db")
+checks = {
+    "internet_rules": c.execute(
+        "SELECT COUNT(*) FROM policy_rules WHERE plane='internet' AND name LIKE 'pq-%'"
+    ).fetchone()[0],
+    "network_objects": c.execute(
+        "SELECT COUNT(*) FROM objects WHERE name LIKE 'pq-%' OR name='qual-live-mutation'"
+    ).fetchone()[0],
+    "service_objects": c.execute(
+        "SELECT COUNT(*) FROM service_objects WHERE name LIKE 'pq-%'"
+    ).fetchone()[0],
+    "service_groups": c.execute(
+        "SELECT COUNT(*) FROM service_groups WHERE name LIKE 'pq-%'"
+    ).fetchone()[0],
+}
+print(checks)
+if any(int(v) for v in checks.values()):
+    raise SystemExit("qualification residue remains")
+PY
+if [ -f /tmp/prod-qual-egress.pid ]; then
+  pid="$(cat /tmp/prod-qual-egress.pid 2>/dev/null || true)"
+  if [ -n "$pid" ] && [ -r "/proc/$pid/cmdline" ] && tr '\0' ' ' <"/proc/$pid/cmdline" | grep -q 'frp-egress-gateway.py'; then
+    kill "$pid" >/dev/null 2>&1 || true
+  fi
+  rm -f /tmp/prod-qual-egress.pid
+fi
+echo EXTENDED_CLEANUP=PASS
+EOF
+  local rc=$?
+  set -uo pipefail
+  if [[ "$rc" -eq 0 ]]; then
+    pq_gate EXTENDED_CLEANUP PASS
+  else
+    pq_gate EXTENDED_CLEANUP FAIL
+    PROD_QUAL_FAILS=$((PROD_QUAL_FAILS + 1))
+  fi
+}
+
+# ---------------------------------------------------------------------------
 # Wrong-role / interrupted mutation (lightweight)
 # ---------------------------------------------------------------------------
 phase_wrong_ops() {
@@ -1746,16 +1776,14 @@ phase_wrong_ops() {
   pq_ssh "$SERVER" "sudo bash -s" >"$OUT/extended/wrong-ops.log" 2>&1 <<'EOF'
 set -euo pipefail
 set +e
-drlink client show zzzzdead >/tmp/w1.txt 2>&1; e1=$?
-drlink service add nosuch ssh --local-port 22 >/tmp/w2.txt 2>&1; e2=$?
-drlink egress add-destination nosuch bad_host 99999 --protocol http >/tmp/w3.txt 2>&1; e3=$?
-drlink access create '' >/tmp/w4.txt 2>&1; e4=$?
+drlink show managed-host zzzzdead >/tmp/w1.txt 2>&1; e1=$?
+drlink set service-object bad-service type tcp port 99999 >/tmp/w2.txt 2>&1; e2=$?
+drlink set network-object bad-network type cidr value not-a-cidr >/tmp/w3.txt 2>&1; e3=$?
+drlink test internet-access source nosuch destination bad_host service nosuch >/tmp/w4.txt 2>&1; e4=$?
 set -e
-# Every captured invalid-command RC must be non-zero.
 test "$e1" -ne 0 -a "$e2" -ne 0 -a "$e3" -ne 0 -a "$e4" -ne 0
 echo "WRONG_OPS_RC e1=$e1 e2=$e2 e3=$e3 e4=$e4"
-# registry still loadable
-python3 -c 'import json; json.load(open("/var/lib/drlink/registry.json"))'
+python3 -c 'import sqlite3; c=sqlite3.connect("/var/lib/drlink/drlink.db"); print(c.execute("PRAGMA integrity_check").fetchone()[0])'
 echo WRONG_OPS=PASS
 EOF
   if [[ $? -eq 0 ]]; then
@@ -1783,8 +1811,9 @@ main() {
   phase_network_flap
   phase_docs_free_ux
   phase_wrong_ops
-  phase_fixed_tcp_egress
+  phase_fixed_tcp_remote_service
   phase_soak
+  phase_extended_cleanup
   # Prior-stable capture is owned by the dedicated A-019 harness. This suite
   # runs on the current v2.4 candidate and must not attempt a v2.3 capture here.
   pq_note "A019_GOLDEN_OWNER=tests/run-v230-to-v240-upgrade-e2e.sh"
