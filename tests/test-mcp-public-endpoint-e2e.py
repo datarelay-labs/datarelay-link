@@ -165,7 +165,7 @@ class PublicMcpEndpointTests(unittest.TestCase):
             import io, contextlib
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
-                dispatch(["system", "credential", "rotate", "ai-principal", "chatgpt-support"], root=self.tmp)
+                dispatch(["system", "credential", "rotate", "ai-identity", "chatgpt-support"], root=self.tmp)
             out.append(buf.getvalue())
 
         _capture()
@@ -627,13 +627,13 @@ class PublicMcpEndpointTests(unittest.TestCase):
         ca = self.ca if self.https_url else None
         status, _payload = rpc(target, {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}, self.token, method="tools/list", ca=ca)
         self.assertEqual(status, 200)
-        dispatch(["system", "credential", "revoke", "ai-principal", "chatgpt-support"], root=self.tmp)
+        dispatch(["system", "credential", "revoke", "ai-identity", "chatgpt-support"], root=self.tmp)
         status, _payload = rpc(target, {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}, self.token, method="tools/list", ca=ca)
         self.assertEqual(status, 401)
         import io, contextlib
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
-            dispatch(["system", "credential", "rotate", "ai-principal", "chatgpt-support"], root=self.tmp)
+            dispatch(["system", "credential", "rotate", "ai-identity", "chatgpt-support"], root=self.tmp)
         new_token = [ln.split(" ", 1)[1].strip() for ln in buf.getvalue().splitlines() if ln.startswith("Token: ")][0]
         status, _payload = rpc(target, {"jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": {}}, new_token, method="tools/list", ca=ca)
         self.assertEqual(status, 200)
@@ -642,7 +642,7 @@ class PublicMcpEndpointTests(unittest.TestCase):
         bak = str(Path(self.tmp) / "mcp-backup.tar.gz")
         self.assertEqual(dispatch(["system", "backup", bak], root=self.tmp), 0)
         self.assertTrue(Path(bak).is_file())
-        dispatch(["system", "credential", "revoke", "ai-principal", "chatgpt-support"], root=self.tmp)
+        dispatch(["system", "credential", "revoke", "ai-identity", "chatgpt-support"], root=self.tmp)
         self.assertEqual(dispatch(["system", "restore", bak], root=self.tmp), 0)
         status, _payload = rpc(target, {"jsonrpc": "2.0", "id": 5, "method": "tools/list", "params": {}}, new_token, method="tools/list", ca=ca)
         self.assertEqual(status, 200)
@@ -715,9 +715,9 @@ class PublicMcpEndpointTests(unittest.TestCase):
         print("MCP_HOST_HEADER_POISONING_PROTECTION=PASS")
 
     def test_authorization_code_pkce_and_replay(self):
-        dispatch(["system", "credential", "configure", "ai-principal", "chatgpt-support", "authentication", "oauth"], root=self.tmp)
+        dispatch(["system", "credential", "configure", "ai-identity", "chatgpt-support", "authentication", "oauth"], root=self.tmp)
         dispatch(
-            ["system", "credential", "configure", "ai-principal", "chatgpt-support", "oauth-redirect", "http://127.0.0.1/callback"],
+            ["system", "credential", "configure", "ai-identity", "chatgpt-support", "oauth-redirect", "http://127.0.0.1/callback"],
             root=self.tmp,
         )
         verifier = "A" * 43
