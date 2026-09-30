@@ -792,10 +792,9 @@ except Exception as exc:
 
 frpctl_control_plane_status() {
   local cli_py libdir
-  cli_py="$(frpctl_lib_candidate drlink_control_cli.py)" || return 0
+  cli_py="$(frpctl_lib_candidate drlink_control_cli.py)" || return 1
   libdir="$(dirname "$cli_py")"
-  echo
-  PYTHONPATH="${libdir}${PYTHONPATH:+:$PYTHONPATH}" python3 "$cli_py" show status 2>/dev/null || true
+  PYTHONPATH="${libdir}${PYTHONPATH:+:$PYTHONPATH}" python3 "$cli_py" show status
 }
 
 frpctl_print_catalog_overview() {
@@ -2759,7 +2758,8 @@ frpctl_status() {
       frpctl_run frp-client status
     fi
   elif [[ "$server" == "1" ]]; then
-    frpctl_run frp-server-status
+    # Public Server status is the SQLite-backed v2.4 control-plane view.
+    # frp-server-status remains an internal readiness/upgrade compatibility tool.
     frpctl_control_plane_status
   else
     frpctl_require_install
@@ -3833,7 +3833,7 @@ frpctl_dispatch_canonical() {
     show_server_status)
       frpctl_require_server || return 1
       frpctl_load_passthrough "$result"
-      frpctl_with_pt frpctl_run frp-server-status
+      frpctl_with_pt frpctl_control_plane_status
       ;;
     show_version) echo; frpctl_print_version; echo ;;
     control_plane)

@@ -125,6 +125,7 @@ bash ./tests/test-installed-client-update.sh
 ./tests/test-uninstall-stdin-execution.sh
 ./tests/test-uninstall-zero-residue.sh
 ./tests/test-frpctl.sh
+./tests/test-status-surface-parity.sh
 ./tests/test-frpctl-suggest-portable.sh
 ./tests/test-frpctl-completion.sh
 ./tests/test-frpctl-pty-completion.sh

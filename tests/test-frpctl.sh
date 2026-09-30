@@ -213,10 +213,20 @@ unset FRP_CLIENT_TEST_ROOT
 export FRP_CTL_TEST_ROOT="$SERVER"
 export FRP_CTL_DRY_RUN=1
 export FRP_UPDATE_TEST_HARNESS=0
-"$CTL" status >"$WORKDIR/server-status.out"
+"$CTL" show status >"$WORKDIR/server-status.out"
 grep -q 'DRLink Server' "$WORKDIR/server-status.out" || fail "server status role"
 grep -q 'Managed Hosts' "$WORKDIR/server-status.out" || fail "server status Managed Hosts"
+grep -q 'Control DB' "$WORKDIR/server-status.out" || fail "server status Control DB"
 grep -qE 'Remote Access|Internet Access|AI Access' "$WORKDIR/server-status.out" || fail "server status access policies"
+if grep -qE '^Clients[[:space:]]*:|^Registry (schema|state)[[:space:]]*:' "$WORKDIR/server-status.out"; then
+  fail "public server status leaked legacy registry model"
+fi
+"$CTL" system status >"$WORKDIR/server-system-status.out"
+if ! cmp -s "$WORKDIR/server-status.out" "$WORKDIR/server-system-status.out"; then
+  diff -u "$WORKDIR/server-status.out" "$WORKDIR/server-system-status.out" >&2 || true
+  fail "show status and system status disagree on Server"
+fi
+pass "FRPCTL_SERVER_STATUS_PARITY"
 "$CTL" clients >"$WORKDIR/server-clients.out"
 grep -qx 'DISPATCH frp-clients' "$WORKDIR/server-clients.out" || fail "clients dispatch"
 # Bare create-client/enroll are guided (no public --options).
