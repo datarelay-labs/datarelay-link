@@ -48,19 +48,19 @@ def _server_root(tmp: str) -> None:
 
 class SliceAGrammarTests(unittest.TestCase):
     def test_show_and_test_internet_use_control_plane(self):
-        show = grammar.match(["show", "internet"], "server")
+        show = grammar.match(["show", "internet-access"], "server")
         self.assertEqual(show.get("status"), "ok")
         self.assertEqual(show.get("action"), "control_plane")
-        self.assertEqual(show.get("tokens"), ["show", "internet"])
+        self.assertEqual(show.get("tokens"), ["show", "internet-access"])
         self.assertNotEqual(show.get("action"), "egress_cmd")
 
         test = grammar.match(
-            ["test", "internet", "10.10.20.25", "archive.ubuntu.com", "443", "https"],
+            ["test", "internet-access", "10.10.20.25", "archive.ubuntu.com", "443", "https"],
             "server",
         )
         self.assertEqual(test.get("status"), "ok")
         self.assertEqual(test.get("action"), "control_plane")
-        self.assertEqual(test.get("tokens")[0:2], ["test", "internet"])
+        self.assertEqual(test.get("tokens")[0:2], ["test", "internet-access"])
 
     def test_diagnostics_scopes_stay_on_doctor_action(self):
         for scope in ("control-plane", "runtime", "mcp"):
@@ -171,12 +171,11 @@ class SliceAInternetCommandTests(unittest.TestCase):
         return rc, out.getvalue(), err.getvalue()
 
     def test_show_internet_status_without_egress_tool(self):
-        rc, out, err = self._run(["show", "internet"])
+        rc, out, err = self._run(["show", "internet-access"])
         self.assertEqual(rc, 0, err)
         self.assertIn("Internet Access", out)
-        self.assertIn("Implicit default", out)
-        self.assertIn("Proxy endpoint", out)
-        self.assertIn("127.0.0.1:6102", out)
+        self.assertIn("Mode        : No Policy", out)
+        self.assertIn("Unmatched   : ALLOW", out)
         self.assertNotIn("frp-egress", out + err)
 
     def test_test_internet_evaluates_policy_and_dns_without_connection(self):
@@ -192,15 +191,15 @@ class SliceAInternetCommandTests(unittest.TestCase):
         socket.getaddrinfo = _fake_getaddrinfo
         try:
             rc, out, err = self._run(
-                ["test", "internet", "10.10.20.25", "archive.ubuntu.com", "443", "https"]
+                ["test", "internet-access", "10.10.20.25", "archive.ubuntu.com", "443", "https"]
             )
         finally:
             socket.getaddrinfo = real_getaddrinfo
         self.assertEqual(rc, 0, err + out)
         self.assertIn("Internet Access Policy Evaluation", out)
-        self.assertIn("resolved", out)
-        self.assertIn("1.2.3.4", out)
-        self.assertIn("Live connection performed: NO", out)
+        self.assertIn("Resolution: not executed (explain only)", out)
+        self.assertIn("server-side DNS required at runtime", out)
+        self.assertIn("ALLOW", out)
         self.assertNotIn("frp-egress", out + err)
 
 

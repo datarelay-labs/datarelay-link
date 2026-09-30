@@ -38,43 +38,13 @@ class CatalogFlagMetadataTests(unittest.TestCase):
         self.assertIsNotNone(cmd, path)
         return next(f for f in cmd["flags"] if f["name"] == name)
 
-    def test_protocol_has_choices_and_type(self):
-        explain = self._flag(("test", "internet"), "--protocol")
-        self.assertEqual(explain.get("type"), "enum")
-        self.assertEqual(set(explain.get("choices") or ()), {"http", "https", "tcp"})
-
-    def test_service_add_preset_and_profile_metadata(self):
-        preset = self._flag(("set", "service"), "--preset")
-        profile = self._flag(("set", "service"), "--profile")
-        self.assertEqual(preset.get("type"), "enum")
-        self.assertEqual(profile.get("type"), "profile")
-
-    def test_preset_choices_cover_every_supported_preset(self):
-        """F02: catalog presets must match the runtime preset vocabulary."""
-        flag = self._flag(("set", "service"), "--preset")
-        self.assertEqual(set(flag.get("choices") or ()), SUPPORTED_PRESETS)
-        self.assertEqual(flag.get("type"), "enum")
-        self.assertIn("https", flag.get("description", ""))
-        self.assertIn("https", flag.get("examples") or ())
-
-    def test_preset_validation_accepts_every_supported_preset(self):
-        for preset in sorted(SUPPORTED_PRESETS):
-            self.assertIsNone(
-                self.cat.strict_error(["set", "service", "--preset", preset]), preset
-            )
-        rejected = self.cat.strict_error(["set", "service", "--preset", "ftp"])
-        self.assertIsNotNone(rejected)
-        self.assertIn("https", rejected)
-
-    def test_preset_metadata_hidden_from_public_completion(self):
-        cmd = self.cat.find(["set", "service"])
-        preset = next(f for f in cmd["flags"] if f["name"] == "--preset")
-        self.assertTrue(preset.get("hidden"))
-        self.assertIn("https", preset.get("choices") or ())
-        offered = load_grammar().completion_candidates(
-            "set service --preset ", "client", [], {}, [], trailing=True
-        )
-        self.assertEqual(offered, [])
+    def test_retired_flag_style_service_and_internet_paths_absent(self):
+        self.assertIsNone(self.cat.find(["set", "service"], include_aliases=True))
+        self.assertIsNone(self.cat.find(["test", "internet"], include_aliases=True))
+        grammar = load_grammar()
+        for toks in (["set", "service", "--preset", "ssh"], ["test", "internet", "--protocol", "https"]):
+            result = grammar.match(toks, "server")
+            self.assertNotEqual(result.get("status"), "ok", result)
 
     def test_enrollment_ttl_role(self):
         enroll = self._flag(("set", "enrollment"), "--ttl")

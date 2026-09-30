@@ -70,9 +70,10 @@ class LifecycleCliUx(unittest.TestCase):
             client = grammar.match(["system", "uninstall", flag], "client")
             self.assertEqual(client.get("action"), "help", client)
 
-    def test_hidden_legacy_start_stop_still_resolve(self):
-        self.assertEqual(grammar.match(["stop"], "client").get("action"), "client_pause")
-        self.assertEqual(grammar.match(["start"], "client").get("action"), "client_resume")
+    def test_hidden_legacy_start_stop_are_rejected(self):
+        for token in ("stop", "start"):
+            result = grammar.match([token], "client")
+            self.assertNotEqual(result.get("status"), "ok", result)
 
     def test_help_system_lists_lifecycle(self):
         text = catalog.domain_help("system", "client") or ""

@@ -196,7 +196,7 @@ def _configuration_apply(plane: ControlPlane, rest):
         if _bundle_has_mutation(kind, plan):
             decision = _approve_configuration_mutation()
             if decision == "cancel":
-                return 1
+                return 0
             if decision == "refuse":
                 return 1
             confirm = True
@@ -219,7 +219,7 @@ def _configuration_apply(plane: ControlPlane, rest):
     if _bundle_has_mutation("legacy", plan):
         decision = _approve_configuration_mutation()
         if decision == "cancel":
-            return 1
+            return 0
         if decision == "refuse":
             return 1
         confirm = True

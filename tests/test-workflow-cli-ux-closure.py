@@ -115,7 +115,7 @@ class DiscoveryTests(unittest.TestCase):
 
 class WorkflowGrammarTests(unittest.TestCase):
     def test_w3_group_mapping(self):
-        r = GRAMMAR.match(["set", "group", "production"], "server")
+        r = GRAMMAR.match(["set", "managed-host-group", "production"], "server")
         self.assertEqual(r.get("status"), "ok")
         self.assertEqual(r.get("action"), "create_group")
         self.assertEqual(r.get("name"), "production")

@@ -22,6 +22,7 @@ sys.path.insert(0, str(ROOT / "lib"))
 
 from drlink_control_plane import ControlPlane
 import drlink_v24 as v24
+import drlink_upgrade_reconcile as upgrade_reconcile
 
 BACKUP = ROOT / "tools" / "frp-backup"
 RESTORE = ROOT / "tools" / "frp-restore"
@@ -78,6 +79,7 @@ def seed_server(tree: Path, marker: str = "orig") -> ControlPlane:
     )
     plane.conn.commit()
     plane.compile_runtime()
+    upgrade_reconcile.project_client_inventory_from_control_plane(plane, root=str(tree))
     return plane
 
 

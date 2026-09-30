@@ -44,14 +44,14 @@ echo "$HELP" | grep -q '^show$' || fail "root help missing show"
 echo "$HELP" | grep -q '^set$' || fail "root help missing set"
 echo "$HELP" | grep -q 'unset' || fail "root help missing unset"
 echo "$HELP" | grep -q 'system' || fail "root help missing system"
-python3 - <<'PY' || fail "help internet missing Internet Access"
+python3 - <<'PY' || fail "help internet-access missing Internet Access"
 import sys
 sys.path.insert(0, "lib")
 import frp_ctl_grammar as g
 
-text = g.help_text(["internet"], "server") or ""
+text = g.help_text(["internet-access"], "server") or ""
 if "Internet Access" not in text:
-    raise SystemExit("help internet missing Internet Access:\n%r" % (text[:500],))
+    raise SystemExit("help internet-access missing Internet Access:\n%r" % (text[:500],))
 PY
 
 echo "$HELP" | grep -q 'help commands' || fail "root help missing help commands"

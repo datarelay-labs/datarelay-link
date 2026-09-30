@@ -152,9 +152,9 @@ class EgressStagedWorkflowTests(unittest.TestCase):
 
 class GrammarEmptyDescriptionTests(unittest.TestCase):
     def test_f10_empty_description_token_tokenize_and_match(self):
-        line = 'group set edge description ""'
+        line = 'set managed-host-group edge description ""'
         tokens = GRAMMAR.tokenize(line)
-        self.assertEqual(tokens, ["group", "set", "edge", "description", ""])
+        self.assertEqual(tokens, ["set", "managed-host-group", "edge", "description", ""])
 
         result = GRAMMAR.match(tokens, "server")
         self.assertEqual(result.get("status"), "ok")

@@ -105,25 +105,12 @@ class BackendCatalogReverseParityTests(unittest.TestCase):
         # consolidation onto unset client / control plane.
         self.assertTrue(True)
 
-    def test_create_client_flags_in_enrollment_catalog(self):
+    def test_create_client_backend_is_not_public_catalog(self):
+        # Greenfield v2.4 exposes enrollment through canonical positional
+        # `set enrollment ...` grammar; backend create-client flags are internal.
         tool_flags = _collect_add_argument_flags(ROOT / "tools" / "frp-create-client")
-        cmd = self.cat.find(["create", "enrollment"], include_aliases=True)
-        self.assertIsNotNone(cmd)
-        cat_flags = set(self.cat.flag_names(cmd["flags"], include_hidden=True))
-        expected = {
-            "--ttl",
-            "--one-line",
-            "--ssh",
-            "--ssh-user",
-            "--ssh-port",
-            "--services-file",
-            "--platform",
-            "--rdp",
-            "--rdp-port",
-            "--client-name",
-        }
-        missing = sorted(f for f in expected if f in tool_flags and f not in cat_flags)
-        self.assertEqual(missing, [], msg="enrollment catalog missing flags: %s" % missing)
+        self.assertTrue(tool_flags)
+        self.assertIsNone(self.cat.find(["create", "enrollment"], include_aliases=True))
 
     def test_backend_tools_exist(self):
         missing = [rel for rel, _ in BACKEND_TOOLS if not (ROOT / rel).is_file()]
