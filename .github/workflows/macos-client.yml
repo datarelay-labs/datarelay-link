@@ -1,6 +1,7 @@
 name: macos-client
 on:
   push:
+    branches: [main]
   pull_request:
 
 permissions:
