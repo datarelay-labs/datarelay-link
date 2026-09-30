@@ -5689,7 +5689,12 @@ class ControlPlane:
         public_ok = mcp["public_url"] != "Not configured" and mcp["frontend_routed"]
         if mcp.get("deployment_mode") == "direct":
             lines.append("MCP Public Endpoint : Warning")
-            lines.append("Reason              : Direct mode has no public HTTPS MCP frontend; reconfigure Server to single443")
+            lines.append("Reason              : Direct mode has no public HTTPS MCP frontend")
+            try:
+                import drlink_mcp_tls as mcp_tls
+                lines.append("Next action         : %s" % mcp_tls.single443_recovery_guidance())
+            except Exception:
+                lines.append("Next action         : Re-run the Server installer in single443 mode")
         elif not mcp["frontend_routed"]:
             lines.append("MCP Public Endpoint : Critical")
             lines.append("Reason              : /mcp is not routed by HTTPS frontend")

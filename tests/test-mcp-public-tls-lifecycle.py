@@ -424,11 +424,15 @@ class McpTlsLifecycleTests(unittest.TestCase):
         shown_text = shown.getvalue()
         self.assertIn("Not available (requires single443)", shown_text)
         self.assertIn("unavailable in Direct deployment mode", shown_text)
+        self.assertIn("FRP_DEPLOYMENT_MODE=single443", shown_text)
+        self.assertIn("FRP_CONFIRM_MODE_SWITCH=yes", shown_text)
         self.assertNotIn("https://mcp.example.test/mcp", shown_text)
 
         diag = self.plane.diagnostics_mcp()
         self.assertIn("MCP Public Endpoint : Warning", diag)
         self.assertIn("Direct mode has no public HTTPS MCP frontend", diag)
+        self.assertIn("FRP_DEPLOYMENT_MODE=single443", diag)
+        self.assertIn("FRP_CONFIRM_MODE_SWITCH=yes", diag)
         self.assertIn("Public URL          : Not configured", diag)
 
         os.environ["DRLINK_MCP_PUBLIC_URL"] = "https://override.example.test/mcp"
@@ -440,6 +444,8 @@ class McpTlsLifecycleTests(unittest.TestCase):
         with self.assertRaises(SystemExit) as ctx:
             dispatch(["set", "mcp-tls", "hostname", "new.example.test"], root=self.tmp)
         self.assertIn("single-443 HTTPS frontend", str(ctx.exception))
+        self.assertIn("FRP_DEPLOYMENT_MODE=single443", str(ctx.exception))
+        self.assertIn("FRP_CONFIRM_MODE_SWITCH=yes", str(ctx.exception))
 
         with self.assertRaises(SystemExit) as ctx:
             dispatch(["system", "certificate", "preflight"], root=self.tmp)

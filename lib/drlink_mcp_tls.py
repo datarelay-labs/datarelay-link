@@ -117,14 +117,23 @@ def explicit_deployment_mode(root: Optional[str | Path] = None) -> str:
     return str(data.get("deployment_mode") or "").strip().lower().replace("-", "").replace("_", "")
 
 
+def single443_recovery_guidance() -> str:
+    """Exact supported Direct -> single443 recovery action for public MCP."""
+    return (
+        "Re-run the Data Relay Link Server installer from the same immutable "
+        "release/source ref with FRP_DEPLOYMENT_MODE=single443. Confirm the "
+        "cutover by typing SWITCH on a TTY, or set "
+        "FRP_CONFIRM_MODE_SWITCH=yes for a non-interactive run."
+    )
+
+
 def require_public_frontend(root: Optional[str | Path] = None) -> None:
     """Fail closed when MCP public TLS is requested on explicit Direct mode."""
     mode = explicit_deployment_mode(root)
     if mode and mode not in ("single443", "enterprise", "enterprisesingle443"):
         raise McpTlsError(
             "MCP public access requires the single-443 HTTPS frontend; "
-            "current deployment mode is direct. Reconfigure the Server to "
-            "single443 before configuring MCP TLS or certificates.",
+            "current deployment mode is direct. " + single443_recovery_guidance(),
             failure_class="MCP_FRONTEND_REQUIRED",
         )
 
@@ -1781,7 +1790,9 @@ def format_status(view: dict) -> str:
                 "",
                 "Warning:",
                 "  MCP public access is unavailable in Direct deployment mode.",
-                "  Reconfigure the Server to single443 before using MCP TLS.",
+                "",
+                "Next action:",
+                "  %s" % single443_recovery_guidance(),
             ]
         )
     if view.get("private_ca_warning"):
