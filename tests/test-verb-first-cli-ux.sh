@@ -222,7 +222,7 @@ for line_action in \
   "system backup:create_backup" \
   "system update product:update_project" \
   "system update engine:update_frp" \
-  "unset group edge:delete_group" \
+  "unset managed-host-group edge:delete_group" \
   "set internet-access allow-api:control_plane"
 do
   line="${line_action%%:*}"

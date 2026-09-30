@@ -48,18 +48,21 @@
   {
     "path": [
       "show",
-      "groups"
+      "managed-host-groups"
     ],
     "roles": "server",
     "category": "Inventory",
     "summary": "List Managed Host Groups",
     "detail": "List server-owned Managed Host Groups and their Managed Host membership counts.",
     "examples": [
-      "show groups"
+      "show managed-host-groups"
     ],
     "args": [],
     "tail": null,
-    "internal": null,
+    "internal": [
+      "show",
+      "groups"
+    ],
     "aliases": [],
     "destructive": false,
     "hidden": false,
@@ -71,14 +74,14 @@
   {
     "path": [
       "show",
-      "group"
+      "managed-host-group"
     ],
     "roles": "server",
     "category": "Inventory",
     "summary": "Show one Managed Host Group and its members",
     "detail": "Show one Managed Host Group, its immutable group ID, description, and Managed Host membership count.",
     "examples": [
-      "show group edge"
+      "show managed-host-group edge"
     ],
     "args": [
       {
@@ -88,7 +91,10 @@
       }
     ],
     "tail": null,
-    "internal": null,
+    "internal": [
+      "show",
+      "group"
+    ],
     "aliases": [],
     "destructive": false,
     "hidden": false,
@@ -152,15 +158,15 @@
   {
     "path": [
       "set",
-      "group"
+      "managed-host-group"
     ],
     "roles": "server",
     "category": "Inventory",
     "summary": "Create or update a Managed Host Group",
     "detail": "Group IDs are immutable ('grp_' plus eight hex digits). Names and descriptions are mutable. Manage membership with 'set managed-host <HOST> group <GROUP>'.",
     "examples": [
-      "set group edge",
-      "set group edge name edge-sites"
+      "set managed-host-group edge",
+      "set managed-host-group edge name edge-sites"
     ],
     "args": [
       {
@@ -551,14 +557,14 @@
   {
     "path": [
       "unset",
-      "group"
+      "managed-host-group"
     ],
     "roles": "server",
     "category": "Inventory",
     "summary": "Delete a Managed Host Group",
     "detail": "Delete a Managed Host Group after interactive y/N confirmation. Membership references are removed; Managed Host identity, Remote Services, and public ports are unchanged. Managed Host Groups are inventory groupings and are distinct from Network Groups used by policy selectors.",
     "examples": [
-      "unset group edge"
+      "unset managed-host-group edge"
     ],
     "args": [
       {

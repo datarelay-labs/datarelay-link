@@ -126,13 +126,13 @@ def cmd_create(args):
         return gid, group
 
     gid, group = mutate_registry(change)
-    print('Created group: %s' % group['name'])
+    print('Created Managed Host Group: %s' % group['name'])
     print()
     print('Add a Managed Host:')
     print('  set managed-host <HOST> group %s' % group['name'])
     print()
     print('View:')
-    print('  show group %s' % group['name'])
+    print('  show managed-host-group %s' % group['name'])
     audit('group.created', group_id=gid, group_name=group['name'])
 
 
@@ -162,7 +162,7 @@ def cmd_set(args):
         return gid, group, old
 
     gid, group, old = mutate_registry(change)
-    print('Updated group %s' % gid)
+    print('Updated Managed Host Group %s' % gid)
     print('%s: %s' % (args.property.capitalize(), group.get(args.property) or '(cleared)'))
     event = 'group.renamed' if args.property == 'name' else 'group.description_changed'
     audit(
@@ -235,8 +235,8 @@ def cmd_delete(args):
         return str(group.get('name') or '')
 
     name = mutate_registry(change) or name
-    print('Deleted group %s (%s)' % (gid, name))
-    print('Removed group membership from %d Managed Host(s).' % len(expected))
+    print('Deleted Managed Host Group %s (%s)' % (gid, name))
+    print('Removed Managed Host Group membership from %d Managed Host(s).' % len(expected))
     print('Managed Host identity, Remote Services, and public ports were not changed.')
     audit(
         'group.deleted',

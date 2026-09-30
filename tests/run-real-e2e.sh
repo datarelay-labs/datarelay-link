@@ -896,7 +896,7 @@ scenario_uninstall_reinstall() {
 }
 
 scenario_groups_probe() {
-  run_server 60-groups-probe "sudo /usr/local/bin/drlink show groups || true"
+  run_server 60-groups-probe "sudo /usr/local/bin/drlink show managed-host-groups || true"
 }
 
 scenario_dns_only() {

@@ -71,5 +71,5 @@ else
   echo "No update was performed."
 fi
 echo
-echo "Install only a pinned, tested FRP version with: sudo drlink frp-update"
+echo "Install only a pinned, tested Relay Engine version with: sudo drlink system update engine"
 exit 0

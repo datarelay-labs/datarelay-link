@@ -161,8 +161,12 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         return 0
     if res in ("network-objects",):
         _require_server(plane, "Network Objects")
+        rows = list(v24.list_network_objects(plane))
+        if not rows:
+            sys.stdout.write("No Network Objects configured.\n")
+            return 0
         sys.stdout.write("%-16s %s\n" % ("NAME", "TYPE"))
-        for row in v24.list_network_objects(plane):
+        for row in rows:
             sys.stdout.write("%-16s %s\n" % (row["name"], row["type"]))
         return 0
     if res == "network-object":
@@ -210,7 +214,11 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         return 0
     if res in ("network-groups",):
         _require_server(plane, "Network Groups")
-        for g in plane.conn.execute("SELECT name FROM object_groups ORDER BY name"):
+        rows = plane.conn.execute("SELECT name FROM object_groups ORDER BY name").fetchall()
+        if not rows:
+            sys.stdout.write("No Network Groups configured.\n")
+            return 0
+        for g in rows:
             sys.stdout.write("%s\n" % g["name"])
         return 0
     if res == "network-group":
@@ -265,7 +273,11 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         return 0
     if res in ("service-groups",):
         _require_server(plane, "Service Groups")
-        for g in plane.conn.execute("SELECT name FROM service_groups ORDER BY name"):
+        rows = plane.conn.execute("SELECT name FROM service_groups ORDER BY name").fetchall()
+        if not rows:
+            sys.stdout.write("No Service Groups configured.\n")
+            return 0
+        for g in rows:
             sys.stdout.write("%s\n" % g["name"])
         return 0
     if res == "service-group":
@@ -295,7 +307,11 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         return 0
     if res in ("permission-objects",):
         _require_server(plane, "Permission Objects")
-        for row in plane.conn.execute("SELECT name FROM permission_objects ORDER BY name"):
+        rows = plane.conn.execute("SELECT name FROM permission_objects ORDER BY name").fetchall()
+        if not rows:
+            sys.stdout.write("No Permission Objects configured.\n")
+            return 0
+        for row in rows:
             sys.stdout.write("%s\n" % row["name"])
         return 0
     if res == "permission-object":
@@ -314,7 +330,11 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         return 0
     if res in ("permission-groups",):
         _require_server(plane, "Permission Groups")
-        for row in plane.conn.execute("SELECT name FROM permission_groups ORDER BY name"):
+        rows = plane.conn.execute("SELECT name FROM permission_groups ORDER BY name").fetchall()
+        if not rows:
+            sys.stdout.write("No Permission Groups configured.\n")
+            return 0
+        for row in rows:
             sys.stdout.write("%s\n" % row["name"])
         return 0
     if res == "permission-group":
@@ -333,10 +353,14 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         return 0
     if res in ("managed-hosts",):
         _require_server(plane, "Managed Hosts")
-        for row in plane.conn.execute(
+        rows = plane.conn.execute(
             "SELECT id, label, hostname, status, connected, trust_status, last_seen "
             "FROM clients ORDER BY COALESCE(label, hostname, id)"
-        ):
+        ).fetchall()
+        if not rows:
+            sys.stdout.write("No Managed Hosts enrolled.\n")
+            return 0
+        for row in rows:
             sys.stdout.write(
                 "%s %s %s\n"
                 % (
@@ -489,7 +513,13 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         return 0
     if res in ("ai-identities",):
         _require_server(plane, "AI Identities")
-        for p in plane.conn.execute("SELECT name, enabled, credential_status FROM ai_principals ORDER BY name"):
+        rows = plane.conn.execute(
+            "SELECT name, enabled, credential_status FROM ai_principals ORDER BY name"
+        ).fetchall()
+        if not rows:
+            sys.stdout.write("No AI Identities configured.\n")
+            return 0
+        for p in rows:
             status = "VERIFIED" if str(p["credential_status"] or "").lower() in ("verified", "active", "configured", "ok") else (
                 p["credential_status"] or "UNBOUND"
             )

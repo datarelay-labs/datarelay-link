@@ -238,13 +238,13 @@ PY
 ! "$GSET" create another-group >/dev/null 2>&1
 cp "$WORKDIR/good" "$REG"
 
-"$CTL" show groups | grep -q acme-korea
-"$CTL" show group acme-korea | grep -q "$GID"
+"$CTL" show managed-host-groups | grep -q acme-korea
+"$CTL" show managed-host-group acme-korea | grep -q "$GID"
 "$ROOT/tools/frp-clients" | grep -q aaaaaaaa
-"$CTL" create group safe-group
-"$CTL" set group safe-group description 'literal $HOME `id` ; text'
-"$CTL" rename group safe-group safer-group
-"$CTL" set group safer-group description 'new description'
+"$CTL" set managed-host-group safe-group
+"$CTL" set managed-host-group safe-group description 'literal $HOME `id` ; text'
+"$CTL" set managed-host-group safe-group name safer-group
+"$CTL" set managed-host-group safer-group description 'new description'
 "$CTL" set managed-host cccccccc group safer-group
 "$CTL" unset managed-host cccccccc group safer-group
 "$CTL" system audit managed-host cccccccc >"$WORKDIR/audit-managed-host.out"
@@ -278,13 +278,13 @@ PY
 # Product-owned confirmation (no public --yes).
 export FRP_CTL_TEST_INPUT=$'y\n'
 set +e
-"$CTL" unset group safer-group >"$WORKDIR/del-cli.out" 2>&1
+"$CTL" unset managed-host-group safer-group >"$WORKDIR/del-cli.out" 2>&1
 del_rc=$?
 set -e
 unset FRP_CTL_TEST_INPUT
 cat "$WORKDIR/del-cli.out"
-[[ "$del_rc" -eq 0 ]] || { echo "FAIL: delete group rc=$del_rc" >&2; exit 1; }
-grep -qi 'Deleted group' "$WORKDIR/del-cli.out" || { echo "FAIL: delete group missing confirmation output" >&2; exit 1; }
+[[ "$del_rc" -eq 0 ]] || { echo "FAIL: unset managed-host-group rc=$del_rc" >&2; exit 1; }
+grep -qi 'Deleted Managed Host Group' "$WORKDIR/del-cli.out" || { echo "FAIL: Managed Host Group delete missing confirmation output" >&2; exit 1; }
 # Action-first help topics describe the canonical create/add/remove trees
 # or reject obsolete topics with a pointer to help commands.
 "$CTL" help create >"$WORKDIR/help-create" 2>&1 || true
@@ -296,8 +296,8 @@ grep -qiE 'add |Usage|client|service|Unknown help topic|help commands|obsolete' 
   "$WORKDIR/help-add"
 grep -qiE 'remove |Usage|client|Unknown help topic|help commands|obsolete' \
   "$WORKDIR/help-remove"
-"$CTL" help group >"$WORKDIR/help-group" 2>&1 || true
-grep -Eqi 'Compatibility topic|Unknown help topic|create group|show group|set group' "$WORKDIR/help-group"
+"$CTL" help managed-host-group >"$WORKDIR/help-group" 2>&1 || true
+grep -Eqi 'managed-host-group|Managed Host Group|Unknown help topic|help commands' "$WORKDIR/help-group"
 set +e
 "$CTL" help legacy >"$WORKDIR/help-legacy" 2>"$WORKDIR/help-legacy.err"
 legacy_rc=$?
@@ -322,7 +322,19 @@ groups = ['grp_11111111']
 roots = g.completion_candidates('', 'server', [], {}, [], groups=groups)
 assert 'group' not in roots
 assert 'show' in roots and 'set' in roots and 'unset' in roots
-assert 'groups' in g.completion_candidates('show ', 'server', [], {}, [], groups=groups)
+show_children = g.completion_candidates('show ', 'server', [], {}, [], groups=groups)
+assert 'managed-host-groups' in show_children
+assert 'managed-host-group' in show_children
+assert 'groups' not in show_children and 'group' not in show_children
+assert 'grp_11111111' in g.completion_candidates(
+    'show managed-host-group ', 'server', [], {}, [], groups=groups
+)
+assert 'grp_11111111' in g.completion_candidates(
+    'set managed-host-group ', 'server', [], {}, [], groups=groups
+)
+assert 'grp_11111111' in g.completion_candidates(
+    'unset managed-host-group ', 'server', [], {}, [], groups=groups
+)
 assert 'group' in g.completion_candidates(
     'set managed-host aaaaaaaa ', 'server', ['aaaaaaaa'], {}, [], groups=groups
 )
@@ -338,6 +350,15 @@ assert 'grp_11111111' in g.completion_candidates(
 assert g.completion_candidates('group ', 'server', [], {}, [], groups=groups) == []
 assert 'group' not in g.canonical_verbs('server')
 assert 'set' in g.canonical_verbs('server') and 'show' in g.canonical_verbs('server')
+for old in (
+    ['show', 'groups'],
+    ['show', 'group', 'grp_11111111'],
+    ['set', 'group', 'grp_11111111'],
+    ['unset', 'group', 'grp_11111111'],
+):
+    result = g.match(old, 'server', names=[])
+    assert result.get('status') == 'error', (old, result)
+    assert 'managed-host-group' in (result.get('message') or ''), (old, result)
 PY
 
 python3 - "$ROOT/lib/frp_client_registry.py" <<'PY'

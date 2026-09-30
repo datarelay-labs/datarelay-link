@@ -2011,12 +2011,12 @@ show managed-host <HOST>
 show managed-host <HOST> agent
 show managed-host <HOST> addresses
 show managed-host <HOST> remote-services
-show groups
-show group <GROUP>
-set group <GROUP>
+show managed-host-groups
+show managed-host-group <GROUP>
+set managed-host-group <GROUP>
 set managed-host <HOST> group <GROUP>
 unset managed-host <HOST> group <GROUP>
-unset group <GROUP>
+unset managed-host-group <GROUP>
 unset managed-host <HOST>
 ~~~
 
@@ -3309,8 +3309,8 @@ show managed-host <HOST> agent
 show managed-host <HOST> addresses
 show managed-host <HOST> remote-services
 
-show groups
-show group <GROUP>
+show managed-host-groups
+show managed-host-group <GROUP>
 
 show enrollments
 show enrollment <ENROLLMENT>
@@ -3372,7 +3372,7 @@ set mcp-tls contact-email <EMAIL>
 set mcp-tls acme-environment <ENVIRONMENT>
 set mcp-tls acme-directory <URL>
 
-set group <GROUP>
+set managed-host-group <GROUP>
 set managed-host <HOST> group <GROUP>
 
 set network-object <OBJECT>
@@ -3404,7 +3404,7 @@ set ai-access disabled
 ~~~text
 unset managed-host <HOST>
 unset managed-host <HOST> group <GROUP>
-unset group <GROUP>
+unset managed-host-group <GROUP>
 unset enrollment <ENROLLMENT>
 unset server public-hostname
 unset server bootstrap-hostname

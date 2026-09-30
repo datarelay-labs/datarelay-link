@@ -1139,7 +1139,7 @@ frpctl_nav_workflow() {
     manage_client) frpctl_manage_clients ;;
     create_group)
       id="$(frpctl_nav_prompt_id "Group name: ")" || return 1
-      frpctl_dispatch set group "$id" || true
+      frpctl_dispatch set managed-host-group "$id" || true
       ;;
     manage_group)
       id="$(frpctl_select_inventory groups "Group: ")" || return 1
@@ -2355,7 +2355,7 @@ PY
 frpctl_manage_one_group() {
   local gid="$1" action sub name value mid display
   # Resolve once so invalid selectors fail before the context menu.
-  if ! frpctl_dispatch show group "$gid" >/dev/null; then
+  if ! frpctl_dispatch show managed-host-group "$gid" >/dev/null; then
     return 1
   fi
   display="$(frpctl_group_display_name "$gid" 2>/dev/null || true)"
@@ -2369,7 +2369,7 @@ frpctl_manage_one_group() {
     action="$(frpctl_read "Select: " "")" || return 1
     case "$action" in
       1)
-        frpctl_dispatch show group "$gid" || true
+        frpctl_dispatch show managed-host-group "$gid" || true
         ;;
       2)
         echo
@@ -2381,13 +2381,13 @@ frpctl_manage_one_group() {
           1)
             name="$(frpctl_read "New name: " "")"
             [[ -n "$name" ]] || { echo "ERROR: name is required" >&2; continue; }
-            frpctl_dispatch set group "$gid" name "$name" || true
+            frpctl_dispatch set managed-host-group "$gid" name "$name" || true
             display="$(frpctl_group_display_name "$gid" 2>/dev/null || true)"
             [[ -n "$display" ]] || display="$name"
             ;;
           2)
             value="$(frpctl_read "New description: " "")"
-            frpctl_dispatch set group "$gid" description "$value" || true
+            frpctl_dispatch set managed-host-group "$gid" description "$value" || true
             ;;
         esac
         ;;
@@ -2403,7 +2403,7 @@ frpctl_manage_one_group() {
         frpctl_dispatch unset client "$mid" group "$gid" || true
         ;;
       6)
-        frpctl_dispatch unset group "$gid" || true
+        frpctl_dispatch unset managed-host-group "$gid" || true
         return 0
         ;;
       7|"")

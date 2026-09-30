@@ -2374,8 +2374,8 @@ show managed-host <HOST> agent
 show managed-host <HOST> addresses
 show managed-host <HOST> remote-services
 
-show groups
-show group <GROUP>
+show managed-host-groups
+show managed-host-group <GROUP>
 
 show enrollments
 show enrollment <ENROLLMENT>
@@ -2429,7 +2429,7 @@ set enrollment zero-touch
 set enrollment manual
 set enrollment bulk
 
-set group <GROUP>
+set managed-host-group <GROUP>
 set managed-host <HOST> group <GROUP>
 
 set network-object <OBJECT>
@@ -2467,7 +2467,7 @@ A **Managed Host Group** is an inventory grouping for registered Managed Hosts a
 ```text
 unset managed-host <HOST>
 unset managed-host <HOST> group <GROUP>
-unset group <GROUP>
+unset managed-host-group <GROUP>
 unset enrollment <ENROLLMENT>
 
 unset network-object <OBJECT>
@@ -2491,7 +2491,7 @@ unset ai-access <RULE>
 unset ai-access policy
 ```
 
-Bare `unset managed-host <HOST>` remains the reference-safe Managed Host retirement operation. `unset managed-host <HOST> group <GROUP>` removes only inventory membership. `unset group <GROUP>` requires interactive y/N confirmation and does not expose a public `--yes` bypass.
+Bare `unset managed-host <HOST>` remains the reference-safe Managed Host retirement operation. `unset managed-host <HOST> group <GROUP>` removes only inventory membership. `unset managed-host-group <GROUP>` requires interactive y/N confirmation and does not expose a public `--yes` bypass.
 
 ---
 

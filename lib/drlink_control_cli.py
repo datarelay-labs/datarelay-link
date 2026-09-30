@@ -810,7 +810,13 @@ def _show(plane: ControlPlane, rest):
         sys.stdout.write(plane.format_ai_activity(plane.list_ai_activity(principal=principal, endpoint=endpoint)))
         return 0
     if res == "enrollments":
-        for row in plane.conn.execute("SELECT id, kind, status FROM enrollments"):
+        rows = plane.conn.execute(
+            "SELECT id, kind, status FROM enrollments ORDER BY created_at DESC, id"
+        ).fetchall()
+        if not rows:
+            sys.stdout.write("No Enrollments found.\n")
+            return 0
+        for row in rows:
             sys.stdout.write("%s %s %s\n" % (row["id"], row["kind"], row["status"]))
         return 0
     if res == "mcp-tls":
@@ -1470,7 +1476,11 @@ def _system(plane: ControlPlane, rest):
     if rest[0] == "revisions":
         if len(rest) != 1:
             raise SystemExit("Usage: system revisions")
-        for row in plane.list_revisions():
+        rows = plane.list_revisions()
+        if not rows:
+            sys.stdout.write("No Revisions found.\n")
+            return 0
+        for row in rows:
             sys.stdout.write("%s %s %s\n" % (row["revision"], row["created_at"], row["command"]))
         return 0
     if rest[0] == "revision":

@@ -306,6 +306,16 @@ def reject_obsolete_surface(tokens):
                 "Use show internet-access or test internet-access source <SOURCE> destination <DESTINATION> service <SERVICE>."
             ),
         }
+    if verb in ("show", "set", "unset") and len(raw) >= 2 and raw[1] in ("group", "groups"):
+        return {
+            "status": "error",
+            "exit_code": 2,
+            "message": (
+                "Ambiguous Managed Host Group shorthand is not part of the current Data Relay Link grammar.\n"
+                "Use show managed-host-groups, show managed-host-group <GROUP>, "
+                "set managed-host-group <GROUP>, or unset managed-host-group <GROUP>."
+            ),
+        }
     if verb in ("show", "set", "unset", "test", "create", "add", "remove", "enable", "disable", "delete", "system") and len(raw) >= 2:
         resource = raw[1]
         # system export/import/diff internet-profile
@@ -650,13 +660,13 @@ def help_text(tokens, role):
             "Groups\n"
             "======\n\n"
             "Usage:\n"
-            "  show groups\n"
-            "  show group <GROUP>\n"
-            "  set group <NAME>\n"
-            "  set group <GROUP> description|name <value>\n"
+            "  show managed-host-groups\n"
+            "  show managed-host-group <GROUP>\n"
+            "  set managed-host-group <NAME>\n"
+            "  set managed-host-group <GROUP> description|name <value>\n"
             "  set client <CLIENT> group <GROUP>\n"
             "  unset client <CLIENT> group <GROUP>\n"
-            "  unset group <GROUP>\n"
+            "  unset managed-host-group <GROUP>\n"
         )
     # Action-first topics are served by _catalog_help_topic above.
     if verb == "update":
@@ -756,8 +766,8 @@ def _root_help_legacy(role):
     if server:
         lines.extend(
             [
-                "  show groups",
-                "  show group <GROUP>",
+                "  show managed-host-groups",
+                "  show managed-host-group <GROUP>",
                 "  show profiles",
                 "  show profile <PROFILE>",
                 "  show clients",
@@ -768,12 +778,12 @@ def _root_help_legacy(role):
                 "  unset client <ID> label",
                 "  unset client <ID> note",
                 "  unset client <ID> tag <key>",
-                "  create group <name>",
+                "  set managed-host-group <GROUP>",
                 "  create profile <name> --preset ... --target-host ... --target-port ...",
-                "  rename group <GROUP> <name>",
-                "  set group <GROUP> name|description <value>",
+                "  set managed-host-group <GROUP> name <name>",
+                "  set managed-host-group <GROUP> name|description <value>",
                 "  set profile <PROFILE> <prop> <value>",
-                "  delete group <GROUP>",
+                "  unset managed-host-group <GROUP>",
                 "  delete profile <PROFILE>",
                 "  add client <ID> group <GROUP>",
                 "  remove client <ID> group <GROUP>",
@@ -873,8 +883,8 @@ def _show_help(rest, role):
             "Show groups\n"
             "===========\n\n"
             "Usage:\n"
-            "  show groups\n"
-            "  show group <GROUP>\n"
+            "  show managed-host-groups\n"
+            "  show managed-host-group <GROUP>\n"
             "  show clients\n"
             "  show client <ID> groups\n"
         )
@@ -1047,14 +1057,14 @@ def _verb_help(verb, role):
         ),
         "delete": (
             "Delete\n======\n\nUsage:\n"
-            "  delete group <GROUP>\n"
+            "  unset managed-host-group <GROUP>\n"
             "  delete service-profile <PROFILE>\n"
             "  delete access-list <LIST>\n"
             "  delete egress-profile <PROFILE>\n"
             "  delete enrollment <ENROLLMENT>\n\n"
             "Destructive deletes ask for confirmation.\n"
         ),
-        "rename": "Rename group\n============\n\nUsage:\n  rename group <GROUP> <name>\n",
+        "rename": "Rename group\n============\n\nUsage:\n  set managed-host-group <GROUP> name <name>\n",
     }
     return mapping.get(verb, "Usage:\n  %s\n" % verb)
 
@@ -1348,7 +1358,7 @@ def context_help(tokens, role, names=None, clients=None):
         )
     if tokens == ["delete"] and server:
         return (
-            "delete group <GROUP>\n"
+            "unset managed-host-group <GROUP>\n"
             "delete service-profile <PROFILE>\n"
             "delete access-list <LIST>\n"
             "delete egress-profile <PROFILE>\n"
@@ -2536,13 +2546,13 @@ def _match_show(tokens, role, names=None):
         return {"status": "ok", "action": "show_clients", "passthrough": []}
     if resource == "groups":
         if len(tokens) > 2:
-            return incomplete("Unexpected arguments.", ["show groups"])
+            return incomplete("Unexpected arguments.", ["show managed-host-groups"])
         return {"status": "ok", "action": "show_groups"}
     if resource == "group":
         if len(tokens) < 3:
-            return incomplete("Missing group selector.", ["show group <GROUP>"])
+            return incomplete("Missing group selector.", ["show managed-host-group <GROUP>"])
         if len(tokens) > 3:
-            return incomplete("Unexpected arguments.", ["show group <GROUP>"])
+            return incomplete("Unexpected arguments.", ["show managed-host-group <GROUP>"])
         return {"status": "ok", "action": "show_group", "group": tokens[2]}
     if resource == "profiles":
         if len(tokens) > 2:
@@ -2759,17 +2769,17 @@ def _match_set(tokens, role, names=None):
         }
     if resource == "group":
         if not server:
-            return {"status": "role", "need": "server", "command": "set group"}
+            return {"status": "role", "need": "server", "command": "set managed-host-group"}
         if len(tokens) < 3:
-            return incomplete("Missing group selector.", ["set group <GROUP> name|description <value>"])
+            return incomplete("Missing group selector.", ["set managed-host-group <GROUP> name|description <value>"])
         if len(tokens) < 4 or tokens[3] not in ("name", "description"):
             return incomplete(
                 "Missing or unknown group property.",
-                ["set group <GROUP> name|description <value>"],
+                ["set managed-host-group <GROUP> name|description <value>"],
                 ["name", "description"],
             )
         if len(tokens) < 5:
-            return incomplete("Missing value.", ["set group <GROUP> %s <value>" % tokens[3]])
+            return incomplete("Missing value.", ["set managed-host-group <GROUP> %s <value>" % tokens[3]])
         if len(tokens) > 5:
             return {"status": "error", "message": "Too many arguments. Quote values that contain spaces."}
         return {
@@ -3267,11 +3277,11 @@ def _match_create(tokens, role, names=None):
         return {"status": "ok", "action": "create_backup", "passthrough": tokens[2:]}
     if resource == "group":
         if len(tokens) < 3:
-            return incomplete("Missing group name.", ["create group <name>"])
+            return incomplete("Missing group name.", ["set managed-host-group <GROUP>"])
         description = ""
         if len(tokens) > 3:
             if len(tokens) != 5 or tokens[3] != "--description":
-                return incomplete("Unexpected arguments.", ["create group <name>"])
+                return incomplete("Unexpected arguments.", ["set managed-host-group <GROUP>"])
             description = tokens[4]
         return {
             "status": "ok",
@@ -3862,7 +3872,7 @@ def _match_delete(tokens, role, names=None):
         return incomplete(
             "Missing resource.",
             [
-                "delete group <GROUP>",
+                "unset managed-host-group <GROUP>",
                 "delete service-profile <PROFILE>",
                 "delete egress-profile <PROFILE>",
                 "delete access-list <LIST>",
@@ -3896,12 +3906,12 @@ def _match_delete(tokens, role, names=None):
     if tokens[1] == "group":
         if len(tokens) < 3:
             return incomplete(
-                "Missing group selector.", ["delete group <GROUP> [--yes]"], ["group"]
+                "Missing group selector.", ["unset managed-host-group <GROUP>"], ["group"]
             )
         for token in tokens[3:]:
             if not str(token).startswith("-"):
                 return incomplete(
-                    "Unexpected arguments.", ["delete group <GROUP> [--yes]"]
+                    "Unexpected arguments.", ["unset managed-host-group <GROUP>"]
                 )
         return {
             "status": "ok",
@@ -3938,14 +3948,14 @@ def _match_delete(tokens, role, names=None):
         }
     return incomplete(
         "Unknown delete resource.",
-        ["delete group <GROUP>", "delete profile <PROFILE>", "delete egress-profile <PROFILE>"],
+        ["unset managed-host-group <GROUP>", "delete profile <PROFILE>", "delete egress-profile <PROFILE>"],
         ["group", "profile", "egress-profile"],
     )
 
 
 def _match_rename(tokens, role, names=None):
     if len(tokens) < 4 or tokens[1] != "group":
-        return incomplete("Missing group selector or name.", ["rename group <GROUP> <name>"], ["group"])
+        return incomplete("Missing group selector or name.", ["set managed-host-group <GROUP> name <name>"], ["group"])
     return {
         "status": "ok",
         "action": "set_group",
@@ -4515,13 +4525,13 @@ def _canonical_completion(
     if verb == "show":
         if len(filled) == 1:
             return _filter(_show_resources(role), prefix)
-        if filled[1] == "group" and server and len(filled) == 2:
+        if filled[1] == "managed-host-group" and server and len(filled) == 2:
             return _filter(groups, prefix)
         return []
     if verb == "set":
         if len(filled) == 1:
             return _filter(_set_resources(role), prefix)
-        if filled[1] == "group" and server:
+        if filled[1] == "managed-host-group" and server:
             if len(filled) == 2:
                 return _filter(groups, prefix)
             if len(filled) == 3:

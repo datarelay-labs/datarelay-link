@@ -1131,7 +1131,7 @@ def to_internal(tokens):
         # metadata label/note/tag
         return ["unset", "client"] + rest
 
-    if path == ("set", "group"):
+    if path == ("set", "managed-host-group"):
         if not rest:
             return ["set", "group"]
         if len(rest) == 1:
@@ -1266,7 +1266,7 @@ def to_internal(tokens):
             return ["disable", "service", rest[0]] + rest[2:]
         return ["disable", "service"] + rest
 
-    if path == ("unset", "group"):
+    if path == ("unset", "managed-host-group"):
         return ["delete", "group"] + rest
 
     if path == ("unset", "enrollment"):
@@ -2572,8 +2572,8 @@ COMPLETION_DOMAIN_GROUPS = (
             "managed-host",
             "clients",
             "client",
-            "groups",
-            "group",
+            "managed-host-groups",
+            "managed-host-group",
             "client-groups",
             "client-group",
             "enrollments",
