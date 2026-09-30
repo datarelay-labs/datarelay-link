@@ -54,8 +54,13 @@ class AccessBroadeningBundleOrder(unittest.TestCase):
     def _dispatch(self, args):
         out = io.StringIO()
         err = io.StringIO()
-        with redirect_stdout(out), redirect_stderr(err):
-            rc = cli.dispatch(list(args), root=self.tmp, plane=self.plane)
+        original_stdin = sys.stdin
+        try:
+            sys.stdin = io.StringIO("")
+            with redirect_stdout(out), redirect_stderr(err):
+                rc = cli.dispatch(list(args), root=self.tmp, plane=self.plane)
+        finally:
+            sys.stdin = original_stdin
         return rc, out.getvalue(), err.getvalue()
 
     def _seed_remote_blacklist(self, rule="block-ssh"):
@@ -167,7 +172,7 @@ class AccessBroadeningBundleOrder(unittest.TestCase):
         # Use empty stdin cancel via _run semantics: env unset + no confirm.
         rc, out, err = self._dispatch(["unset", "remote-access", "block-ssh"])
         # Without TTY, _confirm_from_stdin returns False → cancelled
-        self.assertEqual(rc, 0)
+        self.assertEqual(rc, 1)
         self.assertIn("Cancelled", out)
         self.assertEqual(self.plane.current_revision(), rev_before)
         self.assertIsNotNone(self.plane._get_rule("remote", "block-ssh"))

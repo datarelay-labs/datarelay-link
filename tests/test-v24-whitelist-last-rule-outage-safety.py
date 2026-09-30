@@ -54,8 +54,13 @@ class WhitelistLastRuleOutageSafety(unittest.TestCase):
     def _dispatch(self, args):
         out = io.StringIO()
         err = io.StringIO()
-        with redirect_stdout(out), redirect_stderr(err):
-            rc = cli.dispatch(list(args), root=self.tmp, plane=self.plane)
+        original_stdin = sys.stdin
+        try:
+            sys.stdin = io.StringIO("")
+            with redirect_stdout(out), redirect_stderr(err):
+                rc = cli.dispatch(list(args), root=self.tmp, plane=self.plane)
+        finally:
+            sys.stdin = original_stdin
         return rc, out.getvalue(), err.getvalue()
 
     def _seed_remote_whitelist(self, *rules):
@@ -205,13 +210,25 @@ class WhitelistLastRuleOutageSafety(unittest.TestCase):
         os.environ.pop("DRLINK_CONFIRM", None)
         rev_before = self.plane.current_revision()
         rc, out, _err = self._dispatch(["unset", "remote-access", "allow-ssh"])
-        self.assertEqual(rc, 0)
+        self.assertEqual(rc, 1)
         self.assertIn("Cancelled", out)
         self.assertEqual(self.plane.current_revision(), rev_before)
         self.assertIsNotNone(self.plane._get_rule("remote", "allow-ssh"))
         pol = v24.get_access_policy(self.plane, "remote")
         self.assertEqual(pol["mode"], "whitelist")
         self.assertEqual(str(pol["enforcement"]).lower(), "enabled")
+
+    def test_cancel_disable_returns_nonzero_and_preserves_rule(self):
+        self._seed_remote_whitelist()
+        os.environ.pop("DRLINK_CONFIRM", None)
+        rev_before = self.plane.current_revision()
+        rc, out, _err = self._dispatch(
+            ["set", "remote-access", "allow-ssh", "disabled"]
+        )
+        self.assertEqual(rc, 1)
+        self.assertIn("Cancelled", out)
+        self.assertEqual(self.plane.current_revision(), rev_before)
+        self.assertTrue(bool(self.plane._get_rule("remote", "allow-ssh")["enabled"]))
 
     def test_confirm_yields_zero_enabled_rules_and_deny_all(self):
         self._seed_remote_whitelist()

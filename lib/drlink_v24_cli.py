@@ -997,7 +997,7 @@ def handle_set(plane: ControlPlane, rest: list[str]) -> Optional[int]:
             oneshot=True,
         )
         if isinstance(result, dict) and result.get("cancelled"):
-            return 0
+            return 1
         sys.stdout.write("%s rule set: %s\n" % (res, name))
         return 0
     if res == "ai-access":
@@ -1039,7 +1039,7 @@ def handle_set(plane: ControlPlane, rest: list[str]) -> Optional[int]:
             oneshot=True,
         )
         if isinstance(result, dict) and result.get("cancelled"):
-            return 0
+            return 1
         sys.stdout.write("AI Access rule set: %s\n" % name)
         return 0
     if res == "ai-identity":
@@ -1151,7 +1151,7 @@ def handle_unset(plane: ControlPlane, rest: list[str]) -> Optional[int]:
 
         result = _run(v24.unset_access_rule, plane, res, rest[1])
         if isinstance(result, dict) and result.get("cancelled"):
-            return 0
+            return 1
         sys.stdout.write("Rule deleted: %s\n" % rest[1])
         return 0
     if res == "ai-access":
@@ -1174,7 +1174,7 @@ def handle_unset(plane: ControlPlane, rest: list[str]) -> Optional[int]:
 
         result = _run(v24.unset_ai_access_rule, plane, rest[1])
         if isinstance(result, dict) and result.get("cancelled"):
-            return 0
+            return 1
         sys.stdout.write("AI Access rule deleted: %s\n" % rest[1])
         return 0
     if res == "ai-identity":
