@@ -2909,7 +2909,6 @@ def _match_set(tokens, role, names=None):
         if not server:
             return {"status": "role", "need": "server", "command": "set server"}
         # Canonical: public-hostname / bootstrap-hostname / installer URLs.
-        # Hidden compat: hostname → public-hostname.
         server_settings = [
             "public-hostname",
             "bootstrap-hostname",
@@ -2929,8 +2928,6 @@ def _match_set(tokens, role, names=None):
                 tip="drlink help set",
             )
         setting = tokens[2]
-        if setting == "hostname":
-            setting = "public-hostname"
         if setting == "installer-url":
             if len(tokens) < 4:
                 return incomplete(
