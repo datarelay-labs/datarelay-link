@@ -246,10 +246,15 @@ def build_desired_runtime_services(
             dest = str(row["destination"] or "")
             identity = v24.load_agent_identity(root)
             host_name = identity.get("hostname") or identity.get("label") or ""
-            if dest and host_name and dest.lower() != host_name.lower() and dest.lower() not in (
-                "this-host",
-                "this_host",
-                "self",
+            self_machine_id = str(identity.get("machine_id") or "").strip()
+            bound_client_id = str(row["destination_client_id"] or "").strip()
+            self_bound = bool(self_machine_id and bound_client_id == self_machine_id)
+            if (
+                not self_bound
+                and dest
+                and host_name
+                and dest.lower() != host_name.lower()
+                and dest.lower() not in ("this-host", "this_host", "self")
             ):
                 # Routed destination: local_ip is the destination address.
                 obj = plane_db.get_object(dest) if hasattr(plane_db, "get_object") else None
