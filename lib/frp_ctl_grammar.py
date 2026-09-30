@@ -2905,25 +2905,6 @@ def _match_set(tokens, role, names=None):
                 "set internet-profile ubuntu-update source 10.10.20.0/24",
             ],
         )
-    if resource == "installer-url":
-        if not server:
-            return {"status": "role", "need": "server", "command": "set installer-url"}
-        if len(tokens) < 3:
-            return incomplete("Missing installer URL.", ["set installer-url <url>"])
-        return {"status": "ok", "action": "set_installer_url", "value": tokens[2]}
-    if resource == "windows-installer-url":
-        if not server:
-            return {"status": "role", "need": "server", "command": "set windows-installer-url"}
-        if len(tokens) < 3:
-            return incomplete(
-                "Missing Windows installer URL.",
-                ["set windows-installer-url <url>"],
-            )
-        return {
-            "status": "ok",
-            "action": "set_windows_installer_url",
-            "value": tokens[2],
-        }
     if resource == "server":
         if not server:
             return {"status": "role", "need": "server", "command": "set server"}
