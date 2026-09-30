@@ -40,7 +40,7 @@ PROD_QUAL_FAILS=0
 : >"$PROD_QUAL_SUMMARY"
 : >"$PROD_QUAL_GATES"
 
-SERVER="${FRP_E2E_SERVER_ALIAS:-frp-e2e-server}"
+SERVER="${FRP_E2E_SERVER_ALIAS:-}"
 PRIOR_STABLE_VERSION=2.3.0
 PRIOR_STABLE_TAG="v${PRIOR_STABLE_VERSION}"
 GOLDEN="${FRP_E2E_GOLDEN_BASELINE:-$OUT/golden/${PRIOR_STABLE_TAG}-upgrade-baseline}"
@@ -61,15 +61,24 @@ if [[ -z "$V230_TREE" ]] && git -C "$ROOT" rev-parse --verify "refs/tags/${PRIOR
   mkdir -p "$V230_TREE"
   git -C "$ROOT" archive "$PRIOR_STABLE_TAG" | tar -x -C "$V230_TREE"
 fi
-HEAD="$(pq_head_sha)"
+PROVENANCE_HEAD="$(pq_head_sha)"
+HEAD="$PROVENANCE_HEAD"
+SOURCE_HEAD="$(python3 - "$ROOT/release-manifest.json" <<'PY'
+import json, sys
+from pathlib import Path
+data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+print(str(data.get("source_head") or "").strip().lower())
+PY
+)"
+PROVENANCE_PARENT="$(git -C "$ROOT" rev-parse HEAD^1 2>/dev/null || true)"
 WORKTREE_CLEAN_START=NO
 if git -C "$ROOT" diff --quiet && git -C "$ROOT" diff --cached --quiet; then
   WORKTREE_CLEAN_START=YES
 fi
 A019_CANONICAL_EVIDENCE="${FRP_E2E_A019_CANONICAL_EVIDENCE:-$ROOT/e2e-reports/release-qualification/a019-v230-to-v240.json}"
 PROJECT_VERSION="$(awk -F= '/^PROJECT_VERSION=/{print $2}' "$ROOT/VERSION")"
-PUBLIC_HOSTNAME="${FRP_E2E_PUBLIC_HOSTNAME:-221.139.249.113.nip.io}"
-PUBLIC_IP="${FRP_E2E_SERVER_IP:-221.139.249.113}"
+PUBLIC_HOSTNAME="${FRP_E2E_PUBLIC_HOSTNAME:-}"
+PUBLIC_IP="${FRP_E2E_SERVER_IP:-}"
 
 tree_channel() {
   python3 - "$1/release-manifest.json" <<'PY'
@@ -91,13 +100,42 @@ fail_out() {
   exit 1
 }
 
+# A-019 is destructive by design. Refuse to touch any host until the caller has
+# explicitly selected a disposable target and that alias/hostname/IP tuple
+# passes the same release-target consistency guard used by final qualification.
+[[ "${FRP_E2E_A019_DISPOSABLE:-}" == "YES" ]] \
+  || fail_out "A-019 requires explicit disposable-target acknowledgement: set FRP_E2E_A019_DISPOSABLE=YES"
+if ! frp_require_release_target >"$OUT/release-target-preflight.log" 2>&1; then
+  cat "$OUT/release-target-preflight.log" >&2 || true
+  fail_out "A-019 target failed release-target guard before destructive setup"
+fi
+pq_gate A019_RELEASE_TARGET_PREFLIGHT PASS
+
+# Canonical release evidence is bound to a provenance commit whose first parent
+# is the source/content HEAD embedded in the release manifest and bundles.
+[[ "$SOURCE_HEAD" =~ ^[0-9a-f]{40}$ ]] \
+  || fail_out "release-manifest source_head is not a 40-character SHA"
+[[ "$PROVENANCE_PARENT" == "$SOURCE_HEAD" ]] \
+  || fail_out "A-019 provenance/source mismatch: parent=$PROVENANCE_PARENT manifest_source=$SOURCE_HEAD"
+pq_gate A019_SOURCE_PROVENANCE_BINDING PASS
+
+# A parked v2.3 fixture is acceptable. A target that already contains current
+# /etc/drlink or /var/lib/drlink state is protected by default so this harness
+# can never accidentally purge the approved live v2.4 Server.
+if pq_ssh "$SERVER" 'sudo test -e /etc/drlink -o -e /var/lib/drlink'; then
+  if [[ "${FRP_E2E_A019_ALLOW_CURRENT_PURGE:-}" != "YES" ]]; then
+    fail_out "A-019 target contains current v2.4 state; refusing purge (use a disposable prior-stable host)"
+  fi
+fi
+pq_gate A019_DISPOSABLE_TARGET_PRECHECK PASS
+
 [[ -n "$V230_TREE" && -f "$V230_TREE/dist/bootstrap-server.sh" ]] || fail_out "v2.3.0 tree missing (set FRP_V230_TREE to the immutable v2.3.0 tree)"
 grep -q "^PROJECT_VERSION=${PRIOR_STABLE_VERSION}$" "$V230_TREE/VERSION" || fail_out "prior-stable tree is not PROJECT_VERSION=${PRIOR_STABLE_VERSION}"
 [[ "$PROJECT_VERSION" == "2.4.0" ]] || fail_out "current tree must be PROJECT_VERSION=2.4.0 (got $PROJECT_VERSION)"
 V230_CHANNEL="$(tree_channel "$V230_TREE")"
 V240_CHANNEL="$(tree_channel "$ROOT")"
 
-pq_note "LIVE_V230_TO_V240_UPGRADE start HEAD=$HEAD PROJECT_VERSION=$PROJECT_VERSION"
+pq_note "LIVE_V230_TO_V240_UPGRADE start PROVENANCE_HEAD=$PROVENANCE_HEAD SOURCE_HEAD=$SOURCE_HEAD PROJECT_VERSION=$PROJECT_VERSION"
 pq_note "OUT=$OUT GOLDEN=$GOLDEN V230_TREE=$V230_TREE"
 pq_note "V230_CHANNEL=$V230_CHANNEL V240_CHANNEL=$V240_CHANNEL"
 pq_note "WORKTREE_CLEAN_START=$WORKTREE_CLEAN_START"
@@ -728,11 +766,11 @@ pq_note "RELEASE_TARGET_QUALIFIED=$RELEASE_TARGET_QUALIFIED"
 if [[ "$up_cmp" -eq 0 ]] && ! grep -q '=FAIL$' "$PROD_QUAL_GATES"; then
   pq_gate LIVE_V230_TO_V240_UPGRADE PASS
   pq_note "LIVE_V230_TO_V240_UPGRADE=PASS"
-  python3 - "$OUT" "$HEAD" "$END_HEAD" "$WORKTREE_CLEAN_START" "$WORKTREE_CLEAN_END" "$RELEASE_TARGET_QUALIFIED" <<'PY'
+  python3 - "$OUT" "$HEAD" "$SOURCE_HEAD" "$END_HEAD" "$WORKTREE_CLEAN_START" "$WORKTREE_CLEAN_END" "$RELEASE_TARGET_QUALIFIED" <<'PY'
 import json, sys
 from pathlib import Path
 out = Path(sys.argv[1])
-head, end_head, clean_start, clean_end, release_target = sys.argv[2:]
+head, source_head, end_head, clean_start, clean_end, release_target = sys.argv[2:]
 gates = {}
 for line in (out / "gates.env").read_text().splitlines():
     if "=" in line:
@@ -741,6 +779,8 @@ for line in (out / "gates.env").read_text().splitlines():
 doc = {
     "schema_version": 1,
     "git_head": head,
+    "provenance_head": head,
+    "source_head": source_head,
     "end_head": end_head,
     "head_unchanged": end_head == head,
     "worktree_clean_start": clean_start == "YES",
