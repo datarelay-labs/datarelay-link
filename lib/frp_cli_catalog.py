@@ -1269,12 +1269,6 @@ def to_internal(tokens):
         return ["add", "egress-destination"] + rest
 
     if path == ("set", "server"):
-        if not rest:
-            return ["set", "server"]
-        if rest[0] == "installer-url":
-            return ["set", "installer-url"] + rest[1:]
-        if rest[0] == "windows-installer-url":
-            return ["set", "windows-installer-url"] + rest[1:]
         return ["set", "server"] + rest
 
     if path == ("set", "service"):
