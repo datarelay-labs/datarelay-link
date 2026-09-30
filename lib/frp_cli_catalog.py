@@ -1614,7 +1614,7 @@ def domain_help(topic, role):
     """Conceptual help for product domains (v2.4 public nouns)."""
     topic = str(topic or "").strip().lower()
     client, server = role_parts(role)
-    if topic in ("managed-host", "managed-hosts", "client", "clients"):
+    if topic in ("managed-host", "managed-hosts"):
         if not server:
             return "Managed Hosts help is available on a Data Relay Link server.\n"
         return (
@@ -1633,9 +1633,8 @@ def domain_help(topic, role):
             "  set enrollment\n"
             "  set enrollment zero-touch\n"
             "  unset managed-host <HOST>\n\n"
-            "Obsolete noun 'clients' redirects here.\n"
         )
-    if topic in ("network-object", "network-objects", "object", "objects"):
+    if topic in ("network-object", "network-objects"):
         if not server:
             return "Network Objects help is available on a Data Relay Link server.\n"
         return (
@@ -1674,7 +1673,7 @@ def domain_help(topic, role):
             "  set service-group <NAME> members a,b\n"
             "  show service-group <NAME> references\n"
         )
-    if topic in ("remote-access", "remote"):
+    if topic == "remote-access":
         if not server:
             return "Remote Access help is available on a Data Relay Link server.\n"
         return (
@@ -1689,7 +1688,7 @@ def domain_help(topic, role):
             "  set remote-access <RULE>\n"
             "  test remote-access source <SRC> destination <DST> service <SVC>\n"
         )
-    if topic in ("service", "services", "remote-service", "remote-services"):
+    if topic in ("remote-service", "remote-services"):
         if server:
             return (
                 "Remote Services are owned by Agent Hosts.\n\n"
@@ -1709,7 +1708,7 @@ def domain_help(topic, role):
             "  set remote-service <NAME> destination <DEST|this-host> service <SERVICE> enabled\n"
             "  unset remote-service <NAME>\n"
         )
-    if topic in ("internet", "egress", "internet-access"):
+    if topic == "internet-access":
         if not server:
             return "Internet Access help is available on a Data Relay Link server.\n"
         return (
@@ -1724,7 +1723,7 @@ def domain_help(topic, role):
             "  set internet-access <RULE>\n"
             "  test internet-access source <SRC> destination <DST> service <SVC>\n"
         )
-    if topic in ("ai", "ai-access", "mcp", "ai-identity", "ai-identities"):
+    if topic in ("ai-access", "mcp", "ai-identity", "ai-identities"):
         if not server:
             return "AI Access help is available on a Data Relay Link server.\n"
         return (
@@ -1751,7 +1750,7 @@ def domain_help(topic, role):
             "  show ai-access\n"
             "  show ai-access-log\n"
         )
-    if topic in ("system", "operate"):
+    if topic == "system":
         client, server = role_parts(role)
         if client and not server:
             intro = "Operate Data Relay Link itself: updates, diagnostics and Agent system operations."

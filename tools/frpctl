@@ -689,15 +689,7 @@ EOF
 }
 
 frpctl_header() {
-  echo "${FRP_CTL_PRODUCT_NAME}"
-  echo "==============="
-  echo
-  echo "Role            : $(frpctl_role_label)"
-  echo "Project version : $(frpctl_project_version)"
-  echo "Release channel : $(frpctl_release_channel)"
-  echo "Source ref      : $(frpctl_source_ref)"
-  echo "FRP version     : $(frpctl_frp_version)"
-  echo "Bundle SHA256   : $(frpctl_bundle_sha256)"
+  frpctl_print_version
   echo
 }
 
@@ -2841,9 +2833,14 @@ frpctl_repl_help() {
   frpctl_is_server && server=1
   echo
   if [[ $# -gt 0 ]]; then
-    frpctl_grammar_call help "$(python3 -c 'import json,sys; print(json.dumps({"tokens":sys.argv[1:]}))' "$@")"
+    local help_rc=0
+    if frpctl_grammar_call help "$(python3 -c 'import json,sys; print(json.dumps({"tokens":sys.argv[1:]}))' "$@")"; then
+      help_rc=0
+    else
+      help_rc=$?
+    fi
     echo
-    return 0
+    return "$help_rc"
   fi
   if [[ "$client" == "1" && "$server" == "1" ]]; then
     echo "${FRP_CTL_PRODUCT_NAME} — Commands"
@@ -4393,8 +4390,12 @@ frpctl_dispatch_canonical() {
     help)
       frpctl_load_passthrough "$result"
       # Always render from the command catalog so shell and REPL help stay aligned.
-      if ! frpctl_with_pt frpctl_repl_help; then
+      if frpctl_with_pt frpctl_repl_help; then
+        :
+      else
+        _FRP_CTL_RC=$?
         frpctl_usage
+        return 0
       fi
       ;;
     menu) frpctl_interactive ;;
@@ -5026,15 +5027,7 @@ frpctl_repl_sigint() {
 }
 
 frpctl_repl_banner() {
-  echo "${FRP_CTL_PRODUCT_NAME}"
-  echo "================="
-  echo
-  echo "Role            : $(frpctl_role_label)"
-  echo "Project version : $(frpctl_project_version)"
-  echo "Release channel : $(frpctl_release_channel)"
-  echo "Source ref      : $(frpctl_source_ref)"
-  echo "FRP version     : $(frpctl_frp_version)"
-  echo "Bundle SHA256   : $(frpctl_bundle_sha256)"
+  frpctl_print_version
   echo
   echo "Type '?' for a short command list, or 'help' for full syntax."
   if frpctl_is_server; then

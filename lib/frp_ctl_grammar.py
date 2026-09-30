@@ -4825,8 +4825,9 @@ def main(argv=None):
         return 0
     if cmd == "help":
         tokens = payload.get("tokens") or argv[1:]
-        sys.stdout.write(help_text(tokens, role))
-        return 0
+        rendered = help_text(tokens, role)
+        sys.stdout.write(rendered)
+        return 2 if rendered.startswith("Unknown help topic:") else 0
     if cmd == "complete":
         line = payload.get("line") or (argv[1] if len(argv) > 1 else "")
         for item in completion_candidates(
