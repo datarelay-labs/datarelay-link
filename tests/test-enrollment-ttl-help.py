@@ -118,9 +118,7 @@ class EnrollmentTtlHelpTests(unittest.TestCase):
             CREATE.parse_enrollment_ttl("bad")
 
     def test_catalog_enrollment_ttl_examples_parse(self):
-        cmd = CATALOG.find(["create", "enrollment"]) or CATALOG.find(
-            ["enrollment", "create"], include_aliases=True
-        )
+        cmd = CATALOG.find(["set", "enrollment"], role="server")
         self.assertIsNotNone(cmd)
         ttl_flag = next(f for f in cmd["flags"] if f["name"] == "--ttl")
         self.assertEqual(ttl_flag.get("role"), "enrollment")
@@ -133,9 +131,7 @@ class EnrollmentTtlHelpTests(unittest.TestCase):
             ["access", "add-source"], include_aliases=True
         )
         self.assertIsNone(access_cmd)
-        enroll_cmd = CATALOG.find(["create", "enrollment"]) or CATALOG.find(
-            ["enrollment", "create"], include_aliases=True
-        )
+        enroll_cmd = CATALOG.find(["set", "enrollment"], role="server")
         self.assertIsNotNone(enroll_cmd)
         enroll = next(f for f in enroll_cmd["flags"] if f["name"] == "--ttl")
         self.assertEqual(enroll.get("role"), "enrollment")
@@ -192,9 +188,7 @@ class EnrollmentTtlUpperBoundTests(unittest.TestCase):
             self.assertIn("24h", result.stdout)
 
     def test_catalog_documents_the_maximum(self):
-        cmd = CATALOG.find(["create", "enrollment"]) or CATALOG.find(
-            ["enrollment", "create"], include_aliases=True
-        )
+        cmd = CATALOG.find(["set", "enrollment"], role="server")
         self.assertIsNotNone(cmd)
         ttl_flag = next(f for f in cmd["flags"] if f["name"] == "--ttl")
         self.assertEqual(ttl_flag.get("maximum"), MAX_TTL)
@@ -226,6 +220,17 @@ class EnrollmentTtlUpperBoundTests(unittest.TestCase):
             tickets = list((root / "var/lib/drlink/bootstrap").glob("*.json"))
             self.assertEqual(enrollments, [], "rejected TTL still wrote an enrollment")
             self.assertEqual(tickets, [], "rejected TTL still issued a ticket")
+
+    def test_bulk_catalog_uses_zero_touch_ttl_contract(self):
+        cmd = CATALOG.find(["set", "enrollment", "bulk"])
+        self.assertIsNotNone(cmd)
+        ttl_flag = next(f for f in cmd["flags"] if f["name"] == "--ttl")
+        self.assertEqual(ttl_flag.get("role"), "zero-touch")
+        self.assertEqual(ttl_flag.get("default"), 3600)
+        self.assertEqual(ttl_flag.get("maximum"), CREATE.ZERO_TOUCH_MAX_TTL_SEC)
+        self.assertIn("1h", ttl_flag.get("description", ""))
+        self.assertIn("24h", ttl_flag.get("description", ""))
+        self.assertNotIn("3650d", ttl_flag.get("description", ""))
 
     def test_bulk_enrollment_shares_the_bound(self):
         with tempfile.TemporaryDirectory() as name:

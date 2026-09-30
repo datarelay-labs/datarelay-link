@@ -248,7 +248,28 @@ ENROLL_FLAGS = (
         platform="windows",
     ),
 )
-BULK_FLAGS = ("--count", "--csv", "--label-prefix", "--ssh-user", "--note", "--ttl")
+BULK_FLAGS = (
+    "--count",
+    "--csv",
+    "--label-prefix",
+    "--ssh-user",
+    "--note",
+    _flag(
+        "--ttl",
+        arity=1,
+        hidden=True,
+        metavar="30m|1h|4h|24h",
+        description="Zero-Touch bulk enrollment lifetime (default 1h, maximum 24h / 86400 seconds)",
+        examples=("30m", "1h", "4h", "24h"),
+        effect="Every ticket in the batch expires automatically after the TTL",
+        risk="metadata",
+        type="duration",
+        unit="s|m|h|d|seconds",
+        default=3600,
+        maximum=86400,
+        role="zero-touch",
+    ),
+)
 PROFILE_CREATE_FLAGS = (
     "--preset",
     "--target-host",

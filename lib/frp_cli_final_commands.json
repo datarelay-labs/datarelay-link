@@ -498,17 +498,21 @@
         "choices": [],
         "hidden": true,
         "required": false,
-        "description": "Temporary entry lifetime (access lists; max 3650d)",
-        "metavar": "30m|1h|4h|1d",
+        "description": "Zero-Touch bulk enrollment lifetime (default 1h, maximum 24h / 86400 seconds)",
+        "metavar": "30m|1h|4h|24h",
         "examples": [
+          "30m",
+          "1h",
           "4h",
-          "1d"
+          "24h"
         ],
-        "effect": "Entry expires automatically after the TTL (maximum 3650d)",
+        "effect": "Every ticket in the batch expires automatically after the TTL",
         "risk": "metadata",
         "type": "duration",
-        "unit": "s|m|h|d",
-        "role": "access"
+        "unit": "s|m|h|d|seconds",
+        "role": "zero-touch",
+        "default": 3600,
+        "maximum": 86400
       }
     ]
   },
