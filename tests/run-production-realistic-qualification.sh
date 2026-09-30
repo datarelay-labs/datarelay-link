@@ -44,10 +44,10 @@ echo "${PASS_NAME}_HEAD=$FROZEN_HEAD" >>"$PROD_QUAL_GATES"
 # It is produced only by a clean run of run-v230-to-v240-upgrade-e2e.sh.
 A019_EVIDENCE="${FRP_E2E_A019_EVIDENCE:-$ROOT/e2e-reports/release-qualification/a019-v230-to-v240.json}"
 A019_LOG="$OUT/a019-upgrade-evidence.log"
-if python3 - "$A019_EVIDENCE" "$FROZEN_HEAD" >"$A019_LOG" 2>&1 <<'PY'
+if python3 - "$A019_EVIDENCE" "$FROZEN_HEAD" "$ROOT/release-manifest.json" >"$A019_LOG" 2>&1 <<'PY'
 import json, sys
 from pathlib import Path
-path, expected = Path(sys.argv[1]), sys.argv[2].lower()
+path, expected, manifest_path = Path(sys.argv[1]), sys.argv[2].lower(), Path(sys.argv[3])
 if not path.is_file():
     raise SystemExit("A-019 evidence missing: %s" % path)
 doc = json.loads(path.read_text(encoding="utf-8"))
@@ -55,6 +55,12 @@ if doc.get("schema_version") != 1:
     raise SystemExit("A-019 evidence schema_version must be 1")
 if str(doc.get("git_head") or "").lower() != expected:
     raise SystemExit("A-019 git_head does not match frozen HEAD")
+if str(doc.get("provenance_head") or "").lower() != expected:
+    raise SystemExit("A-019 provenance_head does not match frozen HEAD")
+manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+expected_source = str(manifest.get("source_head") or "").lower()
+if not expected_source or str(doc.get("source_head") or "").lower() != expected_source:
+    raise SystemExit("A-019 source_head does not match release-manifest source_head")
 if str(doc.get("end_head") or "").lower() != expected or doc.get("head_unchanged") is not True:
     raise SystemExit("A-019 did not finish on the same HEAD")
 if doc.get("worktree_clean_start") is not True or doc.get("worktree_clean_end") is not True:
@@ -67,6 +73,9 @@ gates = doc.get("gates")
 if not isinstance(gates, dict):
     raise SystemExit("A-019 gates are missing")
 required = (
+    "A019_RELEASE_TARGET_PREFLIGHT",
+    "A019_SOURCE_PROVENANCE_BINDING",
+    "A019_DISPOSABLE_TARGET_PRECHECK",
     "V230_BOOTSTRAP_STAGED",
     "V230_VERSION_IDENTITY",
     "V230_LEGACY_LAYOUT_RUNTIME",

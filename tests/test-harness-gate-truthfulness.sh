@@ -234,11 +234,31 @@ assert "FRP_E2E_SERVER_IP:-221.139.249.113" not in text
 assert "SOURCE_HEAD=" in text and "PROVENANCE_PARENT=" in text
 assert "A019_SOURCE_PROVENANCE_BINDING" in text
 assert '[[ "$PROVENANCE_PARENT" == "$SOURCE_HEAD" ]]' in text
+assert "FRP_E2E_A019_DISPOSABLE" in text
+assert "A019_RELEASE_TARGET_PREFLIGHT" in text
+assert "A019_DISPOSABLE_TARGET_PRECHECK" in text
+assert "FRP_E2E_A019_ALLOW_CURRENT_PURGE" in text
+assert text.index('if ! frp_require_release_target >"$OUT/release-target-preflight.log"') < text.index('Purging canonical v2.4 and legacy v2.3 server state')
+assert text.index("A019_DISPOSABLE_TARGET_PRECHECK") < text.index('Purging canonical v2.4 and legacy v2.3 server state')
 assert "PRIOR_STABLE_VERSION=2.3.0" in text
 assert "PRIOR_STABLE_VERSION=2.3.1" not in text
 print("ok")
 PY
 pass "A-019 prior-stable/backup/exact-head truthfulness"
+
+python3 - "$ROOT/tests/run-production-realistic-qualification.sh" <<'PY' || fail "A-019 release evidence binding"
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+assert 'doc.get("provenance_head")' in text
+assert 'doc.get("source_head")' in text
+assert 'release-manifest.json' in text
+assert '"A019_RELEASE_TARGET_PREFLIGHT"' in text
+assert '"A019_SOURCE_PROVENANCE_BINDING"' in text
+assert '"A019_DISPOSABLE_TARGET_PRECHECK"' in text
+print("ok")
+PY
+pass "A-019 qualification evidence binds source/provenance and target safety"
 
 python3 - "$ROOT/tests/run-prod-qual-extended.sh" <<'PY' || fail "A-019 golden ownership"
 from pathlib import Path
