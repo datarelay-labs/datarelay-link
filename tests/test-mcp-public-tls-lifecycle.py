@@ -979,11 +979,12 @@ spec:
         import frp_cli_catalog as catalog
         import frp_ctl_grammar as grammar
 
-        self.assertIsNotNone(catalog.find(["show", "mcp-tls"]))
-        self.assertIsNotNone(catalog.find(["set", "mcp-tls"]))
-        self.assertIsNotNone(catalog.find(["system", "certificate"]))
+        self.assertIsNone(catalog.find(["show", "mcp-tls"], role="server"))
+        self.assertIsNotNone(catalog.find(["set", "mcp-tls"], role="server"))
+        self.assertIsNotNone(catalog.find(["system", "certificate"], role="server"))
         m = grammar.match(["show", "mcp-tls"], role="server")
-        self.assertEqual(m.get("action"), "control_plane")
+        self.assertEqual(m.get("status"), "error")
+        self.assertIn("system certificate status", m.get("message") or "")
         m2 = grammar.match(["system", "certificate", "status"], role="server")
         self.assertEqual(m2.get("action"), "control_plane")
 

@@ -133,6 +133,12 @@ set permission-group <GROUP>
 set ai-access <RULE>
 set ai-access enabled
 set ai-access disabled
+
+set mcp-tls hostname <FQDN>
+set mcp-tls mode <auto-acme|user-certificate>
+set mcp-tls contact-email <EMAIL>
+set mcp-tls acme-environment <production|staging>
+set mcp-tls acme-directory <URL>
 ```
 
 Bare named `set` enters Guided Create/Edit. A complete one-shot form skips the Wizard.
@@ -250,7 +256,12 @@ unset permission-group <GROUP>
 
 unset ai-access <RULE>
 unset ai-access policy
+
+unset mcp-tls
+unset mcp-tls purge
 ```
+
+`unset mcp-tls` clears TLS intent while retaining DRLink-owned certificate and ACME account material. `unset mcp-tls purge` removes that retained material only after interactive y/N confirmation; non-interactive use fails closed.
 
 Referenced Objects/Groups/Identities/Managed Hosts are protected from deletion until references are removed.
 
@@ -291,11 +302,18 @@ system export configuration <FILE>
 system diff configuration <FILE|->
 system apply configuration <FILE|->
 
-system certificate
+system certificate issue
+system certificate import <CERT> <KEY> [CHAIN]
+system certificate renew
+system certificate status
+system certificate preflight
+
 system update
 system support-bundle
 system uninstall
 ```
+
+`system certificate status` is the single public MCP TLS/certificate status surface. Configure TLS intent with `set mcp-tls ...`; there is no separate MCP TLS status read command.
 
 ## 9. Managed Host as Network Object
 

@@ -1521,7 +1521,7 @@ test ai-access source <IDENTITY> destination <DESTINATION> permission read-only
 show ai-access-log identity <IDENTITY>
 ~~~
 
-For v2.4.0 ChatGPT acceptance, first verify that the Server is in `single443` deployment mode and that `show mcp-tls`/MCP diagnostics identify the same externally reachable HTTPS MCP hostname. Direct mode is not a valid public-MCP test topology: TCP/443 may be the FRP control listener, so a TLS hostname/certificate alone must never be treated as proof that `/mcp` exists. If Direct mode advertises an MCP URL or permits MCP TLS/certificate activation without requiring `single443`, record a product `FAIL` rather than continuing connector probes.
+For v2.4.0 ChatGPT acceptance, first verify that the Server is in `single443` deployment mode and that `system certificate status`/MCP diagnostics identify the same externally reachable HTTPS MCP hostname. Direct mode is not a valid public-MCP test topology: TCP/443 may be the FRP control listener, so a TLS hostname/certificate alone must never be treated as proof that `/mcp` exists. If Direct mode advertises an MCP URL or permits MCP TLS/certificate activation without requiring `single443`, record a product `FAIL` rather than continuing connector probes.
 
 Then use a currently supported ChatGPT full-MCP owner/UI environment (Business or Enterprise/Edu at the time of this contract) to complete OAuth Authorization Code/consent through the public MCP endpoint and confirm tool discovery. Record the actual ChatGPT plan, surface, and date in run evidence rather than hard-coding a consumer plan name. Machine-side SDK/HTTP conformance remains required evidence but cannot satisfy this owner/UI gate by itself.
 
@@ -2107,7 +2107,8 @@ Exercise real traffic plus the applicable failure/recovery cases in section 10.
 ## A-006 — AI Identity, permissions, AI Access, MCP TLS, OAuth approval, and logs — MANDATORY for v2.4.0
 
 ~~~text
-show mcp-tls
+system certificate status
+system certificate preflight
 show ai-identities
 show ai-identity <IDENTITY>
 show permission-objects
@@ -2121,7 +2122,11 @@ show ai-access-log identity <IDENTITY>
 show ai-access-log destination <DESTINATION>
 show ai-access-log permission <PERMISSION>
 
-set mcp-tls <SETTING> ...
+set mcp-tls hostname <FQDN>
+set mcp-tls mode <auto-acme|user-certificate>
+set mcp-tls contact-email <EMAIL>
+set mcp-tls acme-environment <production|staging>
+set mcp-tls acme-directory <URL>
 set ai-identity <IDENTITY>
 set permission-object <PERMISSION>
 set permission-group <GROUP>
@@ -2129,7 +2134,8 @@ set ai-access <RULE>
 set ai-access enabled
 set ai-access disabled
 
-unset mcp-tls [<PURGE>]
+unset mcp-tls
+unset mcp-tls purge
 unset ai-identity <IDENTITY>
 unset permission-object <PERMISSION>
 unset permission-group <GROUP>
@@ -2229,6 +2235,7 @@ system update product
 system update check-engine
 system update engine
 system certificate status
+system certificate preflight
 system certificate issue
 system certificate renew
 system certificate import <CERT> <KEY> [CHAIN]
@@ -3299,9 +3306,6 @@ FULL_USER_E2E requires every applicable entry below to be executed through the p
 
 ~~~text
 show status
-show services
-show internet
-show mcp-tls
 
 show managed-hosts
 show managed-host <HOST>
@@ -3410,7 +3414,8 @@ unset server public-hostname
 unset server bootstrap-hostname
 unset server installer-url
 unset server windows-installer-url
-unset mcp-tls [<PURGE>]
+unset mcp-tls
+unset mcp-tls purge
 
 unset network-object <OBJECT>
 unset network-group <GROUP>
@@ -3467,6 +3472,7 @@ system apply configuration <FILE|->
 system diagnostics mcp
 
 system certificate status
+system certificate preflight
 system certificate issue
 system certificate renew
 system certificate import <CERT> <KEY> [CHAIN]

@@ -316,6 +316,15 @@ def reject_obsolete_surface(tokens):
                 "set managed-host-group <GROUP>, or unset managed-host-group <GROUP>."
             ),
         }
+    if verb == "show" and len(raw) >= 2 and raw[1] == "mcp-tls":
+        return {
+            "status": "error",
+            "exit_code": 2,
+            "message": (
+                "Duplicate MCP TLS status shorthand is not part of the current Data Relay Link grammar.\n"
+                "Use system certificate status instead."
+            ),
+        }
     if verb in ("show", "set", "unset", "test", "create", "add", "remove", "enable", "disable", "delete", "system") and len(raw) >= 2:
         resource = raw[1]
         # system export/import/diff internet-profile

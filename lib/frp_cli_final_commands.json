@@ -2148,29 +2148,6 @@
   },
   {
     "roles": "server",
-    "detail": "TLS mode, certificate validity, renewal, and cloud compatibility for https://<hostname>/mcp",
-    "aliases": [],
-    "destructive": false,
-    "hidden": false,
-    "risk": "none",
-    "confirmation": "none",
-    "surface": "",
-    "flags": [],
-    "internal": null,
-    "tail": "flags",
-    "path": [
-      "show",
-      "mcp-tls"
-    ],
-    "category": "System",
-    "summary": "Show MCP public TLS status",
-    "examples": [
-      "show mcp-tls"
-    ],
-    "args": []
-  },
-  {
-    "roles": "server",
     "detail": "Configure non-secret MCP TLS intent. Default public-cloud mode is AUTO_ACME. PRIVATE_CA is internal/test only.",
     "aliases": [],
     "destructive": false,

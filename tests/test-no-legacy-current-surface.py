@@ -177,6 +177,20 @@ class LegacyReintroductionGate(unittest.TestCase):
                 bad.append("/".join(cmd["path"]) + " surface=" + cmd.get("surface"))
         self.assertEqual(bad, [], "forbidden catalog paths: %s" % bad)
 
+    def test_mcp_tls_status_has_single_public_surface(self):
+        self.assertIsNone(
+            catalog.find(["show", "mcp-tls"], role="server"),
+            "show mcp-tls must not duplicate system certificate status",
+        )
+        self.assertIsNotNone(
+            catalog.find(["system", "certificate", "status"], role="server")
+            or catalog.find(["system", "certificate"], role="server"),
+            "system certificate status must remain discoverable",
+        )
+        result = grammar.match(["show", "mcp-tls"], role="server")
+        self.assertEqual(result.get("status"), "error", result)
+        self.assertIn("system certificate status", result.get("message") or "")
+
     def test_guided_menu_has_no_legacy_labels(self):
         bad = []
         for key, entries in catalog.NAVIGATION_TREE.items():
@@ -209,6 +223,7 @@ class LegacyReintroductionGate(unittest.TestCase):
             ["set", "acl", "office"],
             ["show", "acls"],
             ["create", "service-profile", "x"],
+            ["show", "mcp-tls"],
         ]
         for tokens in samples:
             result = grammar.match(tokens, role="server")
