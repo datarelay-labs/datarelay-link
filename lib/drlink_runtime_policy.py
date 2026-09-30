@@ -62,7 +62,10 @@ _HOST_SAFE_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
 
 def sanitize_host_id_part(hostname: str) -> str:
-    return _HOST_SAFE_RE.sub("-", str(hostname or ""))
+    text = str(hostname or "").strip().rstrip(".")
+    if "." in text:
+        text = text.split(".", 1)[0]
+    return _HOST_SAFE_RE.sub("-", text)
 
 
 def expected_host_id(hostname: str, machine_id: str) -> str:

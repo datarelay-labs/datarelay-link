@@ -611,7 +611,9 @@ def generate_id(prefix: str, hex_len: int, existing: set[str]) -> str:
 
 def sanitize_host_id_part(hostname: str) -> str:
     """Match install-client HOST_SAFE: tr -cs 'A-Za-z0-9._-' '-'."""
-    text = str(hostname or "")
+    text = str(hostname or "").strip().rstrip(".")
+    if "." in text:
+        text = text.split(".", 1)[0]
     return re.sub(r"[^A-Za-z0-9._-]+", "-", text)
 
 
