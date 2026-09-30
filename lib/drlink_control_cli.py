@@ -196,13 +196,13 @@ def _configuration_apply(plane: ControlPlane, rest):
         if _bundle_has_mutation(kind, plan):
             decision = _approve_configuration_mutation()
             if decision == "cancel":
-                return 0
+                return 1
             if decision == "refuse":
                 return 1
             confirm = True
         result = _run(apply_v24_plan, plane, plan, confirm=confirm)
         if isinstance(result, dict) and result.get("cancelled"):
-            return 0
+            return 1
         if isinstance(result, dict) and result.get("status") == "NO_CHANGE":
             sys.stdout.write("NO CHANGE\nConfiguration already matches the requested state.\n")
             return 0
@@ -219,13 +219,13 @@ def _configuration_apply(plane: ControlPlane, rest):
     if _bundle_has_mutation("legacy", plan):
         decision = _approve_configuration_mutation()
         if decision == "cancel":
-            return 0
+            return 1
         if decision == "refuse":
             return 1
         confirm = True
     result = _run(apply_change_plan, plane, plan, confirm=confirm)
     if isinstance(result, dict) and result.get("cancelled"):
-        return 0
+        return 1
     if not isinstance(result, dict):
         return 0
     status = result.get("status")
@@ -1410,7 +1410,7 @@ def _system_revision_rollback(plane: ControlPlane, value: str) -> int:
 
     decision = _approve_configuration_mutation("system rollback")
     if decision == "cancel":
-        return 0
+        return 1
     if decision == "refuse":
         return 1
 
@@ -1424,7 +1424,7 @@ def _system_revision_rollback(plane: ControlPlane, value: str) -> int:
         snapshot_meta={"rollback_target_revision": revision},
     )
     if isinstance(result, dict) and result.get("cancelled"):
-        return 0
+        return 1
     sys.stdout.write("Rollback result: APPLIED\n")
     if isinstance(result, dict):
         sys.stdout.write("New revision: %s\n" % result.get("revision"))

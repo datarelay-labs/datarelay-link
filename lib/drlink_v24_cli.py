@@ -786,7 +786,9 @@ def handle_set(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         _require_server(plane, _policy_resource_label(res))
         from drlink_control_cli import _run
 
-        _run(v24.set_policy_enforcement, plane, res, rest[1] == "enabled")
+        result = _run(v24.set_policy_enforcement, plane, res, rest[1] == "enabled")
+        if isinstance(result, dict) and result.get("cancelled"):
+            return 1
         title = res.replace("-", " ").title()
         pol = v24.get_access_policy(plane, res)
         sys.stdout.write(
@@ -829,7 +831,7 @@ def handle_set(plane: ControlPlane, rest: list[str]) -> Optional[int]:
             oneshot=True,
         )
         if isinstance(result, dict) and result.get("cancelled"):
-            return 0
+            return 1
         sys.stdout.write("Network Object %s: %s\n" % (result["operation"], name))
         return 0
     if res == "network-group":
@@ -861,7 +863,7 @@ def handle_set(plane: ControlPlane, rest: list[str]) -> Optional[int]:
             oneshot=True,
         )
         if isinstance(result, dict) and result.get("cancelled"):
-            return 0
+            return 1
         sys.stdout.write("Network Group set: %s\n" % name)
         return 0
     if res == "service-object":
@@ -891,7 +893,7 @@ def handle_set(plane: ControlPlane, rest: list[str]) -> Optional[int]:
             oneshot=True,
         )
         if isinstance(result, dict) and result.get("cancelled"):
-            return 0
+            return 1
         sys.stdout.write("Service Object set: %s\n" % name)
         return 0
     if res == "service-group":
@@ -923,7 +925,7 @@ def handle_set(plane: ControlPlane, rest: list[str]) -> Optional[int]:
             oneshot=True,
         )
         if isinstance(result, dict) and result.get("cancelled"):
-            return 0
+            return 1
         sys.stdout.write("Service Group set: %s\n" % name)
         return 0
     if res == "permission-object":
@@ -955,7 +957,7 @@ def handle_set(plane: ControlPlane, rest: list[str]) -> Optional[int]:
             oneshot=True,
         )
         if isinstance(result, dict) and result.get("cancelled"):
-            return 0
+            return 1
         sys.stdout.write("Permission Object set: %s\n" % name)
         return 0
     if res == "permission-group":
@@ -987,7 +989,7 @@ def handle_set(plane: ControlPlane, rest: list[str]) -> Optional[int]:
             oneshot=True,
         )
         if isinstance(result, dict) and result.get("cancelled"):
-            return 0
+            return 1
         sys.stdout.write("Permission Group set: %s\n" % name)
         return 0
     if res in ("remote-access", "internet-access"):
@@ -1126,7 +1128,7 @@ def handle_unset(plane: ControlPlane, rest: list[str]) -> Optional[int]:
 
         result = _run(v24.reset_access_policy, plane, res)
         if isinstance(result, dict) and result.get("cancelled"):
-            return 0
+            return 1
         sys.stdout.write("%s policy reset.\nEffective access: ALLOW\n" % res)
         return 0
     if res == "network-object":
@@ -1229,7 +1231,7 @@ def handle_unset(plane: ControlPlane, rest: list[str]) -> Optional[int]:
                 result = plane.unset_managed_host(rest[1], confirm=True)
             else:
                 sys.stdout.write("Cancelled.\nNo changes were applied.\n")
-                return 0
+                return 1
         host = (result.get("entity") or {}).get("name") or rest[1]
         sys.stdout.write("Managed Host removed: %s\n" % host)
         return 0

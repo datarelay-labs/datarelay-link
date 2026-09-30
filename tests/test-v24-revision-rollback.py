@@ -101,6 +101,14 @@ class RevisionRollbackContract(unittest.TestCase):
         self.assertEqual(self._object_value("alpha"), "10.0.0.2")
 
         rc, out, err = self._dispatch(
+            ["system", "rollback", "1"], TTYInput("n\n")
+        )
+        self.assertEqual(rc, 1)
+        self.assertIn("Cancelled", out)
+        self.assertEqual(self.plane.current_revision(), 3)
+        self.assertEqual(self._object_value("alpha"), "10.0.0.2")
+
+        rc, out, err = self._dispatch(
             ["system", "rollback", "1"], TTYInput("y\n")
         )
         self.assertEqual(rc, 0, err)

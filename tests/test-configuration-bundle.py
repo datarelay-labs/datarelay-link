@@ -2,12 +2,15 @@
 """Focused ConfigurationBundle + Change Plan tests (no full suite)."""
 from __future__ import annotations
 
+import io
 import os
 import sys
 import tempfile
 import threading
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
@@ -22,6 +25,11 @@ from drlink_configuration_bundle import (
     read_bundle_from_path_or_stdin,
 )
 import drlink_control_cli as cli
+
+
+class TTYInput(io.StringIO):
+    def isatty(self):
+        return True
 
 
 def _bundle(**spec_parts):
@@ -234,6 +242,23 @@ class ConfigurationBundleTests(unittest.TestCase):
         result = apply_change_plan(self.plane, plan, confirm=True)
         self.assertEqual(result["status"], "APPLIED")
         self.assertEqual(result["tickets_issued"], 0)
+
+    def test_cancelled_apply_returns_nonzero_and_preserves_state(self):
+        raw = _bundle(
+            objects=[{"name": "cancelled-obj", "type": "Host", "values": ["198.51.100.44"]}]
+        )
+        path = Path(self.tmp) / "cancelled.yaml"
+        path.write_text(raw, encoding="utf-8")
+        out, err = io.StringIO(), io.StringIO()
+        with patch("sys.stdin", TTYInput("n\n")), redirect_stdout(out), redirect_stderr(err):
+            rc = cli.dispatch(
+                ["system", "apply", "configuration", str(path)],
+                root=self.tmp,
+                plane=self.plane,
+            )
+        self.assertEqual(rc, 1, err.getvalue() or out.getvalue())
+        self.assertIn("Cancelled", out.getvalue())
+        self.assertIsNone(self.plane.get_object("cancelled-obj"))
 
     def test_enrollment_plans_issue_zero_tickets(self):
         plans = [{"name": "c%02d" % i, "platform": "linux"} for i in range(1, 31)]
