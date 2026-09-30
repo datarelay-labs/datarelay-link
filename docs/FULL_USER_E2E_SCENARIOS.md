@@ -100,7 +100,7 @@ ChatGPT
 → make the final E2E PASS/PARTIAL/FAIL determination
 ~~~
 
-Implementation-agent output may be supporting evidence for remediation verification, but it does **not** substitute for ChatGPT's requested User E2E execution.
+Implementation-agent output may be supporting evidence for static/source review, isolated deterministic checks, or remediation verification, but it does **not** substitute for ChatGPT's requested persona-led User E2E execution.
 
 A Cursor session must never be treated as the executor of an unqualified request such as:
 
@@ -198,6 +198,29 @@ SCRIPT_OR_WRAPPER_PASS != USER_PERSONA_PASS
 ~~~
 
 If automation/tooling cannot perform one user action, classify only that dependent scenario as `BLOCKED_TOOLING` and immediately continue all independent lanes. Do not spend the full run repeatedly trying to overcome one automation limitation when other user scenarios can execute.
+
+### 1.2.1.1 Tooling isolation — TTY and GitHub
+
+Remote-execution tooling is not product behavior.
+
+For persistent REPL, menu/wizard navigation, Tab completion, interactive confirmation, and other TTY-sensitive user flows:
+
+1. prefer connector-native or otherwise explicitly authorized interactive terminal/PTY access;
+2. do not repeatedly attempt shell-level PTY emulation when the execution tool or safety layer rejects it;
+3. record only the affected lane as `BLOCKED_TOOLING_TTY` and continue all independent user, AI, traffic, lifecycle, performance, and regression lanes;
+4. deterministic PTY regression tests remain supporting evidence and never substitute for the real persona TTY lane;
+5. a mandatory TTY persona lane that remains blocked prevents aggregate FULL_USER_E2E PASS, but it is not a product defect by itself.
+
+For final GitHub Work Packet reporting, use the general GitHub Issue update path (`update_issue`) against the active `[AI Work]` Issue, read the current body first, replace only the bounded final-report section, and read back the Issue to verify the current RUN_ID/HEAD/result. Do not depend on PR-conversation comment APIs for normal Issue reporting.
+
+A GitHub write failure does not change the product-test result. Record `GITHUB_REPORT_STATUS=BLOCKED_TOOLING`, retain frozen evidence, and retry the final sync separately. The test execution may be finished while reporting sync remains incomplete.
+
+~~~text
+TTY_TOOLING_STATUS=PASS|BLOCKED_TOOLING_TTY|NOT_APPLICABLE
+TTY_PERSONA_COVERAGE=PASS|PARTIAL|NOT_APPLICABLE
+GITHUB_REPORT_STATUS=PASS|BLOCKED_TOOLING
+GITHUB_REPORT_READBACK=PASS|FAIL|NOT_RUN
+~~~
 
 ### 1.2.2 Product-test-only execution scope
 
@@ -796,6 +819,9 @@ PRODUCT_SOURCE_HEAD=
 REPOSITORY=
 BRANCH=
 SOURCE_HEAD=
+ASSIGNED_RUNTIME_SOURCE_HEADS=
+ASSIGNED_RUNTIME_HEADS_MATCH_PRODUCT_SOURCE=PASS|FAIL
+PRE_CANDIDATE_OBSERVATION_PRODUCT_FINDING_COUNT=
 WORKTREE_OR_ARTIFACT=
 PRODUCT_VERSION=
 RELEASE_CHANNEL=
@@ -816,7 +842,9 @@ AI_CLIENTS=
 
 `TEST_CONTRACT_HEAD` is the Git identity of this execution contract/worktree. `PRODUCT_SOURCE_HEAD` (also recorded as installed `SOURCE_HEAD` when they match) is the immutable product/content identity under test. They may differ; both must be recorded. Do not treat that difference as a worktree-selection defect.
 
-Before testing, capture the exact build identity from the installed product, not only from Git.
+Before testing, capture the exact build identity from every assigned installed product role, not only from Git. Pre-clean/stale installations may be inventoried for preparation evidence, but behavior observed before the exact candidate is pinned is **not current-candidate product evidence** and must not be counted as a product finding. Record it as pre-candidate/stale correlation only.
+
+Except for an explicit prior-stable upgrade precondition such as A-019, no scenario becomes PASS-eligible until its participating Server/Agent runtime source identities match `PRODUCT_SOURCE_HEAD`. After an upgrade scenario reaches the candidate, post-upgrade evidence must also match the same product source.
 
 ### 5.1 Host inventory and SSH access resolution (no lab literals in this contract)
 
@@ -896,7 +924,7 @@ For each reachable assigned host:
 6. clear stale failed/transient service state where the OS exposes it;
 7. verify prior product-reserved listeners/endpoints are no longer active and no previous Remote Service/load target can answer traffic;
 8. retain SSH access, OS/network configuration, required package dependencies, test accounts, base DNS, and explicit test-management infrastructure needed to reach the hosts. Do not destroy the laboratory itself in the name of cleanup;
-9. record the selected repository/worktree state and independently pin the installed candidate/build identity. If the development worktree is dirty, do not build, package, reinstall, or update the tested product from that dirty source; continue independent black-box runtime scenarios against the already installed pinned candidate.
+9. record the selected repository/worktree state and independently pin the installed candidate/build identity on every assigned product role. If the development worktree is dirty, do not build, package, reinstall, or update the tested product from that dirty source; continue only scenarios against an already installed pinned candidate whose identity is explicitly recorded. Before PASS-eligible candidate scenarios begin, require all participating candidate Server/Agent roles to report `PRODUCT_SOURCE_HEAD`; stale/pre-clean observations remain preparation evidence only.
 
 Management-access exception: reverse SSH/tunnel services used solely to keep a test host reachable may remain active when they are outside the DRLink product/data path. Record them explicitly as `PRESERVED_TEST_MANAGEMENT_INFRA` so they cannot be mistaken for a DRLink runtime process. A failure confined to that out-of-band management path is `BLOCKED_MANAGEMENT_PATH`; it is not automatically a product Agent connection or data-plane FAIL, and it must not be counted as product PASS either.
 
@@ -3761,6 +3789,40 @@ Rules:
 - A numeric performance PASS is invalid when no approved numeric performance profile/SLO is defined; use MEASURED_NOT_QUALIFIED for the numeric qualification while still reporting functional load-test results.
 - A release PASS additionally follows all exact-HEAD and double-pass requirements in docs/RELEASE_VALIDATION.md.
 
+### 16.1 Canonical evidence ledgers and report consistency
+
+The final FULL_USER_E2E report must be generated from retained machine-readable ledgers, not manually re-counted from prose evidence.
+
+Canonical ledgers under the RUN_ID evidence root:
+
+~~~text
+ledger/scenario-results.tsv
+  SCENARIO_ID  USE_CASE_ID  APPLICABLE  MANDATORY  DIRECT_RESULT  AI_REQUIRED  AI_RESULT  FINAL_RESULT  BLOCK_REASON  EVIDENCE
+
+ledger/findings.tsv
+  FINDING_ID  SEVERITY  USER_BLOCKING  STATUS  CLASSIFICATION  SURFACE  EVIDENCE
+~~~
+
+Rules:
+
+1. every executed/dispositioned U/O/A/S/C/P/X scenario appears exactly once in `scenario-results.tsv`;
+2. every mandatory applicable scenario has explicit Direct result and AI result when AI is required;
+3. every finding file has exactly one `findings.tsv` row;
+4. scenario/finding totals in the final report and release JSON are recomputed from these ledgers;
+5. the GitHub final-report section is generated from the same recomputed values;
+6. any mismatch between ledger, summary, release JSON, or GitHub report is `REPORT_CONSISTENCY_FAIL` and prevents a clean final report;
+7. evidence is authoritative; regenerate summaries from it rather than editing evidence to fit a previously published summary;
+8. a late manual spot-check does not convert an earlier scripted/wrapper-run scenario into actual-user evidence. Invalid persona evidence must be rerun from a clean persona context, and run-wide contamination requires a new RUN_ID.
+
+~~~text
+EVIDENCE_LEDGER_SCHEMA=PASS|FAIL
+SUMMARY_DERIVED_FROM_LEDGER=YES|NO
+REPORT_CONSISTENCY=PASS|FAIL
+EVIDENCE_SUMMARY_MISMATCH_COUNT=
+AUDITOR_KNOWLEDGE_LEAK_COUNT=
+PRIMARY_USER_EVIDENCE_MODE=PERSONA_LED_PUBLIC_UX
+~~~
+
 Per scenario retain:
 
 ~~~text
@@ -3862,6 +3924,9 @@ ACTIVE_WORKTREE=
 WORKTREE_RESOLUTION=PASS|FAIL
 TEST_CONTRACT_HEAD=
 PRODUCT_SOURCE_HEAD=
+ASSIGNED_RUNTIME_SOURCE_HEADS=
+ASSIGNED_RUNTIME_HEADS_MATCH_PRODUCT_SOURCE=PASS|FAIL
+PRE_CANDIDATE_OBSERVATION_PRODUCT_FINDING_COUNT=
 PRE_RUN_CLEAN_STATE=PASS|FAIL
 ALL_REACHABLE_ASSIGNED_HOSTS_CLEAN=PASS|FAIL
 PRESERVED_TEST_MANAGEMENT_INFRA=
@@ -3899,6 +3964,12 @@ MANDATORY_REPEAT_COVERAGE=
 DELIBERATE_MISTAKE_COVERAGE=
 FUNCTION_UNDER_LOAD_COLLISION_COVERAGE=
 ACTING_PERSONA_MANUAL_FREE=PASS|FAIL
+PRIMARY_USER_EVIDENCE_MODE=PERSONA_LED_PUBLIC_UX
+AUDITOR_KNOWLEDGE_LEAK_COUNT=
+SCRIPTED_USER_SCENARIO_EXECUTION_COUNT=
+AUTOMATED_HARNESS_USER_SUBSTITUTION_COUNT=
+TTY_TOOLING_STATUS=PASS|BLOCKED_TOOLING_TTY|NOT_APPLICABLE
+TTY_PERSONA_COVERAGE=PASS|PARTIAL|NOT_APPLICABLE
 CURRENT_CONFIGURED_TEST_HOSTS_ONLY=PASS|FAIL
 ORACLE_ONLY_COMMANDS_NOT_DISCOVERABLE=
 DISCOVERABILITY_DEFECTS=
@@ -3961,6 +4032,14 @@ MISLEADING_SUCCESS_OR_STATE_COUNT=
 MANUAL_REQUIRED_FOR_NORMAL_WORKFLOW_COUNT=
 UNRESOLVED_ACTIONABLE_USABILITY_FINDINGS=
 UNRESOLVED_PRODUCT_DEFECTS=
+EVIDENCE_LEDGER_SCHEMA=PASS|FAIL
+SUMMARY_DERIVED_FROM_LEDGER=YES|NO
+REPORT_CONSISTENCY=PASS|FAIL
+EVIDENCE_SUMMARY_MISMATCH_COUNT=
+SCENARIO_COUNTS=
+FINDING_COUNTS=
+GITHUB_REPORT_STATUS=PASS|BLOCKED_TOOLING
+GITHUB_REPORT_READBACK=PASS|FAIL|NOT_RUN
 NO_KNOWN_IN_SCOPE_PRODUCT_DEFECTS=YES|NO
 NO_FURTHER_PRODUCT_CHANGE_REQUIRED_BY_CURRENT_QUALITY_GATES=YES|NO
 BLOCKERS=

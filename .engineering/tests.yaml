@@ -55,6 +55,9 @@ scenarios:
       - "every applicable feature and FCS has 100% Direct-user and AI-assisted persona coverage"
       - "scripted/harness execution is supplemental evidence and never substitutes for a user-role lane"
       - "independent reconciliation lanes use maximum-safe parallel execution with no avoidable serial wait"
+      - "release-gate evidence requires exact Server and Agent runtime source identity, actual-user TTY persona coverage, and no tooling blockers"
+      - "FCS/finding summaries are derived from retained ledgers and must match release JSON and final GitHub report"
+      - "stale runtime observations are correlation-only and cannot be promoted to current-candidate defects"
       - "this validator does not provision or execute Server/Agent lifecycle qualification"
     release_gate: true
 
@@ -72,7 +75,11 @@ scenarios:
     command: "python3 scripts/check-pre-release-exhaustive-gates.py --gate full-user-e2e-all"
     invariants:
       - "FULL_USER_E2E PASS1 and PASS2 both passed on the exact release HEAD"
+      - "all participating installed Server/Agent runtimes match the pinned product source HEAD"
       - "no mandatory scenario, public command, or required AI-assisted mirror is unexercised"
+      - "persona-led public UX is primary evidence; wrapper/harness output is supplemental only"
+      - "TTY-dependent persona coverage is complete and tooling blockers are zero"
+      - "scenario/finding summaries are derived from retained ledgers and match the release JSON and final GitHub report"
     release_gate: true
 
   - id: ADOPTED-STATIC-001

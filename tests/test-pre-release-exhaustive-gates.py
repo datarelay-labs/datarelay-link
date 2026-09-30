@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -28,6 +30,22 @@ def cli_evidence():
         "head_unchanged": True,
         "cleanup_status": "PASS",
         "feature_inventory_total": 25,
+        "product_source_head": HEAD,
+        "server_source_head": HEAD,
+        "agent_source_head": HEAD,
+        "server_runtime_match": "EXACT",
+        "agent_runtime_match": "EXACT",
+        "runtime_coverage_complete": True,
+        "evidence_ledger_schema": "PASS",
+        "summary_derived_from_ledger": True,
+        "report_consistency": "PASS",
+        "primary_user_evidence_mode": "PERSONA_LED_PUBLIC_UX",
+        "tty_tooling_status": "PASS",
+        "tty_persona_coverage": "PASS",
+        "github_report_status": "PASS",
+        "github_report_readback": "PASS",
+        "fcs_counts": {"total": 15, "pass": 15, "fail": 0, "blocked": 0},
+        "finding_counts": {"total": 0, "open": 0, "p0": 0, "p1": 0, "p2": 0, "p3": 0, "user_blocking_open": 0},
         "user_role_execution": "PASS",
         "scripted_user_scenario_execution": False,
         "automated_harness_role": "SUPPLEMENTAL_ONLY",
@@ -42,6 +60,33 @@ def cli_evidence():
         "evidence_root": "e2e-reports/cli-feature-scenario-test",
     }
 
+def write_cli_ledgers(root: Path):
+    ledger = root / "ledger"
+    ledger.mkdir(parents=True, exist_ok=True)
+    with (ledger / "fcs-results.tsv").open("w", encoding="utf-8") as fh:
+        fh.write("FCS_ID\tAPPLICABLE\tDIRECT_RESULT\tAI_RESULT\tFINAL_RESULT\tBLOCK_REASON\tEVIDENCE\n")
+        for idx in range(1, 16):
+            fh.write(f"FCS-{idx:03d}\tYES\tPASS\tPASS\tPASS\t\tevidence-{idx}\n")
+    (ledger / "findings.tsv").write_text(
+        "FINDING_ID\tSEVERITY\tUSER_BLOCKING\tSTATUS\tCLASSIFICATION\tSURFACE\tEVIDENCE\n",
+        encoding="utf-8",
+    )
+
+
+def write_full_ledgers(root: Path):
+    ledger = root / "ledger"
+    ledger.mkdir(parents=True, exist_ok=True)
+    (ledger / "scenario-results.tsv").write_text(
+        "SCENARIO_ID\tUSE_CASE_ID\tAPPLICABLE\tMANDATORY\tDIRECT_RESULT\tAI_REQUIRED\tAI_RESULT\tFINAL_RESULT\tBLOCK_REASON\tEVIDENCE\n"
+        "U-001\tUC-01\tYES\tYES\tPASS\tYES\tPASS\tPASS\t\tevidence-u1\n",
+        encoding="utf-8",
+    )
+    (ledger / "findings.tsv").write_text(
+        "FINDING_ID\tSEVERITY\tUSER_BLOCKING\tSTATUS\tCLASSIFICATION\tSURFACE\tEVIDENCE\n",
+        encoding="utf-8",
+    )
+
+
 def full_evidence(pass_name: str):
     data = {
         "schema_version": 1,
@@ -51,6 +96,11 @@ def full_evidence(pass_name: str):
         "git_head": HEAD,
         "end_head": HEAD,
         "head_unchanged": True,
+        "product_source_head": HEAD,
+        "summary_derived_from_ledger": True,
+        "primary_user_evidence_mode": "PERSONA_LED_PUBLIC_UX",
+        "scenario_counts": {"total": 1, "pass": 1, "fail": 0, "blocked": 0},
+        "finding_counts": {"total": 0, "open": 0, "p0": 0, "p1": 0, "p2": 0, "p3": 0, "user_blocking_open": 0},
         "evidence_root": f"e2e-reports/full-user-e2e-{pass_name.lower()}",
     }
     data.update({key: "PASS" for key in MOD.FULL_PASS_FIELDS})
@@ -102,6 +152,26 @@ class PreReleaseExhaustiveGateTests(unittest.TestCase):
         errors = MOD.validate_cli_feature(data, HEAD)
         self.assertTrue(any("end_head" in item for item in errors))
 
+    def test_cli_feature_stale_runtime_and_report_block(self):
+        data = cli_evidence()
+        data["server_runtime_match"] = "STALE"
+        data["github_report_readback"] = "FAIL"
+        errors = MOD.validate_cli_feature(data, HEAD)
+        self.assertTrue(any("server_runtime_match" in item for item in errors))
+        self.assertTrue(any("github_report_readback" in item for item in errors))
+
+    def test_cli_feature_ledger_summary_mismatch_blocks(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            run = repo / "run"
+            write_cli_ledgers(run)
+            (repo / "release-manifest.json").write_text(json.dumps({"source_head": HEAD}), encoding="utf-8")
+            data = cli_evidence()
+            data["evidence_root"] = str(run)
+            data["fcs_counts"]["pass"] = 14
+            errors = MOD.validate_cli_feature(data, HEAD, repo)
+            self.assertTrue(any("fcs_counts.pass" in item for item in errors))
+
     def test_full_user_pass1_valid(self):
         self.assertEqual(MOD.validate_full_user(full_evidence("PASS1"), HEAD, "PASS1"), [])
 
@@ -119,6 +189,18 @@ class PreReleaseExhaustiveGateTests(unittest.TestCase):
         data["unexercised_public_commands"] = 1
         errors = MOD.validate_full_user(data, HEAD, "PASS2")
         self.assertTrue(any("unexercised_public_commands" in item for item in errors))
+
+    def test_full_user_ledger_summary_mismatch_blocks(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            run = repo / "run"
+            write_full_ledgers(run)
+            (repo / "release-manifest.json").write_text(json.dumps({"source_head": HEAD}), encoding="utf-8")
+            data = full_evidence("PASS1")
+            data["evidence_root"] = str(run)
+            data["scenario_counts"]["pass"] = 0
+            errors = MOD.validate_full_user(data, HEAD, "PASS1", repo)
+            self.assertTrue(any("scenario_counts.pass" in item for item in errors))
 
 
 if __name__ == "__main__":

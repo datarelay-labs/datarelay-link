@@ -118,6 +118,7 @@ Parallel execution means multiple independent **persona-led audit lanes** plus s
 
 ~~~text
 USER_ROLE_EXECUTION=REQUIRED
+PRIMARY_PERSONA_EXECUTOR=ChatGPT
 SCRIPTED_USER_SCENARIO_EXECUTION=FORBIDDEN
 AUTOMATED_HARNESS_ROLE=SUPPLEMENTAL_ONLY
 DIRECT_USER_FEATURE_COVERAGE=100%
@@ -173,6 +174,7 @@ AUDIT_PROFILE=CLI_FEATURE_SCENARIO_RECONCILIATION
 AUDIT_SEMANTICS=FEATURE_CLI_AI_OPERATOR_WORKFLOW
 FIRST_ACTION=EXECUTE
 USER_ROLE_EXECUTION=REQUIRED
+PRIMARY_PERSONA_EXECUTOR=ChatGPT
 SCRIPTED_USER_SCENARIO_EXECUTION=FORBIDDEN
 AUTOMATED_HARNESS_ROLE=SUPPLEMENTAL_ONLY
 DIRECT_USER_FEATURE_COVERAGE_REQUIRED=100%
@@ -269,7 +271,9 @@ RUN_ID=
 START_UTC=
 REPOSITORY=
 BRANCH=
+TEST_CONTRACT_HEAD=
 REPO_HEAD=
+PRODUCT_SOURCE_HEAD=
 WORKTREE=
 WORKTREE_CLEAN=
 ACTIVE_WORK_PACKET=
@@ -277,15 +281,22 @@ SERVER_RUNTIME=AVAILABLE|UNAVAILABLE
 SERVER_HOST=<assigned existing host or N/A>
 SERVER_PRODUCT_VERSION=<if available>
 SERVER_SOURCE_HEAD=<if available>
+SERVER_RUNTIME_MATCH=EXACT|STALE|UNAVAILABLE
 AGENT_RUNTIME=AVAILABLE|UNAVAILABLE
 AGENT_HOST=<assigned existing host or N/A>
 AGENT_PRODUCT_VERSION=<if available>
 AGENT_SOURCE_HEAD=<if available>
+AGENT_RUNTIME_MATCH=EXACT|STALE|UNAVAILABLE
+RUNTIME_COVERAGE_COMPLETE=YES|NO
 ~~~
 
-Runtime HEAD equality is informative for correlation, not a reason to install a different candidate during this audit.
+`TEST_CONTRACT_HEAD` identifies the audit contract/worktree. `PRODUCT_SOURCE_HEAD` identifies the product candidate being reconciled. Installed Server/Agent heads are independent observations.
 
-If an applicable Server or Agent runtime is unavailable, mark only runtime-dependent checks `BLOCKED_RUNTIME_UNAVAILABLE` and continue the feature/CLI/document/operator-workflow reconciliation that remains executable.
+A stale installed runtime is **correlation-only evidence**. Do not classify behavior seen only on a stale runtime as a current-candidate product defect. Record `STALE_RUNTIME_CORRELATION_ONLY`, then verify the candidate surface through exact-HEAD public CLI/source/package evidence and continue all independent lanes.
+
+This audit never installs a different candidate merely to repair a mismatch. When the audit is later consumed as a release gate, the enclosing release workflow must provide exact candidate Server and Agent runtime coverage before a clean release-gate PASS can be claimed.
+
+If an applicable Server or Agent runtime is unavailable, mark only runtime-dependent checks `BLOCKED_RUNTIME_UNAVAILABLE` and continue the feature/CLI/AI/document/operator-workflow reconciliation that remains executable. A normal audit may finish with incomplete runtime coverage; a release-gate PASS requires `RUNTIME_COVERAGE_COMPLETE=YES` and exact Server/Agent runtime match.
 
 Create:
 
@@ -311,6 +322,34 @@ For each already-assigned runtime used by this audit:
 Runtime health warnings, stale installed HEAD, disconnected Agent state, pending transactions, or unrelated pre-existing resources do **not** stop the reconciliation and do not authorize repair/recovery.
 
 If another test owns a runtime, continue source/document/read-only checks and mark only conflicting runtime observations `NOT_RUN_SHARED_STATE`.
+
+### 6.1 Tooling isolation — TTY and GitHub
+
+Remote-execution tooling is not product behavior.
+
+For TTY-dependent UX such as persistent REPL, menu navigation, guided wizard prompts, Tab completion, and interactive confirmation:
+
+1. prefer a connector-native or otherwise explicitly authorized interactive terminal/PTY surface;
+2. do not repeatedly attempt shell-level PTY emulation when the execution tool or safety layer rejects it;
+3. record `BLOCKED_TOOLING_TTY` for only the affected persona lane when no valid TTY surface is available;
+4. continue all independent Direct, AI-assisted, read-only, source/catalog, documentation, and isolated PTY-regression lanes;
+5. deterministic PTY regression tests are supporting evidence only and do not replace actual-user TTY evidence.
+
+A TTY tooling block is not a product defect. However, a mandatory TTY/user-flow lane that remains unexecuted prevents a clean exhaustive PASS.
+
+For final GitHub Work Packet reporting:
+
+- use the GitHub connector's general Issue write path (`update_issue`) for the active `[AI Work]` Issue rather than relying on PR-conversation comment APIs;
+- read the current Issue body first, update only the bounded final-report section, then read it back and verify the expected RUN_ID/HEAD/result are present;
+- a GitHub connector failure does not rewrite the product/audit result; record it separately as `GITHUB_REPORT_STATUS=BLOCKED_TOOLING` and preserve the frozen local evidence for retry;
+- do not claim the audit workflow fully offboarded until the required final Issue sync is either verified PASS or explicitly recorded as a reporting-tool blocker.
+
+~~~text
+TTY_TOOLING_STATUS=PASS|BLOCKED_TOOLING_TTY|NOT_APPLICABLE
+TTY_PERSONA_COVERAGE=PASS|PARTIAL|NOT_APPLICABLE
+GITHUB_REPORT_STATUS=PASS|BLOCKED_TOOLING
+GITHUB_REPORT_READBACK=PASS|FAIL|NOT_RUN
+~~~
 
 ## 7. Build the feature inventory first
 
@@ -701,7 +740,7 @@ ISOLATED_TEST_COVERAGE=
 EXIT_STATUS_CONTRACT=
 ~~~
 
-Do not trust parent-command metadata for a destructive child variant.
+Do not trust parent-command metadata for a destructive child variant. Enumerate every user-visible leaf/subvariant exposed by help/menu/completion (for example `system certificate issue|import|renew|status|preflight`) and require effect-appropriate destructive/risk/confirmation metadata for each leaf. A parent-only catalog entry is insufficient when child variants have materially different effects.
 
 **Do not execute destructive variants on assigned runtime during this audit, including "answer No" probes.** Audit confirmation behavior from catalog/parser/source plus deterministic isolated test coverage.
 
@@ -772,7 +811,7 @@ Verify Product update and Relay Engine check/update are distinct and discoverabl
 Server/Agent/menu/help/status/diagnostics/version describe one current model using read-only evidence.
 
 ## FCS-015 — Legacy / alias negative reconciliation
-Find retired guesses from docs/catalog/source and prove they are absent from public discovery and rejected by parser/isolated tests with canonical guidance. **Do not execute source-enumerated legacy mutation paths on assigned runtime state.**
+Find retired guesses from docs/catalog/source and prove they are absent from every public discovery form and rejected by parser/isolated tests with canonical guidance. Negative reconciliation includes root invocation, action/resource invocation, command-specific `?`, nested help, Tab/completion, menu aliases, and error-recovery suggestions. A legacy mutation that rejects but whose `...?` help path still returns success is a `HELP_ONLY_LEGACY_PATH` defect. **Do not execute source-enumerated legacy mutation paths on assigned runtime state.**
 
 ## 21. Active documentation / generated-output scan
 
@@ -799,6 +838,10 @@ enrollment output
 
 Classify examples as `CANONICAL_PUBLIC`, `INSTALLER_ONLY_JUSTIFIED`, `INTERNAL_EXPLICITLY_LABELLED`, `NONCANONICAL_ACTIVE_EXAMPLE`, or `HISTORICAL_IGNORE`.
 
+Scan active guidance for executable retired syntax and retired public nouns, including installer/bootstrap completion text and error/recovery output. Any guidance that tells a user to run obsolete forms such as retired root commands, wrong restore/update grammar, or superseded object nouns is a blocking guidance/terminology finding.
+
+Isolated regression suites count as current evidence only when their setup and asserted public grammar are current. A suite that still uses retired nouns/commands (for example an obsolete AI identity noun) is `STALE_REGRESSION_GRAMMAR`; its PASS/FAIL may help locate drift but cannot satisfy current-candidate coverage until the test itself is migrated and rerun.
+
 ## 22. Evidence layout
 
 ~~~text
@@ -811,6 +854,8 @@ Classify examples as `CANONICAL_PUBLIC`, `INSTALLER_ONLY_JUSTIFIED`, `INTERNAL_E
     feature-ledger.tsv
     cli-ledger.tsv
     feature-cli-scenario.tsv
+    fcs-results.tsv
+    findings.tsv
     ai-feature-parity.tsv
     ai-fcs-parity.tsv
     hidden-alias-enumeration.tsv
@@ -825,6 +870,42 @@ Classify examples as `CANONICAL_PUBLIC`, `INSTALLER_ONLY_JUSTIFIED`, `INTERNAL_E
   findings/P3-*.txt
   cleanup/                 # audit-owned temp/process cleanup only; no product-resource cleanup expected
   summary.txt
+~~~
+
+### 22.1 Canonical evidence authority and summary consistency
+
+The final summary and GitHub report must be **derived from machine-readable ledgers**, not manually re-counted from memory or prose files.
+
+Canonical run ledgers:
+
+~~~text
+ledger/fcs-results.tsv
+  FCS_ID  APPLICABLE  DIRECT_RESULT  AI_RESULT  FINAL_RESULT  BLOCK_REASON  EVIDENCE
+
+ledger/findings.tsv
+  FINDING_ID  SEVERITY  USER_BLOCKING  STATUS  CLASSIFICATION  SURFACE  EVIDENCE
+~~~
+
+Rules:
+
+1. every FCS-001..FCS-015 appears exactly once in `fcs-results.tsv`;
+2. Direct and AI results are explicit for every applicable FCS;
+3. every P0/P1/P2/P3 finding file has exactly one corresponding `findings.tsv` row;
+4. no summary counter is entered independently of these ledgers;
+5. before final reporting, recompute FCS PASS/FAIL/BLOCKED and finding severity/open counts from the ledgers;
+6. compare recomputed counts with `summary.txt`, release JSON when present, and the GitHub report payload;
+7. any mismatch is `REPORT_CONSISTENCY_FAIL` and invalidates the final report until corrected from the retained evidence;
+8. do not "fix" a mismatch by editing evidence to match the report. The ledgers/evidence are authoritative; regenerate the report from them.
+
+A late manual spot-check cannot retroactively convert a wrapper/script-driven FCS into actual-user evidence. If the primary persona lane was contaminated by auditor/source knowledge or scripted command replay, mark that lane invalid and rerun it from a fresh persona context. If contamination is run-wide or cannot be isolated, start a new RUN_ID.
+
+~~~text
+EVIDENCE_LEDGER_SCHEMA=PASS|FAIL
+SUMMARY_DERIVED_FROM_LEDGER=YES|NO
+REPORT_CONSISTENCY=PASS|FAIL
+EVIDENCE_SUMMARY_MISMATCH_COUNT=
+AUDITOR_KNOWLEDGE_LEAK_COUNT=
+PRIMARY_USER_EVIDENCE_MODE=PERSONA_LED_PUBLIC_UX
 ~~~
 
 Never retain raw Zero-Touch credentials, Enrollment Codes when secret, OAuth codes/tokens, bearer tokens, client secrets, private keys, or protected backup contents.
@@ -876,9 +957,15 @@ STRUCTURE_DRIFT_COUNT=
 STATE_SEMANTICS_DRIFT_COUNT=
 CONFIRMATION_METADATA_DRIFT_COUNT=
 DESTRUCTIVE_CONFIRMATION_GAP_COUNT=
+DESTRUCTIVE_CHILD_VARIANT_METADATA_GAP_COUNT=
 ERROR_WITH_ZERO_RC_COUNT=
 EMPTY_STATE_SILENCE_COUNT=
 NEXT_ACTION_STALE_COUNT=
+ACTIVE_GUIDANCE_NONCANONICAL_COUNT=
+HELP_ONLY_LEGACY_PATH_COUNT=
+PUBLIC_NOUN_DRIFT_COUNT=
+STALE_REGRESSION_GRAMMAR_COUNT=
+ACTIVE_INSTALLER_LEGACY_TERM_COUNT=
 DOC_EXAMPLE_NONCANONICAL_COUNT=
 ROLE_SURFACE_DRIFT_COUNT=
 STATUS_DOC_RUNTIME_MISMATCH_COUNT=
@@ -888,6 +975,10 @@ PARALLEL_LANES_STARTED=
 MAX_SIMULTANEOUS_ACTIVE_LANES=
 SERIAL_IDLE_WITH_RUNNABLE_WORK=YES|NO
 AVOIDABLE_SERIAL_WAIT_COUNT=
+EVIDENCE_SUMMARY_MISMATCH_COUNT=
+AUDITOR_KNOWLEDGE_LEAK_COUNT=
+TOOLING_BLOCKER_COUNT=
+TTY_TOOLING_BLOCK_COUNT=
 UNRESOLVED_P0=
 UNRESOLVED_P1=
 UNRESOLVED_USER_BLOCKING_P2=
@@ -924,7 +1015,13 @@ Minimum JSON contract:
     "discovery_gap_count": 0,
     "installer_guidance_mismatch_count": 0,
     "destructive_confirmation_gap_count": 0,
+    "destructive_child_variant_metadata_gap_count": 0,
     "error_with_zero_rc_count": 0,
+    "active_guidance_noncanonical_count": 0,
+    "help_only_legacy_path_count": 0,
+    "public_noun_drift_count": 0,
+    "stale_regression_grammar_count": 0,
+    "active_installer_legacy_term_count": 0,
     "scenario_blocked_count": 0,
     "scenario_dead_end_count": 0,
     "features_without_ai_support_count": 0,
@@ -936,8 +1033,28 @@ Minimum JSON contract:
     "automated_harness_user_substitution_count": 0,
     "cleanup_residue_count": 0,
     "runtime_mutation_attempt_count": 0,
-    "avoidable_serial_wait_count": 0
+    "avoidable_serial_wait_count": 0,
+    "evidence_summary_mismatch_count": 0,
+    "auditor_knowledge_leak_count": 0,
+    "tooling_blocker_count": 0,
+    "tty_tooling_block_count": 0
   },
+  "product_source_head": "<40-char product source HEAD>",
+  "server_source_head": "<same product source HEAD>",
+  "agent_source_head": "<same product source HEAD>",
+  "server_runtime_match": "EXACT",
+  "agent_runtime_match": "EXACT",
+  "runtime_coverage_complete": true,
+  "evidence_ledger_schema": "PASS",
+  "summary_derived_from_ledger": true,
+  "report_consistency": "PASS",
+  "primary_user_evidence_mode": "PERSONA_LED_PUBLIC_UX",
+  "tty_tooling_status": "PASS",
+  "tty_persona_coverage": "PASS",
+  "github_report_status": "PASS",
+  "github_report_readback": "PASS",
+  "fcs_counts": {"total": 15, "pass": 15, "fail": 0, "blocked": 0},
+  "finding_counts": {"total": 0, "open": 0, "p0": 0, "p1": 0, "p2": 0, "p3": 0, "user_blocking_open": 0},
   "user_role_execution": "PASS",
   "scripted_user_scenario_execution": false,
   "automated_harness_role": "SUPPLEMENTAL_ONLY",
@@ -979,10 +1096,15 @@ PASS requires:
 16. `USER_ROLE_EXECUTION=PASS`, `SCRIPTED_USER_SCENARIO_EXECUTION_COUNT=0`, and `AUTOMATED_HARNESS_USER_SUBSTITUTION_COUNT=0`;
 17. audit-owned temporary process/file residue is zero;
 18. `PARALLEL_EXECUTION=MAXIMUM_SAFE`, `SERIAL_IDLE_WITH_RUNNABLE_WORK=NO`, and `AVOIDABLE_SERIAL_WAIT_COUNT=0`;
-19. unresolved P0/P1/user-blocking P2 = 0;
-20. no unresolved actionable usability/product-improvement finding remains. A P2/P3 observation may remain only when it is explicitly dispositioned as non-actionable for the current supported product scope.
+19. `EVIDENCE_LEDGER_SCHEMA=PASS`, `SUMMARY_DERIVED_FROM_LEDGER=YES`, `REPORT_CONSISTENCY=PASS`, and `EVIDENCE_SUMMARY_MISMATCH_COUNT=0`;
+20. `AUDITOR_KNOWLEDGE_LEAK_COUNT=0` and `PRIMARY_USER_EVIDENCE_MODE=PERSONA_LED_PUBLIC_UX`;
+21. active guidance, help-only legacy paths, public noun drift, stale regression grammar, active installer legacy terms, and destructive child metadata gap counters are zero;
+22. unresolved P0/P1/user-blocking P2 = 0;
+23. no unresolved actionable usability/product-improvement finding remains. A P2/P3 observation may remain only when it is explicitly dispositioned as non-actionable for the current supported product scope.
 
 Anything else is FAIL or explicitly BLOCKED.
+
+For a **release-gate PASS**, additionally require exact Server and Agent candidate runtime coverage, `TTY_PERSONA_COVERAGE=PASS`, `TOOLING_BLOCKER_COUNT=0`, `GITHUB_REPORT_STATUS=PASS`, and `GITHUB_REPORT_READBACK=PASS`. A normal audit may finish honestly with runtime/tooling incompleteness, but it must not be promoted to release-gate PASS.
 
 A workflow is not `BLOCKED` merely because this audit refuses to execute its mutation. Mutation is intentionally out of scope; judge that workflow step from discoverability/contract/test evidence.
 
@@ -1029,10 +1151,21 @@ Include:
 
 ~~~text
 RUN_ID=
+TEST_CONTRACT_HEAD=
 REPO_HEAD=
+PRODUCT_SOURCE_HEAD=
 INSTALLED_SERVER_HEAD=
+SERVER_RUNTIME_MATCH=
 INSTALLED_AGENT_HEAD=
+AGENT_RUNTIME_MATCH=
+RUNTIME_COVERAGE_COMPLETE=
 FINAL_STATUS=
+REPORT_CONSISTENCY=
+FCS_COUNTS=
+FINDING_COUNTS=
+TTY_PERSONA_COVERAGE=
+GITHUB_REPORT_STATUS=
+GITHUB_REPORT_READBACK=
 EVIDENCE_ROOT=
 CLEANUP_STATUS=
 RUNTIME_MUTATION_ATTEMPT_COUNT=
