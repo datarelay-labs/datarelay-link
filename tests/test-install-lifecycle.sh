@@ -1090,9 +1090,14 @@ echo '{"schema_version":1}' >"$DUAL/etc/frp/client-state.json"
 cat >"$DUAL/usr/local/bin/drlink" <<'EOF'
 #!/bin/sh
 case "$1" in
-  version) echo "drlink test 0.0.0";;
-  status) echo "Server status: ok (fixture)";;
-  doctor) echo "doctor ok";;
+  system)
+    case "$2" in
+      version) echo "drlink test 0.0.0";;
+      diagnostics) echo "doctor ok";;
+      *) echo "drlink $*";;
+    esac
+    ;;
+  show) if [ "$2" = "status" ]; then echo "Server status: ok (fixture)"; else echo "drlink $*"; fi;;
   support) echo "support bundle ok";;
   *) echo "drlink $*";;
 esac
@@ -1121,9 +1126,9 @@ export FRP_UNINSTALL_TEST_ROOT="$DUAL"
 [[ -x "$DUAL/usr/local/bin/frpctl" ]] || fail "dual-role removed shared frpctl"
 [[ -x "$DUAL/usr/local/bin/frp-support-bundle" ]] || fail "dual-role removed support-bundle"
 [[ -f "$DUAL/usr/local/lib/drlink/frp_doctor.py" ]] || fail "dual-role removed doctor lib"
-"$DUAL/usr/local/bin/drlink" version | grep -q 'drlink test' || fail "dual-role drlink version broken"
-"$DUAL/usr/local/bin/drlink" status | grep -q 'Server status' || fail "dual-role drlink status broken"
-"$DUAL/usr/local/bin/drlink" doctor | grep -q 'doctor ok' || fail "dual-role doctor missing"
+"$DUAL/usr/local/bin/drlink" system version | grep -q 'drlink test' || fail "dual-role drlink version broken"
+"$DUAL/usr/local/bin/drlink" show status | grep -q 'Server status' || fail "dual-role drlink status broken"
+"$DUAL/usr/local/bin/drlink" system diagnostics | grep -q 'doctor ok' || fail "dual-role doctor missing"
 pass "DUAL_ROLE_CLIENT_UNINSTALL_PRESERVES_SERVER_CLI"
 
 # Dual-role opposite: server uninstall must keep client drlink usable
@@ -1141,8 +1146,8 @@ touch "$DUAL2/etc/systemd/system/drlink-client.service"
 cat >"$DUAL2/usr/local/bin/drlink" <<'EOF'
 #!/bin/sh
 case "$1" in
-  version) echo "drlink client 0.0.0";;
-  status) echo "Client status: ok (fixture)";;
+  system) if [ "$2" = "version" ]; then echo "drlink client 0.0.0"; else echo "drlink $*"; fi;;
+  show) if [ "$2" = "status" ]; then echo "Client status: ok (fixture)"; else echo "drlink $*"; fi;;
   *) echo "drlink $*";;
 esac
 EOF
@@ -1160,7 +1165,7 @@ export FRP_UNINSTALL_TEST_ROOT="$DUAL2"
 [[ ! -f "$DUAL2/etc/frp/server_token" ]] || fail "dual-role server uninstall left server token"
 [[ ! -f "$DUAL2/etc/drlink/config.json" ]] || fail "dual-role server uninstall left server config"
 [[ ! -f "$DUAL2/var/lib/drlink/registry.json" ]] || fail "dual-role server uninstall left registry"
-"$DUAL2/usr/local/bin/drlink" version | grep -q 'drlink client' || fail "dual-role client drlink broken after server uninstall"
+"$DUAL2/usr/local/bin/drlink" system version | grep -q 'drlink client' || fail "dual-role client drlink broken after server uninstall"
 pass "DUAL_ROLE_SERVER_UNINSTALL_PRESERVES_CLIENT_CLI"
 
 # ---------------------------------------------------------------------------
