@@ -115,6 +115,21 @@ class ManagedHostRetirement(unittest.TestCase):
         self.assertIsNone(self.plane.get_client("ubuntu-prod"))
         self.assertIsNone(self.plane.get_object("ubuntu-prod"))
 
+    def test_cancel_retirement_returns_nonzero_and_preserves_host(self):
+        self._seed_host(MID, "ubuntu-prod")
+        os.environ.pop("DRLINK_CONFIRM", None)
+        rev_before = self.plane.current_revision()
+        old_stdin = sys.stdin
+        try:
+            sys.stdin = io.StringIO("")
+            rc, out, err = self._dispatch(["unset", "managed-host", "ubuntu-prod"])
+        finally:
+            sys.stdin = old_stdin
+        self.assertEqual(rc, 1, err or out)
+        self.assertIn("Cancelled", out)
+        self.assertEqual(self.plane.current_revision(), rev_before)
+        self.assertIsNotNone(self.plane.get_client("ubuntu-prod"))
+
     def test_managed_host_with_remote_services_and_reservations_cleaned(self):
         self._seed_host(MID, "ubuntu-prod", with_service=True)
         rc, out, err = self._dispatch(["unset", "managed-host", "ubuntu-prod"])

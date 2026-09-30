@@ -230,6 +230,29 @@ class WhitelistLastRuleOutageSafety(unittest.TestCase):
         self.assertEqual(self.plane.current_revision(), rev_before)
         self.assertTrue(bool(self.plane._get_rule("remote", "allow-ssh")["enabled"]))
 
+    def test_cancel_policy_enforcement_disable_returns_nonzero(self):
+        self._seed_remote_whitelist()
+        os.environ.pop("DRLINK_CONFIRM", None)
+        rev_before = self.plane.current_revision()
+        rc, out, _err = self._dispatch(["set", "remote-access", "disabled"])
+        self.assertEqual(rc, 1)
+        self.assertIn("Cancelled", out)
+        self.assertEqual(self.plane.current_revision(), rev_before)
+        pol = v24.get_access_policy(self.plane, "remote")
+        self.assertEqual(str(pol["enforcement"]).lower(), "enabled")
+
+    def test_cancel_policy_reset_returns_nonzero(self):
+        self._seed_remote_whitelist()
+        os.environ.pop("DRLINK_CONFIRM", None)
+        rev_before = self.plane.current_revision()
+        rc, out, _err = self._dispatch(["unset", "remote-access", "policy"])
+        self.assertEqual(rc, 1)
+        self.assertIn("Cancelled", out)
+        self.assertEqual(self.plane.current_revision(), rev_before)
+        pol = v24.get_access_policy(self.plane, "remote")
+        self.assertEqual(pol["mode"], "whitelist")
+        self.assertIsNotNone(self.plane._get_rule("remote", "allow-ssh"))
+
     def test_confirm_yields_zero_enabled_rules_and_deny_all(self):
         self._seed_remote_whitelist()
         rev_before = self.plane.current_revision()
