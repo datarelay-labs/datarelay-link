@@ -161,7 +161,8 @@ def build_proxy_map(plane: ControlPlane) -> dict[str, dict]:
         ):
             # v2.4 Remote Services use stable rs-<name> runtime ids; enrollment
             # services keep their historical id (== published name).
-            sid = str(svc["name"]).strip().lower()
+            historical_sid = str(svc["name"]).strip().lower()
+            sid = historical_sid
             meta = plane.conn.execute(
                 "SELECT * FROM remote_service_meta WHERE service_id = ?",
                 (svc["id"],),
@@ -191,10 +192,18 @@ def build_proxy_map(plane: ControlPlane) -> dict[str, dict]:
                 "service_object_id": meta["service_object_id"] if meta is not None else None,
                 "has_remote_meta": meta is not None,
             }
-            if name in mapping or name in collisions:
-                collisions.setdefault(name, [mapping.pop(name, None)]).append(entry)
-                continue
-            mapping[name] = entry
+            names = [name]
+            # Zero-Touch/enrollment agents may still be running the historical
+            # published-service proxy id when runtime metadata is attached after
+            # enrollment. Authorize that exact identity as an alias of the same
+            # authoritative service; policy evaluation remains identical.
+            if meta is not None and historical_sid != sid:
+                names.append(expected_proxy_name(hostname, mid, historical_sid))
+            for proxy_name in names:
+                if proxy_name in mapping or proxy_name in collisions:
+                    collisions.setdefault(proxy_name, [mapping.pop(proxy_name, None)]).append(entry)
+                    continue
+                mapping[proxy_name] = entry
     if collisions:
         owners = []
         for name, entries in sorted(collisions.items()):
