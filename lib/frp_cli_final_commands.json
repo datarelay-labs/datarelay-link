@@ -14,11 +14,7 @@
     "args": [],
     "tail": null,
     "internal": null,
-    "aliases": [
-      [
-        "status"
-      ]
-    ],
+    "aliases": [],
     "destructive": false,
     "hidden": false,
     "risk": "none",
@@ -147,15 +143,7 @@
     "args": [],
     "tail": null,
     "internal": null,
-    "aliases": [
-      [
-        "service",
-        "list"
-      ],
-      [
-        "services"
-      ]
-    ],
+    "aliases": [],
     "destructive": false,
     "hidden": false,
     "risk": "none",
@@ -178,12 +166,7 @@
     "args": [],
     "tail": null,
     "internal": null,
-    "aliases": [
-      [
-        "group",
-        "list"
-      ]
-    ],
+    "aliases": [],
     "destructive": false,
     "hidden": false,
     "risk": "none",
@@ -212,12 +195,7 @@
     ],
     "tail": null,
     "internal": null,
-    "aliases": [
-      [
-        "group",
-        "show"
-      ]
-    ],
+    "aliases": [],
     "destructive": false,
     "hidden": false,
     "risk": "none",
@@ -240,15 +218,7 @@
     "args": [],
     "tail": null,
     "internal": null,
-    "aliases": [
-      [
-        "enrollment",
-        "list"
-      ],
-      [
-        "enrollments"
-      ]
-    ],
+    "aliases": [],
     "destructive": false,
     "hidden": false,
     "risk": "none",
@@ -472,20 +442,7 @@
       "create",
       "group"
     ],
-    "aliases": [
-      [
-        "create",
-        "group"
-      ],
-      [
-        "group",
-        "create"
-      ],
-      [
-        "group",
-        "set"
-      ]
-    ],
+    "aliases": [],
     "destructive": false,
     "hidden": false,
     "risk": "none",
@@ -535,22 +492,7 @@
       "create",
       "enrollment"
     ],
-    "aliases": [
-      [
-        "create",
-        "enrollment"
-      ],
-      [
-        "enrollment",
-        "create"
-      ],
-      [
-        "enroll"
-      ],
-      [
-        "create-client"
-      ]
-    ],
+    "aliases": [],
     "destructive": false,
     "hidden": false,
     "risk": "none",
@@ -745,19 +687,7 @@
       "create",
       "enrollments"
     ],
-    "aliases": [
-      [
-        "create",
-        "enrollments"
-      ],
-      [
-        "enrollment",
-        "bulk"
-      ],
-      [
-        "enroll-bulk"
-      ]
-    ],
+    "aliases": [],
     "destructive": false,
     "hidden": false,
     "risk": "none",
@@ -1016,28 +946,7 @@
       "add",
       "service"
     ],
-    "aliases": [
-      [
-        "add",
-        "service"
-      ],
-      [
-        "service",
-        "add"
-      ],
-      [
-        "service",
-        "set"
-      ],
-      [
-        "enable",
-        "service"
-      ],
-      [
-        "service",
-        "enable"
-      ]
-    ],
+    "aliases": [],
     "destructive": false,
     "hidden": false,
     "risk": "none",
@@ -1241,16 +1150,7 @@
       "delete",
       "group"
     ],
-    "aliases": [
-      [
-        "delete",
-        "group"
-      ],
-      [
-        "group",
-        "delete"
-      ]
-    ],
+    "aliases": [],
     "destructive": true,
     "hidden": false,
     "risk": "irreversible",
@@ -1421,16 +1321,7 @@
       "disable",
       "service"
     ],
-    "aliases": [
-      [
-        "disable",
-        "service"
-      ],
-      [
-        "service",
-        "disable"
-      ]
-    ],
+    "aliases": [],
     "destructive": false,
     "hidden": false,
     "risk": "none",
@@ -1564,15 +1455,7 @@
       "show",
       "version"
     ],
-    "aliases": [
-      [
-        "show",
-        "version"
-      ],
-      [
-        "version"
-      ]
-    ],
+    "aliases": [],
     "destructive": false,
     "hidden": false,
     "risk": "none",
@@ -1597,23 +1480,7 @@
     "internal": [
       "server-status"
     ],
-    "aliases": [
-      [
-        "system",
-        "server-status"
-      ],
-      [
-        "show",
-        "server-status"
-      ],
-      [
-        "server",
-        "status"
-      ],
-      [
-        "server-status"
-      ]
-    ],
+    "aliases": [],
     "destructive": false,
     "hidden": false,
     "risk": "none",
@@ -1639,19 +1506,7 @@
       "show",
       "info"
     ],
-    "aliases": [
-      [
-        "show",
-        "info"
-      ],
-      [
-        "client",
-        "info"
-      ],
-      [
-        "info"
-      ]
-    ],
+    "aliases": [],
     "destructive": false,
     "hidden": false,
     "risk": "none",
@@ -1743,19 +1598,7 @@
       "restore",
       "backup"
     ],
-    "aliases": [
-      [
-        "restore",
-        "backup"
-      ],
-      [
-        "backup",
-        "restore"
-      ],
-      [
-        "restore"
-      ]
-    ],
+    "aliases": [],
     "destructive": true,
     "hidden": false,
     "risk": "outage",
@@ -1782,22 +1625,7 @@
       "update",
       "project"
     ],
-    "aliases": [
-      [
-        "update",
-        "product"
-      ],
-      [
-        "update",
-        "project"
-      ],
-      [
-        "project-update"
-      ],
-      [
-        "client-update"
-      ]
-    ],
+    "aliases": [],
     "destructive": false,
     "hidden": false,
     "risk": "none",
@@ -1837,22 +1665,7 @@
       "update",
       "frp"
     ],
-    "aliases": [
-      [
-        "update",
-        "engine"
-      ],
-      [
-        "update",
-        "frp"
-      ],
-      [
-        "frp-update"
-      ],
-      [
-        "server-update"
-      ]
-    ],
+    "aliases": [],
     "destructive": false,
     "hidden": false,
     "risk": "none",
@@ -1892,19 +1705,7 @@
       "show",
       "upstream"
     ],
-    "aliases": [
-      [
-        "show",
-        "upstream"
-      ],
-      [
-        "server",
-        "upstream"
-      ],
-      [
-        "upstream"
-      ]
-    ],
+    "aliases": [],
     "destructive": false,
     "hidden": false,
     "risk": "none",
@@ -1941,11 +1742,7 @@
     "internal": [
       "doctor"
     ],
-    "aliases": [
-      [
-        "doctor"
-      ]
-    ],
+    "aliases": [],
     "destructive": false,
     "hidden": false,
     "risk": "none",
@@ -2014,19 +1811,7 @@
     "internal": [
       "support-bundle"
     ],
-    "aliases": [
-      [
-        "create",
-        "support-bundle"
-      ],
-      [
-        "support",
-        "bundle"
-      ],
-      [
-        "support-bundle"
-      ]
-    ],
+    "aliases": [],
     "destructive": false,
     "hidden": false,
     "risk": "none",
@@ -2068,19 +1853,7 @@
       "show",
       "audit"
     ],
-    "aliases": [
-      [
-        "show",
-        "audit"
-      ],
-      [
-        "server",
-        "audit"
-      ],
-      [
-        "audit"
-      ]
-    ],
+    "aliases": [],
     "destructive": false,
     "hidden": false,
     "risk": "none",
@@ -2106,15 +1879,7 @@
     "internal": [
       "apply"
     ],
-    "aliases": [
-      [
-        "apply"
-      ],
-      [
-        "service",
-        "apply"
-      ]
-    ],
+    "aliases": [],
     "destructive": false,
     "hidden": false,
     "risk": "none",
@@ -2140,15 +1905,7 @@
     "internal": [
       "discard"
     ],
-    "aliases": [
-      [
-        "discard"
-      ],
-      [
-        "service",
-        "discard"
-      ]
-    ],
+    "aliases": [],
     "destructive": false,
     "hidden": false,
     "risk": "none",
@@ -2174,15 +1931,7 @@
     "internal": [
       "sync"
     ],
-    "aliases": [
-      [
-        "sync"
-      ],
-      [
-        "service",
-        "sync"
-      ]
-    ],
+    "aliases": [],
     "destructive": false,
     "hidden": false,
     "risk": "none",
@@ -2207,14 +1956,7 @@
     "internal": [
       "pause"
     ],
-    "aliases": [
-      [
-        "pause"
-      ],
-      [
-        "stop"
-      ]
-    ],
+    "aliases": [],
     "destructive": false,
     "hidden": false,
     "risk": "none",
@@ -2239,14 +1981,7 @@
     "internal": [
       "resume"
     ],
-    "aliases": [
-      [
-        "resume"
-      ],
-      [
-        "start"
-      ]
-    ],
+    "aliases": [],
     "destructive": false,
     "hidden": false,
     "risk": "none",
@@ -2271,11 +2006,7 @@
     "internal": [
       "restart"
     ],
-    "aliases": [
-      [
-        "restart"
-      ]
-    ],
+    "aliases": [],
     "destructive": false,
     "hidden": false,
     "risk": "none",
@@ -2300,11 +2031,7 @@
     "internal": [
       "autostart"
     ],
-    "aliases": [
-      [
-        "autostart"
-      ]
-    ],
+    "aliases": [],
     "destructive": false,
     "hidden": false,
     "risk": "none",
@@ -2331,12 +2058,7 @@
       "autostart",
       "enable"
     ],
-    "aliases": [
-      [
-        "autostart",
-        "enable"
-      ]
-    ],
+    "aliases": [],
     "destructive": false,
     "hidden": false,
     "risk": "none",
@@ -2363,12 +2085,7 @@
       "autostart",
       "disable"
     ],
-    "aliases": [
-      [
-        "autostart",
-        "disable"
-      ]
-    ],
+    "aliases": [],
     "destructive": false,
     "hidden": false,
     "risk": "none",
@@ -2393,11 +2110,7 @@
     "internal": [
       "uninstall"
     ],
-    "aliases": [
-      [
-        "uninstall"
-      ]
-    ],
+    "aliases": [],
     "destructive": true,
     "hidden": false,
     "risk": "irreversible",
@@ -2435,11 +2148,7 @@
     "internal": [
       "history"
     ],
-    "aliases": [
-      [
-        "history"
-      ]
-    ],
+    "aliases": [],
     "destructive": false,
     "hidden": false,
     "risk": "none",
@@ -2464,11 +2173,7 @@
     "internal": [
       "clear"
     ],
-    "aliases": [
-      [
-        "clear"
-      ]
-    ],
+    "aliases": [],
     "destructive": false,
     "hidden": false,
     "risk": "none",
