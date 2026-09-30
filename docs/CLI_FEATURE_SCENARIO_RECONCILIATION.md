@@ -29,6 +29,14 @@ When triggered, resolve this file from the active repository and execute it imme
 
 Do not substitute FULL_USER_E2E, a generic CLI smoke test, or historical evidence.
 
+### Continuous execution / finding accumulation rule
+
+Do **not** stop the reconciliation when an individual finding, mismatch, or test failure is discovered. Record it in the finding ledger with its evidence and disposition, then immediately continue every remaining check that is safe and independent of that failure. Findings are accumulated and reported together after the audit has exhausted all executable checks.
+
+Stop early only when continuing would be unsafe, would corrupt or invalidate shared state/evidence, requires an unavailable mandatory dependency or explicit owner action, or when the failed prerequisite makes a specific downstream check technically impossible. In that case, mark only the affected check `BLOCKED` or `NOT_RUN` with the exact reason and continue all other independent checks.
+
+During an audit with `PRODUCT_SOURCE_EDITS_DURING_AUDIT=NO`, do not remediate findings inline. Preserve the candidate, retain the finding, finish the complete audit, and perform remediation only in the subsequent remediation phase.
+
 ~~~text
 AUDIT_PROFILE=CLI_FEATURE_SCENARIO_RECONCILIATION
 FIRST_ACTION=EXECUTE
@@ -867,12 +875,16 @@ FULL_USER_E2E remains separate.
 Final qualification order:
 
 ~~~text
-deterministic/unit/targeted tests
-→ install exact candidate
-→ CLI_FEATURE_SCENARIO_RECONCILIATION=PASS
-→ other exact-head release gates
+install/freeze candidate
+→ CLI_FEATURE_SCENARIO_RECONCILIATION PASS1 (finding discovery)
+→ batch remediation if required; freeze a new candidate
+→ CLI_FEATURE_SCENARIO_RECONCILIATION PASS2=PASS
 → FULL_USER_E2E PASS1
-→ FULL_USER_E2E PASS2
+→ batch remediation if required; invalidate and rerun affected qualification
+→ FULL_USER_E2E PASS2=PASS on the unchanged final candidate
+→ A-019 and remaining release-specific qualification
+→ final exact-head CI / automated regression / provenance / attestation gates
+→ final release audit
 → release
 ~~~
 

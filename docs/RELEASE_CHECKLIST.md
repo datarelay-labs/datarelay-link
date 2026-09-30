@@ -387,6 +387,30 @@ macOS Apple Silicon=
 Windows 10=
 ```
 
+
+### Continuous execution and finding accumulation
+
+A single finding, mismatch, scenario failure, or test failure MUST NOT stop the suite. Record the finding and its evidence, then continue every remaining check that is safe and independent. Exhaust all executable checks before the suite reports its aggregate result.
+
+Stop or skip only the specific downstream check when continuing it would be unsafe, would corrupt shared state/evidence, requires an unavailable mandatory dependency or explicit owner action, or is technically impossible because its prerequisite failed. Mark that check `BLOCKED` or `NOT_RUN` with the exact reason and continue all other independent checks. Do not remediate product/source findings inline during a frozen audit pass; finish the pass first, then remediate findings as one phase and rerun the required pass.
+
+
+### Qualification execution order
+
+Use this order for v2.4 release closure:
+
+1. CLI Feature/Scenario reconciliation PASS1; accumulate findings and finish the pass.
+2. Batch remediation if required; freeze a new candidate.
+3. CLI Feature/Scenario reconciliation PASS2 must PASS.
+4. Full User E2E PASS1; accumulate findings and finish the pass.
+5. Batch remediation if required; any source/product/doc change invalidates affected evidence.
+6. Full User E2E PASS2 must PASS on the unchanged final candidate.
+7. Execute A-019 and remaining release-specific qualification.
+8. Run final exact-head CI and automated regression, artifact, provenance, governance, and attestation gates.
+9. Perform final release audit, then merge/tag/publish only if every required gate is green.
+
+CI may run earlier as advisory feedback, but it is not a blocking wait point for independent semantic/user qualification. Only the final exact-head CI on the unchanged release candidate counts as terminal CI evidence. If final CI forces a source/product/doc change, invalidate and rerun every affected qualification pass before release.
+
 ## 20. Mandatory pre-release exhaustive gates and Double Full Real E2E
 
 - [ ] `CLI_FEATURE_SCENARIO_RECONCILIATION=PASS` on the same exact candidate before PASS1 starts.

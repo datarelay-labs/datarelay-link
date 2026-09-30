@@ -12,6 +12,13 @@
 > **Release checklist:** docs/RELEASE_CHECKLIST.md
 > **Status:** Normative living document
 
+
+### Continuous execution and finding accumulation
+
+A single finding, mismatch, scenario failure, or test failure MUST NOT stop the suite. Record the finding and its evidence, then continue every remaining check that is safe and independent. Exhaust all executable checks before the suite reports its aggregate result.
+
+Stop or skip only the specific downstream check when continuing it would be unsafe, would corrupt shared state/evidence, requires an unavailable mandatory dependency or explicit owner action, or is technically impossible because its prerequisite failed. Mark that check `BLOCKED` or `NOT_RUN` with the exact reason and continue all other independent checks. Do not remediate product/source findings inline during a frozen audit pass; finish the pass first, then remediate findings as one phase and rerun the required pass.
+
 ## 1. Purpose and execution trigger
 
 This document defines the exhaustive real-user E2E suite for Data Relay Link.
