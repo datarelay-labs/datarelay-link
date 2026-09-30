@@ -497,8 +497,8 @@ frp_identity_ensure() {
   if [[ "$status" == corrupt ]]; then
     echo "ERROR: this client's management identity is unusable." >&2
     echo "The local identity file exists but cannot be used." >&2
-    echo "Create a new Enrollment Code on the Data Relay Link server with sudo drlink set client" >&2
-    echo "(or sudo drlink set enrollment), move the damaged identity aside, then re-enroll this client." >&2
+    echo "Create a new Enrollment Code on the Data Relay Link server with sudo drlink set enrollment manual" >&2
+    echo "Move the damaged identity aside, then re-enroll this Agent Host." >&2
     echo "Do not overwrite ${key} automatically." >&2
     return 1
   fi
@@ -1126,8 +1126,7 @@ Before continuing, you need an Enrollment Code.
 
 Generate one on the Data Relay Link server with:
 
-  sudo drlink set client
-  # or: sudo drlink set enrollment
+  sudo drlink set enrollment manual
 
 The Enrollment Code is short-lived. Enter it only here.
 It authorizes this first enrollment (or a later recovery).
@@ -1145,8 +1144,7 @@ EOF
 frp_ux_enrollment_help() {
   cat <<'EOF'
 Enrollment Code
-  Generated on the Data Relay Link server with: sudo drlink set client
-  (or: sudo drlink set enrollment)
+  Generated on the Data Relay Link server with: sudo drlink set enrollment manual
   Short-lived bootstrap/recovery credential. Entered interactively.
   Not stored. Not the FRP token.
   Needed for first enrollment, recovering a lost local identity,
