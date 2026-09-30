@@ -192,20 +192,21 @@ echo "$CLIENT_SYSTEM" | grep -qx 'support-bundle' || fail "client system missing
 pass ROLE_FILTERING
 
 # --- INCOMPLETE_COMMAND_HELP ---
-INC="$(grammar 'revoke client')"
-echo "$INC" | grep -q 'revoke client <ID>' || fail "incomplete usage"
-! echo "$INC" | grep -q 'client show' || fail "incomplete recommends resource-first"
-echo "$INC" | grep -qi 'Tab' || fail "incomplete missing Tab tip"
+INC="$(grammar 'system update')"
+echo "$INC" | grep -q 'product' || fail "incomplete usage"
+echo "$INC" | grep -q 'engine' || fail "incomplete missing update choices"
 pass INCOMPLETE_COMMAND_HELP
 
-# --- REVOKE_RELEASE_DELETE_DISTINCT ---
-R1="$(grammar 'revoke client 24cd7856')"
-R2="$(grammar 'release client 24cd7856')"
-R3="$(grammar 'delete enrollment abcdef12')"
-assert_json_field "$R1" action revoke_client
-assert_json_field "$R2" action release_client
-assert_json_field "$R3" action purge_enrollment
-pass REVOKE_RELEASE_DELETE_DISTINCT
+# --- REMOVED_ROOT_LIFECYCLE_GRAMMAR ---
+for obsolete in   'revoke client 24cd7856'   'release client 24cd7856'   'delete enrollment abcdef12'; do
+  OUT="$(grammar "$obsolete")"
+  [[ "$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("status",""))' "$OUT")" != "ok" ]]     || fail "obsolete root still executes: $obsolete"
+done
+CANON1="$(grammar 'unset managed-host 24cd7856')"
+CANON2="$(grammar 'unset enrollment abcdef12')"
+assert_json_field "$CANON1" action control_plane
+assert_json_field "$CANON2" action control_plane
+pass REMOVED_ROOT_LIFECYCLE_GRAMMAR
 
 # --- GUIDED_ZERO_TOUCH / GUIDED_ENROLLMENT ---
 ZT="$(grammar 'set enrollment zero-touch')"
@@ -218,7 +219,7 @@ pass GUIDED_ENROLLMENT
 # --- BACKEND_CAPABILITY_PARITY (spot checks) ---
 for line_action in \
   "show managed-hosts:control_plane" \
-  "create backup:create_backup" \
+  "system backup:create_backup" \
   "system update product:update_project" \
   "system update engine:update_frp" \
   "unset group edge:delete_group" \

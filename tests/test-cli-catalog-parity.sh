@@ -358,8 +358,8 @@ for label, block in (("install-server.sh", server_block), ("install-client.sh", 
     for needle in banned:
         if needle in lower:
             raise SystemExit("%s post-install teaches banned form: %r" % (label, needle))
-# Positive sanity: canonical forms remain present.
-for needle in ("set client", "show clients"):
+# Positive sanity: current canonical onboarding/inventory remain present.
+for needle in ("set enrollment zero-touch", "set enrollment manual", "show managed-hosts"):
     if needle not in server_block:
         raise SystemExit("install-server.sh post-install missing canonical %r" % needle)
 if "system info" not in client_block and "show info" not in client_block and "show status" not in client_block:

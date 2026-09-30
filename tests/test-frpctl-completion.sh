@@ -134,11 +134,17 @@ pass "FRPCTL_TAB_CLIENT_ROLE_COMMANDS"
 pass "FRPCTL_TAB_SERVER_COMMAND_NOT_ON_CLIENT"
 
 export FRP_CTL_TEST_ROOT="$CLIENT"
-svc_props="$(cands "set service ssh ")"
-echo "$svc_props" | has_line target-host || fail "set service missing target-host"
-echo "$svc_props" | has_line health-type || fail "set service missing health-type"
-echo "$svc_props" | has_line health-path || fail "set service missing health-path"
-pass "FRPCTL_TAB_SET_SERVICE_HEALTH"
+[[ -z "$(cands "set service ssh ")" ]] || fail "legacy set service still completes"
+set_children="$(cands "set ")"
+echo "$set_children" | has_line remote-service || fail "client set missing remote-service"
+! echo "$set_children" | has_line service || fail "client set still advertises legacy service"
+show_children="$(cands "show ")"
+echo "$show_children" | has_line remote-services || fail "client show missing remote-services"
+! echo "$show_children" | has_line services || fail "client show still advertises legacy services"
+system_children="$(cands "system ")"
+echo "$system_children" | has_line synchronize || fail "client system missing synchronize"
+! echo "$system_children" | has_line services || fail "client system still advertises legacy services"
+pass "FRPCTL_TAB_REMOTE_SERVICE_CANONICAL"
 
 # --- Server role commands
 export FRP_CTL_TEST_ROOT="$SERVER"
@@ -197,29 +203,24 @@ echo "$names" | has_line eeff9988 || fail "second CLIENT ID missing"
 if echo "$names" | has_line oci-e2e-renamed; then fail "label completed as identity"; fi
 if echo "$names" | has_line dp-os-upgrade; then fail "hostname completed as identity"; fi
 if echo "$names" | has_line other-client; then fail "hostname completed as identity"; fi
-[[ "$(cands "set client aa")" == "aabbccdd" ]] || fail "set client aa"
-[[ "$(cands "client aa")" == "aabbccdd" ]] || fail "legacy client aa"
-[[ "$(cands "revoke-client aa")" == "aabbccdd" ]] || fail "legacy revoke names"
-pass "FRPCTL_TAB_CLIENT_NAME"
-pass "FRPCTL_TAB_CLIENT_CANONICAL_NAME"
+[[ "$(cands "set managed-host aa")" == "aabbccdd" ]] || fail "set managed-host aa"
+[[ "$(cands "unset managed-host aa")" == "aabbccdd" ]] || fail "unset managed-host aa"
+[[ -z "$(cands "set client aa")" ]] || fail "legacy set client still completes"
+[[ -z "$(cands "client aa")" ]] || fail "legacy client root still completes"
+[[ -z "$(cands "revoke-client aa")" ]] || fail "legacy revoke-client still completes"
+pass "FRPCTL_TAB_MANAGED_HOST_NAME"
 pass "FRPCTL_TAB_NO_DUPLICATE_CLIENT_IDENTITY"
-pass "CANONICAL_CLIENT_COMPLETION"
+pass "CANONICAL_MANAGED_HOST_COMPLETION"
 
-[[ "$(cands "release service aabbccdd e")" == "e2e-ssh" ]] || fail "service e -> e2e-ssh"
-[[ "$(frpctl_complete_line "release service aabbccdd e")" == "release service aabbccdd e2e-ssh " ]] || fail "service complete line"
-svc="$(cands "release service aabbccdd ")"
-echo "$svc" | has_line e2e-ssh || fail "service list e2e-ssh"
-echo "$svc" | has_line grafana || fail "service list grafana"
-if echo "$svc" | has_line ssh; then fail "other client service leaked"; fi
-pass "FRPCTL_TAB_SERVICE_ID"
+[[ "$(frpctl_complete_line "unset managed-host aa")" == "unset managed-host aabbccdd " ]] || fail "managed-host complete line"
+pass "FRPCTL_TAB_MANAGED_HOST_ID"
 
-[[ -z "$(cands "client nosuch")" ]] || fail "unknown client should not complete"
-[[ -z "$(cands "release-service nosuch e")" ]] || fail "unknown client service complete"
-[[ "$(frpctl_complete_line "client nosuch")" == "client nosuch" ]] || fail "unknown client line"
-pass "FRPCTL_TAB_UNKNOWN_CLIENT_SAFE"
+[[ -z "$(cands "show managed-host nosuch")" ]] || fail "unknown managed host should not complete"
+[[ "$(frpctl_complete_line "show managed-host nosuch")" == "show managed-host nosuch" ]] || fail "unknown managed host line"
+pass "FRPCTL_TAB_UNKNOWN_MANAGED_HOST_SAFE"
 
 # --- Secrets never appear in completion output
-secret_out="$(cands "client "; cands "release-service dp-os-upgrade "; cands "")"
+secret_out="$(cands "show managed-host "; cands "unset managed-host "; cands "")"
 if echo "$secret_out" | grep -q 'SECRET_MAC_KEY_SHOULD_NOT_LEAK'; then
   fail "mac key leaked in completion"
 fi
@@ -233,7 +234,7 @@ if echo "$secret_out" | grep -qiE 'server_token|BEGIN .*PRIVATE KEY'; then
   fail "secret-like material in completion"
 fi
 pass "NO_SECRET_COMPLETION"
-sel_secret="$(cands "show managed-host "; cands "unset managed-host "; cands "revoke client "; cands "release client ")"
+sel_secret="$(cands "show managed-host "; cands "set managed-host "; cands "unset managed-host ")"
 if echo "$sel_secret" | grep -qE 'SECRET_MAC_KEY_SHOULD_NOT_LEAK|SECRET_PUBKEY_SHOULD_NOT_LEAK|OTHER_SECRET_MAC'; then
   fail "selector completion leaked secret"
 fi
@@ -297,13 +298,11 @@ echo "$show_res" | has_line managed-hosts || fail "show resources missing manage
 echo "$show_res" | has_line managed-host || fail "show resources missing managed-host"
 echo "$show_res" | has_line status || fail "show resources missing status"
 if echo "$show_res" | has_line clients; then fail "obsolete show clients still completed"; fi
-set_props="$(cands "set client aabbccdd ")"
-echo "$set_props" | has_line label || fail "set props missing label"
-echo "$set_props" | has_line note || fail "set props missing note"
-echo "$set_props" | has_line tag || fail "set props missing tag"
-if echo "$set_props" | has_line --label; then fail "flag-style set completion"; fi
-unset_props="$(cands "unset client aabbccdd ")"
-echo "$unset_props" | has_line tag || fail "unset props missing tag"
+set_props="$(cands "set managed-host aabbccdd ")"
+echo "$set_props" | has_line group || fail "set managed-host props missing group"
+if echo "$set_props" | has_line label; then fail "retired managed-host label mutation completed"; fi
+unset_props="$(cands "unset managed-host aabbccdd ")"
+echo "$unset_props" | has_line group || fail "unset managed-host props missing group"
 pass "FRPCTL_TAB_RESOURCE"
 pass "FRPCTL_TAB_CONTEXT_AWARE"
 pass "FRPCTL_TAB_TAG_SUPPORT"
@@ -671,7 +670,7 @@ print("TAB_SHOW_CANDIDATES_FIRST_PRESS")
 # --- client IDs on first Tab ---
 os.write(fd, b"\x15")
 read_more(0.2)
-os.write(fd, b"set client ")
+os.write(fd, b"set managed-host ")
 read_more(0.3)
 before = len(buf)
 os.write(fd, b"\t")
@@ -687,23 +686,24 @@ print("TAB_CLIENT_IDS_FIRST_PRESS")
 # --- client properties ---
 os.write(fd, b"\x15")
 read_more(0.2)
-os.write(fd, b"set client aabbccdd ")
+os.write(fd, b"set managed-host aabbccdd ")
 read_more(0.3)
 before = len(buf)
 os.write(fd, b"\t")
 read_more(1.0)
 prop_chunk = bytes(buf[before:])
 vis_prop = visible(prop_chunk)
-for token in (b"label", b"note", b"tag"):
-    if token not in vis_prop:
-        fail_pty("PTY: client property tab missing %s" % token.decode(), prop_chunk)
-# Descriptions are optional; candidate names are the required contract.
-print("TAB_CLIENT_PROPERTIES_FIRST_PRESS")
+if b"group" not in vis_prop:
+    fail_pty("PTY: managed-host property tab missing group", prop_chunk)
+for retired in (b"label", b"note", b"tag"):
+    if retired in vis_prop:
+        fail_pty("PTY: retired managed-host property still completed", prop_chunk)
+print("TAB_MANAGED_HOST_PROPERTIES_FIRST_PRESS")
 
 # --- no secret candidates after tag ---
 os.write(fd, b"\x15")
 read_more(0.2)
-os.write(fd, b"set client aabbccdd tag ")
+os.write(fd, b"set managed-host aabbccdd group ")
 read_more(0.3)
 before = len(buf)
 os.write(fd, b"\t")

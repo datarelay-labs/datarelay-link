@@ -4767,6 +4767,18 @@ frpctl_dispatch() {
   if [[ -n "${_FRP_CTL_CANON:-}" ]]; then
     return "${_FRP_CTL_RC:-1}"
   fi
+  # Greenfield v2.4 exposes only the catalog-defined public roots.  If the
+  # grammar rejected a raw root, never fall through into the historical shell
+  # dispatcher where hidden aliases (status/update/doctor/...) could execute.
+  if [[ -n "$cmd" ]]; then
+    case "$cmd" in
+      -h|--help|show|set|unset|test|system|menu|help|'?'|exit) ;;
+      *)
+        frpctl_unknown_command "$cmd"
+        return $?
+        ;;
+    esac
+  fi
   shift || true
   case "$cmd" in
     -h|--help)

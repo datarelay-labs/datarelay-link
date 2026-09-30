@@ -268,14 +268,15 @@ def main() -> int:
         if bad.lower() in bare_help.lower():
             failures.append("normal help leaked hidden form near %r" % bad.strip())
 
-    unset_q = grammar.context_help(["unset", "client"], "server") or ""
-    for needle in (
-        "unset client <CLIENT> trust",
-        "unset client <CLIENT> service <SERVICE>",
-        "unset client <CLIENT>",
-    ):
-        if needle not in unset_q:
-            failures.append("unset client ? missing %r" % needle)
+    obsolete_q = grammar.match(["unset", "client", "?"], "server")
+    if obsolete_q.get("status") != "error":
+        failures.append("unset client ? did not fail closed: %r" % obsolete_q)
+    elif "managed-host" not in (obsolete_q.get("message") or ""):
+        failures.append("unset client ? missing canonical managed-host guidance")
+
+    managed_q = grammar.match(["unset", "managed-host", "?"], "server")
+    if managed_q.get("status") != "ok" or managed_q.get("action") != "context_help":
+        failures.append("unset managed-host ? contextual help failed: %r" % managed_q)
 
     upd_q = grammar.context_help(["system", "update"], "server") or ""
     for needle in ("product", "engine", "check-engine"):
@@ -295,11 +296,20 @@ def main() -> int:
         [],
         trailing=True,
     )
-    if "ssh" in after_client:
-        failures.append("ambiguous Tab service id still offered: %r" % after_client)
-    for need in ("trust", "service"):
-        if need not in after_client:
-            failures.append("Tab after unset client <ID> missing %r in %r" % (need, after_client))
+    if after_client:
+        failures.append("obsolete unset client still completes: %r" % after_client)
+
+    after_host = grammar.completion_candidates(
+        "unset managed-host 24cd7856 ",
+        "server",
+        ["24cd7856"],
+        {"24cd7856": ["ssh"]},
+        [],
+        trailing=True,
+        groups=["edge"],
+    )
+    if "group" not in after_host:
+        failures.append("canonical unset managed-host <ID> missing group in %r" % after_host)
 
     update_tab = grammar.completion_candidates(
         "system update ", "server", [], {}, [], trailing=True

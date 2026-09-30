@@ -986,32 +986,11 @@ def _rw_disable_service(rest):
     return ["unset", "service", rest[0], "enabled"] + list(rest[1:])
 
 
-REWRITES = {
-    ("client", "release"): _rw_client_release,
-    ("enrollment", "purge"): _rw_enrollment_purge,
-    ("group", "add-client"): _rw_group_member("add"),
-    ("group", "remove-client"): _rw_group_member("remove"),
-    ("group", "add-member"): _rw_group_member("add"),
-    ("group", "remove-member"): _rw_group_member("remove"),
-    ("server", "set"): _rw_server_set,
-    ("server", "unset"): _rw_server_unset,
-    ("egress", "set"): _rw_egress_set,
-    ("egress", "add-destination"): _rw_egress_add_destination,
-    ("egress", "add-source"): _rw_egress_add_source,
-    ("egress", "remove-destination"): _rw_egress_remove("destination"),
-    ("egress", "remove-source"): _rw_egress_remove("source"),
-    ("access", "remove-expired"): _rw_access_remove_expired,
-    ("remove", "access-expired"): _rw_access_remove_expired,
-    ("enable", "service"): _rw_enable_service,
-    ("service", "enable"): _rw_enable_service,
-    ("disable", "service"): _rw_disable_service,
-    ("service", "disable"): _rw_disable_service,
-}
-
-# Roots that also exist as historical flat commands. A bare root token (or a
-# root followed by something that is not a canonical action) keeps the old
-# meaning so scripts do not change behavior.
-AMBIGUOUS_ROOTS = ("client", "backup", "restore", "profile", "access", "egress")
+# v2.4 is an unreleased greenfield public CLI. Resource-first and flat
+# compatibility spellings are intentionally not rewritten into canonical
+# action-first commands.
+REWRITES = {}
+AMBIGUOUS_ROOTS = ()
 
 
 def canonical_actions(root):

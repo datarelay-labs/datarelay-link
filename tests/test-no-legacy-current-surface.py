@@ -34,7 +34,6 @@ FORBIDDEN_DOC_PATTERNS = [
     r"(?i)^\s*set service-profile\s*$",
     r"(?i)^\s*set internet-profile\s*$",
     r"(?i)^\s*set acl\b",
-    r"(?i)compatibility aliases",
 ]
 
 FORBIDDEN_E2E_PATTERNS = [
@@ -219,12 +218,30 @@ class LegacyReintroductionGate(unittest.TestCase):
                 "expected rejection for %s, got %s" % (tokens, result),
             )
 
+    def test_grammar_rejects_noncanonical_root_commands(self):
+        samples = [
+            ["create"], ["revoke"], ["purge"], ["release"], ["update"],
+            ["restore"], ["add"], ["remove"], ["delete"], ["rename"],
+            ["enable"], ["disable"], ["apply"], ["discard"], ["sync"],
+            ["doctor"], ["support-bundle"], ["pause"], ["resume"], ["restart"],
+            ["autostart"], ["uninstall"], ["access"], ["egress"], ["history"],
+            ["clear"], ["quit"], ["q"], ["status"], ["server-status"], ["version"],
+            ["explain"], ["export"], ["import"], ["diff"],
+        ]
+        for tokens in samples:
+            result = grammar.match(tokens, role="server")
+            self.assertNotEqual(
+                result.get("status"),
+                "ok",
+                "noncanonical root still executes: %s -> %s" % (tokens, result),
+            )
+
     def test_canonical_control_plane_still_routes(self):
         for tokens in (
             ["show", "remote-access"],
             ["set", "internet-access", "allow-api"],
-            ["show", "published-services"],
-            ["set", "fixed-tcp", "pin"],
+            ["show", "managed-hosts"],
+            ["set", "service-object", "pin", "type", "fixed-tcp", "port", "1521"],
         ):
             result = grammar.match(tokens, role="server")
             self.assertEqual(result.get("status"), "ok", tokens)
@@ -255,6 +272,9 @@ class LegacyReintroductionGate(unittest.TestCase):
     def test_final_commands_json_parity(self):
         rows = json.loads((ROOT / "lib" / "frp_cli_final_commands.json").read_text())
         self.assertEqual(len(rows), len(catalog.COMMANDS))
+        self.assertEqual(sum(len(row.get("aliases") or []) for row in rows), 0)
+        self.assertEqual([row["path"] for row in rows if row.get("hidden")], [])
+        self.assertEqual(catalog.REWRITES, {})
         for row in rows:
             self.assertNotEqual(row.get("surface"), "hidden_compat")
             self.assertNotIn(row["path"][0], ("access", "egress"))

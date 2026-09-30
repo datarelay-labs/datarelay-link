@@ -182,18 +182,44 @@ _OBSOLETE_RESOURCES = frozenset(
         "internet-template",
         "egress-recipes",
         "egress-recipe",
+        "objects",
+        "object",
+        "object-groups",
+        "object-group",
+        "managed-endpoints",
+        "managed-endpoint",
+        "published-services",
+        "published-service",
+        "service-presets",
+        "service-preset",
+        "client-groups",
+        "client-group",
+        "ai-principals",
+        "ai-principal",
+        "ai-activity",
+        "fixed-tcp",
+        "access-log",
     }
 )
 _OBSOLETE_POINTERS = {
-    "access": "Use show/set/unset/test remote-access and Objects instead.",
-    "egress": "Use show/set/unset/test internet-access and set fixed-tcp instead.",
-    "acl": "Use remote-access ordered rules with Objects instead.",
-    "service-profile": "Use published-service and service-preset instead.",
-    "internet-profile": "Use internet-access ordered rules with Objects instead.",
-    "internet-destination": "Use set internet-access … with Objects instead.",
-    "egress-destination": "Use set internet-access … with Objects instead.",
-    "egress-source": "Use set internet-access … with Objects instead.",
-    "profile": "Use published-service / service-preset / internet-access instead.",
+    "access": "Use show/set/unset/test remote-access and Network/Service Objects instead.",
+    "egress": "Use show/set/unset/test internet-access and Service Objects (type fixed-tcp when needed).",
+    "acl": "Use remote-access rules with Network/Service Objects instead.",
+    "service-profile": "Use Service Objects and Agent Remote Services instead.",
+    "internet-profile": "Use internet-access rules with Network/Service Objects instead.",
+    "internet-destination": "Use set internet-access … with Network/Service Objects instead.",
+    "egress-destination": "Use set internet-access … with Network/Service Objects instead.",
+    "egress-source": "Use set internet-access … with Network/Service Objects instead.",
+    "profile": "Use Service Objects, Remote Services, or internet-access as appropriate.",
+    "object": "Use Network/Service/Permission Objects and Groups instead.",
+    "managed-endpoint": "Use managed-host / managed-hosts instead.",
+    "published-service": "Use Agent remote-service / remote-services instead.",
+    "service-preset": "Use Service Objects instead.",
+    "client-group": "Use Managed Host group commands instead.",
+    "ai-principal": "Use ai-identity / ai-identities instead.",
+    "ai-activity": "Use ai-access-log instead.",
+    "fixed-tcp": "Use a Service Object with type fixed-tcp.",
+    "access-log": "Use system audit and current Remote Access inspection instead.",
     "legacy": "Use help commands for the current grammar.",
 }
 
@@ -252,6 +278,34 @@ def reject_obsolete_surface(tokens):
                 "Use unset managed-host <HOST> instead."
             ),
         }
+    if len(raw) >= 2 and raw[1] in ("service", "services"):
+        if verb in ("show", "set", "unset", "add", "remove", "enable", "disable"):
+            return {
+                "status": "error",
+                "exit_code": 2,
+                "message": (
+                    "Legacy local-service commands are not part of the v2.4 Agent grammar.\n"
+                    "Use show/set/unset remote-service on the Agent and system synchronize when reconciliation is needed."
+                ),
+            }
+        if verb == "system" and raw[1] == "services":
+            return {
+                "status": "error",
+                "exit_code": 2,
+                "message": (
+                    "Legacy 'system services ...' commands are not part of the v2.4 Agent grammar.\n"
+                    "Use set/unset remote-service and system synchronize."
+                ),
+            }
+    if len(raw) >= 2 and raw[1] == "internet" and verb in ("show", "test"):
+        return {
+            "status": "error",
+            "exit_code": 2,
+            "message": (
+                "Legacy Internet command is not part of the current Data Relay Link grammar.\n"
+                "Use show internet-access or test internet-access source <SOURCE> destination <DESTINATION> service <SERVICE>."
+            ),
+        }
     if verb in ("show", "set", "unset", "test", "create", "add", "remove", "enable", "disable", "delete", "system") and len(raw) >= 2:
         resource = raw[1]
         # system export/import/diff internet-profile
@@ -265,6 +319,15 @@ def reject_obsolete_surface(tokens):
                 "egress-destination",
                 "egress-source",
                 "internet-destination",
+                "managed-endpoint",
+                "published-service",
+                "service-preset",
+                "client-group",
+                "ai-principal",
+                "ai-activity",
+                "fixed-tcp",
+                "access-log",
+                "object",
                 "acl",
                 "access",
                 "egress",
@@ -1944,7 +2007,14 @@ def match(tokens, role, names=None, clients=None):
     if list(tokens) in (["--help"], ["-h"]):
         return {"status": "unknown", "command": tokens[0]}
     if tokens[-1] == "?":
-        focus = CATALOG.resolve_tokens(tokens[:-1], role=role)
+        raw_focus = [str(t) for t in tokens[:-1]]
+        rejected = reject_obsolete_surface(raw_focus)
+        if rejected is not None:
+            return rejected
+        focus = CATALOG.resolve_tokens(raw_focus, role=role)
+        rejected = reject_obsolete_surface(focus)
+        if rejected is not None:
+            return rejected
         return {
             "status": "ok",
             "action": "context_help",
@@ -1999,30 +2069,14 @@ def match(tokens, role, names=None, clients=None):
     # Reject shell-like tokens only when they are not catalog-resolved commands.
     if (not rewritten) and verb in SHELL_REJECT:
         return {"status": "shell"}
-    # Hidden resource-first bare roots must discover, never mutate.
-    if not rewritten and list(tokens) == ["backup"]:
-        return incomplete(
-            "Missing action.",
-            ["create backup [path]", "restore backup <path>"],
-            available=["create", "restore"],
-        )
-    # Resource-first client root: unknown actions must not fall through as a
-    # client-id shortcut (e.g. "client release-service").
-    if (
-        not rewritten
-        and verb == "client"
-        and len(tokens) >= 2
-        and not _client_legacy_selector(tokens, names=names)
-    ):
-        actions = sorted(set(CATALOG.canonical_actions("client")) | set(_CLIENT_ACTION_LIKE))
-        return incomplete(
-            "Unknown action.",
-            ["client <ID>", "show client <ID>", "revoke client <ID>", "release client <ID>"],
-            available=actions[:12] or None,
-            tip="Use action-first commands such as show client / revoke client / release client.",
-        )
-    if not rewritten and verb in LEGACY_COMMANDS:
-        return {"status": "legacy"}
+    # The public v2.4 surface is catalog-defined and action-first. Internal
+    # dispatcher verbs remain valid only after a canonical catalog command has
+    # resolved to them above; flat/resource-first compatibility roots are not
+    # executable or discoverable.
+    if not rewritten and verb not in {
+        "show", "set", "unset", "test", "system", "menu", "help", "exit", "?"
+    }:
+        return {"status": "unknown", "command": verb}
     client, server = _role_parts(role)
     handlers = {
         "show": _match_show,
@@ -3973,6 +4027,8 @@ def completion_candidates(
     if tokens[0] in SHELL_REJECT:
         return []
     verb = tokens[0]
+    if verb not in canonical_verbs(role):
+        return []
     filled = tokens if trailing else tokens[:-1]
     hit = _catalog_candidates(
         filled,
@@ -4445,16 +4501,10 @@ def _canonical_completion(
     if catalog_hit is not None:
         return catalog_hit
     verb = filled[0]
+    if verb not in canonical_verbs(role):
+        return []
     if verb == "help":
-        topics = list(canonical_verbs(role)) + [
-            "clients",
-            "services",
-            "internet",
-            "system",
-            "workflows",
-            "commands",
-            "legacy",
-        ]
+        topics = list(canonical_verbs(role)) + ["workflows", "commands"]
         if len(filled) == 1:
             return _filter(topics, prefix)
         if filled[1] == "show" and len(filled) == 2:
@@ -4465,22 +4515,12 @@ def _canonical_completion(
     if verb == "show":
         if len(filled) == 1:
             return _filter(_show_resources(role), prefix)
-        if filled[1] == "client" and server:
-            if len(filled) == 2:
-                return _filter(names, prefix)
-            if len(filled) == 3:
-                return _filter(["services", "tags", "groups"], prefix)
         if filled[1] == "group" and server and len(filled) == 2:
             return _filter(groups, prefix)
         return []
     if verb == "set":
         if len(filled) == 1:
             return _filter(_set_resources(role), prefix)
-        if filled[1] == "client" and server:
-            if len(filled) == 2:
-                return _filter(names, prefix)
-            if len(filled) == 3:
-                return _filter(["label", "note", "tag", "group"], prefix)
         if filled[1] == "group" and server:
             if len(filled) == 2:
                 return _filter(groups, prefix)
@@ -4489,24 +4529,6 @@ def _canonical_completion(
         if filled[1] == "server" and server:
             if len(filled) == 2:
                 return _filter(["public-hostname", "bootstrap-hostname"], prefix)
-        if filled[1] == "service" and client:
-            if len(filled) == 2:
-                return _filter(local_services, prefix)
-            if len(filled) == 3:
-                return _filter(
-                    [
-                        "target-host",
-                        "target-port",
-                        "ssh-user",
-                        "name",
-                        "health-type",
-                        "health-timeout",
-                        "health-interval",
-                        "health-max-failed",
-                        "health-path",
-                    ],
-                    prefix,
-                )
         return []
     if verb == "unset":
         if len(filled) == 1:
@@ -4514,18 +4536,6 @@ def _canonical_completion(
         if filled[1] == "server" and server:
             if len(filled) == 2:
                 return _filter(["public-hostname", "bootstrap-hostname"], prefix)
-        if filled[1] == "client":
-            if len(filled) == 2:
-                return _filter(names, prefix)
-            if len(filled) == 3:
-                return _filter(
-                    ["trust", "service", "group", "label", "note", "tag"],
-                    prefix,
-                )
-            if len(filled) == 4 and filled[3] == "service":
-                return _filter((services or {}).get(filled[2], []), prefix)
-            if len(filled) == 4 and filled[3] == "group":
-                return _filter(groups or [], prefix)
         return []
     if verb == "create":
         if len(filled) == 1:

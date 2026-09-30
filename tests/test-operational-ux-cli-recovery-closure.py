@@ -43,19 +43,23 @@ class OperationalUxClosureTests(unittest.TestCase):
         self.assertEqual(result.get("status"), "error")
         self.assertNotIn(result.get("action"), ("access_cmd", "set_access_public", "access_public"))
 
-    def test_client_service_edit_public_cli(self):
+    def test_legacy_agent_service_and_internet_surfaces_rejected(self):
         cases = [
-            (["set", "service", "ssh", "target-port", "2222"], "set_service"),
-            (["set", "service", "ssh", "target-host", "127.0.0.1"], "set_service"),
-            (["set", "service", "ssh", "enabled"], "enable_service"),
-            (["unset", "service", "ssh", "enabled"], "disable_service"),
+            ("client", ["show", "services"], "remote-service"),
+            ("client", ["set", "service", "ssh", "target-port", "2222"], "remote-service"),
+            ("client", ["unset", "service", "ssh", "enabled"], "remote-service"),
+            ("client", ["system", "services", "apply"], "remote-service"),
+            ("client", ["system", "services", "discard"], "remote-service"),
+            ("client", ["system", "services", "sync"], "remote-service"),
+            ("server", ["show", "internet"], "internet-access"),
+            ("server", ["test", "internet", "10.0.0.5", "api.example.com", "443"], "internet-access"),
         ]
-        for tokens, action in cases:
+        for role, tokens, replacement in cases:
             with self.subTest(tokens=tokens):
-                self.assertIsNone(CATALOG.strict_error(tokens))
-                result = _match(tokens, "client")
-                self.assertEqual(result.get("status"), "ok", result)
-                self.assertEqual(result.get("action"), action, result)
+                self.assertIsNone(CATALOG.find(tokens, role=role))
+                result = _match(tokens, role)
+                self.assertEqual(result.get("status"), "error", result)
+                self.assertIn(replacement, result.get("message") or "")
 
     def test_service_profile_edit_public_cli_rejected(self):
         tokens = ["set", "service-profile", "office-ssh", "target-port", "22"]
@@ -106,17 +110,15 @@ class OperationalUxClosureTests(unittest.TestCase):
         self.assertEqual(failures, [], failures[:12])
 
     def test_parent_command_discovery_not_unknown(self):
-        cases = [
-            (["system", "update"], "server"),
-            (["system", "services"], "client"),
-        ]
-        for tokens, role in cases:
-            with self.subTest(tokens=tokens):
-                result = _match(tokens, role)
-                self.assertEqual(result.get("status"), "incomplete", result)
-                msg = result.get("message") or ""
-                self.assertNotIn("Unknown system operation", msg)
-                self.assertIn("Available:", msg)
+        result = _match(["system", "update"], "server")
+        self.assertEqual(result.get("status"), "incomplete", result)
+        msg = result.get("message") or ""
+        self.assertNotIn("Unknown system operation", msg)
+        self.assertIn("Available:", msg)
+
+        legacy = _match(["system", "services"], "client")
+        self.assertEqual(legacy.get("status"), "error", legacy)
+        self.assertIn("remote-service", legacy.get("message") or "")
 
     def test_obsolete_system_export_import_rejected(self):
         # Current parent is ConfigurationBundle export discovery, not a
@@ -140,20 +142,18 @@ class OperationalUxClosureTests(unittest.TestCase):
                 )
                 self.assertNotEqual(result.get("action"), "control_plane")
 
-    def test_system_status_canonical_and_alias(self):
+    def test_system_status_canonical_only(self):
         canonical = _match(["system", "status"], "server")
         self.assertEqual(canonical.get("status"), "ok")
         self.assertEqual(canonical.get("action"), "show_server_status")
         alias = _match(["system", "server-status"], "server")
-        self.assertEqual(alias.get("status"), "ok")
-        self.assertEqual(alias.get("action"), "show_server_status")
+        self.assertNotEqual(alias.get("status"), "ok")
         summary = _match(["show", "status"], "server")
         self.assertEqual(summary.get("status"), "ok")
         self.assertEqual(summary.get("action"), "control_plane")
         self.assertNotEqual(summary.get("action"), "show_server_status")
         bare = _match(["status"], "server")
-        self.assertEqual(bare.get("action"), "control_plane")
-        self.assertNotEqual(bare.get("action"), "show_server_status")
+        self.assertNotEqual(bare.get("status"), "ok")
         client = _match(["system", "status"], "client")
         self.assertEqual(client.get("status"), "role")
         self.assertNotEqual(client.get("action"), "show_server_status")
@@ -194,12 +194,12 @@ class OperationalUxClosureTests(unittest.TestCase):
         self.assertTrue(any("Windows" in str(label) for label in labels), labels)
         self.assertIn("set_windows_installer_url", targets)
 
-    def test_menu_service_workflows_use_canonical_grammar(self):
-        # Guided edit/enable/disable must resolve through final public grammar.
+    def test_remote_service_workflows_use_canonical_grammar(self):
         for tokens in (
-            ["set", "service", "ssh", "target-port", "2222"],
-            ["set", "service", "ssh", "enabled"],
-            ["unset", "service", "ssh", "enabled"],
+            ["show", "remote-services"],
+            ["set", "remote-service", "ssh-access", "destination", "this-host", "service", "ssh", "enabled"],
+            ["unset", "remote-service", "ssh-access"],
+            ["system", "synchronize"],
         ):
             result = _match(tokens, "client")
             self.assertEqual(result.get("status"), "ok", result)
@@ -242,11 +242,14 @@ class OperationalUxClosureTests(unittest.TestCase):
         client = (ROOT / "tools" / "frp-client").read_text(encoding="utf-8")
         self.assertIn("frp_state_has_no_diff", client)
 
-    def test_pending_service_changes_discoverable_in_status_code(self):
-        text = (ROOT / "tools" / "frp-client").read_text(encoding="utf-8")
-        self.assertIn("Pending service changes : YES", text)
-        self.assertIn("system services apply", text)
-        self.assertIn("system services discard", text)
+    def test_legacy_pending_service_commands_not_public(self):
+        for tokens in (
+            ["system", "services", "apply"],
+            ["system", "services", "discard"],
+            ["system", "services", "sync"],
+        ):
+            self.assertIsNone(CATALOG.find(tokens, role="client"))
+        self.assertIsNotNone(CATALOG.find(["system", "synchronize"], role="client"))
 
     def test_menu_command_targets_resolve(self):
         # Every guided command target must exist in final public grammar.
