@@ -75,10 +75,9 @@ class ManualConsentBrowserTests(unittest.TestCase):
         os.environ["DRLINK_CONFIRM"] = "yes"
         os.environ.pop("DRLINK_OAUTH_AUTO_APPROVE", None)
         self.plane = ControlPlane(self.tmp)
-        dispatch(["set", "ai-principal", "agent-a"], root=self.tmp)
-        dispatch(["set", "ai-principal", "agent-a", "enabled"], root=self.tmp)
+        self.plane.set_ai_principal("agent-a", enabled=True)
         dispatch(
-            ["system", "credential", "configure", "ai-principal", "agent-a", "authentication", "oauth"],
+            ["system", "credential", "configure", "ai-identity", "agent-a", "authentication", "oauth"],
             root=self.tmp,
         )
         dispatch(
@@ -86,7 +85,7 @@ class ManualConsentBrowserTests(unittest.TestCase):
                 "system",
                 "credential",
                 "configure",
-                "ai-principal",
+                "ai-identity",
                 "agent-a",
                 "oauth-redirect",
                 "http://127.0.0.1/callback",
@@ -521,9 +520,8 @@ class ManualConsentBrowserTests(unittest.TestCase):
         return match(tokens, "server")
 
     def test_dcr_unbound_public_cli_identity_approval(self):
-        dispatch(["set", "ai-principal", "agent-dcr"], root=self.tmp)
-        dispatch(["set", "ai-principal", "agent-dcr", "enabled"], root=self.tmp)
-        dispatch(["set", "ai-principal", "agent-off"], root=self.tmp)
+        self.plane.set_ai_principal("agent-dcr", enabled=True)
+        self.plane.set_ai_principal("agent-off", enabled=False)
         reg = json.loads(
             urllib.request.urlopen(
                 urllib.request.Request(
