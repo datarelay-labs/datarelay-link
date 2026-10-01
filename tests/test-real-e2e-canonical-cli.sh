@@ -66,6 +66,11 @@ grep -q 'run_client_confirm_yes.*unset remote-service' "$E2E" \
   || fail "Real E2E Remote Service deletion does not use TTY confirmation"
 grep -q 'ssh -tt' "$E2E" \
   || fail "Real E2E TTY confirmation helper does not force a remote PTY"
+if grep -Fq "printf 'y\\n' | run_timed" "$E2E"; then
+  fail "Real E2E TTY helper pipes stateful run_timed into a subshell"
+fi
+grep -q "run_timed .*<<< 'y'" "$E2E" \
+  || fail "Real E2E TTY helper does not feed confirmation without a pipeline subshell"
 if grep -nE 'run_client[[:space:]].*unset remote-service' "$E2E" >/dev/null; then
   grep -nE 'run_client[[:space:]].*unset remote-service' "$E2E" >&2 || true
   fail "Real E2E still deletes Remote Services through a non-TTY client call"

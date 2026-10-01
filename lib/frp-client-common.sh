@@ -6096,7 +6096,52 @@ frp_client_server_local_update_origin() {
   local state allocator_url origin ca
   state="$(frp_client_state_path)"
   [[ -f "$state" ]] || return 1
-  allocator_url="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1],encoding="utf-8")).get("allocator_url") or "")' "$state" 2>/dev/null || true)"
+  # Product update must resolve its download origin before apply-time state
+  # migration runs. Treat only explicit WSS transport as single-443 evidence;
+  # Direct/TCP on port 443 is intentionally ambiguous and remains unchanged.
+  # This is read-only so "system update product --check" never mutates state.
+  allocator_url="$(python3 - "$state" <<'PY' 2>/dev/null || true
+import json
+import sys
+from urllib.parse import urlparse, urlunparse
+
+try:
+    data = json.load(open(sys.argv[1], encoding="utf-8"))
+except Exception:
+    raise SystemExit(0)
+
+url = str(data.get("allocator_url") or "").strip()
+transport = str(data.get("frp_transport") or "").strip().lower()
+try:
+    public_port = int(data.get("frp_server_port"))
+except (TypeError, ValueError):
+    public_port = 0
+
+parsed = urlparse(url)
+try:
+    current_port = parsed.port
+except ValueError:
+    current_port = None
+
+if (
+    transport == "wss"
+    and parsed.scheme.lower() == "https"
+    and parsed.hostname
+    and current_port == 6099
+    and 1 <= public_port <= 65535
+    and public_port != 6099
+):
+    host = parsed.hostname
+    if ":" in host:
+        host = "[%s]" % host
+    netloc = host if public_port == 443 else "%s:%s" % (host, public_port)
+    url = urlunparse(
+        (parsed.scheme, netloc, parsed.path, parsed.params, parsed.query, parsed.fragment)
+    )
+
+print(url)
+PY
+)"
   [[ -n "$allocator_url" ]] || return 1
   origin="$(frp_allocator_origin_url "$allocator_url" 2>/dev/null)" || return 1
   ca="$(frp_allocator_ca_path)"

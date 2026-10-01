@@ -1290,9 +1290,9 @@ class ControlPlane:
                     "FROM remote_service_meta m "
                     "JOIN published_services s ON s.id = m.service_id "
                     "JOIN clients c ON c.id = s.client_id "
-                    "WHERE m.destination_client_id = ? AND IFNULL(s.released, 0) = 0 "
-                    "ORDER BY s.name",
-                    (bound_cid,),
+                    "WHERE m.destination_client_id = ? AND s.client_id != ? "
+                    "AND IFNULL(s.released, 0) = 0 ORDER BY s.name",
+                    (bound_cid, bound_cid),
                 ):
                     owner = row["owner_label"] or row["owner_hostname"] or row["owner_id"][:8]
                     refs.append(

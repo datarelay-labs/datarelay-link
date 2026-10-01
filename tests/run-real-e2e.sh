@@ -270,7 +270,10 @@ run_client() {
 
 run_client_confirm_yes() {
   local name="$1"; shift
-  printf 'y\n' | run_timed "$name" "$OUT_DIR/${name}.log" ssh -tt "${SSH_OPTS[@]}" "$CLIENT_ALIAS" "$@"
+  # Keep run_timed in the parent shell so PASS/FAIL counters remain authoritative
+  # when STOP_ON_FAIL=0. Feed confirmation through stdin rather than piping the
+  # stateful accounting function into a Bash subshell.
+  run_timed "$name" "$OUT_DIR/${name}.log" ssh -tt "${SSH_OPTS[@]}" "$CLIENT_ALIAS" "$@" <<< 'y'
 }
 
 wait_host() {
