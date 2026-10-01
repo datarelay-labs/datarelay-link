@@ -29,6 +29,21 @@ assert p["StandardOutPath"] == state+"/logs/frpc.out.log"
 assert "@" not in repr(p)
 PY
 
+lifecycle_out="$TMP/lifecycle.plist"
+frp_macos_render_lifecycle_plist "$lifecycle_out"
+python3 - "$lifecycle_out" "$TMP/root$TMP/state" <<'PY'
+import plistlib, sys
+with open(sys.argv[1], "rb") as f: p = plistlib.load(f)
+state = sys.argv[2]
+assert p["Label"] == "com.datarelay.drlink.lifecycle"
+assert p["ProgramArguments"] == [
+    "/usr/bin/python3", state + "/lib/drlink_agent_lifecycle.py", "worker"
+]
+assert p["RunAtLoad"] is True
+assert p["KeepAlive"]["NetworkState"] is True
+assert "@" not in repr(p)
+PY
+
 # Wrapper itself must invalidate the live macOS Agent DB, then exec argv.
 # Prove wrapper-driven root=None resolution (FRP_MACOS_STATE_ROOT), not a
 # separate helper-only call + argv-only exec.
@@ -123,6 +138,40 @@ echo "MACOS_BOOT_WRAPPER_INVALIDATE=PASS"
 
 # Packaging destinations must ship the wrapper explicitly.
 . "$ROOT/lib/frp-client-common.sh"
-frp_client_upgrade_destinations | grep -qx 'usr/local/lib/drlink/drlink-frpc-launch:0755:client/drlink-frpc-launch'
+destinations="$(frp_client_upgrade_destinations)"
+grep -qx 'usr/local/lib/drlink/drlink-frpc-launch:0755:client/drlink-frpc-launch' <<<"$destinations"
+grep -qx 'usr/local/lib/drlink/com.datarelay.drlink.lifecycle.plist:0644:client/com.datarelay.drlink.lifecycle.plist' <<<"$destinations"
+
+# Same-version upgrade must detect a missing active lifecycle LaunchDaemon.
+active_lifecycle="$(frp_client_path /etc/systemd/system/drlink-lifecycle.service)"
+rm -f "$active_lifecycle"
+frp_client_macos_lifecycle_needs_converge || {
+  echo "ERROR: missing lifecycle LaunchDaemon was not detected" >&2; exit 1;
+}
+frp_client_install_lifecycle_unit "$ROOT"
+[[ -f "$active_lifecycle" ]] || { echo "ERROR: lifecycle LaunchDaemon not installed" >&2; exit 1; }
+if frp_client_macos_lifecycle_needs_converge; then
+  echo "ERROR: installed lifecycle LaunchDaemon still reports drift" >&2; exit 1
+fi
+
+# Upgrade rollback restores the exact prior active plist, or removes a newly
+# introduced plist when the pre-update state was absent.
+backup1="$TMP/backup-present"; mkdir -p "$backup1"
+printf '%s\n' 'prior-lifecycle-plist' >"$active_lifecycle"
+frp_client_capture_ai_agent_service_state "$backup1"
+printf '%s\n' 'new-lifecycle-plist' >"$active_lifecycle"
+frp_client_restore_ai_agent_service_state "$backup1"
+grep -qx 'prior-lifecycle-plist' "$active_lifecycle" || {
+  echo "ERROR: lifecycle rollback did not restore prior plist" >&2; exit 1;
+}
+backup2="$TMP/backup-absent"; mkdir -p "$backup2"
+rm -f "$active_lifecycle"
+frp_client_capture_ai_agent_service_state "$backup2"
+frp_client_install_lifecycle_unit "$ROOT"
+frp_client_restore_ai_agent_service_state "$backup2"
+[[ ! -e "$active_lifecycle" ]] || {
+  echo "ERROR: lifecycle rollback did not restore absent state" >&2; exit 1;
+}
+echo "MACOS_LIFECYCLE_UPDATE_ROLLBACK=PASS"
 
 echo "MACOS_LAUNCHD_PLIST_TEST=PASS"

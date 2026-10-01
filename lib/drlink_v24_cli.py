@@ -354,7 +354,8 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
     if res in ("managed-hosts",):
         _require_server(plane, "Managed Hosts")
         rows = plane.conn.execute(
-            "SELECT id, label, hostname, status, connected, trust_status, last_seen "
+            "SELECT id, label, hostname, status, connected, trust_status, last_seen, "
+            "agent_heartbeat_at, agent_lifecycle_state "
             "FROM clients ORDER BY COALESCE(label, hostname, id)"
         ).fetchall()
         if not rows:

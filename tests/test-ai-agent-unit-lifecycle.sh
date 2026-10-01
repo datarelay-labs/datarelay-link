@@ -97,10 +97,14 @@ INSTALL="$WORKDIR/install-root"
   frp_client_converge_ai_agent_unit "$ROOT"
 )
 [[ -f "$INSTALL/etc/systemd/system/drlink-ai-agent.service" ]] || fail "install did not write unit"
+[[ -f "$INSTALL/etc/systemd/system/drlink-lifecycle.service" ]] || fail "install did not write lifecycle unit"
 grep -q 'drlink_ai_agent.py' "$INSTALL/etc/systemd/system/drlink-ai-agent.service" || fail "install unit exec"
+grep -q 'drlink_agent_lifecycle.py worker' "$INSTALL/etc/systemd/system/drlink-lifecycle.service" || fail "lifecycle unit exec"
 grep -qx 'daemon-reload' "$LOG" || fail "install daemon-reload"
 grep -qx 'enable drlink-ai-agent' "$LOG" || fail "install enable"
 grep -qx 'restart drlink-ai-agent' "$LOG" || fail "install restart"
+grep -qx 'enable drlink-lifecycle' "$LOG" || fail "lifecycle enable"
+grep -qx 'restart drlink-lifecycle' "$LOG" || fail "lifecycle restart"
 if grep -q 'drlink-client' "$LOG"; then fail "install restarted frpc via AI converge"; fi
 pass "INSTALL_ENABLES_AND_RESTARTS_AI_AGENT"
 
@@ -124,13 +128,18 @@ grep -q 'frpc restarted  : YES' "$WORKDIR/update.out" || fail "missing client un
 grep -q 'AI agent service : converged' "$WORKDIR/update.out" || fail "update converge line"
 [[ -f "$TREE/etc/systemd/system/drlink-ai-agent.service" ]] || fail "update did not install AI unit"
 [[ -f "$TREE/etc/systemd/system/drlink-client.service" ]] || fail "update did not install client unit"
+[[ -f "$TREE/etc/systemd/system/drlink-lifecycle.service" ]] || fail "update did not install lifecycle unit"
 cmp -s "$ROOT/client/drlink-ai-agent.service" "$TREE/etc/systemd/system/drlink-ai-agent.service" \
   || fail "update AI unit is not the canonical source file"
 cmp -s "$ROOT/client/drlink-client.service" "$TREE/etc/systemd/system/drlink-client.service" \
   || fail "update client unit is not the canonical source file"
+cmp -s "$ROOT/client/drlink-lifecycle.service" "$TREE/etc/systemd/system/drlink-lifecycle.service" \
+  || fail "update lifecycle unit is not the canonical source file"
 grep -qx 'daemon-reload' "$LOG" || fail "update daemon-reload"
 grep -qx 'enable drlink-ai-agent' "$LOG" || fail "update AI enable"
 grep -qx 'restart drlink-ai-agent' "$LOG" || fail "update AI restart"
+grep -qx 'enable drlink-lifecycle' "$LOG" || fail "update lifecycle enable"
+grep -qx 'restart drlink-lifecycle' "$LOG" || fail "update lifecycle restart"
 grep -qx 'enable drlink-client' "$LOG" || fail "update client enable"
 grep -qx 'restart drlink-client' "$LOG" || fail "update client restart"
 STATE_AFTER="$(python3 - "$TREE/etc/frp/client-state.json" <<'PY'
@@ -149,6 +158,8 @@ pass "PRODUCT_UPDATE_CONVERGES_MISSING_LINUX_UNITS"
   grep -qx 'etc/systemd/system/drlink-ai-agent.service:0644:client/drlink-ai-agent.service' \
     <<<"$destinations"
   grep -qx 'etc/systemd/system/drlink-client.service:0644:client/drlink-client.service' \
+    <<<"$destinations"
+  grep -qx 'etc/systemd/system/drlink-lifecycle.service:0644:client/drlink-lifecycle.service' \
     <<<"$destinations"
 ) || fail "Linux units missing from upgrade destinations"
 pass "UPGRADE_DESTINATIONS_INCLUDE_LINUX_UNITS"

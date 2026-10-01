@@ -4513,7 +4513,8 @@ frp_client_stop() {
 frp_client_install_lifecycle_unit() {
   local source="${1:-}" dest src
   if declare -F frp_is_darwin >/dev/null 2>&1 && frp_is_darwin; then
-    return 0
+    frp_macos_lifecycle_install
+    return $?
   fi
   dest="$(frp_client_path /etc/systemd/system/drlink-lifecycle.service)"
   mkdir -p "$(dirname "$dest")"
@@ -4647,6 +4648,29 @@ frp_client_ai_agent_unit_needs_converge() {
   return 1
 }
 
+frp_client_lifecycle_unit_needs_converge() {
+  local source="${1:-}" ctl enabled active
+  frp_client_unit_file_needs_converge "$source" "drlink-lifecycle.service" && return 0
+  if ! frp_client_systemd_state_queryable; then
+    return 1
+  fi
+  [[ -f "$(frp_client_path /etc/systemd/system/drlink-lifecycle.service)" ]] || return 0
+  ctl="${FRP_SYSTEMCTL_BIN:-systemctl}"
+  enabled="$("$ctl" is-enabled drlink-lifecycle 2>/dev/null || true)"
+  active="$("$ctl" is-active drlink-lifecycle 2>/dev/null || true)"
+  case "$enabled" in enabled|static|indirect|alias) ;; *) return 0 ;; esac
+  [[ "$active" == "active" ]] || return 0
+  return 1
+}
+
+frp_client_macos_lifecycle_needs_converge() {
+  if ! { declare -F frp_is_darwin >/dev/null 2>&1 && frp_is_darwin; }; then
+    return 1
+  fi
+  [[ -f "$(frp_client_path /etc/systemd/system/drlink-lifecycle.service)" ]] || return 0
+  return 1
+}
+
 frp_client_linux_units_need_converge() {
   local source="${1:-}"
   if declare -F frp_is_darwin >/dev/null 2>&1 && frp_is_darwin; then
@@ -4654,6 +4678,7 @@ frp_client_linux_units_need_converge() {
   fi
   frp_client_unit_file_needs_converge "$source" "drlink-client.service" && return 0
   frp_client_ai_agent_unit_needs_converge "$source" && return 0
+  frp_client_lifecycle_unit_needs_converge "$source" && return 0
   return 1
 }
 
@@ -4692,7 +4717,17 @@ frp_client_capture_linux_unit_state() {
 }
 
 frp_client_capture_ai_agent_service_state() {
-  frp_client_capture_linux_unit_state "$1"
+  local dest="$1" live
+  frp_client_capture_linux_unit_state "$dest"
+  if declare -F frp_is_darwin >/dev/null 2>&1 && frp_is_darwin; then
+    live="$(frp_client_path /etc/systemd/system/drlink-lifecycle.service)"
+    if [[ -f "$live" ]]; then
+      install -m 0644 "$live" "${dest}/macos-lifecycle.plist"
+      printf '%s\n' present >"${dest}/macos-lifecycle.state"
+    else
+      printf '%s\n' absent >"${dest}/macos-lifecycle.state"
+    fi
+  fi
 }
 
 frp_client_activate_linux_runtime_units() {
@@ -4768,12 +4803,29 @@ frp_client_restore_linux_unit_state() {
 }
 
 frp_client_restore_ai_agent_service_state() {
-  frp_client_restore_linux_unit_state "$1"
+  local backup="$1" state live
+  if declare -F frp_is_darwin >/dev/null 2>&1 && frp_is_darwin; then
+    state="$(cat "${backup}/macos-lifecycle.state" 2>/dev/null || printf absent)"
+    live="$(frp_client_path /etc/systemd/system/drlink-lifecycle.service)"
+    frp_macos_lifecycle_bootout || true
+    if [[ "$state" == "present" && -f "${backup}/macos-lifecycle.plist" ]]; then
+      install -m 0644 "${backup}/macos-lifecycle.plist" "$live" || return 1
+      frp_macos_lifecycle_set_enabled enable || return 1
+      frp_macos_lifecycle_bootstrap || return 1
+    else
+      rm -f "$live" || return 1
+    fi
+    return 0
+  fi
+  frp_client_restore_linux_unit_state "$backup"
 }
 
 frp_client_converge_ai_agent_unit() {
   local source="${1:-}"
   if declare -F frp_is_darwin >/dev/null 2>&1 && frp_is_darwin; then
+    frp_client_install_lifecycle_unit "$source" || return 1
+    frp_macos_lifecycle_set_enabled enable || return 1
+    frp_macos_lifecycle_bootstrap || return 1
     return 0
   fi
   frp_client_install_ai_agent_unit "$source" || return 1
@@ -4868,6 +4920,19 @@ set_lifecycle_intent(sys.argv[2], root=sys.argv[1])
 PY
 }
 
+frp_client_best_effort_lifecycle_disconnect() {
+  local root lib_dir
+  frp_client_hook_log lifecycle_disconnect
+  root="$(frp_client_mgmt_origin_root)"
+  lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  PYTHONPATH="${lib_dir}${PYTHONPATH:+:$PYTHONPATH}" python3 - "$root" <<'PY' >/dev/null 2>&1 || true
+import sys
+from drlink_agent_lifecycle import disconnect_once
+disconnect_once(root=sys.argv[1])
+PY
+  return 0
+}
+
 frp_client_pause_cmd() {
   local already=0
   if ! frp_client_runtime_active && ! frp_client_autostart_enabled; then
@@ -4878,6 +4943,10 @@ frp_client_pause_cmd() {
     frp_client_set_lifecycle_intent running >/dev/null 2>&1 || true
     return 1
   fi
+  # Match Windows/uninstall lifecycle semantics: once the runtime is stopped,
+  # report an authenticated disconnect when the Server is reachable. Offline
+  # pause still succeeds; heartbeat expiry is the fail-safe fallback.
+  frp_client_best_effort_lifecycle_disconnect
   if [[ "${FRP_SKIP_SYSTEMD:-}" == "1" || -n "${FRP_CLIENT_TEST_ROOT:-}" ]]; then
     FRP_CLIENT_TEST_RUNTIME=inactive
     export FRP_CLIENT_TEST_RUNTIME
@@ -5251,6 +5320,10 @@ frp_client_install_management_files() {
     install -m 0644 "${source}/client/${FRP_MACOS_LAUNCHD_LABEL}.plist" \
       "${libdir}/${FRP_MACOS_LAUNCHD_LABEL}.plist"
   fi
+  if [[ -f "${source}/client/${FRP_MACOS_LIFECYCLE_LABEL}.plist" ]]; then
+    install -m 0644 "${source}/client/${FRP_MACOS_LIFECYCLE_LABEL}.plist" \
+      "${libdir}/${FRP_MACOS_LIFECYCLE_LABEL}.plist"
+  fi
   if [[ -f "${source}/client/drlink-frpc-launch" ]]; then
     install -m 0755 "${source}/client/drlink-frpc-launch" \
       "${libdir}/drlink-frpc-launch"
@@ -5270,6 +5343,7 @@ frp_client_upgrade_destinations() {
   done < <(frp_agent_lib_payload_files)
   printf '%s\n' \
     "usr/local/lib/drlink/com.datarelay.drlink.frpc.plist:0644:client/com.datarelay.drlink.frpc.plist" \
+    "usr/local/lib/drlink/com.datarelay.drlink.lifecycle.plist:0644:client/com.datarelay.drlink.lifecycle.plist" \
     "usr/local/lib/drlink/drlink-frpc-launch:0755:client/drlink-frpc-launch" \
     "usr/local/lib/drlink/uninstall-client.sh:0755:uninstall-client.sh" \
     "usr/local/bin/frp-client:0755:tools/frp-client" \
@@ -5968,14 +6042,23 @@ frp_client_apply_upgrade() {
     return 1
   fi
   _ai_agent_converged=0
+  _lifecycle_converged=0
   _frp_client_relay_restarted=0
-  if ! { declare -F frp_is_darwin >/dev/null 2>&1 && frp_is_darwin; }; then
+  if declare -F frp_is_darwin >/dev/null 2>&1 && frp_is_darwin; then
+    if ! frp_client_converge_ai_agent_unit "$source"; then
+      echo "ERROR: failed to converge macOS Agent lifecycle worker; restoring previous management files." >&2
+      frp_client_upgrade_rollback "$backup" HEALTH_CHECK_FAILED || return 2
+      return 1
+    fi
+    _lifecycle_converged=1
+  else
     if ! frp_client_activate_linux_runtime_units "$_restart_client_unit"; then
       echo "ERROR: failed to converge Linux client units; restoring previous management files." >&2
       frp_client_upgrade_rollback "$backup" HEALTH_CHECK_FAILED || return 2
       return 1
     fi
     _ai_agent_converged=1
+    _lifecycle_converged=1
   fi
   if ! frp_client_upgrade_post_mutation_guard; then
     echo "ERROR: unexpected post-mutation failure; restoring previous management files." >&2
@@ -6095,6 +6178,9 @@ frp_client_apply_upgrade() {
   fi
   if [[ "${_ai_agent_converged:-0}" == "1" ]]; then
     echo "AI agent service : converged"
+  fi
+  if [[ "${_lifecycle_converged:-0}" == "1" ]]; then
+    echo "Agent lifecycle service : converged"
   fi
   echo "Enrollment Code : NOT REQUIRED"
   return 0

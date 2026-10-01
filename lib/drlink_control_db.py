@@ -279,6 +279,8 @@ CREATE TABLE clients (
   trust_status TEXT NOT NULL DEFAULT 'trusted',
   connected INTEGER NOT NULL DEFAULT 0,
   last_seen TEXT,
+  agent_heartbeat_at TEXT,
+  agent_lifecycle_state TEXT NOT NULL DEFAULT 'legacy',
   row_version INTEGER NOT NULL DEFAULT 1,
   created_revision INTEGER,
   updated_revision INTEGER,
@@ -862,6 +864,19 @@ def ensure_enrollment_plans_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(ENROLLMENT_PLANS_SQL)
 
 
+def ensure_agent_lifecycle_schema(conn: sqlite3.Connection) -> None:
+    """Add Agent presence fields without changing the v2 schema contract."""
+    cols = {str(row[1]) for row in conn.execute("PRAGMA table_info(clients)")}
+    if not cols:
+        return
+    if "agent_heartbeat_at" not in cols:
+        conn.execute("ALTER TABLE clients ADD COLUMN agent_heartbeat_at TEXT")
+    if "agent_lifecycle_state" not in cols:
+        conn.execute(
+            "ALTER TABLE clients ADD COLUMN agent_lifecycle_state TEXT NOT NULL DEFAULT 'legacy'"
+        )
+
+
 def initialize(conn: sqlite3.Connection) -> None:
     from drlink_v24 import ensure_v2_schema
 
@@ -871,11 +886,13 @@ def initialize(conn: sqlite3.Connection) -> None:
     if found == SCHEMA_VERSION:
         ensure_ai_auth_schema(conn)
         ensure_v2_schema(conn)
+        ensure_agent_lifecycle_schema(conn)
         integrity_check(conn)
         return
     if found == 0:
         conn.executescript(SCHEMA_SQL)
         ensure_v2_schema(conn)
+        ensure_agent_lifecycle_schema(conn)
         now = utc_now_iso()
         conn.execute("BEGIN IMMEDIATE")
         try:
@@ -918,6 +935,7 @@ def initialize(conn: sqlite3.Connection) -> None:
         return
     if found == 1:
         ensure_v2_schema(conn)
+        ensure_agent_lifecycle_schema(conn)
         now = utc_now_iso()
         conn.execute("BEGIN IMMEDIATE")
         try:

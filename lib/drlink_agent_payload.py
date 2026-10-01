@@ -37,6 +37,7 @@ AGENT_LIB_FILES: tuple[str, ...] = (
     "frp_infrastructure_ports.py",
     "drlink_qualified_artifacts.py",
     "drlink_ai_agent.py",
+    "drlink_agent_lifecycle.py",
     "drlink_control_db.py",
     "drlink_control_plane.py",
     "drlink_control_cli.py",
@@ -58,6 +59,7 @@ AGENT_LIB_FILES: tuple[str, ...] = (
 # even if SOURCE_HEAD metadata claims the current commit.
 AGENT_CRITICAL_LINEAGE_FILES: tuple[str, ...] = (
     "drlink_control_cli.py",
+    "drlink_agent_lifecycle.py",
     "drlink_v24.py",
     "drlink_v24_cli.py",
     "drlink_v24_bundle.py",

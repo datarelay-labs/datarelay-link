@@ -163,6 +163,91 @@ class MgmtApiAuthTests(unittest.TestCase):
         payload.update(extra)
         return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
+    def test_AGENT_LIFECYCLE_HEARTBEAT_IS_SIGNED_AND_AI_INDEPENDENT(self):
+        stale_ai = "2026-09-19T08:29:50Z"
+        self.server.conn.execute(
+            "UPDATE clients SET last_seen = ? WHERE id = ?", (stale_ai, MACHINE_A)
+        )
+        self.server.conn.commit()
+        before_rev = self.server.current_revision()
+
+        result = mgmt.report_agent_lifecycle_on_server(
+            root=self.agent_tmp, state="connected"
+        )
+        self.assertEqual(result.get("state"), "connected")
+        self.assertTrue(result.get("reconcile_required"))
+        second = mgmt.report_agent_lifecycle_on_server(
+            root=self.agent_tmp, state="connected"
+        )
+        self.assertFalse(second.get("reconcile_required"))
+        row = self.server.conn.execute(
+            "SELECT * FROM clients WHERE id = ?", (MACHINE_A,)
+        ).fetchone()
+        self.assertEqual(row["last_seen"], stale_ai)
+        self.assertTrue(row["agent_heartbeat_at"])
+        self.assertEqual(row["agent_lifecycle_state"], "connected")
+        self.assertEqual(self.server.managed_host_connectivity(row), "connected")
+        self.assertEqual(self.server.ai_executor_status(row), "not_ready")
+        self.assertEqual(self.server.current_revision(), before_rev)
+
+    def test_CATALOG_DOES_NOT_SUBSTITUTE_FOR_LIFECYCLE_HEARTBEAT(self):
+        stale_ai = "2026-09-19T08:29:50Z"
+        self.server.conn.execute(
+            "UPDATE clients SET last_seen = ?, agent_lifecycle_state = 'disconnected', "
+            "agent_heartbeat_at = NULL, connected = 0 WHERE id = ?",
+            (stale_ai, MACHINE_A),
+        )
+        self.server.conn.commit()
+        catalog = mgmt.fetch_server_catalog(root=self.agent_tmp)
+        self.assertIn("managedHosts", catalog)
+        row = self.server.conn.execute(
+            "SELECT * FROM clients WHERE id = ?", (MACHINE_A,)
+        ).fetchone()
+        self.assertEqual(row["last_seen"], stale_ai)
+        self.assertEqual(row["agent_lifecycle_state"], "disconnected")
+        self.assertIsNone(row["agent_heartbeat_at"])
+        self.assertEqual(self.server.managed_host_connectivity(row), "disconnected")
+        self.assertEqual(self.server.ai_executor_status(row), "not_ready")
+
+    def test_AGENT_LIFECYCLE_DISCONNECT_INVALIDATES_RUNTIME(self):
+        self.server.set_published_service(
+            MACHINE_A,
+            "ssh-heartbeat",
+            service_type="tcp",
+            target_mode="self",
+            target_host="127.0.0.1",
+            target_port=22,
+            enabled=True,
+            public_port=6022,
+        )
+        pub = self.server.conn.execute(
+            "SELECT id FROM published_services WHERE client_id = ? AND name = ?",
+            (MACHINE_A, "ssh-heartbeat"),
+        ).fetchone()
+        self.server.conn.execute(
+            "INSERT OR REPLACE INTO remote_service_meta"
+            "(service_id, status, pool_class, destination_name, destination_client_id, "
+            "pending_allocation, delete_pending, reason, runtime_verified) "
+            "VALUES (?, 'HEALTHY', 'normal', 'this-host', ?, 0, 0, '', 1)",
+            (pub["id"], MACHINE_A),
+        )
+        self.server.conn.commit()
+        mgmt.report_agent_lifecycle_on_server(root=self.agent_tmp, state="connected")
+        result = mgmt.report_agent_lifecycle_on_server(
+            root=self.agent_tmp, state="disconnected"
+        )
+        self.assertEqual(result.get("state"), "disconnected")
+        row = self.server.conn.execute(
+            "SELECT * FROM clients WHERE id = ?", (MACHINE_A,)
+        ).fetchone()
+        meta = self.server.conn.execute(
+            "SELECT * FROM remote_service_meta WHERE service_id = ?", (pub["id"],)
+        ).fetchone()
+        self.assertEqual(self.server.managed_host_connectivity(row), "disconnected")
+        self.assertEqual(int(row["connected"] or 0), 0)
+        self.assertEqual(int(meta["runtime_verified"] or 0), 0)
+        self.assertEqual(meta["status"], "DEGRADED")
+
     def test_MGMT_AUTH_MISSING_SIGNATURE_REJECT(self):
         before = self._snapshot()
         code, payload = self._http(

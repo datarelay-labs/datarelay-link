@@ -359,10 +359,11 @@ PY
 
 frp_client_install_service_definition() {
   if frp_is_darwin; then
-    frp_macos_launchd_install
-    # macOS durable AI worker lifecycle is not claimed in this packet; Linux is
-    # the mandatory Managed Host AI executor path. macOS remains fail-closed
-    # (no local AI worker) until a later platform-support packet.
+    frp_macos_launchd_install || return 1
+    # macOS intentionally has no durable AI executor in v2.4, but Agent
+    # connectivity/reconnect truth must not depend on AI. Install the separate
+    # lifecycle worker alongside the frpc launchd job.
+    frp_macos_lifecycle_install || return 1
     return
   fi
   # Retire product-owned legacy frpc.service before enabling the canonical unit.
@@ -488,6 +489,7 @@ frp_client_service_start() {
     frp_macos_launchd_set_enabled enable || return 1
     frp_macos_launchd_bootout
     frp_macos_launchd_bootstrap || return 1
+    frp_client_converge_ai_agent_unit "${_FRP_INSTALL_CLIENT_DIR:-}" || return 1
   else
     frp_retire_legacy_client_unit || return 1
     systemctl enable drlink-client >/dev/null && systemctl restart drlink-client

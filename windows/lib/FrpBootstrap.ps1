@@ -346,6 +346,15 @@ function Complete-FrpZeroTouchPostEnroll {
     }
 
     if ($enabledCount -le 0) {
+        try {
+            Install-FrpLifecycleTask | Out-Null
+            if (-not (Test-FrpLifecycleTaskHealthy)) {
+                throw 'ERROR: lifecycle task was not registered as a SYSTEM boot worker'
+            }
+        } catch {
+            Write-Host ("ERROR: failed to register Agent lifecycle worker: {0}" -f $_.Exception.Message)
+            return 1
+        }
         Write-Host 'Management-only enrollment: no public services; skipping frpc start.'
         Set-FrpInstallStatus -Status 'management_only'
         Write-Host ''
@@ -356,6 +365,16 @@ function Complete-FrpZeroTouchPostEnroll {
 
     if ($env:FRP_WINDOWS_FAIL_BEFORE_START -eq '1') {
         throw 'ERROR: simulated failure before start (FRP_WINDOWS_FAIL_BEFORE_START=1)'
+    }
+
+    try {
+        Install-FrpLifecycleTask | Out-Null
+        if (-not (Test-FrpLifecycleTaskHealthy)) {
+            throw 'ERROR: lifecycle task was not registered as a SYSTEM boot worker'
+        }
+    } catch {
+        Write-Host ("ERROR: failed to register Agent lifecycle worker: {0}" -f $_.Exception.Message)
+        return 1
     }
 
     # Register product autostart so frpc survives reboot without an
@@ -371,6 +390,7 @@ function Complete-FrpZeroTouchPostEnroll {
             }
             Write-Host ("Registered autostart ({0}): frpc starts at system boot (SYSTEM, no login required)." -f (Get-FrpAutostartTaskName))
         } catch {
+            try { Uninstall-FrpLifecycleTask | Out-Null } catch { }
             Write-Host ("ERROR: failed to register autostart: {0}" -f $_.Exception.Message)
             Write-Host 'ERROR: enabled public services require reboot persistence without login. This client is not fully installed.'
             return 1
@@ -1088,6 +1108,48 @@ function Invoke-FrpReconcileReleasedServices {
 
     Invoke-FrpApplyReconcileRuntime -DroppedEnabled $droppedEnabled -DroppedAny $droppedAny -HostnameChanged $hostnameChanged
     return $true
+}
+
+function Invoke-FrpAgentLifecycle {
+    <#
+    .SYNOPSIS
+      Report signed Agent lifecycle presence to the v2.4 management API.
+    #>
+    param([ValidateSet('connected','disconnected')][string]$State = 'connected')
+    if (-not (Test-FrpIsEnrolled)) { throw 'ERROR: client is not enrolled' }
+    $client = Read-FrpClientState
+    $machineId = [string]$client.machine_id
+    $allocatorUrl = [string]$client.allocator_url
+    if (-not $machineId -or -not $allocatorUrl) { throw 'ERROR: client lifecycle state is incomplete' }
+    $uri = [Uri]$allocatorUrl
+    $path = '/v1/agent-lifecycle'
+    $url = ('{0}://{1}{2}' -f $uri.Scheme, $uri.Authority, $path)
+    $body = Get-FrpCanonicalJson -Object ([ordered]@{ state = $State })
+    $ts = [int64]([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())
+    $nonce = New-FrpNonce
+    $message = Get-FrpSignedMessage -MachineId $machineId -Body $body -Timestamp $ts -Nonce $nonce `
+        -Op 'agent.lifecycle' -Method 'POST' -Path $path
+    $privatePem = Read-FrpIdentityKey
+    $signature = Protect-FrpSignMessage -PrivatePem $privatePem -Message $message
+    $privatePem = $null
+    $headers = @{
+        'X-Machine-Id'      = $machineId
+        'X-Mgmt-Auth'       = '1'
+        'X-Timestamp'       = [string]$ts
+        'X-Mgmt-Nonce'      = $nonce
+        'X-Mgmt-Signature'  = $signature
+    }
+    $respText = Invoke-FrpHttpsJson -Method POST -Url $url -Body $body -Headers $headers
+    $data = $respText | ConvertFrom-Json
+    if ($data.error) { throw ("ERROR: lifecycle report rejected: {0}" -f [string]$data.error) }
+    $received = [string]$data.response_hmac
+    $copy = ConvertTo-FrpPlainObject $data
+    if ($copy.ContainsKey('response_hmac')) { $copy.Remove('response_hmac') }
+    $expected = Get-FrpHmacHex -Secret (Read-FrpIdentityMac) -Message (Get-FrpCanonicalJson -Object $copy)
+    if (-not $received -or -not (Test-FrpFixedTimeEquals -Left $received -Right $expected -IgnoreCase)) {
+        throw 'ERROR: lifecycle response HMAC verification failed'
+    }
+    return $copy
 }
 
 function Invoke-FrpClientSync {
