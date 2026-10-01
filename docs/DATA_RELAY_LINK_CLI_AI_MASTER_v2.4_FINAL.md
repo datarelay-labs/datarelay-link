@@ -3676,6 +3676,14 @@ Apply
 
 A stale earlier diff is never blindly applied.
 
+Direct mutation workflows can bind an edit to the authoritative revision they reviewed:
+
+```bash
+DRLINK_EXPECTED_REVISION=42 sudo drlink set network-object branch-dns value 198.51.100.20
+```
+
+`DRLINK_EXPECTED_REVISION` must be a non-negative integer. The direct mutation checks it under the same write transaction before changing state. If the current revision no longer matches, the command fails closed with `REVISION_CONFLICT` and makes no change. The guard applies to the one direct mutation invocation; ConfigurationBundle continues to use `sourceRevision`.
+
 ---
 
 # 72.1 Rollback and restore use the same safety pipeline

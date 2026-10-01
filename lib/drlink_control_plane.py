@@ -306,6 +306,7 @@ class ControlPlane:
         self._db_ident = self._db_file_ident()
         self._batch_mode = False
         self._batch_results: list = []
+        self._public_revision_guard_consumed = False
         # Serialize threaded MCP Bridge access to the shared SQLite connection.
         self._db_lock = threading.RLock()
         # Agent Bundle / nested Apply: Server-side Remote Service creates to
@@ -614,6 +615,34 @@ class ControlPlane:
             return
         self._commit_open_transaction()
 
+    def _public_expected_revision(self) -> Optional[int]:
+        """Return an operator-supplied direct-mutation revision precondition.
+
+        Data Relay Link public commands do not use GNU-style options. Operators
+        that prepared an edit from revision N can bind that direct mutation by
+        exporting DRLINK_EXPECTED_REVISION=N. The guard is consumed only after
+        one successful top-level mutation; ConfigurationBundle has its own
+        sourceRevision contract and does not use this path.
+        """
+        if self._public_revision_guard_consumed:
+            return None
+        raw = str(os.environ.get("DRLINK_EXPECTED_REVISION") or "").strip()
+        if not raw:
+            return None
+        try:
+            value = int(raw)
+        except ValueError as exc:
+            raise ControlPlaneError(
+                "DRLINK_EXPECTED_REVISION must be a non-negative integer.\n"
+                "No changes were applied."
+            ) from exc
+        if value < 0:
+            raise ControlPlaneError(
+                "DRLINK_EXPECTED_REVISION must be a non-negative integer.\n"
+                "No changes were applied."
+            )
+        return value
+
     def _mutate(
         self,
         command: str,
@@ -651,8 +680,19 @@ class ControlPlane:
         checkpoint = None
         if compile_runtime and self._activation_should_run():
             checkpoint = self._pre_activation_checkpoint()
+        public_expected_revision = self._public_expected_revision()
         self.conn.execute("BEGIN IMMEDIATE")
         try:
+            if public_expected_revision is not None:
+                current = self.current_revision()
+                if current != public_expected_revision:
+                    raise ConcurrencyError(
+                        "REVISION_CONFLICT\n"
+                        "Expected revision %s but current revision is %s.\n"
+                        "No changes were applied.\n"
+                        "Review current state and retry."
+                        % (public_expected_revision, current)
+                    )
             if expected:
                 for table, entity_id, version in expected.get("rows") or ():
                     row = self.conn.execute(
@@ -691,6 +731,8 @@ class ControlPlane:
                     impact=json.dumps(impact or {}, sort_keys=True)[:2000],
                 )
             self._commit_open_transaction()
+            if public_expected_revision is not None:
+                self._public_revision_guard_consumed = True
         except ConfirmationRequired:
             self._rollback_open_transaction()
             self._cleanup_activation_checkpoint(checkpoint)
