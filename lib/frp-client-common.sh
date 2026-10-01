@@ -4510,6 +4510,27 @@ frp_client_stop() {
   return 0
 }
 
+frp_client_install_lifecycle_unit() {
+  local source="${1:-}" dest src
+  if declare -F frp_is_darwin >/dev/null 2>&1 && frp_is_darwin; then
+    return 0
+  fi
+  dest="$(frp_client_path /etc/systemd/system/drlink-lifecycle.service)"
+  mkdir -p "$(dirname "$dest")"
+  src=""
+  if [[ -n "$source" && -f "$source/client/drlink-lifecycle.service" ]]; then
+    src="$source/client/drlink-lifecycle.service"
+  elif [[ -n "${_FRP_INSTALL_CLIENT_DIR:-}" && -f "${_FRP_INSTALL_CLIENT_DIR}/client/drlink-lifecycle.service" ]]; then
+    src="${_FRP_INSTALL_CLIENT_DIR}/client/drlink-lifecycle.service"
+  fi
+  [[ -n "$src" ]] || { echo "ERROR: missing drlink-lifecycle.service" >&2; return 1; }
+  if declare -F frp_write_compatible_systemd_unit >/dev/null 2>&1; then
+    frp_write_compatible_systemd_unit "$src" "$dest"
+  else
+    install -m 0644 "$src" "$dest"
+  fi
+}
+
 frp_client_install_ai_agent_unit() {
   local source="${1:-}"
   local dest src
@@ -4646,7 +4667,7 @@ frp_client_capture_linux_unit_state() {
   {
     printf 'systemd=%s\n' "$mode"
     if ! { declare -F frp_is_darwin >/dev/null 2>&1 && frp_is_darwin; }; then
-      for unit in drlink-client drlink-ai-agent; do
+      for unit in drlink-client drlink-ai-agent drlink-lifecycle; do
         live="$(frp_client_path "/etc/systemd/system/${unit}.service")"
         presence="absent"
         enabled="disabled"
@@ -4685,6 +4706,8 @@ frp_client_activate_linux_runtime_units() {
   frp_client_systemctl daemon-reload || return 1
   frp_client_systemctl enable drlink-ai-agent || return 1
   frp_client_systemctl restart drlink-ai-agent || return 1
+  frp_client_systemctl enable drlink-lifecycle || return 1
+  frp_client_systemctl restart drlink-lifecycle || return 1
   if [[ "$restart_client" == "1" ]]; then
     frp_client_systemctl enable drlink-client || return 1
     frp_client_systemctl restart drlink-client || return 1
@@ -4738,7 +4761,7 @@ frp_client_restore_linux_unit_state() {
   [[ "$mode" == "skipped" ]] && return 0
   frp_client_systemctl daemon-reload || return 1
   while read -r unit presence enabled active; do
-    [[ "$unit" == "drlink-client" || "$unit" == "drlink-ai-agent" ]] || continue
+    [[ "$unit" == "drlink-client" || "$unit" == "drlink-ai-agent" || "$unit" == "drlink-lifecycle" ]] || continue
     frp_client_restore_one_linux_unit "$unit" "$presence" "$enabled" "$active" || return 1
   done <"$state"
   return 0
@@ -4754,6 +4777,7 @@ frp_client_converge_ai_agent_unit() {
     return 0
   fi
   frp_client_install_ai_agent_unit "$source" || return 1
+  frp_client_install_lifecycle_unit "$source" || return 1
   frp_client_activate_ai_agent_unit || return 1
   return 0
 }
@@ -4833,12 +4857,25 @@ frp_client_runtime_active() {
   esac
 }
 
+frp_client_set_lifecycle_intent() {
+  local intent="$1" root lib_dir
+  root="$(frp_client_mgmt_origin_root)"
+  lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  PYTHONPATH="${lib_dir}${PYTHONPATH:+:$PYTHONPATH}" python3 - "$root" "$intent" <<'PY'
+import sys
+from drlink_agent_lifecycle import set_lifecycle_intent
+set_lifecycle_intent(sys.argv[2], root=sys.argv[1])
+PY
+}
+
 frp_client_pause_cmd() {
   local already=0
   if ! frp_client_runtime_active && ! frp_client_autostart_enabled; then
     already=1
   fi
+  frp_client_set_lifecycle_intent paused || return 1
   if ! frp_client_stop; then
+    frp_client_set_lifecycle_intent running >/dev/null 2>&1 || true
     return 1
   fi
   if [[ "${FRP_SKIP_SYSTEMD:-}" == "1" || -n "${FRP_CLIENT_TEST_ROOT:-}" ]]; then
@@ -4874,6 +4911,7 @@ frp_client_resume_cmd() {
   if ! frp_client_restart; then
     return 1
   fi
+  frp_client_set_lifecycle_intent running || return 1
   if [[ "${FRP_SKIP_SYSTEMD:-}" == "1" || -n "${FRP_CLIENT_TEST_ROOT:-}" ]]; then
     FRP_CLIENT_TEST_RUNTIME=active
     export FRP_CLIENT_TEST_RUNTIME
@@ -5243,7 +5281,8 @@ frp_client_upgrade_destinations() {
     printf '%s\n' \
       "usr/bin/drlink:0755:tools/drlink" \
       "etc/systemd/system/drlink-client.service:0644:client/drlink-client.service" \
-      "etc/systemd/system/drlink-ai-agent.service:0644:client/drlink-ai-agent.service"
+      "etc/systemd/system/drlink-ai-agent.service:0644:client/drlink-ai-agent.service" \
+      "etc/systemd/system/drlink-lifecycle.service:0644:client/drlink-lifecycle.service"
   fi
 }
 

@@ -408,6 +408,12 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF3
   fi
+  local lifecycle_unit_src="${_FRP_INSTALL_CLIENT_DIR}/client/drlink-lifecycle.service"
+  [[ -f "$lifecycle_unit_src" ]] || {
+    echo "ERROR: missing lifecycle service definition" >&2
+    return 1
+  }
+  frp_write_compatible_systemd_unit "$lifecycle_unit_src" /etc/systemd/system/drlink-lifecycle.service
 }
 
 frp_client_service_reload() {
@@ -477,6 +483,7 @@ if results and not healthy and degraded:
 }
 
 frp_client_service_start() {
+  frp_client_set_lifecycle_intent running || return 1
   if frp_is_darwin; then
     frp_macos_launchd_set_enabled enable || return 1
     frp_macos_launchd_bootout
