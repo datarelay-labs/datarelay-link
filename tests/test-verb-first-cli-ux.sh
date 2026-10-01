@@ -205,7 +205,8 @@ done
 CANON1="$(grammar 'unset managed-host 24cd7856')"
 CANON2="$(grammar 'unset enrollment abcdef12')"
 assert_json_field "$CANON1" action control_plane
-assert_json_field "$CANON2" action control_plane
+# Enrollment lifecycle uses its dedicated revoke/purge authority.
+assert_json_field "$CANON2" action unset_enrollment
 pass REMOVED_ROOT_LIFECYCLE_GRAMMAR
 
 # --- GUIDED_ZERO_TOUCH / GUIDED_ENROLLMENT ---
