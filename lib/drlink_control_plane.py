@@ -32,6 +32,7 @@ from drlink_control_db import (
     ensure_ai_jobs_safety_schema,
     integrity_check,
     open_control_db,
+    open_control_db_readonly,
     pragma_snapshot,
     runtime_dir,
     utc_now_iso,
@@ -318,11 +319,20 @@ def membership_eligible(address: str) -> bool:
 
 
 class ControlPlane:
-    def __init__(self, root: Optional[str] = None, conn: Optional[sqlite3.Connection] = None):
+    def __init__(
+        self,
+        root: Optional[str] = None,
+        conn: Optional[sqlite3.Connection] = None,
+        *,
+        read_only: bool = False,
+    ):
         self.root = root
         self.db_file = db_path(root)
         self.runtime = runtime_dir(root)
-        self.conn = conn or open_control_db(root)
+        self._read_only = bool(read_only and conn is None)
+        self.conn = conn or (
+            open_control_db_readonly(root) if self._read_only else open_control_db(root)
+        )
         self._db_ident = self._db_file_ident()
         self._batch_mode = False
         self._batch_results: list = []
@@ -366,7 +376,11 @@ class ControlPlane:
                 self.conn.close()
         except Exception:
             pass
-        self.conn = open_control_db(self.root)
+        self.conn = (
+            open_control_db_readonly(self.root)
+            if getattr(self, "_read_only", False)
+            else open_control_db(self.root)
+        )
         self._db_ident = ident
 
     # --- revision / audit -------------------------------------------------

@@ -346,9 +346,29 @@ def _need(tokens, n, usage):
         raise SystemExit("Missing arguments.\n\nUsage:\n  %s" % usage)
 
 
+def _public_command_is_read_only(tokens) -> bool:
+    """Select the query-only DB path for public commands that promise no mutation."""
+    if not tokens:
+        return False
+    verb = str(tokens[0])
+    if verb in ("show", "test"):
+        return True
+    if verb != "system" or len(tokens) < 2:
+        return False
+    op = str(tokens[1])
+    if op in ("diagnostics", "revisions", "revision", "diff", "audit"):
+        return True
+    if op == "export" and len(tokens) >= 3 and tokens[2] == "configuration":
+        return True
+    if op == "certificate" and len(tokens) >= 3 and tokens[2] in ("status", "preflight"):
+        return True
+    return False
+
+
 def dispatch(tokens, *, root=None, plane: Optional[ControlPlane] = None, client_sel: Optional[str] = None):
     tokens = [str(t) for t in tokens if t is not None]
-    plane = plane or ControlPlane(root)
+    if plane is None:
+        plane = ControlPlane(root, read_only=_public_command_is_read_only(tokens))
     client_sel = client_sel or os.environ.get("DRLINK_LOCAL_CLIENT")
     if not tokens:
         return 0

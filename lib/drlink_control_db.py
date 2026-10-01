@@ -12,11 +12,13 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+from urllib.parse import quote
 
 SCHEMA_VERSION = 2
 APPLICATION_ID = 0x44524C4B  # 'DRLK'
 DEFAULT_DB_REL = "var/lib/drlink/drlink.db"
 BUSY_TIMEOUT_MS = 5000
+READ_BUSY_TIMEOUT_MS = 500
 
 SUPPORTED_PRAGMAS = (
     ("foreign_keys", "ON"),
@@ -673,6 +675,53 @@ def connect(path: Optional[Path] = None, root: Optional[str] = None, *, create: 
     return conn
 
 
+def connect_read_only(
+    path: Optional[Path] = None,
+    root: Optional[str] = None,
+) -> sqlite3.Connection:
+    """Open the authoritative DB without renegotiating write-affecting PRAGMAs.
+
+    Public show/test/diff paths must not wait for the writer slot merely because
+    a new SQLite connection is being initialized. The URI is mode=ro and
+    query_only is enabled as a second fail-closed guard.
+    """
+    target = Path(path) if path else db_path(root)
+    if not target.is_file():
+        raise ControlPlaneError("Control DB does not exist: %s" % target)
+    uri_path = quote(str(target.resolve()), safe="/:")
+    uri = "file:%s?mode=ro" % uri_path
+    conn = sqlite3.connect(
+        uri,
+        uri=True,
+        isolation_level=None,
+        timeout=READ_BUSY_TIMEOUT_MS / 1000.0,
+        check_same_thread=False,
+    )
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA query_only = ON")
+    conn.execute("PRAGMA busy_timeout = %s" % READ_BUSY_TIMEOUT_MS)
+    try:
+        conn.execute("PRAGMA trusted_schema = OFF")
+    except sqlite3.Error:
+        pass
+    try:
+        found = current_schema_version(conn)
+    except sqlite3.DatabaseError as exc:
+        conn.close()
+        raise DatabaseCorruptError(str(exc)) from exc
+    if found > SCHEMA_VERSION:
+        conn.close()
+        raise SchemaTooNewError(found, SCHEMA_VERSION)
+    if found < SCHEMA_VERSION:
+        conn.close()
+        raise ControlPlaneError(
+            "Control DB schema %s requires migration before read-only access "
+            "(current schema %s)." % (found, SCHEMA_VERSION)
+        )
+    return conn
+
+
 AI_AUTH_SQL = r"""
 CREATE TABLE IF NOT EXISTS ai_oauth_clients (
   client_id TEXT PRIMARY KEY,
@@ -964,6 +1013,10 @@ def open_control_db(root: Optional[str] = None, *, create: bool = True) -> sqlit
     conn = connect(root=root, create=create)
     initialize(conn)
     return conn
+
+
+def open_control_db_readonly(root: Optional[str] = None) -> sqlite3.Connection:
+    return connect_read_only(root=root)
 
 
 def pragma_snapshot(conn: sqlite3.Connection) -> dict:
