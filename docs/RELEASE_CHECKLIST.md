@@ -364,6 +364,7 @@ CHATGPT_PLUS_ALLOW_DENY=
 - [ ] uninstall zero-residue where purge requested.
 - [ ] reinstall.
 - [ ] Remote Access SSH/HTTP/HTTPS/TCP as claimed.
+- [ ] Custom TCP half-close preserves the reverse response after client `shutdown(SHUT_WR)`; pinned FRP compatibility reports `tcp_half_close=PASS`.
 - [ ] ROUTED LAN target.
 - [ ] Internet Access curl/wget/git/apt.
 - [ ] denied Internet traffic cannot escape.

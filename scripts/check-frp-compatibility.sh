@@ -113,12 +113,48 @@ fi
 if [[ "${FRP_COMPAT_OFFLINE:-}" == "1" ]]; then
   echo "OFFLINE=1; expecting pre-staged archives in $STAGE"
 else
-  # Official checksum file is the preferred trusted digest source for a new
-  # candidate (not yet pinned in VERSION).
-  curl -fL --retry 3 --connect-timeout 10 --max-time 60 \
-    -o "$STAGE/frp_sha256_checksums" \
-    "$BASE_URL/frp_sha256_checksums" \
-    || fail_closed "official frp_sha256_checksums download failed"
+  # Prefer the release checksum asset. Some official FRP releases publish
+  # SHA256 only as GitHub release-asset digests, so fail closed to that
+  # release metadata instead of treating a missing checksum file as a
+  # compatibility failure.
+  if ! curl -fL --retry 3 --connect-timeout 10 --max-time 60 \
+      -o "$STAGE/frp_sha256_checksums" \
+      "$BASE_URL/frp_sha256_checksums"; then
+    rm -f "$STAGE/frp_sha256_checksums"
+    curl -fL --retry 3 --connect-timeout 10 --max-time 60 \
+      -H "Accept: application/vnd.github+json" \
+      -o "$STAGE/github-release.json" \
+      "https://api.github.com/repos/fatedier/frp/releases/tags/v${CANDIDATE}" \
+      || fail_closed "GitHub release metadata download failed"
+    python3 - "$STAGE/github-release.json" "$STAGE/frp_sha256_checksums" "$CANDIDATE" <<'PY' \
+      || fail_closed "trusted GitHub release asset digests unavailable"
+import json, re, sys
+from pathlib import Path
+
+src = Path(sys.argv[1])
+out = Path(sys.argv[2])
+version = sys.argv[3]
+data = json.loads(src.read_text(encoding="utf-8"))
+wanted = {
+    f"frp_{version}_linux_amd64.tar.gz",
+    f"frp_{version}_linux_arm64.tar.gz",
+}
+rows = []
+for asset in data.get("assets") or []:
+    name = str(asset.get("name") or "")
+    digest = str(asset.get("digest") or "")
+    if name not in wanted or not digest.startswith("sha256:"):
+        continue
+    value = digest.split(":", 1)[1].lower()
+    if re.fullmatch(r"[0-9a-f]{64}", value):
+        rows.append(f"{value}  {name}")
+found = {row.split(None, 1)[1] for row in rows}
+if found != wanted:
+    raise SystemExit("required release asset SHA256 digests missing")
+out.write_text("\n".join(sorted(rows)) + "\n", encoding="utf-8")
+print("GITHUB_RELEASE_ASSET_DIGESTS=PASS")
+PY
+  fi
   download "frp_${CANDIDATE}_linux_amd64.tar.gz"
   download "frp_${CANDIDATE}_linux_arm64.tar.gz"
 fi
@@ -198,6 +234,14 @@ fi
 echo "FRPS_VERIFY=PASS"
 rm -f "$tmp"
 
+# A TCP proxy must preserve a client write-half-close long enough for an
+# EOF-driven target to return its response. This exercises the verified
+# official frps/frpc pair, not a project-side relay or synthetic substitute.
+if ! python3 "$ROOT/scripts/check-frp-half-close.py" \
+  --frps "$amd_bin" --frpc "$frpc_bin" --stage "$STAGE"; then
+  fail_closed "candidate TCP proxy does not preserve client half-close response"
+fi
+
 # Atomic PASS report only after every required check.
 python3 - "$STAGE" "$CANDIDATE" "$RUN_ID" "$BASE_URL" "$AMD_EXPECT" "$ARM_EXPECT" <<'PY'
 import json, sys, time
@@ -216,6 +260,9 @@ report = {
     "run_id": run_id,
     "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     "platform": "linux",
+    "capabilities": {
+        "tcp_half_close": "PASS",
+    },
     "artifacts": [
         {
             "name": "frp_%s_linux_amd64.tar.gz" % version,

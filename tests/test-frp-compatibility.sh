@@ -49,6 +49,22 @@ pass "WEBSOCKET_PATH_PINNED"
 pass "SKIP_ARCHIVES_REJECTED"
 unset FRP_COMPAT_SKIP_ARCHIVES
 
+python3 -m py_compile "$ROOT/scripts/check-frp-half-close.py" || fail "half-close probe parse"
+grep -q 'shutdown(socket.SHUT_WR)' "$ROOT/scripts/check-frp-half-close.py" \
+  || fail "half-close probe does not perform SHUT_WR"
+grep -q 'FRP_HALF_CLOSE=PASS' "$ROOT/scripts/check-frp-half-close.py" \
+  || fail "half-close probe PASS marker missing"
+grep -q 'check-frp-half-close.py' "$ROOT/scripts/check-frp-compatibility.sh" \
+  || fail "compatibility gate does not invoke half-close probe"
+grep -q 'tcp_half_close.*PASS' "$ROOT/scripts/check-frp-compatibility.sh" \
+  || fail "compatibility report missing half-close capability"
+grep -q 'api.github.com/repos/fatedier/frp/releases/tags' "$ROOT/scripts/check-frp-compatibility.sh" \
+  || fail "GitHub release asset digest fallback missing"
+grep -q 'GITHUB_RELEASE_ASSET_DIGESTS=PASS' "$ROOT/scripts/check-frp-compatibility.sh" \
+  || fail "release asset digest validation marker missing"
+pass "TCP_HALF_CLOSE_REQUIRED"
+pass "RELEASE_ASSET_DIGEST_FALLBACK"
+
 [[ -f "$ROOT/docs/FRP_UPGRADE.md" ]] || fail "FRP_UPGRADE.md missing"
 grep -q 'never installs GitHub' "$ROOT/docs/FRP_UPGRADE.md" || fail "upgrade policy"
 [[ -f "$ROOT/docs/OCI_ACCEPTANCE.md" ]] || fail "OCI plan missing"

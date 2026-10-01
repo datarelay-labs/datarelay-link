@@ -13,7 +13,7 @@ Current pin: see `VERSION` (`FRP_VERSION`) and `lib/frp-common.sh`
 
 - A new FRP release exists but this project has not run the compatibility gate.
 - The candidate changes `FrpWebsocketPath` away from `/~!frp`.
-- Config verify, token file auth, allowPorts, Direct mode, or single443 WSS fails.
+- Config verify, token file auth, allowPorts, Direct mode, single443 WSS, or TCP half-close response preservation fails.
 - You only want "whatever is newest".
 
 ## When to consider upgrading
@@ -31,10 +31,11 @@ Current pin: see `VERSION` (`FRP_VERSION`) and `lib/frp-common.sh`
 The script:
 
 1. downloads linux amd64 and arm64 release archives (HTTPS)
-2. records SHA256
+2. verifies SHA256 from the official checksum asset or GitHub release-asset digest metadata
 3. fetches `pkg/util/net/websocket.go` from the same tag
 4. **fails** if `/~!frp` is missing
-5. runs `frps verify` when a candidate binary is present
+5. runs `frps verify` against the verified candidate binary
+6. starts the verified frps/frpc pair on loopback and proves a TCP proxy preserves client write-half-close long enough for an EOF-driven target response
 
 It does **not** change production version numbers.
 
@@ -45,6 +46,7 @@ Minimum checks before `--apply`:
 - allowPorts
 - TLS / Direct / single443 / WSS `/~!frp`
 - proxy registration, SSH TCP, multiple services
+- TCP half-close: client `shutdown(SHUT_WR)` must still receive the target response after target-side EOF processing
 - zero-service client behavior
 - reconnect
 
