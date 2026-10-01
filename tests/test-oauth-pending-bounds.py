@@ -73,10 +73,9 @@ class OAuthPendingBoundsTests(unittest.TestCase):
         os.environ.pop("DRLINK_CONFIRM", None)
 
     def _stage(self, name: str) -> None:
-        dispatch(["set", "ai-principal", name], root=self.tmp)
-        dispatch(["set", "ai-principal", name, "enabled"], root=self.tmp)
+        self.plane.set_ai_principal(name, enabled=True)
         dispatch(
-            ["system", "credential", "configure", "ai-principal", name, "authentication", "oauth"],
+            ["system", "credential", "configure", "ai-identity", name, "authentication", "oauth"],
             root=self.tmp,
         )
         dispatch(
@@ -84,7 +83,7 @@ class OAuthPendingBoundsTests(unittest.TestCase):
                 "system",
                 "credential",
                 "configure",
-                "ai-principal",
+                "ai-identity",
                 name,
                 "oauth-redirect",
                 REDIRECT,
