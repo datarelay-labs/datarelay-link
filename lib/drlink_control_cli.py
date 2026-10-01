@@ -634,7 +634,7 @@ def _show(plane: ControlPlane, rest):
             raise SystemExit("Service Preset not found")
         sys.stdout.write(
             "Service Preset: %s\nType: %s\nTarget Mode: %s\nTarget Port: %s\nDescription: %s\n"
-            "A Service Preset only supplies initial values.\nChanging it does not change existing Published Services.\n"
+            "A Service Preset only supplies initial values.\nChanging it does not change existing Remote Services.\n"
             % (row["name"], row["service_type"], row["target_mode"], row["target_port"], row["description"])
         )
         return 0
@@ -1740,8 +1740,25 @@ def main(argv=None):
         or os.environ.get("FRP_SERVER_TEST_ROOT")
         or os.environ.get("DRLINK_TEST_ROOT")
     )
-    rc = dispatch(argv, root=root)
-    return rc or 0
+    try:
+        rc = dispatch(argv, root=root)
+        # Force buffered stdout through while BrokenPipeError is still inside
+        # this handler. Without this flush, Python can raise only during
+        # interpreter shutdown and exit 120 after a consumer such as `head`
+        # has already closed the pipe.
+        sys.stdout.flush()
+        return rc or 0
+    except BrokenPipeError:
+        # A consumer such as `head` may close stdout before a long read-only
+        # listing is complete. Treat that as normal pipeline termination and
+        # redirect the inherited fd so Python shutdown cannot emit a traceback.
+        try:
+            sink = os.open(os.devnull, os.O_WRONLY)
+            os.dup2(sink, sys.stdout.fileno())
+            os.close(sink)
+        except (AttributeError, OSError, ValueError):
+            pass
+        return 0
 
 
 if __name__ == "__main__":

@@ -577,8 +577,9 @@ if _is_file(cfg):
             raw_path = str((data or {}).get(cfg_key) or rel_default)
             store_path = _map_path(raw_path)
             if not _is_file(store_path):
-                if server_role:
-                    inventory_warning = True
+                # These JSON stores are legacy/migration inputs. Current v2.4
+                # Server state is SQLite-authoritative, so their absence on a
+                # healthy fresh install is not an inventory failure.
                 continue
             try:
                 state = json.loads(store_path.read_text(encoding="utf-8"))
@@ -1026,25 +1027,32 @@ if key and key != 'fixed_tcp':
             items.append(label or mid)
     else:
         items = [str(x) for x in raw if str(x).strip()]
-elif kind == 'fixed_tcp':
-    import os
+elif kind in ('fixed-tcp', 'fixed_tcp'):
+    import os, sqlite3
     from pathlib import Path
+    from urllib.parse import quote
     root = os.environ.get('FRP_CTL_TEST_ROOT') or os.environ.get('FRP_DEPLOY_TEST_ROOT') or ''
     cfg_path = Path(root + '/etc/drlink/config.json') if root else Path('/etc/drlink/config.json')
     cfg = {}
     if cfg_path.is_file():
         cfg = json.loads(cfg_path.read_text(encoding='utf-8'))
-    raw_path = str(cfg.get('egress_control_file') or '/var/lib/drlink/egress-control.json')
+    raw_path = str(cfg.get('control_db_file') or '/var/lib/drlink/drlink.db')
     path = Path(raw_path)
     if root and not str(path).startswith(root):
         path = Path(root + str(path))
     if path.is_file():
-        state = json.loads(path.read_text(encoding='utf-8'))
-        for rid, relay in sorted((state.get('tcp_relays') or {}).items(), key=lambda kv: str((kv[1] or {}).get('name') or kv[0])):
-            if isinstance(relay, dict):
-                items.append(str(relay.get('name') or rid))
-            else:
-                items.append(str(rid))
+        uri = 'file:%s?mode=ro' % quote(str(path.resolve()), safe='/:')
+        conn = sqlite3.connect(uri, uri=True)
+        try:
+            rows = conn.execute(
+                "SELECT name FROM service_objects "
+                "WHERE lower(type) = 'fixed-tcp' ORDER BY name COLLATE NOCASE"
+            )
+            items.extend(str(row[0]) for row in rows if str(row[0]).strip())
+        except sqlite3.Error:
+            pass
+        finally:
+            conn.close()
 seen = set()
 out = []
 for item in items:
@@ -1129,6 +1137,12 @@ frpctl_nav_workflow() {
     create_zero_touch) frpctl_guided_client_onboarding ;;
     create_enrollment) frpctl_guided_manual_enrollment ;;
     manage_client) frpctl_manage_clients ;;
+    create_remote_service)
+      id="$(frpctl_nav_prompt_id "Remote Service name: ")" || return 1
+      # Dispatch the canonical name-only form so the v2.4 backend enters the
+      # interactive Remote Service wizard instead of a bare usage dead-end.
+      frpctl_dispatch set remote-service "$id" || true
+      ;;
     create_group)
       id="$(frpctl_nav_prompt_id "Group name: ")" || return 1
       frpctl_dispatch set managed-host-group "$id" || true

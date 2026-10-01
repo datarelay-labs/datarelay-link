@@ -2050,7 +2050,7 @@ def check_service_profiles(report, paths, facts, cfg):
             'SERVICE_PROFILES_ERROR', FAIL,
             'SERVICE_PROFILES_ERROR: service-profiles.json is invalid',
             str(exc),
-            'ignore obsolete service-profiles.json; use published-service / service-preset',
+            'ignore obsolete service-profiles.json; use Service Objects and Agent Remote Services',
             'state',
         )
         return
@@ -2063,7 +2063,7 @@ def check_service_profiles(report, paths, facts, cfg):
             status,
             '%s: %s' % (cls, issue.get('message') or 'issue'),
             '',
-            'inspect Published Services with show published-services',
+            'inspect current Service Objects and Agent Remote Services',
             'state',
         )
 
