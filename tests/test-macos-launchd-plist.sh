@@ -31,13 +31,15 @@ PY
 
 lifecycle_out="$TMP/lifecycle.plist"
 frp_macos_render_lifecycle_plist "$lifecycle_out"
-python3 - "$lifecycle_out" "$TMP/root$TMP/state" <<'PY'
+expected_python="${FRP_MACOS_PYTHON:-$(command -v python3)}"
+python3 - "$lifecycle_out" "$TMP/root$TMP/state" "$expected_python" <<'PY'
 import plistlib, sys
 with open(sys.argv[1], "rb") as f: p = plistlib.load(f)
 state = sys.argv[2]
+python_bin = sys.argv[3]
 assert p["Label"] == "com.datarelay.drlink.lifecycle"
 assert p["ProgramArguments"] == [
-    "/usr/bin/python3", state + "/lib/drlink_agent_lifecycle.py", "worker"
+    python_bin, state + "/lib/drlink_agent_lifecycle.py", "worker"
 ]
 assert p["RunAtLoad"] is True
 assert p["KeepAlive"]["NetworkState"] is True
