@@ -66,22 +66,22 @@
     "bootstrap-client.sh": {
       "path": "dist/bootstrap-client.sh",
       "url_path": "dist/bootstrap-client.sh",
-      "sha256": "14b75ecc4ac05f68ed2059a4f57d2f3f79a1a9ec56c1b4ec7eed91f72817243b"
+      "sha256": "0714f2f859fc40f4beb29e3a50a169b0d836265f7f41e92091d48ab6a74de6c3"
     },
     "bootstrap-client.ps1": {
       "path": "dist/bootstrap-client.ps1",
       "url_path": "dist/bootstrap-client.ps1",
-      "sha256": "6bfb6709522ab11f70ce2448215156d1a932cfe3bb25b5aeedee32b586ba312c"
+      "sha256": "78a520d0396a3add6f4da0b7200df636c6f881a9b19ca10e5885428d8722a09e"
     },
     "bootstrap-server.sh": {
       "path": "dist/bootstrap-server.sh",
       "url_path": "dist/bootstrap-server.sh",
-      "sha256": "078f71cf10ef671eb356541c7b10338adc5b1d6923606f3a4c882d35fb449161"
+      "sha256": "563bf5c0d2373ee660d99dc92591edc26e8af832679c85b9ec7ea8336afafcf8"
     },
     "uninstall-client.sh": {
       "path": "dist/uninstall-client.sh",
       "url_path": "dist/uninstall-client.sh",
-      "sha256": "fecf7b0be564fdd77a11c3808f73ffc951499fc3d8abdb0f9c00579804c88c42"
+      "sha256": "1296af25ea7aaa5d820e44071f2952630666f7ebdb31fc7b26cdfdf294e98755"
     },
     "uninstall-server.sh": {
       "path": "dist/uninstall-server.sh",

@@ -237,6 +237,7 @@ python3 tests/test-v24-ai-policy-cli-parity.py
 python3 tests/test-v24-manual-e2e-findings.py
 python3 tests/test-v24-cli-workflow-semantic-parity.py
 python3 tests/test-v24-revision-rollback.py
+python3 tests/test-v24-direct-revision-guard.py
 python3 tests/test-v24-ai-access-reference-integrity.py
 python3 tests/test-v24-ai-path-scope-public-parity.py
 python3 tests/test-v24-group-policy-test-false-assurance.py
@@ -248,6 +249,7 @@ python3 tests/test-v24-public-name-namespace-ambiguity.py
 python3 tests/test-v24-rule-mutation-security-impact.py
 python3 tests/test-v24-referenced-selector-mutation-security-impact.py
 python3 tests/test-v24-restore-security-impact.py
+python3 tests/test-v24-restore-client-inventory.py
 python3 tests/test-v24-managed-host-retirement.py
 python3 tests/test-v24-user-lifecycle-ux.py
 python3 tests/test-v24-ai-auth-convergence.py

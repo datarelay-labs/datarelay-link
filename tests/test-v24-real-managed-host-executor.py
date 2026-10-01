@@ -331,8 +331,10 @@ class RealManagedHostExecutorTests(unittest.TestCase):
         self.assertIn("drlink-ai-agent.service", install)
         uninstall = (ROOT / "uninstall-client.sh").read_text(encoding="utf-8")
         self.assertIn("drlink-ai-agent.service", uninstall)
-        # macOS remains fail-closed for AI worker in this packet.
-        self.assertIn("macOS durable AI worker lifecycle is not claimed", install)
+        # macOS has no durable AI executor in v2.4, but it does ship the
+        # independent lifecycle worker required for Agent connectivity truth.
+        self.assertIn("macOS intentionally has no durable AI executor in v2.4", install)
+        self.assertIn("frp_macos_lifecycle_install", install)
 
 
 if __name__ == "__main__":

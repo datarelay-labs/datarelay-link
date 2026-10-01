@@ -37,6 +37,9 @@ class PublicGrammarClosure(unittest.TestCase):
         os.environ["FRP_DEPLOY_TEST_ROOT"] = self.tmp
         os.environ["DRLINK_CONFIRM"] = "yes"
         os.environ["DRLINK_SKIP_ACTIVATION"] = "1"
+        plane = ControlPlane(self.tmp)
+        v24.ensure_v2_schema(plane.conn)
+        plane.close()
 
     def tearDown(self):
         for k in ("FRP_DEPLOY_TEST_ROOT", "DRLINK_CONFIRM", "DRLINK_SKIP_ACTIVATION"):
@@ -135,14 +138,9 @@ class PublicGrammarClosure(unittest.TestCase):
 
         cases = (
             (["system", "update", "engine"], "client", "update_frp"),
-            (["update", "engine"], "client", "update_frp"),
             (["system", "update", "product"], "client", "update_project"),
-            (["update", "product"], "client", "update_project"),
             (["system", "info"], "client", "show_info"),
-            (["info"], "client", "show_info"),
             (["show", "info"], "client", "show_info"),
-            (["pause"], "client", "client_pause"),
-            (["stop"], "client", "client_pause"),
             (["unset", "managed-host", "x"], "server", "control_plane"),
             (["system", "revoke", "client", "x"], "server", "revoke_client"),
         )
@@ -150,11 +148,23 @@ class PublicGrammarClosure(unittest.TestCase):
             result = grammar.match(list(tokens), role=role)
             self.assertEqual(result.get("status"), "ok", tokens)
             self.assertEqual(result.get("action"), action, tokens)
+
+        retired = (
+            ["update", "engine"],
+            ["update", "product"],
+            ["info"],
+            ["pause"],
+            ["stop"],
+        )
+        for tokens in retired:
+            result = grammar.match(tokens, role="client")
+            self.assertNotEqual(result.get("status"), "ok", tokens)
+
         help_root = grammar.help_text([], "server")
         self.assertIn("help managed-hosts", help_root)
         self.assertNotIn("help clients", help_root)
         compat = grammar.help_text(["clients"], "server")
-        self.assertIn("Managed Hosts", compat)
+        self.assertIn("Unknown help topic: clients", compat)
 
 
 class BundleStrictClosure(unittest.TestCase):
