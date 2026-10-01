@@ -3745,7 +3745,7 @@ frpctl_unset_enrollment() {
   if [[ -n "${FRP_ENROLLMENT_STATE:-}" ]]; then
     state="$(printf '%s' "$FRP_ENROLLMENT_STATE" | tr '[:lower:]' '[:upper:]')"
   else
-    state="$(frpctl_invoke frp-enrollment-state "$id" 2>/dev/null || true)"
+    state="$(frpctl_invoke frp-enrollments "$id" --state-only 2>/dev/null || true)"
     state="$(printf '%s' "$state" | tr '[:lower:]' '[:upper:]' | tr -d '[:space:]')"
   fi
   case "$state" in
@@ -3874,6 +3874,7 @@ frpctl_dispatch_canonical() {
       echo
       ;;
     show_enrollments) frpctl_require_server || return 1; frpctl_invoke frp-enrollments ;;
+    show_enrollment) frpctl_require_server || return 1; frpctl_invoke frp-enrollments "$(frpctl_json_get "$result" id)" ;;
     show_audit)
       frpctl_require_server || return 1
       frpctl_load_passthrough "$result"

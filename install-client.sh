@@ -623,10 +623,19 @@ frp_client_main() {
   fi
 
   FRP_RESUME_PENDING=0
+  FRP_REPLACE_PENDING=0
   if frp_pending_enroll_exists_for "$MACHINE_ID"; then
-    FRP_RESUME_PENDING=1
     if [[ -z "${FRP_ALLOCATOR_URL:-}" ]]; then
       FRP_ALLOCATOR_URL="$(frp_pending_enroll_allocator_url || true)"
+    fi
+    if [[ -n "${FRP_ENROLLMENT_CODE:-}" ]] && ! frp_zero_touch_active; then
+      # An explicitly supplied fresh Manual Enrollment Code is an operator
+      # decision to replace a stale/terminal pending transaction. Keep the
+      # old pending file intact until the new code passes preflight and the
+      # replacement pending transaction is atomically written below.
+      FRP_REPLACE_PENDING=1
+    else
+      FRP_RESUME_PENDING=1
     fi
   fi
 
@@ -634,7 +643,9 @@ frp_client_main() {
     frp_client_existing_install_message
     return 1
   fi
-  if frp_client_has_partial_install && [[ "$FRP_RESUME_PENDING" != "1" ]]; then
+  if frp_client_has_partial_install \
+      && [[ "$FRP_RESUME_PENDING" != "1" ]] \
+      && [[ "$FRP_REPLACE_PENDING" != "1" ]]; then
     if frp_client_partial_is_safe_to_repair; then
       frp_client_repair_partial_install "${_FRP_INSTALL_CLIENT_DIR}" || return 1
       return 0

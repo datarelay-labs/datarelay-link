@@ -3718,12 +3718,19 @@ PY
     return 1
   fi
   rm -f "$curl_err"
-  ENROLL_SECRET="$enroll_secret" RESPONSE="$response" ALLOCATED_FILE="$allocated_file" META_FILE="$meta_file" python3 - <<'PY'
-import hashlib,hmac,json,os
+  if ! ENROLL_SECRET="$enroll_secret" RESPONSE="$response" ALLOCATED_FILE="$allocated_file" META_FILE="$meta_file" python3 - <<'PY'
+import hashlib,hmac,json,os,sys
 from pathlib import Path
 secret=os.environ['ENROLL_SECRET']
-d=json.loads(os.environ['RESPONSE'])
-if isinstance(d, dict) and d.get('error'):
+try:
+    d=json.loads(os.environ['RESPONSE'])
+except (json.JSONDecodeError, TypeError):
+    print('ERROR: allocator returned a malformed enrollment response', file=sys.stderr)
+    raise SystemExit(1)
+if not isinstance(d, dict):
+    print('ERROR: allocator returned an invalid enrollment response', file=sys.stderr)
+    raise SystemExit(1)
+if d.get('error'):
     raise SystemExit(f"ERROR: allocator rejected enrollment: {d.get('error')}")
 received=d.pop('response_hmac',None)
 canonical=json.dumps(d,sort_keys=True,separators=(',',':'),ensure_ascii=False)
@@ -3755,6 +3762,9 @@ if 'public_hostname' in d:
     meta['public_hostname']=str(d.get('public_hostname') or '').strip()
 Path(os.environ['META_FILE']).write_text(json.dumps(meta)+'\n', encoding='utf-8')
 PY
+  then
+    return 1
+  fi
   if [[ -n "$pubkey_pem" ]]; then
     frp_identity_derive_and_store_mac "$machine_id" "$enroll_secret" || return 1
   fi

@@ -375,5 +375,68 @@ pass "PENDING_FILE_SECRET_NEVER_IN_CLIENT_STATE"
 )
 pass "PENDING_ENROLL_HELPERS_WRITE_LOAD_CLEAR"
 
+# ---------------------------------------------------------------------------
+# 5. Malformed allocator responses fail cleanly. The parser must return
+#    nonzero immediately and never leak a Python traceback or continue into
+#    later metadata processing.
+# ---------------------------------------------------------------------------
+(
+  set -euo pipefail
+  . "$ROOT/lib/frp-common.sh"
+  . "$ROOT/lib/frp-client-common.sh"
+  export FRP_CLIENT_TEST_ROOT="$WORKDIR/malformed-response"
+  mkdir -p "$FRP_CLIENT_TEST_ROOT/etc/frp"
+  SVC="$WORKDIR/malformed-services.json"
+  ALLOC="$WORKDIR/malformed-allocated.json"
+  META="$WORKDIR/malformed-meta.json"
+  printf '%s\n' '[{"id":"web","name":"web","preset":"custom","local_ip":"127.0.0.1","local_port":8080}]' >"$SVC"
+  : >"$ALLOC"; : >"$META"
+  frp_allocator_curl() { printf '%s' '{not-json'; }
+  set +e
+  OUTPUT="$(frp_enroll_services 'https://example.test/enroll' '0123456789abcdef' 'fresh-secret' \
+    'unit-machine' 'unit-host' "$SVC" "$ALLOC" "$META" 2>&1)"
+  RC=$?
+  set -e
+  [[ "$RC" -ne 0 ]] || { echo "FAIL malformed enrollment response returned success" >&2; exit 1; }
+  [[ "$OUTPUT" == *'malformed enrollment response'* ]] || { echo "FAIL malformed response guidance missing" >&2; exit 1; }
+  [[ "$OUTPUT" != *'Traceback (most recent call last)'* ]] || { echo "FAIL malformed response leaked traceback" >&2; exit 1; }
+  [[ ! -s "$META" ]] || { echo "FAIL malformed response wrote enrollment metadata" >&2; exit 1; }
+)
+pass "MALFORMED_ENROLLMENT_RESPONSE_FAILS_CLEANLY"
+
+# ---------------------------------------------------------------------------
+# 6. An explicitly supplied fresh Manual Enrollment Code overrides pending
+#    resume selection, while an ordinary retry still selects exact replay.
+#    The old pending transaction is not cleared by selection itself.
+# ---------------------------------------------------------------------------
+(
+  set -euo pipefail
+  export FRP_CLIENT_SOURCED=1
+  export FRP_CLIENT_TEST_ROOT="$WORKDIR/pending-selection"
+  export FRP_TEST_MACHINE_ID='unit-machine-id'
+  . "$ROOT/install-client.sh"
+  frp_pending_enroll_exists_for() { return 0; }
+  frp_pending_enroll_allocator_url() { printf '%s' 'https://example.test/enroll'; }
+  frp_client_has_existing_install() { return 0; }
+  frp_client_existing_install_message() { :; }
+  frp_zero_touch_active() { return 1; }
+
+  unset FRP_ENROLLMENT_CODE FRP_ALLOCATOR_URL 2>/dev/null || true
+  set +e
+  frp_client_main >/dev/null 2>&1
+  set -e
+  [[ "$FRP_RESUME_PENDING" == "1" && "$FRP_REPLACE_PENDING" == "0" ]] \
+    || { echo "FAIL ordinary retry did not select pending exact replay" >&2; exit 1; }
+
+  export FRP_ENROLLMENT_CODE='fedcba9876543210.fresh-secret-value'
+  unset FRP_ALLOCATOR_URL 2>/dev/null || true
+  set +e
+  frp_client_main >/dev/null 2>&1
+  set -e
+  [[ "$FRP_RESUME_PENDING" == "0" && "$FRP_REPLACE_PENDING" == "1" ]] \
+    || { echo "FAIL fresh Manual Code did not supersede pending selection" >&2; exit 1; }
+)
+pass "FRESH_MANUAL_CODE_SUPERSEDES_PENDING_SELECTION"
+
 echo
 echo "PENDING_ENROLL_RECOVERY_TEST=PASS"
