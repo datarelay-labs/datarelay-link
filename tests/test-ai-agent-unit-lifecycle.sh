@@ -27,9 +27,10 @@ python3 - "$ROOT/install-client.sh" <<'PY' || fail "lifecycle activation is not 
 import sys
 text = open(sys.argv[1], encoding="utf-8").read()
 state_commit = text.index("frp_pending_enroll_clear")
-lifecycle = text.index("frp_client_converge_lifecycle_unit", state_commit)
+intent = text.index("frp_client_set_lifecycle_intent running", state_commit)
+lifecycle = text.index("frp_client_converge_lifecycle_unit", intent)
 remote_promote = text.index("frp_client_activate_enrolled_services", lifecycle)
-assert state_commit < lifecycle < remote_promote
+assert state_commit < intent < lifecycle < remote_promote
 PY
 pass "INSTALL_CALLS_INDEPENDENT_LIFECYCLE_AND_AI_CONVERGE"
 

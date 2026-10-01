@@ -1016,6 +1016,11 @@ frp_client_main() {
   # worker's retry/backoff loop; failure to register the local supervisor is not.
   if [[ "${FRP_SKIP_SYSTEMD:-}" != "1" && -z "${FRP_CLIENT_TEST_ROOT:-}" ]]; then
     echo "Starting Data Relay Link Agent lifecycle worker ..."
+    if ! frp_client_set_lifecycle_intent running; then
+      echo "ERROR: Data Relay Link Agent lifecycle intent could not be initialized." >&2
+      frp_emit_failure_class SERVICE_START_FAILED
+      exit 1
+    fi
     if ! frp_client_converge_lifecycle_unit "${_FRP_INSTALL_CLIENT_DIR:-}"; then
       echo "ERROR: Data Relay Link Agent lifecycle worker could not be started." >&2
       echo "Recovery: sudo drlink system update product" >&2
