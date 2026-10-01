@@ -73,9 +73,21 @@ for rel in (
         raise SystemExit(f"{rel}: unexpected trigger block:\n{actual}")
 
 lint = Path(".github/workflows/lint.yml").read_text(encoding="utf-8")
-release_only_steps = (
+pr_regression_steps = (
     "Install Full Suite OS Python deps",
     "Provision pinned official MCP SDK",
+    "Full local non-Docker suite",
+)
+for name in pr_regression_steps:
+    marker = f"      - name: {name}\n"
+    pos = lint.find(marker)
+    if pos < 0:
+        raise SystemExit(f"lint.yml missing PR regression step: {name}")
+    tail = lint[pos + len(marker):].splitlines()
+    if tail and tail[0].strip().startswith("if:"):
+        raise SystemExit(f"lint.yml PR regression step unexpectedly gated off PR: {name}")
+
+release_only_steps = (
     "Build standalone bundles",
     "SHA256SUMS",
     "SBOM binds to the checked-out commit",
