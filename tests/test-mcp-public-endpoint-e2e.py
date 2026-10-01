@@ -155,8 +155,7 @@ class PublicMcpEndpointTests(unittest.TestCase):
         )
         dispatch(["set", "client-group", "production-linux"], root=self.tmp)
         dispatch(["set", "client-group", "production-linux", "member", "Expernet-DP1"], root=self.tmp)
-        dispatch(["set", "ai-principal", "chatgpt-support"], root=self.tmp)
-        dispatch(["set", "ai-principal", "chatgpt-support", "enabled"], root=self.tmp)
+        self.plane.set_ai_principal("chatgpt-support", enabled=True)
         # Canonical v2.4 AI Access: Permission Object + rule fields + internal path scopes.
         # Do not use superseded principal/target/capability/path/action grammar.
         out = []
