@@ -86,10 +86,8 @@ class RemoteConnectorInteropTests(unittest.TestCase):
         self.plane.upsert_client("client-a-aaaaaaaaaaaa", label="Host-A")
         self.plane.upsert_client("client-b-bbbbbbbbbbbb", label="Host-B")
         dispatch(["set", "network-group", "group-a", "members", "Host-A"], root=self.tmp)
-        dispatch(["set", "ai-principal", "ro-agent"], root=self.tmp)
-        dispatch(["set", "ai-principal", "ro-agent", "enabled"], root=self.tmp)
-        dispatch(["set", "ai-principal", "rw-agent"], root=self.tmp)
-        dispatch(["set", "ai-principal", "rw-agent", "enabled"], root=self.tmp)
+        self.plane.set_ai_principal("ro-agent", enabled=True)
+        self.plane.set_ai_principal("rw-agent", enabled=True)
         # Canonical v2.4 AI Access: verify identities first, then Permission Objects +
         # mode/source/destination/permission/enabled. Path scopes are internal-only.
         # Do not use superseded principal/target/capability/path/action grammar.
@@ -99,11 +97,11 @@ class RemoteConnectorInteropTests(unittest.TestCase):
         for name in ("ro-agent", "rw-agent"):
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
-                dispatch(["system", "credential", "rotate", "ai-principal", name], root=self.tmp)
+                dispatch(["system", "credential", "rotate", "ai-identity", name], root=self.tmp)
             token = [ln.split(" ", 1)[1].strip() for ln in buf.getvalue().splitlines() if ln.startswith("Token: ")][0]
             setattr(self, name.replace("-", "_") + "_token", token)
             dispatch(
-                ["system", "credential", "configure", "ai-principal", name, "authentication", "oauth"],
+                ["system", "credential", "configure", "ai-identity", name, "authentication", "oauth"],
                 root=self.tmp,
             )
             dispatch(
@@ -111,7 +109,7 @@ class RemoteConnectorInteropTests(unittest.TestCase):
                     "system",
                     "credential",
                     "configure",
-                    "ai-principal",
+                    "ai-identity",
                     name,
                     "oauth-redirect",
                     "http://127.0.0.1/callback",
