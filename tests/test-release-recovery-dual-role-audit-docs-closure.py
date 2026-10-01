@@ -114,7 +114,9 @@ class ReleaseRecoveryDualRoleAuditDocsClosure(unittest.TestCase):
         self.assertIsNone(CATALOG.strict_error(["show", "enrollment", "enr_test"]))
         result = GRAMMAR.match(["show", "enrollment", "enr_test"], "server")
         self.assertEqual(result.get("status"), "ok", result)
-        self.assertEqual(result.get("action"), "control_plane", result)
+        self.assertEqual(result.get("action"), "show_enrollment", result)
+        self.assertEqual(result.get("id"), "enr_test", result)
+        self.assertNotEqual(result.get("action"), "control_plane", result)
 
     def test_show_enrollment_runtime_hides_secret(self):
         sys.path.insert(0, str(LIB))
