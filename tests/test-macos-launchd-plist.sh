@@ -30,8 +30,25 @@ assert "@" not in repr(p)
 PY
 
 lifecycle_out="$TMP/lifecycle.plist"
+real_python="$(command -v python3)"
+mkdir -p "$TMP/transient-venv/bin"
+cat >"$TMP/transient-venv/bin/python3" <<EOF
+#!/usr/bin/env bash
+exec "$real_python" "\$@"
+EOF
+chmod 0755 "$TMP/transient-venv/bin/python3"
+PATH="$TMP/transient-venv/bin:$PATH"
+export PATH
 frp_macos_render_lifecycle_plist "$lifecycle_out"
-expected_python="${FRP_MACOS_PYTHON:-$(command -v python3)}"
+expected_python="$(frp_macos_lifecycle_python)"
+[[ "$expected_python" != "$TMP/transient-venv/bin/python3" ]] || {
+  echo "ERROR: lifecycle plist pinned a transient PATH shim" >&2
+  exit 1
+}
+case "$expected_python" in
+  /usr/bin/python3|/opt/homebrew/bin/python3|/usr/local/bin/python3) ;;
+  *) echo "ERROR: lifecycle python is not a durable system/Homebrew path: $expected_python" >&2; exit 1 ;;
+esac
 python3 - "$lifecycle_out" "$TMP/root$TMP/state" "$expected_python" <<'PY'
 import plistlib, sys
 with open(sys.argv[1], "rb") as f: p = plistlib.load(f)

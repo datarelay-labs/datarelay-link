@@ -230,14 +230,37 @@ tmp.chmod(0o644); tmp.replace(out)
 PY
 }
 
+frp_macos_lifecycle_python() {
+  local candidate
+  if [[ -n "${FRP_MACOS_PYTHON:-}" ]]; then
+    candidate="$FRP_MACOS_PYTHON"
+    [[ "$candidate" == /* && -x "$candidate" ]] || {
+      echo "ERROR: FRP_MACOS_PYTHON must be an executable absolute path" >&2
+      return 1
+    }
+    printf '%s' "$candidate"
+    return 0
+  fi
+  # LaunchDaemons must not persist a shell-local virtualenv/pyenv shim. Prefer
+  # durable system/Homebrew locations that remain valid after the installer
+  # process and its PATH disappear.
+  for candidate in /usr/bin/python3 /opt/homebrew/bin/python3 /usr/local/bin/python3; do
+    if [[ -x "$candidate" ]]; then
+      printf '%s' "$candidate"
+      return 0
+    fi
+  done
+  echo "ERROR: durable python3 is required for the Agent lifecycle worker" >&2
+  return 1
+}
+
 frp_macos_render_lifecycle_plist() {
   local dest="$1" template python_bin
   template="$(frp_macos_lifecycle_template)" || {
     echo "ERROR: lifecycle launchd plist template not found" >&2
     return 1
   }
-  python_bin="${FRP_MACOS_PYTHON:-$(command -v python3 2>/dev/null || true)}"
-  [[ "$python_bin" == /* ]] || { echo "ERROR: python3 is required for the Agent lifecycle worker" >&2; return 1; }
+  python_bin="$(frp_macos_lifecycle_python)" || return 1
   FRP_LIFECYCLE_LABEL="$FRP_MACOS_LIFECYCLE_LABEL" \
   FRP_LIFECYCLE_PYTHON="$python_bin" \
   FRP_LIFECYCLE_SCRIPT="$(frp_macos_fs /usr/local/lib/drlink/drlink_agent_lifecycle.py)" \

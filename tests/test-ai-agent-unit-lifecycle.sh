@@ -21,8 +21,17 @@ assert_readonly_systemd_log() {
 }
 
 grep -q 'frp_client_converge_ai_agent_unit' "$ROOT/install-client.sh" || fail "install path missing AI agent converge"
+grep -q 'frp_client_converge_lifecycle_unit' "$ROOT/install-client.sh" || fail "install path missing lifecycle converge"
 grep -q 'systemctl enable drlink-client' "$ROOT/install-client.sh" || fail "client unit enable missing"
-pass "INSTALL_CALLS_AI_AGENT_CONVERGE"
+python3 - "$ROOT/install-client.sh" <<'PY' || fail "lifecycle activation is not on the common post-state path"
+import sys
+text = open(sys.argv[1], encoding="utf-8").read()
+state_commit = text.index("frp_pending_enroll_clear")
+lifecycle = text.index("frp_client_converge_lifecycle_unit", state_commit)
+remote_promote = text.index("frp_client_activate_enrolled_services", lifecycle)
+assert state_commit < lifecycle < remote_promote
+PY
+pass "INSTALL_CALLS_INDEPENDENT_LIFECYCLE_AND_AI_CONVERGE"
 
 MOCK="$WORKDIR/systemctl"
 LOG="$WORKDIR/systemctl.log"
@@ -94,19 +103,51 @@ INSTALL="$WORKDIR/install-root"
   export FRP_SYSTEMCTL_BIN="$MOCK"
   # shellcheck disable=SC1091
   . "$ROOT/lib/frp-client-common.sh"
-  frp_client_converge_ai_agent_unit "$ROOT"
+  frp_client_converge_lifecycle_unit "$ROOT"
 )
-[[ -f "$INSTALL/etc/systemd/system/drlink-ai-agent.service" ]] || fail "install did not write unit"
 [[ -f "$INSTALL/etc/systemd/system/drlink-lifecycle.service" ]] || fail "install did not write lifecycle unit"
-grep -q 'drlink_ai_agent.py' "$INSTALL/etc/systemd/system/drlink-ai-agent.service" || fail "install unit exec"
 grep -q 'drlink_agent_lifecycle.py worker' "$INSTALL/etc/systemd/system/drlink-lifecycle.service" || fail "lifecycle unit exec"
-grep -qx 'daemon-reload' "$LOG" || fail "install daemon-reload"
-grep -qx 'enable drlink-ai-agent' "$LOG" || fail "install enable"
-grep -qx 'restart drlink-ai-agent' "$LOG" || fail "install restart"
+grep -qx 'daemon-reload' "$LOG" || fail "lifecycle daemon-reload"
 grep -qx 'enable drlink-lifecycle' "$LOG" || fail "lifecycle enable"
 grep -qx 'restart drlink-lifecycle' "$LOG" || fail "lifecycle restart"
-if grep -q 'drlink-client' "$LOG"; then fail "install restarted frpc via AI converge"; fi
-pass "INSTALL_ENABLES_AND_RESTARTS_AI_AGENT"
+if grep -q 'drlink-ai-agent' "$LOG"; then fail "lifecycle converge touched AI worker"; fi
+if grep -q 'drlink-client' "$LOG"; then fail "lifecycle converge restarted frpc"; fi
+pass "LIFECYCLE_CONVERGES_INDEPENDENTLY"
+
+: >"$LOG"
+(
+  export FRP_CLIENT_TEST_ROOT="$INSTALL"
+  export FRP_SYSTEMCTL_BIN="$MOCK"
+  # shellcheck disable=SC1091
+  . "$ROOT/lib/frp-client-common.sh"
+  frp_client_converge_ai_agent_unit "$ROOT"
+)
+[[ -f "$INSTALL/etc/systemd/system/drlink-ai-agent.service" ]] || fail "install did not write AI unit"
+grep -q 'drlink_ai_agent.py' "$INSTALL/etc/systemd/system/drlink-ai-agent.service" || fail "install AI unit exec"
+grep -qx 'daemon-reload' "$LOG" || fail "AI daemon-reload"
+grep -qx 'enable drlink-ai-agent' "$LOG" || fail "AI enable"
+grep -qx 'restart drlink-ai-agent' "$LOG" || fail "AI restart"
+if grep -q 'drlink-lifecycle' "$LOG"; then fail "AI converge touched lifecycle worker"; fi
+if grep -q 'drlink-client' "$LOG"; then fail "AI converge restarted frpc"; fi
+pass "AI_AGENT_CONVERGES_INDEPENDENTLY"
+
+(
+  export FRP_CLIENT_SOURCED=1
+  # shellcheck disable=SC1091
+  . "$ROOT/install-client.sh"
+  frp_is_darwin() { return 1; }
+  frp_retire_legacy_client_unit() { return 0; }
+  frp_client_set_lifecycle_intent() { return 0; }
+  frp_client_converge_ai_agent_unit() { return 0; }
+  systemctl() {
+    [[ "$1" == "restart" && "$2" == "drlink-client" ]] && return 1
+    return 0
+  }
+  if frp_client_service_start; then
+    exit 1
+  fi
+) || fail "client runtime start failure was masked"
+pass "CLIENT_RUNTIME_START_FAILURE_NOT_MASKED"
 
 TREE="$WORKDIR/update-root"
 install_tree "$TREE"

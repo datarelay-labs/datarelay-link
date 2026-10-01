@@ -4739,10 +4739,10 @@ frp_client_activate_linux_runtime_units() {
     return 0
   fi
   frp_client_systemctl daemon-reload || return 1
-  frp_client_systemctl enable drlink-ai-agent || return 1
-  frp_client_systemctl restart drlink-ai-agent || return 1
-  frp_client_systemctl enable drlink-lifecycle || return 1
-  frp_client_systemctl restart drlink-lifecycle || return 1
+  # Connectivity lifecycle is a required product signal and must not depend on
+  # AI worker health. Start it first and fail closed if it cannot run.
+  frp_client_activate_lifecycle_unit || return 1
+  frp_client_activate_ai_agent_unit || return 1
   if [[ "$restart_client" == "1" ]]; then
     frp_client_systemctl enable drlink-client || return 1
     frp_client_systemctl restart drlink-client || return 1
@@ -4752,7 +4752,31 @@ frp_client_activate_linux_runtime_units() {
 }
 
 frp_client_activate_ai_agent_unit() {
-  frp_client_activate_linux_runtime_units 0
+  if declare -F frp_is_darwin >/dev/null 2>&1 && frp_is_darwin; then
+    return 0
+  fi
+  if frp_client_ai_agent_systemd_skipped; then
+    return 0
+  fi
+  frp_client_systemctl daemon-reload || return 1
+  frp_client_systemctl enable drlink-ai-agent || return 1
+  frp_client_systemctl restart drlink-ai-agent || return 1
+  return 0
+}
+
+frp_client_activate_lifecycle_unit() {
+  if declare -F frp_is_darwin >/dev/null 2>&1 && frp_is_darwin; then
+    frp_macos_lifecycle_set_enabled enable || return 1
+    frp_macos_lifecycle_bootstrap || return 1
+    return 0
+  fi
+  if frp_client_ai_agent_systemd_skipped; then
+    return 0
+  fi
+  frp_client_systemctl daemon-reload || return 1
+  frp_client_systemctl enable drlink-lifecycle || return 1
+  frp_client_systemctl restart drlink-lifecycle || return 1
+  return 0
 }
 
 frp_client_restore_one_linux_unit() {
@@ -4831,16 +4855,21 @@ frp_client_restore_ai_agent_service_state() {
   frp_client_restore_linux_unit_state "$backup"
 }
 
+frp_client_converge_lifecycle_unit() {
+  local source="${1:-}"
+  frp_client_install_lifecycle_unit "$source" || return 1
+  frp_client_activate_lifecycle_unit || return 1
+  return 0
+}
+
 frp_client_converge_ai_agent_unit() {
   local source="${1:-}"
   if declare -F frp_is_darwin >/dev/null 2>&1 && frp_is_darwin; then
-    frp_client_install_lifecycle_unit "$source" || return 1
-    frp_macos_lifecycle_set_enabled enable || return 1
-    frp_macos_lifecycle_bootstrap || return 1
+    # v2.4 has no durable macOS AI executor. Agent lifecycle is converged
+    # independently by frp_client_converge_lifecycle_unit.
     return 0
   fi
   frp_client_install_ai_agent_unit "$source" || return 1
-  frp_client_install_lifecycle_unit "$source" || return 1
   frp_client_activate_ai_agent_unit || return 1
   return 0
 }
@@ -6056,7 +6085,7 @@ frp_client_apply_upgrade() {
   _lifecycle_converged=0
   _frp_client_relay_restarted=0
   if declare -F frp_is_darwin >/dev/null 2>&1 && frp_is_darwin; then
-    if ! frp_client_converge_ai_agent_unit "$source"; then
+    if ! frp_client_converge_lifecycle_unit "$source"; then
       echo "ERROR: failed to converge macOS Agent lifecycle worker; restoring previous management files." >&2
       frp_client_upgrade_rollback "$backup" HEALTH_CHECK_FAILED || return 2
       return 1
