@@ -1727,7 +1727,7 @@ def domain_help(topic, role):
             "Everyday commands:\n"
             "  show remote-services\n"
             "  set remote-service <NAME> destination <DEST|this-host> service <SERVICE> enabled\n"
-            "  unset remote-service <NAME>\n"
+            "  unset remote-service <NAME>   (interactive y/N confirmation required)\n"
         )
     if topic == "internet-access":
         if not server:

@@ -1239,15 +1239,36 @@ def handle_unset(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         _require_agent(plane)
         if len(rest) < 2:
             raise ControlPlaneError("Usage: unset remote-service <NAME>")
+        from drlink_control_cli import _confirm_from_stdin, _stdin_is_interactive
+
+        name = rest[1]
+        if not _stdin_is_interactive():
+            sys.stderr.write(
+                "ERROR: unset remote-service requires interactive confirmation.\n"
+                "This deletes the Agent Remote Service and removes or queues removal of its Server publication.\n"
+                "Run interactively and answer y.\n"
+                "No changes were applied.\n"
+            )
+            return 1
+        sys.stdout.write(
+            "Delete Remote Service\n"
+            "=====================\n\n"
+            "Remote Service: %s\n"
+            "This deletes the Agent configuration and removes or queues removal of its Server publication.\n\n"
+            % name
+        )
+        if not _confirm_from_stdin("Continue? [y/N]:"):
+            sys.stdout.write("Cancelled.\nNo changes were applied.\n")
+            return 1
         reachable = v24.detect_server_reachable(plane, plane.root)
         v24.unset_remote_service_agent(
-            plane, rest[1], root=plane.root, server_reachable=reachable
+            plane, name, root=plane.root, server_reachable=reachable
         )
         sys.stdout.write(
-            "Remote Service deleted: %s\n" % rest[1]
+            "Remote Service deleted: %s\n" % name
             if reachable
             else "Remote Service local configuration deleted: %s\nDeletion will synchronize when the Server is reachable.\n"
-            % rest[1]
+            % name
         )
         return 0
     return None
