@@ -3718,12 +3718,19 @@ PY
     return 1
   fi
   rm -f "$curl_err"
-  ENROLL_SECRET="$enroll_secret" RESPONSE="$response" ALLOCATED_FILE="$allocated_file" META_FILE="$meta_file" python3 - <<'PY'
-import hashlib,hmac,json,os
+  if ! ENROLL_SECRET="$enroll_secret" RESPONSE="$response" ALLOCATED_FILE="$allocated_file" META_FILE="$meta_file" python3 - <<'PY'
+import hashlib,hmac,json,os,sys
 from pathlib import Path
 secret=os.environ['ENROLL_SECRET']
-d=json.loads(os.environ['RESPONSE'])
-if isinstance(d, dict) and d.get('error'):
+try:
+    d=json.loads(os.environ['RESPONSE'])
+except (json.JSONDecodeError, TypeError):
+    print('ERROR: allocator returned a malformed enrollment response', file=sys.stderr)
+    raise SystemExit(1)
+if not isinstance(d, dict):
+    print('ERROR: allocator returned an invalid enrollment response', file=sys.stderr)
+    raise SystemExit(1)
+if d.get('error'):
     raise SystemExit(f"ERROR: allocator rejected enrollment: {d.get('error')}")
 received=d.pop('response_hmac',None)
 canonical=json.dumps(d,sort_keys=True,separators=(',',':'),ensure_ascii=False)
@@ -3755,6 +3762,9 @@ if 'public_hostname' in d:
     meta['public_hostname']=str(d.get('public_hostname') or '').strip()
 Path(os.environ['META_FILE']).write_text(json.dumps(meta)+'\n', encoding='utf-8')
 PY
+  then
+    return 1
+  fi
   if [[ -n "$pubkey_pem" ]]; then
     frp_identity_derive_and_store_mac "$machine_id" "$enroll_secret" || return 1
   fi
@@ -4500,6 +4510,28 @@ frp_client_stop() {
   return 0
 }
 
+frp_client_install_lifecycle_unit() {
+  local source="${1:-}" dest src
+  if declare -F frp_is_darwin >/dev/null 2>&1 && frp_is_darwin; then
+    frp_macos_lifecycle_install
+    return $?
+  fi
+  dest="$(frp_client_path /etc/systemd/system/drlink-lifecycle.service)"
+  mkdir -p "$(dirname "$dest")"
+  src=""
+  if [[ -n "$source" && -f "$source/client/drlink-lifecycle.service" ]]; then
+    src="$source/client/drlink-lifecycle.service"
+  elif [[ -n "${_FRP_INSTALL_CLIENT_DIR:-}" && -f "${_FRP_INSTALL_CLIENT_DIR}/client/drlink-lifecycle.service" ]]; then
+    src="${_FRP_INSTALL_CLIENT_DIR}/client/drlink-lifecycle.service"
+  fi
+  [[ -n "$src" ]] || { echo "ERROR: missing drlink-lifecycle.service" >&2; return 1; }
+  if declare -F frp_write_compatible_systemd_unit >/dev/null 2>&1; then
+    frp_write_compatible_systemd_unit "$src" "$dest"
+  else
+    install -m 0644 "$src" "$dest"
+  fi
+}
+
 frp_client_install_ai_agent_unit() {
   local source="${1:-}"
   local dest src
@@ -4616,6 +4648,29 @@ frp_client_ai_agent_unit_needs_converge() {
   return 1
 }
 
+frp_client_lifecycle_unit_needs_converge() {
+  local source="${1:-}" ctl enabled active
+  frp_client_unit_file_needs_converge "$source" "drlink-lifecycle.service" && return 0
+  if ! frp_client_systemd_state_queryable; then
+    return 1
+  fi
+  [[ -f "$(frp_client_path /etc/systemd/system/drlink-lifecycle.service)" ]] || return 0
+  ctl="${FRP_SYSTEMCTL_BIN:-systemctl}"
+  enabled="$("$ctl" is-enabled drlink-lifecycle 2>/dev/null || true)"
+  active="$("$ctl" is-active drlink-lifecycle 2>/dev/null || true)"
+  case "$enabled" in enabled|static|indirect|alias) ;; *) return 0 ;; esac
+  [[ "$active" == "active" ]] || return 0
+  return 1
+}
+
+frp_client_macos_lifecycle_needs_converge() {
+  if ! { declare -F frp_is_darwin >/dev/null 2>&1 && frp_is_darwin; }; then
+    return 1
+  fi
+  [[ -f "$(frp_client_path /etc/systemd/system/drlink-lifecycle.service)" ]] || return 0
+  return 1
+}
+
 frp_client_linux_units_need_converge() {
   local source="${1:-}"
   if declare -F frp_is_darwin >/dev/null 2>&1 && frp_is_darwin; then
@@ -4623,6 +4678,7 @@ frp_client_linux_units_need_converge() {
   fi
   frp_client_unit_file_needs_converge "$source" "drlink-client.service" && return 0
   frp_client_ai_agent_unit_needs_converge "$source" && return 0
+  frp_client_lifecycle_unit_needs_converge "$source" && return 0
   return 1
 }
 
@@ -4636,7 +4692,7 @@ frp_client_capture_linux_unit_state() {
   {
     printf 'systemd=%s\n' "$mode"
     if ! { declare -F frp_is_darwin >/dev/null 2>&1 && frp_is_darwin; }; then
-      for unit in drlink-client drlink-ai-agent; do
+      for unit in drlink-client drlink-ai-agent drlink-lifecycle; do
         live="$(frp_client_path "/etc/systemd/system/${unit}.service")"
         presence="absent"
         enabled="disabled"
@@ -4661,7 +4717,17 @@ frp_client_capture_linux_unit_state() {
 }
 
 frp_client_capture_ai_agent_service_state() {
-  frp_client_capture_linux_unit_state "$1"
+  local dest="$1" live
+  frp_client_capture_linux_unit_state "$dest"
+  if declare -F frp_is_darwin >/dev/null 2>&1 && frp_is_darwin; then
+    live="$(frp_client_path /etc/systemd/system/drlink-lifecycle.service)"
+    if [[ -f "$live" ]]; then
+      install -m 0644 "$live" "${dest}/macos-lifecycle.plist"
+      printf '%s\n' present >"${dest}/macos-lifecycle.state"
+    else
+      printf '%s\n' absent >"${dest}/macos-lifecycle.state"
+    fi
+  fi
 }
 
 frp_client_activate_linux_runtime_units() {
@@ -4673,8 +4739,10 @@ frp_client_activate_linux_runtime_units() {
     return 0
   fi
   frp_client_systemctl daemon-reload || return 1
-  frp_client_systemctl enable drlink-ai-agent || return 1
-  frp_client_systemctl restart drlink-ai-agent || return 1
+  # Connectivity lifecycle is a required product signal and must not depend on
+  # AI worker health. Start it first and fail closed if it cannot run.
+  frp_client_activate_lifecycle_unit || return 1
+  frp_client_activate_ai_agent_unit || return 1
   if [[ "$restart_client" == "1" ]]; then
     frp_client_systemctl enable drlink-client || return 1
     frp_client_systemctl restart drlink-client || return 1
@@ -4684,7 +4752,31 @@ frp_client_activate_linux_runtime_units() {
 }
 
 frp_client_activate_ai_agent_unit() {
-  frp_client_activate_linux_runtime_units 0
+  if declare -F frp_is_darwin >/dev/null 2>&1 && frp_is_darwin; then
+    return 0
+  fi
+  if frp_client_ai_agent_systemd_skipped; then
+    return 0
+  fi
+  frp_client_systemctl daemon-reload || return 1
+  frp_client_systemctl enable drlink-ai-agent || return 1
+  frp_client_systemctl restart drlink-ai-agent || return 1
+  return 0
+}
+
+frp_client_activate_lifecycle_unit() {
+  if declare -F frp_is_darwin >/dev/null 2>&1 && frp_is_darwin; then
+    frp_macos_lifecycle_set_enabled enable || return 1
+    frp_macos_lifecycle_bootstrap || return 1
+    return 0
+  fi
+  if frp_client_ai_agent_systemd_skipped; then
+    return 0
+  fi
+  frp_client_systemctl daemon-reload || return 1
+  frp_client_systemctl enable drlink-lifecycle || return 1
+  frp_client_systemctl restart drlink-lifecycle || return 1
+  return 0
 }
 
 frp_client_restore_one_linux_unit() {
@@ -4728,19 +4820,53 @@ frp_client_restore_linux_unit_state() {
   [[ "$mode" == "skipped" ]] && return 0
   frp_client_systemctl daemon-reload || return 1
   while read -r unit presence enabled active; do
-    [[ "$unit" == "drlink-client" || "$unit" == "drlink-ai-agent" ]] || continue
+    [[ "$unit" == "drlink-client" || "$unit" == "drlink-ai-agent" || "$unit" == "drlink-lifecycle" ]] || continue
     frp_client_restore_one_linux_unit "$unit" "$presence" "$enabled" "$active" || return 1
   done <"$state"
   return 0
 }
 
 frp_client_restore_ai_agent_service_state() {
-  frp_client_restore_linux_unit_state "$1"
+  local backup="$1" state live
+  if declare -F frp_is_darwin >/dev/null 2>&1 && frp_is_darwin; then
+    state="$(cat "${backup}/macos-lifecycle.state" 2>/dev/null || printf absent)"
+    live="$(frp_client_path /etc/systemd/system/drlink-lifecycle.service)"
+    # Test-root rollback must never touch the host launchd service namespace.
+    # Restore exactly the staged plist state and leave runtime activation to
+    # real-host paths only.
+    if [[ -n "${FRP_CLIENT_TEST_ROOT:-}" ]]; then
+      if [[ "$state" == "present" && -f "${backup}/macos-lifecycle.plist" ]]; then
+        install -m 0644 "${backup}/macos-lifecycle.plist" "$live" || return 1
+      else
+        rm -f "$live" || return 1
+      fi
+      return 0
+    fi
+    frp_macos_lifecycle_bootout || true
+    if [[ "$state" == "present" && -f "${backup}/macos-lifecycle.plist" ]]; then
+      install -m 0644 "${backup}/macos-lifecycle.plist" "$live" || return 1
+      frp_macos_lifecycle_set_enabled enable || return 1
+      frp_macos_lifecycle_bootstrap || return 1
+    else
+      rm -f "$live" || return 1
+    fi
+    return 0
+  fi
+  frp_client_restore_linux_unit_state "$backup"
+}
+
+frp_client_converge_lifecycle_unit() {
+  local source="${1:-}"
+  frp_client_install_lifecycle_unit "$source" || return 1
+  frp_client_activate_lifecycle_unit || return 1
+  return 0
 }
 
 frp_client_converge_ai_agent_unit() {
   local source="${1:-}"
   if declare -F frp_is_darwin >/dev/null 2>&1 && frp_is_darwin; then
+    # v2.4 has no durable macOS AI executor. Agent lifecycle is converged
+    # independently by frp_client_converge_lifecycle_unit.
     return 0
   fi
   frp_client_install_ai_agent_unit "$source" || return 1
@@ -4823,14 +4949,44 @@ frp_client_runtime_active() {
   esac
 }
 
+frp_client_set_lifecycle_intent() {
+  local intent="$1" root lib_dir
+  root="$(frp_client_mgmt_origin_root)"
+  lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  PYTHONPATH="${lib_dir}${PYTHONPATH:+:$PYTHONPATH}" python3 - "$root" "$intent" <<'PY'
+import sys
+from drlink_agent_lifecycle import set_lifecycle_intent
+set_lifecycle_intent(sys.argv[2], root=sys.argv[1])
+PY
+}
+
+frp_client_best_effort_lifecycle_disconnect() {
+  local root lib_dir
+  frp_client_hook_log lifecycle_disconnect
+  root="$(frp_client_mgmt_origin_root)"
+  lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  PYTHONPATH="${lib_dir}${PYTHONPATH:+:$PYTHONPATH}" python3 - "$root" <<'PY' >/dev/null 2>&1 || true
+import sys
+from drlink_agent_lifecycle import disconnect_once
+disconnect_once(root=sys.argv[1])
+PY
+  return 0
+}
+
 frp_client_pause_cmd() {
   local already=0
   if ! frp_client_runtime_active && ! frp_client_autostart_enabled; then
     already=1
   fi
+  frp_client_set_lifecycle_intent paused || return 1
   if ! frp_client_stop; then
+    frp_client_set_lifecycle_intent running >/dev/null 2>&1 || true
     return 1
   fi
+  # Match Windows/uninstall lifecycle semantics: once the runtime is stopped,
+  # report an authenticated disconnect when the Server is reachable. Offline
+  # pause still succeeds; heartbeat expiry is the fail-safe fallback.
+  frp_client_best_effort_lifecycle_disconnect
   if [[ "${FRP_SKIP_SYSTEMD:-}" == "1" || -n "${FRP_CLIENT_TEST_ROOT:-}" ]]; then
     FRP_CLIENT_TEST_RUNTIME=inactive
     export FRP_CLIENT_TEST_RUNTIME
@@ -4864,6 +5020,7 @@ frp_client_resume_cmd() {
   if ! frp_client_restart; then
     return 1
   fi
+  frp_client_set_lifecycle_intent running || return 1
   if [[ "${FRP_SKIP_SYSTEMD:-}" == "1" || -n "${FRP_CLIENT_TEST_ROOT:-}" ]]; then
     FRP_CLIENT_TEST_RUNTIME=active
     export FRP_CLIENT_TEST_RUNTIME
@@ -5203,6 +5360,10 @@ frp_client_install_management_files() {
     install -m 0644 "${source}/client/${FRP_MACOS_LAUNCHD_LABEL}.plist" \
       "${libdir}/${FRP_MACOS_LAUNCHD_LABEL}.plist"
   fi
+  if [[ -f "${source}/client/${FRP_MACOS_LIFECYCLE_LABEL}.plist" ]]; then
+    install -m 0644 "${source}/client/${FRP_MACOS_LIFECYCLE_LABEL}.plist" \
+      "${libdir}/${FRP_MACOS_LIFECYCLE_LABEL}.plist"
+  fi
   if [[ -f "${source}/client/drlink-frpc-launch" ]]; then
     install -m 0755 "${source}/client/drlink-frpc-launch" \
       "${libdir}/drlink-frpc-launch"
@@ -5222,6 +5383,7 @@ frp_client_upgrade_destinations() {
   done < <(frp_agent_lib_payload_files)
   printf '%s\n' \
     "usr/local/lib/drlink/com.datarelay.drlink.frpc.plist:0644:client/com.datarelay.drlink.frpc.plist" \
+    "usr/local/lib/drlink/com.datarelay.drlink.lifecycle.plist:0644:client/com.datarelay.drlink.lifecycle.plist" \
     "usr/local/lib/drlink/drlink-frpc-launch:0755:client/drlink-frpc-launch" \
     "usr/local/lib/drlink/uninstall-client.sh:0755:uninstall-client.sh" \
     "usr/local/bin/frp-client:0755:tools/frp-client" \
@@ -5233,7 +5395,8 @@ frp_client_upgrade_destinations() {
     printf '%s\n' \
       "usr/bin/drlink:0755:tools/drlink" \
       "etc/systemd/system/drlink-client.service:0644:client/drlink-client.service" \
-      "etc/systemd/system/drlink-ai-agent.service:0644:client/drlink-ai-agent.service"
+      "etc/systemd/system/drlink-ai-agent.service:0644:client/drlink-ai-agent.service" \
+      "etc/systemd/system/drlink-lifecycle.service:0644:client/drlink-lifecycle.service"
   fi
 }
 
@@ -5919,14 +6082,23 @@ frp_client_apply_upgrade() {
     return 1
   fi
   _ai_agent_converged=0
+  _lifecycle_converged=0
   _frp_client_relay_restarted=0
-  if ! { declare -F frp_is_darwin >/dev/null 2>&1 && frp_is_darwin; }; then
+  if declare -F frp_is_darwin >/dev/null 2>&1 && frp_is_darwin; then
+    if ! frp_client_converge_lifecycle_unit "$source"; then
+      echo "ERROR: failed to converge macOS Agent lifecycle worker; restoring previous management files." >&2
+      frp_client_upgrade_rollback "$backup" HEALTH_CHECK_FAILED || return 2
+      return 1
+    fi
+    _lifecycle_converged=1
+  else
     if ! frp_client_activate_linux_runtime_units "$_restart_client_unit"; then
       echo "ERROR: failed to converge Linux client units; restoring previous management files." >&2
       frp_client_upgrade_rollback "$backup" HEALTH_CHECK_FAILED || return 2
       return 1
     fi
     _ai_agent_converged=1
+    _lifecycle_converged=1
   fi
   if ! frp_client_upgrade_post_mutation_guard; then
     echo "ERROR: unexpected post-mutation failure; restoring previous management files." >&2
@@ -6047,6 +6219,9 @@ frp_client_apply_upgrade() {
   if [[ "${_ai_agent_converged:-0}" == "1" ]]; then
     echo "AI agent service : converged"
   fi
+  if [[ "${_lifecycle_converged:-0}" == "1" ]]; then
+    echo "Agent lifecycle service : converged"
+  fi
   echo "Enrollment Code : NOT REQUIRED"
   return 0
 }
@@ -6096,7 +6271,52 @@ frp_client_server_local_update_origin() {
   local state allocator_url origin ca
   state="$(frp_client_state_path)"
   [[ -f "$state" ]] || return 1
-  allocator_url="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1],encoding="utf-8")).get("allocator_url") or "")' "$state" 2>/dev/null || true)"
+  # Product update must resolve its download origin before apply-time state
+  # migration runs. Treat only explicit WSS transport as single-443 evidence;
+  # Direct/TCP on port 443 is intentionally ambiguous and remains unchanged.
+  # This is read-only so "system update product --check" never mutates state.
+  allocator_url="$(python3 - "$state" <<'PY' 2>/dev/null || true
+import json
+import sys
+from urllib.parse import urlparse, urlunparse
+
+try:
+    data = json.load(open(sys.argv[1], encoding="utf-8"))
+except Exception:
+    raise SystemExit(0)
+
+url = str(data.get("allocator_url") or "").strip()
+transport = str(data.get("frp_transport") or "").strip().lower()
+try:
+    public_port = int(data.get("frp_server_port"))
+except (TypeError, ValueError):
+    public_port = 0
+
+parsed = urlparse(url)
+try:
+    current_port = parsed.port
+except ValueError:
+    current_port = None
+
+if (
+    transport == "wss"
+    and parsed.scheme.lower() == "https"
+    and parsed.hostname
+    and current_port == 6099
+    and 1 <= public_port <= 65535
+    and public_port != 6099
+):
+    host = parsed.hostname
+    if ":" in host:
+        host = "[%s]" % host
+    netloc = host if public_port == 443 else "%s:%s" % (host, public_port)
+    url = urlunparse(
+        (parsed.scheme, netloc, parsed.path, parsed.params, parsed.query, parsed.fragment)
+    )
+
+print(url)
+PY
+)"
   [[ -n "$allocator_url" ]] || return 1
   origin="$(frp_allocator_origin_url "$allocator_url" 2>/dev/null)" || return 1
   ca="$(frp_allocator_ca_path)"

@@ -359,10 +359,11 @@ PY
 
 frp_client_install_service_definition() {
   if frp_is_darwin; then
-    frp_macos_launchd_install
-    # macOS durable AI worker lifecycle is not claimed in this packet; Linux is
-    # the mandatory Managed Host AI executor path. macOS remains fail-closed
-    # (no local AI worker) until a later platform-support packet.
+    frp_macos_launchd_install || return 1
+    # macOS intentionally has no durable AI executor in v2.4, but Agent
+    # connectivity/reconnect truth must not depend on AI. Install the separate
+    # lifecycle worker alongside the frpc launchd job.
+    frp_macos_lifecycle_install || return 1
     return
   fi
   # Retire product-owned legacy frpc.service before enabling the canonical unit.
@@ -408,6 +409,12 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF3
   fi
+  local lifecycle_unit_src="${_FRP_INSTALL_CLIENT_DIR}/client/drlink-lifecycle.service"
+  [[ -f "$lifecycle_unit_src" ]] || {
+    echo "ERROR: missing lifecycle service definition" >&2
+    return 1
+  }
+  frp_write_compatible_systemd_unit "$lifecycle_unit_src" /etc/systemd/system/drlink-lifecycle.service
 }
 
 frp_client_service_reload() {
@@ -477,15 +484,17 @@ if results and not healthy and degraded:
 }
 
 frp_client_service_start() {
+  frp_client_set_lifecycle_intent running || return 1
   if frp_is_darwin; then
     frp_macos_launchd_set_enabled enable || return 1
     frp_macos_launchd_bootout
     frp_macos_launchd_bootstrap || return 1
   else
     frp_retire_legacy_client_unit || return 1
-    systemctl enable drlink-client >/dev/null && systemctl restart drlink-client
-    # Durable AI worker. Connectivity install still proceeds if the worker
-    # cannot start; product update fails closed when the same converge fails.
+    systemctl enable drlink-client >/dev/null || return 1
+    systemctl restart drlink-client || return 1
+    # The AI executor is optional for connectivity. Lifecycle presence is
+    # converged independently after committed client state exists.
     frp_client_converge_ai_agent_unit "${_FRP_INSTALL_CLIENT_DIR:-}" || true
   fi
 }
@@ -623,10 +632,19 @@ frp_client_main() {
   fi
 
   FRP_RESUME_PENDING=0
+  FRP_REPLACE_PENDING=0
   if frp_pending_enroll_exists_for "$MACHINE_ID"; then
-    FRP_RESUME_PENDING=1
     if [[ -z "${FRP_ALLOCATOR_URL:-}" ]]; then
       FRP_ALLOCATOR_URL="$(frp_pending_enroll_allocator_url || true)"
+    fi
+    if [[ -n "${FRP_ENROLLMENT_CODE:-}" ]] && ! frp_zero_touch_active; then
+      # An explicitly supplied fresh Manual Enrollment Code is an operator
+      # decision to replace a stale/terminal pending transaction. Keep the
+      # old pending file intact until the new code passes preflight and the
+      # replacement pending transaction is atomically written below.
+      FRP_REPLACE_PENDING=1
+    else
+      FRP_RESUME_PENDING=1
     fi
   fi
 
@@ -634,7 +652,9 @@ frp_client_main() {
     frp_client_existing_install_message
     return 1
   fi
-  if frp_client_has_partial_install && [[ "$FRP_RESUME_PENDING" != "1" ]]; then
+  if frp_client_has_partial_install \
+      && [[ "$FRP_RESUME_PENDING" != "1" ]] \
+      && [[ "$FRP_REPLACE_PENDING" != "1" ]]; then
     if frp_client_partial_is_safe_to_repair; then
       frp_client_repair_partial_install "${_FRP_INSTALL_CLIENT_DIR}" || return 1
       return 0
@@ -988,6 +1008,26 @@ frp_client_main() {
   # no longer needed; clear it so it is never replayed against a future,
   # unrelated Enrollment Code.
   frp_pending_enroll_clear
+
+  # Agent lifecycle presence is mandatory even for management-only enrollment
+  # and must not depend on the optional AI worker. Start it only after the
+  # management identity and client state are durable so its first heartbeat can
+  # authenticate successfully. Offline Server reachability is handled by the
+  # worker's retry/backoff loop; failure to register the local supervisor is not.
+  if [[ "${FRP_SKIP_SYSTEMD:-}" != "1" && -z "${FRP_CLIENT_TEST_ROOT:-}" ]]; then
+    echo "Starting Data Relay Link Agent lifecycle worker ..."
+    if ! frp_client_set_lifecycle_intent running; then
+      echo "ERROR: Data Relay Link Agent lifecycle intent could not be initialized." >&2
+      frp_emit_failure_class SERVICE_START_FAILED
+      exit 1
+    fi
+    if ! frp_client_converge_lifecycle_unit "${_FRP_INSTALL_CLIENT_DIR:-}"; then
+      echo "ERROR: Data Relay Link Agent lifecycle worker could not be started." >&2
+      echo "Recovery: sudo drlink system update product" >&2
+      frp_emit_failure_class SERVICE_START_FAILED
+      exit 1
+    fi
+  fi
 
   # Promote enrolled services into v2.4 Remote Services (reuse allocated ports).
   # The flag is a command-scoped environment value, not a leaked shell export.

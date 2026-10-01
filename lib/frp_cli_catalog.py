@@ -1727,7 +1727,7 @@ def domain_help(topic, role):
             "Everyday commands:\n"
             "  show remote-services\n"
             "  set remote-service <NAME> destination <DEST|this-host> service <SERVICE> enabled\n"
-            "  unset remote-service <NAME>\n"
+            "  unset remote-service <NAME>   (interactive y/N confirmation required)\n"
         )
     if topic == "internet-access":
         if not server:
@@ -2205,7 +2205,7 @@ NAVIGATION_TREE = {
     ),
     "client.remote_services": (
         ("client_rs_list", "List Remote Services", "", "command", "show remote-services"),
-        ("client_rs_create", "Create Remote Service", "", "command", "set remote-service"),
+        ("client_rs_create", "Create Remote Service", "", "workflow", "create_remote_service"),
         ("client_rs_manage", "Manage Remote Service", "", "command", "show remote-services"),
         ("back", "Back", "", "back", None),
     ),
@@ -2226,7 +2226,7 @@ NAVIGATION_TREE = {
     ),
     "client.services": (
         ("client_svc_list", "List Remote Services", "", "command", "show remote-services"),
-        ("client_svc_add", "Create Remote Service", "", "command", "set remote-service"),
+        ("client_svc_add", "Create Remote Service", "", "workflow", "create_remote_service"),
         ("back", "Back", "", "back", None),
     ),
     "client.system": (

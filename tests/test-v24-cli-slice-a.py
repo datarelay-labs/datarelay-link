@@ -46,6 +46,22 @@ def _server_root(tmp: str) -> None:
     )
 
 
+def _agent_root(tmp: str) -> None:
+    state = Path(tmp, "etc/frp")
+    state.mkdir(parents=True, exist_ok=True)
+    Path(state, "client-state.json").write_text(
+        json.dumps(
+            {
+                "machine_id": "aabbccddeeff00112233445566778899",
+                "hostname": "slice-a-agent",
+                "label": "slice-a-agent",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 class SliceAGrammarTests(unittest.TestCase):
     def test_show_and_test_internet_use_control_plane(self):
         show = grammar.match(["show", "internet-access"], "server")
@@ -148,6 +164,78 @@ class SliceAConfigurationConfirmationTests(unittest.TestCase):
         self.assertEqual(rc, 0, err + out)
         self.assertIn("NO CHANGE", out)
         self.assertNotIn("requires confirmation", err)
+
+
+class SliceARemoteServiceConfirmationTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="drlink-slice-a-agent-")
+        _agent_root(self.tmp)
+        os.environ["FRP_DEPLOY_TEST_ROOT"] = self.tmp
+        os.environ["DRLINK_SKIP_ACTIVATION"] = "1"
+        self.plane = ControlPlane(self.tmp)
+        v24.ensure_v2_schema(self.plane.conn)
+        v24.set_service_object(self.plane, "ssh", type="tcp", port=22, oneshot=True)
+        v24.set_remote_service_agent(
+            self.plane,
+            "confirm-delete",
+            destination="this-host",
+            service="ssh",
+            enabled=True,
+            oneshot=True,
+            root=self.tmp,
+            server_reachable=False,
+        )
+        self._stdin = sys.stdin
+
+    def tearDown(self):
+        sys.stdin = self._stdin
+        self.plane.close()
+        for key in ("FRP_DEPLOY_TEST_ROOT", "DRLINK_SKIP_ACTIVATION"):
+            os.environ.pop(key, None)
+
+    def _delete_pending(self):
+        row = self.plane.conn.execute(
+            "SELECT delete_pending FROM agent_remote_services WHERE name = ?",
+            ("confirm-delete",),
+        ).fetchone()
+        self.assertIsNotNone(row)
+        return int(row["delete_pending"] or 0)
+
+    def _unset(self, stdin):
+        sys.stdin = stdin
+        out = io.StringIO()
+        err = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            rc = cli.dispatch(
+                ["unset", "remote-service", "confirm-delete"],
+                root=self.tmp,
+                plane=self.plane,
+            )
+        return rc, out.getvalue(), err.getvalue()
+
+    def test_remote_service_delete_tty_no_cancels_without_mutation(self):
+        self.assertEqual(self._delete_pending(), 0)
+        rc, out, err = self._unset(_Tty("n\n"))
+        self.assertEqual(rc, 1, err + out)
+        self.assertIn("Cancelled", out)
+        self.assertIn("No changes were applied", out)
+        self.assertEqual(self._delete_pending(), 0)
+
+    def test_remote_service_delete_non_tty_fails_closed_without_mutation(self):
+        self.assertEqual(self._delete_pending(), 0)
+        rc, out, err = self._unset(io.StringIO(""))
+        self.assertEqual(rc, 1, err + out)
+        self.assertIn("requires interactive confirmation", err)
+        self.assertIn("No changes were applied", err)
+        self.assertNotIn("Remote Service deleted", out)
+        self.assertEqual(self._delete_pending(), 0)
+
+    def test_remote_service_delete_tty_yes_applies(self):
+        self.assertEqual(self._delete_pending(), 0)
+        rc, out, err = self._unset(_Tty("y\n"))
+        self.assertEqual(rc, 0, err + out)
+        self.assertIn("Remote Service local configuration deleted", out)
+        self.assertEqual(self._delete_pending(), 1)
 
 
 class SliceAInternetCommandTests(unittest.TestCase):

@@ -16,6 +16,7 @@ import json, sys
 from pathlib import Path
 root = Path(sys.argv[1])
 (root / 'etc/drlink/config.json').write_text(json.dumps({
+  'role': 'server',
   'enrollments_dir': '/var/lib/drlink/enrollments',
   'bootstrap_dir': '/var/lib/drlink/bootstrap',
   'tls_ca_cert': '/etc/drlink/pki/ca.crt',
@@ -32,6 +33,21 @@ REVOKE="$ROOT/tools/frp-enrollment-revoke"
 pass() { echo "PASS $1"; }
 fail() { echo "FAIL $1" >&2; exit 1; }
 
+python3 - "$ROOT" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1] + '/lib')
+import frp_ctl_grammar as grammar
+cases = {
+    ('show', 'enrollments'): 'show_enrollments',
+    ('show', 'enrollment', '0123456789abcdef'): 'show_enrollment',
+    ('unset', 'enrollment', '0123456789abcdef'): 'unset_enrollment',
+}
+for tokens, action in cases.items():
+    result = grammar.match(list(tokens), 'server')
+    assert result.get('action') == action, (tokens, result)
+PY
+pass "PUBLIC_ENROLLMENT_GRAMMAR_LIFECYCLE_ROUTE"
+
 # --- Manual enrollment visible + tracking ID ---
 python3 "$CREATE" --client-name manual-a --note 'manual note' >"$WORK/manual.out"
 MANUAL_ID="$(awk '/^Enrollment ID:/{print $3; exit}' "$WORK/manual.out")"
@@ -47,7 +63,33 @@ grep -E "^${MANUAL_ID}[[:space:]]+manual[[:space:]]+manual-a" "$WORK/list1.out" 
   || fail "MANUAL_ENROLLMENT_VISIBLE_IN_SHOW / MANUAL_PENDING_STATE"
 pass "MANUAL_ENROLLMENT_VISIBLE_IN_SHOW"
 pass "MANUAL_PENDING_STATE"
+python3 "$ENROLL" "$MANUAL_ID" >"$WORK/manual-detail.out"
+grep -q "^ID      : $MANUAL_ID$" "$WORK/manual-detail.out" || fail "MANUAL_ENROLLMENT_DETAIL"
+grep -q '^State   : pending$' "$WORK/manual-detail.out" || fail "MANUAL_ENROLLMENT_DETAIL_STATE"
+[[ "$(python3 "$ENROLL" "$MANUAL_ID" --state-only)" == "pending" ]] || fail "MANUAL_ENROLLMENT_STATE_ONLY"
+pass "MANUAL_ENROLLMENT_DETAIL_STATE"
+FRP_CTL_BIN_DIR="$ROOT/tools" FRP_CTL_TEST_ROOT="$TREE" FRP_DEPLOY_TEST_ROOT="$TREE" \
+  "$ROOT/tools/frpctl" show enrollments >"$WORK/public-list.out"
+grep -E "^${MANUAL_ID}[[:space:]]+manual" "$WORK/public-list.out" | grep -q 'pending' \
+  || fail "PUBLIC_SHOW_ENROLLMENTS_LIFECYCLE_AUTHORITY"
+FRP_CTL_BIN_DIR="$ROOT/tools" FRP_CTL_TEST_ROOT="$TREE" FRP_DEPLOY_TEST_ROOT="$TREE" \
+  "$ROOT/tools/frpctl" show enrollment "$MANUAL_ID" >"$WORK/public-detail.out"
+grep -q "^ID      : $MANUAL_ID$" "$WORK/public-detail.out" || fail "PUBLIC_SHOW_ENROLLMENT_DETAIL"
+pass "PUBLIC_ENROLLMENT_READS_USE_LIFECYCLE_AUTHORITY"
+python3 "$CREATE" --client-name public-unset --note 'public unset' >"$WORK/public-unset-create.out"
+PUBLIC_UNSET_ID="$(awk '/^Enrollment ID:/{print $3; exit}' "$WORK/public-unset-create.out")"
+FRP_CTL_BIN_DIR="$ROOT/tools" FRP_CTL_TEST_ROOT="$TREE" FRP_DEPLOY_TEST_ROOT="$TREE" \
+  "$ROOT/tools/frpctl" unset enrollment "$PUBLIC_UNSET_ID" >"$WORK/public-unset-revoke.out"
+[[ "$(python3 "$ENROLL" "$PUBLIC_UNSET_ID" --state-only)" == "revoked" ]] \
+  || fail "PUBLIC_UNSET_ENROLLMENT_REVOKE"
+FRP_ENROLLMENT_PURGE_YES=yes FRP_CTL_BIN_DIR="$ROOT/tools" FRP_CTL_TEST_ROOT="$TREE" FRP_DEPLOY_TEST_ROOT="$TREE" \
+  "$ROOT/tools/frpctl" unset enrollment "$PUBLIC_UNSET_ID" >"$WORK/public-unset-purge.out"
+if python3 "$ENROLL" "$PUBLIC_UNSET_ID" --state-only >/dev/null 2>&1; then
+  fail "PUBLIC_UNSET_ENROLLMENT_PURGE"
+fi
+pass "PUBLIC_UNSET_ENROLLMENT_LIFECYCLE_AUTHORITY"
 ! grep -Fq "$MANUAL_SECRET" "$WORK/list1.out" || fail "ENROLLMENT_SECRET_NOT_SHOWN"
+! grep -Fq "$MANUAL_SECRET" "$WORK/manual-detail.out" || fail "ENROLLMENT_DETAIL_SECRET_NOT_SHOWN"
 pass "ENROLLMENT_SECRET_NOT_SHOWN"
 grep -qE 'sudo drlink (unset|revoke) enrollment <ID>' "$WORK/list1.out" \
   || fail "SHOW_ENROLLMENTS_REVOKE_GUIDANCE"

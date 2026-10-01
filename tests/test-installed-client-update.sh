@@ -247,7 +247,7 @@ unset FRP_RELEASE_CHANNEL FRP_CLIENT_UPDATE_SHA256 FRP_RELEASE_SHA256SUMS_FILE |
 
 snapshot_preserved_state "$CLIENT" "$WORKDIR/runtime.before"
 CHECK_TOOL_SHA="$(sha "$CLIENT/usr/local/bin/drlink")"
-"$CLIENT/usr/local/bin/drlink" update product --check >"$WORKDIR/check.out" 2>"$WORKDIR/check.err"
+"$CLIENT/usr/local/bin/drlink" system update product --check >"$WORKDIR/check.out" 2>"$WORKDIR/check.err"
 grep -q 'Update                    : available' "$WORKDIR/check.out" || fail "same-version build not available"
 grep -q 'Installed project version :' "$WORKDIR/check.out" || fail "check missing installed version"
 grep -q 'Target project version    :' "$WORKDIR/check.out" || fail "check missing target version"
@@ -265,7 +265,7 @@ fi
 pass "SAME_VERSION_DIFFERENT_BUILD"
 pass "CHECK_ONLY_READONLY"
 
-"$CLIENT/usr/local/bin/drlink" update product >"$WORKDIR/update.out" 2>"$WORKDIR/update.err"
+"$CLIENT/usr/local/bin/drlink" system update product >"$WORKDIR/update.out" 2>"$WORKDIR/update.err"
 assert_preserved_state "$CLIENT" "$WORKDIR/runtime.before"
 grep -q 'RELEASE_CHANNEL=development' "$CLIENT/etc/drlink/version" || fail "dev channel changed"
 grep -q 'SOURCE_REF=main' "$CLIENT/etc/drlink/version" || fail "dev source ref changed"
@@ -279,7 +279,7 @@ fi
 pass "REMOTE_INSTALLED_CLIENT_UPDATE"
 pass "DEV_MAIN_UPDATE"
 pass "SHA256_VALID"
-"$CLIENT/usr/local/bin/drlink" update product --check >"$WORKDIR/same-build-check.out" 2>"$WORKDIR/same-build-check.err"
+"$CLIENT/usr/local/bin/drlink" system update product --check >"$WORKDIR/same-build-check.out" 2>"$WORKDIR/same-build-check.err"
 grep -q "Installed bundle SHA256   : ${B_SHA}" "$WORKDIR/same-build-check.out" || fail "same-build installed sha"
 grep -q "Target bundle SHA256      : ${B_SHA}" "$WORKDIR/same-build-check.out" || fail "same-build target sha"
 grep -q 'Update                    : not needed' "$WORKDIR/same-build-check.out" || fail "same verified build should be not needed"
@@ -321,7 +321,7 @@ pass "STABLE_IMMUTABLE_DEFAULT_URLS"
 
 : >"$MOCK_CURL_LOG"
 if FRP_CLIENT_LIB="$CLIENT/usr/local/lib/drlink/frp-client-common.sh" \
-  "$CLIENT/usr/local/bin/drlink" update product --check \
+  "$CLIENT/usr/local/bin/drlink" system update product --check \
   >"$WORKDIR/stable-check.out" 2>"$WORKDIR/stable-check.err"; then
   fail "stable expected channel must not accept a dev Server-local candidate"
 fi
@@ -384,9 +384,45 @@ PY
 unset FRP_CLIENT_UPDATE_URL FRP_CLIENT_UPDATE_METADATA_URL FRP_EXPECTED_SOURCE_REF \
   FRP_EXPECTED_RELEASE_CHANNEL FRP_RELEASE_CHANNEL FRP_CLIENT_UPDATE_SHA256 \
   FRP_RELEASE_SHA256SUMS_FILE
+
+# A prior-state single443 Agent may still persist the old private allocator
+# :6099 URL. Product-update fetch must use the WSS public frontend origin
+# before apply-time migration rewrites persistent state. --check stays read-only.
+SINGLE443_CLIENT="$WORKDIR/single443-client"
+cp -a "$CLIENT" "$SINGLE443_CLIENT"
+python3 - "$SINGLE443_CLIENT/etc/frp/client-state.json" <<'PY'
+import json, sys
+from pathlib import Path
+p = Path(sys.argv[1])
+d = json.loads(p.read_text())
+d["allocator_url"] = "https://allocator.example.test:6099/enroll"
+d["frp_transport"] = "wss"
+d["frp_server_port"] = 443
+p.write_text(json.dumps(d, indent=2, sort_keys=True) + "\n")
+PY
+SINGLE443_STATE_SHA="$(sha "$SINGLE443_CLIENT/etc/frp/client-state.json")"
+: >"$MOCK_CURL_LOG"
+FRP_CLIENT_TEST_ROOT="$SINGLE443_CLIENT" FRP_CTL_TEST_ROOT="$SINGLE443_CLIENT" \
+  FRP_CLIENT_LIB="$SINGLE443_CLIENT/usr/local/lib/drlink/frp-client-common.sh" \
+  "$SINGLE443_CLIENT/usr/local/bin/drlink" system update product --check \
+  >"$WORKDIR/single443-server-local-check.out" 2>"$WORKDIR/single443-server-local-check.err"
+grep -qx 'https://allocator.example.test/artifacts/manifest.json' "$MOCK_CURL_LOG" \
+  || fail "single443 update manifest did not use public frontend origin"
+grep -qx 'https://allocator.example.test/artifacts/SHA256SUMS' "$MOCK_CURL_LOG" \
+  || fail "single443 update metadata did not use public frontend origin"
+grep -qx 'https://allocator.example.test/artifacts/agent/bootstrap-client.sh' "$MOCK_CURL_LOG" \
+  || fail "single443 update bundle did not use public frontend origin"
+if grep -q ':6099/' "$MOCK_CURL_LOG"; then
+  fail "single443 update contacted legacy private allocator port"
+fi
+[[ "$(sha "$SINGLE443_CLIENT/etc/frp/client-state.json")" == "$SINGLE443_STATE_SHA" ]] \
+  || fail "single443 update --check mutated client state"
+pass "SINGLE443_SERVER_LOCAL_UPDATE_ORIGIN"
+pass "SINGLE443_UPDATE_CHECK_READONLY"
+
 : >"$MOCK_CURL_LOG"
 FRP_CLIENT_LIB="$CLIENT/usr/local/lib/drlink/frp-client-common.sh" \
-  "$CLIENT/usr/local/bin/drlink" update product --check \
+  "$CLIENT/usr/local/bin/drlink" system update product --check \
   >"$WORKDIR/server-local-check.out" 2>"$WORKDIR/server-local-check.err"
 grep -q 'Update                    : available' "$WORKDIR/server-local-check.out" || fail "server-local check availability"
 grep -q "Target source ref         : ${LOCAL_REF}" "$WORKDIR/server-local-check.out" || fail "server-local exact source ref"
@@ -400,7 +436,7 @@ pass "SERVER_LOCAL_CLIENT_UPDATE_CHECK"
 
 : >"$MOCK_CURL_LOG"
 FRP_CLIENT_LIB="$CLIENT/usr/local/lib/drlink/frp-client-common.sh" \
-  "$CLIENT/usr/local/bin/drlink" update product \
+  "$CLIENT/usr/local/bin/drlink" system update product \
   >"$WORKDIR/server-local-update.out" 2>"$WORKDIR/server-local-update.err"
 grep -q "SOURCE_REF=${LOCAL_REF}" "$CLIENT/etc/drlink/version" || fail "server-local source ref not persisted"
 grep -q "SOURCE_HEAD=${LOCAL_REF}" "$CLIENT/etc/drlink/version" || fail "server-local source head not persisted"
@@ -421,7 +457,7 @@ p.write_text(json.dumps(d, indent=2) + "\n")
 PY
 : >"$MOCK_CURL_LOG"
 if FRP_CLIENT_LIB="$CLIENT/usr/local/lib/drlink/frp-client-common.sh" \
-  "$CLIENT/usr/local/bin/drlink" update product \
+  "$CLIENT/usr/local/bin/drlink" system update product \
   >"$WORKDIR/server-local-bad.out" 2>"$WORKDIR/server-local-bad.err"; then
   fail "server-local manifest/SHA mismatch accepted"
 fi
@@ -435,7 +471,7 @@ pass "SERVER_LOCAL_MANIFEST_SUMS_BINDING"
 export MOCK_CURL_FAIL_MANIFEST=1
 : >"$MOCK_CURL_LOG"
 if FRP_CLIENT_LIB="$CLIENT/usr/local/lib/drlink/frp-client-common.sh" \
-  "$CLIENT/usr/local/bin/drlink" update product \
+  "$CLIENT/usr/local/bin/drlink" system update product \
   >"$WORKDIR/server-local-missing.out" 2>"$WORKDIR/server-local-missing.err"; then
   fail "missing Server-local manifest accepted"
 fi
@@ -455,7 +491,7 @@ export FRP_CLIENT_UPDATE_METADATA_URL="https://updates.example.test/main/SHA256S
 LIVE_SHA="$(sha "$CLIENT/usr/local/bin/drlink")"
 cp "$REMOTE/bootstrap-client.sh" "$WORKDIR/valid-bundle"
 printf '\n# tampered\n' >>"$REMOTE/bootstrap-client.sh"
-if "$CLIENT/usr/local/bin/drlink" update product >"$WORKDIR/tamper.out" 2>"$WORKDIR/tamper.err"; then
+if "$CLIENT/usr/local/bin/drlink" system update product >"$WORKDIR/tamper.out" 2>"$WORKDIR/tamper.err"; then
   fail "tampered artifact accepted"
 fi
 grep -q 'INTEGRITY_FAILED' "$WORKDIR/tamper.out" "$WORKDIR/tamper.err" || fail "tamper failure class"
@@ -464,7 +500,7 @@ pass "TAMPERED_ARTIFACT"
 
 cp "$WORKDIR/valid-bundle" "$REMOTE/bootstrap-client.sh"
 printf '%s  dist/bootstrap-client.sh\n' "$A_SHA" >"$REMOTE/SHA256SUMS"
-if "$CLIENT/usr/local/bin/drlink" update product >"$WORKDIR/wrong-metadata.out" 2>"$WORKDIR/wrong-metadata.err"; then
+if "$CLIENT/usr/local/bin/drlink" system update product >"$WORKDIR/wrong-metadata.out" 2>"$WORKDIR/wrong-metadata.err"; then
   fail "wrong metadata accepted"
 fi
 grep -q 'SHA256 checksum mismatch' "$WORKDIR/wrong-metadata.err" || fail "wrong metadata mismatch message"
@@ -473,7 +509,7 @@ pass "SHA256_MISMATCH"
 pass "WRONG_METADATA_REJECTED"
 
 printf '%s  dist/bootstrap-client.sh\n' 'not-a-sha256' >"$REMOTE/SHA256SUMS"
-if "$CLIENT/usr/local/bin/drlink" update product >"$WORKDIR/malformed-sha.out" 2>"$WORKDIR/malformed-sha.err"; then
+if "$CLIENT/usr/local/bin/drlink" system update product >"$WORKDIR/malformed-sha.out" 2>"$WORKDIR/malformed-sha.err"; then
   fail "malformed SHA256 accepted"
 fi
 grep -q 'malformed SHA256' "$WORKDIR/malformed-sha.err" || fail "malformed SHA256 message"
@@ -481,7 +517,7 @@ assert_management_unchanged "$CLIENT" "$LIVE_SHA"
 pass "MALFORMED_SHA256_REJECTED"
 
 rm -f "$REMOTE/SHA256SUMS"
-if "$CLIENT/usr/local/bin/drlink" update product >"$WORKDIR/missing-metadata.out" 2>"$WORKDIR/missing-metadata.err"; then
+if "$CLIENT/usr/local/bin/drlink" system update product >"$WORKDIR/missing-metadata.out" 2>"$WORKDIR/missing-metadata.err"; then
   fail "missing metadata accepted"
 fi
 grep -q 'INTEGRITY_FAILED' "$WORKDIR/missing-metadata.out" "$WORKDIR/missing-metadata.err" || fail "missing metadata failure class"
@@ -489,7 +525,7 @@ assert_management_unchanged "$CLIENT" "$LIVE_SHA"
 pass "MISSING_METADATA_REJECTED"
 
 export FRP_CLIENT_UPDATE_URL="http://updates.example.test/main/dist/bootstrap-client.sh"
-if "$CLIENT/usr/local/bin/drlink" update product >"$WORKDIR/http.out" 2>"$WORKDIR/http.err"; then
+if "$CLIENT/usr/local/bin/drlink" system update product >"$WORKDIR/http.out" 2>"$WORKDIR/http.err"; then
   fail "HTTP artifact URL accepted"
 fi
 grep -qi 'valid HTTPS URL' "$WORKDIR/http.err" || fail "HTTP rejection message"
@@ -497,7 +533,7 @@ assert_management_unchanged "$CLIENT" "$LIVE_SHA"
 pass "HTTP_REJECTED"
 
 export FRP_CLIENT_UPDATE_URL="https:///main/dist/bootstrap-client.sh"
-if "$CLIENT/usr/local/bin/drlink" update product >"$WORKDIR/malformed-url.out" 2>"$WORKDIR/malformed-url.err"; then
+if "$CLIENT/usr/local/bin/drlink" system update product >"$WORKDIR/malformed-url.out" 2>"$WORKDIR/malformed-url.err"; then
   fail "malformed artifact URL accepted"
 fi
 grep -qi 'valid HTTPS URL' "$WORKDIR/malformed-url.err" || fail "malformed URL rejection message"
@@ -507,7 +543,7 @@ pass "MALFORMED_URL_REJECTED"
 export FRP_CLIENT_UPDATE_URL="https://updates.example.test/main/dist/bootstrap-client.sh"
 printf '%s  dist/bootstrap-client.sh\n' "$B_SHA" >"$REMOTE/SHA256SUMS"
 export MOCK_CURL_FAIL_ARTIFACT=1
-if "$CLIENT/usr/local/bin/drlink" update product >"$WORKDIR/download.out" 2>"$WORKDIR/download.err"; then
+if "$CLIENT/usr/local/bin/drlink" system update product >"$WORKDIR/download.out" 2>"$WORKDIR/download.err"; then
   fail "artifact download failure accepted"
 fi
 unset MOCK_CURL_FAIL_ARTIFACT

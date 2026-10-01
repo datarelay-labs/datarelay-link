@@ -277,14 +277,24 @@ class PublicNameNamespaceAmbiguity(unittest.TestCase):
             enabled=True,
             oneshot=True,
         )
+        source_revision = self.plane.current_revision()
         exported = export_configuration_v24(self.plane)
-        # Fresh plane
+        # A portable export still carries the source revision that was reviewed.
+        # Reapplying it to another control plane requires an explicit rebase to
+        # that plane's current revision; silently freshening would defeat the
+        # stale-plan safety contract.
         tmp2 = tempfile.mkdtemp(prefix="drlink-ns-reapply-")
         _server_root(tmp2)
         os.environ["FRP_DEPLOY_TEST_ROOT"] = tmp2
         plane2 = ControlPlane(tmp2)
         try:
-            plan = prepare_v24_plan(plane2, exported)
+            rebased = exported.replace(
+                "sourceRevision: %s" % source_revision,
+                "sourceRevision: %s" % plane2.current_revision(),
+                1,
+            )
+            self.assertNotEqual(rebased, exported)
+            plan = prepare_v24_plan(plane2, rebased)
             apply_v24_plan(plane2, plan, confirm=True)
             rule = plane2._get_rule("remote", "deny-group")
             refs = plane2.conn.execute(

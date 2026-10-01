@@ -1249,5 +1249,99 @@ frp_client_restart_runtime_cmd
         self.assertIn("invalidate_runtime_verification_for_restart", launcher.read_text(encoding="utf-8"))
 
 
+class AgentLifecycleWorkerTests(unittest.TestCase):
+    def test_pause_intent_is_not_reported_critical(self):
+        from drlink_agent_lifecycle import set_lifecycle_intent
+
+        with tempfile.TemporaryDirectory(prefix="drlink-paused-intent-") as tmp:
+            set_lifecycle_intent("paused", tmp)
+            os.environ["DRLINK_TEST_RUNTIME_UNIT"] = "inactive"
+            try:
+                view = v24.probe_agent_runtime_unit(root=tmp)
+                self.assertEqual(view["level"], "Paused")
+                self.assertIn("intentionally paused", view["detail"])
+                os.environ["DRLINK_TEST_RUNTIME_UNIT"] = "active"
+                view = v24.probe_agent_runtime_unit(root=tmp)
+                self.assertEqual(view["level"], "Warning")
+            finally:
+                os.environ.pop("DRLINK_TEST_RUNTIME_UNIT", None)
+
+    def test_worker_heartbeats_then_synchronizes_only_when_needed(self):
+        from unittest import mock
+        import drlink_agent_lifecycle as lifecycle
+
+        with tempfile.TemporaryDirectory(prefix="drlink-lifecycle-worker-") as tmp:
+            root = Path(tmp)
+            (root / "etc/drlink").mkdir(parents=True)
+            (root / "etc/drlink/config.json").write_text(
+                '{"role":"agent"}\n', encoding="utf-8"
+            )
+            plane = ControlPlane(tmp)
+            v24.ensure_v2_schema(plane.conn)
+            plane.close()
+            lifecycle.set_lifecycle_intent("running", tmp)
+
+            with mock.patch(
+                "drlink_mgmt_sync.report_agent_lifecycle_on_server",
+                return_value={"ok": True, "state": "connected"},
+            ) as heartbeat, mock.patch(
+                "drlink_v24.synchronize_agent_remote_services"
+            ) as sync:
+                result = lifecycle.reconcile_once(tmp)
+                self.assertEqual(result["status"], "HEARTBEAT")
+                heartbeat.assert_called_once()
+                sync.assert_not_called()
+
+            with mock.patch(
+                "drlink_mgmt_sync.report_agent_lifecycle_on_server",
+                return_value={"ok": True, "state": "connected", "reconcile_required": True},
+            ), mock.patch(
+                "drlink_v24.synchronize_agent_remote_services",
+                return_value={"status": "SYNCHRONIZED", "updated": 0},
+            ) as forced_sync:
+                result = lifecycle.reconcile_once(tmp)
+                self.assertEqual(result["status"], "SYNCHRONIZED")
+                forced_sync.assert_called_once()
+
+            plane = ControlPlane(tmp)
+            v24.ensure_v2_schema(plane.conn)
+            plane.conn.execute(
+                "INSERT OR REPLACE INTO agent_remote_services"
+                "(name, destination, service_object, enabled, status, pending_allocation, "
+                "delete_pending, pool_class, reason, runtime_verified, updated_at) "
+                "VALUES ('pending', 'this-host', 'ssh', 1, 'DEGRADED', 1, 0, "
+                "'normal', 'Server unreachable.', 0, '2026-10-01T00:00:00Z')"
+            )
+            plane.conn.commit()
+            plane.close()
+            with mock.patch(
+                "drlink_mgmt_sync.report_agent_lifecycle_on_server",
+                return_value={"ok": True, "state": "connected"},
+            ) as heartbeat, mock.patch(
+                "drlink_v24.synchronize_agent_remote_services",
+                return_value={"status": "SYNCHRONIZED", "updated": 1},
+            ) as sync:
+                result = lifecycle.reconcile_once(tmp)
+                self.assertEqual(result["status"], "SYNCHRONIZED")
+                heartbeat.assert_called_once()
+                sync.assert_called_once()
+
+    def test_paused_worker_does_not_touch_server(self):
+        from unittest import mock
+        import drlink_agent_lifecycle as lifecycle
+
+        with tempfile.TemporaryDirectory(prefix="drlink-lifecycle-paused-") as tmp:
+            lifecycle.set_lifecycle_intent("paused", tmp)
+            with mock.patch(
+                "drlink_agent_lifecycle.heartbeat_once"
+            ) as heartbeat, mock.patch(
+                "drlink_v24.synchronize_agent_remote_services"
+            ) as sync:
+                result = lifecycle.reconcile_once(tmp)
+                self.assertEqual(result["status"], "PAUSED")
+                heartbeat.assert_not_called()
+                sync.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

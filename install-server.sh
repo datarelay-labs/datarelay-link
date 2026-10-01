@@ -1219,8 +1219,8 @@ resolve_server_settings() {
   fi
 
   echo
-  echo "Published Service Ports"
-  echo "-----------------------"
+  echo "Remote Service Ports"
+  echo "--------------------"
   prompt "Range start" "${FRP_PORT_START:-6000}" FRP_PORT_START
   prompt "Range end" "${FRP_PORT_END:-6098}" FRP_PORT_END
 
@@ -1995,7 +1995,7 @@ EOF2
     ${alloc_target}
 
 
-Published Services
+Remote Services
   Public:
     TCP ${FRP_PORT_START}-${FRP_PORT_END}
 

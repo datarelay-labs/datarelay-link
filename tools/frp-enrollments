@@ -138,7 +138,14 @@ def main(argv=None):
     parser = argparse.ArgumentParser(
         description='List issued enrollment credentials (never displays secrets)'
     )
-    parser.parse_args(argv)
+    parser.add_argument('id', nargs='?', help='show one logical enrollment ID')
+    parser.add_argument(
+        '--state-only', action='store_true',
+        help='print only the normalized state for one enrollment ID',
+    )
+    args = parser.parse_args(argv)
+    if args.state_only and not args.id:
+        parser.error('--state-only requires an enrollment ID')
     cfg = json.loads(CONFIG.read_text(encoding='utf-8'))
     enrollments = remap(cfg['enrollments_dir'])
     bootstrap = remap(
@@ -146,6 +153,23 @@ def main(argv=None):
         or str(Path(cfg['enrollments_dir']).parent / 'bootstrap')
     )
     rows = collect_rows(enrollments, bootstrap, int(time.time()))
+    if args.id:
+        target = str(args.id).strip().lower()
+        row = next((item for item in rows if str(item.get('id') or '').lower() == target), None)
+        if row is None:
+            raise SystemExit('ERROR: enrollment not found')
+        if args.state_only:
+            print(row['state'])
+            return 0
+        print('Enrollment')
+        print('==========')
+        print('ID      : %s' % row['id'])
+        print('Type    : %s' % row['type'])
+        print('Label   : %s' % row['label'])
+        print('Created : %s' % row['created'])
+        print('Expires : %s' % row['expires'])
+        print('State   : %s' % row['state'])
+        return 0
     print(f'{"ID":<16} {"TYPE":<11} {"LABEL":<12} {"CREATED":<21} {"EXPIRES":<21} STATE')
     print('-' * 96)
     for row in rows:

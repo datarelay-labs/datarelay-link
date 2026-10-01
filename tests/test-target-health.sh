@@ -448,19 +448,25 @@ print("ok")
 PY
 pass "F13 batched probes are bounded, not serialized"
 
-# Grammar props
-python3 - "$ROOT/lib" <<'PY' || fail "grammar health props"
+# Public grammar: legacy local-service mutation is retired in v2.4.
+# Health-check behavior above remains covered through current runtime/state
+# helpers; old set service forms must fail closed with canonical guidance.
+python3 - "$ROOT/lib" <<'PY' || fail "legacy health grammar fail-closed"
 import sys
 sys.path.insert(0, sys.argv[1])
 import frp_ctl_grammar as G
-ok = G.match(["set", "service", "web", "health-type", "tcp"], "client")
-assert ok["status"] == "ok" and ok["property"] == "health-type"
-bad = G.match(["set", "service", "web", "health-bogus", "1"], "client")
-assert bad["status"] != "ok"
-inc = G.match(["set", "service", "web"], "client")
-assert "health-type" in inc.get("message", "")
+for tokens in (
+    ["set", "service", "web", "health-type", "tcp"],
+    ["set", "service", "web", "health-bogus", "1"],
+    ["set", "service", "web"],
+):
+    result = G.match(tokens, "client")
+    assert result["status"] != "ok", result
+    message = result.get("message", "")
+    assert "Legacy local-service commands" in message, result
+    assert "remote-service" in message, result
 print("ok")
 PY
-pass "grammar health props"
+pass "legacy health grammar fail-closed"
 
 echo "ALL TARGET HEALTH CHECK TESTS PASSED"

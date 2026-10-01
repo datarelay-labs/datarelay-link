@@ -24,9 +24,12 @@ try {
     $root = Get-FrpWindowsRoot
     Assert-FrpTrue (Test-Path -LiteralPath $root) 'root exists'
     $env:FRP_AUTOSTART_TASK_NAME = 'DataRelayLinkClient-Test-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+    $env:FRP_LIFECYCLE_TASK_NAME = 'DataRelayLinkLifecycle-Test-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
 
     Install-FrpAutostartTask | Out-Null
+    Install-FrpLifecycleTask | Out-Null
     Assert-FrpTrue (Test-FrpAutostartTaskExists) 'autostart present before uninstall'
+    Assert-FrpTrue (Test-FrpLifecycleTaskHealthy) 'lifecycle task present before uninstall'
 
     $emptyDir = Join-Path $root 'lib\data\egress-recipes'
     New-Item -ItemType Directory -Path $emptyDir -Force | Out-Null
@@ -47,12 +50,17 @@ try {
     Assert-FrpTrue ($okOut -match 'SERVER-SIDE RESERVATIONS PRESERVED') 'uninstall reservation message'
     Assert-FrpTrue (-not (Test-Path -LiteralPath $root)) 'root removed after successful uninstall'
     Assert-FrpTrue (-not (Test-FrpAutostartTaskExists)) 'autostart gone after successful uninstall'
+    Assert-FrpTrue (-not (Test-FrpAutostartTaskExists -TaskName $env:FRP_LIFECYCLE_TASK_NAME)) 'lifecycle task gone after successful uninstall'
+    Assert-FrpTrue ($okOut -match 'Signed disconnect notification') 'best-effort disconnect is reported'
+    Assert-FrpTrue ($okOut -match 'Offline uninstall still completes') 'offline uninstall fallback is reported'
 
     $client = Get-Content -LiteralPath $clientPath -Raw
     Assert-FrpTrue ($client -match 'SERVER-SIDE RESERVATIONS PRESERVED') 'uninstall message in tool'
     Assert-FrpTrue ($client -match 'leaving product files in place') 'fail-closed uninstall message in tool'
     Assert-FrpTrue ($client -match 'unset managed-host <HOST>') 'managed-host release guidance'
-    Assert-FrpTrue ($client -match 'does not release ports') 'uninstall does not release ports'
+    Assert-FrpTrue ($client -match "Invoke-FrpAgentLifecycle -State 'disconnected'") 'signed disconnect hook in uninstall'
+    Assert-FrpTrue ($client -match 'Offline uninstall still completes') 'offline uninstall fallback in tool'
+    Assert-FrpTrue ($client -match 'reservations remain until removed on the server') 'server reservations remain explicit'
     Assert-FrpTrue ($client -notmatch 'drlink client release') 'no obsolete release grammar'
     Assert-FrpTrue ($client -notmatch 'unset client <CLIENT>') 'no obsolete unset-client grammar'
     Assert-FrpTrue ($client -notmatch 'remain until an administrator revokes them') 'no revoke-for-ports wording'
@@ -61,5 +69,6 @@ try {
 } finally {
     Remove-Item Env:FRP_WINDOWS_FAIL_AUTOSTART -ErrorAction SilentlyContinue
     Remove-Item Env:FRP_AUTOSTART_TASK_NAME -ErrorAction SilentlyContinue
+    Remove-Item Env:FRP_LIFECYCLE_TASK_NAME -ErrorAction SilentlyContinue
     Remove-FrpWindowsTestRoot
 }

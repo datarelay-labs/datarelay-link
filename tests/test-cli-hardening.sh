@@ -46,7 +46,7 @@ printf '{"services":{}}\n' >"$CTLROOT/etc/frp/client-state.json"
 printf 'PROJECT_VERSION=2.1.0\n' >"$CTLROOT/etc/drlink/version"
 unset FRP_DEPLOY_TEST_ROOT
 export FRP_CTL_TEST_ROOT="$CTLROOT"
-"$ROOT/tools/frpctl" version >"$WORK/version-unknown.out"
+"$ROOT/tools/frpctl" system version >"$WORK/version-unknown.out"
 grep -qE '^(FRP version     |Relay Engine \(FRP\): )legacy / unknown$' "$WORK/version-unknown.out" \
   || fail "unknown version not truthful"
 cat >"$CTLROOT/usr/local/bin/frpc" <<'EOF'
@@ -54,19 +54,19 @@ cat >"$CTLROOT/usr/local/bin/frpc" <<'EOF'
 printf 'v0.69.9\n'
 EOF
 chmod +x "$CTLROOT/usr/local/bin/frpc"
-"$ROOT/tools/frpctl" version >"$WORK/version-binary.out"
+"$ROOT/tools/frpctl" system version >"$WORK/version-binary.out"
 grep -qE '^(FRP version     |Relay Engine \(FRP\): )0\.69\.9$' "$WORK/version-binary.out" \
   || fail "binary version fallback"
 printf 'PROJECT_VERSION=2.1.0\nFRP_VERSION=0.71.0\n' >"$CTLROOT/etc/drlink/version"
 printf '#!/usr/bin/env bash\nprintf "9.9.9\\n"\n' >"$CTLROOT/usr/local/bin/frpc"
 chmod +x "$CTLROOT/usr/local/bin/frpc"
-"$ROOT/tools/frpctl" version >"$WORK/version-meta.out"
+"$ROOT/tools/frpctl" system version >"$WORK/version-meta.out"
 grep -qE '^(FRP version     |Relay Engine \(FRP\): )0\.71\.0$' "$WORK/version-meta.out" \
   || fail "metadata precedence"
 printf 'PROJECT_VERSION=2.1.0\n' >"$CTLROOT/etc/drlink/version"
 printf '#!/usr/bin/env bash\nprintf "0.69.9\\033[31m\\n"\n' >"$CTLROOT/usr/local/bin/frpc"
 chmod +x "$CTLROOT/usr/local/bin/frpc"
-"$ROOT/tools/frpctl" version >"$WORK/version-unsafe.out"
+"$ROOT/tools/frpctl" system version >"$WORK/version-unsafe.out"
 grep -qE '^(FRP version     |Relay Engine \(FRP\): )legacy / unknown$' "$WORK/version-unsafe.out" \
   || fail "unsafe version output trusted"
 pass FRP_VERSION_METADATA_PRESERVED
@@ -114,10 +114,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(sys.argv[1]) / 'lib'))
 import frp_ctl_grammar as g
 result = g.match(['client', 'release-service'], 'server', names=['24cd7856'])
-assert result.get('status') == 'incomplete', result
-assert 'Unknown action' in result.get('message', ''), result
+assert result.get('status') == 'unknown', result
+assert result.get('command') == 'client', result
 legacy = g.match(['client', '24cd7856'], 'server', names=['24cd7856'])
-assert legacy.get('status') == 'legacy', legacy
+assert legacy.get('status') == 'unknown', legacy
+assert legacy.get('command') == 'client', legacy
 PY
 pass CLIENT_BAD_ACTION_NO_FALLTHROUGH
 

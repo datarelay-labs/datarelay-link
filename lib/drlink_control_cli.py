@@ -346,9 +346,29 @@ def _need(tokens, n, usage):
         raise SystemExit("Missing arguments.\n\nUsage:\n  %s" % usage)
 
 
+def _public_command_is_read_only(tokens) -> bool:
+    """Select the query-only DB path for public commands that promise no mutation."""
+    if not tokens:
+        return False
+    verb = str(tokens[0])
+    if verb in ("show", "test"):
+        return True
+    if verb != "system" or len(tokens) < 2:
+        return False
+    op = str(tokens[1])
+    if op in ("diagnostics", "revisions", "revision", "diff", "audit"):
+        return True
+    if op == "export" and len(tokens) >= 3 and tokens[2] == "configuration":
+        return True
+    if op == "certificate" and len(tokens) >= 3 and tokens[2] in ("status", "preflight"):
+        return True
+    return False
+
+
 def dispatch(tokens, *, root=None, plane: Optional[ControlPlane] = None, client_sel: Optional[str] = None):
     tokens = [str(t) for t in tokens if t is not None]
-    plane = plane or ControlPlane(root)
+    if plane is None:
+        plane = ControlPlane(root, read_only=_public_command_is_read_only(tokens))
     client_sel = client_sel or os.environ.get("DRLINK_LOCAL_CLIENT")
     if not tokens:
         return 0
@@ -614,7 +634,7 @@ def _show(plane: ControlPlane, rest):
             raise SystemExit("Service Preset not found")
         sys.stdout.write(
             "Service Preset: %s\nType: %s\nTarget Mode: %s\nTarget Port: %s\nDescription: %s\n"
-            "A Service Preset only supplies initial values.\nChanging it does not change existing Published Services.\n"
+            "A Service Preset only supplies initial values.\nChanging it does not change existing Remote Services.\n"
             % (row["name"], row["service_type"], row["target_mode"], row["target_port"], row["description"])
         )
         return 0
@@ -1720,8 +1740,25 @@ def main(argv=None):
         or os.environ.get("FRP_SERVER_TEST_ROOT")
         or os.environ.get("DRLINK_TEST_ROOT")
     )
-    rc = dispatch(argv, root=root)
-    return rc or 0
+    try:
+        rc = dispatch(argv, root=root)
+        # Force buffered stdout through while BrokenPipeError is still inside
+        # this handler. Without this flush, Python can raise only during
+        # interpreter shutdown and exit 120 after a consumer such as `head`
+        # has already closed the pipe.
+        sys.stdout.flush()
+        return rc or 0
+    except BrokenPipeError:
+        # A consumer such as `head` may close stdout before a long read-only
+        # listing is complete. Treat that as normal pipeline termination and
+        # redirect the inherited fd so Python shutdown cannot emit a traceback.
+        try:
+            sink = os.open(os.devnull, os.O_WRONLY)
+            os.dup2(sink, sys.stdout.fileno())
+            os.close(sink)
+        except (AttributeError, OSError, ValueError):
+            pass
+        return 0
 
 
 if __name__ == "__main__":

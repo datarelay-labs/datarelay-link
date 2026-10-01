@@ -17,6 +17,26 @@ function Get-FrpAutostartTaskName {
     return 'DataRelayLinkClient'
 }
 
+function Get-FrpLifecycleTaskName {
+    if ($env:FRP_LIFECYCLE_TASK_NAME -and $env:FRP_LIFECYCLE_TASK_NAME.Trim().Length -gt 0) {
+        return $env:FRP_LIFECYCLE_TASK_NAME.Trim()
+    }
+    return 'DataRelayLinkLifecycle'
+}
+
+function Get-FrpLifecycleRunCommand {
+    # Persist the same PowerShell family that installed the client.
+    $name = if ($PSVersionTable.PSEdition -eq 'Core') { 'pwsh.exe' } else { 'powershell.exe' }
+    $candidate = Join-Path $PSHOME $name
+    if (Test-Path -LiteralPath $candidate) { return $candidate }
+    return $name
+}
+
+function Get-FrpLifecycleRunArguments {
+    $client = Join-Path (Get-FrpToolsDir) 'FrpClient.ps1'
+    return ('-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{0}" lifecycle-worker' -f $client)
+}
+
 function Get-FrpAutostartLegacyTaskName {
     <#
     .SYNOPSIS
@@ -86,7 +106,8 @@ function New-FrpAutostartTaskXml {
     param(
         [Parameter(Mandatory = $true)][string]$Command,
         [AllowEmptyString()][string]$Arguments = '',
-        [int]$DelaySeconds = 30
+        [int]$DelaySeconds = 30,
+        [string]$ExecutionTimeLimit = 'PT10M'
     )
     $delay = 'PT{0}S' -f [Math]::Max(0, [int]$DelaySeconds)
     $cmdEsc = [System.Security.SecurityElement]::Escape($Command)
@@ -122,7 +143,7 @@ function New-FrpAutostartTaskXml {
     <StartWhenAvailable>true</StartWhenAvailable>
     <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
     <Hidden>true</Hidden>
-    <ExecutionTimeLimit>PT10M</ExecutionTimeLimit>
+    <ExecutionTimeLimit>$ExecutionTimeLimit</ExecutionTimeLimit>
     <Priority>7</Priority>
     <RestartOnFailure>
       <Interval>PT1M</Interval>
@@ -219,6 +240,67 @@ function Install-FrpAutostartTask {
     if (-not (Test-FrpAutostartHealthy -TaskName $TaskName)) {
         throw 'ERROR: autostart task exists but is not a SYSTEM boot task at the installed product path'
     }
+    return $true
+}
+
+function Install-FrpLifecycleTask {
+    param([string]$TaskName = (Get-FrpLifecycleTaskName))
+    Initialize-FrpDirectories
+    $command = Get-FrpLifecycleRunCommand
+    $arguments = Get-FrpLifecycleRunArguments
+    if (Test-FrpIsWindowsHost) {
+        $null = Invoke-FrpSchtasks -ArgString ('/End /TN "{0}"' -f $TaskName)
+        $xml = New-FrpAutostartTaskXml -Command $command -Arguments $arguments -DelaySeconds 5 -ExecutionTimeLimit 'PT0S'
+        $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("drlink-lifecycle-" + [guid]::NewGuid().ToString('N') + '.xml')
+        try {
+            Set-Content -LiteralPath $tmp -Value $xml -Encoding Unicode
+            $result = Invoke-FrpSchtasks -ArgString ('/Create /F /TN "{0}" /XML "{1}"' -f $TaskName, $tmp)
+            if ($result.ExitCode -ne 0) { throw 'ERROR: failed to register lifecycle task' }
+        } finally {
+            Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+        }
+        if (-not (Test-FrpLifecycleTaskHealthy -TaskName $TaskName)) {
+            throw 'ERROR: lifecycle task is not a SYSTEM boot worker'
+        }
+        $runResult = Invoke-FrpSchtasks -ArgString ('/Run /TN "{0}"' -f $TaskName)
+        if ($runResult.ExitCode -ne 0) { throw 'ERROR: failed to start lifecycle task' }
+        return $true
+    }
+    $marker = Get-FrpAutostartMarkerPath -TaskName $TaskName
+    $payload = [ordered]@{
+        task_name = $TaskName; run = ("{0} {1}" -f $command, $arguments)
+        run_as = 'SYSTEM'; trigger = 'ONSTART'; lifecycle = $true
+    }
+    ($payload | ConvertTo-Json) | Set-Content -LiteralPath $marker
+    return $true
+}
+
+function Test-FrpLifecycleTaskHealthy {
+    param([string]$TaskName = (Get-FrpLifecycleTaskName))
+    if (-not (Test-FrpAutostartTaskExists -TaskName $TaskName)) { return $false }
+    if (Test-FrpIsWindowsHost) {
+        $result = Invoke-FrpSchtasks -ArgString ('/Query /TN "{0}" /XML' -f $TaskName)
+        if ($result.ExitCode -ne 0) { return $false }
+        $xml = [string]$result.Output
+        return ($xml -match 'S-1-5-18' -and $xml -match 'BootTrigger' -and
+            $xml -match 'lifecycle-worker' -and $xml -match '<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>')
+    }
+    try {
+        $raw = Get-Content -LiteralPath (Get-FrpAutostartMarkerPath -TaskName $TaskName) -Raw | ConvertFrom-Json
+        return ([string]$raw.run_as -eq 'SYSTEM' -and [string]$raw.trigger -eq 'ONSTART' -and [bool]$raw.lifecycle)
+    } catch { return $false }
+}
+
+function Uninstall-FrpLifecycleTask {
+    param([string]$TaskName = (Get-FrpLifecycleTaskName))
+    if (Test-FrpIsWindowsHost) {
+        if (-not (Test-FrpAutostartTaskExists -TaskName $TaskName)) { return $true }
+        $null = Invoke-FrpSchtasks -ArgString ('/End /TN "{0}"' -f $TaskName)
+        $result = Invoke-FrpSchtasks -ArgString ('/Delete /F /TN "{0}"' -f $TaskName)
+        if ($result.ExitCode -ne 0) { throw 'ERROR: failed to remove lifecycle task' }
+        return $true
+    }
+    Remove-Item -LiteralPath (Get-FrpAutostartMarkerPath -TaskName $TaskName) -Force -ErrorAction SilentlyContinue
     return $true
 }
 

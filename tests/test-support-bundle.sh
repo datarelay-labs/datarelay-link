@@ -462,13 +462,13 @@ assert c.to_internal(['system', 'support-bundle', '/tmp/bundle.tgz']) == [
     'support-bundle', '--output', '/tmp/bundle.tgz'
 ]
 
-# Compatibility aliases still work but are not the public grammar under test.
+# Retired root/flag forms are not current public grammar and must fail closed.
 r2 = g.match(g.tokenize('support-bundle'), 'client')
-assert r2.get('status') == 'ok' and r2.get('action') == 'support_bundle', r2
+assert r2.get('status') != 'ok', r2
 r3 = g.match(g.tokenize('support bundle --output /tmp/x.tar.gz'), 'server')
-assert r3.get('status') == 'ok' and r3.get('action') == 'support_bundle', r3
+assert r3.get('status') != 'ok', r3
 r4 = g.match(g.tokenize('create support-bundle --output /tmp/x.tar.gz'), 'server')
-assert r4.get('status') == 'ok' and r4.get('action') == 'support_bundle', r4
+assert r4.get('status') != 'ok', r4
 
 for role in ('server', 'client', 'both'):
     help_txt = g.help_text([], role)

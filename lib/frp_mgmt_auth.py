@@ -64,6 +64,7 @@ MGMT_OP_CATALOG_READ = 'catalog.read'
 MGMT_OP_REMOTE_SERVICE_SET = 'remote-service.set'
 MGMT_OP_REMOTE_SERVICE_DELETE = 'remote-service.delete'
 MGMT_OP_REMOTE_SERVICE_STATUS = 'remote-service.status'
+MGMT_OP_AGENT_LIFECYCLE = 'agent.lifecycle'
 MGMT_OP_AI_JOB_CLAIM = 'ai-job.claim'
 MGMT_OP_AI_JOB_COMPLETE = 'ai-job.complete'
 MGMT_NONCE_HEX_LEN = 64

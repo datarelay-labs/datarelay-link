@@ -1067,7 +1067,8 @@ fi
 [[ ! -e "$CL/var/lib/drlink" ]] || fail "client /var/lib/drlink remains"
 [[ ! -e "$CL/usr/local/lib/drlink" ]] || fail "client library tree remains"
 grep -q 'Server-side reservations remain' "$WORKDIR/cu.out" || fail "reservation warning"
-grep -q 'does not contact the server' "$WORKDIR/cu.out" || fail "no-server-call message"
+grep -q 'signed disconnect notification was attempted' "$WORKDIR/cu.out" || fail "best-effort disconnect message"
+grep -q 'Offline uninstall still completes' "$WORKDIR/cu.out" || fail "offline uninstall fallback message"
 if grep -E 'curl|https://' "$WORKDIR/cu.out" "$WORKDIR/cu.err" | grep -v 'intentionally' >/dev/null; then
   fail "client uninstall appears to make a network call"
 fi

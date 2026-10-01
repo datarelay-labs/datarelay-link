@@ -155,6 +155,42 @@ class ManagedHostLivenessTests(unittest.TestCase):
         self.assertTrue(self.plane.client_effectively_connected(fresh))
         self.assertIn("other-host other connected", listed)
 
+    def test_agent_heartbeat_is_separate_from_ai_liveness_and_expires(self):
+        self.plane.conn.execute(
+            "UPDATE clients SET agent_lifecycle_state = 'connected', agent_heartbeat_at = ? "
+            "WHERE id = ?",
+            (STALE_SEEN, MACHINE),
+        )
+        self.plane.commit_if_autonomous()
+        stale = self._client(MACHINE)
+        self.assertEqual(self.plane.managed_host_connectivity(stale), "stale")
+        self.assertFalse(self.plane.ai_executor_ready(stale))
+        listed = self._show("managed-hosts")
+        self.assertIn("%s expernet-dp1 stale" % HOST, listed)
+
+        old_ai_seen = stale["last_seen"]
+        self.assertTrue(self.plane.refresh_agent_lifecycle(MACHINE, "connected"))
+        fresh = self._client(MACHINE)
+        self.assertEqual(self.plane.managed_host_connectivity(fresh), "connected")
+        self.assertEqual(fresh["last_seen"], old_ai_seen)
+        self.assertFalse(self.plane.ai_executor_ready(fresh))
+
+        self.assertTrue(self.plane.refresh_agent_lifecycle(MACHINE, "disconnected"))
+        disconnected = self._client(MACHINE)
+        self.assertEqual(self.plane.managed_host_connectivity(disconnected), "disconnected")
+        self.assertEqual(int(disconnected["connected"]), 0)
+
+        # A contradictory legacy connected flag must not suppress recovery.
+        self.plane.conn.execute(
+            "UPDATE clients SET agent_lifecycle_state = 'connected', agent_heartbeat_at = ?, connected = 0 WHERE id = ?",
+            (utc_now_iso(), MACHINE),
+        )
+        self.plane.commit_if_autonomous()
+        self.assertTrue(self.plane.refresh_agent_lifecycle(MACHINE, "connected"))
+        repaired = self._client(MACHINE)
+        self.assertEqual(int(repaired["connected"]), 1)
+        self.assertEqual(self.plane.managed_host_connectivity(repaired), "connected")
+
     def test_stale_dispatch_fails_closed_without_job_timeout(self):
         started = time.monotonic()
         result = self.bridge.call_tool(

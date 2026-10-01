@@ -184,7 +184,7 @@ PY
 frp_doctor_collect_facts() {
   local facts_file="$1"
   local root py_ver openssl_ver systemd_ver kernel arch os_name os_id
-  local frps_a frps_e alloc_a alloc_e access_a access_e egress_a egress_e frpc_a frpc_e frontend_a frontend_e
+  local frps_a frps_e alloc_a alloc_e access_a access_e egress_a egress_e frpc_a frpc_e lifecycle_a lifecycle_e frontend_a frontend_e
   local clock_status clock_detail disk_mb macos_ver service_manager os_family
   local systemd_usable=0 skip_net=0 expect_root=1 have_systemctl=0
   root="$(frp_doctor_root)"
@@ -235,6 +235,7 @@ frp_doctor_collect_facts() {
     read -r access_a access_e <<<"$(frp_doctor_unit_state drlink-access)"
     read -r egress_a egress_e <<<"$(frp_doctor_unit_state drlink-egress)"
     read -r frpc_a frpc_e <<<"$(frp_doctor_unit_state drlink-client)"
+    read -r lifecycle_a lifecycle_e <<<"$(frp_doctor_unit_state drlink-lifecycle)"
     read -r frontend_a frontend_e <<<"$(frp_doctor_unit_state drlink-frontend)"
   else
     frps_a=unknown; frps_e=unknown
@@ -242,6 +243,7 @@ frp_doctor_collect_facts() {
     access_a=unknown; access_e=unknown
     egress_a=unknown; egress_e=unknown
     frpc_a=unknown; frpc_e=unknown
+    lifecycle_a=unknown; lifecycle_e=unknown
     frontend_a=unknown; frontend_e=unknown
   fi
   if type frp_is_darwin >/dev/null 2>&1 && frp_is_darwin && type frp_macos_launchd_running >/dev/null 2>&1; then
@@ -251,6 +253,14 @@ frp_doctor_collect_facts() {
       frpc_a=inactive
     fi
     frpc_e=enabled
+    if type frp_macos_lifecycle_running >/dev/null 2>&1; then
+      if frp_macos_lifecycle_running; then
+        lifecycle_a=active
+      else
+        lifecycle_a=inactive
+      fi
+      lifecycle_e=enabled
+    fi
   fi
 
   IFS=$'\t' read -r clock_status clock_detail <<<"$(frp_doctor_clock_status)"
@@ -262,7 +272,7 @@ frp_doctor_collect_facts() {
   python3 - "$facts_file" \
     "$expect_root" "$systemd_usable" "$have_systemctl" "$skip_net" \
     "$frps_a" "$frps_e" "$alloc_a" "$alloc_e" "$access_a" "$access_e" "$egress_a" "$egress_e" \
-    "$frpc_a" "$frpc_e" "$frontend_a" "$frontend_e" \
+    "$frpc_a" "$frpc_e" "$lifecycle_a" "$lifecycle_e" "$frontend_a" "$frontend_e" \
     "$clock_status" "$clock_detail" \
     "$os_name" "$os_id" "$kernel" "$arch" "$BASH_VERSION" "$py_ver" "$openssl_ver" "$systemd_ver" \
     "$disk_mb" "${macos_ver}" "${service_manager}" "${os_family}" <<'PY'
@@ -271,9 +281,9 @@ from pathlib import Path
 path = Path(sys.argv[1])
 expect_root, systemd_usable, have_systemctl, skip_net = (sys.argv[i] == "1" for i in range(2, 6))
 (frps_a, frps_e, alloc_a, alloc_e, access_a, access_e, egress_a, egress_e, frpc_a, frpc_e,
- frontend_a, frontend_e, clock_status, clock_detail, os_name, os_id, kernel, arch,
- bash, py_ver, openssl_ver, systemd_ver, disk_mb, macos_ver, service_manager,
- os_family) = sys.argv[6:32]
+ lifecycle_a, lifecycle_e, frontend_a, frontend_e, clock_status, clock_detail, os_name, os_id,
+ kernel, arch, bash, py_ver, openssl_ver, systemd_ver, disk_mb, macos_ver, service_manager,
+ os_family) = sys.argv[6:34]
 avail = int(disk_mb) if disk_mb.isdigit() else None
 facts = {
     "expect_root_owner": expect_root,
@@ -286,6 +296,7 @@ facts = {
         "drlink-access": {"active": access_a, "enabled": access_e},
         "drlink-egress": {"active": egress_a, "enabled": egress_e},
         "frpc": {"active": frpc_a, "enabled": frpc_e},
+        "drlink-lifecycle": {"active": lifecycle_a, "enabled": lifecycle_e},
         "drlink-frontend": {"active": frontend_a, "enabled": frontend_e},
     },
     "clock": {"status": clock_status, "detail": clock_detail},

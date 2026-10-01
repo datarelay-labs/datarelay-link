@@ -268,6 +268,14 @@ run_client() {
   run_timed "$name" "$OUT_DIR/${name}.log" ssh "${SSH_OPTS[@]}" "$CLIENT_ALIAS" "$@"
 }
 
+run_client_confirm_yes() {
+  local name="$1"; shift
+  # Keep run_timed in the parent shell so PASS/FAIL counters remain authoritative
+  # when STOP_ON_FAIL=0. Feed confirmation through stdin rather than piping the
+  # stateful accounting function into a Bash subshell.
+  run_timed "$name" "$OUT_DIR/${name}.log" ssh -tt "${SSH_OPTS[@]}" "$CLIENT_ALIAS" "$@" <<< 'y'
+}
+
 wait_host() {
   local alias="$1" name="${2:-wait-$alias}" tries="${3:-$REBOOT_TRIES}" delay="${4:-$REBOOT_DELAY}"
   local i start rc=1
@@ -676,7 +684,7 @@ scenario_macos_full() {
   run_server 11-remote-policy-probe "sudo /usr/local/bin/drlink unset network-object real-e2e-loopback >/dev/null 2>&1 || true; sudo /usr/local/bin/drlink set network-object real-e2e-loopback type ip value 127.0.0.1; sudo /usr/local/bin/drlink test remote-access source real-e2e-loopback destination '$CLIENT_LABEL' service ssh | tee /tmp/real-e2e-remote-policy.txt; grep -q 'Effective Result.*ALLOW' /tmp/real-e2e-remote-policy.txt; sudo /usr/local/bin/drlink unset network-object real-e2e-loopback" || fail_stop
 
   run_client 12-http-fixtures 'mkdir -p /tmp/frp-e2e-http && printf "macos-web\n" >/tmp/frp-e2e-http/index.html; nohup python3 -m http.server 18080 --bind 127.0.0.1 -d /tmp/frp-e2e-http >/tmp/frp-http.log 2>&1 </dev/null & sleep 1; curl -fsS http://127.0.0.1:18080' || fail_stop
-  run_client 12b-http-cleanup "sudo /usr/local/bin/drlink unset remote-service web >/dev/null 2>&1 || true" || fail_stop
+  run_client_confirm_yes 12b-http-cleanup "sudo /usr/local/bin/drlink unset remote-service web >/dev/null 2>&1 || true" || fail_stop
   run_server 12c-http-object-cleanup "sudo /usr/local/bin/drlink unset service-object macos-e2e-http >/dev/null 2>&1 || true" || fail_stop
   run_server 13-http-object-create "sudo /usr/local/bin/drlink set service-object macos-e2e-http type tcp port 18080" || fail_stop
   run_client 13b-http-sync "sudo /usr/local/bin/drlink system synchronize" || fail_stop
@@ -687,7 +695,7 @@ scenario_macos_full() {
   [[ -n "$http_port" ]] || fail_stop
   note "HTTP_PUBLIC_PORT=$http_port"
   run_server 14-http-external "curl -fsS 'http://127.0.0.1:$http_port' | grep -q macos-web" || fail_stop
-  run_client 14b-http-delete "sudo /usr/local/bin/drlink unset remote-service web" || fail_stop
+  run_client_confirm_yes 14b-http-delete "sudo /usr/local/bin/drlink unset remote-service web" || fail_stop
   run_server 14c-http-object-delete "sudo /usr/local/bin/drlink unset service-object macos-e2e-http" || fail_stop
   MATRIX_SERVICE=PASS
   MATRIX_REBOOT=SKIP
@@ -780,7 +788,7 @@ scenario_services() {
 
   # Canonical v2.4 model: the Server owns the Service Object definition and
   # the Agent owns the Remote Service that binds it to this-host.
-  run_client 10b-http-cleanup "sudo /usr/local/bin/drlink unset remote-service '$remote_service' >/dev/null 2>&1 || true" || fail_stop
+  run_client_confirm_yes 10b-http-cleanup "sudo /usr/local/bin/drlink unset remote-service '$remote_service' >/dev/null 2>&1 || true" || fail_stop
   run_server 10c-http-object-cleanup "sudo /usr/local/bin/drlink unset service-object '$service_object' >/dev/null 2>&1 || true" || fail_stop
   run_server 11-http-object-create "sudo /usr/local/bin/drlink set service-object '$service_object' type tcp port 18080 && sudo /usr/local/bin/drlink show service-object '$service_object'" || fail_stop
   run_client 11b-http-sync "sudo /usr/local/bin/drlink system synchronize" || fail_stop
@@ -806,7 +814,7 @@ scenario_services() {
   run_client 17-http-enable "sudo /usr/local/bin/drlink set remote-service '$remote_service' enabled enabled && sudo /usr/local/bin/drlink show remote-service '$remote_service'" || fail_stop
   run_server 18-http-reenabled "curl -fsS 'http://127.0.0.1:$http_port' | grep -q web-b" || fail_stop
 
-  run_client 19-http-delete "sudo /usr/local/bin/drlink unset remote-service '$remote_service' && sudo /usr/local/bin/drlink show remote-services" || fail_stop
+  run_client_confirm_yes 19-http-delete "sudo /usr/local/bin/drlink unset remote-service '$remote_service' && sudo /usr/local/bin/drlink show remote-services" || fail_stop
   run_server 20-http-released "! curl -fsS --max-time 5 'http://127.0.0.1:$http_port'" || fail_stop
   run_server 21-server-remote-services "sudo /usr/local/bin/drlink show managed-host '$CLIENT_MID_PREFIX' remote-services | tee /tmp/real-e2e-remote-services.txt; ! grep -q '$remote_service' /tmp/real-e2e-remote-services.txt" || fail_stop
   run_server 22-http-object-delete "sudo /usr/local/bin/drlink unset service-object '$service_object'" || fail_stop

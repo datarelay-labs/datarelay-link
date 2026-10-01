@@ -11,11 +11,14 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 
+import drlink_control_cli as control_cli  # noqa: E402
 import drlink_v24 as v24  # noqa: E402
+import frp_cli_catalog as cli_catalog  # noqa: E402
 import frp_doctor as doctor  # noqa: E402
 import frp_server_config as scfg  # noqa: E402
 import frp_version_identity as ident  # noqa: E402
@@ -464,6 +467,149 @@ class EnrollmentHostnameContractTests(unittest.TestCase):
         self.assertIn("FRP_ENROLLMENT_PUBLIC_HOST", src)
         self.assertIn("Public URL identity", src)
         self.assertIn("frp_format_https_url \"$enrollment_host\"", src)
+
+
+class RemainingP2UxClosureTests(unittest.TestCase):
+    def test_remote_service_menu_enters_guided_workflow(self):
+        row = cli_catalog.navigation_resolve("client.remote_services", "2")
+        self.assertIsNotNone(row)
+        self.assertEqual(row[0], "client_rs_create")
+        self.assertEqual(row[3], "workflow")
+        self.assertEqual(row[4], "create_remote_service")
+        shell = (ROOT / "tools" / "frpctl").read_text(encoding="utf-8")
+        self.assertIn('create_remote_service)', shell)
+        self.assertIn('frpctl_dispatch set remote-service "$id"', shell)
+
+    def test_remote_service_name_only_dispatch_enters_wizard(self):
+        tmp = Path(tempfile.mkdtemp(prefix="drlink-rs-wizard-"))
+        try:
+            (tmp / "etc/frp").mkdir(parents=True)
+            (tmp / "etc/frp/client-state.json").write_text(
+                '{"schema_version":1,"machine_id":"guided-agent","services":{}}\n',
+                encoding="utf-8",
+            )
+            from drlink_control_plane import ControlPlane
+
+            plane = ControlPlane(str(tmp))
+            try:
+                with mock.patch(
+                    "drlink_v24_wizard.run_wizard", return_value=0
+                ) as wizard:
+                    rc = control_cli.dispatch(
+                        ["set", "remote-service", "guided-rs"],
+                        root=str(tmp),
+                        plane=plane,
+                    )
+                self.assertEqual(rc, 0)
+                wizard.assert_called_once()
+                args = wizard.call_args.args
+                self.assertEqual(args[1:], ("remote-service", "guided-rs"))
+            finally:
+                plane.close()
+        finally:
+            shutil.rmtree(tmp)
+
+    def test_fresh_installer_uses_remote_service_terminology(self):
+        src = (ROOT / "install-server.sh").read_text(encoding="utf-8")
+        self.assertIn("Remote Service Ports", src)
+        self.assertIn("\nRemote Services\n", src)
+        self.assertNotIn("Published Service Ports", src)
+        self.assertNotIn("\nPublished Services\n", src)
+
+    def test_obsolete_published_service_guidance_is_not_user_facing(self):
+        doctor_src = (ROOT / "lib" / "frp_doctor.py").read_text(encoding="utf-8")
+        cli_src = (ROOT / "lib" / "drlink_control_cli.py").read_text(encoding="utf-8")
+        self.assertNotIn("inspect Published Services with show published-services", doctor_src)
+        self.assertNotIn("use published-service / service-preset", doctor_src)
+        self.assertNotIn("existing Published Services", cli_src)
+
+    def test_missing_legacy_completion_json_is_not_a_warning(self):
+        tmp = Path(tempfile.mkdtemp(prefix="drlink-completion-sqlite-"))
+        try:
+            (tmp / "etc/drlink").mkdir(parents=True)
+            (tmp / "var/lib/drlink/runtime").mkdir(parents=True)
+            (tmp / "etc/drlink/config.json").write_text(
+                '{"registry_file":"/var/lib/drlink/runtime/client-inventory.json"}\n',
+                encoding="utf-8",
+            )
+            (tmp / "var/lib/drlink/runtime/client-inventory.json").write_text(
+                '{"clients":{},"groups":{}}\n', encoding="utf-8"
+            )
+            env = os.environ.copy()
+            env["FRP_CTL_TEST_ROOT"] = str(tmp)
+            proc = subprocess.run(
+                [str(ROOT / "tools/frpctl"), "--print-grammar-payload"],
+                env=env,
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            payload = json.loads(proc.stdout)
+            self.assertEqual(payload["role"], "server")
+            self.assertFalse(payload["inventory_warning"])
+        finally:
+            shutil.rmtree(tmp)
+
+    def test_fixed_tcp_selector_uses_sqlite_service_objects(self):
+        tmp = Path(tempfile.mkdtemp(prefix="drlink-fixed-tcp-sqlite-"))
+        try:
+            (tmp / "etc/drlink").mkdir(parents=True)
+            (tmp / "etc/drlink/config.json").write_text(
+                '{"role":"server","egress_control_file":"/var/lib/drlink/egress-control.json"}\n',
+                encoding="utf-8",
+            )
+            legacy = tmp / "var/lib/drlink/egress-control.json"
+            legacy.parent.mkdir(parents=True, exist_ok=True)
+            legacy.write_text(
+                '{"tcp_relays":{"legacy":{"name":"legacy-fixed"}}}\n',
+                encoding="utf-8",
+            )
+            plane = ControlPlane(str(tmp))
+            try:
+                v24.set_service_object(
+                    plane, "current-fixed", type="fixed-tcp", port=8443, oneshot=True
+                )
+            finally:
+                plane.close()
+            env = os.environ.copy()
+            env["FRP_CTL_TEST_ROOT"] = str(tmp)
+            script = (
+                'export FRP_CTL_SOURCED=1; . "$1"; '
+                'frpctl_read(){ printf "1\\n"; }; '
+                'frpctl_select_inventory fixed-tcp "Fixed TCP: "'
+            )
+            proc = subprocess.run(
+                ["bash", "-lc", script, "bash", str(ROOT / "tools/frpctl")],
+                env=env,
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertIn("current-fixed", proc.stdout)
+            self.assertNotIn("legacy-fixed", proc.stdout)
+        finally:
+            shutil.rmtree(tmp)
+
+    def test_broken_pipe_is_normal_cli_termination(self):
+        class FlushBrokenPipe:
+            def write(self, text):
+                return len(text)
+
+            def flush(self):
+                raise BrokenPipeError
+
+            def fileno(self):
+                raise OSError("no real fd in unit test")
+
+        stream = FlushBrokenPipe()
+        with mock.patch.object(control_cli, "dispatch", return_value=0), mock.patch.object(
+            control_cli.sys, "stdout", stream
+        ):
+            self.assertEqual(control_cli.main(["system", "revisions"]), 0)
 
 
 if __name__ == "__main__":

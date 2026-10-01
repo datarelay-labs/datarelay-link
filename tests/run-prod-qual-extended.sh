@@ -1425,7 +1425,9 @@ phase_fixed_tcp_remote_service() {
 
   # Prepare real target services on the Agent and clean any residue from a prior run.
   set +e
-  pq_ssh frp-e2e-client "sudo /usr/local/bin/drlink unset remote-service '$fixed_rs' >/dev/null 2>&1 || true; sudo /usr/local/bin/drlink unset remote-service '$normal_rs' >/dev/null 2>&1 || true; pkill -f 'http.server $fixed_target_port' >/dev/null 2>&1 || true; pkill -f 'http.server $normal_target_port' >/dev/null 2>&1 || true; mkdir -p /tmp/pq-fixed-target /tmp/pq-normal-target; printf 'fixed-tcp-ok\\n' >/tmp/pq-fixed-target/index.html; printf 'normal-tcp-ok\\n' >/tmp/pq-normal-target/index.html; nohup python3 -m http.server $fixed_target_port --bind 127.0.0.1 -d /tmp/pq-fixed-target >/tmp/pq-fixed-http.log 2>&1 </dev/null & nohup python3 -m http.server $normal_target_port --bind 127.0.0.1 -d /tmp/pq-normal-target >/tmp/pq-normal-http.log 2>&1 </dev/null & sleep 1; curl -fsS http://127.0.0.1:$fixed_target_port/; curl -fsS http://127.0.0.1:$normal_target_port/" >>"$evidence" 2>&1
+  pq_ssh_confirm_yes frp-e2e-client "sudo /usr/local/bin/drlink unset remote-service '$fixed_rs' >/dev/null 2>&1 || true" >>"$evidence" 2>&1 || true
+  pq_ssh_confirm_yes frp-e2e-client "sudo /usr/local/bin/drlink unset remote-service '$normal_rs' >/dev/null 2>&1 || true" >>"$evidence" 2>&1 || true
+  pq_ssh frp-e2e-client "pkill -f 'http.server $fixed_target_port' >/dev/null 2>&1 || true; pkill -f 'http.server $normal_target_port' >/dev/null 2>&1 || true; mkdir -p /tmp/pq-fixed-target /tmp/pq-normal-target; printf 'fixed-tcp-ok\\n' >/tmp/pq-fixed-target/index.html; printf 'normal-tcp-ok\\n' >/tmp/pq-normal-target/index.html; nohup python3 -m http.server $fixed_target_port --bind 127.0.0.1 -d /tmp/pq-fixed-target >/tmp/pq-fixed-http.log 2>&1 </dev/null & nohup python3 -m http.server $normal_target_port --bind 127.0.0.1 -d /tmp/pq-normal-target >/tmp/pq-normal-http.log 2>&1 </dev/null & sleep 1; curl -fsS http://127.0.0.1:$fixed_target_port/; curl -fsS http://127.0.0.1:$normal_target_port/" >>"$evidence" 2>&1
   local target_rc=$?
   pq_ssh "$SERVER" "sudo /usr/local/bin/drlink unset service-object '$fixed_obj' >/dev/null 2>&1 || true; sudo /usr/local/bin/drlink unset service-object '$normal_obj' >/dev/null 2>&1 || true; sudo /usr/local/bin/drlink set service-object '$fixed_obj' type fixed-tcp port $fixed_target_port; sudo /usr/local/bin/drlink set service-object '$normal_obj' type tcp port $normal_target_port" >>"$evidence" 2>&1
   local object_rc=$?
@@ -1497,7 +1499,9 @@ PY
   fi
 
   set +e
-  pq_ssh frp-e2e-client "sudo /usr/local/bin/drlink unset remote-service '$fixed_rs' >/dev/null 2>&1 || true; sudo /usr/local/bin/drlink unset remote-service '$normal_rs' >/dev/null 2>&1 || true; pkill -f 'http.server $fixed_target_port' >/dev/null 2>&1 || true; pkill -f 'http.server $normal_target_port' >/dev/null 2>&1 || true" >>"$evidence" 2>&1
+  pq_ssh_confirm_yes frp-e2e-client "sudo /usr/local/bin/drlink unset remote-service '$fixed_rs' >/dev/null 2>&1 || true" >>"$evidence" 2>&1 || true
+  pq_ssh_confirm_yes frp-e2e-client "sudo /usr/local/bin/drlink unset remote-service '$normal_rs' >/dev/null 2>&1 || true" >>"$evidence" 2>&1 || true
+  pq_ssh frp-e2e-client "pkill -f 'http.server $fixed_target_port' >/dev/null 2>&1 || true; pkill -f 'http.server $normal_target_port' >/dev/null 2>&1 || true" >>"$evidence" 2>&1
   local agent_cleanup_rc=$?
   pq_ssh "$SERVER" "sudo /usr/local/bin/drlink unset service-object '$fixed_obj' >/dev/null 2>&1 || true; sudo /usr/local/bin/drlink unset service-object '$normal_obj' >/dev/null 2>&1 || true" >>"$evidence" 2>&1
   local server_cleanup_rc=$?

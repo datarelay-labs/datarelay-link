@@ -94,9 +94,9 @@ class ManagedHostRetirement(unittest.TestCase):
             self.plane.conn.execute(
                 "INSERT OR REPLACE INTO remote_service_meta"
                 "(service_id, status, pool_class, service_object_id, destination_name, "
-                "pending_allocation, delete_pending, reason) "
-                "VALUES (?, 'HEALTHY', 'normal', ?, 'this-host', 0, 0, '')",
-                (pub["id"], v24.get_service_object(self.plane, "ssh")["id"]),
+                "destination_client_id, pending_allocation, delete_pending, reason) "
+                "VALUES (?, 'HEALTHY', 'normal', ?, 'this-host', ?, 0, 0, '')",
+                (pub["id"], v24.get_service_object(self.plane, "ssh")["id"], client_id),
             )
             # Ensure an active reservation row exists even if allocator skipped insert.
             self.plane.conn.execute(
@@ -180,6 +180,27 @@ class ManagedHostRetirement(unittest.TestCase):
         self.assertIn("remote access", text)
         self.assertIsNotNone(self.plane.get_client("ubuntu-prod"))
         self.assertNotIn("foreign key", text)
+
+    def test_cross_host_remote_service_still_blocks_retirement(self):
+        self._seed_host(MID, "dest-host")
+        self._seed_host(MID2, "owner-host", with_service=True)
+        pub = self.plane.conn.execute(
+            "SELECT id FROM published_services WHERE client_id = ? AND name = 'ssh-access'",
+            (MID2,),
+        ).fetchone()
+        self.plane.conn.execute(
+            "UPDATE remote_service_meta SET destination_client_id = ?, destination_name = ? "
+            "WHERE service_id = ?",
+            (MID, "dest-host", pub["id"]),
+        )
+        self.plane.conn.commit()
+
+        rc, out, err = self._dispatch(["unset", "managed-host", "dest-host"])
+        self.assertNotEqual(rc, 0)
+        text = err or out
+        self.assertIn("still referenced", text)
+        self.assertIn("Remote Service: ssh-access (Agent owner-host)", text)
+        self.assertIsNotNone(self.plane.get_client("dest-host"))
 
     def test_disconnected_revoked_host_removed(self):
         self._seed_host(

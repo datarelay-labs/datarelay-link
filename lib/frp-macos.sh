@@ -7,6 +7,7 @@ fi
 FRP_MACOS_LOADED=1
 
 FRP_MACOS_LAUNCHD_LABEL="${FRP_MACOS_LAUNCHD_LABEL:-com.datarelay.drlink.frpc}"
+FRP_MACOS_LIFECYCLE_LABEL="${FRP_MACOS_LIFECYCLE_LABEL:-com.datarelay.drlink.lifecycle}"
 FRP_MACOS_STATE_ROOT_DEFAULT='/Library/Application Support/drlink'
 FRP_MACOS_LAUNCHDAEMON_DIR='/Library/LaunchDaemons'
 FRP_MACOS_MIN_PRODUCT_VERSION="${FRP_MACOS_MIN_PRODUCT_VERSION:-11}"
@@ -21,6 +22,10 @@ frp_macos_state_root() {
 
 frp_macos_plist_path() {
   printf '%s/%s.plist' "$FRP_MACOS_LAUNCHDAEMON_DIR" "$FRP_MACOS_LAUNCHD_LABEL"
+}
+
+frp_macos_lifecycle_plist_path() {
+  printf '%s/%s.plist' "$FRP_MACOS_LAUNCHDAEMON_DIR" "$FRP_MACOS_LIFECYCLE_LABEL"
 }
 
 frp_macos_brew_prefix() {
@@ -55,6 +60,7 @@ frp_macos_map_path() {
     /var/lib/drlink) printf '%s/state' "$state"; return ;;
     /var/lib/drlink/*) printf '%s/state/%s' "$state" "${p#/var/lib/drlink/}"; return ;;
     /etc/systemd/system/drlink-client.service) frp_macos_plist_path; return ;;
+    /etc/systemd/system/drlink-lifecycle.service) frp_macos_lifecycle_plist_path; return ;;
     /usr/local/lib/drlink) printf '%s/lib' "$state"; return ;;
     /usr/local/lib/drlink/*) printf '%s/lib/%s' "$state" "${p#/usr/local/lib/drlink/}"; return ;;
     /usr/local/bin/frpc) printf '%s/bin/frpc' "$state"; return ;;
@@ -172,6 +178,17 @@ frp_macos_launchd_template() {
   return 1
 }
 
+frp_macos_lifecycle_template() {
+  local here candidate
+  here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  for candidate in "${FRP_MACOS_LIFECYCLE_PLIST_TEMPLATE:-}" \
+    "${here}/../client/${FRP_MACOS_LIFECYCLE_LABEL}.plist" \
+    "$(frp_macos_fs "/usr/local/lib/drlink/${FRP_MACOS_LIFECYCLE_LABEL}.plist")"; do
+    [[ -n "$candidate" && -f "$candidate" ]] && { printf '%s' "$candidate"; return; }
+  done
+  return 1
+}
+
 frp_macos_render_plist() {
   local dest="$1" template
   template="$(frp_macos_launchd_template)" || {
@@ -213,6 +230,77 @@ tmp.chmod(0o644); tmp.replace(out)
 PY
 }
 
+frp_macos_lifecycle_python() {
+  local candidate
+  if [[ -n "${FRP_MACOS_PYTHON:-}" ]]; then
+    candidate="$FRP_MACOS_PYTHON"
+    [[ "$candidate" == /* && -x "$candidate" ]] || {
+      echo "ERROR: FRP_MACOS_PYTHON must be an executable absolute path" >&2
+      return 1
+    }
+    printf '%s' "$candidate"
+    return 0
+  fi
+  # LaunchDaemons must not persist a shell-local virtualenv/pyenv shim. Prefer
+  # durable system/Homebrew locations that remain valid after the installer
+  # process and its PATH disappear.
+  for candidate in /usr/bin/python3 /opt/homebrew/bin/python3 /usr/local/bin/python3; do
+    if [[ -x "$candidate" ]]; then
+      printf '%s' "$candidate"
+      return 0
+    fi
+  done
+  echo "ERROR: durable python3 is required for the Agent lifecycle worker" >&2
+  return 1
+}
+
+frp_macos_render_lifecycle_plist() {
+  local dest="$1" template python_bin
+  template="$(frp_macos_lifecycle_template)" || {
+    echo "ERROR: lifecycle launchd plist template not found" >&2
+    return 1
+  }
+  python_bin="$(frp_macos_lifecycle_python)" || return 1
+  FRP_LIFECYCLE_LABEL="$FRP_MACOS_LIFECYCLE_LABEL" \
+  FRP_LIFECYCLE_PYTHON="$python_bin" \
+  FRP_LIFECYCLE_SCRIPT="$(frp_macos_fs /usr/local/lib/drlink/drlink_agent_lifecycle.py)" \
+  FRP_LIFECYCLE_STDOUT="$(frp_macos_fs /etc/frp)/logs/lifecycle.out.log" \
+  FRP_LIFECYCLE_STDERR="$(frp_macos_fs /etc/frp)/logs/lifecycle.err.log" \
+  python3 - "$template" "$dest" <<'PY'
+import os, plistlib, sys
+from pathlib import Path
+with open(sys.argv[1], 'rb') as f: data = plistlib.load(f)
+subs = {
+    '@LIFECYCLE_LABEL@': os.environ['FRP_LIFECYCLE_LABEL'],
+    '@PYTHON@': os.environ['FRP_LIFECYCLE_PYTHON'],
+    '@LIFECYCLE@': os.environ['FRP_LIFECYCLE_SCRIPT'],
+    '@LIFECYCLE_STDOUT@': os.environ['FRP_LIFECYCLE_STDOUT'],
+    '@LIFECYCLE_STDERR@': os.environ['FRP_LIFECYCLE_STDERR'],
+}
+def expand(v):
+    if isinstance(v, str):
+        for a, b in subs.items(): v = v.replace(a, b)
+    elif isinstance(v, list): v = [expand(x) for x in v]
+    elif isinstance(v, dict): v = {k: expand(x) for k, x in v.items()}
+    return v
+data = expand(data)
+if any(t in repr(data) for t in subs): raise SystemExit('ERROR: unresolved lifecycle plist placeholder')
+want = [subs['@PYTHON@'], subs['@LIFECYCLE@'], 'worker']
+if data.get('Label') != subs['@LIFECYCLE_LABEL@'] or data.get('ProgramArguments') != want:
+    raise SystemExit('ERROR: lifecycle launchd plist is not pinned to the lifecycle worker')
+out = Path(sys.argv[2]); out.parent.mkdir(parents=True, exist_ok=True)
+tmp = out.with_name(out.name + '.tmp')
+with open(tmp, 'wb') as f: plistlib.dump(data, f)
+tmp.chmod(0o644); tmp.replace(out)
+PY
+}
+
+frp_macos_lifecycle_install() {
+  local dest
+  dest="$(frp_macos_fs /etc/systemd/system/drlink-lifecycle.service)"
+  frp_require_safe_write_path "$dest" && frp_macos_render_lifecycle_plist "$dest"
+}
+
 frp_macos_launchd_install() {
   local dest
   dest="$(frp_macos_fs /etc/systemd/system/drlink-client.service)"
@@ -224,6 +312,30 @@ frp_macos_launchd_bootout() {
   frp_launchd_usable || return 0
   frp_invoke launchctl bootout "system/${FRP_MACOS_LAUNCHD_LABEL}" >/dev/null 2>&1 ||
     frp_invoke launchctl unload -w "$(frp_macos_fs /etc/systemd/system/drlink-client.service)" >/dev/null 2>&1 || true
+}
+
+frp_macos_lifecycle_bootout() {
+  frp_launchd_usable || return 0
+  frp_invoke launchctl bootout "system/${FRP_MACOS_LIFECYCLE_LABEL}" >/dev/null 2>&1 ||
+    frp_invoke launchctl unload -w "$(frp_macos_fs /etc/systemd/system/drlink-lifecycle.service)" >/dev/null 2>&1 || true
+}
+
+frp_macos_lifecycle_bootstrap() {
+  local plist
+  frp_launchd_usable || return 0
+  plist="$(frp_macos_fs /etc/systemd/system/drlink-lifecycle.service)"
+  frp_macos_lifecycle_bootout
+  if frp_invoke launchctl bootstrap system "$plist" >/dev/null 2>&1; then
+    return 0
+  fi
+  frp_invoke launchctl load -w "$plist" >/dev/null 2>&1
+}
+
+frp_macos_lifecycle_set_enabled() {
+  local action="${1:-}"
+  frp_launchd_usable || return 0
+  case "$action" in enable|disable) ;; *) return 1 ;; esac
+  frp_invoke launchctl "$action" "system/${FRP_MACOS_LIFECYCLE_LABEL}" >/dev/null
 }
 
 frp_macos_launchd_stop() {
@@ -272,6 +384,17 @@ frp_macos_launchd_pid() {
 frp_macos_launchd_running() {
   local pid
   pid="$(frp_macos_launchd_pid || true)"
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]]
+}
+
+frp_macos_lifecycle_pid() {
+  frp_invoke launchctl print "system/${FRP_MACOS_LIFECYCLE_LABEL}" 2>/dev/null |
+    awk '/^[[:space:]]*pid[[:space:]]*=/ {print $3; exit}'
+}
+
+frp_macos_lifecycle_running() {
+  local pid
+  pid="$(frp_macos_lifecycle_pid || true)"
   [[ "$pid" =~ ^[1-9][0-9]*$ ]]
 }
 

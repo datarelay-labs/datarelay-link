@@ -76,6 +76,7 @@ SUPPORTED_DISTRO_IDS = {
     'ubuntu', 'rocky', 'almalinux', 'amzn', 'centos', 'rhel', 'debian', 'fedora',
 }
 MACOS_LAUNCHD_LABEL_DEFAULT = 'com.datarelay.drlink.frpc'
+MACOS_LIFECYCLE_LABEL_DEFAULT = 'com.datarelay.drlink.lifecycle'
 MACOS_MIN_PRODUCT_MAJOR_DEFAULT = 11
 MACOS_OS_IDS = {'macos', 'darwin'}
 
@@ -195,6 +196,13 @@ def _doctor_launchd_label():
     return label or MACOS_LAUNCHD_LABEL_DEFAULT
 
 
+def _doctor_lifecycle_launchd_label():
+    label = str(
+        os.environ.get('FRP_MACOS_LIFECYCLE_LABEL') or MACOS_LIFECYCLE_LABEL_DEFAULT
+    ).strip()
+    return label or MACOS_LIFECYCLE_LABEL_DEFAULT
+
+
 def _macos_min_product_major():
     raw = str(os.environ.get('FRP_MACOS_MIN_PRODUCT_VERSION') or MACOS_MIN_PRODUCT_MAJOR_DEFAULT).strip()
     try:
@@ -265,7 +273,9 @@ def macos_map_path(abs_path):
     if p.startswith('/var/lib/drlink/'):
         return state + '/state/' + p[len('/var/lib/drlink/'):]
     if p == '/etc/systemd/system/drlink-client.service':
-        return '/Library/LaunchDaemons/com.datarelay.drlink.frpc.plist'
+        return '/Library/LaunchDaemons/%s.plist' % _doctor_launchd_label()
+    if p == '/etc/systemd/system/drlink-lifecycle.service':
+        return '/Library/LaunchDaemons/%s.plist' % _doctor_lifecycle_launchd_label()
     if p == '/usr/local/lib/drlink':
         return state + '/lib'
     if p.startswith('/usr/local/lib/drlink/'):
@@ -1886,11 +1896,16 @@ def check_unit(report, facts, unit, check_id, label):
     systemd_usable = bool(facts.get('systemd_usable'))
     units = facts.get('units') or {}
     info = units.get(unit) or {}
-    darwin_frpc = unit == 'frpc' and _facts_is_darwin(facts)
-    if darwin_frpc:
-        label = _frpc_runtime_label(facts)
+    darwin_job = None
+    if _facts_is_darwin(facts):
+        if unit == 'frpc':
+            darwin_job = _doctor_launchd_label()
+            label = _frpc_runtime_label(facts)
+        elif unit == 'drlink-lifecycle':
+            darwin_job = _doctor_lifecycle_launchd_label()
+            label = 'launchd job %s' % darwin_job
     if not systemd_usable and not info:
-        unavailable = 'launchd state unavailable' if darwin_frpc else 'systemd unavailable'
+        unavailable = 'launchd state unavailable' if darwin_job else 'systemd unavailable'
         report.add(check_id, NOT_TESTED, '%s was not tested (%s)' % (label, unavailable), '', '', 'runtime')
         return 'not_tested'
     active = str(info.get('active') or 'unknown')
@@ -1902,10 +1917,16 @@ def check_unit(report, facts, unit, check_id, label):
         detail = 'state=%s' % active
         if journal:
             detail += '\n' + redact(journal)
-        recovery = _frpc_runtime_recovery(facts) if darwin_frpc else (
-            'inspect the unit with systemctl status %s; doctor does not restart services'
-            % (label[:-8] if label.endswith('.service') else label)
-        )
+        if darwin_job:
+            recovery = (
+                'inspect the job with launchctl print system/%s; doctor does not restart services'
+                % darwin_job
+            )
+        else:
+            recovery = (
+                'inspect the unit with systemctl status %s; doctor does not restart services'
+                % (label[:-8] if label.endswith('.service') else label)
+            )
         report.add(
             check_id, FAIL,
             '%s is not active' % label,
@@ -2029,7 +2050,7 @@ def check_service_profiles(report, paths, facts, cfg):
             'SERVICE_PROFILES_ERROR', FAIL,
             'SERVICE_PROFILES_ERROR: service-profiles.json is invalid',
             str(exc),
-            'ignore obsolete service-profiles.json; use published-service / service-preset',
+            'ignore obsolete service-profiles.json; use Service Objects and Agent Remote Services',
             'state',
         )
         return
@@ -2042,7 +2063,7 @@ def check_service_profiles(report, paths, facts, cfg):
             status,
             '%s: %s' % (cls, issue.get('message') or 'issue'),
             '',
-            'inspect Published Services with show published-services',
+            'inspect current Service Objects and Agent Remote Services',
             'state',
         )
 
@@ -3477,6 +3498,27 @@ def check_client(report, paths, facts, skip_network):
             check_unit(report, facts, 'frpc', 'frpc_service', _frpc_runtime_label(facts))
     else:
         check_unit(report, facts, 'frpc', 'frpc_service', _frpc_runtime_label(facts))
+
+    lifecycle_worker = paths.is_file('/usr/local/lib/drlink/drlink_agent_lifecycle.py')
+    lifecycle_unit = paths.is_file('/etc/systemd/system/drlink-lifecycle.service')
+    if lifecycle_worker or lifecycle_unit:
+        if not lifecycle_unit:
+            report.add(
+                'agent_lifecycle_service',
+                FAIL,
+                'Agent lifecycle worker service is missing',
+                'drlink_agent_lifecycle.py is installed but its service definition is absent',
+                're-run the Agent installer/update; doctor does not create services',
+                'runtime',
+            )
+        else:
+            check_unit(
+                report,
+                facts,
+                'drlink-lifecycle',
+                'agent_lifecycle_service',
+                'drlink-lifecycle.service',
+            )
 
     alloc_url = ''
     frp_host = ''
