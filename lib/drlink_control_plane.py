@@ -32,6 +32,7 @@ from drlink_control_db import (
     ensure_ai_jobs_safety_schema,
     integrity_check,
     open_control_db,
+    open_control_db_readonly,
     pragma_snapshot,
     runtime_dir,
     utc_now_iso,
@@ -124,6 +125,10 @@ MANAGED_HOST_LIVENESS_SECONDS = 120
 # Persist liveness well inside the TTL so claim polls do not rewrite the row
 # on every poll. 30s is safely inside the 120s freshness bound.
 MANAGED_HOST_LIVENESS_REFRESH_SECONDS = 30
+# Independent Agent lifecycle heartbeat. This is transport/product presence,
+# not AI executor activity; macOS and other Agents without an AI worker use it.
+AGENT_HEARTBEAT_SECONDS = 120
+AGENT_HEARTBEAT_REFRESH_SECONDS = 30
 MCP_AUTH_MODEL = "static-bearer+built-in-oauth2.1-as/rs+rfc9728"
 OBJECT_TYPES = ("host", "network", "fqdn")
 PLANES = ("remote", "internet")
@@ -184,7 +189,7 @@ def _ai_job_deadline_passed(deadline_at: Optional[str], *, now_iso: Optional[str
 
 
 def managed_host_liveness_fresh(last_seen: Optional[str], *, now_iso: Optional[str] = None) -> bool:
-    """True when last_seen is within the Managed Host liveness bound."""
+    """True when last_seen is within the AI-executor liveness bound."""
     seen = _parse_ai_job_ts(last_seen)
     if seen is None:
         return False
@@ -197,6 +202,22 @@ def managed_host_liveness_fresh(last_seen: Optional[str], *, now_iso: Optional[s
         now = now.replace(tzinfo=timezone.utc)
     age = (now - seen).total_seconds()
     return 0 <= age <= MANAGED_HOST_LIVENESS_SECONDS
+
+
+def agent_heartbeat_fresh(heartbeat_at: Optional[str], *, now_iso: Optional[str] = None) -> bool:
+    """True when the independent authenticated Agent heartbeat is current."""
+    seen = _parse_ai_job_ts(heartbeat_at)
+    if seen is None:
+        return False
+    now = _parse_ai_job_ts(now_iso) if now_iso else datetime.now(timezone.utc)
+    if now is None:
+        now = datetime.now(timezone.utc)
+    if seen.tzinfo is None:
+        seen = seen.replace(tzinfo=timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    age = (now - seen).total_seconds()
+    return 0 <= age <= AGENT_HEARTBEAT_SECONDS
 
 
 def _validate_name(value: str, kind: str = "name") -> str:
@@ -298,14 +319,24 @@ def membership_eligible(address: str) -> bool:
 
 
 class ControlPlane:
-    def __init__(self, root: Optional[str] = None, conn: Optional[sqlite3.Connection] = None):
+    def __init__(
+        self,
+        root: Optional[str] = None,
+        conn: Optional[sqlite3.Connection] = None,
+        *,
+        read_only: bool = False,
+    ):
         self.root = root
         self.db_file = db_path(root)
         self.runtime = runtime_dir(root)
-        self.conn = conn or open_control_db(root)
+        self._read_only = bool(read_only and conn is None)
+        self.conn = conn or (
+            open_control_db_readonly(root) if self._read_only else open_control_db(root)
+        )
         self._db_ident = self._db_file_ident()
         self._batch_mode = False
         self._batch_results: list = []
+        self._public_revision_guard_consumed = False
         # Serialize threaded MCP Bridge access to the shared SQLite connection.
         self._db_lock = threading.RLock()
         # Agent Bundle / nested Apply: Server-side Remote Service creates to
@@ -345,7 +376,11 @@ class ControlPlane:
                 self.conn.close()
         except Exception:
             pass
-        self.conn = open_control_db(self.root)
+        self.conn = (
+            open_control_db_readonly(self.root)
+            if getattr(self, "_read_only", False)
+            else open_control_db(self.root)
+        )
         self._db_ident = ident
 
     # --- revision / audit -------------------------------------------------
@@ -614,6 +649,34 @@ class ControlPlane:
             return
         self._commit_open_transaction()
 
+    def _public_expected_revision(self) -> Optional[int]:
+        """Return an operator-supplied direct-mutation revision precondition.
+
+        Data Relay Link public commands do not use GNU-style options. Operators
+        that prepared an edit from revision N can bind that direct mutation by
+        exporting DRLINK_EXPECTED_REVISION=N. The guard is consumed only after
+        one successful top-level mutation; ConfigurationBundle has its own
+        sourceRevision contract and does not use this path.
+        """
+        if self._public_revision_guard_consumed:
+            return None
+        raw = str(os.environ.get("DRLINK_EXPECTED_REVISION") or "").strip()
+        if not raw:
+            return None
+        try:
+            value = int(raw)
+        except ValueError as exc:
+            raise ControlPlaneError(
+                "DRLINK_EXPECTED_REVISION must be a non-negative integer.\n"
+                "No changes were applied."
+            ) from exc
+        if value < 0:
+            raise ControlPlaneError(
+                "DRLINK_EXPECTED_REVISION must be a non-negative integer.\n"
+                "No changes were applied."
+            )
+        return value
+
     def _mutate(
         self,
         command: str,
@@ -651,8 +714,19 @@ class ControlPlane:
         checkpoint = None
         if compile_runtime and self._activation_should_run():
             checkpoint = self._pre_activation_checkpoint()
+        public_expected_revision = self._public_expected_revision()
         self.conn.execute("BEGIN IMMEDIATE")
         try:
+            if public_expected_revision is not None:
+                current = self.current_revision()
+                if current != public_expected_revision:
+                    raise ConcurrencyError(
+                        "REVISION_CONFLICT\n"
+                        "Expected revision %s but current revision is %s.\n"
+                        "No changes were applied.\n"
+                        "Review current state and retry."
+                        % (public_expected_revision, current)
+                    )
             if expected:
                 for table, entity_id, version in expected.get("rows") or ():
                     row = self.conn.execute(
@@ -691,6 +765,8 @@ class ControlPlane:
                     impact=json.dumps(impact or {}, sort_keys=True)[:2000],
                 )
             self._commit_open_transaction()
+            if public_expected_revision is not None:
+                self._public_revision_guard_consumed = True
         except ConfirmationRequired:
             self._rollback_open_transaction()
             self._cleanup_activation_checkpoint(checkpoint)
@@ -1290,9 +1366,9 @@ class ControlPlane:
                     "FROM remote_service_meta m "
                     "JOIN published_services s ON s.id = m.service_id "
                     "JOIN clients c ON c.id = s.client_id "
-                    "WHERE m.destination_client_id = ? AND IFNULL(s.released, 0) = 0 "
-                    "ORDER BY s.name",
-                    (bound_cid,),
+                    "WHERE m.destination_client_id = ? AND s.client_id != ? "
+                    "AND IFNULL(s.released, 0) = 0 ORDER BY s.name",
+                    (bound_cid, bound_cid),
                 ):
                     owner = row["owner_label"] or row["owner_hostname"] or row["owner_id"][:8]
                     refs.append(
@@ -4700,15 +4776,76 @@ class ControlPlane:
         return self.ai_executor_ready(client)
 
     def managed_host_connectivity(self, client) -> str:
-        """Public FRP/transport projection.
+        """Public Agent lifecycle projection, independent from AI freshness.
 
-        This follows the persisted connected flag and trust. It does not
-        consult AI-worker claim freshness. A macOS host with no durable AI
-        worker stays connected while that flag is up.
+        Legacy rows preserve the pre-heartbeat connected flag during upgrade.
+        Once an Agent has reported lifecycle state, current connectivity comes
+        only from its authenticated heartbeat/disconnect signal.
         """
-        if self._managed_host_admitted(client):
-            return "connected"
-        return "disconnected"
+        if not self._managed_host_admitted(client):
+            return "disconnected"
+        keys = client.keys() if client is not None else ()
+        lifecycle = (
+            str(client["agent_lifecycle_state"] or "legacy").strip().lower()
+            if "agent_lifecycle_state" in keys
+            else "legacy"
+        )
+        heartbeat = client["agent_heartbeat_at"] if "agent_heartbeat_at" in keys else None
+        if lifecycle == "disconnected":
+            return "disconnected"
+        if lifecycle == "connected":
+            return "connected" if agent_heartbeat_fresh(heartbeat) else "stale"
+        # Migration compatibility only. The lifecycle worker converts a live
+        # upgraded Agent from legacy to connected on its first signed heartbeat.
+        return "connected"
+
+    def refresh_agent_lifecycle(self, client_id: str, state: str = "connected") -> bool:
+        """Record independent signed Agent presence without touching AI liveness."""
+        lifecycle = str(state or "").strip().lower()
+        if lifecycle not in ("connected", "disconnected"):
+            raise ControlPlaneError("Agent lifecycle state must be connected or disconnected")
+        row = self.conn.execute("SELECT * FROM clients WHERE id = ?", (client_id,)).fetchone()
+        if row is None:
+            return False
+        if str(row["trust_status"] or "") != "trusted":
+            return False
+        if str(row["status"] or "").lower() in ("retired", "removed", "deleted"):
+            return False
+        old_state = str(row["agent_lifecycle_state"] or "legacy").strip().lower()
+        old_heartbeat = row["agent_heartbeat_at"]
+        old_connected = bool(int(row["connected"] or 0))
+        was_fresh = (
+            old_connected
+            and old_state == "connected"
+            and agent_heartbeat_fresh(old_heartbeat)
+        )
+        now = utc_now_iso()
+        if lifecycle == "connected" and was_fresh:
+            seen = _parse_ai_job_ts(old_heartbeat)
+            now_dt = datetime.now(timezone.utc)
+            if seen is not None:
+                if seen.tzinfo is None:
+                    seen = seen.replace(tzinfo=timezone.utc)
+                if 0 <= (now_dt - seen).total_seconds() < AGENT_HEARTBEAT_REFRESH_SECONDS:
+                    return True
+        # A reconnect after disconnect/staleness invalidates prior runtime truth
+        # before presence becomes fresh again. Heartbeat alone never marks a
+        # Remote Service HEALTHY.
+        if lifecycle == "disconnected" or not was_fresh:
+            self._invalidate_client_remote_service_runtime_verification(client_id, now=now)
+            self.conn.execute(
+                "UPDATE remote_service_meta SET status = 'DEGRADED', reason = ? "
+                "WHERE service_id IN (SELECT id FROM published_services "
+                "WHERE client_id = ? AND released = 0 AND enabled = 1)",
+                ("Agent lifecycle verification pending.", client_id),
+            )
+        self.conn.execute(
+            "UPDATE clients SET agent_heartbeat_at = ?, agent_lifecycle_state = ?, "
+            "connected = ?, updated_at = ? WHERE id = ?",
+            (now, lifecycle, 1 if lifecycle == "connected" else 0, now, client_id),
+        )
+        self.commit_if_autonomous()
+        return True
 
     def ai_executor_status(self, client) -> str:
         return "ready" if self.ai_executor_ready(client) else "not_ready"

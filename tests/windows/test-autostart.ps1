@@ -5,7 +5,9 @@
 try {
     # Isolate from any leftover product/E2E scheduled task on Windows CI hosts.
     $env:FRP_AUTOSTART_TASK_NAME = 'DataRelayLinkClient-Test-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+    $env:FRP_LIFECYCLE_TASK_NAME = 'DataRelayLinkLifecycle-Test-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
     $taskName = Get-FrpAutostartTaskName
+    $lifecycleTaskName = Get-FrpLifecycleTaskName
     Assert-FrpEqual $env:FRP_AUTOSTART_TASK_NAME $taskName 'product-owned task name'
     # Canonical default branding (when env override unset).
     $prevOverride = $env:FRP_AUTOSTART_TASK_NAME
@@ -32,6 +34,15 @@ try {
     Assert-FrpTrue ($xml -match 'S-1-5-18') 'runs as SYSTEM'
     Assert-FrpTrue ($xml -match 'BootTrigger') 'boot trigger present'
 
+    Install-FrpLifecycleTask | Out-Null
+    Assert-FrpTrue (Test-FrpLifecycleTaskHealthy) 'lifecycle SYSTEM boot worker after install'
+    $lifeXml = New-FrpAutostartTaskXml -Command (Get-FrpLifecycleRunCommand) `
+        -Arguments (Get-FrpLifecycleRunArguments) -DelaySeconds 5 -ExecutionTimeLimit 'PT0'
+    Assert-FrpTrue ($lifeXml -match 'lifecycle-worker') 'lifecycle task targets lifecycle worker'
+    Assert-FrpTrue ($lifeXml -match '<ExecutionTimeLimit>PT0</ExecutionTimeLimit>') 'lifecycle task has no execution time limit'
+    Uninstall-FrpLifecycleTask | Out-Null
+    Assert-FrpTrue (-not (Test-FrpAutostartTaskExists -TaskName $lifecycleTaskName)) 'lifecycle task removed'
+
     # Idempotent: re-install (overwrite) does not throw.
     Install-FrpAutostartTask | Out-Null
     Assert-FrpTrue (Test-FrpAutostartTaskExists) 'still registered after re-install'
@@ -40,6 +51,18 @@ try {
     Assert-FrpTrue (-not (Test-FrpAutostartTaskExists)) 'removed after uninstall'
     # Idempotent: uninstalling an already-absent task is success, not an error.
     Uninstall-FrpAutostartTask | Out-Null
+
+    # Independent Agent lifecycle worker: SYSTEM boot task, long-running, and
+    # separate from frpc autostart so management-only Agents still heartbeat.
+    Assert-FrpTrue (-not (Test-FrpAutostartTaskExists -TaskName $lifecycleTaskName)) 'lifecycle task absent initially'
+    Install-FrpLifecycleTask | Out-Null
+    Assert-FrpTrue (Test-FrpLifecycleTaskHealthy) 'lifecycle SYSTEM boot task healthy'
+    $lifecycleXml = New-FrpAutostartTaskXml -Command (Get-FrpLifecycleRunCommand) `
+        -Arguments (Get-FrpLifecycleRunArguments) -ExecutionTimeLimit 'PT0S'
+    Assert-FrpTrue ($lifecycleXml -match 'lifecycle-worker') 'lifecycle task invokes worker'
+    Assert-FrpTrue ($lifecycleXml -match '<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>') 'lifecycle worker has no task time limit'
+    Uninstall-FrpLifecycleTask | Out-Null
+    Assert-FrpTrue (-not (Test-FrpAutostartTaskExists -TaskName $lifecycleTaskName)) 'lifecycle task removed'
 
     # Legacy branding migration: product-owned FRPAutoDeployClient is removed
     # when installing the canonical DataRelayLinkClient (or test override) task.
@@ -97,7 +120,9 @@ try {
 
     Complete-FrpZeroTouchPostEnroll -SkipDownload -SkipStart -Services $services | Out-Null
     Assert-FrpTrue (Test-FrpAutostartTaskExists) 'autostart registered for a client with enabled services'
+    Assert-FrpTrue (Test-FrpLifecycleTaskHealthy) 'lifecycle worker registered for enabled-services client'
     Uninstall-FrpAutostartTask | Out-Null
+    Uninstall-FrpLifecycleTask | Out-Null
 
     Write-FrpTestPass 'test-autostart (zero-touch registers for services)'
 
@@ -110,9 +135,11 @@ try {
     New-FrpClientToml -ServerAddr 'example.test' -ServerPort 7000 -Token 'tok' `
         -HostId 'wxyz' -Services @{} -Transport 'tcp' | Out-Null
     Complete-FrpZeroTouchPostEnroll -SkipDownload -SkipStart -Services @{} | Out-Null
-    Assert-FrpTrue (-not (Test-FrpAutostartTaskExists)) 'management-only client does not register autostart'
+    Assert-FrpTrue (-not (Test-FrpAutostartTaskExists)) 'management-only client does not register frpc autostart'
+    Assert-FrpTrue (Test-FrpLifecycleTaskHealthy) 'management-only client keeps lifecycle heartbeat task'
+    Uninstall-FrpLifecycleTask | Out-Null
 
-    Write-FrpTestPass 'test-autostart (management-only skips registration)'
+    Write-FrpTestPass 'test-autostart (management-only skips frpc registration)'
 
     # Registration failure with enabled public services must FAIL CLOSED.
     Save-FrpClientState -AllocatorUrl 'https://example.test/enroll' -FrpServer 'example.test' `
@@ -130,6 +157,8 @@ try {
 } finally {
     Remove-Item Env:FRP_WINDOWS_FAIL_AUTOSTART -ErrorAction SilentlyContinue
     try { Uninstall-FrpAutostartTask | Out-Null } catch { }
+    try { Uninstall-FrpLifecycleTask | Out-Null } catch { }
     Remove-Item Env:FRP_AUTOSTART_TASK_NAME -ErrorAction SilentlyContinue
+    Remove-Item Env:FRP_LIFECYCLE_TASK_NAME -ErrorAction SilentlyContinue
     Remove-FrpWindowsTestRoot
 }

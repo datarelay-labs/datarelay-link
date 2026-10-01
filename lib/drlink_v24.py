@@ -6641,9 +6641,15 @@ def format_remote_service_view(view: dict) -> str:
 def probe_agent_runtime_unit(*, root: Optional[str] = None) -> dict:
     """Read-only probe of the Agent frpc unit (drlink-client / launchd).
 
-    Returns {level, detail} where level is Healthy|Critical|Warning|Unknown.
+    Returns {level, detail} where level is Healthy|Paused|Critical|Warning|Unknown.
     Does not start/stop services. Test roots may inject DRLINK_TEST_RUNTIME_UNIT.
     """
+    try:
+        from drlink_agent_lifecycle import load_lifecycle_intent
+        lifecycle_intent = load_lifecycle_intent(root)
+    except Exception:
+        lifecycle_intent = "running"
+    paused = lifecycle_intent == "paused"
     inject = str(os.environ.get("DRLINK_TEST_RUNTIME_UNIT") or "").strip()
     if inject:
         # Formats: "failed:start-limit-hit" | "active" | "inactive" | "unknown:reason"
@@ -6656,8 +6662,12 @@ def probe_agent_runtime_unit(*, root: Optional[str] = None) -> dict:
                 msg = "%s (Result=%s)" % (msg, detail)
             return {"level": "Critical", "detail": msg}
         if state in ("active", "healthy", "running"):
+            if paused:
+                return {"level": "Warning", "detail": "runtime is active while lifecycle intent is paused"}
             return {"level": "Healthy", "detail": "drlink-client.service is active"}
         if state in ("inactive", "dead"):
+            if paused:
+                return {"level": "Paused", "detail": "Agent runtime is intentionally paused"}
             return {"level": "Critical", "detail": "drlink-client.service is inactive"}
         return {"level": "Unknown", "detail": detail or inject}
 
@@ -6690,11 +6700,15 @@ def probe_agent_runtime_unit(*, root: Optional[str] = None) -> dict:
             )
             text = (proc.stdout or "") + (proc.stderr or "")
             if proc.returncode != 0:
+                if paused:
+                    return {"level": "Paused", "detail": "Agent runtime is intentionally paused"}
                 return {
                     "level": "Critical",
                     "detail": "macOS Agent runtime job is not loaded",
                 }
             if "state = running" in text.lower() or "runs = 1" in text.lower():
+                if paused:
+                    return {"level": "Warning", "detail": "runtime is active while lifecycle intent is paused"}
                 return {"level": "Healthy", "detail": "macOS Agent runtime is running"}
             return {"level": "Warning", "detail": "macOS Agent runtime is loaded but not running"}
         except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
@@ -6716,8 +6730,12 @@ def probe_agent_runtime_unit(*, root: Optional[str] = None) -> dict:
             msg = "%s (Result=%s)" % (msg, result)
         return {"level": "Critical", "detail": msg}
     if active == "active":
+        if paused:
+            return {"level": "Warning", "detail": "runtime is active while lifecycle intent is paused"}
         return {"level": "Healthy", "detail": "drlink-client.service is active"}
     if active in ("inactive", "dead"):
+        if paused:
+            return {"level": "Paused", "detail": "Agent runtime is intentionally paused"}
         return {"level": "Critical", "detail": "drlink-client.service is inactive"}
     if active:
         return {"level": "Warning", "detail": "drlink-client.service is %s" % active}

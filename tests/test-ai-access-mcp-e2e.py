@@ -146,7 +146,7 @@ class ControlPlaneAITests(unittest.TestCase):
         return out
 
     def token_for(self, principal):
-        out = self.cli("system", "credential", "rotate", "ai-principal", principal)
+        out = self.cli("system", "credential", "rotate", "ai-identity", principal)
         self.assertIn("Fingerprint:", out)
         self.assertIn("Token:", out)
         line = [ln for ln in out.splitlines() if ln.startswith("Token: ")][0]
@@ -202,9 +202,14 @@ class ControlPlaneAITests(unittest.TestCase):
         return self.token_for(name)
 
     def test_ai1_readonly_support(self):
-        self.cli("set", "ai-principal", "chatgpt-support")
-        self.cli("set", "ai-principal", "chatgpt-support", "description", "ChatGPT production support")
-        self.cli("set", "ai-principal", "chatgpt-support", "enabled")
+        # AI Identity creation is a guided public workflow. Unit/E2E fixtures seed
+        # the same authoritative control-plane row directly, then exercise the
+        # public credential and AI Access surfaces non-interactively.
+        self.plane.set_ai_principal(
+            "chatgpt-support",
+            description="ChatGPT production support",
+            enabled=True,
+        )
         self._verify_ai_identity("chatgpt-support")
         self.cli(
             "set",
@@ -281,8 +286,7 @@ class ControlPlaneAITests(unittest.TestCase):
         self.assertNotIn("uid=", str(auth))
 
     def test_ai2_lab_and_target_isolation(self):
-        self.cli("set", "ai-principal", "cursor-dev")
-        self.cli("set", "ai-principal", "cursor-dev", "enabled")
+        self.plane.set_ai_principal("cursor-dev", enabled=True)
         self._verify_ai_identity("cursor-dev")
         self.cli(
             "set",
@@ -361,8 +365,7 @@ class ControlPlaneAITests(unittest.TestCase):
         self.assertIn("DENY", prod)
 
     def test_ai3_explicit_deny_order(self):
-        self.cli("set", "ai-principal", "cursor-dev")
-        self.cli("set", "ai-principal", "cursor-dev", "enabled")
+        self.plane.set_ai_principal("cursor-dev", enabled=True)
         self._verify_ai_identity("cursor-dev")
         self.cli(
             "set",
@@ -521,10 +524,8 @@ class MCPBridgeE2ETests(unittest.TestCase):
         run_cli(self.tmp, ["set", "client-group", "production-linux", "member", "Expernet-DP1"])
         run_cli(self.tmp, ["set", "client-group", "lab-linux"])
         run_cli(self.tmp, ["set", "client-group", "lab-linux", "member", "lab1"])
-        run_cli(self.tmp, ["set", "ai-principal", "chatgpt-support"])
-        run_cli(self.tmp, ["set", "ai-principal", "chatgpt-support", "enabled"])
-        run_cli(self.tmp, ["set", "ai-principal", "cursor-dev"])
-        run_cli(self.tmp, ["set", "ai-principal", "cursor-dev", "enabled"])
+        self.plane.set_ai_principal("chatgpt-support", enabled=True)
+        self.plane.set_ai_principal("cursor-dev", enabled=True)
         # Canonical v2.4 AI Access is the MCP authority. Seed verified identities
         # and equivalent ai_policy_rules (+ path scopes) before issuing tokens.
         self.plane.conn.execute(
@@ -636,7 +637,7 @@ class MCPBridgeE2ETests(unittest.TestCase):
             self.fail("; ".join(failures))
 
     def _token(self, principal):
-        rc, out, err = run_cli(self.tmp, ["system", "credential", "rotate", "ai-principal", principal])
+        rc, out, err = run_cli(self.tmp, ["system", "credential", "rotate", "ai-identity", principal])
         self.assertEqual(rc, 0, err)
         return [ln.split(" ", 1)[1] for ln in out.splitlines() if ln.startswith("Token: ")][0]
 
@@ -866,7 +867,7 @@ class MCPBridgeE2ETests(unittest.TestCase):
         status, payload = self.call(self.cursor, "exec", {"endpoint": "lab1", "command": "true"})
         self.assertIn("DENY", self.text_of(payload))
         v24.set_ai_access_rule(self.plane, "mcp-lab-maintenance", enabled=True)
-        run_cli(self.tmp, ["system", "credential", "revoke", "ai-principal", "chatgpt-support"])
+        run_cli(self.tmp, ["system", "credential", "revoke", "ai-identity", "chatgpt-support"])
         status, payload = self.call(
             self.chatgpt,
             "get_system_info",
@@ -884,7 +885,7 @@ class MCPBridgeE2ETests(unittest.TestCase):
             self.chatgpt, "get_system_info", {"endpoint": "Expernet-DP1"}
         )
         self.assertEqual(status, 401)
-        shown = run_cli(self.tmp, ["show", "ai-principal", "chatgpt-support"])[1]
+        shown = run_cli(self.tmp, ["show", "ai-identity", "chatgpt-support"])[1]
         self.assertNotIn(new_token, shown)
         self.assertIn("chatgpt-support", shown)
 
@@ -914,12 +915,13 @@ class MCPBridgeE2ETests(unittest.TestCase):
         self.plane.upsert_client("client-prod-new-cccccc", label="Expernet-DP1")
         rebound = self.plane.get_object("Expernet-DP1")
         self.assertEqual(rebound["status"], "orphaned")
-        activity = run_cli(self.tmp, ["show", "ai-activity", "principal", "chatgpt-support"])[1]
+        activity = run_cli(self.tmp, ["show", "ai-access-log", "identity", "chatgpt-support"])[1]
         self.assertIn("chatgpt-support", activity)
-        self.assertIn("read_file", activity)
+        self.assertIn("file-read", activity)
+        self.assertIn("UNAVAILABLE", activity)
         self.assertNotIn("log-ok", activity)
         self.assertNotIn(self.chatgpt, activity)
-        audit = run_cli(self.tmp, ["system", "audit", "ai-principal", "chatgpt-support"])[1]
+        audit = run_cli(self.tmp, ["system", "audit", "ai-identity", "chatgpt-support"])[1]
         self.assertIn("chatgpt-support", audit)
         status, payload = rpc(
             self.url,
@@ -1080,8 +1082,9 @@ class MCPBridgeE2ETests(unittest.TestCase):
         import frp_ctl_grammar as grammar
 
         cases = [
-            ["set", "ai-principal", "chatgpt-support"],
-            ["set", "ai-principal", "chatgpt-support", "enabled"],
+            # AI Identity creation is intentionally a guided name-only workflow;
+            # enablement/verification follows the credential lifecycle.
+            ["set", "ai-identity", "chatgpt-support"],
             [
                 "set",
                 "permission-object",
@@ -1115,13 +1118,13 @@ class MCPBridgeE2ETests(unittest.TestCase):
             ],
             ["show", "ai-access"],
             ["show", "ai-access", "readonly-support"],
-            ["show", "ai-activity", "principal", "chatgpt-support"],
-            ["system", "credential", "rotate", "ai-principal", "chatgpt-support"],
+            ["show", "ai-access-log", "identity", "chatgpt-support"],
+            ["system", "credential", "rotate", "ai-identity", "chatgpt-support"],
             [
                 "system",
                 "credential",
                 "configure",
-                "ai-principal",
+                "ai-identity",
                 "chatgpt-support",
                 "authentication",
                 "static-bearer",

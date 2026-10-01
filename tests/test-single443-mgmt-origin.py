@@ -45,6 +45,27 @@ def _state(url: str, transport: str, port: int) -> dict:
     }
 
 
+def _server_local_update_origin(root: Path) -> str:
+    env = os.environ.copy()
+    env["FRP_CLIENT_TEST_ROOT"] = str(root)
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            '. "$1"; frp_client_server_local_update_origin',
+            "_",
+            str(ROOT / "lib/frp-client-common.sh"),
+        ],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise AssertionError(result.stdout + result.stderr)
+    return result.stdout.split("\t", 1)[0].strip()
+
+
 class LegacyOriginTests(unittest.TestCase):
     def test_rewrite_rules(self):
         self.assertEqual(
@@ -57,6 +78,24 @@ class LegacyOriginTests(unittest.TestCase):
         )
         self.assertIsNone(mgmt.rewrite_legacy_backend_url("https://203.0.113.10/enroll", 443))
         self.assertIsNone(mgmt.rewrite_legacy_backend_url("https://203.0.113.10:7000/enroll", 443))
+
+    def test_server_local_update_origin_is_single443_aware_and_read_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cases = (
+                ("wss443", _state("https://203.0.113.10:6099/enroll", "wss", 443), "https://203.0.113.10"),
+                ("wss8443", _state("https://203.0.113.10:6099/enroll", "wss", 8443), "https://203.0.113.10:8443"),
+                ("tcp443", _state("https://203.0.113.10:6099/enroll", "tcp", 443), "https://203.0.113.10:6099"),
+            )
+            for name, state, expected in cases:
+                with self.subTest(name=name):
+                    case = root / name
+                    state_path = case / "etc/frp/client-state.json"
+                    _write(state_path, json.dumps(state, indent=2) + "\n")
+                    _write(case / "etc/drlink/allocator-ca.crt", "test-ca\n", 0o644)
+                    before = state_path.read_bytes()
+                    self.assertEqual(_server_local_update_origin(case), expected)
+                    self.assertEqual(state_path.read_bytes(), before)
 
     def test_direct_mode_and_repeat_are_unchanged(self):
         with tempfile.TemporaryDirectory() as tmp:

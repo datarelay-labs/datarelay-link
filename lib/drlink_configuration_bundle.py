@@ -10,6 +10,7 @@ import hashlib
 import io
 import json
 import re
+import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -1716,41 +1717,55 @@ def prepare_plan(
     bundle = parse_bundle(raw_text)
     plan = build_change_plan(plane, bundle, input_path=input_path)
     if run_tests and plan.embedded_tests:
-        # Evaluate tests against proposed state in a scratch transaction.
-        plane.conn.execute("BEGIN IMMEDIATE")
+        # Evaluate proposed state on an in-memory SQLite snapshot. Public
+        # test/diff must never acquire the authoritative writer slot merely to
+        # simulate changes. Swapping the connection on the same ControlPlane
+        # preserves legacy apply_fn closures that captured the plane object.
+        scratch = sqlite3.connect(":memory:", isolation_level=None, check_same_thread=False)
+        scratch.row_factory = sqlite3.Row
+        live_conn = plane.conn
+        prev_batch = plane._batch_mode
+        prev_results = plane._batch_results
         try:
+            live_conn.backup(scratch)
+            scratch.execute("PRAGMA foreign_keys = ON")
+            scratch.execute("BEGIN IMMEDIATE")
+            plane.conn = scratch
             plane._batch_mode = True
             plane._batch_results = []
-            try:
-                def _prep_order(ch: PlannedChange) -> tuple:
-                    family_rank = {
-                        "remoteAccess": 10,
-                        "internetAccess": 10,
-                        "aiAccess": 10,
-                        "fixedTcp": 20,
-                        "publishedServices": 20,
-                        "objectGroups": 30,
-                        "clientGroups": 30,
-                        "objects": 40,
-                        "aiPrincipals": 50,
-                        "servicePresets": 50,
-                        "enrollmentPlans": 60,
-                        "mcpTls": 70,
-                    }
-                    if ch.op == "DELETE":
-                        return (0, family_rank.get(ch.family, 99), ch.name)
-                    if ch.op == "CREATE":
-                        return (1, -family_rank.get(ch.family, 99), ch.name)
-                    return (2, family_rank.get(ch.family, 99), ch.name)
 
-                for ch in sorted(plan.mutating_changes, key=_prep_order):
-                    ch.apply_fn(plane)
-                plan.test_results = run_embedded_tests(plane, plan.embedded_tests)
-            finally:
-                plane._batch_mode = False
-                plane._batch_results = []
+            def _prep_order(ch: PlannedChange) -> tuple:
+                family_rank = {
+                    "remoteAccess": 10,
+                    "internetAccess": 10,
+                    "aiAccess": 10,
+                    "fixedTcp": 20,
+                    "publishedServices": 20,
+                    "objectGroups": 30,
+                    "clientGroups": 30,
+                    "objects": 40,
+                    "aiPrincipals": 50,
+                    "servicePresets": 50,
+                    "enrollmentPlans": 60,
+                    "mcpTls": 70,
+                }
+                if ch.op == "DELETE":
+                    return (0, family_rank.get(ch.family, 99), ch.name)
+                if ch.op == "CREATE":
+                    return (1, -family_rank.get(ch.family, 99), ch.name)
+                return (2, family_rank.get(ch.family, 99), ch.name)
+
+            for ch in sorted(plan.mutating_changes, key=_prep_order):
+                ch.apply_fn(plane)
+            plan.test_results = run_embedded_tests(plane, plan.embedded_tests)
         finally:
-            plane.conn.execute("ROLLBACK")
+            plane.conn = live_conn
+            plane._batch_mode = prev_batch
+            plane._batch_results = prev_results
+            try:
+                scratch.close()
+            except sqlite3.Error:
+                pass
         if not all(r.get("ok") for r in plan.test_results):
             raise BundleError(
                 "Embedded policy tests failed.\nNo changes were applied.\n%s"

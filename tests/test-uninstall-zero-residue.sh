@@ -63,6 +63,8 @@ assert_client_zero_residue() {
     /etc/drlink \
     /var/lib/drlink \
     /etc/systemd/system/drlink-client.service \
+    /etc/systemd/system/drlink-ai-agent.service \
+    /etc/systemd/system/drlink-lifecycle.service \
     /etc/systemd/system/frpc.service
   do
     assert_absent "${tree}${p}" "$label $p"
@@ -132,6 +134,7 @@ seed_client() {
   printf 'ca\n' >"$tree/etc/drlink/allocator-ca.crt"
   printf 'PROJECT_VERSION=2.4.0\n' >"$tree/etc/drlink/version"
   printf 'draft\n' >"$tree/var/lib/drlink/client-draft.json"
+  printf '{"intent":"running"}\n' >"$tree/var/lib/drlink/agent-lifecycle.json"
   printf '{}\n' >"$tree/var/lib/drlink/client-update-pending.json"
   printf 'log\n' >"$tree/var/lib/drlink/update-actions.log"
   printf '#!/bin/true\n' >"$tree/usr/local/bin/frpc"
@@ -144,6 +147,7 @@ seed_client() {
     "$tree/usr/local/sbin/frp-client" "$tree/usr/local/bin/drlink" \
     "$tree/usr/bin/drlink" "$tree/usr/local/bin/frpctl"
   echo 'common' >"$tree/usr/local/lib/drlink/frp-client-common.sh"
+  echo 'lifecycle' >"$tree/usr/local/lib/drlink/drlink_agent_lifecycle.py"
   echo 'shared' >"$tree/usr/local/lib/drlink/frp_doctor.py"
   cp "$ROOT/lib/frp-role-ownership.sh" "$tree/usr/local/lib/drlink/"
   cat >"$tree/etc/systemd/system/drlink-client.service" <<'EOF'
@@ -151,6 +155,14 @@ seed_client() {
 Description=Data Relay Link Client
 [Service]
 ExecStart=/usr/local/bin/frpc -c /etc/frp/frpc.toml
+EOF
+  cat >"$tree/etc/systemd/system/drlink-ai-agent.service" <<'EOF'
+[Unit]
+Description=Data Relay Link AI Agent Worker
+EOF
+  cat >"$tree/etc/systemd/system/drlink-lifecycle.service" <<'EOF'
+[Unit]
+Description=Data Relay Link Agent Lifecycle Worker
 EOF
   cat >"$tree/etc/systemd/system/frpc.service" <<'EOF'
 [Unit]
@@ -312,7 +324,9 @@ printf '#!/bin/true\n' >"$TREE/opt/homebrew/bin/frpctl"
 chmod +x "$STATE/bin/frpc" "$TREE/opt/homebrew/bin/drlink" \
   "$TREE/opt/homebrew/bin/frp-client" "$TREE/opt/homebrew/bin/frpctl"
 echo 'common' >"$STATE/lib/frp-client-common.sh"
+echo 'lifecycle' >"$STATE/lib/drlink_agent_lifecycle.py"
 echo 'plist' >"$TREE/Library/LaunchDaemons/com.datarelay.drlink.frpc.plist"
+echo 'lifecycle plist' >"$TREE/Library/LaunchDaemons/com.datarelay.drlink.lifecycle.plist"
 export FRP_UNINSTALL_TEST_ROOT="$TREE"
 export FRP_CLIENT_TEST_ROOT="$TREE"
 if ! "$ROOT/uninstall-client.sh" >"$WORKDIR/mac.out" 2>"$WORKDIR/mac.err"; then
@@ -322,6 +336,7 @@ assert_absent "$STATE" "macos Application Support payload"
 assert_absent "$STATE/client-state.json" "macos client state"
 assert_absent "$STATE/client-identity.key" "macos identity"
 assert_absent "$TREE/Library/LaunchDaemons/com.datarelay.drlink.frpc.plist" "macos plist"
+assert_absent "$TREE/Library/LaunchDaemons/com.datarelay.drlink.lifecycle.plist" "macos lifecycle plist"
 assert_absent "$TREE/opt/homebrew/bin/drlink" "macos drlink"
 assert_absent "$TREE/opt/homebrew/bin/frp-client" "macos frp-client"
 assert_absent "$TREE/opt/homebrew/bin/frpctl" "macos frpctl"

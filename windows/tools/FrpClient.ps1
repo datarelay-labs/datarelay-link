@@ -564,6 +564,7 @@ function Invoke-FrpClientUpdate {
         if (-not (Enter-FrpClientLock)) { return 1 }
         try {
             Install-FrpProjectManagementFiles -SrcRoot $src
+            if (Test-FrpIsEnrolled) { Install-FrpLifecycleTask | Out-Null }
             Write-Host ("Project update complete from {0}" -f $src)
             Write-Host 'Identity, ports, services, and CA trust were preserved.'
             Write-Host 'Restart this PowerShell session (or re-run drlink) to load updated CLI modules.'
@@ -687,7 +688,13 @@ function Invoke-FrpClientUninstallLocked {
     Write-Host 'Public port reservations'
     Write-Host 'Server-side policy state'
     Write-Host ''
-    Write-Host 'This uninstall does not contact the server and does not release ports.'
+    try {
+        $null = Invoke-FrpAgentLifecycle -State 'disconnected'
+        Write-Host 'Signed disconnect notification sent to the Server.'
+    } catch {
+        Write-Host 'Signed disconnect notification could not be delivered; local uninstall will continue.'
+    }
+    Write-Host 'Offline uninstall still completes; Server presence expires by heartbeat timeout.'
     Write-Host 'Remote Managed Host records and reservations remain until removed on the server.'
     Write-Host 'On the DRLink Server:'
     Write-Host '  unset managed-host <HOST>'
@@ -700,12 +707,13 @@ function Invoke-FrpClientUninstallLocked {
     }
     try {
         Uninstall-FrpAutostartTask | Out-Null
+        Uninstall-FrpLifecycleTask | Out-Null
     } catch {
-        Write-Host ("ERROR: failed to remove autostart task: {0}" -f $_.Exception.Message)
-        Write-Host 'ERROR: leaving product files in place so autostart can be recovered. Uninstall did not complete.'
+        Write-Host ("ERROR: failed to remove product scheduled task: {0}" -f $_.Exception.Message)
+        Write-Host 'ERROR: leaving product files in place so task state can be recovered. Uninstall did not complete.'
         return 1
     }
-    if (Test-FrpAutostartTaskExists) {
+    if (Test-FrpAutostartTaskExists -or (Test-FrpAutostartTaskExists -TaskName (Get-FrpLifecycleTaskName))) {
         Write-Host 'ERROR: autostart task still present; leaving product files in place.'
         return 1
     }
@@ -1123,6 +1131,33 @@ function Invoke-FrpClientDiscardDraft {
     })
 }
 
+function Invoke-FrpLifecycleOnce {
+    if (-not (Test-FrpIsEnrolled)) { return 1 }
+    try {
+        $null = Invoke-FrpAgentLifecycle -State 'connected'
+        $rc = Invoke-FrpClientSync
+        return [int]$rc
+    } catch {
+        return 1
+    }
+}
+
+function Invoke-FrpLifecycleWorker {
+    $idle = 30
+    $retry = 5
+    $backoff = $retry
+    while ($true) {
+        $rc = Invoke-FrpLifecycleOnce
+        if ($rc -eq 0) {
+            $backoff = $retry
+            Start-Sleep -Seconds $idle
+        } else {
+            Start-Sleep -Seconds $backoff
+            $backoff = [Math]::Min(60, [Math]::Max($retry, $backoff * 2))
+        }
+    }
+}
+
 switch ($Command) {
     'help' { Show-FrpClientHelp; exit 0 }
     'start' {
@@ -1132,6 +1167,7 @@ switch ($Command) {
         }
         try {
             Install-FrpAutostartTask | Out-Null
+            Install-FrpLifecycleTask | Out-Null
         } catch { }
         Start-FrpClient -Force:$Force | Out-Null
         Write-Host 'Client resumed.'
@@ -1147,14 +1183,18 @@ switch ($Command) {
         }
         $st = Get-FrpClientStatus
         $autoOn = Test-FrpAutostartTaskExists
-        if ($st.Running -and $autoOn) {
+        $lifecycleOn = Test-FrpAutostartTaskExists -TaskName (Get-FrpLifecycleTaskName)
+        if ($st.Running -and $autoOn -and $lifecycleOn) {
             Write-Host 'Client is already active.'
             Write-Host 'Runtime    : active'
             Write-Host 'Autostart  : enabled'
             Write-Host 'Identity   : preserved'
             exit 0
         }
-        try { Install-FrpAutostartTask | Out-Null } catch {
+        try {
+            Install-FrpAutostartTask | Out-Null
+            Install-FrpLifecycleTask | Out-Null
+        } catch {
             Write-Host $_.Exception.Message
             exit 1
         }
@@ -1166,20 +1206,27 @@ switch ($Command) {
         exit 0
     }
     'stop' {
+        try { $null = Invoke-FrpAgentLifecycle -State 'disconnected' } catch { }
         Stop-FrpClient | Out-Null
         try { Uninstall-FrpAutostartTask | Out-Null } catch { }
+        try { Uninstall-FrpLifecycleTask | Out-Null } catch { }
         exit 0
     }
     'pause' {
         $st = Get-FrpClientStatus
         $autoOn = Test-FrpAutostartTaskExists
-        if (-not $st.Running -and -not $autoOn) {
+        $lifecycleOn = Test-FrpAutostartTaskExists -TaskName (Get-FrpLifecycleTaskName)
+        if (-not $st.Running -and -not $autoOn -and -not $lifecycleOn) {
             Write-Host 'Client is already paused.'
             Write-Host 'Runtime is stopped and autostart is disabled.'
             exit 0
         }
+        try { $null = Invoke-FrpAgentLifecycle -State 'disconnected' } catch { }
         Stop-FrpClient | Out-Null
-        try { Uninstall-FrpAutostartTask | Out-Null } catch {
+        try {
+            Uninstall-FrpAutostartTask | Out-Null
+            Uninstall-FrpLifecycleTask | Out-Null
+        } catch {
             Write-Host $_.Exception.Message
             exit 1
         }
@@ -1231,6 +1278,8 @@ switch ($Command) {
     'discard' { exit (Invoke-FrpClientDiscardDraft) }
     'sync' { exit (Invoke-FrpClientSync) }
     'reconcile' { exit (Invoke-FrpClientSync) }
+    'lifecycle-once' { exit (Invoke-FrpLifecycleOnce) }
+    'lifecycle-worker' { exit (Invoke-FrpLifecycleWorker) }
     'update' { exit (Invoke-FrpClientUpdate -CheckOnly:$Check) }
     'uninstall' { exit (Invoke-FrpClientUninstall) }
     'doctor' { exit (Invoke-FrpClientDoctor) }

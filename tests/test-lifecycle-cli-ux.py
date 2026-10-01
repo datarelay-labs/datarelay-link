@@ -130,6 +130,8 @@ class LifecycleCliUx(unittest.TestCase):
             env = os.environ.copy()
             env["FRP_CLIENT_TEST_ROOT"] = tmp
             env["FRP_SKIP_SYSTEMD"] = "1"
+            hook = Path(tmp) / "lifecycle-hooks.log"
+            env["FRP_CLIENT_HOOK_LOG"] = str(hook)
             script = r"""
 set -euo pipefail
 . lib/frp-common.sh
@@ -161,6 +163,8 @@ frp_client_autostart_cmd disable
             self.assertIn("Autostart :", out)
             self.assertNotIn("frp-client set-service", out)
             self.assertNotIn("systemctl", out)
+            hooks = hook.read_text(encoding="utf-8").splitlines()
+            self.assertIn("lifecycle_disconnect", hooks)
 
 
 if __name__ == "__main__":

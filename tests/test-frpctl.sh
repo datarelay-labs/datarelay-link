@@ -82,6 +82,16 @@ reg.write_text(json.dumps({
     },
 }, indent=2, sort_keys=True) + "\n")
 PY
+  # Current v2.4 Server authority is SQLite. Keep the legacy registry fixture
+  # only for compatibility/status context, but initialize the canonical control
+  # plane so public Server commands exercise the real authoritative state path.
+  python3 - "$ROOT/lib" "$tree" <<'PYDB'
+import sys
+sys.path.insert(0, sys.argv[1])
+from drlink_control_plane import ControlPlane
+plane = ControlPlane(sys.argv[2])
+plane.close()
+PYDB
   cat >"$tree/etc/drlink/version" <<'EOF'
 PROJECT_VERSION=1.4.0
 FRP_VERSION=0.71.0

@@ -157,7 +157,10 @@ mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
 facts = {
     'systemd_usable': False,
-    'units': {'frpc': {'active': 'active', 'enabled': 'enabled'}},
+    'units': {
+        'frpc': {'active': 'active', 'enabled': 'enabled'},
+        'drlink-lifecycle': {'active': 'active', 'enabled': 'enabled'},
+    },
     'platform': {'os_id': 'macos', 'os_family': 'darwin', 'service_manager': 'launchd'},
 }
 report = mod.Report()
@@ -167,6 +170,35 @@ assert item['status'] == mod.PASS
 assert 'launchd job com.datarelay.drlink.frpc is active' == item['message']
 assert 'drlink-client.service' not in item['message']
 assert 'systemctl' not in (item.get('recommendation') or '')
+
+lifecycle_report = mod.Report()
+mod.check_unit(
+    lifecycle_report,
+    facts,
+    'drlink-lifecycle',
+    'agent_lifecycle_service',
+    'drlink-lifecycle.service',
+)
+lifecycle_item = lifecycle_report.checks[0]
+assert lifecycle_item['status'] == mod.PASS
+assert lifecycle_item['message'] == 'launchd job com.datarelay.drlink.lifecycle is active'
+
+lifecycle_fail = mod.Report()
+lifecycle_facts_fail = dict(facts)
+lifecycle_facts_fail['units'] = {
+    'drlink-lifecycle': {'active': 'inactive', 'enabled': 'enabled'}
+}
+mod.check_unit(
+    lifecycle_fail,
+    lifecycle_facts_fail,
+    'drlink-lifecycle',
+    'agent_lifecycle_service',
+    'drlink-lifecycle.service',
+)
+lifecycle_item_f = lifecycle_fail.checks[0]
+assert lifecycle_item_f['status'] == mod.FAIL
+assert lifecycle_item_f['message'] == 'launchd job com.datarelay.drlink.lifecycle is not active'
+assert 'launchctl print system/com.datarelay.drlink.lifecycle' in lifecycle_item_f['recommendation']
 
 report_fail = mod.Report()
 facts_fail = dict(facts)
@@ -273,6 +305,7 @@ assert plat.get('arch') == 'arm64', plat
 assert plat.get('macos_version') == '14.6.1', plat
 assert plat.get('os_id') not in ('ubuntu', 'debian', 'fedora', 'rhel', 'centos')
 assert (facts.get('units') or {}).get('frpc', {}).get('active') == 'active'
+assert (facts.get('units') or {}).get('drlink-lifecycle', {}).get('active') == 'active'
 print('facts_ok')
 PY
 ) || fail "darwin facts leaked linux distro or missed launchd"
@@ -304,6 +337,8 @@ EOF
   chmod 0755 "$bin"
 done
 echo 'fixture' >"$TREE/Library/LaunchDaemons/com.datarelay.drlink.frpc.plist"
+echo 'fixture' >"$TREE/Library/LaunchDaemons/com.datarelay.drlink.lifecycle.plist"
+cp "$ROOT/lib/drlink_agent_lifecycle.py" "$STATE/lib/drlink_agent_lifecycle.py"
 python3 "$ROOT/lib/frp_mgmt_auth.py" gen-key \
   "$STATE/client-identity.key" "$STATE/client-identity.pub"
 chmod 600 "$STATE/client-identity.key"
@@ -392,6 +427,10 @@ frpc = ids.get('frpc_service') or {}
 assert 'launchd job com.datarelay.drlink.frpc' in (frpc.get('message') or ''), frpc
 assert 'drlink-client.service' not in (frpc.get('message') or '')
 assert 'systemctl' not in (frpc.get('recommendation') or '')
+lifecycle = ids.get('agent_lifecycle_service') or {}
+assert lifecycle.get('status') == 'PASS', lifecycle
+assert 'launchd job com.datarelay.drlink.lifecycle' in (lifecycle.get('message') or ''), lifecycle
+assert 'systemctl' not in (lifecycle.get('recommendation') or '')
 warns = [c for c in data.get('checks') or [] if c.get('status') == 'WARN']
 fails = [c for c in data.get('checks') or [] if c.get('status') == 'FAIL']
 # Only real Darwin conditions may WARN/FAIL. The Linux distro warning must not.
@@ -407,6 +446,7 @@ grep -F 'drlink-client.service' "$WORKDIR/darwin.human" && fail "human doctor me
 grep -F 'container matrix' "$WORKDIR/darwin.human" && fail "human doctor mentioned Linux container matrix"
 grep -F 'uncertified rather than broken' "$WORKDIR/darwin.human" && fail "human doctor used Linux uncertified wording"
 grep -F 'launchd job com.datarelay.drlink.frpc' "$WORKDIR/darwin.human" || fail "human doctor missing launchd job"
+grep -F 'launchd job com.datarelay.drlink.lifecycle' "$WORKDIR/darwin.human" || fail "human doctor missing lifecycle launchd job"
 grep -F 'macos_support' "$WORKDIR/darwin.human" || fail "human doctor missing macos_support"
 grep -F 'distro_support' "$WORKDIR/darwin.human" && fail "human doctor emitted distro_support"
 [[ "$human_rc" -eq 0 || "$human_rc" -eq 1 ]] || fail "human doctor exit $human_rc"

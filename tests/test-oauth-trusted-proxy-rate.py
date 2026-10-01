@@ -62,14 +62,13 @@ class TrustedProxyRateTests(unittest.TestCase):
         os.environ["DRLINK_CONFIRM"] = "yes"
         os.environ.pop("DRLINK_OAUTH_AUTO_APPROVE", None)
         self.plane = ControlPlane(self.tmp)
-        dispatch(["set", "ai-principal", "agent-a"], root=self.tmp)
-        dispatch(["set", "ai-principal", "agent-a", "enabled"], root=self.tmp)
+        self.plane.set_ai_principal("agent-a", enabled=True)
         dispatch(
-            ["system", "credential", "configure", "ai-principal", "agent-a", "authentication", "oauth"],
+            ["system", "credential", "configure", "ai-identity", "agent-a", "authentication", "oauth"],
             root=self.tmp,
         )
         dispatch(
-            ["system", "credential", "configure", "ai-principal", "agent-a", "oauth-redirect", REDIRECT],
+            ["system", "credential", "configure", "ai-identity", "agent-a", "oauth-redirect", REDIRECT],
             root=self.tmp,
         )
         self.port = free_port()

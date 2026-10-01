@@ -58,8 +58,6 @@ CONTROL_PLANE_SHOW = frozenset(
         "permission-group",
         "managed-hosts",
         "managed-host",
-        "enrollments",
-        "enrollment",
         "remote-access",
         "internet-access",
         "internet",
@@ -99,7 +97,6 @@ CONTROL_PLANE_MUTATE = frozenset(
         "permission-object",
         "permission-group",
         "managed-host",
-        "enrollment",
         "remote-access",
         "internet-access",
         "ai-identity",
@@ -2641,7 +2638,15 @@ def _match_show(tokens, role, names=None):
             return incomplete("Unexpected arguments.", ["show egress-profile <PROFILE>"])
         return {"status": "ok", "action": "show_egress_profile", "profile": tokens[2]}
     if resource == "enrollments":
+        if len(tokens) > 2:
+            return incomplete("Unexpected arguments.", ["show enrollments"])
         return {"status": "ok", "action": "show_enrollments"}
+    if resource == "enrollment":
+        if len(tokens) < 3:
+            return incomplete("Missing enrollment id.", ["show enrollment <ENROLLMENT>"])
+        if len(tokens) > 3:
+            return incomplete("Unexpected arguments.", ["show enrollment <ENROLLMENT>"])
+        return {"status": "ok", "action": "show_enrollment", "id": tokens[2]}
     if resource == "audit":
         return {"status": "ok", "action": "show_audit", "passthrough": list(tokens[2:])}
     if resource == "upstream":

@@ -343,6 +343,22 @@ frp_u_retire_ai_agent_unit() {
   frp_u_retire_unit_fail_closed "$unit" "$unit_file" "product-owned drlink-ai-agent.service" "AI_AGENT_UNIT"
 }
 
+frp_u_retire_lifecycle_unit() {
+  local unit unit_file
+  unit=drlink-lifecycle.service
+  unit_file="$(frp_u_path /etc/systemd/system/drlink-lifecycle.service)"
+  [[ -f "$unit_file" ]] || return 0
+  frp_u_retire_unit_fail_closed "$unit" "$unit_file" "product-owned drlink-lifecycle.service" "LIFECYCLE_UNIT"
+}
+
+frp_u_best_effort_disconnect() {
+  local worker root
+  worker="$(frp_u_path /usr/local/lib/drlink/drlink_agent_lifecycle.py)"
+  [[ -f "$worker" ]] || return 0
+  root="${FRP_UNINSTALL_TEST_ROOT:-${FRP_CLIENT_TEST_ROOT:-}}"
+  python3 "$worker" disconnect --root "$root" >/dev/null 2>&1 || true
+}
+
 frp_u_retire_legacy_client_unit() {
   local unit unit_file
   unit=frpc.service
@@ -363,14 +379,23 @@ if [[ "$SKIP_SYSTEMD" != "1" ]]; then
       exit 1
     fi
     frp_macos_launchd_bootout
+    frp_macos_lifecycle_set_enabled disable || true
+    frp_macos_lifecycle_bootout || true
   fi
 fi
+# Best-effort signed lifecycle notification. Offline uninstall must still
+# complete; heartbeat expiry is the server-side fallback.
+frp_u_best_effort_disconnect
 # Canonical supervisor must stop fail-closed before binary/config removal.
 if ! frp_u_retire_canonical_client_unit; then
   exit 1
 fi
 # Product-owned AI worker must not survive uninstall and respawn on reboot.
 if ! frp_u_retire_ai_agent_unit; then
+  exit 1
+fi
+# Independent lifecycle worker must not survive uninstall either.
+if ! frp_u_retire_lifecycle_unit; then
   exit 1
 fi
 # Historical product supervisor must not survive uninstall and respawn on reboot.
@@ -417,7 +442,9 @@ unset _frp_own _frp_own_cands
 
 if [[ -d "$libdir" && ! -L "$libdir" ]]; then
   # CLIENT_ONLY: always remove on client uninstall.
-  for f in frp-client-common.sh frp-macos.sh com.datarelay.drlink.frpc.plist drlink-frpc-launch uninstall-client.sh; do
+  for f in frp-client-common.sh frp-macos.sh com.datarelay.drlink.frpc.plist \
+    com.datarelay.drlink.lifecycle.plist drlink-frpc-launch \
+    drlink_agent_lifecycle.py uninstall-client.sh; do
     frp_u_rm_file "${libdir}/${f}"
   done
   # SHARED with server: remove only when server role is absent.
@@ -474,6 +501,7 @@ PY
   fi
 fi
 frp_u_rm_file "$(frp_u_path /var/lib/drlink/client-draft.json)"
+frp_u_rm_file "$(frp_u_path /var/lib/drlink/agent-lifecycle.json)"
 frp_u_rm_file "$(frp_u_path /var/lib/drlink/update-actions.log)"
 frp_u_safe_rm_rf "$(frp_u_path /var/lib/drlink/client-upgrades)"
 
@@ -500,7 +528,8 @@ if frp_u_use_systemd; then
 fi
 
 echo 'Data Relay Link client removed locally.'
-echo 'This uninstall does not contact the server and does not release ports.'
+echo 'A signed disconnect notification was attempted when the Server was reachable.'
+echo 'Offline uninstall still completes; Server presence then expires by heartbeat timeout.'
 echo 'Remote Managed Host records and reservations remain until removed on the server.'
 echo 'On the DRLink Server:'
 echo '  unset managed-host <HOST>'

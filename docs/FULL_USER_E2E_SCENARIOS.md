@@ -199,7 +199,7 @@ SCRIPT_OR_WRAPPER_PASS != USER_PERSONA_PASS
 
 If automation/tooling cannot perform one user action, classify only that dependent scenario as `BLOCKED_TOOLING` and immediately continue all independent lanes. Do not spend the full run repeatedly trying to overcome one automation limitation when other user scenarios can execute.
 
-### 1.2.1.1 Tooling isolation — TTY and GitHub
+### Tooling isolation — TTY and GitHub
 
 Remote-execution tooling is not product behavior.
 

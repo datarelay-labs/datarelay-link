@@ -34,6 +34,12 @@ pq_ssh() {
   ssh "${PROD_QUAL_SSH_OPTS[@]}" "$alias" "$@"
 }
 
+pq_ssh_confirm_yes() {
+  local alias="$1"
+  shift
+  printf 'y\n' | ssh -tt "${PROD_QUAL_SSH_OPTS[@]}" "$alias" "$@"
+}
+
 pq_gate() {
   local name="$1" status="$2"
   local gates="${PROD_QUAL_GATES:-}"

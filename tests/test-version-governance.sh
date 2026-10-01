@@ -73,22 +73,43 @@ for rel in (
         raise SystemExit(f"{rel}: unexpected trigger block:\n{actual}")
 
 lint = Path(".github/workflows/lint.yml").read_text(encoding="utf-8")
-heavy_steps = (
+pr_regression_steps = (
     "Install Full Suite OS Python deps",
     "Provision pinned official MCP SDK",
     "Full local non-Docker suite",
+)
+for name in pr_regression_steps:
+    marker = f"      - name: {name}\n"
+    pos = lint.find(marker)
+    if pos < 0:
+        raise SystemExit(f"lint.yml missing PR regression step: {name}")
+    tail = lint[pos + len(marker):].splitlines()
+    if tail and tail[0].strip().startswith("if:"):
+        raise SystemExit(f"lint.yml PR regression step unexpectedly gated off PR: {name}")
+
+release_only_steps = (
     "Build standalone bundles",
     "SHA256SUMS",
     "SBOM binds to the checked-out commit",
 )
-for name in heavy_steps:
+for name in release_only_steps:
     marker = f"      - name: {name}\n"
     pos = lint.find(marker)
     if pos < 0:
-        raise SystemExit(f"lint.yml missing heavy step: {name}")
+        raise SystemExit(f"lint.yml missing release-only step: {name}")
     tail = lint[pos + len(marker):].splitlines()
     if not tail or tail[0].strip() != "if: github.event_name != 'pull_request'":
-        raise SystemExit(f"lint.yml heavy step not gated off PR: {name}")
+        raise SystemExit(f"lint.yml release-only step not gated off PR: {name}")
+
+# DRLink intentionally keeps its full deterministic regression suite on PRs.
+# This project-specific stricter gate was restored on 2026-09-30.
+full_marker = "      - name: Full local non-Docker suite\n"
+pos = lint.find(full_marker)
+if pos < 0:
+    raise SystemExit("lint.yml missing full local non-Docker suite")
+tail = lint[pos + len(full_marker):].splitlines()
+if not tail or tail[0].strip().startswith("if:"):
+    raise SystemExit("lint.yml full suite unexpectedly gated off PR")
 
 portability = "  portability-containers:\n    if: github.event_name != 'pull_request'\n"
 if portability not in lint:
@@ -99,19 +120,23 @@ start = tests.index("  - id: ADOPTED-TEST-001\n")
 end = tests.index("\n  - id: ", start + 1)
 scenario = tests[start:end]
 required = (
-    "name: Project-native release qualification",
-    "      - release",
+    "name: Project-native affected tests",
+    "      - affected",
     'command: "bash tests/run-all.sh"',
     "release_gate: true",
-    '"project-native release qualification remains green"',
+    '"project-native tests remain green for affected changes"',
 )
 for needle in required:
     if needle not in scenario:
-        raise SystemExit(f"ADOPTED-TEST-001 missing release-only contract: {needle}")
-if "      - affected" in scenario:
-    raise SystemExit("ADOPTED-TEST-001 must not be an affected/default PR gate")
+        raise SystemExit(f"ADOPTED-TEST-001 missing DRLink pre-merge contract: {needle}")
+if "cost: medium" not in scenario:
+    raise SystemExit("ADOPTED-TEST-001 must retain the explicit medium-cost PR classification")
 
-baseline = "a8969ac4e86465c9fda588a7c1cad7f96f7276c6"
+project_text = Path(".engineering/project.yaml").read_text(encoding="utf-8")
+baseline_line = next(line for line in project_text.splitlines() if line.strip().startswith("baseline: "))
+baseline = baseline_line.split(":", 1)[1].strip()
+if len(baseline) != 40:
+    raise SystemExit(f"invalid Engineering System baseline: {baseline!r}")
 for rel in (
     ".engineering/project.yaml",
     ".github/workflows/engineering-release.yml",

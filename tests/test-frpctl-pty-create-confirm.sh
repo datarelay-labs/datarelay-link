@@ -120,10 +120,9 @@ def run_session(answers_after_confirm, label):
         os.kill(pid, 9)
         raise SystemExit("%s: no initial prompt: %r" % (label, buf[-400:]))
 
-    # Guided Zero-Touch: method -> Linux -> name -> blank note -> SSH only -> optional user -> default port
-    send(b"create zero-touch\n")
+    # Guided Zero-Touch: Linux -> name -> blank note -> SSH only -> optional user -> default port
+    send(b"set enrollment zero-touch\n")
     steps = [
-        (b"Installation method", b"1\n"),
         (b"Platform", b"1\n"),
         (b"Managed Host name:", b"pty-confirm\n"),
         (b"Description", b"\n"),
@@ -179,15 +178,18 @@ print("PTY_CONFIRM_DEFAULT_NEWLINE=PASS")
 print("REPL_PROMPT_STARTS_NEW_LINE=PASS")
 PY
 
-# Direct (non-REPL) command must stay clean: confirmation skipped on non-TTY,
-# and stdout must not grow stray leading/trailing blank-line pairs around the
-# one-shot create output.
+# Direct (non-REPL) guided invocation must fail closed without leaking a REPL
+# prompt or gluing confirmation output when no TTY is available.
 export FRP_CTL_TEST_ROOT="$TREE"
-"$CTL" create enrollment --ttl 1h --client-name direct-fmt >"$WORKDIR/direct.out" 2>"$WORKDIR/direct.err" || true
+set +e
+"$CTL" set enrollment zero-touch </dev/null >"$WORKDIR/direct.out" 2>"$WORKDIR/direct.err"
+direct_rc=$?
+set -e
+[[ "$direct_rc" -ne 0 ]] || fail "direct guided invocation unexpectedly succeeded"
 if grep -q 'Create this client setup? [Y/n]: drlink>' "$WORKDIR/direct.out" "$WORKDIR/direct.err"; then
   fail "direct command glued REPL prompt"
 fi
-# One-shot create enrollment is non-interactive; it should not print the REPL prompt.
+# A direct guided invocation must never print the persistent REPL prompt.
 if grep -qE '^drlink>' "$WORKDIR/direct.out"; then
   fail "direct command leaked REPL prompt"
 fi

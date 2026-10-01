@@ -517,6 +517,8 @@ def _canonical_operation(method: str, path: str) -> Optional[tuple[str, str]]:
         return MGMT.MGMT_OP_REMOTE_SERVICE_SET, parsed
     if method_u == "POST" and parsed == "/v1/remote-services-status":
         return MGMT.MGMT_OP_REMOTE_SERVICE_STATUS, parsed
+    if method_u == "POST" and parsed == "/v1/agent-lifecycle":
+        return MGMT.MGMT_OP_AGENT_LIFECYCLE, parsed
     if method_u == "DELETE" and parsed.startswith("/v1/remote-services/"):
         name = parsed[len("/v1/remote-services/") :]
         if not name or "/" in name:
@@ -743,6 +745,24 @@ def report_remote_service_status_on_server(
         )
     body = {"services": list(services or [])}
     return _request_json("POST", base + "/v1/remote-services-status", body, root=root)
+
+
+def report_agent_lifecycle_on_server(
+    *, root: Optional[str] = None, state: str = "connected"
+) -> dict:
+    """Report signed Agent presence independently from AI job polling."""
+    base = resolve_mgmt_base_url(root)
+    if not base:
+        raise MgmtSyncError(
+            "ERROR:\nNo Server management URL is configured for Agent lifecycle.\n\n"
+            "No changes were applied."
+        )
+    lifecycle = str(state or "").strip().lower()
+    if lifecycle not in ("connected", "disconnected"):
+        raise MgmtSyncError("Agent lifecycle state must be connected or disconnected")
+    return _request_json(
+        "POST", base + "/v1/agent-lifecycle", {"state": lifecycle}, root=root
+    )
 
 
 def delete_remote_service_on_server(*, root: Optional[str] = None, name: str) -> dict:
@@ -1388,6 +1408,32 @@ def server_delete_remote_service(plane, auth: MgmtAuthContext, name: str) -> dic
     return {"status": "DELETED", "name": name, "released_port": pub["public_port"]}
 
 
+def server_report_agent_lifecycle(plane, auth: MgmtAuthContext, body: dict) -> dict:
+    """Persist signed Agent presence without changing configuration revision."""
+    from drlink_control_plane import agent_heartbeat_fresh
+
+    machine_id = auth.machine_id
+    before = _require_managed_host(plane, machine_id)
+    state = str((body or {}).get("state") or "connected").strip().lower()
+    if state not in ("connected", "disconnected"):
+        raise MgmtSyncError("Agent lifecycle state must be connected or disconnected")
+    old_state = str(before["agent_lifecycle_state"] or "legacy").strip().lower()
+    old_heartbeat = before["agent_heartbeat_at"]
+    was_fresh = old_state == "connected" and agent_heartbeat_fresh(old_heartbeat)
+    if not plane.refresh_agent_lifecycle(machine_id, state):
+        raise MgmtAuthError("unknown Managed Host")
+    client = plane.conn.execute(
+        "SELECT agent_heartbeat_at, agent_lifecycle_state FROM clients WHERE id = ?",
+        (machine_id,),
+    ).fetchone()
+    return {
+        "ok": True,
+        "state": client["agent_lifecycle_state"] if client else state,
+        "heartbeat_at": client["agent_heartbeat_at"] if client else None,
+        "reconcile_required": bool(state == "connected" and not was_fresh),
+    }
+
+
 def server_claim_ai_jobs(plane, auth: MgmtAuthContext, body: dict) -> dict:
     """Claim queued AI jobs for the authenticated Managed Host identity only."""
     machine_id = auth.machine_id
@@ -1727,11 +1773,10 @@ def handle_allocator_http(
         )
         _require_managed_host(plane, auth.machine_id)
         _commit_auth_nonce(verifier, auth)
-        # Claim and complete refresh once inside the control-plane methods.
-        # Refreshing here as well doubled the row write on every poll.
-        if op not in (MGMT.MGMT_OP_AI_JOB_CLAIM, MGMT.MGMT_OP_AI_JOB_COMPLETE):
-            if hasattr(plane, "refresh_managed_host_liveness"):
-                plane.refresh_managed_host_liveness(auth.machine_id)
+        # Public Agent connectivity is owned exclusively by the dedicated
+        # signed lifecycle operation. Catalog, Remote Service, and other
+        # management traffic must not revive or refresh lifecycle presence.
+        # AI executor freshness is updated only inside the AI job methods.
         if method.upper() == "GET" and parsed == "/v1/catalog":
             return 200, _with_response_mac(build_catalog_payload(plane), auth)
         if method.upper() == "POST" and parsed == "/v1/remote-services":
@@ -1745,6 +1790,12 @@ def handle_allocator_http(
             if not isinstance(data, dict):
                 return 400, {"error": "invalid JSON"}
             result = server_report_remote_service_status(plane, auth, data)
+            return 200, _with_response_mac(result, auth)
+        if method.upper() == "POST" and parsed == "/v1/agent-lifecycle":
+            data = json.loads(raw.decode("utf-8") or "{}") if raw else {}
+            if not isinstance(data, dict):
+                return 400, {"error": "invalid JSON"}
+            result = server_report_agent_lifecycle(plane, auth, data)
             return 200, _with_response_mac(result, auth)
         if method.upper() == "DELETE" and parsed.startswith("/v1/remote-services/"):
             name = unquote(parsed[len("/v1/remote-services/") :])
