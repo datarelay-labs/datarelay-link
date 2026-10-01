@@ -364,6 +364,17 @@ frp_macos_launchd_running() {
   [[ "$pid" =~ ^[1-9][0-9]*$ ]]
 }
 
+frp_macos_lifecycle_pid() {
+  frp_invoke launchctl print "system/${FRP_MACOS_LIFECYCLE_LABEL}" 2>/dev/null |
+    awk '/^[[:space:]]*pid[[:space:]]*=/ {print $3; exit}'
+}
+
+frp_macos_lifecycle_running() {
+  local pid
+  pid="$(frp_macos_lifecycle_pid || true)"
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]]
+}
+
 frp_macos_launchd_set_enabled() {
   local action="${1:-}"
   if ! frp_launchd_usable; then
