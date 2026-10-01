@@ -4807,6 +4807,17 @@ frp_client_restore_ai_agent_service_state() {
   if declare -F frp_is_darwin >/dev/null 2>&1 && frp_is_darwin; then
     state="$(cat "${backup}/macos-lifecycle.state" 2>/dev/null || printf absent)"
     live="$(frp_client_path /etc/systemd/system/drlink-lifecycle.service)"
+    # Test-root rollback must never touch the host launchd service namespace.
+    # Restore exactly the staged plist state and leave runtime activation to
+    # real-host paths only.
+    if [[ -n "${FRP_CLIENT_TEST_ROOT:-}" ]]; then
+      if [[ "$state" == "present" && -f "${backup}/macos-lifecycle.plist" ]]; then
+        install -m 0644 "${backup}/macos-lifecycle.plist" "$live" || return 1
+      else
+        rm -f "$live" || return 1
+      fi
+      return 0
+    fi
     frp_macos_lifecycle_bootout || true
     if [[ "$state" == "present" && -f "${backup}/macos-lifecycle.plist" ]]; then
       install -m 0644 "${backup}/macos-lifecycle.plist" "$live" || return 1
