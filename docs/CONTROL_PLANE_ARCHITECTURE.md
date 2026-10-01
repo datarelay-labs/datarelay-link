@@ -295,7 +295,7 @@ BLACKLIST / WHITELIST
 
 Network Groups, Service Groups, and Permission Groups are flat. A Managed Host may be selected as a Network Object where the policy context allows it. Managed Host lifecycle stays on Managed Host commands, not `set network-object` / `unset network-object`.
 
-Internet Access source may be IP, CIDR, FQDN, Managed Host, or a Network Group of those. Internet Access destination must not be a Managed Host, directly or through a Network Group.
+Internet Access source may be IP, CIDR, FQDN, Managed Host, or a Network Group of those. A Managed Host source is address-backed: runtime identity is proven only when the observed proxy peer source IP matches an eligible active address for that Managed Host. In BLACKLIST mode, destination/service match plus unprovable Managed Host source identity fails closed to DENY rather than becoming unmatched/ALLOW. Internet Access destination must not be a Managed Host, directly or through a Network Group.
 
 Access Policy has no public rule ordering and no per-rule ALLOW/DENY action. The effective decision comes from BLACKLIST or WHITELIST mode plus enforcement.
 

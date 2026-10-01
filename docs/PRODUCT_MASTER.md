@@ -152,7 +152,9 @@ Registered Managed Hosts also appear as Network Objects of type `Managed Host`.
 
 Network Groups are flat reusable collections.
 
-Internet Access source may use a Managed Host.
+Internet Access source may use a Managed Host, but the source identity remains address-backed because Controlled Egress is agentless. The observed proxy peer IP must match an eligible active address reported for that Managed Host.
+
+If a BLACKLIST rule's destination and service match but the observed proxy source cannot be proven to be the selected Managed Host, evaluation fails closed with DENY instead of treating the request as unmatched/ALLOW. NAT can therefore make a selective Managed Host source unusable; use an IP/CIDR Network Object representing the proxy-visible source when deterministic NAT-aware policy is required.
 
 Internet Access destination must not use a Managed Host, directly or through a Network Group containing one.
 
@@ -580,6 +582,14 @@ No other document may redefine the public CLI/AI model independently.
 ### 2026-09 — Context-local Bundle atomicity
 
 **Decision:** ConfigurationBundle atomicity is scoped to the current Server or Agent CLI context, not distributed across contexts.
+
+### 2026-10 — Managed Host Internet source identity under NAT
+
+**Decision:** Keep Managed Host as an Internet Access source selector, but define it as address-backed because Controlled Egress remains agentless. Runtime identity exists only when the observed proxy peer IP matches an eligible active address reported for that Managed Host.
+
+**Security consequence:** In BLACKLIST mode, when destination and service match a Managed-Host-sourced rule but that source identity cannot be proven, Data Relay Link denies fail-closed rather than treating the connection as unmatched/ALLOW. NAT-aware deployments that need deterministic source policy should use the proxy-visible IP/CIDR.
+
+**Reason:** Do not invent per-host cryptographic identity for an agentless proxy, and do not let source-identity ambiguity silently broaden access.
 
 ## 29. Master rule
 

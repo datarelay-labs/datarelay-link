@@ -172,6 +172,8 @@ safe logs
 
 Ambiguous parsing or unsafe resolution fails closed.
 
+Internet Access does not turn Managed Host enrollment identity into a proxy authentication credential. A Managed Host used as an Internet Access source remains an address-backed selector: the observed proxy peer IP must match an eligible active address reported for that Managed Host. If a BLACKLIST rule otherwise matches destination/service but that source identity cannot be proven, the request is denied fail-closed rather than treated as unmatched/ALLOW. This preserves the separate durable Managed Host identity model while refusing to invent per-host identity across NAT.
+
 ## 12. Object context validation
 
 Objects are neutral but context validation is mandatory.

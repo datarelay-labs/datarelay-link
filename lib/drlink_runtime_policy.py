@@ -378,6 +378,7 @@ def authorize_internet(
         "candidate_ips": [],
         "authorized_candidates": [],
         "candidate_results": [],
+        "ambiguous_managed_source_rules": [],
     }
     if not gen["healthy"]:
         base["reason"] = REASON_GENERATION_MISMATCH if gen["mismatch"] else REASON_DB_UNAVAILABLE
@@ -404,6 +405,9 @@ def authorize_internet(
     base["candidate_ips"] = list(evaluation.get("candidate_ips") or [])
     base["authorized_candidates"] = list(evaluation.get("authorized_candidates") or [])
     base["candidate_results"] = list(evaluation.get("candidate_results") or [])
+    base["ambiguous_managed_source_rules"] = list(
+        evaluation.get("ambiguous_managed_source_rules") or []
+    )
     # Hostname-only evaluation (no candidates): preserve prior ALLOW/DENY.
     # Candidate evaluation: ALLOW only when authorized_candidates is non-empty
     # (or mode/enforcement already yielded ALLOW with empty list for no-policy).
@@ -415,7 +419,9 @@ def authorize_internet(
             else:
                 action = DECISION_DENY
     base["decision"] = DECISION_ALLOW if action == DECISION_ALLOW else DECISION_DENY
-    if evaluation.get("implicit") and action != DECISION_ALLOW:
+    if action != DECISION_ALLOW and base["ambiguous_managed_source_rules"]:
+        base["reason"] = evaluation.get("reason") or REASON_POLICY_DENY
+    elif evaluation.get("implicit") and action != DECISION_ALLOW:
         base["reason"] = REASON_IMPLICIT_DENY
     elif action == DECISION_ALLOW:
         base["reason"] = evaluation.get("reason") or "INTERNET_ACCESS_ALLOW"

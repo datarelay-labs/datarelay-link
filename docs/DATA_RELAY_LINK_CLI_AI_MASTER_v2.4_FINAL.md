@@ -414,7 +414,10 @@ ERROR:
 Network Group 'mixed-destinations' contains Managed Host 'ubuntu-prod'.
 
 Managed Hosts are valid Internet Access sources,
-but cannot be used as Internet Access destinations.
+but source identity is address-backed because the egress proxy is agentless.
+If the observed proxy source cannot be proven to be the selected Managed Host,
+BLACKLIST evaluation fails closed instead of falling through to unmatched ALLOW.
+Managed Hosts cannot be used as Internet Access destinations.
 
 No changes were applied.
 ```
@@ -1082,7 +1085,7 @@ service
 enabled / disabled
 ```
 
-Internet Access source selectors may include Managed Hosts and Groups containing Managed Hosts.
+Internet Access source selectors may include Managed Hosts and Groups containing Managed Hosts. A Managed Host source is address-backed: the observed proxy peer IP must match an eligible active address for that Managed Host. Under BLACKLIST, a destination/service match with unprovable Managed Host source identity is DENY fail-closed, not unmatched ALLOW. NAT-aware deployments should use a proxy-visible IP/CIDR selector when deterministic source policy is required.
 
 Internet Access destination selectors reject a Managed Host and reject any Group containing a Managed Host.
 
@@ -3152,7 +3155,7 @@ Permission Object.permissions
 
 ## 61.4 Internet Access Managed Host example
 
-A Managed Host is valid as an Internet Access source.
+A Managed Host is valid as an Internet Access source. The selector is address-backed rather than cryptographic: actual proxy traffic matches only when the observed peer source IP is one of the Managed Host's eligible active addresses. If a BLACKLIST destination/service match cannot prove that source identity, runtime denies fail-closed. Behind NAT, use an IP/CIDR selector for the proxy-visible source when deterministic policy is required.
 
 ```yaml
 configurationBundle:
@@ -4339,7 +4342,7 @@ The WHITELIST default handles all unmatched traffic.
 
 # 87. Scenario — Internet Access Managed Host source
 
-A Managed Host may be used directly as an Internet Access source.
+A Managed Host may be used directly as an Internet Access source. Because Internet Access is agentless, the runtime proves that selector only by matching the observed proxy peer IP to an eligible active Managed Host address. BLACKLIST source ambiguity is fail-closed DENY; NAT-aware deployments should select the proxy-visible IP/CIDR when deterministic identity is required.
 
 Example:
 

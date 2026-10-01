@@ -100,6 +100,8 @@ Reject/inactivate inappropriate loopback/link-local/multicast/special addresses 
 
 Test NAT/public observed source is not substituted for reported internal addresses.
 
+For Internet Access Managed Host sources, prove the runtime distinction explicitly: direct peer address match follows normal BLACKLIST/WHITELIST semantics; a NAT/source mismatch that leaves Managed Host identity unprovable must fail closed under BLACKLIST when destination/service otherwise match, while Enforcement DISABLED still yields ALLOW ALL.
+
 ## 6. Remote Service tests
 
 Prove Agent-owned connectivity through the public Agent Host CLI:
@@ -207,6 +209,7 @@ Required deny regressions:
 
 ```text
 unapproved source
+Managed Host BLACKLIST source identity ambiguous behind NAT/source mismatch -> DENY fail-closed
 unapproved FQDN
 wrong port
 loopback

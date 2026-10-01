@@ -124,7 +124,7 @@ DB_CORRUPTION_FAIL_CLOSED=
 ## 8. Internet Access policy/security
 
 - [ ] Same BLACKLIST / WHITELIST / Enforcement semantics proven independently from Remote Access.
-- [ ] Internet Access source may use Managed Host; destination rejects Managed Host directly or through a Group containing one.
+- [ ] Internet Access source may use Managed Host only with address-backed runtime identity; BLACKLIST source ambiguity fails closed under NAT/source mismatch; destination rejects Managed Host directly or through a Group containing one.
 - [ ] FQDN destinations.
 - [ ] Explicit public Host/CIDR destinations where supported.
 - [ ] server-side DNS.

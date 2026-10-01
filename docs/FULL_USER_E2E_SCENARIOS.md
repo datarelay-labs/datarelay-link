@@ -1577,7 +1577,8 @@ Verify:
 - unapproved destination fails;
 - wrong destination port fails;
 - removing a destination required by an application makes that application fail through policy;
-- broad wildcard expansion is not used just to obtain PASS.
+- broad wildcard expansion is not used just to obtain PASS;
+- when a Managed Host is used as the Internet Access source, compare the source address assumed by `test internet-access` with the actual proxy peer source seen by the Server; if NAT/source mismatch prevents Managed Host identity from being proven, a matching BLACKLIST destination/service path must DENY fail-closed rather than fall through to unmatched ALLOW.
 
 ## U-007 — AI/MCP authorized and denied use — MANDATORY for v2.4.0
 
@@ -2174,7 +2175,7 @@ unset internet-access policy
 test internet-access source <SOURCE> destination <DESTINATION> service <SERVICE>
 ~~~
 
-Exercise real traffic plus the applicable failure/recovery cases in section 10.
+Exercise real traffic plus the applicable failure/recovery cases in section 10. Include Managed Host source identity parity: direct address match, NAT/source mismatch fail-closed under BLACKLIST, and the same scenario with Enforcement DISABLED to prove the explicit ALLOW ALL override remains authoritative.
 
 ## A-006 — AI Identity, permissions, AI Access, MCP TLS, OAuth approval, and logs — MANDATORY for v2.4.0
 

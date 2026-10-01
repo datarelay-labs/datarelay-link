@@ -96,6 +96,8 @@ Internet Access Source accepts context-valid Host/Network Objects and compatible
 
 The base agentless HTTP/HTTPS proxy observes network source identity. Per-host cryptographic identity is not invented where the protected application is simply using a standard proxy.
 
+A Managed Host source selector is therefore address-backed, not cryptographic. It matches only when the proxy peer source IP equals an eligible active address reported for that Managed Host. If a BLACKLIST rule otherwise matches destination and service but this Managed Host source identity cannot be proven, the request is denied fail-closed instead of falling through to BLACKLIST unmatched/ALLOW. NAT may make a selective Managed Host selector ambiguous; use an IP/CIDR selector for the proxy-visible source when that topology must be represented explicitly.
+
 ## 6. HTTP
 
 For approved HTTP requests:

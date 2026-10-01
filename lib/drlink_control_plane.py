@@ -2765,6 +2765,19 @@ class ControlPlane:
                 return True
         return False
 
+    def _ref_contains_managed_endpoint(self, kind: str, ref_id: str) -> bool:
+        """Return whether a Network selector contains a Managed Host leaf."""
+        if kind == "object":
+            obj = self.conn.execute("SELECT type FROM objects WHERE id = ?", (ref_id,)).fetchone()
+            return bool(obj) and obj["type"] == "managed_endpoint"
+        grp = self.conn.execute("SELECT * FROM object_groups WHERE id = ?", (ref_id,)).fetchone()
+        if not grp:
+            return False
+        return any(
+            obj["type"] == "managed_endpoint"
+            for obj in self._expand_group_members(grp["id"], set())
+        )
+
     def _ref_matches_host(self, kind: str, ref_id: str, host: str) -> bool:
         if kind == "object":
             obj = self.conn.execute("SELECT * FROM objects WHERE id = ?", (ref_id,)).fetchone()
@@ -3097,14 +3110,16 @@ class ControlPlane:
         def _rule_src_svc(rule_row):
             view = self._rule_view(rule_row)
             src_ok = False
+            managed_source = False
             for s in self.conn.execute(
                 "SELECT ref_kind, ref_id FROM rule_sources WHERE rule_id = ?", (rule_row["id"],)
             ):
+                if self._ref_contains_managed_endpoint(s["ref_kind"], s["ref_id"]):
+                    managed_source = True
                 if self._ref_matches_ip(s["ref_kind"], s["ref_id"], source_ip, role="source"):
                     src_ok = True
-                    break
             svc_ok = rule_matches_service(self, rule_row["id"], proto, port)
-            return view, src_ok, svc_ok
+            return view, src_ok, svc_ok, managed_source
 
         def _dest_ok(rule_row, cand_ip: Optional[str]) -> bool:
             for s in self.conn.execute(
@@ -3123,8 +3138,9 @@ class ControlPlane:
         # Aggregate traces use hostname-level destination match (any candidate).
         traces = []
         matched = []
+        ambiguous_managed_source_rules = []
         for rule_row in rule_rows:
-            view, src_ok, svc_ok = _rule_src_svc(rule_row)
+            view, src_ok, svc_ok, managed_source = _rule_src_svc(rule_row)
             if normalized_candidates is None:
                 dst_ok = _dest_ok(rule_row, None)
             else:
@@ -3137,11 +3153,15 @@ class ControlPlane:
                 if not dst_ok and not is_ip_literal:
                     dst_ok = _dest_ok(rule_row, None)
             hit = bool(src_ok and dst_ok and svc_ok)
+            managed_source_ambiguous = bool(
+                managed_source and not src_ok and dst_ok and svc_ok
+            )
             traces.append(
                 {
                     "rule": view,
                     "evaluated": True,
                     "source": src_ok,
+                    "source_ambiguous": managed_source_ambiguous,
                     "dest": dst_ok,
                     "service": svc_ok,
                     "match": hit,
@@ -3149,28 +3169,42 @@ class ControlPlane:
             )
             if hit:
                 matched.append(view)
+            elif managed_source_ambiguous:
+                ambiguous_managed_source_rules.append(view)
 
         candidate_results = []
         authorized_candidates: list[str] = []
         if normalized_candidates is not None:
             for cand in normalized_candidates:
                 cand_matched = []
+                cand_ambiguous_managed_source = []
                 for rule_row in rule_rows:
-                    view, src_ok, svc_ok = _rule_src_svc(rule_row)
+                    view, src_ok, svc_ok, managed_source = _rule_src_svc(rule_row)
                     # Per-candidate: Host/CIDR vs cand, or FQDN vs hostname (non-literal).
                     dst_ok = _dest_ok(rule_row, cand)
                     if not dst_ok and not is_ip_literal:
                         dst_ok = _dest_ok(rule_row, None)
                     if src_ok and dst_ok and svc_ok:
                         cand_matched.append(view)
+                    elif managed_source and dst_ok and svc_ok:
+                        cand_ambiguous_managed_source.append(view)
                 cand_action = effective_policy_result(
                     pol["mode"], pol["enforcement"], bool(cand_matched)
                 )
+                if (
+                    pol["mode"] == "blacklist"
+                    and str(pol["enforcement"]).lower() != "disabled"
+                    and cand_ambiguous_managed_source
+                ):
+                    cand_action = "DENY"
                 candidate_results.append(
                     {
                         "ip": cand,
                         "action": cand_action,
                         "matched_rules": [m["name"] for m in cand_matched],
+                        "ambiguous_managed_source_rules": [
+                            m["name"] for m in cand_ambiguous_managed_source
+                        ],
                     }
                 )
                 if cand_action == "ALLOW":
@@ -3183,6 +3217,12 @@ class ControlPlane:
                 action = "DENY"
         else:
             action = effective_policy_result(pol["mode"], pol["enforcement"], bool(matched))
+            if (
+                pol["mode"] == "blacklist"
+                and str(pol["enforcement"]).lower() != "disabled"
+                and ambiguous_managed_source_rules
+            ):
+                action = "DENY"
 
         winner = matched[0] if matched else None
         if pol["mode"] is None:
@@ -3191,6 +3231,12 @@ class ControlPlane:
             reason = "Policy enforcement DISABLED (ALLOW ALL)"
         elif matched:
             reason = "Internet Access matched rule(s): %s" % ", ".join(m["name"] for m in matched)
+        elif action == "DENY" and ambiguous_managed_source_rules:
+            reason = (
+                "Managed Host source identity cannot be proven from observed proxy source "
+                "address; fail closed for rule(s): %s"
+                % ", ".join(m["name"] for m in ambiguous_managed_source_rules)
+            )
         else:
             reason = "No enabled Internet Access rule matched (%s)" % (
                 "ALLOW" if pol["mode"] == "blacklist" else "DENY"
@@ -3209,6 +3255,9 @@ class ControlPlane:
             "traces": traces,
             "winner": winner,
             "matched_rules": [m["name"] for m in matched],
+            "ambiguous_managed_source_rules": [
+                m["name"] for m in ambiguous_managed_source_rules
+            ],
             "mode": pol["mode"],
             "enforcement": pol["enforcement"],
             "action": action,

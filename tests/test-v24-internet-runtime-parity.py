@@ -407,6 +407,158 @@ class InternetRuntimeParityTests(unittest.TestCase):
         host, port = EG.parse_authority_host_port("%s:443" % PUBLIC_A)
         self.assertEqual((host, port), (PUBLIC_A, 443))
 
+    def test_16_managed_host_blacklist_nat_source_fails_closed(self):
+        managed_ip = "10.20.30.41"
+        nat_ip = "198.51.100.41"
+        self.plane.upsert_client(
+            "managed-source-client",
+            label="managed-source",
+            hostname="managed-source",
+            addresses=[{"address": managed_ip, "active": True}],
+        )
+        v24.set_access_rule(
+            self.plane,
+            "internet",
+            "block-managed",
+            mode="blacklist",
+            source="managed-source",
+            destination="api-fqdn",
+            service="https",
+            enabled=True,
+            oneshot=True,
+        )
+
+        direct = RP.authorize_internet(
+            self.plane,
+            source_ip=managed_ip,
+            hostname="api.example",
+            port=443,
+            protocol="https",
+            candidate_ips=[PUBLIC_A],
+        )
+        self.assertEqual(direct["decision"], RP.DECISION_DENY)
+        self.assertEqual(direct["rule_name"], "block-managed")
+
+        nat = RP.authorize_internet(
+            self.plane,
+            source_ip=nat_ip,
+            hostname="api.example",
+            port=443,
+            protocol="https",
+            candidate_ips=[PUBLIC_A],
+        )
+        self.assertEqual(nat["decision"], RP.DECISION_DENY)
+        self.assertEqual(nat["authorized_candidates"], [])
+        self.assertEqual(nat["ambiguous_managed_source_rules"], ["block-managed"])
+        self.assertIn("cannot be proven", nat["reason"])
+        self.assertEqual(
+            nat["candidate_results"][0]["ambiguous_managed_source_rules"],
+            ["block-managed"],
+        )
+
+        unrelated = RP.authorize_internet(
+            self.plane,
+            source_ip=nat_ip,
+            hostname="other.example",
+            port=443,
+            protocol="https",
+            candidate_ips=[PUBLIC_A],
+        )
+        self.assertEqual(unrelated["decision"], RP.DECISION_ALLOW)
+        self.assertEqual(unrelated["ambiguous_managed_source_rules"], [])
+
+    def test_17_managed_host_ambiguity_does_not_override_disabled_enforcement(self):
+        self.plane.upsert_client(
+            "managed-source-client",
+            label="managed-source",
+            hostname="managed-source",
+            addresses=[{"address": "10.20.30.41", "active": True}],
+        )
+        v24.set_access_rule(
+            self.plane,
+            "internet",
+            "block-managed",
+            mode="blacklist",
+            source="managed-source",
+            destination="api-fqdn",
+            service="https",
+            enabled=True,
+            oneshot=True,
+        )
+        v24.set_policy_enforcement(self.plane, "internet", False, confirm=True)
+        decision = RP.authorize_internet(
+            self.plane,
+            source_ip="198.51.100.41",
+            hostname="api.example",
+            port=443,
+            protocol="https",
+            candidate_ips=[PUBLIC_A],
+        )
+        self.assertEqual(decision["decision"], RP.DECISION_ALLOW)
+        self.assertEqual(decision["authorized_candidates"], [PUBLIC_A])
+        self.assertIn("DISABLED", decision["reason"])
+
+    def test_18_gateway_does_not_connect_on_managed_host_nat_ambiguity(self):
+        self.plane.upsert_client(
+            "managed-source-client",
+            label="managed-source",
+            hostname="managed-source",
+            addresses=[{"address": "10.20.30.41", "active": True}],
+        )
+        v24.set_access_rule(
+            self.plane,
+            "internet",
+            "block-managed",
+            mode="blacklist",
+            source="managed-source",
+            destination="api-fqdn",
+            service="https",
+            enabled=True,
+            oneshot=True,
+        )
+        self.plane.compile_runtime()
+
+        attempted: list[str] = []
+
+        def resolve(host: str) -> list[str]:
+            self.assertEqual(host, "api.example")
+            return [PUBLIC_A]
+
+        def connect_fn(ip, port, hostname, timeout):
+            del port, hostname, timeout
+            attempted.append(ip)
+            raise AssertionError("connect must not run for ambiguous Managed Host source")
+
+        gw_path = ROOT / "server" / "frp-egress-gateway.py"
+        spec = importlib.util.spec_from_file_location("frp_egress_gateway_nat_guard", gw_path)
+        GW = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(GW)
+
+        cfg_path = Path(self.tmp) / "etc/drlink/config.json"
+        cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+        cfg["egress_conn_log_file"] = str(
+            Path(self.tmp) / "var/log/drlink/egress/connections.jsonl"
+        )
+        Path(self.tmp, "var/log/drlink/egress").mkdir(parents=True, exist_ok=True)
+        cfg_path.write_text(json.dumps(cfg) + "\n", encoding="utf-8")
+
+        cache = GW.PolicyCache(cfg_path)
+        gw = GW.GatewayState(cache, resolve_fn=resolve, connect_fn=connect_fn)
+        sock, decision = GW._authorize_and_connect(
+            gw,
+            source_ip="198.51.100.41",
+            hostname="api.example",
+            port=443,
+            method="CONNECT",
+            protocol="https",
+        )
+        self.assertIsNone(sock)
+        self.assertEqual(decision["decision"], EG.DECISION_DENY)
+        self.assertEqual(decision["authorized_candidates"], [])
+        self.assertEqual(decision["ambiguous_managed_source_rules"], ["block-managed"])
+        self.assertEqual(attempted, [])
+
 
 if __name__ == "__main__":
     unittest.main()
