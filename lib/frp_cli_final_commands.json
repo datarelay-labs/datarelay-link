@@ -3398,9 +3398,9 @@
     "roles": "client",
     "category": "Remote Services",
     "summary": "Delete a Remote Service",
-    "detail": "Delete a Remote Service",
+    "detail": "Delete an Agent Remote Service after interactive y/N confirmation. Non-interactive deletion fails closed. When the Server is reachable, its publication is removed and the endpoint is released; when offline, deletion is queued for synchronization.",
     "examples": [
-      "unset remote-service"
+      "unset remote-service <NAME>"
     ],
     "args": [
       {
@@ -3413,7 +3413,7 @@
     "aliases": [],
     "destructive": true,
     "hidden": false,
-    "risk": "none",
+    "risk": "irreversible",
     "confirmation": "y_n",
     "surface": "",
     "flags": []

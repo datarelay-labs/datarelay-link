@@ -59,6 +59,30 @@ grep -Fq '\"$note_text\" '\''1'\'' \"$TUNNEL_SSH_USER\"' "$E2E" \
   || fail "zero-touch guided answers missing SSH-only step"
 pass "CANONICAL_INSTALLER_AND_ZERO_TOUCH"
 
+# Destructive Remote Service deletion is an interactive y/N contract. Release
+# harnesses must allocate a real remote PTY rather than weakening the product
+# command for non-interactive automation.
+grep -q 'run_client_confirm_yes.*unset remote-service' "$E2E" \
+  || fail "Real E2E Remote Service deletion does not use TTY confirmation"
+grep -q 'ssh -tt' "$E2E" \
+  || fail "Real E2E TTY confirmation helper does not force a remote PTY"
+if grep -nE 'run_client[[:space:]].*unset remote-service' "$E2E" >/dev/null; then
+  grep -nE 'run_client[[:space:]].*unset remote-service' "$E2E" >&2 || true
+  fail "Real E2E still deletes Remote Services through a non-TTY client call"
+fi
+
+PROD_EXT="$ROOT/tests/run-prod-qual-extended.sh"
+PROD_COMMON="$ROOT/tests/lib/prod-qual-common.sh"
+grep -q 'pq_ssh_confirm_yes.*unset remote-service' "$PROD_EXT" \
+  || fail "Production qualification Remote Service cleanup lacks TTY confirmation"
+grep -q 'ssh -tt' "$PROD_COMMON" \
+  || fail "Production qualification TTY confirmation helper does not force a remote PTY"
+if grep -nE 'pq_ssh[[:space:]].*unset remote-service' "$PROD_EXT" >/dev/null; then
+  grep -nE 'pq_ssh[[:space:]].*unset remote-service' "$PROD_EXT" >&2 || true
+  fail "Production qualification still deletes Remote Services through non-TTY pq_ssh"
+fi
+pass "REMOTE_SERVICE_DELETE_TTY_CONFIRMATION"
+
 # Release qualification harnesses must not exercise removed v2.4 public roots.
 # Match complete resource tokens so current nouns such as service-object do not
 # become false positives.
