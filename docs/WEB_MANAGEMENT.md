@@ -1195,7 +1195,9 @@ architecture or expanding Data Relay Link into another product category.
 | Zscaler health/diagnostics | Adopt bounded health aggregation and drill-down; no application-discovery platform |
 | Boundary worker health separation | Keep component health explicit; do not create controller/worker cluster architecture |
 
-Review reference set (official vendor documentation, checked 2026-10-02):
+### 38.1 Review reference set
+
+Official vendor documentation checked on 2026-10-02:
 
 - Tailscale Visual Policy Editor: https://tailscale.com/docs/features/visual-editor
 - Cloudflare Access policy tester: https://developers.cloudflare.com/cloudflare-one/access-controls/policies/policy-management/
@@ -1209,7 +1211,7 @@ Review reference set (official vendor documentation, checked 2026-10-02):
 These links are research evidence, not product authority. Future competitor changes do not
 automatically alter 3.0 scope after DRL3-0 freezes it.
 
-### 38.1 Explicit competitive-feature deferrals
+### 38.2 Explicit competitive-feature deferrals
 The following are intentionally **not** 3.0 GA requirements:
 
 - full JIT/access-request approval workflow;
@@ -1226,24 +1228,6 @@ The following are intentionally **not** 3.0 GA requirements:
 Temporary rule TTL, external notification channels, external Web-admin SSO/IdP, GitOps
 editor locking, and long-term external audit export are useful later additions because
 the 3.0 foundations allow them without changing authority or management architecture.
-
-### 38.2 Non-authoritative review inputs
-
-The review used current official documentation from the following products as design
-inputs only. These sources do not define Data Relay Link behavior and may change later.
-
-- Tailscale — Visual policy editor; tailnet policy preview/tests.
-- Cloudflare Zero Trust — Access policy tester; dashboard decision/activity logs;
-  connector/tunnel health notifications.
-- Twingate — Resource/User Access Graph; troubleshooting via Resource Activity; admin roles.
-- Teleport — Web UI inventory/version visibility; RBAC; Access Graph.
-- NetBird — Control Center, Draft Mode, user roles, and Audit Events.
-- Zscaler Private Access — application health reporting modes and Health dashboard.
-- HashiCorp Boundary — worker Last Seen/health separation and read-only audit roles.
-
-The adopted DRLink behavior is the decision table above plus the canonical Product
-Master/Roadmap/Architecture. Re-running competitor research does not automatically change
-3.0 scope after DRL3-0 freeze.
 
 ## 39. 3.0 scope-freeze contract
 
