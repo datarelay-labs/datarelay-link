@@ -1195,6 +1195,20 @@ architecture or expanding Data Relay Link into another product category.
 | Zscaler health/diagnostics | Adopt bounded health aggregation and drill-down; no application-discovery platform |
 | Boundary worker health separation | Keep component health explicit; do not create controller/worker cluster architecture |
 
+Review reference set (official vendor documentation, checked 2026-10-02):
+
+- Tailscale Visual Policy Editor: https://tailscale.com/docs/features/visual-editor
+- Cloudflare Access policy tester: https://developers.cloudflare.com/cloudflare-one/access-controls/policies/policy-management/
+- Cloudflare connector health: https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-wan/configuration/common-settings/check-tunnel-health-dashboard/
+- Twingate troubleshooting: https://www.twingate.com/docs/how-to-troubleshoot
+- Teleport Web UI / Instance Inventory: https://goteleport.com/docs/connect-your-client/teleport-clients/web-ui/
+- NetBird Control Center: https://docs.netbird.io/manage/control-center
+- NetBird audit events: https://docs.netbird.io/manage/activity
+- Zscaler Private Access help/diagnostics: https://help.zscaler.com/zpa
+
+These links are research evidence, not product authority. Future competitor changes do not
+automatically alter 3.0 scope after DRL3-0 freezes it.
+
 ### 38.1 Explicit competitive-feature deferrals
 The following are intentionally **not** 3.0 GA requirements:
 
