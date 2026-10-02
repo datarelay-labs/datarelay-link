@@ -2028,7 +2028,7 @@ def check_service_profiles(report, paths, facts, cfg):
     if not paths.is_file(profiles_rel):
         report.add(
             'SERVICE_PROFILES_ERROR', INFO,
-            'obsolete service-profiles.json absent (published-service/presets are authoritative)',
+            'obsolete service-profiles.json absent (Service Objects and Agent Remote Services are authoritative)',
             profiles_rel,
             '',
             'state',

@@ -53,6 +53,44 @@ class EmptyStateCliTests(unittest.TestCase):
                 self.assertIn(marker, out)
                 self.assertEqual(err, "")
 
+    def test_policy_and_ai_log_empty_states_are_explicit(self):
+        self.plane.conn.execute(
+            "UPDATE access_policies SET mode = 'blacklist', enforcement = 'enabled' "
+            "WHERE plane IN ('remote', 'internet')"
+        )
+        self.plane.conn.commit()
+        cases = (
+            (["show", "remote-access"], "No rules configured."),
+            (["show", "internet-access"], "No rules configured."),
+            (["show", "ai-access"], "No rules configured."),
+            (["show", "ai-access-log"], "No AI Access Log entries found."),
+        )
+        for tokens, marker in cases:
+            with self.subTest(tokens=tokens):
+                rc, out, err = self.dispatch(list(tokens))
+                self.assertEqual(rc, 0, err)
+                self.assertIn(marker, out)
+                self.assertEqual(err, "")
+
+    def test_agent_remote_services_empty_state_is_explicit(self):
+        tmp = tempfile.mkdtemp(prefix="drlink-agent-empty-state-")
+        Path(tmp, "etc/frp").mkdir(parents=True, exist_ok=True)
+        Path(tmp, "etc/frp/client-state.json").write_text(
+            '{"client_id":"audit-agent","hostname":"audit-agent"}\n',
+            encoding="utf-8",
+        )
+        plane = ControlPlane(tmp)
+        out = io.StringIO()
+        err = io.StringIO()
+        try:
+            with redirect_stdout(out), redirect_stderr(err):
+                rc = cli.dispatch(["show", "remote-services"], root=tmp, plane=plane)
+        finally:
+            plane.close()
+        self.assertEqual(rc, 0, err.getvalue())
+        self.assertEqual(out.getvalue(), "No Remote Services configured.\n")
+        self.assertEqual(err.getvalue(), "")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1793,12 +1793,12 @@ def domain_help(topic, role):
             "  system support-bundle",
             "  system update product",
             "  system update engine",
-            "  system update check-engine",
             "  system uninstall",
         ]
         if server:
             lines.extend(
                 [
+                    "  system update check-engine",
                     "  system backup",
                     "  system backup validate <PATH>",
                     "  system restore <PATH>",

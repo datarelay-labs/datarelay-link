@@ -320,7 +320,9 @@ system certificate renew
 system certificate status
 system certificate preflight
 
-system update
+system update product
+system update engine
+system update check-engine
 system support-bundle
 system uninstall
 ```
@@ -355,6 +357,7 @@ system autostart enable
 system autostart disable
 system update product
 system update engine
+system synchronize
 
 test configuration <FILE|->
 system export configuration <FILE>
