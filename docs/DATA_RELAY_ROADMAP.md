@@ -247,7 +247,7 @@ Legacy JSON is migration input only, not dual authority.
 
 **Status:** Included in v2.4.0 target; supersedes old exclusion decision.
 
-**Current release blocker:** Real ChatGPT Plus owner/UI OAuth Authorization Code/consent, tool discovery, one policy-allowed operation, and one expected policy denial must be retained as release evidence. Machine-side MCP/OAuth conformance is required but does not clear this user-authentication gate by itself.
+**Current release blocker:** Real ChatGPT owner/UI OAuth Authorization Code/consent, tool discovery, one policy-allowed operation, and one expected policy denial must be retained as release evidence from a plan/surface that officially supports full MCP at evidence-capture time. Machine-side MCP/OAuth conformance is required but does not clear this user-authentication gate by itself.
 
 Implement server-side MCP Bridge plus:
 

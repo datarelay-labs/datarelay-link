@@ -50,7 +50,7 @@ CONTROL_DB_SCHEMA_VERSION=
 - [ ] Remote Access BLACKLIST / WHITELIST policy implemented.
 - [ ] Internet Access BLACKLIST / WHITELIST policy implemented.
 - [ ] AI Access/MCP included and implemented (`MCP_INCLUDED_IN_V2_4_0=YES`).
-- [ ] Real ChatGPT Plus user authentication is a mandatory v2.4.0 release gate.
+- [ ] Real ChatGPT owner/UI authentication on a currently supported full-MCP plan/surface is a mandatory v2.4.0 release gate.
 - [ ] ConfigurationBundle included in the v2.4.0 stable target.
 - [ ] direct CLI, AI-generated CLI, and ConfigurationBundle share one Change Plan/mutation engine.
 - [ ] ConfigurationBundle is an idempotent change set, not a second SSOT.
@@ -222,16 +222,18 @@ DB_CORRUPTION_FAIL_CLOSED=
 - [ ] each new tool call evaluates current policy.
 - [ ] running operation not implicitly killed by policy edit.
 - [ ] AI activity audit attributable to principal/target/rule/revision.
-- [ ] real ChatGPT Plus owner/UI OAuth Authorization Code / consent completes through the public MCP endpoint.
-- [ ] ChatGPT Plus tool discovery succeeds after authentication.
-- [ ] one AI Access policy-allowed operation succeeds through ChatGPT Plus.
-- [ ] one intentionally out-of-scope operation is denied through ChatGPT Plus.
+- [ ] real ChatGPT owner/UI on a currently supported full-MCP plan/surface OAuth Authorization Code / consent completes through the public MCP endpoint.
+- [ ] ChatGPT owner/UI tool discovery succeeds after authentication.
+- [ ] one AI Access policy-allowed operation succeeds through the supported ChatGPT owner/UI.
+- [ ] one intentionally out-of-scope operation is denied through the supported ChatGPT owner/UI.
 - [ ] machine-side MCP/OAuth conformance evidence is retained separately and does not substitute for owner/UI acceptance.
-- [ ] retained ChatGPT Plus owner/UI evidence is bound to the exact provenance HEAD, source HEAD, bootstrap-server artifact SHA256, and public HTTPS `/mcp` endpoint.
+- [ ] retained ChatGPT owner/UI evidence is bound to the exact provenance HEAD, source HEAD, bootstrap-server artifact SHA256, and public HTTPS `/mcp` endpoint.
+- [ ] the owner/UI `mcp_endpoint` exactly matches the `public_mcp_endpoint` retained by both exact-candidate qualification passes and the combined qualification evidence package.
 - [ ] owner/UI evidence capture time is at/after the exact provenance commit and not implausibly in the future.
 - [ ] qualification rejects missing/stale/incomplete ChatGPT owner/UI evidence before destructive Real E2E begins.
 - [ ] stable attestation revalidates the actual owner/UI evidence payload and derives acceptance/hash/HEAD instead of trusting free-form PASS/hash inputs.
 - [ ] stable v2.4.0 attestation requires protected GitHub Environment `stable-release-owner-ui` approval; caller input cannot synthesize `trusted_owner_ui_review=PASS`.
+- [ ] protected owner/UI approval is bound to the exact prevalidated owner/UI evidence SHA256; digest mismatch fails closed.
 - [ ] `stable-release-owner-ui` has at least one required reviewer and administrator bypass is disabled.
 - [ ] denied, cancelled, skipped, or unconfigured protected owner/UI review fails closed before stable attestation proceeds.
 - [ ] Claude interoperability tested if claimed supported.
@@ -247,9 +249,9 @@ MCP_CAPABILITY_ENFORCEMENT=
 MCP_FILE_SCOPE=
 MCP_AUDIT=
 MCP_REAL_E2E=
-CHATGPT_PLUS_USER_AUTH=
-CHATGPT_PLUS_TOOL_DISCOVERY=
-CHATGPT_PLUS_ALLOW_DENY=
+CHATGPT_OWNER_UI_USER_AUTH=
+CHATGPT_OWNER_UI_TOOL_DISCOVERY=
+CHATGPT_OWNER_UI_ALLOW_DENY=
 ```
 
 ## 14.1 ConfigurationBundle / AI-assisted configuration
@@ -371,11 +373,11 @@ CHATGPT_PLUS_ALLOW_DENY=
 - [ ] denied Internet traffic cannot escape.
 - [ ] multi-host matrix.
 - [ ] MCP real operation on private/closed target.
-- [ ] real ChatGPT Plus owner/UI connects to the public MCP endpoint.
-- [ ] ChatGPT Plus OAuth Authorization Code / consent completes successfully.
-- [ ] ChatGPT Plus tool discovery succeeds.
-- [ ] one policy-allowed operation succeeds through ChatGPT Plus.
-- [ ] one intentionally out-of-scope operation is denied through ChatGPT Plus.
+- [ ] real ChatGPT owner/UI on a currently supported full-MCP plan/surface connects to the public MCP endpoint.
+- [ ] ChatGPT owner/UI OAuth Authorization Code / consent completes successfully.
+- [ ] ChatGPT owner/UI tool discovery succeeds.
+- [ ] one policy-allowed operation succeeds through the supported ChatGPT owner/UI.
+- [ ] one intentionally out-of-scope operation is denied through the supported ChatGPT owner/UI.
 - [ ] machine-side MCP/OAuth evidence and owner/UI evidence are both retained; neither is substituted for the other.
 
 Platform evidence:
@@ -504,8 +506,8 @@ RUNTIME_GENERATION_CONSISTENCY=
 BACKUP_RESTORE=
 MCP_REAL_E2E=
 MCP_INCLUDED_IN_V2_4_0=YES
-CHATGPT_PLUS_USER_AUTH_ACCEPTANCE=REQUIRED
-CHATGPT_PLUS_USER_AUTH_STATUS=PASS|BLOCKED
+CHATGPT_OWNER_UI_USER_AUTH_ACCEPTANCE=REQUIRED
+CHATGPT_OWNER_UI_USER_AUTH_STATUS=PASS|BLOCKED
 CONFIGURATION_BUNDLE=
 CONFIGURATION_DIRECT_CLI_PARITY=
 CONFIGURATION_AI_COPY_PASTE_REAL_E2E=

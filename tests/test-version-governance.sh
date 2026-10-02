@@ -310,9 +310,9 @@ python3 -c 'import json; assert json.load(open("release-manifest.json"))["featur
 pass "MCP_V2_4_INCLUDED"
 
 grep -q '^MCP_INCLUDED_IN_V2_4_0=YES$' docs/VERSION_POLICY.md || fail "MCP v2.4 inclusion policy marker"
-grep -q '^CHATGPT_PLUS_USER_AUTH_ACCEPTANCE=REQUIRED$' docs/VERSION_POLICY.md || fail "ChatGPT Plus auth requirement marker"
-grep -q '^CHATGPT_PLUS_USER_AUTH_STATUS=BLOCKED_PENDING_OWNER_UI_AUTH$' docs/VERSION_POLICY.md || fail "ChatGPT Plus auth blocker marker"
-grep -q 'Real ChatGPT Plus user authentication is a mandatory v2.4.0 release gate' docs/RELEASE_CHECKLIST.md || fail "ChatGPT Plus release checklist gate"
+grep -q '^CHATGPT_OWNER_UI_USER_AUTH_ACCEPTANCE=REQUIRED$' docs/VERSION_POLICY.md || fail "ChatGPT owner/UI auth requirement marker"
+grep -q '^CHATGPT_OWNER_UI_USER_AUTH_STATUS=BLOCKED_PENDING_OWNER_UI_AUTH$' docs/VERSION_POLICY.md || fail "ChatGPT owner/UI auth blocker marker"
+grep -q 'Real ChatGPT owner/UI authentication on a currently supported full-MCP plan/surface is a mandatory v2.4.0 release gate' docs/RELEASE_CHECKLIST.md || fail "ChatGPT owner/UI release checklist gate"
 pass "MCP_V2_4_SCOPE_AND_CHATGPT_AUTH_GATE"
 
 echo "VERSION_GOVERNANCE=PASS"

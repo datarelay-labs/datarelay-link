@@ -25,7 +25,7 @@ on:
         type: string
         default: ''
       qualification_chatgpt_owner_evidence_b64:
-        description: Base64-encoded ChatGPT Plus owner/UI acceptance JSON; required for stable v2.4.0
+        description: Base64-encoded ChatGPT owner/UI acceptance JSON; must record the actual supported full-MCP plan/surface and current official support reference for stable v2.4.0
         required: false
         type: string
         default: ''
@@ -44,6 +44,7 @@ jobs:
       pass2_head: ${{ steps.validate.outputs.pass2_head }}
       final_head: ${{ steps.validate.outputs.final_head }}
       sha256: ${{ steps.validate.outputs.sha256 }}
+      mcp_endpoint: ${{ steps.validate.outputs.mcp_endpoint }}
     steps:
       - name: Reject mutable ref input
         env:
@@ -93,6 +94,7 @@ jobs:
             echo "pass2_head=" >>"$GITHUB_OUTPUT"
             echo "final_head=" >>"$GITHUB_OUTPUT"
             echo "sha256=" >>"$GITHUB_OUTPUT"
+            echo "mcp_endpoint=" >>"$GITHUB_OUTPUT"
             exit 0
           fi
           [[ -n "$QUALIFICATION_EVIDENCE_B64" ]] || {
@@ -108,6 +110,7 @@ jobs:
           echo "pass2_head=$(sed -n 's/^QUALIFICATION_PASS2_HEAD=//p' "$result")" >>"$GITHUB_OUTPUT"
           echo "final_head=$(sed -n 's/^QUALIFICATION_FINAL_HEAD=//p' "$result")" >>"$GITHUB_OUTPUT"
           echo "sha256=$(sed -n 's/^QUALIFICATION_EVIDENCE_SHA256=//p' "$result")" >>"$GITHUB_OUTPUT"
+          echo "mcp_endpoint=$(sed -n 's/^QUALIFICATION_MCP_ENDPOINT=//p' "$result")" >>"$GITHUB_OUTPUT"
 
   stable-qualification-approval:
     needs: qualification-evidence-validation
@@ -131,8 +134,62 @@ jobs:
           echo "trusted_qualification_review=PASS" >>"$GITHUB_OUTPUT"
           echo "reviewed_sha256=$QUALIFICATION_EVIDENCE_SHA256" >>"$GITHUB_OUTPUT"
 
+  owner-ui-evidence-validation:
+    needs: qualification-evidence-validation
+    if: ${{ needs.qualification-evidence-validation.outputs.is_stable == 'true' && github.ref == 'refs/tags/v2.4.0' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      acceptance: ${{ steps.validate.outputs.acceptance }}
+      sha256: ${{ steps.validate.outputs.sha256 }}
+      provenance_head: ${{ steps.validate.outputs.provenance_head }}
+      client_plan: ${{ steps.validate.outputs.client_plan }}
+      support_reference: ${{ steps.validate.outputs.support_reference }}
+    steps:
+      - name: Checkout immutable ref for owner/UI evidence validation
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+
+      - name: Validate retained ChatGPT owner/UI evidence
+        id: validate
+        env:
+          OWNER_EVIDENCE_B64: ${{ inputs.qualification_chatgpt_owner_evidence_b64 }}
+          QUALIFICATION_MCP_ENDPOINT: ${{ needs.qualification-evidence-validation.outputs.mcp_endpoint }}
+        run: |
+          set -euo pipefail
+          [[ -n "$OWNER_EVIDENCE_B64" ]] || {
+            echo "ERROR: retained ChatGPT owner/UI evidence is required for stable v2.4.0" >&2
+            exit 1
+          }
+          [[ -n "$QUALIFICATION_MCP_ENDPOINT" ]] || {
+            echo "ERROR: qualified public MCP endpoint is missing from qualification evidence" >&2
+            exit 1
+          }
+          evidence="$RUNNER_TEMP/chatgpt-owner-acceptance.json"
+          result="$RUNNER_TEMP/chatgpt-owner-acceptance.check"
+          printf '%s' "$OWNER_EVIDENCE_B64" | base64 --decode >"$evidence"
+          ./scripts/check-chatgpt-owner-acceptance.py --root . --evidence "$evidence" \
+            --expected-endpoint "$QUALIFICATION_MCP_ENDPOINT" | tee "$result"
+          evidence_sha="$(sha256sum "$evidence" | awk '{print $1}')"
+          evidence_head="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["core_provenance_head"])' "$evidence")"
+          client_plan="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["client_plan"])' "$evidence")"
+          support_reference="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["support_reference"])' "$evidence")"
+          echo "acceptance=PASS" >>"$GITHUB_OUTPUT"
+          echo "sha256=$evidence_sha" >>"$GITHUB_OUTPUT"
+          echo "provenance_head=$evidence_head" >>"$GITHUB_OUTPUT"
+          echo "client_plan=$client_plan" >>"$GITHUB_OUTPUT"
+          echo "support_reference=$support_reference" >>"$GITHUB_OUTPUT"
+          {
+            echo '### ChatGPT owner/UI evidence'
+            printf '%s\n' "- plan: $client_plan" "- support: $support_reference" "- sha256: $evidence_sha"
+          } >>"$GITHUB_STEP_SUMMARY"
+
   stable-owner-ui-approval:
-    if: ${{ github.ref == 'refs/tags/v2.4.0' }}
+    needs: owner-ui-evidence-validation
+    if: ${{ needs.owner-ui-evidence-validation.result == 'success' }}
     runs-on: ubuntu-latest
     environment:
       name: stable-release-owner-ui
@@ -140,17 +197,25 @@ jobs:
       contents: read
     outputs:
       trusted_owner_ui_review: ${{ steps.record.outputs.trusted_owner_ui_review }}
+      reviewed_sha256: ${{ steps.record.outputs.reviewed_sha256 }}
     steps:
       - name: Record protected owner/UI approval
         id: record
-        run: echo "trusted_owner_ui_review=PASS" >>"$GITHUB_OUTPUT"
+        env:
+          OWNER_EVIDENCE_SHA256: ${{ needs.owner-ui-evidence-validation.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          [[ "$OWNER_EVIDENCE_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          echo "trusted_owner_ui_review=PASS" >>"$GITHUB_OUTPUT"
+          echo "reviewed_sha256=$OWNER_EVIDENCE_SHA256" >>"$GITHUB_OUTPUT"
 
   build-attest:
     needs:
       - qualification-evidence-validation
       - stable-qualification-approval
+      - owner-ui-evidence-validation
       - stable-owner-ui-approval
-    if: ${{ always() && needs.qualification-evidence-validation.result == 'success' && (needs.stable-qualification-approval.result == 'success' || needs.stable-qualification-approval.result == 'skipped') && (needs.stable-owner-ui-approval.result == 'success' || needs.stable-owner-ui-approval.result == 'skipped') }}
+    if: ${{ always() && needs.qualification-evidence-validation.result == 'success' && (needs.stable-qualification-approval.result == 'success' || needs.stable-qualification-approval.result == 'skipped') && (needs.owner-ui-evidence-validation.result == 'success' || needs.owner-ui-evidence-validation.result == 'skipped') && (needs.stable-owner-ui-approval.result == 'success' || needs.stable-owner-ui-approval.result == 'skipped') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -225,6 +290,8 @@ jobs:
         id: owner_evidence
         env:
           OWNER_EVIDENCE_B64: ${{ inputs.qualification_chatgpt_owner_evidence_b64 }}
+          PREVALIDATED_OWNER_SHA256: ${{ needs.owner-ui-evidence-validation.outputs.sha256 }}
+          PREVALIDATED_OWNER_HEAD: ${{ needs.owner-ui-evidence-validation.outputs.provenance_head }}
         run: |
           set -euo pipefail
           if [[ -z "$OWNER_EVIDENCE_B64" ]]; then
@@ -238,6 +305,10 @@ jobs:
           ./scripts/check-chatgpt-owner-acceptance.py --root . --evidence "$evidence"
           evidence_sha="$(sha256sum "$evidence" | awk '{print $1}')"
           evidence_head="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["core_provenance_head"])' "$evidence")"
+          if [[ -n "$PREVALIDATED_OWNER_SHA256" ]]; then
+            [[ "$evidence_sha" == "$PREVALIDATED_OWNER_SHA256" ]]
+            [[ "$evidence_head" == "$PREVALIDATED_OWNER_HEAD" ]]
+          fi
           echo "acceptance=PASS" >>"$GITHUB_OUTPUT"
           echo "sha256=$evidence_sha" >>"$GITHUB_OUTPUT"
           echo "provenance_head=$evidence_head" >>"$GITHUB_OUTPUT"
@@ -258,6 +329,7 @@ jobs:
           QUALIFICATION_CHATGPT_OWNER_EVIDENCE_SHA256: ${{ steps.owner_evidence.outputs.sha256 }}
           QUALIFICATION_CHATGPT_OWNER_EVIDENCE_PROVENANCE_HEAD: ${{ steps.owner_evidence.outputs.provenance_head }}
           QUALIFICATION_TRUSTED_OWNER_UI_REVIEW: ${{ needs.stable-owner-ui-approval.outputs.trusted_owner_ui_review }}
+          QUALIFICATION_TRUSTED_OWNER_UI_REVIEW_SHA256: ${{ needs.stable-owner-ui-approval.outputs.reviewed_sha256 }}
         run: |
           set -euo pipefail
           ./scripts/check-release-attest-binding.py >>"$GITHUB_OUTPUT"
@@ -317,6 +389,7 @@ jobs:
           CHATGPT_EVIDENCE_SHA256: ${{ steps.owner_evidence.outputs.sha256 }}
           CHATGPT_EVIDENCE_HEAD: ${{ steps.owner_evidence.outputs.provenance_head }}
           TRUSTED_OWNER_UI_REVIEW: ${{ needs.stable-owner-ui-approval.outputs.trusted_owner_ui_review }}
+          TRUSTED_OWNER_UI_SHA256: ${{ needs.stable-owner-ui-approval.outputs.reviewed_sha256 }}
         run: |
           set -euo pipefail
           mkdir -p release-subjects
@@ -346,10 +419,11 @@ jobs:
                   "qualification_evidence_sha256": os.environ["QUALIFICATION_EVIDENCE_SHA256"],
                   "trusted_qualification_review": os.environ["TRUSTED_QUALIFICATION_REVIEW"],
                   "trusted_qualification_evidence_sha256": os.environ["TRUSTED_QUALIFICATION_SHA256"],
-                  "chatgpt_plus_owner_ui_acceptance": os.environ["CHATGPT_OWNER_UI"],
+                  "chatgpt_owner_ui_acceptance": os.environ["CHATGPT_OWNER_UI"],
                   "chatgpt_owner_evidence_sha256": os.environ["CHATGPT_EVIDENCE_SHA256"],
                   "chatgpt_owner_evidence_provenance_head": os.environ["CHATGPT_EVIDENCE_HEAD"],
                   "trusted_owner_ui_review": os.environ["TRUSTED_OWNER_UI_REVIEW"],
+                  "trusted_owner_ui_evidence_sha256": os.environ["TRUSTED_OWNER_UI_SHA256"],
               }
           )
           Path("qualification-evidence.json").write_text(

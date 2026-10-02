@@ -102,11 +102,16 @@ def evidence_errors(
             "protected qualification review SHA256 must match qualification evidence SHA256"
         )
     if require_chatgpt_owner:
-        if evidence.get("chatgpt_plus_owner_ui_acceptance") != "PASS":
-            errs.append("ChatGPT Plus owner/UI acceptance must be PASS")
+        if evidence.get("chatgpt_owner_ui_acceptance") != "PASS":
+            errs.append("ChatGPT owner/UI acceptance must be PASS")
         if evidence.get("trusted_owner_ui_review") != "PASS":
             errs.append("protected owner/UI review must be PASS")
-        evidence_sha = str(evidence.get("chatgpt_owner_evidence_sha256") or "")
+        evidence_sha = str(evidence.get("chatgpt_owner_evidence_sha256") or "").lower()
+        trusted_owner_sha = str(evidence.get("trusted_owner_ui_evidence_sha256") or "").lower()
+        if not SHA256.fullmatch(trusted_owner_sha):
+            errs.append("protected owner/UI review SHA256 must be 64 hex characters")
+        elif trusted_owner_sha != evidence_sha:
+            errs.append("protected owner/UI review SHA256 must match ChatGPT owner/UI evidence SHA256")
         if not SHA256.fullmatch(evidence_sha):
             errs.append("ChatGPT owner/UI evidence SHA256 must be 64 hex characters")
         evidence_head = str(evidence.get("chatgpt_owner_evidence_provenance_head") or "").lower()
@@ -150,10 +155,11 @@ def project_manifest(repo: Path, evidence: dict) -> dict:
     if require_chatgpt_owner:
         projected["qualification"].update(
             {
-                "chatgpt_plus_owner_ui_acceptance": "PASS",
+                "chatgpt_owner_ui_acceptance": "PASS",
                 "chatgpt_owner_evidence_sha256": evidence["chatgpt_owner_evidence_sha256"],
                 "chatgpt_owner_evidence_provenance_head": head,
                 "trusted_owner_ui_review": "PASS",
+                "trusted_owner_ui_evidence_sha256": evidence["trusted_owner_ui_evidence_sha256"],
             }
         )
     if projected.get("artifacts") != artifacts:

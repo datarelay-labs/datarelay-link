@@ -9,6 +9,7 @@ source "$ROOT/tests/lib/prod-qual-common.sh"
 # shellcheck source=lib/require-release-target.sh
 source "$ROOT/tests/lib/require-release-target.sh"
 frp_require_release_target || exit 1
+PUBLIC_MCP_ENDPOINT="https://${FRP_E2E_PUBLIC_HOSTNAME}/mcp"
 
 PASS_NAME="${1:-PASS1}"
 RUN_ID="${FRP_E2E_QUAL_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)}"
@@ -34,6 +35,7 @@ export FRP_E2E_QUAL_SKIP_LOCAL="${FRP_E2E_QUAL_SKIP_LOCAL:-0}"
 pq_note "PHASE=DATA_RELAY_LINK_V2_4_0_FINAL_PRODUCTION_REALISTIC_QUALIFICATION"
 pq_note "PASS_NAME=$PASS_NAME RUN_ID=$RUN_ID OUT=$OUT"
 pq_note "FROZEN_HEAD=$FROZEN_HEAD"
+pq_note "PUBLIC_MCP_ENDPOINT=$PUBLIC_MCP_ENDPOINT"
 pq_note "STARTED=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 echo "PASS_NAME=$PASS_NAME" >>"$PROD_QUAL_GATES"
@@ -125,27 +127,28 @@ if ! pq_precheck_hosts; then
   exit 1
 fi
 
-# v2.4 stable qualification requires retained real ChatGPT Plus owner/UI
+# v2.4 stable qualification requires retained real ChatGPT owner/UI
 # acceptance evidence bound to this exact provenance/content bundle. Fail before
 # any matrix install/reboot when the evidence is missing, stale, or incomplete.
 CHATGPT_OWNER_EVIDENCE="${FRP_E2E_CHATGPT_OWNER_EVIDENCE:-$ROOT/e2e-reports/chatgpt-owner-acceptance.json}"
 CHATGPT_OWNER_LOG="$OUT/chatgpt-owner-acceptance.log"
 if python3 "$ROOT/scripts/check-chatgpt-owner-acceptance.py" \
-    --root "$ROOT" --evidence "$CHATGPT_OWNER_EVIDENCE" >"$CHATGPT_OWNER_LOG" 2>&1; then
+    --root "$ROOT" --evidence "$CHATGPT_OWNER_EVIDENCE" \
+    --expected-endpoint "$PUBLIC_MCP_ENDPOINT" >"$CHATGPT_OWNER_LOG" 2>&1; then
   cat "$CHATGPT_OWNER_LOG"
-  pq_gate CHATGPT_PLUS_OWNER_UI_ACCEPTANCE PASS
+  pq_gate CHATGPT_OWNER_UI_ACCEPTANCE PASS
   pq_gate MCP_REAL_E2E PASS
-  pq_gate CHATGPT_PLUS_USER_AUTH PASS
-  pq_gate CHATGPT_PLUS_TOOL_DISCOVERY PASS
-  pq_gate CHATGPT_PLUS_ALLOW_DENY PASS
+  pq_gate CHATGPT_OWNER_UI_USER_AUTH PASS
+  pq_gate CHATGPT_OWNER_UI_TOOL_DISCOVERY PASS
+  pq_gate CHATGPT_OWNER_UI_ALLOW_DENY PASS
 else
   cat "$CHATGPT_OWNER_LOG" >&2 || true
-  pq_gate CHATGPT_PLUS_OWNER_UI_ACCEPTANCE BLOCKED
+  pq_gate CHATGPT_OWNER_UI_ACCEPTANCE BLOCKED
   pq_gate MCP_REAL_E2E BLOCKED
-  pq_gate CHATGPT_PLUS_USER_AUTH BLOCKED
-  pq_gate CHATGPT_PLUS_TOOL_DISCOVERY BLOCKED
-  pq_gate CHATGPT_PLUS_ALLOW_DENY BLOCKED
-  pq_note "ERROR: real ChatGPT Plus owner/UI acceptance evidence is required before destructive qualification"
+  pq_gate CHATGPT_OWNER_UI_USER_AUTH BLOCKED
+  pq_gate CHATGPT_OWNER_UI_TOOL_DISCOVERY BLOCKED
+  pq_gate CHATGPT_OWNER_UI_ALLOW_DENY BLOCKED
+  pq_note "ERROR: real ChatGPT owner/UI acceptance evidence is required before destructive qualification"
   exit 1
 fi
 
@@ -467,10 +470,10 @@ fi
 # Write machine-readable summary only after the terminal PASS/FAIL gate exists.
 # A pre-terminal summary can otherwise report UNKNOWN while the shell exits 0.
 pq_write_summary() {
-  python3 - "$OUT" "$(pq_head_sha)" "$PASS_NAME" <<'PY' || true
+  python3 - "$OUT" "$(pq_head_sha)" "$PASS_NAME" "$PUBLIC_MCP_ENDPOINT" <<'PY' || true
 import json, sys
 from pathlib import Path
-out, head, pass_name = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+out, head, pass_name, public_mcp_endpoint = Path(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4]
 gates = {}
 gates_path = out / "gates.env"
 if gates_path.is_file():
@@ -489,6 +492,7 @@ doc = {
     "schema_version": 1,
     "pass_name": pass_name,
     "git_head": head,
+    "public_mcp_endpoint": public_mcp_endpoint,
     "gates": gates,
     "evidence_paths": evidence,
     "final_status": gates.get(pass_name, "UNKNOWN"),

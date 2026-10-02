@@ -149,7 +149,7 @@ print("ok")
 PY
 pass "production reboot gate requires evidence files"
 
-# --- ChatGPT Plus owner/UI evidence must gate destructive qualification ---
+# --- ChatGPT owner/UI evidence must gate destructive qualification ---
 python3 - "$ROOT/tests/run-production-realistic-qualification.sh" <<'PY' \
   || fail "ChatGPT owner/UI evidence gate ordering"
 from pathlib import Path
@@ -158,12 +158,14 @@ text = Path(sys.argv[1]).read_text(encoding="utf-8")
 owner = text.index("check-chatgpt-owner-acceptance.py")
 matrix = text.index('pq_note "==== REAL E2E MATRIX ===="')
 assert owner < matrix, (owner, matrix)
-assert "CHATGPT_PLUS_OWNER_UI_ACCEPTANCE BLOCKED" in text
+assert "CHATGPT_OWNER_UI_ACCEPTANCE BLOCKED" in text
+assert '--expected-endpoint "$PUBLIC_MCP_ENDPOINT"' in text
+assert '"public_mcp_endpoint": public_mcp_endpoint' in text
 for gate in (
     "MCP_REAL_E2E",
-    "CHATGPT_PLUS_USER_AUTH",
-    "CHATGPT_PLUS_TOOL_DISCOVERY",
-    "CHATGPT_PLUS_ALLOW_DENY",
+    "CHATGPT_OWNER_UI_USER_AUTH",
+    "CHATGPT_OWNER_UI_TOOL_DISCOVERY",
+    "CHATGPT_OWNER_UI_ALLOW_DENY",
 ):
     assert f"pq_gate {gate} PASS" in text, gate
     assert f"pq_gate {gate} BLOCKED" in text, gate

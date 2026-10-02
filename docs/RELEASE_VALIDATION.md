@@ -286,24 +286,27 @@ Target matrix:
 MCP_SPEC_VERSION=2026-07-28
 OFFICIAL_SPEC_SOURCE=https://modelcontextprotocol.io/specification/2026-07-28/
 REFERENCE_SDK=Python mcp 2.2.0 Streamable HTTP
-ChatGPT Plus=REQUIRED_REAL_USER_ACCEPTANCE (interactive OAuth Authorization Code / consent through owner UI)
-ChatGPT Plus current status=BLOCKED_PENDING_OWNER_UI_AUTH
-Machine-side OAuth/MCP qualification=REQUIRED_BUT_NOT_SUFFICIENT for the ChatGPT Plus user-auth gate
+ChatGPT owner/UI=REQUIRED_REAL_USER_ACCEPTANCE (currently supported full-MCP plan/surface; interactive OAuth Authorization Code / consent)
+ChatGPT owner/UI current status=BLOCKED_PENDING_OWNER_UI_AUTH
+Machine-side OAuth/MCP qualification=REQUIRED_BUT_NOT_SUFFICIENT for the ChatGPT owner/UI user-auth gate
 Claude=not claimed unless separately qualified with real host/account evidence
 Cursor=not claimed unless separately qualified with real remote MCP host evidence
 Official SDK E2E=PASS (HTTPS /mcp through product frontend in tests)
 ```
 
-Real ChatGPT Plus owner/UI acceptance is retained as JSON evidence. By default the
+Real ChatGPT owner/UI acceptance is retained as JSON evidence. By default the
 qualification harness reads `e2e-reports/chatgpt-owner-acceptance.json`; an
 external evidence path may be supplied with `FRP_E2E_CHATGPT_OWNER_EVIDENCE`.
 The evidence is valid only when it binds all of the following to the candidate
 being qualified:
 
 ```text
-schema_version=1
+schema_version=2
 status=PASS
-client_surface=ChatGPT Plus owner/UI
+client_plan=<actual ChatGPT plan>
+client_surface=ChatGPT owner/UI
+support_reference=<current official OpenAI full-MCP support URL>
+support_checked_at=<offset-aware ISO-8601 timestamp>
 core_provenance_head=<exact qualification HEAD>
 core_source_head=<release-manifest source_head>
 bootstrap_server_sha256=<release-manifest bootstrap-server.sh artifact SHA256>
@@ -316,12 +319,17 @@ captured_at=<offset-aware ISO-8601 timestamp>
 evidence_refs=<one or more retained owner/UI evidence references>
 ```
 
-Missing, stale, machine-only, loopback/raw-IP, or incomplete evidence blocks
-qualification before the destructive multi-host matrix begins. For this gate,
-`stale` includes evidence whose `captured_at` predates the exact provenance
-commit; timestamps more than 10 minutes in the future are also rejected.
-The qualification report records `MCP_REAL_E2E`, `CHATGPT_PLUS_USER_AUTH`,
-`CHATGPT_PLUS_TOOL_DISCOVERY`, and `CHATGPT_PLUS_ALLOW_DENY` separately in
+Missing, stale, machine-only, loopback/raw-IP, endpoint-mismatched, or incomplete evidence blocks
+qualification before the destructive multi-host matrix begins. The production qualification derives
+`PUBLIC_MCP_ENDPOINT=https://<FRP_E2E_PUBLIC_HOSTNAME>/mcp` only after the release-target DNS/IP/alias
+preflight passes, stores that exact endpoint in both PASS summaries and the combined qualification
+evidence package, and requires the owner/UI evidence `mcp_endpoint` to match it exactly. Stable
+attestation revalidates the same endpoint binding from the retained qualification package before the
+protected owner/UI approval. For this gate, `stale` includes evidence whose `captured_at` predates the exact provenance
+commit; timestamps more than 10 minutes in the future are also rejected. The cited official OpenAI support check must be no more than 30 days old at evidence capture time. The protected `stable-release-owner-ui` reviewer must confirm that the recorded `client_plan`/`client_surface` is supported by the cited official source; the evidence checker deliberately does not hard-code a plan allowlist that can go stale.
+The workflow validates and hashes that owner/UI evidence before protected approval. The approval records the exact reviewed SHA256, and stable attestation fails closed if the reviewed digest differs from the evidence digest.
+The qualification report records `MCP_REAL_E2E`, `CHATGPT_OWNER_UI_USER_AUTH`,
+`CHATGPT_OWNER_UI_TOOL_DISCOVERY`, and `CHATGPT_OWNER_UI_ALLOW_DENY` separately in
 addition to the aggregate owner/UI gate. Stable attestation receives the same
 owner/UI evidence JSON as a base64 workflow input, revalidates it against the
 checked-out release HEAD, and derives PASS/hash/HEAD values from that payload;
@@ -349,7 +357,7 @@ expired credential denied where applicable
 disabled AI Identity denied
 AI Identity attribution stable
 authenticated transport required
-real ChatGPT Plus owner/UI OAuth authentication and consent succeeds
+real ChatGPT owner/UI OAuth authentication and consent succeeds on a currently supported full-MCP plan/surface
 ChatGPT tool discovery succeeds after authentication
 one authorized ChatGPT operation succeeds
 one intentionally out-of-scope ChatGPT operation is denied
@@ -659,12 +667,12 @@ features.mcp_included=true whenever v2.4.0 candidate bytes include MCP Bridge/AI
 manifest schema permits/requires actual feature truth
 no MCP_V2_4_EXCLUSION legacy guard
 MCP inclusion evidence present
-ChatGPT Plus owner/UI user-auth acceptance evidence retained before stable
+ChatGPT owner/UI user-auth acceptance evidence retained before stable
 exact source HEAD/ref immutable
 no future-tag URL before tag exists
 ```
 
-Set manifest feature truth from the candidate bytes: once MCP Bridge/AI Access are present, `features.mcp_included=true` even while ChatGPT Plus owner/UI authentication remains blocked. Do not use `mcp_included=false` to represent an unqualified or blocked release.
+Set manifest feature truth from the candidate bytes: once MCP Bridge/AI Access are present, `features.mcp_included=true` even while ChatGPT owner/UI authentication remains blocked. Do not use `mcp_included=false` to represent an unqualified or blocked release.
 
 ## 24. Fresh install / uninstall / reinstall
 
@@ -803,7 +811,7 @@ MCP_FILE_SCOPE=
 MCP_AUDIT=
 MCP_REAL_E2E=
 MCP_INCLUDED_IN_V2_4_0=YES
-CHATGPT_PLUS_USER_AUTH_STATUS=PASS|BLOCKED
+CHATGPT_OWNER_UI_USER_AUTH_STATUS=PASS|BLOCKED
 CONFIGURATION_BUNDLE=
 CONFIGURATION_DIRECT_CLI_PARITY=
 CONFIGURATION_AI_COPY_PASTE_REAL_E2E=

@@ -8,6 +8,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=lib/require-release-target.sh
 source "$ROOT/tests/lib/require-release-target.sh"
 frp_require_release_target
+PUBLIC_MCP_ENDPOINT="https://${FRP_E2E_PUBLIC_HOSTNAME}/mcp"
 
 HEAD="$(git -C "$ROOT" rev-parse HEAD)"
 STATE_DIR="$ROOT/e2e-reports/release-qualification"
@@ -29,15 +30,15 @@ require_pre_release_exhaustive_gates() {
 }
 
 validate_summary_file() {
-  local pass_name="$1" summary="$2" expected_head="$3"
-  python3 - "$summary" "$pass_name" "$expected_head" <<'PY'
+  local pass_name="$1" summary="$2" expected_head="$3" expected_endpoint="$4"
+  python3 - "$summary" "$pass_name" "$expected_head" "$expected_endpoint" <<'PY'
 import hashlib
 import json
 import re
 import sys
 from pathlib import Path
 
-path, pass_name, head = Path(sys.argv[1]), sys.argv[2], sys.argv[3].lower()
+path, pass_name, head, expected_endpoint = Path(sys.argv[1]), sys.argv[2], sys.argv[3].lower(), sys.argv[4]
 if not path.is_file():
     raise SystemExit("ERROR: missing terminal qualification summary %s" % path)
 raw = path.read_bytes()
@@ -52,6 +53,8 @@ if str(doc.get("git_head") or "").lower() != head:
     raise SystemExit("ERROR: qualification summary git_head mismatch")
 if doc.get("final_status") != "PASS":
     raise SystemExit("ERROR: qualification summary final_status must be PASS")
+if doc.get("public_mcp_endpoint") != expected_endpoint:
+    raise SystemExit("ERROR: qualification summary public_mcp_endpoint mismatch")
 gates = doc.get("gates")
 if not isinstance(gates, dict):
     raise SystemExit("ERROR: qualification summary gates must be an object")
@@ -95,7 +98,7 @@ if [[ ! -f "$STATE" ]]; then
     rm -f "$STATE"
     exit 1
   fi
-  pass1_sha="$(validate_summary_file PASS1 "$PASS1_OUT/summary.json" "$HEAD")" || {
+  pass1_sha="$(validate_summary_file PASS1 "$PASS1_OUT/summary.json" "$HEAD" "$PUBLIC_MCP_ENDPOINT")" || {
     rm -f "$STATE"
     exit 1
   }
@@ -126,7 +129,7 @@ fi
 # Revalidate the CLI/feature/scenario gate and require an independent
 # FULL_USER_E2E PASS2 record on the same unchanged HEAD.
 require_pre_release_exhaustive_gates PASS2
-pass1_sha="$(validate_summary_file PASS1 "$PASS1_OUT/summary.json" "$HEAD")" || exit 1
+pass1_sha="$(validate_summary_file PASS1 "$PASS1_OUT/summary.json" "$HEAD" "$PUBLIC_MCP_ENDPOINT")" || exit 1
 if [[ "$pass1_sha" != "${PASS1_SUMMARY_SHA256:-}" ]]; then
   echo "ERROR: retained PASS1 summary digest changed" >&2
   exit 1
@@ -141,22 +144,23 @@ if [[ "$now" != "$HEAD" ]]; then
   echo "ERROR: PASS2 changed HEAD from $HEAD to $now" >&2
   exit 1
 fi
-pass2_sha="$(validate_summary_file PASS2 "$PASS2_OUT/summary.json" "$HEAD")" || exit 1
+pass2_sha="$(validate_summary_file PASS2 "$PASS2_OUT/summary.json" "$HEAD" "$PUBLIC_MCP_ENDPOINT")" || exit 1
 
 evidence_tmp="${EVIDENCE}.tmp.$$"
-python3 - "$PASS1_OUT/summary.json" "$PASS2_OUT/summary.json" "$HEAD"   "$pass1_sha" "$pass2_sha" "$evidence_tmp" <<'PY'
+python3 - "$PASS1_OUT/summary.json" "$PASS2_OUT/summary.json" "$HEAD"   "$pass1_sha" "$pass2_sha" "$PUBLIC_MCP_ENDPOINT" "$evidence_tmp" <<'PY'
 import json
 import sys
 from pathlib import Path
 
 pass1_path, pass2_path = Path(sys.argv[1]), Path(sys.argv[2])
-head, pass1_sha, pass2_sha, out = sys.argv[3], sys.argv[4], sys.argv[5], Path(sys.argv[6])
+head, pass1_sha, pass2_sha, public_mcp_endpoint, out = sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6], Path(sys.argv[7])
 doc = {
     "schema_version": 1,
     "status": "PASS",
     "pass1_head": head,
     "pass2_head": head,
     "final_qualified_head": head,
+    "public_mcp_endpoint": public_mcp_endpoint,
     "pass1_summary_sha256": pass1_sha,
     "pass2_summary_sha256": pass2_sha,
     "pass1_summary": json.loads(pass1_path.read_text(encoding="utf-8")),

@@ -247,7 +247,7 @@ def main() -> int:
         out = outside / "projected-release-manifest.json"
         owner = evidence(
             provenance,
-            chatgpt_plus_owner_ui_acceptance="PASS",
+            chatgpt_owner_ui_acceptance="PASS",
             chatgpt_owner_evidence_sha256="c" * 64,
             chatgpt_owner_evidence_provenance_head=provenance,
         )
@@ -258,6 +258,7 @@ def main() -> int:
         if missing_review.returncode == 0 or "protected owner/UI review" not in missing_review.stderr:
             fail("v2.4.0 projection did not require protected owner/UI review")
         owner["trusted_owner_ui_review"] = "PASS"
+        owner["trusted_owner_ui_evidence_sha256"] = "c" * 64
         ev.write_text(json.dumps(owner), encoding="utf-8")
         approved = run(
             [sys.executable, str(PROJECT), "--root", str(repo), "--evidence", str(ev), "--output", str(out)]
@@ -267,6 +268,8 @@ def main() -> int:
         projected = json.loads(out.read_text(encoding="utf-8"))
         if projected["qualification"].get("trusted_owner_ui_review") != "PASS":
             fail("protected owner/UI review not retained in projected qualification")
+        if projected["qualification"].get("trusted_owner_ui_evidence_sha256") != "c" * 64:
+            fail("protected owner/UI evidence digest not retained in projected qualification")
         print("PASS V240_PROTECTED_OWNER_REVIEW_PROJECTION")
 
     contract = (ROOT / ".engineering" / "release.yaml").read_text(encoding="utf-8")
