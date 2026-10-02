@@ -1566,23 +1566,27 @@ test internet-access source <SOURCE> destination approved-site service https
 
 Before counting any HTTP/HTTPS Internet Access traffic as PASS, configure the **protected host itself** to use the Data Relay Link Internet Access endpoint through the application's normal proxy mechanism.
 
-For shell-based proxy-aware applications on Linux/macOS, the baseline environment is:
+For shell-based proxy-aware applications on Linux/macOS, run the applicable U-006/U-012 application probes in a **dedicated subshell/process** so the parent shell's proxy environment is unchanged when the scenario ends:
 
 ~~~bash
-export http_proxy=http://<DRLINK_SERVER>:<INTERNET_ACCESS_PORT>
-export https_proxy=http://<DRLINK_SERVER>:<INTERNET_ACCESS_PORT>
-export HTTP_PROXY="$http_proxy"
-export HTTPS_PROXY="$https_proxy"
-proxy_bypass="${no_proxy:-}"
-if [ -n "${NO_PROXY:-}" ]; then
-  proxy_bypass="${proxy_bypass:+${proxy_bypass},}${NO_PROXY}"
-fi
-proxy_bypass="${proxy_bypass:+${proxy_bypass},}127.0.0.1,localhost"
-export no_proxy="$proxy_bypass"
-export NO_PROXY="$proxy_bypass"
+(
+  export http_proxy=http://<DRLINK_SERVER>:<INTERNET_ACCESS_PORT>
+  export https_proxy=http://<DRLINK_SERVER>:<INTERNET_ACCESS_PORT>
+  export HTTP_PROXY="$http_proxy"
+  export HTTPS_PROXY="$https_proxy"
+  proxy_bypass="${no_proxy:-}"
+  if [ -n "${NO_PROXY:-}" ]; then
+    proxy_bypass="${proxy_bypass:+${proxy_bypass},}${NO_PROXY}"
+  fi
+  proxy_bypass="${proxy_bypass:+${proxy_bypass},}127.0.0.1,localhost"
+  export no_proxy="$proxy_bypass"
+  export NO_PROXY="$proxy_bypass"
+
+  # Execute the required curl/wget/git/apt probes and evidence capture here.
+)
 ~~~
 
-Merge and preserve the pre-existing `no_proxy` and `NO_PROXY` bypass entries needed for management endpoints or internal services, append localhost, then export the same merged list under both casings so application precedence cannot drop an existing bypass.
+Merge and preserve the pre-existing `no_proxy` and `NO_PROXY` bypass entries needed for management endpoints or internal services, append localhost, then export the same merged list under both casings so application precedence cannot drop an existing bypass. Exiting the dedicated subshell/process must restore the parent environment automatically. If a dedicated process cannot be used, capture both value **and unset state** of `http_proxy`, `https_proxy`, `HTTP_PROXY`, `HTTPS_PROXY`, `no_proxy`, and `NO_PROXY`, and restore those exact states during cleanup before PASS.
 
 If an application requires its own standard proxy configuration instead of inheriting these variables, configure that application to the **same Data Relay Link endpoint** and retain the effective configuration as evidence. Prefer process-scoped or temporary per-test configuration. If the test must change a persistent application proxy setting, capture the pre-test value/state first and restore it exactly (or remove the test-only override when none existed) during scenario cleanup. Cleanup failure is a test failure because stale proxy settings can break later package/application workflows. Do not install a Data Relay Link Agent merely to make Internet Access work.
 

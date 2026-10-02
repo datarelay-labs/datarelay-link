@@ -33,23 +33,27 @@ The base HTTP/HTTPS path remains agentless on the protected host.
 
 The normal user journey is to configure standard application proxy settings on the protected host to point at the Data Relay Link Internet Access endpoint. Data Relay Link must not require its Remote Access Agent on that host merely for HTTP/HTTPS Internet Access.
 
-Representative shell configuration:
+Representative shell configuration uses a dedicated subshell/process so test proxy variables cannot leak into the operator's parent shell:
 
 ```bash
-export http_proxy=http://<DRLINK_SERVER>:<INTERNET_ACCESS_PORT>
-export https_proxy=http://<DRLINK_SERVER>:<INTERNET_ACCESS_PORT>
-export HTTP_PROXY="$http_proxy"
-export HTTPS_PROXY="$https_proxy"
-proxy_bypass="${no_proxy:-}"
-if [ -n "${NO_PROXY:-}" ]; then
-  proxy_bypass="${proxy_bypass:+${proxy_bypass},}${NO_PROXY}"
-fi
-proxy_bypass="${proxy_bypass:+${proxy_bypass},}127.0.0.1,localhost"
-export no_proxy="$proxy_bypass"
-export NO_PROXY="$proxy_bypass"
+(
+  export http_proxy=http://<DRLINK_SERVER>:<INTERNET_ACCESS_PORT>
+  export https_proxy=http://<DRLINK_SERVER>:<INTERNET_ACCESS_PORT>
+  export HTTP_PROXY="$http_proxy"
+  export HTTPS_PROXY="$https_proxy"
+  proxy_bypass="${no_proxy:-}"
+  if [ -n "${NO_PROXY:-}" ]; then
+    proxy_bypass="${proxy_bypass:+${proxy_bypass},}${NO_PROXY}"
+  fi
+  proxy_bypass="${proxy_bypass:+${proxy_bypass},}127.0.0.1,localhost"
+  export no_proxy="$proxy_bypass"
+  export NO_PROXY="$proxy_bypass"
+
+  # Run the proxy-aware application workflow here.
+)
 ```
 
-Merge and preserve the pre-existing `no_proxy` and `NO_PROXY` bypass entries needed for management endpoints or internal services, append localhost, then export the same merged list under both casings so application precedence cannot drop an existing bypass.
+Merge and preserve the pre-existing `no_proxy` and `NO_PROXY` bypass entries needed for management endpoints or internal services, append localhost, then export the same merged list under both casings so application precedence cannot drop an existing bypass. Exiting the dedicated process restores the parent environment. If that isolation is unavailable, capture and restore the exact value-versus-unset state of all six proxy/bypass variables before PASS.
 
 Applications that use an application-specific standard proxy setting may use that instead, but it must resolve to the same Data Relay Link endpoint. Prefer process-scoped or temporary test configuration. If qualification changes persistent application proxy configuration, capture the pre-test value/state and restore it exactly (or remove the test-only override when none existed) before the scenario can PASS. For APT, prefer a temporary `APT_CONFIG` plus temporary source/list/cache paths; only modify persistent `Acquire::http::Proxy` / `Acquire::https::Proxy` configuration when necessary, and then restore the prior bytes/absence during cleanup.
 
