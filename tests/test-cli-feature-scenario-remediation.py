@@ -162,6 +162,16 @@ class CliFeatureScenarioRemediation(unittest.TestCase):
         self.assertIn("check-engine", server_update)
         self.assertNotIn("check-engine", agent_update)
 
+        server_topic = grammar.help_text(["update"], "server") or ""
+        agent_topic = grammar.help_text(["update"], "client") or ""
+        self.assertIn("system update check-engine", server_topic)
+        self.assertNotIn("system update check-engine", agent_topic)
+
+        server_redirect = grammar.context_help(["update"], "server") or ""
+        agent_redirect = grammar.context_help(["update"], "client") or ""
+        self.assertIn("system update check-engine", server_redirect)
+        self.assertNotIn("system update check-engine", agent_redirect)
+
     def test_mcp_tls_purge_metadata_explains_interactive_only_contract(self):
         rows = json.loads((LIB / "frp_cli_final_commands.json").read_text(encoding="utf-8"))
         by_path = {tuple(row["path"]): row for row in rows}
