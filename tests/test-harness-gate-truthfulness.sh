@@ -344,6 +344,10 @@ assert "set internet-access '$apt_rule'" in body
 assert "set internet-access '$git_rule' disabled" in body
 assert "set internet-access '$git_rule' enabled" in body
 assert "curl.exe" in body and "PROXY_CONFIGURATION_VERIFIED=PASS" in body
+cleanup = text[text.find("phase_extended_cleanup()"):text.find("\n# ---------------------------------------------------------------------------\n# Wrong-role", text.find("phase_extended_cleanup()"))]
+assert "pq-github-com" in cleanup and "pq-archive-ubuntu-com" in cleanup
+assert "rm -rf /tmp/pq-apt" in cleanup
+assert "client_cleanup_rc" in cleanup
 # Qualification must not manufacture a closed-network condition by altering routing/firewall state.
 for forbidden in ("iptables ", "nft ", "ufw ", "ip route del", "nmcli connection down"):
     assert forbidden not in body, forbidden

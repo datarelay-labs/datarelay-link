@@ -1959,7 +1959,7 @@ drlink unset service-group pq-web >/dev/null 2>&1 || true
 for name in pq-http pq-https pq-fixed-target pq-normal-target; do
   drlink unset service-object "$name" >/dev/null 2>&1 || true
 done
-for name in pq-example-com pq-any-source pq-blackhole qual-live-mutation; do
+for name in pq-example-com pq-github-com pq-archive-ubuntu-com pq-any-source pq-blackhole qual-live-mutation; do
   drlink unset network-object "$name" >/dev/null 2>&1 || true
 done
 python3 - <<'PY'
@@ -1993,8 +1993,11 @@ fi
 echo EXTENDED_CLEANUP=PASS
 EOF
   local rc=$?
+  # Remove qualification-owned temporary application state from the protected host.
+  pq_ssh frp-e2e-client "rm -rf /tmp/pq-apt /tmp/pq-wget.body /tmp/pq-git.out /tmp/pq-git-deny.out /tmp/pq-git-deny.err" >>"$OUT/extended/cleanup.log" 2>&1
+  local client_cleanup_rc=$?
   set -uo pipefail
-  if [[ "$rc" -eq 0 ]]; then
+  if [[ "$rc" -eq 0 && "$client_cleanup_rc" -eq 0 ]]; then
     pq_gate EXTENDED_CLEANUP PASS
   else
     pq_gate EXTENDED_CLEANUP FAIL
