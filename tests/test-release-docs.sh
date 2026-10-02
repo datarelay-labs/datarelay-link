@@ -250,6 +250,22 @@ grep -q 'test internet-access source <SOURCE> destination <DESTINATION> service 
 grep -q 'system certificate status' "$FULL_E2E_DOC"   || fail "FULL_USER_E2E missing canonical MCP TLS/certificate status path"
 pass "FULL_USER_E2E_CANONICAL_CLI_LEDGER"
 
+half_close_docs=(
+  docs/PRODUCT_MASTER.md
+  docs/FULL_USER_E2E_SCENARIOS.md
+  docs/RELEASE_VALIDATION.md
+  docs/RELEASE_CHECKLIST.md
+)
+for half_close_doc in "${half_close_docs[@]}"; do
+  grep -q 'CUSTOM_TCP_HALF_CLOSE=UNSUPPORTED_FRP_0_71_0' "$half_close_doc" \
+    || fail "Custom TCP half-close limitation missing from $half_close_doc"
+done
+grep -q 'CUSTOM_TCP_HALF_CLOSE_E2E=NOT_APPLICABLE' docs/FULL_USER_E2E_SCENARIOS.md \
+  || fail "FULL_USER_E2E missing Custom TCP half-close applicability"
+grep -q 'CUSTOM_TCP_HALF_CLOSE_E2E=NOT_APPLICABLE' docs/RELEASE_VALIDATION.md \
+  || fail "release validation missing Custom TCP half-close applicability"
+pass "CUSTOM_TCP_HALF_CLOSE_LIMITATION_CONTRACT"
+
 grep -q 'REAL_ENTERPRISE_RESTRICTED_NETWORK_E2E=PASS' docs/RELEASE_VALIDATION.md || fail "missing enterprise-network evidence"
 grep -q 'REAL_SSH_SERVICE_E2E=PASS' docs/RELEASE_VALIDATION.md || fail "missing SSH E2E evidence"
 grep -q 'REAL_END_TO_END_REBOOT_RECOVERY=PASS' docs/RELEASE_VALIDATION.md || fail "missing reboot-recovery evidence"

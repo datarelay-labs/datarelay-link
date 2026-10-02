@@ -272,6 +272,15 @@ established session not implicitly killed by policy edit
 new connection uses new policy immediately
 ```
 
+Custom TCP real traffic remains mandatory, but v2.4 does not claim the EOF-response TCP half-close semantic that official FRP 0.71.0 does not preserve through its TCP proxy. Do not use that subcase as a required PASS condition and do not advertise it as supported.
+
+```text
+CUSTOM_TCP_HALF_CLOSE=UNSUPPORTED_FRP_0_71_0
+CUSTOM_TCP_HALF_CLOSE_E2E=NOT_APPLICABLE
+```
+
+This limitation does not waive ordinary bidirectional traffic, normal close, abrupt disconnect/recovery, endpoint stability, or other applicable Remote Access qualification.
+
 ## 15. MCP protocol/interoperability validation
 
 Immediately before implementation freeze, re-check the current official MCP specification and supported SDK behavior.

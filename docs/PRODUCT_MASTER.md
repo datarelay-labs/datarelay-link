@@ -214,6 +214,18 @@ Agent Host
 
 Remote Service supports TCP and Fixed TCP Service Objects. UDP Remote Service is not supported.
 
+### v2.4 Custom TCP half-close limitation
+
+Custom TCP remains supported for ordinary bidirectional TCP application traffic and normal connection lifecycle behavior. v2.4 does **not** claim the TCP half-close pattern where a client performs a write-half-close, the target waits for EOF, and the target sends its response only after observing that EOF.
+
+The pinned official Relay Engine, FRP 0.71.0, does not preserve that EOF-driven response through a plain TCP proxy, and Data Relay Link does not fork or patch upstream FRP for this release.
+
+```text
+CUSTOM_TCP_HALF_CLOSE=UNSUPPORTED_FRP_0_71_0
+```
+
+Protocols that require response-after-EOF half-close semantics are outside the v2.4 Custom TCP support contract. This limitation does not waive real bidirectional Custom TCP traffic, normal close, abrupt disconnect/recovery, endpoint stability, or other applicable release tests.
+
 When destination is another host, the current Agent Host is the Relay Host.
 
 A policy Rule never creates connectivity.

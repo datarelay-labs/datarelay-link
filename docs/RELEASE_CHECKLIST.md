@@ -368,6 +368,7 @@ CHATGPT_OWNER_UI_ALLOW_DENY=
 - [ ] uninstall zero-residue where purge requested.
 - [ ] reinstall.
 - [ ] Remote Access SSH/HTTP/HTTPS/TCP as claimed.
+- [ ] Custom TCP ordinary bidirectional traffic passes; the v2.4 half-close limitation is documented and is not claimed as supported: `CUSTOM_TCP_HALF_CLOSE=UNSUPPORTED_FRP_0_71_0`.
 - [ ] ROUTED LAN target.
 - [ ] Internet Access curl/wget/git/apt.
 - [ ] denied Internet traffic cannot escape.
