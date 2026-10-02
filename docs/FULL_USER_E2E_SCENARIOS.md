@@ -1562,7 +1562,41 @@ test internet-access source <SOURCE> destination approved-site service https
 
 `test internet-access` is policy/explain evaluation only and must never be mistaken for live connectivity evidence.
 
-From the protected host, use real applications as applicable:
+### U-006 protected-host proxy precondition — hard gate
+
+Before counting any HTTP/HTTPS Internet Access traffic as PASS, configure the **protected host itself** to use the Data Relay Link Internet Access endpoint through the application's normal proxy mechanism.
+
+For shell-based proxy-aware applications on Linux/macOS, run the applicable U-006/U-012 application probes in a **dedicated subshell/process** so the parent shell's proxy environment is unchanged when the scenario ends:
+
+~~~bash
+(
+  export http_proxy=http://<DRLINK_SERVER>:<INTERNET_ACCESS_PORT>
+  export https_proxy=http://<DRLINK_SERVER>:<INTERNET_ACCESS_PORT>
+  export HTTP_PROXY="$http_proxy"
+  export HTTPS_PROXY="$https_proxy"
+  proxy_bypass="${no_proxy:-}"
+  if [ -n "${NO_PROXY:-}" ]; then
+    proxy_bypass="${proxy_bypass:+${proxy_bypass},}${NO_PROXY}"
+  fi
+  proxy_bypass="${proxy_bypass:+${proxy_bypass},}127.0.0.1,localhost"
+  export no_proxy="$proxy_bypass"
+  export NO_PROXY="$proxy_bypass"
+
+  # Execute the required curl/wget/git/apt probes and evidence capture here.
+)
+~~~
+
+Merge and preserve the pre-existing `no_proxy` and `NO_PROXY` bypass entries needed for management endpoints or internal services, append localhost, then export the same merged list under both casings so application precedence cannot drop an existing bypass. The dedicated subshell/process is **mandatory** for these shell-based qualification probes; do not export the test proxy variables directly into a long-lived operator/test shell. Exiting or interrupting the dedicated process must leave the parent shell's `http_proxy`, `https_proxy`, `HTTP_PROXY`, `HTTPS_PROXY`, `no_proxy`, and `NO_PROXY` states unchanged.
+
+If an application requires its own standard proxy configuration instead of inheriting these variables, configure that application to the **same Data Relay Link endpoint** and retain the effective configuration as evidence. Prefer process-scoped or temporary per-test configuration. If the test must change a persistent application proxy setting, capture the pre-test value/state first and restore it exactly (or remove the test-only override when none existed) during scenario cleanup. Cleanup failure is a test failure because stale proxy settings can break later package/application workflows. Do not install a Data Relay Link Agent merely to make Internet Access work.
+
+Do not disable or reconfigure the host's direct Internet path merely to prove a test precondition. The E2E requirement is to verify that the protected host's **effective application proxy configuration** points to the expected Data Relay Link Internet Access endpoint and that the tested application traffic is actually observed through that proxy path.
+
+Retain evidence of the effective proxy variables/application configuration and the Data Relay Link-side request/source observation for the same test run.
+
+A one-off `curl -x ...` probe may be useful diagnostic evidence, but **does not by itself satisfy** the protected-host proxy-configuration or real-application gate.
+
+From the protected host, exercise every applicable proxy-aware application below through its normal configuration:
 
 ~~~text
 curl
@@ -1571,13 +1605,25 @@ git
 apt
 ~~~
 
+Minimum application evidence:
+
+- `curl`: approved HTTP and HTTPS/CONNECT succeed through the configured proxy; paired unapproved destination and wrong-port cases are denied;
+- `wget`: a real HTTP/HTTPS retrieval or spider/check succeeds only for an approved destination through the configured proxy;
+- `git`: a real HTTPS operation such as `git ls-remote` against an approved repository/service succeeds through the configured proxy and a policy-denied destination fails;
+- `apt`: repository FQDNs required by the selected Ubuntu/Debian repository path are explicitly allowed; a strict update such as `apt-get -o APT::Update::Error-Mode=any update` succeeds through Data Relay Link; removing at least one actually required repository destination makes the strict update fail because of Internet Access policy; restoring the destination makes the same workflow succeed again. If the target APT version does not support `APT::Update::Error-Mode=any`, explicitly detect any failed required index and treat it as FAIL while correlating the failure with the proxy audit.
+
+For `apt`, use the host/application's normal proxy configuration (`HTTP_PROXY`/`HTTPS_PROXY` when honored, or standard APT `Acquire::http::Proxy` / `Acquire::https::Proxy` configuration) pointing to the same Data Relay Link Internet Access endpoint. Prefer a test-scoped APT config/state (for example via `APT_CONFIG` and temporary source/list/cache paths) so the system configuration is not mutated. If a persistent APT proxy file must be changed, save and restore its prior bytes/absence before the scenario can PASS. Do not add broad wildcards merely to make package update pass.
+
 Verify:
 
-- approved destination/port works;
-- unapproved destination fails;
+- approved destination/port works through the configured Data Relay Link proxy;
+- unapproved destination fails through the same proxy path;
 - wrong destination port fails;
+- the effective application proxy configuration points to the expected Data Relay Link Internet Access endpoint and the observed request traverses that proxy path;
 - removing a destination required by an application makes that application fail through policy;
+- restoring the policy makes the same application workflow recover;
 - broad wildcard expansion is not used just to obtain PASS;
+- Server-side audit/evidence shows the real proxy request and observed source used for policy evaluation;
 - when a Managed Host is used as the Internet Access source, compare the source address assumed by `test internet-access` with the actual proxy peer source seen by the Server; if NAT/source mismatch prevents Managed Host identity from being proven, a matching BLACKLIST destination/service path must DENY fail-closed rather than fall through to unmatched ALLOW.
 
 ## U-007 — AI/MCP authorized and denied use — MANDATORY for v2.4.0
@@ -1708,6 +1754,10 @@ In addition to U-006, explicitly exercise every currently supported Internet Acc
 - real package/update workflow.
 
 For each allowed path include a paired denied path using wrong source, destination, or service. Discover and use the public policy/explain helper (`test internet-access source <SOURCE> destination <DESTINATION> service <SERVICE>`) and then prove the same outcome with the real application client; a passing explain result alone is not traffic evidence.
+
+U-012 inherits the U-006 protected-host proxy hard gate. HTTP/HTTPS coverage must use the protected host's configured proxy path, not only per-command `-x/--proxy` overrides. `curl` coverage does not substitute for applicable `wget`, `git`, or `apt` coverage. Fixed TCP is a separate path for proxy-unaware applications and does not satisfy the HTTP/HTTPS proxy-aware application matrix.
+
+For the package/update workflow, retain evidence of the exact repository FQDNs used, the effective proxy configuration, successful update through Data Relay Link, policy-caused failure after removing a required destination, and successful recovery after restoring it. The final result must include `PROXY_CONFIGURATION_VERIFIED=PASS` and `PROXY_APPLICATION_PATH=PASS`; do not require disabling the host's direct Internet path.
 
 ## U-013 — Cross-surface terminology, clarity, and operator-guidance consistency — MANDATORY
 

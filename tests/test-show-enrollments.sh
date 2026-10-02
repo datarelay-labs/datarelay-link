@@ -78,15 +78,44 @@ grep -q "^ID      : $MANUAL_ID$" "$WORK/public-detail.out" || fail "PUBLIC_SHOW_
 pass "PUBLIC_ENROLLMENT_READS_USE_LIFECYCLE_AUTHORITY"
 python3 "$CREATE" --client-name public-unset --note 'public unset' >"$WORK/public-unset-create.out"
 PUBLIC_UNSET_ID="$(awk '/^Enrollment ID:/{print $3; exit}' "$WORK/public-unset-create.out")"
-FRP_CTL_BIN_DIR="$ROOT/tools" FRP_CTL_TEST_ROOT="$TREE" FRP_DEPLOY_TEST_ROOT="$TREE" \
+if FRP_CTL_BIN_DIR="$ROOT/tools" FRP_CTL_TEST_ROOT="$TREE" FRP_DEPLOY_TEST_ROOT="$TREE" \
+  "$ROOT/tools/frpctl" unset enrollment "$PUBLIC_UNSET_ID" </dev/null \
+  >"$WORK/public-unset-no-confirm.out" 2>"$WORK/public-unset-no-confirm.err"; then
+  fail "PUBLIC_UNSET_ENROLLMENT_REQUIRES_CONFIRMATION"
+fi
+[[ "$(python3 "$ENROLL" "$PUBLIC_UNSET_ID" --state-only)" == "pending" ]] \
+  || fail "PUBLIC_UNSET_ENROLLMENT_NO_CONFIRM_MUTATED"
+grep -q "requires confirmation" "$WORK/public-unset-no-confirm.err" \
+  || fail "PUBLIC_UNSET_ENROLLMENT_CONFIRMATION_GUIDANCE"
+
+if printf '\n' | FRP_CTL_BIN_DIR="$ROOT/tools" FRP_CTL_TEST_ROOT="$TREE" FRP_DEPLOY_TEST_ROOT="$TREE" \
+  "$ROOT/tools/frpctl" unset enrollment "$PUBLIC_UNSET_ID" >"$WORK/public-unset-default-no.out"; then
+  fail "PUBLIC_UNSET_ENROLLMENT_DEFAULT_NO_RC"
+fi
+[[ "$(python3 "$ENROLL" "$PUBLIC_UNSET_ID" --state-only)" == "pending" ]] \
+  || fail "PUBLIC_UNSET_ENROLLMENT_DEFAULT_NO_MUTATED"
+grep -q "Cancelled." "$WORK/public-unset-default-no.out" \
+  || fail "PUBLIC_UNSET_ENROLLMENT_DEFAULT_NO_GUIDANCE"
+
+printf 'y\n' | FRP_CTL_BIN_DIR="$ROOT/tools" FRP_CTL_TEST_ROOT="$TREE" FRP_DEPLOY_TEST_ROOT="$TREE" \
   "$ROOT/tools/frpctl" unset enrollment "$PUBLIC_UNSET_ID" >"$WORK/public-unset-revoke.out"
 [[ "$(python3 "$ENROLL" "$PUBLIC_UNSET_ID" --state-only)" == "revoked" ]] \
   || fail "PUBLIC_UNSET_ENROLLMENT_REVOKE"
-FRP_ENROLLMENT_PURGE_YES=yes FRP_CTL_BIN_DIR="$ROOT/tools" FRP_CTL_TEST_ROOT="$TREE" FRP_DEPLOY_TEST_ROOT="$TREE" \
+
+if FRP_ENROLLMENT_PURGE_YES=yes FRP_CTL_BIN_DIR="$ROOT/tools" FRP_CTL_TEST_ROOT="$TREE" FRP_DEPLOY_TEST_ROOT="$TREE" \
+  "$ROOT/tools/frpctl" unset enrollment "$PUBLIC_UNSET_ID" </dev/null \
+  >"$WORK/public-unset-purge-no-confirm.out" 2>"$WORK/public-unset-purge-no-confirm.err"; then
+  fail "PUBLIC_UNSET_ENROLLMENT_PURGE_REQUIRES_CONFIRMATION"
+fi
+[[ "$(python3 "$ENROLL" "$PUBLIC_UNSET_ID" --state-only)" == "revoked" ]] \
+  || fail "PUBLIC_UNSET_ENROLLMENT_PURGE_NO_CONFIRM_MUTATED"
+
+printf 'y\n' | FRP_ENROLLMENT_PURGE_YES=yes FRP_CTL_BIN_DIR="$ROOT/tools" FRP_CTL_TEST_ROOT="$TREE" FRP_DEPLOY_TEST_ROOT="$TREE" \
   "$ROOT/tools/frpctl" unset enrollment "$PUBLIC_UNSET_ID" >"$WORK/public-unset-purge.out"
 if python3 "$ENROLL" "$PUBLIC_UNSET_ID" --state-only >/dev/null 2>&1; then
   fail "PUBLIC_UNSET_ENROLLMENT_PURGE"
 fi
+pass "PUBLIC_UNSET_ENROLLMENT_CONFIRMATION"
 pass "PUBLIC_UNSET_ENROLLMENT_LIFECYCLE_AUTHORITY"
 ! grep -Fq "$MANUAL_SECRET" "$WORK/list1.out" || fail "ENROLLMENT_SECRET_NOT_SHOWN"
 ! grep -Fq "$MANUAL_SECRET" "$WORK/manual-detail.out" || fail "ENROLLMENT_DETAIL_SECRET_NOT_SHOWN"

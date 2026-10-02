@@ -1541,12 +1541,12 @@ try:
 finally:
     for rule in reversed(created_rules):
         try:
-            v24.unset_access_rule(plane, "internet", rule)
+            v24.unset_access_rule(plane, "internet", rule, confirm=True)
         except Exception as exc:
             print("cleanup_rule", rule, exc)
     for obj in reversed(created_objects):
         try:
-            v24.unset_network_object(plane, obj)
+            v24.unset_network_object(plane, obj, confirm=True)
         except Exception as exc:
             print("cleanup_object", obj, exc)
     plane.close()

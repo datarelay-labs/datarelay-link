@@ -2511,7 +2511,7 @@ def set_network_object(
     raise ControlPlaneError("Interactive Network Object wizard requires a TTY session")
 
 
-def unset_network_object(plane_db, name: str) -> dict:
+def unset_network_object(plane_db, name: str, *, confirm: Optional[bool] = None) -> dict:
     name = validate_public_name(name, "Network Object name")
     obj = plane_db.get_object(name)
     if not obj:
@@ -2532,7 +2532,7 @@ def unset_network_object(plane_db, name: str) -> dict:
             "ERROR:\nNetwork Object '%s' is still referenced.\n\n%s\n\nNo changes were applied."
             % (name, "\n".join(lines))
         )
-    return plane_db.unset_object(name)
+    return plane_db.unset_object(name, confirm=confirm, public_label="Network Object")
 
 
 def list_network_objects(plane_db) -> list[dict]:
@@ -3076,7 +3076,7 @@ def format_references_view(refs: list[dict]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def unset_service_object(plane_db, name: str) -> dict:
+def unset_service_object(plane_db, name: str, *, confirm: Optional[bool] = None) -> dict:
     name = validate_public_name(name, "Service Object name")
     obj = get_service_object(plane_db, name)
     if not obj:
@@ -3092,7 +3092,19 @@ def unset_service_object(plane_db, name: str) -> dict:
         plane_db.conn.execute("DELETE FROM service_objects WHERE id = ?", (obj["id"],))
         return {"entity": {"type": "service-object", "id": obj["id"], "name": name}, "operation": "delete"}
 
-    return plane_db._mutate("unset service-object %s" % name, "delete service object", write)
+    return plane_db._mutate(
+        "unset service-object %s" % name,
+        "delete service object",
+        write,
+        impact={
+            "kind": "destructive-delete",
+            "resource": "Service Object",
+            "name": name,
+            "warning": "This permanently deletes the Service Object.",
+            "requires_confirmation": True,
+        },
+        confirm=confirm,
+    )
 
 
 def set_service_group(
@@ -3169,7 +3181,7 @@ def set_service_group(
     )
 
 
-def unset_service_group(plane_db, name: str) -> dict:
+def unset_service_group(plane_db, name: str, *, confirm: Optional[bool] = None) -> dict:
     name = validate_public_name(name, "Service Group name")
     grp = get_service_group(plane_db, name)
     if not grp:
@@ -3187,7 +3199,19 @@ def unset_service_group(plane_db, name: str) -> dict:
         plane_db.conn.execute("DELETE FROM service_groups WHERE id = ?", (grp["id"],))
         return {"entity": {"type": "service-group", "id": grp["id"], "name": name}, "operation": "delete"}
 
-    return plane_db._mutate("unset service-group %s" % name, "delete service group", write)
+    return plane_db._mutate(
+        "unset service-group %s" % name,
+        "delete service group",
+        write,
+        impact={
+            "kind": "destructive-delete",
+            "resource": "Service Group",
+            "name": name,
+            "warning": "This permanently deletes the Service Group.",
+            "requires_confirmation": True,
+        },
+        confirm=confirm,
+    )
 
 
 def expand_service_ref(plane_db, token: str) -> list[sqlite3.Row]:
@@ -3314,7 +3338,7 @@ def ai_identity_references(plane_db, name: str) -> list[dict]:
     return refs
 
 
-def unset_permission_object(plane_db, name: str) -> dict:
+def unset_permission_object(plane_db, name: str, *, confirm: Optional[bool] = None) -> dict:
     name = validate_public_name(name, "Permission Object name")
     obj = get_permission_object(plane_db, name)
     if not obj:
@@ -3334,10 +3358,22 @@ def unset_permission_object(plane_db, name: str) -> dict:
         plane_db.conn.execute("DELETE FROM permission_objects WHERE id = ?", (obj["id"],))
         return {"entity": {"type": "permission-object", "id": obj["id"], "name": name}, "operation": "delete"}
 
-    return plane_db._mutate("unset permission-object %s" % name, "delete permission object", write)
+    return plane_db._mutate(
+        "unset permission-object %s" % name,
+        "delete permission object",
+        write,
+        impact={
+            "kind": "destructive-delete",
+            "resource": "Permission Object",
+            "name": name,
+            "warning": "This permanently deletes the Permission Object.",
+            "requires_confirmation": True,
+        },
+        confirm=confirm,
+    )
 
 
-def unset_permission_group(plane_db, name: str) -> dict:
+def unset_permission_group(plane_db, name: str, *, confirm: Optional[bool] = None) -> dict:
     name = validate_public_name(name, "Permission Group name")
     grp = get_permission_group(plane_db, name)
     if not grp:
@@ -3355,7 +3391,19 @@ def unset_permission_group(plane_db, name: str) -> dict:
         plane_db.conn.execute("DELETE FROM permission_groups WHERE id = ?", (grp["id"],))
         return {"entity": {"type": "permission-group", "id": grp["id"], "name": name}, "operation": "delete"}
 
-    return plane_db._mutate("unset permission-group %s" % name, "delete permission group", write)
+    return plane_db._mutate(
+        "unset permission-group %s" % name,
+        "delete permission group",
+        write,
+        impact={
+            "kind": "destructive-delete",
+            "resource": "Permission Group",
+            "name": name,
+            "warning": "This permanently deletes the Permission Group.",
+            "requires_confirmation": True,
+        },
+        confirm=confirm,
+    )
 
 
 def set_permission_object(
