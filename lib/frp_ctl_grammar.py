@@ -3166,11 +3166,17 @@ def _match_unset(tokens, role, names=None):
                 "Missing enrollment id.",
                 ["unset enrollment <ENROLLMENT>"],
             )
+        if len(tokens) > 3:
+            return {
+                "status": "error",
+                "exit_code": 2,
+                "message": "Unexpected arguments.\n\nRun:\n  unset enrollment <ENROLLMENT>",
+            }
         return {
             "status": "ok",
             "action": "unset_enrollment",
             "id": tokens[2],
-            "passthrough": tokens[3:],
+            "passthrough": [],
         }
     if resource == "client":
         if len(tokens) < 3:

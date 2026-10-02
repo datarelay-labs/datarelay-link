@@ -2515,6 +2515,8 @@ unset mcp-tls purge
 
 `unset mcp-tls` clears TLS intent while retaining DRLink-owned certificate and ACME account material. `unset mcp-tls purge` removes that retained material only after interactive y/N confirmation; non-interactive use fails closed.
 
+`unset enrollment <ENROLLMENT>`, `unset network-object`, `unset network-group`, `unset service-object`, `unset service-group`, `unset permission-object`, `unset permission-group`, and `unset ai-identity` are destructive lifecycle operations and require explicit `y/N` confirmation after existence/reference validation. Default is No and cancellation applies no change. These are normal `y_n` flows rather than TTY-only flows, so controlled automation may provide `y`/`yes` on stdin; there is no public hidden environment-variable or `--yes` bypass for these commands. Policy Rule deletion uses effect-aware `conditional_y_n`: confirmation is required when the calculated change broadens or materially narrows access, while full `unset <plane>-access policy` reset always requires explicit confirmation.
+
 Bare `unset managed-host <HOST>` remains the reference-safe Managed Host retirement operation. `unset managed-host <HOST> group <GROUP>` removes only inventory membership. `unset managed-host-group <GROUP>` requires interactive y/N confirmation and does not expose a public `--yes` bypass.
 
 ---
