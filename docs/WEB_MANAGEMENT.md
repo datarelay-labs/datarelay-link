@@ -1,7 +1,9 @@
 # Data Relay Link — Optional Full Web Management
 
-> **Status:** Planned post-v2.4 design specification
+> **Status:** Planned Data Relay Link 3.0.0 design specification
+> **Target release:** **3.0.0**
 > **Roadmap:** Phase DL-16
+> **Version boundary:** 2.x = CLI is the only complete human management surface; 3.0 = first Full Web Management generation
 > **Product authority:** `PRODUCT_MASTER.md`
 > **Control-plane authority:** `CONTROL_PLANE_ARCHITECTURE.md`
 > **Current CLI authority:** `DATA_RELAY_LINK_CLI_AI_MASTER_v2.4_FINAL.md`
@@ -881,9 +883,10 @@ the lightweight headless Core.
 
 **Non-goals:** central SaaS, alternate database, monitoring platform, or CLI replacement.
 
-**Affected public contract:** post-v2.4 Web UX, management identity/roles, optional package
-lifecycle, and browser-visible equivalents of supported management capability. Current
-v2.4 CLI grammar is unchanged by this design.
+**Affected public contract:** Data Relay Link 3.0 Web UX, management identity/roles,
+optional package lifecycle, and browser-visible equivalents of supported management
+capability. The 2.x CLI contract remains fully supported and the current v2.4 CLI grammar
+is unchanged by this design.
 
 **State/migration impact:** future implementation may add Core-owned operator identity,
 role, and Web configuration/session metadata with ordered SQLite migration. Existing

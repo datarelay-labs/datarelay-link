@@ -1295,7 +1295,7 @@ docs/CLI_REFERENCE.md
 
 The old public nouns `acl`, `service-profile`, and `internet-profile` are not canonical v2.4.0 target resources.
 
-### 46.1 Post-v2.4 shared management-surface boundary
+### 46.1 Data Relay Link 3.0 shared management-surface boundary
 
 Optional Full Web Management must not implement a second control plane.
 
@@ -1343,7 +1343,7 @@ Security boundary:
 - broadening/destructive changes require the same impact preview and confirmation semantics as CLI;
 - Web API endpoints are not a bypass around policy, role, reference, or concurrency checks.
 
-Detailed post-v2.4 implementation and UX requirements are defined in
+Detailed Data Relay Link 3.0 implementation and UX requirements are defined in
 `docs/WEB_MANAGEMENT.md`.
 
 ## 47. Security-impact confirmation
@@ -1447,7 +1447,7 @@ automatic firewall rule changes
 automatic DNS changes
 ```
 
-Optional Full Web Management is now a planned post-v2.4 additive phase; the remaining items stay demand-driven. None of them may replace the local SQLite control plane or the current public object and policy identity model. Web Management follows the shared boundary in section 46.1 and `docs/WEB_MANAGEMENT.md`.
+Optional Full Web Management is the planned Data Relay Link 3.0.0 product-generation phase. The 2.x line remains headless with CLI as the only complete human management surface; the remaining items stay demand-driven. None of them may replace the local SQLite control plane or the current public object and policy identity model. Web Management follows the shared boundary in section 46.1 and `docs/WEB_MANAGEMENT.md`.
 
 ## 51. Architecture freeze rule
 

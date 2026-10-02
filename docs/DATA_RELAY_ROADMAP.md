@@ -30,11 +30,15 @@ AI-generated canonical CLI / copy-paste bundle workflow
 bounded Zero-Touch issuance (max 10/request and active unused)
 ```
 
-Planned additive post-v2.4 work:
+Planned next product generation:
 
 ```text
-Optional Full Web Management (Phase DL-16)
+Data Relay Link 3.0.0
+→ Optional Full Web Management (Phase DL-16)
 ```
+
+The 2.x line remains the headless generation where CLI is the only complete human management surface. Full Web Management is not
+promoted into a 2.x stable release.
 
 Can remain demand-driven later work:
 
@@ -466,9 +470,19 @@ update public docs
 verify clean stable install/bootstrap/update
 ```
 
-## 18. Phase DL-16 — Optional Full Web Management
+## 18. Phase DL-16 — Data Relay Link 3.0 Optional Full Web Management
 
-**Status:** Planned post-v2.4 additive phase.
+**Status:** Planned **v3.0.0** product-generation phase.
+
+Version boundary:
+
+```text
+2.x   headless Core + CLI as the only full human management surface
+3.0.0 headless Core + complete CLI + Optional Full Web Management
+```
+
+3.0 is a deliberate product-generation boundary rather than the minimum SemVer change
+required by technical compatibility.
 
 Goal:
 
@@ -520,7 +534,7 @@ including CLI/Web semantic parity, no alternate authoritative state, Web-disable
 operation, Web-service failure isolation, policy-explain correctness, mutation audit,
 Agent-offline truthfulness, and remote-exposure security.
 
-## 19. Post-v2.4 demand-driven work
+## 19. Later demand-driven work
 
 Potential later additions only with real demand:
 

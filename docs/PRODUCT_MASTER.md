@@ -41,10 +41,23 @@ Data Relay Link Core
 ```
 
 The Core is headless and fully operable without a Web UI. The CLI remains a complete
-administrative surface and recovery path. When the optional Web Management package is
-installed, it provides full supported management capability plus dashboard,
-visualization, policy explanation, and guided troubleshooting; it is not a reduced
-read-only companion and it does not become authoritative state.
+administrative surface and recovery path throughout the product line.
+
+Version-generation rule:
+
+```text
+Data Relay Link 2.x
+= headless Core + complete CLI as the only full human management surface
+= Full Web Management not part of the stable supported surface
+
+Data Relay Link 3.0+
+= same headless Core + complete CLI
++ separately installable Optional Full Web Management
+```
+
+When the 3.0 Web Management package is installed, it provides full supported management
+capability plus dashboard, visualization, policy explanation, and guided troubleshooting;
+it is not a reduced read-only companion and it does not become authoritative state.
 
 ## 2. Product family
 
@@ -356,8 +369,8 @@ ConfigurationBundle
 
 All converge on one Change Plan.
 
-Post-v2.4 Optional Full Web Management is an additional presentation/input surface,
-not an alternate mutation engine:
+Data Relay Link 3.0 Optional Full Web Management is an additional presentation/input
+surface, not an alternate mutation engine:
 
 ```text
 CLI / Wizard ────────────┐
@@ -595,7 +608,7 @@ CONTROL_PLANE_ARCHITECTURE.md
   internal architecture/schema history; public semantics must remain consistent with the Master
 
 WEB_MANAGEMENT.md
-  post-v2.4 Optional Full Web Management architecture, UX, security, feature, and acceptance contract
+  Data Relay Link 3.0 Optional Full Web Management architecture, UX, security, feature, and acceptance contract
 
 VERSION_POLICY.md / RELEASE_CHECKLIST.md / RELEASE_VALIDATION.md
   version and qualification governance
@@ -627,9 +640,11 @@ No other document may redefine the public CLI/AI model independently.
 
 **Reason:** Do not invent per-host cryptographic identity for an agentless proxy, and do not let source-identity ambiguity silently broaden access.
 
-### 2026-10 — Optional Full Web Management
+### 2026-10 — Data Relay Link 3.0 Optional Full Web Management
 
-**Decision:** Keep Data Relay Link Core headless and fully operable through the CLI, while adding a separately installable full Web management surface after v2.4.
+**Decision:** Keep the entire 2.x line as the headless generation where CLI is the only complete human management surface. Data Relay Link 3.0.0 is the first stable release target with a separately installable Full Web Management surface. The 3.0 Core remains headless and fully operable through the CLI when Web Management is absent or stopped.
+
+**Versioning rule:** This MAJOR boundary is an intentional product-generation decision, even though an optional Web package could otherwise be implemented in a backward-compatible way. The new supported browser management experience is what distinguishes the 3.x generation from 2.x.
 
 **Capability rule:** Web Management must cover the supported management capabilities available through the CLI and add dashboard, visualization, policy simulation/decision trace, guided installation/enrollment, audit exploration, and troubleshooting workflows.
 
