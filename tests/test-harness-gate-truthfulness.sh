@@ -313,4 +313,75 @@ print("ok")
 PY
 pass "shorturl -k hostname false-positive guard"
 
+# --- Controlled Egress real-app qualification must prove configured proxy traversal. ---
+python3 - "$ROOT/tests/run-prod-qual-extended.sh" <<'PY' || fail "real-app egress qualification contract incomplete"
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+start = text.find("phase_egress_allow_deny()")
+end = text.find("\n# ---------------------------------------------------------------------------\n# Resource sampler", start)
+assert start >= 0 and end > start
+body = text[start:end]
+for marker in (
+    "PROXY_CONFIGURATION_VERIFIED",
+    "PROXY_APPLICATION_PATH",
+    "WGET_REAL_PROXY",
+    "GIT_REAL_PROXY",
+    "APT_REAL_PROXY",
+    "EGRESS_GIT_POLICY_DENY_RECOVERY",
+    "EGRESS_APT_POLICY_DENY_RECOVERY",
+    "APT::Update::Error-Mode=any",
+    "archive.ubuntu.com",
+    "github.com",
+    "/var/log/drlink/egress/connections.jsonl",
+    'record.get("source_ip")',
+):
+    assert marker in body, marker
+assert 'type fqdn value github.com' in body
+assert 'type fqdn value archive.ubuntu.com' in body
+assert "unset internet-access '$apt_rule'" in body
+assert "set internet-access '$apt_rule'" in body
+assert "set internet-access '$git_rule' disabled" in body
+assert "set internet-access '$git_rule' enabled" in body
+assert "curl.exe" in body and "PROXY_CONFIGURATION_VERIFIED=PASS" in body
+cleanup = text[text.find("phase_extended_cleanup()"):text.find("\n# ---------------------------------------------------------------------------\n# Wrong-role", text.find("phase_extended_cleanup()"))]
+assert "pq-github-com" in cleanup and "pq-archive-ubuntu-com" in cleanup
+assert "rm -rf /tmp/pq-apt" in cleanup
+assert "client_cleanup_rc" in cleanup
+assert "audit_snapshot_rc" in body and "audit_snapshot_ok" in body
+assert "PROXY_AUDIT_SNAPSHOT=FAIL" in body
+assert "refusing historical evidence fallback" in body
+assert "audit_start=0" not in body
+assert 'cfg.get("egress_conn_log_file")' in body
+assert "urlsafe_b64encode" in body and "urlsafe_b64decode" in body
+assert "egress connection log path changed after snapshot" in body
+assert "set no_proxy=&& set NO_PROXY=&&" not in body
+assert "WINDOWS_PROXY_APPLICATION_PATH=PASS" in body
+assert "missing fresh Windows proxy traversal audit record" in body
+# Destructive public cleanup must honor the y/N contract introduced by the
+# final CLI reconciliation. Non-interactive qualification may not rely on
+# EOF/default cancellation or silently bypass the public command.
+for line in text.splitlines():
+    for resource in (
+        "network-object",
+        "network-group",
+        "service-object",
+        "service-group",
+        "permission-object",
+        "permission-group",
+        "ai-identity",
+        "enrollment",
+    ):
+        calls = line.count(f"drlink unset {resource}")
+        if not calls:
+            continue
+        confirms = line.count("printf 'y") + line.count("pq_ssh_confirm_yes")
+        assert confirms >= calls, line
+# Qualification must not manufacture a closed-network condition by altering routing/firewall state.
+for forbidden in ("iptables ", "nft ", "ufw ", "ip route del", "nmcli connection down"):
+    assert forbidden not in body, forbidden
+print("ok")
+PY
+pass "real-app egress proxy/config/audit/deny-recovery contract"
+
 echo "PASS harness gate truthfulness"
