@@ -44,6 +44,7 @@ jobs:
       pass2_head: ${{ steps.validate.outputs.pass2_head }}
       final_head: ${{ steps.validate.outputs.final_head }}
       sha256: ${{ steps.validate.outputs.sha256 }}
+      mcp_endpoint: ${{ steps.validate.outputs.mcp_endpoint }}
     steps:
       - name: Reject mutable ref input
         env:
@@ -93,6 +94,7 @@ jobs:
             echo "pass2_head=" >>"$GITHUB_OUTPUT"
             echo "final_head=" >>"$GITHUB_OUTPUT"
             echo "sha256=" >>"$GITHUB_OUTPUT"
+            echo "mcp_endpoint=" >>"$GITHUB_OUTPUT"
             exit 0
           fi
           [[ -n "$QUALIFICATION_EVIDENCE_B64" ]] || {
@@ -108,6 +110,7 @@ jobs:
           echo "pass2_head=$(sed -n 's/^QUALIFICATION_PASS2_HEAD=//p' "$result")" >>"$GITHUB_OUTPUT"
           echo "final_head=$(sed -n 's/^QUALIFICATION_FINAL_HEAD=//p' "$result")" >>"$GITHUB_OUTPUT"
           echo "sha256=$(sed -n 's/^QUALIFICATION_EVIDENCE_SHA256=//p' "$result")" >>"$GITHUB_OUTPUT"
+          echo "mcp_endpoint=$(sed -n 's/^QUALIFICATION_MCP_ENDPOINT=//p' "$result")" >>"$GITHUB_OUTPUT"
 
   stable-qualification-approval:
     needs: qualification-evidence-validation
@@ -154,16 +157,22 @@ jobs:
         id: validate
         env:
           OWNER_EVIDENCE_B64: ${{ inputs.qualification_chatgpt_owner_evidence_b64 }}
+          QUALIFICATION_MCP_ENDPOINT: ${{ needs.qualification-evidence-validation.outputs.mcp_endpoint }}
         run: |
           set -euo pipefail
           [[ -n "$OWNER_EVIDENCE_B64" ]] || {
             echo "ERROR: retained ChatGPT owner/UI evidence is required for stable v2.4.0" >&2
             exit 1
           }
+          [[ -n "$QUALIFICATION_MCP_ENDPOINT" ]] || {
+            echo "ERROR: qualified public MCP endpoint is missing from qualification evidence" >&2
+            exit 1
+          }
           evidence="$RUNNER_TEMP/chatgpt-owner-acceptance.json"
           result="$RUNNER_TEMP/chatgpt-owner-acceptance.check"
           printf '%s' "$OWNER_EVIDENCE_B64" | base64 --decode >"$evidence"
-          ./scripts/check-chatgpt-owner-acceptance.py --root . --evidence "$evidence" | tee "$result"
+          ./scripts/check-chatgpt-owner-acceptance.py --root . --evidence "$evidence" \
+            --expected-endpoint "$QUALIFICATION_MCP_ENDPOINT" | tee "$result"
           evidence_sha="$(sha256sum "$evidence" | awk '{print $1}')"
           evidence_head="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["core_provenance_head"])' "$evidence")"
           client_plan="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["client_plan"])' "$evidence")"

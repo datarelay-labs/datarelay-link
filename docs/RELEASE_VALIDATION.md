@@ -319,9 +319,13 @@ captured_at=<offset-aware ISO-8601 timestamp>
 evidence_refs=<one or more retained owner/UI evidence references>
 ```
 
-Missing, stale, machine-only, loopback/raw-IP, or incomplete evidence blocks
-qualification before the destructive multi-host matrix begins. For this gate,
-`stale` includes evidence whose `captured_at` predates the exact provenance
+Missing, stale, machine-only, loopback/raw-IP, endpoint-mismatched, or incomplete evidence blocks
+qualification before the destructive multi-host matrix begins. The production qualification derives
+`PUBLIC_MCP_ENDPOINT=https://<FRP_E2E_PUBLIC_HOSTNAME>/mcp` only after the release-target DNS/IP/alias
+preflight passes, stores that exact endpoint in both PASS summaries and the combined qualification
+evidence package, and requires the owner/UI evidence `mcp_endpoint` to match it exactly. Stable
+attestation revalidates the same endpoint binding from the retained qualification package before the
+protected owner/UI approval. For this gate, `stale` includes evidence whose `captured_at` predates the exact provenance
 commit; timestamps more than 10 minutes in the future are also rejected. The cited official OpenAI support check must be no more than 30 days old at evidence capture time. The protected `stable-release-owner-ui` reviewer must confirm that the recorded `client_plan`/`client_surface` is supported by the cited official source; the evidence checker deliberately does not hard-code a plan allowlist that can go stale.
 The workflow validates and hashes that owner/UI evidence before protected approval. The approval records the exact reviewed SHA256, and stable attestation fails closed if the reviewed digest differs from the evidence digest.
 The qualification report records `MCP_REAL_E2E`, `CHATGPT_OWNER_UI_USER_AUTH`,

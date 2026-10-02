@@ -87,6 +87,7 @@ def validate_evidence(
     manifest: dict,
     provenance_committed_at: datetime | None = None,
     now: datetime | None = None,
+    expected_mcp_endpoint: str | None = None,
 ) -> list[str]:
     errs: list[str] = []
     if not isinstance(data, dict):
@@ -123,6 +124,12 @@ def validate_evidence(
     endpoint_err = _endpoint_error(data.get("mcp_endpoint"))
     if endpoint_err:
         errs.append(endpoint_err)
+    if expected_mcp_endpoint is not None:
+        expected_err = _endpoint_error(expected_mcp_endpoint)
+        if expected_err:
+            errs.append(f"expected MCP endpoint is invalid: {expected_err}")
+        elif data.get("mcp_endpoint") != expected_mcp_endpoint:
+            errs.append("mcp_endpoint does not match qualified public MCP endpoint")
     for key in PASS_FIELDS:
         if data.get(key) != "PASS":
             errs.append(f"{key} must be PASS")
@@ -177,6 +184,7 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--root", default=".")
     ap.add_argument("--evidence", required=True)
+    ap.add_argument("--expected-endpoint")
     ap.add_argument("--print-endpoint", action="store_true")
     args = ap.parse_args(argv)
     repo = Path(args.root).resolve()
@@ -194,6 +202,7 @@ def main(argv: list[str] | None = None) -> int:
         manifest=manifest,
         provenance_committed_at=committed_at,
         now=datetime.now(timezone.utc),
+        expected_mcp_endpoint=args.expected_endpoint,
     )
     if errs:
         for err in errs:

@@ -187,6 +187,8 @@ def test_workflow_uses_checker() -> None:
         fail("release-attest.yml does not accept the actual owner/UI evidence payload")
     if "scripts/check-chatgpt-owner-acceptance.py" not in text:
         fail("release-attest.yml does not revalidate owner/UI evidence")
+    if "QUALIFICATION_MCP_ENDPOINT" not in text or "--expected-endpoint" not in text:
+        fail("release-attest.yml does not bind owner/UI evidence to qualified public MCP endpoint")
     if "stable-release-qualification" not in text:
         fail("release-attest.yml lacks protected qualification environment")
     if "QUALIFICATION_TRUSTED_REVIEW" not in text:
@@ -573,6 +575,7 @@ def test_release_qualification_evidence_binding() -> None:
             "schema_version": 1,
             "pass_name": pass_name,
             "git_head": head,
+            "public_mcp_endpoint": "https://drlink.example.com/mcp",
             "gates": {
                 "FROZEN_HEAD": head,
                 f"{pass_name}_HEAD": head,
@@ -602,6 +605,7 @@ def test_release_qualification_evidence_binding() -> None:
         "pass1_head": head,
         "pass2_head": head,
         "final_qualified_head": head,
+        "public_mcp_endpoint": "https://drlink.example.com/mcp",
         "pass1_summary_sha256": digest(pass1),
         "pass2_summary_sha256": digest(pass2),
         "pass1_summary": pass1,
@@ -633,6 +637,13 @@ def test_release_qualification_evidence_binding() -> None:
         ok = check(evidence)
         if ok.returncode != 0 or "QUALIFICATION_EVIDENCE=PASS" not in ok.stdout:
             fail("valid qualification evidence rejected: %s" % ok.stderr)
+
+        mismatched_endpoint = json.loads(json.dumps(evidence))
+        mismatched_endpoint["pass2_summary"]["public_mcp_endpoint"] = "https://other.example.com/mcp"
+        mismatched_endpoint["pass2_summary_sha256"] = digest(mismatched_endpoint["pass2_summary"])
+        rejected = check(mismatched_endpoint)
+        if rejected.returncode == 0 or "public_mcp_endpoint mismatch" not in rejected.stderr:
+            fail("mismatched qualification MCP endpoint was accepted: %s" % rejected.stderr)
 
         no_summaries = dict(evidence)
         no_summaries.pop("pass1_summary")

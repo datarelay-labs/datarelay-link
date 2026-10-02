@@ -27,6 +27,7 @@ PROJECT_SPEC.loader.exec_module(PROJECT)
 PROVENANCE = "a" * 40
 SOURCE = "b" * 40
 BUNDLE = "c" * 64
+EXPECTED_ENDPOINT = "https://drlink.example.com/mcp"
 PROVENANCE_TIME = datetime(2026, 9, 28, 11, 0, tzinfo=timezone.utc)
 NOW = datetime(2026, 9, 28, 12, 0, tzinfo=timezone.utc)
 
@@ -61,13 +62,14 @@ def evidence():
 
 
 class OwnerAcceptanceTests(unittest.TestCase):
-    def check(self, data=None, mf=None, head=PROVENANCE):
+    def check(self, data=None, mf=None, head=PROVENANCE, expected_endpoint=EXPECTED_ENDPOINT):
         return MOD.validate_evidence(
             data if data is not None else evidence(),
             provenance_head=head,
             manifest=mf if mf is not None else manifest(),
             provenance_committed_at=PROVENANCE_TIME,
             now=NOW,
+            expected_mcp_endpoint=expected_endpoint,
         )
 
     def test_valid_exact_candidate_evidence(self):
@@ -86,6 +88,14 @@ class OwnerAcceptanceTests(unittest.TestCase):
         data["mcp_endpoint"] = "http://127.0.0.1:6103/mcp"
         errs = self.check(data)
         self.assertTrue(any("https" in err or "public DNS" in err for err in errs), errs)
+
+    def test_endpoint_must_match_qualified_public_endpoint(self):
+        data = evidence()
+        data["mcp_endpoint"] = "https://other.example.com/mcp"
+        self.assertIn(
+            "mcp_endpoint does not match qualified public MCP endpoint",
+            self.check(data),
+        )
 
     def test_manifest_without_mcp_rejected(self):
         mf = manifest()

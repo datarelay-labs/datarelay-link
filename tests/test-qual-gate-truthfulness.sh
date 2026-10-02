@@ -159,6 +159,8 @@ owner = text.index("check-chatgpt-owner-acceptance.py")
 matrix = text.index('pq_note "==== REAL E2E MATRIX ===="')
 assert owner < matrix, (owner, matrix)
 assert "CHATGPT_OWNER_UI_ACCEPTANCE BLOCKED" in text
+assert '--expected-endpoint "$PUBLIC_MCP_ENDPOINT"' in text
+assert '"public_mcp_endpoint": public_mcp_endpoint' in text
 for gate in (
     "MCP_REAL_E2E",
     "CHATGPT_OWNER_UI_USER_AUTH",
