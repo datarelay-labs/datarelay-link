@@ -1573,9 +1573,11 @@ export http_proxy=http://<DRLINK_SERVER>:<INTERNET_ACCESS_PORT>
 export https_proxy=http://<DRLINK_SERVER>:<INTERNET_ACCESS_PORT>
 export HTTP_PROXY="$http_proxy"
 export HTTPS_PROXY="$https_proxy"
-export no_proxy=127.0.0.1,localhost
-export NO_PROXY="$no_proxy"
+export no_proxy="${no_proxy:+${no_proxy},}127.0.0.1,localhost"
+export NO_PROXY="${NO_PROXY:+${NO_PROXY},}127.0.0.1,localhost"
 ~~~
+
+Preserve any pre-existing `no_proxy` / `NO_PROXY` bypass entries needed for management endpoints or internal services; append localhost rather than replacing the existing list.
 
 If an application requires its own standard proxy configuration instead of inheriting these variables, configure that application to the **same Data Relay Link endpoint** and retain the effective configuration as evidence. Do not install a Data Relay Link Agent merely to make Internet Access work.
 

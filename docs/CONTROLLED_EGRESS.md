@@ -40,9 +40,11 @@ export http_proxy=http://<DRLINK_SERVER>:<INTERNET_ACCESS_PORT>
 export https_proxy=http://<DRLINK_SERVER>:<INTERNET_ACCESS_PORT>
 export HTTP_PROXY="$http_proxy"
 export HTTPS_PROXY="$https_proxy"
-export no_proxy=127.0.0.1,localhost
-export NO_PROXY="$no_proxy"
+export no_proxy="${no_proxy:+${no_proxy},}127.0.0.1,localhost"
+export NO_PROXY="${NO_PROXY:+${NO_PROXY},}127.0.0.1,localhost"
 ```
+
+Preserve any pre-existing `no_proxy` / `NO_PROXY` bypass entries needed for management endpoints or internal services; append localhost rather than replacing the existing list.
 
 Applications that use an application-specific standard proxy setting may use that instead, but it must resolve to the same Data Relay Link endpoint. For example, APT may use its normal `Acquire::http::Proxy` / `Acquire::https::Proxy` configuration when required by the target distribution/application behavior.
 
