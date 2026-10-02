@@ -1584,7 +1584,7 @@ export NO_PROXY="$proxy_bypass"
 
 Merge and preserve the pre-existing `no_proxy` and `NO_PROXY` bypass entries needed for management endpoints or internal services, append localhost, then export the same merged list under both casings so application precedence cannot drop an existing bypass.
 
-If an application requires its own standard proxy configuration instead of inheriting these variables, configure that application to the **same Data Relay Link endpoint** and retain the effective configuration as evidence. Do not install a Data Relay Link Agent merely to make Internet Access work.
+If an application requires its own standard proxy configuration instead of inheriting these variables, configure that application to the **same Data Relay Link endpoint** and retain the effective configuration as evidence. Prefer process-scoped or temporary per-test configuration. If the test must change a persistent application proxy setting, capture the pre-test value/state first and restore it exactly (or remove the test-only override when none existed) during scenario cleanup. Cleanup failure is a test failure because stale proxy settings can break later package/application workflows. Do not install a Data Relay Link Agent merely to make Internet Access work.
 
 Do not disable or reconfigure the host's direct Internet path merely to prove a test precondition. The E2E requirement is to verify that the protected host's **effective application proxy configuration** points to the expected Data Relay Link Internet Access endpoint and that the tested application traffic is actually observed through that proxy path.
 
@@ -1608,7 +1608,7 @@ Minimum application evidence:
 - `git`: a real HTTPS operation such as `git ls-remote` against an approved repository/service succeeds through the configured proxy and a policy-denied destination fails;
 - `apt`: repository FQDNs required by the selected Ubuntu/Debian repository path are explicitly allowed; a strict update such as `apt-get -o APT::Update::Error-Mode=any update` succeeds through Data Relay Link; removing at least one actually required repository destination makes the strict update fail because of Internet Access policy; restoring the destination makes the same workflow succeed again. If the target APT version does not support `APT::Update::Error-Mode=any`, explicitly detect any failed required index and treat it as FAIL while correlating the failure with the proxy audit.
 
-For `apt`, use the host/application's normal proxy configuration (`HTTP_PROXY`/`HTTPS_PROXY` when honored, or standard APT `Acquire::http::Proxy` / `Acquire::https::Proxy` configuration) pointing to the same Data Relay Link Internet Access endpoint. Do not add broad wildcards merely to make package update pass.
+For `apt`, use the host/application's normal proxy configuration (`HTTP_PROXY`/`HTTPS_PROXY` when honored, or standard APT `Acquire::http::Proxy` / `Acquire::https::Proxy` configuration) pointing to the same Data Relay Link Internet Access endpoint. Prefer a test-scoped APT config/state (for example via `APT_CONFIG` and temporary source/list/cache paths) so the system configuration is not mutated. If a persistent APT proxy file must be changed, save and restore its prior bytes/absence before the scenario can PASS. Do not add broad wildcards merely to make package update pass.
 
 Verify:
 

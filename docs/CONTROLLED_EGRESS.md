@@ -51,7 +51,7 @@ export NO_PROXY="$proxy_bypass"
 
 Merge and preserve the pre-existing `no_proxy` and `NO_PROXY` bypass entries needed for management endpoints or internal services, append localhost, then export the same merged list under both casings so application precedence cannot drop an existing bypass.
 
-Applications that use an application-specific standard proxy setting may use that instead, but it must resolve to the same Data Relay Link endpoint. For example, APT may use its normal `Acquire::http::Proxy` / `Acquire::https::Proxy` configuration when required by the target distribution/application behavior.
+Applications that use an application-specific standard proxy setting may use that instead, but it must resolve to the same Data Relay Link endpoint. Prefer process-scoped or temporary test configuration. If qualification changes persistent application proxy configuration, capture the pre-test value/state and restore it exactly (or remove the test-only override when none existed) before the scenario can PASS. For APT, prefer a temporary `APT_CONFIG` plus temporary source/list/cache paths; only modify persistent `Acquire::http::Proxy` / `Acquire::https::Proxy` configuration when necessary, and then restore the prior bytes/absence during cleanup.
 
 A per-command proxy override such as `curl -x ...` is useful for diagnostics, but it is not sufficient evidence that the protected-host user workflow works as designed.
 
