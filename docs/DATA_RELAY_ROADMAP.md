@@ -1,582 +1,597 @@
 # Data Relay Link Roadmap
 
-> **Status:** Living roadmap aligned to the v2.4.0 Control Plane / Policy / MCP architecture
-> **Product Master:** `PRODUCT_MASTER.md`
-> **Public model:** `DATA_RELAY_LINK_CLI_AI_MASTER_v2.4_FINAL.md`
+> **Role:** Forward-looking product roadmap and implementation ordering
+> **Product authority:** `PRODUCT_MASTER.md`
+> **Version authority:** `VERSION_POLICY.md`
+> **3.0 Web/management design:** `WEB_MANAGEMENT.md`
+> **Current 2.x CLI authority:** `DATA_RELAY_LINK_CLI_AI_MASTER_v2.4_FINAL.md`
+> **Rule:** actual exact-HEAD implementation and qualification evidence override status snapshots in this document.
 
-## 1. Roadmap principle
+## 1. Roadmap model
 
-Finish foundations that would be expensive to replace after stable release. Defer features that can be added later without changing those foundations.
-
-Foundation to finish before v2.4.0 stable:
+This roadmap separates **product generations** from historical implementation tasks.
 
 ```text
-SQLite authority
+2.x
+= headless Core
+= CLI is the only complete human management surface
+= bounded integrations such as MCP may exist
+
+3.0+
+= same headless Core and complete CLI
++ Optional Full Web Management
++ management scalability and operator-safety layer
+```
+
+The old DL-0..DL-15 sequence described how the v2.4 foundation was built. Those steps are
+no longer future roadmap phases and must not be used to restart already-implemented work.
+
+## 2. Product generations
+### Data Relay Link 2.x
+
+Primary outcome:
+
+> Securely relay only approved connections while remaining lightweight, headless, and
+> fully manageable through `drlink`.
+
+Supported design center:
+
+- single Data Relay Link Server;
+- embedded SQLite control-plane authority;
+- official relay engine;
+- Managed Host / Agent identity;
+- Remote Service;
+- Remote / Internet / AI Access;
+- ConfigurationBundle and Change Plan;
+- revision/audit/runtime generation;
+- CLI as the complete human administration surface.
+
+### Data Relay Link 3.0
+
+Primary outcome:
+
+> Keep the 2.x Core intact while making deployment, policy management, troubleshooting,
+> and operation of up to 100 Managed Hosts practical through an optional full Web
+> management surface.
+
+3.0 is an operator-experience and management-scale generation, not a new relay engine or
+network architecture.
+
+## 3. 2.x baseline
+The following are **implemented foundation**, subject to final qualification of the exact
+release candidate rather than future redesign:
+
+```text
+SQLite SSOT + migrations
 immutable Managed Host / Agent identity
-Network Objects / Groups
-Service Objects / Groups
-Permission Objects / Groups
+Network / Service / Permission Objects and Groups
 Managed Host address inventory
 Agent-owned Remote Services
-BLACKLIST / WHITELIST Remote Access policy
-BLACKLIST / WHITELIST Internet Access policy
+BLACKLIST / WHITELIST Remote Access
+BLACKLIST / WHITELIST Internet Access
 AI Identity + AI Access / MCP Bridge
-revisions / audit
-runtime generation
-backup / migration
-canonical CLI nouns
+revision / audit / runtime generation
+backup / restore / migration
+canonical CLI
 ConfigurationBundle + shared Change Plan
-AI-generated canonical CLI / copy-paste bundle workflow
-bounded Zero-Touch issuance (max 10/request and active unused)
+bounded Zero-Touch enrollment issuance
+runtime rollback / fail-closed safety
 ```
 
-Planned next product generation:
+Do not reopen these foundations merely to implement Web Management. A 3.0 design that
+requires replacing them is a foundation-change proposal and requires an explicit product
+architecture decision.
+
+## 4. v2.4 release closure
+
+**Status:** Active qualification/release closure. Not yet a stable-release claim in this
+roadmap.
+
+Remaining work is release closure, not architecture invention:
+- exact candidate integration and governance;
+- CLI/feature/workflow reconciliation on the exact candidate;
+- Full User E2E and real application qualification;
+- supported platform/topology evidence;
+- artifact/provenance/checksum/SBOM integrity;
+- final same-HEAD qualification gates;
+- immutable v2.4.0 publication only after all mandatory gates pass.
+
+The active `[AI Work] v2.4.0 Release Closure` packet and exact release branch are the
+authority for detailed current closure state.
+
+## 5. 2.x maintenance after v2.4
+
+Allowed within 2.x:
 
 ```text
-Data Relay Link 3.0.0
-→ Optional Full Web Management (Phase DL-16)
+PATCH  backward-compatible defect/security fixes
+MINOR  backward-compatible Core/CLI/integration features
 ```
 
-The 2.x line remains the headless generation where CLI is the only complete human management surface. Full Web Management is not
-promoted into a 2.x stable release.
-
-Can remain demand-driven later work:
+Not allowed in a 2.x stable line:
 
 ```text
-central SaaS management
-external DB / HA
-large-fleet orchestration
-SIEM/reporting
-broad vendor destination catalogs
+Full supported Web Management product surface
+Web becoming required for Core operation
+alternate authoritative management database
 ```
 
-## 2. Phase DL-0 — proven relay foundation
+## 6. Data Relay Link 3.0 product outcome
+A successful 3.0 operator can:
 
-**Status:** Existing foundation; preserve while redesigning control plane.
+1. install/enroll a Managed Host without learning CLI grammar;
+2. understand all Managed Hosts, Remote Services, policies, and health from one UI;
+3. build policy and see its impact before Apply;
+4. prove expected allow/deny behavior with saved policy regression tests;
+5. answer "why is this connection blocked?" without reading raw logs;
+6. see who/what currently has effective access to a resource;
+7. diagnose whether failure is identity, policy, Agent, runtime, target, DNS, or network;
+8. perform safe bounded operations across groups of Hosts;
+9. understand revision history and safely recover from a bad change;
+10. operate up to 100 Managed Hosts without requiring an external DB or orchestration stack.
 
-Includes:
+Web Management remains optional. The same product remains fully operable through Core +
+CLI when `drlink-web` is absent or stopped.
+
+## 7. 3.0 scale contract
+
+Qualified management target:
 
 ```text
-official fatedier/frp
-Zero-Touch / Manual Enrollment
-immutable Client identity
-multi-service relay
-public-port reservation
-Linux/macOS/Windows clients
-lifecycle/update/doctor/support bundle
+1–10 hosts     extremely simple
+10–50 hosts    normal operating range
+50–100 hosts   fully supported 3.0 management target
+>100 hosts     no stable support claim until separately measured/qualified
+```
+100 is a qualification target, not a reason to turn the product into a fleet platform.
+
+3.0 keeps:
+
+- one Data Relay Link Server;
+- SQLite as authoritative state;
+- no PostgreSQL/MySQL/Redis requirement;
+- no Kubernetes requirement;
+- no message broker requirement;
+- no distributed control plane.
+
+Scale is achieved through bounded management work, not infrastructure multiplication.
+
+## 8. Feature-admission and scope-freeze rule
+
+A feature enters 3.0 GA only when it satisfies all of these:
+
+1. directly improves deploy/configure/explain/troubleshoot/operate workflows;
+2. has clear value at the 1–100-host target;
+3. reuses existing Core identity/policy/state semantics;
+4. does not turn Link into SASE, RMM, SIEM, PAM, or fleet orchestration;
+5. has an objective acceptance test;
+6. cannot be added later with equal value and no foundation rework.
+
+After **DRL3-0 Scope Freeze**, new ideas default to 3.1+ unless they close a security,
+correctness, or architecture-blocking gap in the accepted 3.0 contract.
+
+## 9. 3.0 architecture invariants
+The following are frozen unless an explicit foundation decision changes them:
+
+```text
+SQLite = authoritative control-plane state
+CLI = complete administration + recovery path
+Web = optional presentation/management surface
+Agent-owned state = mutated by Agent through authenticated RPC
+Change Plan = shared mutation semantics
+policy engine = single implementation
+revision/audit = shared across CLI/Web/Bundle
+runtime artifacts = derived state
 ```
 
-Do not fork FRP.
+3.0 adds a **Management Scalability Layer** as logical modules, not mandatory
+microservices:
 
-## 3. Phase DL-1 — control-plane architecture closure
+```text
+Command Service
+Query Service / Read Models
+Bounded Job Engine
+Agent RPC Worker Pool
+Operational State Aggregator
+Audit / history query layer
+```
 
-**Status:** Architecture approved; docs-first closure in progress.
+## 10. DRL3-0 — Scope and architecture freeze
+
+**Goal:** remove design ambiguity before feature implementation.
+
+Required:
+- generation/scale contract frozen;
+- Management Scalability Layer boundaries frozen;
+- Web authentication/RBAC model frozen;
+- shared management-operation contract frozen;
+- 3.0 additive CLI/Bundle contract for Web operators, saved policy tests, and Job recovery frozen;
+- capability parity ledger format frozen;
+- authoritative vs preference vs operational vs derived state boundaries frozen;
+- Agent RPC/job semantics frozen;
+- Web API internal/public boundary frozen;
+- 3.0 GA / 3.1+ / out-of-scope matrix frozen;
+- cross-document contract gate defined for Product Master / Version Policy / Roadmap /
+  Control Plane Architecture / Web Management;
+- performance measurement profile and SLO methodology frozen.
+
+The DRL3-0 performance profile must define reproducible scale dimensions for at least:
+
+```text
+Managed Hosts          1 / 10 / 50 / 100
+Remote Service count   representative per-Host distributions
+Object/Group count     representative small/normal/high inventory
+Policy Rule count      representative small/normal/high rule sets
+Audit history depth    bounded current + large-history query cases
+Web sessions           single + concurrent operator cases
+Agent RPC jobs         single-target + fan-out + saturated queue
+Lifecycle events       normal heartbeat + 100-Host reconnect/flap storm
+Mixed workload         dashboard/search + policy test + mutation + jobs
+```
+
+Exact latency/resource SLO numbers are frozen from measured baseline/reference hardware,
+not guessed before measurement. The test dimensions themselves are part of the scope
+freeze so later implementation cannot redefine the workload to make qualification pass.
+
+Acceptance:
+
+```text
+another engineer/agent can implement DRL3-1 without inventing
+state ownership, async behavior, security boundaries, or product scope
+```
+
+No frontend-first implementation before this gate.
+
+## 11. DRL3-1 — Management Scalability Foundation
+
+**Goal:** make the existing Core safe for concurrent CLI/Web/MCP and 100-host operations.
+
+Implement logical boundaries for:
+
+- typed Core Application/Management Service;
+- command/query separation;
+- bounded read-only connections and server-side filtering/pagination;
+- query-plan/index review for common Host/Service/status/version/policy/audit/job views;
+- rebuildable derived read models for dashboard/inventory summaries;
+- cursor/keyset-style bounded history/job pagination where offset growth would be wasteful;
+- bounded Management Job Engine for operations that wait on Agents or multiple resources;
+- Agent RPC worker pool with concurrency/backpressure/timeouts;
+- operational-state aggregation/coalescing;
+- indexed bounded audit/history queries;
+- capability parity inventory generated from the supported public model.
+
+Existing AI-job primitives may share low-level utilities only when semantics fit. Management
+jobs must not inherit AI Identity/authorization semantics merely to reuse an existing
+table or queue.
+
+Hard rules:
+
+- no SQLite write transaction waits on browser input or Agent RPC;
+- heartbeat/status refresh does not create configuration revisions unless effective
+  configuration/membership changes;
+- derived read models are never recovery authority;
+- browser request count must not scale one-for-one with Host count;
+- worker saturation queues/rejects safely rather than spawning unbounded work.
+
+Acceptance includes mixed read/write/RPC load with no policy drift, false success,
+unbounded resource growth, or starvation of relay enforcement.
+
+## 12. DRL3-2 — Web Platform and Read-Only Operations
+
+**Goal:** deliver useful Web operations before granting mutation authority.
 
 Required:
 
-```text
-CONTROL_PLANE_ARCHITECTURE.md
-Product Master alignment
-CLI IA alignment
-Security alignment
-Version/release governance alignment
-MCP inclusion decision aligned
-```
+- separately installable/stoppable `drlink-web`;
+- static production frontend assets;
+- local-only listen by default;
+- privileged local bootstrap for the first Web Admin;
+- authenticated browser sessions;
+- Admin / Operator / Read Only roles;
+- Overview Dashboard and Attention Center;
+- Managed Host / Remote Service inventory;
+- Object/Group and policy read views;
+- Agent/platform/version inventory and version-drift visibility;
+- global search, server-side filters, and Saved Views;
+- audit/revision read views;
+- Doctor/health read views;
+- Web-service health independent from Core health.
 
-No stable tag during this phase.
+No state-changing Web operation is required to pass this phase.
 
-## 4. Phase DL-2 — SQLite control-plane implementation
+Acceptance must prove Web can be stopped/uninstalled while Core, CLI, enforcement,
+Agent connectivity, backup/restore, and recovery remain functional.
 
-**Status:** Next implementation phase.
+## 13. DRL3-3 — Guided Configuration and Full Management Parity
 
-Implement:
+**Goal:** make normal administration possible without memorized CLI grammar.
 
-```text
-/var/lib/drlink/drlink.db
-schema_migrations
-system_meta
-config_revisions
-revision_snapshots
-audit_events
-runtime_generations
-```
+Required workflows:
 
-Required properties:
+- guided Agent Zero-Touch/Manual enrollment and installation guidance;
+- browser-guided Server management settings after the Core/Web package is installed;
+- Managed Host metadata/lifecycle where supported;
+- Network / Service / Permission Object and Group lifecycle;
+- Remote Service lifecycle through authenticated Agent RPC;
+- Remote / Internet / AI Access policy management;
+- ConfigurationBundle test/diff/apply/export;
+- system/update/certificate/backup/restore operations where browser-appropriate.
 
-```text
-foreign keys
-WAL
-synchronous durability
-busy timeout
-trusted_schema off
-transactional mutation
-optimistic concurrency
-integrity checks
-unsupported-schema fail closed
-```
+Add a non-authoritative **Draft Workspace**:
+- compose multiple related changes;
+- show generated Change Plan;
+- run validation/tests before Apply;
+- cancel with zero authoritative mutation;
+- Apply through the same atomic/revision-bound Core path as CLI/Bundle.
 
-## 5. Phase DL-3 — Object and endpoint model
+A Web page must never become the only way to perform a supported management operation.
 
-Implement:
+## 14. DRL3-4 — Policy Safety, Preview, and Explainability
 
-```text
-objects
-object_values
-object_group_members
-clients
-managed_endpoints
-endpoint_addresses
-client_groups
-client_group_members
-client_tags
-```
+**Goal:** prevent policy mistakes before they become outages.
 
-Acceptance:
+Mandatory:
 
-```text
-neutral Objects
-no Source/Destination object duplication
-multi-value static Objects
-Object Group cycle protection
-context validation
-Managed Host lifecycle ownership
-no silent identity rebinding
-Managed Host local address inventory
-reference-protected deletion
-```
+### Policy Simulator / Decision Trace
+Use the Core evaluator. Never reimplement policy semantics in frontend code.
 
-## 6. Phase DL-4 — Remote Service / Service Object model
+### Saved Policy Regression Tests
+Operators can persist expected allow/deny assertions for critical flows.
 
-Internal storage may retain compatibility table names such as `published_services` and `service_presets`, but they do not define the public model.
+Security-relevant policy Apply runs required tests against the proposed Change Plan.
+A failed required assertion blocks Apply until the change or test expectation is
+explicitly corrected.
 
-Acceptance:
+### Blast Radius Preview
+Before Apply show:
+- access broadened / narrowed;
+- affected rules;
+- affected Managed Hosts / Remote Services / destinations;
+- expected effective-decision changes;
+- newly reachable or newly blocked flows represented by available inventory.
 
-```text
-Agent Host owns Remote Service mutation
-single destination + one Service Object
-TCP and Fixed TCP Remote Service
-UDP Remote Service rejected
-Relay Host semantics for another-host destination
-stable endpoint identity
-policy-impact analysis on destination/Service Object changes
-Service Object Wizard presets are creation conveniences, not public resources
-```
+### Effective Access Graph
+Show the explainable path between identity/source, Groups/Objects, policy rules, Remote
+Service/destination, and effective access.
 
-## 7. Phase DL-5 — Remote Access policy
+The graph is a policy/inventory visualization, not a general network topology mapper.
 
-Implement the shared BLACKLIST / WHITELIST policy engine and Remote Access evaluator/compiler.
+### Draft Graph Overlay
+When a Draft Workspace is open, visually distinguish current effective access from the
+proposed state.
 
-Acceptance:
+Acceptance requires CLI/Web policy-test parity and no discrepancy between graph/preview
+and the Core evaluator.
+
+## 15. DRL3-5 — Diagnosis, Health, and Attention
+
+**Goal:** make "why does this not work?" a first-class product workflow.
+
+Connection Diagnosis correlates, where applicable:
 
 ```text
-No Policy / No Rules = effective ALLOW
-BLACKLIST match DENY / no match ALLOW
-WHITELIST match ALLOW / no match DENY
-rule enable/disable
-no rule ordering
-no per-rule ALLOW/DENY action
-Policy Reset semantics
-Enforcement disable/enable
-impact analysis
-flow test/explain
-Remote Service + reachability intersection
+identity / source
+policy match and mode
+Agent presence
+Remote Service configuration
+runtime verification
+public endpoint
+target reachability / configured health check
+DNS / Internet Access destination validation
+recent decision/audit evidence
 ```
+The result identifies the failed layer and gives a safe next action.
 
-Legacy ACL becomes non-canonical and is removed/hidden before stable.
+Health design:
 
-## 8. Phase DL-6 — Internet Access policy
+- reuse existing Agent heartbeat/runtime/health-check signals;
+- no browser-originated N-per-host health polling;
+- configured target probes are bounded and rate/concurrency limited;
+- status aggregation is independent from configuration revisions;
+- flapping is coalesced into meaningful attention rather than alert storms.
 
-Replace legacy Internet Profile authoritative policy with Network/Service Objects plus the shared BLACKLIST / WHITELIST policy model.
+Attention Center must prioritize:
 
-Preserve/harden protocol boundary:
+- disconnected/stale Managed Hosts;
+- DEGRADED Remote Services;
+- policy/runtime revision mismatch;
+- repeated meaningful policy denies;
+- version drift;
+- certificate/backup/update readiness;
+- failed/incomplete jobs.
+
+External Email/Slack/Webhook notification channels are **not required for 3.0 GA**.
+The internal event model must allow them to be added later without redesign.
+
+## 16. DRL3-6 — Bounded Fleet Operations
+
+**Goal:** make 50–100-host operation efficient without becoming RMM.
+
+Job Engine + Worker Pool powers multi-host actions with visible queued/running/success/
+failed/cancelled state.
+3.0 safe bulk operations may include:
+
+- diagnostics/Doctor collection;
+- synchronize/refresh;
+- version inventory / update-availability check;
+- support-bundle generation;
+- bounded metadata/group/tag assignment with normal impact checks;
+- inventory export.
+
+Explicitly exclude broad destructive fleet actions from 3.0:
 
 ```text
-HTTP forward proxy
-HTTPS CONNECT
-server-side DNS
-SSRF/special-address protection
-DNS rebinding resistance
-CONNECT/SNI binding
-controlled wildcard semantics
-public Host/CIDR explicit policy
-Fixed TCP through same authority
-resource limits
-safe audit
+bulk delete
+bulk revoke
+bulk release
+bulk policy disable/reset
+unbounded bulk update/restart
 ```
 
-Acceptance includes curl/wget/git/apt Real E2E plus denied-traffic escape tests.
+Any future high-impact bulk operation requires its own risk, rollback, and qualification
+contract.
 
-## 9. Phase DL-7 — revision/audit/runtime compiler
+## 17. DRL3-7 — Audit, Lifecycle, and 100-Host Hardening
 
-Implement one mutation pipeline:
-
-```text
-validate
-→ impact
-→ confirm
-→ transaction
-→ revision/audit
-→ compile
-→ atomic activate
-→ verify generation
-```
-
-Acceptance:
-
-```text
-system audit
-system revisions
-runtime revision status
-compiler failure surfaced
-generation mismatch fail closed where required
-```
-
-Rollback may be added only if its semantics are fully transactional and qualified.
-
-## 10. Phase DL-8 — backup / restore / migration
-
-Implement SQLite Online Backup/equivalent consistent snapshot.
-
-Acceptance:
-
-```text
-backup during WAL activity
-config/trust/secret recovery
-restore integrity + FK checks
-schema compatibility
-runtime regeneration
-permissions/ownership
-pre-upgrade backup
-migration rollback/failure safety
-```
-
-Legacy JSON is migration input only, not dual authority.
-
-## 11. Phase DL-9 — MCP Bridge / AI Access
-
-**Status:** Included in v2.4.0 target; supersedes old exclusion decision.
-
-**Current release blocker:** Real ChatGPT Plus owner/UI OAuth Authorization Code/consent, tool discovery, one policy-allowed operation, and one expected policy denial must be retained as release evidence. Machine-side MCP/OAuth conformance is required but does not clear this user-authentication gate by itself.
-
-Implement server-side MCP Bridge plus:
-
-```text
-AI Identity backing state
-AI Access Rules
-Network Object / Network Group targets
-Permission Object / Permission Group references
-path scopes / exec constraints
-AI sessions / activity
-```
-
-Targets:
-
-```text
-Network Object
-Network Group
-```
-
-Minimum capabilities:
-
-```text
-exec
-read_file
-write_file
-upload_file
-download_file
-```
-
-Additional discovery:
-
-```text
-list_hosts
-get_host
-get_system_info
-list_processes
-```
-
-Security:
-
-```text
-current official MCP spec
-modern supported remote transport
-authenticated HTTPS
-strong AI Identity binding
-per-invocation authorization
-least privilege
-path scopes
-exec timeout/process controls
-audit
-no per-host MCP server requirement
-```
-
-Real interoperability is required for each client explicitly claimed supported.
-
-## 12. Phase DL-10 — canonical CLI implementation
-
-Implement guided root:
-
-```text
-Managed Hosts
-Network Objects
-Service Objects
-Remote Access
-Internet Access
-AI Access
-System
-Help
-Exit
-```
-
-Direct roots:
-
-```text
-show
-set
-unset
-test
-system
-menu
-help
-exit
-```
-
-Remove/hide pre-stable legacy public resources:
-
-```text
-service-profile
-internet-profile
-legacy ACL naming
-ambiguous generic group
-```
-
-Protect impact confirmation, stale edit detection, contextual Tab completion, REPL/shell hints, and backend isolation.
-
-## 13. Phase DL-11 — release-governance transition
-
-Remove old hard-coded v2.4 MCP exclusion from:
-
-```text
-release manifest schema
-manifest generator
-version identity validation
-release governance scripts
-version consistency checks
-tests
-release manifest content
-```
-
-Final candidate truth:
-
-```text
-features.mcp_included=true
-```
-
-only after actual MCP implementation exists and passes qualification.
-
-Keep exact-SHA pretag provenance, immutable tags, source/dist parity, checksums, and historical tag immutability.
-
-## 14. Phase DL-12 — full automated closure
+**Goal:** complete full management parity and prove bounded behavior at target scale.
 
 Required:
 
+- searchable Audit Explorer;
+- revision diff and rollback;
+- bounded time-range/cursor pagination;
+- indexes for actual Web query patterns;
+- retention/archive policy for active audit data;
+- read-model rebuild/recovery;
+- backup/restore including new 3.0 Core-owned management metadata;
+- Web update/uninstall/reinstall semantics;
+- session/operator identity recovery;
+- Web/API resource limits;
+- Agent disconnect/reconnect storms;
+- Job Engine saturation/backpressure tests;
+- DB lock/contention tests;
+- Web crash/restart isolation;
+- dashboard/search/policy-test load at 100-host inventory size.
+
+No new external datastore may be introduced merely to pass the 100-host target. If
+measured evidence proves SQLite insufficient, that is a new architecture decision, not
+an implementation shortcut.
+
+## 18. DRL3-8 — 3.0 Qualification and Stable Release
+
+Required exact-candidate evidence includes:
+
 ```text
-static validation
-DB/migration tests
-Object tests
-policy evaluator/compiler tests
-shadow/impact tests
-CLI/PTy tests
-Internet security tests
-MCP auth/capability/path tests
-backup/restore tests
-release governance tests
-full local suite
-CI
-source/dist parity
-secret/public metadata scan
+CORE_WITHOUT_WEB=PASS
+CLI_FULL_CAPABILITY=PASS
+WEB_CAPABILITY_PARITY=PASS
+WEB_AUTH_RBAC=PASS
+WEB_POLICY_EXPLAIN_PARITY=PASS
+DRAFT_WORKSPACE_ATOMICITY=PASS
+POLICY_REGRESSION_GATE=PASS
+BLAST_RADIUS_ACCURACY=PASS
+EFFECTIVE_ACCESS_GRAPH_ACCURACY=PASS
+CONNECTION_DIAGNOSIS=PASS
+ATTENTION_DEDUPLICATION=PASS
+SAVED_VIEWS=PASS
+VERSION_DRIFT_ATTENTION=PASS
+AGENT_RPC_OWNERSHIP=PASS
+BOUNDED_JOB_ENGINE=PASS
+HEALTH_COLLECTION_BOUNDS=PASS
+NO_BROWSER_N_PER_HOST_POLLING=PASS
+NO_SQLITE_TXN_WAITING_ON_AGENT_RPC=PASS
 ```
 
-No stale test is allowed to redefine the approved architecture.
-
-## 14.1 Phase DL-12A — ConfigurationBundle and bounded Zero-Touch
-
-**Status:** Required before v2.4.0 stable.
-
-Implement one shared Change Plan path for direct CLI, AI-generated commands, and declarative ConfigurationBundle input.
-
-Required closure:
-
 ```text
-file + stdin ConfigurationBundle
-validate / embedded policy tests / diff
-idempotent present + explicit absent semantics
-one atomic transaction
-revision conflict protection
-policy-impact confirmation
-redacted export
-secret exclusion
-AI copy/paste real CLI E2E
-CLIENT_ACTION_REQUIRED boundary
-Zero-Touch enrollment plans separate from ticket issuance
-max 10 tickets per issuance request
-max 10 active unused tickets
-unique single-use ticket
-1h default / 24h max TTL
-atomic consumption / double-use denial
-```
-
-This phase must reuse the canonical SQLite/domain policy engine; do not add a second YAML/AI state engine.
-
-## 15. Phase DL-13 — multi-host Real E2E
-
-Matrix:
-
-```text
-Ubuntu 24
-Windows 10
-Rocky Linux 8
-Rocky Linux 9
-Amazon Linux 2023
-macOS Apple Silicon
-```
-
-Validate install, enrollment, services, policy, Internet Access, lifecycle, reboot, backup/restore, and supported AI/MCP operations.
-
-## 16. Phase DL-14 — final exact-HEAD qualification
-
-Freeze candidate HEAD, then:
-
-```text
+100_HOST_CONTROL_PLANE_SCALE=PASS
+100_HOST_MIXED_OPERATION_LOAD=PASS
+WEB_FAILURE_ISOLATION=PASS
+AUDIT_REVISION_RECOVERY=PASS
+BACKUP_RESTORE_3_0=PASS
+SECURITY_REVIEW=PASS
+BROWSER_REAL_USER_E2E=PASS
+MULTI_PLATFORM_AGENT_E2E=PASS
 FULL_REAL_E2E_PASS_1=PASS
 FULL_REAL_E2E_PASS_2=PASS
 PASS1_HEAD==PASS2_HEAD
 ```
 
-Both passes include all three access planes and release lifecycle applicable to stable claims.
+100-host qualification may use simulated/virtual Agents for saturation and state-scale
+coverage, but real Agent/platform and real traffic evidence remain mandatory for
+functional claims. Synthetic scale evidence never substitutes for real-user correctness.
 
-Any code/dependency/generated-artifact change resets the counter.
+## 19. 3.0 GA capability matrix
 
-## 17. Phase DL-15 — stable publication
-
-Only after all gates:
+### Must ship
 
 ```text
-create immutable v2.4.0 tag
-publish immutable artifacts/checksums/manifest
-publish release notes
-update stable channel
-update public docs
-verify clean stable install/bootstrap/update
+Management Scalability Layer
+Full CLI-management parity in Web
+Admin / Operator / Read Only
+Dashboard + Attention Center
+Inventory + search/filter/Saved Views
+Guided enrollment
+Draft Workspace / Change Plan preview
+Policy Builder
+Policy Simulator / Decision Trace
+Saved Policy Regression Tests
+Blast Radius Preview
+Effective Access Graph
+Connection Diagnosis
+Audit / Revision Explorer
+bounded safe fleet jobs
+100-host qualification
+```
+### Design now, implement after 3.0 unless required by evidence
+
+```text
+external Email/Slack/Webhook notifications
+temporary rule TTL / temporary access
+external IdP/SSO for Web administrators
+GitOps/locked-editor workflow
+long-term external audit export
+scheduled recurring operations
+additional specialized operator roles
 ```
 
-## 18. Phase DL-16 — Data Relay Link 3.0 Optional Full Web Management
+These later capabilities must reuse 3.0 event, identity, Change Plan, and job boundaries.
 
-**Status:** Planned **v3.0.0** product-generation phase.
+## 20. Explicitly out of 3.0 scope
 
-Version boundary:
-
-```text
-2.x   headless Core + CLI as the only full human management surface
-3.0.0 headless Core + complete CLI + Optional Full Web Management
-```
-
-3.0 is a deliberate product-generation boundary rather than the minimum SemVer change
-required by technical compatibility.
-
-Goal:
-
-> Give operators a complete graphical management surface for normal deployment,
-> configuration, policy, troubleshooting, and lifecycle work without making Web UI
-> a dependency of the Data Relay Link Core.
-
-Required product behavior:
+Do not add merely because competitors provide them:
 
 ```text
-Core + CLI only
-→ fully functional product
-
-Core + CLI + Optional Web Management
-→ full management parity
-→ dashboard / visualization
-→ policy simulation and decision trace
-→ guided troubleshooting
-```
-
-Required implementation foundation:
-
-- one shared Core domain/management interface used by CLI, Web, ConfigurationBundle, and integration adapters;
-- no Web-owned authoritative database or duplicated policy engine;
-- separately installable and independently stoppable `drlink-web` component;
-- production frontend shipped as static assets with no Node.js runtime requirement;
-- local-only bind by default; explicit authenticated/TLS configuration for remote exposure;
-- Server-hosted orchestration of Agent-owned operations only through authenticated management/RPC;
-- revision/audit attribution for every Web mutation;
-- security-impact preview and explicit confirmation for broadening or destructive changes.
-
-Required operator capabilities:
-
-- dashboard and attention queue;
-- Server/Agent install and enrollment journeys;
-- Managed Host, Object/Group, Remote Service, policy, AI Access, and system management;
-- full supported CLI management parity;
-- policy builder plus `test`/explain visualization and decision trace;
-- audit/revision explorer, diff, rollback, backup/restore, update, and Doctor/health workflows;
-- safe search/filter/drill-down across the 1–50-host target range.
-
-Implementation should be sliced so that the shared management interface and read-only
-observability arrive before remote mutations, then complete parity before the phase is
-declared complete. A partially implemented Web UI must never become the only supported
-path for an operation.
-
-Acceptance requires the capability and security matrix in `WEB_MANAGEMENT.md` to pass,
-including CLI/Web semantic parity, no alternate authoritative state, Web-disabled Core
-operation, Web-service failure isolation, policy-explain correctness, mutation audit,
-Agent-offline truthfulness, and remote-exposure security.
-
-## 19. Later demand-driven work
-
-Potential later additions only with real demand:
-
-```text
-central multi-server/fleet coordination
-enterprise identity providers beyond required MCP auth
-HA deployment
-reporting/SIEM exports
-more protocols
-more Fixed TCP presets
-policy rollback UX enhancements
-signed policy/export packages
-```
-
-These additions should reuse, not replace, the v2.4 identity/Object/policy/database foundation.
-
-## 20. Stable non-goals
-
-Data Relay Link is not being expanded into:
-
-```text
-VPN/full network overlay
+full JIT/access-request approval system
+device-posture/MDM platform
+session recording
+browser SSH/RDP terminal
+credential vault/injection
+application discovery/scanning
+SIEM/reporting platform
 SASE/SWG/CASB/DLP
-TLS inspection platform
-RMM/fleet orchestrator
-automatic firewall/DNS manager
-large database cluster
+TLS interception
+multi-server SaaS control plane
+HA database cluster
+PostgreSQL/Redis/Kubernetes requirement
+multi-region orchestration
+hundreds/thousands-host fleet platform
 ```
 
-## 21. Roadmap success condition
+## 21. Competitive-pattern decisions
+The 3.0 scope was re-reviewed against current official product patterns on 2026-10-02.
 
-The v2.4.0 foundation is done when no further foreseeable core change requires replacing:
+Adopt the **operator pattern**, not the competitor architecture:
+
+| Pattern observed | 3.0 decision |
+|---|---|
+| Tailscale visual policy editor, tests, preview | Adopt policy tests, preview, visual builder; defer GitOps |
+| Cloudflare policy tester and decision logs | Adopt blast radius and decision drill-down |
+| Twingate Access Graph and path-based troubleshooting | Adopt Effective Access Graph + Connection Diagnosis |
+| Teleport inventory/RBAC/access graph | Adopt version drift + three-role Web RBAC; exclude session recording/browser terminal |
+| NetBird Control Center/draft graph/audit | Adopt graph/draft overlay/searchable audit; no overlay-network expansion |
+| Zscaler health/diagnostics patterns | Adopt bounded health aggregation/diagnosis; exclude app discovery/HA platform |
+| Boundary worker health/last-seen separation | Adopt explicit component health; no controller/worker cluster architecture |
+
+Competitor functionality that does not strengthen Data Relay Link's core operator mission
+stays out of the GA scope.
+
+## 22. Roadmap success condition
+
+The roadmap is successful when 3.0 adds full graphical operation and 100-host management
+without replacing the proven 2.x Core.
+
+A future feature should be additive to:
 
 ```text
-control-plane authority
-identity model
-Object model
-BLACKLIST / WHITELIST policy semantics
-Remote Service destination/Service Object semantics
-AI Identity / permission authorization model
+SQLite authority
+identity/Object model
+Remote Service ownership
+BLACKLIST / WHITELIST semantics
+AI Identity / permission model
+Change Plan / revision / audit
 backup/migration model
-canonical CLI nouns
+complete CLI administration
 ```
 
-Feature growth after that point should be additive.
+If a proposed feature requires replacing those foundations, stop and make an explicit
+product-generation/architecture decision before implementation.

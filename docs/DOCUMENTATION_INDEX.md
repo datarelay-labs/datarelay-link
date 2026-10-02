@@ -22,6 +22,7 @@ External copies, Project/chat attachments, exported snapshots, and same-named do
 | Area | Canonical document |
 |---|---|
 | Product model / scope | `PRODUCT_MASTER.md` |
+| Product roadmap / implementation ordering | `DATA_RELAY_ROADMAP.md` |
 | CLI + AI configuration | `DATA_RELAY_LINK_CLI_AI_MASTER_v2.4_FINAL.md` |
 | Direct CLI grammar | `CLI_REFERENCE.md` |
 | Guided CLI / UX | `Data Relay Link CLI Information Architecture.md` |

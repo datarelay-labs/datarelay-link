@@ -1343,6 +1343,109 @@ Security boundary:
 - broadening/destructive changes require the same impact preview and confirmation semantics as CLI;
 - Web API endpoints are not a bypass around policy, role, reference, or concurrency checks.
 
+### 46.2 Data Relay Link 3.0 management scalability boundary
+
+The 100-Managed-Host target changes management workload shape, not the control-plane
+authority.
+
+```text
+Management Inputs
+CLI / Web / Bundle / MCP
+          │
+          ├───────────────┐
+          ▼               ▼
+   Command Service    Query Service
+          │               │
+          ▼               ├─ bounded read-only queries
+     Change Plan           ├─ rebuildable read models
+          │               └─ dashboard/search/history
+          ▼
+    SQLite SSOT
+          │
+          ├───────────────┐
+          ▼               ▼
+ runtime compiler     Operational State Aggregator
+                          │
+                          ▼
+                    bounded Job Engine
+                          │
+                          ▼
+                    Agent RPC Worker Pool
+```
+
+These are logical boundaries and may run in one local process/package. They do not imply
+microservices or a distributed system.
+
+Required boundaries:
+
+- security-relevant mutation remains serialized through the existing authoritative
+  transaction/revision path;
+- read-heavy Web activity uses read-only/bounded query paths and must not acquire the
+  writer slot merely to render a page;
+- derived dashboard/inventory summaries are rebuildable and never become restore or
+  enforcement authority;
+- operations that wait on Agents or fan out to multiple Hosts become bounded Jobs and
+  must not hold SQLite write transactions while waiting;
+- Job/RPC execution uses explicit concurrency limits, queue bounds, timeout, cancellation,
+  backpressure, and per-target truthful results;
+- frequent heartbeat/status/activity refresh is operational state and is coalesced where
+  semantics allow; it does not create configuration revisions merely because time changed;
+- browser refresh/event delivery is aggregated and bounded rather than N-per-Host polling;
+- common Web query plans receive explicit index review through ordered schema migration;
+  routine dashboard/list/filter views must not rely on avoidable unbounded scans;
+- audit/history/job queries are indexed and bounded by cursor/time range;
+- Management Job semantics remain separate from AI-job identity/authorization semantics,
+  even when low-level worker/queue utilities are shared;
+- Web, Query, Job, or Agent-RPC saturation must not starve relay enforcement or CLI
+  recovery.
+
+### 46.3 3.0 scale non-escalation rule
+
+The initial 100-host target must first be qualified on the existing single-Server +
+SQLite architecture.
+
+Do not add PostgreSQL, Redis, a message broker, Kubernetes, controller/worker clusters,
+or a distributed cache merely because an implementation used unbounded polling, queries,
+threads, or probes.
+
+If bounded implementation and measured evidence still show an architectural limit below
+the accepted 100-host SLO, record that evidence and make a new architecture decision.
+Do not silently replace the 2.x Core during Web implementation.
+
+### 46.4 3.0 additive persistence ownership
+
+The schema may grow for 3.0 management needs, but every new state family is classified
+before implementation.
+
+```text
+AUTHORITATIVE
+  Web operator identity / roles
+  saved policy-regression tests
+  security-relevant management configuration
+
+PREFERENCE
+  Saved Views / non-security UI preferences
+
+OPERATIONAL
+  browser sessions
+  Job / per-target execution state
+  transient Attention state
+
+DERIVED
+  dashboard / inventory / effective-access read models
+```
+
+Authoritative state follows migration, revision/audit where applicable, backup, restore,
+and fail-closed compatibility rules. It also requires a non-Web management/recovery path
+through the 3.0 CLI or ConfigurationBundle contract; browser availability cannot be the
+only way to repair authoritative Web-management state.
+
+Operational state may be persisted for restart truthfulness but is not restored as
+configuration authority. In-flight jobs interrupted by restart/restore become explicitly
+interrupted/failed unless a later operation contract defines safe resumability.
+
+Derived state is never included as recovery authority and must be rebuildable.
+
 Detailed Data Relay Link 3.0 implementation and UX requirements are defined in
 `docs/WEB_MANAGEMENT.md`.
 

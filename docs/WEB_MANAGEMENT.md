@@ -2,7 +2,7 @@
 
 > **Status:** Planned Data Relay Link 3.0.0 design specification
 > **Target release:** **3.0.0**
-> **Roadmap:** Phase DL-16
+> **Roadmap:** DRL3-0 through DRL3-8 in `DATA_RELAY_ROADMAP.md`
 > **Version boundary:** 2.x = CLI is the only complete human management surface; 3.0 = first Full Web Management generation
 > **Product authority:** `PRODUCT_MASTER.md`
 > **Control-plane authority:** `CONTROL_PLANE_ARCHITECTURE.md`
@@ -43,6 +43,11 @@ Required invariants:
 - Web Management can perform every supported management task that is meaningful in a browser.
 - Web-specific value is dashboard, visualization, guided workflow, correlation, and explanation.
 - Web Management never becomes an alternate source of policy truth.
+- New 3.0 authoritative management state is never Web-only: operator/role state and saved
+  policy-test state require a supported CLI or ConfigurationBundle management/recovery path.
+- Operational Job state that can block/recover work requires CLI inspection/cancel/recovery
+  capability even when its richer progress visualization is Web-specific.
+- Web-only persistence is limited to non-security operator preferences such as Saved Views.
 
 ## 3. Goals
 
@@ -50,9 +55,11 @@ Required invariants:
 2. Make Agent enrollment and first usable connection a guided workflow.
 3. Make policy construction understandable before Apply.
 4. Make allow/deny decisions explainable after Apply.
-5. Give 1–50-host environments a useful operational dashboard without a monitoring platform.
+5. Make operation of 1–100 Managed Hosts practical without becoming a fleet platform.
 6. Preserve the same safety, audit, concurrency, and fail-closed semantics across CLI and Web.
 7. Keep production runtime small when the Web package is installed and unchanged when it is not.
+8. Prevent unsafe policy changes with regression tests and blast-radius preview.
+9. Make effective access and connection failures explainable without raw-log archaeology.
 
 ## 4. Non-goals
 
@@ -154,6 +161,45 @@ Browser → drlink-web → Core request
 The Server never converts Agent-unreachable into success and never mutates a Server
 projection to pretend an Agent-local operation completed.
 
+### 6.5 Management Scalability Layer
+
+3.0 adds bounded logical management modules around the existing Core:
+
+```text
+Command Service
+  security-relevant validation / Change Plan / authoritative mutation
+
+Query Service
+  bounded read-only queries / filtering / pagination
+
+Derived Read Models
+  rebuildable dashboard/inventory summaries; never recovery authority
+
+Job Engine
+  durable/bounded operation state for work that waits on Agents or multiple resources
+
+Agent RPC Worker Pool
+  concurrency limits / timeouts / backpressure / truthful per-target results
+
+Operational State Aggregator
+  heartbeat/runtime/health summaries without converting presence churn into config revisions
+
+Audit/History Query Layer
+  indexed bounded history and revision access
+```
+
+These are logical boundaries and may coexist in one process/package. 3.0 does not require
+microservices, Redis, a broker, or an external database.
+
+Hard scale rules:
+
+- no SQLite write transaction waits for browser input or Agent RPC;
+- no browser N-per-Host polling pattern;
+- multi-Host work goes through bounded jobs, not unbounded threads;
+- timestamp-only operational refresh is coalesced and does not create configuration revisions;
+- read models can be deleted/rebuilt from authoritative Core state;
+- relay enforcement remains available when Web/Query/Job components are degraded.
+
 ## 7. State and mutation model
 All state-changing Web requests follow the same pipeline as the CLI:
 
@@ -178,6 +224,55 @@ configuration directly.
 A Web preview is revision-bound. If authoritative state changes after preview, Apply
 fails with a conflict and requires a fresh preview instead of silently rebasing the
 operator's intent.
+
+### 7.1 Draft Workspace
+
+Web Management may hold a non-authoritative Draft Workspace for multi-resource work.
+
+A Draft can:
+
+- create/edit/delete proposed resources in memory or bounded ephemeral Core-owned draft state;
+- generate the canonical Change Plan;
+- render the current-versus-proposed diff;
+- run embedded validation and saved policy regression tests;
+- compute blast radius;
+- render a proposed Effective Access Graph overlay;
+- export/copy an equivalent ConfigurationBundle where safe.
+
+Cancel produces zero authoritative mutation. Apply always returns through the normal
+revision-bound Change Plan transaction. A Draft is never reconciled continuously and is
+never a second desired-state database.
+
+### 7.2 3.0 persistence classes
+
+New management state is classified before schema work:
+
+**Authoritative management state**
+- Web operator identities and role assignments;
+- saved policy regression-test definitions;
+- any security-relevant Web configuration explicitly promoted to Core state.
+
+This state is revision/audit aware where applicable and included in product backup/restore.
+
+**Operator preference state**
+- Saved Views and non-security UI preferences.
+
+It may be persisted locally and backed up, but never affects policy without an explicit
+authoritative operation.
+
+**Operational state**
+- browser sessions;
+- active/background Job state;
+- transient Attention aggregation.
+
+This state must fail/recover truthfully after restart. Running jobs do not become
+authoritative configuration and must not silently resume after restore.
+
+**Derived state**
+- dashboard/inventory/read-model summaries and caches.
+
+Derived state is rebuildable from authoritative/operational sources and is never a
+backup or restore authority.
 
 ## 8. Packaging and deployment
 
@@ -223,12 +318,21 @@ boundary safe.
 Web operators are management identities, not Network Objects, Managed Hosts, or AI
 Identities.
 
-Initial minimum roles:
+Initial roles:
 
 ```text
-Admin       read + supported mutation + lifecycle actions
-Read Only   read + dashboard + explain/test, no state mutation
+Admin
+  full supported management, security policy, restore/certificate, operator administration
+
+Operator
+  enrollment, Managed Hosts, Remote Services, diagnostics, synchronization,
+  normal lifecycle and other explicitly delegated non-administrative operations
+
+Read Only
+  dashboard, inventory, audit, revisions, health, explain/test; no state mutation
 ```
+
+Role checks are enforced by the Core management operation, not only by hiding Web controls.
 
 Operator identity belongs to Core management state. It must not live only in browser
 local storage or a Web-only database.
@@ -325,12 +429,19 @@ Required summary:
 - update, backup, and certificate attention where applicable;
 - a Needs Attention queue with direct drill-down.
 
-Typical attention items include an offline Managed Host, a DEGRADED Remote Service,
-a denied required destination, a policy/runtime generation mismatch, certificate
-expiry, backup readiness failure, or an expiring unused enrollment.
+Typical attention items include an offline/flapping Managed Host, a DEGRADED Remote
+Service, repeated meaningful policy denial, version drift, a policy/runtime generation
+mismatch, certificate expiry, backup readiness failure, failed background job, or an
+expiring unused enrollment.
+
+Attention is deduplicated/coalesced by affected resource and condition. Repeated state
+flapping must not generate an alert storm.
+
+The browser consumes aggregated summary endpoints or a bounded event stream. It must not
+refresh one endpoint per Managed Host or Remote Service.
 
 Do not add a time-series database merely to draw dashboard graphs. Initial charts and
-counts derive from bounded current state and audit/event aggregates.
+counts derive from bounded current state, derived read models, and audit/event aggregates.
 
 ## 15. Agent enrollment and installation journey
 
@@ -425,13 +536,23 @@ Effective default implied by current mode
 The UI must not invent ordered-rule or per-rule ALLOW/DENY semantics.
 
 Rule forms use selectable Objects/Groups and explain invalid selector contexts before
-Apply. Changes show a human-readable security-impact preview:
+Apply.
 
-- access broadened;
-- access narrowed;
-- affected rules/resources;
-- effective decision changes;
+### 19.1 Blast Radius Preview
+
+Every security-relevant Draft/Change Plan shows a human-readable impact preview from the
+Core evaluator:
+
+- access broadened / narrowed;
+- affected rules and referenced resources;
+- affected Managed Hosts / Remote Services / destinations represented by current inventory;
+- expected effective decision changes;
+- newly reachable and newly blocked modeled flows where deterministically known;
 - references that will be added or removed.
+
+The preview must distinguish facts computed from current authoritative inventory from
+estimates/unknowns. It must never imply that unobserved traffic has been exhaustively
+enumerated.
 
 Broadening and destructive changes require explicit confirmation using the same Core
 impact result as the CLI.
@@ -478,6 +599,36 @@ separate operation and must not be implied by a simulated PASS.
 
 Recent real ALLOW/DENY activity may link into the same Decision Trace view when the
 audit/runtime evidence contains enough bounded input to reproduce an explanation.
+
+### 20.1 Saved Policy Regression Tests
+
+Operators can save critical expected policy outcomes:
+
+```text
+source + destination + service/permission + plane
+→ expected ALLOW or DENY
+```
+
+Tests are evaluated by the same Core policy engine. Required tests run against a proposed
+Change Plan before security-relevant Apply. A failed required assertion blocks Apply
+until the configuration or expected test is explicitly corrected.
+
+Tests are versioned/audited management state and must survive backup/restore.
+
+### 20.2 Effective Access Graph
+
+The graph answers:
+
+- who/what can reach this resource;
+- what can this source reach;
+- which Object/Group/rule path produces the effective decision;
+- which relationships would change under the current Draft.
+
+Graph edges are derived from current Core identity/object/policy/Remote Service state.
+The graph is not a general network-discovery or packet-topology system.
+
+A Draft overlay visibly separates current access from proposed additions/removals.
+Selecting a path opens the underlying resource/rule and its Decision Trace.
 
 ## 21. AI Access
 AI Access Web Management includes:
@@ -542,6 +693,47 @@ Priority troubleshooting journeys include:
 Suggested fixes that change state must enter the normal preview/impact/confirmation
 pipeline. A diagnostic card must never mutate state merely because it is opened.
 
+### 23.1 Connection Diagnosis
+
+Connection Diagnosis is a guided correlation workflow, not a raw-log viewer.
+
+For the selected flow it evaluates the applicable chain:
+
+```text
+input/source identity
+→ policy mode/rule match
+→ Managed Host / Agent presence
+→ Remote Service configuration
+→ runtime verification / endpoint allocation
+→ target reachability or configured health-check result
+→ DNS / Internet destination validation where applicable
+→ recent bounded decision/activity evidence
+```
+
+It must identify which layer is proven healthy, failed, unknown, or not applicable.
+
+Examples:
+
+- no policy match under WHITELIST → policy failure;
+- policy ALLOW + Agent disconnected → Agent/lifecycle failure;
+- policy ALLOW + Agent connected + target health failure → target/network failure;
+- no observed connection activity → clearly state that DRLink cannot prove the attempt
+  reached the relevant data path instead of inventing a policy diagnosis.
+
+### 23.2 Health collection at 100-host scale
+
+Health views reuse existing heartbeat, runtime verification, configured health-check, and
+recent activity signals.
+
+Rules:
+
+- the browser never launches one probe per row;
+- probes/checks are server/Agent-side and globally bounded;
+- configured periodic checks use concurrency/rate limits and jitter;
+- unconfigured target health remains UNKNOWN/N/A rather than being silently probed;
+- timestamp-only health/presence refresh is operational state, not a config revision;
+- repeated flapping is coalesced before entering Attention Center.
+
 ## 24. System and lifecycle
 
 Web Management covers meaningful browser equivalents for supported CLI system operations,
@@ -560,21 +752,50 @@ including:
 
 Irreversible or high-impact actions require explicit confirmation and clear consequences.
 
+### 24.1 Bounded multi-host operations
+
+Operations across multiple Managed Hosts use the Job Engine and expose per-target state:
+
+```text
+QUEUED
+RUNNING
+SUCCEEDED
+FAILED
+CANCELLED
+```
+
+Initial safe bulk scope:
+
+- run/collect diagnostics;
+- synchronize/refresh;
+- check Agent/product versions and update availability;
+- generate support bundles;
+- export inventory;
+- bounded metadata/group/tag assignment through normal Change Plan impact checks.
+
+The initial 3.0 scope does not expose broad bulk delete/revoke/release/policy-reset or
+unbounded mass update/restart. Those actions require a separate future risk/rollback
+contract.
+
 ## 25. Search, filtering, and scale
 
-The target remains 1–50 Managed Hosts. The UI optimizes this range with:
+The qualified 3.0 target is 1–100 Managed Hosts.
 
-- fast text search;
-- status filters;
-- Object/Group filters;
+The UI provides:
+
+- fast text search by stable identifiers and safe display metadata;
+- status/platform/version filters;
+- Object/Group/Tag relationship filters;
 - policy relationship filters;
-- recent-problem filters;
+- health/attention/recent-problem filters;
 - sortable compact tables;
-- persistent URL query state for shareable non-secret views.
+- Saved Views for recurring operational slices such as Offline Hosts, Version Drift,
+  DEGRADED Services, or Recent Policy Denies;
+- persistent URL query state for shareable non-secret views;
+- server-side bounded pagination/cursors rather than loading unbounded history/inventory.
 
-Do not introduce large-fleet pagination infrastructure, distributed search, or an external
-index solely for this phase. Server-side bounded queries against the authoritative store
-are sufficient unless measured evidence proves otherwise.
+SQLite indexes and bounded server-side queries remain the default. Do not introduce
+distributed search or an external index merely for the 100-host target.
 
 ## 26. Functional parity matrix
 
@@ -596,6 +817,10 @@ Every supported management capability must be classified during implementation:
 | Doctor / health / support bundle | Required | Full parity + structured visualization |
 | Backup / restore | Required | Full parity with stronger confirmation UX |
 | Update / certificate / lifecycle | Required where supported | Browser-equivalent supported actions |
+| Web operator identity / roles | 3.0 CLI management/recovery required | Full Web operator administration for Admin |
+| Saved policy regression tests | 3.0 CLI/Bundle lifecycle required | Visual lifecycle + pre-Apply execution |
+| Management Jobs | 3.0 CLI inspect/cancel/recovery required | Rich progress/per-target job UX |
+| Saved Views / UI preferences | Not required | Web-specific non-security preference |
 
 Implementation must generate/maintain a machine-auditable parity ledger from the current
 public capability/catalog model. A new supported CLI management capability cannot be
@@ -619,7 +844,7 @@ Design rules:
 - state changes require explicit mutation methods and revision preconditions;
 - mutation preview and commit are separate operations for security-relevant changes;
 - structured errors include a stable code, safe message, affected resource, and retry/conflict guidance;
-- list endpoints are bounded and support search/filter appropriate to the 1–50-host target;
+- list endpoints are bounded and support indexed search/filter/pagination for the 1–100-host target;
 - secrets are omitted or represented only by non-sensitive status metadata;
 - Web responses do not expose SQLite schema or internal FRP implementation names.
 
@@ -690,21 +915,25 @@ by automatic retry of a security-relevant mutation.
 
 ## 30. Performance and lightweight requirements
 
-Initial targets are intentionally modest and measurable:
+3.0 performance is designed and qualified at 100 Managed Hosts.
 
-- normal navigation should feel interactive on a small DRLink Server;
-- list/detail queries are bounded and indexed using the existing control-plane database;
-- dashboard aggregation must not block policy enforcement or Agent management;
-- Web background refresh uses bounded frequency and backoff;
+Required architecture properties:
+
+- common navigation/list/detail queries are bounded and indexed;
+- dashboard/inventory summaries use aggregate/read-model queries rather than N-per-Host calls;
+- Web background refresh uses bounded frequency, jitter, and backoff;
+- Agent RPC fan-out uses the bounded Job Engine/Worker Pool;
 - browser sessions and event streams have hard resource limits;
-- audit queries require bounded time ranges/pagination when data grows;
-- no Web request holds a SQLite write transaction while waiting on browser input or Agent RPC.
+- audit/history queries use bounded ranges and pagination;
+- operational-state writes are coalesced where semantics permit;
+- no Web request holds a SQLite write transaction while waiting on browser input or Agent RPC;
+- Web/query/job failures cannot starve relay enforcement or CLI recovery.
 
-The Web service must have independent CPU/memory/service limits so a frontend bug or
-expensive query cannot starve relay enforcement.
+The Web service has independent CPU/memory/service limits.
 
-Exact numeric resource budgets should be established from measurement during
-implementation rather than invented in this design document.
+DRL3-0 establishes a reproducible reference profile and freezes measurable latency,
+resource, saturation, and recovery SLOs after baseline measurement. Do not invent a new
+external datastore solely because an unbounded implementation misses those SLOs.
 
 ## 31. Observability
 
@@ -736,57 +965,59 @@ without hover-only interaction.
 
 ## 33. Implementation sequence
 
-### WM-0 — Shared Core management interface
+This document uses the same phase IDs as the canonical roadmap. Do not maintain a second
+Web-only phase plan.
 
-- extract/normalize typed application-service operations from existing CLI/domain paths;
-- prove CLI behavior remains unchanged;
-- expose structured read models, Change Plan preview, apply, and explain results;
-- add parity inventory machinery.
+### DRL3-0 — Scope and architecture freeze
 
-### WM-1 — Optional package and read-only Web
+Freeze product scope, 100-host qualification model, Management Scalability Layer,
+operator/RBAC model, parity ledger, Agent RPC/jobs, state boundaries, and SLO methodology.
 
-- package/service lifecycle;
-- authentication/session baseline;
-- Overview dashboard;
-- Managed Host, Remote Service, Object/Group, policy, audit, revision, and health read views;
-- Web-disabled/Core-only regression.
+### DRL3-1 — Management Scalability Foundation
 
-### WM-2 — Safe Server mutations
+Extract/normalize the shared Core management operations, command/query boundaries,
+derived read models, bounded Job Engine, Agent RPC Worker Pool, operational aggregation,
+audit/history query layer, and capability inventory. Prove existing CLI behavior is
+unchanged.
 
-- Object/Group CRUD;
-- enrollment lifecycle;
-- Remote/Internet policy builder;
-- ConfigurationBundle test/diff/apply;
-- security-impact preview, confirmation, revision conflict, and audit attribution.
+### DRL3-2 — Web Platform and Read-Only Operations
 
-### WM-3 — Policy Simulator and troubleshooting
+Package/service lifecycle, browser auth/session/RBAC, Overview/Attention, inventory,
+search/Saved Views, audit/revision/health read views, version drift, and Core-without-Web
+regressions.
 
-- Remote Access Decision Trace;
-- Internet Access Decision Trace;
-- AI Access explain where applicable;
-- recent real decision correlation;
-- Doctor/health drill-down and safe remediation entry points;
-- no diagnostic-side-effect regressions.
+### DRL3-3 — Guided Configuration and Full Management Parity
 
-### WM-4 — Agent-scoped full management
+Enrollment, Object/Group lifecycle, Agent-owned Remote Service RPC, policy management,
+ConfigurationBundle, system operations, Draft Workspace, Change Plan preview/apply, and
+complete supported management parity.
 
-- authenticated Agent management/RPC contract for Web-initiated supported operations;
-- Remote Service full lifecycle;
-- Agent ConfigurationBundle and synchronization;
-- supported Agent lifecycle/update/diagnostic actions;
-- offline/unreachable truthfulness and retry behavior;
-- no Server-side projection mutation pretending to be Agent success.
+### DRL3-4 — Policy Safety, Preview, and Explainability
 
-### WM-5 — Full parity and release qualification
+Policy Simulator/Decision Trace, Saved Policy Regression Tests, Blast Radius Preview,
+Effective Access Graph, and Draft Graph Overlay.
 
-- complete capability parity ledger;
-- backup/restore/update/certificate/system workflows;
-- Admin/Read Only authorization matrix;
-- remote TLS exposure qualification;
-- security review;
-- Real Web E2E across supported Server/Agent platforms;
-- failure-isolation/resource tests;
-- documentation and operator usability closure.
+### DRL3-5 — Diagnosis, Health, and Attention
+
+Connection Diagnosis, structured Doctor/health, bounded health aggregation, recent
+decision correlation, actionable Attention Center, and no diagnostic-side-effect paths.
+
+### DRL3-6 — Bounded Fleet Operations
+
+Visible Job Engine UX and the approved safe multi-Host operations. No broad destructive
+fleet controls.
+
+### DRL3-7 — Audit, Lifecycle, and 100-Host Hardening
+
+Full audit/revision/lifecycle parity, retention/query indexing, backup/restore of 3.0
+metadata, resource limits, saturation/backpressure, disconnect storms, read-model rebuild,
+Web crash isolation, and 100-host mixed-load qualification.
+
+### DRL3-8 — 3.0 Qualification and Stable Release
+
+Exact-candidate browser Real E2E, security review, parity ledger closure, supported
+platform/Agent E2E, 100-host scale gates, failure isolation, and same-HEAD Full Real E2E
+release qualification.
 
 ## 34. Acceptance and regression criteria
 
@@ -836,27 +1067,43 @@ AGENT_LOCAL_STATE_NOT_SERVER_WRITTEN=PASS
 REMOTE_SERVICE_WEB_PARITY=PASS
 ```
 
-Operator UX:
+Operator UX and policy safety:
 
 ```text
 ENROLLMENT_GUIDED_E2E=PASS
+DRAFT_WORKSPACE_ATOMICITY=PASS
 POLICY_BUILDER_E2E=PASS
 POLICY_DENY_REASON_DISCOVERABLE=PASS
 DECISION_TRACE_MATCHES_CORE=PASS
+POLICY_REGRESSION_GATE=PASS
+BLAST_RADIUS_ACCURACY=PASS
+EFFECTIVE_ACCESS_GRAPH_ACCURACY=PASS
+CONNECTION_DIAGNOSIS=PASS
+ATTENTION_DEDUPLICATION=PASS
+SAVED_VIEWS=PASS
+VERSION_DRIFT_ATTENTION=PASS
 AUDIT_DRILLDOWN=PASS
 DOCTOR_DRILLDOWN=PASS
 BACKUP_RESTORE_WEB_E2E=PASS
 UPDATE_LIFECYCLE_WEB_E2E=PASS
 ```
 
-Failure isolation and scale:
+Fleet operations, failure isolation, and scale:
 
 ```text
+BOUNDED_JOB_ENGINE=PASS
+RPC_WORKER_BACKPRESSURE=PASS
+BULK_SAFE_ACTION_SCOPE=PASS
+HEALTH_COLLECTION_BOUNDS=PASS
+NO_BROWSER_N_PER_HOST_POLLING=PASS
+NO_SQLITE_TXN_WAITING_ON_AGENT_RPC=PASS
 WEB_RESOURCE_LIMITS=PASS
 WEB_QUERY_BOUNDS=PASS
 WEB_RESTART_SESSION_BEHAVIOR=PASS
 CORE_ENFORCEMENT_UNDER_WEB_FAILURE=PASS
-TARGET_SCALE_50_HOST_USABILITY=PASS
+READ_MODEL_REBUILD=PASS
+100_HOST_CONTROL_PLANE_SCALE=PASS
+100_HOST_MIXED_OPERATION_LOAD=PASS
 ```
 
 ## 35. Testing strategy
@@ -869,12 +1116,18 @@ Minimum layers:
 4. Frontend component/workflow tests.
 5. Browser E2E for primary operator journeys.
 6. Server↔Agent authenticated RPC E2E for Agent-owned mutations.
-7. security tests for CSRF, session, role, secret, TLS, and unsafe input handling.
-8. resource/failure-isolation tests.
-9. real-user E2E with a user who does not rely on CLI knowledge.
+7. policy-regression/blast-radius/access-graph parity tests against the Core evaluator.
+8. security tests for CSRF, session, role, secret, TLS, and unsafe input handling.
+9. Job Engine/RPC backpressure, timeout, cancellation, and disconnect-storm tests.
+10. 10/50/100-host inventory and mixed-operation scale tests.
+11. Web/query/job failure-isolation and read-model rebuild tests.
+12. real-user E2E with a user who does not rely on CLI knowledge.
 
-Browser E2E must include both successful and denied/blocked flows. A UI that only proves
-happy-path CRUD does not satisfy the product goal.
+Browser E2E must include both successful and denied/blocked flows. Scale qualification
+must mix heartbeat/status activity, dashboard/search/audit reads, policy explain, bounded
+Agent jobs, and at least one configuration mutation without policy drift or false success.
+
+A UI that only proves happy-path CRUD does not satisfy the product goal.
 
 ## 36. Design-gate summary
 
@@ -900,13 +1153,17 @@ relay enforcement.
 
 **Architecture boundary:** CLI, Web, ConfigurationBundle, and adapters share one Core
 application/change-plan path. Agent-owned mutations remain Agent-owned via authenticated
-RPC.
+RPC. The Management Scalability Layer adds bounded query/read-model/job/aggregation
+modules without replacing SQLite authority or relay architecture.
+
+**Scale impact:** 3.0 qualifies management behavior at 100 Managed Hosts while preserving
+single-Server operation and Web/Core failure isolation.
 
 **Acceptance:** section 34 plus the exact implementation-phase regression/Real E2E suite.
 
 ## 37. Implementation decisions intentionally left flexible
 
-These choices may be finalized during WM-0/WM-1 without changing this product contract:
+These choices may be finalized during DRL3-0/DRL3-1 without changing this product contract:
 
 - exact first-party package/install command grammar;
 - FastAPI versus an equivalent small supported Python HTTP adapter;
@@ -918,3 +1175,76 @@ These choices may be finalized during WM-0/WM-1 without changing this product co
 Changing the authority model, making Web mandatory, adding alternate authoritative
 storage, bypassing Agent ownership, or weakening security confirmation is not an
 implementation detail and requires a new architecture decision.
+## 38. Competitive pattern review and scope decisions
+
+The 3.0 design was re-reviewed against current official product documentation on
+2026-10-02. The goal is to adopt proven operator workflows without importing competitor
+architecture or expanding Data Relay Link into another product category.
+
+| Product/pattern | Data Relay Link decision |
+|---|---|
+| Tailscale visual policy editor, tests, preview | Adopt visual policy management, saved regression tests, and pre-Apply preview |
+| Tailscale GitOps mode | Defer; ConfigurationBundle remains the current portable configuration artifact |
+| Cloudflare policy tester / activity logs | Adopt impact preview and decision drill-down; no analytics platform |
+| Twingate Access Graph | Adopt Effective Access Graph tied to actual DRLink policy/resource semantics |
+| Twingate path-based troubleshooting | Adopt Connection Diagnosis that separates policy from data-path/target failures |
+| Teleport inventory/version visibility | Adopt Agent/platform/version drift and attention |
+| Teleport/Twingate role separation | Adopt Admin / Operator / Read Only; avoid role proliferation |
+| NetBird Control Center / draft visualization | Adopt current-vs-draft graph overlay and fast relationship navigation |
+| NetBird notifications | Design internal attention/event boundary; external channels move to later 3.x |
+| Zscaler health/diagnostics | Adopt bounded health aggregation and drill-down; no application-discovery platform |
+| Boundary worker health separation | Keep component health explicit; do not create controller/worker cluster architecture |
+
+### 38.1 Explicit competitive-feature deferrals
+The following are intentionally **not** 3.0 GA requirements:
+
+- full JIT/access-request approval workflow;
+- session recording;
+- browser SSH/RDP terminal;
+- credential vault/injection;
+- device-posture/MDM platform;
+- broad application/network discovery;
+- full traffic analytics;
+- SIEM/reporting platform;
+- external HA/multi-region controller architecture;
+- large-fleet rollout/orchestration.
+
+Temporary rule TTL, external notification channels, external Web-admin SSO/IdP, GitOps
+editor locking, and long-term external audit export are useful later additions because
+the 3.0 foundations allow them without changing authority or management architecture.
+
+### 38.2 Non-authoritative review inputs
+
+The review used current official documentation from the following products as design
+inputs only. These sources do not define Data Relay Link behavior and may change later.
+
+- Tailscale — Visual policy editor; tailnet policy preview/tests.
+- Cloudflare Zero Trust — Access policy tester; dashboard decision/activity logs;
+  connector/tunnel health notifications.
+- Twingate — Resource/User Access Graph; troubleshooting via Resource Activity; admin roles.
+- Teleport — Web UI inventory/version visibility; RBAC; Access Graph.
+- NetBird — Control Center, Draft Mode, user roles, and Audit Events.
+- Zscaler Private Access — application health reporting modes and Health dashboard.
+- HashiCorp Boundary — worker Last Seen/health separation and read-only audit roles.
+
+The adopted DRLink behavior is the decision table above plus the canonical Product
+Master/Roadmap/Architecture. Re-running competitor research does not automatically change
+3.0 scope after DRL3-0 freeze.
+
+## 39. 3.0 scope-freeze contract
+
+DRL3-0 is complete only when the roadmap and this design are sufficiently detailed that
+implementation does not need to invent product semantics.
+
+After scope freeze:
+
+- a new competitor feature does not enter 3.0 merely because it is attractive;
+- a new feature defaults to 3.1+ when it can be added without foundation rework;
+- P0/P1 security/correctness gaps may modify 3.0 scope;
+- measured scale evidence may modify an implementation detail, but not silently replace
+  SQLite authority, Agent ownership, or the single-Core policy engine;
+- every accepted scope change updates Product Master, Roadmap, this document, acceptance
+  gates, and the active Work Packet before implementation.
+
+This contract exists specifically to prevent late feature discovery from causing repeated
+Core/API/UI redesign.

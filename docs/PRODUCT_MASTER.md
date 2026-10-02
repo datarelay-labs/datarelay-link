@@ -115,14 +115,32 @@ Product version and Relay Engine version are independent.
 
 ## 5. Target scale
 
+Scale is generation-specific.
+
+### Data Relay Link 2.x
+
 ```text
 1–5 hosts       extremely simple
-10–30 hosts     comfortable CLI or optional Web operation
-30–50 hosts     reusable Objects/Groups plus search/filter are sufficient
-100–1000 hosts  not the current product target
+10–30 hosts     normal CLI operating range
+30–50 hosts     upper supported design range
+>50 hosts       no 2.x scale claim without separate qualification
 ```
 
-Do not turn Data Relay Link into a large fleet-management or network-overlay platform merely to match competitor feature lists.
+### Data Relay Link 3.0
+
+```text
+1–10 hosts      extremely simple
+10–50 hosts     normal Web or CLI operating range
+50–100 hosts    fully supported management target
+>100 hosts      no stable support claim until separately measured and qualified
+```
+
+The 3.0 100-host target is achieved by bounded management architecture around the existing
+single-Server/SQLite Core, not by turning Data Relay Link into a large fleet-management
+or network-overlay platform.
+
+Data Relay Link 3.0 does not require PostgreSQL, Redis, Kubernetes, a message broker, or
+a distributed control plane merely to satisfy the 100-host target.
 
 ## 6. CLI execution contexts
 
@@ -557,6 +575,36 @@ Critical v2.4 CLI/AI acceptance includes:
 - runtime rollback and truthful rollback-failure path;
 - role-aware help/error discovery.
 
+### 25.1 Data Relay Link 3.0 acceptance focus
+
+3.0 extends product-quality closure with Web and management-scale evidence.
+
+At minimum, the exact candidate must prove:
+
+```text
+Core + CLI remain complete without Web
+Web management capability parity
+Admin / Operator / Read Only authorization
+shared Change Plan semantics across CLI/Web/Bundle
+Policy Simulator / Decision Trace parity
+saved policy regression tests
+blast-radius accuracy
+effective-access graph accuracy
+connection-diagnosis workflow
+Agent RPC ownership / no false remote success
+bounded multi-host Job Engine
+dashboard/search/audit bounds
+100-host control-plane and mixed-operation scale
+Web failure isolation from relay enforcement
+3.0 backup/restore and lifecycle
+real-browser user journeys
+```
+
+The 100-host scale gate is a management-plane qualification. It does not require 100
+physical hosts for every functional assertion; scale/saturation may use controlled
+simulated Agents, while real supported-platform Agents and real traffic remain mandatory
+for functional claims.
+
 ## 26. Non-goals
 
 Data Relay Link is not:
@@ -592,8 +640,11 @@ These guides make existing normative behavior easier to find. They do not overri
 ## 27. Documentation ownership
 
 ```text
+DATA_RELAY_ROADMAP.md
+  forward-looking product generation, phase ordering, scope freeze, and implementation dependency plan
+
 DATA_RELAY_LINK_CLI_AI_MASTER_v2.4_FINAL.md
-  authoritative CLI/AI public behavior
+  authoritative 2.x CLI/AI public behavior
 
 Data Relay Link CLI Information Architecture.md
   derived menus/discovery/UX
@@ -651,6 +702,30 @@ No other document may redefine the public CLI/AI model independently.
 **Architecture rule:** Web Management owns no alternate authoritative state. CLI, Web, ConfigurationBundle, and integration adapters converge on the same Core domain/change-plan, validation, authorization, revision/audit, runtime-generation, and verification paths. Agent-owned mutations remain Agent-owned and may be requested remotely only through authenticated management/RPC.
 
 **Security/lightweight rule:** The Web package is optional, disabled/uninstalled by default, has no separate database, and cannot become a dependency for Core startup, enforcement, CLI recovery, backup/restore, or upgrade.
+
+### 2026-10 — Data Relay Link 3.0 100-host management boundary
+
+**Decision:** Qualify Data Relay Link 3.0 for up to 100 Managed Hosts on the existing
+single-Server + SQLite Core before considering any external database or distributed
+management architecture.
+
+**Management architecture:** Add bounded command/query separation, rebuildable read
+models, an operational-state aggregator, a bounded Job Engine, and an Agent RPC Worker
+Pool as logical management modules. These modules may remain in one local process/package.
+
+**Operator-safety scope:** 3.0 GA includes Draft Workspace, saved policy regression
+tests, Blast Radius Preview, Effective Access Graph, Connection Diagnosis, Attention
+Center, version drift, searchable audit/revisions, Saved Views, and bounded safe
+multi-Host jobs.
+
+**Scope discipline:** Full JIT approvals, session recording, browser terminals,
+device-posture/MDM, broad discovery, SIEM/reporting, external HA/multi-region control,
+and large-fleet orchestration are not 3.0 goals. Temporary access TTL, external
+notifications, Web-admin SSO/IdP, GitOps locking, and external audit export remain
+later-additive features unless 3.0 evidence proves a foundation dependency.
+
+**Reason:** Improve day-to-day operation and troubleshooting without changing Data Relay
+Link into a different product category or forcing repeated Core redesign.
 
 ## 29. Master rule
 
