@@ -2269,7 +2269,7 @@
   },
   {
     "roles": "server",
-    "detail": "Permanently remove DRLink-owned MCP TLS certificate and ACME account material and clear MCP TLS intent.",
+    "detail": "Permanently remove DRLink-owned MCP TLS certificate and ACME account material and clear MCP TLS intent. Requires an interactive TTY y/N confirmation; non-interactive use fails closed.",
     "aliases": [],
     "destructive": true,
     "hidden": false,

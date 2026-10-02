@@ -998,20 +998,50 @@ def _create_help(role):
 
 
 def _update_help(role):
-    return (
-        "Update\n======\n\n"
-        "Public commands:\n"
-        "  system update product\n"
-        "  system update engine\n"
-        "  system update check-engine\n\n"
-        "system update product updates Data Relay Link management tools.\n"
-        "system update engine updates the pinned upstream Relay Engine (FRP) binary.\n"
-        "system update check-engine checks upstream Relay Engine releases (read-only).\n"
-        "A software update does not re-enroll clients or rotate CA/token/ports.\n"
-        "See: help system / help commands\n"
+    _client, server = _role_parts(role)
+    lines = [
+        "Update",
+        "======",
+        "",
+        "Public commands:",
+        "  system update product",
+        "  system update engine",
+    ]
+    if server:
+        lines.append("  system update check-engine")
+    lines.extend(
+        [
+            "",
+            "system update product updates Data Relay Link management tools.",
+            "system update engine updates the pinned upstream Relay Engine (FRP) binary.",
+        ]
     )
+    if server:
+        lines.append(
+            "system update check-engine checks upstream Relay Engine releases (read-only)."
+        )
+    lines.extend(
+        [
+            "A software update does not re-enroll clients or rotate CA/token/ports.",
+            "See: help system / help commands",
+        ]
+    )
+    return "\n".join(lines) + "\n"
 
 
+def _update_redirect_help(role):
+    _client, server = _role_parts(role)
+    lines = [
+        '"update" is not a current public root.',
+        "",
+        "Use:",
+        "  system update product",
+        "  system update engine",
+    ]
+    if server:
+        lines.append("  system update check-engine")
+    lines.extend(["", "See: help commands"])
+    return "\n".join(lines) + "\n"
 def _verb_help(verb, role):
     mapping = {
         "revoke": (
@@ -1268,14 +1298,7 @@ def context_help(tokens, role, names=None, clients=None):
             "  unset managed-host <HOST>\n\n"
             "See: help commands\n"
         ),
-        "update": (
-            '"update" is not a current public root.\n\n'
-            "Use:\n"
-            "  system update product\n"
-            "  system update engine\n"
-            "  system update check-engine\n\n"
-            "See: help commands\n"
-        ),
+        "update": _update_redirect_help(role),
         "doctor": (
             '"doctor" is not a current public root.\n\n'
             "Use: system diagnostics\n"
