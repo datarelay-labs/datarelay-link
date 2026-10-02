@@ -352,6 +352,12 @@ assert "audit_snapshot_rc" in body and "audit_snapshot_ok" in body
 assert "PROXY_AUDIT_SNAPSHOT=FAIL" in body
 assert "refusing historical evidence fallback" in body
 assert "audit_start=0" not in body
+assert 'cfg.get("egress_conn_log_file")' in body
+assert "urlsafe_b64encode" in body and "urlsafe_b64decode" in body
+assert "egress connection log path changed after snapshot" in body
+assert "set no_proxy=&& set NO_PROXY=&&" not in body
+assert "WINDOWS_PROXY_APPLICATION_PATH=PASS" in body
+assert "missing fresh Windows proxy traversal audit record" in body
 # Qualification must not manufacture a closed-network condition by altering routing/firewall state.
 for forbidden in ("iptables ", "nft ", "ufw ", "ip route del", "nmcli connection down"):
     assert forbidden not in body, forbidden

@@ -223,13 +223,33 @@ EOF
   # Real proxy-aware application qualification on the Ubuntu protected host.
   # Keep direct Internet untouched; prove the configured proxy path with the
   # gateway connection audit instead.
-  local audit_start audit_snapshot_rc audit_snapshot_ok=1
+  local audit_meta audit_log_path_b64 audit_start audit_snapshot_rc audit_snapshot_ok=1
   set +e
-  audit_start="$(pq_ssh "$SERVER" "sudo bash -lc 'if [[ -f /var/log/drlink/egress/connections.jsonl ]]; then wc -l < /var/log/drlink/egress/connections.jsonl; else echo 0; fi'" 2>/dev/null | tr -d '[:space:]')"
+  audit_meta="$(pq_ssh "$SERVER" "sudo python3 -s" 2>/dev/null <<'PY'
+import base64
+import json
+from pathlib import Path
+
+config_path = Path("/etc/drlink/config.json")
+cfg = json.loads(config_path.read_text(encoding="utf-8"))
+path = Path(str(cfg.get("egress_conn_log_file") or "/var/log/drlink/egress/connections.jsonl"))
+if not path.is_absolute():
+    raise SystemExit("egress_conn_log_file must be absolute")
+count = 0
+if path.is_file():
+    with path.open("r", encoding="utf-8", errors="replace") as handle:
+        count = sum(1 for _ in handle)
+print(base64.urlsafe_b64encode(str(path).encode("utf-8")).decode("ascii"))
+print(count)
+PY
+)"
   audit_snapshot_rc=$?
   set -uo pipefail
-  if [[ "$audit_snapshot_rc" -ne 0 || ! "$audit_start" =~ ^[0-9]+$ ]]; then
+  audit_log_path_b64="$(printf '%s\n' "$audit_meta" | sed -n '1p')"
+  audit_start="$(printf '%s\n' "$audit_meta" | sed -n '2p')"
+  if [[ "$audit_snapshot_rc" -ne 0 || ! "$audit_log_path_b64" =~ ^[A-Za-z0-9_-]+=*$ || ! "$audit_start" =~ ^[0-9]+$ ]]; then
     audit_snapshot_ok=0
+    audit_log_path_b64=""
     audit_start=""
     pq_note "PROXY_AUDIT_SNAPSHOT=FAIL rc=$audit_snapshot_rc"
   else
@@ -393,14 +413,19 @@ EOF
   local audit_rc
   if [[ "$audit_snapshot_ok" -eq 1 ]]; then
     set +e
-    pq_ssh "$SERVER" "sudo python3 - '$audit_start'" >"$OUT/extended/egress-real-app-audit.jsonl" 2>"$OUT/extended/egress-real-app-audit.err" <<'PY'
+    pq_ssh "$SERVER" "sudo python3 - '$audit_start' '$audit_log_path_b64'" >"$OUT/extended/egress-real-app-audit.jsonl" 2>"$OUT/extended/egress-real-app-audit.err" <<'PY'
+import base64
 import json
 import sys
 from pathlib import Path
 
-path = Path("/var/log/drlink/egress/connections.jsonl")
 start = int(sys.argv[1])
-lines = path.read_text(encoding="utf-8").splitlines()[start:]
+path = Path(base64.urlsafe_b64decode(sys.argv[2].encode("ascii")).decode("utf-8"))
+cfg = json.loads(Path("/etc/drlink/config.json").read_text(encoding="utf-8"))
+configured = Path(str(cfg.get("egress_conn_log_file") or "/var/log/drlink/egress/connections.jsonl"))
+if path != configured:
+    raise SystemExit("egress connection log path changed after snapshot")
+lines = path.read_text(encoding="utf-8", errors="replace").splitlines()[start:]
 records = []
 for line in lines:
     try:
@@ -442,13 +467,69 @@ PY
     fails=$((fails + 1))
   fi
 
-  # Windows via curl.exe if present.
+  # Windows via curl.exe if present. Preserve any operator-provided
+  # NO_PROXY/no_proxy bypasses; prove this request actually traversed DRLink by
+  # requiring a fresh server-side audit record after a bounded snapshot.
+  local windows_audit_start="" windows_audit_snapshot_rc=1 windows_audit_rc=1
+  if [[ "$audit_snapshot_ok" -eq 1 ]]; then
+    set +e
+    windows_audit_start="$(pq_ssh "$SERVER" "sudo python3 - '$audit_log_path_b64'" 2>/dev/null <<'PY'
+import base64
+import sys
+from pathlib import Path
+
+path = Path(base64.urlsafe_b64decode(sys.argv[1].encode("ascii")).decode("utf-8"))
+if not path.is_file():
+    raise SystemExit("egress connection log unavailable before Windows probe")
+with path.open("r", encoding="utf-8", errors="replace") as handle:
+    print(sum(1 for _ in handle))
+PY
+)"
+    windows_audit_snapshot_rc=$?
+    set -uo pipefail
+  fi
+
   set +e
   pq_ssh frp-e2e-windows "cmd.exe /V:OFF /C \"set http_proxy=http://${SERVER_IP}:${EGRESS_PORT}&& set https_proxy=http://${SERVER_IP}:${EGRESS_PORT}&& set HTTP_PROXY=http://${SERVER_IP}:${EGRESS_PORT}&& set HTTPS_PROXY=http://${SERVER_IP}:${EGRESS_PORT}&& echo PROXY_CONFIGURATION_VERIFIED=PASS&& curl.exe -sS -o NUL -w %{http_code} --max-time 25 http://example.com/\"" >"$OUT/extended/egress-windows.log" 2>&1
   local wrc=$?
   set -uo pipefail
-  if [[ "$wrc" -eq 0 ]] && grep -q "PROXY_CONFIGURATION_VERIFIED=PASS" "$OUT/extended/egress-windows.log" && grep -q "200" "$OUT/extended/egress-windows.log"; then
+
+  if [[ "$wrc" -eq 0 && "$windows_audit_snapshot_rc" -eq 0 && "$windows_audit_start" =~ ^[0-9]+$ ]]; then
+    set +e
+    pq_ssh "$SERVER" "sudo python3 - '$windows_audit_start' '$audit_log_path_b64'" >"$OUT/extended/egress-windows-audit.jsonl" 2>"$OUT/extended/egress-windows-audit.err" <<'PY'
+import base64
+import json
+import sys
+from pathlib import Path
+
+start = int(sys.argv[1])
+path = Path(base64.urlsafe_b64decode(sys.argv[2].encode("ascii")).decode("utf-8"))
+for line in path.read_text(encoding="utf-8", errors="replace").splitlines()[start:]:
+    try:
+        record = json.loads(line)
+    except json.JSONDecodeError:
+        continue
+    if (
+        str(record.get("hostname") or "").lower() == "example.com"
+        and str(record.get("decision") or "").upper() == "ALLOW"
+        and str(record.get("source_ip") or "").strip()
+    ):
+        print(json.dumps(record, sort_keys=True, separators=(",", ":")))
+        raise SystemExit(0)
+raise SystemExit("missing fresh Windows proxy traversal audit record")
+PY
+    windows_audit_rc=$?
+    set -uo pipefail
+  fi
+
+  if [[ "$wrc" -eq 0 && "$windows_audit_rc" -eq 0 ]] \
+    && grep -q "PROXY_CONFIGURATION_VERIFIED=PASS" "$OUT/extended/egress-windows.log" \
+    && grep -q "200" "$OUT/extended/egress-windows.log"; then
     pq_note "INTERNET_OS_windows=PASS"
+    pq_note "WINDOWS_PROXY_APPLICATION_PATH=PASS audit_start=$windows_audit_start"
+  elif [[ "$wrc" -eq 0 && "$windows_audit_rc" -ne 0 ]]; then
+    pq_note "INTERNET_OS_windows=FAIL proxy traversal audit missing"
+    fails=$((fails + 1))
   elif grep -Eq "403|000|502|curl" "$OUT/extended/egress-windows.log"; then
     pq_note "INTERNET_OS_windows=FAIL"
     fails=$((fails + 1))
