@@ -34,6 +34,7 @@ External copies, Project/chat attachments, exported snapshots, and same-named do
 | Exhaustive direct CLI audit | `CLI_EXHAUSTIVE_AUDIT.md` |
 | Exhaustive AI-assisted command audit | `AI_ASSISTED_COMMAND_EXHAUSTIVE_AUDIT.md` |
 | Internal control-plane/schema history | `CONTROL_PLANE_ARCHITECTURE.md` |
+| Optional Full Web Management design | `WEB_MANAGEMENT.md` |
 
 ## Operator lifecycle documents
 
@@ -43,6 +44,7 @@ External copies, Project/chat attachments, exported snapshots, and same-named do
 | Upgrade / release channels | `UPGRADE.md` |
 | Remote Service + Remote Access operation | `REMOTE_ACCESS.md` |
 | AI Identity / AI Access / MCP | `AI_ACCESS_MCP.md` |
+| Optional Full Web Management | `WEB_MANAGEMENT.md` |
 | Troubleshooting | `TROUBLESHOOTING.md` |
 | Deployment topology | `DEPLOYMENT_MODES.md` |
 | Windows Agent details | `WINDOWS_CLIENT.md` |

@@ -62,7 +62,33 @@ After stable release:
 | Test/audit/internal-only change | none by itself |
 | Docs-only correction outside shipped behavior | none by itself |
 
-The supported compatibility surface includes documented CLI grammar, config/state formats, enrollment/identity continuity, backup/restore format, install/service identity, update semantics, and security-policy behavior.
+The supported compatibility surface includes documented CLI grammar, config/state formats, enrollment/identity continuity, backup/restore format, install/service identity, update semantics, and security-policy behavior. Beginning with 3.0.0, it also includes the supported Optional Full Web Management behavior and its management/API compatibility promises where explicitly documented.
+
+### 3.1 Product-generation boundary: 2.x and 3.0
+
+Data Relay Link intentionally uses a stronger product-generation boundary than the
+minimum SemVer increment that an additive feature might otherwise require.
+
+```text
+2.x
+= headless Core + complete CLI as the only full human management surface
+= no supported Full Web Management product surface
+
+3.0.0
+= first stable generation with Optional Full Web Management
+= full supported browser management parity + dashboard/explain/troubleshooting
+= Core + CLI remain complete without Web installed
+```
+
+This is a deliberate product-line decision, not a claim that adding an optional Web
+package is inherently SemVer-incompatible. The MAJOR increment communicates the new
+primary operator experience and supported management surface while preserving the
+lightweight headless architecture.
+
+MCP and other bounded integration adapters may exist in 2.x and do not by themselves
+change this rule: CLI remains the only complete human administrative surface in 2.x.
+The generation boundary is the supported Full Web Management surface defined by
+`WEB_MANAGEMENT.md`.
 
 ## 4. Pre-stable redesign rule
 
@@ -81,6 +107,9 @@ MCP exclusion
 without renaming the target to 3.0.0.
 
 This exception exists because the incompatible behavior was never part of an immutable qualified stable v2.4.0 release.
+
+This pre-stable exception does not consume the 3.0 generation boundary. Data Relay Link
+3.0.0 remains reserved as the first stable release with Optional Full Web Management.
 
 Once v2.4.0 is stable, incompatible changes to its supported public surface require a future MAJOR version unless an automatic safe compatibility path preserves the contract.
 
@@ -363,10 +392,15 @@ If final integration creates a new commit, repeat qualification on the new HEAD.
 After stable v2.4.0:
 
 ```text
-compatible defect/security fix → 2.4.1, 2.4.2 ...
-compatible feature             → 2.5.0
-incompatible supported change  → 3.0.0
+compatible defect/security fix                 → 2.4.1, 2.4.2 ...
+compatible CLI/Core feature within 2.x scope   → 2.5.0, 2.6.0 ...
+Optional Full Web Management generation        → 3.0.0
+other incompatible supported change            → next applicable MAJOR
 ```
+
+The 2.x line remains headless, with CLI as the only complete human management surface. Do not introduce supported
+Full Web Management into a 2.x stable release, even if the implementation could be made
+technically backward-compatible.
 
 Do not backport new features into a PATCH release.
 

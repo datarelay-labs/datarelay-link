@@ -31,6 +31,34 @@ Internet Access   managed/protected source → approved outside destination
 AI Access         authenticated AI Identity → approved target permissions
 ```
 
+Management-surface principle:
+
+```text
+Data Relay Link Core
+├── complete local CLI                         always available
+├── Optional Full Web Management              separately installable
+└── integration adapters such as MCP          separately bounded
+```
+
+The Core is headless and fully operable without a Web UI. The CLI remains a complete
+administrative surface and recovery path throughout the product line.
+
+Version-generation rule:
+
+```text
+Data Relay Link 2.x
+= headless Core + complete CLI as the only full human management surface
+= Full Web Management not part of the stable supported surface
+
+Data Relay Link 3.0+
+= same headless Core + complete CLI
++ separately installable Optional Full Web Management
+```
+
+When the 3.0 Web Management package is installed, it provides full supported management
+capability plus dashboard, visualization, policy explanation, and guided troubleshooting;
+it is not a reduced read-only companion and it does not become authoritative state.
+
 ## 2. Product family
 
 ```text
@@ -89,8 +117,8 @@ Product version and Relay Engine version are independent.
 
 ```text
 1–5 hosts       extremely simple
-10–30 hosts     comfortable CLI operation
-30–50 hosts     reusable Objects/Groups are sufficient
+10–30 hosts     comfortable CLI or optional Web operation
+30–50 hosts     reusable Objects/Groups plus search/filter are sufficient
 100–1000 hosts  not the current product target
 ```
 
@@ -329,9 +357,9 @@ For the v2.4.0 target, the server-side MCP Bridge is included as part of AI Acce
 
 Stable v2.4.0 qualification is blocked until real ChatGPT Plus interactive user authentication is proven end to end. The required owner/UI evidence is: OAuth Authorization Code/consent completes through the public MCP endpoint, ChatGPT discovers the exposed tools, one authorized operation succeeds, and one intentionally out-of-scope operation is denied by current AI Access policy. Machine-side SDK/HTTP conformance alone does not satisfy this gate. Because retained owner/UI JSON is external evidence, it is not terminal release authority by itself; stable attestation also requires the independently administered `stable-release-owner-ui` GitHub Environment approval gate.
 
-## 16. Human, AI, and ConfigurationBundle convergence
+## 16. Human, AI, ConfigurationBundle, and Web convergence
 
-Three configuration input styles share the same semantics:
+Current v2.4 configuration input styles share the same semantics:
 
 ```text
 Human Guided Wizard
@@ -340,6 +368,22 @@ ConfigurationBundle
 ```
 
 All converge on one Change Plan.
+
+Data Relay Link 3.0 Optional Full Web Management is an additional presentation/input
+surface, not an alternate mutation engine:
+
+```text
+CLI / Wizard ────────────┐
+AI-generated CLI ────────┤
+ConfigurationBundle ─────┼→ canonical Change Plan → authoritative transaction
+Optional Web Management ─┘
+```
+
+Web actions must reuse the same validation, reference resolution, policy-impact,
+confirmation, concurrency, revision/audit, runtime generation, activation, and
+verification contracts as the CLI. Agent-owned operations remain Agent-owned; a
+Server-hosted Web UI may request them only through an authenticated management/RPC
+path and must report offline or unsupported operations truthfully.
 
 Human Wizard draft/inline Objects remain non-authoritative until final Apply. Cancel leaves no partial state.
 
@@ -523,7 +567,8 @@ full network overlay
 SASE/SWG
 DLP platform
 large fleet orchestrator
-Web-UI-first control plane
+Web UI as a mandatory Core/CLI dependency
+Web-only authoritative state or database-heavy management plane
 generic open proxy
 transparent full-network bridge
 ```
@@ -538,6 +583,7 @@ INSTALLATION.md
 UPGRADE.md
 REMOTE_ACCESS.md
 AI_ACCESS_MCP.md
+WEB_MANAGEMENT.md
 TROUBLESHOOTING.md
 ```
 
@@ -560,6 +606,9 @@ CONFIGURATION_BUNDLE.md
 
 CONTROL_PLANE_ARCHITECTURE.md
   internal architecture/schema history; public semantics must remain consistent with the Master
+
+WEB_MANAGEMENT.md
+  Data Relay Link 3.0 Optional Full Web Management architecture, UX, security, feature, and acceptance contract
 
 VERSION_POLICY.md / RELEASE_CHECKLIST.md / RELEASE_VALIDATION.md
   version and qualification governance
@@ -590,6 +639,18 @@ No other document may redefine the public CLI/AI model independently.
 **Security consequence:** In BLACKLIST mode, when destination and service match a Managed-Host-sourced rule but that source identity cannot be proven, Data Relay Link denies fail-closed rather than treating the connection as unmatched/ALLOW. NAT-aware deployments that need deterministic source policy should use the proxy-visible IP/CIDR.
 
 **Reason:** Do not invent per-host cryptographic identity for an agentless proxy, and do not let source-identity ambiguity silently broaden access.
+
+### 2026-10 — Data Relay Link 3.0 Optional Full Web Management
+
+**Decision:** Keep the entire 2.x line as the headless generation where CLI is the only complete human management surface. Data Relay Link 3.0.0 is the first stable release target with a separately installable Full Web Management surface. The 3.0 Core remains headless and fully operable through the CLI when Web Management is absent or stopped.
+
+**Versioning rule:** This MAJOR boundary is an intentional product-generation decision, even though an optional Web package could otherwise be implemented in a backward-compatible way. The new supported browser management experience is what distinguishes the 3.x generation from 2.x.
+
+**Capability rule:** Web Management must cover the supported management capabilities available through the CLI and add dashboard, visualization, policy simulation/decision trace, guided installation/enrollment, audit exploration, and troubleshooting workflows.
+
+**Architecture rule:** Web Management owns no alternate authoritative state. CLI, Web, ConfigurationBundle, and integration adapters converge on the same Core domain/change-plan, validation, authorization, revision/audit, runtime-generation, and verification paths. Agent-owned mutations remain Agent-owned and may be requested remotely only through authenticated management/RPC.
+
+**Security/lightweight rule:** The Web package is optional, disabled/uninstalled by default, has no separate database, and cannot become a dependency for Core startup, enforcement, CLI recovery, backup/restore, or upgrade.
 
 ## 29. Master rule
 
