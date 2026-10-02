@@ -29,6 +29,36 @@ approved Internet destination
 
 The base HTTP/HTTPS path remains agentless on the protected host.
 
+### 2.1 Protected-host proxy configuration
+
+The normal user journey is to configure standard application proxy settings on the protected host to point at the Data Relay Link Internet Access endpoint. Data Relay Link must not require its Remote Access Agent on that host merely for HTTP/HTTPS Internet Access.
+
+Representative shell configuration uses a dedicated subshell/process so test proxy variables cannot leak into the operator's parent shell:
+
+```bash
+(
+  export http_proxy=http://<DRLINK_SERVER>:<INTERNET_ACCESS_PORT>
+  export https_proxy=http://<DRLINK_SERVER>:<INTERNET_ACCESS_PORT>
+  export HTTP_PROXY="$http_proxy"
+  export HTTPS_PROXY="$https_proxy"
+  proxy_bypass="${no_proxy:-}"
+  if [ -n "${NO_PROXY:-}" ]; then
+    proxy_bypass="${proxy_bypass:+${proxy_bypass},}${NO_PROXY}"
+  fi
+  proxy_bypass="${proxy_bypass:+${proxy_bypass},}127.0.0.1,localhost"
+  export no_proxy="$proxy_bypass"
+  export NO_PROXY="$proxy_bypass"
+
+  # Run the proxy-aware application workflow here.
+)
+```
+
+Merge and preserve the pre-existing `no_proxy` and `NO_PROXY` bypass entries needed for management endpoints or internal services, append localhost, then export the same merged list under both casings so application precedence cannot drop an existing bypass. A dedicated subshell/process is mandatory for shell-based qualification probes; never export the test proxy variables directly into a long-lived operator/test shell. Process exit or interruption therefore leaves the parent's six proxy/bypass variables unchanged.
+
+Applications that use an application-specific standard proxy setting may use that instead, but it must resolve to the same Data Relay Link endpoint. Prefer process-scoped or temporary test configuration. If qualification changes persistent application proxy configuration, capture the pre-test value/state and restore it exactly (or remove the test-only override when none existed) before the scenario can PASS. For APT, prefer a temporary `APT_CONFIG` plus temporary source/list/cache paths; only modify persistent `Acquire::http::Proxy` / `Acquire::https::Proxy` configuration when necessary, and then restore the prior bytes/absence during cleanup.
+
+A per-command proxy override such as `curl -x ...` is useful for diagnostics, but it is not sufficient evidence that the protected-host user workflow works as designed.
+
 ## 3. Policy authority
 
 The authoritative policy is not `egress-control.json`.
@@ -406,4 +436,23 @@ backup/restore                              policy preserved
 DB/runtime mismatch                         fail closed / surfaced
 ```
 
-Real application qualification continues to include `curl`, `wget`, `git`, `apt`, and representative vendor/API HTTPS use cases where applicable.
+Real application qualification includes `curl`, `wget`, `git`, `apt`, and representative vendor/API HTTPS use cases where applicable.
+
+For final E2E, prove the complete proxy user path without disrupting the host's existing direct Internet connectivity:
+
+```text
+protected host configured with standard proxy settings pointing to Data Relay Link
+→ effective proxy configuration verified
+→ approved curl/wget/git/apt traffic observed through Data Relay Link
+→ unapproved destination / wrong port is denied through the same proxy path
+→ remove an actually required application destination
+→ the corresponding application workflow fails through policy
+→ restore policy
+→ the same application workflow succeeds again
+```
+
+`curl` alone does not satisfy the real-application matrix when `wget`, `git`, and `apt` are applicable to the selected qualification host. Policy/explain output alone is never live traffic evidence. The evidence must retain the effective proxy endpoint/configuration, application result, and Data Relay Link audit/source observation proving that the tested request traversed the configured proxy. Do not disable or reconfigure the host's direct Internet path merely to manufacture a test precondition.
+
+For APT specifically, qualify a real repository/update workflow using explicitly allowed repository FQDNs. Do not use broad wildcard authorization merely to obtain PASS. Use strict update failure semantics such as `apt-get -o APT::Update::Error-Mode=any update`; if that option is unavailable, explicitly detect any failed required index and count it as FAIL even when APT exits 0. Remove at least one destination actually required by that update path, correlate the failed required index with the Data Relay Link proxy DENY audit, then restore that destination and prove recovery.
+
+Fixed TCP remains the separate solution for proxy-unaware applications and is not a substitute for the HTTP/HTTPS proxy-aware application qualification above.
