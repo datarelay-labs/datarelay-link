@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regression tests for the ChatGPT Plus owner/UI release evidence gate."""
+"""Regression tests for the ChatGPT owner/UI release evidence gate."""
 from __future__ import annotations
 
 import importlib.util
@@ -41,9 +41,12 @@ def manifest():
 
 def evidence():
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "status": "PASS",
-        "client_surface": "ChatGPT Plus owner/UI",
+        "client_plan": "Business",
+        "client_surface": "ChatGPT owner/UI",
+        "support_reference": "https://help.openai.com/en/articles/12584461-developer-mode-and-full-mcp-connectors-in-chatgpt",
+        "support_checked_at": "2026-09-28T20:00:00+09:00",
         "core_provenance_head": PROVENANCE,
         "core_source_head": SOURCE,
         "bootstrap_server_sha256": BUNDLE,
@@ -107,6 +110,61 @@ class OwnerAcceptanceTests(unittest.TestCase):
             self.check(data),
         )
 
+    def test_plan_name_is_evidence_not_hardcoded_allowlist(self):
+        data = evidence()
+        data["client_plan"] = "Future Full MCP Plan"
+        self.assertEqual(self.check(data), [])
+
+    def test_legacy_plus_surface_is_rejected(self):
+        data = evidence()
+        data["client_surface"] = "ChatGPT Plus owner/UI"
+        self.assertIn("client_surface must be ChatGPT owner/UI", self.check(data))
+
+    def test_actual_plan_is_required(self):
+        data = evidence()
+        data["client_plan"] = ""
+        self.assertIn("client_plan must record one safe actual ChatGPT plan name", self.check(data))
+
+    def test_plan_name_rejects_control_characters(self):
+        data = evidence()
+        data["client_plan"] = "Business\nFAKE=PASS"
+        self.assertIn(
+            "client_plan must record one safe actual ChatGPT plan name",
+            self.check(data),
+        )
+
+    def test_support_reference_must_be_official_openai(self):
+        data = evidence()
+        data["support_reference"] = "https://example.com/full-mcp"
+        self.assertIn(
+            "support_reference must use an official openai.com hostname",
+            self.check(data),
+        )
+
+    def test_support_reference_rejects_query_or_fragment(self):
+        data = evidence()
+        data["support_reference"] += "?source=untrusted"
+        self.assertIn(
+            "support_reference must not contain query or fragment",
+            self.check(data),
+        )
+
+    def test_support_reference_rejects_output_injection(self):
+        data = evidence()
+        data["support_reference"] += "\nFAKE=PASS"
+        self.assertIn(
+            "support_reference must not contain surrounding whitespace or control characters",
+            self.check(data),
+        )
+
+    def test_support_check_must_be_current_at_capture(self):
+        data = evidence()
+        data["support_checked_at"] = "2026-08-01T00:00:00+00:00"
+        self.assertIn(
+            "support_checked_at is older than 30 days at evidence capture time",
+            self.check(data),
+        )
+
     def test_stable_projection_requires_owner_evidence_binding(self):
         release_evidence = {
             "status": "PASS",
@@ -125,7 +183,7 @@ class OwnerAcceptanceTests(unittest.TestCase):
         self.assertTrue(any("owner/UI acceptance" in err for err in errs), errs)
         release_evidence.update(
             {
-                "chatgpt_plus_owner_ui_acceptance": "PASS",
+                "chatgpt_owner_ui_acceptance": "PASS",
                 "chatgpt_owner_evidence_sha256": "d" * 64,
                 "chatgpt_owner_evidence_provenance_head": PROVENANCE,
             }
@@ -137,6 +195,7 @@ class OwnerAcceptanceTests(unittest.TestCase):
         )
         self.assertTrue(any("protected owner/UI review" in err for err in errs), errs)
         release_evidence["trusted_owner_ui_review"] = "PASS"
+        release_evidence["trusted_owner_ui_evidence_sha256"] = "d" * 64
         self.assertEqual(
             PROJECT.evidence_errors(
                 release_evidence,

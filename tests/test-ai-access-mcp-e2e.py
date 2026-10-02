@@ -1157,7 +1157,7 @@ class MCPBridgeE2ETests(unittest.TestCase):
             )
         if not chatgpt:
             print(
-                "CHATGPT_BLOCKER=OWNER_UI_AUTH_PENDING: real ChatGPT Plus OAuth Authorization Code/consent "
+                "CHATGPT_BLOCKER=OWNER_UI_AUTH_PENDING: real supported ChatGPT owner/UI OAuth Authorization Code/consent "
                 "must be completed through the owner UI; machine-side MCP conformance does not clear this gate."
             )
 

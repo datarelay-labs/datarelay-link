@@ -53,9 +53,9 @@ Public MCP is served only through the `single443` HTTPS frontend. `direct` deplo
 
 ### v2.4.0 release status
 
-MCP Bridge is included in the v2.4.0 target. The current stable-release blocker is the real ChatGPT Plus user authentication path, not MCP protocol implementation itself.
+MCP Bridge is included in the v2.4.0 target. The current stable-release blocker is the real ChatGPT owner/UI authentication path on a plan/surface that officially supports full MCP at evidence-capture time, not MCP protocol implementation itself.
 
-The release gate requires retained owner/UI evidence that a real ChatGPT Plus user can:
+The release gate requires retained owner/UI evidence that a real user on a currently supported ChatGPT full-MCP plan/surface can:
 
 1. connect to the public Data Relay Link MCP endpoint;
 2. complete OAuth Authorization Code and consent successfully;

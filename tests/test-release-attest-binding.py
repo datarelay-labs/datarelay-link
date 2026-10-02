@@ -146,6 +146,7 @@ def run_cli(
                 "QUALIFICATION_CHATGPT_OWNER_EVIDENCE_SHA256": "d" * 64,
                 "QUALIFICATION_CHATGPT_OWNER_EVIDENCE_PROVENANCE_HEAD": qualified_head,
                 "QUALIFICATION_TRUSTED_OWNER_UI_REVIEW": "PASS",
+                "QUALIFICATION_TRUSTED_OWNER_UI_REVIEW_SHA256": "d" * 64,
             }
         )
     return subprocess.run(
@@ -198,6 +199,12 @@ def test_workflow_uses_checker() -> None:
         fail("release-attest.yml does not bind protected owner/UI review")
     if "needs.stable-owner-ui-approval.outputs.trusted_owner_ui_review" not in text:
         fail("release-attest.yml does not source owner/UI review from protected job")
+    if "owner-ui-evidence-validation" not in text:
+        fail("release-attest.yml does not prevalidate owner/UI evidence before protected approval")
+    if "needs.stable-owner-ui-approval.outputs.reviewed_sha256" not in text:
+        fail("release-attest.yml does not bind protected owner/UI review to evidence SHA256")
+    if "QUALIFICATION_TRUSTED_OWNER_UI_REVIEW_SHA256" not in text:
+        fail("release-attest.yml does not pass the protected owner/UI evidence digest to binding")
     for forbidden in (
         "inputs.qualification_chatgpt_owner_ui_acceptance",
         "inputs.qualification_chatgpt_owner_evidence_sha256",
@@ -472,11 +479,52 @@ def test_v240_stable_requires_chatgpt_owner_evidence() -> None:
         chatgpt_owner_evidence_sha256="c" * 64,
         chatgpt_owner_evidence_provenance_head=head,
         trusted_owner_ui_review="PASS",
+        trusted_owner_ui_evidence_sha256="c" * 64,
     )
     result = checker.evaluate(checker.BindingFacts(**base))
     if result.get("channel") != "stable":
         fail("owner evidence did not permit validated stable publication: %s" % result)
     print("PASS V240_STABLE_REQUIRES_CHATGPT_OWNER_EVIDENCE")
+
+
+def test_v240_stable_rejects_mismatched_protected_owner_evidence_digest() -> None:
+    head = "a" * 40
+    parent = "b" * 40
+    facts = checker.BindingFacts(
+        project_version="2.4.0",
+        manifest_version="2.4.0",
+        channel="development",
+        git_ref=parent,
+        source_head=parent,
+        immutable_source_ref=parent,
+        head=head,
+        parent=parent,
+        input_ref="v2.4.0",
+        workflow_ref="refs/tags/v2.4.0",
+        workflow_sha=head,
+        changed_paths=("release-manifest.json",),
+        tag_commits={"v2.4.0": head},
+        clean=True,
+        pass1_head=head,
+        pass2_head=head,
+        final_qualified_head=head,
+        qualification_evidence_sha256="e" * 64,
+        trusted_qualification_review="PASS",
+        trusted_qualification_evidence_sha256="e" * 64,
+        chatgpt_owner_ui_acceptance="PASS",
+        chatgpt_owner_evidence_sha256="c" * 64,
+        chatgpt_owner_evidence_provenance_head=head,
+        trusted_owner_ui_review="PASS",
+        trusted_owner_ui_evidence_sha256="d" * 64,
+    )
+    try:
+        checker.evaluate(facts)
+    except checker.BindingError as exc:
+        if not any("owner/UI review SHA256 must match" in err for err in exc.errors):
+            fail("mismatched protected owner evidence digest not reported: %s" % exc.errors)
+    else:
+        fail("mismatched protected owner evidence digest was accepted")
+    print("PASS V240_STABLE_BINDS_PROTECTED_OWNER_REVIEW_TO_EVIDENCE_DIGEST")
 
 
 def test_v240_stable_requires_protected_owner_review() -> None:
@@ -647,6 +695,7 @@ def main() -> int:
     test_validated_stable_tag_exposes_effective_channel()
     test_stable_requires_protected_qualification_review()
     test_v240_stable_requires_chatgpt_owner_evidence()
+    test_v240_stable_rejects_mismatched_protected_owner_evidence_digest()
     test_v240_stable_requires_protected_owner_review()
     test_release_qualification_evidence_binding()
     test_self_reference_is_rejected()

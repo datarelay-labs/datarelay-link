@@ -254,7 +254,7 @@ Do not reuse an upstream FRP token as a general management or MCP credential.
 
 MCP is included in the v2.4.0 target.
 
-Stable v2.4.0 qualification is blocked until real ChatGPT Plus owner/UI user authentication is proven end to end through the public MCP endpoint: OAuth Authorization Code/consent must complete, expected tools must be discovered, one policy-allowed operation must succeed, and one intentionally out-of-scope operation must be denied. Machine-side OAuth/MCP protocol conformance is required evidence but does not clear this real-user authentication gate by itself.
+Stable v2.4.0 qualification is blocked until real ChatGPT owner/UI user authentication is proven end to end through the public MCP endpoint on a plan/surface that officially supports full MCP at evidence-capture time: OAuth Authorization Code/consent must complete, expected tools must be discovered, one policy-allowed operation must succeed, and one intentionally out-of-scope operation must be denied. Machine-side OAuth/MCP protocol conformance is required evidence but does not clear this real-user authentication gate by itself.
 
 Remote MCP calls terminate at a Data Relay Link server-side bridge. Internal endpoints do not expose independent MCP servers by default.
 

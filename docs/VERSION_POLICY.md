@@ -276,8 +276,8 @@ Current authoritative product decision:
 ```text
 MCP_INCLUDED_IN_V2_4_0=YES
 MCP_RELEASE_BLOCKER=YES
-CHATGPT_PLUS_USER_AUTH_ACCEPTANCE=REQUIRED
-CHATGPT_PLUS_USER_AUTH_STATUS=BLOCKED_PENDING_OWNER_UI_AUTH
+CHATGPT_OWNER_UI_USER_AUTH_ACCEPTANCE=REQUIRED
+CHATGPT_OWNER_UI_USER_AUTH_STATUS=BLOCKED_PENDING_OWNER_UI_AUTH
 features.mcp_included=true   # on the development candidate once MCP Bridge/AI Access are present
 ```
 
@@ -285,7 +285,7 @@ The final v2.4.0 target includes the Control Plane/Object/Policy/MCP behavior fr
 
 The earlier decision to exclude MCP from v2.4.0 is superseded historical context only and is not a valid current release rule. No current checklist, test expectation, release manifest, generated artifact, or support statement may encode MCP exclusion as the expected v2.4.0 behavior.
 
-Before v2.4.0 candidate qualification, all implementation/governance artifacts must remain consistent with MCP inclusion. Machine-side MCP protocol and policy tests are necessary but do not clear the release blocker by themselves. Stable qualification also requires a real ChatGPT Plus user to complete the interactive OAuth Authorization Code/consent flow against the public MCP endpoint, discover tools, complete one authorized operation, and observe one policy-denied operation with retained evidence. The owner/UI evidence payload is external input and is not a trust anchor by itself: stable v2.4.0 attestation additionally requires approval through the protected GitHub Environment `stable-release-owner-ui`. That environment must have a required reviewer configured and administrator bypass disabled. Its `PASS` signal is produced only by the environment-gated job and is not exposed as a `workflow_dispatch` input.
+Before v2.4.0 candidate qualification, all implementation/governance artifacts must remain consistent with MCP inclusion. Machine-side MCP protocol and policy tests are necessary but do not clear the release blocker by themselves. Stable qualification also requires a real user on a ChatGPT plan/surface that officially supports full MCP at evidence-capture time to complete the interactive OAuth Authorization Code/consent flow against the public MCP endpoint, discover tools, complete one authorized operation, and observe one policy-denied operation with retained evidence. The owner/UI evidence payload is external input and is not a trust anchor by itself: stable v2.4.0 attestation additionally requires approval through the protected GitHub Environment `stable-release-owner-ui`. That environment must have a required reviewer configured and administrator bypass disabled. Its `PASS` signal is produced only by the environment-gated job and is not exposed as a `workflow_dispatch` input. The environment-gated approval records the SHA256 of the already validated owner/UI evidence, and release binding rejects any digest mismatch.
 
 ## 12. Release manifest
 
@@ -309,7 +309,7 @@ For every v2.4.0 candidate whose bytes contain MCP Bridge/AI Access:
 features.mcp_included=true
 ```
 
-`features.mcp_included` records artifact content, not release qualification. It remains `true` while the ChatGPT Plus owner/UI user-authentication gate is blocked. Stable release readiness is tracked separately and remains blocked until that gate passes with retained evidence.
+`features.mcp_included` records artifact content, not release qualification. It remains `true` while the ChatGPT owner/UI user-authentication gate is blocked. Stable release readiness is tracked separately and remains blocked until that gate passes with retained evidence.
 
 Before implementation completes, a development manifest may reflect current code truth rather than future target scope; it must not be used to claim release readiness.
 
@@ -327,7 +327,7 @@ RELEASE_MANIFEST_VALID
 HISTORICAL_TAG_IMMUTABILITY
 CONTROL_PLANE_SCHEMA_COMPATIBLE
 MCP_V2_4_INCLUDED
-CHATGPT_PLUS_USER_AUTH_ACCEPTANCE
+CHATGPT_OWNER_UI_USER_AUTH_ACCEPTANCE
 ```
 
 The old `MCP_V2_4_EXCLUSION` guard is retired during the implementation phase, not carried into candidate qualification.
