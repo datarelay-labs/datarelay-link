@@ -29,6 +29,25 @@ approved Internet destination
 
 The base HTTP/HTTPS path remains agentless on the protected host.
 
+### 2.1 Protected-host proxy configuration
+
+The normal user journey is to configure standard application proxy settings on the protected host to point at the Data Relay Link Internet Access endpoint. Data Relay Link must not require its Remote Access Agent on that host merely for HTTP/HTTPS Internet Access.
+
+Representative shell configuration:
+
+```bash
+export http_proxy=http://<DRLINK_SERVER>:<INTERNET_ACCESS_PORT>
+export https_proxy=http://<DRLINK_SERVER>:<INTERNET_ACCESS_PORT>
+export HTTP_PROXY="$http_proxy"
+export HTTPS_PROXY="$https_proxy"
+export no_proxy=127.0.0.1,localhost
+export NO_PROXY="$no_proxy"
+```
+
+Applications that use an application-specific standard proxy setting may use that instead, but it must resolve to the same Data Relay Link endpoint. For example, APT may use its normal `Acquire::http::Proxy` / `Acquire::https::Proxy` configuration when required by the target distribution/application behavior.
+
+A per-command proxy override such as `curl -x ...` is useful for diagnostics, but it is not sufficient evidence that the protected-host user workflow works as designed.
+
 ## 3. Policy authority
 
 The authoritative policy is not `egress-control.json`.
@@ -406,4 +425,23 @@ backup/restore                              policy preserved
 DB/runtime mismatch                         fail closed / surfaced
 ```
 
-Real application qualification continues to include `curl`, `wget`, `git`, `apt`, and representative vendor/API HTTPS use cases where applicable.
+Real application qualification includes `curl`, `wget`, `git`, `apt`, and representative vendor/API HTTPS use cases where applicable.
+
+For the closed/restricted-network release claim, final E2E must prove the complete user path:
+
+```text
+protected host direct Internet path blocked
+→ protected host configured with standard proxy settings pointing to Data Relay Link
+→ approved curl/wget/git/apt traffic succeeds through Data Relay Link
+→ unapproved destination / wrong port is denied
+→ remove an actually required application destination
+→ the corresponding application workflow fails through policy
+→ restore policy
+→ the same application workflow succeeds again
+```
+
+`curl` alone does not satisfy the real-application matrix when `wget`, `git`, and `apt` are applicable to the selected qualification host. Policy/explain output alone is never live traffic evidence. The evidence must retain the effective proxy endpoint/configuration, application result, Data Relay Link audit/source observation, and the direct-path-block result. If direct Internet cannot be shown blocked in the available environment, the closed-network gate is `BLOCKED_ENVIRONMENT`, not PASS.
+
+For APT specifically, qualify a real repository/update workflow using explicitly allowed repository FQDNs. Do not use broad wildcard authorization merely to obtain PASS. Remove at least one destination actually required by that update path and prove `apt update` fails because of Internet Access policy; restore that destination and prove recovery.
+
+Fixed TCP remains the separate solution for proxy-unaware applications and is not a substitute for the HTTP/HTTPS proxy-aware application qualification above.
