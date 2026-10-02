@@ -106,6 +106,10 @@ phase_egress_allow_deny() {
   local https_obj="pq-https"
   local service_group="pq-web"
   local rule="pq-example-web"
+  local git_destination_obj="pq-github-com"
+  local apt_destination_obj="pq-archive-ubuntu-com"
+  local git_rule="pq-github-https"
+  local apt_rule="pq-apt-http"
   ensure_egress_listener || { pq_gate MULTI_OS_EGRESS_ALLOW_DENY FAIL; return 1; }
 
   # Qualification owns a clean Internet Access policy on the disposable
@@ -134,19 +138,27 @@ PY
   printf 'y\n' | drlink unset internet-access policy
 fi
 # Clean only qualification-owned residue from an interrupted prior run.
-drlink unset service-group "$service_group" >/dev/null 2>&1 || true
-drlink unset service-object "$http_obj" >/dev/null 2>&1 || true
-drlink unset service-object "$https_obj" >/dev/null 2>&1 || true
-drlink unset network-object "$destination_obj" >/dev/null 2>&1 || true
-drlink unset network-object "$source_obj" >/dev/null 2>&1 || true
+printf 'y\n' | drlink unset service-group "$service_group" >/dev/null 2>&1 || true
+printf 'y\n' | drlink unset service-object "$http_obj" >/dev/null 2>&1 || true
+printf 'y\n' | drlink unset service-object "$https_obj" >/dev/null 2>&1 || true
+printf 'y\n' | drlink unset network-object "$apt_destination_obj" >/dev/null 2>&1 || true
+printf 'y\n' | drlink unset network-object "$git_destination_obj" >/dev/null 2>&1 || true
+printf 'y\n' | drlink unset network-object "$destination_obj" >/dev/null 2>&1 || true
+printf 'y\n' | drlink unset network-object "$source_obj" >/dev/null 2>&1 || true
 drlink set network-object "$source_obj" type cidr value 0.0.0.0/0
 drlink set network-object "$destination_obj" type fqdn value example.com
+drlink set network-object "$git_destination_obj" type fqdn value github.com
+drlink set network-object "$apt_destination_obj" type fqdn value archive.ubuntu.com
 drlink set service-object "$http_obj" type tcp port 80
 drlink set service-object "$https_obj" type tcp port 443
 drlink set service-group "$service_group" members "$http_obj,$https_obj"
 drlink set internet-access "$rule" mode whitelist source "$source_obj" destination "$destination_obj" service "$service_group" enabled
+drlink set internet-access "$git_rule" source "$source_obj" destination "$git_destination_obj" service "$https_obj" enabled
+drlink set internet-access "$apt_rule" source "$source_obj" destination "$apt_destination_obj" service "$http_obj" enabled
 drlink show internet-access
 drlink test internet-access source "$source_obj" destination "$destination_obj" service "$http_obj"
+drlink test internet-access source "$source_obj" destination "$git_destination_obj" service "$https_obj"
+drlink test internet-access source "$source_obj" destination "$apt_destination_obj" service "$http_obj"
 EOF
   local setup_rc=$?
   set -uo pipefail
@@ -167,8 +179,19 @@ export http_proxy=http://${SERVER_IP}:${EGRESS_PORT}
 export https_proxy=http://${SERVER_IP}:${EGRESS_PORT}
 export HTTP_PROXY=http://${SERVER_IP}:${EGRESS_PORT}
 export HTTPS_PROXY=http://${SERVER_IP}:${EGRESS_PORT}
-export no_proxy=127.0.0.1,localhost
-export NO_PROXY=127.0.0.1,localhost
+proxy_bypass="\${no_proxy:-}"
+if [[ -n "\${NO_PROXY:-}" ]]; then
+  proxy_bypass="\${proxy_bypass:+\${proxy_bypass},}\${NO_PROXY}"
+fi
+proxy_bypass="\${proxy_bypass:+\${proxy_bypass},}127.0.0.1,localhost"
+export no_proxy="\$proxy_bypass"
+export NO_PROXY="\$proxy_bypass"
+test "\$http_proxy" = "http://${SERVER_IP}:${EGRESS_PORT}"
+test "\$https_proxy" = "http://${SERVER_IP}:${EGRESS_PORT}"
+test "\$HTTP_PROXY" = "http://${SERVER_IP}:${EGRESS_PORT}"
+test "\$HTTPS_PROXY" = "http://${SERVER_IP}:${EGRESS_PORT}"
+test "\$no_proxy" = "\$NO_PROXY"
+echo PROXY_CONFIGURATION_VERIFIED=PASS
 echo HOST=\$(hostname)
 code=\$(curl -sS -o /tmp/pq-allow.body -w "%{http_code}" --max-time 25 http://example.com/ || true)
 echo ALLOW_HTTP=\$code
@@ -197,13 +220,316 @@ EOF
     fi
   done
 
-  # Windows via curl.exe if present.
+  # Real proxy-aware application qualification on the Ubuntu protected host.
+  # Keep direct Internet untouched; prove the configured proxy path with the
+  # gateway connection audit instead.
+  local audit_meta audit_log_path_b64 audit_start audit_snapshot_rc audit_snapshot_ok=1
   set +e
-  pq_ssh frp-e2e-windows "cmd.exe /c curl.exe -sS -o NUL -w %{http_code} --max-time 25 -x http://${SERVER_IP}:${EGRESS_PORT} http://example.com/" >"$OUT/extended/egress-windows.log" 2>&1
+  audit_meta="$(pq_ssh "$SERVER" "sudo python3 -s" 2>/dev/null <<'PY'
+import base64
+import json
+from pathlib import Path
+
+config_path = Path("/etc/drlink/config.json")
+cfg = json.loads(config_path.read_text(encoding="utf-8"))
+path = Path(str(cfg.get("egress_conn_log_file") or "/var/log/drlink/egress/connections.jsonl"))
+if not path.is_absolute():
+    raise SystemExit("egress_conn_log_file must be absolute")
+count = 0
+if path.is_file():
+    with path.open("r", encoding="utf-8", errors="replace") as handle:
+        count = sum(1 for _ in handle)
+print(base64.urlsafe_b64encode(str(path).encode("utf-8")).decode("ascii"))
+print(count)
+PY
+)"
+  audit_snapshot_rc=$?
+  set -uo pipefail
+  audit_log_path_b64="$(printf '%s\n' "$audit_meta" | sed -n '1p')"
+  audit_start="$(printf '%s\n' "$audit_meta" | sed -n '2p')"
+  if [[ "$audit_snapshot_rc" -ne 0 || ! "$audit_log_path_b64" =~ ^[A-Za-z0-9_-]+=*$ || ! "$audit_start" =~ ^[0-9]+$ ]]; then
+    audit_snapshot_ok=0
+    audit_log_path_b64=""
+    audit_start=""
+    pq_note "PROXY_AUDIT_SNAPSHOT=FAIL rc=$audit_snapshot_rc"
+  else
+    pq_note "PROXY_AUDIT_SNAPSHOT=PASS start=$audit_start"
+  fi
+
+  local app_allow_rc
+  set +e
+  pq_ssh frp-e2e-client "bash -s" >"$OUT/extended/egress-real-app-allow.log" 2>&1 <<EOF
+set -euo pipefail
+for tool in curl wget git apt-get; do
+  command -v "\$tool" >/dev/null 2>&1 || { echo "MISSING_REQUIRED_TOOL=\$tool"; exit 1; }
+done
+export http_proxy=http://${SERVER_IP}:${EGRESS_PORT}
+export https_proxy=http://${SERVER_IP}:${EGRESS_PORT}
+export HTTP_PROXY=http://${SERVER_IP}:${EGRESS_PORT}
+export HTTPS_PROXY=http://${SERVER_IP}:${EGRESS_PORT}
+proxy_bypass="\${no_proxy:-}"
+if [[ -n "\${NO_PROXY:-}" ]]; then
+  proxy_bypass="\${proxy_bypass:+\${proxy_bypass},}\${NO_PROXY}"
+fi
+proxy_bypass="\${proxy_bypass:+\${proxy_bypass},}127.0.0.1,localhost"
+export no_proxy="\$proxy_bypass"
+export NO_PROXY="\$proxy_bypass"
+test "\$http_proxy" = "http://${SERVER_IP}:${EGRESS_PORT}"
+test "\$https_proxy" = "http://${SERVER_IP}:${EGRESS_PORT}"
+test "\$no_proxy" = "\$NO_PROXY"
+echo PROXY_CONFIGURATION_VERIFIED=PASS
+
+wget -q -O /tmp/pq-wget.body --timeout=25 http://example.com/
+test -s /tmp/pq-wget.body
+echo WGET_REAL_PROXY=PASS
+
+git ls-remote https://github.com/octocat/Hello-World.git HEAD > /tmp/pq-git.out
+grep -Eq "^[0-9a-f]{40}[[:space:]]+HEAD$" /tmp/pq-git.out
+echo GIT_REAL_PROXY=PASS
+
+rm -rf /tmp/pq-apt
+mkdir -p /tmp/pq-apt/lists/partial /tmp/pq-apt/cache/archives/partial
+cat >/tmp/pq-apt/sources.list <<'APT_SOURCE'
+deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] http://archive.ubuntu.com/ubuntu jammy main
+APT_SOURCE
+cat >/tmp/pq-apt/apt.conf <<'APT_PROXY'
+Acquire::http::Proxy "http://${SERVER_IP}:${EGRESS_PORT}";
+Acquire::https::Proxy "http://${SERVER_IP}:${EGRESS_PORT}";
+APT_PROXY
+grep -Fx 'Acquire::http::Proxy "http://${SERVER_IP}:${EGRESS_PORT}";' /tmp/pq-apt/apt.conf >/dev/null
+grep -Fx 'Acquire::https::Proxy "http://${SERVER_IP}:${EGRESS_PORT}";' /tmp/pq-apt/apt.conf >/dev/null
+echo APT_PROXY_CONFIGURATION_VERIFIED=PASS
+APT_CONFIG=/tmp/pq-apt/apt.conf apt-get \
+  -o APT::Update::Error-Mode=any \
+  -o Debug::NoLocking=1 \
+  -o Acquire::Languages=none \
+  -o Dir::Etc::sourcelist=/tmp/pq-apt/sources.list \
+  -o Dir::Etc::sourceparts=- \
+  -o Dir::State::lists=/tmp/pq-apt/lists \
+  -o Dir::Cache=/tmp/pq-apt/cache \
+  -o APT::Get::List-Cleanup=0 update
+echo APT_REAL_PROXY=PASS
+EOF
+  app_allow_rc=$?
+  set -uo pipefail
+  if [[ "$app_allow_rc" -eq 0 ]] \
+    && grep -q '^PROXY_CONFIGURATION_VERIFIED=PASS$' "$OUT/extended/egress-real-app-allow.log" \
+    && grep -q '^WGET_REAL_PROXY=PASS$' "$OUT/extended/egress-real-app-allow.log" \
+    && grep -q '^GIT_REAL_PROXY=PASS$' "$OUT/extended/egress-real-app-allow.log" \
+    && grep -q '^APT_PROXY_CONFIGURATION_VERIFIED=PASS$' "$OUT/extended/egress-real-app-allow.log" \
+    && grep -q '^APT_REAL_PROXY=PASS$' "$OUT/extended/egress-real-app-allow.log"; then
+    pq_gate PROXY_CONFIGURATION_VERIFIED PASS
+    pq_gate EGRESS_REAL_APPLICATION_ALLOW PASS
+  else
+    pq_gate PROXY_CONFIGURATION_VERIFIED FAIL
+    pq_gate EGRESS_REAL_APPLICATION_ALLOW FAIL
+    fails=$((fails + 1))
+  fi
+
+  # Git policy denial and recovery against the same real HTTPS operation.
+  local git_disable_rc git_deny_rc git_enable_rc git_recover_rc
+  set +e
+  pq_ssh "$SERVER" "sudo drlink set internet-access '$git_rule' disabled" >"$OUT/extended/git-rule-disable.log" 2>&1
+  git_disable_rc=$?
+  pq_ssh frp-e2e-client "bash -s" >"$OUT/extended/egress-git-deny.log" 2>&1 <<EOF
+set -euo pipefail
+export https_proxy=http://${SERVER_IP}:${EGRESS_PORT}
+export HTTPS_PROXY=http://${SERVER_IP}:${EGRESS_PORT}
+if git ls-remote https://github.com/octocat/Hello-World.git HEAD >/tmp/pq-git-deny.out 2>/tmp/pq-git-deny.err; then
+  echo GIT_POLICY_DENY=UNEXPECTED_SUCCESS
+  exit 1
+fi
+echo GIT_POLICY_DENY=PASS
+EOF
+  git_deny_rc=$?
+  pq_ssh "$SERVER" "sudo drlink set internet-access '$git_rule' enabled" >"$OUT/extended/git-rule-enable.log" 2>&1
+  git_enable_rc=$?
+  pq_ssh frp-e2e-client "bash -s" >"$OUT/extended/egress-git-recover.log" 2>&1 <<EOF
+set -euo pipefail
+export https_proxy=http://${SERVER_IP}:${EGRESS_PORT}
+export HTTPS_PROXY=http://${SERVER_IP}:${EGRESS_PORT}
+git ls-remote https://github.com/octocat/Hello-World.git HEAD | grep -Eq "^[0-9a-f]{40}[[:space:]]+HEAD$"
+echo GIT_POLICY_RECOVERY=PASS
+EOF
+  git_recover_rc=$?
+  set -uo pipefail
+  if [[ "$git_disable_rc" -eq 0 && "$git_deny_rc" -eq 0 && "$git_enable_rc" -eq 0 && "$git_recover_rc" -eq 0 ]]; then
+    pq_gate EGRESS_GIT_POLICY_DENY_RECOVERY PASS
+  else
+    pq_gate EGRESS_GIT_POLICY_DENY_RECOVERY FAIL
+    fails=$((fails + 1))
+  fi
+
+  # APT denial must be strict: normal apt update may exit 0 after failed indexes.
+  local apt_remove_rc apt_deny_rc apt_restore_rc apt_recover_rc
+  set +e
+  pq_ssh "$SERVER" "printf 'y\\n' | sudo drlink unset internet-access '$apt_rule'" >"$OUT/extended/apt-rule-remove.log" 2>&1
+  apt_remove_rc=$?
+  pq_ssh frp-e2e-client "bash -s" >"$OUT/extended/egress-apt-deny.log" 2>&1 <<EOF
+set -euo pipefail
+set +e
+APT_CONFIG=/tmp/pq-apt/apt.conf apt-get \
+  -o APT::Update::Error-Mode=any \
+  -o Debug::NoLocking=1 \
+  -o Acquire::Languages=none \
+  -o Dir::Etc::sourcelist=/tmp/pq-apt/sources.list \
+  -o Dir::Etc::sourceparts=- \
+  -o Dir::State::lists=/tmp/pq-apt/lists \
+  -o Dir::Cache=/tmp/pq-apt/cache \
+  -o APT::Get::List-Cleanup=0 update
+rc=\$?
+set -e
+echo APT_DENY_RC=\$rc
+test "\$rc" -ne 0
+echo APT_POLICY_DENY=PASS
+EOF
+  apt_deny_rc=$?
+  pq_ssh "$SERVER" "sudo drlink set internet-access '$apt_rule' source '$source_obj' destination '$apt_destination_obj' service '$http_obj' enabled" >"$OUT/extended/apt-rule-restore.log" 2>&1
+  apt_restore_rc=$?
+  pq_ssh frp-e2e-client "bash -s" >"$OUT/extended/egress-apt-recover.log" 2>&1 <<EOF
+set -euo pipefail
+APT_CONFIG=/tmp/pq-apt/apt.conf apt-get \
+  -o APT::Update::Error-Mode=any \
+  -o Debug::NoLocking=1 \
+  -o Acquire::Languages=none \
+  -o Dir::Etc::sourcelist=/tmp/pq-apt/sources.list \
+  -o Dir::Etc::sourceparts=- \
+  -o Dir::State::lists=/tmp/pq-apt/lists \
+  -o Dir::Cache=/tmp/pq-apt/cache \
+  -o APT::Get::List-Cleanup=0 update
+echo APT_POLICY_RECOVERY=PASS
+EOF
+  apt_recover_rc=$?
+  set -uo pipefail
+  if [[ "$apt_remove_rc" -eq 0 && "$apt_deny_rc" -eq 0 && "$apt_restore_rc" -eq 0 && "$apt_recover_rc" -eq 0 ]]; then
+    pq_gate EGRESS_APT_POLICY_DENY_RECOVERY PASS
+  else
+    pq_gate EGRESS_APT_POLICY_DENY_RECOVERY FAIL
+    fails=$((fails + 1))
+  fi
+
+  # Retain only post-snapshot gateway audit and require ALLOW/DENY records for
+  # each real application destination with a non-empty observed source IP.
+  local audit_rc
+  if [[ "$audit_snapshot_ok" -eq 1 ]]; then
+    set +e
+    pq_ssh "$SERVER" "sudo python3 - '$audit_start' '$audit_log_path_b64'" >"$OUT/extended/egress-real-app-audit.jsonl" 2>"$OUT/extended/egress-real-app-audit.err" <<'PY'
+import base64
+import json
+import sys
+from pathlib import Path
+
+start = int(sys.argv[1])
+path = Path(base64.urlsafe_b64decode(sys.argv[2].encode("ascii")).decode("utf-8"))
+cfg = json.loads(Path("/etc/drlink/config.json").read_text(encoding="utf-8"))
+configured = Path(str(cfg.get("egress_conn_log_file") or "/var/log/drlink/egress/connections.jsonl"))
+if path != configured:
+    raise SystemExit("egress connection log path changed after snapshot")
+lines = path.read_text(encoding="utf-8", errors="replace").splitlines()[start:]
+records = []
+for line in lines:
+    try:
+        item = json.loads(line)
+    except json.JSONDecodeError:
+        continue
+    host = str(item.get("hostname") or "").lower()
+    decision = str(item.get("decision") or "").upper()
+    if host in {"example.com", "github.com", "archive.ubuntu.com"}:
+        records.append(item)
+        print(json.dumps(item, sort_keys=True, separators=(",", ":")))
+
+required = {
+    ("example.com", "ALLOW"),
+    ("github.com", "ALLOW"),
+    ("github.com", "DENY"),
+    ("archive.ubuntu.com", "ALLOW"),
+    ("archive.ubuntu.com", "DENY"),
+}
+seen = {(str(r.get("hostname") or "").lower(), str(r.get("decision") or "").upper()) for r in records}
+missing = sorted(required - seen)
+if missing:
+    raise SystemExit("missing required proxy audit records: %s" % missing)
+for record in records:
+    if not str(record.get("source_ip") or "").strip():
+        raise SystemExit("proxy audit record missing source_ip")
+PY
+    audit_rc=$?
+    set -uo pipefail
+  else
+    audit_rc=1
+    printf '%s\n' "audit snapshot unavailable; refusing historical evidence fallback" >"$OUT/extended/egress-real-app-audit.err"
+  fi
+  if [[ "$audit_rc" -eq 0 ]]; then
+    pq_gate PROXY_APPLICATION_PATH PASS
+    pq_note "PROXY_APPLICATION_PATH=PASS audit_start=$audit_start"
+  else
+    pq_gate PROXY_APPLICATION_PATH FAIL
+    fails=$((fails + 1))
+  fi
+
+  # Windows via curl.exe if present. Preserve any operator-provided
+  # NO_PROXY/no_proxy bypasses; prove this request actually traversed DRLink by
+  # requiring a fresh server-side audit record after a bounded snapshot.
+  local windows_audit_start="" windows_audit_snapshot_rc=1 windows_audit_rc=1
+  if [[ "$audit_snapshot_ok" -eq 1 ]]; then
+    set +e
+    windows_audit_start="$(pq_ssh "$SERVER" "sudo python3 - '$audit_log_path_b64'" 2>/dev/null <<'PY'
+import base64
+import sys
+from pathlib import Path
+
+path = Path(base64.urlsafe_b64decode(sys.argv[1].encode("ascii")).decode("utf-8"))
+if not path.is_file():
+    raise SystemExit("egress connection log unavailable before Windows probe")
+with path.open("r", encoding="utf-8", errors="replace") as handle:
+    print(sum(1 for _ in handle))
+PY
+)"
+    windows_audit_snapshot_rc=$?
+    set -uo pipefail
+  fi
+
+  set +e
+  pq_ssh frp-e2e-windows "cmd.exe /V:OFF /C \"set http_proxy=http://${SERVER_IP}:${EGRESS_PORT}&& set https_proxy=http://${SERVER_IP}:${EGRESS_PORT}&& set HTTP_PROXY=http://${SERVER_IP}:${EGRESS_PORT}&& set HTTPS_PROXY=http://${SERVER_IP}:${EGRESS_PORT}&& echo PROXY_CONFIGURATION_VERIFIED=PASS&& curl.exe -sS -o NUL -w %{http_code} --max-time 25 http://example.com/\"" >"$OUT/extended/egress-windows.log" 2>&1
   local wrc=$?
   set -uo pipefail
-  if [[ "$wrc" -eq 0 ]] && grep -q "200" "$OUT/extended/egress-windows.log"; then
+
+  if [[ "$wrc" -eq 0 && "$windows_audit_snapshot_rc" -eq 0 && "$windows_audit_start" =~ ^[0-9]+$ ]]; then
+    set +e
+    pq_ssh "$SERVER" "sudo python3 - '$windows_audit_start' '$audit_log_path_b64'" >"$OUT/extended/egress-windows-audit.jsonl" 2>"$OUT/extended/egress-windows-audit.err" <<'PY'
+import base64
+import json
+import sys
+from pathlib import Path
+
+start = int(sys.argv[1])
+path = Path(base64.urlsafe_b64decode(sys.argv[2].encode("ascii")).decode("utf-8"))
+for line in path.read_text(encoding="utf-8", errors="replace").splitlines()[start:]:
+    try:
+        record = json.loads(line)
+    except json.JSONDecodeError:
+        continue
+    if (
+        str(record.get("hostname") or "").lower() == "example.com"
+        and str(record.get("decision") or "").upper() == "ALLOW"
+        and str(record.get("source_ip") or "").strip()
+    ):
+        print(json.dumps(record, sort_keys=True, separators=(",", ":")))
+        raise SystemExit(0)
+raise SystemExit("missing fresh Windows proxy traversal audit record")
+PY
+    windows_audit_rc=$?
+    set -uo pipefail
+  fi
+
+  if [[ "$wrc" -eq 0 && "$windows_audit_rc" -eq 0 ]] \
+    && grep -q "PROXY_CONFIGURATION_VERIFIED=PASS" "$OUT/extended/egress-windows.log" \
+    && grep -q "200" "$OUT/extended/egress-windows.log"; then
     pq_note "INTERNET_OS_windows=PASS"
+    pq_note "WINDOWS_PROXY_APPLICATION_PATH=PASS audit_start=$windows_audit_start"
+  elif [[ "$wrc" -eq 0 && "$windows_audit_rc" -ne 0 ]]; then
+    pq_note "INTERNET_OS_windows=FAIL proxy traversal audit missing"
+    fails=$((fails + 1))
   elif grep -Eq "403|000|502|curl" "$OUT/extended/egress-windows.log"; then
     pq_note "INTERNET_OS_windows=FAIL"
     fails=$((fails + 1))
@@ -537,7 +863,7 @@ phase_failure_load() {
   pq_ssh "$SERVER" "sudo bash -s" <<EOF
 set -euo pipefail
 drlink unset internet-access "$blackhole_rule" >/dev/null 2>&1 || true
-drlink unset network-object "$blackhole_obj" >/dev/null 2>&1 || true
+printf 'y\n' | drlink unset network-object "$blackhole_obj" >/dev/null 2>&1 || true
 drlink set network-object "$blackhole_obj" type ip value 198.51.100.1
 drlink set internet-access "$blackhole_rule" source pq-any-source destination "$blackhole_obj" service pq-https enabled
 EOF
@@ -573,7 +899,7 @@ print('failstorm-host-done')
   pq_ssh "$SERVER" "sudo bash -s" >/dev/null 2>&1 <<EOF || true
 set -euo pipefail
 printf 'y\n' | drlink unset internet-access "$blackhole_rule" >/dev/null 2>&1 || true
-drlink unset network-object "$blackhole_obj" >/dev/null 2>&1 || true
+printf 'y\n' | drlink unset network-object "$blackhole_obj" >/dev/null 2>&1 || true
 EOF
   if [[ "$recover" == "200" && "$status_ok" -eq 1 && "$doctor_ok" -eq 1 ]]; then
     pq_gate FAILURE_LOAD_RESOURCE_BOUND PASS
@@ -620,7 +946,7 @@ phase_simultaneous_mutation() {
   child_pids+=($!)
   child_names+=("doctor")
   (
-    pq_ssh "$SERVER" "sudo drlink set network-object qual-live-mutation type ip value 198.51.100.31 >/dev/null && sudo drlink show network-object qual-live-mutation >/dev/null && sudo drlink unset network-object qual-live-mutation >/dev/null" 2>&1
+    pq_ssh "$SERVER" "sudo drlink set network-object qual-live-mutation type ip value 198.51.100.31 >/dev/null && sudo drlink show network-object qual-live-mutation >/dev/null && printf 'y\\n' | sudo drlink unset network-object qual-live-mutation >/dev/null" 2>&1
   ) &
   child_pids+=($!)
   child_names+=("control_plane_mutation")
@@ -1273,8 +1599,8 @@ test "$(wc -l </tmp/pq-enroll-new.ids)" -eq 10
 echo ENROLL_CREATE_10=OK
 while IFS= read -r id; do
   [ -n "$id" ] || continue
-  drlink unset enrollment "$id" >/dev/null
-  drlink unset enrollment "$id" >/dev/null
+  printf 'y\n' | drlink unset enrollment "$id" >/dev/null
+  printf 'y\n' | drlink unset enrollment "$id" >/dev/null
 done </tmp/pq-enroll-new.ids
 drlink show enrollments | awk 'NR>2 && $1 !~ /^\\(/ {print $1}' | sort -u >/tmp/pq-enroll-final.ids
 if comm -12 /tmp/pq-enroll-new.ids /tmp/pq-enroll-final.ids | grep -q .; then
@@ -1375,7 +1701,7 @@ drlink show status >/tmp/pq-status.txt
 drlink system diagnostics >/tmp/pq-doctor.txt
 drlink set network-object pq-docs-free type ip value 198.51.100.40 >/tmp/pq-create.txt
 drlink show network-object pq-docs-free >>/tmp/pq-create.txt
-drlink unset network-object pq-docs-free >>/tmp/pq-create.txt
+printf 'y\n' | drlink unset network-object pq-docs-free >>/tmp/pq-create.txt
 # Intentional mistakes must fail with current-resource guidance.
 set +e
 drlink show managed-host does-not-exist-xyz >/tmp/pq-wrong.txt 2>&1
@@ -1429,7 +1755,7 @@ phase_fixed_tcp_remote_service() {
   pq_ssh_confirm_yes frp-e2e-client "sudo /usr/local/bin/drlink unset remote-service '$normal_rs' >/dev/null 2>&1 || true" >>"$evidence" 2>&1 || true
   pq_ssh frp-e2e-client "pkill -f 'http.server $fixed_target_port' >/dev/null 2>&1 || true; pkill -f 'http.server $normal_target_port' >/dev/null 2>&1 || true; mkdir -p /tmp/pq-fixed-target /tmp/pq-normal-target; printf 'fixed-tcp-ok\\n' >/tmp/pq-fixed-target/index.html; printf 'normal-tcp-ok\\n' >/tmp/pq-normal-target/index.html; nohup python3 -m http.server $fixed_target_port --bind 127.0.0.1 -d /tmp/pq-fixed-target >/tmp/pq-fixed-http.log 2>&1 </dev/null & nohup python3 -m http.server $normal_target_port --bind 127.0.0.1 -d /tmp/pq-normal-target >/tmp/pq-normal-http.log 2>&1 </dev/null & sleep 1; curl -fsS http://127.0.0.1:$fixed_target_port/; curl -fsS http://127.0.0.1:$normal_target_port/" >>"$evidence" 2>&1
   local target_rc=$?
-  pq_ssh "$SERVER" "sudo /usr/local/bin/drlink unset service-object '$fixed_obj' >/dev/null 2>&1 || true; sudo /usr/local/bin/drlink unset service-object '$normal_obj' >/dev/null 2>&1 || true; sudo /usr/local/bin/drlink set service-object '$fixed_obj' type fixed-tcp port $fixed_target_port; sudo /usr/local/bin/drlink set service-object '$normal_obj' type tcp port $normal_target_port" >>"$evidence" 2>&1
+  pq_ssh "$SERVER" "printf 'y\\n' | sudo /usr/local/bin/drlink unset service-object '$fixed_obj' >/dev/null 2>&1 || true; printf 'y\\n' | sudo /usr/local/bin/drlink unset service-object '$normal_obj' >/dev/null 2>&1 || true; sudo /usr/local/bin/drlink set service-object '$fixed_obj' type fixed-tcp port $fixed_target_port; sudo /usr/local/bin/drlink set service-object '$normal_obj' type tcp port $normal_target_port" >>"$evidence" 2>&1
   local object_rc=$?
   pq_ssh frp-e2e-client "sudo /usr/local/bin/drlink system synchronize && sudo /usr/local/bin/drlink set remote-service '$fixed_rs' destination this-host service '$fixed_obj' enabled && sudo /usr/local/bin/drlink set remote-service '$normal_rs' destination this-host service '$normal_obj' enabled && sudo /usr/local/bin/drlink show remote-service '$fixed_rs' && sudo /usr/local/bin/drlink show remote-service '$normal_rs'" >>"$evidence" 2>&1
   local create_rc=$?
@@ -1503,7 +1829,7 @@ PY
   pq_ssh_confirm_yes frp-e2e-client "sudo /usr/local/bin/drlink unset remote-service '$normal_rs' >/dev/null 2>&1 || true" >>"$evidence" 2>&1 || true
   pq_ssh frp-e2e-client "pkill -f 'http.server $fixed_target_port' >/dev/null 2>&1 || true; pkill -f 'http.server $normal_target_port' >/dev/null 2>&1 || true" >>"$evidence" 2>&1
   local agent_cleanup_rc=$?
-  pq_ssh "$SERVER" "sudo /usr/local/bin/drlink unset service-object '$fixed_obj' >/dev/null 2>&1 || true; sudo /usr/local/bin/drlink unset service-object '$normal_obj' >/dev/null 2>&1 || true" >>"$evidence" 2>&1
+  pq_ssh "$SERVER" "printf 'y\\n' | sudo /usr/local/bin/drlink unset service-object '$fixed_obj' >/dev/null 2>&1 || true; printf 'y\\n' | sudo /usr/local/bin/drlink unset service-object '$normal_obj' >/dev/null 2>&1 || true" >>"$evidence" 2>&1
   local server_cleanup_rc=$?
   set -uo pipefail
   if [[ "$agent_cleanup_rc" -eq 0 && "$server_cleanup_rc" -eq 0 ]]; then cleanup_rc=0; fi
@@ -1724,12 +2050,12 @@ PY
 if ! drlink show internet-access | grep -q "Mode[[:space:]]*: No Policy"; then
   printf 'y\n' | drlink unset internet-access policy
 fi
-drlink unset service-group pq-web >/dev/null 2>&1 || true
+printf 'y\n' | drlink unset service-group pq-web >/dev/null 2>&1 || true
 for name in pq-http pq-https pq-fixed-target pq-normal-target; do
-  drlink unset service-object "$name" >/dev/null 2>&1 || true
+  printf 'y\n' | drlink unset service-object "$name" >/dev/null 2>&1 || true
 done
-for name in pq-example-com pq-any-source pq-blackhole qual-live-mutation; do
-  drlink unset network-object "$name" >/dev/null 2>&1 || true
+for name in pq-example-com pq-github-com pq-archive-ubuntu-com pq-any-source pq-blackhole qual-live-mutation; do
+  printf 'y\n' | drlink unset network-object "$name" >/dev/null 2>&1 || true
 done
 python3 - <<'PY'
 import sqlite3
@@ -1762,8 +2088,11 @@ fi
 echo EXTENDED_CLEANUP=PASS
 EOF
   local rc=$?
+  # Remove qualification-owned temporary application state from the protected host.
+  pq_ssh frp-e2e-client "rm -rf /tmp/pq-apt /tmp/pq-wget.body /tmp/pq-git.out /tmp/pq-git-deny.out /tmp/pq-git-deny.err" >>"$OUT/extended/cleanup.log" 2>&1
+  local client_cleanup_rc=$?
   set -uo pipefail
-  if [[ "$rc" -eq 0 ]]; then
+  if [[ "$rc" -eq 0 && "$client_cleanup_rc" -eq 0 ]]; then
     pq_gate EXTENDED_CLEANUP PASS
   else
     pq_gate EXTENDED_CLEANUP FAIL
