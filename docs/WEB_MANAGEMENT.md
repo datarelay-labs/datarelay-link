@@ -1199,14 +1199,21 @@ architecture or expanding Data Relay Link into another product category.
 
 Official vendor documentation checked on 2026-10-02:
 
-- Tailscale Visual Policy Editor: https://tailscale.com/docs/features/visual-editor
+- Tailscale Visual Policy Editor / tests / preview: https://tailscale.com/docs/features/visual-editor
 - Cloudflare Access policy tester: https://developers.cloudflare.com/cloudflare-one/access-controls/policies/policy-management/
+- Cloudflare dashboard/admin activity logs: https://developers.cloudflare.com/cloudflare-one/insights/logs/dashboard-logs/
 - Cloudflare connector health: https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-wan/configuration/common-settings/check-tunnel-health-dashboard/
-- Twingate troubleshooting: https://www.twingate.com/docs/how-to-troubleshoot
+- Twingate troubleshooting / Resource Activity: https://www.twingate.com/docs/how-to-troubleshoot
+- Twingate Access Graph / admin-role model: https://www.twingate.com/docs/users
 - Teleport Web UI / Instance Inventory: https://goteleport.com/docs/connect-your-client/teleport-clients/web-ui/
-- NetBird Control Center: https://docs.netbird.io/manage/control-center
+- Teleport Access Graph: https://goteleport.com/docs/identity-security/policy-connections/
+- Teleport role model: https://goteleport.com/docs/get-started/access/
+- NetBird Control Center / Draft Mode: https://docs.netbird.io/manage/control-center
+- NetBird user roles: https://docs.netbird.io/manage/team/user-roles
 - NetBird audit events: https://docs.netbird.io/manage/activity
-- Zscaler Private Access help/diagnostics: https://help.zscaler.com/zpa
+- Zscaler Private Access Health/Diagnostics index: https://help.zscaler.com/zpa
+- HashiCorp Boundary worker status/health: https://developer.hashicorp.com/boundary/docs/concepts/workers
+- HashiCorp Boundary read-only/auditor role examples: https://developer.hashicorp.com/boundary/docs/rbac/example-roles
 
 These links are research evidence, not product authority. Future competitor changes do not
 automatically alter 3.0 scope after DRL3-0 freezes it.
