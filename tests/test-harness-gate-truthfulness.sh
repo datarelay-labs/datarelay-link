@@ -348,6 +348,10 @@ cleanup = text[text.find("phase_extended_cleanup()"):text.find("\n# ------------
 assert "pq-github-com" in cleanup and "pq-archive-ubuntu-com" in cleanup
 assert "rm -rf /tmp/pq-apt" in cleanup
 assert "client_cleanup_rc" in cleanup
+assert "audit_snapshot_rc" in body and "audit_snapshot_ok" in body
+assert "PROXY_AUDIT_SNAPSHOT=FAIL" in body
+assert "refusing historical evidence fallback" in body
+assert "audit_start=0" not in body
 # Qualification must not manufacture a closed-network condition by altering routing/firewall state.
 for forbidden in ("iptables ", "nft ", "ufw ", "ip route del", "nmcli connection down"):
     assert forbidden not in body, forbidden

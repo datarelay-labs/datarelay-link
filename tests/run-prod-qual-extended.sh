@@ -223,9 +223,18 @@ EOF
   # Real proxy-aware application qualification on the Ubuntu protected host.
   # Keep direct Internet untouched; prove the configured proxy path with the
   # gateway connection audit instead.
-  local audit_start
+  local audit_start audit_snapshot_rc audit_snapshot_ok=1
+  set +e
   audit_start="$(pq_ssh "$SERVER" "sudo bash -lc 'if [[ -f /var/log/drlink/egress/connections.jsonl ]]; then wc -l < /var/log/drlink/egress/connections.jsonl; else echo 0; fi'" 2>/dev/null | tr -d '[:space:]')"
-  [[ "$audit_start" =~ ^[0-9]+$ ]] || audit_start=0
+  audit_snapshot_rc=$?
+  set -uo pipefail
+  if [[ "$audit_snapshot_rc" -ne 0 || ! "$audit_start" =~ ^[0-9]+$ ]]; then
+    audit_snapshot_ok=0
+    audit_start=""
+    pq_note "PROXY_AUDIT_SNAPSHOT=FAIL rc=$audit_snapshot_rc"
+  else
+    pq_note "PROXY_AUDIT_SNAPSHOT=PASS start=$audit_start"
+  fi
 
   local app_allow_rc
   set +e
@@ -382,8 +391,9 @@ EOF
   # Retain only post-snapshot gateway audit and require ALLOW/DENY records for
   # each real application destination with a non-empty observed source IP.
   local audit_rc
-  set +e
-  pq_ssh "$SERVER" "sudo python3 - '$audit_start'" >"$OUT/extended/egress-real-app-audit.jsonl" 2>"$OUT/extended/egress-real-app-audit.err" <<'PY'
+  if [[ "$audit_snapshot_ok" -eq 1 ]]; then
+    set +e
+    pq_ssh "$SERVER" "sudo python3 - '$audit_start'" >"$OUT/extended/egress-real-app-audit.jsonl" 2>"$OUT/extended/egress-real-app-audit.err" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -418,8 +428,12 @@ for record in records:
     if not str(record.get("source_ip") or "").strip():
         raise SystemExit("proxy audit record missing source_ip")
 PY
-  audit_rc=$?
-  set -uo pipefail
+    audit_rc=$?
+    set -uo pipefail
+  else
+    audit_rc=1
+    printf '%s\n' "audit snapshot unavailable; refusing historical evidence fallback" >"$OUT/extended/egress-real-app-audit.err"
+  fi
   if [[ "$audit_rc" -eq 0 ]]; then
     pq_gate PROXY_APPLICATION_PATH PASS
     pq_note "PROXY_APPLICATION_PATH=PASS audit_start=$audit_start"
