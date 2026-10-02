@@ -1606,7 +1606,7 @@ Minimum application evidence:
 - `curl`: approved HTTP and HTTPS/CONNECT succeed through the configured proxy; paired unapproved destination and wrong-port cases are denied;
 - `wget`: a real HTTP/HTTPS retrieval or spider/check succeeds only for an approved destination through the configured proxy;
 - `git`: a real HTTPS operation such as `git ls-remote` against an approved repository/service succeeds through the configured proxy and a policy-denied destination fails;
-- `apt`: repository FQDNs required by the selected Ubuntu/Debian repository path are explicitly allowed; `apt update` succeeds through Data Relay Link; removing at least one actually required repository destination makes `apt update` fail because of Internet Access policy; restoring the destination makes the same workflow succeed again.
+- `apt`: repository FQDNs required by the selected Ubuntu/Debian repository path are explicitly allowed; a strict update such as `apt-get -o APT::Update::Error-Mode=any update` succeeds through Data Relay Link; removing at least one actually required repository destination makes the strict update fail because of Internet Access policy; restoring the destination makes the same workflow succeed again. If the target APT version does not support `APT::Update::Error-Mode=any`, explicitly detect any failed required index and treat it as FAIL while correlating the failure with the proxy audit.
 
 For `apt`, use the host/application's normal proxy configuration (`HTTP_PROXY`/`HTTPS_PROXY` when honored, or standard APT `Acquire::http::Proxy` / `Acquire::https::Proxy` configuration) pointing to the same Data Relay Link Internet Access endpoint. Do not add broad wildcards merely to make package update pass.
 
