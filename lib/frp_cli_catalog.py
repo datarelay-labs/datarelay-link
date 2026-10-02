@@ -82,9 +82,9 @@ def _arg(name, complete=C_NONE, required=True):
 
 # Lightweight operator risk / confirmation vocabulary (not a policy engine).
 RISK_LEVELS = frozenset(
-    {"none", "metadata", "outage", "irreversible", "security_widening"}
+    {"none", "metadata", "outage", "irreversible", "security_widening", "security_change"}
 )
-CONFIRMATION_MODES = frozenset({"none", "y_n", "typed_token", "yes_flag"})
+CONFIRMATION_MODES = frozenset({"none", "y_n", "conditional_y_n", "typed_token", "yes_flag"})
 
 
 def _flag(

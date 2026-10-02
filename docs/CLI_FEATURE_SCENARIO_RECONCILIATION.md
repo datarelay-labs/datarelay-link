@@ -47,6 +47,22 @@ Do **not** wander through unrelated repositories, hosts, similarly named files, 
 
 Once this document resolves, start the audit immediately. Do not stop to propose a plan.
 
+### Single-run coordination — hard gate
+
+Only one active CLI Feature/Scenario reconciliation run may own the same active worktree / Work Packet reporting surface at a time.
+
+Before creating the evidence directory:
+
+1. acquire an audit-only coordination lock under `e2e-reports/.cli-feature-scenario.lock` using an atomic create operation;
+2. record at least `RUN_ID`, host, owner PID/session identity where available, `START_UTC`, worktree, and contract file SHA256 in that lock;
+3. if a live owner already holds the lock, do not start a second audit; record `BLOCKED_CONCURRENT_AUDIT`;
+4. a stale lock may be retired only after the prior owner is proven gone; preserve its metadata in the new run evidence before replacing it;
+5. release only the current run's lock during offboarding.
+
+The lock is audit coordination state only. It is not Data Relay Link product state and never authorizes product mutation.
+
+A second ChatGPT/tool session, scheduler, or operator must not reuse an existing RUN_ID or write the same GitHub final-report section concurrently.
+
 ### Meaning of Scenario
 
 `Scenario` means an **operator workflow audit scenario**: verify that a user can discover and understand the complete CLI lifecycle from one step to the next, both directly and with AI assistance.
@@ -93,6 +109,8 @@ Update the active `[AI Work]` GitHub Issue **once, after the audit has exhausted
 ### User-role execution and AI-assisted parity — hard gate
 
 The primary executor is always a **realistic operator/user persona**, never a shell/Python test wrapper.
+
+**ChatGPT itself executes both sides of every AI-assisted lane. No external AI executor, second model, plugin, or separate AI session is required.** Keep the roles logically separate: first act as the operator and supply only the natural-language goal plus user-visible product output, then act as the AI assistant using only that supplied information, then return to the operator role and validate the guidance against the public `drlink` surface. External AI unavailability is not an AI-lane blocker.
 
 For each applicable Feature and FCS:
 
@@ -166,6 +184,17 @@ MAX_SIMULTANEOUS_ACTIVE_LANES=
 SERIAL_IDLE_WITH_RUNNABLE_WORK=NO
 AVOIDABLE_SERIAL_WAIT_COUNT=0
 ~~~
+
+`PARALLEL_LANES_STARTED` counts **named logical audit lanes**, not shell processes, tool calls, retries, or evidence-write operations. Maintain:
+
+~~~text
+ledger/execution-lanes.tsv
+  LANE_ID  KIND  START_UTC  END_UTC  RESULT  PREREQUISITE  EVIDENCE
+~~~
+
+Each logical Direct persona, AI-assisted persona, runtime-read lane, document scan, post-hoc catalog/parser audit, and isolated deterministic suite may count once when it is independently scheduled. A retry of the same lane does not increment the lane count.
+
+Derive `PARALLEL_LANES_STARTED` and `MAX_SIMULTANEOUS_ACTIVE_LANES` from this ledger/timeline. Do not estimate them from memory or tool-call history. Record an avoidable serial wait only when an eligible named lane remained runnable and intentionally unscheduled while another lane was awaited.
 
 A run that intentionally leaves independent runnable checks idle while waiting on another check is execution-incomplete and must not claim terminal PASS until those checks are exhausted.
 
@@ -272,11 +301,14 @@ START_UTC=
 REPOSITORY=
 BRANCH=
 TEST_CONTRACT_HEAD=
+TEST_CONTRACT_FILE_SHA256=
+TEST_CONTRACT_DIRTY=YES|NO
 REPO_HEAD=
 PRODUCT_SOURCE_HEAD=
 WORKTREE=
 WORKTREE_CLEAN=
 ACTIVE_WORK_PACKET=
+AUDIT_RUN_LOCK=ACQUIRED|BLOCKED_CONCURRENT_AUDIT
 SERVER_RUNTIME=AVAILABLE|UNAVAILABLE
 SERVER_HOST=<assigned existing host or N/A>
 SERVER_PRODUCT_VERSION=<if available>
@@ -290,7 +322,9 @@ AGENT_RUNTIME_MATCH=EXACT|STALE|UNAVAILABLE
 RUNTIME_COVERAGE_COMPLETE=YES|NO
 ~~~
 
-`TEST_CONTRACT_HEAD` identifies the audit contract/worktree. `PRODUCT_SOURCE_HEAD` identifies the product candidate being reconciled. Installed Server/Agent heads are independent observations.
+`TEST_CONTRACT_HEAD` identifies the repository commit containing the audit contract. `TEST_CONTRACT_FILE_SHA256` identifies the exact contract bytes that were actually executed. `TEST_CONTRACT_DIRTY` records whether those bytes differ from the committed file at `TEST_CONTRACT_HEAD`. `PRODUCT_SOURCE_HEAD` identifies the product candidate being reconciled. Installed Server/Agent heads are independent observations.
+
+A normal reconciliation may execute a dirty contract only when its exact file SHA256 is retained. A **release-gate PASS requires `TEST_CONTRACT_DIRTY=NO`** so the contract itself is committed and reproducible.
 
 A stale installed runtime is **correlation-only evidence**. Do not classify behavior seen only on a stale runtime as a current-candidate product defect. Record `STALE_RUNTIME_CORRELATION_ONLY`, then verify the candidate surface through exact-HEAD public CLI/source/package evidence and continue all independent lanes.
 
@@ -313,11 +347,13 @@ Runtime observation is supporting evidence, not an environment-preparation task.
 For each already-assigned runtime used by this audit:
 
 1. identify role/availability without discovering or repurposing hosts;
-2. execute only read-only discovery/status/help/test-explain operations whose non-mutating contract is known;
-3. do not execute mutation-bearing commands merely to prove existence, rejection, confirmation, or cleanup;
-4. do not create audit-prefixed product resources;
-5. do not alter shared product state to obtain cleaner evidence;
-6. when non-destructive behavior is uncertain, inspect help/catalog/parser/source/tests instead of running the command.
+2. when the current connection is already authorized for read-only privilege elevation, use that existing read-only path (for example `sudo -n drlink system version`) to identify role/product/source truth before declaring the runtime unavailable; an unprivileged permission error alone does not prove runtime absence;
+3. privilege elevation in this rule is read-only identity/discovery only — do not obtain new credentials, change permissions, or alter product/host state;
+4. execute only read-only discovery/status/help/test-explain operations whose non-mutating contract is known;
+5. do not execute mutation-bearing commands merely to prove existence, rejection, confirmation, or cleanup;
+6. do not create audit-prefixed product resources;
+7. do not alter shared product state to obtain cleaner evidence;
+8. when non-destructive behavior is uncertain, inspect help/catalog/parser/source/tests instead of running the command.
 
 Runtime health warnings, stale installed HEAD, disconnected Agent state, pending transactions, or unrelated pre-existing resources do **not** stop the reconciliation and do not authorize repair/recovery.
 
@@ -340,7 +376,10 @@ A TTY tooling block is not a product defect. However, a mandatory TTY/user-flow 
 For final GitHub Work Packet reporting:
 
 - use the GitHub connector's general Issue write path (`update_issue`) for the active `[AI Work]` Issue rather than relying on PR-conversation comment APIs;
-- read the current Issue body first, update only the bounded final-report section, then read it back and verify the expected RUN_ID/HEAD/result are present;
+- the only writable final-report region is bounded by the canonical markers `<!-- CLI_FEATURE_SCENARIO_FINAL_START -->` and `<!-- CLI_FEATURE_SCENARIO_FINAL_END -->`;
+- while still holding the current audit run lock, read the latest Issue body immediately before replacement, replace only that bounded region, then read it back and verify the expected RUN_ID / contract hash / HEAD / result are present;
+- never append a second same-run final section and never overwrite unrelated Issue-body changes observed in the fresh pre-write read;
+- if the connector cannot safely preserve concurrent outside-section edits, record `GITHUB_REPORT_STATUS=BLOCKED_TOOLING` rather than retrying with a stale full-body snapshot;
 - a GitHub connector failure does not rewrite the product/audit result; record it separately as `GITHUB_REPORT_STATUS=BLOCKED_TOOLING` and preserve the frozen local evidence for retry;
 - do not claim the audit workflow fully offboarded until the required final Issue sync is either verified PASS or explicitly recorded as a reporting-tool blocker.
 
@@ -365,7 +404,8 @@ Network Object / Network Group
 Service Object / Service Group
 Permission Object / Permission Group
 Remote Service / Fixed TCP
-Remote Access / Internet Access
+Remote Access
+Internet Access
 AI Identity / AI credential lifecycle / AI Access / AI Access Log
 MCP public TLS / certificate lifecycle / OAuth approval-denial
 ConfigurationBundle
@@ -378,10 +418,37 @@ Version / release / provenance reporting
 Uninstall / reinstall where applicable
 ~~~
 
+For release-gate reconciliation, the inventory must include these stable feature keys at least once, all with `SUPPORTED=YES`:
+
+~~~text
+SERVER_IDENTITY_SETTINGS
+ENROLLMENT
+MANAGED_HOST
+NETWORK_OBJECTS
+SERVICE_OBJECTS
+PERMISSION_OBJECTS
+REMOTE_SERVICE_FIXED_TCP
+REMOTE_ACCESS
+INTERNET_ACCESS
+AI_IDENTITY_ACCESS
+MCP_TLS_OAUTH
+CONFIGURATION_BUNDLE
+REVISION_ROLLBACK
+BACKUP_RESTORE
+DIAGNOSTICS_SUPPORT
+PRODUCT_ENGINE_UPDATE
+AGENT_LIFECYCLE
+VERSION_PROVENANCE
+UNINSTALL_REINSTALL
+~~~
+
+Additional supported features may add more rows, but they do not replace any required key.
+
 For every feature create a row:
 
 ~~~text
 FEATURE_ID=
+FEATURE_KEY=
 FEATURE=
 PRODUCT_AUTHORITY=
 SUPPORTED=YES|NO
@@ -746,12 +813,16 @@ Do not trust parent-command metadata for a destructive child variant. Enumerate 
 
 Required contract:
 
-- explicit TTY confirmation where applicable;
-- default No;
-- No/cancel applies no change;
-- non-TTY fails closed unless documented automation approval exists;
-- no mutation before confirmation;
+- confirmation behavior must match the **specific leaf operation's** canonical product contract and catalog metadata;
+- `y_n` means explicit y/N confirmation with default No; stdin confirmation may be accepted when the canonical product contract permits it;
+- `conditional_y_n` means confirmation is required only when the calculated effect meets the documented security/risk condition, and the no-confirm path must be justified by the same effect calculation;
+- an operation documented as **interactive-only** must fail closed when no TTY is present; piped stdin, hidden environment variables, or undocumented flags must not bypass that restriction;
+- `confirmation=none` on a behavior-changing leaf is valid only when the canonical product contract intentionally treats the explicit command invocation as sufficient approval and the risk/effect metadata truthfully describes that behavior;
+- default No / cancel applies no change whenever a confirmation prompt is part of the contract;
+- no mutation before any required confirmation;
 - automation-safe exit status.
+
+Do **not** invent a universal TTY-only rule for all destructive commands. For example, current canonical documentation explicitly makes `unset mcp-tls purge` and `unset managed-host-group` interactive-only, while other y/N safety flows may accept documented stdin confirmation.
 
 Missing isolated regression coverage for a security-sensitive/destructive contract may itself be a finding.
 
@@ -860,6 +931,7 @@ Isolated regression suites count as current evidence only when their setup and a
     ai-fcs-parity.tsv
     hidden-alias-enumeration.tsv
     docs-example-ledger.tsv
+    execution-lanes.tsv
   personas/
     direct-*.txt
     ai-assisted-*.txt
@@ -872,7 +944,68 @@ Isolated regression suites count as current evidence only when their setup and a
   summary.txt
 ~~~
 
-### 22.1 Canonical evidence authority and summary consistency
+### 22.1 Ledger schemas
+
+At minimum:
+
+~~~text
+ledger/feature-ledger.tsv
+  FEATURE_ID  FEATURE_KEY  FEATURE  PRODUCT_AUTHORITY  SUPPORTED  EXPECTED_ROLE  EXPECTED_LIFECYCLE  CANONICAL_CLI  MENU_PATH  INSTALLER_OR_GENERATED_PATH  EXPECTED_SCENARIO  DIRECT_USER_GOAL  DIRECT_USER_RESULT  AI_ASSISTED_USER_GOAL  AI_ASSISTED_GUIDANCE  AI_ASSISTED_RESULT
+
+ledger/cli-ledger.tsv
+  CLI_PATH  ROLE  DISCOVERED_BY  DOCUMENTED  PRODUCT_FEATURE  RUNTIME_ONLY  DUPLICATE_OF  LEGACY_OR_COMPATIBILITY  RUNTIME_OBSERVABLE  MUTATION_PATH_AUDIT  SCENARIO_ID  EVIDENCE
+
+ledger/feature-cli-scenario.tsv
+  FEATURE_ID  FEATURE  CANONICAL_CLI  EXPECTED_SCENARIO  DIRECT_RESULT  AI_RESULT
+
+ledger/ai-feature-parity.tsv
+  FEATURE_ID  FEATURE  AI_ASSISTED_RESULT
+
+ledger/ai-fcs-parity.tsv
+  FCS_ID  AI_LANE  RESULT  EVIDENCE
+
+ledger/hidden-alias-enumeration.tsv
+  METRIC  COUNT  EVIDENCE
+
+Required metrics:
+  PUBLIC_COMMAND_ENTRY_COUNT
+  PUBLIC_ALIAS_PATH_COUNT
+  ROOT_BYPASS_ALIAS_COUNT
+  HIDDEN_COMMAND_ENTRY_COUNT
+  HIDDEN_EXECUTABLE_PATH_COUNT
+  LEGACY_COMPATIBILITY_PATH_COUNT
+  PARSER_ONLY_PATH_COUNT
+  DOC_ONLY_PATH_COUNT
+  DUPLICATE_PUBLIC_PATH_COUNT
+
+ledger/docs-example-ledger.tsv
+  PATH  CLASSIFICATION  RESULT  EVIDENCE
+
+Required canonical `PATH` keys:
+
+  README.md
+  README.ko.md
+  docs/INSTALLATION.md
+  docs/UPGRADE.md
+  docs/REMOTE_ACCESS.md
+  docs/AI_ACCESS_MCP.md
+  docs/TROUBLESHOOTING.md
+  docs/DEPLOYMENT_MODES.md
+  docs/CLI_REFERENCE.md
+  docs/DATA_RELAY_LINK_CLI_AI_MASTER_v2.4_FINAL.md
+  generated:installer-completion
+  generated:agent-recovery
+  generated:doctor-diagnostics-remediation
+  generated:update-recommendations
+  generated:enrollment-output
+
+ledger/execution-lanes.tsv
+  LANE_ID  KIND  START_UTC  END_UTC  RESULT  PREREQUISITE  EVIDENCE
+~~~
+
+`docs-example-ledger.tsv` must contain every mandatory active-document/generated-output surface listed in section 21 exactly once. Do not treat a grep transcript alone as a completed documentation ledger.
+
+### 22.2 Canonical evidence authority and summary consistency
 
 The final summary and GitHub report must be **derived from machine-readable ledgers**, not manually re-counted from memory or prose files.
 
@@ -997,11 +1130,14 @@ Minimum JSON contract:
   "schema_version": 1,
   "gate": "CLI_FEATURE_SCENARIO_RECONCILIATION",
   "final_status": "PASS",
+  "test_contract_file_sha256": "<64-char SHA256>",
+  "test_contract_dirty": false,
+  "single_run_coordination": "PASS",
   "repo_head": "<40-char exact HEAD>",
   "end_head": "<same HEAD>",
   "head_unchanged": true,
   "cleanup_status": "PASS",
-  "feature_inventory_total": 1,
+  "feature_inventory_total": 19,
   "counters": {
     "feature_no_cli_gaps": 0,
     "feature_without_discoverable_cli_count": 0,
@@ -1012,16 +1148,28 @@ Minimum JSON contract:
     "legacy_compatibility_path_count": 0,
     "root_bypass_alias_count": 0,
     "hidden_executable_path_count": 0,
+    "parser_only_path_count": 0,
+    "doc_only_path_count": 0,
     "discovery_gap_count": 0,
     "installer_guidance_mismatch_count": 0,
+    "terminology_drift_count": 0,
+    "procedure_drift_count": 0,
+    "structure_drift_count": 0,
+    "state_semantics_drift_count": 0,
+    "confirmation_metadata_drift_count": 0,
     "destructive_confirmation_gap_count": 0,
     "destructive_child_variant_metadata_gap_count": 0,
     "error_with_zero_rc_count": 0,
+    "empty_state_silence_count": 0,
+    "next_action_stale_count": 0,
     "active_guidance_noncanonical_count": 0,
     "help_only_legacy_path_count": 0,
     "public_noun_drift_count": 0,
     "stale_regression_grammar_count": 0,
     "active_installer_legacy_term_count": 0,
+    "doc_example_noncanonical_count": 0,
+    "role_surface_drift_count": 0,
+    "status_doc_runtime_mismatch_count": 0,
     "scenario_blocked_count": 0,
     "scenario_dead_end_count": 0,
     "features_without_ai_support_count": 0,
@@ -1064,6 +1212,7 @@ Minimum JSON contract:
   "ai_assisted_fcs_coverage": 100,
   "parallel_execution": "MAXIMUM_SAFE",
   "parallel_lanes_started": 1,
+  "max_simultaneous_active_lanes": 1,
   "serial_idle_with_runnable_work": false,
   "evidence_root": "<retained evidence directory>"
 }
@@ -1104,7 +1253,7 @@ PASS requires:
 
 Anything else is FAIL or explicitly BLOCKED.
 
-For a **release-gate PASS**, additionally require exact Server and Agent candidate runtime coverage, `TTY_PERSONA_COVERAGE=PASS`, `TOOLING_BLOCKER_COUNT=0`, `GITHUB_REPORT_STATUS=PASS`, and `GITHUB_REPORT_READBACK=PASS`. A normal audit may finish honestly with runtime/tooling incompleteness, but it must not be promoted to release-gate PASS.
+For a **release-gate PASS**, additionally require `TEST_CONTRACT_DIRTY=NO`, `AUDIT_RUN_LOCK=ACQUIRED` / single-run coordination PASS, exact Server and Agent candidate runtime coverage, `TTY_PERSONA_COVERAGE=PASS`, `TOOLING_BLOCKER_COUNT=0`, `GITHUB_REPORT_STATUS=PASS`, and `GITHUB_REPORT_READBACK=PASS`. A normal audit may finish honestly with dirty-contract/runtime/tooling incompleteness, but it must not be promoted to release-gate PASS.
 
 A workflow is not `BLOCKED` merely because this audit refuses to execute its mutation. Mutation is intentionally out of scope; judge that workflow step from discoverability/contract/test evidence.
 
@@ -1131,9 +1280,10 @@ Before completion:
 1. verify `RUNTIME_MUTATION_ATTEMPT_COUNT=0`;
 2. terminate only audit-owned transient CLI/PTY helper processes;
 3. remove only audit-owned temporary local files not retained as evidence;
-4. verify no audit-owned test listener/service/lock/pid remains;
+4. verify no audit-owned test listener/service/pid remains; keep only the current run coordination lock until final reporting completes;
 5. preserve the evidence directory;
-6. do **not** delete/reset/revoke/release/rollback/restore any pre-existing product state.
+6. do **not** delete/reset/revoke/release/rollback/restore any pre-existing product state;
+7. after the section 28 GitHub write/readback attempt is PASS or explicitly recorded `BLOCKED_TOOLING`, release only the current run's coordination lock and verify it is gone.
 
 Capture final read-only state only where useful for correlation.
 
@@ -1152,6 +1302,9 @@ Include:
 ~~~text
 RUN_ID=
 TEST_CONTRACT_HEAD=
+TEST_CONTRACT_FILE_SHA256=
+TEST_CONTRACT_DIRTY=
+AUDIT_RUN_LOCK=
 REPO_HEAD=
 PRODUCT_SOURCE_HEAD=
 INSTALLED_SERVER_HEAD=

@@ -51,10 +51,10 @@ class CatalogFlagMetadataTests(unittest.TestCase):
         self.assertEqual(enroll.get("role"), "enrollment")
         self.assertEqual(enroll.get("type"), "duration")
 
-    def test_older_than_metadata(self):
-        flag = self._flag(("unset", "enrollment"), "--older-than")
-        self.assertEqual(flag.get("type"), "integer")
-        self.assertEqual(flag.get("unit"), "days")
+    def test_unset_enrollment_has_no_hidden_bulk_purge_flag(self):
+        cmd = self.cat.find(["unset", "enrollment", "example-id"], include_aliases=True)
+        self.assertIsNotNone(cmd)
+        self.assertNotIn("--older-than", {flag["name"] for flag in cmd["flags"]})
 
 
 if __name__ == "__main__":
