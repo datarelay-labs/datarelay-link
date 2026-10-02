@@ -1136,42 +1136,60 @@ def handle_unset(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         _require_server(plane, "Network Objects")
         if len(rest) < 2:
             raise ControlPlaneError("Usage: unset network-object <NAME>")
-        v24.unset_network_object(plane, rest[1])
+        from drlink_control_cli import _run
+        result = _run(v24.unset_network_object, plane, rest[1])
+        if isinstance(result, dict) and result.get("cancelled"):
+            return 1
         sys.stdout.write("Network Object deleted: %s\n" % rest[1])
         return 0
     if res == "network-group":
         _require_server(plane, "Network Groups")
         if len(rest) < 2:
             raise ControlPlaneError("Usage: unset network-group <NAME>")
-        plane.unset_object_group(rest[1])
+        from drlink_control_cli import _run
+        result = _run(plane.unset_object_group, rest[1], public_label="Network Group")
+        if isinstance(result, dict) and result.get("cancelled"):
+            return 1
         sys.stdout.write("Network Group deleted: %s\n" % rest[1])
         return 0
     if res == "service-object":
         _require_server(plane, "Service Objects")
         if len(rest) < 2:
             raise ControlPlaneError("Usage: unset service-object <NAME>")
-        v24.unset_service_object(plane, rest[1])
+        from drlink_control_cli import _run
+        result = _run(v24.unset_service_object, plane, rest[1])
+        if isinstance(result, dict) and result.get("cancelled"):
+            return 1
         sys.stdout.write("Service Object deleted: %s\n" % rest[1])
         return 0
     if res == "service-group":
         _require_server(plane, "Service Groups")
         if len(rest) < 2:
             raise ControlPlaneError("Usage: unset service-group <NAME>")
-        v24.unset_service_group(plane, rest[1])
+        from drlink_control_cli import _run
+        result = _run(v24.unset_service_group, plane, rest[1])
+        if isinstance(result, dict) and result.get("cancelled"):
+            return 1
         sys.stdout.write("Service Group deleted: %s\n" % rest[1])
         return 0
     if res == "permission-object":
         _require_server(plane, "Permission Objects")
         if len(rest) < 2:
             raise ControlPlaneError("Usage: unset permission-object <NAME>")
-        v24.unset_permission_object(plane, rest[1])
+        from drlink_control_cli import _run
+        result = _run(v24.unset_permission_object, plane, rest[1])
+        if isinstance(result, dict) and result.get("cancelled"):
+            return 1
         sys.stdout.write("Permission Object deleted: %s\n" % rest[1])
         return 0
     if res == "permission-group":
         _require_server(plane, "Permission Groups")
         if len(rest) < 2:
             raise ControlPlaneError("Usage: unset permission-group <NAME>")
-        v24.unset_permission_group(plane, rest[1])
+        from drlink_control_cli import _run
+        result = _run(v24.unset_permission_group, plane, rest[1])
+        if isinstance(result, dict) and result.get("cancelled"):
+            return 1
         sys.stdout.write("Permission Group deleted: %s\n" % rest[1])
         return 0
     if res in ("remote-access", "internet-access"):
@@ -1215,7 +1233,10 @@ def handle_unset(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         if len(rest) < 2:
             raise ControlPlaneError("Usage: unset ai-identity <NAME>")
         # Reference-safe via existing unset_ai_principal
-        plane.unset_ai_principal(rest[1])
+        from drlink_control_cli import _run
+        result = _run(plane.unset_ai_principal, rest[1], public_label="AI Identity")
+        if isinstance(result, dict) and result.get("cancelled"):
+            return 1
         sys.stdout.write("AI Identity deleted: %s\n" % rest[1])
         return 0
     if res == "managed-host":

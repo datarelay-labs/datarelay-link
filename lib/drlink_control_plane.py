@@ -839,6 +839,17 @@ class ControlPlane:
             lines.append("")
             lines.append("Continue? [y/N]:")
             return "\n".join(lines)
+        if impact.get("kind") == "destructive-delete":
+            label = str(impact.get("resource") or "Resource")
+            name = str(impact.get("name") or "-")
+            lines = [
+                str(impact.get("warning") or ("This permanently deletes the %s." % label)),
+                "",
+                "%s: %s" % (label, name),
+                "",
+                "Continue? [y/N]:",
+            ]
+            return "\n".join(lines)
         lines = [
             "Policy behavior will change",
             "",
@@ -1383,7 +1394,13 @@ class ControlPlane:
                     )
         return refs
 
-    def unset_object(self, name: str) -> dict:
+    def unset_object(
+        self,
+        name: str,
+        *,
+        confirm: Optional[bool] = None,
+        public_label: str = "Object",
+    ) -> dict:
         obj = self.require_object(name)
         if obj["origin"] == "managed":
             raise ControlPlaneError(
@@ -1404,7 +1421,19 @@ class ControlPlane:
             self.conn.execute("DELETE FROM objects WHERE id = ?", (obj["id"],))
             return {"entity": {"type": "object", "id": obj["id"], "name": name}, "operation": "delete"}
 
-        return self._mutate("unset object %s" % name, "delete object", write)
+        return self._mutate(
+            "unset object %s" % name,
+            "delete object",
+            write,
+            impact={
+                "kind": "destructive-delete",
+                "resource": public_label,
+                "name": name,
+                "warning": "This permanently deletes the %s." % public_label,
+                "requires_confirmation": True,
+            },
+            confirm=confirm,
+        )
 
     def format_object(self, name: str) -> str:
         view = self._object_view(self.require_object(name))
@@ -1540,7 +1569,13 @@ class ControlPlane:
 
         return self._mutate("unset object-group %s member %s" % (group_name, member), "remove group member", write)
 
-    def unset_object_group(self, name: str) -> dict:
+    def unset_object_group(
+        self,
+        name: str,
+        *,
+        confirm: Optional[bool] = None,
+        public_label: str = "Object Group",
+    ) -> dict:
         grp = self.get_object_group(name)
         if grp is None:
             raise ControlPlaneError("Object Group not found: %s" % name)
@@ -1563,7 +1598,19 @@ class ControlPlane:
             self.conn.execute("DELETE FROM object_groups WHERE id = ?", (grp["id"],))
             return {"entity": {"type": "object-group", "id": grp["id"], "name": name}, "operation": "delete"}
 
-        return self._mutate("unset object-group %s" % name, "delete object group", write)
+        return self._mutate(
+            "unset object-group %s" % name,
+            "delete object group",
+            write,
+            impact={
+                "kind": "destructive-delete",
+                "resource": public_label,
+                "name": name,
+                "warning": "This permanently deletes the %s." % public_label,
+                "requires_confirmation": True,
+            },
+            confirm=confirm,
+        )
 
     def format_object_group(self, name: str) -> str:
         grp = self.get_object_group(name)
@@ -3493,7 +3540,13 @@ class ControlPlane:
 
         return self._mutate("set ai-principal %s" % name, "set AI principal", write)
 
-    def unset_ai_principal(self, name: str) -> dict:
+    def unset_ai_principal(
+        self,
+        name: str,
+        *,
+        confirm: Optional[bool] = None,
+        public_label: str = "AI Identity",
+    ) -> dict:
         existing = self.get_principal(name)
         if existing is None:
             raise ControlPlaneError("AI Principal not found: %s" % name)
@@ -3522,7 +3575,19 @@ class ControlPlane:
             self.conn.execute("DELETE FROM ai_principals WHERE id = ?", (existing["id"],))
             return {"entity": {"type": "ai-principal", "id": existing["id"], "name": name}, "operation": "delete"}
 
-        return self._mutate("unset ai-principal %s" % name, "delete AI principal", write)
+        return self._mutate(
+            "unset ai-principal %s" % name,
+            "delete AI principal",
+            write,
+            impact={
+                "kind": "destructive-delete",
+                "resource": public_label,
+                "name": name,
+                "warning": "This permanently deletes the %s and its active session state." % public_label,
+                "requires_confirmation": True,
+            },
+            confirm=confirm,
+        )
 
     def rotate_ai_credential(self, name: str) -> dict:
         principal = self.get_principal(name)

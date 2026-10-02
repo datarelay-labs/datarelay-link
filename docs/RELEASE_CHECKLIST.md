@@ -296,6 +296,8 @@ CHATGPT_PLUS_ALLOW_DENY=
 
 - [ ] `CLI_FEATURE_SCENARIO_RECONCILIATION=PASS` using `CLI_FEATURE_SCENARIO_RECONCILIATION.md`; this is a runtime non-destructive Feature ↔ CLI/AI ↔ Operator Workflow audit separate from Full User E2E. Every applicable feature/FCS requires 100% Direct-user and AI-assisted persona coverage; scripts/harnesses are supplemental evidence only. The audit uses read-only runtime evidence plus catalog/parser/docs/isolated tests and never changes assigned product state.
 - [ ] `CLI_PRODUCT_SURFACE_RECONCILIATION=PASS` is satisfied by the same exact-candidate reconciliation evidence.
+- [ ] reconciliation records the exact executed `TEST_CONTRACT_FILE_SHA256`, uses a committed contract (`TEST_CONTRACT_DIRTY=NO`), and passes single-run coordination; no concurrent run writes the same evidence/report surface.
+- [ ] `execution-lanes.tsv` and `docs-example-ledger.tsv` are complete and their derived counts/surfaces match the final summary/release JSON.
 - [ ] every Product Master capability has a justified public CLI/menu/installer lifecycle mapping.
 - [ ] every installed runtime command maps to a current product capability and canonical documentation.
 - [ ] every required lifecycle variant is discoverable from public help/?/completion/menu without memorized hidden syntax.
@@ -306,8 +308,8 @@ CHATGPT_PLUS_ALLOW_DENY=
 - [ ] installer completion text, enrollment instructions, diagnostics, update recommendations, and recovery text point only to current canonical commands or exact documented installer actions.
 - [ ] active documentation examples use canonical public grammar or an explicitly justified installer-only lifecycle.
 - [ ] no supported workflow ends with a non-actionable recovery instruction or legacy alias.
-- [ ] destructive subvariants have effect-appropriate `risk`/confirmation metadata and isolated regression coverage for interactive/default-No/non-TTY fail-closed behavior; the reconciliation itself does not execute them on assigned runtime state.
-- [ ] destructive/non-TTY cancellation contract is automation-safe and never returns success for an unapplied mutation.
+- [ ] destructive subvariants have effect-appropriate leaf-level `risk`/confirmation metadata and isolated regression coverage matching the canonical confirmation mode (`y_n`, `conditional_y_n`, interactive-only, or intentionally `none`); the reconciliation itself does not execute them on assigned runtime state.
+- [ ] when confirmation is required, default-No/cancel is mutation-free and automation-safe; commands explicitly documented as interactive-only fail closed without a TTY, while other documented stdin-confirmable flows are not incorrectly treated as TTY-only.
 - [ ] privilege/readability ERROR paths return non-zero and are not misreported as wrong-role errors.
 - [ ] empty-list output explicitly distinguishes zero items from failure rather than silent RC=0 success.
 - [ ] status/version/provenance surfaces are mutually consistent and do not expose retired state models as current.
