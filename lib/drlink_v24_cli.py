@@ -568,8 +568,16 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         return _show_ai_log(plane, rest[1:])
     if res in ("remote-services",):
         _require_agent(plane)
+        rows = list(
+            plane.conn.execute(
+                "SELECT * FROM agent_remote_services WHERE delete_pending = 0 ORDER BY name"
+            )
+        )
+        if not rows:
+            sys.stdout.write("No Remote Services configured.\n")
+            return 0
         sys.stdout.write("%-18s %-14s %-10s %-24s %s\n" % ("NAME", "DESTINATION", "SERVICE", "ENDPOINT", "STATUS"))
-        for row in plane.conn.execute("SELECT * FROM agent_remote_services WHERE delete_pending = 0 ORDER BY name"):
+        for row in rows:
             endpoint = (
                 "Pending allocation"
                 if row["pending_allocation"] or row["endpoint_port"] is None
@@ -647,10 +655,19 @@ def _show_policy(plane: ControlPlane, family: str, rest: list[str]) -> int:
                 % (pol["mode"].upper(), str(pol["enforcement"]).upper(), eff)
             )
         sys.stdout.write("\nRules:\n")
-        for row in plane.conn.execute(
-            "SELECT name, enabled FROM policy_rules WHERE plane = ? ORDER BY name", (family,)
-        ):
-            sys.stdout.write("  %s (%s)\n" % (row["name"], "enabled" if row["enabled"] else "disabled"))
+        rows = list(
+            plane.conn.execute(
+                "SELECT name, enabled FROM policy_rules WHERE plane = ? ORDER BY name", (family,)
+            )
+        )
+        if not rows:
+            sys.stdout.write("  No rules configured.\n")
+        else:
+            for row in rows:
+                sys.stdout.write(
+                    "  %s (%s)\n"
+                    % (row["name"], "enabled" if row["enabled"] else "disabled")
+                )
         return 0
     rule = plane._get_rule(family, rest[1])
     if not rule:
@@ -688,8 +705,15 @@ def _show_ai_policy(plane: ControlPlane, rest: list[str]) -> int:
                 % (pol["mode"].upper(), str(pol["enforcement"]).upper(), eff)
             )
         sys.stdout.write("\nRules:\n")
-        for row in plane.conn.execute("SELECT name, enabled FROM ai_policy_rules ORDER BY name"):
-            sys.stdout.write("  %s (%s)\n" % (row["name"], "enabled" if row["enabled"] else "disabled"))
+        rows = list(plane.conn.execute("SELECT name, enabled FROM ai_policy_rules ORDER BY name"))
+        if not rows:
+            sys.stdout.write("  No rules configured.\n")
+        else:
+            for row in rows:
+                sys.stdout.write(
+                    "  %s (%s)\n"
+                    % (row["name"], "enabled" if row["enabled"] else "disabled")
+                )
         return 0
     row = plane.conn.execute(
         "SELECT * FROM ai_policy_rules WHERE name = ? COLLATE NOCASE", (rest[1],)
@@ -755,14 +779,18 @@ def _show_ai_log(plane: ControlPlane, args: list[str]) -> int:
             i += 2
             continue
         i += 1
-    sys.stdout.write("%-22s %-10s %-14s %-12s %s\n" % ("TIME", "IDENTITY", "DESTINATION", "PERMISSION", "RESULT"))
     rows = plane.list_ai_activity(principal=identity, endpoint=destination)
+    visible_rows = []
     for row in rows:
-        perm = permission or "-"
-        # Map capability to permission label when possible
         cap = row.get("capability") or row.get("action") or "-"
         if permission and v24.CAP_TO_PERMISSION.get(str(cap)) != permission and str(cap) != permission:
             continue
+        visible_rows.append((row, cap))
+    if not visible_rows:
+        sys.stdout.write("No AI Access Log entries found.\n")
+        return 0
+    sys.stdout.write("%-22s %-10s %-14s %-12s %s\n" % ("TIME", "IDENTITY", "DESTINATION", "PERMISSION", "RESULT"))
+    for row, cap in visible_rows:
         sys.stdout.write(
             "%-22s %-10s %-14s %-12s %s\n"
             % (

@@ -19,6 +19,7 @@ from drlink_control_plane import ControlPlane
 import drlink_control_cli as cli
 import drlink_v24 as v24
 import frp_ctl_grammar as grammar
+import frp_cli_catalog as catalog
 
 
 class CliFeatureScenarioRemediation(unittest.TestCase):
@@ -149,6 +150,46 @@ class CliFeatureScenarioRemediation(unittest.TestCase):
             self.assertFalse(row["destructive"])
             self.assertEqual(row["risk"], "none")
             self.assertEqual(row["confirmation"], "none")
+
+    def test_system_help_keeps_check_engine_server_only(self):
+        server_help = catalog.domain_help("system", "server") or ""
+        agent_help = catalog.domain_help("system", "client") or ""
+        self.assertIn("system update check-engine", server_help)
+        self.assertNotIn("system update check-engine", agent_help)
+
+        server_update = grammar.context_help(["system", "update"], "server") or ""
+        agent_update = grammar.context_help(["system", "update"], "client") or ""
+        self.assertIn("check-engine", server_update)
+        self.assertNotIn("check-engine", agent_update)
+
+    def test_mcp_tls_purge_metadata_explains_interactive_only_contract(self):
+        rows = json.loads((LIB / "frp_cli_final_commands.json").read_text(encoding="utf-8"))
+        by_path = {tuple(row["path"]): row for row in rows}
+        purge = by_path[("unset", "mcp-tls", "purge")]
+        detail = str(purge.get("detail") or "").lower()
+        self.assertTrue(purge["destructive"])
+        self.assertEqual(purge["risk"], "irreversible")
+        self.assertEqual(purge["confirmation"], "y_n")
+        self.assertIn("interactive tty", detail)
+        self.assertIn("non-interactive", detail)
+        self.assertIn("fails closed", detail)
+
+    def test_diagnostics_and_cli_reference_use_current_public_model(self):
+        doctor = (LIB / "frp_doctor.py").read_text(encoding="utf-8")
+        self.assertNotIn("published-service/presets are authoritative", doctor)
+        self.assertIn(
+            "Service Objects and Agent Remote Services are authoritative",
+            doctor,
+        )
+
+        reference = (ROOT / "docs/CLI_REFERENCE.md").read_text(encoding="utf-8")
+        server = reference.split("## 8. Server system commands", 1)[1].split(
+            "## 9. Managed Host as Network Object", 1
+        )[0]
+        agent = reference.split("## 10. Agent Host commands", 1)[1]
+        self.assertIn("system update check-engine", server)
+        self.assertNotIn("system update check-engine", agent)
+        self.assertIn("system synchronize", agent)
 
     def test_unset_enrollment_rejects_trailing_input(self):
         for tokens in (
