@@ -133,11 +133,19 @@ class OwnerAcceptanceTests(unittest.TestCase):
             self.check(data),
         )
 
-    def test_support_reference_must_be_official_openai(self):
+    def test_support_reference_must_be_official_help_center(self):
         data = evidence()
         data["support_reference"] = "https://example.com/full-mcp"
         self.assertIn(
-            "support_reference must use an official openai.com hostname",
+            "support_reference must use the official OpenAI Help Center",
+            self.check(data),
+        )
+
+    def test_support_reference_must_bind_specific_mcp_support_article(self):
+        data = evidence()
+        data["support_reference"] = "https://help.openai.com/en/articles/99999999-unrelated"
+        self.assertIn(
+            "support_reference must reference OpenAI Help Center article 12584461",
             self.check(data),
         )
 

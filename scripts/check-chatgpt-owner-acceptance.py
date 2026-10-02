@@ -58,8 +58,11 @@ def _support_reference_error(value: object) -> str | None:
         return "support_reference must not contain credentials"
     if parsed.query or parsed.fragment:
         return "support_reference must not contain query or fragment"
-    if host != "openai.com" and not host.endswith(".openai.com"):
-        return "support_reference must use an official openai.com hostname"
+    if host != "help.openai.com":
+        return "support_reference must use the official OpenAI Help Center"
+    path = parsed.path.rstrip("/")
+    if not re.fullmatch(r"/(?:[^/]+/)?articles/12584461(?:-[^/]*)?", path):
+        return "support_reference must reference OpenAI Help Center article 12584461"
     return None
 
 
