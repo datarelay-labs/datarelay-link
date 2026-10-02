@@ -358,6 +358,24 @@ assert "egress connection log path changed after snapshot" in body
 assert "set no_proxy=&& set NO_PROXY=&&" not in body
 assert "WINDOWS_PROXY_APPLICATION_PATH=PASS" in body
 assert "missing fresh Windows proxy traversal audit record" in body
+# Destructive Object/Group cleanup must honor the public y/N contract introduced
+# by the final CLI reconciliation. Non-interactive qualification may not rely on
+# EOF/default cancellation or silently bypass the public command.
+for line in text.splitlines():
+    if any(
+        f"drlink unset {resource}" in line
+        for resource in (
+            "network-object",
+            "network-group",
+            "service-object",
+            "service-group",
+            "permission-object",
+            "permission-group",
+            "ai-identity",
+            "enrollment",
+        )
+    ):
+        assert "printf 'y" in line or "pq_ssh_confirm_yes" in line, line
 # Qualification must not manufacture a closed-network condition by altering routing/firewall state.
 for forbidden in ("iptables ", "nft ", "ufw ", "ip route del", "nmcli connection down"):
     assert forbidden not in body, forbidden

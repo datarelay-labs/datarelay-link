@@ -138,13 +138,13 @@ PY
   printf 'y\n' | drlink unset internet-access policy
 fi
 # Clean only qualification-owned residue from an interrupted prior run.
-drlink unset service-group "$service_group" >/dev/null 2>&1 || true
-drlink unset service-object "$http_obj" >/dev/null 2>&1 || true
-drlink unset service-object "$https_obj" >/dev/null 2>&1 || true
-drlink unset network-object "$apt_destination_obj" >/dev/null 2>&1 || true
-drlink unset network-object "$git_destination_obj" >/dev/null 2>&1 || true
-drlink unset network-object "$destination_obj" >/dev/null 2>&1 || true
-drlink unset network-object "$source_obj" >/dev/null 2>&1 || true
+printf 'y\n' | drlink unset service-group "$service_group" >/dev/null 2>&1 || true
+printf 'y\n' | drlink unset service-object "$http_obj" >/dev/null 2>&1 || true
+printf 'y\n' | drlink unset service-object "$https_obj" >/dev/null 2>&1 || true
+printf 'y\n' | drlink unset network-object "$apt_destination_obj" >/dev/null 2>&1 || true
+printf 'y\n' | drlink unset network-object "$git_destination_obj" >/dev/null 2>&1 || true
+printf 'y\n' | drlink unset network-object "$destination_obj" >/dev/null 2>&1 || true
+printf 'y\n' | drlink unset network-object "$source_obj" >/dev/null 2>&1 || true
 drlink set network-object "$source_obj" type cidr value 0.0.0.0/0
 drlink set network-object "$destination_obj" type fqdn value example.com
 drlink set network-object "$git_destination_obj" type fqdn value github.com
@@ -863,7 +863,7 @@ phase_failure_load() {
   pq_ssh "$SERVER" "sudo bash -s" <<EOF
 set -euo pipefail
 drlink unset internet-access "$blackhole_rule" >/dev/null 2>&1 || true
-drlink unset network-object "$blackhole_obj" >/dev/null 2>&1 || true
+printf 'y\n' | drlink unset network-object "$blackhole_obj" >/dev/null 2>&1 || true
 drlink set network-object "$blackhole_obj" type ip value 198.51.100.1
 drlink set internet-access "$blackhole_rule" source pq-any-source destination "$blackhole_obj" service pq-https enabled
 EOF
@@ -899,7 +899,7 @@ print('failstorm-host-done')
   pq_ssh "$SERVER" "sudo bash -s" >/dev/null 2>&1 <<EOF || true
 set -euo pipefail
 printf 'y\n' | drlink unset internet-access "$blackhole_rule" >/dev/null 2>&1 || true
-drlink unset network-object "$blackhole_obj" >/dev/null 2>&1 || true
+printf 'y\n' | drlink unset network-object "$blackhole_obj" >/dev/null 2>&1 || true
 EOF
   if [[ "$recover" == "200" && "$status_ok" -eq 1 && "$doctor_ok" -eq 1 ]]; then
     pq_gate FAILURE_LOAD_RESOURCE_BOUND PASS
@@ -946,7 +946,7 @@ phase_simultaneous_mutation() {
   child_pids+=($!)
   child_names+=("doctor")
   (
-    pq_ssh "$SERVER" "sudo drlink set network-object qual-live-mutation type ip value 198.51.100.31 >/dev/null && sudo drlink show network-object qual-live-mutation >/dev/null && sudo drlink unset network-object qual-live-mutation >/dev/null" 2>&1
+    pq_ssh "$SERVER" "sudo drlink set network-object qual-live-mutation type ip value 198.51.100.31 >/dev/null && sudo drlink show network-object qual-live-mutation >/dev/null && printf 'y\\n' | sudo drlink unset network-object qual-live-mutation >/dev/null" 2>&1
   ) &
   child_pids+=($!)
   child_names+=("control_plane_mutation")
@@ -1599,8 +1599,8 @@ test "$(wc -l </tmp/pq-enroll-new.ids)" -eq 10
 echo ENROLL_CREATE_10=OK
 while IFS= read -r id; do
   [ -n "$id" ] || continue
-  drlink unset enrollment "$id" >/dev/null
-  drlink unset enrollment "$id" >/dev/null
+  printf 'y\n' | drlink unset enrollment "$id" >/dev/null
+  printf 'y\n' | drlink unset enrollment "$id" >/dev/null
 done </tmp/pq-enroll-new.ids
 drlink show enrollments | awk 'NR>2 && $1 !~ /^\\(/ {print $1}' | sort -u >/tmp/pq-enroll-final.ids
 if comm -12 /tmp/pq-enroll-new.ids /tmp/pq-enroll-final.ids | grep -q .; then
@@ -1701,7 +1701,7 @@ drlink show status >/tmp/pq-status.txt
 drlink system diagnostics >/tmp/pq-doctor.txt
 drlink set network-object pq-docs-free type ip value 198.51.100.40 >/tmp/pq-create.txt
 drlink show network-object pq-docs-free >>/tmp/pq-create.txt
-drlink unset network-object pq-docs-free >>/tmp/pq-create.txt
+printf 'y\n' | drlink unset network-object pq-docs-free >>/tmp/pq-create.txt
 # Intentional mistakes must fail with current-resource guidance.
 set +e
 drlink show managed-host does-not-exist-xyz >/tmp/pq-wrong.txt 2>&1
@@ -1755,7 +1755,7 @@ phase_fixed_tcp_remote_service() {
   pq_ssh_confirm_yes frp-e2e-client "sudo /usr/local/bin/drlink unset remote-service '$normal_rs' >/dev/null 2>&1 || true" >>"$evidence" 2>&1 || true
   pq_ssh frp-e2e-client "pkill -f 'http.server $fixed_target_port' >/dev/null 2>&1 || true; pkill -f 'http.server $normal_target_port' >/dev/null 2>&1 || true; mkdir -p /tmp/pq-fixed-target /tmp/pq-normal-target; printf 'fixed-tcp-ok\\n' >/tmp/pq-fixed-target/index.html; printf 'normal-tcp-ok\\n' >/tmp/pq-normal-target/index.html; nohup python3 -m http.server $fixed_target_port --bind 127.0.0.1 -d /tmp/pq-fixed-target >/tmp/pq-fixed-http.log 2>&1 </dev/null & nohup python3 -m http.server $normal_target_port --bind 127.0.0.1 -d /tmp/pq-normal-target >/tmp/pq-normal-http.log 2>&1 </dev/null & sleep 1; curl -fsS http://127.0.0.1:$fixed_target_port/; curl -fsS http://127.0.0.1:$normal_target_port/" >>"$evidence" 2>&1
   local target_rc=$?
-  pq_ssh "$SERVER" "sudo /usr/local/bin/drlink unset service-object '$fixed_obj' >/dev/null 2>&1 || true; sudo /usr/local/bin/drlink unset service-object '$normal_obj' >/dev/null 2>&1 || true; sudo /usr/local/bin/drlink set service-object '$fixed_obj' type fixed-tcp port $fixed_target_port; sudo /usr/local/bin/drlink set service-object '$normal_obj' type tcp port $normal_target_port" >>"$evidence" 2>&1
+  pq_ssh "$SERVER" "printf 'y\\n' | sudo /usr/local/bin/drlink unset service-object '$fixed_obj' >/dev/null 2>&1 || true; printf 'y\\n' | sudo /usr/local/bin/drlink unset service-object '$normal_obj' >/dev/null 2>&1 || true; sudo /usr/local/bin/drlink set service-object '$fixed_obj' type fixed-tcp port $fixed_target_port; sudo /usr/local/bin/drlink set service-object '$normal_obj' type tcp port $normal_target_port" >>"$evidence" 2>&1
   local object_rc=$?
   pq_ssh frp-e2e-client "sudo /usr/local/bin/drlink system synchronize && sudo /usr/local/bin/drlink set remote-service '$fixed_rs' destination this-host service '$fixed_obj' enabled && sudo /usr/local/bin/drlink set remote-service '$normal_rs' destination this-host service '$normal_obj' enabled && sudo /usr/local/bin/drlink show remote-service '$fixed_rs' && sudo /usr/local/bin/drlink show remote-service '$normal_rs'" >>"$evidence" 2>&1
   local create_rc=$?
@@ -1829,7 +1829,7 @@ PY
   pq_ssh_confirm_yes frp-e2e-client "sudo /usr/local/bin/drlink unset remote-service '$normal_rs' >/dev/null 2>&1 || true" >>"$evidence" 2>&1 || true
   pq_ssh frp-e2e-client "pkill -f 'http.server $fixed_target_port' >/dev/null 2>&1 || true; pkill -f 'http.server $normal_target_port' >/dev/null 2>&1 || true" >>"$evidence" 2>&1
   local agent_cleanup_rc=$?
-  pq_ssh "$SERVER" "sudo /usr/local/bin/drlink unset service-object '$fixed_obj' >/dev/null 2>&1 || true; sudo /usr/local/bin/drlink unset service-object '$normal_obj' >/dev/null 2>&1 || true" >>"$evidence" 2>&1
+  pq_ssh "$SERVER" "printf 'y\\n' | sudo /usr/local/bin/drlink unset service-object '$fixed_obj' >/dev/null 2>&1 || true; printf 'y\\n' | sudo /usr/local/bin/drlink unset service-object '$normal_obj' >/dev/null 2>&1 || true" >>"$evidence" 2>&1
   local server_cleanup_rc=$?
   set -uo pipefail
   if [[ "$agent_cleanup_rc" -eq 0 && "$server_cleanup_rc" -eq 0 ]]; then cleanup_rc=0; fi
@@ -2050,12 +2050,12 @@ PY
 if ! drlink show internet-access | grep -q "Mode[[:space:]]*: No Policy"; then
   printf 'y\n' | drlink unset internet-access policy
 fi
-drlink unset service-group pq-web >/dev/null 2>&1 || true
+printf 'y\n' | drlink unset service-group pq-web >/dev/null 2>&1 || true
 for name in pq-http pq-https pq-fixed-target pq-normal-target; do
-  drlink unset service-object "$name" >/dev/null 2>&1 || true
+  printf 'y\n' | drlink unset service-object "$name" >/dev/null 2>&1 || true
 done
 for name in pq-example-com pq-github-com pq-archive-ubuntu-com pq-any-source pq-blackhole qual-live-mutation; do
-  drlink unset network-object "$name" >/dev/null 2>&1 || true
+  printf 'y\n' | drlink unset network-object "$name" >/dev/null 2>&1 || true
 done
 python3 - <<'PY'
 import sqlite3
