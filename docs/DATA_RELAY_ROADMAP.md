@@ -30,10 +30,15 @@ AI-generated canonical CLI / copy-paste bundle workflow
 bounded Zero-Touch issuance (max 10/request and active unused)
 ```
 
-Can remain later work:
+Planned additive post-v2.4 work:
 
 ```text
-Web UI
+Optional Full Web Management (Phase DL-16)
+```
+
+Can remain demand-driven later work:
+
+```text
 central SaaS management
 external DB / HA
 large-fleet orchestration
@@ -461,12 +466,65 @@ update public docs
 verify clean stable install/bootstrap/update
 ```
 
-## 18. Post-v2.4 demand-driven work
+## 18. Phase DL-16 — Optional Full Web Management
+
+**Status:** Planned post-v2.4 additive phase.
+
+Goal:
+
+> Give operators a complete graphical management surface for normal deployment,
+> configuration, policy, troubleshooting, and lifecycle work without making Web UI
+> a dependency of the Data Relay Link Core.
+
+Required product behavior:
+
+```text
+Core + CLI only
+→ fully functional product
+
+Core + CLI + Optional Web Management
+→ full management parity
+→ dashboard / visualization
+→ policy simulation and decision trace
+→ guided troubleshooting
+```
+
+Required implementation foundation:
+
+- one shared Core domain/management interface used by CLI, Web, ConfigurationBundle, and integration adapters;
+- no Web-owned authoritative database or duplicated policy engine;
+- separately installable and independently stoppable `drlink-web` component;
+- production frontend shipped as static assets with no Node.js runtime requirement;
+- local-only bind by default; explicit authenticated/TLS configuration for remote exposure;
+- Server-hosted orchestration of Agent-owned operations only through authenticated management/RPC;
+- revision/audit attribution for every Web mutation;
+- security-impact preview and explicit confirmation for broadening or destructive changes.
+
+Required operator capabilities:
+
+- dashboard and attention queue;
+- Server/Agent install and enrollment journeys;
+- Managed Host, Object/Group, Remote Service, policy, AI Access, and system management;
+- full supported CLI management parity;
+- policy builder plus `test`/explain visualization and decision trace;
+- audit/revision explorer, diff, rollback, backup/restore, update, and Doctor/health workflows;
+- safe search/filter/drill-down across the 1–50-host target range.
+
+Implementation should be sliced so that the shared management interface and read-only
+observability arrive before remote mutations, then complete parity before the phase is
+declared complete. A partially implemented Web UI must never become the only supported
+path for an operation.
+
+Acceptance requires the capability and security matrix in `WEB_MANAGEMENT.md` to pass,
+including CLI/Web semantic parity, no alternate authoritative state, Web-disabled Core
+operation, Web-service failure isolation, policy-explain correctness, mutation audit,
+Agent-offline truthfulness, and remote-exposure security.
+
+## 19. Post-v2.4 demand-driven work
 
 Potential later additions only with real demand:
 
 ```text
-Web UI
 central multi-server/fleet coordination
 enterprise identity providers beyond required MCP auth
 HA deployment
@@ -479,7 +537,7 @@ signed policy/export packages
 
 These additions should reuse, not replace, the v2.4 identity/Object/policy/database foundation.
 
-## 19. Stable non-goals
+## 20. Stable non-goals
 
 Data Relay Link is not being expanded into:
 
@@ -492,7 +550,7 @@ automatic firewall/DNS manager
 large database cluster
 ```
 
-## 20. Roadmap success condition
+## 21. Roadmap success condition
 
 The v2.4.0 foundation is done when no further foreseeable core change requires replacing:
 

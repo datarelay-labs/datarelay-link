@@ -1295,6 +1295,57 @@ docs/CLI_REFERENCE.md
 
 The old public nouns `acl`, `service-profile`, and `internet-profile` are not canonical v2.4.0 target resources.
 
+### 46.1 Post-v2.4 shared management-surface boundary
+
+Optional Full Web Management must not implement a second control plane.
+
+```text
+CLI / Wizard ───────────────┐
+ConfigurationBundle ────────┤
+Optional Web Management ────┼→ Core Domain / Management Interface
+MCP / integration adapters ─┘              │
+                                           ▼
+                               Change Plan / Policy Engine
+                                           │
+                                           ▼
+                                  SQLite authoritative state
+                                           │
+                                           ▼
+                            runtime compile / activate / verify
+```
+
+The shared Core interface owns resource validation, reference resolution, policy
+evaluation, security-impact calculation, optimistic/concurrent edit protection,
+revision/audit creation, runtime generation, activation, rollback, and verification.
+Presentation surfaces may shape input/output but may not reproduce these semantics.
+
+The Web component is a separately installable process, conceptually `drlink-web`.
+It may contain an HTTP API adapter and compiled static frontend assets, but it owns no
+alternate authoritative database. Stopping, breaking, or uninstalling Web Management
+must not stop relay enforcement, Agent connectivity, CLI administration, backup/restore,
+upgrade, or recovery.
+
+Server-hosted Web Management may present Agent-scoped configuration in one UI. An
+Agent-owned mutation is still executed by that Agent through the authenticated
+management/RPC path. The Server must not simulate success by editing a Server-side
+projection of Agent-local state. Offline/unreachable/unsupported Agent operations return
+an explicit pending, blocked, or `CLIENT_ACTION_REQUIRED`-style result according to the
+future public contract.
+
+Security boundary:
+
+- local-only listen is the default;
+- remote listen requires explicit enablement, authentication, and TLS;
+- browser sessions never receive raw private keys or reusable bootstrap verifiers;
+- one-time enrollment/install credentials follow their existing display-once rules;
+- state-changing requests use CSRF/session protections appropriate to the selected Web stack;
+- every mutation records an authenticated operator identity and uses normal revision/audit;
+- broadening/destructive changes require the same impact preview and confirmation semantics as CLI;
+- Web API endpoints are not a bypass around policy, role, reference, or concurrency checks.
+
+Detailed post-v2.4 implementation and UX requirements are defined in
+`docs/WEB_MANAGEMENT.md`.
+
 ## 47. Security-impact confirmation
 
 Interactive confirmation is required for meaningful access broadening.
@@ -1396,7 +1447,7 @@ automatic firewall rule changes
 automatic DNS changes
 ```
 
-Those can be added later without replacing the local SQLite control plane or the current public object and policy identity model.
+Optional Full Web Management is now a planned post-v2.4 additive phase; the remaining items stay demand-driven. None of them may replace the local SQLite control plane or the current public object and policy identity model. Web Management follows the shared boundary in section 46.1 and `docs/WEB_MANAGEMENT.md`.
 
 ## 51. Architecture freeze rule
 
