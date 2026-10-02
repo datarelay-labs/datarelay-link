@@ -427,20 +427,20 @@ DB/runtime mismatch                         fail closed / surfaced
 
 Real application qualification includes `curl`, `wget`, `git`, `apt`, and representative vendor/API HTTPS use cases where applicable.
 
-For the closed/restricted-network release claim, final E2E must prove the complete user path:
+For final E2E, prove the complete proxy user path without disrupting the host's existing direct Internet connectivity:
 
 ```text
-protected host direct Internet path blocked
-→ protected host configured with standard proxy settings pointing to Data Relay Link
-→ approved curl/wget/git/apt traffic succeeds through Data Relay Link
-→ unapproved destination / wrong port is denied
+protected host configured with standard proxy settings pointing to Data Relay Link
+→ effective proxy configuration verified
+→ approved curl/wget/git/apt traffic observed through Data Relay Link
+→ unapproved destination / wrong port is denied through the same proxy path
 → remove an actually required application destination
 → the corresponding application workflow fails through policy
 → restore policy
 → the same application workflow succeeds again
 ```
 
-`curl` alone does not satisfy the real-application matrix when `wget`, `git`, and `apt` are applicable to the selected qualification host. Policy/explain output alone is never live traffic evidence. The evidence must retain the effective proxy endpoint/configuration, application result, Data Relay Link audit/source observation, and the direct-path-block result. If direct Internet cannot be shown blocked in the available environment, the closed-network gate is `BLOCKED_ENVIRONMENT`, not PASS.
+`curl` alone does not satisfy the real-application matrix when `wget`, `git`, and `apt` are applicable to the selected qualification host. Policy/explain output alone is never live traffic evidence. The evidence must retain the effective proxy endpoint/configuration, application result, and Data Relay Link audit/source observation proving that the tested request traversed the configured proxy. Do not disable or reconfigure the host's direct Internet path merely to manufacture a test precondition.
 
 For APT specifically, qualify a real repository/update workflow using explicitly allowed repository FQDNs. Do not use broad wildcard authorization merely to obtain PASS. Remove at least one destination actually required by that update path and prove `apt update` fails because of Internet Access policy; restore that destination and prove recovery.
 

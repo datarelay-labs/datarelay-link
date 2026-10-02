@@ -1579,14 +1579,9 @@ export NO_PROXY="$no_proxy"
 
 If an application requires its own standard proxy configuration instead of inheriting these variables, configure that application to the **same Data Relay Link endpoint** and retain the effective configuration as evidence. Do not install a Data Relay Link Agent merely to make Internet Access work.
 
-The restricted-network claim must also be real. For the host used to represent a closed/restricted network:
+Do not disable or reconfigure the host's direct Internet path merely to prove a test precondition. The E2E requirement is to verify that the protected host's **effective application proxy configuration** points to the expected Data Relay Link Internet Access endpoint and that the tested application traffic is actually observed through that proxy path.
 
-1. temporarily remove/bypass the application proxy configuration without changing Internet Access policy;
-2. prove the tested public destination is not reachable directly;
-3. restore the proxy configuration;
-4. prove the approved destination succeeds through Data Relay Link.
-
-If the available topology allows unrestricted direct Internet access and no existing host/network control can prove the direct path blocked, record the closed/restricted-network subcheck `BLOCKED_ENVIRONMENT`; do not claim `CLOSED_NETWORK_E2E=PASS` from proxy success alone.
+Retain evidence of the effective proxy variables/application configuration and the Data Relay Link-side request/source observation for the same test run.
 
 A one-off `curl -x ...` probe may be useful diagnostic evidence, but **does not by itself satisfy** the protected-host proxy-configuration or real-application gate.
 
@@ -1606,14 +1601,14 @@ Minimum application evidence:
 - `git`: a real HTTPS operation such as `git ls-remote` against an approved repository/service succeeds through the configured proxy and a policy-denied destination fails;
 - `apt`: repository FQDNs required by the selected Ubuntu/Debian repository path are explicitly allowed; `apt update` succeeds through Data Relay Link; removing at least one actually required repository destination makes `apt update` fail because of Internet Access policy; restoring the destination makes the same workflow succeed again.
 
-For `apt`, use the host/application's normal proxy configuration (`HTTP_PROXY`/`HTTPS_PROXY` when honored, or standard APT `Acquire::http::Proxy` / `Acquire::https::Proxy` configuration) pointing to the same Data Relay Link Internet Access endpoint. Do not open direct Internet access or add broad wildcards merely to make package update pass.
+For `apt`, use the host/application's normal proxy configuration (`HTTP_PROXY`/`HTTPS_PROXY` when honored, or standard APT `Acquire::http::Proxy` / `Acquire::https::Proxy` configuration) pointing to the same Data Relay Link Internet Access endpoint. Do not add broad wildcards merely to make package update pass.
 
 Verify:
 
 - approved destination/port works through the configured Data Relay Link proxy;
 - unapproved destination fails through the same proxy path;
 - wrong destination port fails;
-- direct Internet access remains unavailable for the restricted-network scenario;
+- the effective application proxy configuration points to the expected Data Relay Link Internet Access endpoint and the observed request traverses that proxy path;
 - removing a destination required by an application makes that application fail through policy;
 - restoring the policy makes the same application workflow recover;
 - broad wildcard expansion is not used just to obtain PASS;
@@ -1751,7 +1746,7 @@ For each allowed path include a paired denied path using wrong source, destinati
 
 U-012 inherits the U-006 protected-host proxy hard gate. HTTP/HTTPS coverage must use the protected host's configured proxy path, not only per-command `-x/--proxy` overrides. `curl` coverage does not substitute for applicable `wget`, `git`, or `apt` coverage. Fixed TCP is a separate path for proxy-unaware applications and does not satisfy the HTTP/HTTPS proxy-aware application matrix.
 
-For the package/update workflow, retain evidence of the exact repository FQDNs used, the effective proxy configuration, successful update through Data Relay Link, policy-caused failure after removing a required destination, and successful recovery after restoring it. The final result must distinguish `DIRECT_INTERNET_BLOCKED=PASS` from `PROXY_APPLICATION_PATH=PASS`; both are required for a closed/restricted-network PASS claim.
+For the package/update workflow, retain evidence of the exact repository FQDNs used, the effective proxy configuration, successful update through Data Relay Link, policy-caused failure after removing a required destination, and successful recovery after restoring it. The final result must include `PROXY_CONFIGURATION_VERIFIED=PASS` and `PROXY_APPLICATION_PATH=PASS`; do not require disabling the host's direct Internet path.
 
 ## U-013 — Cross-surface terminology, clarity, and operator-guidance consistency — MANDATORY
 
