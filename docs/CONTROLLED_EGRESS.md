@@ -53,7 +53,7 @@ Representative shell configuration uses a dedicated subshell/process so test pro
 )
 ```
 
-Merge and preserve the pre-existing `no_proxy` and `NO_PROXY` bypass entries needed for management endpoints or internal services, append localhost, then export the same merged list under both casings so application precedence cannot drop an existing bypass. Exiting the dedicated process restores the parent environment. If that isolation is unavailable, capture and restore the exact value-versus-unset state of all six proxy/bypass variables before PASS.
+Merge and preserve the pre-existing `no_proxy` and `NO_PROXY` bypass entries needed for management endpoints or internal services, append localhost, then export the same merged list under both casings so application precedence cannot drop an existing bypass. A dedicated subshell/process is mandatory for shell-based qualification probes; never export the test proxy variables directly into a long-lived operator/test shell. Process exit or interruption therefore leaves the parent's six proxy/bypass variables unchanged.
 
 Applications that use an application-specific standard proxy setting may use that instead, but it must resolve to the same Data Relay Link endpoint. Prefer process-scoped or temporary test configuration. If qualification changes persistent application proxy configuration, capture the pre-test value/state and restore it exactly (or remove the test-only override when none existed) before the scenario can PASS. For APT, prefer a temporary `APT_CONFIG` plus temporary source/list/cache paths; only modify persistent `Acquire::http::Proxy` / `Acquire::https::Proxy` configuration when necessary, and then restore the prior bytes/absence during cleanup.
 
