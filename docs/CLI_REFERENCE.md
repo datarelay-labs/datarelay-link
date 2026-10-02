@@ -275,6 +275,8 @@ unset mcp-tls purge
 
 Referenced Objects/Groups/Identities/Managed Hosts are protected from deletion until references are removed.
 
+`unset enrollment <ENROLLMENT>`, `unset network-object`, `unset network-group`, `unset service-object`, `unset service-group`, `unset permission-object`, `unset permission-group`, and `unset ai-identity` are destructive lifecycle operations and require explicit `y/N` confirmation after existence/reference validation. Default is No and cancellation applies no change. These are normal `y_n` flows rather than TTY-only flows, so controlled automation may provide `y`/`yes` on stdin; there is no public hidden environment-variable or `--yes` bypass for these commands. Policy Rule deletion uses effect-aware `conditional_y_n`: confirmation is required when the calculated change broadens or materially narrows access, while full `unset <plane>-access policy` reset always requires explicit confirmation.
+
 A **Managed Host Group** is an inventory grouping of registered Managed Hosts. It is distinct from a **Network Group**, which is a reusable policy selector made from Network Objects. Adding or removing Managed Host Group membership does not retire the Managed Host, change Remote Services, reallocate public ports, or create/change a Network Group. Bare `unset managed-host <HOST>` remains the reference-safe Managed Host retirement operation. `unset managed-host-group <GROUP>` requires interactive y/N confirmation; public `--yes` is not supported.
 
 ## 7. Policy test commands

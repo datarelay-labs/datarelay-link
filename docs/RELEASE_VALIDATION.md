@@ -507,6 +507,9 @@ Required evidence:
 ```text
 CLI_PRODUCT_SURFACE_RECONCILIATION=PASS
 CLI_FEATURE_SCENARIO_RECONCILIATION=PASS
+TEST_CONTRACT_FILE_SHA256=<exact executed contract SHA256>
+TEST_CONTRACT_DIRTY=NO
+SINGLE_RUN_COORDINATION=PASS
 FEATURE_INVENTORY_TOTAL=<n>
 FEATURE_NO_CLI_GAPS=0
 FEATURE_WITHOUT_DISCOVERABLE_CLI_COUNT=0
@@ -538,7 +541,7 @@ The reconciliation must treat installer completion output, generated enrollment 
 
 After black-box discovery is retained, perform post-hoc executable catalog/parser enumeration to prove that hidden/alias paths do not escape the public model. This source inspection is reconciliation evidence for operator-workflow coherence; it does not authorize execution of hidden or mutation-bearing runtime paths.
 
-Every behavior-changing setting/subcommand and destructive subvariant must receive its own disposition. Reconcile intended effect against catalog/parser/source risk/confirmation metadata and deterministic isolated-test coverage; do not execute destructive confirmation probes on assigned runtime state. Privilege/readability errors for read-only probes must return non-zero and must not be misreported as role errors. Status/version/provenance surfaces must not contradict the current control-plane model.
+Every behavior-changing setting/subcommand and destructive subvariant must receive its own disposition. Reconcile intended effect against leaf-level catalog/parser/source risk/confirmation metadata and deterministic isolated-test coverage; do not execute destructive confirmation probes on assigned runtime state. Confirmation must match the canonical mode: `y_n`, `conditional_y_n`, explicitly interactive-only, or intentionally `none` when the explicit command invocation itself is the accepted approval. Do not invent a universal TTY-only rule for all destructive commands. Privilege/readability errors for read-only probes must return non-zero and must not be misreported as role errors. Status/version/provenance surfaces must not contradict the current control-plane model.
 
 The reconciliation must record `RUNTIME_MUTATION_ATTEMPT_COUNT=0`. Its cleanup evidence covers only audit-owned temporary processes/files because the audit must not create product resources. Environment provisioning, product-resource cleanup, and host lifecycle cleanup remain responsibilities of the enclosing release/FULL_USER_E2E workflow.
 

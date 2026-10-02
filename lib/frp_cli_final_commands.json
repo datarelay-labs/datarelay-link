@@ -609,7 +609,7 @@
         "required": true
       }
     ],
-    "tail": "any",
+    "tail": null,
     "internal": [
       "revoke",
       "enrollment"
@@ -617,26 +617,10 @@
     "aliases": [],
     "destructive": true,
     "hidden": false,
-    "risk": "none",
-    "confirmation": "none",
+    "risk": "irreversible",
+    "confirmation": "y_n",
     "surface": "",
-    "flags": [
-      {
-        "name": "--older-than",
-        "arity": 1,
-        "choices": [],
-        "hidden": true,
-        "required": false,
-        "description": "Purge enrollments older than this many days",
-        "metavar": "DAYS",
-        "examples": [],
-        "effect": "Bulk purge terminal enrollment metadata",
-        "risk": "irreversible",
-        "type": "integer",
-        "unit": "days",
-        "default": 30
-      }
-    ]
+    "flags": []
   },
   {
     "path": [
@@ -1582,9 +1566,9 @@
     "roles": "server",
     "category": "Remote Access",
     "summary": "Remove a Remote Access rule",
-    "detail": "Remove a Remote Access rule",
+    "detail": "Remove one Remote Access rule. Effective security impact is calculated first; y/N confirmation is required when the deletion broadens or materially narrows access.",
     "examples": [
-      "unset remote-access"
+      "unset remote-access <RULE>"
     ],
     "args": [
       {
@@ -1596,10 +1580,34 @@
     "tail": "any",
     "internal": null,
     "aliases": [],
-    "destructive": false,
+    "destructive": true,
     "hidden": false,
-    "risk": "none",
-    "confirmation": "none",
+    "risk": "security_change",
+    "confirmation": "conditional_y_n",
+    "surface": "",
+    "flags": []
+  },
+  {
+    "path": [
+      "unset",
+      "remote-access",
+      "policy"
+    ],
+    "roles": "server",
+    "category": "Remote Access",
+    "summary": "Reset the Remote Access policy",
+    "detail": "Remove the Remote Access mode and all rules. Effective access becomes ALLOW. This always requires explicit y/N confirmation.",
+    "examples": [
+      "unset remote-access policy"
+    ],
+    "args": [],
+    "tail": null,
+    "internal": null,
+    "aliases": [],
+    "destructive": true,
+    "hidden": false,
+    "risk": "security_widening",
+    "confirmation": "y_n",
     "surface": "",
     "flags": []
   },
@@ -1611,9 +1619,9 @@
     "roles": "server",
     "category": "Internet Access",
     "summary": "Remove an Internet Access rule",
-    "detail": "Remove an Internet Access rule",
+    "detail": "Remove one Internet Access rule. Effective security impact is calculated first; y/N confirmation is required when the deletion broadens or materially narrows access.",
     "examples": [
-      "unset internet-access"
+      "unset internet-access <RULE>"
     ],
     "args": [
       {
@@ -1625,10 +1633,34 @@
     "tail": "any",
     "internal": null,
     "aliases": [],
-    "destructive": false,
+    "destructive": true,
     "hidden": false,
-    "risk": "none",
-    "confirmation": "none",
+    "risk": "security_change",
+    "confirmation": "conditional_y_n",
+    "surface": "",
+    "flags": []
+  },
+  {
+    "path": [
+      "unset",
+      "internet-access",
+      "policy"
+    ],
+    "roles": "server",
+    "category": "Internet Access",
+    "summary": "Reset the Internet Access policy",
+    "detail": "Remove the Internet Access mode and all rules. Effective access becomes ALLOW. This always requires explicit y/N confirmation.",
+    "examples": [
+      "unset internet-access policy"
+    ],
+    "args": [],
+    "tail": null,
+    "internal": null,
+    "aliases": [],
+    "destructive": true,
+    "hidden": false,
+    "risk": "security_widening",
+    "confirmation": "y_n",
     "surface": "",
     "flags": []
   },
@@ -1640,9 +1672,9 @@
     "roles": "server",
     "category": "AI Access",
     "summary": "Remove an AI Access rule",
-    "detail": "Remove an AI Access rule",
+    "detail": "Remove one AI Access rule. Effective security impact is calculated first; y/N confirmation is required when the deletion broadens or materially narrows access.",
     "examples": [
-      "unset ai-access"
+      "unset ai-access <RULE>"
     ],
     "args": [
       {
@@ -1654,10 +1686,34 @@
     "tail": "any",
     "internal": null,
     "aliases": [],
-    "destructive": false,
+    "destructive": true,
     "hidden": false,
-    "risk": "none",
-    "confirmation": "none",
+    "risk": "security_change",
+    "confirmation": "conditional_y_n",
+    "surface": "",
+    "flags": []
+  },
+  {
+    "path": [
+      "unset",
+      "ai-access",
+      "policy"
+    ],
+    "roles": "server",
+    "category": "AI Access",
+    "summary": "Reset the AI Access policy",
+    "detail": "Remove the AI Access mode and all rules. Effective access becomes ALLOW. This always requires explicit y/N confirmation.",
+    "examples": [
+      "unset ai-access policy"
+    ],
+    "args": [],
+    "tail": null,
+    "internal": null,
+    "aliases": [],
+    "destructive": true,
+    "hidden": false,
+    "risk": "security_widening",
+    "confirmation": "y_n",
     "surface": "",
     "flags": []
   },
@@ -2237,7 +2293,7 @@
   },
   {
     "roles": "server",
-    "detail": "Certificate lifecycle for the public MCP endpoint. Uses python3-acme for AUTO_ACME (HTTP-01).",
+    "detail": "MCP public certificate lifecycle. Use an explicit child operation.",
     "aliases": [],
     "destructive": false,
     "hidden": false,
@@ -2252,7 +2308,7 @@
       "certificate"
     ],
     "category": "System",
-    "summary": "Issue, import, renew, or show MCP certificates",
+    "summary": "MCP public certificate operations",
     "examples": [
       "system certificate issue",
       "system certificate import /path/fullchain.pem /path/privkey.pem",
@@ -2273,6 +2329,142 @@
         "required": true
       }
     ]
+  },
+  {
+    "path": [
+      "system",
+      "certificate",
+      "issue"
+    ],
+    "roles": "server",
+    "category": "System",
+    "summary": "Issue and activate the configured MCP certificate",
+    "detail": "Issue and activate a certificate for the configured MCP TLS mode. The previous valid certificate is retained on failed activation.",
+    "examples": [
+      "system certificate issue"
+    ],
+    "args": [],
+    "tail": null,
+    "internal": null,
+    "aliases": [],
+    "destructive": true,
+    "hidden": false,
+    "risk": "outage",
+    "confirmation": "none",
+    "surface": "",
+    "flags": []
+  },
+  {
+    "path": [
+      "system",
+      "certificate",
+      "import"
+    ],
+    "roles": "server",
+    "category": "System",
+    "summary": "Import and activate an MCP certificate",
+    "detail": "Import matching certificate/key material and activate it after validation.",
+    "examples": [
+      "system certificate import <CERT> <KEY> [CHAIN]"
+    ],
+    "args": [
+      {
+        "name": "<CERT>",
+        "complete": "path",
+        "required": true
+      },
+      {
+        "name": "<KEY>",
+        "complete": "path",
+        "required": true
+      },
+      {
+        "name": "CHAIN",
+        "complete": "path",
+        "required": false
+      }
+    ],
+    "tail": null,
+    "internal": null,
+    "aliases": [],
+    "destructive": true,
+    "hidden": false,
+    "risk": "outage",
+    "confirmation": "none",
+    "surface": "",
+    "flags": []
+  },
+  {
+    "path": [
+      "system",
+      "certificate",
+      "renew"
+    ],
+    "roles": "server",
+    "category": "System",
+    "summary": "Renew and activate the MCP certificate when due",
+    "detail": "Renew the configured MCP certificate when due and retain the previous valid certificate on failed renewal.",
+    "examples": [
+      "system certificate renew"
+    ],
+    "args": [],
+    "tail": null,
+    "internal": null,
+    "aliases": [],
+    "destructive": true,
+    "hidden": false,
+    "risk": "outage",
+    "confirmation": "none",
+    "surface": "",
+    "flags": []
+  },
+  {
+    "path": [
+      "system",
+      "certificate",
+      "status"
+    ],
+    "roles": "server",
+    "category": "System",
+    "summary": "Show MCP certificate status",
+    "detail": "Read-only MCP certificate status.",
+    "examples": [
+      "system certificate status"
+    ],
+    "args": [],
+    "tail": null,
+    "internal": null,
+    "aliases": [],
+    "destructive": false,
+    "hidden": false,
+    "risk": "none",
+    "confirmation": "none",
+    "surface": "",
+    "flags": []
+  },
+  {
+    "path": [
+      "system",
+      "certificate",
+      "preflight"
+    ],
+    "roles": "server",
+    "category": "System",
+    "summary": "Preflight MCP certificate prerequisites",
+    "detail": "Read-only DNS/TLS prerequisite checks.",
+    "examples": [
+      "system certificate preflight"
+    ],
+    "args": [],
+    "tail": null,
+    "internal": null,
+    "aliases": [],
+    "destructive": false,
+    "hidden": false,
+    "risk": "none",
+    "confirmation": "none",
+    "surface": "",
+    "flags": []
   },
   {
     "path": [
@@ -2470,7 +2662,7 @@
     "aliases": [],
     "destructive": true,
     "hidden": false,
-    "risk": "none",
+    "risk": "irreversible",
     "confirmation": "y_n",
     "surface": "",
     "flags": []
@@ -2499,7 +2691,7 @@
     "aliases": [],
     "destructive": true,
     "hidden": false,
-    "risk": "none",
+    "risk": "irreversible",
     "confirmation": "y_n",
     "surface": "",
     "flags": []
@@ -2697,7 +2889,7 @@
     "aliases": [],
     "destructive": true,
     "hidden": false,
-    "risk": "none",
+    "risk": "irreversible",
     "confirmation": "y_n",
     "surface": "",
     "flags": []
@@ -2725,7 +2917,7 @@
     "aliases": [],
     "destructive": true,
     "hidden": false,
-    "risk": "none",
+    "risk": "irreversible",
     "confirmation": "y_n",
     "surface": "",
     "flags": []
@@ -2913,7 +3105,7 @@
     "aliases": [],
     "destructive": true,
     "hidden": false,
-    "risk": "none",
+    "risk": "irreversible",
     "confirmation": "y_n",
     "surface": "",
     "flags": []
@@ -2941,7 +3133,7 @@
     "aliases": [],
     "destructive": true,
     "hidden": false,
-    "risk": "none",
+    "risk": "irreversible",
     "confirmation": "y_n",
     "surface": "",
     "flags": []
@@ -3083,7 +3275,7 @@
     "aliases": [],
     "destructive": true,
     "hidden": false,
-    "risk": "none",
+    "risk": "irreversible",
     "confirmation": "y_n",
     "surface": "",
     "flags": []
@@ -3192,7 +3384,7 @@
     "aliases": [],
     "destructive": true,
     "hidden": false,
-    "risk": "none",
+    "risk": "irreversible",
     "confirmation": "y_n",
     "surface": "",
     "flags": []
