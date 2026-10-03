@@ -84,6 +84,17 @@ frp_infer_expected_source_ref
 [[ "${FRP_RELEASE_CHANNEL:-}" == "stable" ]] || fail "stable effective channel inference"
 pass "INFER_STABLE_TAG_PUBLICATION_CONTEXT"
 
+# Stable publication persists the public tag separately from the exact product
+# source SHA carried by the frozen bundle.
+export FRP_EXPECTED_SOURCE_HEAD="$FAKE_SHA"
+export FRP_DEPLOY_TEST_ROOT="$WORKDIR/stable-tag-version"
+mkdir -p "$FRP_DEPLOY_TEST_ROOT/etc/drlink"
+frp_write_version_file "$FRP_DEPLOY_TEST_ROOT/etc/drlink/version" client
+grep -q '^RELEASE_CHANNEL=stable$' "$FRP_DEPLOY_TEST_ROOT/etc/drlink/version" || fail "stable channel not persisted"
+grep -q "^SOURCE_REF=v${PROJECT_VERSION}$" "$FRP_DEPLOY_TEST_ROOT/etc/drlink/version" || fail "stable tag not persisted"
+grep -q "^SOURCE_HEAD=${FAKE_SHA}$" "$FRP_DEPLOY_TEST_ROOT/etc/drlink/version" || fail "exact product source head not persisted"
+pass "STABLE_TAG_AND_SOURCE_HEAD_PERSISTED"
+
 reset_provenance_env
 export FRP_CLIENT_INSTALLER_URL="https://raw.githubusercontent.com/datarelay-labs/datarelay-link/${FAKE_SHA}/dist/bootstrap-client.sh"
 frp_infer_expected_source_ref
