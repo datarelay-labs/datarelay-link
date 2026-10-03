@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import io
+import json
+import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -71,6 +74,54 @@ class EmptyStateCliTests(unittest.TestCase):
                 self.assertEqual(rc, 0, err)
                 self.assertIn(marker, out)
                 self.assertEqual(err, "")
+
+    def test_agent_system_info_empty_remote_services_is_explicit(self):
+        tmp = Path(tempfile.mkdtemp(prefix="drlink-agent-info-empty-"))
+        (tmp / "etc/frp").mkdir(parents=True, exist_ok=True)
+        (tmp / "etc/drlink").mkdir(parents=True, exist_ok=True)
+        (tmp / "etc/frp/client-state.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "allocator_url": "https://127.0.0.1:9/enroll",
+                    "frp_server": "203.0.113.10",
+                    "frp_server_port": 443,
+                    "hostname": "audit-agent",
+                    "machine_id": "00112233445566778899aabbccddeeff",
+                    "host_id": "audit-agent-00112233",
+                    "services": {},
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        (tmp / "etc/drlink/version").write_text(
+            "PROJECT_VERSION=2.4.0\nFRP_VERSION=0.71.0\n", encoding="utf-8"
+        )
+        env = os.environ.copy()
+        env.update(
+            {
+                "FRP_CTL_TEST_ROOT": str(tmp),
+                "FRP_CLIENT_TEST_ROOT": str(tmp),
+                "FRP_CTL_FORCE_DRLINK": "1",
+                "FRP_CTL_CMD_NAME": "drlink",
+                "FRP_CTL_BIN_DIR": str(ROOT / "tools"),
+                "FRP_CLIENT_LIB": str(ROOT / "lib/frp-client-common.sh"),
+                "FRP_SKIP_SYSTEMD": "1",
+            }
+        )
+        proc = subprocess.run(
+            [str(ROOT / "tools/frpctl"), "system", "info"],
+            cwd=ROOT,
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("Remote Services:", proc.stdout)
+        self.assertIn("No Remote Services configured.", proc.stdout)
 
     def test_agent_remote_services_empty_state_is_explicit(self):
         tmp = tempfile.mkdtemp(prefix="drlink-agent-empty-state-")

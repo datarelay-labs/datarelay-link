@@ -1956,13 +1956,21 @@ def _ownership_error_message(path, need):
             "No changes were applied."
         )
     if agent_resource and need_s in ("client", "agent"):
-        if v24 is not None:
-            return v24.role_error_agent_resource(str(resource).replace("-", " ").title())
+        label = str(resource).replace("-", " ").title()
+        if resource in ("remote-service", "remote-services"):
+            if v24 is not None:
+                return v24.role_error_agent_resource(label)
+            return (
+                "ERROR:\n"
+                "%s is managed from the DRLink Agent Host.\n\n"
+                "Run this command on the Agent Host that will own the Remote Service.\n\n"
+                "No changes were applied." % label
+            )
         return (
             "ERROR:\n"
-            "%s is managed from the DRLink Agent Host.\n\n"
-            "Run this command on the Agent Host that will own the Remote Service.\n\n"
-            "No changes were applied." % str(resource).replace("-", " ").title()
+            "%s is available on a DRLink Agent Host.\n\n"
+            "No changes were applied.\n\n"
+            "Run this command on a DRLink Agent Host." % label
         )
     labels = {
         "internet-access": "Internet Access policy",
@@ -2084,6 +2092,19 @@ def match(tokens, role, names=None, clients=None):
         rejected = reject_obsolete_surface(raw_focus)
         if rejected is not None:
             return rejected
+        # Command-specific help is a real public surface.  Do not let a
+        # wrong-role path fall through to generic root/domain help with RC=0;
+        # it must preserve the same ownership guidance as executing the
+        # command itself.
+        exact_cmd = CATALOG.find(raw_focus, include_aliases=True) if raw_focus else None
+        if exact_cmd is not None and not CATALOG.role_allows(exact_cmd["roles"], role):
+            path = tuple(exact_cmd.get("path") or ())
+            return {
+                "status": "role",
+                "need": exact_cmd["roles"],
+                "command": " ".join(path) if path else " ".join(raw_focus),
+                "message": _ownership_error_message(path, exact_cmd["roles"]),
+            }
         if raw_focus and raw_focus[0] not in _PUBLIC_ROOTS:
             message = context_help(raw_focus, role, names=names, clients=clients)
             return {

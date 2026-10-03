@@ -112,7 +112,7 @@ def _recovery_for_operation(operation, role):
     if op == 'restore':
         return (
             'inspect the pending restore marker and retry '
-            'sudo drlink restore backup <PATH> only after the failure is understood'
+            'sudo drlink system restore <PATH> only after the failure is understood'
             + extra
         )
     if op == 'update':

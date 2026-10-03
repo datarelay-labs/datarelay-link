@@ -137,8 +137,11 @@ class CliFeatureScenarioRemediation(unittest.TestCase):
             self.assertEqual(rule["confirmation"], "conditional_y_n")
             reset = by_path[("unset", resource, "policy")]
             self.assertTrue(reset["destructive"])
-            self.assertEqual(reset["risk"], "security_widening")
+            expected_risk = "security_widening" if resource == "remote-access" else "security_change"
+            self.assertEqual(reset["risk"], expected_risk)
             self.assertEqual(reset["confirmation"], "y_n")
+            if resource in ("internet-access", "ai-access"):
+                self.assertIn("DENY ALL", reset["detail"])
 
         for op in ("issue", "import", "renew"):
             row = by_path[("system", "certificate", op)]
@@ -150,6 +153,73 @@ class CliFeatureScenarioRemediation(unittest.TestCase):
             self.assertFalse(row["destructive"])
             self.assertEqual(row["risk"], "none")
             self.assertEqual(row["confirmation"], "none")
+
+    def test_restricted_plane_help_is_whitelist_only(self):
+        internet = catalog.domain_help("internet-access", "server") or ""
+        ai = catalog.domain_help("ai-access", "server") or ""
+        self.assertIn("WHITELIST-only", internet)
+        self.assertIn("deny-by-default", internet)
+        self.assertNotIn("BLACKLIST / WHITELIST", internet)
+        self.assertIn("WHITELIST-only", ai)
+        self.assertIn("deny-by-default", ai)
+        self.assertIn("mode whitelist", ai)
+        self.assertNotIn("blacklist|whitelist", ai)
+
+    def test_wrong_role_context_help_fails_with_ownership_guidance(self):
+        cases = (
+            (["test", "internet-access", "?"], "client", "DRLink Server"),
+            (["set", "network-object", "?"], "client", "DRLink Server"),
+            (["set", "remote-service", "?"], "server", "Agent Host"),
+            (["system", "autostart", "?"], "server", "Agent Host"),
+        )
+        for tokens, role, marker in cases:
+            with self.subTest(tokens=tokens, role=role):
+                result = grammar.match(tokens, role=role)
+                self.assertEqual(result.get("status"), "role", result)
+                self.assertIn(marker, str(result.get("message") or ""))
+
+    def test_wrong_role_context_help_public_cli_is_nonzero(self):
+        def run_cli(root, tokens, *, client=False):
+            env = os.environ.copy()
+            env.update(
+                {
+                    "FRP_CTL_TEST_ROOT": str(root),
+                    "FRP_CTL_FORCE_DRLINK": "1",
+                    "FRP_CTL_CMD_NAME": "drlink",
+                    "FRP_CTL_BIN_DIR": str(ROOT / "tools"),
+                    "FRP_CLIENT_LIB": str(ROOT / "lib/frp-client-common.sh"),
+                    "FRP_SKIP_SYSTEMD": "1",
+                }
+            )
+            if client:
+                env["FRP_CLIENT_TEST_ROOT"] = str(root)
+                env.pop("FRP_DEPLOY_TEST_ROOT", None)
+            else:
+                env["FRP_DEPLOY_TEST_ROOT"] = str(root)
+                env.pop("FRP_CLIENT_TEST_ROOT", None)
+            return subprocess.run(
+                [str(ROOT / "tools/frpctl"), *tokens],
+                cwd=ROOT,
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+        server = run_cli(self.tmp, ["set", "remote-service", "?"])
+        self.assertEqual(server.returncode, 1, server.stdout + server.stderr)
+        self.assertIn("Agent Host", server.stderr)
+
+        client = Path(tempfile.mkdtemp(prefix="drlink-wrong-role-help-client-"))
+        (client / "etc/frp").mkdir(parents=True, exist_ok=True)
+        (client / "etc/frp/client-state.json").write_text(
+            '{"client_id":"audit-agent","hostname":"audit-agent","services":{}}\n',
+            encoding="utf-8",
+        )
+        agent = run_cli(client, ["test", "internet-access", "?"], client=True)
+        self.assertEqual(agent.returncode, 1, agent.stdout + agent.stderr)
+        self.assertIn("DRLink Server", agent.stderr)
 
     def test_system_help_keeps_check_engine_server_only(self):
         server_help = catalog.domain_help("system", "server") or ""

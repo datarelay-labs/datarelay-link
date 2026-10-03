@@ -1481,7 +1481,9 @@
     "detail": "Create or edit a Remote Access rule",
     "examples": [
       "set remote-access",
-      "set remote-access block-partner mode blacklist source partner-office destination ubuntu-prod service ssh enabled"
+      "set remote-access block-partner mode blacklist source partner-office destination ubuntu-prod service ssh enabled",
+      "set remote-access enabled",
+      "set remote-access disabled"
     ],
     "args": [
       {
@@ -1510,7 +1512,9 @@
     "detail": "Create or edit an Internet Access rule",
     "examples": [
       "set internet-access",
-      "set internet-access github-https mode whitelist source ubuntu-prod destination github service https enabled"
+      "set internet-access github-https mode whitelist source ubuntu-prod destination github service https enabled",
+      "set internet-access enabled",
+      "set internet-access disabled"
     ],
     "args": [
       {
@@ -1540,7 +1544,9 @@
     "examples": [
       "set ai-access",
       "set ai-access allow-ops mode whitelist source automation-ai destination production-servers permission operations enabled",
-      "set ai-access allow-read mode whitelist source automation-ai destination ubuntu-prod permission read-only paths /var/lib/vendor/** enabled"
+      "set ai-access allow-read mode whitelist source automation-ai destination ubuntu-prod permission read-only paths /var/lib/vendor/** enabled",
+      "set ai-access enabled",
+      "set ai-access disabled"
     ],
     "args": [
       {
@@ -1649,7 +1655,7 @@
     "roles": "server",
     "category": "Internet Access",
     "summary": "Reset the Internet Access policy",
-    "detail": "Remove the Internet Access mode and all rules. Effective access becomes ALLOW. This always requires explicit y/N confirmation.",
+    "detail": "Remove the Internet Access mode and all rules. Effective access becomes DENY ALL. This always requires explicit y/N confirmation.",
     "examples": [
       "unset internet-access policy"
     ],
@@ -1659,7 +1665,7 @@
     "aliases": [],
     "destructive": true,
     "hidden": false,
-    "risk": "security_widening",
+    "risk": "security_change",
     "confirmation": "y_n",
     "surface": "",
     "flags": []
@@ -1702,7 +1708,7 @@
     "roles": "server",
     "category": "AI Access",
     "summary": "Reset the AI Access policy",
-    "detail": "Remove the AI Access mode and all rules. Effective access becomes ALLOW. This always requires explicit y/N confirmation.",
+    "detail": "Remove the AI Access mode and all rules. Effective access becomes DENY ALL. This always requires explicit y/N confirmation.",
     "examples": [
       "unset ai-access policy"
     ],
@@ -1712,7 +1718,7 @@
     "aliases": [],
     "destructive": true,
     "hidden": false,
-    "risk": "security_widening",
+    "risk": "security_change",
     "confirmation": "y_n",
     "surface": "",
     "flags": []
