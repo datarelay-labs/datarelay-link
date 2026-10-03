@@ -174,9 +174,9 @@ if len(parts) >= 3 and parts[0] == owner and parts[1] in allowed:
 import os, re
 from urllib.parse import unquote, urlsplit
 pat = re.compile(
-    r"https://raw\\.githubusercontent\\.com/datarelay-labs/"
+    r"https://raw\.githubusercontent\.com/datarelay-labs/"
     r"(?:datarelay-link|data-relay-link)/"
-    r"([^/\\s\"']+)/dist/bootstrap-server\\.sh"
+    r"([^/\s\"']+)/dist/bootstrap-(?:server|client)\.sh"
 )
 pgid = os.getpgid(0)
 for name in os.listdir("/proc"):
@@ -188,7 +188,7 @@ for name in os.listdir("/proc"):
         raw = open(f"/proc/{name}/cmdline", "rb").read()
     except (OSError, ProcessLookupError, PermissionError):
         continue
-    text = raw.replace(b"\\0", b" ").decode("utf-8", "replace")
+    text = raw.replace(b"\0", b" ").decode("utf-8", "replace")
     m = pat.search(text)
     if not m:
         continue
@@ -201,8 +201,42 @@ PY
   fi
   if [[ -n "$_frp_bootstrap_ref" ]]; then
     export FRP_EXPECTED_SOURCE_REF="$_frp_bootstrap_ref"
+    _frp_bootstrap_channel=""
+    if [[ "$_frp_bootstrap_ref" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+      _frp_bootstrap_channel=stable
+    elif [[ "$_frp_bootstrap_ref" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$ ]]; then
+      _frp_bootstrap_channel=preview
+    fi
+    if [[ -n "$_frp_bootstrap_channel" ]]; then
+      _frp_expected_channel="${FRP_EXPECTED_RELEASE_CHANNEL:-}"
+      _frp_effective_channel="${FRP_RELEASE_CHANNEL:-}"
+      case "$_frp_expected_channel" in
+        "") ;;
+        dev|main|development) _frp_expected_channel=development ;;
+        preview|rc|candidate|prerelease) _frp_expected_channel=preview ;;
+        stable) _frp_expected_channel=stable ;;
+        *) echo "ERROR: invalid expected release channel for source ref $_frp_bootstrap_ref" >&2; exit 1 ;;
+      esac
+      case "$_frp_effective_channel" in
+        "") ;;
+        dev|main|development) _frp_effective_channel=development ;;
+        preview|rc|candidate|prerelease) _frp_effective_channel=preview ;;
+        stable) _frp_effective_channel=stable ;;
+        *) echo "ERROR: invalid effective release channel for source ref $_frp_bootstrap_ref" >&2; exit 1 ;;
+      esac
+      if [[ -n "$_frp_expected_channel" && "$_frp_expected_channel" != "$_frp_bootstrap_channel" ]]; then
+        echo "ERROR: expected release channel conflicts with source ref $_frp_bootstrap_ref" >&2
+        exit 1
+      fi
+      if [[ -n "$_frp_effective_channel" && "$_frp_effective_channel" != "$_frp_bootstrap_channel" ]]; then
+        echo "ERROR: effective release channel conflicts with source ref $_frp_bootstrap_ref" >&2
+        exit 1
+      fi
+      export FRP_EXPECTED_RELEASE_CHANNEL="$_frp_bootstrap_channel"
+      export FRP_RELEASE_CHANNEL="$_frp_bootstrap_channel"
+    fi
   fi
-  unset _frp_bootstrap_ref
+  unset _frp_bootstrap_ref _frp_bootstrap_channel _frp_expected_channel _frp_effective_channel
 fi'''
 
 client_files=[
@@ -244,6 +278,7 @@ for rel in client_files:
         client_lines.append(f'chmod +x "$TMP/{rel}"')
 client_lines.append('echo "Preparing installation..."')
 client_lines.append('echo "Installing Data Relay Link Agent Host..."')
+client_lines.append(SERVER_BOOTSTRAP_REF_SNIPPET)
 client_lines.append('exec "$TMP/install-client.sh" "$@"')
 (dist/'bootstrap-client.sh').write_text('\n'.join(client_lines)+'\n')
 (dist/'bootstrap-client.sh').chmod(0o755)

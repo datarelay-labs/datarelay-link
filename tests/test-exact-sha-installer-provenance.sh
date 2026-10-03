@@ -16,7 +16,8 @@ FAKE_SHA='0123456789abcdef0123456789abcdef01234567'
 . "$ROOT/lib/frp-common.sh"
 
 reset_provenance_env() {
-  unset FRP_EXPECTED_SOURCE_REF FRP_TXN_SOURCE_REF FRP_BOOTSTRAP_URL \
+  unset FRP_EXPECTED_SOURCE_REF FRP_EXPECTED_SOURCE_HEAD \
+    FRP_EXPECTED_RELEASE_CHANNEL FRP_TXN_SOURCE_REF FRP_BOOTSTRAP_URL \
     FRP_CLIENT_INSTALLER_URL FRP_WINDOWS_CLIENT_INSTALLER_URL \
     FRP_RELEASE_CHANNEL FRP_DEPLOY_TEST_ROOT FRP_SERVER_TEST_ROOT \
     FRP_CTL_TEST_ROOT || true
@@ -73,6 +74,85 @@ export FRP_BOOTSTRAP_URL="https://raw.githubusercontent.com/datarelay-labs/datar
 frp_infer_expected_source_ref
 [[ "${FRP_EXPECTED_SOURCE_REF:-}" == "$FAKE_SHA" ]] || fail "infer from FRP_BOOTSTRAP_URL"
 pass "INFER_FROM_BOOTSTRAP_URL"
+
+# An already-inferred stable publication tag selects the stable effective
+# channel while preserving the embedded pretag source identity.
+reset_provenance_env
+export FRP_EXPECTED_SOURCE_REF="v${PROJECT_VERSION}"
+frp_infer_expected_source_ref
+[[ "${FRP_EXPECTED_RELEASE_CHANNEL:-}" == "stable" ]] || fail "stable expected channel inference"
+[[ "${FRP_RELEASE_CHANNEL:-}" == "stable" ]] || fail "stable effective channel inference"
+pass "INFER_STABLE_TAG_PUBLICATION_CONTEXT"
+
+# Explicit release-channel state must agree with an inferred immutable tag.
+# A conflicting environment is provenance ambiguity and must fail closed.
+reset_provenance_env
+export FRP_EXPECTED_SOURCE_REF="v${PROJECT_VERSION}"
+export FRP_RELEASE_CHANNEL=development
+if frp_infer_expected_source_ref >"$WORKDIR/conflicting-channel.out" 2>"$WORKDIR/conflicting-channel.err"; then
+  fail "stable tag accepted conflicting development release channel"
+fi
+grep -qi 'conflicts with source ref' "$WORKDIR/conflicting-channel.err" \
+  || fail "conflicting release channel missing fail-closed diagnostic"
+pass "STABLE_TAG_CHANNEL_CONFLICT_FAILS_CLOSED"
+
+# Validate the literal generated /proc fallback pattern without importing the
+# generator (importing build-bundles.py intentionally writes dist artifacts).
+python3 - "$ROOT/scripts/build-bundles.py" <<'PY' || fail "generated bootstrap raw URL matcher"
+import ast
+import re
+import sys
+from pathlib import Path
+
+tree = ast.parse(Path(sys.argv[1]).read_text(encoding="utf-8"))
+snippet = None
+for node in tree.body:
+    if isinstance(node, ast.Assign):
+        if any(isinstance(t, ast.Name) and t.id == "SERVER_BOOTSTRAP_REF_SNIPPET" for t in node.targets):
+            snippet = ast.literal_eval(node.value)
+            break
+assert snippet, "SERVER_BOOTSTRAP_REF_SNIPPET missing"
+marker = "import os, re\n"
+start = snippet.index(marker)
+end = snippet.index("\nPY\n)\"", start)
+proc_python = snippet[start:end]
+proc_tree = ast.parse(proc_python)
+pattern = None
+for node in ast.walk(proc_tree):
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+        if isinstance(node.func.value, ast.Name) and node.func.value.id == "re" and node.func.attr == "compile":
+            pattern = ast.literal_eval(node.args[0])
+            break
+assert pattern, "generated /proc regex missing"
+rx = re.compile(pattern)
+for ref, filename in (
+    ("0123456789abcdef0123456789abcdef01234567", "bootstrap-client.sh"),
+    ("v2.4.0", "bootstrap-server.sh"),
+):
+    url = f"https://raw.githubusercontent.com/datarelay-labs/datarelay-link/{ref}/dist/{filename}"
+    match = rx.search("curl -fsSL " + url)
+    assert match and match.group(1) == ref, (pattern, url, match.groups() if match else None)
+assert 'raw.replace(b"\\0", b" ")' in snippet, "generated cmdline NUL replacement missing"
+print("GENERATED_BOOTSTRAP_PROC_REF_MATCHER=PASS")
+PY
+pass "GENERATED_BOOTSTRAP_PROC_REF_MATCHER"
+
+# Reset the intentionally conflicting case and re-establish a valid stable
+# publication context before persistence assertions.
+reset_provenance_env
+export FRP_EXPECTED_SOURCE_REF="v${PROJECT_VERSION}"
+frp_infer_expected_source_ref
+export FRP_EXPECTED_SOURCE_HEAD="$FAKE_SHA"
+
+# Stable publication persists the public tag separately from the exact product
+# source SHA carried by the frozen bundle.
+export FRP_DEPLOY_TEST_ROOT="$WORKDIR/stable-tag-version"
+mkdir -p "$FRP_DEPLOY_TEST_ROOT/etc/drlink"
+frp_write_version_file "$FRP_DEPLOY_TEST_ROOT/etc/drlink/version" client
+grep -q '^RELEASE_CHANNEL=stable$' "$FRP_DEPLOY_TEST_ROOT/etc/drlink/version" || fail "stable channel not persisted"
+grep -q "^SOURCE_REF=v${PROJECT_VERSION}$" "$FRP_DEPLOY_TEST_ROOT/etc/drlink/version" || fail "stable tag not persisted"
+grep -q "^SOURCE_HEAD=${FAKE_SHA}$" "$FRP_DEPLOY_TEST_ROOT/etc/drlink/version" || fail "exact product source head not persisted"
+pass "STABLE_TAG_AND_SOURCE_HEAD_PERSISTED"
 
 reset_provenance_env
 export FRP_CLIENT_INSTALLER_URL="https://raw.githubusercontent.com/datarelay-labs/datarelay-link/${FAKE_SHA}/dist/bootstrap-client.sh"
@@ -204,6 +284,43 @@ meta="$(frp_validate_release_source_metadata "$ROOT" "$FAKE_SHA" development)" \
 got_ref="$(printf '%s' "$meta" | awk -F'\t' '{print $3}')"
 [[ "$got_ref" == "$FAKE_SHA" ]] || fail "validate did not return exact SHA provenance: $got_ref"
 pass "VALIDATE_ACCEPTS_EXACT_SHA_PROVENANCE"
+
+# The frozen provenance bundle remains development/exact-SHA internally but
+# must be installable through the final vPROJECT_VERSION publication ref.
+reset_provenance_env
+stable_meta="$(frp_validate_release_source_metadata "$ROOT" "v${PROJECT_VERSION}" stable)" \
+  || fail "stable tag rejected frozen pretag manifest"
+[[ "$stable_meta" == "${PROJECT_VERSION}"$'\t''stable'$'\t'"v${PROJECT_VERSION}" ]] \
+  || fail "stable publication metadata triple: $stable_meta"
+pass "STABLE_TAG_ACCEPTS_FROZEN_PRETAG_MANIFEST"
+
+# The compatibility path is fail-closed: source_head must be the same exact SHA
+# as the embedded development git_ref.
+BAD_STABLE="$WORKDIR/bad-stable-source"
+mkdir -p "$BAD_STABLE"
+cp "$ROOT/VERSION" "$ROOT/release-manifest.json" "$BAD_STABLE/"
+python3 - "$BAD_STABLE/release-manifest.json" <<'PY'
+import json, sys
+from pathlib import Path
+p = Path(sys.argv[1])
+d = json.loads(p.read_text())
+d["source_head"] = "f" * 40
+p.write_text(json.dumps(d) + "\n")
+PY
+if frp_validate_release_source_metadata "$BAD_STABLE" "v${PROJECT_VERSION}" stable >/dev/null 2>&1; then
+  fail "stable tag accepted mismatched pretag source_head"
+fi
+pass "STABLE_TAG_PRETAG_SOURCE_MISMATCH_REJECTED"
+
+for shipped in "$ROOT/dist/bootstrap-server.sh" "$ROOT/dist/bootstrap-client.sh"; do
+  grep -Fq 'FRP_EXPECTED_RELEASE_CHANNEL="$_frp_bootstrap_channel"' "$shipped" \
+    || fail "expected channel propagation missing from $(basename "$shipped")"
+  grep -Fq 'FRP_RELEASE_CHANNEL="$_frp_bootstrap_channel"' "$shipped" \
+    || fail "effective channel propagation missing from $(basename "$shipped")"
+  grep -Fq 'conflicts with source ref' "$shipped" \
+    || fail "channel conflict fail-closed guard missing from $(basename "$shipped")"
+done
+pass "STABLE_TAG_BUNDLE_CONTEXT_PROPAGATION"
 
 # --- local git source inference ---
 reset_provenance_env

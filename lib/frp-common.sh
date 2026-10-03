@@ -412,11 +412,55 @@ frp_git_head_source_ref() {
   return 1
 }
 
+frp_apply_expected_source_ref_context() {
+  # A published tag is the install/publication ref, while frozen pretags keep
+  # their embedded manifest pinned to the exact product source SHA. Derive the
+  # effective release channel from an explicit tag ref without rewriting the
+  # embedded source identity. Conflicting explicit channel state is a
+  # provenance contradiction and must fail closed.
+  local ref="${1:-${FRP_EXPECTED_SOURCE_REF:-}}"
+  local inferred="" expected="" effective=""
+  [[ -n "$ref" ]] || return 0
+  if [[ "$ref" == "v${PROJECT_VERSION}" ]]; then
+    inferred="stable"
+  elif [[ "$ref" =~ ^v${PROJECT_VERSION//./\\.}-rc\.[0-9]+$ ]]; then
+    inferred="preview"
+  else
+    return 0
+  fi
+
+  if [[ -n "${FRP_EXPECTED_RELEASE_CHANNEL:-}" ]]; then
+    if ! expected="$(frp_parse_known_release_channel "$FRP_EXPECTED_RELEASE_CHANNEL")"; then
+      echo "ERROR: invalid expected release channel for source ref $ref" >&2
+      return 1
+    fi
+    if [[ "$expected" != "$inferred" ]]; then
+      echo "ERROR: expected release channel conflicts with source ref $ref" >&2
+      return 1
+    fi
+  fi
+  if [[ -n "${FRP_RELEASE_CHANNEL:-}" ]]; then
+    if ! effective="$(frp_parse_known_release_channel "$FRP_RELEASE_CHANNEL")"; then
+      echo "ERROR: invalid effective release channel for source ref $ref" >&2
+      return 1
+    fi
+    if [[ "$effective" != "$inferred" ]]; then
+      echo "ERROR: effective release channel conflicts with source ref $ref" >&2
+      return 1
+    fi
+  fi
+
+  FRP_EXPECTED_RELEASE_CHANNEL="$inferred"
+  FRP_RELEASE_CHANNEL="$inferred"
+  export FRP_EXPECTED_RELEASE_CHANNEL FRP_RELEASE_CHANNEL
+}
+
 frp_infer_expected_source_ref_from_git_source() {
   # Local --source / worktree installs: prefer exact HEAD SHA over a premature
   # release-line tag so Zero-Touch URLs remain fetchable before the tag exists.
   local source="${1:-}" ref="" channel=""
   if [[ -n "${FRP_EXPECTED_SOURCE_REF:-}" ]]; then
+    frp_apply_expected_source_ref_context "$FRP_EXPECTED_SOURCE_REF" || return 1
     if [[ -z "${FRP_EXPECTED_SOURCE_HEAD:-}" && "${FRP_EXPECTED_SOURCE_REF}" =~ ^[0-9a-fA-F]{40}$ ]]; then
       FRP_EXPECTED_SOURCE_HEAD="$FRP_EXPECTED_SOURCE_REF"
       export FRP_EXPECTED_SOURCE_HEAD
@@ -446,6 +490,7 @@ frp_infer_expected_source_ref() {
   # Never invent a second provenance mechanism or guess from PROJECT_VERSION.
   local ref="" url=""
   if [[ -n "${FRP_EXPECTED_SOURCE_REF:-}" ]]; then
+    frp_apply_expected_source_ref_context "$FRP_EXPECTED_SOURCE_REF" || return 1
     if [[ -z "${FRP_EXPECTED_SOURCE_HEAD:-}" && "${FRP_EXPECTED_SOURCE_REF}" =~ ^[0-9a-fA-F]{40}$ ]]; then
       FRP_EXPECTED_SOURCE_HEAD="$FRP_EXPECTED_SOURCE_REF"
       export FRP_EXPECTED_SOURCE_HEAD
@@ -459,6 +504,7 @@ frp_infer_expected_source_ref() {
     if [[ -n "$url" ]] && ref="$(frp_source_ref_from_github_raw_url "$url")"; then
       FRP_EXPECTED_SOURCE_REF="$ref"
       export FRP_EXPECTED_SOURCE_REF
+      frp_apply_expected_source_ref_context "$ref" || return 1
       if [[ "$ref" =~ ^[0-9a-fA-F]{40}$ ]]; then
         FRP_EXPECTED_SOURCE_HEAD="$ref"
         export FRP_EXPECTED_SOURCE_HEAD
@@ -543,6 +589,7 @@ if str(data.get("project_version") or "") != project:
     raise SystemExit(1)
 channel = str(data.get("channel") or "").strip().lower()
 git_ref = str(data.get("git_ref") or "").strip()
+source_head = str(data.get("source_head") or "").strip()
 # Normalize legacy "dev" alias to development for comparison.
 if channel == "dev":
     channel = "development"
@@ -552,6 +599,7 @@ if channel not in ("development", "preview", "stable"):
     )
     raise SystemExit(1)
 is_exact_sha = bool(re.fullmatch(r"[0-9a-fA-F]{40}", git_ref or ""))
+source_is_exact_sha = bool(re.fullmatch(r"[0-9a-fA-F]{40}", source_head or ""))
 is_rc = bool(re.fullmatch(r"v\d+\.\d+\.\d+-rc\.\d+", git_ref or ""))
 if channel == "development":
     if not (is_exact_sha or git_ref == "main"):
@@ -570,7 +618,25 @@ else:
     if git_ref != expected_git_ref:
         sys.stderr.write("ERROR: release metadata channel/ref disagreement\n")
         raise SystemExit(1)
-# Exact SHA is install provenance for pretags / local git checkouts.
+
+exp = expected_channel.strip().lower()
+if exp == "dev":
+    exp = "development"
+stable_tag = "v%s" % project
+pretag_stable_alias = (
+    expected_ref == stable_tag
+    and exp == "stable"
+    and channel == "development"
+    and is_exact_sha
+    and source_is_exact_sha
+    and source_head.lower() == git_ref.lower()
+)
+
+# Exact SHA is install provenance for pretags / local git checkouts. A stable
+# publication may also consume the frozen pretag bundle when the publication
+# ref is vPROJECT_VERSION and the embedded source_head/git_ref exact SHA pair
+# agrees. Stable tag placement is separately required to point at the
+# provenance commit whose content parent is this exact source SHA.
 expected_is_sha = bool(re.fullmatch(r"[0-9a-fA-F]{40}", expected_ref or ""))
 if expected_ref and not expected_is_sha and git_ref != expected_ref:
     # Development tip-following (expected main) accepts either an explicit
@@ -579,18 +645,15 @@ if expected_ref and not expected_is_sha and git_ref != expected_ref:
         channel == "development"
         and expected_ref == "main"
         and (git_ref == "main" or is_exact_sha)
-    ):
+    ) and not pretag_stable_alias:
         sys.stderr.write("ERROR: release metadata source ref mismatch\n")
         raise SystemExit(1)
-if expected_channel:
-    exp = expected_channel.strip().lower()
-    if exp == "dev":
-        exp = "development"
-    if channel != exp:
-        sys.stderr.write("ERROR: release metadata channel mismatch\n")
-        raise SystemExit(1)
-out_ref = expected_ref if expected_is_sha else git_ref
-sys.stdout.write("%s\t%s\t%s\n" % (project, channel, out_ref))
+if exp and channel != exp and not pretag_stable_alias:
+    sys.stderr.write("ERROR: release metadata channel mismatch\n")
+    raise SystemExit(1)
+out_channel = "stable" if pretag_stable_alias else channel
+out_ref = expected_ref if (expected_is_sha or pretag_stable_alias) else git_ref
+sys.stdout.write("%s\t%s\t%s\n" % (project, out_channel, out_ref))
 PY
 }
 
