@@ -70,11 +70,12 @@ Pinned allocator CA verification and hostname/IP SAN checks both apply on the .N
 
 ### Updates, PID, secrets
 
-- `drlink system update engine` (and legacy bare `update`) refreshes pinned `frpc.exe` with SHA256 verify; failure restores binary, metadata, config, and prior running/stopped state (`RECOVERY_REQUIRED=YES` if rollback itself fails).
+- `drlink system update engine` refreshes pinned `frpc.exe` with SHA256 verify; failure restores binary, metadata, config, and prior running/stopped state (`RECOVERY_REQUIRED=YES` if rollback itself fails).
 - `drlink system update product` does **not** download a project artifact in this release. On an installed client, re-run the canonical Windows installer to refresh management tools (identity/ports preserved). Developers/CI may set `FRP_WINDOWS_PROJECT_SRC` to a `windows/` tree.
-- Check modes are distinct: `system update product -Check` (project only), `system update engine -Check` (engine Would download), `system update engine --check` / combined check (combined).
+- Check modes are distinct: `system update product -Check` checks the project-update path and `system update engine -Check` / `system update check-engine` check Relay Engine availability without applying it.
 - Stop kills only a PID whose recorded exe matches the managed `frpc.exe`.
 - Secret ACL application is fail-closed on Windows.
+- After upgrading a pre-v2.4 Windows Agent, run `drlink system synchronize` once. Existing enrolled services are promoted to canonical Remote Services with their existing public ports when the Server catalog provides an unambiguous matching Service Object. ConfigurationBundle export/apply fails closed until that convergence completes.
 
 ## RDP
 
@@ -112,23 +113,37 @@ A Windows PC can forward LAN targets by setting `local_ip` to a reachable LAN ad
 ## Lifecycle
 
 ```text
-tools\drlink.cmd start
-tools\drlink.cmd stop
-tools\drlink.cmd status
-tools\drlink.cmd info
-tools\drlink.cmd update [--check]
-tools\drlink.cmd uninstall
+tools\drlink.cmd show status
+tools\drlink.cmd show agent
+tools\drlink.cmd show remote-services
+tools\drlink.cmd show remote-service <NAME>
+tools\drlink.cmd set remote-service <NAME> destination <DEST|this-host> service <SERVICE> enabled|disabled
+tools\drlink.cmd unset remote-service <NAME>
+tools\drlink.cmd system info
+tools\drlink.cmd system pause
+tools\drlink.cmd system resume
+tools\drlink.cmd system restart
+tools\drlink.cmd system autostart enable|disable
+tools\drlink.cmd system synchronize
+tools\drlink.cmd system update product
+tools\drlink.cmd system update engine
+tools\drlink.cmd test configuration <FILE|->
+tools\drlink.cmd system export configuration <FILE>
+tools\drlink.cmd system diff configuration <FILE|->
+tools\drlink.cmd system apply configuration <FILE|->
 tools\drlink.cmd system diagnostics
-tools\drlink.cmd autostart
+tools\drlink.cmd system uninstall
 ```
 
 | Command | Behavior |
 | --- | --- |
-| `start` / `stop` | Idempotent; manages only the PID recorded under `logs\frpc.pid` |
-| `info` | Prints `mstsc` / `ssh` / HTTP(S) URLs without secrets |
-| `update` | Replaces `frpc.exe` after SHA256 verify; preserves identity and ports; transactional rollback of managed files + process state |
-| `uninstall` | **LOCAL SOFTWARE REMOVED, SERVER RESERVATIONS PRESERVED**; removes the product autostart task |
-| `autostart` | Show / enable / disable the product Scheduled Task (`DataRelayLinkClient`) |
+| `system pause/resume/restart` | Manages the local Agent runtime while preserving identity and Remote Service intent |
+| `show/set/unset remote-service(s)` | Canonical Agent Remote Service lifecycle; Service Objects are resolved from the synchronized Server catalog |
+| `test/system ... configuration` | Canonical Agent ConfigurationBundle validation, diff, export and atomic apply surface |
+| `system info` | Prints connection details without secrets |
+| `system update product/engine` | Separates Data Relay Link management updates from Relay Engine updates |
+| `system uninstall` | **LOCAL SOFTWARE REMOVED, SERVER RESERVATIONS PRESERVED**; removes the product autostart task |
+| `system autostart` | Show / enable / disable the product Scheduled Task (`DataRelayLinkClient`) |
 
 ## Reboot / autostart
 
@@ -138,7 +153,7 @@ named **`DataRelayLinkClient`**. Older installs may still have
 autostart register/uninstall. It runs `drlink system resume` as **SYSTEM** at
 system boot (ONSTART), so `frpc` comes back without an interactive login.
 Management-only (zero-service) clients do not register the task. Use
-`drlink autostart` to inspect, enable, or disable it. Enrollment state
+`drlink system autostart` to inspect, enable, or disable it. Enrollment state
 under `ProgramData` persists across reboot.
 
 ## Unsupported / out of scope

@@ -41,7 +41,7 @@ function Enter-FrpClientLock {
             try { $old = ([string](Get-Content -LiteralPath $pidPath -ErrorAction SilentlyContinue | Select-Object -First 1)).Trim() } catch { $old = '' }
         }
         if (Test-FrpLockPidAlive -ProcessId $old) {
-            Write-Host 'ERROR: another frp-client management operation is already running.'
+            Write-Host 'ERROR: another Data Relay Link Agent management operation is already running.'
             return $false
         }
         Remove-Item -LiteralPath $lock -Recurse -Force -ErrorAction SilentlyContinue
@@ -49,7 +49,7 @@ function Enter-FrpClientLock {
     try {
         New-Item -ItemType Directory -Path $lock -ErrorAction Stop | Out-Null
     } catch {
-        Write-Host 'ERROR: another frp-client management operation is already running.'
+        Write-Host 'ERROR: another Data Relay Link Agent management operation is already running.'
         return $false
     }
     Set-Content -LiteralPath (Join-Path $lock 'pid') -Value ([string]$PID)

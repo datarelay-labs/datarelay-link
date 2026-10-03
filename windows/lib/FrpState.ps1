@@ -439,6 +439,13 @@ function ConvertTo-FrpServiceRecord {
     if ($null -ne $ht['remote_port'] -and [string]$ht['remote_port'] -ne '') {
         $rec['remote_port'] = [int]$ht['remote_port']
     }
+    # v2.4 Agent Remote Service metadata is authoritative public state on the
+    # Agent and must survive state normalization / restart.
+    if ($ht['v24_remote_service']) { $rec['v24_remote_service'] = $true }
+    foreach ($key in @('destination','service_object','pool_class','status','reason','destination_client_id','endpoint_host')) {
+        if ($null -ne $ht[$key] -and [string]$ht[$key] -ne '') { $rec[$key] = $ht[$key] }
+    }
+    if ($null -ne $ht['pending_allocation']) { $rec['pending_allocation'] = [bool]$ht['pending_allocation'] }
     if ($preset -eq 'ssh' -and $ht['ssh_user']) {
         $rec['ssh_user'] = [string]$ht['ssh_user']
     }

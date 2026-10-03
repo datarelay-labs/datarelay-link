@@ -40,11 +40,25 @@ Environment equivalents:
   FRP_ALLOCATOR_URL, FRP_ALLOCATOR_CA_SHA256, FRP_BOOTSTRAP_TICKET
 
 After enrollment:
-  tools\drlink.cmd start|stop|status|info|update|uninstall|doctor
-  (compatibility: tools\frp-client.cmd)
+  tools\drlink.cmd show status
+  tools\drlink.cmd show remote-services
+  tools\drlink.cmd system info
+  tools\drlink.cmd system pause
+  tools\drlink.cmd system resume
+  tools\drlink.cmd system restart
+  tools\drlink.cmd system autostart
+  tools\drlink.cmd system synchronize
+  tools\drlink.cmd test configuration <FILE|->
+  tools\drlink.cmd system export configuration <FILE>
+  tools\drlink.cmd system diff configuration <FILE|->
+  tools\drlink.cmd system apply configuration <FILE|->
+  tools\drlink.cmd system diagnostics
+  tools\drlink.cmd system update product
+  tools\drlink.cmd system update engine
+  tools\drlink.cmd system uninstall
 
 Notes:
-  - ENROLL ONCE: if already enrolled, refuse ticket re-use; run frp-client start
+  - ENROLL ONCE: if already enrolled, refuse ticket re-use; use drlink system resume
   - No irm|iex. Download this script, verify SHA256, then execute with -File
   - Does not modify Windows Firewall
 '@ | Write-Host
@@ -55,7 +69,7 @@ if ($Help) { Show-FrpInstallHelp; exit 0 }
 $libDir = Join-Path $PSScriptRoot 'lib'
 foreach ($mod in @(
         'FrpPaths.ps1', 'FrpLock.ps1', 'FrpCrypto.ps1', 'FrpTls.ps1', 'FrpState.ps1', 'FrpDraft.ps1',
-        'FrpConfig.ps1', 'FrpProcess.ps1', 'FrpShim.ps1', 'FrpAutostart.ps1', 'FrpBootstrap.ps1'
+        'FrpConfig.ps1', 'FrpProcess.ps1', 'FrpShim.ps1', 'FrpAutostart.ps1', 'FrpBootstrap.ps1', 'FrpV24.ps1'
     )) {
     $path = Join-Path $libDir $mod
     if (-not (Test-Path -LiteralPath $path)) {

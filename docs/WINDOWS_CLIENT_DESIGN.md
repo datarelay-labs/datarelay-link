@@ -64,7 +64,7 @@ Windows one-line (no `irm | iex`):
 **ENROLL ONCE / RUN MANY TIMES**
 
 - First run: redeem + enroll + write state/config + start drlink-client
-- Later: `frp-client start` uses existing identity/config/ports — no ticket, no re-enroll
+- Later: `drlink system resume` uses existing identity/config/ports — no ticket, no re-enroll
 
 Autostart (Service / Task Scheduler) is **optional**, not MVP-blocking.
 

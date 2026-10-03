@@ -33,8 +33,8 @@ function Get-FrpLifecycleRunCommand {
 }
 
 function Get-FrpLifecycleRunArguments {
-    $client = Join-Path (Get-FrpToolsDir) 'FrpClient.ps1'
-    return ('-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{0}" lifecycle-worker' -f $client)
+    $worker = Join-Path (Get-FrpToolsDir) 'FrpLifecycleWorker.ps1'
+    return ('-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "{0}"' -f $worker)
 }
 
 function Get-FrpAutostartLegacyTaskName {
@@ -187,7 +187,7 @@ function Install-FrpAutostartTask {
     <#
     .SYNOPSIS
       Register (or idempotently overwrite) a Scheduled Task that runs
-      `frp-client start` as SYSTEM at system startup. No user login required.
+      the canonical `drlink system resume` boot wrapper as SYSTEM at system startup. No user login required.
     #>
     param(
         [string]$TaskName = (Get-FrpAutostartTaskName),
@@ -278,16 +278,23 @@ function Install-FrpLifecycleTask {
 function Test-FrpLifecycleTaskHealthy {
     param([string]$TaskName = (Get-FrpLifecycleTaskName))
     if (-not (Test-FrpAutostartTaskExists -TaskName $TaskName)) { return $false }
+    $expectedWorker = Join-Path (Get-FrpToolsDir) 'FrpLifecycleWorker.ps1'
     if (Test-FrpIsWindowsHost) {
         $result = Invoke-FrpSchtasks -ArgString ('/Query /TN "{0}" /XML' -f $TaskName)
         if ($result.ExitCode -ne 0) { return $false }
         $xml = [string]$result.Output
+        $workerEsc = [System.Security.SecurityElement]::Escape($expectedWorker)
+        $workerMatch = ($xml -match [regex]::Escape($expectedWorker)) -or
+            ($workerEsc -and $xml -match [regex]::Escape($workerEsc))
         return ($xml -match 'S-1-5-18' -and $xml -match 'BootTrigger' -and
-            $xml -match 'lifecycle-worker' -and $xml -match '<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>')
+            $workerMatch -and $xml -match '<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>')
     }
     try {
         $raw = Get-Content -LiteralPath (Get-FrpAutostartMarkerPath -TaskName $TaskName) -Raw | ConvertFrom-Json
-        return ([string]$raw.run_as -eq 'SYSTEM' -and [string]$raw.trigger -eq 'ONSTART' -and [bool]$raw.lifecycle)
+        return ([string]$raw.run_as -eq 'SYSTEM' -and
+            [string]$raw.trigger -eq 'ONSTART' -and
+            [bool]$raw.lifecycle -and
+            [string]$raw.run -match [regex]::Escape($expectedWorker))
     } catch { return $false }
 }
 
