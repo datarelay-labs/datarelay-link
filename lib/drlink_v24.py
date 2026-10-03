@@ -991,19 +991,22 @@ def set_policy_enforcement(plane_db, family: str, enabled: bool, *, confirm: Opt
 
 
 def _count_blocking_rules(plane_db, plane: str) -> int:
+    from drlink_v30_temporal import row_effective_for_new_authorization
+
+    mode = get_access_policy(plane_db, plane).get("mode")
     if plane == "ai":
-        return int(
-            plane_db.conn.execute(
-                "SELECT COUNT(*) FROM ai_policy_rules WHERE enabled = 1"
-            ).fetchone()[0]
-            or 0
-        )
-    return int(
-        plane_db.conn.execute(
-            "SELECT COUNT(*) FROM policy_rules WHERE plane = ? AND enabled = 1",
+        rows = plane_db.conn.execute(
+            "SELECT * FROM ai_policy_rules WHERE enabled = 1"
+        ).fetchall()
+    else:
+        rows = plane_db.conn.execute(
+            "SELECT * FROM policy_rules WHERE plane = ? AND enabled = 1",
             (plane,),
-        ).fetchone()[0]
-        or 0
+        ).fetchall()
+    return sum(
+        1
+        for row in rows
+        if row_effective_for_new_authorization(row, policy_mode=mode)
     )
 
 
@@ -1016,14 +1019,19 @@ def _access_family_title(plane: str) -> str:
 
 
 def _rule_is_enabled(plane_db, plane: str, name: str) -> bool:
+    from drlink_v30_temporal import row_effective_for_new_authorization
+
     if plane == "ai":
         row = plane_db.conn.execute(
-            "SELECT enabled FROM ai_policy_rules WHERE name = ? COLLATE NOCASE",
+            "SELECT * FROM ai_policy_rules WHERE name = ? COLLATE NOCASE",
             (name,),
         ).fetchone()
     else:
         row = plane_db._get_rule(plane, name)
-    return bool(row and row["enabled"])
+    if not row or not row["enabled"]:
+        return False
+    mode = get_access_policy(plane_db, plane).get("mode")
+    return row_effective_for_new_authorization(row, policy_mode=mode)
 
 
 def blacklist_last_rule_impact(
@@ -1154,6 +1162,36 @@ def _paths_changed(current: list[str], desired: Optional[list[str]]) -> bool:
     }
 
 
+def _expiry_change_direction(current: Optional[str], desired: Optional[str]) -> Optional[str]:
+    """Return broaden/narrow for an explicit Temporary Access expiry edit.
+
+    desired=None means the caller omitted the expiry field. Empty string is an
+    explicit clear. Invalid persisted current state is fail-closed, so repairing
+    it to a permissive state is conservatively classified as broadening.
+    """
+    if desired is None:
+        return None
+    from drlink_v30_temporal import canonical_expiry
+
+    desired_text = str(desired).strip()
+    try:
+        desired_norm = canonical_expiry(desired_text) if desired_text else None
+    except ValueError as exc:
+        raise ControlPlaneError(str(exc)) from exc
+    current_text = str(current or "").strip()
+    if not current_text:
+        return "narrow" if desired_norm else None
+    try:
+        current_norm = canonical_expiry(current_text)
+    except ValueError:
+        return "broaden"
+    if current_norm == desired_norm:
+        return None
+    if desired_norm is None:
+        return "broaden"
+    return "broaden" if desired_norm > current_norm else "narrow"
+
+
 def access_rule_update_security_impact(
     plane_db,
     family: str,
@@ -1163,6 +1201,7 @@ def access_rule_update_security_impact(
     destination: Optional[str] = None,
     service: Optional[str] = None,
     enabled: Optional[bool] = None,
+    expires_at: Optional[str] = None,
 ) -> Optional[dict]:
     """Security impact for Remote/Internet Rule mutation (enable / selector change).
 
@@ -1197,6 +1236,10 @@ def access_rule_update_security_impact(
             _selector_token_changed(cur_dst, destination),
             _selector_token_changed(cur_svc, service),
         )
+    )
+    expiry_direction = _expiry_change_direction(
+        existing["expires_at"] if "expires_at" in existing.keys() else None,
+        expires_at,
     )
     effectively_enabled = was_enabled if enabled is None else bool(enabled)
 
@@ -1291,6 +1334,32 @@ def access_rule_update_security_impact(
                 "before": "WHITELIST / enabled Rule match set",
                 "after": "WHITELIST / changed selectors / additional flows may ALLOW",
             }
+    if mode == "whitelist" and effectively_enabled and expiry_direction == "broaden":
+        return {
+            "access_broadened": True,
+            "access_narrowed": False,
+            "requires_confirmation": True,
+            "warning": (
+                "This change broadens %s by extending or clearing Temporary Access "
+                "expiry on WHITELIST Rule '%s'." % (title, rule_name)
+            ),
+            "affected_rules": [rule_name],
+            "before": "WHITELIST / current Temporary Access expiry",
+            "after": "WHITELIST / later or no expiry / matching flows ALLOW longer",
+        }
+    if mode == "whitelist" and effectively_enabled and expiry_direction == "narrow":
+        return {
+            "access_broadened": False,
+            "access_narrowed": True,
+            "requires_confirmation": True,
+            "warning": (
+                "This change narrows %s by adding or shortening Temporary Access "
+                "expiry on WHITELIST Rule '%s'." % (title, rule_name)
+            ),
+            "affected_rules": [rule_name],
+            "before": "WHITELIST / current Temporary Access expiry",
+            "after": "WHITELIST / earlier expiry / matching flows DENY sooner",
+        }
     return None
 
 
@@ -1303,6 +1372,7 @@ def ai_access_rule_update_security_impact(
     permission: Optional[str] = None,
     paths: Optional[list[str]] = None,
     enabled: Optional[bool] = None,
+    expires_at: Optional[str] = None,
 ) -> Optional[dict]:
     """Security impact for AI Access Rule mutation (enable / selector change)."""
     existing = plane_db.conn.execute(
@@ -1357,6 +1427,10 @@ def ai_access_rule_update_security_impact(
         ).fetchone()
         cur_perm = row["name"] if row else None
     cur_paths = list_ai_policy_path_scopes(plane_db, existing["name"])
+    expiry_direction = _expiry_change_direction(
+        existing["expires_at"] if "expires_at" in existing.keys() else None,
+        expires_at,
+    )
 
     selector_changed = any(
         (
@@ -1410,6 +1484,32 @@ def ai_access_rule_update_security_impact(
             "affected_rules": [rule_name],
             "before": "WHITELIST / enabled Rule match set",
             "after": "WHITELIST / changed selectors / additional operations may ALLOW",
+        }
+    if mode == "whitelist" and effectively_enabled and expiry_direction == "broaden":
+        return {
+            "access_broadened": True,
+            "access_narrowed": False,
+            "requires_confirmation": True,
+            "warning": (
+                "This change broadens %s by extending or clearing Temporary Access "
+                "expiry on WHITELIST Rule '%s'." % (title, rule_name)
+            ),
+            "affected_rules": [rule_name],
+            "before": "WHITELIST / current Temporary Access expiry",
+            "after": "WHITELIST / later or no expiry / matching operations ALLOW longer",
+        }
+    if mode == "whitelist" and effectively_enabled and expiry_direction == "narrow":
+        return {
+            "access_broadened": False,
+            "access_narrowed": True,
+            "requires_confirmation": True,
+            "warning": (
+                "This change narrows %s by adding or shortening Temporary Access "
+                "expiry on WHITELIST Rule '%s'." % (title, rule_name)
+            ),
+            "affected_rules": [rule_name],
+            "before": "WHITELIST / current Temporary Access expiry",
+            "after": "WHITELIST / earlier expiry / matching operations DENY sooner",
         }
     return None
 
@@ -1666,8 +1766,15 @@ def _enabled_rule_fingerprints(conn: sqlite3.Connection, plane: str) -> set[str]
             except sqlite3.Error:
                 paths = []
             out.add(
-                "ai|%s|src=%s|dst=%s|perm=%s|paths=%s"
-                % (row["name"], src, dst, perm, ",".join(paths) or "-")
+                "ai|%s|src=%s|dst=%s|perm=%s|paths=%s|expires=%s"
+                % (
+                    row["name"],
+                    src,
+                    dst,
+                    perm,
+                    ",".join(paths) or "-",
+                    row["expires_at"] if "expires_at" in row.keys() and row["expires_at"] else "-",
+                )
             )
         return out
 
@@ -1709,13 +1816,14 @@ def _enabled_rule_fingerprints(conn: sqlite3.Connection, plane: str) -> set[str]
             ):
                 services.append("{%s:%s}" % (s["protocol"], s["port"]))
         out.add(
-            "%s|%s|src=%s|dst=%s|svc=%s"
+            "%s|%s|src=%s|dst=%s|svc=%s|expires=%s"
             % (
                 plane,
                 row["name"],
                 ",".join(sources) or "-",
                 ",".join(destinations) or "-",
                 ",".join(services) or "-",
+                row["expires_at"] if "expires_at" in row.keys() and row["expires_at"] else "-",
             )
         )
     return out
@@ -3631,12 +3739,31 @@ def set_access_rule(
     destination: Optional[str] = None,
     service: Optional[str] = None,
     enabled: Optional[bool] = None,
+    expires_at: Optional[str] = None,
     oneshot: bool = False,
     confirm: Optional[bool] = None,
 ) -> dict:
     plane = _plane_key(family)
     name = validate_public_name(name, "Rule name")
     existing = plane_db._get_rule(plane, name)
+    expiry_provided = expires_at is not None
+    normalized_expiry = None
+    if expiry_provided:
+        from drlink_v30_temporal import canonical_expiry
+
+        try:
+            normalized_expiry = (
+                canonical_expiry(str(expires_at)) if str(expires_at).strip() else None
+            )
+        except ValueError as exc:
+            raise ControlPlaneError(str(exc)) from exc
+        effective_mode = str(
+            mode or get_access_policy(plane_db, plane).get("mode") or ""
+        ).lower()
+        if normalized_expiry is not None and effective_mode != "whitelist":
+            raise ControlPlaneError(
+                "Temporary Access expiry is supported only on WHITELIST grants."
+            )
     if oneshot and existing is None:
         missing = []
         if source is None:
@@ -3742,9 +3869,18 @@ def set_access_rule(
             rid = _new_id("rul")
             now = utc_now_iso()
             plane_db.conn.execute(
-                "INSERT INTO policy_rules(id, plane, name, position, action, enabled, description, row_version, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, 'match', ?, '', 1, ?, ?)",
-                (rid, plane, name, plane_db._bottom_position(plane), 1 if enabled else 0, now, now),
+                "INSERT INTO policy_rules(id, plane, name, position, action, enabled, description, expires_at, row_version, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, 'match', ?, '', ?, 1, ?, ?)",
+                (
+                    rid,
+                    plane,
+                    name,
+                    plane_db._bottom_position(plane),
+                    1 if enabled else 0,
+                    normalized_expiry,
+                    now,
+                    now,
+                ),
             )
             rule_id = rid
             op = "create"
@@ -3756,6 +3892,11 @@ def set_access_rule(
                 plane_db.conn.execute(
                     "UPDATE policy_rules SET enabled = ?, row_version = row_version + 1, updated_at = ? WHERE id = ?",
                     (1 if enabled else 0, utc_now_iso(), rule_id),
+                )
+            if expiry_provided:
+                plane_db.conn.execute(
+                    "UPDATE policy_rules SET expires_at = ?, row_version = row_version + 1, updated_at = ? WHERE id = ?",
+                    (normalized_expiry, utc_now_iso(), rule_id),
                 )
             op = "update"
         if source is not None:
@@ -3817,6 +3958,7 @@ def set_access_rule(
             destination=destination,
             service=service,
             enabled=enabled,
+            expires_at=expires_at,
         )
 
     return plane_db._mutate(
@@ -4090,6 +4232,8 @@ def evaluate_selector_policy(
     For Internet Access hostname destinations, ``resolve_fn`` (default: getaddrinfo)
     supplies the same validated candidate set the gateway uses for IP/CIDR matching.
     """
+    from drlink_v30_temporal import row_effective_for_new_authorization
+
     plane = _plane_key(family)
 
     # Public CLI path: named selectors → resolve → same evaluators as runtime.
@@ -4190,6 +4334,10 @@ def evaluate_selector_policy(
         "SELECT * FROM policy_rules WHERE plane = ? ORDER BY name", (plane,)
     ):
         if not rule_row["enabled"]:
+            continue
+        if not row_effective_for_new_authorization(
+            rule_row, policy_mode=pol["mode"]
+        ):
             continue
         view = plane_db._rule_view(rule_row)
         src_ok = False
@@ -4359,6 +4507,7 @@ def set_ai_access_rule(
     permission: Optional[str] = None,
     paths: Optional[list[str]] = None,
     enabled: Optional[bool] = None,
+    expires_at: Optional[str] = None,
     oneshot: bool = False,
     confirm: Optional[bool] = None,
 ) -> dict:
@@ -4366,6 +4515,24 @@ def set_ai_access_rule(
     existing = plane_db.conn.execute(
         "SELECT * FROM ai_policy_rules WHERE name = ? COLLATE NOCASE", (name,)
     ).fetchone()
+    expiry_provided = expires_at is not None
+    normalized_expiry = None
+    if expiry_provided:
+        from drlink_v30_temporal import canonical_expiry
+
+        try:
+            normalized_expiry = (
+                canonical_expiry(str(expires_at)) if str(expires_at).strip() else None
+            )
+        except ValueError as exc:
+            raise ControlPlaneError(str(exc)) from exc
+        effective_mode = str(
+            mode or get_access_policy(plane_db, "ai").get("mode") or ""
+        ).lower()
+        if normalized_expiry is not None and effective_mode != "whitelist":
+            raise ControlPlaneError(
+                "Temporary Access expiry is supported only on WHITELIST grants."
+            )
     if oneshot and existing is None:
         missing = []
         if source is None:
@@ -4418,9 +4585,9 @@ def set_ai_access_rule(
             plane_db.conn.execute(
                 "INSERT INTO ai_policy_rules"
                 "(id, name, enabled, source_identity_id, destination_ref_kind, destination_ref_id, "
-                "permission_ref_kind, permission_ref_id, description, row_version, created_at, updated_at) "
-                "VALUES (?, ?, ?, NULL, NULL, NULL, NULL, NULL, '', 1, ?, ?)",
-                (rid, name, 1 if enabled else 0, now, now),
+                "permission_ref_kind, permission_ref_id, description, expires_at, row_version, created_at, updated_at) "
+                "VALUES (?, ?, ?, NULL, NULL, NULL, NULL, NULL, '', ?, 1, ?, ?)",
+                (rid, name, 1 if enabled else 0, normalized_expiry, now, now),
             )
             rule_id = rid
             op = "create"
@@ -4430,6 +4597,11 @@ def set_ai_access_rule(
                 plane_db.conn.execute(
                     "UPDATE ai_policy_rules SET enabled = ?, row_version = row_version + 1, updated_at = ? WHERE id = ?",
                     (1 if enabled else 0, now, rule_id),
+                )
+            if expiry_provided:
+                plane_db.conn.execute(
+                    "UPDATE ai_policy_rules SET expires_at = ?, row_version = row_version + 1, updated_at = ? WHERE id = ?",
+                    (normalized_expiry, now, rule_id),
                 )
             op = "update"
         if source is not None:
@@ -4475,6 +4647,7 @@ def set_ai_access_rule(
             permission=permission,
             paths=paths,
             enabled=enabled,
+            expires_at=expires_at,
         )
 
     return plane_db._mutate(
@@ -4522,6 +4695,8 @@ def evaluate_ai_access_v24(
     destination: str,
     permission: str,
 ) -> dict:
+    from drlink_v30_temporal import row_effective_for_new_authorization
+
     pol = get_access_policy(plane_db, "ai")
     principal = plane_db.get_principal(identity)
     if not principal:
@@ -4548,6 +4723,8 @@ def evaluate_ai_access_v24(
     wanted_perms = expand_permissions(plane_db, permission) if get_permission_object(plane_db, permission) or get_permission_group(plane_db, permission) else {permission}
     matched = []
     for row in plane_db.conn.execute("SELECT * FROM ai_policy_rules WHERE enabled = 1 ORDER BY name"):
+        if not row_effective_for_new_authorization(row, policy_mode=pol["mode"]):
+            continue
         if row["source_identity_id"] != principal["id"]:
             continue
         if not _ref_name_match(plane_db, row["destination_ref_kind"], row["destination_ref_id"], destination):

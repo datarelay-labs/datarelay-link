@@ -2651,6 +2651,7 @@ class ControlPlane:
             "%s/%s" % (s["protocol"], s["port"])
             for s in self.conn.execute("SELECT protocol, port FROM rule_services WHERE rule_id = ?", (row["id"],))
         ]
+        keys = set(row.keys())
         return {
             "id": row["id"],
             "name": row["name"],
@@ -2663,6 +2664,7 @@ class ControlPlane:
             "sources": sources,
             "destinations": dests,
             "services": services,
+            "expires_at": row["expires_at"] if "expires_at" in keys else None,
             "row_version": row["row_version"],
         }
 
@@ -2964,6 +2966,7 @@ class ControlPlane:
 
     def evaluate_remote_access(self, source_ip: str, destination: str, protocol: str, port: int) -> dict:
         from drlink_v24 import effective_policy_result, get_access_policy, rule_matches_service
+        from drlink_v30_temporal import row_effective_for_new_authorization
 
         proto = str(protocol).lower()
         if proto in ("https", "http"):
@@ -3008,6 +3011,10 @@ class ControlPlane:
             "SELECT * FROM policy_rules WHERE plane = 'remote' ORDER BY name"
         ):
             if not rule_row["enabled"]:
+                continue
+            if not row_effective_for_new_authorization(
+                rule_row, policy_mode=pol["mode"]
+            ):
                 continue
             view = self._rule_view(rule_row)
             src_ok = False
@@ -3164,6 +3171,7 @@ class ControlPlane:
         candidate_ips: Optional[list[str]] = None,
     ) -> dict:
         from drlink_v24 import effective_policy_result, get_access_policy, rule_matches_service
+        from drlink_v30_temporal import row_effective_for_new_authorization
 
         proto = str(protocol).lower()
         dest_raw = str(destination or "").strip()
@@ -3227,6 +3235,10 @@ class ControlPlane:
             "SELECT * FROM policy_rules WHERE plane = 'internet' ORDER BY name"
         ):
             if not rule_row["enabled"]:
+                continue
+            if not row_effective_for_new_authorization(
+                rule_row, policy_mode=pol["mode"]
+            ):
                 continue
             rule_rows.append(rule_row)
 

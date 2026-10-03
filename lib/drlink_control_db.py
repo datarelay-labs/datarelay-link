@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import quote
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 APPLICATION_ID = 0x44524C4B  # 'DRLK'
 DEFAULT_DB_REL = "var/lib/drlink/drlink.db"
 BUSY_TIMEOUT_MS = 5000
@@ -926,6 +926,46 @@ def ensure_agent_lifecycle_schema(conn: sqlite3.Connection) -> None:
         )
 
 
+V30_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS emergency_cutoffs (
+  id TEXT PRIMARY KEY,
+  plane TEXT NOT NULL,
+  scope_kind TEXT NOT NULL,
+  scope_ref TEXT NOT NULL DEFAULT '',
+  active INTEGER NOT NULL DEFAULT 1,
+  reason TEXT NOT NULL DEFAULT '',
+  row_version INTEGER NOT NULL DEFAULT 1,
+  created_revision INTEGER,
+  updated_revision INTEGER,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE (plane, scope_kind, scope_ref)
+);
+
+CREATE INDEX IF NOT EXISTS idx_emergency_cutoffs_active
+  ON emergency_cutoffs(active, plane, scope_kind, scope_ref);
+"""
+
+
+def ensure_v30_schema(conn: sqlite3.Connection) -> None:
+    """Install additive 3.0 management primitives on the authoritative DB."""
+    policy_cols = {str(row[1]) for row in conn.execute("PRAGMA table_info(policy_rules)")}
+    if policy_cols and "expires_at" not in policy_cols:
+        conn.execute("ALTER TABLE policy_rules ADD COLUMN expires_at TEXT")
+    ai_cols = {str(row[1]) for row in conn.execute("PRAGMA table_info(ai_policy_rules)")}
+    if ai_cols and "expires_at" not in ai_cols:
+        conn.execute("ALTER TABLE ai_policy_rules ADD COLUMN expires_at TEXT")
+    conn.executescript(V30_SCHEMA_SQL)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_policy_rules_expiry "
+        "ON policy_rules(plane, enabled, expires_at)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_ai_policy_rules_expiry "
+        "ON ai_policy_rules(enabled, expires_at)"
+    )
+
+
 def initialize(conn: sqlite3.Connection) -> None:
     from drlink_v24 import ensure_v2_schema
 
@@ -935,24 +975,28 @@ def initialize(conn: sqlite3.Connection) -> None:
     if found == SCHEMA_VERSION:
         ensure_ai_auth_schema(conn)
         ensure_v2_schema(conn)
+        ensure_v30_schema(conn)
         ensure_agent_lifecycle_schema(conn)
         integrity_check(conn)
         return
+
     if found == 0:
         conn.executescript(SCHEMA_SQL)
         ensure_v2_schema(conn)
+        ensure_v30_schema(conn)
         ensure_agent_lifecycle_schema(conn)
         now = utc_now_iso()
         conn.execute("BEGIN IMMEDIATE")
         try:
-            conn.execute(
-                "INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)",
-                (1, "initial_control_plane", now),
-            )
-            conn.execute(
-                "INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)",
-                (2, "v24_canonical_objects_policy", now),
-            )
+            for version, name in (
+                (1, "initial_control_plane"),
+                (2, "v24_canonical_objects_policy"),
+                (3, "v30_management_foundation"),
+            ):
+                conn.execute(
+                    "INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)",
+                    (version, name, now),
+                )
             conn.execute(
                 "INSERT OR REPLACE INTO system_meta(key, value) VALUES (?, ?)",
                 ("schema_version", str(SCHEMA_VERSION)),
@@ -982,16 +1026,22 @@ def initialize(conn: sqlite3.Connection) -> None:
             raise
         ensure_ai_auth_schema(conn)
         return
+
     if found == 1:
         ensure_v2_schema(conn)
+        ensure_v30_schema(conn)
         ensure_agent_lifecycle_schema(conn)
         now = utc_now_iso()
         conn.execute("BEGIN IMMEDIATE")
         try:
-            conn.execute(
-                "INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)",
-                (2, "v24_canonical_objects_policy", now),
-            )
+            for version, name in (
+                (2, "v24_canonical_objects_policy"),
+                (3, "v30_management_foundation"),
+            ):
+                conn.execute(
+                    "INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)",
+                    (version, name, now),
+                )
             conn.execute(
                 "INSERT OR REPLACE INTO system_meta(key, value) VALUES (?, ?)",
                 ("schema_version", str(SCHEMA_VERSION)),
@@ -1006,6 +1056,33 @@ def initialize(conn: sqlite3.Connection) -> None:
             raise
         ensure_ai_auth_schema(conn)
         return
+
+    if found == 2:
+        ensure_v2_schema(conn)
+        ensure_v30_schema(conn)
+        ensure_agent_lifecycle_schema(conn)
+        ensure_ai_auth_schema(conn)
+        now = utc_now_iso()
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            conn.execute(
+                "INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)",
+                (3, "v30_management_foundation", now),
+            )
+            conn.execute(
+                "INSERT OR REPLACE INTO system_meta(key, value) VALUES (?, ?)",
+                ("schema_version", str(SCHEMA_VERSION)),
+            )
+            integrity_check(conn)
+            conn.execute("COMMIT")
+        except Exception:
+            try:
+                conn.execute("ROLLBACK")
+            except sqlite3.Error:
+                pass
+            raise
+        return
+
     raise ControlPlaneError("Unknown control DB schema %s" % found)
 
 
