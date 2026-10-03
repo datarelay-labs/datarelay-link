@@ -721,11 +721,33 @@ multi-Host jobs.
 **Scope discipline:** Full JIT approvals, session recording, browser terminals,
 device-posture/MDM, broad discovery, SIEM/reporting, external HA/multi-region control,
 and large-fleet orchestration are not 3.0 goals. Temporary access TTL, external
-notifications, Web-admin SSO/IdP, GitOps locking, and external audit export remain
-later-additive features unless 3.0 evidence proves a foundation dependency.
+notifications, Web-admin SSO/IdP, GitOps locking, and continuous external audit/SIEM
+streaming remain later-additive features unless 3.0 evidence proves a foundation dependency.
 
 **Reason:** Improve day-to-day operation and troubleshooting without changing Data Relay
 Link into a different product category or forcing repeated Core redesign.
+
+### 2026-10 — First-class audit logging contract
+
+**Decision:** Audit logging is a first-class Core security/operations capability, not a
+Web-only activity feed.
+
+**Model:** One versioned event envelope with CONTROL, ACCESS_DECISION, and
+SECURITY_LIFECYCLE logical streams. Attribution covers CLI, Web, ConfigurationBundle,
+AI-assisted operations, Agent RPC, and system lifecycle activity.
+
+**Safety:** State-changing operations commit audit atomically and fail when durable audit
+persistence fails. New auditable access decisions do not proceed when durable enqueue
+cannot be guaranteed. Audit is schema-redacted and excludes secrets, credentials,
+application payloads, TLS contents, and sensitive URL query strings.
+
+**Storage/UX:** Active audit remains in SQLite/Core with bounded indexed queries, cursor
+pagination, retention/storage guardrails, backup/restore continuity, CLI/Web query parity,
+Audit/Revision Explorer, and manual filtered NDJSON export from CLI and Web in 3.0.
+
+**Scope:** Continuous SIEM/S3/syslog/webhook streaming is later-additive. Session recording,
+payload capture, and a SIEM/reporting platform remain out of scope. Append-only product
+semantics do not justify a tamper-proof claim against a privileged host administrator.
 
 ## 29. Master rule
 
