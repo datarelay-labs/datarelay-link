@@ -1707,6 +1707,7 @@ def domain_help(topic, role):
             "Everyday commands:\n"
             "  show remote-access\n"
             "  set remote-access <RULE>\n"
+            "  set remote-access enabled|disabled\n"
             "  test remote-access source <SRC> destination <DST> service <SVC>\n"
         )
     if topic in ("remote-service", "remote-services"):
@@ -1735,13 +1736,14 @@ def domain_help(topic, role):
         return (
             "Internet Access\n"
             "===============\n\n"
-            "BLACKLIST / WHITELIST authorization for outbound access.\n"
+            "WHITELIST-only, deny-by-default authorization for outbound access.\n"
             "Managed Host may be used as a source; Managed Host destination is rejected.\n\n"
             "Guided path:\n"
             "  menu → Internet Access\n\n"
             "Everyday commands:\n"
             "  show internet-access\n"
             "  set internet-access <RULE>\n"
+            "  set internet-access enabled|disabled\n"
             "  test internet-access source <SRC> destination <DST> service <SVC>\n"
         )
     if topic in ("ai-access", "mcp", "ai-identity", "ai-identities"):
@@ -1750,6 +1752,7 @@ def domain_help(topic, role):
         return (
             "AI Access\n"
             "=========\n\n"
+            "WHITELIST-only, deny-by-default authorization for authenticated AI Identities.\n"
             "AI Identity authentication is separate from AI Access authorization.\n"
             "Display name alone is not a verified identity.\n\n"
             "Lifecycle:\n"
@@ -1764,9 +1767,10 @@ def domain_help(topic, role):
             "  show ai-identities\n"
             "  set permission-object <NAME> permissions <PERM>[,PERM...]\n"
             "  set permission-group <NAME> members <PO>[,PO...]\n"
-            "  set ai-access <RULE> mode <blacklist|whitelist> source <IDENTITY> \\\n"
+            "  set ai-access <RULE> mode whitelist source <IDENTITY> \\\n"
             "      destination <DEST> permission <PERM|GROUP> enabled\n"
             "  set ai-access <RULE> enabled|disabled\n"
+            "  set ai-access enabled|disabled\n"
             "  test ai-access source <IDENTITY> destination <DEST> permission <PERM>\n"
             "  show ai-access\n"
             "  show ai-access-log\n"
@@ -2343,6 +2347,8 @@ NAVIGATION_TREE = {
     "server.remote": (
         ("server_ra_list", "Rules", "", "command", "show remote-access"),
         ("server_ra_create", "Create Remote Access rule", "", "command", "set remote-access"),
+        ("server_ra_enable", "Enable Enforcement", "", "command", "set remote-access enabled"),
+        ("server_ra_disable", "Disable Enforcement", "", "command", "set remote-access disabled"),
         ("server_ra_test", "Test / Explain", "", "command", "test remote-access"),
         ("back", "Back", "", "back", None),
     ),
@@ -2351,6 +2357,8 @@ NAVIGATION_TREE = {
         ("server_ai_perm", "Permission Objects", "", "command", "show permission-objects"),
         ("server_ai_perm_groups", "Permission Groups", "", "command", "show permission-groups"),
         ("server_ai_rules", "Rules", "", "command", "show ai-access"),
+        ("server_ai_enable", "Enable Enforcement", "", "command", "set ai-access enabled"),
+        ("server_ai_disable", "Disable Enforcement", "", "command", "set ai-access disabled"),
         ("server_ai_log", "Access Log", "", "command", "show ai-access-log"),
         ("server_ai_test", "Test / Explain", "", "command", "test ai-access"),
         ("back", "Back", "", "back", None),
@@ -2370,6 +2378,8 @@ NAVIGATION_TREE = {
     "server.internet": (
         ("server_ia_list", "Rules", "", "command", "show internet-access"),
         ("server_ia_create", "Create Internet Access rule", "", "command", "set internet-access"),
+        ("server_ia_enable", "Enable Enforcement", "", "command", "set internet-access enabled"),
+        ("server_ia_disable", "Disable Enforcement", "", "command", "set internet-access disabled"),
         ("server_ia_test", "Test / Explain", "", "command", "test internet-access"),
         ("back", "Back", "", "back", None),
     ),
@@ -2391,10 +2401,10 @@ NAVIGATION_TREE = {
         ("back", "Back", "", "back", None),
     ),
     "server.system.settings": (
-        ("server_set_public", "Published service hostname", "", "workflow", "set_public_hostname"),
+        ("server_set_public", "Remote Service public hostname", "", "workflow", "set_public_hostname"),
         ("server_set_bootstrap", "Bootstrap hostname", "", "workflow", "set_bootstrap_hostname"),
-        ("server_set_installer", "Linux/macOS client installer URL", "", "workflow", "set_installer_url"),
-        ("server_set_win_installer", "Windows client installer URL", "", "workflow", "set_windows_installer_url"),
+        ("server_set_installer", "Linux/macOS Agent installer URL", "", "workflow", "set_installer_url"),
+        ("server_set_win_installer", "Windows Agent installer URL", "", "workflow", "set_windows_installer_url"),
         ("back", "Back", "", "back", None),
     ),
     "server.system.backup": (

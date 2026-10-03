@@ -77,7 +77,7 @@ bootstrap_hostname
 
 If installation allows a domain to be selected as the product public identity, that choice must be used consistently by generated bootstrap/Zero-Touch links and other user-facing URLs according to current implementation.
 
-Changing a friendly published-service hostname must not silently change management identity.
+Changing a friendly Remote Service hostname alias must not silently change management identity.
 
 ## 5. Connect a Managed Host
 

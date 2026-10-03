@@ -2179,7 +2179,7 @@ if isinstance(raw, dict) and 'services' in raw:
         alias = str(raw.get('public_hostname') or '')
 else:
     services = raw
-lines = [f'Data Relay Link Server: {server}', '', 'Services:', '']
+lines = [f'Data Relay Link Server: {server}', '', 'Remote Services:', '']
 def clean(value, limit=253):
     text = str(value or '')
     return ''.join(' ' if ord(c) < 32 or 127 <= ord(c) <= 159 else c for c in text)[:limit].strip()
@@ -2267,6 +2267,12 @@ for item in services:
             lines.append(f'    {host_port(server, remote_port)}')
     lines.append('')
 has_enabled = any(item.get('enabled', True) is not False for item in services)
+if not services:
+    lines.append('No Remote Services configured.')
+    lines.append('')
+elif not has_enabled:
+    lines.append('No enabled Remote Services.')
+    lines.append('')
 # Reachability (addresses above) is not Remote Access authorization.
 # Initial Server policy is No Policy / effective ALLOW. The Agent cannot
 # see the live policy, so operators inspect it on the Server.

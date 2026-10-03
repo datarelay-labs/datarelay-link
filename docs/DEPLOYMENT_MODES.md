@@ -21,7 +21,7 @@ TCP passthrough.
 
 An optional **bootstrap hostname** may be configured separately for publicly
 trusted Zero-Touch short URL entry (`GET /i/<ticket>`). That name is not the
-published-service alias and is not the Private CA / FRP control identity. See
+Remote Service alias and is not the Private CA / FRP control identity. See
 `docs/ZERO_TOUCH_SHORT_URL.md`.
 
 The addresses `203.0.113.10` and `192.0.2.50` are documentation-only (RFC 5737).
