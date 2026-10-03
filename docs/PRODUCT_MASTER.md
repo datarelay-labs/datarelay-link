@@ -501,15 +501,31 @@ The product-surface reconciliation is executed by `CLI_FEATURE_SCENARIO_RECONCIL
 
 `FULL_USER_E2E_SCENARIOS.md` is the complementary real-user black-box quality contract. It validates that users who do not know the product or command set in advance can discover, configure, operate, troubleshoot, recover, upgrade, stress, and use the product through supported public UX and real traffic across the claimed platforms/topologies.
 
-A clean PASS from both exhaustive quality contracts on the same supported product candidate establishes:
+For v2.4 release closure, these two exhaustive contracts form the primary **product-quality convergence loop**. There is no fixed pass count and no candidate-freeze shortcut:
+
+1. execute the complete CLI Feature/Scenario reconciliation and finish every safe/independent check before remediation;
+2. batch-fix every actionable in-scope product, CLI, documentation, usability, or test-contract defect found by that run;
+3. rerun the complete CLI Feature/Scenario reconciliation and repeat until it produces no new or unresolved in-scope defect;
+4. execute the complete `FULL_USER_E2E` contract and finish every safe/independent scenario before remediation;
+5. batch-fix every actionable in-scope defect found by that run;
+6. rerun every exhaustive contract affected by those fixes, including the CLI reconciliation when product/CLI/docs changed, and continue the loop whenever a new defect appears.
+
+A finding may be closed only by a verified fix, a deterministic proof that the finding is not a product defect, or an explicit out-of-scope disposition supported by the canonical product contract. Reclassifying a real defect to a lower severity does not satisfy convergence. P0/P1/P2 defects are always blocking; a P3 classified as a real product defect is also fixed before convergence rather than carried into release as known debt.
+
+The convergence loop exits only when the latest complete runs of **both** exhaustive contracts establish all of the following:
 
 ```text
+CLI_FEATURE_SCENARIO_RECONCILIATION=PASS
+FULL_USER_E2E=PASS
+NEW_IN_SCOPE_PRODUCT_DEFECTS=0
+UNRESOLVED_IN_SCOPE_PRODUCT_DEFECTS=0
+UNRESOLVED_ACTIONABLE_USABILITY_FINDINGS=0
 PRODUCT_QUALITY_CLOSURE=PASS
 NO_KNOWN_IN_SCOPE_PRODUCT_DEFECTS=YES
 NO_FURTHER_PRODUCT_CHANGE_REQUIRED_BY_CURRENT_QUALITY_GATES=YES
 ```
 
-This means product-quality work is closed for the covered scope; it does **not** mean the release process is complete. Stable release still follows `RELEASE_VALIDATION.md` and `RELEASE_CHECKLIST.md`, including their exact-HEAD repetition, CI, artifact, provenance, governance, attestation, approval, tagging, and publication requirements.
+Only after this convergence may the repository freeze the final candidate and spend release effort on exact-HEAD repetition, CI, SBOM, artifacts, provenance, governance, attestation, approval, tagging, and publication. Those release gates remain mandatory, but they do not take priority over finding and fixing product defects while the quality loop is still open.
 
 Critical v2.4 CLI/AI acceptance includes:
 
