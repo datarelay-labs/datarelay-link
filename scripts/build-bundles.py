@@ -64,6 +64,7 @@ files=[
  'lib/drlink_v30_cutoff.py',
  'lib/drlink_v30_audit.py',
  'lib/drlink_v30_live.py',
+ 'lib/drlink_v30_jobs.py',
  'lib/drlink_management_catalog.py',
  'lib/drlink_management_service.py',
  'lib/drlink_management_change.py',

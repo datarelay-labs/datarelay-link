@@ -966,6 +966,51 @@ CREATE TABLE IF NOT EXISTS management_change_plans (
 CREATE INDEX IF NOT EXISTS idx_management_change_plans_actor
   ON management_change_plans(actor_id, status, expires_at);
 
+CREATE TABLE IF NOT EXISTS management_jobs (
+  id TEXT PRIMARY KEY,
+  job_type TEXT NOT NULL,
+  requested_by TEXT NOT NULL,
+  resource_type TEXT NOT NULL DEFAULT '',
+  resource_ref TEXT NOT NULL DEFAULT '',
+  payload_json TEXT NOT NULL DEFAULT '{}',
+  status TEXT NOT NULL DEFAULT 'QUEUED',
+  cancel_requested INTEGER NOT NULL DEFAULT 0,
+  target_count INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  started_at TEXT,
+  finished_at TEXT,
+  deadline_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  last_error TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_management_jobs_status_time
+  ON management_jobs(status, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_management_jobs_type_time
+  ON management_jobs(job_type, created_at DESC, id DESC);
+
+CREATE TABLE IF NOT EXISTS management_job_targets (
+  job_id TEXT NOT NULL,
+  target_id TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'QUEUED',
+  worker_id TEXT NOT NULL DEFAULT '',
+  claim_token TEXT NOT NULL DEFAULT '',
+  attempt INTEGER NOT NULL DEFAULT 0,
+  started_at TEXT,
+  finished_at TEXT,
+  lease_expires_at TEXT,
+  updated_at TEXT NOT NULL,
+  result_json TEXT NOT NULL DEFAULT '{}',
+  error TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY (job_id, target_id),
+  FOREIGN KEY (job_id) REFERENCES management_jobs(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_management_job_targets_claim
+  ON management_job_targets(status, updated_at, job_id, target_id);
+CREATE INDEX IF NOT EXISTS idx_management_job_targets_job_status
+  ON management_job_targets(job_id, status, target_id);
+
 CREATE TABLE IF NOT EXISTS audit_ingest_checkpoints (
   source TEXT PRIMARY KEY,
   last_sequence INTEGER NOT NULL DEFAULT 0,

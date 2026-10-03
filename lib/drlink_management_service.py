@@ -32,6 +32,8 @@ IMPLEMENTED_MANAGEMENT_TOOLS = frozenset(
         "drlink_policy_test",
         "drlink_audit_query",
         "drlink_live_access",
+        "drlink_job_list",
+        "drlink_job_get",
     }
 )
 
@@ -234,6 +236,39 @@ def _decode_audit_cursor(cursor: Optional[str]) -> Optional[tuple[str, int]]:
     return payload["time"], row_id
 
 
+def _encode_job_cursor(created_at: str, job_id: str) -> str:
+    raw = json.dumps(
+        {
+            "v": _CURSOR_VERSION,
+            "resource": "management-job",
+            "time": str(created_at or ""),
+            "id": str(job_id or ""),
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _decode_job_cursor(cursor: Optional[str]) -> Optional[tuple[str, str]]:
+    if cursor is None or not str(cursor).strip():
+        return None
+    text = str(cursor).strip()
+    try:
+        padded = text + "=" * (-len(text) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")))
+    except Exception as exc:
+        raise ControlPlaneError("Invalid management Job cursor.") from exc
+    if (
+        payload.get("v") != _CURSOR_VERSION
+        or payload.get("resource") != "management-job"
+        or not isinstance(payload.get("time"), str)
+        or not isinstance(payload.get("id"), str)
+    ):
+        raise ControlPlaneError("Management Job cursor is invalid.")
+    return payload["time"], payload["id"]
+
+
 def _json_field(value: Any, fallback):
     if value is None or value == "":
         return fallback
@@ -411,8 +446,11 @@ class ManagementQueryService:
             status = dict(plane.status())
         finally:
             plane.close()
+        from drlink_v30_jobs import job_operational_summary
+
         status["resource"] = "data-relay-link"
         status["read_only"] = True
+        status["management_jobs"] = job_operational_summary(self.conn)
         return status
 
     def policy_test(
@@ -584,6 +622,88 @@ class ManagementQueryService:
             next_cursor=next_cursor,
             limit=page_limit,
         )
+
+    def job_list(
+        self,
+        *,
+        cursor: Optional[str] = None,
+        limit: Optional[int] = None,
+        status: Optional[str] = None,
+        job_type: Optional[str] = None,
+    ) -> ManagementPage:
+        """Read a bounded keyset page of management Jobs."""
+        from drlink_v30_jobs import JOB_STATUSES
+
+        page_limit = _bounded_limit(limit)
+        after = _decode_job_cursor(cursor)
+        where: list[str] = []
+        args: list[Any] = []
+        status_text = str(status or "").strip().upper()
+        if status_text:
+            if status_text not in JOB_STATUSES:
+                raise ControlPlaneError("Unsupported management Job status.")
+            where.append("status=?")
+            args.append(status_text)
+        type_text = str(job_type or "").strip().lower()
+        if type_text:
+            where.append("job_type=?")
+            args.append(type_text)
+        if after is not None:
+            where.append("(created_at < ? OR (created_at = ? AND id < ?))")
+            args.extend((after[0], after[0], after[1]))
+        where_sql = (" WHERE " + " AND ".join(where)) if where else ""
+        args.append(page_limit + 1)
+        rows = self.conn.execute(
+            "SELECT id,job_type,requested_by,resource_type,resource_ref,status,"
+            "cancel_requested,target_count,created_at,started_at,finished_at,"
+            "deadline_at,updated_at,last_error FROM management_jobs"
+            + where_sql
+            + " ORDER BY created_at DESC,id DESC LIMIT ?",
+            tuple(args),
+        ).fetchall()
+        has_more = len(rows) > page_limit
+        page_rows = rows[:page_limit]
+        items = tuple({key: row[key] for key in row.keys()} for row in page_rows)
+        next_cursor = None
+        if has_more and page_rows:
+            last = page_rows[-1]
+            next_cursor = _encode_job_cursor(str(last["created_at"]), str(last["id"]))
+        return ManagementPage(
+            resource_type="management-job",
+            items=items,
+            next_cursor=next_cursor,
+            limit=page_limit,
+        )
+
+    def job_get(self, job_id: str) -> dict[str, Any]:
+        """Read one management Job and its bounded per-target terminal/progress truth."""
+        from drlink_v30_jobs import MAX_JOB_TARGETS
+
+        ident = str(job_id or "").strip()
+        if not ident:
+            raise ControlPlaneError("Management Job ID is required.")
+        row = self.conn.execute(
+            "SELECT id,job_type,requested_by,resource_type,resource_ref,status,"
+            "cancel_requested,target_count,created_at,started_at,finished_at,"
+            "deadline_at,updated_at,last_error FROM management_jobs WHERE id=?",
+            (ident,),
+        ).fetchone()
+        if not row:
+            raise ControlPlaneError("Management Job was not found.")
+        out = {key: row[key] for key in row.keys()}
+        target_rows = self.conn.execute(
+            "SELECT target_id,status,worker_id,attempt,started_at,finished_at,"
+            "lease_expires_at,updated_at,result_json,error "
+            "FROM management_job_targets WHERE job_id=? ORDER BY target_id LIMIT ?",
+            (ident, MAX_JOB_TARGETS),
+        ).fetchall()
+        targets = []
+        for target in target_rows:
+            item = {key: target[key] for key in target.keys() if key != "result_json"}
+            item["result"] = _json_field(target["result_json"], {})
+            targets.append(item)
+        out["targets"] = targets
+        return out
 
     def live_access(
         self,
