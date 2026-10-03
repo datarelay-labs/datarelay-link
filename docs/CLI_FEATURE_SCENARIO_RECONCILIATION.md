@@ -1406,9 +1406,13 @@ FEATURE INVENTORY
 → PER-SURFACE POST-HOC HIDDEN/PARSER/DOC ENUMERATION + ISOLATED SUITES (supporting evidence; maximum-safe parallel)
 → COMPLETE ALL INDEPENDENT CHECKS
 → FREEZE EVIDENCE AND COUNTERS
-→ ONE FINAL GITHUB ISSUE UPDATE
+→ IF ANY ACTIONABLE FINDING EXISTS: REMEDIATE ALL FINDINGS WITH THE AUTHORIZED IMPLEMENTER
+→ START A BRAND-NEW COMPLETE RECONCILIATION WITH A NEW RUN_ID
+→ REPEAT UNTIL THE LATEST COMPLETE RUN HAS ZERO NEW/UNRESOLVED IN-SCOPE DEFECTS AND ZERO ACTIONABLE USABILITY FINDINGS
+→ ONLY THEN ADVANCE TO THE FULL_USER_E2E CLOSED LOOP
+→ ONLY AFTER FULL_USER_E2E ALSO CONVERGES MAY CANDIDATE FREEZE / RELEASE QUALIFICATION BEGIN
 ~~~
 
-Do not turn findings into pauses. Record them and continue.
+Do not turn findings into pauses during an individual audit run. Record them and continue until that run is exhausted. Once the run is frozen, findings are an immediate remediation trigger, not a reporting stop. ChatGPT must implement the fixes, test them, and launch the next full run without waiting for another owner prompt. A subset PASS, CI PASS, or a single audit pass never terminates the closed loop.
 
 Do not perform product-state mutation, host discovery, installation, upgrade, uninstall, restart, pause/resume, synchronization, rollback/restore, platform qualification, CI waiting, or release-candidate preparation as part of this trigger.
