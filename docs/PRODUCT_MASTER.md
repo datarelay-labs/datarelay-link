@@ -716,42 +716,51 @@ Pool as logical management modules. These modules may remain in one local proces
 **Operator-safety scope:** 3.0 GA includes Draft Workspace, saved policy regression
 tests, Blast Radius Preview, Effective Access Graph, Connection Diagnosis, Attention
 Center, version drift, searchable audit/revisions, Saved Views, bounded safe multi-Host
-jobs, Web-admin local MFA + optional OIDC SSO, time-bounded Temporary Access, and bounded
-live-connection visibility with an emergency access-cutoff workflow.
+jobs, offline-capable local Web-admin MFA, time-bounded Temporary Access, and bounded
+live-access visibility with an emergency new-access cutoff workflow.
 
 **Scope discipline:** Full JIT/access-request approval, session recording, browser
 terminals, device-posture/MDM, broad discovery, SIEM/reporting, external HA/multi-region
 control, and large-fleet orchestration are not 3.0 goals. External notifications,
-SAML/LDAP/SCIM provisioning, GitOps locking, and continuous external audit/SIEM streaming
-remain later-additive features unless 3.0 evidence proves a foundation dependency.
+SSO/IdP integration, SAML/LDAP/SCIM provisioning, GitOps locking, and continuous
+external audit/SIEM streaming are not 3.0 requirements and require separate field-demand
+review before entering a later roadmap.
 
 **Reason:** Improve day-to-day operation and troubleshooting without changing Data Relay
 Link into a different product category or forcing repeated Core redesign.
 
 ### 2026-10 — 3.0 competitive baseline essentials
 
-**Decision:** Promote only three remaining repeated market-baseline gaps into 3.0 GA:
-(1) strong Web-admin authentication, (2) time-bounded Temporary Access, and
-(3) live-connection visibility with a truthful emergency access-cutoff workflow.
+**Decision:** Keep the selected 3.0 additions small and priority-separated rather than
+treating them as one feature bundle.
 
-**Strong Web-admin authentication:** Keep local recovery for isolated environments, require
-MFA for password-backed Web operators, and support optional OIDC SSO with explicit role
-mapping. OIDC outage must never remove the headless CLI recovery path. SAML, LDAP, and SCIM
-are later-additive rather than 3.0 dependencies.
+**P0 security baseline — Local Web MFA:** Password-backed Web administration requires an
+offline-capable local MFA factor, bounded/revocable browser sessions, and local recovery.
+SSO/OIDC/IdP integration is excluded from 3.0; the product must remain fully operable in
+isolated environments without external identity infrastructure.
 
-**Temporary Access:** Add server-authoritative expiry to supported Remote / Internet / AI
-Access grants. Expiration automatically denies new authorization and is visible/audited.
-This is intentionally smaller than a requester/approver/JIT access-governance system.
+**P1 product value — Temporary Access:** Add server-authoritative expiry to supported
+Remote / Internet / AI Access grants. Expiration automatically denies new authorization
+and is visible/audited. Scope stops at set/change/clear expiry, policy evaluation,
+CLI/Bundle/Web parity, preview/test, backup/restore, and Attention. No requester/approver
+workflow, recurring schedule, automatic renewal, or implicit active-session termination.
 
-**Live connection / cutoff:** Show the best bounded active-connection state each access
-plane can prove and provide an emergency cutoff at the smallest safe supported scope.
-Individual active-connection termination is required only where Data Relay Link owns or
-the pinned official upstream exposes that lifecycle. Remote Access must not claim
-per-connection kill semantics that official FRP cannot prove without a fork.
+**P1 operations value — Live Access Visibility:** Show bounded current-use state each
+access plane can actually prove. Exact per-connection state, aggregate state, and UNKNOWN
+must be distinguished rather than normalized into false precision.
 
-**Not promoted:** External notification delivery, full JIT approval, device posture/MDM,
-session recording, credential vaulting, payload replay, SCIM, and general identity
-governance remain later or out of scope.
+**P1 incident response — Emergency New-Access Cutoff:** Provide an explicit reversible
+security override that immediately denies new authorization at supported scopes without
+rewriting the operator's normal policy intent. Existing active work is terminated only
+where Data Relay Link or the pinned official upstream exposes a proven supported lifecycle.
+
+**P2/conditional — Active connection termination:** Per-connection kill is not a 3.0 GA
+requirement for Remote Access and must not require an FRP fork. It may ship per plane where
+lifecycle ownership and deterministic termination are already proven.
+
+**Not promoted:** SSO/IdP, external notification delivery, full JIT approval, device
+posture/MDM, session recording, credential vaulting, payload replay, SCIM, and general
+identity governance remain outside 3.0.
 
 **Reason:** These three additions close common operator/security expectations and directly
 increase the value of controlled connectivity without turning Data Relay Link into PAM,
