@@ -936,6 +936,11 @@ Initial browser API namespace:
 /api/v1/
 ```
 
+This namespace is the first-party Web adapter contract, not the ChatGPT Plugin/MCP
+management contract. Plugin/MCP reaches the same Core Management Service through the
+separate Management MCP adapter defined by `MANAGEMENT_SURFACE_CONTRACT.md`; Plugin code
+must not depend on Web endpoint shapes.
+
 API resources mirror product nouns rather than internal table names.
 
 Design rules:

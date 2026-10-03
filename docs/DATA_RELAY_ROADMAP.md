@@ -297,7 +297,7 @@ Required:
 - Web authentication/RBAC model frozen, including offline-capable local MFA, local recovery, browser-session lifetime/idle timeout, and revocation; SSO/IdP integration is excluded from 3.0;
 - Temporary Access data model and expiry semantics frozen, including supported policy scopes, set/change/clear operations, clock-failure behavior, and explicit non-termination of established sessions;
 - live-access visibility granularity and Emergency New-Access Cutoff semantics frozen per access plane, with exact-vs-aggregate-vs-unknown visibility and official-FRP/no-fork limits explicit;
-- shared management-operation contract frozen;
+- shared management-operation contract frozen through `MANAGEMENT_SURFACE_CONTRACT.md`, including CLI/Web/MCP surface projection, operation risk classes, Change Plan/confirmation semantics, Plugin-safe scope, and explicit high-risk exclusions;
 - 3.0 additive CLI/Bundle contract for Web operators, saved policy tests, and Job recovery frozen;
 - capability parity ledger format frozen;
 - authoritative vs preference vs operational vs derived state boundaries frozen;
@@ -347,6 +347,7 @@ No frontend-first implementation before this gate.
 Implement logical boundaries for:
 
 - typed Core Application/Management Service;
+- Web API adapter and Management MCP adapter as separate projections over that same Core service; the Plugin/relay must not depend on the Web API;
 - command/query separation;
 - bounded read-only connections and server-side filtering/pagination;
 - query-plan/index review for common Host/Service/status/version/policy/audit/job views;
@@ -654,6 +655,10 @@ Required exact-candidate evidence includes:
 CORE_WITHOUT_WEB=PASS
 CLI_FULL_CAPABILITY=PASS
 WEB_CAPABILITY_PARITY=PASS
+MANAGEMENT_SURFACE_CONTRACT=PASS
+MCP_CORE_SEMANTIC_PARITY=PASS
+PLUGIN_WEB_API_DEPENDENCY=NO
+TARGET_OS_PERMISSION_IMPLIES_MANAGEMENT_PERMISSION=NO
 CLI_AUDIT_QUERY_EXPORT=PASS
 WEB_AUTH_RBAC=PASS
 WEB_LOCAL_MFA=PASS

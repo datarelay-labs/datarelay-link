@@ -201,3 +201,29 @@ Support bundles and logs must redact protected values.
 Do not claim ChatGPT, Claude, Cursor, or another MCP host as supported solely from protocol conformance.
 
 Release qualification must retain real interoperability evidence for every host explicitly claimed as supported.
+
+## 11. Data Relay Link 3.0 management MCP boundary
+
+The current v2.4 target focuses AI Access on authorized Managed Host operations. Data Relay
+Link 3.0 may additionally expose a bounded product-management MCP surface, but that surface
+must follow `MANAGEMENT_SURFACE_CONTRACT.md`.
+
+Key rules:
+
+- management tools are defined by DRLink Server/Core, not by the optional Plugin relay;
+- the Web `/api/v1` adapter is not the Plugin backend;
+- target-OS permissions such as `command-exec` or `file-write` never imply DRLink
+  management permission;
+- 3.0 management permissions are a separate capability family frozen during DRL3-0;
+- management reads/tests may be exposed broadly when explicitly authorized;
+- Temporary Access mutation uses shared Change Plan preview/apply semantics;
+- Emergency New-Access Cutoff uses a dedicated high-impact permission and confirmation
+  class;
+- restore, uninstall, Web operator/MFA administration, protected credential workflows, and
+  unsupported active-connection termination are not part of the default 3.0 Plugin surface;
+- authorization is re-evaluated on every privileged management tool call.
+
+The optional `datarelay-link-plugin` continues to act as transport, subject-to-server
+binding, OAuth/authentication seam, and MCP pass-through. A passing Plugin relay test does
+not replace direct Core MCP qualification, and direct MCP PASS does not prove the Plugin
+distribution path.
