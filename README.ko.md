@@ -64,16 +64,19 @@ Remote Access
 Internet Access
 AI Access
 
-BLACKLIST / WHITELIST
+Remote Access: BLACKLIST / WHITELIST
+Internet Access: WHITELIST only, deny-by-default
+AI Access: WHITELIST only, deny-by-default
 
 ConfigurationBundle
 ```
 
-초기 정책 상태는 No Policy / No Rules이며 실효 접근은 ALLOW입니다.
-정책이 생성되면 BLACKLIST는 일치하는 enabled Rule을 deny하고,
-WHITELIST는 일치하는 enabled Rule을 allow합니다. Rule은 순서가 없으며
-Rule별 ALLOW/DENY action을 갖지 않습니다. Policy Rule은 접근을 허용하거나
-거부할 뿐, connectivity 자체를 만들지 않습니다.
+초기 정책 상태는 plane마다 다릅니다. Remote Access는 No Policy / No Rules에서 실효 접근이 ALLOW이고,
+Internet Access와 AI Access는 No Policy / No Rules에서 DENY ALL입니다.
+Remote Access는 BLACKLIST 또는 WHITELIST를 지원하고, Internet Access와 AI Access는 WHITELIST만 지원합니다.
+BLACKLIST는 일치하는 enabled Rule을 deny하고, WHITELIST는 일치하는 enabled Rule을 allow합니다.
+Rule은 순서가 없으며 Rule별 ALLOW/DENY action을 갖지 않습니다.
+Policy Rule은 접근을 허용하거나 거부할 뿐, connectivity 자체를 만들지 않습니다.
 
 ## Architecture 요약
 
@@ -115,7 +118,7 @@ Docker Server 배포는 v2.4 target에 포함되지 않으며 이후 release lin
 | **Stable endpoint** | 정상 lifecycle에서 public-port reservation 유지 |
 | **Remote Services** | Agent 소유의 TCP / Fixed TCP connectivity (UDP Remote Service는 거부) |
 | **LAN reachability** | 로컬 Managed Host 또는 도달 가능한 internal-LAN host에 publish |
-| **Access Policy** | Remote / Internet / AI Access에 대한 BLACKLIST / WHITELIST |
+| **Access Policy** | Remote Access는 BLACKLIST / WHITELIST, Internet / AI Access는 WHITELIST-only deny-by-default |
 | **AI Access / MCP** | Verified AI Identity → Permission을 통한 MCP Bridge 접근 |
 | **ConfigurationBundle** | Server/Agent 원자성 범위의 multi-resource 변경 세트 |
 | **Health & operations** | Doctor, support bundle, lifecycle, backup/restore |
@@ -212,7 +215,7 @@ Remote Access policy permits the flow
 보안에는 다음이 포함됩니다:
 
 ```text
-BLACKLIST / WHITELIST policy enforcement
+WHITELIST-only deny-by-default policy enforcement
 fail-closed unsafe-destination checks
 server-side DNS
 DNS rebinding resistance
