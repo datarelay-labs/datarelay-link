@@ -94,10 +94,10 @@ If implementation change is required after the run:
   → report exact branch/HEAD/evidence
 
 ChatGPT
-→ independently verify the implementation result
-→ rerun every affected User E2E scenario
-→ rerun any invalidated broader/full pass required by this document
-→ make the final E2E PASS/PARTIAL/FAIL determination
+→ independently verify the implementation result with targeted deterministic regression as supporting evidence
+→ because product/public-surface/contract remediation changed the candidate, start a brand-new **complete FULL_USER_E2E run from the beginning with a new RUN_ID**
+→ repeat complete run → final report/readback/offboarding → remediation → complete rerun with no fixed pass limit until the latest complete run has zero new/unresolved actionable findings and zero mandatory FAIL/PARTIAL/BLOCKED
+→ make the final E2E PASS/PARTIAL/FAIL determination only from the latest complete persona-led run
 ~~~
 
 Implementation-agent output may be supporting evidence for static/source review, isolated deterministic checks, or remediation verification, but it does **not** substitute for ChatGPT's requested persona-led User E2E execution.
@@ -138,7 +138,7 @@ Resolution order:
 3. only if the canonical repository/path itself changed may repository history be used to locate its successor;
 4. never begin with broad GitHub search, unrelated repository discovery, historical-worktree comparison, CI inspection, or release preparation.
 
-Once the canonical document resolves, start execution immediately.
+Once the canonical document resolves, **read this entire current canonical contract end-to-end before any E2E action**, then start execution immediately from the contract. Do not begin with an improvised checklist, wrapper script, generic E2E harness, CI run, source/test oracle, or historical scenario replay. Those may be supporting evidence/orchestration only where this contract explicitly permits them; they never replace ChatGPT's primary persona-led public-surface execution.
 
 ~~~text
 FIRST_ACTION=DISCOVER_TEST_HOSTS_AND_EXECUTE

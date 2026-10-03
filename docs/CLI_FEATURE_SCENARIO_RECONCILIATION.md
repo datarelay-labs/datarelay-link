@@ -1336,11 +1336,13 @@ Never paste secrets.
 After the audit is exhausted:
 
 1. freeze evidence;
-2. update the active Work Packet with the reconciliation findings;
-3. create remediation slices P0 → P1 → user-blocking P2 → P3;
-4. add durable regression coverage where appropriate;
-5. after remediation, rerun the affected reconciliation scenarios with a **new RUN_ID** against already-assigned applicable runtime surfaces;
-6. if release qualification later requires clean exact-candidate installation, that provisioning is performed by the release/FULL_USER_E2E workflow before invoking this audit.
+2. update the active Work Packet once with the consolidated reconciliation findings and final counters;
+3. read back the GitHub update, record `GITHUB_REPORT_STATUS` / `GITHUB_REPORT_READBACK`, complete section 27 offboarding, and release only this run's coordination lock;
+4. create remediation slices P0 → P1 → user-blocking P2 → actionable P3;
+5. add durable regression coverage where appropriate and batch-remediate the frozen finding set;
+6. after any product/public-surface/contract remediation, start a **brand-new complete reconciliation with a new RUN_ID** and repeat the full Feature inventory plus 100% Direct-user and AI-assisted Feature/FCS coverage; a partial/affected-scenario rerun is targeted regression evidence only and can never close the gate;
+7. repeat complete audit → report/readback/offboard → remediation → complete rerun until the latest complete run has zero new/unresolved actionable findings;
+8. if release qualification later requires clean exact-candidate installation, that provisioning is performed by the release/FULL_USER_E2E workflow before invoking this audit.
 
 ## 30. Relationship to other tests
 
@@ -1395,24 +1397,27 @@ or:
 CLI, 기능, 시나리오의 연계성을 테스트 진행
 ~~~
 
-Resolve `datarelay-labs/datarelay-link/docs/CLI_FEATURE_SCENARIO_RECONCILIATION.md` deterministically and start immediately.
+Resolve `datarelay-labs/datarelay-link/docs/CLI_FEATURE_SCENARIO_RECONCILIATION.md` deterministically, then **read this entire current canonical contract end-to-end before starting any audit action**. Do not begin with an improvised checklist, wrapper, replay script, parser/source scan, unit/integration suite, or CI shortcut. Those may be supporting evidence only after the contract-prescribed persona boundary allows them.
 
 Execution order is fixed:
 
 ~~~text
-FEATURE INVENTORY
+READ THE COMPLETE CURRENT CANONICAL CONTRACT
+→ FEATURE INVENTORY
 → DIRECT USER + AI-ASSISTED PUBLIC DISCOVERY (independent persona lanes in parallel)
 → DIRECT + AI OPERATOR WORKFLOW RECONCILIATION (independent FCS persona lanes in parallel)
 → PER-SURFACE POST-HOC HIDDEN/PARSER/DOC ENUMERATION + ISOLATED SUITES (supporting evidence; maximum-safe parallel)
 → COMPLETE ALL INDEPENDENT CHECKS
 → FREEZE EVIDENCE AND COUNTERS
-→ IF ANY ACTIONABLE FINDING EXISTS: REMEDIATE ALL FINDINGS WITH THE AUTHORIZED IMPLEMENTER
+→ ONE FINAL GITHUB ISSUE UPDATE + READBACK
+→ OFFBOARD THE RUN AND RELEASE ITS COORDINATION LOCK
+→ IF ANY ACTIONABLE FINDING EXISTS: REMEDIATE THE FROZEN FINDING SET WITH THE AUTHORIZED IMPLEMENTER
 → START A BRAND-NEW COMPLETE RECONCILIATION WITH A NEW RUN_ID
 → REPEAT UNTIL THE LATEST COMPLETE RUN HAS ZERO NEW/UNRESOLVED IN-SCOPE DEFECTS AND ZERO ACTIONABLE USABILITY FINDINGS
-→ ONLY THEN ADVANCE TO THE FULL_USER_E2E CLOSED LOOP
-→ ONLY AFTER FULL_USER_E2E ALSO CONVERGES MAY CANDIDATE FREEZE / RELEASE QUALIFICATION BEGIN
 ~~~
 
-Do not turn findings into pauses during an individual audit run. Record them and continue until that run is exhausted. Once the run is frozen, findings are an immediate remediation trigger, not a reporting stop. ChatGPT must implement the fixes, test them, and launch the next full run without waiting for another owner prompt. A subset PASS, CI PASS, or a single audit pass never terminates the closed loop.
+Do not turn findings into pauses during an individual audit run. Record them and continue until that run is exhausted. Once the run is reported/read back and offboarded, findings are an immediate remediation trigger for an active release-quality workstream, not a reason to return control to the owner. ChatGPT must implement the fixes, test them, and launch the next full run without waiting for another owner prompt. A subset PASS, targeted regression PASS, CI PASS, or a single audit pass never terminates the closed loop.
 
-Do not perform product-state mutation, host discovery, installation, upgrade, uninstall, restart, pause/resume, synchronization, rollback/restore, platform qualification, CI waiting, or release-candidate preparation as part of this trigger.
+For a **standalone CLI reconciliation request**, a clean CLI result completes this trigger; it does not itself authorize state-changing FULL_USER_E2E. When the current owner intent / active Work Packet is **release-quality closure**, the scheduler must next resolve `docs/FULL_USER_E2E_SCENARIOS.md`, read that entire current contract before any E2E action, and execute its separate closed loop until clean. Only after both required release-quality gates converge on the same exact HEAD may candidate freeze / release qualification begin.
+
+Do not perform product-state mutation, host discovery, installation, upgrade, uninstall, restart, pause/resume, synchronization, rollback/restore, platform qualification, CI waiting, or release-candidate preparation as part of this CLI trigger.
