@@ -416,9 +416,10 @@ frp_apply_expected_source_ref_context() {
   # A published tag is the install/publication ref, while frozen pretags keep
   # their embedded manifest pinned to the exact product source SHA. Derive the
   # effective release channel from an explicit tag ref without rewriting the
-  # embedded source identity.
+  # embedded source identity. Conflicting explicit channel state is a
+  # provenance contradiction and must fail closed.
   local ref="${1:-${FRP_EXPECTED_SOURCE_REF:-}}"
-  local inferred=""
+  local inferred="" expected="" effective=""
   [[ -n "$ref" ]] || return 0
   if [[ "$ref" == "v${PROJECT_VERSION}" ]]; then
     inferred="stable"
@@ -427,14 +428,31 @@ frp_apply_expected_source_ref_context() {
   else
     return 0
   fi
-  if [[ -z "${FRP_EXPECTED_RELEASE_CHANNEL:-}" ]]; then
-    FRP_EXPECTED_RELEASE_CHANNEL="$inferred"
-    export FRP_EXPECTED_RELEASE_CHANNEL
+
+  if [[ -n "${FRP_EXPECTED_RELEASE_CHANNEL:-}" ]]; then
+    if ! expected="$(frp_parse_known_release_channel "$FRP_EXPECTED_RELEASE_CHANNEL")"; then
+      echo "ERROR: invalid expected release channel for source ref $ref" >&2
+      return 1
+    fi
+    if [[ "$expected" != "$inferred" ]]; then
+      echo "ERROR: expected release channel conflicts with source ref $ref" >&2
+      return 1
+    fi
   fi
-  if [[ -z "${FRP_RELEASE_CHANNEL:-}" ]]; then
-    FRP_RELEASE_CHANNEL="$inferred"
-    export FRP_RELEASE_CHANNEL
+  if [[ -n "${FRP_RELEASE_CHANNEL:-}" ]]; then
+    if ! effective="$(frp_parse_known_release_channel "$FRP_RELEASE_CHANNEL")"; then
+      echo "ERROR: invalid effective release channel for source ref $ref" >&2
+      return 1
+    fi
+    if [[ "$effective" != "$inferred" ]]; then
+      echo "ERROR: effective release channel conflicts with source ref $ref" >&2
+      return 1
+    fi
   fi
+
+  FRP_EXPECTED_RELEASE_CHANNEL="$inferred"
+  FRP_RELEASE_CHANNEL="$inferred"
+  export FRP_EXPECTED_RELEASE_CHANNEL FRP_RELEASE_CHANNEL
 }
 
 frp_infer_expected_source_ref_from_git_source() {
@@ -442,7 +460,7 @@ frp_infer_expected_source_ref_from_git_source() {
   # release-line tag so Zero-Touch URLs remain fetchable before the tag exists.
   local source="${1:-}" ref="" channel=""
   if [[ -n "${FRP_EXPECTED_SOURCE_REF:-}" ]]; then
-    frp_apply_expected_source_ref_context "$FRP_EXPECTED_SOURCE_REF"
+    frp_apply_expected_source_ref_context "$FRP_EXPECTED_SOURCE_REF" || return 1
     if [[ -z "${FRP_EXPECTED_SOURCE_HEAD:-}" && "${FRP_EXPECTED_SOURCE_REF}" =~ ^[0-9a-fA-F]{40}$ ]]; then
       FRP_EXPECTED_SOURCE_HEAD="$FRP_EXPECTED_SOURCE_REF"
       export FRP_EXPECTED_SOURCE_HEAD
@@ -472,7 +490,7 @@ frp_infer_expected_source_ref() {
   # Never invent a second provenance mechanism or guess from PROJECT_VERSION.
   local ref="" url=""
   if [[ -n "${FRP_EXPECTED_SOURCE_REF:-}" ]]; then
-    frp_apply_expected_source_ref_context "$FRP_EXPECTED_SOURCE_REF"
+    frp_apply_expected_source_ref_context "$FRP_EXPECTED_SOURCE_REF" || return 1
     if [[ -z "${FRP_EXPECTED_SOURCE_HEAD:-}" && "${FRP_EXPECTED_SOURCE_REF}" =~ ^[0-9a-fA-F]{40}$ ]]; then
       FRP_EXPECTED_SOURCE_HEAD="$FRP_EXPECTED_SOURCE_REF"
       export FRP_EXPECTED_SOURCE_HEAD
@@ -486,7 +504,7 @@ frp_infer_expected_source_ref() {
     if [[ -n "$url" ]] && ref="$(frp_source_ref_from_github_raw_url "$url")"; then
       FRP_EXPECTED_SOURCE_REF="$ref"
       export FRP_EXPECTED_SOURCE_REF
-      frp_apply_expected_source_ref_context "$ref"
+      frp_apply_expected_source_ref_context "$ref" || return 1
       if [[ "$ref" =~ ^[0-9a-fA-F]{40}$ ]]; then
         FRP_EXPECTED_SOURCE_HEAD="$ref"
         export FRP_EXPECTED_SOURCE_HEAD
