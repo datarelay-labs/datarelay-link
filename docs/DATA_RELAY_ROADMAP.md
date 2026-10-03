@@ -267,7 +267,9 @@ redacted audit query/export authorization model; a specialized role can be added
 Required:
 - generation/scale contract frozen;
 - Management Scalability Layer boundaries frozen;
-- Web authentication/RBAC model frozen;
+- Web authentication/RBAC model frozen, including local MFA, OIDC SSO, claim/group-to-role mapping, break-glass recovery, browser-session lifetime/idle timeout, and revocation;
+- Temporary Access data model and expiry semantics frozen, including clock-failure behavior and active-connection effect;
+- live-connection visibility granularity and emergency-cutoff semantics frozen per access plane, with official-FRP/no-fork limits explicit;
 - shared management-operation contract frozen;
 - 3.0 additive CLI/Bundle contract for Web operators, saved policy tests, and Job recovery frozen;
 - capability parity ledger format frozen;
@@ -366,6 +368,11 @@ Required:
 - local-only listen by default;
 - privileged local bootstrap for the first Web Admin;
 - authenticated browser sessions;
+- Web-admin strong authentication baseline:
+  - local recovery/break-glass Admin remains available;
+  - local password-backed operators require MFA;
+  - optional OIDC SSO for Web administrators with explicit claim/group-to-role mapping;
+  - OIDC/IdP outage must not remove the local CLI/recovery path;
 - Admin / Operator / Read Only roles;
 - Overview Dashboard and Attention Center;
 - Managed Host / Remote Service inventory;
@@ -379,7 +386,9 @@ Required:
 No state-changing Web operation is required to pass this phase.
 
 Acceptance must prove Web can be stopped/uninstalled while Core, CLI, enforcement,
-Agent connectivity, backup/restore, and recovery remain functional.
+Agent connectivity, backup/restore, and recovery remain functional. Authentication
+acceptance must also prove local MFA, OIDC SSO, role mapping, bounded browser-session
+lifetime/idle timeout, explicit session revocation, and break-glass recovery.
 
 ## 13. DRL3-3 — Guided Configuration and Full Management Parity
 
@@ -439,8 +448,21 @@ The graph is a policy/inventory visualization, not a general network topology ma
 When a Draft Workspace is open, visually distinguish current effective access from the
 proposed state.
 
+### Time-bounded Temporary Access
+Remote / Internet / AI Access rules or assignments may carry an explicit `expires_at`
+(or equivalent TTL input) where that policy family supports it.
+
+Rules:
+- expiry is server-authoritative and audited; browser timers are display only;
+- expired grants deny new authorization automatically without an operator cleanup step;
+- remaining validity is visible in CLI/Web and in preview/diff;
+- expiration uses the same Core evaluator as normal policy, not a second scheduler-only
+  policy path;
+- a large/ambiguous server-clock anomaly fails closed for temporary grants;
+- 3.0 does **not** add requester/approver/JIT workflow merely to support TTL.
+
 Acceptance requires CLI/Web policy-test parity and no discrepancy between graph/preview
-and the Core evaluator.
+and the Core evaluator, including before/at/after-expiry cases.
 
 ## 15. DRL3-5 — Diagnosis, Health, and Attention
 
@@ -469,6 +491,23 @@ Health design:
 - status aggregation is independent from configuration revisions;
 - flapping is coalesced into meaningful attention rather than alert storms.
 
+### Live Connections and Emergency Cutoff
+
+3.0 provides a bounded live-connection view rather than forcing operators to infer active
+use from historical audit alone.
+
+Required baseline:
+- current connection/session counts by Managed Host / Remote Service / access plane;
+- bounded recent/active metadata already observable by Data Relay Link;
+- explicit indication of whether visibility is aggregate or per-connection for that plane;
+- emergency cutoff at the smallest safe supported scope to stop new access immediately;
+- individual connection termination where the product owns that connection lifecycle.
+
+Official FRP remains unmodified. Remote Access must not claim per-connection termination
+if the pinned upstream exposes only aggregate proxy connection state. In that case 3.0
+must provide a truthful service/host-level cutoff using supported lifecycle controls and
+show the limitation explicitly.
+
 Attention Center must prioritize:
 
 - disconnected/stale Managed Hosts;
@@ -477,7 +516,10 @@ Attention Center must prioritize:
 - repeated meaningful policy denies;
 - version drift;
 - certificate/backup/update readiness;
-- failed/incomplete jobs.
+- failed/incomplete jobs;
+- temporary access nearing expiry when operator action is useful;
+- audit-spool/high-water degradation;
+- emergency cutoff activation.
 
 External Email/Slack/Webhook notification channels are **not required for 3.0 GA**.
 The internal event model must allow them to be added later without redesign.
@@ -557,12 +599,22 @@ CLI_FULL_CAPABILITY=PASS
 WEB_CAPABILITY_PARITY=PASS
 CLI_AUDIT_QUERY_EXPORT=PASS
 WEB_AUTH_RBAC=PASS
+WEB_LOCAL_MFA=PASS
+WEB_OIDC_SSO=PASS
+WEB_OIDC_ROLE_MAPPING=PASS
+WEB_BREAK_GLASS_RECOVERY=PASS
+WEB_SESSION_TIMEOUT_REVOCATION=PASS
 WEB_POLICY_EXPLAIN_PARITY=PASS
 DRAFT_WORKSPACE_ATOMICITY=PASS
 POLICY_REGRESSION_GATE=PASS
 BLAST_RADIUS_ACCURACY=PASS
 EFFECTIVE_ACCESS_GRAPH_ACCURACY=PASS
 CONNECTION_DIAGNOSIS=PASS
+TEMPORARY_ACCESS_EXPIRY=PASS
+TEMPORARY_ACCESS_CLOCK_FAIL_CLOSED=PASS
+LIVE_CONNECTION_VISIBILITY=PASS
+EMERGENCY_CUTOFF=PASS
+FRP_NO_FALSE_PER_CONNECTION_TERMINATION_CLAIM=PASS
 ATTENTION_DEDUPLICATION=PASS
 SAVED_VIEWS=PASS
 VERSION_DRIFT_ATTENTION=PASS
@@ -605,16 +657,19 @@ functional claims. Synthetic scale evidence never substitutes for real-user corr
 Management Scalability Layer
 Full CLI-management parity in Web
 Admin / Operator / Read Only
+Web-admin local MFA + optional OIDC SSO
 Dashboard + Attention Center
 Inventory + search/filter/Saved Views
 Guided enrollment
 Draft Workspace / Change Plan preview
 Policy Builder
 Policy Simulator / Decision Trace
+Time-bounded Temporary Access
 Saved Policy Regression Tests
 Blast Radius Preview
 Effective Access Graph
 Connection Diagnosis
+Live Connection Visibility + Emergency Cutoff
 Audit / Revision Explorer
 manual filtered NDJSON audit export
 bounded safe fleet jobs
@@ -624,8 +679,7 @@ bounded safe fleet jobs
 
 ```text
 external Email/Slack/Webhook notifications
-temporary rule TTL / temporary access
-external IdP/SSO for Web administrators
+SAML/LDAP/SCIM identity provisioning
 GitOps/locked-editor workflow
 continuous external audit/SIEM streaming
 scheduled recurring operations
@@ -656,7 +710,7 @@ hundreds/thousands-host fleet platform
 ```
 
 ## 21. Competitive-pattern decisions
-The 3.0 scope was re-reviewed against current official product patterns on 2026-10-02.
+The 3.0 scope was re-reviewed against current official product patterns on 2026-10-03.
 
 Adopt the **operator pattern**, not the competitor architecture:
 
@@ -678,6 +732,15 @@ Adopt the **operator pattern**, not the competitor architecture:
 | Boundary event sinks/redaction | Adopt schema-aware sensitive-field handling and bounded local sinks |
 | NetBird audit + traffic event separation | Adopt searchable management/access streams on existing SQLite authority |
 | ngrok audit/log export + payload-capable Traffic Inspector | Adopt exportability only; reject payload/body inspection or replay as a DRLink audit requirement |
+| Tailscale IdP/OIDC + MFA and admin-session controls | Promote Web-admin strong authentication; keep local recovery for isolated operation |
+| Cloudflare MFA + session duration/revocation | Promote MFA/session security; do not turn DRLink Remote Access into an identity proxy |
+| Twingate Admin MFA + Ephemeral Access | Promote Web-admin MFA and operator-set access expiry; skip JIT approval workflow |
+| Teleport SSO/MFA + expiring access | Promote OIDC/MFA and TTL; reject full identity-governance/access-request system |
+| Boundary OIDC + active-session view/cancel | Promote OIDC plus live-connection visibility/emergency cutoff, bounded by DRLink transport ownership |
+| Zscaler authentication/idle timeout policies | Promote bounded session/temporary-access lifetime semantics; avoid SWG/ZTNA platform expansion |
+| Tailscale/Twingate webhook notifications | Keep external channels later; 3.0 local Attention Center is sufficient for isolated networks |
+| OpenZiti OIDC/JWT identity + fine-grained management permissions | Reinforces OIDC/RBAC value; do not import distributed-controller/overlay complexity |
+| NordLayer SSO/MFA + posture controls | Promote SSO/MFA only; device-posture platform remains outside DRLink scope |
 
 Competitor functionality that does not strengthen Data Relay Link's core operator mission
 stays out of the GA scope.
