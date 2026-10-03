@@ -22,7 +22,7 @@ sys.path.insert(0, str(ROOT / "lib"))
 
 from drlink_ai_agent import MAX_STDOUT_BYTES, AgentLoop, execute_local  # noqa: E402
 from drlink_control_cli import dispatch  # noqa: E402
-from drlink_control_plane import ControlPlane, path_allowed  # noqa: E402
+from drlink_control_plane import ControlPlane, ControlPlaneError, path_allowed  # noqa: E402
 from drlink_mcp_bridge import MCP_PROTOCOL_VERSION, MCPBridge, make_handler  # noqa: E402
 from drlink_mcp_bridge import ThreadingHTTPServer  # noqa: E402
 import drlink_v24 as v24  # noqa: E402
@@ -364,7 +364,7 @@ class ControlPlaneAITests(unittest.TestCase):
         )
         self.assertIn("DENY", prod)
 
-    def test_ai3_explicit_deny_order(self):
+    def test_ai3_whitelist_only_and_no_policy_deny(self):
         self.plane.set_ai_principal("cursor-dev", enabled=True)
         self._verify_ai_identity("cursor-dev")
         self.cli(
@@ -374,11 +374,10 @@ class ControlPlaneAITests(unittest.TestCase):
             "permissions",
             "command-exec",
         )
-        # WHITELIST allow proves the permission can be granted on this destination.
         self.cli(
             "set",
             "ai-access",
-            "support-read",
+            "support-exec",
             "mode",
             "whitelist",
             "source",
@@ -400,40 +399,9 @@ class ControlPlaneAITests(unittest.TestCase):
             "command-exec",
         )
         self.assertIn("ALLOW", allow)
-        self.assertIn("support-read", allow)
-        # Reset and switch to BLACKLIST so a matching rule is an explicit DENY.
+
         self.cli("unset", "ai-access", "policy")
-        self.cli(
-            "set",
-            "ai-access",
-            "deny-prod-exec",
-            "mode",
-            "blacklist",
-            "source",
-            "cursor-dev",
-            "destination",
-            "Expernet-DP1",
-            "permission",
-            "exec-only",
-            "enabled",
-        )
-        self.cli(
-            "set",
-            "ai-access",
-            "zzz-later-deny",
-            "source",
-            "cursor-dev",
-            "destination",
-            "Expernet-DP1",
-            "permission",
-            "exec-only",
-            "enabled",
-        )
-        listed = self.cli("show", "ai-access")
-        deny_pos = listed.find("deny-prod-exec")
-        later_pos = listed.find("zzz-later-deny")
-        self.assertLess(deny_pos, later_pos)
-        out = self.cli(
+        denied = self.cli(
             "test",
             "ai-access",
             "source",
@@ -443,22 +411,20 @@ class ControlPlaneAITests(unittest.TestCase):
             "permission",
             "command-exec",
         )
-        self.assertIn("DENY", out)
-        self.assertIn("deny-prod-exec", out)
-        # Unmatched blacklist permission remains ALLOW under current v2.4 model.
-        # Use a non-file permission so the check is not conflated with path-scope
-        # fail-closed (file ops DENY without path / without canonical scopes).
-        other = self.cli(
-            "test",
-            "ai-access",
-            "source",
-            "cursor-dev",
-            "destination",
-            "Expernet-DP1",
-            "permission",
-            "host-info",
-        )
-        self.assertIn("ALLOW", other)
+        self.assertIn("DENY", denied)
+
+        with self.assertRaises(ControlPlaneError) as ctx:
+            v24.set_ai_access_rule(
+                self.plane,
+                "deny-prod-exec",
+                mode="blacklist",
+                source="cursor-dev",
+                destination="Expernet-DP1",
+                permission="exec-only",
+                enabled=True,
+                oneshot=True,
+            )
+        self.assertIn("WHITELIST", str(ctx.exception))
 
     def test_path_traversal_and_symlink(self):
         self.assertFalse(path_allowed("/var/log/vendor/../../etc/shadow", ["/var/log/vendor/**"]))

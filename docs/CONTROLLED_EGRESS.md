@@ -2,7 +2,7 @@
 
 > **Document role:** Protocol and security behavior for the Internet Access plane
 > **Status:** v2.4.0 target architecture; implementation qualification pending
-> **Policy model:** BLACKLIST / WHITELIST Internet Access policy using the shared v2.4 control plane
+> **Policy model:** deny-by-default WHITELIST Internet Access policy using the shared v2.4 control plane
 > **Public SSOT:** `PRODUCT_MASTER.md` + `DATA_RELAY_LINK_CLI_AI_MASTER_v2.4_FINAL.md`
 
 ## 1. Purpose
@@ -69,19 +69,19 @@ v2.4.0 target authority:
 /var/lib/drlink/drlink.db
 ```
 
-Internet Access uses Network Objects/Groups, Service Objects/Groups, and the shared BLACKLIST / WHITELIST policy model.
+Internet Access uses Network Objects/Groups and Service Objects/Groups with a dedicated fail-closed WHITELIST policy contract.
 
-Example semantics:
+Semantics:
 
 ```text
-No Policy / No Rules -> effective ALLOW
-BLACKLIST + matching enabled Rule -> DENY
-BLACKLIST + no match -> ALLOW
+No Policy / No Rules -> DENY
 WHITELIST + matching enabled Rule -> ALLOW
 WHITELIST + no match -> DENY
+Enforcement DISABLED -> DENY ALL
+Unsupported/invalid mode -> DENY
 ```
 
-Rules are not ordered and do not carry per-rule ALLOW/DENY actions. Enforcement can be disabled without deleting the configured Mode or Rules.
+BLACKLIST is not a supported Internet Access mode in v2.4. Rules are not ordered and do not carry per-rule ALLOW/DENY actions. Disabling enforcement preserves the configured Mode/Rules but shuts the plane fail-closed instead of opening it.
 
 ## 4. Destination types
 
@@ -126,7 +126,7 @@ Internet Access Source accepts context-valid Host/Network Objects and compatible
 
 The base agentless HTTP/HTTPS proxy observes network source identity. Per-host cryptographic identity is not invented where the protected application is simply using a standard proxy.
 
-A Managed Host source selector is therefore address-backed, not cryptographic. It matches only when the proxy peer source IP equals an eligible active address reported for that Managed Host. If a BLACKLIST rule otherwise matches destination and service but this Managed Host source identity cannot be proven, the request is denied fail-closed instead of falling through to BLACKLIST unmatched/ALLOW. NAT may make a selective Managed Host selector ambiguous; use an IP/CIDR selector for the proxy-visible source when that topology must be represented explicitly.
+A Managed Host source selector is therefore address-backed, not cryptographic. It matches only when the proxy peer source IP equals an eligible active address reported for that Managed Host. Because Internet Access is WHITELIST-only, an unprovable or NAT-translated Managed Host source does not match and is denied. Use an IP/CIDR selector for the proxy-visible source when that topology must be represented explicitly.
 
 ## 6. HTTP
 
@@ -428,8 +428,8 @@ DNS rebinding-style attempt                 DENY
 IP literal bypass                           DENY
 wildcard boundary bypass                    DENY
 malformed CONNECT                           DENY
-BLACKLIST / WHITELIST semantics             PASS
-Enforcement disable/enable                   PASS
+WHITELIST-only / BLACKLIST rejected          PASS
+Enforcement disabled = DENY ALL              PASS
 object-change impact                        PASS
 restart                                     policy preserved
 backup/restore                              policy preserved

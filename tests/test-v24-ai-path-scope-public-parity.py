@@ -375,12 +375,12 @@ configurationBundle:
         self.assertEqual(self._auth("read_file", operand=out_path)["action"], "DENY")
 
     def test_wizard_binds_paths_for_file_permission(self):
-        # Choices: mode whitelist, identity bot, dest ubuntu-prod,
-        # permission read-only (info-only=1, read-only=2), paths, enabled, apply.
+        # AI Access is WHITELIST-only; wizard does not ask for policy mode.
+        # Choices: identity bot, dest ubuntu-prod, permission read-only
+        # (info-only=1, read-only=2), paths, enabled, apply.
         set_wizard_io(
             ScriptedIO(
                 [
-                    "2",
                     "1",
                     "1",
                     "2",

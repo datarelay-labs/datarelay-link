@@ -146,7 +146,8 @@ class AccessPolicyDispatch(unittest.TestCase):
             "enabled",
         )
         self.assertEqual(rc, 1)
-        self.assertIn("mode blacklist|whitelist", err)
+        self.assertIn("mode whitelist", err)
+        self.assertNotIn("blacklist|whitelist", err)
         self.assertIsNone(self.plane._get_rule("internet", "first-rule"))
         self.assertEqual(self.plane.current_revision(), rev)
 

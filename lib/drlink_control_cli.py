@@ -415,15 +415,18 @@ def _show_internet_status(plane: ControlPlane) -> int:
     enabled = sum(1 for rule in rules if rule.get("enabled"))
     mode = pol.get("mode")
     enforcement = str(pol.get("enforcement") or "enabled")
-    if mode is None or enforcement.lower() == "disabled":
-        default = "ALLOW ALL"
-        readiness = "NOT ENFORCING"
+    if mode is None:
+        default = "DENY ALL"
+        readiness = "FAIL CLOSED (NO POLICY)"
+    elif enforcement.lower() == "disabled":
+        default = "DENY ALL"
+        readiness = "DISABLED (DENY ALL)"
     elif str(mode).lower() == "whitelist":
         default = "DENY"
         readiness = "READY"
     else:
-        default = "ALLOW"
-        readiness = "READY"
+        default = "DENY ALL"
+        readiness = "FAIL CLOSED (UNSUPPORTED MODE)"
     cfg = {}
     root = getattr(plane, "root", None) or ""
     cfg_path = Path(str(root)) / "etc/drlink/config.json" if root else Path("/etc/drlink/config.json")

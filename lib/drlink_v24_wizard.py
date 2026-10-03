@@ -852,8 +852,12 @@ def run_access_rule_wizard(plane: ControlPlane, family: str, name: str) -> int:
     try:
         while True:
             if pol["mode"] is None and session.policy_mode is None:
-                mode = _ask_choice(io, "Policy Mode", ["blacklist", "whitelist"])
-                session.policy_mode = mode
+                if plane_key == "internet":
+                    mode = "whitelist"
+                    session.policy_mode = mode
+                else:
+                    mode = _ask_choice(io, "Policy Mode", ["blacklist", "whitelist"])
+                    session.policy_mode = mode
             else:
                 mode = session.policy_mode or pol["mode"]
             source = _select_network_selector(io, plane, session, "Source")
@@ -929,7 +933,7 @@ def run_ai_access_wizard(plane: ControlPlane, name: str) -> int:
     try:
         while True:
             if pol["mode"] is None and session.policy_mode is None:
-                mode = _ask_choice(io, "Policy Mode", ["blacklist", "whitelist"])
+                mode = "whitelist"
                 session.policy_mode = mode
             else:
                 mode = session.policy_mode or pol["mode"]

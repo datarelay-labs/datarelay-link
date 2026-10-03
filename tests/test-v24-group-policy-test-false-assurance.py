@@ -286,8 +286,8 @@ class GroupPolicyTestFalseAssurance(unittest.TestCase):
         v24.set_access_rule(
             self.plane,
             "internet",
-            "block-a",
-            mode="blacklist",
+            "allow-a",
+            mode="whitelist",
             source="src-a",
             destination="pub-a",
             service="https",
@@ -304,8 +304,8 @@ class GroupPolicyTestFalseAssurance(unittest.TestCase):
         self.assertEqual(group["result"], "DENY")
         self.assertTrue(group.get("mixed"))
         by_src = {m["source"]: m["result"] for m in group["member_results"]}
-        self.assertEqual(by_src["src-a"], "DENY")
-        self.assertEqual(by_src["src-b"], "ALLOW")
+        self.assertEqual(by_src["src-a"], "ALLOW")
+        self.assertEqual(by_src["src-b"], "DENY")
 
         dest = v24.evaluate_selector_policy(
             self.plane,
@@ -314,9 +314,9 @@ class GroupPolicyTestFalseAssurance(unittest.TestCase):
             destination_name="pubs",
             service_name="https",
         )
-        self.assertEqual(dest["result"], "ALLOW")
+        self.assertEqual(dest["result"], "DENY")
         self.assertFalse(dest.get("mixed"))
-        self.assertTrue(all(m["result"] == "ALLOW" for m in dest["member_results"]))
+        self.assertTrue(all(m["result"] == "DENY" for m in dest["member_results"]))
 
         single = v24.evaluate_selector_policy(
             self.plane,
@@ -325,7 +325,7 @@ class GroupPolicyTestFalseAssurance(unittest.TestCase):
             destination_name="pub-a",
             service_name="https",
         )
-        self.assertEqual(single["result"], "ALLOW")
+        self.assertEqual(single["result"], "DENY")
         self.assertNotIn("member_results", single)
 
         # Destination Group mixed: allow only pub-a under whitelist.

@@ -54,7 +54,94 @@ class V24MasterScenarios(unittest.TestCase):
         self.assertEqual(v24.effective_policy_result(None, "enabled", False), "ALLOW")
         out = self.plane.format_status()
         self.assertIn("Role: DRLink Server", out)
-        self.assertIn("No access restrictions are currently configured", out)
+        self.assertIn("No access policies are currently configured", out)
+        self.assertIn("Internet Access default: DENY ALL", out)
+        self.assertIn("AI Access default: DENY ALL", out)
+
+
+    def test_P0_internet_and_ai_fail_closed_without_policy(self):
+        self.assertEqual(
+            v24.effective_policy_result(None, "enabled", False, plane="internet"),
+            "DENY",
+        )
+        self.assertEqual(
+            v24.effective_policy_result(None, "enabled", False, plane="ai"),
+            "DENY",
+        )
+        self.assertEqual(
+            v24.effective_policy_result("bogus", "enabled", True, plane="remote"),
+            "DENY",
+        )
+
+        self.plane.set_ai_principal("chatgpt", enabled=True)
+        self.plane.conn.execute(
+            "UPDATE ai_principals SET credential_status = 'verified' WHERE name = 'chatgpt'"
+        )
+        v24.set_network_object(
+            self.plane, "managed-a", type="ip", value="198.51.100.10", oneshot=True
+        )
+        ev = v24.evaluate_ai_access_v24(
+            self.plane, identity="chatgpt", destination="managed-a", permission="command-exec"
+        )
+        self.assertEqual(ev["result"], "DENY")
+        self.assertEqual(ev["auth"], "VERIFIED")
+
+    def test_P0_internet_and_ai_reject_blacklist(self):
+        for family in ("internet", "ai"):
+            with self.subTest(family=family):
+                with self.assertRaises(Exception) as ctx:
+                    v24.ensure_policy_mode(self.plane, family, "blacklist", oneshot=True)
+                self.assertIn("WHITELIST", str(ctx.exception))
+
+    def test_P0_stale_restricted_blacklist_state_fails_closed(self):
+        for family in ("internet", "ai"):
+            with self.subTest(family=family):
+                self.plane.conn.execute(
+                    "UPDATE access_policies SET mode = 'blacklist', enforcement = 'enabled' WHERE plane = ?",
+                    (family,),
+                )
+                self.plane.conn.commit()
+                self.assertEqual(
+                    v24.effective_policy_result("blacklist", "enabled", False, plane=family),
+                    "DENY",
+                )
+                with self.assertRaises(Exception) as ctx:
+                    v24.set_policy_enforcement(self.plane, family, False, confirm=True)
+                self.assertIn("fail-closed", str(ctx.exception).lower())
+                v24.reset_access_policy(self.plane, family, confirm=True)
+                self.assertIsNone(v24.get_access_policy(self.plane, family)["mode"])
+
+    def test_P0_internet_disabled_means_deny_all(self):
+        v24.set_network_object(self.plane, "src", type="ip", value="203.0.113.10", oneshot=True)
+        v24.set_network_object(self.plane, "dst", type="fqdn", value="example.com", oneshot=True)
+        v24.set_access_rule(
+            self.plane,
+            "internet",
+            "allow-example",
+            mode="whitelist",
+            source="src",
+            destination="dst",
+            service="https",
+            enabled=True,
+            oneshot=True,
+        )
+        allowed = v24.evaluate_selector_policy(
+            self.plane,
+            "internet",
+            source_name="src",
+            destination_name="dst",
+            service_name="https",
+        )
+        self.assertEqual(allowed["result"], "ALLOW")
+        v24.set_policy_enforcement(self.plane, "internet", False, confirm=True)
+        denied = v24.evaluate_selector_policy(
+            self.plane,
+            "internet",
+            source_name="src",
+            destination_name="dst",
+            service_name="https",
+        )
+        self.assertEqual(denied["result"], "DENY")
 
     def test_B_C_blacklist_whitelist(self):
         v24.set_network_object(self.plane, "partner-office", type="ip", value="203.0.113.50", oneshot=True)
@@ -424,11 +511,12 @@ configurationBundle:
         service: https
         enabled: true
 """
-        # conflicting mode should fail before mutation of internetAccess — reset first
+        # Internet Access is deny-by-default and WHITELIST-only. Bundle BLACKLIST must fail before mutation.
         v24.reset_access_policy(self.plane, "internet", confirm=True)
-        plan3 = prepare_v24_plan(self.plane, raw2, role="server")
-        apply_v24_plan(self.plane, plan3, confirm=True)
-        self.assertEqual(v24.get_access_policy(self.plane, "internet")["mode"], "blacklist")
+        with self.assertRaises(Exception) as ctx3:
+            prepare_v24_plan(self.plane, raw2, role="server")
+        self.assertIn("whitelist", str(ctx3.exception).lower())
+        self.assertIsNone(v24.get_access_policy(self.plane, "internet")["mode"])
 
     def test_AN_dependency_parity_validates_group_members_before_apply(self):
         rev_before = self.plane.current_revision()
@@ -797,7 +885,7 @@ configurationBundle:
         ev3 = v24.evaluate_ai_access_v24(
             self.plane, identity="claude", destination="ubuntu-prod", permission="command-exec"
         )
-        self.assertEqual(ev3["result"], "ALLOW")
+        self.assertEqual(ev3["result"], "DENY")
         self.assertEqual(ev3["auth"], "VERIFIED")
 
 

@@ -109,21 +109,17 @@ set ai-access claude-prod mode whitelist source claude destination production-se
 
 ## 5. Policy semantics
 
-AI Access uses the same public policy mode model:
+AI Access is explicitly deny-by-default and **WHITELIST-only**.
 
 ```text
-BLACKLIST
-→ matching enabled Rule DENY
-→ otherwise ALLOW
-
-WHITELIST
-→ matching enabled Rule ALLOW
-→ otherwise DENY
+Authenticated AI Identity + matching enabled Rule → ALLOW
+No Policy / No Rules                              → DENY
+No matching Rule                                  → DENY
+Enforcement DISABLED                              → DENY ALL
+Unsupported/invalid mode                          → DENY
 ```
 
-Rules are not ordered and do not carry per-rule ALLOW/DENY actions.
-
-AI authentication remains mandatory even when AI Access enforcement is disabled.
+Rules are not ordered and do not carry per-rule ALLOW/DENY actions. Authentication is necessary but never sufficient authorization. Disabling AI Access enforcement preserves configuration but shuts privileged AI/MCP operations fail-closed.
 
 ## 6. Test and audit
 

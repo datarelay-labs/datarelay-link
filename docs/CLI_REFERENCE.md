@@ -335,7 +335,7 @@ Registered Managed Hosts appear in `show network-objects` with type `Managed Hos
 
 Managed Host lifecycle is never performed through `set/unset network-object`.
 
-Internet Access source may use a Managed Host. Because the egress proxy is agentless, that selector is proven only when the observed proxy peer IP matches an eligible active address for the Managed Host. A BLACKLIST request whose destination/service match such a rule but whose Managed Host source identity cannot be proven is denied fail-closed rather than treated as unmatched/ALLOW. Behind NAT, prefer an IP/CIDR selector for the proxy-visible source. Internet Access destination may not use a Managed Host, directly or through a Network Group.
+Internet Access source may use a Managed Host. Because the egress proxy is agentless, that selector is proven only when the observed proxy peer IP matches an eligible active address for the Managed Host. Internet Access is WHITELIST-only, so an unprovable or NAT-translated Managed Host source does not match and is denied. Behind NAT, prefer an IP/CIDR selector for the proxy-visible source. Internet Access destination may not use a Managed Host, directly or through a Network Group.
 
 ## 10. Agent Host commands
 
@@ -503,4 +503,4 @@ per-rule ALLOW/DENY action
 implicit default-DENY-only policy model
 ```
 
-Use the Network/Service/Permission Object model, AI Identity, Remote Service, and BLACKLIST/WHITELIST semantics defined by the Master.
+Use the Network/Service/Permission Object model, AI Identity, Remote Service, and plane-specific policy semantics defined by the Master: Remote Access supports BLACKLIST/WHITELIST; Internet Access and AI Access are WHITELIST-only and deny-by-default.

@@ -33,11 +33,9 @@ AI Identity
 
 Remote Service
 
-Remote Access
-Internet Access
-AI Access
-
-BLACKLIST / WHITELIST
+Remote Access      — BLACKLIST / WHITELIST
+Internet Access    — WHITELIST only
+AI Access          — WHITELIST only
 ```
 
 Connectivity and authorization are separate:
@@ -229,41 +227,25 @@ Human Wizard, AI one-shot CLI, and ConfigurationBundle converge on the same Chan
 
 ## 9. Access Policy UX
 
-Each policy family has:
+Policy semantics are plane-specific:
 
 ```text
-Mode:
-  BLACKLIST
-  WHITELIST
+Remote Access
+  Mode: BLACKLIST | WHITELIST
+  No Policy: ALLOW
+  Enforcement DISABLED: ALLOW ALL
 
-Enforcement:
-  ENABLED
-  DISABLED
+Internet Access
+  Mode: WHITELIST only
+  No Policy / no match / disabled: DENY
+
+AI Access
+  Mode: WHITELIST only
+  No Policy / no match / disabled: DENY
+  Authentication alone never grants authorization
 ```
 
-Initial state:
-
-```text
-No Policy
-No Rules
-Effective access = ALLOW
-```
-
-BLACKLIST:
-
-```text
-enabled Rule matches → DENY
-no enabled Rule match → ALLOW
-```
-
-WHITELIST:
-
-```text
-enabled Rule matches → ALLOW
-no enabled Rule match → DENY
-```
-
-There is no rule ordering and no per-rule ALLOW/DENY action.
+There is no rule ordering and no per-rule ALLOW/DENY action. Unsupported modes on Internet Access or AI Access fail closed.
 
 Deleting the last Rule preserves Policy Mode. Policy Reset is separate:
 
@@ -273,7 +255,7 @@ unset internet-access policy
 unset ai-access policy
 ```
 
-Policy Reset returns the area to `No Policy / No Rules / ALLOW`.
+Policy Reset returns Remote Access to `No Policy / No Rules / ALLOW`, but Internet Access and AI Access to `No Policy / No Rules / DENY`.
 
 ## 10. Remote Service UX
 
@@ -384,7 +366,9 @@ REMOTE_SERVICE_UDP=NO
 POLICY_MODES=BLACKLIST|WHITELIST
 RULE_ORDERING=NO
 RULE_ACTION_FIELD=NO
-INITIAL_NO_POLICY_EFFECTIVE=ALLOW
+REMOTE_NO_POLICY_EFFECTIVE=ALLOW
+INTERNET_NO_POLICY_EFFECTIVE=DENY
+AI_NO_POLICY_EFFECTIVE=DENY
 WIZARD_ATOMICITY=YES
 AI_ONE_SHOT_COMPLETE_RESOURCE=YES
 BUNDLE_ATOMICITY=CURRENT_CLI_CONTEXT
@@ -397,7 +381,7 @@ Regression tests must protect:
 - role-aware Server/Agent roots;
 - canonical nouns and help/menu discovery;
 - Guided Create/Edit and Cancel atomicity;
-- BLACKLIST/WHITELIST semantics;
+- plane-specific policy semantics: Remote BLACKLIST/WHITELIST; Internet/AI WHITELIST-only;
 - policy disable/enable/reset;
 - Managed Host Internet source and destination validation;
 - Agent-local Remote Service ownership;

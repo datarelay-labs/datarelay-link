@@ -48,7 +48,7 @@ CONTROL_DB_SCHEMA_VERSION=
 - [ ] Managed Host address inventory implemented.
 - [ ] Agent-owned Remote Service model implemented.
 - [ ] Remote Access BLACKLIST / WHITELIST policy implemented.
-- [ ] Internet Access BLACKLIST / WHITELIST policy implemented.
+- [ ] Internet Access is WHITELIST-only and deny-by-default; BLACKLIST is rejected/fails closed.
 - [ ] AI Access/MCP included and implemented (`MCP_INCLUDED_IN_V2_4_0=YES`).
 - [ ] Real ChatGPT owner/UI authentication on a currently supported full-MCP plan/surface is a mandatory v2.4.0 release gate.
 - [ ] ConfigurationBundle included in the v2.4.0 stable target.
@@ -111,20 +111,23 @@ DB_CORRUPTION_FAIL_CLOSED=
 
 ## 7. Remote Access policy
 
-- [ ] Initial state is No Policy / No Rules / effective ALLOW.
+- [ ] Remote Access initial state is No Policy / No Rules / effective ALLOW.
+- [ ] Internet Access initial state is No Policy / No Rules / effective DENY.
+- [ ] AI Access initial state is No Policy / No Rules / effective DENY after authentication.
 - [ ] BLACKLIST: matching enabled Rule DENY; no match ALLOW.
 - [ ] WHITELIST: matching enabled Rule ALLOW; no match DENY.
 - [ ] Rules have no ordering and no per-rule ALLOW/DENY action.
-- [ ] Policy Reset removes Mode and Rules and restores initial ALLOW.
-- [ ] Enforcement DISABLED preserves Mode/Rules and makes policy effective ALLOW ALL.
+- [ ] Remote Access Policy Reset removes Mode/Rules and restores ALLOW; Internet Access / AI Access Policy Reset removes Mode/Rules and restores DENY ALL.
+- [ ] Remote Access Enforcement DISABLED preserves Mode/Rules and makes policy effective ALLOW ALL.
+- [ ] Internet Access / AI Access Enforcement DISABLED preserves Mode/Rules but is effective DENY ALL.
 - [ ] Effective access also requires an enabled/reachable Remote Service.
 - [ ] Policy changes apply immediately to new connections.
 - [ ] Established connections are not implicitly terminated by policy edit.
 
 ## 8. Internet Access policy/security
 
-- [ ] Same BLACKLIST / WHITELIST / Enforcement semantics proven independently from Remote Access.
-- [ ] Internet Access source may use Managed Host only with address-backed runtime identity; BLACKLIST source ambiguity fails closed under NAT/source mismatch; destination rejects Managed Host directly or through a Group containing one.
+- [ ] Internet Access WHITELIST-only / fail-closed semantics are proven independently from Remote Access.
+- [ ] Internet Access source may use Managed Host only with address-backed runtime identity; source ambiguity/NAT mismatch fails closed under WHITELIST; destination rejects Managed Host directly or through a Group containing one.
 - [ ] FQDN destinations.
 - [ ] Explicit public Host/CIDR destinations where supported.
 - [ ] server-side DNS.
@@ -209,7 +212,7 @@ DB_CORRUPTION_FAIL_CLOSED=
 - [ ] Credential revoke/rotation works.
 - [ ] Target = Network Object / Network Group.
 - [ ] Permission = Permission Object / Permission Group.
-- [ ] AI Access uses BLACKLIST / WHITELIST semantics; authentication remains mandatory.
+- [ ] AI Access is WHITELIST-only and deny-by-default; authentication remains mandatory but never grants authorization by itself.
 - [ ] AI Rules have no ordering and no per-rule ALLOW/DENY action.
 - [ ] `exec` enforcement.
 - [ ] `read_file` enforcement.
@@ -322,7 +325,7 @@ CHATGPT_OWNER_UI_ALLOW_DENY=
 - [ ] Managed Host / Network Object terminology consistent.
 - [ ] Remote Service terminology consistent.
 - [ ] Service Object Wizard presets are clear and are not exposed as standalone public resources.
-- [ ] BLACKLIST / WHITELIST Mode and Enforcement state are visible.
+- [ ] Plane-appropriate Mode and Enforcement state are visible; Internet/AI never display fail-open defaults.
 - [ ] `test` explains effective policy outcome without ordered-rule semantics.
 - [ ] Tab context filters invalid Object types.
 - [ ] broadening confirmation visible.

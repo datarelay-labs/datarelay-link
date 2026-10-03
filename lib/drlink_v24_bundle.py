@@ -136,13 +136,18 @@ def _parse_enforcement(value: Any) -> str:
     raise AssertionError("unreachable")
 
 
-def _parse_mode(value: Any) -> Optional[str]:
+def _parse_mode(value: Any, *, family: Optional[str] = None) -> Optional[str]:
     if value is None:
         return None
     if not isinstance(value, str):
         _bundle_error("mode must be 'blacklist' or 'whitelist'.")
     token = value.strip().lower()
     if token in ("blacklist", "whitelist"):
+        if family in ("internet", "ai") and token == "blacklist":
+            _bundle_error(
+                "%s Access is deny-by-default and supports mode 'whitelist' only."
+                % ("Internet" if family == "internet" else "AI")
+            )
         return token
     _bundle_error("Invalid mode '%s'.\n\nAccepted values: blacklist, whitelist." % value)
     raise AssertionError("unreachable")
@@ -279,7 +284,7 @@ def _validate_access_rule(item: dict, *, family: str) -> dict:
     if "enabled" in item:
         out["enabled"] = _parse_bool_field(item.get("enabled"))
     if item.get("mode") is not None:
-        out["mode"] = _parse_mode(item.get("mode"))
+        out["mode"] = _parse_mode(item.get("mode"), family=family)
     if family == "ai":
         perm = item.get("permission")
         if not isinstance(perm, str) or not perm.strip():
@@ -323,7 +328,7 @@ def _validate_access_section(section: Any, *, key: str, family: str) -> dict:
         return {"state": "absent"}
     out: dict[str, Any] = {}
     if "mode" in section:
-        out["mode"] = _parse_mode(section.get("mode"))
+        out["mode"] = _parse_mode(section.get("mode"), family=family)
     if "enforcement" in section:
         out["enforcement"] = _parse_enforcement(section.get("enforcement"))
     if "rules" in section:
@@ -496,18 +501,33 @@ def _security_impact_for_plan(plane: ControlPlane, context: str, body: dict, cha
             continue
         pol = v24.get_access_policy(plane, family)
         if section.get("state") == "absent" and pol.get("mode") is not None:
+            effective = "DENY ALL" if family in ("internet", "ai") else "ALLOW"
             impact.append(
-                "WARNING: This change resets %s.\nBefore: mode=%s enforcement=%s\nAfter: mode removed / rules removed / Effective: ALLOW"
-                % (title, pol.get("mode"), pol.get("enforcement"))
+                "WARNING: This change resets %s.\nBefore: mode=%s enforcement=%s\nAfter: mode removed / rules removed / Effective: %s"
+                % (title, pol.get("mode"), pol.get("enforcement"), effective)
             )
             continue
         want_enf = section.get("enforcement")
-        if want_enf == "disabled" and str(pol.get("enforcement")).lower() == "enabled":
-            blocking = v24._count_blocking_rules(plane, family if family != "ai" else "ai")
-            impact.append(
-                "WARNING: This change broadens %s.\nBefore:\n  %s\n  Enforcement: ENABLED\n  Effective blocking rules: %s\nAfter:\n  %s\n  Enforcement: DISABLED\n  Effective result: ALLOW ALL"
-                % (title, str(pol.get("mode") or "-").upper(), blocking, str(section.get("mode") or pol.get("mode") or "-").upper())
-            )
+        current_enf = str(pol.get("enforcement") or "enabled").lower()
+        if want_enf == "disabled" and current_enf == "enabled":
+            count = v24._count_blocking_rules(plane, family if family != "ai" else "ai")
+            if family in ("internet", "ai"):
+                impact.append(
+                    "WARNING: This change disables %s fail-closed.\nBefore:\n  %s\n  Enforcement: ENABLED\n  Effective enabled rules: %s\nAfter:\n  %s\n  Enforcement: DISABLED\n  Effective result: DENY ALL"
+                    % (title, str(pol.get("mode") or "-").upper(), count, str(section.get("mode") or pol.get("mode") or "-").upper())
+                )
+            else:
+                impact.append(
+                    "WARNING: This change broadens %s.\nBefore:\n  %s\n  Enforcement: ENABLED\n  Effective blocking rules: %s\nAfter:\n  %s\n  Enforcement: DISABLED\n  Effective result: ALLOW ALL"
+                    % (title, str(pol.get("mode") or "-").upper(), count, str(section.get("mode") or pol.get("mode") or "-").upper())
+                )
+        elif want_enf == "enabled" and current_enf == "disabled" and family in ("internet", "ai"):
+            count = v24._count_blocking_rules(plane, family)
+            if str(section.get("mode") or pol.get("mode") or "").lower() == "whitelist" and count:
+                impact.append(
+                    "WARNING: This change may broaden %s by re-enabling %s existing WHITELIST Rule(s)."
+                    % (title, count)
+                )
         # last blacklist rule deletion / disable
         if pol.get("mode") == "blacklist" and str(pol.get("enforcement")).lower() == "enabled":
             enabled_before = v24._count_blocking_rules(plane, family if family != "ai" else "ai")

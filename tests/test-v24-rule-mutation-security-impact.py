@@ -314,33 +314,34 @@ class RuleMutationSecurityImpact(unittest.TestCase):
         view = self.plane._rule_view(self.plane._get_rule("remote", "deny-grp"))
         self.assertEqual((view.get("sources") or [None])[0].lower(), "src1")
 
-    def test_internet_blacklist_service_selector_parity(self):
+    def test_internet_blacklist_is_rejected_without_mutation(self):
         self._seed_internet_objects()
         v24.set_service_group(
             self.plane, "web-svc", members=["http", "https"], oneshot=True
         )
-        v24.set_access_rule(
-            self.plane,
-            "internet",
-            "deny-web",
-            mode="blacklist",
-            source="lan-grp",
-            destination="web",
-            service="web-svc",
-            enabled=True,
-            oneshot=True,
-        )
-        os.environ.pop("DRLINK_CONFIRM", None)
-        with self.assertRaises(ConfirmationRequired) as ctx:
+        rev = self.plane.current_revision()
+        with self.assertRaises(Exception) as ctx:
             v24.set_access_rule(
-                self.plane, "internet", "deny-web", service="https", oneshot=True
+                self.plane,
+                "internet",
+                "deny-web",
+                mode="blacklist",
+                source="lan-grp",
+                destination="web",
+                service="web-svc",
+                enabled=True,
+                oneshot=True,
             )
-        self.assertTrue(ctx.exception.impact.get("access_broadened"))
-        plan = prepare_v24_plan(
-            self.plane,
-            """configurationBundle:
+        self.assertIn("WHITELIST", str(ctx.exception))
+        self.assertEqual(self.plane.current_revision(), rev)
+        self.assertIsNone(self.plane._get_rule("internet", "deny-web"))
+        with self.assertRaises(Exception) as ctx2:
+            prepare_v24_plan(
+                self.plane,
+                """configurationBundle:
   context: server
   internetAccess:
+    mode: blacklist
     rules:
       - name: deny-web
         source: lan-grp
@@ -348,38 +349,40 @@ class RuleMutationSecurityImpact(unittest.TestCase):
         service: https
         enabled: true
 """,
-        )
-        self.assertTrue(any("broaden" in t.lower() for t in plan.security_impact))
+            )
+        self.assertIn("whitelist", str(ctx2.exception).lower())
+        self.assertEqual(self.plane.current_revision(), rev)
 
-    def test_ai_blacklist_permission_and_path_narrowing(self):
+    def test_ai_blacklist_is_rejected_without_mutation(self):
         self._seed_ai()
-        v24.set_ai_access_rule(
-            self.plane,
-            "deny-ops",
-            mode="blacklist",
-            source="bot",
-            destination="ubuntu-prod",
-            permission="ops",
-            paths=["/etc", "/var"],
-            enabled=True,
-            oneshot=True,
+        rev = self.plane.current_revision()
+        with self.assertRaises(Exception) as ctx:
+            v24.set_ai_access_rule(
+                self.plane,
+                "deny-ops",
+                mode="blacklist",
+                source="bot",
+                destination="ubuntu-prod",
+                permission="ops",
+                paths=["/etc", "/var"],
+                enabled=True,
+                oneshot=True,
+            )
+        self.assertIn("WHITELIST", str(ctx.exception))
+        self.assertEqual(self.plane.current_revision(), rev)
+        self.assertIsNone(
+            self.plane.conn.execute(
+                "SELECT 1 FROM ai_policy_rules WHERE name = ? COLLATE NOCASE",
+                ("deny-ops",),
+            ).fetchone()
         )
-        os.environ.pop("DRLINK_CONFIRM", None)
-        with self.assertRaises(ConfirmationRequired) as ctx:
-            v24.set_ai_access_rule(
-                self.plane, "deny-ops", permission="exec-only", oneshot=True
-            )
-        self.assertTrue(ctx.exception.impact.get("access_broadened"))
-        with self.assertRaises(ConfirmationRequired) as ctx2:
-            v24.set_ai_access_rule(
-                self.plane, "deny-ops", paths=["/etc"], oneshot=True
-            )
-        self.assertTrue(ctx2.exception.impact.get("access_broadened"))
-        plan = prepare_v24_plan(
-            self.plane,
-            """configurationBundle:
+        with self.assertRaises(Exception) as ctx2:
+            prepare_v24_plan(
+                self.plane,
+                """configurationBundle:
   context: server
   aiAccess:
+    mode: blacklist
     rules:
       - name: deny-ops
         source: bot
@@ -389,8 +392,9 @@ class RuleMutationSecurityImpact(unittest.TestCase):
           - /etc
         enabled: true
 """,
-        )
-        self.assertTrue(any("broaden" in t.lower() for t in plan.security_impact))
+            )
+        self.assertIn("whitelist", str(ctx2.exception).lower())
+        self.assertEqual(self.plane.current_revision(), rev)
 
     def test_true_semantic_no_change_does_not_prompt(self):
         self._seed_remote_objects()

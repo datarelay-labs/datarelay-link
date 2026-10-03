@@ -3028,7 +3028,7 @@ class ControlPlane:
             traces.append({"rule": view, "evaluated": True, "source": src_ok, "dest": dst_ok, "service": svc_ok, "match": hit})
             if hit:
                 matched.append(view)
-        action = effective_policy_result(pol["mode"], pol["enforcement"], bool(matched))
+        action = effective_policy_result(pol["mode"], pol["enforcement"], bool(matched), plane="remote")
         winner = matched[0] if matched else None
         published = self._published_for_destination(dest_ip, proto, port, dest_obj)
         if pol["mode"] is None:
@@ -3312,7 +3312,7 @@ class ControlPlane:
                     elif managed_source and dst_ok and svc_ok:
                         cand_ambiguous_managed_source.append(view)
                 cand_action = effective_policy_result(
-                    pol["mode"], pol["enforcement"], bool(cand_matched)
+                    pol["mode"], pol["enforcement"], bool(cand_matched), plane="internet"
                 )
                 if (
                     pol["mode"] == "blacklist"
@@ -3332,14 +3332,16 @@ class ControlPlane:
                 )
                 if cand_action == "ALLOW":
                     authorized_candidates.append(cand)
-            if pol["mode"] is None or str(pol["enforcement"]).lower() == "disabled":
-                action = "ALLOW"
+            if pol["mode"] is None or str(pol["enforcement"]).lower() != "enabled":
+                action = "DENY"
+            elif str(pol["mode"]).lower() != "whitelist":
+                action = "DENY"
             elif authorized_candidates:
                 action = "ALLOW"
             else:
                 action = "DENY"
         else:
-            action = effective_policy_result(pol["mode"], pol["enforcement"], bool(matched))
+            action = effective_policy_result(pol["mode"], pol["enforcement"], bool(matched), plane="internet")
             if (
                 pol["mode"] == "blacklist"
                 and str(pol["enforcement"]).lower() != "disabled"
@@ -3349,9 +3351,11 @@ class ControlPlane:
 
         winner = matched[0] if matched else None
         if pol["mode"] is None:
-            reason = "No Policy (ALLOW)"
-        elif str(pol["enforcement"]).lower() == "disabled":
-            reason = "Policy enforcement DISABLED (ALLOW ALL)"
+            reason = "No Policy (DENY)"
+        elif str(pol["enforcement"]).lower() != "enabled":
+            reason = "Policy enforcement DISABLED (DENY ALL)"
+        elif str(pol["mode"]).lower() != "whitelist":
+            reason = "Unsupported Internet Access policy mode (DENY)"
         elif matched:
             reason = "Internet Access matched rule(s): %s" % ", ".join(m["name"] for m in matched)
         elif action == "DENY" and ambiguous_managed_source_rules:

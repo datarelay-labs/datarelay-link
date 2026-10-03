@@ -274,8 +274,8 @@ class BundleStrictClosure(unittest.TestCase):
         v24.set_access_rule(
             self.plane,
             "internet",
-            "block",
-            mode="blacklist",
+            "allow",
+            mode="whitelist",
             source="src",
             destination="dst",
             service="https",
@@ -287,12 +287,14 @@ class BundleStrictClosure(unittest.TestCase):
             """configurationBundle:
   context: server
   internetAccess:
-    mode: blacklist
+    mode: whitelist
     enforcement: disabled
 """,
         )
         self.assertTrue(plan.security_impact)
-        self.assertTrue(any("broadens" in x.lower() for x in plan.security_impact))
+        joined = "\n".join(plan.security_impact).lower()
+        self.assertIn("deny all", joined)
+        self.assertNotIn("broadens internet access", joined)
 
     def test_AI_ACCESS_DIFF_DESTINATION_PERMISSION(self):
         self.plane.set_ai_principal("automation-ai", enabled=True)

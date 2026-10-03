@@ -148,8 +148,8 @@ def hux_ai_005(env: ScenarioEnv) -> None:
     _seed_ai(h.server_plane)
     v24.set_ai_access_rule(
         h.server_plane,
-        "block-exec",
-        mode="blacklist",
+        "allow-exec",
+        mode="whitelist",
         source="automation-bot",
         destination="ubuntu-prod",
         permission="exec-only",
@@ -160,6 +160,8 @@ def hux_ai_005(env: ScenarioEnv) -> None:
     r = s.run("show", "ai-access")
     expect_true(r.rc == 0, "show ai-access failed", evidence=r.combined)
     expect_contains(r.combined, "Unmatched")
+    expect_contains(r.combined, "DENY")
+    expect_contains(r.combined, "WHITELIST")
     expect_true("Effective   :" not in r.combined, "misleading Effective label still present", evidence=r.combined)
 
 

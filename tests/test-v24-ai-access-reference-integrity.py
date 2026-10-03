@@ -37,7 +37,7 @@ def _verify(plane: ControlPlane, name: str) -> None:
     plane.conn.commit()
 
 
-def _seed_blacklist_rule(plane: ControlPlane) -> None:
+def _seed_whitelist_rule(plane: ControlPlane) -> None:
     plane.set_ai_principal("bot", enabled=True)
     _verify(plane, "bot")
     v24.set_network_object(plane, "ubuntu-prod", type="ip", value="198.51.100.10", oneshot=True)
@@ -50,8 +50,8 @@ def _seed_blacklist_rule(plane: ControlPlane) -> None:
     v24.set_permission_group(plane, "ops", members=["exec-only"], oneshot=True)
     v24.set_ai_access_rule(
         plane,
-        "block-exec",
-        mode="blacklist",
+        "allow-exec",
+        mode="whitelist",
         source="bot",
         destination="ubuntu-prod",
         permission="exec-only",
@@ -81,27 +81,27 @@ class AiAccessReferenceIntegrity(unittest.TestCase):
         return rc, out.getvalue(), err.getvalue()
 
     def test_permission_object_delete_while_directly_referenced_rejected(self):
-        _seed_blacklist_rule(self.plane)
+        _seed_whitelist_rule(self.plane)
         before = v24.evaluate_ai_access_v24(
             self.plane, identity="bot", destination="ubuntu-prod", permission="command-exec"
         )
-        self.assertEqual(before["result"], "DENY")
+        self.assertEqual(before["result"], "ALLOW")
         rc, _out, err = self._dispatch(["unset", "permission-object", "exec-only"])
         self.assertNotEqual(rc, 0)
         self.assertIn("still referenced", err)
-        self.assertIn("ai-access block-exec", err)
+        self.assertIn("ai-access allow-exec", err)
         self.assertIsNotNone(v24.get_permission_object(self.plane, "exec-only"))
         after = v24.evaluate_ai_access_v24(
             self.plane, identity="bot", destination="ubuntu-prod", permission="command-exec"
         )
-        self.assertEqual(after["result"], "DENY")
+        self.assertEqual(after["result"], "ALLOW")
 
     def test_permission_group_delete_while_referenced_rejected(self):
-        _seed_blacklist_rule(self.plane)
+        _seed_whitelist_rule(self.plane)
         v24.set_ai_access_rule(
             self.plane,
-            "block-ops",
-            mode="blacklist",
+            "allow-ops",
+            mode="whitelist",
             source="bot",
             destination="ubuntu-prod",
             permission="ops",
@@ -111,38 +111,38 @@ class AiAccessReferenceIntegrity(unittest.TestCase):
         before = v24.evaluate_ai_access_v24(
             self.plane, identity="bot", destination="ubuntu-prod", permission="command-exec"
         )
-        self.assertEqual(before["result"], "DENY")
+        self.assertEqual(before["result"], "ALLOW")
         rc, _out, err = self._dispatch(["unset", "permission-group", "ops"])
         self.assertNotEqual(rc, 0)
         self.assertIn("still referenced", err)
-        self.assertIn("ai-access block-ops", err)
+        self.assertIn("ai-access allow-ops", err)
         self.assertIsNotNone(v24.get_permission_group(self.plane, "ops"))
         after = v24.evaluate_ai_access_v24(
             self.plane, identity="bot", destination="ubuntu-prod", permission="command-exec"
         )
-        self.assertEqual(after["result"], "DENY")
+        self.assertEqual(after["result"], "ALLOW")
 
     def test_ai_identity_delete_while_referenced_rejected(self):
-        _seed_blacklist_rule(self.plane)
+        _seed_whitelist_rule(self.plane)
         before = v24.evaluate_ai_access_v24(
             self.plane, identity="bot", destination="ubuntu-prod", permission="command-exec"
         )
-        self.assertEqual(before["result"], "DENY")
+        self.assertEqual(before["result"], "ALLOW")
         rc, _out, err = self._dispatch(["unset", "ai-identity", "bot"])
         self.assertNotEqual(rc, 0)
         self.assertIn("still referenced", err)
-        self.assertIn("ai-access block-exec", err)
+        self.assertIn("ai-access allow-exec", err)
         self.assertIsNotNone(self.plane.get_principal("bot"))
         after = v24.evaluate_ai_access_v24(
             self.plane, identity="bot", destination="ubuntu-prod", permission="command-exec"
         )
-        self.assertEqual(after["result"], "DENY")
+        self.assertEqual(after["result"], "ALLOW")
 
     def test_same_name_recreate_does_not_revive_dangling_rule(self):
         """Immutable-ID semantics: recreating the public name must not reconnect old rules."""
-        _seed_blacklist_rule(self.plane)
+        _seed_whitelist_rule(self.plane)
         row = self.plane.conn.execute(
-            "SELECT id, permission_ref_id FROM ai_policy_rules WHERE name = 'block-exec'"
+            "SELECT id, permission_ref_id FROM ai_policy_rules WHERE name = 'allow-exec'"
         ).fetchone()
         old_perm_id = row["permission_ref_id"]
         # Simulate a dangling immutable ID (pre-fix fail-open hole) without violating FK:
@@ -162,7 +162,7 @@ class AiAccessReferenceIntegrity(unittest.TestCase):
         dangling = v24.evaluate_ai_access_v24(
             self.plane, identity="bot", destination="ubuntu-prod", permission="command-exec"
         )
-        self.assertEqual(dangling["result"], "ALLOW")  # BLACKLIST unmatched => ALLOW
+        self.assertEqual(dangling["result"], "DENY")  # WHITELIST dangling ref => fail closed
         v24.set_permission_object(
             self.plane, "exec-only", permissions=["command-exec"], oneshot=True
         )
@@ -172,19 +172,19 @@ class AiAccessReferenceIntegrity(unittest.TestCase):
         still = v24.evaluate_ai_access_v24(
             self.plane, identity="bot", destination="ubuntu-prod", permission="command-exec"
         )
-        self.assertEqual(still["result"], "ALLOW")
+        self.assertEqual(still["result"], "DENY")
         rule = self.plane.conn.execute(
-            "SELECT permission_ref_id FROM ai_policy_rules WHERE name = 'block-exec'"
+            "SELECT permission_ref_id FROM ai_policy_rules WHERE name = 'allow-exec'"
         ).fetchone()
         self.assertEqual(rule["permission_ref_id"], "perm_retired_dangling")
 
 
     def test_bundle_referenced_permission_group_delete_rejected_atomically(self):
-        _seed_blacklist_rule(self.plane)
+        _seed_whitelist_rule(self.plane)
         v24.set_ai_access_rule(
             self.plane,
-            "block-ops",
-            mode="blacklist",
+            "allow-ops",
+            mode="whitelist",
             source="bot",
             destination="ubuntu-prod",
             permission="ops",
@@ -194,7 +194,7 @@ class AiAccessReferenceIntegrity(unittest.TestCase):
         before = v24.evaluate_ai_access_v24(
             self.plane, identity="bot", destination="ubuntu-prod", permission="command-exec"
         )
-        self.assertEqual(before["result"], "DENY")
+        self.assertEqual(before["result"], "ALLOW")
         yaml_text = """configurationBundle:
   context: server
   permissionGroups:
@@ -208,10 +208,10 @@ class AiAccessReferenceIntegrity(unittest.TestCase):
         after = v24.evaluate_ai_access_v24(
             self.plane, identity="bot", destination="ubuntu-prod", permission="command-exec"
         )
-        self.assertEqual(after["result"], "DENY")
+        self.assertEqual(after["result"], "ALLOW")
 
     def test_bundle_referenced_permission_object_delete_rejected_atomically(self):
-        _seed_blacklist_rule(self.plane)
+        _seed_whitelist_rule(self.plane)
         yaml_text = """configurationBundle:
   context: server
   permissionObjects:
@@ -225,7 +225,7 @@ class AiAccessReferenceIntegrity(unittest.TestCase):
         after = v24.evaluate_ai_access_v24(
             self.plane, identity="bot", destination="ubuntu-prod", permission="command-exec"
         )
-        self.assertEqual(after["result"], "DENY")
+        self.assertEqual(after["result"], "ALLOW")
 
     def test_whitelist_remains_fail_closed_when_permission_missing(self):
         self.plane.set_ai_principal("bot", enabled=True)

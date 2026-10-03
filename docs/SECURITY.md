@@ -9,9 +9,9 @@ Pinned FRP version: **0.71.0**
 
 ## 1. Security principle
 
-Data Relay Link fails closed on invalid, ambiguous, or unsafe state; policy behavior follows the v2.4 BLACKLIST / WHITELIST model.
+Data Relay Link fails closed on invalid, ambiguous, or unsafe state. Remote Access retains the v2.4 BLACKLIST / WHITELIST compatibility model, while Internet Access and AI Access are WHITELIST-only and deny-by-default.
 
-With no policy configured, effective access is ALLOW. BLACKLIST denies matching enabled Rules and otherwise allows; WHITELIST allows matching enabled Rules and otherwise denies. AI authentication remains mandatory regardless of AI Access policy enforcement.
+Remote Access with no policy remains ALLOW because connectivity must first be explicitly published. Internet Access and AI Access with no policy, disabled enforcement, an unsupported mode, or no matching enabled Rule are DENY. AI authentication remains mandatory and is never sufficient authorization by itself.
 
 The product has three policy planes:
 
@@ -172,7 +172,7 @@ safe logs
 
 Ambiguous parsing or unsafe resolution fails closed.
 
-Internet Access does not turn Managed Host enrollment identity into a proxy authentication credential. A Managed Host used as an Internet Access source remains an address-backed selector: the observed proxy peer IP must match an eligible active address reported for that Managed Host. If a BLACKLIST rule otherwise matches destination/service but that source identity cannot be proven, the request is denied fail-closed rather than treated as unmatched/ALLOW. This preserves the separate durable Managed Host identity model while refusing to invent per-host identity across NAT.
+Internet Access does not turn Managed Host enrollment identity into a proxy authentication credential. A Managed Host used as an Internet Access source remains an address-backed selector: the observed proxy peer IP must match an eligible active address reported for that Managed Host. Internet Access is WHITELIST-only, so inability to prove the source identity is simply a failed match and therefore DENY. This preserves the separate durable Managed Host identity model while refusing to invent per-host identity across NAT.
 
 ## 12. Object context validation
 
@@ -313,7 +313,7 @@ download_file
 
 Unknown or ungranted tools are denied.
 
-Each tool invocation is authorized using the current AI Access policy. Authentication remains mandatory; policy evaluation follows BLACKLIST / WHITELIST Mode and Enforcement semantics with no rule ordering and no per-rule ALLOW/DENY action.
+Each tool invocation is authorized using the current AI Access policy. Authentication remains mandatory but never grants capability access by itself. AI Access is WHITELIST-only: no policy, disabled enforcement, unsupported mode, or no matching enabled Rule is DENY.
 
 ## 20. Read-only AI semantics
 
