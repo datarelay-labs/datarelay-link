@@ -341,25 +341,17 @@ left to the implementation-phase CLI design, but plaintext passwords, bootstrap 
 or reusable session tokens must never be stored in normal audit or browser storage.
 
 For password-backed local operators, use a modern salted password KDF, bounded login
-rate limits, and MFA. The first privileged bootstrap must enroll or explicitly complete
-the required local MFA setup before remote Web administration is considered ready.
+rate limits, and offline-capable MFA. The 3.0 baseline is deliberately small: TOTP plus
+one-time recovery codes. Recovery codes are stored only as verifiers/hashes, and TOTP seed
+material follows protected credential handling. WebAuthn/passkeys or other factors may be
+added later if field demand justifies them.
 
-3.0 also supports optional OIDC SSO for Web administrators. OIDC is an authentication
-adapter into the same Core operator identities and roles; it is not a second identity
-database. The canonical external identity is `issuer + subject`, never display name or
-email alone. Claim/group mapping to Admin / Operator / Read Only is explicit and
-fail-closed, and arbitrary IdP claims must never implicitly create an Admin.
+The first privileged bootstrap must complete local MFA setup before remote Web
+administration is considered production-ready. A local recovery Admin remains available
+for isolated operation and is protected by the same local MFA/recovery rules.
 
-OIDC uses Authorization Code flow with normal state/nonce/redirect protection and HTTPS
-issuer validation. Where an operator requires IdP MFA, the accepted authentication-context
-claims are configured explicitly rather than inferred. Exact local MFA factor support and
-OIDC claim conventions are frozen in DRL3-0.
-
-A local recovery/break-glass Admin remains available for isolated or IdP-unavailable
-operation and is protected by the same local MFA/recovery rules. OIDC failure must never
-remove CLI recovery or make Core enforcement depend on an external identity provider.
-
-SAML, LDAP, and SCIM provisioning are not 3.0 GA requirements.
+SSO/OIDC/IdP integration is **not part of Data Relay Link 3.0**. Web administration and
+CLI/Core recovery must not depend on an external identity provider.
 
 ## 11. Browser session security
 
@@ -574,22 +566,25 @@ enumerated.
 Broadening and destructive changes require explicit confirmation using the same Core
 impact result as the CLI.
 
-### 19.2 Time-bounded Temporary Access
+### 19.2 Time-bounded Temporary Access — P1 Must Ship
 
 The Policy Builder can add an explicit expiry to supported Remote / Internet / AI Access
 rules or assignments without introducing a full access-request workflow.
 
-Required UX:
-- accept a TTL or exact expiration and render the canonical `expires_at`;
+3.0 UX is intentionally limited to:
+- set, change, or clear a TTL/exact expiration and render canonical `expires_at`;
 - show remaining validity and expired state in policy lists/details;
-- include expiry in Draft, diff, blast-radius, audit, and ConfigurationBundle views;
-- warn when a temporary grant is close to expiry only through the local Attention model;
+- include expiry in Draft, diff, blast-radius, audit, ConfigurationBundle, backup/restore,
+  and policy-test views;
+- warn near expiry only through the local Attention model;
 - never rely on a browser timer for enforcement.
 
 Expiration automatically denies **new authorization** at or after the server-authoritative
-expiry. The UI must state active-connection semantics separately and must not imply an
-already-established Remote Access connection was terminated merely because a policy grant
-expired.
+expiry. 3.0 does not add recurring access windows, automatic renewal, requester/approver
+workflow, or automatic deletion of the rule as an enforcement requirement.
+
+The UI states active-connection semantics separately and must not imply an already-
+established connection was terminated merely because a temporary grant expired.
 
 ## 20. Policy Simulator and Decision Trace
 
@@ -796,42 +791,49 @@ Rules:
 - timestamp-only health/presence refresh is operational state, not a config revision;
 - repeated flapping is coalesced before entering Attention Center.
 
-### 23.3 Live Connections and Emergency Cutoff
+### 23.3 Live Access Visibility — P1 Must Ship
 
-The Web UI provides a bounded live-use view for each access plane, using only state the
+The Web UI provides a bounded current-use view for each access plane, using only state the
 product can actually prove.
 
 Required fields when available include:
-
 - access plane;
 - Managed Host / Remote Service / destination;
 - source identity/address;
-- start time and duration;
+- start time/duration when actually known;
 - current policy/runtime revision;
-- connection/session/job identifier where the product owns one;
+- connection/session/job identifier only where the product owns one;
 - status such as ACTIVE, CLOSING, ENDED, UNKNOWN;
-- whether the row is exact per-connection state or an aggregate/upstream-derived view.
+- an explicit fidelity label: EXACT_PER_CONNECTION, AGGREGATE, or UNKNOWN.
+
+3.0 does not require packet capture, payload inspection, session recording, or browser
+polling that scales one request per Host.
+
+### 23.4 Emergency New-Access Cutoff — P1 Must Ship
 
 Normal policy edits continue to apply to **new** authorization and do not silently kill
-established sessions. Emergency Cutoff is an explicit separate action with stronger
-operator confirmation and audit.
+established sessions. Emergency Cutoff is a separate reversible security override with
+stronger confirmation and audit.
 
-Emergency Cutoff must:
+The 3.0 cutoff contract must:
+- stop new authorization immediately at the selected supported scope;
+- preserve normal operator policy so clearing the cutoff does not require reconstructing
+  previous rules;
+- provide at least one useful resource-level cutoff per access plane where current Core
+  identity/resource semantics support it safely, plus a plane-level fallback;
+- show the exact consequence before Apply, including that existing sessions may remain;
+- expose active/recovered state in relevant resource, Attention, and Diagnosis views;
+- use the same Core authorization/revision/audit/runtime path as other security mutations.
 
-- stop new access immediately at the selected supported scope;
-- terminate active connections only where Data Relay Link owns the connection lifecycle or
-  the pinned official upstream exposes a proven supported termination primitive;
-- never claim per-connection Remote Access termination merely from aggregate FRP metrics;
-- show the exact consequence before Apply: new-connections-only versus active termination;
-- be available from the affected Managed Host / Remote Service / access-plane detail and
-  from relevant Attention/Diagnosis views;
-- use the same Core authorization/audit path as other security mutations.
+### 23.5 Active connection termination — P2 / conditional
 
-For Internet Access, the Data Relay Link egress process owns outbound sockets and may expose
-bounded active-connection termination. For AI Access, explicit job/tool cancellation uses
-its own operation-safety contract. For Remote Access, DRL3-0 must qualify what the pinned
-official FRP can observe and terminate without a fork; fallback cutoff is service/host scope
-and may be new-connections-only when upstream cannot prove more.
+Active termination is **not a 3.0 GA blocker**. It may ship per access plane only where
+Data Relay Link owns the lifecycle or the pinned official upstream exposes a deterministic,
+supported termination primitive.
+
+Internet Access and AI work may qualify independently because DRLink owns more of those
+lifecycles. Remote Access per-connection termination is not required for 3.0 and must not
+be inferred from aggregate FRP connection metrics or require an FRP fork.
 
 ## 24. System and lifecycle
 
@@ -1070,28 +1072,30 @@ Web-only phase plan.
 ### DRL3-0 — Scope and architecture freeze
 
 Freeze product scope, 100-host qualification model, Management Scalability Layer,
-operator/RBAC/authentication model (local MFA + OIDC + break-glass), Temporary Access
-expiry semantics, live-connection/cutoff capability limits per plane, parity ledger,
-Agent RPC/jobs, state boundaries, and SLO methodology.
+operator/RBAC/authentication model (local TOTP MFA + recovery + session revocation),
+Temporary Access expiry semantics, live-access visibility/cutoff capability limits per
+plane, parity ledger, Agent RPC/jobs, state boundaries, and SLO methodology. SSO/IdP is
+explicitly outside 3.0.
 
 ### DRL3-1 — Management Scalability Foundation
 
 Extract/normalize the shared Core management operations, command/query boundaries,
 derived read models, bounded Job Engine, Agent RPC Worker Pool, operational aggregation,
-audit/history query layer, and capability inventory. Prove existing CLI behavior is
-unchanged.
+Temporary Access expiry primitive/time-trust behavior, bounded per-plane live-access
+observation inputs, audit/history query layer, and capability inventory. Prove existing
+CLI behavior is unchanged.
 
 ### DRL3-2 — Web Platform and Read-Only Operations
 
-Package/service lifecycle, browser auth/session/RBAC, local MFA, optional OIDC SSO,
+Package/service lifecycle, browser auth/session/RBAC, local TOTP MFA + recovery,
 session revocation, Overview/Attention, inventory, search/Saved Views,
 audit/revision/health read views, version drift, and Core-without-Web regressions.
 
 ### DRL3-3 — Guided Configuration and Full Management Parity
 
 Enrollment, Object/Group lifecycle, Agent-owned Remote Service RPC, policy management,
-ConfigurationBundle, system operations, Draft Workspace, Change Plan preview/apply, and
-complete supported management parity.
+Temporary Access set/change/clear expiry parity, ConfigurationBundle, system operations,
+Draft Workspace, Change Plan preview/apply, and complete supported management parity.
 
 ### DRL3-4 — Policy Safety, Preview, and Explainability
 
@@ -1100,9 +1104,10 @@ Tests, Blast Radius Preview, Effective Access Graph, and Draft Graph Overlay.
 
 ### DRL3-5 — Diagnosis, Health, and Attention
 
-Connection Diagnosis, Live Connection Visibility + Emergency Cutoff, structured
-Doctor/health, bounded health aggregation, recent decision correlation, actionable
-Attention Center, and no diagnostic-side-effect paths.
+Connection Diagnosis, Live Access Visibility followed by Emergency New-Access Cutoff,
+structured Doctor/health, bounded health aggregation, recent decision correlation,
+actionable Attention Center, and no diagnostic-side-effect paths. Active connection
+termination is conditional by plane and not a 3.0 GA blocker.
 
 ### DRL3-6 — Bounded Fleet Operations
 
@@ -1155,10 +1160,10 @@ AUTH_REQUIRED_ON_LOOPBACK=PASS
 CSRF_PROTECTION=PASS
 SESSION_SECURITY=PASS
 LOCAL_OPERATOR_MFA=PASS
-OIDC_SSO=PASS
-OIDC_ROLE_MAPPING=PASS
-BREAK_GLASS_RECOVERY=PASS
+LOCAL_MFA_TOTP_RECOVERY=PASS
+LOCAL_ADMIN_RECOVERY=PASS
 SESSION_REVOCATION=PASS
+SSO_IDP_DEPENDENCY=NO
 ROLE_ENFORCEMENT=PASS
 SECRET_REDACTION=PASS
 MUTATION_AUDIT_ATTRIBUTION=PASS
@@ -1194,8 +1199,11 @@ EFFECTIVE_ACCESS_GRAPH_ACCURACY=PASS
 CONNECTION_DIAGNOSIS=PASS
 TEMPORARY_ACCESS_EXPIRY=PASS
 TEMPORARY_ACCESS_CLOCK_FAIL_CLOSED=PASS
-LIVE_CONNECTION_VISIBILITY=PASS
-EMERGENCY_CUTOFF=PASS
+LIVE_ACCESS_VISIBILITY=PASS
+LIVE_ACCESS_FIDELITY_LABEL=PASS
+EMERGENCY_NEW_ACCESS_CUTOFF=PASS
+EMERGENCY_CUTOFF_POLICY_PRESERVATION=PASS
+ACTIVE_CONNECTION_TERMINATION_GA_REQUIRED=NO
 REMOTE_ACCESS_TERMINATION_CLAIM_TRUTHFUL=PASS
 ATTENTION_DEDUPLICATION=PASS
 SAVED_VIEWS=PASS
@@ -1267,18 +1275,18 @@ capability. The 2.x CLI contract remains fully supported and the current v2.4 CL
 is unchanged by this design.
 
 **State/migration impact:** future implementation adds Core-owned operator identity,
-role/OIDC/MFA metadata, Temporary Access expiry, Emergency Cutoff state, and Web
-configuration/session metadata with ordered SQLite migration. Live connection observations
+local MFA metadata, Temporary Access expiry, Emergency New-Access Cutoff state, and Web
+configuration/session metadata with ordered SQLite migration. Live access observations
 remain operational/derived rather than policy authority. Existing identity/Object/policy/
 Remote Service data remains authoritative and is not copied into a Web schema.
 Disabling/uninstalling Web Management preserves all Core state.
 
 **Security/operations impact:** a privileged management listener is added only when the
-optional package is installed. Loopback is default; remote exposure requires explicit TLS,
-authentication, local MFA or validated OIDC, and revocable bounded sessions. A local
-break-glass path remains available. Temporary grants expire in Core policy evaluation;
-Emergency Cutoff is separately confirmed/audited and never overclaims active-session
-termination. Web service health and resource limits remain independent from relay
+optional package is installed. Loopback is default; remote exposure requires explicit
+TLS, local authentication + MFA, and revocable bounded sessions. A local recovery path
+remains available and 3.0 has no SSO/IdP dependency. Temporary grants expire in Core
+policy evaluation; Emergency New-Access Cutoff is separately confirmed/audited and never
+overclaims active-session termination. Web service health and resource limits remain independent from relay
 enforcement.
 
 **Architecture boundary:** CLI, Web, ConfigurationBundle, and adapters share one Core
@@ -1299,9 +1307,10 @@ These choices may be finalized during DRL3-0/DRL3-1 without changing this produc
 - FastAPI versus an equivalent small supported Python HTTP adapter;
 - Vite versus an equivalent static frontend build tool;
 - SSE versus conservative polling for individual live views;
-- exact operator-identity schema columns, local MFA factors, protected-secret storage,
-  OIDC claim conventions, and session storage implementation;
-- exact cutoff-state table/schema and per-plane live-connection adapter where product
+- exact operator-identity schema columns and session storage implementation;
+- protected local TOTP seed/recovery-code storage details consistent with the fixed local
+  MFA semantics;
+- exact cutoff-state table/schema and per-plane live-access adapter where product
   semantics above remain unchanged;
 - exact TLS certificate sourcing among approved product/operator-managed options.
 
@@ -1336,14 +1345,14 @@ architecture or expanding Data Relay Link into another product category.
 | Boundary sinks + sensitive-field controls | Adopt bounded local sink semantics and schema-aware redaction |
 | NetBird audit + traffic events | Adopt searchable management/access separation on SQLite; no analytics datastore |
 | ngrok audit/log export + Traffic Inspector | Adopt exportability only; do not add payload/body inspection or request replay |
-| Tailscale SSO/OIDC + IdP MFA + independent recovery admin | Adopt optional OIDC + local MFA/break-glass; do not make an external IdP mandatory |
-| Cloudflare independent/IdP MFA + bounded/revocable sessions | Adopt MFA/session lifetime/revocation for Web admin; do not proxy application identity |
-| Twingate Admin MFA + Ephemeral Access | Adopt Web-admin MFA and time-bounded policy access; defer access-request workflow |
-| Teleport SSO/MFA + access/session TTL | Adopt OIDC/MFA and bounded Temporary Access; exclude full identity-governance/session-recording scope |
-| Boundary OIDC + active session list/cancel | Adopt live-connection visibility/cutoff only where DRLink/upstream owns or proves the lifecycle |
-| Zscaler authentication/idle timeout + session termination policy | Adopt explicit expiry/connection-lifetime semantics without broad ZTNA/SWG expansion |
-| OpenZiti OIDC/JWT + fine-grained permissions | Reinforces OIDC/RBAC value; do not import clustered overlay-controller scope |
-| NordLayer SSO/MFA + posture | Adopt strong authentication only; posture/MDM remains outside DRLink 3.0 |
+| Tailscale external identity + MFA + recovery admin | Adopt local MFA/session recovery patterns only; SSO/IdP is excluded from 3.0 |
+| Cloudflare MFA + bounded/revocable sessions | Adopt local MFA/session lifetime/revocation for Web admin; do not proxy application identity |
+| Twingate Admin MFA + Ephemeral Access | Adopt local MFA and time-bounded policy access; defer access-request workflow |
+| Teleport SSO/MFA + access/session TTL | Adopt MFA/TTL patterns only; SSO and full identity-governance/session-recording scope are excluded from 3.0 |
+| Boundary active session list/cancel | Adopt live-access visibility and new-access cutoff; active termination only where DRLink/upstream owns the lifecycle |
+| Zscaler authentication/idle timeout + session termination policy | Adopt local session/temporary-access lifetime semantics without broad ZTNA/SWG expansion |
+| OpenZiti external identity + fine-grained permissions | Reinforces RBAC value only; SSO/IdP and clustered overlay-controller scope are not adopted for 3.0 |
+| NordLayer SSO/MFA + posture | Adopt the MFA pattern only; SSO and posture/MDM remain outside DRLink 3.0 |
 
 ### 38.1 Review reference set
 
@@ -1404,12 +1413,15 @@ The following are intentionally **not** 3.0 GA requirements:
 - external HA/multi-region controller architecture;
 - large-fleet rollout/orchestration.
 
-External notification channels, SAML/LDAP/SCIM provisioning, GitOps editor locking,
-and continuous external audit/SIEM streaming remain later additions. Full JIT/access-request
-approval, device posture/MDM, session recording, credential vault/injection, and payload
-replay remain outside 3.0 and require separate field-demand/product-scope review. Local
-MFA + optional OIDC, time-bounded Temporary Access, Live Connection Visibility + Emergency
-Cutoff, and manual filtered NDJSON audit export are part of 3.0 GA.
+External notification channels, SSO/IdP integration (including OIDC/SAML/LDAP/SCIM),
+GitOps editor locking, and continuous external audit/SIEM streaming are not 3.0
+requirements and need separate field-demand review before entering a later roadmap.
+Full JIT/access-request approval, device posture/MDM, session recording, credential
+vault/injection, and payload replay remain outside 3.0.
+
+Local TOTP MFA + recovery, time-bounded Temporary Access, Live Access Visibility,
+Emergency New-Access Cutoff, and manual filtered NDJSON audit export are part of 3.0 GA.
+Active connection termination is conditional by plane and not a GA blocker.
 
 ## 39. 3.0 scope-freeze contract
 
