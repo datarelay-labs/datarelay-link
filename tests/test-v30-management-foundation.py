@@ -56,6 +56,15 @@ class ManagementCatalogTests(unittest.TestCase):
         )
         self.assertFalse(d["annotations"]["readOnlyHint"])
 
+    def test_frozen_management_document_contains_exact_catalog(self):
+        text = (ROOT / "docs" / "MANAGEMENT_SURFACE_CONTRACT.md").read_text(
+            encoding="utf-8"
+        )
+        for permission in MC.MANAGEMENT_PERMISSION_NAMES:
+            self.assertIn(permission, text)
+        for tool in MC.MANAGEMENT_TOOL_NAMES:
+            self.assertIn(tool, text)
+
 
 class TemporaryAccessTimeTests(unittest.TestCase):
     def setUp(self):

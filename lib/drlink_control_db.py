@@ -964,6 +964,18 @@ def ensure_v30_schema(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_ai_policy_rules_expiry "
         "ON ai_policy_rules(enabled, expires_at)"
     )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_v30_clients_label "
+        "ON clients(label COLLATE NOCASE, id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_v30_clients_hostname "
+        "ON clients(hostname COLLATE NOCASE, id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_v30_clients_status "
+        "ON clients(status, id)"
+    )
 
 
 def initialize(conn: sqlite3.Connection) -> None:

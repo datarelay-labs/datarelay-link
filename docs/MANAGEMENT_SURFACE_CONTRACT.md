@@ -186,8 +186,7 @@ command-exec
 
 Granting any of those must **never** imply permission to mutate Data Relay Link itself.
 
-DRL3-0 freezes a separate management-permission namespace/family for semantic capabilities
-equivalent to:
+DRL3-0 freezes the following exact management permission values:
 
 ```text
 management-read
@@ -196,10 +195,11 @@ management-policy-test
 management-temporary-access
 management-emergency-cutoff
 management-job-observe
+management-job-run
 ```
 
-The exact public Permission Object values and MCP tool names are frozen in DRL3-0.
-This document freezes the separation, not the final spelling.
+These names are public 3.0 capability values. They are separate from target-OS permissions
+and must not be aliased to `host-info`, `command-exec`, file permissions, or Web roles.
 
 High-impact management permission is never implied by `command-exec`, file write, Admin
 display name, Plugin installation, or possession of a relay binding.
@@ -435,22 +435,49 @@ No Plugin release should require copying Core management semantics into relay so
 - Emergency cutoff runtime activation cannot be verified → report failure/degraded state
   and follow the Core rollback/recovery contract.
 
-## 13. DRL3-0 freeze outputs
+## 13. DRL3-0 frozen management catalog
 
-Before DRL3-1 implementation, freeze:
+The exact admitted Management MCP tool names are:
 
-- Core capability catalog shape;
-- operation class per capability;
-- exact management Permission Object values;
-- exact MCP tool names/input/output schemas for the admitted 3.0 management subset;
-- MCP annotations/risk metadata;
-- Change Plan identifier/binding/staleness contract;
-- confirmation-class behavior;
-- Plugin exposure matrix final version;
-- safe Web deep-link convention if used;
-- bounded result/pagination limits;
-- error/result codes shared across adapters where public;
-- qualification matrix for direct MCP and optional Plugin relay.
+```text
+drlink_inventory_list
+drlink_inventory_get
+drlink_health
+drlink_diagnose_connection
+drlink_policy_test
+drlink_audit_query
+drlink_temporary_access_preview
+drlink_temporary_access_apply
+drlink_live_access
+drlink_emergency_cutoff_preview
+drlink_emergency_cutoff_apply
+drlink_emergency_cutoff_clear
+drlink_job_list
+drlink_job_get
+drlink_diagnostic_job_start
+```
+
+Their required permission, operation class, Plugin exposure, input schema, and MCP
+annotations are defined by `lib/drlink_management_catalog.py`. The catalog is Core data;
+the Plugin relay must pass descriptors through rather than maintaining a copied list.
+
+DRL3-0 additionally freezes:
+
+- Change Plan identifiers as short-lived opaque Core-issued IDs bound to authenticated
+  identity, DRLink Server identity, normalized operation/resource, expected revision, and
+  impact summary;
+- stale/cross-identity/cross-server/revision-mismatched Change Plans fail closed;
+- OBSERVE/TEST require no mutation confirmation;
+- CHANGE requires preview before apply;
+- INCIDENT_CHANGE requires the dedicated permission and explicit high-impact confirmation;
+- JOB start/cancel is allowed only for explicitly admitted bounded job families;
+- RECOVERY_AUTHORITY is never exposed through the 3.0 Plugin surface;
+- list/history result limits are server-bounded and cursor/keyset-based where unbounded
+  offset growth would be unsafe;
+- direct Core MCP and optional Plugin relay qualification remain separate evidence lanes.
+
+Exact serialization details for opaque Change Plan IDs and internal cursor encodings may
+remain implementation details as long as these frozen semantics are preserved.
 
 ## 14. Acceptance
 
