@@ -176,7 +176,7 @@ from urllib.parse import unquote, urlsplit
 pat = re.compile(
     r"https://raw\\.githubusercontent\\.com/datarelay-labs/"
     r"(?:datarelay-link|data-relay-link)/"
-    r"([^/\\s\"']+)/dist/bootstrap-server\\.sh"
+    r"([^/\\s\"']+)/dist/bootstrap-(?:server|client)\\.sh"
 )
 pgid = os.getpgid(0)
 for name in os.listdir("/proc"):
@@ -201,6 +201,13 @@ PY
   fi
   if [[ -n "$_frp_bootstrap_ref" ]]; then
     export FRP_EXPECTED_SOURCE_REF="$_frp_bootstrap_ref"
+    if [[ "$_frp_bootstrap_ref" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+      [[ -n "${FRP_EXPECTED_RELEASE_CHANNEL:-}" ]] || export FRP_EXPECTED_RELEASE_CHANNEL=stable
+      [[ -n "${FRP_RELEASE_CHANNEL:-}" ]] || export FRP_RELEASE_CHANNEL=stable
+    elif [[ "$_frp_bootstrap_ref" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$ ]]; then
+      [[ -n "${FRP_EXPECTED_RELEASE_CHANNEL:-}" ]] || export FRP_EXPECTED_RELEASE_CHANNEL=preview
+      [[ -n "${FRP_RELEASE_CHANNEL:-}" ]] || export FRP_RELEASE_CHANNEL=preview
+    fi
   fi
   unset _frp_bootstrap_ref
 fi'''
@@ -244,6 +251,7 @@ for rel in client_files:
         client_lines.append(f'chmod +x "$TMP/{rel}"')
 client_lines.append('echo "Preparing installation..."')
 client_lines.append('echo "Installing Data Relay Link Agent Host..."')
+client_lines.append(SERVER_BOOTSTRAP_REF_SNIPPET)
 client_lines.append('exec "$TMP/install-client.sh" "$@"')
 (dist/'bootstrap-client.sh').write_text('\n'.join(client_lines)+'\n')
 (dist/'bootstrap-client.sh').chmod(0o755)

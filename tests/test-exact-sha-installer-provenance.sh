@@ -16,7 +16,8 @@ FAKE_SHA='0123456789abcdef0123456789abcdef01234567'
 . "$ROOT/lib/frp-common.sh"
 
 reset_provenance_env() {
-  unset FRP_EXPECTED_SOURCE_REF FRP_TXN_SOURCE_REF FRP_BOOTSTRAP_URL \
+  unset FRP_EXPECTED_SOURCE_REF FRP_EXPECTED_SOURCE_HEAD \
+    FRP_EXPECTED_RELEASE_CHANNEL FRP_TXN_SOURCE_REF FRP_BOOTSTRAP_URL \
     FRP_CLIENT_INSTALLER_URL FRP_WINDOWS_CLIENT_INSTALLER_URL \
     FRP_RELEASE_CHANNEL FRP_DEPLOY_TEST_ROOT FRP_SERVER_TEST_ROOT \
     FRP_CTL_TEST_ROOT || true
@@ -73,6 +74,15 @@ export FRP_BOOTSTRAP_URL="https://raw.githubusercontent.com/datarelay-labs/datar
 frp_infer_expected_source_ref
 [[ "${FRP_EXPECTED_SOURCE_REF:-}" == "$FAKE_SHA" ]] || fail "infer from FRP_BOOTSTRAP_URL"
 pass "INFER_FROM_BOOTSTRAP_URL"
+
+# An already-inferred stable publication tag selects the stable effective
+# channel while preserving the embedded pretag source identity.
+reset_provenance_env
+export FRP_EXPECTED_SOURCE_REF="v${PROJECT_VERSION}"
+frp_infer_expected_source_ref
+[[ "${FRP_EXPECTED_RELEASE_CHANNEL:-}" == "stable" ]] || fail "stable expected channel inference"
+[[ "${FRP_RELEASE_CHANNEL:-}" == "stable" ]] || fail "stable effective channel inference"
+pass "INFER_STABLE_TAG_PUBLICATION_CONTEXT"
 
 reset_provenance_env
 export FRP_CLIENT_INSTALLER_URL="https://raw.githubusercontent.com/datarelay-labs/datarelay-link/${FAKE_SHA}/dist/bootstrap-client.sh"
@@ -204,6 +214,39 @@ meta="$(frp_validate_release_source_metadata "$ROOT" "$FAKE_SHA" development)" \
 got_ref="$(printf '%s' "$meta" | awk -F'\t' '{print $3}')"
 [[ "$got_ref" == "$FAKE_SHA" ]] || fail "validate did not return exact SHA provenance: $got_ref"
 pass "VALIDATE_ACCEPTS_EXACT_SHA_PROVENANCE"
+
+# The frozen provenance bundle remains development/exact-SHA internally but
+# must be installable through the final vPROJECT_VERSION publication ref.
+reset_provenance_env
+stable_meta="$(frp_validate_release_source_metadata "$ROOT" "v${PROJECT_VERSION}" stable)" \
+  || fail "stable tag rejected frozen pretag manifest"
+[[ "$stable_meta" == "${PROJECT_VERSION}"$'\t''stable'$'\t'"v${PROJECT_VERSION}" ]] \
+  || fail "stable publication metadata triple: $stable_meta"
+pass "STABLE_TAG_ACCEPTS_FROZEN_PRETAG_MANIFEST"
+
+# The compatibility path is fail-closed: source_head must be the same exact SHA
+# as the embedded development git_ref.
+BAD_STABLE="$WORKDIR/bad-stable-source"
+mkdir -p "$BAD_STABLE"
+cp "$ROOT/VERSION" "$ROOT/release-manifest.json" "$BAD_STABLE/"
+python3 - "$BAD_STABLE/release-manifest.json" <<'PY'
+import json, sys
+from pathlib import Path
+p = Path(sys.argv[1])
+d = json.loads(p.read_text())
+d["source_head"] = "f" * 40
+p.write_text(json.dumps(d) + "\n")
+PY
+if frp_validate_release_source_metadata "$BAD_STABLE" "v${PROJECT_VERSION}" stable >/dev/null 2>&1; then
+  fail "stable tag accepted mismatched pretag source_head"
+fi
+pass "STABLE_TAG_PRETAG_SOURCE_MISMATCH_REJECTED"
+
+for shipped in "$ROOT/dist/bootstrap-server.sh" "$ROOT/dist/bootstrap-client.sh"; do
+  grep -q 'FRP_EXPECTED_RELEASE_CHANNEL=stable' "$shipped" \
+    || fail "stable publication context missing from $(basename "$shipped")"
+done
+pass "STABLE_TAG_BUNDLE_CONTEXT_PROPAGATION"
 
 # --- local git source inference ---
 reset_provenance_env
