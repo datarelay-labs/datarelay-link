@@ -57,11 +57,9 @@ Permission Object / Permission Group
 AI Identity
 Remote Service
 
-Remote Access
-Internet Access
-AI Access
-
-BLACKLIST / WHITELIST
+Remote Access      — BLACKLIST / WHITELIST
+Internet Access    — WHITELIST only, deny-by-default
+AI Access          — WHITELIST only, deny-by-default
 
 ConfigurationBundle
 ```
@@ -275,41 +273,30 @@ Internet Access
 AI Access
 ```
 
-Each has:
+The three planes intentionally do **not** share the same default-access semantics.
+
+Remote Access preserves the publish-first compatibility model:
 
 ```text
 Mode        BLACKLIST | WHITELIST
-Enforcement ENABLED | DISABLED
-Rules
+No Policy   ALLOW
+Disabled    ALLOW ALL
 ```
 
-Initial state:
+Internet Access and AI Access are privileged/restricted planes and are fail-closed:
 
 ```text
-No Policy
-No Rules
-Effective access = ALLOW
+Mode        WHITELIST only
+No Policy   DENY
+No Rules    DENY
+No Match    DENY
+Disabled    DENY ALL
+Unknown/invalid mode DENY
 ```
 
-BLACKLIST:
+For Internet Access and AI Access, authentication or network reachability alone never grants authorization; only an enabled matching WHITELIST Rule can ALLOW. Policy Reset removes Mode and Rules and therefore returns those planes to DENY.
 
-```text
-enabled Rule match → DENY
-no match           → ALLOW
-```
-
-WHITELIST:
-
-```text
-enabled Rule match → ALLOW
-no match           → DENY
-```
-
-There is no rule ordering and no per-rule ALLOW/DENY action.
-
-Deleting the last Rule preserves Mode. Policy Reset removes Mode and Rules and restores initial ALLOW.
-
-Disabling enforcement preserves Mode/Rules but makes policy effective ALLOW ALL. AI authentication remains mandatory.
+There is no rule ordering and no per-rule ALLOW/DENY action. Remote Access retains its existing BLACKLIST/WHITELIST behavior for v2.4 compatibility.
 
 ## 15. AI Identity and AI Access
 
@@ -430,7 +417,7 @@ Required controls include:
 - bounded resource/time-out behavior;
 - safe audit logs.
 
-These transport/security controls are independent of the BLACKLIST/WHITELIST rule semantics.
+These transport/security controls are independent of policy matching, and Internet Access itself is WHITELIST-only and deny-by-default.
 
 ## 21. Network responsibility boundary
 
@@ -530,7 +517,7 @@ Only after this convergence may the repository freeze the final candidate and sp
 Critical v2.4 CLI/AI acceptance includes:
 
 - Guided Wizard implementation and Cancel atomicity;
-- BLACKLIST/WHITELIST behavior;
+- plane-specific policy behavior: Remote Access BLACKLIST/WHITELIST, Internet Access and AI Access WHITELIST-only deny-by-default;
 - Managed Host selector validation;
 - Agent-local Remote Service ownership;
 - Relay DEGRADED/reconnect behavior;
@@ -599,7 +586,7 @@ No other document may redefine the public CLI/AI model independently.
 
 ### 2026-09 — Final v2.4 CLI/AI model freeze
 
-**Decision:** Adopt the Managed Host + Network/Service/Permission Object + AI Identity + Agent-local Remote Service + BLACKLIST/WHITELIST model as the v2.4 public CLI/AI contract.
+**Decision:** Adopt the Managed Host + Network/Service/Permission Object + AI Identity + Agent-local Remote Service model; Remote Access retains BLACKLIST/WHITELIST while Internet Access and AI Access are WHITELIST-only and deny-by-default.
 
 **Supersedes:** the intermediate Managed Endpoint / Published Service / Service Preset / ordered first-match ALLOW-DENY / AI Principal public model.
 

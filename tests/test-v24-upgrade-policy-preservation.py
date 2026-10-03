@@ -206,7 +206,8 @@ class UpgradePolicyPreservationTests(unittest.TestCase):
         self.assertEqual(denied_before["action"], "ALLOW")
         self.assertIn("No Policy", denied_before["reason"])
         other = self.plane.evaluate_internet_access("203.0.113.9", "example.com", 443, "https")
-        self.assertEqual(other["action"], "ALLOW")
+        self.assertEqual(other["action"], "DENY")
+        self.assertIn("No Policy (DENY)", other["reason"])
 
     def test_reconcile_is_idempotent(self):
         self._seed(_access(allow=True), _egress(enabled=True))

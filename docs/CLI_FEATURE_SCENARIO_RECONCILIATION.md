@@ -625,7 +625,7 @@ Permission Object  vs legacy capability/profile nouns
 AI Identity        vs AI Principal
 Remote Access      vs legacy ACL
 Internet Access    vs Egress / Controlled Egress
-BLACKLIST/WHITELIST vs ordered first-match ALLOW/DENY
+plane-specific policy modes (Remote BLACKLIST/WHITELIST; Internet/AI WHITELIST-only) vs ordered first-match ALLOW/DENY
 Data Relay Link    vs user-facing FRP product identity
 ~~~
 
@@ -855,7 +855,7 @@ Discover Agent surface → create/edit/disable/delete syntax → inspect existin
 Discover dependencies → mode/rule grammar → show → read-only test/explain → discover enforcement/edit/reset syntax → verify dependency/recovery contract. Do not modify policy.
 
 ## FCS-006 — Internet Access
-Same non-destructive workflow audit plus object/protocol validity, BLACKLIST/WHITELIST semantics, and absence of ordered-rule semantics. Do not modify policy.
+Same non-destructive workflow audit plus object/protocol validity, WHITELIST-only deny-by-default semantics, BLACKLIST rejection, disabled=DENY ALL, and absence of ordered-rule semantics. Do not modify policy.
 
 ## FCS-007 — AI Identity / Credential / Permission / AI Access
 Discover identity/credential lifecycle → Permission/AI Access grammar → read-only show/test/log → inspect rejection/recovery contracts from parser/tests. Do not create/rotate/revoke credentials or identities.

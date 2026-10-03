@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Packet 3: Access-broadening confirmation + Bundle dependency ordering.
 
-Last enabled BLACKLIST rule delete/disable requires the same security-impact
-confirmation model as policy disable/reset (Remote / Internet / AI).
-Bundle reports direct and indirect broadening, and deletes Permission Group
+Remote Access BLACKLIST broadening and restricted-plane WHITELIST narrowing
+use explicit security-impact confirmation. Internet/AI BLACKLIST is rejected.
+Bundle reports direct and indirect impact, and deletes Permission Group
 before member Permission Object in one desired-state apply.
 """
 from __future__ import annotations
@@ -79,7 +79,7 @@ class AccessBroadeningBundleOrder(unittest.TestCase):
             oneshot=True,
         )
 
-    def _seed_internet_blacklist(self, rule="block-https"):
+    def _seed_internet_whitelist(self, rule="allow-https"):
         v24.set_network_object(self.plane, "lan", type="ip", value="10.10.10.20", oneshot=True)
         v24.set_network_object(self.plane, "web", type="fqdn", value="example.com", oneshot=True)
         v24.set_service_object(self.plane, "https", type="tcp", port=443, oneshot=True)
@@ -87,7 +87,7 @@ class AccessBroadeningBundleOrder(unittest.TestCase):
             self.plane,
             "internet",
             rule,
-            mode="blacklist",
+            mode="whitelist",
             source="lan",
             destination="web",
             service="https",
@@ -95,7 +95,7 @@ class AccessBroadeningBundleOrder(unittest.TestCase):
             oneshot=True,
         )
 
-    def _seed_ai_blacklist(self, rule="block-exec"):
+    def _seed_ai_whitelist(self, rule="allow-exec"):
         self.plane.set_ai_principal("bot", enabled=True)
         _verify(self.plane, "bot")
         v24.set_network_object(self.plane, "ubuntu-prod", type="ip", value="198.51.100.10", oneshot=True)
@@ -105,7 +105,7 @@ class AccessBroadeningBundleOrder(unittest.TestCase):
         v24.set_ai_access_rule(
             self.plane,
             rule,
-            mode="blacklist",
+            mode="whitelist",
             source="bot",
             destination="ubuntu-prod",
             permission="exec-only",
@@ -136,31 +136,31 @@ class AccessBroadeningBundleOrder(unittest.TestCase):
         self.assertEqual(self.plane.current_revision(), rev_before)
         self.assertTrue(bool(self.plane._get_rule("remote", "block-ssh")["enabled"]))
 
-    def test_last_blacklist_rule_delete_internet_and_ai_parity(self):
-        self._seed_internet_blacklist()
-        self._seed_ai_blacklist()
-        os.environ.pop("DRLINK_CONFIRM", None)
-        with self.assertRaises(ConfirmationRequired) as ctx_i:
-            v24.unset_access_rule(self.plane, "internet", "block-https")
-        self.assertTrue(ctx_i.exception.impact.get("access_broadened"))
-        with self.assertRaises(ConfirmationRequired) as ctx_a:
-            v24.unset_ai_access_rule(self.plane, "block-exec")
-        self.assertTrue(ctx_a.exception.impact.get("access_broadened"))
+    def test_restricted_planes_reject_blacklist(self):
+        self._seed_internet_whitelist()
+        self._seed_ai_whitelist()
+        with self.assertRaises(ControlPlaneError) as ctx_i:
+            v24.ensure_policy_mode(self.plane, "internet", "blacklist", oneshot=False)
+        self.assertIn("WHITELIST", str(ctx_i.exception))
+        with self.assertRaises(ControlPlaneError) as ctx_a:
+            v24.ensure_policy_mode(self.plane, "ai", "blacklist", oneshot=False)
+        self.assertIn("WHITELIST", str(ctx_a.exception))
 
-    def test_last_blacklist_rule_disable_ai_parity(self):
-        self._seed_ai_blacklist()
+    def test_last_whitelist_rule_disable_ai_requires_confirm(self):
+        self._seed_ai_whitelist()
         os.environ.pop("DRLINK_CONFIRM", None)
         with self.assertRaises(ConfirmationRequired) as ctx:
             v24.set_ai_access_rule(
                 self.plane,
-                "block-exec",
+                "allow-exec",
                 source="bot",
                 destination="ubuntu-prod",
                 permission="exec-only",
                 enabled=False,
                 oneshot=True,
             )
-        self.assertTrue(ctx.exception.impact.get("access_broadened"))
+        self.assertTrue(ctx.exception.impact.get("access_narrowed"))
+        self.assertFalse(ctx.exception.impact.get("access_broadened"))
 
     def test_cancelled_confirmation_leaves_revision_unchanged_cli(self):
         self._seed_remote_blacklist()
@@ -199,17 +199,17 @@ class AccessBroadeningBundleOrder(unittest.TestCase):
             apply_v24_plan(self.plane, plan)
         self.assertIsNotNone(self.plane._get_rule("remote", "block-ssh"))
 
-    def test_bundle_last_blacklist_rule_disable_reports_impact(self):
-        self._seed_internet_blacklist()
+    def test_bundle_last_whitelist_rule_disable_reports_impact(self):
+        self._seed_internet_whitelist()
         plan = prepare_v24_plan(
             self.plane,
             """configurationBundle:
   context: server
   internetAccess:
-    mode: blacklist
+    mode: whitelist
     enforcement: enabled
     rules:
-      - name: block-https
+      - name: allow-https
         source: lan
         destination: web
         service: https
@@ -217,11 +217,11 @@ class AccessBroadeningBundleOrder(unittest.TestCase):
 """,
         )
         text = "\n".join(plan.security_impact)
-        self.assertIn("broadens", text.lower())
-        self.assertIn("last BLACKLIST", text)
+        self.assertIn("narrows", text.lower())
+        self.assertIn("DENY ALL", text)
 
     def test_bundle_referenced_permission_delete_fails_during_prepare(self):
-        self._seed_ai_blacklist()
+        self._seed_ai_whitelist()
         rev_before = self.plane.current_revision()
         with self.assertRaises(ControlPlaneError) as ctx:
             prepare_v24_plan(
@@ -234,17 +234,17 @@ class AccessBroadeningBundleOrder(unittest.TestCase):
 """,
             )
         self.assertIn("still referenced", str(ctx.exception).lower())
-        self.assertIn("block-exec", str(ctx.exception))
+        self.assertIn("allow-exec", str(ctx.exception))
         self.assertEqual(self.plane.current_revision(), rev_before)
         self.assertIsNotNone(v24.get_permission_object(self.plane, "exec-only"))
         self.assertIsNotNone(
             self.plane.conn.execute(
-                "SELECT id FROM ai_policy_rules WHERE name='block-exec'"
+                "SELECT id FROM ai_policy_rules WHERE name='allow-exec'"
             ).fetchone()
         )
 
     def test_bundle_rule_and_permission_dependency_delete_ordered(self):
-        self._seed_ai_blacklist()
+        self._seed_ai_whitelist()
         rev_before = self.plane.current_revision()
         plan = prepare_v24_plan(
             self.plane,
@@ -254,22 +254,22 @@ class AccessBroadeningBundleOrder(unittest.TestCase):
     - name: exec-only
       state: absent
   aiAccess:
-    mode: blacklist
+    mode: whitelist
     enforcement: enabled
     rules:
-      - name: block-exec
+      - name: allow-exec
         state: absent
 """,
         )
         ops = [(c["op"], c["kind"], c["name"]) for c in plan.mutating_changes]
-        self.assertIn(("DELETE", "ai-access-rule", "block-exec"), ops)
+        self.assertIn(("DELETE", "ai-access-rule", "allow-exec"), ops)
         self.assertIn(("DELETE", "permission-object", "exec-only"), ops)
         result = apply_v24_plan(self.plane, plan, confirm=True)
         self.assertEqual(result["status"], "APPLIED")
         self.assertIsNone(v24.get_permission_object(self.plane, "exec-only"))
         self.assertIsNone(
             self.plane.conn.execute(
-                "SELECT id FROM ai_policy_rules WHERE name='block-exec'"
+                "SELECT id FROM ai_policy_rules WHERE name='allow-exec'"
             ).fetchone()
         )
         self.assertGreater(self.plane.current_revision(), rev_before)

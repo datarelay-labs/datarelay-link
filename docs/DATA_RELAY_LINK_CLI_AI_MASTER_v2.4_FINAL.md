@@ -49,11 +49,9 @@ AI Identity
 
 Remote Service
 
-Remote Access
-Internet Access
-AI Access
-
-BLACKLIST / WHITELIST
+Remote Access      — BLACKLIST / WHITELIST
+Internet Access    — WHITELIST only, deny-by-default
+AI Access          — WHITELIST only, deny-by-default
 ```
 
 The main relationships are:
@@ -811,19 +809,19 @@ Internet Access
 AI Access
 ```
 
-Each Access Policy has:
+Policy modes are plane-specific:
 
 ```text
-POLICY MODE
-├── BLACKLIST
-└── WHITELIST
+Remote Access   BLACKLIST | WHITELIST
+Internet Access WHITELIST only
+AI Access       WHITELIST only
 
 ENFORCEMENT
 ├── ENABLED
 └── DISABLED
 ```
 
-The mode alone determines the meaning of matching Rules.
+Remote Access preserves compatibility with explicit service publication. Internet Access and AI Access are privileged/restricted planes: they remain deny-by-default even when enforcement is disabled, and unsupported/invalid policy modes fail closed.
 
 ---
 
@@ -832,29 +830,27 @@ The mode alone determines the meaning of matching Rules.
 Immediately after installation, before an Access Policy has been configured:
 
 ```text
-No Policy
-No Rules
-Effective access = ALLOW
+Remote Access   No Policy → ALLOW
+Internet Access No Policy → DENY
+AI Access       No Policy → DENY (authentication is still required)
 ```
 
-The CLI should communicate this clearly.
+The CLI must communicate these plane-specific defaults clearly.
 
 Example first screen:
 
 ```text
 Data Relay Link
 
-No access restrictions are currently configured.
-Access is allowed by default.
-
 Access policies:
-  Remote Access
-  Internet Access
-  AI Access
+  Remote Access   — no policy; published services use compatibility ALLOW
+  Internet Access — no policy; DENY ALL
+  AI Access       — no policy; DENY ALL after authentication
 
 Policy modes:
-  Blacklist — rules define what to block
-  Whitelist — rules define what to allow
+  Remote Access   — Blacklist or Whitelist
+  Internet Access — Whitelist only
+  AI Access       — Whitelist only
 
 Reusable objects:
   Network Objects / Groups
@@ -948,7 +944,7 @@ Several matching Rules do not create a conflict.
 
 # 18. First Rule and Policy Mode
 
-When a human creates the first Rule in an unconfigured Access Policy, the Wizard asks for the mode.
+When a human creates the first Remote Access Rule in an unconfigured policy, the Wizard asks for BLACKLIST or WHITELIST. Internet Access and AI Access do not offer BLACKLIST; their first Rule establishes WHITELIST mode.
 
 Example:
 
@@ -983,7 +979,7 @@ The selected mode is saved with the policy.
 
 AI one-shot commands are non-interactive.
 
-If no Policy Mode exists yet, the first Rule must include the mode.
+If no Policy Mode exists yet, the first one-shot Rule must include the mode. Internet Access and AI Access accept `mode whitelist` only; Remote Access accepts `mode blacklist|whitelist`.
 
 Example:
 
@@ -1085,7 +1081,7 @@ service
 enabled / disabled
 ```
 
-Internet Access source selectors may include Managed Hosts and Groups containing Managed Hosts. A Managed Host source is address-backed: the observed proxy peer IP must match an eligible active address for that Managed Host. Under BLACKLIST, a destination/service match with unprovable Managed Host source identity is DENY fail-closed, not unmatched ALLOW. NAT-aware deployments should use a proxy-visible IP/CIDR selector when deterministic source policy is required.
+Internet Access source selectors may include Managed Hosts and Groups containing Managed Hosts. A Managed Host source is address-backed: the observed proxy peer IP must match an eligible active address for that Managed Host. Internet Access is WHITELIST-only, so an unprovable source identity does not match and is DENY. NAT-aware deployments should use a proxy-visible IP/CIDR selector when deterministic source policy is required.
 
 Internet Access destination selectors reject a Managed Host and reject any Group containing a Managed Host.
 
@@ -1375,38 +1371,23 @@ set internet-access disabled
 set ai-access disabled
 ```
 
-Effect:
-
-```text
-Mode              → preserved
-Rules             → preserved
-Rule enabled state→ preserved
-Enforcement       → DISABLED
-Effective policy  → ALLOW ALL
-```
-
-Example:
+Effect is plane-specific:
 
 ```text
 Remote Access
-=============
+  Mode/Rules preserved
+  Enforcement DISABLED
+  Effective policy → ALLOW ALL
 
-Mode        : WHITELIST
-Enforcement : DISABLED
-Effective   : ALLOW ALL
-
-Saved rules remain unchanged.
+Internet Access / AI Access
+  Mode/Rules preserved
+  Enforcement DISABLED
+  Effective policy → DENY ALL
 ```
 
-Re-enable:
+Remote Access disable is an explicit access-broadening operation and requires a strong confirmation because every enabled Remote Service becomes reachable from any network source that can reach its public endpoint.
 
-```text
-set remote-access enabled
-```
-
-The previously saved mode and Rules immediately become effective again.
-
-For AI Access, authentication still remains mandatory even while policy enforcement is disabled.
+For Internet Access and AI Access, `disabled` means the plane is shut fail-closed. Re-enabling a WHITELIST with enabled Rules may broaden access and therefore receives normal security-impact confirmation. Authentication remains mandatory for AI Access regardless of enforcement state.
 
 ---
 
@@ -1428,33 +1409,20 @@ Effect:
 Mode  → removed
 Rules → removed
 
-Result:
-No Policy
-No Rules
-Effective access = ALLOW
+Remote Access   → No Policy / ALLOW
+Internet Access → No Policy / DENY ALL
+AI Access       → No Policy / DENY ALL
 ```
 
-Reset is destructive and requires explicit confirmation.
+Reset is destructive and requires explicit confirmation. Remote Access reset is additionally access-broadening and the warning must state that every enabled Remote Service becomes reachable from any network source that can reach its public endpoint. Internet Access and AI Access reset fail closed.
 
-Example:
-
-```text
-WARNING:
-This will remove the Remote Access policy mode and all Remote Access rules.
-
-Effective access after reset:
-  ALLOW
-
-Continue? [y/N]
-```
-
-AI Access policy reset does not remove AI Identity authentication.
+AI Access policy reset does not remove AI Identity authentication, but an authenticated identity has no authorized capabilities until an enabled WHITELIST Rule matches.
 
 ---
 
 # 30. Policy Mode replacement
 
-A configured Access Policy is not directly converted from BLACKLIST to WHITELIST or vice versa.
+Remote Access is not directly converted from BLACKLIST to WHITELIST or vice versa. Internet Access and AI Access support WHITELIST only; BLACKLIST configuration is rejected and any persisted unsupported BLACKLIST state fails closed.
 
 To replace the mode:
 
@@ -2750,7 +2718,7 @@ Missing:
 No changes were applied.
 ```
 
-When no Policy Mode exists, `mode blacklist|whitelist` is also required for a first one-shot Rule.
+When no Policy Mode exists, a first Remote Access one-shot Rule requires `mode blacklist|whitelist`; first Internet Access and AI Access one-shot Rules require `mode whitelist`.
 
 ---
 
@@ -3157,7 +3125,7 @@ Permission Object.permissions
 
 ## 61.4 Internet Access Managed Host example
 
-A Managed Host is valid as an Internet Access source. The selector is address-backed rather than cryptographic: actual proxy traffic matches only when the observed peer source IP is one of the Managed Host's eligible active addresses. If a BLACKLIST destination/service match cannot prove that source identity, runtime denies fail-closed. Behind NAT, use an IP/CIDR selector for the proxy-visible source when deterministic policy is required.
+A Managed Host is valid as an Internet Access source. The selector is address-backed rather than cryptographic: actual proxy traffic matches only when the observed peer source IP is one of the Managed Host's eligible active addresses. Because Internet Access is WHITELIST-only, an unprovable source identity is an unmatched request and runtime denies fail-closed. Behind NAT, use an IP/CIDR selector for the proxy-visible source when deterministic policy is required.
 
 ```yaml
 configurationBundle:
@@ -3839,8 +3807,9 @@ Expected:
 ```text
 Role: DRLink Server
 
-No access restrictions are currently configured.
-Access is allowed by default.
+No access policies are currently configured.
+Remote Access compatibility default is ALLOW for explicitly published services.
+Internet Access and AI Access are DENY by default.
 ```
 
 User understands:
@@ -4352,7 +4321,7 @@ The WHITELIST default handles all unmatched traffic.
 
 # 87. Scenario — Internet Access Managed Host source
 
-A Managed Host may be used directly as an Internet Access source. Because Internet Access is agentless, the runtime proves that selector only by matching the observed proxy peer IP to an eligible active Managed Host address. BLACKLIST source ambiguity is fail-closed DENY; NAT-aware deployments should select the proxy-visible IP/CIDR when deterministic identity is required.
+A Managed Host may be used directly as an Internet Access source. Because Internet Access is agentless, the runtime proves that selector only by matching the observed proxy peer IP to an eligible active Managed Host address. Source ambiguity is fail-closed DENY under the WHITELIST-only model; NAT-aware deployments should select the proxy-visible IP/CIDR when deterministic identity is required.
 
 Example:
 
@@ -5110,12 +5079,12 @@ A v2.4 CLI implementation is conformant only if the following can all be demonst
 
 ## Policy
 
-- First Human Rule selects BLACKLIST/WHITELIST.
+- First Remote Access Human Rule selects BLACKLIST/WHITELIST; Internet Access and AI Access are WHITELIST-only.
 - First AI one-shot Rule requires `mode`.
 - Multiple matches behave deterministically without rule ordering.
 - Last Rule deletion preserves Mode.
 - Rule disable and Policy disable have different, correctly explained effects.
-- Policy reset returns to initial ALLOW state.
+- Policy reset returns Remote Access to ALLOW, but Internet Access and AI Access to DENY ALL.
 - Direct Mode conversion is not performed.
 
 ## Remote Service
@@ -5136,7 +5105,7 @@ A v2.4 CLI implementation is conformant only if the following can all be demonst
 
 - Interactive and automation authentication can bind an AI Identity.
 - Policy evaluation occurs only after identity authentication.
-- AI Access BLACKLIST/WHITELIST behaves like the other policy families.
+- AI Access is WHITELIST-only and deny-by-default; authentication alone never grants a capability.
 - Policy disable does not remove authentication.
 - AI Access Log supports identity/destination/permission filtering.
 

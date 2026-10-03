@@ -54,8 +54,11 @@ class AuthoritativeConnectivityConvergence(unittest.TestCase):
         v24.set_network_object(
             self.plane, "blocked-src", type="ip", value="198.51.100.9", oneshot=True
         )
+        v24.set_network_object(
+            self.plane, "allowed-src", type="ip", value="198.51.100.10", oneshot=True
+        )
         v24.ensure_policy_mode(self.plane, "remote", "blacklist", oneshot=True)
-        v24.ensure_policy_mode(self.plane, "internet", "blacklist", oneshot=True)
+        v24.ensure_policy_mode(self.plane, "internet", "whitelist", oneshot=True)
 
     def tearDown(self):
         self.plane.close()
@@ -289,7 +292,7 @@ class AuthoritativeConnectivityConvergence(unittest.TestCase):
         )
         self.assertEqual(after["decision"], RP.DECISION_DENY)
 
-    def test_fixed_tcp_object_edit_keeps_internet_blacklist_deny(self):
+    def test_fixed_tcp_object_edit_keeps_internet_whitelist_unmatched_deny(self):
         v24.set_network_object(
             self.plane, "db-target", type="fqdn", value="old.invalid", oneshot=True
         )
@@ -303,9 +306,9 @@ class AuthoritativeConnectivityConvergence(unittest.TestCase):
         v24.set_access_rule(
             self.plane,
             "internet",
-            "block-db",
-            mode="blacklist",
-            source="blocked-src",
+            "allow-db",
+            mode="whitelist",
+            source="allowed-src",
             destination="db-target",
             service="ssh",
             enabled=True,

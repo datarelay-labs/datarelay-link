@@ -959,6 +959,11 @@ def set_policy_enforcement(plane_db, family: str, enabled: bool, *, confirm: Opt
                 "No %s policy is configured yet." % title
             )
         )
+    if plane in ("internet", "ai") and str(pol.get("mode") or "").lower() != "whitelist":
+        raise ControlPlaneError(
+            "%s contains an unsupported policy mode and is fail-closed. "
+            "Reset the policy before changing enforcement.\n\nNo changes were applied." % title
+        )
 
     def write():
         plane_db.conn.execute(
@@ -971,15 +976,46 @@ def set_policy_enforcement(plane_db, family: str, enabled: bool, *, confirm: Opt
         }
 
     impact = None
-    if not enabled and str(pol["enforcement"]).lower() == "enabled":
-        blocking = _count_blocking_rules(plane_db, plane)
-        impact = {
-            "access_broadened": True,
-            "access_narrowed": False,
-            "before": "%s / Enforcement ENABLED / Effective blocking rules: %s" % (str(pol["mode"]).upper(), blocking),
-            "after": "%s / Enforcement DISABLED / Effective result: ALLOW ALL" % str(pol["mode"]).upper(),
-            "warning": "This change broadens %s." % title,
-        }
+    current_enforcement = str(pol["enforcement"] or "enabled").lower()
+    enabled_rules = _count_blocking_rules(plane_db, plane)
+    if not enabled and current_enforcement == "enabled":
+        if plane in ("internet", "ai"):
+            impact = {
+                "access_broadened": False,
+                "access_narrowed": True,
+                "requires_confirmation": True,
+                "before": "%s / Enforcement ENABLED / Effective enabled rules: %s"
+                % (str(pol["mode"]).upper(), enabled_rules),
+                "after": "%s / Enforcement DISABLED / Effective result: DENY ALL"
+                % str(pol["mode"]).upper(),
+                "warning": "Disabling %s enforcement disables all access on this plane (DENY ALL)."
+                % title,
+            }
+        else:
+            impact = {
+                "access_broadened": True,
+                "access_narrowed": False,
+                "requires_confirmation": True,
+                "before": "%s / Enforcement ENABLED / Effective blocking rules: %s"
+                % (str(pol["mode"]).upper(), enabled_rules),
+                "after": "%s / Enforcement DISABLED / Effective result: ALLOW ALL"
+                % str(pol["mode"]).upper(),
+                "warning": (
+                    "Disabling Remote Access enforcement makes every enabled Remote Service "
+                    "reachable from any network source that can reach its public endpoint."
+                ),
+            }
+    elif enabled and current_enforcement == "disabled" and plane in ("internet", "ai"):
+        if str(pol.get("mode") or "").lower() == "whitelist" and enabled_rules:
+            impact = {
+                "access_broadened": True,
+                "access_narrowed": False,
+                "requires_confirmation": True,
+                "before": "WHITELIST / Enforcement DISABLED / Effective result: DENY ALL",
+                "after": "WHITELIST / Enforcement ENABLED / matching enabled Rules may ALLOW",
+                "warning": "Enabling %s enforcement may allow flows or operations matched by existing Rules."
+                % title,
+            }
 
     return plane_db._mutate(
         "set %s-access %s" % (plane if plane != "ai" else "ai", "enabled" if enabled else "disabled"),
@@ -1414,32 +1450,55 @@ def ai_access_rule_update_security_impact(
     return None
 
 
-def _policy_restrictiveness_rank(mode: Optional[str], enforcement: str) -> int:
-    """Higher rank = more restrictive default posture for unmatched traffic."""
-    if mode is None:
-        return 0
-    if str(enforcement or "enabled").lower() == "disabled":
-        return 0
-    mode_l = str(mode).lower()
+def _policy_restrictiveness_rank(
+    mode: Optional[str], enforcement: str, *, plane: str, enabled_rules: int
+) -> int:
+    """Higher rank = more restrictive effective posture for restore impact."""
+    plane_n = _plane_key(plane)
+    mode_l = str(mode or "").strip().lower() or None
+    enf = str(enforcement or "enabled").strip().lower()
+    if plane_n in ("internet", "ai"):
+        # Restricted planes fail closed unless an enabled WHITELIST has at
+        # least one enabled Rule that can authorize a subset of traffic/tools.
+        if enf != "enabled" or mode_l != "whitelist" or enabled_rules <= 0:
+            return 3  # DENY ALL
+        return 2      # selective ALLOW
+    if mode_l is None or enf == "disabled":
+        return 0      # ALLOW ALL
     if mode_l == "blacklist":
         return 1
     if mode_l == "whitelist":
         return 2
-    return 0
+    return 3          # invalid state fails closed
 
 
-def _policy_effective_label(mode: Optional[str], enforcement: str, enabled_rules: int) -> str:
-    if mode is None:
+def _policy_effective_label(
+    mode: Optional[str], enforcement: str, enabled_rules: int, *, plane: str
+) -> str:
+    plane_n = _plane_key(plane)
+    mode_l = str(mode or "").strip().lower() or None
+    enf = str(enforcement or "enabled").strip().lower()
+    if plane_n in ("internet", "ai"):
+        if mode_l is None:
+            return "No Policy / DENY ALL"
+        mode_u = str(mode).upper()
+        if enf != "enabled":
+            return "%s / Enforcement DISABLED / DENY ALL" % mode_u
+        if mode_l != "whitelist":
+            return "%s / unsupported mode / DENY ALL" % mode_u
+        if enabled_rules <= 0:
+            return "WHITELIST / Enforcement ENABLED / 0 enabled Rules / DENY ALL"
+        return "WHITELIST / Enforcement ENABLED / %s enabled Rule(s) / unmatched DENY" % enabled_rules
+    if mode_l is None:
         return "No Policy / unmatched ALLOW"
-    enf = str(enforcement or "enabled").lower()
     mode_u = str(mode).upper()
     if enf == "disabled":
         return "%s / Enforcement DISABLED / ALLOW ALL" % mode_u
-    unmatched = "DENY" if mode_u == "WHITELIST" else "ALLOW"
+    if mode_l not in ("blacklist", "whitelist"):
+        return "%s / invalid mode / DENY ALL" % mode_u
+    unmatched = "DENY" if mode_l == "whitelist" else "ALLOW"
     return "%s / Enforcement ENABLED / %s enabled Rule(s) / unmatched %s" % (
-        mode_u,
-        enabled_rules,
-        unmatched,
+        mode_u, enabled_rules, unmatched
     )
 
 
@@ -1735,9 +1794,13 @@ def _access_policy_snapshot(conn: sqlite3.Connection, plane: str) -> dict:
         "plane": plane,
         "mode": mode,
         "enforcement": enforcement,
-        "rank": _policy_restrictiveness_rank(mode, enforcement),
+        "rank": _policy_restrictiveness_rank(
+            mode, enforcement, plane=plane, enabled_rules=len(rules)
+        ),
         "rules": rules,
-        "label": _policy_effective_label(mode, enforcement, len(rules)),
+        "label": _policy_effective_label(
+            mode, enforcement, len(rules), plane=plane
+        ),
     }
 
 
@@ -1772,8 +1835,8 @@ def restore_access_security_impact(
             family_broaden = True
         elif cand["rank"] > live["rank"]:
             family_narrow = True
-        elif live["rank"] == 0 and cand["rank"] == 0:
-            # Both permissive (No Policy or enforcement disabled): no confirm.
+        elif live["rank"] == cand["rank"] and live["rank"] in (0, 3):
+            # Both equivalent all-open (Remote) or all-deny (restricted/invalid) postures.
             pass
         elif live["mode"] == "blacklist" and cand["mode"] == "blacklist":
             # Fewer / weaker blocks broaden; added blocks narrow.
@@ -2326,14 +2389,35 @@ def reset_access_policy(plane_db, family: str, *, confirm: Optional[bool] = None
         )
         return {"entity": {"type": "%s-access" % plane, "id": plane, "name": "policy"}, "operation": "reset"}
 
-    impact = {
-        "warning": "This will remove the %s policy mode and all %s rules." % (title, title),
-        "effective": "ALLOW",
-        "access_broadened": True,
-        "before": "mode=%s rules=%s enforcement=%s"
-        % (pol.get("mode") or "none", rule_count, pol.get("enforcement")),
-        "after": "mode removed / rules removed / effective result after reset: ALLOW",
-    }
+    if plane in ("internet", "ai"):
+        impact = {
+            "warning": (
+                "This will remove the %s policy mode and all %s rules. "
+                "This plane will fail closed after reset (DENY ALL)."
+            ) % (title, title),
+            "effective": "DENY",
+            "access_broadened": False,
+            "access_narrowed": True,
+            "requires_confirmation": True,
+            "before": "mode=%s rules=%s enforcement=%s"
+            % (pol.get("mode") or "none", rule_count, pol.get("enforcement")),
+            "after": "mode removed / rules removed / effective result after reset: DENY",
+        }
+    else:
+        impact = {
+            "warning": (
+                "This will remove the Remote Access policy mode and all Remote Access rules. "
+                "Every enabled Remote Service will then be reachable from any network source "
+                "that can reach its public endpoint."
+            ),
+            "effective": "ALLOW",
+            "access_broadened": True,
+            "access_narrowed": False,
+            "requires_confirmation": True,
+            "before": "mode=%s rules=%s enforcement=%s"
+            % (pol.get("mode") or "none", rule_count, pol.get("enforcement")),
+            "after": "mode removed / rules removed / effective result after reset: ALLOW",
+        }
     return plane_db._mutate(
         "unset %s-access policy" % ("ai" if plane == "ai" else plane),
         "reset policy",
@@ -2349,13 +2433,24 @@ def ensure_policy_mode(plane_db, family: str, mode: Optional[str], *, oneshot: b
     wanted = str(mode or "").strip().lower() or None
     if wanted is not None and wanted not in POLICY_MODES:
         raise ControlPlaneError("mode must be blacklist or whitelist")
+    if plane in ("internet", "ai"):
+        if wanted == "blacklist":
+            raise ControlPlaneError(
+                "%s is deny-by-default and supports WHITELIST mode only.\n\nNo changes were applied."
+                % _access_family_title(plane)
+            )
+        if str(pol.get("mode") or "").lower() == "blacklist":
+            raise ControlPlaneError(
+                "%s contains an unsupported BLACKLIST policy. Reset the policy and recreate it in WHITELIST mode.\n\nNo changes were applied."
+                % _access_family_title(plane)
+            )
     if pol["mode"] is None:
         if wanted is None:
             if oneshot:
                 raise ControlPlaneError(
                     cli_error(
                         "No Policy Mode exists yet.",
-                        expected="mode blacklist|whitelist on the first one-shot Rule",
+                        expected=("mode whitelist on the first one-shot Rule" if plane in ("internet", "ai") else "mode blacklist|whitelist on the first one-shot Rule"),
                     )
                 )
             raise ControlPlaneError("Policy mode is required")
@@ -2380,16 +2475,34 @@ def ensure_policy_mode(plane_db, family: str, mode: Optional[str], *, oneshot: b
     return pol["mode"]
 
 
-def effective_policy_result(mode: Optional[str], enforcement: str, matched: bool) -> str:
-    if mode is None:
-        return "ALLOW"
-    if str(enforcement or "enabled").lower() == "disabled":
-        return "ALLOW"
-    if mode == "blacklist":
-        return "DENY" if matched else "ALLOW"
-    if mode == "whitelist":
+def effective_policy_result(
+    mode: Optional[str], enforcement: str, matched: bool, *, plane: str = "remote"
+) -> str:
+    """Return the effective decision for one policy plane.
+
+    Remote Access preserves its historical opt-in publication semantics: no
+    policy or disabled enforcement means ALLOW. Internet Access and AI Access
+    are privileged/restricted planes and are fail-closed: only an enabled
+    WHITELIST rule match can ALLOW. Unknown state always DENYs.
+    """
+    plane_n = _plane_key(plane)
+    mode_n = str(mode or "").strip().lower() or None
+    enforcement_n = str(enforcement or "enabled").strip().lower()
+    if plane_n in ("internet", "ai"):
+        if enforcement_n != "enabled":
+            return "DENY"
+        if mode_n != "whitelist":
+            return "DENY"
         return "ALLOW" if matched else "DENY"
-    return "ALLOW"
+    if mode_n is None:
+        return "ALLOW"
+    if enforcement_n == "disabled":
+        return "ALLOW"
+    if mode_n == "blacklist":
+        return "DENY" if matched else "ALLOW"
+    if mode_n == "whitelist":
+        return "ALLOW" if matched else "DENY"
+    return "DENY"
 
 
 # ---------------------------------------------------------------------------
@@ -3649,7 +3762,7 @@ def set_access_rule(
             missing.append("enabled|disabled")
         pol = get_access_policy(plane_db, plane)
         if pol["mode"] is None and mode is None:
-            missing.append("mode blacklist|whitelist")
+            missing.append("mode whitelist" if plane == "internet" else "mode blacklist|whitelist")
         if missing:
             raise ControlPlaneError(
                 "ERROR:\n%s Access rule is incomplete.\n\nMissing:\n%s\n\nNo changes were applied."
@@ -4233,7 +4346,7 @@ def evaluate_selector_policy(
         if src_ok and dst_ok and svc_ok:
             matched_rules.append(view["name"])
     matched = bool(matched_rules)
-    result = effective_policy_result(pol["mode"], pol["enforcement"], matched)
+    result = effective_policy_result(pol["mode"], pol["enforcement"], matched, plane=plane)
     return {
         "mode": pol["mode"],
         "enforcement": pol["enforcement"],
@@ -4378,7 +4491,7 @@ def set_ai_access_rule(
             missing.append("enabled|disabled")
         pol = get_access_policy(plane_db, "ai")
         if pol["mode"] is None and mode is None:
-            missing.append("mode blacklist|whitelist")
+            missing.append("mode whitelist")
         if missing:
             raise ControlPlaneError(
                 "ERROR:\nAI Access rule is incomplete.\n\nMissing:\n%s\n\nNo changes were applied."
@@ -4573,8 +4686,8 @@ def evaluate_ai_access_v24(
                     perms.add(r["permission"])
         if wanted_perms & perms or permission.lower() in {p.lower() for p in perms}:
             matched.append(row["name"])
-    # Policy enforcement disabled => ALLOW only after authentication succeeds.
-    result = effective_policy_result(pol["mode"], pol["enforcement"], bool(matched))
+    # AI Access is deny-by-default; authentication is necessary but never sufficient.
+    result = effective_policy_result(pol["mode"], pol["enforcement"], bool(matched), plane="ai")
     return {
         "mode": pol["mode"],
         "enforcement": pol["enforcement"],
@@ -7032,19 +7145,28 @@ def format_show_status(role: str, plane_db=None) -> str:
             pol = get_access_policy(plane_db, family)
             title = {"remote": "Remote Access", "internet": "Internet Access", "ai": "AI Access"}[family]
             if pol["mode"] is None:
-                policies.append("  %s: No Policy (ALLOW)" % title)
+                default = "ALLOW" if family == "remote" else "DENY"
+                policies.append("  %s: No Policy (%s)" % (title, default))
             else:
                 configured = True
-                # Show mode summary
-                policies.append(
-                    "  %s: %s / %s"
-                    % (title, pol["mode"].upper(), str(pol["enforcement"]).upper())
-                )
+                mode = str(pol["mode"] or "").lower()
+                if family in ("internet", "ai") and mode != "whitelist":
+                    policies.append(
+                        "  %s: %s / FAIL CLOSED (UNSUPPORTED MODE)"
+                        % (title, str(pol["mode"]).upper())
+                    )
+                else:
+                    policies.append(
+                        "  %s: %s / %s"
+                        % (title, str(pol["mode"]).upper(), str(pol["enforcement"]).upper())
+                    )
         if not configured:
             lines.extend(
                 [
-                    "No access restrictions are currently configured.",
-                    "Access is allowed by default.",
+                    "No access policies are currently configured.",
+                    "Remote Access compatibility default: ALLOW for explicitly published services.",
+                    "Internet Access default: DENY ALL.",
+                    "AI Access default: DENY ALL after authentication.",
                     "",
                     "Access policies:",
                     "  Remote Access",
@@ -7052,8 +7174,9 @@ def format_show_status(role: str, plane_db=None) -> str:
                     "  AI Access",
                     "",
                     "Policy modes:",
-                    "  Blacklist — rules define what to block",
-                    "  Whitelist — rules define what to allow",
+                    "  Remote Access — Blacklist or Whitelist",
+                    "  Internet Access — Whitelist only",
+                    "  AI Access — Whitelist only",
                     "",
                     "Reusable objects:",
                     "  Network Objects / Groups",

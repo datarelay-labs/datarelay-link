@@ -153,15 +153,15 @@ class RemoteAccessSemanticParity(_Base):
 class InternetAccessSemanticParity(_Base):
     def test_user_intent_equivalent_fqdn_objects(self):
         # Intent: "Would traffic to example.com be denied?"
-        # BLACKLIST references audit-fqdn; test with another-object (same FQDN).
+        # WHITELIST references audit-fqdn; test with another-object (same FQDN).
         v24.set_network_object(self.plane, "agent-src", type="ip", value="10.10.10.20", oneshot=True)
         v24.set_network_object(self.plane, "audit-fqdn", type="fqdn", value="example.com", oneshot=True)
         v24.set_network_object(self.plane, "another-object", type="fqdn", value="example.com", oneshot=True)
         v24.set_access_rule(
             self.plane,
             "internet",
-            "block-example",
-            mode="blacklist",
+            "allow-example",
+            mode="whitelist",
             source="agent-src",
             destination="audit-fqdn",
             service="https",
@@ -190,10 +190,10 @@ class InternetAccessSemanticParity(_Base):
         )
         self.assertEqual(rc_named, 0)
         self.assertEqual(rc_alias, 0)
-        self.assertIn("DENY", out_named)
-        self.assertIn("DENY", out_alias)
+        self.assertIn("ALLOW", out_named)
+        self.assertIn("ALLOW", out_alias)
         runtime = self.plane.evaluate_internet_access("10.10.10.20", "example.com", 443, "https")
-        self.assertEqual(runtime["action"], "DENY")
+        self.assertEqual(runtime["action"], "ALLOW")
 
     def test_whitelist_and_equivalent_ip_service(self):
         v24.set_network_object(self.plane, "src-a", type="ip", value="8.8.8.8", oneshot=True)
@@ -251,7 +251,7 @@ class ObjectReferenceSubviews(_Base):
             self.plane,
             "internet",
             "rule-b",
-            mode="blacklist",
+            mode="whitelist",
             source="office",
             destination="ext-site",
             service="web-https",

@@ -537,18 +537,18 @@ PY
     pq_note "INTERNET_OS_windows=BLOCKED"
   fi
 
-  # v2.4 enforcement disable preserves rules but makes Internet Access ALLOW ALL.
+  # v2.4 Internet Access disable preserves rules but shuts the plane fail-closed (DENY ALL).
   set +e
   pq_ssh "$SERVER" "sudo drlink set internet-access disabled" >"$OUT/extended/internet-disabled.log" 2>&1
   local disable_rc=$?
   local disabled_code
-  disabled_code="$(pq_ssh frp-e2e-client "curl -sS -o /dev/null -w '%{http_code}' --max-time 15 -x http://${SERVER_IP}:${EGRESS_PORT} http://example.org/ || true")"
+  disabled_code="$(pq_ssh frp-e2e-client "curl -sS -o /dev/null -w '%{http_code}' --max-time 15 -x http://${SERVER_IP}:${EGRESS_PORT} http://example.com/ || true")"
   pq_ssh "$SERVER" "sudo drlink set internet-access enabled" >"$OUT/extended/internet-enabled.log" 2>&1
   local enable_rc=$?
   local reenabled_code
-  reenabled_code="$(pq_ssh frp-e2e-client "curl -sS -o /dev/null -w '%{http_code}' --max-time 15 -x http://${SERVER_IP}:${EGRESS_PORT} http://example.org/ || true")"
+  reenabled_code="$(pq_ssh frp-e2e-client "curl -sS -o /dev/null -w '%{http_code}' --max-time 15 -x http://${SERVER_IP}:${EGRESS_PORT} http://example.com/ || true")"
   set -uo pipefail
-  if [[ "$disable_rc" -eq 0 && "$enable_rc" -eq 0 && "$disabled_code" =~ ^[23][0-9][0-9]$ && "$reenabled_code" == "403" ]]; then
+  if [[ "$disable_rc" -eq 0 && "$enable_rc" -eq 0 && "$disabled_code" == "403" && "$reenabled_code" =~ ^[23][0-9][0-9]$ ]]; then
     pq_note "INTERNET_ENFORCEMENT_TOGGLE=PASS disabled=$disabled_code reenabled=$reenabled_code"
   else
     pq_note "INTERNET_ENFORCEMENT_TOGGLE=FAIL disable_rc=$disable_rc enable_rc=$enable_rc disabled=$disabled_code reenabled=$reenabled_code"

@@ -79,8 +79,8 @@ class UserLifecycleUxCoverage(unittest.TestCase):
         v24.set_permission_object(self.plane, "exec", permissions=["command-exec"], oneshot=True)
         v24.set_ai_access_rule(
             self.plane,
-            "block",
-            mode="blacklist",
+            "allow",
+            mode="whitelist",
             source="bot",
             destination="host",
             permission="exec",
@@ -90,7 +90,9 @@ class UserLifecycleUxCoverage(unittest.TestCase):
         rc, out, err = self._dispatch(["show", "ai-access"])
         self.assertEqual(rc, 0, err or out)
         self.assertIn("Unmatched   :", out)
+        self.assertIn("DENY", out)
         self.assertNotIn("Effective   :", out)
+        self.assertIn("WHITELIST", out)
 
     def test_ai_access_help_has_lifecycle_and_v24_nouns(self):
         text = catalog.domain_help("ai-access", "server")

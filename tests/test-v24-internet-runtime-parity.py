@@ -84,6 +84,91 @@ class InternetRuntimeParityTests(unittest.TestCase):
             oneshot=True,
         )
 
+    def test_00_no_policy_gateway_denies_without_outbound_connect(self):
+        self.plane.compile_runtime()
+        cfg_path = Path(self.tmp) / "etc/drlink/config.json"
+        cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+        cfg["egress_conn_log_file"] = str(
+            Path(self.tmp) / "var/log/drlink/egress/connections.jsonl"
+        )
+        Path(self.tmp, "var/log/drlink/egress").mkdir(parents=True, exist_ok=True)
+        cfg_path.write_text(json.dumps(cfg) + "\n", encoding="utf-8")
+
+        attempted: list[str] = []
+
+        def resolve(host: str) -> list[str]:
+            self.assertEqual(host, "api.example")
+            return [PUBLIC_A]
+
+        def connect_fn(ip, port, hostname, timeout):
+            del port, hostname, timeout
+            attempted.append(ip)
+            raise AssertionError("No Policy must not attempt an outbound connection")
+
+        gw_path = ROOT / "server" / "frp-egress-gateway.py"
+        spec = importlib.util.spec_from_file_location("frp_egress_gateway_no_policy_guard", gw_path)
+        GW = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(GW)
+
+        cache = GW.PolicyCache(cfg_path)
+        gw = GW.GatewayState(cache, resolve_fn=resolve, connect_fn=connect_fn)
+        sock, decision = GW._authorize_and_connect(
+            gw,
+            source_ip=SRC,
+            hostname="api.example",
+            port=443,
+            method="CONNECT",
+            protocol="https",
+        )
+        self.assertIsNone(sock)
+        self.assertEqual(decision["decision"], EG.DECISION_DENY)
+        self.assertEqual(decision["authorized_candidates"], [])
+        self.assertEqual(attempted, [])
+
+    def test_00_no_policy_gateway_fails_closed_without_connect(self):
+        """Fresh v2.4 must not turn the default 0.0.0.0 proxy listener into an open proxy."""
+        self.plane.compile_runtime()
+        attempted: list[tuple[str, int, str]] = []
+
+        def resolve(host: str) -> list[str]:
+            self.assertEqual(host, "api.example")
+            return [PUBLIC_A]
+
+        def connect_fn(ip, port, hostname, timeout):
+            del timeout
+            attempted.append((ip, int(port), hostname))
+            raise AssertionError("outbound connect must not run when Internet Access has No Policy")
+
+        gw_path = ROOT / "server" / "frp-egress-gateway.py"
+        spec = importlib.util.spec_from_file_location("frp_egress_gateway_no_policy", gw_path)
+        GW = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(GW)
+
+        cfg_path = Path(self.tmp) / "etc/drlink/config.json"
+        cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+        cfg["egress_conn_log_file"] = str(
+            Path(self.tmp) / "var/log/drlink/egress/connections.jsonl"
+        )
+        Path(self.tmp, "var/log/drlink/egress").mkdir(parents=True, exist_ok=True)
+        cfg_path.write_text(json.dumps(cfg) + "\n", encoding="utf-8")
+
+        cache = GW.PolicyCache(cfg_path)
+        gw = GW.GatewayState(cache, resolve_fn=resolve, connect_fn=connect_fn)
+        sock, decision = GW._authorize_and_connect(
+            gw,
+            source_ip=SRC,
+            hostname="api.example",
+            port=443,
+            method="CONNECT",
+            protocol="https",
+        )
+        self.assertIsNone(sock)
+        self.assertEqual(decision["decision"], EG.DECISION_DENY)
+        self.assertEqual(decision["authorized_candidates"], [])
+        self.assertEqual(attempted, [])
+
     def test_01_direct_ip_literal_explicit_allow(self):
         self._whitelist_rule("allow-ip", "exact-ip")
         decision = RP.authorize_internet(
@@ -168,19 +253,12 @@ class InternetRuntimeParityTests(unittest.TestCase):
         self.assertEqual(decision["authorized_candidates"], [PUBLIC_A])
         self.assertNotIn(PUBLIC_OUTSIDE, decision["authorized_candidates"])
 
-    def test_07_blacklist_candidate_behavior(self):
-        self._blacklist_rule("block-cidr", "cidr-block")
-        decision = RP.authorize_internet(
-            self.plane,
-            source_ip=SRC,
-            hostname="api.example",
-            port=443,
-            protocol="https",
-            candidate_ips=[PUBLIC_A, PUBLIC_OUTSIDE],
-        )
-        self.assertEqual(decision["decision"], RP.DECISION_ALLOW)
-        self.assertEqual(decision["authorized_candidates"], [PUBLIC_OUTSIDE])
-        self.assertNotIn(PUBLIC_A, decision["authorized_candidates"])
+    def test_07_blacklist_rejected(self):
+        rev = self.plane.current_revision()
+        with self.assertRaises(ControlPlaneError) as ctx:
+            self._blacklist_rule("block-cidr", "cidr-block")
+        self.assertIn("WHITELIST", str(ctx.exception))
+        self.assertEqual(self.plane.current_revision(), rev)
 
     def test_08_fqdn_rule_authorizes_all_safe_candidates(self):
         self._whitelist_rule("allow-fqdn", "api-fqdn")
@@ -407,7 +485,7 @@ class InternetRuntimeParityTests(unittest.TestCase):
         host, port = EG.parse_authority_host_port("%s:443" % PUBLIC_A)
         self.assertEqual((host, port), (PUBLIC_A, 443))
 
-    def test_16_managed_host_blacklist_nat_source_fails_closed(self):
+    def test_16_managed_host_whitelist_nat_source_fails_closed(self):
         managed_ip = "10.20.30.41"
         nat_ip = "198.51.100.41"
         self.plane.upsert_client(
@@ -419,8 +497,8 @@ class InternetRuntimeParityTests(unittest.TestCase):
         v24.set_access_rule(
             self.plane,
             "internet",
-            "block-managed",
-            mode="blacklist",
+            "allow-managed",
+            mode="whitelist",
             source="managed-source",
             destination="api-fqdn",
             service="https",
@@ -436,8 +514,8 @@ class InternetRuntimeParityTests(unittest.TestCase):
             protocol="https",
             candidate_ips=[PUBLIC_A],
         )
-        self.assertEqual(direct["decision"], RP.DECISION_DENY)
-        self.assertEqual(direct["rule_name"], "block-managed")
+        self.assertEqual(direct["decision"], RP.DECISION_ALLOW)
+        self.assertEqual(direct["authorized_candidates"], [PUBLIC_A])
 
         nat = RP.authorize_internet(
             self.plane,
@@ -449,12 +527,6 @@ class InternetRuntimeParityTests(unittest.TestCase):
         )
         self.assertEqual(nat["decision"], RP.DECISION_DENY)
         self.assertEqual(nat["authorized_candidates"], [])
-        self.assertEqual(nat["ambiguous_managed_source_rules"], ["block-managed"])
-        self.assertIn("cannot be proven", nat["reason"])
-        self.assertEqual(
-            nat["candidate_results"][0]["ambiguous_managed_source_rules"],
-            ["block-managed"],
-        )
 
         unrelated = RP.authorize_internet(
             self.plane,
@@ -464,41 +536,24 @@ class InternetRuntimeParityTests(unittest.TestCase):
             protocol="https",
             candidate_ips=[PUBLIC_A],
         )
-        self.assertEqual(unrelated["decision"], RP.DECISION_ALLOW)
-        self.assertEqual(unrelated["ambiguous_managed_source_rules"], [])
+        self.assertEqual(unrelated["decision"], RP.DECISION_DENY)
 
-    def test_17_managed_host_ambiguity_does_not_override_disabled_enforcement(self):
-        self.plane.upsert_client(
-            "managed-source-client",
-            label="managed-source",
-            hostname="managed-source",
-            addresses=[{"address": "10.20.30.41", "active": True}],
-        )
-        v24.set_access_rule(
-            self.plane,
-            "internet",
-            "block-managed",
-            mode="blacklist",
-            source="managed-source",
-            destination="api-fqdn",
-            service="https",
-            enabled=True,
-            oneshot=True,
-        )
+    def test_17_disabled_enforcement_is_deny_all(self):
+        self._whitelist_rule("allow-fqdn", "api-fqdn")
         v24.set_policy_enforcement(self.plane, "internet", False, confirm=True)
         decision = RP.authorize_internet(
             self.plane,
-            source_ip="198.51.100.41",
+            source_ip=SRC,
             hostname="api.example",
             port=443,
             protocol="https",
             candidate_ips=[PUBLIC_A],
         )
-        self.assertEqual(decision["decision"], RP.DECISION_ALLOW)
-        self.assertEqual(decision["authorized_candidates"], [PUBLIC_A])
+        self.assertEqual(decision["decision"], RP.DECISION_DENY)
+        self.assertEqual(decision["authorized_candidates"], [])
         self.assertIn("DISABLED", decision["reason"])
 
-    def test_18_gateway_does_not_connect_on_managed_host_nat_ambiguity(self):
+    def test_18_gateway_does_not_connect_without_matching_whitelist_source(self):
         self.plane.upsert_client(
             "managed-source-client",
             label="managed-source",
@@ -508,8 +563,8 @@ class InternetRuntimeParityTests(unittest.TestCase):
         v24.set_access_rule(
             self.plane,
             "internet",
-            "block-managed",
-            mode="blacklist",
+            "allow-managed",
+            mode="whitelist",
             source="managed-source",
             destination="api-fqdn",
             service="https",
@@ -527,7 +582,7 @@ class InternetRuntimeParityTests(unittest.TestCase):
         def connect_fn(ip, port, hostname, timeout):
             del port, hostname, timeout
             attempted.append(ip)
-            raise AssertionError("connect must not run for ambiguous Managed Host source")
+            raise AssertionError("connect must not run for unmatched WHITELIST source")
 
         gw_path = ROOT / "server" / "frp-egress-gateway.py"
         spec = importlib.util.spec_from_file_location("frp_egress_gateway_nat_guard", gw_path)
@@ -556,7 +611,6 @@ class InternetRuntimeParityTests(unittest.TestCase):
         self.assertIsNone(sock)
         self.assertEqual(decision["decision"], EG.DECISION_DENY)
         self.assertEqual(decision["authorized_candidates"], [])
-        self.assertEqual(decision["ambiguous_managed_source_rules"], ["block-managed"])
         self.assertEqual(attempted, [])
 
 

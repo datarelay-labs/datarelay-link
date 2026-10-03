@@ -100,7 +100,7 @@ Reject/inactivate inappropriate loopback/link-local/multicast/special addresses 
 
 Test NAT/public observed source is not substituted for reported internal addresses.
 
-For Internet Access Managed Host sources, prove the runtime distinction explicitly: direct peer address match follows normal BLACKLIST/WHITELIST semantics; a NAT/source mismatch that leaves Managed Host identity unprovable must fail closed under BLACKLIST when destination/service otherwise match, while Enforcement DISABLED still yields ALLOW ALL.
+For Internet Access Managed Host sources, prove the runtime distinction explicitly: direct peer address match may satisfy an enabled WHITELIST Rule; a NAT/source mismatch that leaves Managed Host identity unprovable must fail closed as DENY, and Enforcement DISABLED must yield DENY ALL.
 
 ## 6. Remote Service tests
 
@@ -123,14 +123,14 @@ Edit destination/Service Object and verify impact analysis.
 For Remote Access and Internet Access separately:
 
 ```text
-No Policy / No Rules -> effective ALLOW
+Remote Access: No Policy / No Rules -> effective ALLOW
 BLACKLIST + matching enabled Rule -> DENY
 BLACKLIST + no match -> ALLOW
 WHITELIST + matching enabled Rule -> ALLOW
 WHITELIST + no match -> DENY
 disabled Rule does not match
-Enforcement DISABLED -> effective ALLOW ALL while Mode/Rules are preserved
-Policy Reset -> No Policy / No Rules / effective ALLOW
+Remote Access: Enforcement DISABLED -> effective ALLOW ALL while Mode/Rules are preserved
+Remote Access Policy Reset -> No Policy / No Rules / effective ALLOW
 Rules have no ordering and no per-rule ALLOW/DENY action
 ```
 
@@ -139,7 +139,7 @@ Rules have no ordering and no per-rule ALLOW/DENY action
 Prove:
 
 ```text
-BLACKLIST <-> WHITELIST mode change uses the documented reset semantics
+Remote Access BLACKLIST <-> WHITELIST mode change uses the documented reset semantics
 Policy Reset removes Mode and Rules
 Enforcement disable/enable preserves configured Mode/Rules
 disabled Rule remains stored but ineffective
@@ -209,7 +209,7 @@ Required deny regressions:
 
 ```text
 unapproved source
-Managed Host BLACKLIST source identity ambiguous behind NAT/source mismatch -> DENY fail-closed
+Managed Host WHITELIST source identity ambiguous behind NAT/source mismatch -> DENY fail-closed
 unapproved FQDN
 wrong port
 loopback
@@ -264,7 +264,9 @@ SSH Remote Service
 HTTP/HTTPS Remote Service
 Custom TCP
 Relay Host to another LAN destination
-No Policy effective ALLOW
+Internet Access No Policy effective DENY
+Internet Access BLACKLIST configuration rejected or fails closed
+Internet Access Enforcement DISABLED effective DENY ALL
 BLACKLIST deny match
 WHITELIST allow match and non-match deny
 Enforcement disable/enable behavior
@@ -379,12 +381,12 @@ First prove AI Access policy semantics:
 
 ```text
 AI authentication remains mandatory
-No Policy / No Rules -> effective ALLOW after authentication
+AI Access: No Policy / No Rules -> effective DENY after authentication
 BLACKLIST matching enabled Rule -> DENY
 BLACKLIST no match -> ALLOW
 WHITELIST matching enabled Rule -> ALLOW
 WHITELIST no match -> DENY
-Enforcement DISABLED preserves Mode/Rules and yields policy ALLOW ALL
+AI Access: Enforcement DISABLED preserves Mode/Rules and yields DENY ALL
 Rules have no ordering and no per-rule ALLOW/DENY action
 ```
 
@@ -608,7 +610,7 @@ Tab non-execution
 context-valid Object suggestions
 Managed Host / Network Object terms
 Service Object Wizard preset terminology
-BLACKLIST / WHITELIST Mode display
+plane-appropriate Mode display (Remote BLACKLIST/WHITELIST; Internet/AI WHITELIST only)
 Enforcement state display
 effective policy outcome
 impact confirmation
@@ -817,6 +819,14 @@ POLICY_IMPACT_ANALYSIS=
 REFERENCE_PROTECTION=
 CONCURRENT_EDIT_PROTECTION=
 MCP_BRIDGE=
+
+AI_ACCESS_NO_POLICY_DENY=PASS
+AI_ACCESS_DISABLED_DENY_ALL=PASS
+AI_ACCESS_BLACKLIST_REJECTED=PASS
+INTERNET_ACCESS_NO_POLICY_DENY=PASS
+INTERNET_ACCESS_DISABLED_DENY_ALL=PASS
+INTERNET_ACCESS_BLACKLIST_REJECTED=PASS
+POLICY_UNKNOWN_MODE_DENY=PASS
 MCP_AUTH=
 MCP_HOST_ROUTING=
 MCP_CAPABILITY_ENFORCEMENT=

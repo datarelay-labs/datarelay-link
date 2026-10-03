@@ -263,7 +263,7 @@ class SliceAInternetCommandTests(unittest.TestCase):
         self.assertEqual(rc, 0, err)
         self.assertIn("Internet Access", out)
         self.assertIn("Mode        : No Policy", out)
-        self.assertIn("Unmatched   : ALLOW", out)
+        self.assertIn("Unmatched   : DENY", out)
         self.assertNotIn("frp-egress", out + err)
 
     def test_test_internet_evaluates_policy_and_dns_without_connection(self):
@@ -287,7 +287,8 @@ class SliceAInternetCommandTests(unittest.TestCase):
         self.assertIn("Internet Access Policy Evaluation", out)
         self.assertIn("Resolution: not executed (explain only)", out)
         self.assertIn("server-side DNS required at runtime", out)
-        self.assertIn("ALLOW", out)
+        self.assertIn("DENY", out)
+        self.assertIn("No Policy (DENY)", out)
         self.assertNotIn("frp-egress", out + err)
 
 

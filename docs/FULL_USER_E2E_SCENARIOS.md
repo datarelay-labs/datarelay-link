@@ -1510,7 +1510,7 @@ set remote-access disabled
 set remote-access enabled
 ~~~
 
-Enforcement disable must preserve Mode/Rules and temporarily yield effective ALLOW ALL according to the canonical policy contract.
+Remote Access enforcement disable must preserve Mode/Rules and temporarily yield effective ALLOW ALL according to the canonical Remote Access contract.
 
 ## U-004 — Relay Host to another LAN destination — MANDATORY
 
@@ -1632,7 +1632,7 @@ Verify:
 - restoring the policy makes the same application workflow recover;
 - broad wildcard expansion is not used just to obtain PASS;
 - Server-side audit/evidence shows the real proxy request and observed source used for policy evaluation;
-- when a Managed Host is used as the Internet Access source, compare the source address assumed by `test internet-access` with the actual proxy peer source seen by the Server; if NAT/source mismatch prevents Managed Host identity from being proven, a matching BLACKLIST destination/service path must DENY fail-closed rather than fall through to unmatched ALLOW.
+- when a Managed Host is used as the Internet Access source, compare the source address assumed by `test internet-access` with the actual proxy peer source seen by the Server; if NAT/source mismatch prevents Managed Host identity from being proven, the WHITELIST rule must not match and the request must DENY fail-closed.
 
 ## U-007 — AI/MCP authorized and denied use — MANDATORY for v2.4.0
 
@@ -2217,7 +2217,7 @@ Verify:
 - deleting last rule preserves Mode;
 - last WHITELIST rule removal yields DENY ALL;
 - last BLACKLIST rule removal yields ALLOW ALL;
-- policy reset removes Mode and Rules and returns No Policy / ALLOW;
+- Remote Access policy reset removes Mode and Rules and returns No Policy / ALLOW; Internet Access and AI Access reset return No Policy / DENY;
 - direct BLACKLIST <-> WHITELIST conversion is not silently performed.
 
 ## A-005 — Internet Access full policy lifecycle — MANDATORY
@@ -2233,7 +2233,7 @@ unset internet-access policy
 test internet-access source <SOURCE> destination <DESTINATION> service <SERVICE>
 ~~~
 
-Exercise real traffic plus the applicable failure/recovery cases in section 10. Include Managed Host source identity parity: direct address match, NAT/source mismatch fail-closed under BLACKLIST, and the same scenario with Enforcement DISABLED to prove the explicit ALLOW ALL override remains authoritative.
+Exercise real traffic plus the applicable failure/recovery cases in section 10. Internet Access is WHITELIST-only: prove direct Managed Host source-address match can ALLOW an approved flow, NAT/source mismatch fails closed to DENY, No Policy is DENY, BLACKLIST configuration is rejected, and Enforcement DISABLED preserves Mode/Rules while producing DENY ALL.
 
 ## A-006 — AI Identity, permissions, AI Access, MCP TLS, OAuth approval, and logs — MANDATORY for v2.4.0
 

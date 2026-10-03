@@ -93,11 +93,9 @@ Permission Object / Permission Group
 AI Identity
 Remote Service
 
-Remote Access
-Internet Access
-AI Access
-
-BLACKLIST / WHITELIST
+Remote Access      — BLACKLIST / WHITELIST
+Internet Access    — WHITELIST only, deny-by-default
+AI Access          — WHITELIST only, deny-by-default
 
 ConfigurationBundle
 ```

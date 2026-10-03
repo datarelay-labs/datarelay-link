@@ -36,7 +36,7 @@ Service Object / Service Group
 Permission Object / Permission Group
 AI Identity
 Remote Service
-BLACKLIST / WHITELIST Access Policy
+plane-specific Access Policy (Remote BLACKLIST/WHITELIST; Internet/AI WHITELIST-only)
 ```
 
 Internal storage names in the mapping above are not public nouns. Superseded intermediate public nouns are listed only in section 2.
@@ -53,7 +53,7 @@ The following values and nouns document the intermediate schema/policy design th
 | Remote Service | Published Service | `published_services` |
 | Service Object (wizard presets) | Service Preset | `service_presets` |
 | AI Identity | AI Principal | `ai_principals` |
-| BLACKLIST / WHITELIST Access Policy | ordered first-match ALLOW/DENY rulebases | policy rule tables |
+| Plane-specific Access Policy (Remote BLACKLIST/WHITELIST; Internet/AI WHITELIST-only) | ordered first-match ALLOW/DENY rulebases | policy rule tables |
 
 ```text
 CONTROL_PLANE_SSOT=SQLite
@@ -289,15 +289,16 @@ Service Object / Service Group
 Permission Object / Permission Group
 AI Identity
 Remote Service
-Remote Access / Internet Access / AI Access
-BLACKLIST / WHITELIST
+Remote Access      — BLACKLIST / WHITELIST
+Internet Access    — WHITELIST only
+AI Access          — WHITELIST only
 ```
 
 Network Groups, Service Groups, and Permission Groups are flat. A Managed Host may be selected as a Network Object where the policy context allows it. Managed Host lifecycle stays on Managed Host commands, not `set network-object` / `unset network-object`.
 
-Internet Access source may be IP, CIDR, FQDN, Managed Host, or a Network Group of those. A Managed Host source is address-backed: runtime identity is proven only when the observed proxy peer source IP matches an eligible active address for that Managed Host. In BLACKLIST mode, destination/service match plus unprovable Managed Host source identity fails closed to DENY rather than becoming unmatched/ALLOW. Internet Access destination must not be a Managed Host, directly or through a Network Group.
+Internet Access source may be IP, CIDR, FQDN, Managed Host, or a Network Group of those. A Managed Host source is address-backed: runtime identity is proven only when the observed proxy peer source IP matches an eligible active address for that Managed Host. Internet Access is WHITELIST-only; an unprovable source identity is an unmatched request and therefore DENY. Internet Access destination must not be a Managed Host, directly or through a Network Group.
 
-Access Policy has no public rule ordering and no per-rule ALLOW/DENY action. The effective decision comes from BLACKLIST or WHITELIST mode plus enforcement.
+Access Policy has no public rule ordering and no per-rule ALLOW/DENY action. Remote Access derives decisions from BLACKLIST/WHITELIST mode plus enforcement; Internet Access and AI Access are WHITELIST-only and otherwise fail closed.
 
 ## 8. Intermediate neutral Object model (historical)
 
@@ -579,7 +580,7 @@ There is no automatic "most specific rule wins" algorithm.
 
 ## 21. Intermediate Internet Access rulebase (historical)
 
-> Current public Internet Access uses BLACKLIST / WHITELIST semantics per the Product Master. The ordered first-match ALLOW/DENY narrative below is retained only as intermediate redesign history.
+> Current public Internet Access is WHITELIST-only and deny-by-default per the Product Master. The ordered first-match ALLOW/DENY narrative below is retained only as intermediate redesign history.
 
 Intermediate Internet Access was a separate ordered rulebase.
 
@@ -611,34 +612,28 @@ The existing controlled-egress protections remain required: server-side DNS reso
 
 ## 23. Current policy decision
 
-Remote Access, Internet Access, and AI Access each have:
+The policy planes share Object/Rule infrastructure but intentionally have different default-access semantics.
 
 ```text
-Mode         BLACKLIST | WHITELIST
-Enforcement  ENABLED | DISABLED
-Rules        unordered match records
+Remote Access
+  Mode         BLACKLIST | WHITELIST
+  No Policy    ALLOW
+  Disabled     ALLOW ALL
+
+Internet Access
+  Mode         WHITELIST only
+  No Policy    DENY
+  No Match     DENY
+  Disabled     DENY ALL
+
+AI Access
+  Mode         WHITELIST only
+  No Policy    DENY after authentication
+  No Match     DENY
+  Disabled     DENY ALL
 ```
 
-```text
-No Policy
-→ effective policy ALLOW
-→ AI authentication is still mandatory
-
-BLACKLIST
-→ any enabled matching Rule DENY
-→ no enabled Rule match ALLOW
-
-WHITELIST
-→ any enabled matching Rule ALLOW
-→ no enabled Rule match DENY
-
-Enforcement DISABLED
-→ effective policy ALLOW ALL
-→ saved Mode/Rules preserved
-→ AI authentication is still mandatory
-```
-
-There is no public rule order and no per-rule ALLOW/DENY action. Deleting the last Rule preserves Mode. Policy Reset removes Mode and Rules and restores initial ALLOW.
+Unknown/unsupported modes fail closed. Authentication remains mandatory for AI Access and is never sufficient authorization by itself. There is no public rule order and no per-rule ALLOW/DENY action. Deleting the last WHITELIST Rule preserves Mode and yields DENY ALL. Policy Reset restores Remote Access to ALLOW and Internet/AI Access to DENY ALL.
 
 The ordered explicit-DENY / implicit-DENY rulebase in sections 20–21 is historical only.
 
@@ -727,7 +722,7 @@ Output must show:
 - Service or permission matches.
 - Policy mode and enforcement.
 - Matching enabled rules, without first-match ordering.
-- Effective decision from BLACKLIST / WHITELIST semantics.
+- Effective decision from the plane-specific semantics (Remote BLACKLIST/WHITELIST; Internet/AI WHITELIST-only).
 - Relevant Remote Service / reachability state for Remote Access.
 - Final authorization result.
 
@@ -1014,7 +1009,7 @@ Authentication credentials are never stored or displayed as plaintext merely for
 
 ## 38. AI Access rules
 
-AI Access is a policy family over authenticated AI Identities. Its public policy semantics are the same BLACKLIST / WHITELIST + Enforcement model used by the other access-policy families.
+AI Access is a policy family over authenticated AI Identities. Its public policy semantics are WHITELIST-only and deny-by-default; authentication alone never grants a capability.
 
 Canonical public rule shape:
 
@@ -1221,7 +1216,7 @@ Origin is validated to block loopback DNS rebinding
 Bearer tokens never appear in show/status/audit/support bundles
 OAuth codes are one-time; tokens expire and are resource-bound
 issuer and audience/resource mismatches are rejected
-authenticated != authorized; AI Access remains fail-closed under current BLACKLIST/WHITELIST semantics
+authenticated != authorized; AI Access remains fail-closed under WHITELIST-only semantics
 ```
 
 ## 44. Runtime health and consistency

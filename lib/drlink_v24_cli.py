@@ -625,12 +625,12 @@ def _show_policy(plane: ControlPlane, family: str, rest: list[str]) -> int:
     if len(rest) == 1:
         sys.stdout.write("%s\n%s\n\n" % (title, "=" * len(title)))
         if pol["mode"] is None:
-            sys.stdout.write("Mode        : No Policy\nEnforcement : -\nUnmatched   : ALLOW\n")
+            sys.stdout.write("Mode        : No Policy\nEnforcement : -\nUnmatched   : %s\n" % ("DENY" if family == "internet" else "ALLOW"))
         else:
             # unmatched / default action when no rule matches
-            eff = v24.effective_policy_result(pol["mode"], pol["enforcement"], False)
+            eff = v24.effective_policy_result(pol["mode"], pol["enforcement"], False, plane=family)
             if str(pol["enforcement"]).lower() == "disabled":
-                eff = "ALLOW ALL"
+                eff = "DENY ALL" if family == "internet" else "ALLOW ALL"
             elif pol["mode"] == "whitelist":
                 # With zero rules, whitelist is DENY ALL
                 count = plane.conn.execute(
@@ -644,7 +644,7 @@ def _show_policy(plane: ControlPlane, family: str, rest: list[str]) -> int:
                     ).fetchone()[0]
                     if int(enabled or 0) == 0:
                         eff = "DENY ALL"
-            elif pol["mode"] == "blacklist":
+            elif pol["mode"] == "blacklist" and family == "remote":
                 count = plane.conn.execute(
                     "SELECT COUNT(*) FROM policy_rules WHERE plane = ?", (family,)
                 ).fetchone()[0]
@@ -692,11 +692,13 @@ def _show_ai_policy(plane: ControlPlane, rest: list[str]) -> int:
     if len(rest) == 1:
         sys.stdout.write("AI Access\n=========\n\n")
         if pol["mode"] is None:
-            sys.stdout.write("Mode        : No Policy\nEnforcement : -\nUnmatched   : ALLOW\n")
+            sys.stdout.write("Mode        : No Policy\nEnforcement : -\nUnmatched   : DENY\n")
         else:
-            eff = "ALLOW ALL" if str(pol["enforcement"]).lower() == "disabled" else (
-                "DENY ALL" if pol["mode"] == "whitelist" else "ALLOW ALL"
+            eff = v24.effective_policy_result(
+                pol["mode"], pol["enforcement"], False, plane="ai"
             )
+            if str(pol["enforcement"]).lower() == "disabled":
+                eff = "DENY ALL"
             count = plane.conn.execute("SELECT COUNT(*) FROM ai_policy_rules").fetchone()[0]
             if pol["mode"] == "whitelist" and int(count or 0) == 0 and str(pol["enforcement"]).lower() != "disabled":
                 eff = "DENY ALL"
@@ -821,12 +823,13 @@ def handle_set(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         title = res.replace("-", " ").title()
         pol = v24.get_access_policy(plane, res)
         sys.stdout.write(
-            "%s\n%s\n\nMode        : %s\nEnforcement : %s\nUnmatched   : ALLOW ALL\n\nSaved rules remain unchanged.\n"
+            "%s\n%s\n\nMode        : %s\nEnforcement : %s\nUnmatched   : %s\n\nSaved rules remain unchanged.\n"
             % (
                 title,
                 "=" * len(title),
                 (pol["mode"] or "-").upper(),
                 str(pol["enforcement"]).upper(),
+                "DENY ALL" if res in ("internet-access", "ai-access") else "ALLOW ALL",
             )
             if rest[1] == "disabled" and str(pol["enforcement"]).lower() == "disabled"
             else "%s enforcement enabled.\n" % title
@@ -1158,7 +1161,7 @@ def handle_unset(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         result = _run(v24.reset_access_policy, plane, res)
         if isinstance(result, dict) and result.get("cancelled"):
             return 1
-        sys.stdout.write("%s policy reset.\nEffective access: ALLOW\n" % res)
+        sys.stdout.write("%s policy reset.\nEffective access: %s\n" % (res, "DENY" if res in ("internet-access", "ai-access") else "ALLOW"))
         return 0
     if res == "network-object":
         _require_server(plane, "Network Objects")

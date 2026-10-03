@@ -220,13 +220,17 @@ class ReferencedSelectorMutationSecurityImpact(unittest.TestCase):
         )
         self.assertEqual(after.get("result"), "ALLOW")
 
-    def test_internet_blacklist_service_group_and_object(self):
+    def test_internet_whitelist_service_group_expansion(self):
         self._seed_internet()
+        # Narrow initial allow set, then prove expanding a referenced group is broadening.
+        v24.set_service_group(
+            self.plane, "blocked-svcs", members=["p1111"], oneshot=True
+        )
         v24.set_access_rule(
             self.plane,
             "internet",
-            "block-svcs",
-            mode="blacklist",
+            "allow-svcs",
+            mode="whitelist",
             source="lan",
             destination="web",
             service="blocked-svcs",
@@ -246,15 +250,10 @@ class ReferencedSelectorMutationSecurityImpact(unittest.TestCase):
         rev = self.plane.current_revision()
         with self.assertRaises(ConfirmationRequired) as ctx:
             v24.set_service_group(
-                self.plane, "blocked-svcs", members=["p1111"], oneshot=True
+                self.plane, "blocked-svcs", members=["p1111", "p2222"], oneshot=True
             )
         self.assertTrue(ctx.exception.impact.get("access_broadened"))
         self.assertEqual(self.plane.current_revision(), rev)
-
-        with self.assertRaises(ConfirmationRequired):
-            v24.set_service_object(
-                self.plane, "p2222", type="tcp", port=3333, oneshot=True
-            )
 
         plan = prepare_v24_plan(
             self.plane,
@@ -262,7 +261,7 @@ class ReferencedSelectorMutationSecurityImpact(unittest.TestCase):
   context: server
   serviceGroups:
     - name: blocked-svcs
-      members: [p1111]
+      members: [p1111, p2222]
 """,
         )
         self.assertTrue(any("broaden" in t.lower() for t in plan.security_impact))
@@ -276,12 +275,15 @@ class ReferencedSelectorMutationSecurityImpact(unittest.TestCase):
         )
         self.assertEqual(after.get("result"), "ALLOW")
 
-    def test_ai_blacklist_permission_group_and_object(self):
+    def test_ai_whitelist_permission_group_expansion(self):
         self._seed_ai()
+        v24.set_permission_group(
+            self.plane, "ops", members=["exec-only"], oneshot=True
+        )
         v24.set_ai_access_rule(
             self.plane,
-            "deny-ops",
-            mode="blacklist",
+            "allow-ops",
+            mode="whitelist",
             source="bot",
             destination="ubuntu-prod",
             permission="ops",
@@ -300,15 +302,10 @@ class ReferencedSelectorMutationSecurityImpact(unittest.TestCase):
         rev = self.plane.current_revision()
         with self.assertRaises(ConfirmationRequired) as ctx:
             v24.set_permission_group(
-                self.plane, "ops", members=["exec-only"], oneshot=True
+                self.plane, "ops", members=["exec-only", "info-only"], oneshot=True
             )
         self.assertTrue(ctx.exception.impact.get("access_broadened"))
         self.assertEqual(self.plane.current_revision(), rev)
-
-        with self.assertRaises(ConfirmationRequired):
-            v24.set_permission_object(
-                self.plane, "info-only", permissions=["process-read"], oneshot=True
-            )
 
         plan = prepare_v24_plan(
             self.plane,
@@ -316,7 +313,7 @@ class ReferencedSelectorMutationSecurityImpact(unittest.TestCase):
   context: server
   permissionGroups:
     - name: ops
-      members: [exec-only]
+      members: [exec-only, info-only]
 """,
         )
         self.assertTrue(any("broaden" in t.lower() for t in plan.security_impact))

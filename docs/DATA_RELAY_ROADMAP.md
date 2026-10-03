@@ -19,8 +19,8 @@ Permission Objects / Groups
 Managed Host address inventory
 Agent-owned Remote Services
 BLACKLIST / WHITELIST Remote Access policy
-BLACKLIST / WHITELIST Internet Access policy
-AI Identity + AI Access / MCP Bridge
+deny-by-default WHITELIST Internet Access policy
+AI Identity + deny-by-default WHITELIST AI Access / MCP Bridge
 revisions / audit
 runtime generation
 backup / migration
@@ -155,14 +155,14 @@ Service Object Wizard presets are creation conveniences, not public resources
 
 ## 7. Phase DL-5 — Remote Access policy
 
-Implement the shared BLACKLIST / WHITELIST policy engine and Remote Access evaluator/compiler.
+Implement the shared policy infrastructure and the Remote Access BLACKLIST / WHITELIST evaluator/compiler. Internet Access and AI Access reuse infrastructure but have stricter WHITELIST-only semantics.
 
 Acceptance:
 
 ```text
-No Policy / No Rules = effective ALLOW
-BLACKLIST match DENY / no match ALLOW
-WHITELIST match ALLOW / no match DENY
+Remote Access: No Policy / No Rules = effective ALLOW
+Remote Access: BLACKLIST match DENY / no match ALLOW
+Remote Access: WHITELIST match ALLOW / no match DENY
 rule enable/disable
 no rule ordering
 no per-rule ALLOW/DENY action
@@ -177,7 +177,7 @@ Legacy ACL becomes non-canonical and is removed/hidden before stable.
 
 ## 8. Phase DL-6 — Internet Access policy
 
-Replace legacy Internet Profile authoritative policy with Network/Service Objects plus the shared BLACKLIST / WHITELIST policy model.
+Replace legacy Internet Profile authoritative policy with Network/Service Objects plus a WHITELIST-only, deny-by-default Internet Access policy model.
 
 Preserve/harden protocol boundary:
 
@@ -195,7 +195,7 @@ resource limits
 safe audit
 ```
 
-Acceptance includes curl/wget/git/apt Real E2E plus denied-traffic escape tests.
+Acceptance includes curl/wget/git/apt Real E2E plus denied-traffic escape tests. Release-blocking invariants are: No Policy = DENY, disabled enforcement = DENY ALL, BLACKLIST rejected/fails closed, and only an enabled matching WHITELIST Rule may allow Internet traffic.
 
 ## 9. Phase DL-7 — revision/audit/runtime compiler
 
@@ -301,7 +301,7 @@ audit
 no per-host MCP server requirement
 ```
 
-Real interoperability is required for each client explicitly claimed supported.
+Real interoperability is required for each client explicitly claimed supported. AI Access is release-blocking deny-by-default: authentication alone never authorizes a tool, No Policy = DENY, disabled enforcement = DENY ALL, BLACKLIST is rejected/fails closed, and only an enabled matching WHITELIST Rule may authorize a capability.
 
 ## 12. Phase DL-10 — canonical CLI implementation
 
@@ -500,7 +500,7 @@ The v2.4.0 foundation is done when no further foreseeable core change requires r
 control-plane authority
 identity model
 Object model
-BLACKLIST / WHITELIST policy semantics
+plane-specific policy semantics (Remote BLACKLIST/WHITELIST; Internet/AI WHITELIST-only)
 Remote Service destination/Service Object semantics
 AI Identity / permission authorization model
 backup/migration model

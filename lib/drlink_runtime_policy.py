@@ -408,16 +408,12 @@ def authorize_internet(
     base["ambiguous_managed_source_rules"] = list(
         evaluation.get("ambiguous_managed_source_rules") or []
     )
-    # Hostname-only evaluation (no candidates): preserve prior ALLOW/DENY.
-    # Candidate evaluation: ALLOW only when authorized_candidates is non-empty
-    # (or mode/enforcement already yielded ALLOW with empty list for no-policy).
+    # Candidate evaluation is fail-closed: an ALLOW decision is usable only
+    # when policy produced an explicit authorized candidate set. Internet
+    # Access never widens No Policy / disabled / invalid state into candidates.
     if candidate_ips is not None or evaluation.get("is_ip_literal"):
         if action == DECISION_ALLOW and not base["authorized_candidates"]:
-            # No-policy / enforcement-disabled authorize all provided candidates.
-            if evaluation.get("mode") is None or str(evaluation.get("enforcement") or "").lower() == "disabled":
-                base["authorized_candidates"] = list(base["candidate_ips"])
-            else:
-                action = DECISION_DENY
+            action = DECISION_DENY
     base["decision"] = DECISION_ALLOW if action == DECISION_ALLOW else DECISION_DENY
     if action != DECISION_ALLOW and base["ambiguous_managed_source_rules"]:
         base["reason"] = evaluation.get("reason") or REASON_POLICY_DENY

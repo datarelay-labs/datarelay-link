@@ -2037,7 +2037,7 @@ WORKFLOWS = (
             "set internet-access github-https mode whitelist source ubuntu-prod destination github service https enabled",
             "test internet-access source ubuntu-prod destination github service https",
         ),
-        "Internet Access uses explicit WHITELIST or BLACKLIST mode.",
+        "Internet Access is deny-by-default and supports explicit WHITELIST mode only.",
         "server",
     ),
     (
