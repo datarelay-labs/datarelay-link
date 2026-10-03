@@ -196,6 +196,66 @@ Operational State Aggregator
 Audit / history query layer
 ```
 
+### 9.1 First-class audit logging contract
+
+Audit is a Core security/operations capability shared by CLI, Web, ConfigurationBundle,
+AI-assisted operations, Agent RPC, and system lifecycle paths. It is not a Web-only
+activity feed and it is not generic debug logging.
+
+3.0 uses one versioned structured event envelope with three logical streams:
+
+~~~text
+CONTROL            administrative/configuration mutations and failed attempts
+ACCESS_DECISION    Remote / Internet / AI allow-deny and observable connection metadata
+SECURITY_LIFECYCLE authentication, enrollment, revoke, backup/restore, update and audit lifecycle
+~~~
+
+Every event carries, when applicable: schema version, stable event ID, Server-local
+monotonic sequence, UTC time, event type, actor/delegation identity, originating surface,
+action, resource identity, result/reason code, correlation/request/session ID, revision
+before/after, matched policy/rule, safe before/after summary, and bounded source/destination
+metadata.
+
+Product rules:
+
+- CONTROL and SECURITY_LIFECYCLE audit cannot be disabled.
+- Successful and failed security-relevant mutations/authentication attempts are recorded.
+- A state mutation and its audit record commit atomically. If durable audit persistence
+  fails, the mutation fails.
+- A new auditable access decision must not proceed if its audit record cannot be durably
+  enqueued. Existing established connections are not torn down solely because the audit
+  store later degrades; the condition becomes CRITICAL health/attention.
+- Secrets, credentials, bearer tokens, private keys, application payloads, TLS contents,
+  and sensitive URL query strings are never normal audit fields.
+
+- Before/after data uses schema-aware allowlisting/redaction, not regex-only scrubbing.
+- Audit is append-only through normal product APIs. 3.0 exposes no arbitrary edit/delete;
+  expiry occurs only through retention policy.
+- Active audit stays in SQLite/Core with bounded time-range queries, cursor pagination,
+  indexes, and hard resource limits.
+- CLI and Web both provide bounded read/filter/detail access to the same event model.
+  Exact additive CLI grammar is frozen in DRL3-0; neither surface may invent its own semantics.
+- 3.0 provides manual filtered NDJSON export using the same versioned schema from CLI and
+  Web. Continuous SIEM/S3/syslog/webhook streaming remains later-additive.
+- Append-only semantics are not described as tamper-proof against a privileged host admin.
+
+Default active-local retention targets:
+
+~~~text
+CONTROL + SECURITY_LIFECYCLE   180 days
+ACCESS_DECISION                 30 days
+~~~
+
+DRL3-0 freezes supported configuration bounds, storage-capacity guardrails, migration,
+and exact failure behavior. The product may not silently discard not-yet-expired security
+audit to recover space.
+
+Backup/restore preserves retained event IDs, ordering, schema versions, and revision links.
+Restore completion creates a new lifecycle event after restored state is authoritative.
+
+No dedicated Auditor role is required for 3.0. Admin / Operator / Read Only reuse the
+redacted audit query/export authorization model; a specialized role can be added later.
+
 ## 10. DRL3-0 — Scope and architecture freeze
 
 **Goal:** remove design ambiguity before feature implementation.
@@ -213,7 +273,9 @@ Required:
 - 3.0 GA / 3.1+ / out-of-scope matrix frozen;
 - cross-document contract gate defined for Product Master / Version Policy / Roadmap /
   Control Plane Architecture / Web Management;
-- performance measurement profile and SLO methodology frozen.
+- performance measurement profile and SLO methodology frozen;
+- audit taxonomy/envelope, attribution/delegation, redaction, retention/storage bounds,
+  mutation atomicity, access-path audit failure behavior, NDJSON export, and recovery frozen.
 
 The DRL3-0 performance profile must define reproducible scale dimensions for at least:
 
@@ -437,11 +499,17 @@ contract.
 
 Required:
 
-- searchable Audit Explorer;
-- revision diff and rollback;
-- bounded time-range/cursor pagination;
-- indexes for actual Web query patterns;
-- retention/archive policy for active audit data;
+- searchable Audit Explorer across CONTROL / ACCESS_DECISION / SECURITY_LIFECYCLE;
+- cross-surface actor attribution for CLI/Web/Bundle/AI/Agent RPC/System;
+- safe before/after summaries plus revision diff/rollback correlation;
+- allow/deny reason and matched-rule correlation;
+- bounded time-range/cursor pagination and stable event IDs;
+- indexes for actual Web/CLI audit query patterns;
+- split retention and storage-capacity guardrails;
+- manual filtered NDJSON export with stable schema versioning;
+- audit of retention/export configuration and export execution;
+- no-silent-loss/fail-closed regression for mutation and new-access audit persistence;
+- schema-aware secret/credential/payload redaction regressions;
 - read-model rebuild/recovery;
 - backup/restore including new 3.0 Core-owned management metadata;
 - Web update/uninstall/reinstall semantics;
@@ -465,6 +533,7 @@ Required exact-candidate evidence includes:
 CORE_WITHOUT_WEB=PASS
 CLI_FULL_CAPABILITY=PASS
 WEB_CAPABILITY_PARITY=PASS
+CLI_AUDIT_QUERY_EXPORT=PASS
 WEB_AUTH_RBAC=PASS
 WEB_POLICY_EXPLAIN_PARITY=PASS
 DRAFT_WORKSPACE_ATOMICITY=PASS
@@ -519,6 +588,7 @@ Blast Radius Preview
 Effective Access Graph
 Connection Diagnosis
 Audit / Revision Explorer
+manual filtered NDJSON audit export
 bounded safe fleet jobs
 100-host qualification
 ```
@@ -529,7 +599,7 @@ external Email/Slack/Webhook notifications
 temporary rule TTL / temporary access
 external IdP/SSO for Web administrators
 GitOps/locked-editor workflow
-long-term external audit export
+continuous external audit/SIEM streaming
 scheduled recurring operations
 additional specialized operator roles
 ```
@@ -571,6 +641,15 @@ Adopt the **operator pattern**, not the competitor architecture:
 | NetBird Control Center/draft graph/audit | Adopt graph/draft overlay/searchable audit; no overlay-network expansion |
 | Zscaler health/diagnostics patterns | Adopt bounded health aggregation/diagnosis; exclude app discovery/HA platform |
 | Boundary worker health/last-seen separation | Adopt explicit component health; no controller/worker cluster architecture |
+| Tailscale config audit + separate network-flow logs | Adopt control-plane vs access-event separation, policy diffs, and bounded export |
+| Cloudflare admin/access/gateway logs | Adopt actor/interface/request IDs, safe old/new values, and decision-specific views; no analytics platform |
+| Twingate versioned actor/action/target JSON | Adopt a versioned envelope and manual NDJSON export; defer continuous delivery |
+| Teleport event codes/session correlation | Adopt stable event types and correlation IDs; exclude session recording |
+| StrongDM activities/resource-query separation | Adopt management vs access logical streams and CLI filtering; exclude replay capture |
+| Zscaler admin old/new values + request IDs | Adopt safe before/after summaries and request correlation |
+| Boundary event sinks/redaction | Adopt schema-aware sensitive-field handling and bounded local sinks |
+| NetBird audit + traffic event separation | Adopt searchable management/access streams on existing SQLite authority |
+| ngrok audit/log export + payload-capable Traffic Inspector | Adopt exportability only; reject payload/body inspection or replay as a DRLink audit requirement |
 
 Competitor functionality that does not strengthen Data Relay Link's core operator mission
 stays out of the GA scope.
