@@ -1267,7 +1267,7 @@ Parallel execution must never weaken evidence isolation. Every command/result mu
 
 ### 6.7 AI and ChatGPT Plugin boundary
 
-AI-assisted CLI is mandatory in core FULL_USER_E2E, but the optional ChatGPT Plus Plugin/relay is a separate repository and integration surface.
+AI-assisted CLI is mandatory in core FULL_USER_E2E, but the optional ChatGPT Plugin/relay is a separate repository and integration surface.
 
 Core rule:
 
@@ -1277,7 +1277,7 @@ AI generates intent/command/Bundle
 → drlink remains the only DRLink management/configuration authority used by the E2E
 ~~~
 
-The optional repository `datarelay-labs/datarelay-link-plugin` is an experimental ChatGPT Plus / Agent Plugins + MCP relay layer. A real ChatGPT Plugin acceptance test therefore cannot be represented as a pure `drlink` CLI interaction end to end.
+The optional repository `datarelay-labs/datarelay-link-plugin` is an experimental ChatGPT owner/UI Plugin/App + MCP relay layer. A real ChatGPT Plugin acceptance test therefore cannot be represented as a pure `drlink` CLI interaction end to end.
 
 If the requested E2E scope includes the Plugin stack:
 
@@ -3707,9 +3707,9 @@ supported AI/MCP client when applicable
 
 Use only the commands actually applicable to the target OS/application.
 
-# 15. Conditional ChatGPT Plus Plugin / MCP relay integration lane
+# 15. Conditional ChatGPT Plugin / MCP relay integration lane
 
-This lane applies when the requested E2E scope includes `datarelay-labs/datarelay-link-plugin` or when a release/acceptance claim includes the ChatGPT Plus Plugin/relay path.
+This lane applies when the requested E2E scope includes `datarelay-labs/datarelay-link-plugin` or when a release/acceptance claim includes the ChatGPT Plugin/relay path.
 
 It is intentionally reported separately because the Plugin repository is an optional experimental integration layer. Core DRLink must continue to operate without it.
 
@@ -3809,16 +3809,16 @@ Use the Plugin repository's supported backup/restore workflow for OAuth state.
 
 After restore/restart, verify the expected reconnect/revoke semantics and resulting operational state.
 
-## X-010 — Real ChatGPT Plus Plugin acceptance — CONDITIONAL when environment is available
+## X-010 — Real ChatGPT Plugin acceptance — CONDITIONAL when environment is available
 
-If the acceptance claim explicitly includes ChatGPT Plus rather than only protocol interoperability, test the actual ChatGPT Plus Plugin/App installation and tool-use surface.
+If the acceptance claim explicitly includes a real ChatGPT owner/UI Plugin/App surface rather than only protocol interoperability, test that actual supported ChatGPT Plugin/App installation and tool-use surface.
 
 This is an external-client validation analogous to using real SSH/curl clients; it does not relax the DRLink CLI-only control-plane rule.
 
 Verify end to end:
 
 ~~~text
-ChatGPT Plus
+ChatGPT owner/UI
 → Plugin package
 → OAuth/connect
 → relay

@@ -151,6 +151,15 @@ _OBSOLETE_ROOTS = frozenset(
         "profile",
     }
 )
+_PUBLIC_ROOTS = frozenset({"show", "set", "unset", "test", "system", "menu", "help", "exit", "?"})
+_RETIRED_HELP_TOPICS = frozenset({"access", "group"})
+_HIDDEN_SHOW_RESOURCES = {
+    "version": "Use system version instead.",
+    "info": "Use system info instead.",
+    "audit": "Use system audit instead.",
+    "upstream": "Use system update check-engine instead.",
+    "backups": "Use system backup / system backup validate / system restore instead.",
+}
 _OBSOLETE_RESOURCES = frozenset(
     {
         "acl",
@@ -237,6 +246,16 @@ def reject_obsolete_surface(tokens):
                 "Canonical roots: show, set, unset, test, system, menu, help, exit"
             ),
         }
+    if verb == "help" and len(raw) >= 2 and raw[1] in _RETIRED_HELP_TOPICS:
+        return {
+            "status": "error",
+            "exit_code": 2,
+            "message": (
+                "Retired help topic '%s' is not part of the current Data Relay Link grammar.\n"
+                "Use help commands or the canonical system/resource help instead."
+                % raw[1]
+            ),
+        }
     if verb in _OBSOLETE_ROOTS:
         tip = _OBSOLETE_POINTERS.get(verb, "Use the canonical v2.4.0 grammar (help commands).")
         return {
@@ -257,7 +276,16 @@ def reject_obsolete_surface(tokens):
                 % raw[1]
             ),
         }
-    if verb == "set" and len(raw) >= 3 and raw[1] == "client":
+    if verb == "show" and len(raw) >= 2 and raw[1] in _HIDDEN_SHOW_RESOURCES:
+        return {
+            "status": "error",
+            "exit_code": 2,
+            "message": (
+                "Noncanonical resource '%s' is not part of the current Data Relay Link grammar.\n%s"
+                % (raw[1], _HIDDEN_SHOW_RESOURCES[raw[1]])
+            ),
+        }
+    if verb == "set" and len(raw) >= 2 and raw[1] == "client":
         return {
             "status": "error",
             "exit_code": 2,
@@ -650,6 +678,12 @@ def help_text(tokens, role):
     if verb == "legacy":
         rejected = reject_obsolete_surface(["help", "legacy"])
         return rejected["message"] if rejected else "help legacy removed"
+    if verb in _RETIRED_HELP_TOPICS:
+        rejected = reject_obsolete_surface(["help", verb])
+        return "Unknown help topic: %s\n\n%s\n" % (
+            verb,
+            rejected["message"] if rejected else "Use help commands.",
+        )
     if verb in ("workflow", "workflows"):
         return CATALOG.workflow_help(role)
     if verb in ("command", "commands"):
@@ -660,21 +694,8 @@ def help_text(tokens, role):
     catalog_topic = _catalog_help_topic(tokens, role)
     if catalog_topic is not None:
         return catalog_topic
-    # Hidden resource-first help topics → action-first usage redirect.
-    if verb == "group":
-        return (
-            "Groups\n"
-            "======\n\n"
-            "Usage:\n"
-            "  show managed-host-groups\n"
-            "  show managed-host-group <GROUP>\n"
-            "  set managed-host-group <NAME>\n"
-            "  set managed-host-group <GROUP> description|name <value>\n"
-            "  set client <CLIENT> group <GROUP>\n"
-            "  unset client <CLIENT> group <GROUP>\n"
-            "  unset managed-host-group <GROUP>\n"
-        )
-    # Action-first topics are served by _catalog_help_topic above.
+    # Canonical help topics may redirect to action-first public commands even
+    # when the historical root itself is no longer executable.
     if verb == "update":
         return _update_help(role)
     if verb == "doctor":
@@ -690,23 +711,6 @@ def help_text(tokens, role):
             "Support Bundle\n==============\n\n"
             "Usage:\n  system support-bundle\n\n"
             "Create a sanitized read-only diagnostic archive. Never includes private keys or tokens.\n"
-        )
-    if verb == "access":
-        return (
-            "Access Rules\n"
-            "============\n\n"
-            "Control which source IPs may reach published services.\n\n"
-            "Usage:\n"
-            "  show access-rules\n"
-            "  show access-rule <RULE>\n"
-            "  set access-rule <RULE>\n"
-            "  set access-source <RULE> <SOURCE>\n"
-            "  set service-access <CLIENT> <SERVICE> <RULE>\n"
-            "  unset access-source <RULE> <SELECTOR>\n"
-            "  unset service-access <CLIENT> <SERVICE>\n"
-            "  unset access-rule <RULE>\n"
-            "  test access <CLIENT> <SERVICE> <SOURCE-IP>\n"
-            "  show access-log\n"
         )
     lines = [
         "Unknown help topic: %s" % " ".join(tokens),
@@ -1168,36 +1172,45 @@ def _catalog_context_help(tokens, role, names=None, clients=None):
             return None
         return _fmt_available(rows)
     probe = [root] + list(tokens[1:])
-    # Final client-removal model must be explicit before listing clients.
-    if probe == ["unset", "client"]:
-        lines = [
-            "Client removal model",
-            "====================",
-            "",
-            "unset client <CLIENT> trust",
-            "  identity/trust: management blocked",
-            "  public ports: reserved",
-            "",
-            "unset client <CLIENT> service <SERVICE>",
-            "  client identity: kept",
-            "  selected service port: released",
-            "",
-            "unset client <CLIENT>",
-            "  client record/management identity: removed",
-            "  all service ports: released",
-            "",
-            "Also: unset client <CLIENT> group|label|note|tag …",
-            "",
-            "Select a client:",
-            "",
-        ]
-        return "\n".join(lines) + _context_client_list(names, clients)
     cmd = CATALOG.find(probe)
     if cmd is None or not CATALOG.role_allows(cmd["roles"], role):
         nxt = _catalog_next_path_tokens(probe, role)
         if nxt:
             return _fmt_available([(tok, "") for tok in nxt])
         return None
+
+    # Some valid parent commands are executable lifecycle operations and also
+    # have longer child forms. Their own usage/risk/confirmation contract must
+    # remain visible; child discovery is supplemental, never a replacement.
+    parent_help_paths = {
+        ("unset", "remote-access"),
+        ("unset", "internet-access"),
+        ("unset", "ai-access"),
+        ("system", "diff"),
+        ("system", "backup"),
+    }
+    if tuple(probe) in parent_help_paths:
+        rendered = CATALOG.command_help(cmd).rstrip()
+        nxt = _catalog_next_path_tokens(probe, role)
+        if nxt:
+            rendered += "\n\nAdditional forms:\n" + "\n".join(
+                "  %s" % tok for tok in nxt
+            )
+        return rendered + "\n"
+
+    # Managed Host retirement is the bare unset operation; after a Host is
+    # selected, "group" is an optional narrower mutation. Show the retirement
+    # contract first so inventory completion cannot hide the destructive path.
+    if probe[:2] == ["unset", "managed-host"] and len(probe) in (2, 3):
+        rendered = CATALOG.command_help(cmd).rstrip()
+        if len(probe) == 2:
+            inventory = _context_client_list(names, clients).rstrip()
+            if inventory:
+                rendered += "\n\nSelect a Managed Host:\n\n" + inventory
+        else:
+            rendered += "\n\nAdditional form:\n  group"
+        return rendered + "\n"
+
     # Exact path may also expose positional enum choices and longer public
     # children. Merge both so set enrollment ? discovers zero-touch,
     # manual, and bulk instead of hiding the positional modes behind bulk.
@@ -2071,6 +2084,13 @@ def match(tokens, role, names=None, clients=None):
         rejected = reject_obsolete_surface(raw_focus)
         if rejected is not None:
             return rejected
+        if raw_focus and raw_focus[0] not in _PUBLIC_ROOTS:
+            message = context_help(raw_focus, role, names=names, clients=clients)
+            return {
+                "status": "error",
+                "exit_code": 2,
+                "message": message,
+            }
         focus = CATALOG.resolve_tokens(raw_focus, role=role)
         rejected = reject_obsolete_surface(focus)
         if rejected is not None:
@@ -2133,9 +2153,7 @@ def match(tokens, role, names=None, clients=None):
     # dispatcher verbs remain valid only after a canonical catalog command has
     # resolved to them above; flat/resource-first compatibility roots are not
     # executable or discoverable.
-    if not rewritten and verb not in {
-        "show", "set", "unset", "test", "system", "menu", "help", "exit", "?"
-    }:
+    if not rewritten and verb not in _PUBLIC_ROOTS:
         return {"status": "unknown", "command": verb}
     client, server = _role_parts(role)
     handlers = {

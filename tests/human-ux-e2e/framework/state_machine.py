@@ -56,7 +56,7 @@ TRANSITIONS: tuple[Transition, ...] = (
         "install-server",
         "CONTRACT",
         expected_mutation="server_role",
-        valid_next=frozenset({"show status", "show version", "menu", "?"}),
+        valid_next=frozenset({"show status", "system version", "menu", "?"}),
     ),
     Transition(
         WorkflowState.SERVER_INSTALLED,
@@ -269,7 +269,7 @@ class WorkflowStateMachine:
                     valid.update(t.valid_next)
                     valid.add(t.command.split("<")[0].strip())
         if context == ExecutionContext.DRLINK_SERVER:
-            valid.update({"show status", "show version", "?", "help", "menu"})
+            valid.update({"show status", "system version", "?", "help", "menu"})
         if context == ExecutionContext.AGENT_HOST:
             valid.update(
                 {

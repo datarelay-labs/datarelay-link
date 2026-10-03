@@ -172,6 +172,42 @@ class CliFeatureScenarioRemediation(unittest.TestCase):
         self.assertIn("system update check-engine", server_redirect)
         self.assertNotIn("system update check-engine", agent_redirect)
 
+    def test_context_help_keeps_executable_parent_lifecycle_visible(self):
+        cases = (
+            (["unset", "remote-access", "?"], "unset remote-access <RULE>", "policy"),
+            (["unset", "internet-access", "?"], "unset internet-access <RULE>", "policy"),
+            (["unset", "ai-access", "?"], "unset ai-access <RULE>", "policy"),
+            (["system", "diff", "?"], "system diff <REVISION_A> <REVISION_B>", "configuration"),
+            (["system", "backup", "?"], "system backup [<path>]", "validate"),
+        )
+        for tokens, usage, child in cases:
+            result = grammar.match(tokens, role="server")
+            self.assertEqual(result.get("status"), "ok", (tokens, result))
+            text = result.get("message") or ""
+            self.assertIn(usage, text, (tokens, text))
+            self.assertIn(child, text, (tokens, text))
+
+        managed = grammar.match(
+            ["unset", "managed-host", "?"], role="server", names=["host-a"]
+        )
+        self.assertEqual(managed.get("status"), "ok", managed)
+        text = managed.get("message") or ""
+        self.assertIn("unset managed-host", text)
+        self.assertIn("Risk: irreversible", text)
+        self.assertIn("Select a Managed Host", text)
+
+        selected = grammar.match(
+            ["unset", "managed-host", "host-a", "?"],
+            role="server",
+            names=["host-a"],
+        )
+        self.assertEqual(selected.get("status"), "ok", selected)
+        selected_text = selected.get("message") or ""
+        self.assertIn("unset managed-host", selected_text)
+        self.assertIn("Risk: irreversible", selected_text)
+        self.assertIn("Additional form", selected_text)
+        self.assertIn("group", selected_text)
+
     def test_mcp_tls_purge_metadata_explains_interactive_only_contract(self):
         rows = json.loads((LIB / "frp_cli_final_commands.json").read_text(encoding="utf-8"))
         by_path = {tuple(row["path"]): row for row in rows}

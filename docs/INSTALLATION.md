@@ -43,7 +43,7 @@ Stable installation may use the immutable stable tag only after that tag and its
 After installation, verify with read-only commands:
 
 ```text
-show version
+system version
 show status
 system diagnostics
 ```

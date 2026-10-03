@@ -358,7 +358,7 @@ function Complete-FrpZeroTouchPostEnroll {
         Write-Host 'Management-only enrollment: no public services; skipping frpc start.'
         Set-FrpInstallStatus -Status 'management_only'
         Write-Host ''
-        Write-Host 'Enrollment complete (management-only). Use drlink show info for details.'
+        Write-Host 'Enrollment complete (management-only). Use drlink system info for details.'
         Write-Host 'ENROLL ONCE / RUN MANY TIMES: later starts use existing identity and ports.'
         return 0
     }
@@ -403,7 +403,7 @@ function Complete-FrpZeroTouchPostEnroll {
 
     Set-FrpInstallStatus -Status 'installed'
     Write-Host ''
-    Write-Host 'Enrollment complete. Use drlink show info for connection details.'
+    Write-Host 'Enrollment complete. Use drlink system info for connection details.'
     Write-Host 'ENROLL ONCE / RUN MANY TIMES: later starts use existing identity and ports.'
     return 0
 }
@@ -1214,7 +1214,7 @@ function Invoke-FrpZeroTouch {
     if (-not (Enter-FrpClientLock)) {
         Write-Host 'ERROR: another Data Relay Link client lifecycle operation is already running on this host.'
         Write-Host 'FAILURE_CLASS=CLIENT_LOCK_BUSY'
-        Write-Host 'Wait for it to finish, then check status with: drlink status'
+        Write-Host 'Wait for it to finish, then check status with: drlink show status'
         return 1
     }
     try {

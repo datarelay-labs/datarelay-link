@@ -130,6 +130,17 @@ class OwnerAcceptanceTests(unittest.TestCase):
         data["client_surface"] = "ChatGPT Plus owner/UI"
         self.assertIn("client_surface must be ChatGPT owner/UI", self.check(data))
 
+    def test_normative_owner_ui_docs_are_plan_neutral(self):
+        for relative in (
+            "README.md",
+            "CHANGELOG.md",
+            "docs/FULL_USER_E2E_SCENARIOS.md",
+            "docs/RELEASE_VALIDATION.md",
+        ):
+            text = (ROOT / relative).read_text(encoding="utf-8")
+            self.assertNotIn("ChatGPT Plus", text, relative)
+            self.assertIn("owner/UI", text, relative)
+
     def test_actual_plan_is_required(self):
         data = evidence()
         data["client_plan"] = ""

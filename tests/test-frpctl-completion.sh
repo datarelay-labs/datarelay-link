@@ -413,9 +413,9 @@ if buf.count(b"show managed-hosts") < 2:
     os.write(2, b"PTY: recalled command did not rerun\n" + bytes(buf[-400:]))
     raise SystemExit(1)
 
-os.write(fd, b"show version\r")
+os.write(fd, b"system version\r")
 if not wait_prompt():
-    os.write(2, b"PTY: no prompt after show version\n" + bytes(buf[-400:]))
+    os.write(2, b"PTY: no prompt after system version\n" + bytes(buf[-400:]))
     raise SystemExit(1)
 before = len(buf)
 os.write(fd, b"\x1b[A")  # version
@@ -428,12 +428,12 @@ os.write(fd, b"\r")
 if not wait_prompt():
     os.write(2, b"PTY: no prompt after down-arrow command\n" + bytes(buf[-400:]))
     raise SystemExit(1)
-# The last executed command after down should be show version, not a second extra clients-only path.
+# The last executed command after down should be system version, not a second extra clients-only path.
 text = bytes(buf)
 if text.count(b"Data Relay Link:") + text.count(b"Project version") + text.count(b"Role") < 1:
-    # show version prints role/project; dry-run status is not used here
-    if b"show version" not in bytes(buf[before:]):
-        os.write(2, b"PTY: down-arrow did not land on show version\n" + bytes(buf[before:]))
+    # system version prints role/project; dry-run status is not used here
+    if b"system version" not in bytes(buf[before:]):
+        os.write(2, b"PTY: down-arrow did not land on system version\n" + bytes(buf[before:]))
         raise SystemExit(1)
 
 os.write(fd, b"exit\r")
@@ -722,9 +722,9 @@ if not wait_prompt():
     fail_pty("PTY: no prompt after clearing", bytes(buf[-400:]))
 
 # History recall then Tab completion.
-os.write(fd, b"show version\r")
+os.write(fd, b"system version\r")
 if not wait_prompt():
-    fail_pty("PTY: no prompt after show version", bytes(buf[-400:]))
+    fail_pty("PTY: no prompt after system version", bytes(buf[-400:]))
 os.write(fd, b"\x1b[A")
 read_more(0.5)
 os.write(fd, b"\x15")

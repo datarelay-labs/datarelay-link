@@ -334,7 +334,7 @@ CHATGPT_OWNER_UI_ALLOW_DENY=
 
 - [ ] one product version SSOT.
 - [ ] development/preview/stable identity correct.
-- [ ] `show version` includes exact HEAD and separate FRP version.
+- [ ] `system version` includes exact HEAD and separate FRP version.
 - [ ] control DB schema/version visible.
 - [ ] pre-tag bootstrap/install refs exact SHA/immutable RC.
 - [ ] no future nonexistent stable-tag URL.

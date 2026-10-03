@@ -318,26 +318,23 @@ if ! grep -qiE 'enrollment complete|Zero-touch setup complete|FRP client ready|D
 fi
 pass "SHORT_URL_ENROLL"
 
-# Verify server sees the client.
-SHOW="$OUT_DIR/show-client.out"
-ssh_server "sudo /usr/local/bin/drlink show clients" >"$SHOW" 2>&1 || { cat "$SHOW"; fail "show clients"; }
-ssh_server "sudo /usr/local/bin/drlink show client '$CLIENT_LABEL'" >>"$SHOW" 2>&1 \
-  || ssh_server "sudo /usr/local/bin/drlink show client \$(sudo python3 -c \"import json;d=json.load(open('/var/lib/drlink/registry.json'));print(next(cid for cid,c in (d.get('clients') or {}).items() if (c.get('label') or '')=='$CLIENT_LABEL'))\")" >>"$SHOW" 2>&1 \
-  || { cat "$SHOW"; fail "show client"; }
-grep -qi "$CLIENT_LABEL" "$SHOW" || fail "client label missing"
-grep -qiE '6000|6001|6002|ssh' "$SHOW" || fail "ssh service/port missing"
+# Verify server sees the Managed Host through the current public grammar.
+SHOW="$OUT_DIR/show-managed-host.out"
+ssh_server "sudo /usr/local/bin/drlink show managed-hosts" >"$SHOW" 2>&1 \
+  || { cat "$SHOW"; fail "show managed-hosts"; }
+ssh_server "sudo /usr/local/bin/drlink show managed-host '$CLIENT_LABEL'" >>"$SHOW" 2>&1 \
+  || { cat "$SHOW"; fail "show managed-host"; }
+ssh_server "sudo /usr/local/bin/drlink show managed-host '$CLIENT_LABEL' remote-services" >>"$SHOW" 2>&1 \
+  || { cat "$SHOW"; fail "show managed-host remote-services"; }
+grep -qi "$CLIENT_LABEL" "$SHOW" || fail "Managed Host label missing"
+grep -qiE '6000|6001|6002|ssh' "$SHOW" || fail "Remote Service/port missing"
 pass "CLIENT_SERVICES_PORTS"
 
-CLIENT_MID="$(python3 - "$SHOW" <<'PY'
-import re, sys
-text = open(sys.argv[1]).read()
-m = re.search(r'\b([0-9a-f]{32})\b', text)
-print(m.group(1) if m else '')
-PY
-)"
-[[ -n "$CLIENT_MID" ]] || CLIENT_MID="$(ssh_server "sudo python3 -c \"import json;d=json.load(open('/var/lib/drlink/registry.json'));print(next(iter(d.get('clients') or {})))\"")"
+# Immutable Managed Host identity is local enrollment state; do not scrape the
+# retired server registry.json compatibility store to recover it.
+CLIENT_MID="$(ssh_client "sudo python3 -c \"import json;d=json.load(open('/etc/frp/client-state.json'));print(d.get('machine_id') or '')\"")"
 note "CLIENT_MID=$CLIENT_MID"
-[[ -n "$CLIENT_MID" ]] || fail "CLIENT ID missing"
+[[ "$CLIENT_MID" =~ ^[0-9a-f]{32}$ ]] || fail "CLIENT ID missing or invalid"
 pass "CLIENT_ID"
 
 # Management identity present on client.

@@ -121,9 +121,13 @@ frp_client_update_cmd() {
         ;;
       -h|--help)
         cat <<'EOF'
-Usage: drlink update [--source DIR] [--check]
+Data Relay Link product update backend
 
-Upgrade this client's Data Relay Link management tools.
+Public command:
+  sudo drlink system update product
+
+Internal backend invocation:
+  frp-client update [--source DIR] [--check]
 
   --source DIR   use a local source tree instead of downloading the bundle
   --check        report installed/target versions without changing files
@@ -133,13 +137,13 @@ does not regenerate management identity, and does not rewrite client
 state, frpc.toml, or public port assignments. The official frpc binary
 is left unchanged when it is already the tested version.
 
-The recommended command is: sudo drlink update
+Use the public command for normal operation: sudo drlink system update product
 EOF
         return 0
         ;;
       *)
-        echo "ERROR: unknown option: $1" >&2
-        echo "Usage: drlink update [--source DIR] [--check]" >&2
+        echo "ERROR: unknown internal updater option: $1" >&2
+        echo "Public command: sudo drlink system update product" >&2
         return 2
         ;;
     esac

@@ -133,14 +133,13 @@ class PublicGrammarClosure(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertIn("AI Access Test", r.stdout)
 
-    def test_SYSTEM_UPDATE_AND_INFO_ALIASES_NOT_DEAD_ENDS(self):
+    def test_SYSTEM_UPDATE_AND_INFO_CANONICAL_PATHS(self):
         import frp_ctl_grammar as grammar
 
         cases = (
             (["system", "update", "engine"], "client", "update_frp"),
             (["system", "update", "product"], "client", "update_project"),
             (["system", "info"], "client", "show_info"),
-            (["show", "info"], "client", "show_info"),
             (["unset", "managed-host", "x"], "server", "control_plane"),
             (["system", "revoke", "client", "x"], "server", "revoke_client"),
         )
@@ -150,15 +149,18 @@ class PublicGrammarClosure(unittest.TestCase):
             self.assertEqual(result.get("action"), action, tokens)
 
         retired = (
-            ["update", "engine"],
-            ["update", "product"],
-            ["info"],
-            ["pause"],
-            ["stop"],
+            (["update", "engine"], None),
+            (["update", "product"], None),
+            (["info"], None),
+            (["show", "info"], "system info"),
+            (["pause"], None),
+            (["stop"], None),
         )
-        for tokens in retired:
+        for tokens, guidance in retired:
             result = grammar.match(tokens, role="client")
             self.assertNotEqual(result.get("status"), "ok", tokens)
+            if guidance is not None:
+                self.assertIn(guidance, result.get("message", ""), tokens)
 
         help_root = grammar.help_text([], "server")
         self.assertIn("help managed-hosts", help_root)

@@ -87,7 +87,7 @@ def derive_display_identity(
     tag_exists: Optional[bool] = None,
     rc_number: Optional[int] = None,
 ) -> dict[str, str]:
-    """Return display fields for show version / machine-readable identity.
+    """Return display fields for system version / machine-readable identity.
 
     Stable channel is only claimed when provenance is a matching immutable
     stable tag (and, when known, that tag exists). PROJECT_VERSION alone is

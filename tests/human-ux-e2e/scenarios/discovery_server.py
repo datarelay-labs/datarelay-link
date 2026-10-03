@@ -99,7 +99,7 @@ def hux_srv_005(env: ScenarioEnv) -> None:
 
 @scenario(
     "HUX-SRV-006",
-    "Server show version",
+    "Server system version",
     execution_context=ExecutionContext.DRLINK_SERVER,
     interaction_mode=InteractionMode.ONE_SHOT,
     layer=Layer.NORMAL,
@@ -108,8 +108,6 @@ def hux_srv_005(env: ScenarioEnv) -> None:
 def hux_srv_006(env: ScenarioEnv) -> None:
     s = _srv(env)
     r = s.run("system", "version")
-    if r.rc != 0:
-        r = s.run("show", "version")
     expect_true(r.rc == 0, "version command failed", evidence=r.combined)
     expect_any(r.combined, ("2.4", "Data Relay Link", "FRP", "version", "Channel", "Source"))
     env.extracted["version_text"] = r.combined
