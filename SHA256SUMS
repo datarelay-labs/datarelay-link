@@ -455,7 +455,7 @@ d3b9b977fff03bfe57ab7e5d0e6343b358f3aecc37de4238455f79fb79e3ecec  tests/test-uni
 21bed133e6db2480172b8ffe47087a6e575e2569b46e41a23dfebfbcd4a527b2  tests/test-user-facing-branding.sh
 5239c385f5256c0fc73b744eb0e3a146d0c4505a8718c342ab9d5b0695fc6632  tests/test-v24-access-broadening-bundle-order.py
 a1018ab3262e922101f9ce5d370821d37ab4b27307d1448a5807854bf3ef8148  tests/test-v24-ai-access-reference-integrity.py
-b2c382d46fae82b1ca5d0065c01356cc4c010533ad496a98b7ade7eb7919117d  tests/test-v24-ai-auth-convergence.py
+2c8a38cd78a42e85d3c95babd7447a3590bd5406aeb86489b1113add20d12987  tests/test-v24-ai-auth-convergence.py
 edb7ee57cd514ca9549c466c7a3d452b29fd91c87d297576f679dcd14b467da0  tests/test-v24-ai-job-safety.py
 b9ad5d29ed988b0c9f5f62c4fa567d7114f3ce064149b94a264c51131fe2597d  tests/test-v24-ai-jobs-json1-independence.py
 3b389ce34b63f951cb9dff1f80a1c93aac72f0951f8fdfc4a045a2248a628205  tests/test-v24-ai-path-scope-public-parity.py

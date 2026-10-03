@@ -195,21 +195,22 @@ class AiAuthConvergence(unittest.TestCase):
         self.assertTrue(text.startswith("DENY"), text)
 
     def test_no_policy_and_enforcement_parity(self):
-        # No AI policy configured => evaluate ALLOW after auth.
+        # Authentication is necessary but never sufficient: No Policy is DENY.
         ev = self._eval("host-info")
         auth = self._auth("get_system_info")
         self.assertIsNone(ev["mode"])
-        self.assertEqual(ev["result"], "ALLOW")
-        self.assertEqual(auth["action"], "ALLOW")
-        self.assertEqual(auth["evaluation"]["result"], "ALLOW")
+        self.assertEqual(ev["result"], "DENY")
+        self.assertEqual(auth["action"], "DENY")
+        self.assertEqual(auth["evaluation"]["result"], "DENY")
 
+        # Disabling AI Access shuts the plane fail-closed while preserving policy.
         self._whitelist("allow-info", destination="host-a", permission="read-only")
         v24.set_policy_enforcement(self.plane, "ai", False, confirm=True)
-        ev2 = self._eval("command-exec")
-        auth2 = self._auth("exec", operand="id")
-        self.assertEqual(ev2["result"], "ALLOW")
-        self.assertEqual(auth2["action"], "ALLOW")
-        self.assertEqual(auth2["evaluation"]["result"], "ALLOW")
+        ev2 = self._eval("host-info")
+        auth2 = self._auth("get_system_info")
+        self.assertEqual(ev2["result"], "DENY")
+        self.assertEqual(auth2["action"], "DENY")
+        self.assertEqual(auth2["evaluation"]["result"], "DENY")
 
     def test_permission_object_expansion(self):
         self._whitelist("allow-info", destination="host-a", permission="read-only")
