@@ -1011,6 +1011,23 @@ def ensure_v30_schema(conn: sqlite3.Connection) -> None:
         if audit_cols and column not in audit_cols:
             conn.execute("ALTER TABLE audit_events ADD COLUMN %s %s" % (column, decl))
 
+    # Existing 2.x control audit remains queryable through the 3.0 envelope.
+    # event_id stays NULL for historical rows; new writes receive stable IDs.
+    conn.execute(
+        "UPDATE audit_events SET "
+        "schema_version=COALESCE(schema_version,1),"
+        "category=COALESCE(category,'CONTROL'),"
+        "event_type=COALESCE(event_type,operation),"
+        "occurred_at=COALESCE(occurred_at,timestamp),"
+        "source=COALESCE(source,'legacy-core'),"
+        "actor_type=COALESCE(actor_type,'operator'),"
+        "actor_id=COALESCE(actor_id,actor),"
+        "interface=COALESCE(interface,'LEGACY'),"
+        "revision_after=COALESCE(revision_after,revision),"
+        "revision_before=COALESCE("
+        "revision_before,CASE WHEN revision > 0 THEN revision - 1 ELSE NULL END)"
+    )
+
     conn.executescript(V30_SCHEMA_SQL)
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_policy_rules_expiry "

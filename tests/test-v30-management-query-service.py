@@ -172,6 +172,8 @@ class V30ManagementQueryServiceTests(unittest.TestCase):
                 "drlink_inventory_get",
                 "drlink_health",
                 "drlink_policy_test",
+                "drlink_audit_query",
+                "drlink_live_access",
             },
         )
 

@@ -30,6 +30,8 @@ IMPLEMENTED_MANAGEMENT_TOOLS = frozenset(
         "drlink_inventory_get",
         "drlink_health",
         "drlink_policy_test",
+        "drlink_audit_query",
+        "drlink_live_access",
     }
 )
 
@@ -196,6 +198,50 @@ def _decode_cursor(
     ):
         raise ControlPlaneError("Management query cursor does not match this resource.")
     return payload["name"], payload["id"]
+
+
+def _encode_audit_cursor(occurred_at: str, row_id: int) -> str:
+    raw = json.dumps(
+        {
+            "v": _CURSOR_VERSION,
+            "resource": "audit",
+            "time": str(occurred_at),
+            "id": int(row_id),
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _decode_audit_cursor(cursor: Optional[str]) -> Optional[tuple[str, int]]:
+    if cursor is None or not str(cursor).strip():
+        return None
+    text = str(cursor).strip()
+    try:
+        padded = text + "=" * (-len(text) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")))
+        row_id = int(payload.get("id"))
+    except Exception as exc:
+        raise ControlPlaneError("Invalid audit query cursor.") from exc
+    if (
+        payload.get("v") != _CURSOR_VERSION
+        or payload.get("resource") != "audit"
+        or not isinstance(payload.get("time"), str)
+        or row_id < 1
+    ):
+        raise ControlPlaneError("Audit query cursor is invalid.")
+    return payload["time"], row_id
+
+
+def _json_field(value: Any, fallback):
+    if value is None or value == "":
+        return fallback
+    try:
+        decoded = json.loads(str(value))
+    except (TypeError, ValueError):
+        return fallback
+    return decoded
 
 
 class ManagementQueryService:
@@ -375,6 +421,134 @@ class ManagementQueryService:
             raise ControlPlaneError("Unsupported access plane: %s" % plane)
         finally:
             core.close()
+
+    def audit_query(
+        self,
+        *,
+        start: Optional[str] = None,
+        end: Optional[str] = None,
+        category: Optional[str] = None,
+        event_type: Optional[str] = None,
+        actor: Optional[str] = None,
+        resource: Optional[str] = None,
+        result: Optional[str] = None,
+        correlation: Optional[str] = None,
+        cursor: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> ManagementPage:
+        """Read bounded unified 3.0 audit history with keyset pagination."""
+        page_limit = _bounded_limit(limit)
+        after = _decode_audit_cursor(cursor)
+        where_parts = ["occurred_at IS NOT NULL"]
+        args: list[Any] = []
+
+        start_text = str(start or "").strip()
+        end_text = str(end or "").strip()
+        if start_text:
+            where_parts.append("occurred_at >= ?")
+            args.append(start_text)
+        if end_text:
+            where_parts.append("occurred_at <= ?")
+            args.append(end_text)
+
+        category_text = str(category or "").strip().upper()
+        if category_text:
+            where_parts.append("category = ?")
+            args.append(category_text)
+
+        event_type_text = str(event_type or "").strip()
+        if event_type_text:
+            where_parts.append("event_type = ?")
+            args.append(event_type_text)
+
+        actor_text = str(actor or "").strip()
+        if actor_text:
+            where_parts.append("actor_id = ?")
+            args.append(actor_text)
+
+        resource_text = str(resource or "").strip()
+        if resource_text:
+            where_parts.append("entity_id = ?")
+            args.append(resource_text)
+
+        result_text = str(result or "").strip().lower()
+        if result_text:
+            where_parts.append("LOWER(result) = ?")
+            args.append(result_text)
+
+        correlation_text = str(correlation or "").strip()
+        if correlation_text:
+            where_parts.append("correlation_id = ?")
+            args.append(correlation_text)
+
+        if after is not None:
+            where_parts.append(
+                "(occurred_at < ? OR (occurred_at = ? AND id < ?))"
+            )
+            args.extend((after[0], after[0], after[1]))
+
+        args.append(page_limit + 1)
+        rows = self.conn.execute(
+            "SELECT * FROM audit_events WHERE %s "
+            "ORDER BY occurred_at DESC, id DESC LIMIT ?"
+            % " AND ".join(where_parts),
+            tuple(args),
+        ).fetchall()
+
+        has_more = len(rows) > page_limit
+        page_rows = rows[:page_limit]
+        items = []
+        for row in page_rows:
+            items.append(
+                {
+                    "row_id": int(row["id"]),
+                    "event_id": row["event_id"],
+                    "schema_version": int(row["schema_version"] or 1),
+                    "category": row["category"],
+                    "event_type": row["event_type"],
+                    "occurred_at": row["occurred_at"],
+                    "source": row["source"],
+                    "source_sequence": row["source_sequence"],
+                    "actor_type": row["actor_type"],
+                    "actor_id": row["actor_id"],
+                    "delegated_actor_id": row["delegated_actor_id"],
+                    "interface": row["interface"],
+                    "action": row["action"],
+                    "resource_type": row["entity_type"],
+                    "resource_id": row["entity_id"],
+                    "operation": row["operation"],
+                    "result": row["result"],
+                    "reason_code": row["reason_code"],
+                    "correlation_id": row["correlation_id"],
+                    "request_id": row["request_id"],
+                    "session_id": row["session_id"],
+                    "revision_before": row["revision_before"],
+                    "revision_after": row["revision_after"],
+                    "matched_policy": _json_field(row["matched_policy_json"], []),
+                    "source_meta": _json_field(row["source_meta_json"], {}),
+                    "destination_meta": _json_field(
+                        row["destination_meta_json"], {}
+                    ),
+                    "before_summary": row["before_summary"] or "",
+                    "after_summary": row["after_summary"] or "",
+                    "impact_summary": row["impact_summary"] or "",
+                    "legacy": row["event_id"] is None,
+                }
+            )
+
+        next_cursor = None
+        if has_more and page_rows:
+            last = page_rows[-1]
+            next_cursor = _encode_audit_cursor(
+                str(last["occurred_at"]),
+                int(last["id"]),
+            )
+        return ManagementPage(
+            resource_type="audit-event",
+            items=tuple(items),
+            next_cursor=next_cursor,
+            limit=page_limit,
+        )
 
     def live_access(
         self,
