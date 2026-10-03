@@ -615,11 +615,33 @@ Deferred until a real requirement exists.
 
 Deferred. Useful for workstation/browser environments but not required for initial server-focused use cases.
 
-## 15.4 Strong Per-Host Agentless Identity
+## 15.4 Optional Egress Identity / Proxy Token
 
-Deferred until a secure transport/authentication design is explicitly approved.
+A later agentless identity layer may add an optional **Egress Identity** bound to a generated high-entropy token. The intended model is:
 
-mTLS is currently excluded.
+```text
+Source IP/CIDR
++ Egress Identity / token
++ Egress Profile
++ Destination FQDN / port
+→ ALLOW / DENY
+```
+
+This is machine/service identity, not a general human IAM system. A Basic-compatible `Proxy-Authorization` exchange may be used for client compatibility, but the password field carries a generated Data Relay token rather than a reusable human password.
+
+Required security/lifecycle properties:
+
+- token does not replace source CIDR or destination policy; all applicable checks must pass
+- token values are high entropy, shown only when issued, stored only as a verifier/hash, and never logged
+- lifecycle includes issue, rotate, revoke, expire, and metadata-only inspection
+- identity can be bound to one or more approved Egress Profiles and source CIDRs
+- audit records identity metadata plus source/destination decision without recording the credential
+- NAT-shared hosts can be distinguished when they use different credentials
+- AD/LDAP/OIDC/SAML/MFA and browser/user-directory policy remain out of scope unless separate field demand justifies them
+
+Because Basic-compatible proxy credentials are not safe over a plaintext untrusted hop, deployment beyond a trusted/restricted segment requires a TLS-protected proxy listener or another approved confidential transport before this becomes a production security boundary.
+
+mTLS remains a later field-demand option, not the initial identity mechanism.
 
 ---
 
@@ -933,9 +955,44 @@ Candidates:
 - PAC
 - additional audit/reporting convenience
 - reusable organization-level profile templates
-- stronger host identity if a secure agentless approach is later approved
 
-Do not implement these because competitors have them. Add them only for repeated field requirements.
+### DR-7A — Optional Egress Identity / Proxy Token
+
+Introduce optional agentless machine/service identity without turning Data Relay into a user-directory or Secure Web Gateway product.
+
+Target model:
+
+```text
+Source CIDR + Egress Identity Token + Egress Profile + FQDN/Port
+```
+
+Required scope:
+
+- `egress-identity` lifecycle with generated token credentials
+- Basic-compatible proxy authentication for broad client compatibility
+- token hash/verifier at rest; plaintext shown only at issuance
+- issue / rotate / revoke / expire operations
+- bind identity to approved source CIDRs and Egress Profiles
+- identity-aware audit without credential logging
+- deterministic allow/deny behavior when token, source, profile, or destination does not match
+- real-app compatibility validation for `curl`, `wget`, `git`, and `apt`
+
+Guardrails:
+
+- optional identity augments rather than replaces Source IP/CIDR and destination controls
+- no human password database
+- no AD/LDAP/OIDC/SAML/MFA dependency in this phase
+- no credential transmission over an untrusted plaintext proxy hop
+
+### DR-7B — TLS-Protected Proxy Listener
+
+Add a TLS-protected client-to-Data-Relay proxy transport when credential confidentiality across an untrusted segment is required. This phase is a prerequisite for treating DR-7A credentials as a production security boundary outside trusted/restricted network segments.
+
+### DR-7C — Stronger Machine Identity
+
+Evaluate mTLS or another stronger machine identity only when repeated field demand justifies the extra certificate/provisioning lifecycle. It is not required for the initial Egress Identity design.
+
+Do not implement demand-driven items merely to match competitor feature lists. Add them when field requirements justify the additional product and operational complexity.
 
 ---
 
