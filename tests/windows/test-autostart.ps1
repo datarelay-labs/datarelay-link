@@ -4,8 +4,11 @@
 . (Join-Path $PSScriptRoot '_import.ps1')
 try {
     # Isolate from any leftover product/E2E scheduled task on Windows CI hosts.
-    $env:FRP_AUTOSTART_TASK_NAME = 'DataRelayLinkClient-Test-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
-    $env:FRP_LIFECYCLE_TASK_NAME = 'DataRelayLinkLifecycle-Test-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
+    # Keep the unique suffix digits-only so the fixture itself can never
+    # accidentally match the reverse-SSH/E2E exclusion regex below.
+    $testSuffix = "$PID-$([DateTime]::UtcNow.Ticks)"
+    $env:FRP_AUTOSTART_TASK_NAME = 'DataRelayLinkClient-Test-' + $testSuffix
+    $env:FRP_LIFECYCLE_TASK_NAME = 'DataRelayLinkLifecycle-Test-' + $testSuffix
     $taskName = Get-FrpAutostartTaskName
     $lifecycleTaskName = Get-FrpLifecycleTaskName
     Assert-FrpEqual $env:FRP_AUTOSTART_TASK_NAME $taskName 'product-owned task name'
