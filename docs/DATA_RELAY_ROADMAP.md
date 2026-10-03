@@ -222,17 +222,21 @@ Product rules:
 - Successful and failed security-relevant mutations/authentication attempts are recorded.
 - A state mutation and its audit record commit atomically. If durable audit persistence
   fails, the mutation fails.
-- A new auditable access decision must not proceed if its audit record cannot be durably
-  enqueued. Existing established connections are not torn down solely because the audit
-  store later degrades; the condition becomes CRITICAL health/attention.
+- A would-be ACCESS_DECISION ALLOW is not released until its event is durably enqueued.
+  Enqueue/spool failure therefore converts ALLOW to DENY. A policy DENY remains DENY even
+  if its audit enqueue also fails; the audit subsystem becomes CRITICAL and surfaces the
+  loss counter. Existing established connections are not torn down solely because the
+  audit store later degrades.
 - Secrets, credentials, bearer tokens, private keys, application payloads, TLS contents,
   and sensitive URL query strings are never normal audit fields.
 
 - Before/after data uses schema-aware allowlisting/redaction, not regex-only scrubbing.
 - Audit is append-only through normal product APIs. 3.0 exposes no arbitrary edit/delete;
   expiry occurs only through retention policy.
-- Active audit stays in SQLite/Core with bounded time-range queries, cursor pagination,
-  indexes, and hard resource limits.
+- Active query history stays in SQLite/Core with bounded time-range queries, cursor
+  pagination, indexes, and hard resource limits. Privilege-separated Remote/Internet
+  enforcement writes ACCESS_DECISION events first to a bounded durable per-plane spool;
+  a Core Audit Ingestor imports them to SQLite in short idempotent batches.
 - CLI and Web both provide bounded read/filter/detail access to the same event model.
   Exact additive CLI grammar is frozen in DRL3-0; neither surface may invent its own semantics.
 - 3.0 provides manual filtered NDJSON export using the same versioned schema from CLI and
@@ -275,7 +279,8 @@ Required:
   Control Plane Architecture / Web Management;
 - performance measurement profile and SLO methodology frozen;
 - audit taxonomy/envelope, attribution/delegation, redaction, retention/storage bounds,
-  mutation atomicity, access-path audit failure behavior, NDJSON export, and recovery frozen.
+  mutation atomicity, per-plane durable-spool/Audit-Ingestor boundary, enqueue high-water
+  behavior, ingest/checkpoint recovery, NDJSON export, and recovery frozen.
 
 The DRL3-0 performance profile must define reproducible scale dimensions for at least:
 
@@ -285,10 +290,12 @@ Remote Service count   representative per-Host distributions
 Object/Group count     representative small/normal/high inventory
 Policy Rule count      representative small/normal/high rule sets
 Audit history depth    bounded current + large-history query cases
+Audit ingest rate      idle / normal / burst across Remote/Internet/AI
+Audit spool backlog    empty / recovering / near-high-water
 Web sessions           single + concurrent operator cases
 Agent RPC jobs         single-target + fan-out + saturated queue
 Lifecycle events       normal heartbeat + 100-Host reconnect/flap storm
-Mixed workload         dashboard/search + policy test + mutation + jobs
+Mixed workload         dashboard/search + audit ingest/query + policy test + mutation + jobs
 ```
 
 Exact latency/resource SLO numbers are frozen from measured baseline/reference hardware,
@@ -319,7 +326,14 @@ Implement logical boundaries for:
 - bounded Management Job Engine for operations that wait on Agents or multiple resources;
 - Agent RPC worker pool with concurrency/backpressure/timeouts;
 - operational-state aggregation/coalescing;
+- Core Audit Event Service and versioned audit schema migration;
+- durable per-plane ACCESS_DECISION spools that preserve enforcement-service DB read-only
+  privilege;
+- bounded Audit Ingestor with event-id dedupe, committed per-source checkpoints,
+  ingestion-lag/high-water health, and short batch transactions;
 - indexed bounded audit/history queries;
+- migration/convergence contract for legacy `audit_events`, `ai_activity`, and connection
+  JSONL surfaces;
 - capability parity inventory generated from the supported public model.
 
 Existing AI-job primitives may share low-level utilities only when semantics fit. Management
@@ -333,7 +347,10 @@ Hard rules:
   configuration/membership changes;
 - derived read models are never recovery authority;
 - browser request count must not scale one-for-one with Host count;
-- worker saturation queues/rejects safely rather than spawning unbounded work.
+- worker saturation queues/rejects safely rather than spawning unbounded work;
+- enforcement services never receive SQLite write permission for audit;
+- access-event ingestion never performs one SQLite transaction per connection;
+- spool saturation converts new ALLOW decisions to DENY before access is granted.
 
 Acceptance includes mixed read/write/RPC load with no policy drift, false success,
 unbounded resource growth, or starvation of relay enforcement.
@@ -508,7 +525,12 @@ Required:
 - split retention and storage-capacity guardrails;
 - manual filtered NDJSON export with stable schema versioning;
 - audit of retention/export configuration and export execution;
-- no-silent-loss/fail-closed regression for mutation and new-access audit persistence;
+- no-silent-loss regression for CONTROL mutation audit plus ALLOW fail-closed behavior
+  when ACCESS_DECISION durable enqueue is unavailable;
+- durable-spool crash/restart, duplicate-ingest, checkpoint, lag, high-water, and recovery
+  regressions;
+- mixed-load verification that audit ingestion does not starve configuration writers,
+  relay enforcement, or CLI recovery;
 - schema-aware secret/credential/payload redaction regressions;
 - read-model rebuild/recovery;
 - backup/restore including new 3.0 Core-owned management metadata;
@@ -556,6 +578,12 @@ NO_SQLITE_TXN_WAITING_ON_AGENT_RPC=PASS
 100_HOST_MIXED_OPERATION_LOAD=PASS
 WEB_FAILURE_ISOLATION=PASS
 AUDIT_REVISION_RECOVERY=PASS
+AUDIT_CONTROL_TXN_ATOMICITY=PASS
+AUDIT_ACCESS_DURABLE_ENQUEUE=PASS
+AUDIT_INGEST_DEDUP_CHECKPOINT=PASS
+AUDIT_SPOOL_BACKPRESSURE=PASS
+AUDIT_PENDING_SPOOL_BACKUP_RESTORE=PASS
+EGRESS_SQLITE_WRITE_ACCESS=NO
 BACKUP_RESTORE_3_0=PASS
 SECURITY_REVIEW=PASS
 BROWSER_REAL_USER_E2E=PASS

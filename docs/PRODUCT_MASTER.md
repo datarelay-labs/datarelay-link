@@ -736,14 +736,25 @@ Web-only activity feed.
 SECURITY_LIFECYCLE logical streams. Attribution covers CLI, Web, ConfigurationBundle,
 AI-assisted operations, Agent RPC, and system lifecycle activity.
 
-**Safety:** State-changing operations commit audit atomically and fail when durable audit
-persistence fails. New auditable access decisions do not proceed when durable enqueue
-cannot be guaranteed. Audit is schema-redacted and excludes secrets, credentials,
-application payloads, TLS contents, and sensitive URL query strings.
+**Safety:** Successful state-changing operations commit CONTROL audit atomically with
+their authoritative transaction and fail when durable audit persistence fails. Failed
+security-relevant attempts remain failed if their separate audit write also fails, and the
+product reports CRITICAL audit-degraded health. A would-be ACCESS_DECISION ALLOW does not
+proceed unless its secret-safe event is durably enqueued; a DENY remains DENY if audit
+enqueue also fails. Audit excludes secrets, credentials, application payloads, TLS contents,
+and sensitive URL query strings.
 
-**Storage/UX:** Active audit remains in SQLite/Core with bounded indexed queries, cursor
-pagination, retention/storage guardrails, backup/restore continuity, CLI/Web query parity,
-Audit/Revision Explorer, and manual filtered NDJSON export from CLI and Web in 3.0.
+**Architecture/Storage:** CONTROL and Core lifecycle events use the Core Audit Event
+Service; successful CONTROL mutations remain in the same SQLite transaction as revision
+and state. Privilege-separated Remote/Internet enforcement keeps `drlink.db` read-only and
+durably appends ACCESS_DECISION events to bounded per-plane spools. A Core Audit Ingestor
+imports those events into SQLite in short idempotent batches with committed checkpoints.
+SQLite remains the single query/history store; the spool is durable transport, not a
+second policy authority.
+
+**UX:** Audit uses bounded indexed queries, cursor pagination, retention/storage
+guardrails, backup/restore continuity, CLI/Web query parity, Audit/Revision Explorer, and
+manual filtered NDJSON export from CLI and Web in 3.0.
 
 **Scope:** Continuous SIEM/S3/syslog/webhook streaming is later-additive. Session recording,
 payload capture, and a SIEM/reporting platform remain out of scope. Append-only product

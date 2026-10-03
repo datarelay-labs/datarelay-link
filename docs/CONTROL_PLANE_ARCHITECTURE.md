@@ -787,6 +787,149 @@ effective_decision_changes
 
 Do not persist secrets, arbitrary full file contents, or unbounded command output into the audit database.
 
+### 30.1 3.0 audit write-path architecture
+
+The current 2.x implementation proves two useful but different write paths:
+
+```text
+control-plane mutation
+  → SQLite audit_events
+  → same transaction as successful revision/state change
+
+Remote / Internet connection decision
+  → service-local JSONL
+  → best-effort today
+
+AI activity
+  → ai_activity + audit_events
+  → separate compatibility surface today
+```
+
+3.0 converges these into one query/event model without giving enforcement services
+general SQLite write authority.
+
+```text
+CLI / Web / Bundle / system mutation
+        │
+        ▼
+Core Audit Event Service
+        │
+        ├── successful CONTROL mutation
+        │      → same BEGIN IMMEDIATE transaction as state + revision
+        │
+        └── SECURITY_LIFECYCLE / failed-attempt event
+               → short Core-owned audit transaction
+
+Remote / Internet enforcement process
+        │
+        ▼
+durable per-plane Audit Spool
+  fsync + source sequence + stable event_id
+        │
+        ▼
+bounded Core Audit Ingestor
+  short batch transaction + dedupe + checkpoint
+        │
+        ▼
+SQLite audit_events
+        │
+        ▼
+Audit / History Query Layer
+```
+
+The Audit Event Service and Audit Ingestor are logical Core modules. They do not require
+Redis, a broker, an external database, or a network-visible audit service. Packaging may
+use an existing privileged Core process or a small local worker/timer, but the write/query
+contracts below are fixed.
+
+Architecture rules:
+
+- `drlink-egress` and other privilege-separated enforcement services keep read-only access
+  to `drlink.db`; audit is not a reason to grant them database write permission.
+- High-volume ACCESS_DECISION events do not open one SQLite write transaction per
+  connection on enforcement threads. SQLite/WAL still serializes writers, so access-event
+  ingestion is intentionally batched away from the enforcement hot path.
+- A failed CONTROL/security attempt with no committed revision is recorded through a short
+  Core-owned audit transaction. If even that audit write fails, the attempted operation
+  remains failed/denied and audit health becomes CRITICAL; audit failure can never turn an
+  operation into success.
+- An ALLOW decision is not released to the caller until its source event is durably
+  appended to the local spool. If append/fsync fails or the spool reaches its hard
+  high-water bound, the would-be ALLOW becomes DENY with an audit-unavailable reason.
+- A policy DENY remains DENY when audit enqueue also fails; the logging failure must not
+  turn denial into success. Audit health becomes CRITICAL and the dropped-deny counter is
+  surfaced until recovery.
+- Post-authorization connection outcome/session-end events are also durably enqueued when
+  emitted, but failure after access is already established does not retroactively terminate
+  the connection; it raises audit-degraded health and affects subsequent new ALLOW decisions
+  according to spool/high-water state.
+- Source spools are bounded durable transport journals, not a second control-plane
+  authority. They carry only versioned secret-safe event envelopes.
+- The ingestor imports in bounded batches, never waits on network/Agent RPC while holding a
+  SQLite transaction, and commits imported rows plus the source checkpoint atomically.
+- `event_id` is unique in SQLite. Re-reading a segment after crash/restore is idempotent;
+  duplicate event IDs cannot create duplicate audit history.
+- Spool segments are not removed until every event in the segment is durably represented
+  in SQLite and the committed checkpoint covers the segment.
+- Ingestion lag, spool bytes, oldest-uningested age, enqueue failures, ingest failures, and
+  dropped-deny count are first-class health/Attention signals.
+- Web/CLI query paths read the indexed SQLite history only; they never parse live spool
+  files or legacy JSONL directly.
+
+### 30.2 Audit schema, query, retention, and migration boundary
+
+The 3.0 audit schema must support stable event identity and bounded indexed queries without
+making every event field a separate index.
+
+Required storage concepts:
+
+```text
+audit_events
+  event_id UNIQUE
+  schema_version
+  category / event_type
+  occurred_at
+  source / source_sequence
+  actor / delegated_actor / interface
+  action / resource identity
+  result / reason_code
+  correlation / request / session identifiers
+  revision_before / revision_after
+  matched policy/rule
+  safe before/after/impact summaries
+  bounded source/destination metadata
+
+audit_ingest_checkpoints
+  source
+  segment / sequence / offset
+  updated_at
+```
+
+Indexes are selected from measured query plans, but 3.0 must at least avoid the current
+unbounded `LIKE`-style history search pattern for primary filters. Time/event-id keyset
+pagination is the default history traversal; actor/resource/revision/result/correlation
+lookups receive explicit index review.
+
+Retention uses bounded chunk deletion and bounded page/WAL maintenance. A retention task
+must not hold the writer slot for an unbounded purge or VACUUM while relay/control
+operations need it.
+
+Upgrade convergence:
+
+- existing SQLite `audit_events` become CONTROL-compatible rows under the new schema;
+- `ai_activity` stops being a second long-term audit authority after its migration/
+  compatibility contract is complete;
+- current Remote/Internet connection JSONL files are legacy evidence, not the 3.0 live
+  query backend;
+- DRL3-0 freezes whether retained legacy connection files are one-time imported or kept as
+  explicitly labeled pre-3.0 forensic artifacts. Implementation must not silently discard
+  them.
+
+Backup/restore must account for pending durable spool state. The backup contract either
+drains/checkpoints all spools before the SQLite snapshot or includes spool segments plus
+their committed checkpoint. Restore must be idempotent by `event_id` and must not replay
+an ACCESS_DECISION as a new authorization action.
+
 ## 31. Transactional mutation flow
 
 Security-relevant mutations follow one flow:
@@ -1371,6 +1514,14 @@ CLI / Web / Bundle / MCP
                           │
                           ▼
                     Agent RPC Worker Pool
+
+Privilege-separated enforcement
+          │
+          ▼
+ durable Audit Spool
+          │
+          ▼
+ bounded Audit Ingestor ─────→ SQLite audit_events
 ```
 
 These are logical boundaries and may run in one local process/package. They do not imply
@@ -1394,6 +1545,11 @@ Required boundaries:
 - common Web query plans receive explicit index review through ordered schema migration;
   routine dashboard/list/filter views must not rely on avoidable unbounded scans;
 - audit/history/job queries are indexed and bounded by cursor/time range;
+- high-volume ACCESS_DECISION producers enqueue to bounded durable spools instead of
+  taking the SQLite writer slot per connection;
+- Audit Ingestor batch size/time budget and spool high-water behavior are bounded and
+  measured under mixed mutation/query/access load;
+- privilege-separated enforcement services remain read-only against `drlink.db`;
 - Management Job semantics remain separate from AI-job identity/authorization semantics,
   even when low-level worker/queue utilities are shared;
 - Web, Query, Job, or Agent-RPC saturation must not starve relay enforcement or CLI
@@ -1431,6 +1587,10 @@ OPERATIONAL
   Job / per-target execution state
   transient Attention state
 
+DURABLE_EVENT_TRANSPORT
+  un-ingested per-plane audit spool segments
+  audit-ingest checkpoint / source sequence state
+
 DERIVED
   dashboard / inventory / effective-access read models
 ```
@@ -1443,6 +1603,10 @@ only way to repair authoritative Web-management state.
 Operational state may be persisted for restart truthfulness but is not restored as
 configuration authority. In-flight jobs interrupted by restart/restore become explicitly
 interrupted/failed unless a later operation contract defines safe resumability.
+
+Durable event transport is neither policy authority nor disposable cache. Pending audit
+spool data and its committed checkpoint participate in backup/restore consistency until
+ingested. After ingestion/checkpoint, normal retention owns lifecycle.
 
 Derived state is never included as recovery authority and must be rebuildable.
 
