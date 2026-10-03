@@ -1458,8 +1458,16 @@ External client verification:
 
 - HTTP request returns expected application content;
 - HTTPS passthrough preserves end-to-end application TLS and certificate behavior;
-- Custom TCP transfers application data in both directions;
+- Custom TCP transfers application data in both directions during an ordinary full-duplex session;
 - wrong endpoint/port does not accidentally reach another target.
+
+For v2.4, do not use an EOF-response protocol that requires client write-half-close preservation as the required Custom TCP acceptance client. The pinned official FRP 0.71.0 does not support that response-after-EOF semantic through its TCP proxy:
+
+~~~text
+CUSTOM_TCP_HALF_CLOSE=UNSUPPORTED_FRP_0_71_0
+~~~
+
+This is a scoped transport limitation, not a waiver of the mandatory ordinary Custom TCP real-traffic test above.
 
 Use real application clients where practical, not only a TCP connect probe.
 
@@ -2664,6 +2672,15 @@ Inject representative failure after validation, during authoritative mutation/ru
 ## S-022 — Long-lived, half-close, abrupt-close, and idle connection cases — MANDATORY
 
 Exercise long-lived connections, normal close, abrupt close, one-way silence, and idle-then-resume where supported. Verify cleanup, no endpoint leakage, no session mix-up/corruption, and correct behavior for new connections.
+
+Half-close remains mandatory on any release surface that claims it. For v2.4 Custom TCP, the response-after-EOF write-half-close subcase is NOT_APPLICABLE by explicit product contract because the pinned official FRP 0.71.0 TCP proxy does not preserve that semantic.
+
+~~~text
+CUSTOM_TCP_HALF_CLOSE=UNSUPPORTED_FRP_0_71_0
+CUSTOM_TCP_HALF_CLOSE_E2E=NOT_APPLICABLE
+~~~
+
+Record this scoped limitation with the official-FRP isolation evidence. Long-lived Custom TCP, ordinary bidirectional traffic, normal close, abrupt close/recovery, idle behavior, cleanup, and new-connection correctness remain mandatory.
 
 ## S-023 — Bootstrap catalog false-HEALTHY prevention — MANDATORY
 
