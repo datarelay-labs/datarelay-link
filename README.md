@@ -145,7 +145,7 @@ Until an immutable `v2.4.0` tag exists, install only from an exact SHA or owner-
 After install, prefer discovery commands that do not mutate state:
 
 ```bash
-sudo drlink show version
+sudo drlink system version
 sudo drlink show status
 sudo drlink system diagnostics
 ```
@@ -228,7 +228,7 @@ Technical capability name: **Controlled Egress**. Normal CLI/resource name: **In
 
 ### AI Access / MCP
 
-MCP Bridge is included in the v2.4.0 **target** and must be qualified before any stable release. It is not an already released stable capability. The current release blocker is real ChatGPT Plus user OAuth/consent acceptance through the public MCP endpoint; machine-side MCP conformance alone is not sufficient.
+MCP Bridge is included in the v2.4.0 **target** and must be qualified before any stable release. It is not an already released stable capability. The current release blocker is real ChatGPT owner/UI OAuth/consent acceptance on a currently supported full-MCP plan/surface through the public MCP endpoint; machine-side MCP conformance alone is not sufficient.
 
 ```text
 AI Host / tool

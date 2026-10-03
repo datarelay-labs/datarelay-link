@@ -3467,7 +3467,7 @@ def check_client(report, paths, facts, skip_network):
                 'access_info', WARN,
                 'access-info.txt is missing',
                 'display-only file; state/runtime can still be healthy',
-                'sudo drlink show info regenerates connection text from local client-state when the file is absent',
+                'sudo drlink system info regenerates connection text from local client-state when the file is absent',
                 'state',
             )
         else:

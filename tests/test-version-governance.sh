@@ -219,7 +219,7 @@ pass "RC_IDENTITY"
 pass "STABLE_IDENTITY_GUARD"
 pass "PRODUCT_ENGINE_VERSION_SEPARATION"
 
-# --- show version parity across roles ---------------------------------------
+# --- system version parity across roles -------------------------------------
 WORKDIR="$(mktemp -d)"
 trap 'rm -rf "$WORKDIR"' EXIT
 for role in client server both; do
@@ -253,9 +253,9 @@ EOF
   esac
   out="$WORKDIR/version-$role.out"
   FRP_CTL_TEST_ROOT="$tree" FRP_DEPLOY_TEST_ROOT="$tree" \
-    "$ROOT/tools/drlink" show version >"$out" 2>"$WORKDIR/version-$role.err" || {
+    "$ROOT/tools/drlink" system version >"$out" 2>"$WORKDIR/version-$role.err" || {
       cat "$out" "$WORKDIR/version-$role.err" >&2
-      fail "show version $role"
+      fail "system version $role"
     }
   grep -q "Data Relay Link: 2.4.0-dev+g${SHORT}" "$out" || fail "display $role: $(cat "$out")"
   grep -q "Channel: development" "$out" || fail "channel $role"
@@ -263,7 +263,7 @@ EOF
   grep -q "Relay Engine (FRP): ${FRP_VERSION}" "$out" || fail "engine $role"
   grep -q "Project version" "$out" && fail "legacy project version label still present"
 done
-pass "SHOW_VERSION_PARITY"
+pass "SYSTEM_VERSION_PARITY"
 
 # --- Exact-SHA pretags installer refs; no future-tag URL --------------------
 unset FRP_RELEASE_CHANNEL FRP_TXN_SOURCE_REF || true

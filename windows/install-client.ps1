@@ -93,7 +93,7 @@ if (-not $ZeroTouch) {
 if (-not (Enter-FrpClientLock)) {
     Write-Host 'ERROR: another Data Relay Link client lifecycle operation is already running on this host.'
     Write-Host 'FAILURE_CLASS=CLIENT_LOCK_BUSY'
-    Write-Host 'Wait for it to finish, then check status with: drlink status'
+    Write-Host 'Wait for it to finish, then check status with: drlink show status'
     exit 1
 }
 try {

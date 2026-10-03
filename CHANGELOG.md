@@ -82,7 +82,7 @@ v2.4.0 remains a development target. The following is approved architecture scop
 - Remove/replace old MCP-exclusion code, tests, schema constraints, and release scripts.
 - Generate a candidate manifest that reflects actual included features.
 - Complete automated validation, multi-host Real E2E, MCP interoperability qualification, backup/restore/migration, and security regressions.
-- Clear the current ChatGPT Plus user-authentication release blocker with real owner/UI OAuth Authorization Code/consent, tool discovery, one allowed operation, and one expected policy denial; machine-side MCP tests alone do not clear this gate.
+- Clear the current ChatGPT owner/UI user-authentication release blocker on a currently supported full-MCP plan/surface with real OAuth Authorization Code/consent, tool discovery, one allowed operation, and one expected policy denial; record the actual plan/surface/date and do not hard-code a consumer plan name. Machine-side MCP tests alone do not clear this gate.
 - Qualify ConfigurationBundle file/stdin, idempotency, atomicity, revision conflict, direct-CLI semantic parity, AI copy/paste Real E2E, and bounded Zero-Touch ticket issuance.
 - Pass Full Real E2E twice on the same exact final HEAD.
 - Create the immutable `v2.4.0` tag only afterward.

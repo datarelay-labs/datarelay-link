@@ -362,7 +362,7 @@ for label, block in (("install-server.sh", server_block), ("install-client.sh", 
 for needle in ("set enrollment zero-touch", "set enrollment manual", "show managed-hosts"):
     if needle not in server_block:
         raise SystemExit("install-server.sh post-install missing canonical %r" % needle)
-if "system info" not in client_block and "show info" not in client_block and "show status" not in client_block:
+if "system info" not in client_block and "show status" not in client_block:
     raise SystemExit("install-client.sh useful-commands missing canonical show status/info")
 print("POST_INSTALL_TEACHING_PARITY=PASS")
 PY

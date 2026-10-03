@@ -8,7 +8,7 @@
 Run:
 
 ```text
-show version
+system version
 show status
 ```
 

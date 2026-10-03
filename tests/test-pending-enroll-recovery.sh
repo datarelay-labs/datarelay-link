@@ -331,6 +331,15 @@ fi
 pass "PENDING_FILE_MODE_0600"
 pass "PENDING_FILE_SECRET_NEVER_IN_CLIENT_STATE"
 
+# The live allocator is only needed by scenarios 1-3. Reap it here instead
+# of relying solely on the script EXIT trap so later helper-only scenarios
+# cannot leave a test-owned allocator visible to subsequent run-all gates.
+if [[ -n "$ALLOC_PID" ]]; then
+  frp_test_stop_pid "$ALLOC_PID" || fail "allocator cleanup after recovery scenarios failed"
+  ALLOC_PID=""
+fi
+pass "PENDING_RECOVERY_ALLOCATOR_REAPED"
+
 # ---------------------------------------------------------------------------
 # 4. Manual (non zero-touch) enrollment also gets crash-safe recovery: the
 #    pending write/load/clear helpers work independent of the Bootstrap

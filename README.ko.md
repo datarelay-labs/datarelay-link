@@ -143,7 +143,7 @@ immutable `v2.4.0` 태그가 생기기 전에는 exact SHA 또는 owner가 지�
 설치 후 상태를 바꾸지 않는 discovery 명령을 우선 사용하십시오:
 
 ```bash
-sudo drlink show version
+sudo drlink system version
 sudo drlink show status
 sudo drlink system diagnostics
 ```

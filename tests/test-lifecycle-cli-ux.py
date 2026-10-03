@@ -106,6 +106,28 @@ class LifecycleCliUx(unittest.TestCase):
         self.assertNotIn("sudo drlink manage", text)
         self.assertNotIn("partial FRP client", text)
 
+    def test_generated_recovery_guidance_uses_canonical_cli(self):
+        windows_installer = (ROOT / "windows/install-client.ps1").read_text(encoding="utf-8")
+        windows_bootstrap = (ROOT / "windows/lib/FrpBootstrap.ps1").read_text(encoding="utf-8")
+        doctor = (ROOT / "lib/frp_doctor.py").read_text(encoding="utf-8")
+        client_backend = (ROOT / "tools/frp-client").read_text(encoding="utf-8")
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        readme_ko = (ROOT / "README.ko.md").read_text(encoding="utf-8")
+
+        for text in (windows_installer, windows_bootstrap):
+            self.assertNotIn("drlink status", text)
+            self.assertIn("drlink show status", text)
+        self.assertNotIn("drlink show info", windows_bootstrap)
+        self.assertIn("drlink system info", windows_bootstrap)
+        self.assertNotIn("sudo drlink show info", doctor)
+        self.assertIn("sudo drlink system info", doctor)
+        self.assertNotIn("Usage: drlink update", client_backend)
+        self.assertNotIn("sudo drlink update", client_backend)
+        self.assertIn("sudo drlink system update product", client_backend)
+        for text in (readme, readme_ko):
+            self.assertNotIn("drlink show version", text)
+            self.assertIn("drlink system version", text)
+
     def test_macos_doc_uses_system_uninstall(self):
         text = (ROOT / "docs/MACOS_CLIENT.md").read_text(encoding="utf-8")
         self.assertIn("sudo drlink system uninstall", text)

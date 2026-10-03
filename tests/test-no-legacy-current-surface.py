@@ -34,10 +34,17 @@ FORBIDDEN_DOC_PATTERNS = [
     r"(?i)^\s*set service-profile\s*$",
     r"(?i)^\s*set internet-profile\s*$",
     r"(?i)^\s*set acl\b",
+    r"(?i)\bshow version\b",
+    r"(?i)\bshow info\b",
+    r"(?i)\bshow audit\b",
+    r"(?i)\bshow upstream\b",
+    r"(?i)\bshow backups\b",
 ]
 
 FORBIDDEN_E2E_PATTERNS = [
     r"\bhelp legacy\b",
+    r"\bdrlink show clients\b",
+    r"\bdrlink show client\b",
     r"\bdrlink access\b",
     r"\bfrpctl access\b",
     r"\bdrlink egress\b",
@@ -57,11 +64,23 @@ NORMATIVE_DOCS = [
     ROOT / "docs" / "CONTROL_PLANE_ARCHITECTURE.md",
     ROOT / "docs" / "Data Relay Link CLI Information Architecture.md",
     ROOT / "docs" / "SECURITY.md",
+    ROOT / "docs" / "INSTALLATION.md",
+    ROOT / "docs" / "TROUBLESHOOTING.md",
+    ROOT / "docs" / "RELEASE_CHECKLIST.md",
     ROOT / "README.md",
+    ROOT / "README.ko.md",
+]
+
+CURRENT_VERSION_SURFACES = [
+    ROOT / "tests" / "test-version-governance.sh",
+    ROOT / "tests" / "test-frpctl-completion.sh",
+    ROOT / "tests" / "human-ux-e2e" / "framework" / "state_machine.py",
+    ROOT / "tests" / "human-ux-e2e" / "scenarios" / "discovery_server.py",
 ]
 
 CURRENT_E2E = [
     ROOT / "tests" / "run-real-e2e.sh",
+    ROOT / "tests" / "run-short-url-e2e.sh",
     ROOT / "tests" / "test-real-e2e-canonical-cli.sh",
 ]
 
@@ -250,6 +269,32 @@ class LegacyReintroductionGate(unittest.TestCase):
                 "ok",
                 "noncanonical root still executes: %s -> %s" % (tokens, result),
             )
+            question = grammar.match(tokens + ["?"], role="server")
+            self.assertEqual(
+                question.get("status"),
+                "error",
+                "noncanonical root still has successful ? help: %s -> %s"
+                % (tokens, question),
+            )
+            self.assertEqual(question.get("exit_code"), 2, (tokens, question))
+
+    def test_hidden_dispatch_resources_are_rejected(self):
+        samples = (
+            (["show", "version"], "system version"),
+            (["show", "info"], "system info"),
+            (["show", "audit"], "system audit"),
+            (["show", "upstream"], "system update check-engine"),
+            (["show", "backups"], "system backup"),
+            (["set", "client"], "set managed-host"),
+        )
+        for tokens, guidance in samples:
+            result = grammar.match(tokens, role="server")
+            self.assertEqual(result.get("status"), "error", (tokens, result))
+            self.assertEqual(result.get("exit_code"), 2, (tokens, result))
+            self.assertIn(guidance, result.get("message") or "", (tokens, result))
+            question = grammar.match(tokens + ["?"], role="server")
+            self.assertEqual(question.get("status"), "error", (tokens, question))
+            self.assertEqual(question.get("exit_code"), 2, (tokens, question))
 
     def test_canonical_control_plane_still_routes(self):
         for tokens in (
@@ -282,6 +327,16 @@ class LegacyReintroductionGate(unittest.TestCase):
             for pat in FORBIDDEN_E2E_PATTERNS:
                 if re.search(pat, text):
                     failures.append("%s matches %s" % (path.name, pat))
+        self.assertEqual(failures, [], "\n".join(failures))
+
+    def test_current_version_surfaces_use_system_version(self):
+        failures = []
+        for path in CURRENT_VERSION_SURFACES:
+            if not path.is_file() or _allowlisted(path):
+                continue
+            text = path.read_text(encoding="utf-8")
+            if re.search(r"(?i)\bshow version\b", text):
+                failures.append("%s still references show version" % path.relative_to(ROOT))
         self.assertEqual(failures, [], "\n".join(failures))
 
     def test_final_commands_json_parity(self):
