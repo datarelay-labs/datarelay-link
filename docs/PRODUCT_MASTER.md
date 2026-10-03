@@ -59,6 +59,12 @@ When the 3.0 Web Management package is installed, it provides full supported man
 capability plus dashboard, visualization, policy explanation, and guided troubleshooting;
 it is not a reduced read-only companion and it does not become authoritative state.
 
+Data Relay Link 3.0 also freezes one cross-surface management contract: CLI, Web, and
+Management MCP/Plugin are projections of the same Core Management Service. The Web API is
+not the Plugin backend, the optional Plugin/relay remains transport/binding only, and
+target-OS AI permissions never imply DRLink management authority. Canonical details live
+in `MANAGEMENT_SURFACE_CONTRACT.md`.
+
 ## 2. Product family
 
 ```text

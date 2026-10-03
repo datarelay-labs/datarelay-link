@@ -36,6 +36,7 @@ External copies, Project/chat attachments, exported snapshots, and same-named do
 | Exhaustive AI-assisted command audit | `AI_ASSISTED_COMMAND_EXHAUSTIVE_AUDIT.md` |
 | Internal control-plane/schema history | `CONTROL_PLANE_ARCHITECTURE.md` |
 | Optional Full Web Management design | `WEB_MANAGEMENT.md` |
+| 3.0 CLI/Web/MCP/Plugin management-surface contract | `MANAGEMENT_SURFACE_CONTRACT.md` |
 
 ## Operator lifecycle documents
 
