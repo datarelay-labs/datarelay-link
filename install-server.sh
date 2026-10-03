@@ -46,6 +46,12 @@ for f in \
   "$BASE_DIR/lib/drlink_control_db.py" \
   "$BASE_DIR/lib/drlink_control_plane.py" \
   "$BASE_DIR/lib/drlink_control_cli.py" \
+  "$BASE_DIR/lib/drlink_v30_temporal.py" \
+  "$BASE_DIR/lib/drlink_v30_cutoff.py" \
+  "$BASE_DIR/lib/drlink_v30_audit.py" \
+  "$BASE_DIR/lib/drlink_management_catalog.py" \
+  "$BASE_DIR/lib/drlink_management_service.py" \
+  "$BASE_DIR/lib/drlink_management_change.py" \
   "$BASE_DIR/lib/drlink_mgmt_sync.py" \
   "$BASE_DIR/lib/drlink_runtime_policy.py" \
   "$BASE_DIR/lib/drlink_ai_agent.py" \
@@ -56,6 +62,9 @@ for f in \
   "$BASE_DIR/server/drlink-mcp-bridge.service" \
   "$BASE_DIR/server/drlink-mcp-tls-renew.service" \
   "$BASE_DIR/server/drlink-mcp-tls-renew.timer" \
+  "$BASE_DIR/server/drlink-audit-ingest.py" \
+  "$BASE_DIR/server/drlink-audit-ingest.service" \
+  "$BASE_DIR/server/drlink-audit-ingest.timer" \
   "$BASE_DIR/lib/frp_ctl_repl.py" \
   "$BASE_DIR/lib/frp_machine_id.py" \
   "$BASE_DIR/lib/frp_bounded_server.py" \
@@ -2194,9 +2203,9 @@ frp_server_record_action() {
 frp_server_enable_units() {
   if frp_server_skip_systemd; then
     if frp_mode_is_single443; then
-      frp_server_record_action "enable drlink-server drlink-access drlink-egress drlink-tcp-egress drlink-allocator drlink-frontend drlink-mcp-bridge"
+      frp_server_record_action "enable drlink-server drlink-access drlink-egress drlink-tcp-egress drlink-allocator drlink-frontend drlink-mcp-bridge drlink-audit-ingest.timer"
     else
-      frp_server_record_action "enable drlink-server drlink-access drlink-egress drlink-tcp-egress drlink-allocator drlink-mcp-bridge"
+      frp_server_record_action "enable drlink-server drlink-access drlink-egress drlink-tcp-egress drlink-allocator drlink-mcp-bridge drlink-audit-ingest.timer"
       frp_server_record_action "disable drlink-frontend"
     fi
     if [[ "${FRP_INSTALL_HOOK_ENABLE_FAIL:-}" == "1" ]]; then
@@ -2212,6 +2221,7 @@ frp_server_enable_units() {
     frp_server_systemctl disable --now drlink-frontend >/dev/null 2>&1 || true
   fi
   frp_server_systemctl enable --now drlink-mcp-tls-renew.timer >/dev/null 2>&1 || true
+  frp_server_systemctl enable --now drlink-audit-ingest.timer >/dev/null 2>&1 || true
 }
 
 frp_server_note_runtime_generation() {
@@ -2765,6 +2775,12 @@ PY
   frp_write_compatible_systemd_unit \
     "$BASE_DIR/server/drlink-mcp-tls-renew.timer" \
     "$(frp_server_fs /etc/systemd/system/drlink-mcp-tls-renew.timer)"
+  frp_write_compatible_systemd_unit \
+    "$BASE_DIR/server/drlink-audit-ingest.service" \
+    "$(frp_server_fs /etc/systemd/system/drlink-audit-ingest.service)"
+  frp_write_compatible_systemd_unit \
+    "$BASE_DIR/server/drlink-audit-ingest.timer" \
+    "$(frp_server_fs /etc/systemd/system/drlink-audit-ingest.timer)"
   if frp_mode_is_single443; then
     write_frontend_config "$frontend_conf"
     write_frontend_unit "$unit_frontend"

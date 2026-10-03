@@ -1,0 +1,13 @@
+[Unit]
+Description=Run Data Relay Link Audit Ingest periodically
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=15s
+AccuracySec=5s
+RandomizedDelaySec=2s
+Persistent=yes
+Unit=drlink-audit-ingest.service
+
+[Install]
+WantedBy=timers.target

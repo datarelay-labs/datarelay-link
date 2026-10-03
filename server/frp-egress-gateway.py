@@ -645,6 +645,27 @@ def _new_ids() -> tuple[str, str]:
     return secrets.token_hex(8), secrets.token_hex(8)
 
 
+def _durably_audit_new_decision(decision: dict, cfg: Optional[dict]) -> dict:
+    """Persist a new Internet Access decision before releasing ALLOW.
+
+    DENY remains DENY if audit persistence is degraded. A would-be ALLOW is
+    converted to DENY because new authorization must not proceed without a
+    durable decision record.
+    """
+    current = dict(decision or {})
+    current.setdefault("timestamp", EG.utc_now_iso())
+    try:
+        EG.emit_durable_access_audit(current, cfg=cfg)
+        return current
+    except Exception:
+        if current.get("decision") == EG.DECISION_ALLOW:
+            current["decision"] = EG.DECISION_DENY
+            current["reason"] = "AUDIT_UNAVAILABLE"
+            current["outcome"] = EG.AUDIT_POLICY_DENY
+            current["authorized_candidates"] = []
+        return current
+
+
 def _authorize_policy_only(
     gw: GatewayState,
     *,
@@ -796,6 +817,7 @@ def _authorize_and_connect(
         connection_id=connection_id,
         candidate_ips=validated,
     )
+    decision = _durably_audit_new_decision(decision, cfg)
     if decision.get("decision") != EG.DECISION_ALLOW:
         decision["outcome"] = EG.AUDIT_POLICY_DENY
         EG.emit_conn_log(decision, cfg=cfg)
@@ -1490,6 +1512,7 @@ def _handle_client_inner(gw: GatewayState, request: socket.socket, client_addres
         protocol=EG.PROTOCOL_HTTP,
         connection_id=connection_id,
     )
+    decision = _durably_audit_new_decision(decision, cfg)
     if decision.get("decision") != EG.DECISION_ALLOW:
         decision["outcome"] = EG.AUDIT_POLICY_DENY
         EG.emit_conn_log(decision, cfg=cfg)

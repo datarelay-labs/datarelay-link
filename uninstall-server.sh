@@ -539,6 +539,8 @@ else
   frp_u_rm_file "$(frp_u_path /etc/systemd/system/drlink-access.service)"
   frp_u_rm_file "$(frp_u_path /etc/systemd/system/drlink-egress.service)"
   frp_u_rm_file "$(frp_u_path /etc/systemd/system/drlink-tcp-egress.service)"
+  frp_u_rm_file "$(frp_u_path /etc/systemd/system/drlink-audit-ingest.service)"
+  frp_u_rm_file "$(frp_u_path /etc/systemd/system/drlink-audit-ingest.timer)"
   frp_u_rm_file "$(frp_u_path /etc/systemd/system/drlink-frontend.service)"
   # Legacy unit names from pre-rename installs.
   frp_u_rm_legacy_frps_unit_if_owned
@@ -564,8 +566,9 @@ else
   fi
   libdir="$(frp_u_path /usr/local/lib/drlink)"
   if [[ -d "$libdir" && ! -L "$libdir" ]]; then
-    for f in frp-port-allocator.py frp-access-plugin.py frp-egress-gateway.py drlink-tcp-egress.py frp_access_control.py frp_egress_control.py frp_egress_runtime.py frp_pki.py frp_frontend.py frp_client_registry.py \
+    for f in frp-port-allocator.py frp-access-plugin.py frp-egress-gateway.py drlink-tcp-egress.py drlink-audit-ingest.py frp_access_control.py frp_egress_control.py frp_egress_runtime.py frp_pki.py frp_frontend.py frp_client_registry.py \
       frp_enrollment_lifecycle.py frp_audit.py frp_zero_touch.py drlink_qualified_artifacts.py \
+      drlink_v30_temporal.py drlink_v30_cutoff.py drlink_v30_audit.py drlink_management_catalog.py drlink_management_service.py drlink_management_change.py \
       frp_install_txn.py frp_health_check.py frp_service_profiles.py \
       frp-server-upgrade.sh frp_project_files.py frp_control_locks.py frp_server_config.py \
       frp-role-ownership.sh \

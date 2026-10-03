@@ -1377,6 +1377,56 @@ def emit_conn_log(event: dict, path: Optional[Path] = None, cfg: Optional[dict] 
         return
 
 
+def emit_durable_access_audit(event: dict, cfg: Optional[dict] = None) -> dict:
+    """Durably enqueue one Remote Access decision for 3.0 Core ingestion.
+
+    Raises when durability is unavailable. Callers must convert a would-be
+    ALLOW to DENY; an existing DENY remains DENY.
+    """
+    from drlink_v30_audit import (
+        DurableAuditSpool,
+        build_access_decision_event,
+    )
+
+    spool = DurableAuditSpool(
+        conn_log_path(cfg).parent / "audit-spool",
+        "remote-access",
+    )
+    winner = ((event.get("evaluation") or {}).get("winner") or {})
+    matched = [str(winner.get("name"))] if winner.get("name") else []
+    decision = str(event.get("decision") or "DENY").upper()
+    audit_event = build_access_decision_event(
+        source="remote-access",
+        event_type="remote.access.decision",
+        result=decision,
+        resource_type="remote-service",
+        resource_id=str(event.get("service_id") or event.get("proxy_name") or ""),
+        action="authorize",
+        reason_code=str(event.get("reason") or ""),
+        actor_type="network-client",
+        interface="FRP_PLUGIN",
+        correlation_id=str(event.get("connection_id") or ""),
+        matched_policy=matched,
+        source_meta={
+            "ip": event.get("source_ip"),
+            "managed_host_id": event.get("client_id"),
+            "managed_host_name": event.get("client_label"),
+        },
+        destination_meta={
+            "service_id": event.get("service_id"),
+            "service_name": event.get("proxy_name"),
+            "port": event.get("public_port"),
+            "protocol": "tcp",
+        },
+        occurred_at=event.get("timestamp"),
+    )
+    try:
+        return spool.enqueue(audit_event)
+    except Exception:
+        spool.note_failure(dropped_deny=(decision == "DENY"))
+        raise
+
+
 def read_conn_log(
     path: Optional[Path] = None,
     cfg: Optional[dict] = None,

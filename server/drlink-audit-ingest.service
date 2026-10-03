@@ -1,0 +1,21 @@
+[Unit]
+Description=Data Relay Link Audit Ingest
+After=local-fs.target
+ConditionPathExists=/var/lib/drlink/drlink.db
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/drlink/drlink-audit-ingest.py
+User=root
+Group=root
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/drlink /var/log/drlink/access /var/log/drlink/egress
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictSUIDSGID=yes

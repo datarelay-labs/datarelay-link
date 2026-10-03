@@ -487,14 +487,19 @@ class ControlPlane:
         after: str = "",
         impact: str = "",
     ) -> None:
+        occurred = utc_now_iso()
+        actor = _actor()
+        event_id = "evt_" + secrets.token_hex(16)
         self.conn.execute(
             "INSERT INTO audit_events(timestamp, revision, actor, action, entity_type, "
-            "entity_id, operation, before_summary, after_summary, impact_summary, result) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "entity_id, operation, before_summary, after_summary, impact_summary, result, "
+            "event_id, schema_version, category, event_type, occurred_at, source, "
+            "actor_type, actor_id, interface, reason_code, revision_before, revision_after) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
-                utc_now_iso(),
+                occurred,
                 revision,
-                _actor(),
+                actor,
                 action,
                 entity_type,
                 entity_id,
@@ -503,6 +508,18 @@ class ControlPlane:
                 after,
                 impact,
                 result,
+                event_id,
+                1,
+                "CONTROL",
+                operation,
+                occurred,
+                "core",
+                "operator",
+                actor,
+                os.environ.get("DRLINK_INTERFACE") or "UNKNOWN",
+                "" if str(result).lower() in ("ok", "applied", "no_change") else str(result),
+                (int(revision) - 1) if int(revision) > 0 else None,
+                int(revision) if int(revision) >= 0 else None,
             ),
         )
 

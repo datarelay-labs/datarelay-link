@@ -229,6 +229,10 @@ def make_handler(cache: PolicyCache, plugin_path: str):
                         }
                         if ACL is not None:
                             try:
+                                ACL.emit_durable_access_audit(event, cfg=cfg)
+                            except Exception:
+                                pass
+                            try:
                                 ACL.emit_conn_log(event, cfg=cfg)
                             except Exception:
                                 pass
@@ -260,8 +264,17 @@ def make_handler(cache: PolicyCache, plugin_path: str):
                             },
                         )
                         return
-                    # Logging must not affect allow/deny.
+                    # 3.0 audit persistence is part of the new-authorization
+                    # contract: a would-be ALLOW is not released until the
+                    # secret-safe decision is durably enqueued.
                     if ACL is not None:
+                        try:
+                            ACL.emit_durable_access_audit(verdict, cfg=cfg)
+                        except Exception:
+                            if verdict.get("decision") == RP.DECISION_ALLOW:
+                                verdict = dict(verdict)
+                                verdict["decision"] = RP.DECISION_DENY
+                                verdict["reason"] = "AUDIT_UNAVAILABLE"
                         try:
                             ACL.emit_conn_log(verdict, cfg=cfg)
                         except Exception:

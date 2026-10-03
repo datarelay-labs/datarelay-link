@@ -2033,6 +2033,53 @@ def emit_conn_log(event: dict, path: Optional[Path] = None, cfg: Optional[dict] 
         return
 
 
+def emit_durable_access_audit(event: dict, cfg: Optional[dict] = None) -> dict:
+    """Durably enqueue one Internet Access decision for 3.0 Core ingestion."""
+    from drlink_v30_audit import DurableAuditSpool, build_access_decision_event
+
+    spool = DurableAuditSpool(
+        conn_log_path(cfg).parent / "audit-spool",
+        "internet-access",
+    )
+    decision = str(event.get("decision") or "DENY").upper()
+    matched = [str(event.get("rule_name"))] if event.get("rule_name") else []
+    resource_id = str(
+        event.get("relay_id")
+        or event.get("hostname")
+        or event.get("observed_sni")
+        or ""
+    )
+    audit_event = build_access_decision_event(
+        source="internet-access",
+        event_type="internet.access.decision",
+        result=decision,
+        resource_type="internet-destination",
+        resource_id=resource_id,
+        action="authorize",
+        reason_code=str(event.get("reason") or ""),
+        actor_type="network-client",
+        interface="EGRESS_GATEWAY",
+        correlation_id=str(event.get("connection_id") or ""),
+        session_id=str(event.get("session_id") or ""),
+        matched_policy=matched,
+        source_meta={"ip": event.get("source_ip")},
+        destination_meta={
+            "host": event.get("hostname"),
+            "port": event.get("port"),
+            "protocol": event.get("protocol"),
+            "service_id": event.get("relay_id"),
+            "service_name": event.get("relay_name"),
+            "observed_sni": event.get("observed_sni"),
+        },
+        occurred_at=event.get("timestamp"),
+    )
+    try:
+        return spool.enqueue(audit_event)
+    except Exception:
+        spool.note_failure(dropped_deny=(decision == "DENY"))
+        raise
+
+
 def _unlock_close(fd: Optional[int]) -> None:
     if fd is None:
         return

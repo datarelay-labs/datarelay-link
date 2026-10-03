@@ -293,6 +293,29 @@ def handle_tcp_client(
                 decision["decision"] = EG.DECISION_DENY
         if snap is not None:
             decision["policy_generation"] = snap.generation
+
+        audit_decision = {
+            "timestamp": EG.utc_now_iso(),
+            "connection_id": connection_id,
+            "source_ip": source_ip,
+            "hostname": decision.get("hostname"),
+            "port": decision.get("port"),
+            "protocol": EG.PROTOCOL_TCP,
+            "relay_id": relay_id,
+            "relay_name": decision.get("relay_name"),
+            "decision": decision.get("decision"),
+            "reason": decision.get("reason"),
+            "policy_generation": decision.get("policy_generation"),
+            "rule_name": decision.get("rule_name"),
+        }
+        try:
+            EG.emit_durable_access_audit(audit_decision, cfg=cfg)
+        except Exception:
+            if decision.get("decision") == EG.DECISION_ALLOW:
+                decision = dict(decision)
+                decision["decision"] = EG.DECISION_DENY
+                decision["reason"] = "AUDIT_UNAVAILABLE"
+
         if decision.get("decision") != EG.DECISION_ALLOW:
             EG.emit_conn_log(
                 {

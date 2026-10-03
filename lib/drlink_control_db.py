@@ -965,6 +965,13 @@ CREATE TABLE IF NOT EXISTS management_change_plans (
 
 CREATE INDEX IF NOT EXISTS idx_management_change_plans_actor
   ON management_change_plans(actor_id, status, expires_at);
+
+CREATE TABLE IF NOT EXISTS audit_ingest_checkpoints (
+  source TEXT PRIMARY KEY,
+  last_sequence INTEGER NOT NULL DEFAULT 0,
+  last_segment TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL
+);
 """
 
 
@@ -976,6 +983,34 @@ def ensure_v30_schema(conn: sqlite3.Connection) -> None:
     ai_cols = {str(row[1]) for row in conn.execute("PRAGMA table_info(ai_policy_rules)")}
     if ai_cols and "expires_at" not in ai_cols:
         conn.execute("ALTER TABLE ai_policy_rules ADD COLUMN expires_at TEXT")
+
+    audit_cols = {str(row[1]) for row in conn.execute("PRAGMA table_info(audit_events)")}
+    audit_additions = (
+        ("event_id", "TEXT"),
+        ("schema_version", "INTEGER"),
+        ("category", "TEXT"),
+        ("event_type", "TEXT"),
+        ("occurred_at", "TEXT"),
+        ("source", "TEXT"),
+        ("source_sequence", "INTEGER"),
+        ("actor_type", "TEXT"),
+        ("actor_id", "TEXT"),
+        ("delegated_actor_id", "TEXT"),
+        ("interface", "TEXT"),
+        ("reason_code", "TEXT"),
+        ("correlation_id", "TEXT"),
+        ("request_id", "TEXT"),
+        ("session_id", "TEXT"),
+        ("revision_before", "INTEGER"),
+        ("revision_after", "INTEGER"),
+        ("matched_policy_json", "TEXT"),
+        ("source_meta_json", "TEXT"),
+        ("destination_meta_json", "TEXT"),
+    )
+    for column, decl in audit_additions:
+        if audit_cols and column not in audit_cols:
+            conn.execute("ALTER TABLE audit_events ADD COLUMN %s %s" % (column, decl))
+
     conn.executescript(V30_SCHEMA_SQL)
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_policy_rules_expiry "
@@ -996,6 +1031,30 @@ def ensure_v30_schema(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_v30_clients_status "
         "ON clients(status, id)"
+    )
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_v30_audit_event_id "
+        "ON audit_events(event_id) WHERE event_id IS NOT NULL"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_v30_audit_time "
+        "ON audit_events(occurred_at DESC, id DESC)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_v30_audit_category_time "
+        "ON audit_events(category, occurred_at DESC, id DESC)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_v30_audit_actor_time "
+        "ON audit_events(actor_id, occurred_at DESC, id DESC)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_v30_audit_resource_time "
+        "ON audit_events(entity_type, entity_id, occurred_at DESC, id DESC)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_v30_audit_correlation "
+        "ON audit_events(correlation_id, occurred_at DESC, id DESC)"
     )
 
 
