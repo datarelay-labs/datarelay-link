@@ -944,6 +944,27 @@ CREATE TABLE IF NOT EXISTS emergency_cutoffs (
 
 CREATE INDEX IF NOT EXISTS idx_emergency_cutoffs_active
   ON emergency_cutoffs(active, plane, scope_kind, scope_ref);
+
+CREATE TABLE IF NOT EXISTS management_change_plans (
+  token_hash TEXT PRIMARY KEY,
+  actor_id TEXT NOT NULL,
+  server_id TEXT NOT NULL,
+  operation_class TEXT NOT NULL,
+  operation TEXT NOT NULL,
+  resource_type TEXT NOT NULL,
+  resource_ref TEXT NOT NULL,
+  expected_revision INTEGER NOT NULL,
+  payload_json TEXT NOT NULL,
+  impact_json TEXT NOT NULL DEFAULT '{}',
+  confirmation_class TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  consumed_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_management_change_plans_actor
+  ON management_change_plans(actor_id, status, expires_at);
 """
 
 

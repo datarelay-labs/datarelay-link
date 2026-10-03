@@ -684,6 +684,7 @@ class ControlPlane:
         writer: Callable[[], Any],
         *,
         expected: Optional[dict] = None,
+        expected_revision: Optional[int] = None,
         impact: Optional[dict] = None,
         confirm: Optional[bool] = None,
         compile_runtime: bool = True,
@@ -696,7 +697,33 @@ class ControlPlane:
             )
             if needs_confirm and not self._batch_mode:
                 raise ConfirmationRequired(self._format_impact(impact), impact)
+
+        explicit_expected_revision = None
+        if expected_revision is not None:
+            try:
+                explicit_expected_revision = int(expected_revision)
+            except (TypeError, ValueError) as exc:
+                raise ControlPlaneError(
+                    "Expected revision must be a non-negative integer.\n"
+                    "No changes were applied."
+                ) from exc
+            if explicit_expected_revision < 0:
+                raise ControlPlaneError(
+                    "Expected revision must be a non-negative integer.\n"
+                    "No changes were applied."
+                )
+
         if self._batch_mode:
+            if explicit_expected_revision is not None:
+                current = self.current_revision()
+                if current != explicit_expected_revision:
+                    raise ConcurrencyError(
+                        "REVISION_CONFLICT\n"
+                        "Expected revision %s but current revision is %s.\n"
+                        "No changes were applied.\n"
+                        "Review current state and retry."
+                        % (explicit_expected_revision, current)
+                    )
             if expected:
                 for table, entity_id, version in expected.get("rows") or ():
                     row = self.conn.execute(
@@ -715,17 +742,32 @@ class ControlPlane:
         if compile_runtime and self._activation_should_run():
             checkpoint = self._pre_activation_checkpoint()
         public_expected_revision = self._public_expected_revision()
+        if (
+            explicit_expected_revision is not None
+            and public_expected_revision is not None
+            and explicit_expected_revision != public_expected_revision
+        ):
+            self._cleanup_activation_checkpoint(checkpoint)
+            raise ControlPlaneError(
+                "Conflicting expected revision guards were provided.\n"
+                "No changes were applied."
+            )
+        revision_precondition = (
+            explicit_expected_revision
+            if explicit_expected_revision is not None
+            else public_expected_revision
+        )
         self.conn.execute("BEGIN IMMEDIATE")
         try:
-            if public_expected_revision is not None:
+            if revision_precondition is not None:
                 current = self.current_revision()
-                if current != public_expected_revision:
+                if current != revision_precondition:
                     raise ConcurrencyError(
                         "REVISION_CONFLICT\n"
                         "Expected revision %s but current revision is %s.\n"
                         "No changes were applied.\n"
                         "Review current state and retry."
-                        % (public_expected_revision, current)
+                        % (revision_precondition, current)
                     )
             if expected:
                 for table, entity_id, version in expected.get("rows") or ():

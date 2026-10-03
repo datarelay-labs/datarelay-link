@@ -3742,6 +3742,7 @@ def set_access_rule(
     expires_at: Optional[str] = None,
     oneshot: bool = False,
     confirm: Optional[bool] = None,
+    expected_revision: Optional[int] = None,
 ) -> dict:
     plane = _plane_key(family)
     name = validate_public_name(name, "Rule name")
@@ -3967,6 +3968,7 @@ def set_access_rule(
         write,
         impact=impact,
         confirm=confirm,
+        expected_revision=expected_revision,
     )
 
 
@@ -4510,6 +4512,7 @@ def set_ai_access_rule(
     expires_at: Optional[str] = None,
     oneshot: bool = False,
     confirm: Optional[bool] = None,
+    expected_revision: Optional[int] = None,
 ) -> dict:
     name = validate_public_name(name, "Rule name")
     existing = plane_db.conn.execute(
@@ -4656,6 +4659,7 @@ def set_ai_access_rule(
         write,
         impact=impact,
         confirm=confirm,
+        expected_revision=expected_revision,
     )
 
 
