@@ -37,9 +37,21 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install-client.ps1 -Ze
 ## Lifecycle
 
 ```text
-tools\drlink.cmd start|stop|status|info|update|uninstall|doctor
+tools\drlink.cmd show status
+tools\drlink.cmd show agent
+tools\drlink.cmd show remote-services
+tools\drlink.cmd system info
+tools\drlink.cmd system pause
+tools\drlink.cmd system resume
+tools\drlink.cmd system restart
+tools\drlink.cmd system autostart enable|disable
+tools\drlink.cmd system synchronize
+tools\drlink.cmd system update product
+tools\drlink.cmd system update engine
+tools\drlink.cmd system diagnostics
+tools\drlink.cmd system uninstall
 ```
 
-`tools\frp-client.cmd` remains as a compatibility wrapper for the same operations.
+Remote Service and ConfigurationBundle grammar is the same canonical v2.4 Agent grammar used on other supported platforms. Retired Windows root aliases are rejected with canonical guidance.
 
 The Windows client reuses the same server enrollment and management model. It does not fork a Windows-only API.

@@ -33,12 +33,12 @@ try {
     Set-Content -LiteralPath (Join-Path $lock 'pid') -Value ([string]$PID)
     Assert-FrpTrue (-not (Enter-FrpClientLock)) 'live holder without depth blocks'
 
-    $addOut = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath add-service -Preset custom -Id web -TargetPort 8080 2>&1 | Out-String
-    Assert-FrpTrue ($LASTEXITCODE -ne 0) 'add-service fails when lock held'
-    Assert-FrpTrue ($addOut -match 'already running') 'add-service reports lock contention'
+    $addOut = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath set remote-service web destination this-host service ssh enabled 2>&1 | Out-String
+    Assert-FrpTrue ($LASTEXITCODE -ne 0) 'set remote-service fails when lock held'
+    Assert-FrpTrue ($addOut -match 'already running') 'set remote-service reports lock contention'
 
-    $statusOut = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath status 2>&1 | Out-String
-    Assert-FrpTrue ($LASTEXITCODE -eq 0) ("status remains usable while lock is held: $statusOut")
+    $statusOut = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath show status 2>&1 | Out-String
+    Assert-FrpTrue ($LASTEXITCODE -eq 0) ("show status remains usable while lock is held: $statusOut")
     Assert-FrpTrue ($statusOut -match '(?i)enrolled=') ("status output while lock held: $statusOut")
     Remove-Item -LiteralPath $lock -Recurse -Force
 

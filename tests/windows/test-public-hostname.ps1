@@ -34,7 +34,7 @@ try {
         $hp = (Get-Process -Id $PID).Path
         if ($hp) { $hostExe = $hp }
     } catch { }
-    $infoOut = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath info 2>&1 | Out-String
+    $infoOut = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath system info 2>&1 | Out-String
     Assert-FrpEqual 0 $LASTEXITCODE 'info exits 0'
     Assert-FrpTrue ($infoOut -match 'Public : access.example.com:6003') 'info preferred public'
     Assert-FrpTrue ($infoOut -match 'Fallback public : 203.0.113.10:6003') 'info fallback public'

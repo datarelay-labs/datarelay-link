@@ -26,7 +26,8 @@ try {
     $help = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath help 2>&1 | Out-String
     Assert-FrpTrue ($LASTEXITCODE -eq 0) 'help exits 0'
     Assert-FrpTrue ($help -match 'show status') 'help advertises show status'
-    Assert-FrpTrue ($help -match 'show services') 'help advertises show services'
+    Assert-FrpTrue ($help -match 'show remote-services') 'help advertises show remote-services'
+    Assert-FrpTrue ($help -match 'test configuration') 'help advertises Agent ConfigurationBundle'
     Assert-FrpTrue ($help -match 'system info') 'help advertises system info'
     Assert-FrpTrue ($help -match 'system pause') 'help advertises system pause'
     Assert-FrpTrue ($help -match 'system resume') 'help advertises system resume'
@@ -41,21 +42,21 @@ try {
     Assert-FrpTrue ($help -notmatch '(?m)^  start\s') 'help hides legacy root start'
     Assert-FrpTrue ($help -notmatch '(?m)^  stop\s') 'help hides legacy root stop'
 
-    $list = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath show services 2>&1 | Out-String
-    Assert-FrpTrue ($LASTEXITCODE -eq 0) 'show services exits 0'
-    Assert-FrpTrue ($list -match 'rdp') 'show services shows rdp'
+    $list = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath show remote-services 2>&1 | Out-String
+    Assert-FrpTrue ($LASTEXITCODE -eq 0) 'show remote-services exits 0'
+    Assert-FrpTrue ($list -match 'rdp') 'show remote-services shows rdp'
 
     $info = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath system info 2>&1 | Out-String
     Assert-FrpTrue ($LASTEXITCODE -eq 0) 'system info exits 0'
 
-    # Legacy compatibility aliases still work but are not primary discovery.
+    # Unreleased v2.4 has no public compatibility grammar.
     $legacyList = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath service list 2>&1 | Out-String
-    Assert-FrpTrue ($LASTEXITCODE -eq 0) 'legacy service list still works'
-    Assert-FrpTrue ($legacyList -match 'rdp') 'legacy service list shows rdp'
+    Assert-FrpTrue ($LASTEXITCODE -ne 0) 'legacy service list is rejected'
+    Assert-FrpTrue ($legacyList -match 'obsolete Windows CLI path') 'legacy service list gives canonical guidance'
 
     # Resource-first support bundle vocabulary (legacy support-bundle still works).
     $bundleOut = Join-Path $tmpRoot 'bundle-test.zip'
-    $bundle = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath system support-bundle -Output $bundleOut 2>&1 | Out-String
+    $bundle = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath system support-bundle $bundleOut 2>&1 | Out-String
     Assert-FrpTrue ($LASTEXITCODE -eq 0) 'system support-bundle exits 0'
     Assert-FrpTrue (Test-Path -LiteralPath $bundleOut) 'support bundle wrote archive'
     $extractDir = Join-Path $tmpRoot 'bundle-extract'
@@ -68,17 +69,12 @@ try {
     Assert-FrpTrue ($doctorBody -match 'MISS|Enrolled|Doctor|diagnostics') 'doctor.txt has diagnostic content'
     Assert-FrpTrue ($doctorBody -notmatch '^\s*[01]\s*$') 'doctor.txt is not bare exit code'
 
-    $add = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath service add `
-        -Preset custom -Id web -Name Web -TargetHost 10.0.0.5 -TargetPort 8080 2>&1 | Out-String
-    Assert-FrpTrue ($LASTEXITCODE -eq 0) 'service add exits 0'
-    Assert-FrpTrue ($add -match 'Pending change saved|Pending service web added') 'service add message'
+    $legacyAdd = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath service add 2>&1 | Out-String
+    Assert-FrpTrue ($LASTEXITCODE -ne 0) 'legacy service add is rejected'
 
-    $check = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath update -Check 2>&1 | Out-String
-    Assert-FrpTrue ($LASTEXITCODE -eq 0) 'update --check exits 0'
-    Assert-FrpTrue ($check -match 'Data Relay Link project') 'check shows project section'
-    Assert-FrpTrue ($check -match 'FRP engine') 'check shows engine section'
-    Assert-FrpTrue ($check -match 'Would download:') 'combined check includes engine Would download'
-    Assert-FrpTrue ($check -match 're-run the Windows client installer') 'combined check documents installer path'
+    $legacyUpdate = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath update -Check 2>&1 | Out-String
+    Assert-FrpTrue ($LASTEXITCODE -ne 0) 'legacy update root is rejected'
+    Assert-FrpTrue ($legacyUpdate -match 'system update product') 'legacy update gives canonical guidance'
 
     # WINDOWS_UPDATE_PROJECT_CHECK_SEMANTICS — project -Check is project-only (not engine apply dry-run)
     $projCheck = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath system update product -Check 2>&1 | Out-String
@@ -109,6 +105,22 @@ try {
         Assert-FrpTrue ($LASTEXITCODE -ne 0) 'update project without source fails'
         Assert-FrpTrue ($projApply -match 'PROJECT_UPDATE_USE_INSTALLER') 'update project FAILURE_CLASS=PROJECT_UPDATE_USE_INSTALLER'
         Assert-FrpTrue ($projApply -match 're-run the canonical Windows client installer') 'update project guides to installer'
+    } finally {
+        if ($null -ne $prevSrc -and $prevSrc -ne '') {
+            $env:FRP_WINDOWS_PROJECT_SRC = $prevSrc
+        } else {
+            Remove-Item Env:FRP_WINDOWS_PROJECT_SRC -ErrorAction SilentlyContinue
+        }
+    }
+
+    # Positive project update must persist the standalone lifecycle worker used
+    # by the canonical Agent heartbeat/synchronization Scheduled Task.
+    $prevSrc = $env:FRP_WINDOWS_PROJECT_SRC
+    try {
+        $env:FRP_WINDOWS_PROJECT_SRC = Join-Path $script:RepoRoot 'windows'
+        $projApplyOk = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath system update product 2>&1 | Out-String
+        Assert-FrpTrue ($LASTEXITCODE -eq 0) ("project update from reviewed source succeeds; out=$projApplyOk")
+        Assert-FrpTrue (Test-Path -LiteralPath (Join-Path $tmpRoot 'tools/FrpLifecycleWorker.ps1')) 'project update persists lifecycle worker'
     } finally {
         if ($null -ne $prevSrc -and $prevSrc -ne '') {
             $env:FRP_WINDOWS_PROJECT_SRC = $prevSrc

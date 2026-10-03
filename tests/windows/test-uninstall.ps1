@@ -36,7 +36,7 @@ try {
     Assert-FrpTrue (Test-Path -LiteralPath $emptyDir) 'empty product subdirectory exists before uninstall'
 
     $env:FRP_WINDOWS_FAIL_AUTOSTART = '1'
-    $failOut = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath uninstall 2>&1 | Out-String
+    $failOut = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath system uninstall 2>&1 | Out-String
     $rcFail = $LASTEXITCODE
     Remove-Item Env:FRP_WINDOWS_FAIL_AUTOSTART -ErrorAction SilentlyContinue
     Assert-FrpEqual 1 $rcFail 'uninstall fails closed when autostart removal fails'
@@ -44,7 +44,7 @@ try {
     Assert-FrpTrue (Test-Path -LiteralPath $root) 'product root left in place after failed uninstall'
     Assert-FrpTrue (Test-FrpAutostartTaskExists) 'autostart still present after failed uninstall'
 
-    $okOut = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath uninstall 2>&1 | Out-String
+    $okOut = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath system uninstall 2>&1 | Out-String
     $rc = $LASTEXITCODE
     Assert-FrpEqual 0 $rc 'uninstall succeeds after autostart can be removed'
     Assert-FrpTrue ($okOut -match 'SERVER-SIDE RESERVATIONS PRESERVED') 'uninstall reservation message'

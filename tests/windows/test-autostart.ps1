@@ -41,7 +41,7 @@ try {
     Assert-FrpTrue (Test-FrpLifecycleTaskHealthy) 'lifecycle SYSTEM boot worker after install'
     $lifeXml = New-FrpAutostartTaskXml -Command (Get-FrpLifecycleRunCommand) `
         -Arguments (Get-FrpLifecycleRunArguments) -DelaySeconds 5 -ExecutionTimeLimit 'PT0'
-    Assert-FrpTrue ($lifeXml -match 'lifecycle-worker') 'lifecycle task targets lifecycle worker'
+    Assert-FrpTrue ($lifeXml -match 'FrpLifecycleWorker\.ps1') 'lifecycle task targets canonical lifecycle worker'
     Assert-FrpTrue ($lifeXml -match '<ExecutionTimeLimit>PT0</ExecutionTimeLimit>') 'lifecycle task has no execution time limit'
     Uninstall-FrpLifecycleTask | Out-Null
     Assert-FrpTrue (-not (Test-FrpAutostartTaskExists -TaskName $lifecycleTaskName)) 'lifecycle task removed'
@@ -62,7 +62,7 @@ try {
     Assert-FrpTrue (Test-FrpLifecycleTaskHealthy) 'lifecycle SYSTEM boot task healthy'
     $lifecycleXml = New-FrpAutostartTaskXml -Command (Get-FrpLifecycleRunCommand) `
         -Arguments (Get-FrpLifecycleRunArguments) -ExecutionTimeLimit 'PT0S'
-    Assert-FrpTrue ($lifecycleXml -match 'lifecycle-worker') 'lifecycle task invokes worker'
+    Assert-FrpTrue ($lifecycleXml -match 'FrpLifecycleWorker\.ps1') 'lifecycle task invokes canonical worker'
     Assert-FrpTrue ($lifecycleXml -match '<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>') 'lifecycle worker has no task time limit'
     Uninstall-FrpLifecycleTask | Out-Null
     Assert-FrpTrue (-not (Test-FrpAutostartTaskExists -TaskName $lifecycleTaskName)) 'lifecycle task removed'

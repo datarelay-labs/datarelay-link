@@ -310,6 +310,7 @@ function Complete-FrpZeroTouchPostEnroll {
         $srcCmd = Join-Path $script:FrpWindowsSrcRoot 'tools/frp-client.cmd'
         $srcDrlink = Join-Path $script:FrpWindowsSrcRoot 'tools/drlink.cmd'
         $srcAuto = Join-Path $script:FrpWindowsSrcRoot 'tools/frp-autostart.cmd'
+        $srcLifecycleWorker = Join-Path $script:FrpWindowsSrcRoot 'tools/FrpLifecycleWorker.ps1'
         if (Test-Path -LiteralPath $srcClient) {
             Copy-Item -LiteralPath $srcClient -Destination (Join-Path (Get-FrpToolsDir) 'FrpClient.ps1') -Force
         }
@@ -321,6 +322,9 @@ function Complete-FrpZeroTouchPostEnroll {
         }
         if (Test-Path -LiteralPath $srcAuto) {
             Copy-Item -LiteralPath $srcAuto -Destination (Join-Path (Get-FrpToolsDir) 'frp-autostart.cmd') -Force
+        }
+        if (Test-Path -LiteralPath $srcLifecycleWorker) {
+            Copy-Item -LiteralPath $srcLifecycleWorker -Destination (Join-Path (Get-FrpToolsDir) 'FrpLifecycleWorker.ps1') -Force
         }
         $srcLib = Join-Path $script:FrpWindowsSrcRoot 'lib'
         if (Test-Path -LiteralPath $srcLib) {
@@ -1225,13 +1229,13 @@ function Invoke-FrpZeroTouch {
             }
             if (Test-FrpIsInstallComplete) {
                 Write-Host 'ERROR: this machine is already enrolled.'
-                Write-Host 'ENROLL ONCE: refuse re-ticket path. Use: start the Data Relay Link client service'
+                Write-Host 'ENROLL ONCE: refuse re-ticket path. Use: drlink system resume'
                 Write-Host 'To replace this install, uninstall locally first (server reservations are preserved).'
                 return 2
             }
             # Legacy enrolled installs without install_status: treat as complete / refuse re-ticket
             Write-Host 'ERROR: this machine is already enrolled.'
-            Write-Host 'ENROLL ONCE: refuse re-ticket path. Use: start the Data Relay Link client service'
+            Write-Host 'ENROLL ONCE: refuse re-ticket path. Use: drlink system resume'
             Write-Host 'To replace this install, uninstall locally first (server reservations are preserved).'
             return 2
         }

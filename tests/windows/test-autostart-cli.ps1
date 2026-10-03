@@ -26,11 +26,11 @@ $env:FRP_WINDOWS_ROOT = $tmpRoot
 $env:FRP_AUTOSTART_TASK_NAME = 'DataRelayLinkClient-Test-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
 $isWin = ($env:OS -match 'Windows' -or $env:WinDir)
 try {
-    $statusOut = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath autostart 2>&1 | Out-String
+    $statusOut = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath system autostart 2>&1 | Out-String
     Assert-FrpTrue ($LASTEXITCODE -eq 0) 'autostart status exits 0'
     Assert-FrpTrue ($statusOut -match 'Autostart\s*:\s*disabled') 'autostart initially not configured'
 
-    $enableOut = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath autostart -Enable 2>&1 | Out-String
+    $enableOut = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath system autostart enable 2>&1 | Out-String
     Assert-FrpTrue ($LASTEXITCODE -eq 0) 'autostart -Enable exits 0'
     Assert-FrpTrue ($enableOut -match 'Autostart enabled') 'autostart -Enable message'
     Assert-FrpTrue ($enableOut -match 'SYSTEM') 'autostart -Enable documents SYSTEM / no login'
@@ -42,14 +42,14 @@ try {
         Assert-FrpTrue (Test-Path -LiteralPath $markerPath) 'autostart marker persisted on disk'
     }
 
-    $statusOut2 = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath autostart 2>&1 | Out-String
+    $statusOut2 = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath system autostart 2>&1 | Out-String
     Assert-FrpTrue ($statusOut2 -match 'Autostart\s*:\s*enabled') 'autostart status shows enabled'
     Assert-FrpTrue ($statusOut2 -notmatch 'Autostart\s*:\s*disabled') 'autostart status not disabled when enabled'
 
-    $bothOut = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath autostart -Enable -Disable 2>&1 | Out-String
+    $bothOut = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath system autostart enable -Disable 2>&1 | Out-String
     Assert-FrpTrue ($LASTEXITCODE -ne 0) '-Enable and -Disable together is rejected'
 
-    $disableOut = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath autostart -Disable 2>&1 | Out-String
+    $disableOut = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath system autostart disable 2>&1 | Out-String
     Assert-FrpTrue ($LASTEXITCODE -eq 0) 'autostart -Disable exits 0'
     Assert-FrpTrue ($disableOut -match 'Autostart\s*:\s*disabled') 'autostart -Disable message'
     if ($isWin) {
@@ -59,13 +59,13 @@ try {
     }
 
     # uninstall removes a registered autostart task too.
-    & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath autostart -Enable 2>&1 | Out-String | Out-Null
+    & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath system autostart enable 2>&1 | Out-String | Out-Null
     if ($isWin) {
         Assert-FrpTrue (Test-FrpSchtasksExists -TaskName $env:FRP_AUTOSTART_TASK_NAME) 'autostart re-enabled before uninstall'
     } else {
         Assert-FrpTrue (Test-Path -LiteralPath $markerPath) 'autostart re-enabled before uninstall'
     }
-    $uninstallOut = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath uninstall 2>&1 | Out-String
+    $uninstallOut = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath system uninstall 2>&1 | Out-String
     Assert-FrpTrue ($LASTEXITCODE -eq 0) 'uninstall exits 0'
     Assert-FrpTrue ($uninstallOut -match 'SERVER-SIDE RESERVATIONS PRESERVED') 'uninstall message'
     if ($isWin) {
@@ -78,7 +78,7 @@ try {
     Write-FrpTestPass 'test-autostart-cli'
 } finally {
     try {
-        & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath autostart -Disable 2>&1 | Out-Null
+        & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath system autostart disable 2>&1 | Out-Null
     } catch { }
     Remove-Item Env:FRP_AUTOSTART_TASK_NAME -ErrorAction SilentlyContinue
     Remove-Item Env:FRP_WINDOWS_ROOT -ErrorAction SilentlyContinue

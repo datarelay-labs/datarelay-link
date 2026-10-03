@@ -14,6 +14,10 @@ param(
     [Parameter(Position = 2)][string]$Id,
     [Parameter(Position = 3)][string]$Property,
     [Parameter(Position = 4)][string]$Value,
+    [Parameter(Position = 5)][string]$Extra1,
+    [Parameter(Position = 6)][string]$Extra2,
+    [Parameter(Position = 7)][string]$Extra3,
+    [Parameter(Position = 8)][string]$Extra4,
 
     [switch]$Check,
     [switch]$Force,
@@ -34,202 +38,255 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-# --- Canonical public grammar (legacy root verbs remain as compatibility) ---
-$script:FrpUpdateMode = 'engine'  # engine | project | both-check
+# --- Canonical v2.4 public grammar ---
+$script:FrpUpdateMode = 'engine'
 $normalized = $false
-$fromServiceResource = $false
-$cmdLower = $Command.ToLowerInvariant()
+$script:V24Destination = $null
+$script:V24Service = $null
+$script:V24Enabled = $null
+$script:V24File = $null
+$cmdLower = ([string]$Command).ToLowerInvariant()
 $subLower = if ($SubCommand) { $SubCommand.ToLowerInvariant() } else { '' }
 
-switch -Regex ($cmdLower) {
-    '^show$' {
-        switch ($subLower) {
-            'status' { $Command = 'status'; $normalized = $true }
-            'services' { $Command = 'list'; $normalized = $true }
-            'info' { $Command = 'info'; $normalized = $true }
-            'version' { $Command = 'version'; $normalized = $true }
+foreach ($legacyNamed in @('Force','DownloadUrl','ExpectedSha256','Preset','Name','TargetHost','TargetPort','SshUser','Enable','Disable','Output')) {
+    if ($PSBoundParameters.ContainsKey($legacyNamed)) {
+        Write-Host ("ERROR: noncanonical Windows CLI option: -{0}" -f $legacyNamed)
+        Write-Host 'Use the positional v2.4 command grammar shown by: drlink help'
+        exit 2
+    }
+}
+if ($Check -and -not ($cmdLower -eq 'system' -and $subLower -eq 'update' -and $Id -in @('product','engine','check-engine'))) {
+    Write-Host 'ERROR: -Check is supported only with system update product|engine|check-engine.'
+    exit 2
+}
+
+function Assert-FrpNoTrailingAfterRoot {
+    if ($SubCommand -or $Id -or $Property -or $Value -or $Extra1 -or $Extra2 -or $Extra3 -or $Extra4) {
+        Write-Host 'ERROR: unexpected extra arguments.'
+        exit 2
+    }
+}
+function Assert-FrpNoTrailingAfterSubcommand {
+    if ($Id -or $Property -or $Value -or $Extra1 -or $Extra2 -or $Extra3 -or $Extra4) {
+        Write-Host 'ERROR: unexpected extra arguments.'
+        exit 2
+    }
+}
+function Assert-FrpNoTrailingAfterId {
+    if ($Property -or $Value -or $Extra1 -or $Extra2 -or $Extra3 -or $Extra4) {
+        Write-Host 'ERROR: unexpected extra arguments.'
+        exit 2
+    }
+}
+function Assert-FrpNoTrailingAfterProperty {
+    if ($Value -or $Extra1 -or $Extra2 -or $Extra3 -or $Extra4) {
+        Write-Host 'ERROR: unexpected extra arguments.'
+        exit 2
+    }
+}
+
+function Write-FrpLegacyCliError {
+    param([string]$Legacy, [string]$Next)
+    Write-Host ("ERROR: obsolete Windows CLI path: {0}" -f $Legacy)
+    Write-Host ("Use: {0}" -f $Next)
+    exit 2
+}
+
+function Set-FrpV24RemoteTokens {
+    $tokens = @(@($Property, $Value, $Extra1, $Extra2, $Extra3, $Extra4) |
+        Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+    $seenDestination = $false
+    $seenService = $false
+    $seenEnabled = $false
+    for ($i = 0; $i -lt $tokens.Count; $i++) {
+        $token = ([string]$tokens[$i]).ToLowerInvariant()
+        switch ($token) {
+            'destination' {
+                if ($seenDestination) { Write-Host 'ERROR: duplicate destination field'; exit 2 }
+                if ($i + 1 -ge $tokens.Count) { Write-Host 'ERROR: destination value is required'; exit 2 }
+                $seenDestination = $true
+                $script:V24Destination = [string]$tokens[++$i]
+            }
+            'service' {
+                if ($seenService) { Write-Host 'ERROR: duplicate service field'; exit 2 }
+                if ($i + 1 -ge $tokens.Count) { Write-Host 'ERROR: service value is required'; exit 2 }
+                $seenService = $true
+                $script:V24Service = [string]$tokens[++$i]
+            }
+            'enabled' {
+                if ($seenEnabled) { Write-Host 'ERROR: enabled/disabled may be supplied only once'; exit 2 }
+                $seenEnabled = $true
+                $script:V24Enabled = $true
+            }
+            'disabled' {
+                if ($seenEnabled) { Write-Host 'ERROR: enabled/disabled may be supplied only once'; exit 2 }
+                $seenEnabled = $true
+                $script:V24Enabled = $false
+            }
             default {
-                Write-Host ("ERROR: unknown show command: {0}" -f $SubCommand)
-                Write-Host 'Next: drlink show status | show services | system info'
-                exit 1
+                Write-Host ("ERROR: unknown Remote Service field: {0}" -f $tokens[$i])
+                Write-Host 'Use: set remote-service <NAME> destination <DEST|this-host> service <SERVICE> enabled|disabled'
+                exit 2
             }
         }
     }
-    '^set$' {
-        if ($subLower -eq 'service') {
-            $fromServiceResource = $true
-            $Command = 'set-service'
-            $normalized = $true
-            # drlink set service <id> <property> <value>
-            # → Command=set, Sub=service, Id, Property, Value already positioned.
-        } else {
-            Write-Host ("ERROR: unknown set command: {0}" -f $SubCommand)
-            Write-Host 'Next: drlink set service <id> <property> <value>'
-            exit 1
+}
+
+switch -Regex ($cmdLower) {
+    '^\?$' { Assert-FrpNoTrailingAfterRoot; $Command = 'help-root'; $normalized = $true }
+    '^help$' {
+        Assert-FrpNoTrailingAfterSubcommand
+        switch ($subLower) {
+            '' { $Command = 'help' }
+            'commands' { $Command = 'help-commands' }
+            'workflows' { $Command = 'help-workflows' }
+            'remote-service' { $Command = 'help-remote-service' }
+            'remote-services' { $Command = 'help-remote-service' }
+            'system' { $Command = 'help-system' }
+            default { Write-Host ("ERROR: unknown help topic: {0}" -f $SubCommand); exit 2 }
         }
+        $normalized = $true
+    }
+    '^menu$' { Assert-FrpNoTrailingAfterRoot; $Command = 'menu'; $normalized = $true }
+    '^exit$' { Assert-FrpNoTrailingAfterRoot; $Command = 'exit'; $normalized = $true }
+    '^show$' {
+        switch ($subLower) {
+            '?' { Assert-FrpNoTrailingAfterSubcommand; $Command = 'help-show' }
+            'status' { Assert-FrpNoTrailingAfterSubcommand; $Command = 'status' }
+            'agent' { Assert-FrpNoTrailingAfterSubcommand; $Command = 'show-agent' }
+            'remote-services' { Assert-FrpNoTrailingAfterSubcommand; $Command = 'v24-list' }
+            'remote-service' {
+                if (-not $Id) { $Command = 'help-remote-service' }
+                elseif ($Id -eq '?') { Assert-FrpNoTrailingAfterId; $Command = 'help-remote-service' }
+                else { Assert-FrpNoTrailingAfterId; $Command = 'v24-show' }
+            }
+            default {
+                Write-Host ("ERROR: unknown show resource: {0}" -f $SubCommand)
+                Write-Host 'Use: show status | show agent | show remote-services | show remote-service <NAME>'
+                exit 2
+            }
+        }
+        $normalized = $true
+    }
+    '^set$' {
+        if ($subLower -eq '?') { Assert-FrpNoTrailingAfterSubcommand; $Command = 'help-set'; $normalized = $true; break }
+        if ($subLower -ne 'remote-service') {
+            Write-Host ("ERROR: unknown set resource: {0}" -f $SubCommand)
+            Write-Host 'Use: set remote-service <NAME> ...'
+            exit 2
+        }
+        if (-not $Id) { $Command = 'help-remote-service'; $normalized = $true; break }
+        if ($Id -eq '?') { Assert-FrpNoTrailingAfterId; $Command = 'help-remote-service'; $normalized = $true; break }
+        Set-FrpV24RemoteTokens
+        $Command = 'v24-set'
+        $normalized = $true
     }
     '^unset$' {
-        if ($subLower -eq 'service') {
-            $fromServiceResource = $true
-            $Command = 'disable-service'
-            $normalized = $true
-            # drlink unset service <id> → Id already positioned.
-        } else {
-            Write-Host ("ERROR: unknown unset command: {0}" -f $SubCommand)
-            Write-Host 'Next: drlink unset service <id>'
-            exit 1
+        if ($subLower -eq '?') { Assert-FrpNoTrailingAfterSubcommand; $Command = 'help-unset'; $normalized = $true; break }
+        if ($subLower -ne 'remote-service') {
+            Write-Host ("ERROR: unknown unset resource: {0}" -f $SubCommand)
+            Write-Host 'Use: unset remote-service <NAME>'
+            exit 2
         }
+        if (-not $Id) { $Command = 'help-remote-service'; $normalized = $true; break }
+        if ($Id -eq '?') { Assert-FrpNoTrailingAfterId; $Command = 'help-remote-service'; $normalized = $true; break }
+        Assert-FrpNoTrailingAfterId
+        $Command = 'v24-unset'
+        $normalized = $true
+    }
+    '^test$' {
+        if ($subLower -eq '?') { Assert-FrpNoTrailingAfterSubcommand; $Command = 'help-test'; $normalized = $true; break }
+        if ($subLower -ne 'configuration' -or -not $Id) {
+            Write-Host 'ERROR: use test configuration <file|->'
+            exit 2
+        }
+        Assert-FrpNoTrailingAfterId
+        $script:V24File = $Id
+        $Command = 'v24-test-bundle'
+        $normalized = $true
     }
     '^system$' {
         switch ($subLower) {
-            'info' { $Command = 'info'; $normalized = $true }
-            'version' { $Command = 'version'; $normalized = $true }
-            'pause' { $Command = 'pause'; $normalized = $true }
-            'resume' { $Command = 'resume'; $normalized = $true }
-            'restart' { $Command = 'restart'; $normalized = $true }
+            '?' { Assert-FrpNoTrailingAfterSubcommand; $Command = 'help-system' }
+            'info' { Assert-FrpNoTrailingAfterSubcommand; $Command = 'info' }
+            'version' { Assert-FrpNoTrailingAfterSubcommand; $Command = 'version' }
+            'pause' { Assert-FrpNoTrailingAfterSubcommand; $Command = 'pause' }
+            'resume' { Assert-FrpNoTrailingAfterSubcommand; $Command = 'resume' }
+            'restart' { Assert-FrpNoTrailingAfterSubcommand; $Command = 'restart' }
+            'synchronize' { Assert-FrpNoTrailingAfterSubcommand; $Command = 'v24-sync' }
             'autostart' {
+                if ($Property -or $Value -or $Extra1 -or $Extra2 -or $Extra3 -or $Extra4) { Write-Host 'ERROR: unexpected extra arguments.'; exit 2 }
                 $Command = 'autostart'
-                $normalized = $true
-                $autoSub = if ($Id) { $Id.ToLowerInvariant() } else { '' }
-                if ($autoSub -eq 'enable') { $Enable = $true; $Id = $null }
-                elseif ($autoSub -eq 'disable') { $Disable = $true; $Id = $null }
-                elseif (-not [string]::IsNullOrWhiteSpace($autoSub)) {
-                    Write-Host ("ERROR: unknown system autostart command: {0}" -f $Id)
-                    Write-Host 'Next: drlink system autostart | system autostart enable | system autostart disable'
-                    exit 1
-                }
+                if ($Id -eq 'enable') { $Enable = $true; $Id = $null }
+                elseif ($Id -eq 'disable') { $Disable = $true; $Id = $null }
+                elseif ($Id) { Write-Host ("ERROR: unknown system autostart command: {0}" -f $Id); exit 2 }
             }
-            'diagnostics' { $Command = 'doctor'; $normalized = $true }
-            'support-bundle' { $Command = 'support-bundle'; $normalized = $true }
-            'uninstall' { $Command = 'uninstall'; $normalized = $true }
+            'diagnostics' { Assert-FrpNoTrailingAfterSubcommand; $Command = 'doctor' }
+            'support-bundle' {
+                Assert-FrpNoTrailingAfterId
+                $Output = $Id
+                $Id = $null
+                $Command = 'support-bundle'
+            }
+            'uninstall' { Assert-FrpNoTrailingAfterSubcommand; $Command = 'uninstall' }
             'update' {
+                Assert-FrpNoTrailingAfterId
                 $Command = 'update'
-                $normalized = $true
-                $upd = if ($Id) { $Id.ToLowerInvariant() } else { '' }
-                if ($upd -eq 'product') { $script:FrpUpdateMode = 'project'; $Id = $null }
-                elseif ($upd -eq 'engine') { $script:FrpUpdateMode = 'engine'; $Id = $null }
-                else {
-                    Write-Host ("ERROR: unknown system update command: {0}" -f $Id)
-                    Write-Host 'Next: drlink system update product | system update engine'
-                    exit 1
-                }
+                if ($Id -eq 'product') { $script:FrpUpdateMode = 'project' }
+                elseif ($Id -eq 'engine') { $script:FrpUpdateMode = 'engine' }
+                elseif ($Id -eq 'check-engine') { $script:FrpUpdateMode = 'engine'; $Check = $true }
+                else { Write-Host 'ERROR: use system update product | engine | check-engine'; exit 2 }
+                $Id = $null
             }
-            'services' {
-                $svcOp = if ($Id) { $Id.ToLowerInvariant() } else { '' }
-                switch ($svcOp) {
-                    'apply' { $Command = 'apply'; $normalized = $true; $Id = $null }
-                    'discard' { $Command = 'discard'; $normalized = $true; $Id = $null }
-                    'sync' { $Command = 'sync'; $normalized = $true; $Id = $null }
-                    default {
-                        Write-Host ("ERROR: unknown system services command: {0}" -f $Id)
-                        Write-Host 'Next: drlink system services apply | discard | sync'
-                        exit 1
-                    }
-                }
+            'export' {
+                if ($Id -ne 'configuration' -or -not $Property) { Write-Host 'ERROR: use system export configuration <FILE>'; exit 2 }
+                Assert-FrpNoTrailingAfterProperty
+                $script:V24File = $Property
+                $Command = 'v24-export-bundle'
             }
-            default {
-                Write-Host ("ERROR: unknown system command: {0}" -f $SubCommand)
-                Write-Host 'Next: drlink system info | pause | resume | restart | autostart | uninstall'
-                exit 1
+            'diff' {
+                if ($Id -ne 'configuration' -or -not $Property) { Write-Host 'ERROR: use system diff configuration <file|->'; exit 2 }
+                Assert-FrpNoTrailingAfterProperty
+                $script:V24File = $Property
+                $Command = 'v24-diff-bundle'
             }
+            'apply' {
+                if ($Id -ne 'configuration' -or -not $Property) { Write-Host 'ERROR: use system apply configuration <file|->'; exit 2 }
+                Assert-FrpNoTrailingAfterProperty
+                $script:V24File = $Property
+                $Command = 'v24-apply-bundle'
+            }
+            default { Write-Host ("ERROR: unknown system command: {0}" -f $SubCommand); Write-Host 'Use: system ?'; exit 2 }
         }
-    }
-    '^status$' {
-        $Command = 'status'
         $normalized = $true
     }
-    '^client$' {
-        if ([string]::IsNullOrWhiteSpace($SubCommand) -or $SubCommand.ToLowerInvariant() -eq 'info') {
-            $Command = 'info'
-            $normalized = $true
-        } else {
-            Write-Host ("ERROR: unknown client command: {0}" -f $SubCommand)
-            Write-Host 'Next: drlink system info'
-            exit 1
+    default {
+        $next = 'drlink help'
+        switch ($cmdLower) {
+            'status' { $next = 'drlink show status' }
+            'info' { $next = 'drlink system info' }
+            'version' { $next = 'drlink system version' }
+            'start' { $next = 'drlink system resume' }
+            'stop' { $next = 'drlink system pause' }
+            'pause' { $next = 'drlink system pause' }
+            'resume' { $next = 'drlink system resume' }
+            'restart' { $next = 'drlink system restart' }
+            'autostart' { $next = 'drlink system autostart' }
+            'doctor' { $next = 'drlink system diagnostics' }
+            'update' { $next = 'drlink system update product | system update engine' }
+            'service' { $next = 'drlink show/set/unset remote-service(s)' }
+            'client' { $next = 'drlink show agent | system info' }
+            'list' { $next = 'drlink show remote-services' }
+            'sync' { $next = 'drlink system synchronize' }
         }
-    }
-    '^service$' {
-        $fromServiceResource = $true
-        switch ($subLower) {
-            'list' { $Command = 'list'; $normalized = $true }
-            'add' { $Command = 'add-service'; $normalized = $true }
-            'set' { $Command = 'set-service'; $normalized = $true }
-            'enable' { $Command = 'enable-service'; $normalized = $true }
-            'disable' { $Command = 'disable-service'; $normalized = $true }
-            'apply' { $Command = 'apply'; $normalized = $true }
-            'discard' { $Command = 'discard'; $normalized = $true }
-            default {
-                Write-Host ("ERROR: unknown service command: {0}" -f $SubCommand)
-                Write-Host 'Next: drlink show services | set service | system services apply'
-                exit 1
-            }
-        }
-    }
-    '^update$' {
-        if ($subLower -eq 'project' -or $subLower -eq 'product') {
-            $script:FrpUpdateMode = 'project'
-            $Command = 'update'
-            $normalized = $true
-        } elseif ($subLower -eq 'engine') {
-            $script:FrpUpdateMode = 'engine'
-            $Command = 'update'
-            $normalized = $true
-        } elseif ($Check -or $subLower -eq '--check' -or $subLower -eq 'check') {
-            $script:FrpUpdateMode = 'both-check'
-            $Command = 'update'
-            $Check = $true
-            $normalized = $true
-        } elseif ([string]::IsNullOrWhiteSpace($subLower)) {
-            $script:FrpUpdateMode = 'engine'
-            $Command = 'update'
-            $normalized = $true
-        } else {
-            Write-Host ("ERROR: unknown update command: {0}" -f $SubCommand)
-            Write-Host 'Next: drlink system update product | system update engine'
-            exit 1
-        }
-    }
-    '^support$' {
-        if ($subLower -eq 'bundle' -or [string]::IsNullOrWhiteSpace($subLower)) {
-            $Command = 'support-bundle'
-            $normalized = $true
-        } else {
-            Write-Host ("ERROR: unknown support command: {0}" -f $SubCommand)
-            Write-Host 'Next: drlink system support-bundle'
-            exit 1
-        }
-    }
-    '^(pause|resume|restart)$' {
-        $Command = $cmdLower
-        $normalized = $true
+        Write-FrpLegacyCliError -Legacy $Command -Next $next
     }
 }
 
-# Legacy verb-first used Position 1 as <id>. Resource-first uses Position 1 as
-# the subcommand, so remap when the caller did not use `service …` / `set service`.
-if (-not $fromServiceResource -and $Command -in @('set-service', 'enable-service', 'disable-service')) {
-    if (-not [string]::IsNullOrWhiteSpace($SubCommand) -and $SubCommand.ToLowerInvariant() -ne 'service') {
-        if ($Command -eq 'set-service') {
-            $Value = $Property
-            $Property = $Id
-            $Id = $SubCommand
-        } else {
-            $Id = $SubCommand
-        }
-        $SubCommand = $null
-    }
-}
-
-# Legacy aliases: keep working, but they are not primary discovery output.
-$legacyAllowed = @(
-    'start', 'stop', 'status', 'info', 'version', 'update', 'uninstall', 'doctor', 'support-bundle', 'autostart', 'help',
-    'list', 'add-service', 'add', 'set-service', 'enable-service', 'disable-service',
-    'apply', 'discard', 'sync', 'reconcile', 'pause', 'resume', 'restart'
-)
-if (-not $normalized -and $Command -notin $legacyAllowed) {
+if (-not $normalized) {
     Write-Host ("ERROR: unknown command: {0}" -f $Command)
     Write-Host 'Run: drlink help'
-    exit 1
+    exit 2
 }
 
 function Import-FrpWindowsModules {
@@ -255,7 +312,7 @@ function Import-FrpWindowsModules {
     }
     foreach ($mod in @(
             'FrpPaths.ps1', 'FrpLock.ps1', 'FrpCrypto.ps1', 'FrpTls.ps1', 'FrpState.ps1', 'FrpDraft.ps1',
-            'FrpConfig.ps1', 'FrpProcess.ps1', 'FrpShim.ps1', 'FrpAutostart.ps1', 'FrpBootstrap.ps1'
+            'FrpConfig.ps1', 'FrpProcess.ps1', 'FrpShim.ps1', 'FrpAutostart.ps1', 'FrpBootstrap.ps1', 'FrpV24.ps1'
         )) {
         . (Join-Path $libDir $mod)
     }
@@ -269,37 +326,73 @@ try { Add-Type -AssemblyName System.Security -ErrorAction SilentlyContinue | Out
 
 function Show-FrpClientHelp {
     @'
-drlink (Windows client)
+Data Relay Link — Windows Agent Host Commands
+=============================================
 
-REMOTE ACCESS
-  show status            Running / enrolled summary
-  system info            Connection details (RDP/SSH/HTTP)
-  show services          List configured services
+show
+  show status
+  show agent
+  show remote-services
+  show remote-service <NAME>
 
-  set service <id> <property> <value>
-  unset service <id>
+set
+  set remote-service <NAME> destination <DEST|this-host> service <SERVICE> enabled|disabled
 
-  system services apply  Send pending draft to the server
-  system services discard
-  system services sync
+unset
+  unset remote-service <NAME>
 
-SYSTEM
-  system pause           Stop runtime and disable autostart
-  system resume          Enable autostart and start runtime
-  system restart         Restart local relay runtime only
+test
+  test configuration <file|->
+
+system
+  system info
+  system pause
+  system resume
+  system restart
   system autostart
   system autostart enable
   system autostart disable
+  system synchronize
   system update product
   system update engine
+  system update check-engine
   system diagnostics
   system support-bundle
   system version
-  system uninstall       Remove local software (SERVER RESERVATIONS PRESERVED)
+  system export configuration <FILE>
+  system diff configuration <file|->
+  system apply configuration <file|->
+  system uninstall
 
-Pending service edits become live only after:
-  system services apply
+menu
+help
+exit
+
+Type "<command> ?" for contextual discovery.
 '@ | Write-Host
+}
+
+function Show-FrpClientContextHelp {
+    param([string]$Area)
+    switch ($Area) {
+        'show' { Write-Host 'Available: status, agent, remote-services, remote-service <NAME>' }
+        'set' { Write-Host 'Available: remote-service <NAME> destination <DEST|this-host> service <SERVICE> enabled|disabled' }
+        'unset' { Write-Host 'Available: remote-service <NAME>  (interactive y/N)' }
+        'test' { Write-Host 'Available: configuration <file|->' }
+        'system' { Write-Host 'Available: info, pause, resume, restart, autostart, synchronize, update, diagnostics, support-bundle, version, export, diff, apply, uninstall' }
+        'remote-service' {
+            Write-Host 'Remote Services'
+            Write-Host '  show remote-services'
+            Write-Host '  show remote-service <NAME>'
+            Write-Host '  set remote-service <NAME> destination <DEST|this-host> service <SERVICE> enabled|disabled'
+            Write-Host '  unset remote-service <NAME>'
+        }
+        'workflows' {
+            Write-Host 'Remote Service: set remote-service <NAME> destination <DEST|this-host> service <SERVICE> enabled'
+            Write-Host 'ConfigurationBundle: test configuration <file|->; system diff configuration <file|->; system apply configuration <file|->'
+        }
+        default { Show-FrpClientHelp }
+    }
 }
 
 function Show-FrpClientInfo {
@@ -428,10 +521,15 @@ function Install-FrpProjectManagementFiles {
     $srcCmd = Join-Path $SrcRoot 'tools/frp-client.cmd'
     $srcDrlink = Join-Path $SrcRoot 'tools/drlink.cmd'
     $srcAuto = Join-Path $SrcRoot 'tools/frp-autostart.cmd'
+    $srcLifecycleWorker = Join-Path $SrcRoot 'tools/FrpLifecycleWorker.ps1'
     if (-not (Test-Path -LiteralPath $srcClient)) {
         throw ("ERROR: project source missing FrpClient.ps1 under {0}" -f $SrcRoot)
     }
+    if (-not (Test-Path -LiteralPath $srcLifecycleWorker)) {
+        throw ("ERROR: project source missing FrpLifecycleWorker.ps1 under {0}" -f $SrcRoot)
+    }
     Copy-Item -LiteralPath $srcClient -Destination (Join-Path (Get-FrpToolsDir) 'FrpClient.ps1') -Force
+    Copy-Item -LiteralPath $srcLifecycleWorker -Destination (Join-Path (Get-FrpToolsDir) 'FrpLifecycleWorker.ps1') -Force
     if (Test-Path -LiteralPath $srcCmd) {
         Copy-Item -LiteralPath $srcCmd -Destination (Join-Path (Get-FrpToolsDir) 'frp-client.cmd') -Force
     }
@@ -1024,157 +1122,65 @@ function Invoke-FrpClientAutostart {
     return 0
 }
 
-function Show-FrpClientList {
-    if (-not (Test-Path -LiteralPath (Get-FrpStatePath))) {
-        Write-Host 'ERROR: not enrolled (client-state.json missing)'
-        return 1
-    }
-    $state = Read-FrpClientState
-    $map = ConvertTo-FrpServiceMap -Services $state.services
-    if ($map.Count -eq 0) {
-        Write-Host '(none)'
-        return 0
-    }
-    $labels = @{ ssh = 'SSH / TCP'; http = 'HTTP / TCP'; https = 'HTTPS / TCP' }
-    $n = 0
-    foreach ($sid in $map.Keys) {
-        $n++
-        $item = $map[$sid]
-        $enabled = ($item.enabled -ne $false)
-        $stateLabel = $(if ($enabled) { 'enabled' } else { 'disabled' })
-        $preset = [string]$item.preset
-        $typeLabel = $labels[$preset]
-        if (-not $typeLabel) { $typeLabel = 'Custom TCP' }
-        Write-Host ("{0}. {1}" -f $n, $sid)
-        Write-Host ("   Type        : {0}" -f $typeLabel)
-        Write-Host ("   Target      : {0}:{1}" -f $item.local_ip, $item.local_port)
-        if ($item.remote_port) {
-            Write-Host ("   Public port : {0}" -f $item.remote_port)
-        }
-        Write-Host ("   State       : {0}" -f $stateLabel)
-        Write-Host ''
-    }
-    return 0
-}
-
-function Invoke-FrpAddServiceCli {
-    param([string]$Preset, [string]$Id, [string]$Name, [string]$TargetHost, [int]$TargetPort, [string]$SshUser)
-    return (Invoke-FrpWithClientLock {
-        try {
-            $sid = Add-FrpDraftService -Preset $Preset -Id $Id -Name $Name -TargetHost $TargetHost -TargetPort $TargetPort -SshUser $SshUser
-        } catch {
-            Write-Host $_.Exception.Message
-            return 1
-        }
-        Write-Host "Pending change saved."; Write-Host ""; Write-Host "Apply:"; Write-Host "  system services apply"; Write-Host ""; Write-Host "Discard:"; Write-Host "  system services discard"
-        return 0
-    })
-}
-
-function Invoke-FrpSetServiceCli {
-    param([string]$Id, [string]$Property, [string]$Value)
-    if (-not $Id -or -not $Property -or [string]::IsNullOrEmpty($Value)) {
-        Write-Host 'ERROR: usage: set service <id> <property> <value>'
-        return 2
-    }
-    return (Invoke-FrpWithClientLock {
-        try {
-            Set-FrpDraftServiceField -Id $Id -Property $Property -Value $Value | Out-Null
-        } catch {
-            Write-Host $_.Exception.Message
-            return 1
-        }
-        Write-Host "Pending change saved."; Write-Host ""; Write-Host "Apply:"; Write-Host "  system services apply"; Write-Host ""; Write-Host "Discard:"; Write-Host "  system services discard"
-        return 0
-    })
-}
-
-function Invoke-FrpEnableServiceCli {
-    param([string]$Id, [bool]$Enable)
-    if (-not $Id) {
-        Write-Host ("ERROR: usage: {0} service <id>" -f $(if ($Enable) { 'set' } else { 'unset' }))
-        return 2
-    }
-    return (Invoke-FrpWithClientLock {
-        $wasEnabled = $true
-        try {
-            Ensure-FrpDraftPending | Out-Null
-            $map = Get-FrpDraftServiceMap
-            $sid = $Id.Trim().ToLowerInvariant()
-            if (-not $map.Contains($sid)) { throw ("ERROR: unknown service: {0}" -f $sid) }
-            $wasEnabled = ($map[$sid]['enabled'] -ne $false)
-            Set-FrpDraftServiceEnabled -Id $Id -Enable $Enable | Out-Null
-        } catch {
-            Write-Host $_.Exception.Message
-            return 1
-        }
-        if ($Enable) {
-            Write-Host ("Service {0} will be enabled (same public port reused)." -f $Id); Write-Host ""; Write-Host "Apply:"; Write-Host "  system services apply"; Write-Host ""; Write-Host "Discard:"; Write-Host "  system services discard"
-        } elseif ($wasEnabled) {
-            Write-Host ("Service {0} will be disabled. The public reservation remains until released server-side." -f $Id)
-        } else {
-            Write-Host ("Service {0} is already disabled in the pending state." -f $Id)
-        }
-        return 0
-    })
-}
-
-function Invoke-FrpClientDiscardDraft {
-    return (Invoke-FrpWithClientLock {
-        $existed = Remove-FrpDraftState
-        if ($existed) {
-            Write-Host 'Pending service changes discarded.'
-        } else {
-            Write-Host 'No pending service changes.'
-        }
-        return 0
-    })
-}
-
-function Invoke-FrpLifecycleOnce {
-    if (-not (Test-FrpIsEnrolled)) { return 1 }
-    try {
-        $null = Invoke-FrpAgentLifecycle -State 'connected'
-        $rc = Invoke-FrpClientSync
-        return [int]$rc
-    } catch {
-        return 1
-    }
-}
-
-function Invoke-FrpLifecycleWorker {
-    $idle = 30
-    $retry = 5
-    $backoff = $retry
-    while ($true) {
-        $rc = Invoke-FrpLifecycleOnce
-        if ($rc -eq 0) {
-            $backoff = $retry
-            Start-Sleep -Seconds $idle
-        } else {
-            Start-Sleep -Seconds $backoff
-            $backoff = [Math]::Min(60, [Math]::Max($retry, $backoff * 2))
-        }
-    }
-}
-
 switch ($Command) {
     'help' { Show-FrpClientHelp; exit 0 }
-    'start' {
-        if (-not (Test-FrpIsEnrolled)) {
-            Write-Host 'ERROR: not enrolled; run install-client.ps1 -ZeroTouch first'
-            exit 1
-        }
-        try {
-            Install-FrpAutostartTask | Out-Null
-            Install-FrpLifecycleTask | Out-Null
-        } catch { }
-        Start-FrpClient -Force:$Force | Out-Null
-        Write-Host 'Client resumed.'
-        Write-Host 'Runtime    : active'
-        Write-Host 'Autostart  : enabled'
-        Write-Host 'Identity   : preserved'
+    'help-root' { Show-FrpClientHelp; exit 0 }
+    'help-commands' { Show-FrpClientHelp; exit 0 }
+    'help-workflows' { Show-FrpClientContextHelp -Area workflows; exit 0 }
+    'help-show' { Show-FrpClientContextHelp -Area show; exit 0 }
+    'help-set' { Show-FrpClientContextHelp -Area set; exit 0 }
+    'help-unset' { Show-FrpClientContextHelp -Area unset; exit 0 }
+    'help-test' { Show-FrpClientContextHelp -Area test; exit 0 }
+    'help-system' { Show-FrpClientContextHelp -Area system; exit 0 }
+    'help-remote-service' { Show-FrpClientContextHelp -Area remote-service; exit 0 }
+    'menu' {
+        Write-Host 'Remote Services'
+        Write-Host 'Agent'
+        Write-Host 'Configuration'
+        Write-Host 'System'
+        Write-Host 'Help'
+        Write-Host 'Exit'
         exit 0
+    }
+    'exit' { exit 0 }
+    'show-agent' { exit (Show-FrpV24Agent) }
+    'v24-list' { exit (Show-FrpV24RemoteServices) }
+    'v24-show' { exit (Show-FrpV24RemoteService -Name $Id) }
+    'v24-set' {
+        $rc = Invoke-FrpWithClientLock {
+            try {
+                $args = @{ Name = $Id }
+                if ($script:V24Destination) { $args['Destination'] = $script:V24Destination }
+                if ($script:V24Service) { $args['Service'] = $script:V24Service }
+                if ($null -ne $script:V24Enabled) { $args['Enabled'] = $script:V24Enabled }
+                return (Invoke-FrpV24SetRemoteService @args)
+            } catch {
+                Write-Host $_.Exception.Message
+                return 1
+            }
+        }
+        exit [int]$rc
+    }
+    'v24-unset' {
+        $rc = Invoke-FrpWithClientLock {
+            try { return (Invoke-FrpV24UnsetRemoteService -Name $Id) }
+            catch { Write-Host $_.Exception.Message; return 1 }
+        }
+        exit [int]$rc
+    }
+    'v24-sync' {
+        $rc = Invoke-FrpWithClientLock { return (Invoke-FrpV24Synchronize) }
+        exit [int]$rc
+    }
+    'v24-test-bundle' { exit (Test-FrpV24AgentBundle -Path $script:V24File) }
+    'v24-diff-bundle' { exit (Test-FrpV24AgentBundle -Path $script:V24File -Diff) }
+    'v24-export-bundle' {
+        try { exit (Export-FrpV24AgentBundle -Path $script:V24File) }
+        catch { Write-Host $_.Exception.Message; exit 1 }
+    }
+    'v24-apply-bundle' {
+        $rc = Invoke-FrpWithClientLock { return (Invoke-FrpV24AgentBundleApply -Path $script:V24File) }
+        exit [int]$rc
     }
     'resume' {
         if (-not (Test-FrpIsEnrolled)) {
@@ -1203,13 +1209,6 @@ switch ($Command) {
         Write-Host 'Runtime    : active'
         Write-Host 'Autostart  : enabled'
         Write-Host 'Identity   : preserved'
-        exit 0
-    }
-    'stop' {
-        try { $null = Invoke-FrpAgentLifecycle -State 'disconnected' } catch { }
-        Stop-FrpClient | Out-Null
-        try { Uninstall-FrpAutostartTask | Out-Null } catch { }
-        try { Uninstall-FrpLifecycleTask | Out-Null } catch { }
         exit 0
     }
     'pause' {
@@ -1268,18 +1267,6 @@ switch ($Command) {
         }
         exit 0
     }
-    'list' { exit (Show-FrpClientList) }
-    'add-service' { exit (Invoke-FrpAddServiceCli -Preset $Preset -Id $Id -Name $Name -TargetHost $TargetHost -TargetPort $TargetPort -SshUser $SshUser) }
-    'add' { exit (Invoke-FrpAddServiceCli -Preset $Preset -Id $Id -Name $Name -TargetHost $TargetHost -TargetPort $TargetPort -SshUser $SshUser) }
-    'set-service' { exit (Invoke-FrpSetServiceCli -Id $Id -Property $Property -Value $Value) }
-    'enable-service' { exit (Invoke-FrpEnableServiceCli -Id $Id -Enable $true) }
-    'disable-service' { exit (Invoke-FrpEnableServiceCli -Id $Id -Enable $false) }
-    'apply' { exit (Invoke-FrpClientApplyDraft) }
-    'discard' { exit (Invoke-FrpClientDiscardDraft) }
-    'sync' { exit (Invoke-FrpClientSync) }
-    'reconcile' { exit (Invoke-FrpClientSync) }
-    'lifecycle-once' { exit (Invoke-FrpLifecycleOnce) }
-    'lifecycle-worker' { exit (Invoke-FrpLifecycleWorker) }
     'update' { exit (Invoke-FrpClientUpdate -CheckOnly:$Check) }
     'uninstall' { exit (Invoke-FrpClientUninstall) }
     'doctor' { exit (Invoke-FrpClientDoctor) }
