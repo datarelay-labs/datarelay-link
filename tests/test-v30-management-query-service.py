@@ -152,7 +152,7 @@ class V30ManagementQueryServiceTests(unittest.TestCase):
         result = self.service.live_access(plane="remote", resource="alpha")
         self.assertEqual(result["fidelity"], "UNKNOWN")
         self.assertEqual(result["observations"], [])
-        self.assertIn("not implemented", result["reason"])
+        self.assertIn("official FRP", result["reason"])
 
     def test_read_side_is_query_only_and_does_not_advance_revision(self):
         with self.assertRaises(Exception):

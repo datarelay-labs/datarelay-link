@@ -51,6 +51,7 @@ project usr/local/lib/drlink/drlink_v24_runtime.py 0644 lib/drlink_v24_runtime.p
 project usr/local/lib/drlink/drlink_v30_temporal.py 0644 lib/drlink_v30_temporal.py python
 project usr/local/lib/drlink/drlink_v30_cutoff.py 0644 lib/drlink_v30_cutoff.py python
 project usr/local/lib/drlink/drlink_v30_audit.py 0644 lib/drlink_v30_audit.py python
+project usr/local/lib/drlink/drlink_v30_live.py 0644 lib/drlink_v30_live.py python
 project usr/local/lib/drlink/drlink_management_catalog.py 0644 lib/drlink_management_catalog.py python
 project usr/local/lib/drlink/drlink_management_service.py 0644 lib/drlink_management_service.py python
 project usr/local/lib/drlink/drlink_management_change.py 0644 lib/drlink_management_change.py python

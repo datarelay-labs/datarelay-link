@@ -244,6 +244,41 @@ def _json_field(value: Any, fallback):
     return decoded
 
 
+def _encode_live_cursor(plane: str, started_at: str, observation_id: str) -> str:
+    raw = json.dumps(
+        {
+            "v": _CURSOR_VERSION,
+            "resource": "live:%s" % plane,
+            "time": str(started_at or ""),
+            "id": str(observation_id or ""),
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _decode_live_cursor(
+    cursor: Optional[str], plane: str
+) -> Optional[tuple[str, str]]:
+    if cursor is None or not str(cursor).strip():
+        return None
+    text = str(cursor).strip()
+    try:
+        padded = text + "=" * (-len(text) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")))
+    except Exception as exc:
+        raise ControlPlaneError("Invalid live-access cursor.") from exc
+    if (
+        payload.get("v") != _CURSOR_VERSION
+        or payload.get("resource") != "live:%s" % plane
+        or not isinstance(payload.get("time"), str)
+        or not isinstance(payload.get("id"), str)
+    ):
+        raise ControlPlaneError("Live-access cursor does not match this plane.")
+    return payload["time"], payload["id"]
+
+
 class ManagementQueryService:
     """Bounded read side of the 3.0 Core Management Service."""
 
@@ -553,19 +588,213 @@ class ManagementQueryService:
     def live_access(
         self,
         *,
-        plane: Optional[str] = None,
+        plane: str,
         resource_type: Optional[str] = None,
         resource: Optional[str] = None,
+        cursor: Optional[str] = None,
+        limit: Optional[int] = None,
     ) -> dict[str, Any]:
-        """Return truthful fidelity until per-plane observation adapters exist."""
-        family = str(plane or "").strip().lower() or None
-        if family is not None and family not in ("remote", "internet", "ai"):
+        """Read bounded current-use state with explicit plane fidelity."""
+        from drlink_v30_live import (
+            FIDELITY_EXACT,
+            FIDELITY_UNKNOWN,
+            default_live_snapshot_path,
+            read_live_snapshot,
+        )
+
+        family = str(plane or "").strip().lower()
+        if family not in ("remote", "internet", "ai"):
             raise ControlPlaneError("Unsupported access plane: %s" % plane)
+        page_limit = _bounded_limit(limit)
+        after = _decode_live_cursor(cursor, family)
+        selector = str(resource or "").strip().casefold()
+
+        if family == "remote":
+            return {
+                "plane": "remote",
+                "resource_type": resource_type,
+                "resource": resource,
+                "fidelity": FIDELITY_UNKNOWN,
+                "active_count": None,
+                "observations": [],
+                "next_cursor": None,
+                "limit": page_limit,
+                "reason": (
+                    "official FRP does not expose a proven exact active-connection "
+                    "lifecycle without a fork"
+                ),
+            }
+
+        if family == "internet":
+            snapshots = [
+                read_live_snapshot(
+                    default_live_snapshot_path("internet-gateway", self.root)
+                ),
+                read_live_snapshot(
+                    default_live_snapshot_path("fixed-tcp", self.root)
+                ),
+            ]
+            if any(item.get("fidelity") != FIDELITY_EXACT for item in snapshots):
+                reasons = [
+                    str(item.get("reason") or "")
+                    for item in snapshots
+                    if item.get("fidelity") != FIDELITY_EXACT
+                ]
+                return {
+                    "plane": "internet",
+                    "resource_type": resource_type,
+                    "resource": resource,
+                    "fidelity": FIDELITY_UNKNOWN,
+                    "active_count": None,
+                    "observations": [],
+                    "next_cursor": None,
+                    "limit": page_limit,
+                    "reason": "; ".join(x for x in reasons if x)
+                    or "one or more live-access producers are unavailable",
+                }
+
+            observations: list[dict[str, Any]] = []
+            for snapshot in snapshots:
+                producer = str(snapshot.get("producer") or "internet")
+                for raw in snapshot.get("observations") or []:
+                    if not isinstance(raw, dict):
+                        continue
+                    item = dict(raw)
+                    item["observation_kind"] = "NETWORK_SESSION"
+                    item["observation_id"] = "%s:%s" % (
+                        producer,
+                        item.get("session_id") or item.get("connection_id") or "",
+                    )
+                    if selector:
+                        searchable = {
+                            str(item.get(key) or "").strip().casefold()
+                            for key in (
+                                "session_id",
+                                "connection_id",
+                                "hostname",
+                                "relay_id",
+                                "relay_name",
+                                "profile_id",
+                                "source_ip",
+                            )
+                        }
+                        if selector not in searchable:
+                            continue
+                    observations.append(item)
+
+            observations.sort(
+                key=lambda item: (
+                    str(item.get("started_at") or ""),
+                    str(item.get("observation_id") or ""),
+                ),
+                reverse=True,
+            )
+            matching_count = len(observations)
+            if after is not None:
+                observations = [
+                    item
+                    for item in observations
+                    if (
+                        str(item.get("started_at") or "") < after[0]
+                        or (
+                            str(item.get("started_at") or "") == after[0]
+                            and str(item.get("observation_id") or "") < after[1]
+                        )
+                    )
+                ]
+            has_more = len(observations) > page_limit
+            page = observations[:page_limit]
+            next_cursor = None
+            if has_more and page:
+                last = page[-1]
+                next_cursor = _encode_live_cursor(
+                    family,
+                    str(last.get("started_at") or ""),
+                    str(last.get("observation_id") or ""),
+                )
+            return {
+                "plane": "internet",
+                "resource_type": resource_type,
+                "resource": resource,
+                "fidelity": FIDELITY_EXACT,
+                "active_count": matching_count,
+                "observations": page,
+                "next_cursor": next_cursor,
+                "limit": page_limit,
+                "reason": "",
+            }
+
+        # AI Access current-use truth comes from authoritative queued/running jobs.
+        base_where = ["j.status IN ('queued','running')"]
+        base_args: list[Any] = []
+        if selector:
+            base_where.append(
+                "(LOWER(j.id)=? OR LOWER(COALESCE(a.name,''))=? "
+                "OR LOWER(COALESCE(o.name,''))=? OR LOWER(COALESCE(j.client_id,''))=?)"
+            )
+            base_args.extend((selector, selector, selector, selector))
+        count_row = self.conn.execute(
+            "SELECT COUNT(*) FROM ai_jobs j "
+            "LEFT JOIN ai_principals a ON a.id=j.principal_id "
+            "LEFT JOIN objects o ON o.id=j.endpoint_object_id "
+            "WHERE %s" % " AND ".join(base_where),
+            tuple(base_args),
+        ).fetchone()
+        matching_count = int(count_row[0] or 0)
+
+        where = list(base_where)
+        args = list(base_args)
+        if after is not None:
+            where.append(
+                "(COALESCE(j.claimed_at,j.created_at) < ? OR "
+                "(COALESCE(j.claimed_at,j.created_at) = ? AND j.id < ?))"
+            )
+            args.extend((after[0], after[0], after[1]))
+        args.append(page_limit + 1)
+        rows = self.conn.execute(
+            "SELECT j.id,j.capability,j.status,j.created_at,j.claimed_at,j.updated_at,"
+            "j.client_id,a.name AS ai_identity,o.name AS endpoint_name "
+            "FROM ai_jobs j "
+            "LEFT JOIN ai_principals a ON a.id=j.principal_id "
+            "LEFT JOIN objects o ON o.id=j.endpoint_object_id "
+            "WHERE %s "
+            "ORDER BY COALESCE(j.claimed_at,j.created_at) DESC,j.id DESC LIMIT ?"
+            % " AND ".join(where),
+            tuple(args),
+        ).fetchall()
+        has_more = len(rows) > page_limit
+        page_rows = rows[:page_limit]
+        observations = tuple(
+            {
+                "observation_kind": "AI_JOB",
+                "observation_id": str(row["id"]),
+                "job_id": str(row["id"]),
+                "status": str(row["status"]).upper(),
+                "capability": row["capability"],
+                "ai_identity": row["ai_identity"],
+                "managed_host_id": row["client_id"],
+                "endpoint": row["endpoint_name"],
+                "started_at": row["claimed_at"] or row["created_at"],
+                "updated_at": row["updated_at"],
+            }
+            for row in page_rows
+        )
+        next_cursor = None
+        if has_more and page_rows:
+            last = page_rows[-1]
+            next_cursor = _encode_live_cursor(
+                family,
+                str(last["claimed_at"] or last["created_at"] or ""),
+                str(last["id"]),
+            )
         return {
-            "plane": family,
+            "plane": "ai",
             "resource_type": resource_type,
             "resource": resource,
-            "fidelity": "UNKNOWN",
-            "observations": [],
-            "reason": "live-access observation adapter is not implemented for this scope",
+            "fidelity": FIDELITY_EXACT,
+            "active_count": matching_count,
+            "observations": list(observations),
+            "next_cursor": next_cursor,
+            "limit": page_limit,
+            "reason": "",
         }

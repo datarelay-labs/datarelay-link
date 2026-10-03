@@ -245,7 +245,7 @@ MANAGEMENT_TOOLS = (
         "management-read",
         OBSERVE,
         PLUGIN_READ,
-        _schema(plane="string", resource_type="string", resource="string", cursor="string", limit="integer"),
+        _schema(("plane",), plane="string", resource_type="string", resource="string", cursor="string", limit="integer"),
         True,
         False,
         True,

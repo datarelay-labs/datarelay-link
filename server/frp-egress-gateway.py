@@ -100,6 +100,7 @@ FP = _load_module("frp_policy_fingerprint", "frp_policy_fingerprint.py")
 
 
 RT = _load_module("frp_egress_runtime", "frp_egress_runtime.py")
+LIVE = _load_module("drlink_v30_live", "drlink_v30_live.py")
 
 # Re-export shared runtime primitives (tests mutate gateway module globals).
 audit_safe_hostname = RT.audit_safe_hostname
@@ -180,6 +181,9 @@ class GatewayState:
         self.shutting_down = False
         self._per_source: dict[str, int] = {}
         self._sessions: dict[str, dict] = {}
+        self._live_path = LIVE.default_live_snapshot_path(
+            "internet-gateway", ROOT or None
+        )
         self._spool_used = 0
         self._spool_per_source: dict[str, int] = {}
         self.dns = DnsResolver(
@@ -188,6 +192,21 @@ class GatewayState:
             worker_limit=dns_worker_limit,
             timeout=DNS_TIMEOUT,
         )
+        self._publish_live_snapshot()
+
+    def _publish_live_snapshot(self) -> None:
+        with self._lock:
+            sessions = [dict(item) for item in self._sessions.values()]
+        try:
+            LIVE.write_live_snapshot(
+                self._live_path,
+                producer="internet-gateway",
+                plane="internet",
+                sessions=sessions,
+            )
+        except Exception:
+            # Live Access is derived operational state; failure must not affect relay.
+            pass
 
     def try_reserve_spool(self, source_ip: str, size: int) -> bool:
         """Reserve aggregate + per-source spool budget. size must be >= 0."""
@@ -248,16 +267,22 @@ class GatewayState:
     def register_session(self, session: dict) -> None:
         with self._lock:
             self._sessions[session["session_id"]] = session
+        self._publish_live_snapshot()
 
     def unregister_session(self, session_id: str) -> None:
         with self._lock:
             self._sessions.pop(session_id, None)
+        self._publish_live_snapshot()
 
     def update_session_generation(self, session_id: str, generation: int) -> None:
+        changed = False
         with self._lock:
             sess = self._sessions.get(session_id)
             if sess is not None:
                 sess["policy_generation"] = int(generation)
+                changed = True
+        if changed:
+            self._publish_live_snapshot()
 
 
 

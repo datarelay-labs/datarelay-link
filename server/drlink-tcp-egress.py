@@ -58,6 +58,7 @@ def _load_module(name: str, rel: str):
 
 EG = _load_module("frp_egress_control", "frp_egress_control.py")
 RT = _load_module("frp_egress_runtime", "frp_egress_runtime.py")
+LIVE = _load_module("drlink_v30_live", "drlink_v30_live.py")
 try:
     RP = _load_module("drlink_runtime_policy", "drlink_runtime_policy.py")
 except SystemExit:
@@ -87,6 +88,7 @@ class TcpEgressState:
         self._lock = threading.Lock()
         self._per_source: dict[str, int] = {}
         self._sessions: dict[str, dict] = {}
+        self._live_path = LIVE.default_live_snapshot_path("fixed-tcp", ROOT or None)
         self.shutting_down = False
         self.dns = RT.DnsResolver(
             resolve_fn=resolve_fn,
@@ -96,6 +98,20 @@ class TcpEgressState:
         )
         self._servers: dict[str, "RelayServer"] = {}
         self._desired: dict[str, tuple[str, int]] = {}
+        self._publish_live_snapshot()
+
+    def _publish_live_snapshot(self) -> None:
+        with self._lock:
+            sessions = [dict(item) for item in self._sessions.values()]
+        try:
+            LIVE.write_live_snapshot(
+                self._live_path,
+                producer="fixed-tcp",
+                plane="internet",
+                sessions=sessions,
+            )
+        except Exception:
+            pass
 
     def try_acquire(self) -> bool:
         if self.shutting_down:
@@ -124,16 +140,22 @@ class TcpEgressState:
     def register_session(self, session: dict) -> None:
         with self._lock:
             self._sessions[session["session_id"]] = session
+        self._publish_live_snapshot()
 
     def unregister_session(self, session_id: str) -> None:
         with self._lock:
             self._sessions.pop(session_id, None)
+        self._publish_live_snapshot()
 
     def update_session_generation(self, session_id: str, generation: int) -> None:
+        changed = False
         with self._lock:
             sess = self._sessions.get(session_id)
             if sess is not None:
                 sess["policy_generation"] = int(generation)
+                changed = True
+        if changed:
+            self._publish_live_snapshot()
 
 
 class RelayServer(socketserver.ThreadingTCPServer):
@@ -412,7 +434,9 @@ def handle_tcp_client(
             "method": None,
             "profile_id": decision.get("profile_id"),
             "relay_id": relay_id,
+            "relay_name": decision.get("relay_name"),
             "policy_generation": decision.get("policy_generation"),
+            "start_time": time.time(),
         }
         state.register_session(session)
         EG.emit_conn_log(
