@@ -402,19 +402,21 @@ Stop or skip only the specific downstream check when continuing it would be unsa
 
 ### Qualification execution order
 
-Use this order for v2.4 release closure:
+Use this order for v2.4 release closure. **CLI Feature/Scenario reconciliation and FULL_USER_E2E defect convergence are the top priority. Do not freeze a candidate or spend the main workstream on broad CI/SBOM/provenance while defects are still being found.**
 
-1. CLI Feature/Scenario reconciliation PASS1; accumulate findings and finish the pass.
-2. Batch remediation if required; freeze a new candidate.
-3. CLI Feature/Scenario reconciliation PASS2 must PASS.
-4. Full User E2E PASS1; accumulate findings and finish the pass.
-5. Batch remediation if required; any source/product/doc change invalidates affected evidence.
-6. Full User E2E PASS2 must PASS on the unchanged final candidate.
-7. Execute A-019 and remaining release-specific qualification.
-8. Run final exact-head CI and automated regression, artifact, provenance, governance, and attestation gates.
-9. Perform final release audit, then merge/tag/publish only if every required gate is green.
+1. [ ] Run the complete CLI Feature/Scenario reconciliation and finish all safe/independent checks.
+2. [ ] Batch-fix every actionable in-scope defect from that run and execute targeted deterministic regressions.
+3. [ ] Rerun the complete CLI Feature/Scenario reconciliation. Repeat 1-3 until the latest full run has zero new/unresolved in-scope defects.
+4. [ ] Run the complete FULL_USER_E2E contract and finish all safe/independent scenarios.
+5. [ ] Batch-fix every actionable in-scope defect from Full User E2E and execute targeted deterministic regressions.
+6. [ ] Rerun every exhaustive contract invalidated by the fixes. Keep alternating remediation and complete reruns whenever either contract discovers another defect.
+7. [ ] Declare `PRODUCT_QUALITY_CLOSURE=PASS` only when the latest complete CLI reconciliation and FULL_USER_E2E runs both have zero new/unresolved in-scope product defects and zero unresolved actionable usability findings.
+8. [ ] Freeze one final candidate only after step 7, then run final exact-HEAD CLI reconciliation and FULL_USER_E2E PASS1/PASS2 on the unchanged HEAD.
+9. [ ] Execute A-019 and remaining release-specific qualification.
+10. [ ] Run final exact-head CI, automated regression, SBOM, artifact, provenance, governance, attestation and protected approvals.
+11. [ ] Perform final release audit; merge/tag/publish only if every required gate is green.
 
-CI may run earlier as advisory feedback, but it is not a blocking wait point for independent semantic/user qualification. Only the final exact-head CI on the unchanged release candidate counts as terminal CI evidence. If final CI forces a source/product/doc change, invalidate and rerun every affected qualification pass before release.
+During steps 1-7, CI is optional advisory/targeted feedback and must not block independent quality work. Any real bug found at any severity is fixed before convergence unless deterministic evidence proves it is not a product defect or is outside the canonical product scope. A source/product/doc change after final freeze invalidates affected final evidence and returns the workflow to the quality loop.
 
 ## 20. Mandatory pre-release exhaustive gates and Double Full Real E2E
 

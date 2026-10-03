@@ -485,19 +485,20 @@ Stop or skip only the specific downstream check when continuing it would be unsa
 
 ### Qualification execution order
 
-Use this order for v2.4 release closure:
+Use this order for v2.4 release closure. **Product-quality convergence comes before candidate freeze, CI, SBOM, provenance, or publication work. There is no fixed number of quality iterations.**
 
-1. CLI Feature/Scenario reconciliation PASS1; accumulate findings and finish the pass.
-2. Batch remediation if required; freeze a new candidate.
-3. CLI Feature/Scenario reconciliation PASS2 must PASS.
-4. Full User E2E PASS1; accumulate findings and finish the pass.
-5. Batch remediation if required; any source/product/doc change invalidates affected evidence.
-6. Full User E2E PASS2 must PASS on the unchanged final candidate.
-7. Execute A-019 and remaining release-specific qualification.
-8. Run final exact-head CI and automated regression, artifact, provenance, governance, and attestation gates.
-9. Perform final release audit, then merge/tag/publish only if every required gate is green.
+1. Run a complete CLI Feature/Scenario reconciliation. Accumulate findings and finish every safe/independent check before changing product/source/docs.
+2. Batch-remediate every actionable in-scope defect from that run, including product, CLI, documentation, usability, and stale test-contract defects. Run targeted deterministic tests for the fixes.
+3. Run the complete CLI Feature/Scenario reconciliation again. If it finds any new or unresolved in-scope defect, repeat steps 1-3. Continue until the latest complete reconciliation has zero new/unresolved in-scope defects.
+4. Run a complete `FULL_USER_E2E` pass. Accumulate findings and finish every safe/independent scenario before remediation.
+5. Batch-remediate every actionable in-scope defect from Full User E2E and run targeted deterministic tests.
+6. Rerun every exhaustive contract invalidated by those fixes. Product/CLI/documentation changes require a fresh CLI Feature/Scenario reconciliation; behavior/runtime/platform changes require a fresh Full User E2E. If either exhaustive contract finds another defect, return to the applicable remediation/rerun step. **Repeat this loop until both latest complete runs have zero new and zero unresolved in-scope product defects/actionable usability findings.**
+7. Only after product-quality convergence, freeze one final candidate and run the final exact-HEAD confirmation set: CLI Feature/Scenario reconciliation on the frozen content, then Full User E2E PASS1 and PASS2 on the unchanged final HEAD.
+8. Execute A-019 and remaining release-specific qualification.
+9. Run final exact-head CI and automated regression, SBOM, artifact, provenance, governance, attestation, and protected-approval gates.
+10. Perform final release audit, then merge/tag/publish only if every required gate is green.
 
-CI may run earlier as advisory feedback, but it is not a blocking wait point for independent semantic/user qualification. Only the final exact-head CI on the unchanged release candidate counts as terminal CI evidence. If final CI forces a source/product/doc change, invalidate and rerun every affected qualification pass before release.
+During the convergence loop, CI may run only as advisory/targeted feedback when useful; it must not become the main workstream or a reason to stop finding/fixing product defects. Candidate-freeze, broad CI, SBOM, final provenance/attestation, and publication work are intentionally deferred until convergence. Once the final candidate is frozen, only exact-head evidence from that unchanged candidate counts as terminal release evidence. Any later source/product/doc/generated-artifact change invalidates the affected final evidence and returns execution to the product-quality loop before release.
 
 ### Product-quality closure vs release qualification
 
@@ -506,6 +507,9 @@ The two exhaustive product-quality contracts answer whether the product still ne
 ```text
 CLI_FEATURE_SCENARIO_RECONCILIATION=PASS
 FULL_USER_E2E=PASS
+NEW_IN_SCOPE_PRODUCT_DEFECTS=0
+UNRESOLVED_IN_SCOPE_PRODUCT_DEFECTS=0
+UNRESOLVED_ACTIONABLE_USABILITY_FINDINGS=0
 => PRODUCT_QUALITY_CLOSURE=PASS
 => NO_KNOWN_IN_SCOPE_PRODUCT_DEFECTS=YES
 => NO_FURTHER_PRODUCT_CHANGE_REQUIRED_BY_CURRENT_QUALITY_GATES=YES
