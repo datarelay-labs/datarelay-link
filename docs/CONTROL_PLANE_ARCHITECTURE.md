@@ -74,6 +74,9 @@ IMPLICIT_DEFAULT_DENY=YES
 
 POLICY_CHANGES_APPLY_TO_NEW_CONNECTIONS=YES
 ESTABLISHED_CONNECTIONS_IMPLICITLY_TERMINATED=NO
+TEMPORARY_ACCESS_EXPIRES_NEW_AUTHORIZATION=YES
+EMERGENCY_CUTOFF_EXPLICIT_ACTION=YES
+REMOTE_PER_CONNECTION_TERMINATION_REQUIRES_PROVEN_UPSTREAM_SUPPORT=YES
 
 MCP_INCLUDED_IN_V2_4_0_TARGET=YES
 MCP_PER_ENDPOINT_SERVER_REQUIRED=NO
@@ -1486,6 +1489,107 @@ Security boundary:
 - broadening/destructive changes require the same impact preview and confirmation semantics as CLI;
 - Web API endpoints are not a bypass around policy, role, reference, or concurrency checks.
 
+### 46.1.1 Web operator strong-authentication boundary
+
+Web administrator authentication remains a Core security boundary even though the Web
+package is optional.
+
+Architecture invariants:
+
+```text
+local operator identity / role   = Core authoritative state
+local password verifier          = protected credential state
+local MFA enrollment metadata    = Core-owned security state
+OIDC issuer + subject mapping    = Core authoritative identity binding
+browser session                  = operational state
+OIDC provider                    = optional external authenticator, never Core authority
+CLI recovery                     = independent from Web/OIDC availability
+```
+
+Rules:
+
+- password-backed local Web operators require MFA before remote Web administration is
+  considered ready;
+- at least one protected local break-glass Admin path remains usable when an IdP, DNS, or
+  Internet dependency is unavailable;
+- optional OIDC uses Authorization Code flow and validates issuer, redirect, state, nonce,
+  TLS, and the stable external identity `issuer + subject`;
+- claim/group-to-role mapping is explicit Core configuration and fails closed; email or
+  display name alone is not an authorization identity;
+- IdP-provided MFA may satisfy the external-login MFA requirement only when the configured
+  authentication-context evidence is present and validated;
+- local MFA reset/recovery, OIDC mapping changes, login failures, session revocation, and
+  break-glass use are SECURITY_LIFECYCLE/CONTROL audit events;
+- reusable browser/OIDC/MFA secrets never become normal audit, support-bundle, or frontend
+  state;
+- SAML, LDAP, and SCIM are additive future adapters and do not change the 3.0 identity
+  authority model.
+
+Exact local MFA factors and protected-secret storage are frozen during DRL3-0. They may not
+require a cloud dependency because isolated operation is a primary product requirement.
+
+### 46.1.2 Time-bounded Temporary Access
+
+Temporary Access is an additive attribute of supported Remote / Internet / AI Access
+authorization, not a separate approval product.
+
+A supported grant/rule may carry an optional authoritative `expires_at`. The Core
+evaluator treats an expired grant as inactive for **new** authorization.
+
+Rules:
+
+- expiration is evaluated server-side in the same policy engine used by CLI/Web/runtime;
+- merely crossing the expiry timestamp does not create a configuration revision;
+- bounded housekeeping may later archive/clean expired state, but enforcement does not
+  depend on that cleanup task;
+- Draft/Change Plan, diff, policy tests, blast-radius, audit, backup/restore, and
+  ConfigurationBundle preserve the expiry semantics;
+- established connections are not implicitly terminated by expiry; termination is a
+  separate explicit Emergency Cutoff/session-lifecycle operation;
+- DRL3-0 freezes a fail-closed time-trust rule so a materially backward/ambiguous server
+  clock cannot silently revive an expired temporary grant; this must not require Internet
+  NTP to operate.
+
+This adds bounded temporal authorization without adding requester/approver queues, access
+reviews, or a JIT governance subsystem.
+
+### 46.1.3 Live-connection observation and Emergency Cutoff
+
+Live connection state is operational/derived observation, not policy authority.
+
+```text
+Remote Access   ← official FRP/upstream observable state + DRLink lifecycle state
+Internet Access ← DRLink-owned proxy/socket state
+AI Access       ← DRLink job/tool execution state
+                         │
+                         ▼
+              Operational State Aggregator
+                         │
+                         ▼
+                bounded live-connection view
+```
+
+The product records whether each view is exact per-connection state or only an aggregate/
+upstream-derived observation. Unknown is preferred over invented precision.
+
+Emergency Cutoff is a separate security action from an ordinary policy edit:
+
+1. first establish a fail-closed deny/suspension for **new** authorization at the selected
+   supported scope;
+2. then terminate already-active work only where DRLink owns the connection/job lifecycle
+   or the pinned official upstream exposes a proven supported termination primitive;
+3. audit the requested scope, actual effect, per-plane result, and any active connection
+   that could not be proven terminated.
+
+The exact cutoff-state representation and supported scopes are frozen in DRL3-0. It must
+reuse Core revision/audit/runtime-generation semantics and must be reversible without
+guessing the previous policy state.
+
+Official FRP remains unmodified. If the pinned FRP exposes aggregate proxy connection state
+but no supported individual connection kill primitive, Remote Access must not advertise
+per-connection termination. A service/Managed-Host cutoff that blocks new connections is
+still valid, with active-session limitations displayed explicitly.
+
 ### 46.2 Data Relay Link 3.0 management scalability boundary
 
 The 100-Managed-Host target changes management workload shape, not the control-plane
@@ -1575,7 +1679,10 @@ before implementation.
 
 ```text
 AUTHORITATIVE
-  Web operator identity / roles
+  Web operator identity / roles / OIDC bindings and role mappings
+  local MFA enrollment metadata (secret material follows protected-credential handling)
+  Temporary Access expiry on supported policy grants
+  Emergency Cutoff security state
   saved policy-regression tests
   security-relevant management configuration
 
@@ -1584,6 +1691,7 @@ PREFERENCE
 
 OPERATIONAL
   browser sessions
+  bounded live-connection observations
   Job / per-target execution state
   transient Attention state
 
