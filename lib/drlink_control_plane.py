@@ -3090,6 +3090,18 @@ class ControlPlane:
             reason = "No enabled Remote Access rule matched (%s)" % (
                 "ALLOW" if pol["mode"] == "blacklist" else "DENY"
             )
+
+        from drlink_v30_cutoff import cutoff_reason, matching_cutoff
+        cutoff = matching_cutoff(
+            self.conn,
+            "remote",
+            remote_service=(published or {}).get("name"),
+            remote_service_id=(published or {}).get("id"),
+        )
+        if cutoff is not None:
+            action = "DENY"
+            reason = cutoff_reason(cutoff)
+
         return {
             "source_ip": source_ip,
             "destination": dest_ip,
@@ -3103,8 +3115,9 @@ class ControlPlane:
             "mode": pol["mode"],
             "enforcement": pol["enforcement"],
             "action": action,
-            "implicit": winner is None,
+            "implicit": winner is None and cutoff is None,
             "published": published,
+            "cutoff": cutoff,
             "reason": reason,
             "effective": action,
         }
@@ -3123,14 +3136,15 @@ class ControlPlane:
             endpoint_name = ep["name"] if ep else (client["label"] if client else "")
             if svc["target_mode"] == "self":
                 if dest_obj and ep and dest_obj["id"] == ep["id"]:
-                    return {"name": svc["name"], "mode": "SELF", "endpoint": endpoint_name, "public_port": svc["public_port"], "via": None}
+                    return {"id": svc["id"], "name": svc["name"], "mode": "SELF", "endpoint": endpoint_name, "public_port": svc["public_port"], "via": None}
                 if ep and any(
                     a["address"] == dest_ip and membership_eligible(a["address"])
                     for a in self.endpoint_addresses(ep["name"])
                 ):
-                    return {"name": svc["name"], "mode": "SELF", "endpoint": endpoint_name, "public_port": svc["public_port"], "via": None}
+                    return {"id": svc["id"], "name": svc["name"], "mode": "SELF", "endpoint": endpoint_name, "public_port": svc["public_port"], "via": None}
             elif svc["target_mode"] == "routed" and svc["target_host"] == dest_ip:
                 return {
+                    "id": svc["id"],
                     "name": svc["name"],
                     "mode": "ROUTED",
                     "endpoint": endpoint_name,
@@ -3418,6 +3432,43 @@ class ControlPlane:
             reason = "No enabled Internet Access rule matched (%s)" % (
                 "ALLOW" if pol["mode"] == "blacklist" else "DENY"
             )
+
+        managed_host_refs: list[str] = []
+        for name in src_matches:
+            obj = self.get_object(name)
+            if not obj or obj["type"] != "managed_endpoint":
+                continue
+            managed_host_refs.append(str(obj["name"]))
+            endpoint = self.conn.execute(
+                "SELECT client_id FROM managed_endpoints WHERE object_id = ?",
+                (obj["id"],),
+            ).fetchone()
+            if endpoint and endpoint["client_id"]:
+                managed_host_refs.append(str(endpoint["client_id"]))
+                client = self.conn.execute(
+                    "SELECT label, hostname FROM clients WHERE id = ?",
+                    (endpoint["client_id"],),
+                ).fetchone()
+                if client:
+                    if client["label"]:
+                        managed_host_refs.append(str(client["label"]))
+                    if client["hostname"]:
+                        managed_host_refs.append(str(client["hostname"]))
+
+        from drlink_v30_cutoff import cutoff_reason, matching_cutoff
+        cutoff = matching_cutoff(
+            self.conn,
+            "internet",
+            managed_hosts=managed_host_refs,
+        )
+        if cutoff is not None:
+            action = "DENY"
+            authorized_candidates = []
+            candidate_results = [
+                dict(item, action="DENY", cutoff=True) for item in candidate_results
+            ]
+            reason = cutoff_reason(cutoff)
+
         return {
             "source_ip": source_ip,
             "destination": dest,
@@ -3438,7 +3489,8 @@ class ControlPlane:
             "mode": pol["mode"],
             "enforcement": pol["enforcement"],
             "action": action,
-            "implicit": winner is None,
+            "implicit": winner is None and cutoff is None,
+            "cutoff": cutoff,
             "reason": reason,
             "effective": action,
         }

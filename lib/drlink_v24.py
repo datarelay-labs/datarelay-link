@@ -4756,6 +4756,18 @@ def evaluate_ai_access_v24(
             matched.append(row["name"])
     # Policy enforcement disabled => ALLOW only after authentication succeeds.
     result = effective_policy_result(pol["mode"], pol["enforcement"], bool(matched))
+
+    from drlink_v30_cutoff import cutoff_reason, matching_cutoff
+    cutoff = matching_cutoff(
+        plane_db.conn,
+        "ai",
+        ai_identity=identity,
+    )
+    reason = None
+    if cutoff is not None:
+        result = "DENY"
+        reason = cutoff_reason(cutoff)
+
     return {
         "mode": pol["mode"],
         "enforcement": pol["enforcement"],
@@ -4763,6 +4775,8 @@ def evaluate_ai_access_v24(
         "result": result,
         "plane": "ai",
         "auth": "VERIFIED",
+        "cutoff": cutoff,
+        "reason": reason,
     }
 
 
@@ -5150,6 +5164,8 @@ def authorize_ai_capability_v24(
     action = str(evaluation.get("result") or "DENY").upper()
     if evaluation.get("auth") == "UNAUTHENTICATED":
         reason = "unknown, disabled or unverified AI Identity"
+    elif evaluation.get("cutoff"):
+        reason = str(evaluation.get("reason") or "Emergency New-Access Cutoff active")
     elif action == "ALLOW" and matched_rows:
         reason = "AI Access rule %s" % matched_rows[0]["name"]
     elif action == "ALLOW":
