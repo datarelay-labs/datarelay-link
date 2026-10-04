@@ -32,7 +32,7 @@ python3 -m py_compile server/frp-port-allocator.py server/frp-access-plugin.py s
 python3 -m py_compile tools/frp-create-client tools/frp-enrollments tools/frp-enrollment-revoke tools/frp-enrollment-purge tools/frp-enroll-bulk tools/frp-clients tools/frp-client-info tools/frp-client-set tools/frp-release-client tools/frp-release-service tools/frp-revoke-client tools/frp-set-client-installer-url tools/frp-server-set tools/frp-backup tools/frp-restore
 python3 -m py_compile tests/test-allocator.py tests/test-chatgpt-owner-acceptance.py tests/test-enrollment-security.py tests/test-mgmt-identity.py tests/test-pki-https.py tests/test-bootstrap-ticket.py tests/test-frontend-proxy.py tests/test-single443-mgmt-origin.py tests/test-client-registry.py tests/test-access-control.py tests/test-egress-control.py tests/test-service-profiles.py tests/test-destructive-selector-toctou.py tests/test-egress-create-safe-default.py tests/test-policy-fingerprint.py tests/test-strict-cli-parsing.py tests/test-cli-backend-reverse-parity.py tests/test-enabled-egress-mutation-confirm.py tests/test-lifecycle-contract-matrix.py tests/test-allocator-tls-slow-handshake.py tests/test-http-relay-half-close-idle.py tests/test-http-connection-critical-headers.py tests/test-nonce-capacity-replay.py tests/test-restore-corrupt-current.py tests/test-egress-confirm-toctou.py tests/test-state-paths-backup-restore.py tests/test-enrollment-ttl-help.py tests/test-enrollment-pair-atomicity.py tests/test-enrollment-retention-policy.py tests/test-frpctl-completion-inventory.py tests/test-cli-flag-metadata.py tests/test-operator-workflow-regressions.py tests/test-ai-access-mcp-e2e.py tests/test-mcp-public-endpoint-e2e.py tests/test-mcp-public-tls-lifecycle.py tests/test-mcp-remote-connector-interop.py tests/test-oauth-manual-consent-browser.py tests/test-oauth-redirect-uri-validation.py tests/test-oauth-cimd-ssrf.py tests/test-oauth-pending-bounds.py tests/test-oauth-revoke-form.py tests/test-bounded-zero-touch.py tests/test-configuration-bundle.py tests/test-read-only-db-contention.py tests/mcp_sdk_interop_client.py tests/mcp_sdk_env.py tests/test-qualified-artifacts.py tests/test-v24-ai-policy-cli-parity.py tests/test-egress-concurrency-isolation.py tests/test-egress-parent-traverse.py
 
-python3 -m py_compile lib/drlink_management_catalog.py lib/drlink_management_service.py lib/drlink_management_change.py lib/drlink_management_core.py lib/drlink_management_mcp_adapter.py lib/drlink_management_web_adapter.py lib/drlink_v30_temporal.py lib/drlink_v30_cutoff.py lib/drlink_v30_audit.py lib/drlink_v30_live.py lib/drlink_v30_jobs.py lib/drlink_v30_capability.py lib/drlink_v30_readmodels.py tests/test-v30-management-foundation.py tests/test-v30-management-query-service.py tests/test-v30-management-jobs.py tests/test-v30-management-scalability.py tests/test-v30-management-adapters.py tests/test-v30-management-mixed-load.py tests/test-v30-additive-management-schema.py tests/test-v30-audit-convergence.py tests/test-v30-ai-audit-convergence.py tests/test-v30-live-access.py tests/test-v30-audit-query.py tests/test-v30-temporary-access.py
+python3 -m py_compile lib/drlink_management_catalog.py lib/drlink_management_service.py lib/drlink_management_change.py lib/drlink_management_core.py lib/drlink_management_mcp_adapter.py lib/drlink_management_web_adapter.py lib/drlink_v30_temporal.py lib/drlink_v30_cutoff.py lib/drlink_v30_audit.py lib/drlink_v30_live.py lib/drlink_v30_jobs.py lib/drlink_v30_capability.py lib/drlink_v30_readmodels.py tests/test-v30-management-foundation.py tests/test-v30-management-query-service.py tests/test-v30-management-change-plan.py tests/test-v30-emergency-cutoff.py tests/test-v30-management-jobs.py tests/test-v30-management-scalability.py tests/test-v30-management-adapters.py tests/test-v30-management-mixed-load.py tests/test-v30-additive-management-schema.py tests/test-v30-audit-foundation.py tests/test-v30-audit-runtime-failclosed.py tests/test-v30-audit-worker.py tests/test-v30-audit-convergence.py tests/test-v30-ai-audit-convergence.py tests/test-v30-live-access.py tests/test-v30-audit-query.py tests/test-v30-temporary-access.py
 
 echo "=== tests ==="
 ./tests/test-server-migration.sh
@@ -270,11 +270,16 @@ python3 tests/test-v24-restore-atomic-cutover.py
 python3 tests/test-v24-unified-disaster-recovery.py
 python3 tests/test-v30-management-foundation.py
 python3 tests/test-v30-management-query-service.py
+python3 tests/test-v30-management-change-plan.py
+python3 tests/test-v30-emergency-cutoff.py
 python3 tests/test-v30-management-jobs.py
 python3 tests/test-v30-management-scalability.py
 python3 tests/test-v30-management-mixed-load.py
 python3 tests/test-v30-additive-management-schema.py
 python3 tests/test-v30-management-adapters.py
+python3 tests/test-v30-audit-foundation.py
+python3 tests/test-v30-audit-runtime-failclosed.py
+python3 tests/test-v30-audit-worker.py
 python3 tests/test-v30-audit-convergence.py
 python3 tests/test-v30-ai-audit-convergence.py
 python3 tests/test-v30-live-access.py
