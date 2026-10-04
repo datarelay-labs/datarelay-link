@@ -46,7 +46,7 @@ jobs:
           echo "DRLINK_MCP_SDK_PYTHON=$SDK_PY" >> "$GITHUB_ENV"
       - name: Fast deterministic PR gate
         if: github.event_name == 'pull_request'
-        run: ./tests/run-fast-pr.sh
+        run: bash tests/run-fast-pr.sh
       - name: Full local non-Docker suite
         if: github.event_name != 'pull_request'
         run: ./tests/run-all.sh
