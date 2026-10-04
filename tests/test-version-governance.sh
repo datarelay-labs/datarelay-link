@@ -127,6 +127,16 @@ portability = "  portability-containers:\n    if: github.event_name != 'pull_req
 if portability not in lint:
     raise SystemExit("lint.yml portability-containers must be gated off PR")
 
+macos = Path(".github/workflows/macos-client.yml").read_text(encoding="utf-8")
+if "  apple-silicon:\n    if: github.event_name != 'pull_request'\n" not in macos:
+    raise SystemExit("macOS Apple Silicon qualification must be gated off ordinary PRs")
+windows = Path(".github/workflows/windows-client.yml").read_text(encoding="utf-8")
+for job in ("windows-powershell51", "windows-pwsh7"):
+    if f"  {job}:\n    if: github.event_name != 'pull_request'\n" not in windows:
+        raise SystemExit(f"{job} qualification must be gated off ordinary PRs")
+if "  linux-pwsh-cross:\n" not in windows:
+    raise SystemExit("Linux pwsh cross-language PR feedback must remain available")
+
 tests = Path(".engineering/tests.yaml").read_text(encoding="utf-8")
 start = tests.index("  - id: ADOPTED-TEST-001\n")
 end = tests.index("\n  - id: ", start + 1)
