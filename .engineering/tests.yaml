@@ -99,4 +99,3 @@ scenarios:
     invariants:
       - "committed candidate/base diff has no whitespace errors"
     release_gate: true
-
