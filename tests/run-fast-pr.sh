@@ -17,12 +17,17 @@ echo "=== version and release governance ==="
 
 echo "=== public CLI / contract regressions ==="
 ./tests/test-cli-catalog-parity.sh
+python3 tests/test-public-cli-grammar-parity.py
+python3 tests/test-cli-feature-scenario-remediation.py
 python3 tests/test-no-legacy-current-surface.py
 python3 tests/test-canonical-runtime-policy.py
 python3 tests/test-v24-final-closure.py
 python3 tests/test-v24-doc-consistency.py
 python3 tests/test-v24-cli-ai-master-closure.py
 python3 tests/test-v24-cli-workflow-semantic-parity.py
+
+echo "=== derived artifact closure ==="
+bash tests/test-change-closure-artifacts.sh
 
 echo "=== repository safety ==="
 ./scripts/secret-scan.sh
