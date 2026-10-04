@@ -28,7 +28,7 @@ from drlink_v30_jobs import (
 class V30ManagementJobTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="drlink-v30-jobs-")
-        self.now = datetime(2026, 10, 4, 1, 0, tzinfo=timezone.utc)
+        self.now = datetime.now(timezone.utc).replace(microsecond=0)
         self.engine = ManagementJobEngine(
             self.tmp, max_active_jobs=8, max_targets=8, lease_seconds=5
         )
@@ -257,7 +257,7 @@ class V30ManagementJobTests(unittest.TestCase):
         self.assertTrue(summary["saturated"])
 
     def test_worker_pool_backpressure_does_not_preclaim_unbounded_targets(self):
-        job = self._enqueue(targets=("host-a", "host-b"), timeout_seconds=60)
+        job = self._enqueue(targets=("host-a", "host-b"), timeout_seconds=3600)
         entered = threading.Event()
         release = threading.Event()
 

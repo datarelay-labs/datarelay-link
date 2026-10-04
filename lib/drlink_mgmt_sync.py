@@ -747,6 +747,49 @@ def report_remote_service_status_on_server(
     return _request_json("POST", base + "/v1/remote-services-status", body, root=root)
 
 
+def _local_agent_inventory(root: Optional[str] = None) -> dict:
+    """Return bounded non-secret Agent platform/version evidence."""
+    platform_name = str(sys.platform or "").strip().lower()[:128]
+    project_version = ""
+    candidates = []
+    if root and str(root) not in ("", "/"):
+        base = Path(root)
+        candidates.extend(
+            [
+                base / "etc/drlink/version",
+                base / "Library/Application Support/drlink/version",
+            ]
+        )
+    else:
+        mac_root = str(os.environ.get("FRP_MACOS_STATE_ROOT") or "").strip()
+        if mac_root:
+            candidates.append(Path(mac_root) / "version")
+        candidates.extend(
+            [
+                Path("/Library/Application Support/drlink/version"),
+                Path("/etc/drlink/version"),
+            ]
+        )
+    for version_path in candidates:
+        try:
+            lines = version_path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            key, sep, value = line.partition("=")
+            if sep and key.strip() == "PROJECT_VERSION":
+                project_version = value.strip()[:128]
+                break
+        if project_version:
+            break
+    out = {}
+    if platform_name:
+        out["agent_platform"] = platform_name
+    if project_version:
+        out["agent_version"] = project_version
+    return out
+
+
 def report_agent_lifecycle_on_server(
     *, root: Optional[str] = None, state: str = "connected"
 ) -> dict:
@@ -760,8 +803,11 @@ def report_agent_lifecycle_on_server(
     lifecycle = str(state or "").strip().lower()
     if lifecycle not in ("connected", "disconnected"):
         raise MgmtSyncError("Agent lifecycle state must be connected or disconnected")
+    body = {"state": lifecycle}
+    if lifecycle == "connected":
+        body.update(_local_agent_inventory(root))
     return _request_json(
-        "POST", base + "/v1/agent-lifecycle", {"state": lifecycle}, root=root
+        "POST", base + "/v1/agent-lifecycle", body, root=root
     )
 
 
@@ -1420,16 +1466,28 @@ def server_report_agent_lifecycle(plane, auth: MgmtAuthContext, body: dict) -> d
     old_state = str(before["agent_lifecycle_state"] or "legacy").strip().lower()
     old_heartbeat = before["agent_heartbeat_at"]
     was_fresh = old_state == "connected" and agent_heartbeat_fresh(old_heartbeat)
-    if not plane.refresh_agent_lifecycle(machine_id, state):
+    agent_platform = str((body or {}).get("agent_platform") or "").strip()
+    agent_version = str((body or {}).get("agent_version") or "").strip()
+    if len(agent_platform) > 128 or len(agent_version) > 128:
+        raise MgmtSyncError("Agent platform/version metadata is too long")
+    if not plane.refresh_agent_lifecycle(
+        machine_id,
+        state,
+        agent_platform=agent_platform or None,
+        agent_version=agent_version or None,
+    ):
         raise MgmtAuthError("unknown Managed Host")
     client = plane.conn.execute(
-        "SELECT agent_heartbeat_at, agent_lifecycle_state FROM clients WHERE id = ?",
+        "SELECT agent_heartbeat_at, agent_lifecycle_state, agent_platform, agent_version "
+        "FROM clients WHERE id = ?",
         (machine_id,),
     ).fetchone()
     return {
         "ok": True,
         "state": client["agent_lifecycle_state"] if client else state,
         "heartbeat_at": client["agent_heartbeat_at"] if client else None,
+        "agent_platform": client["agent_platform"] if client else None,
+        "agent_version": client["agent_version"] if client else None,
         "reconcile_required": bool(state == "connected" and not was_fresh),
     }
 

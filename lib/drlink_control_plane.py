@@ -4987,8 +4987,15 @@ class ControlPlane:
         # upgraded Agent from legacy to connected on its first signed heartbeat.
         return "connected"
 
-    def refresh_agent_lifecycle(self, client_id: str, state: str = "connected") -> bool:
-        """Record independent signed Agent presence without touching AI liveness."""
+    def refresh_agent_lifecycle(
+        self,
+        client_id: str,
+        state: str = "connected",
+        *,
+        agent_platform: Optional[str] = None,
+        agent_version: Optional[str] = None,
+    ) -> bool:
+        """Record signed Agent presence/inventory without creating configuration revision."""
         lifecycle = str(state or "").strip().lower()
         if lifecycle not in ("connected", "disconnected"):
             raise ControlPlaneError("Agent lifecycle state must be connected or disconnected")
@@ -5007,8 +5014,14 @@ class ControlPlane:
             and old_state == "connected"
             and agent_heartbeat_fresh(old_heartbeat)
         )
+        platform_value = str(agent_platform or "").strip().lower()[:128] or None
+        version_value = str(agent_version or "").strip()[:128] or None
+        inventory_changed = (
+            (platform_value is not None and platform_value != str(row["agent_platform"] or ""))
+            or (version_value is not None and version_value != str(row["agent_version"] or ""))
+        )
         now = utc_now_iso()
-        if lifecycle == "connected" and was_fresh:
+        if lifecycle == "connected" and was_fresh and not inventory_changed:
             seen = _parse_ai_job_ts(old_heartbeat)
             now_dt = datetime.now(timezone.utc)
             if seen is not None:
@@ -5029,8 +5042,19 @@ class ControlPlane:
             )
         self.conn.execute(
             "UPDATE clients SET agent_heartbeat_at = ?, agent_lifecycle_state = ?, "
-            "connected = ?, updated_at = ? WHERE id = ?",
-            (now, lifecycle, 1 if lifecycle == "connected" else 0, now, client_id),
+            "connected = ?, "
+            "agent_platform = COALESCE(?, agent_platform), "
+            "agent_version = COALESCE(?, agent_version), "
+            "updated_at = ? WHERE id = ?",
+            (
+                now,
+                lifecycle,
+                1 if lifecycle == "connected" else 0,
+                platform_value,
+                version_value,
+                now,
+                client_id,
+            ),
         )
         self.commit_if_autonomous()
         return True

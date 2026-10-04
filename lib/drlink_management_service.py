@@ -68,6 +68,7 @@ _RESOURCE_SPECS: dict[str, dict[str, str]] = {
             "c.connected AS connected, c.last_seen AS last_seen, "
             "c.agent_heartbeat_at AS agent_heartbeat_at, "
             "c.agent_lifecycle_state AS agent_lifecycle_state, "
+            "c.agent_platform AS agent_platform, c.agent_version AS agent_version, "
             "c.row_version AS row_version, c.updated_at AS updated_at"
         ),
     },
@@ -341,6 +342,18 @@ class ManagementQueryService:
             for descriptor in mcp_management_descriptors()
             if descriptor["name"] in IMPLEMENTED_MANAGEMENT_TOOLS
         )
+
+    def capability_inventory(self) -> dict[str, Any]:
+        """Return the machine-generated management parity inventory."""
+        from drlink_v30_capability import capability_parity_ledger
+
+        return capability_parity_ledger()
+
+    def overview_summary(self) -> dict[str, Any]:
+        """Return a rebuildable derived overview, never authoritative state."""
+        from drlink_v30_readmodels import overview_summary
+
+        return overview_summary(self.conn)
 
     def list_inventory(
         self,

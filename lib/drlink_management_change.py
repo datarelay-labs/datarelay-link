@@ -48,6 +48,17 @@ def _token_hash(token: str) -> str:
     return hashlib.sha256(str(token).encode("utf-8")).hexdigest()
 
 
+IMPLEMENTED_MANAGEMENT_CHANGE_TOOLS = frozenset(
+    {
+        "drlink_temporary_access_preview",
+        "drlink_temporary_access_apply",
+        "drlink_emergency_cutoff_preview",
+        "drlink_emergency_cutoff_apply",
+        "drlink_emergency_cutoff_clear",
+    }
+)
+
+
 class ManagementChangeService:
     """Core preview/apply boundary for admitted 3.0 management mutations."""
 

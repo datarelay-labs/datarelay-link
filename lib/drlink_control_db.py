@@ -283,6 +283,8 @@ CREATE TABLE clients (
   last_seen TEXT,
   agent_heartbeat_at TEXT,
   agent_lifecycle_state TEXT NOT NULL DEFAULT 'legacy',
+  agent_platform TEXT,
+  agent_version TEXT,
   row_version INTEGER NOT NULL DEFAULT 1,
   created_revision INTEGER,
   updated_revision INTEGER,
@@ -924,6 +926,10 @@ def ensure_agent_lifecycle_schema(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE clients ADD COLUMN agent_lifecycle_state TEXT NOT NULL DEFAULT 'legacy'"
         )
+    if "agent_platform" not in cols:
+        conn.execute("ALTER TABLE clients ADD COLUMN agent_platform TEXT")
+    if "agent_version" not in cols:
+        conn.execute("ALTER TABLE clients ADD COLUMN agent_version TEXT")
 
 
 V30_SCHEMA_SQL = """
@@ -1093,6 +1099,22 @@ def ensure_v30_schema(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_v30_clients_status "
         "ON clients(status, id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_v30_clients_agent_version "
+        "ON clients(agent_version, id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_v30_clients_platform "
+        "ON clients(agent_platform, id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_v30_services_state "
+        "ON published_services(enabled, released, id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_v30_policy_plane_enabled_pos "
+        "ON policy_rules(plane, enabled, position, id)"
     )
     conn.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_v30_audit_event_id "

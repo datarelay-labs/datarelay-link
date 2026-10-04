@@ -1124,7 +1124,12 @@ function Invoke-FrpAgentLifecycle {
     $uri = [Uri]$allocatorUrl
     $path = '/v1/agent-lifecycle'
     $url = ('{0}://{1}{2}' -f $uri.Scheme, $uri.Authority, $path)
-    $body = Get-FrpCanonicalJson -Object ([ordered]@{ state = $State })
+    $bodyObject = [ordered]@{ state = $State }
+    if ($State -eq 'connected') {
+        $bodyObject.agent_platform = 'windows'
+        $bodyObject.agent_version = (Get-FrpProjectVersion)
+    }
+    $body = Get-FrpCanonicalJson -Object $bodyObject
     $ts = [int64]([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())
     $nonce = New-FrpNonce
     $message = Get-FrpSignedMessage -MachineId $machineId -Body $body -Timestamp $ts -Nonce $nonce `

@@ -51,6 +51,8 @@ for f in \
   "$BASE_DIR/lib/drlink_v30_audit.py" \
   "$BASE_DIR/lib/drlink_v30_live.py" \
   "$BASE_DIR/lib/drlink_v30_jobs.py" \
+  "$BASE_DIR/lib/drlink_v30_capability.py" \
+  "$BASE_DIR/lib/drlink_v30_readmodels.py" \
   "$BASE_DIR/lib/drlink_management_catalog.py" \
   "$BASE_DIR/lib/drlink_management_service.py" \
   "$BASE_DIR/lib/drlink_management_change.py" \

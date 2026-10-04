@@ -164,6 +164,11 @@ class MgmtApiAuthTests(unittest.TestCase):
         return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
     def test_AGENT_LIFECYCLE_HEARTBEAT_IS_SIGNED_AND_AI_INDEPENDENT(self):
+        version_dir = Path(self.agent_tmp, "etc/drlink")
+        version_dir.mkdir(parents=True, exist_ok=True)
+        Path(version_dir, "version").write_text(
+            "PROJECT_VERSION=3.0.0-test\n", encoding="utf-8"
+        )
         stale_ai = "2026-09-19T08:29:50Z"
         self.server.conn.execute(
             "UPDATE clients SET last_seen = ? WHERE id = ?", (stale_ai, MACHINE_A)
@@ -186,6 +191,8 @@ class MgmtApiAuthTests(unittest.TestCase):
         self.assertEqual(row["last_seen"], stale_ai)
         self.assertTrue(row["agent_heartbeat_at"])
         self.assertEqual(row["agent_lifecycle_state"], "connected")
+        self.assertEqual(row["agent_platform"], sys.platform.lower())
+        self.assertEqual(row["agent_version"], "3.0.0-test")
         self.assertEqual(self.server.managed_host_connectivity(row), "connected")
         self.assertEqual(self.server.ai_executor_status(row), "not_ready")
         self.assertEqual(self.server.current_revision(), before_rev)
