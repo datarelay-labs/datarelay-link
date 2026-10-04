@@ -1,0 +1,568 @@
+#!/usr/bin/env python3
+"""Optional Data Relay Link 3.0 read-only Web Management service."""
+from __future__ import annotations
+
+import argparse
+import ipaddress
+import json
+import mimetypes
+import os
+import ssl
+from http import cookies
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Any, Optional
+from urllib.parse import parse_qs, unquote, urlparse
+
+from drlink_control_db import ControlPlaneError
+from drlink_management_core import ManagementActor
+from drlink_management_service import ManagementQueryService
+from drlink_management_web_adapter import ManagementWebApiAdapter
+from drlink_web_auth import ROLE_ADMIN, WebAuthService, WebPrincipal
+
+DEFAULT_WEB_LISTEN = "127.0.0.1"
+DEFAULT_WEB_PORT = 8741
+SESSION_COOKIE = "drlink_session"
+MAX_REQUEST_BYTES = 64 * 1024
+WEB_API_PREFIX = "/api/v1"
+
+CSP = (
+    "default-src 'self'; "
+    "script-src 'self'; style-src 'self'; img-src 'self' data:; "
+    "connect-src 'self'; font-src 'self'; object-src 'none'; "
+    "base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+)
+
+
+def _is_loopback(host: str) -> bool:
+    value = str(host or "").strip().lower()
+    if value in ("localhost", "ip6-localhost"):
+        return True
+    try:
+        return ipaddress.ip_address(value).is_loopback
+    except ValueError:
+        return False
+
+
+def validate_web_bind(
+    listen: str,
+    *,
+    tls_cert: Optional[str] = None,
+    tls_key: Optional[str] = None,
+) -> None:
+    if _is_loopback(listen):
+        return
+    if not str(tls_cert or "").strip() or not str(tls_key or "").strip():
+        raise ControlPlaneError(
+            "Remote drlink-web bind requires an explicit TLS certificate and key."
+        )
+    if not Path(str(tls_cert)).is_file() or not Path(str(tls_key)).is_file():
+        raise ControlPlaneError("Remote drlink-web TLS certificate/key is unavailable.")
+
+
+def _int_arg(value: Optional[str], default: int, *, low: int = 1, high: int = 200) -> int:
+    if value is None or str(value).strip() == "":
+        return default
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ControlPlaneError("Invalid integer request parameter.") from exc
+    if parsed < low or parsed > high:
+        raise ControlPlaneError(
+            "Request parameter must be between %d and %d." % (low, high)
+        )
+    return parsed
+
+
+class WebApplication:
+    """HTTP-independent routing target used by the server and tests."""
+
+    def __init__(
+        self,
+        root: Optional[str] = None,
+        *,
+        static_root: Optional[str] = None,
+        secure_cookie: bool = False,
+    ):
+        self.root = root
+        self.static_root = Path(
+            static_root
+            or (
+                Path(root) / "usr/local/share/drlink-web"
+                if root and str(root) not in ("", "/")
+                else Path("/usr/local/share/drlink-web")
+            )
+        )
+        self.secure_cookie = bool(secure_cookie)
+        self.auth = WebAuthService(root)
+        self.adapter = ManagementWebApiAdapter(root)
+
+    def close(self) -> None:
+        self.auth.close()
+
+    @staticmethod
+    def _actor(principal: WebPrincipal) -> ManagementActor:
+        return ManagementActor.authenticated(
+            "web:%s" % principal.operator_id,
+            principal.permissions,
+        )
+
+    def authenticate(
+        self,
+        body: dict[str, Any],
+        *,
+        source_addr: str,
+        user_agent: str,
+    ) -> dict[str, Any]:
+        issued = self.auth.authenticate(
+            username=str(body.get("username") or ""),
+            password=str(body.get("password") or ""),
+            totp_value=str(body.get("totp") or ""),
+            recovery_code=str(body.get("recovery_code") or ""),
+            source_addr=source_addr,
+            user_agent=user_agent,
+        )
+        return {
+            "session_id": issued.session_id,
+            "csrf_token": issued.csrf_token,
+            "expires_at": issued.expires_at,
+            "idle_expires_at": issued.idle_expires_at,
+            "operator": {
+                "id": issued.principal.operator_id,
+                "username": issued.principal.username,
+                "role": issued.principal.role,
+            },
+            "_session_token": issued.session_token,
+        }
+
+    def session_principal(
+        self,
+        token: str,
+        *,
+        csrf_token: Optional[str] = None,
+        require_csrf: bool = False,
+    ) -> Optional[WebPrincipal]:
+        return self.auth.validate_session(
+            token,
+            csrf_token=csrf_token,
+            require_csrf=require_csrf,
+        )
+
+    def read_api(
+        self,
+        path: str,
+        query: dict[str, list[str]],
+        principal: WebPrincipal,
+    ) -> dict[str, Any]:
+        actor = self._actor(principal)
+        if path == "/api/v1/session":
+            return {
+                "operator": {
+                    "id": principal.operator_id,
+                    "username": principal.username,
+                    "role": principal.role,
+                },
+                "session_id": principal.session_id,
+            }
+        if path == "/api/v1/overview":
+            with ManagementQueryService(self.root) as service:
+                return {
+                    "overview": service.overview_summary(),
+                    "attention": service.attention_summary(),
+                }
+        if path == "/api/v1/inventory":
+            resource_type = _first(query, "resource_type")
+            payload: dict[str, Any] = {"resource_type": resource_type}
+            for key in ("cursor", "q"):
+                value = _first(query, key)
+                if value:
+                    payload["query" if key == "q" else key] = value
+            payload["limit"] = _int_arg(_first(query, "limit"), 50)
+            return self.adapter.invoke(
+                operation="drlink_inventory_list",
+                payload=payload,
+                actor=actor,
+            )
+        if path == "/api/v1/policies":
+            with ManagementQueryService(self.root) as service:
+                return service.policy_list(
+                    plane=_first(query, "plane") or None,
+                    limit=_int_arg(_first(query, "limit"), 50),
+                )
+        if path == "/api/v1/objects-groups":
+            with ManagementQueryService(self.root) as service:
+                return service.inventory_snapshot(
+                    (
+                        "network-object",
+                        "network-group",
+                        "service-object",
+                        "service-group",
+                        "permission-object",
+                        "permission-group",
+                        "ai-identity",
+                    ),
+                    per_type_limit=_int_arg(_first(query, "limit"), 50, high=100),
+                )
+        if path == "/api/v1/search":
+            with ManagementQueryService(self.root) as service:
+                return service.global_search(
+                    _first(query, "q"),
+                    limit=_int_arg(_first(query, "limit"), 40, high=100),
+                )
+        if path == "/api/v1/versions":
+            with ManagementQueryService(self.root) as service:
+                return service.version_drift()
+        if path == "/api/v1/audit":
+            payload = {}
+            for key in (
+                "start",
+                "end",
+                "category",
+                "event_type",
+                "actor",
+                "resource",
+                "result",
+                "correlation_id",
+                "cursor",
+            ):
+                value = _first(query, key)
+                if value:
+                    payload[key] = value
+            payload["limit"] = _int_arg(_first(query, "limit"), 50)
+            return self.adapter.invoke(
+                operation="drlink_audit_query", payload=payload, actor=actor
+            )
+        if path == "/api/v1/revisions":
+            with ManagementQueryService(self.root) as service:
+                return service.revision_list(
+                    cursor=_first(query, "cursor") or None,
+                    limit=_int_arg(_first(query, "limit"), 50),
+                ).as_dict()
+        if path == "/api/v1/health":
+            return self.adapter.invoke(
+                operation="drlink_health", payload={}, actor=actor
+            )
+        if path == "/api/v1/doctor":
+            with ManagementQueryService(self.root) as service:
+                return service.doctor_summary()
+        if path == "/api/v1/saved-views":
+            return {"items": self.auth.list_saved_views(principal.operator_id)}
+        if path == "/api/v1/sessions":
+            return {"items": self.auth.list_sessions(principal.operator_id)}
+        raise ControlPlaneError("Web API route was not found.")
+
+    def write_api(
+        self,
+        path: str,
+        body: dict[str, Any],
+        principal: WebPrincipal,
+    ) -> dict[str, Any]:
+        if path == "/api/v1/auth/logout":
+            self.auth.revoke_session(
+                principal.session_id, actor_id=principal.operator_id
+            )
+            return {"status": "logged_out"}
+        if path == "/api/v1/saved-views":
+            return self.auth.save_view(
+                principal.operator_id,
+                name=str(body.get("name") or ""),
+                payload=body.get("payload")
+                if isinstance(body.get("payload"), dict)
+                else {},
+            )
+        if path == "/api/v1/sessions/revoke":
+            session_id = str(body.get("session_id") or "").strip()
+            if not session_id:
+                raise ControlPlaneError("session_id is required.")
+            allowed = {
+                str(item["id"]) for item in self.auth.list_sessions(principal.operator_id)
+            }
+            if session_id not in allowed and principal.role != ROLE_ADMIN:
+                raise ControlPlaneError("Session is not owned by this operator.")
+            if not self.auth.revoke_session(
+                session_id, actor_id=principal.operator_id
+            ):
+                raise ControlPlaneError("Session was not found or already revoked.")
+            return {"status": "revoked", "session_id": session_id}
+        raise ControlPlaneError("Web API route was not found.")
+
+
+def _first(query: dict[str, list[str]], name: str) -> str:
+    values = query.get(name) or []
+    return str(values[0]) if values else ""
+
+
+def _session_cookie(token: str, *, secure: bool) -> str:
+    attrs = [
+        "%s=%s" % (SESSION_COOKIE, token),
+        "Path=/",
+        "HttpOnly",
+        "SameSite=Strict",
+        "Max-Age=28800",
+    ]
+    if secure:
+        attrs.append("Secure")
+    return "; ".join(attrs)
+
+
+def _clear_session_cookie(*, secure: bool) -> str:
+    attrs = [
+        "%s=" % SESSION_COOKIE,
+        "Path=/",
+        "HttpOnly",
+        "SameSite=Strict",
+        "Max-Age=0",
+    ]
+    if secure:
+        attrs.append("Secure")
+    return "; ".join(attrs)
+
+
+class DrlinkWebHandler(BaseHTTPRequestHandler):
+    server_version = "DataRelayLinkWeb/3.0"
+    protocol_version = "HTTP/1.1"
+
+    @property
+    def app(self) -> WebApplication:
+        return self.server.app  # type: ignore[attr-defined]
+
+    def log_message(self, fmt: str, *args) -> None:
+        if os.environ.get("DRLINK_WEB_QUIET") == "1":
+            return
+        super().log_message(fmt, *args)
+
+    def _security_headers(self, *, api: bool = False) -> None:
+        self.send_header("Content-Security-Policy", CSP)
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+        if api:
+            self.send_header("Cache-Control", "no-store")
+
+    def _json(
+        self,
+        status: int,
+        payload: dict[str, Any],
+        *,
+        cookie: Optional[str] = None,
+    ) -> None:
+        raw = (json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n").encode(
+            "utf-8"
+        )
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(raw)))
+        if cookie is not None:
+            self.send_header("Set-Cookie", cookie)
+        self._security_headers(api=True)
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def _error(self, status: int, message: str) -> None:
+        self._json(status, {"error": message})
+
+    def _body_json(self) -> dict[str, Any]:
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError as exc:
+            raise ControlPlaneError("Invalid Content-Length.") from exc
+        if length < 0 or length > MAX_REQUEST_BYTES:
+            raise ControlPlaneError("Request body is too large.")
+        raw = self.rfile.read(length) if length else b"{}"
+        try:
+            body = json.loads(raw.decode("utf-8"))
+        except Exception as exc:
+            raise ControlPlaneError("Request body must be valid JSON.") from exc
+        if not isinstance(body, dict):
+            raise ControlPlaneError("Request body must be a JSON object.")
+        return body
+
+    def _cookie_token(self) -> str:
+        raw = self.headers.get("Cookie") or ""
+        jar = cookies.SimpleCookie()
+        try:
+            jar.load(raw)
+        except cookies.CookieError:
+            return ""
+        morsel = jar.get(SESSION_COOKIE)
+        return morsel.value if morsel else ""
+
+    def _principal(self, *, csrf: bool = False) -> Optional[WebPrincipal]:
+        return self.app.session_principal(
+            self._cookie_token(),
+            csrf_token=self.headers.get("X-CSRF-Token"),
+            require_csrf=csrf,
+        )
+
+    def do_GET(self) -> None:
+        parsed = urlparse(self.path)
+        if parsed.path == "/healthz":
+            self._json(
+                200,
+                {
+                    "service": "drlink-web",
+                    "status": "ok",
+                    "core_health_endpoint": "/api/v1/health",
+                },
+            )
+            return
+        if parsed.path.startswith("/api/"):
+            principal = self._principal()
+            if principal is None:
+                self._error(401, "authentication required")
+                return
+            try:
+                payload = self.app.read_api(
+                    parsed.path, parse_qs(parsed.query, keep_blank_values=True), principal
+                )
+                self._json(200, payload)
+            except ControlPlaneError as exc:
+                self._error(400, str(exc))
+            except Exception:
+                self._error(500, "internal error")
+            return
+        self._static(parsed.path)
+
+    def do_POST(self) -> None:
+        parsed = urlparse(self.path)
+        if parsed.path == "/api/v1/auth/login":
+            try:
+                body = self._body_json()
+                payload = self.app.authenticate(
+                    body,
+                    source_addr=str(self.client_address[0]),
+                    user_agent=self.headers.get("User-Agent") or "",
+                )
+                token = str(payload.pop("_session_token"))
+                self._json(
+                    200,
+                    payload,
+                    cookie=_session_cookie(token, secure=self.app.secure_cookie),
+                )
+            except ControlPlaneError:
+                self._error(401, "invalid credentials or MFA")
+            except Exception:
+                self._error(500, "internal error")
+            return
+        principal = self._principal(csrf=True)
+        if principal is None:
+            self._error(403, "authenticated session and CSRF token required")
+            return
+        try:
+            body = self._body_json()
+            payload = self.app.write_api(parsed.path, body, principal)
+            clear = parsed.path == "/api/v1/auth/logout"
+            self._json(
+                200,
+                payload,
+                cookie=_clear_session_cookie(secure=self.app.secure_cookie)
+                if clear
+                else None,
+            )
+        except ControlPlaneError as exc:
+            self._error(400, str(exc))
+        except Exception:
+            self._error(500, "internal error")
+
+    def _static(self, request_path: str) -> None:
+        raw = unquote(str(request_path or "/"))
+        if raw in ("", "/"):
+            rel = Path("index.html")
+        else:
+            rel = Path(raw.lstrip("/"))
+        if rel.is_absolute() or ".." in rel.parts:
+            self._error(404, "not found")
+            return
+        target = (self.app.static_root / rel).resolve()
+        root = self.app.static_root.resolve()
+        try:
+            target.relative_to(root)
+        except ValueError:
+            self._error(404, "not found")
+            return
+        if not target.is_file():
+            if "." not in rel.name:
+                target = root / "index.html"
+            if not target.is_file():
+                self._error(404, "not found")
+                return
+        try:
+            raw_bytes = target.read_bytes()
+        except OSError:
+            self._error(404, "not found")
+            return
+        content_type = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(raw_bytes)))
+        self.send_header("Cache-Control", "no-cache" if target.name == "index.html" else "public, max-age=3600")
+        self._security_headers(api=False)
+        self.end_headers()
+        self.wfile.write(raw_bytes)
+
+
+class DrlinkWebServer(ThreadingHTTPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
+    def __init__(self, server_address, app: WebApplication):
+        self.app = app
+        super().__init__(server_address, DrlinkWebHandler)
+
+    def server_close(self) -> None:
+        try:
+            self.app.close()
+        finally:
+            super().server_close()
+
+
+def create_server(
+    *,
+    root: Optional[str] = None,
+    listen: str = DEFAULT_WEB_LISTEN,
+    port: int = DEFAULT_WEB_PORT,
+    static_root: Optional[str] = None,
+    tls_cert: Optional[str] = None,
+    tls_key: Optional[str] = None,
+) -> DrlinkWebServer:
+    validate_web_bind(listen, tls_cert=tls_cert, tls_key=tls_key)
+    use_tls = bool(tls_cert and tls_key)
+    app = WebApplication(root, static_root=static_root, secure_cookie=use_tls)
+    server = DrlinkWebServer((listen, int(port)), app)
+    if use_tls:
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
+        context.load_cert_chain(str(tls_cert), str(tls_key))
+        server.socket = context.wrap_socket(server.socket, server_side=True)
+    return server
+
+
+def main(argv: Optional[list[str]] = None) -> int:
+    parser = argparse.ArgumentParser(description="Data Relay Link optional Web Management")
+    parser.add_argument("--listen", default=DEFAULT_WEB_LISTEN)
+    parser.add_argument("--port", type=int, default=DEFAULT_WEB_PORT)
+    parser.add_argument("--root")
+    parser.add_argument("--static-root")
+    parser.add_argument("--tls-cert")
+    parser.add_argument("--tls-key")
+    args = parser.parse_args(argv)
+    server = create_server(
+        root=args.root,
+        listen=args.listen,
+        port=args.port,
+        static_root=args.static_root,
+        tls_cert=args.tls_cert,
+        tls_key=args.tls_key,
+    )
+    try:
+        server.serve_forever(poll_interval=0.5)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

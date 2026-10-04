@@ -11,6 +11,7 @@ from __future__ import annotations
 import base64
 import json
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Optional
 
 from drlink_control_db import ControlPlaneError, connect_read_only
@@ -355,6 +356,82 @@ class ManagementQueryService:
 
         return overview_summary(self.conn)
 
+    def global_search(
+        self, query: str, *, limit: Optional[int] = None
+    ) -> dict[str, Any]:
+        """Search bounded public management nouns without N-per-Host requests."""
+        needle = str(query or "").strip()
+        if not needle:
+            raise ControlPlaneError("Search query is required.")
+        if len(needle) > 128:
+            raise ControlPlaneError("Search query is too long.")
+        total_limit = max(1, min(int(limit or 40), 100))
+        results: list[dict[str, Any]] = []
+        per_type = max(1, min(8, total_limit))
+        for kind in supported_inventory_types():
+            if len(results) >= total_limit:
+                break
+            page = self.list_inventory(kind, query=needle, limit=per_type)
+            for item in page.items:
+                results.append({
+                    "resource_type": kind,
+                    "id": item.get("id"),
+                    "name": item.get("name") or item.get("id"),
+                    "item": dict(item),
+                })
+                if len(results) >= total_limit:
+                    break
+        if len(results) < total_limit:
+            rows = self.conn.execute(
+                "SELECT id,plane,name,enabled,expires_at,row_version "
+                "FROM policy_rules WHERE LOWER(name) LIKE ? "
+                "ORDER BY LOWER(name),id LIMIT ?",
+                ("%%%s%%" % needle.lower(), total_limit - len(results)),
+            ).fetchall()
+            for row in rows:
+                item = {key: row[key] for key in row.keys()}
+                results.append({
+                    "resource_type": "access-policy-rule",
+                    "id": row["id"],
+                    "name": row["name"],
+                    "item": item,
+                })
+        return {"query": needle, "items": results, "limit": total_limit}
+
+    def policy_list(
+        self, *, plane: Optional[str] = None, limit: Optional[int] = None
+    ) -> dict[str, Any]:
+        """Return a bounded read view of Remote/Internet/AI policy rules."""
+        page_limit = _bounded_limit(limit)
+        family = str(plane or "").strip().lower()
+        if family and family not in ("remote", "internet", "ai"):
+            raise ControlPlaneError("Unsupported access plane: %s" % plane)
+        items: list[dict[str, Any]] = []
+        if family in ("", "remote", "internet"):
+            where = " WHERE plane=?" if family in ("remote", "internet") else ""
+            args: list[Any] = [family] if where else []
+            args.append(page_limit)
+            rows = self.conn.execute(
+                "SELECT id,plane,name,position,action,enabled,description,"
+                "expires_at,row_version FROM policy_rules" + where
+                + " ORDER BY plane,position,id LIMIT ?",
+                tuple(args),
+            ).fetchall()
+            items.extend({key: row[key] for key in row.keys()} for row in rows)
+        if family in ("", "ai") and len(items) < page_limit:
+            rows = self.conn.execute(
+                "SELECT id,name,enabled,source_identity_id,destination_ref_kind,"
+                "destination_ref_id,permission_ref_kind,permission_ref_id,"
+                "description,expires_at,row_version FROM ai_policy_rules "
+                "ORDER BY name COLLATE NOCASE,id LIMIT ?",
+                (page_limit - len(items),),
+            ).fetchall()
+            for row in rows:
+                item = {key: row[key] for key in row.keys()}
+                item["plane"] = "ai"
+                items.append(item)
+        return {"items": items[:page_limit], "limit": page_limit, "plane": family or "all"}
+
     def list_inventory(
         self,
         resource_type: str,
@@ -416,6 +493,42 @@ class ManagementQueryService:
             )
         return ManagementPage(kind, items, next_cursor, page_limit)
 
+    def revision_list(
+        self, *, cursor: Optional[str] = None, limit: Optional[int] = None
+    ) -> ManagementPage:
+        """Return descending configuration revisions with bounded keyset pagination."""
+        page_limit = _bounded_limit(limit)
+        before: Optional[int] = None
+        if cursor:
+            text = str(cursor).strip()
+            try:
+                padded = text + "=" * (-len(text) % 4)
+                payload = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")))
+                if payload.get("v") != _CURSOR_VERSION or payload.get("resource") != "revision":
+                    raise ValueError("cursor mismatch")
+                before = int(payload["revision"])
+            except Exception as exc:
+                raise ControlPlaneError("Invalid revision cursor.") from exc
+        where = " WHERE revision < ?" if before is not None else ""
+        args: list[Any] = [before] if before is not None else []
+        args.append(page_limit + 1)
+        rows = self.conn.execute(
+            "SELECT revision,actor,command,created_at,summary FROM config_revisions"
+            + where + " ORDER BY revision DESC LIMIT ?",
+            tuple(args),
+        ).fetchall()
+        has_more = len(rows) > page_limit
+        page_rows = rows[:page_limit]
+        items = tuple({key: row[key] for key in row.keys()} for row in page_rows)
+        next_cursor = None
+        if has_more and page_rows:
+            raw = json.dumps(
+                {"v": _CURSOR_VERSION, "resource": "revision", "revision": int(page_rows[-1]["revision"])},
+                separators=(",", ":"), sort_keys=True,
+            ).encode("utf-8")
+            next_cursor = base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+        return ManagementPage("revision", items, next_cursor, page_limit)
+
     def get_inventory(self, resource_type: str, selector: str) -> dict[str, Any]:
         kind = str(resource_type or "").strip().lower()
         spec = _RESOURCE_SPECS.get(kind)
@@ -451,6 +564,116 @@ class ManagementQueryService:
             if "was not found" in str(exc):
                 return None
             raise
+
+    def inventory_snapshot(
+        self,
+        resource_types: tuple[str, ...],
+        *,
+        per_type_limit: int = 50,
+    ) -> dict[str, Any]:
+        """Return a fixed-number multi-resource snapshot in one browser request."""
+        limit = max(1, min(int(per_type_limit), 100))
+        resources: dict[str, Any] = {}
+        for kind in resource_types:
+            normalized = str(kind or "").strip().lower()
+            if normalized not in _RESOURCE_SPECS:
+                raise ControlPlaneError("Unsupported management resource type '%s'." % kind)
+            resources[normalized] = self.list_inventory(
+                normalized, limit=limit
+            ).as_dict()
+        return {"resources": resources, "per_type_limit": limit}
+
+    def doctor_summary(self) -> dict[str, Any]:
+        """Side-effect-free DRL3-2 health/Doctor read view."""
+        health = self.health()
+        attention = self.attention_summary()
+        generations = self.conn.execute(
+            "SELECT plane,db_revision,generation,status,activated_at,error "
+            "FROM runtime_generations ORDER BY plane"
+        ).fetchall()
+        checks = []
+        for row in generations:
+            status = str(row["status"] or "unknown")
+            checks.append(
+                {
+                    "id": "runtime.%s" % row["plane"],
+                    "status": "PASS" if status in ("active", "not_configured") else "ATTENTION",
+                    "message": "Runtime generation status: %s" % status,
+                    "plane": row["plane"],
+                    "db_revision": row["db_revision"],
+                    "generation": row["generation"],
+                    "activated_at": row["activated_at"],
+                    "error": row["error"] or "",
+                }
+            )
+        return {
+            "read_only": True,
+            "side_effect_free": True,
+            "health": health,
+            "attention": attention,
+            "checks": checks,
+        }
+
+    def version_drift(self) -> dict[str, Any]:
+        """Return Agent platform/version inventory relative to installed Server version."""
+        root = Path(self.root) if self.root and str(self.root) not in ("", "/") else Path("/")
+        server_version = ""
+        try:
+            for line in (root / "etc/drlink/version").read_text(encoding="utf-8").splitlines():
+                key, sep, value = line.partition("=")
+                if sep and key.strip() == "PROJECT_VERSION":
+                    server_version = value.strip()
+                    break
+        except OSError:
+            pass
+        rows = self.conn.execute(
+            "SELECT id,COALESCE(NULLIF(label,''),NULLIF(hostname,''),id) AS name,"
+            "COALESCE(NULLIF(agent_platform,''),'unknown') AS platform,"
+            "COALESCE(NULLIF(agent_version,''),'unknown') AS version,"
+            "agent_lifecycle_state AS lifecycle,agent_heartbeat_at AS heartbeat "
+            "FROM clients ORDER BY LOWER(COALESCE(NULLIF(label,''),NULLIF(hostname,''),id)),id LIMIT 200"
+        ).fetchall()
+        hosts = []
+        drift_count = 0
+        unknown_count = 0
+        for row in rows:
+            version = str(row["version"])
+            unknown = version == "unknown"
+            drift = bool(server_version and not unknown and version != server_version)
+            unknown_count += 1 if unknown else 0
+            drift_count += 1 if drift else 0
+            hosts.append({
+                "id": row["id"], "name": row["name"], "platform": row["platform"],
+                "version": version, "lifecycle": row["lifecycle"],
+                "heartbeat": row["heartbeat"], "drift": drift, "unknown": unknown,
+            })
+        return {
+            "server_version": server_version or "unknown", "hosts": hosts,
+            "drift_count": drift_count, "unknown_count": unknown_count, "limit": 200,
+        }
+
+    def attention_summary(self) -> dict[str, Any]:
+        """Return derived attention items without becoming operational authority."""
+        overview = self.overview_summary()
+        hosts = overview.get("managed_hosts") or {}
+        jobs = overview.get("management_jobs") or {}
+        version = self.version_drift()
+        items: list[dict[str, Any]] = []
+        for key, label, severity in (
+            ("disconnected", "Disconnected Managed Hosts", "warning"),
+            ("stale", "Stale Managed Hosts", "warning"),
+            ("version_unknown", "Unknown Agent Versions", "info"),
+        ):
+            count = int(hosts.get(key) or 0)
+            if count:
+                items.append({"kind": key, "label": label, "count": count, "severity": severity})
+        if version["drift_count"]:
+            items.append({"kind": "version-drift", "label": "Agent Version Drift", "count": int(version["drift_count"]), "severity": "warning"})
+        if int(jobs.get("failed_jobs") or 0):
+            items.append({"kind": "failed-jobs", "label": "Failed Management Jobs", "count": int(jobs["failed_jobs"]), "severity": "warning"})
+        if bool(jobs.get("saturated")):
+            items.append({"kind": "job-saturation", "label": "Management Job Queue Saturated", "count": int(jobs.get("active_jobs") or 0), "severity": "critical"})
+        return {"items": items, "count": len(items), "authoritative": False}
 
     def health(self) -> dict[str, Any]:
         """Return bounded Core health without creating configuration state."""

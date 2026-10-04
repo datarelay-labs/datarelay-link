@@ -1,0 +1,26 @@
+[Unit]
+Description=Data Relay Link Optional Web Management
+After=network.target
+ConditionPathExists=/var/lib/drlink/drlink.db
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/lib/drlink/drlink-web.py --listen 127.0.0.1 --port 8741 --static-root /usr/local/share/drlink-web
+Restart=on-failure
+RestartSec=2
+User=root
+Group=root
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/drlink
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictSUIDSGID=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,236 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import http.client
+import json
+import os
+import sys
+import tempfile
+import threading
+import time
+import unittest
+from datetime import datetime, timezone
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "lib"))
+
+from drlink_control_db import ControlPlaneError
+from drlink_control_plane import ControlPlane
+from drlink_web_auth import WebAuthService, totp_code
+from drlink_web_service import create_server, validate_web_bind
+
+
+class V30WebServiceTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="drlink-v30-web-service-")
+        os.environ["DRLINK_WEB_QUIET"] = "1"
+        Path(self.tmp, "etc/drlink").mkdir(parents=True, exist_ok=True)
+        Path(self.tmp, "etc/drlink/config.json").write_text(
+            '{"role":"server"}\n', encoding="utf-8"
+        )
+        Path(self.tmp, "etc/drlink/version").write_text(
+            "PROJECT_VERSION=3.0.0\n", encoding="utf-8"
+        )
+        plane = ControlPlane(self.tmp)
+        try:
+            now = "2026-10-04T01:00:00Z"
+            plane.conn.execute(
+                "INSERT INTO clients("
+                "id,label,hostname,status,trust_status,connected,agent_heartbeat_at,"
+                "agent_lifecycle_state,agent_platform,agent_version,created_at,updated_at"
+                ") VALUES ('host-a','alpha','alpha.example','active','trusted',1,?,"
+                "'connected','linux','2.4.0',?,?)",
+                (now, now, now),
+            )
+            plane.set_client_description("host-a", "web test host")
+        finally:
+            plane.close()
+
+        self.auth = WebAuthService(self.tmp)
+        material = self.auth.prepare_mfa_material("admin")
+        now_dt = datetime.now(timezone.utc)
+        code, _ = totp_code(material["totp_secret"], at=now_dt)
+        self.auth.create_first_admin(
+            username="admin",
+            password="correct horse battery staple",
+            totp_secret=material["totp_secret"],
+            recovery_codes=material["recovery_codes"],
+            totp_value=code,
+            now=now_dt,
+        )
+        self.recovery_code = material["recovery_codes"][0]
+        self.auth.close()
+
+        self.server = create_server(
+            root=self.tmp,
+            listen="127.0.0.1",
+            port=0,
+            static_root=str(ROOT / "web/dist"),
+        )
+        self.port = int(self.server.server_address[1])
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.cookie = ""
+        self.csrf = ""
+
+    def tearDown(self):
+        self.server.shutdown()
+        self.thread.join(timeout=2)
+        self.server.server_close()
+        os.environ.pop("DRLINK_WEB_QUIET", None)
+
+    def request(self, method, path, body=None, headers=None):
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        data = None
+        actual_headers = {"Accept": "application/json"}
+        if headers:
+            actual_headers.update(headers)
+        if self.cookie:
+            actual_headers["Cookie"] = self.cookie
+        if body is not None:
+            data = json.dumps(body).encode("utf-8")
+            actual_headers["Content-Type"] = "application/json"
+            actual_headers["Content-Length"] = str(len(data))
+        conn.request(method, path, body=data, headers=actual_headers)
+        response = conn.getresponse()
+        raw = response.read()
+        result_headers = {key.lower(): value for key, value in response.getheaders()}
+        conn.close()
+        try:
+            payload = json.loads(raw.decode("utf-8"))
+        except Exception:
+            payload = raw.decode("utf-8", errors="replace")
+        return response.status, result_headers, payload
+
+    def login(self):
+        status, headers, payload = self.request(
+            "POST",
+            "/api/v1/auth/login",
+            {
+                "username": "admin",
+                "password": "correct horse battery staple",
+                "recovery_code": self.recovery_code,
+            },
+        )
+        self.assertEqual(status, 200, payload)
+        cookie = headers.get("set-cookie") or ""
+        self.assertIn("HttpOnly", cookie)
+        self.assertIn("SameSite=Strict", cookie)
+        self.assertNotIn("Secure", cookie)
+        self.cookie = cookie.split(";", 1)[0]
+        self.csrf = payload["csrf_token"]
+        self.assertNotIn("session_token", json.dumps(payload))
+        return payload
+
+    def test_loopback_health_static_and_security_headers(self):
+        status, headers, payload = self.request("GET", "/healthz")
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["service"], "drlink-web")
+        self.assertEqual(payload["status"], "ok")
+        self.assertIn("content-security-policy", headers)
+        self.assertEqual(headers["x-frame-options"], "DENY")
+
+        status, headers, body = self.request("GET", "/")
+        self.assertEqual(status, 200)
+        self.assertIn("Data Relay Link", body)
+        self.assertIn("content-security-policy", headers)
+
+        status, _, body = self.request("GET", "/app.js")
+        self.assertEqual(status, 200)
+        self.assertNotIn("localStorage", body)
+        self.assertNotIn("sessionStorage", body)
+        index = (ROOT / "web/dist/index.html").read_text(encoding="utf-8")
+        self.assertNotIn('src="http://', index)
+        self.assertNotIn('src="https://', index)
+        self.assertNotIn('href="http://', index)
+        self.assertNotIn('href="https://', index)
+
+    def test_remote_bind_requires_tls(self):
+        with self.assertRaises(ControlPlaneError):
+            validate_web_bind("0.0.0.0")
+        with self.assertRaises(ControlPlaneError):
+            validate_web_bind("192.0.2.10")
+        validate_web_bind("127.0.0.1")
+        validate_web_bind("::1")
+
+    def test_auth_required_on_loopback_and_read_views(self):
+        status, _, _ = self.request("GET", "/api/v1/overview")
+        self.assertEqual(status, 401)
+        self.login()
+
+        for path in (
+            "/api/v1/session",
+            "/api/v1/overview",
+            "/api/v1/inventory?resource_type=managed-host&limit=10",
+            "/api/v1/search?q=alpha&limit=10",
+            "/api/v1/policies?limit=10",
+            "/api/v1/versions",
+            "/api/v1/audit?limit=10",
+            "/api/v1/revisions?limit=10",
+            "/api/v1/health",
+            "/api/v1/saved-views",
+            "/api/v1/sessions",
+        ):
+            status, _, payload = self.request("GET", path)
+            self.assertEqual(status, 200, (path, payload))
+
+        status, _, versions = self.request("GET", "/api/v1/versions")
+        self.assertEqual(status, 200)
+        self.assertEqual(versions["server_version"], "3.0.0")
+        self.assertEqual(versions["drift_count"], 1)
+
+    def test_csrf_protects_web_preferences_and_logout(self):
+        self.login()
+        status, _, _ = self.request(
+            "POST", "/api/v1/saved-views", {"name": "Offline", "payload": {}}
+        )
+        self.assertEqual(status, 403)
+
+        status, _, saved = self.request(
+            "POST",
+            "/api/v1/saved-views",
+            {"name": "Offline", "payload": {"filter": "offline"}},
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, saved)
+        status, _, views = self.request("GET", "/api/v1/saved-views")
+        self.assertEqual(status, 200)
+        self.assertEqual(views["items"][0]["name"], "Offline")
+
+        status, headers, payload = self.request(
+            "POST",
+            "/api/v1/auth/logout",
+            {},
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(payload["status"], "logged_out")
+        self.assertIn("Max-Age=0", headers.get("set-cookie", ""))
+
+    def test_no_generic_management_mutation_endpoint(self):
+        self.login()
+        status, _, _ = self.request(
+            "POST",
+            "/api/v1/drlink_temporary_access_apply",
+            {"change_plan_id": "cp_x", "confirmation": "APPLY"},
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 400)
+
+    def test_web_health_does_not_call_core_health(self):
+        # Healthz is listener/process health and must remain distinct from Core health.
+        original = self.server.app.adapter.invoke
+        self.server.app.adapter.invoke = lambda **kwargs: (_ for _ in ()).throw(
+            RuntimeError("core unavailable")
+        )
+        try:
+            status, _, payload = self.request("GET", "/healthz")
+            self.assertEqual(status, 200)
+            self.assertEqual(payload["status"], "ok")
+        finally:
+            self.server.app.adapter.invoke = original
+
+
+if __name__ == "__main__":
+    unittest.main()

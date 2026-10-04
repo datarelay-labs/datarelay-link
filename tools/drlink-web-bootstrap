@@ -1,0 +1,61 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+import argparse
+import getpass
+import os
+import sys
+from pathlib import Path
+
+LIB = Path("/usr/local/lib/drlink")
+if LIB.is_dir():
+    sys.path.insert(0, str(LIB))
+else:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+
+from drlink_control_db import ControlPlaneError
+from drlink_web_auth import WebAuthService, totp_code
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Bootstrap the first local Data Relay Link Web Admin")
+    parser.add_argument("--username", default="admin")
+    parser.add_argument("--root")
+    args = parser.parse_args()
+    if os.geteuid() != 0 and not args.root:
+        print("ERROR: privileged local bootstrap requires root.", file=sys.stderr)
+        return 2
+    try:
+        with WebAuthService(args.root) as auth:
+            if auth.has_operator():
+                raise ControlPlaneError("A Web operator already exists; use local recovery/admin management.")
+            password = getpass.getpass("New Web Admin password: ")
+            confirm = getpass.getpass("Confirm password: ")
+            if password != confirm:
+                raise ControlPlaneError("Passwords do not match.")
+            material = auth.prepare_mfa_material(args.username)
+            print("\nTOTP setup URI (displayed once):")
+            print(material["otpauth_uri"])
+            print("\nTOTP secret (displayed once):")
+            print(material["totp_secret"])
+            print("\nRecovery codes (store offline; displayed once):")
+            for code in material["recovery_codes"]:
+                print(code)
+            supplied = input("\nEnter a current 6-digit TOTP code to finish bootstrap: ").strip()
+            result = auth.create_first_admin(
+                username=args.username,
+                password=password,
+                totp_secret=material["totp_secret"],
+                recovery_codes=material["recovery_codes"],
+                totp_value=supplied,
+            )
+            print("\nWEB_ADMIN_BOOTSTRAP=PASS")
+            print("USERNAME=%s" % result["username"])
+            print("ROLE=%s" % result["role"])
+            return 0
+    except (ControlPlaneError, OSError, ValueError) as exc:
+        print("ERROR: %s" % exc, file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

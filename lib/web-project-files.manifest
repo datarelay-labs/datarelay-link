@@ -1,0 +1,12 @@
+# Data Relay Link optional Web package manifest
+# source dest mode kind
+lib/drlink_web_auth.py usr/local/lib/drlink/drlink_web_auth.py 0644 python
+lib/drlink_web_service.py usr/local/lib/drlink/drlink_web_service.py 0644 python
+server/drlink-web.py usr/local/lib/drlink/drlink-web.py 0755 python
+server/drlink-web.service etc/systemd/system/drlink-web.service 0644 systemd
+tools/drlink-web-bootstrap usr/local/bin/drlink-web-bootstrap 0755 python
+tools/drlink-web-recovery usr/local/bin/drlink-web-recovery 0755 python
+tools/drlink-web-operator usr/local/bin/drlink-web-operator 0755 python
+web/dist/index.html usr/local/share/drlink-web/index.html 0644 static
+web/dist/app.js usr/local/share/drlink-web/app.js 0644 static
+web/dist/styles.css usr/local/share/drlink-web/styles.css 0644 static

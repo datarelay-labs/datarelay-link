@@ -1,0 +1,58 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+import argparse
+import getpass
+import os
+import sys
+from pathlib import Path
+
+LIB = Path("/usr/local/lib/drlink")
+if LIB.is_dir():
+    sys.path.insert(0, str(LIB))
+else:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+
+from drlink_control_db import ControlPlaneError
+from drlink_web_auth import WebAuthService
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Recover the protected local Data Relay Link Web Admin")
+    parser.add_argument("--username", default="admin")
+    parser.add_argument("--root")
+    args = parser.parse_args()
+    if os.geteuid() != 0 and not args.root:
+        print("ERROR: local Web Admin recovery requires root.", file=sys.stderr)
+        return 2
+    try:
+        with WebAuthService(args.root) as auth:
+            password = getpass.getpass("New Web Admin password: ")
+            confirm = getpass.getpass("Confirm password: ")
+            if password != confirm:
+                raise ControlPlaneError("Passwords do not match.")
+            material = auth.prepare_mfa_material(args.username)
+            print("\nNew TOTP setup URI (displayed once):")
+            print(material["otpauth_uri"])
+            print("\nNew TOTP secret (displayed once):")
+            print(material["totp_secret"])
+            print("\nNew recovery codes (displayed once):")
+            for code in material["recovery_codes"]:
+                print(code)
+            supplied = input("\nEnter a current 6-digit TOTP code to finish recovery: ").strip()
+            auth.recover_admin(
+                username=args.username,
+                new_password=password,
+                totp_secret=material["totp_secret"],
+                recovery_codes=material["recovery_codes"],
+                totp_value=supplied,
+            )
+            print("\nWEB_ADMIN_RECOVERY=PASS")
+            print("ALL_EXISTING_WEB_SESSIONS=REVOKED")
+            return 0
+    except (ControlPlaneError, OSError, ValueError) as exc:
+        print("ERROR: %s" % exc, file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

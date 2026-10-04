@@ -1019,6 +1019,67 @@ CREATE TABLE IF NOT EXISTS audit_ingest_checkpoints (
   last_segment TEXT NOT NULL DEFAULT '',
   updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS web_operators (
+  id TEXT PRIMARY KEY,
+  username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  role TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 0,
+  recovery_admin INTEGER NOT NULL DEFAULT 0,
+  password_salt TEXT NOT NULL,
+  password_hash TEXT NOT NULL,
+  password_kdf TEXT NOT NULL,
+  mfa_secret_ciphertext TEXT NOT NULL,
+  mfa_enrolled INTEGER NOT NULL DEFAULT 0,
+  mfa_last_counter INTEGER,
+  row_version INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  last_login_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_web_operators_role
+  ON web_operators(role, enabled, username);
+
+CREATE TABLE IF NOT EXISTS web_recovery_codes (
+  operator_id TEXT NOT NULL,
+  code_hash TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  consumed_at TEXT,
+  PRIMARY KEY (operator_id, code_hash),
+  FOREIGN KEY (operator_id) REFERENCES web_operators(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS web_sessions (
+  id TEXT PRIMARY KEY,
+  operator_id TEXT NOT NULL,
+  token_hash TEXT NOT NULL UNIQUE,
+  csrf_hash TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  idle_expires_at TEXT NOT NULL,
+  revoked_at TEXT,
+  source_addr TEXT NOT NULL DEFAULT '',
+  user_agent_hash TEXT NOT NULL DEFAULT '',
+  FOREIGN KEY (operator_id) REFERENCES web_operators(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_web_sessions_operator
+  ON web_sessions(operator_id, revoked_at, expires_at);
+CREATE INDEX IF NOT EXISTS idx_web_sessions_expiry
+  ON web_sessions(revoked_at, expires_at, idle_expires_at);
+
+CREATE TABLE IF NOT EXISTS web_saved_views (
+  id TEXT PRIMARY KEY,
+  operator_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  payload_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(operator_id, name),
+  FOREIGN KEY (operator_id) REFERENCES web_operators(id) ON DELETE CASCADE
+);
 """
 
 

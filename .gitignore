@@ -43,3 +43,6 @@ frps.toml.pre-drlink-*
 frps.toml.pre-frp-auto-deploy-*
 registry.json.pre-frp-auto-deploy-*
 !server/config.example.json
+
+# Web frontend build dependencies
+web/node_modules/
