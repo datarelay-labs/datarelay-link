@@ -1,11 +1,11 @@
 contract_version: 1
-base_sha: dd18bdbbdabb8f15ffccd6231753849e8d7e53f0
-from_policy_epoch: 6
-to_policy_epoch: 7
+base_sha: 275ff8ca561b644b6a94c9873ba9d24609b6cc93
+from_policy_epoch: 9
+to_policy_epoch: 10
 requires_exact_head_validate: true
 automation_eligible: false
-rationale: Managed adoption upgrade da91b155bf36c2a8f1a7e3319135b392d500ce21 -> 59914e775f8515819e11ffbcaf7c46482ae9b7c5
+rationale: Managed adoption upgrade 49e615a48ff80fb9337b619f9a5c4e8801cd05b4 -> 713d6f9123ddfddf1ed7bb6829603dd3f740bbec
   changes canonical governance root surfaces.
 changed_surfaces:
 - path: tools/context_epoch.py
-  head_blob_sha: ab834099634cbfacc131e9a332473fc5fc3e58d2
+  head_blob_sha: b0d78d29fef99f14706389067be0f9c7bacc2895
