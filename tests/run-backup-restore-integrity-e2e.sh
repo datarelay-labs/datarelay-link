@@ -1,141 +1,29 @@
 #!/usr/bin/env bash
-# Targeted Real E2E: backup/restore fail-closed on missing authoritative state.
+# Current v2.4 targeted Real E2E: canonical Server backup/restore plus corrupt-current contract.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new)
-SERVER="${FRP_E2E_SERVER_ALIAS:-frp-e2e-server}"
 OUT_DIR="${FRP_BACKUP_E2E_OUT:-$ROOT/e2e-reports/backup-integrity-$(date -u +%Y%m%dT%H%M%SZ)}"
 mkdir -p "$OUT_DIR"
-exec > >(tee -a "$OUT_DIR/run.log") 2>&1
 
-pass(){ echo "PASS $1"; }
-fail(){ echo "FAIL $1" >&2; echo "TARGETED_REAL_E2E=FAIL" >"$OUT_DIR/result.env"; exit 1; }
-blocker(){ echo "ENVIRONMENT_BLOCKER $1" >&2; echo "TARGETED_REAL_E2E=ENVIRONMENT_BLOCKER" >"$OUT_DIR/result.env"; exit 2; }
-sshx(){ local h="$1"; shift; ssh "${SSH_OPTS[@]}" "$h" "$@"; }
+echo "=== Current v2.4 backup/restore Real E2E ==="
+env \
+  FRP_E2E_PROFILE="${FRP_E2E_PROFILE:-baseline-linux}" \
+  FRP_E2E_SCENARIO=backup-repeat \
+  FRP_E2E_BACKUP_REPEAT=1 \
+  FRP_E2E_SKIP_SERVER_INSTALL=1 \
+  FRP_E2E_SKIP_SERVER_PURGE=1 \
+  FRP_E2E_CLIENT_ALIAS="${FRP_E2E_CLIENT_ALIAS:-frp-e2e-client}" \
+  FRP_E2E_OUT_DIR="$OUT_DIR/real" \
+  FRP_E2E_RUN_ID="backup-current-$(date -u +%Y%m%dT%H%M%SZ)" \
+  bash "$ROOT/tests/run-real-e2e.sh"
 
-echo "=== Backup/Restore integrity targeted Real E2E ==="
-sshx "$SERVER" 'echo ok' >/dev/null || blocker "server unreachable"
+echo "=== Corrupt-current restore deterministic contract ==="
+python3 "$ROOT/tests/test-restore-corrupt-current.py"
+python3 "$ROOT/tests/test-restore-preflight.py"
 
-echo "=== sync backup/restore + ACL helpers onto server ==="
-TMP=/tmp/frp-backup-sync-$$
-sshx "$SERVER" "sudo rm -rf $TMP && sudo mkdir -p $TMP && sudo chmod 777 $TMP"
-for f in \
-  lib/frp_access_control.py \
-  lib/frp_service_profiles.py \
-  lib/frp_client_registry.py \
-  tools/frp-backup \
-  tools/frp-restore \
-  tools/frpctl \
-  tools/drlink
-do
-  scp -o BatchMode=yes -o ConnectTimeout=15 "$ROOT/$f" "$SERVER:$TMP/$(basename "$f")"
-done
-sshx "$SERVER" "sudo install -m 0644 $TMP/frp_access_control.py /usr/local/lib/drlink/frp_access_control.py
-sudo install -m 0644 $TMP/frp_service_profiles.py /usr/local/lib/drlink/frp_service_profiles.py
-sudo install -m 0644 $TMP/frp_client_registry.py /usr/local/lib/drlink/frp_client_registry.py
-sudo install -m 0755 $TMP/frp-backup /usr/local/sbin/frp-backup
-sudo install -m 0755 $TMP/frp-restore /usr/local/sbin/frp-restore
-sudo install -m 0755 $TMP/frpctl /usr/local/lib/drlink/frpctl
-sudo install -m 0755 $TMP/drlink /usr/local/bin/drlink
-sudo rm -f /usr/local/sbin/frpctl /usr/local/bin/frpctl
-sudo rm -rf $TMP"
-
-sshx "$SERVER" 'sudo test -f /var/lib/drlink/access-control.json' || blocker "ACL file missing before test"
-sshx "$SERVER" 'sudo test -f /var/lib/drlink/registry.json' || blocker "registry missing before test"
-sshx "$SERVER" 'sudo test -f /var/lib/drlink/service-profiles.json' || blocker "profiles missing before test"
-
-BAK_OK="/var/lib/drlink/backups/e2e-integrity-ok.tar.gz"
-BAK_DIR="/var/lib/drlink/backups"
-sshx "$SERVER" "sudo mkdir -p $BAK_DIR && sudo rm -f $BAK_OK"
-
-echo "=== normal backup PASS ==="
-sshx "$SERVER" "sudo drlink create backup $BAK_OK" | tee "$OUT_DIR/backup-ok.txt"
-sshx "$SERVER" "sudo test -s $BAK_OK" || fail "normal backup archive missing"
-pass NORMAL_BACKUP
-
-echo "=== backup fails when ACL missing ==="
-sshx "$SERVER" "sudo mv /var/lib/drlink/access-control.json /var/lib/drlink/access-control.json.bak-integrity"
-set +e
-sshx "$SERVER" "sudo drlink create backup $BAK_DIR/e2e-integrity-missing-acl.tar.gz" >"$OUT_DIR/backup-missing-acl.txt" 2>&1
-rc=$?
-set -e
-sshx "$SERVER" "sudo mv /var/lib/drlink/access-control.json.bak-integrity /var/lib/drlink/access-control.json"
-[[ "$rc" -ne 0 ]] || fail "backup should FAIL when ACL missing"
-grep -qiE 'access-control|ACL|authoritative|missing|required' "$OUT_DIR/backup-missing-acl.txt" \
-  || echo "WARN: backup failed without clear ACL diagnostic (rc=$rc)"
-sshx "$SERVER" 'sudo test -s /var/lib/drlink/access-control.json' || fail "ACL missing after restore of original"
-pass BACKUP_MISSING_ACL_FAIL
-
-echo "=== backup fails when registry missing ==="
-sshx "$SERVER" "sudo mv /var/lib/drlink/registry.json /var/lib/drlink/registry.json.bak-integrity"
-set +e
-sshx "$SERVER" "sudo drlink create backup $BAK_DIR/e2e-integrity-missing-reg.tar.gz" >"$OUT_DIR/backup-missing-reg.txt" 2>&1
-rc=$?
-set -e
-sshx "$SERVER" "sudo mv /var/lib/drlink/registry.json.bak-integrity /var/lib/drlink/registry.json"
-[[ "$rc" -ne 0 ]] || fail "backup should FAIL when registry missing"
-sshx "$SERVER" 'sudo python3 -c "import json; r=json.load(open(\"/var/lib/drlink/registry.json\")); assert r.get(\"clients\"), \"empty registry\""' \
-  || fail "registry empty/corrupt after recovery"
-pass BACKUP_MISSING_REGISTRY_FAIL
-
-echo "=== restore rejects archive missing ACL (crafted) ==="
-CRAFT="/tmp/frp-e2e-missing-acl-$$.tar.gz"
-sshx "$SERVER" "sudo python3 - <<PY
-import json, shutil, tarfile, tempfile
-from pathlib import Path
-src = Path('$BAK_OK')
-out = Path('$CRAFT')
-work = Path(tempfile.mkdtemp(prefix='frp-e2e-craft-'))
-try:
-    with tarfile.open(src, 'r:gz') as tin:
-        tin.extractall(work)
-    acl = work / 'payload' / 'var' / 'lib' / 'drlink' / 'access-control.json'
-    if acl.exists():
-        acl.unlink()
-    man_path = work / 'manifest.json'
-    man = json.loads(man_path.read_text())
-    man['files'] = [
-        e for e in (man.get('files') or [])
-        if e.get('path') != 'var/lib/drlink/access-control.json'
-    ]
-    man_path.write_text(json.dumps(man, indent=2, sort_keys=True) + '\n')
-    sums = work / 'checksums.sha256'
-    sums.write_text(''.join('%s  payload/%s\n' % (e['sha256'], e['path']) for e in man['files']))
-    with tarfile.open(out, 'w:gz') as tout:
-        tout.add(man_path, arcname='manifest.json')
-        tout.add(sums, arcname='checksums.sha256')
-        tout.add(work / 'payload', arcname='payload')
-    print('crafted', out, 'size', out.stat().st_size)
-finally:
-    shutil.rmtree(work, ignore_errors=True)
-PY"
-set +e
-sshx "$SERVER" "sudo python3 /usr/local/sbin/frp-restore $CRAFT" >"$OUT_DIR/restore-missing-acl.txt" 2>&1
-rc=$?
-set -e
-sshx "$SERVER" "sudo rm -f $CRAFT"
-[[ "$rc" -ne 0 ]] || fail "restore should FAIL when ACL missing from archive"
-pass RESTORE_MISSING_ACL_FAIL
-
-echo "=== normal restore + access plugin readiness ==="
-CODE_BEFORE="$(sshx "$SERVER" 'curl -s -o /dev/null -w %{http_code} http://127.0.0.1:6101/healthz || true')"
-sshx "$SERVER" "sudo python3 /usr/local/sbin/frp-restore $BAK_OK" | tee "$OUT_DIR/restore-ok.txt"
-CODE=""
-for i in $(seq 1 30); do
-  CODE="$(sshx "$SERVER" 'curl -s -o /dev/null -w %{http_code} http://127.0.0.1:6101/healthz || true')"
-  [[ "$CODE" == "200" ]] && break
-  sleep 2
-done
-[[ "$CODE" == "200" ]] || fail "access plugin healthz not 200 after restore (got $CODE, before=$CODE_BEFORE)"
-sshx "$SERVER" 'systemctl is-active drlink-access' | grep -qx active || fail "access plugin inactive after restore"
-pass RESTORE_ACCESS_PLUGIN_READY
-
-cat >"$OUT_DIR/result.env" <<EOF
+cat >"$OUT_DIR/result.env" <<'EOF'
 TARGETED_REAL_E2E=PASS
-BACKUP_NORMAL=PASS
-BACKUP_MISSING_ACL=PASS
-BACKUP_MISSING_REGISTRY=PASS
-RESTORE_MISSING_ACL=PASS
-RESTORE_ACCESS_PLUGIN=PASS
+BACKUP_RESTORE_REAL_FLEET=PASS
+CORRUPT_CURRENT_RESTORE_CONTRACT=PASS
 EOF
-echo "TARGETED_REAL_E2E=PASS report=$OUT_DIR"
+echo "TARGETED_REAL_E2E=PASS"

@@ -80,11 +80,23 @@ class SliceAGrammarTests(unittest.TestCase):
 
     def test_diagnostics_scopes_stay_on_doctor_action(self):
         for scope in ("control-plane", "runtime", "mcp"):
-            for role in ("server", "client"):
-                result = grammar.match(["system", "diagnostics", scope], role)
-                self.assertEqual(result.get("status"), "ok", (role, scope, result))
-                self.assertEqual(result.get("action"), "doctor")
-                self.assertEqual(list(result.get("passthrough") or []), [scope])
+            result = grammar.match(["system", "diagnostics", scope], "server")
+            self.assertEqual(result.get("status"), "ok", ("server", scope, result))
+            self.assertEqual(result.get("action"), "doctor")
+            self.assertEqual(list(result.get("passthrough") or []), [scope])
+
+        result = grammar.match(["system", "diagnostics", "runtime"], "client")
+        self.assertEqual(result.get("status"), "ok", ("client", "runtime", result))
+        self.assertEqual(result.get("action"), "doctor")
+        self.assertEqual(list(result.get("passthrough") or []), ["runtime"])
+
+        for scope in ("control-plane", "mcp"):
+            result = grammar.match(["system", "diagnostics", scope], "client")
+            self.assertEqual(result.get("status"), "role", ("client", scope, result))
+            self.assertEqual(result.get("need"), "server")
+            self.assertEqual(result.get("command"), f"system diagnostics {scope}")
+            self.assertIn("managed on the DRLink Server", result.get("message", ""))
+            self.assertIn("No changes were applied", result.get("message", ""))
 
 
 class SliceAConfigurationConfirmationTests(unittest.TestCase):

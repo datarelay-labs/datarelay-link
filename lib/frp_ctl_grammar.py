@@ -1156,6 +1156,7 @@ def _catalog_context_help(tokens, role, names=None, clients=None):
     """Catalog-driven '?' help for the canonical resource-first grammar."""
     if not tokens:
         return None
+    client, server = _role_parts(role)
     root = canonical_root(tokens[0])
     actions = CATALOG.canonical_actions(root)
     if not actions:
@@ -1178,6 +1179,14 @@ def _catalog_context_help(tokens, role, names=None, clients=None):
         if nxt:
             return _fmt_available([(tok, "") for tok in nxt])
         return None
+
+    if tuple(probe) == ("system", "diagnostics") and client and not server:
+        role_cmd = dict(cmd)
+        role_cmd["args"] = [dict(arg) for arg in cmd.get("args", [])]
+        if role_cmd["args"]:
+            role_cmd["args"][0]["complete"] = ["runtime"]
+        role_cmd["examples"] = ["system diagnostics", "system diagnostics runtime"]
+        return CATALOG.command_help(role_cmd)
 
     # Some valid parent commands are executable lifecycle operations and also
     # have longer child forms. Their own usage/risk/confirmation contract must
@@ -2096,6 +2105,22 @@ def match(tokens, role, names=None, clients=None):
         # wrong-role path fall through to generic root/domain help with RC=0;
         # it must preserve the same ownership guidance as executing the
         # command itself.
+        client, server = _role_parts(role)
+        if (
+            len(raw_focus) >= 3
+            and raw_focus[:2] == ["system", "diagnostics"]
+            and client
+            and not server
+            and raw_focus[2] in ("control-plane", "mcp")
+        ):
+            return {
+                "status": "role",
+                "need": "server",
+                "command": " ".join(raw_focus[:3]),
+                "message": _ownership_error_message(
+                    ("system", "diagnostics", raw_focus[2]), "server"
+                ),
+            }
         exact_cmd = CATALOG.find(raw_focus, include_aliases=True) if raw_focus else None
         if exact_cmd is not None and not CATALOG.role_allows(exact_cmd["roles"], role):
             path = tuple(exact_cmd.get("path") or ())
@@ -2486,16 +2511,20 @@ def _match_system(tokens, role, names=None):
             return {"status": "role", "need": "server", "command": "system status"}
         return {"status": "ok", "action": "show_server_status", "passthrough": []}
     if op == "diagnostics":
-        if len(tokens) > 2 and tokens[2] not in ("control-plane", "runtime", "mcp"):
-            return incomplete(
-                "Unknown diagnostics scope.",
-                [
-                    "system diagnostics",
-                    "system diagnostics control-plane",
-                    "system diagnostics runtime",
-                    "system diagnostics mcp",
-                ],
-            )
+        client, server = _role_parts(role)
+        if len(tokens) > 2 and client and not server and tokens[2] in ("control-plane", "mcp"):
+            return {
+                "status": "role",
+                "need": "server",
+                "command": "system diagnostics %s" % tokens[2],
+                "message": _ownership_error_message(("system", "diagnostics", tokens[2]), "server"),
+            }
+        allowed_scopes = ("control-plane", "runtime", "mcp") if server else ("runtime",)
+        if len(tokens) > 2 and tokens[2] not in allowed_scopes:
+            examples = ["system diagnostics"] + [
+                "system diagnostics %s" % scope for scope in allowed_scopes
+            ]
+            return incomplete("Unknown diagnostics scope.", examples)
         return {"status": "ok", "action": "doctor", "passthrough": list(tokens[2:])}
     if op == "support-bundle":
         return {"status": "ok", "action": "support_bundle", "passthrough": list(tokens[2:])}

@@ -278,7 +278,7 @@ def main() -> int:
         "artifact_hash_required: true",
         "provenance_required: true",
         "sbom_required: true",
-        "qualification_command: bash scripts/check-release-governance.sh",
+        "qualification_command: bash -lc 'tests/run-all.sh && scripts/check-release-governance.sh'",
         "operational_e2e_command: bash tests/run-release-qualification-pass.sh",
         "bash scripts/verify-sha256sums.sh",
         "bash scripts/verify-sbom.sh",

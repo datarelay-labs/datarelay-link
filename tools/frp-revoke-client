@@ -186,7 +186,7 @@ try:
 finally:
     unlock_registry(lock_fd)
 print('Revoked.')
-print('Create a new Enrollment Code with sudo drlink enrollment create, then re-enroll the client.')
+print('Create a new Enrollment Code with sudo drlink set enrollment manual, then re-enroll the Agent Host.')
 try:
     here = Path(__file__).resolve()
     for path in (

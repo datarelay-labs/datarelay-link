@@ -221,6 +221,13 @@ class CliFeatureScenarioRemediation(unittest.TestCase):
         self.assertEqual(agent.returncode, 1, agent.stdout + agent.stderr)
         self.assertIn("DRLink Server", agent.stderr)
 
+        for scope in ("mcp", "control-plane"):
+            scoped = run_cli(
+                client, ["system", "diagnostics", scope, "?"], client=True
+            )
+            self.assertEqual(scoped.returncode, 1, scoped.stdout + scoped.stderr)
+            self.assertIn("DRLink Server", scoped.stderr)
+
     def test_system_help_keeps_check_engine_server_only(self):
         server_help = catalog.domain_help("system", "server") or ""
         agent_help = catalog.domain_help("system", "client") or ""
@@ -367,6 +374,60 @@ class CliFeatureScenarioRemediation(unittest.TestCase):
         self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertIn("ERROR:", proc.stderr)
 
+
+    def test_agent_root_discovers_configuration_test(self):
+        root_help = catalog.root_help("client")
+        self.assertIn("\ntest\n", root_help)
+        self.assertIn("Validate ConfigurationBundle without mutation", root_help)
+        test_help = grammar.context_help(["test"], "client") or ""
+        self.assertIn("configuration", test_help)
+
+    def test_configuration_export_help_is_role_neutral(self):
+        cmd = next(
+            row
+            for row in catalog.COMMANDS
+            if tuple(row["path"]) == ("system", "export", "configuration")
+        )
+        text = catalog.command_help(cmd)
+        self.assertNotIn("server-owned configuration", text)
+        self.assertIn("this host role", text)
+
+    def test_agent_diagnostics_hides_and_rejects_server_only_scopes(self):
+        help_text = grammar.context_help(["system", "diagnostics"], "client") or ""
+        self.assertIn("runtime", help_text)
+        self.assertNotIn("mcp", help_text.lower())
+        self.assertNotIn("control-plane", help_text.lower())
+
+        runtime = grammar.match(["system", "diagnostics", "runtime"], "client")
+        self.assertEqual(runtime.get("status"), "ok", runtime)
+        for scope in ("mcp", "control-plane"):
+            with self.subTest(scope=scope):
+                result = grammar.match(["system", "diagnostics", scope], "client")
+                self.assertEqual(result.get("status"), "role", result)
+                self.assertIn("DRLink Server", str(result.get("message") or ""))
+
+    def test_generated_recovery_guidance_uses_current_public_grammar(self):
+        surfaces = {
+            "doctor": (LIB / "frp_doctor.py").read_text(encoding="utf-8"),
+            "agent": (ROOT / "tools/frp-client").read_text(encoding="utf-8"),
+            "retire": (ROOT / "tools/frp-revoke-client").read_text(encoding="utf-8"),
+            "enrollment-purge": (ROOT / "tools/frp-enrollment-purge").read_text(encoding="utf-8"),
+            "enrollment-revoke": (ROOT / "tools/frp-enrollment-revoke").read_text(encoding="utf-8"),
+        }
+        combined = "\n".join(surfaces.values())
+        for retired in (
+            "drlink egress tcp",
+            "drlink show internet-profiles",
+            "drlink enrollment create",
+            "drlink enrollment revoke",
+            "drlink enrollment list",
+        ):
+            self.assertNotIn(retired, combined, retired)
+        self.assertIn("sudo drlink show internet-access", surfaces["doctor"])
+        self.assertIn("sudo drlink set enrollment manual", surfaces["agent"])
+        self.assertIn("sudo drlink set enrollment manual", surfaces["retire"])
+        self.assertIn("drlink unset enrollment", surfaces["enrollment-purge"])
+        self.assertIn("drlink show enrollments", surfaces["enrollment-revoke"])
 
 if __name__ == "__main__":
     unittest.main()

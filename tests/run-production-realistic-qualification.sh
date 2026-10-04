@@ -309,13 +309,11 @@ else
 fi
 
 if run_feature backup "$ROOT/tests/run-backup-restore-integrity-e2e.sh"; then
-  pq_gate BACKUP_CONTENT PASS
-  pq_gate RESTORE_REAL_FLEET PASS
-  pq_gate CORRUPT_CURRENT_RESTORE PASS
+  pq_gate BACKUP_RESTORE_REAL_FLEET PASS
+  pq_gate CORRUPT_CURRENT_RESTORE_CONTRACT PASS
 else
-  pq_gate BACKUP_CONTENT FAIL
-  pq_gate RESTORE_REAL_FLEET FAIL
-  pq_gate CORRUPT_CURRENT_RESTORE FAIL
+  pq_gate BACKUP_RESTORE_REAL_FLEET FAIL
+  pq_gate CORRUPT_CURRENT_RESTORE_CONTRACT FAIL
 fi
 
 if run_feature support "$ROOT/tests/run-support-bundle-e2e.sh"; then
@@ -326,18 +324,11 @@ else
   pq_gate SUPPORT_BUNDLE_REAL_E2E FAIL
 fi
 
-# Profiles / health remain product features; gate outcomes explicitly.
-# Do not swallow RC with || true — enabled features must affect final PASS.
-if run_feature profiles "$ROOT/tests/run-service-profiles-e2e.sh"; then
-  pq_gate SERVICE_PROFILES_REAL_E2E PASS
-else
-  pq_gate SERVICE_PROFILES_REAL_E2E FAIL
-fi
-if run_feature health "$ROOT/tests/run-target-health-e2e.sh"; then
-  pq_gate TARGET_HEALTH_REAL_E2E PASS
-else
-  pq_gate TARGET_HEALTH_REAL_E2E FAIL
-fi
+# Service Profiles and configurable per-service health checks are retired public
+# models in v2.4. Their old targeted harnesses must not create release gates.
+# Current Service Object + Agent Remote Service lifecycle evidence is owned by
+# the real E2E matrix above (SERVICE_LIFECYCLE_REAL_E2E) and Fixed TCP / load
+# qualification in run-prod-qual-extended.sh.
 if run_feature shorturl "$ROOT/tests/run-short-url-e2e.sh"; then
   pq_gate SHORTURL_REAL_E2E PASS
   pq_gate SHORTURL_SERVER_UPGRADE PASS
