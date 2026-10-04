@@ -552,6 +552,7 @@ class ManagementChangeService:
         change_plan_id: str,
         confirmation: str,
         now: Optional[datetime] = None,
+        expected_operation: Optional[str] = None,
     ) -> dict[str, Any]:
         """Apply/clear a previously previewed Emergency New-Access Cutoff."""
         if str(confirmation or "").strip().upper() != CONFIRM_CUTOFF:
@@ -594,6 +595,11 @@ class ManagementChangeService:
         kind = str(payload.get("scope_kind") or "")
         ref = str(payload.get("scope_ref") or "")
         action = str(payload.get("operation") or "")
+        expected_action = str(expected_operation or "").strip().lower()
+        if expected_action and action != expected_action:
+            raise ControlPlaneError(
+                "Emergency Cutoff Change Plan operation does not match the requested action."
+            )
         reason = str(payload.get("reason") or "")
         timestamp = _utc_text(now or _utc_now())
 

@@ -58,6 +58,9 @@ project usr/local/lib/drlink/drlink_v30_readmodels.py 0644 lib/drlink_v30_readmo
 project usr/local/lib/drlink/drlink_management_catalog.py 0644 lib/drlink_management_catalog.py python
 project usr/local/lib/drlink/drlink_management_service.py 0644 lib/drlink_management_service.py python
 project usr/local/lib/drlink/drlink_management_change.py 0644 lib/drlink_management_change.py python
+project usr/local/lib/drlink/drlink_management_core.py 0644 lib/drlink_management_core.py python
+project usr/local/lib/drlink/drlink_management_mcp_adapter.py 0644 lib/drlink_management_mcp_adapter.py python
+project usr/local/lib/drlink/drlink_management_web_adapter.py 0644 lib/drlink_management_web_adapter.py python
 project usr/local/lib/drlink/drlink_mgmt_sync.py 0644 lib/drlink_mgmt_sync.py python
 project usr/local/lib/drlink/drlink_configuration_bundle.py 0644 lib/drlink_configuration_bundle.py python
 project usr/local/lib/drlink/drlink_runtime_policy.py 0644 lib/drlink_runtime_policy.py python

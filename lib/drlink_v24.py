@@ -3527,10 +3527,16 @@ def set_permission_object(
         raise ControlPlaneError("Interactive Permission Object wizard requires a TTY session")
     if permissions is None:
         raise ControlPlaneError(cli_error("Permission Object is incomplete.", expected="  permissions"))
+    # 3.0 management permissions are a separate trust domain from target-OS
+    # permissions. Keep PERMISSIONS/PERMISSION_TO_CAPS unchanged so granting a
+    # management permission can never imply a host command/file capability.
+    from drlink_management_catalog import MANAGEMENT_PERMISSION_NAMES
+
+    allowed_permissions = frozenset(PERMISSIONS) | MANAGEMENT_PERMISSION_NAMES
     cleaned = []
     for p in permissions:
         perm = str(p).strip().lower()
-        if perm not in PERMISSIONS:
+        if perm not in allowed_permissions:
             raise ControlPlaneError("Unknown permission: %s" % p)
         cleaned.append(perm)
 

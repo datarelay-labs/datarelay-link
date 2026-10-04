@@ -27,7 +27,8 @@ def overview_summary(conn, *, now: datetime | None = None) -> dict[str, Any]:
 
     host = conn.execute(
         "SELECT COUNT(*) AS total,"
-        "SUM(CASE WHEN agent_lifecycle_state='connected' AND connected=1 "
+        "SUM(CASE WHEN agent_lifecycle_state='legacy' THEN 1 "
+        "WHEN agent_lifecycle_state='connected' AND connected=1 "
         "AND agent_heartbeat_at IS NOT NULL AND agent_heartbeat_at>=? THEN 1 ELSE 0 END) "
         "AS connected,"
         "SUM(CASE WHEN agent_lifecycle_state='connected' AND connected=1 "

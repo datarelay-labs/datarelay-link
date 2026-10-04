@@ -926,10 +926,6 @@ def ensure_agent_lifecycle_schema(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE clients ADD COLUMN agent_lifecycle_state TEXT NOT NULL DEFAULT 'legacy'"
         )
-    if "agent_platform" not in cols:
-        conn.execute("ALTER TABLE clients ADD COLUMN agent_platform TEXT")
-    if "agent_version" not in cols:
-        conn.execute("ALTER TABLE clients ADD COLUMN agent_version TEXT")
 
 
 V30_SCHEMA_SQL = """
@@ -1028,6 +1024,11 @@ CREATE TABLE IF NOT EXISTS audit_ingest_checkpoints (
 
 def ensure_v30_schema(conn: sqlite3.Connection) -> None:
     """Install additive 3.0 management primitives on the authoritative DB."""
+    client_cols = {str(row[1]) for row in conn.execute("PRAGMA table_info(clients)")}
+    if client_cols and "agent_platform" not in client_cols:
+        conn.execute("ALTER TABLE clients ADD COLUMN agent_platform TEXT")
+    if client_cols and "agent_version" not in client_cols:
+        conn.execute("ALTER TABLE clients ADD COLUMN agent_version TEXT")
     policy_cols = {str(row[1]) for row in conn.execute("PRAGMA table_info(policy_rules)")}
     if policy_cols and "expires_at" not in policy_cols:
         conn.execute("ALTER TABLE policy_rules ADD COLUMN expires_at TEXT")
