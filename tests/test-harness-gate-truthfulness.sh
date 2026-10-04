@@ -85,9 +85,14 @@ for required in (
     "test remote-access",
     "system export configuration",
     "system apply configuration",
+    "show managed-host '$PREFIX'",
+    "RESTORE_FAILED: pre-run ConfigurationBundle remains",
+    "if ! restore; then",
     "ACCESS_REAL_E2E=PASS",
 ):
     assert required in access, required
+assert 'show managed-hosts" | awk' not in access
+assert "system apply configuration '$PRE'\" >/dev/null 2>&1 || true" not in access
 for retired in (
     "SERVICE_PROFILES_REAL_E2E",
     "TARGET_HEALTH_REAL_E2E",

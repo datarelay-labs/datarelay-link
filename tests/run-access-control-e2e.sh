@@ -17,6 +17,7 @@ pass(){ echo "PASS $1"; }
 fail(){ echo "FAIL $1" >&2; echo "TARGETED_REAL_E2E=FAIL" >"$OUT_DIR/result.env"; restore || true; exit 1; }
 blocker(){ echo "ENVIRONMENT_BLOCKER $1" >&2; echo "TARGETED_REAL_E2E=ENVIRONMENT_BLOCKER" >"$OUT_DIR/result.env"; restore || true; exit 2; }
 sshx(){ local h="$1"; shift; ssh "${SSH_OPTS[@]}" "$h" "$@"; }
+sshx_confirm_yes(){ local h="$1"; shift; printf 'y\n' | ssh -tt "${SSH_OPTS[@]}" "$h" "$@"; }
 
 PRE="/tmp/drlink-remote-access-pre-$RUN_ID.yaml"
 SRC_A="e2e-ra-a-${RUN_ID: -6}"
@@ -25,13 +26,29 @@ RULE="e2e-ra-${RUN_ID: -6}"
 RESTORE_ARMED=0
 
 restore(){
-  if [[ "$RESTORE_ARMED" == "1" ]]; then
-    printf 'y\n' | sshx "$SERVER" "sudo drlink system apply configuration '$PRE'" >/dev/null 2>&1 || true
-    sshx "$SERVER" "sudo rm -f '$PRE'" >/dev/null 2>&1 || true
-    RESTORE_ARMED=0
+  if [[ "$RESTORE_ARMED" != "1" ]]; then
+    return 0
   fi
+  if ! sshx_confirm_yes "$SERVER" "sudo drlink system apply configuration '$PRE'" >"$OUT_DIR/restore-pre-run.log" 2>&1; then
+    echo "RESTORE_FAILED: pre-run ConfigurationBundle remains at $PRE" >&2
+    return 1
+  fi
+  if ! sshx "$SERVER" "sudo rm -f '$PRE'" >>"$OUT_DIR/restore-pre-run.log" 2>&1; then
+    echo "RESTORE_CLEANUP_FAILED: restored configuration but could not remove $PRE" >&2
+    return 1
+  fi
+  RESTORE_ARMED=0
+  return 0
 }
-trap restore EXIT
+on_exit(){
+  local rc=$?
+  trap - EXIT
+  if [[ "$RESTORE_ARMED" == "1" ]] && ! restore; then
+    [[ "$rc" -ne 0 ]] || rc=1
+  fi
+  exit "$rc"
+}
+trap on_exit EXIT
 
 for h in "$SERVER" "$CLIENT_HOST" "$SOURCE_A_HOST" "$SOURCE_B_HOST"; do
   sshx "$h" 'echo ok' >/dev/null || blocker "unreachable host $h"
@@ -44,7 +61,7 @@ SOURCE_B_IP="$(sshx "$SOURCE_B_HOST" 'curl -4 -fsS --max-time 8 https://ifconfig
 CLIENT_ID="$(sshx "$CLIENT_HOST" "sudo python3 -c \"import json; print(json.load(open('/etc/frp/client-state.json')).get('machine_id') or '')\"" | tr -d '\r\n')"
 [[ "$CLIENT_ID" =~ ^[0-9a-f]{32}$ ]] || blocker "Agent machine_id unavailable"
 PREFIX="${CLIENT_ID:0:8}"
-HOST_NAME="$(sshx "$SERVER" "sudo drlink show managed-hosts" | awk -v p="$PREFIX" '$1 ~ ("^" p) {print $2; exit}')"
+HOST_NAME="$(sshx "$SERVER" "sudo drlink show managed-host '$PREFIX'" | sed -n 's/^Managed Host:[[:space:]]*//p' | head -n1)"
 [[ -n "$HOST_NAME" ]] || blocker "Managed Host name not found for $PREFIX"
 
 REMOTE_SERVICE="${FRP_ACCESS_E2E_REMOTE_SERVICE:-ssh}"
@@ -94,7 +111,10 @@ if probe "$SOURCE_A_HOST"; then fail "A actual traffic still allowed after live 
 probe "$SOURCE_B_HOST" || fail "B actual traffic not allowed after live update"
 pass "REMOTE_ACCESS_POLICY_LIVE_UPDATE"
 
-restore
+if ! restore; then
+  echo "TARGETED_REAL_E2E=FAIL" >"$OUT_DIR/result.env"
+  exit 1
+fi
 trap - EXIT
 cat >"$OUT_DIR/result.env" <<EOF
 TARGETED_REAL_E2E=PASS
