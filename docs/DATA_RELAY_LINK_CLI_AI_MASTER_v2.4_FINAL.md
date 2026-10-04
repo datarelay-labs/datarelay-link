@@ -2517,6 +2517,7 @@ system diff <REVISION_A> <REVISION_B>
 system rollback <REVISION>
 
 system backup
+system backup validate <FILE>
 system restore <FILE>
 
 system export configuration <FILE>
@@ -2530,7 +2531,15 @@ system certificate renew
 system certificate status
 system certificate preflight
 
-system update
+system credential rotate ai-identity <IDENTITY>
+system credential revoke ai-identity <IDENTITY>
+system credential configure ai-identity <IDENTITY> authentication <static-bearer|oauth>
+system credential approve-oauth <PENDING-ID> [AI-IDENTITY]
+system credential deny-oauth <PENDING-ID>
+
+system update product
+system update engine
+system update check-engine
 system support-bundle
 system uninstall
 ```
