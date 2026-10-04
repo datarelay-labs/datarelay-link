@@ -112,7 +112,7 @@ if fast_pos < 0:
 fast_tail = lint[fast_pos + len(fast_marker):].splitlines()
 if not fast_tail or fast_tail[0].strip() != "if: github.event_name == 'pull_request'":
     raise SystemExit("lint.yml fast gate must be PR-only")
-if "run: ./tests/run-fast-pr.sh" not in "\n".join(fast_tail[:3]):
+if "run: bash tests/run-fast-pr.sh" not in "\n".join(fast_tail[:3]):
     raise SystemExit("lint.yml fast gate must execute run-fast-pr.sh")
 
 full_marker = "      - name: Full local non-Docker suite\n"
@@ -151,8 +151,8 @@ required = (
 for needle in required:
     if needle not in scenario:
         raise SystemExit(f"ADOPTED-TEST-001 missing DRLink pre-merge contract: {needle}")
-if "cost: low" not in scenario:
-    raise SystemExit("ADOPTED-TEST-001 must use the low-cost PR classification")
+if "cost: cheap" not in scenario:
+    raise SystemExit("ADOPTED-TEST-001 must use the cheap PR classification")
 
 project_text = Path(".engineering/project.yaml").read_text(encoding="utf-8")
 baseline_line = next(line for line in project_text.splitlines() if line.strip().startswith("baseline: "))
