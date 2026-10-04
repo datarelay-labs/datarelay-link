@@ -1,14 +1,14 @@
 engineering_system:
   version: 1.7.0
   mode: adopted
-  baseline: 59914e775f8515819e11ffbcaf7c46482ae9b7c5
+  baseline: d733aeba5ab2a68dc26919be581212fd780699d3
   ci_mode: native
   native_ci_workflows:
   - .github/workflows/lint.yml
   - .github/workflows/macos-client.yml
   - .github/workflows/windows-client.yml
   merge_gate_status: advisory
-  policy_epoch: 7
+  policy_epoch: 8
 project:
   name: datarelay-link
   type: generic
