@@ -469,7 +469,7 @@ d3b8ecf1faa4992cbcec2fb17f02b7c183d64f35f1fb66841a00fcab48546f64  tests/test-v24
 51f1cdb1801fd17680a2590d317f5d631f30d6a3ea5b23ab3bb4d14478640ae3  tests/test-v24-bundle-stale-plan-safety.py
 e3153eddc911738a45f7f7b1760a79550c1f9dc6c47e08d8ecbd8bfe00949ab6  tests/test-v24-cli-ai-master-closure.py
 a8fcadeb8487c7ed72c2972f11ad2e95454485afe9a106190361b7de40dbbbe3  tests/test-v24-cli-ai-master.py
-8d95db974010507f2a8f5e7fb44bc8788ee3f589b44c0c8d5eb8d876c45e3a82  tests/test-v24-cli-slice-a.py
+ae72d3e046c2e3721f06b00d39f495605751be0ad58ca1507210301574772fa4  tests/test-v24-cli-slice-a.py
 4b43d04be46363110d55aa74140d5b7c69a31b572903f7b4a7da6a89bc0cc32f  tests/test-v24-cli-workflow-semantic-parity.py
 1a602691dae23de14234ed1b42f2d3e3bb7612f94756a50ddec66eade96e3d93  tests/test-v24-direct-revision-guard.py
 227562b392e449cc5393f899c135c77c176b9cbc6cfb5938de8c20a8e6e90f7b  tests/test-v24-doc-consistency.py
