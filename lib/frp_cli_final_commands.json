@@ -1504,6 +1504,54 @@
   {
     "path": [
       "set",
+      "remote-access",
+      "enabled"
+    ],
+    "roles": "server",
+    "category": "Remote Access",
+    "summary": "Enable Remote Access enforcement",
+    "detail": "Re-enable Remote Access enforcement using the saved mode and Rules. This can narrow currently reachable Remote Services. The explicit command is sufficient approval; no additional confirmation prompt is required.",
+    "examples": [
+      "set remote-access enabled"
+    ],
+    "args": [],
+    "tail": null,
+    "internal": null,
+    "aliases": [],
+    "destructive": false,
+    "hidden": false,
+    "risk": "security_change",
+    "confirmation": "none",
+    "surface": "",
+    "flags": []
+  },
+  {
+    "path": [
+      "set",
+      "remote-access",
+      "disabled"
+    ],
+    "roles": "server",
+    "category": "Remote Access",
+    "summary": "Disable Remote Access enforcement",
+    "detail": "Disable Remote Access enforcement while preserving saved mode and Rules. Effective result becomes ALLOW ALL. A y/N confirmation is required when the transition broadens access.",
+    "examples": [
+      "set remote-access disabled"
+    ],
+    "args": [],
+    "tail": null,
+    "internal": null,
+    "aliases": [],
+    "destructive": true,
+    "hidden": false,
+    "risk": "security_widening",
+    "confirmation": "conditional_y_n",
+    "surface": "",
+    "flags": []
+  },
+  {
+    "path": [
+      "set",
       "internet-access"
     ],
     "roles": "server",
@@ -1529,6 +1577,54 @@
     "hidden": false,
     "risk": "none",
     "confirmation": "none",
+    "surface": "",
+    "flags": []
+  },
+  {
+    "path": [
+      "set",
+      "internet-access",
+      "enabled"
+    ],
+    "roles": "server",
+    "category": "Internet Access",
+    "summary": "Enable Internet Access enforcement",
+    "detail": "Re-enable WHITELIST Internet Access enforcement using saved Rules. Existing matches may become ALLOW again, so a y/N confirmation is required when the transition broadens access.",
+    "examples": [
+      "set internet-access enabled"
+    ],
+    "args": [],
+    "tail": null,
+    "internal": null,
+    "aliases": [],
+    "destructive": true,
+    "hidden": false,
+    "risk": "security_widening",
+    "confirmation": "conditional_y_n",
+    "surface": "",
+    "flags": []
+  },
+  {
+    "path": [
+      "set",
+      "internet-access",
+      "disabled"
+    ],
+    "roles": "server",
+    "category": "Internet Access",
+    "summary": "Disable Internet Access enforcement",
+    "detail": "Disable Internet Access enforcement while preserving saved WHITELIST Rules. Effective result becomes DENY ALL. A y/N confirmation is required because this can cause an access outage.",
+    "examples": [
+      "set internet-access disabled"
+    ],
+    "args": [],
+    "tail": null,
+    "internal": null,
+    "aliases": [],
+    "destructive": true,
+    "hidden": false,
+    "risk": "outage",
+    "confirmation": "conditional_y_n",
     "surface": "",
     "flags": []
   },
@@ -1561,6 +1657,54 @@
     "hidden": false,
     "risk": "none",
     "confirmation": "none",
+    "surface": "",
+    "flags": []
+  },
+  {
+    "path": [
+      "set",
+      "ai-access",
+      "enabled"
+    ],
+    "roles": "server",
+    "category": "AI Access",
+    "summary": "Enable AI Access enforcement",
+    "detail": "Re-enable WHITELIST AI Access enforcement using saved Rules. Existing matches may authorize AI operations again, so a y/N confirmation is required when the transition broadens access.",
+    "examples": [
+      "set ai-access enabled"
+    ],
+    "args": [],
+    "tail": null,
+    "internal": null,
+    "aliases": [],
+    "destructive": true,
+    "hidden": false,
+    "risk": "security_widening",
+    "confirmation": "conditional_y_n",
+    "surface": "",
+    "flags": []
+  },
+  {
+    "path": [
+      "set",
+      "ai-access",
+      "disabled"
+    ],
+    "roles": "server",
+    "category": "AI Access",
+    "summary": "Disable AI Access enforcement",
+    "detail": "Disable AI Access enforcement while preserving saved WHITELIST Rules. Effective result becomes DENY ALL. A y/N confirmation is required because this can interrupt AI/MCP operations.",
+    "examples": [
+      "set ai-access disabled"
+    ],
+    "args": [],
+    "tail": null,
+    "internal": null,
+    "aliases": [],
+    "destructive": true,
+    "hidden": false,
+    "risk": "outage",
+    "confirmation": "conditional_y_n",
     "surface": "",
     "flags": []
   },
@@ -1918,7 +2062,7 @@
     "roles": "server",
     "category": "AI Access",
     "summary": "Rotate an AI Identity credential",
-    "detail": "Rotate the credential for an existing AI Identity. The new credential is displayed once; this command never creates an AI Identity.",
+    "detail": "Rotate invalidates the previous active credential and issues a replacement secret once. The explicit command is the operator approval; no additional confirmation prompt is used.",
     "examples": [
       "system credential rotate ai-identity automation-ai"
     ],
@@ -1932,9 +2076,9 @@
     "tail": null,
     "internal": null,
     "aliases": [],
-    "destructive": false,
+    "destructive": true,
     "hidden": false,
-    "risk": "none",
+    "risk": "security_change",
     "confirmation": "none",
     "surface": "",
     "flags": []
@@ -1949,7 +2093,7 @@
     "roles": "server",
     "category": "AI Access",
     "summary": "Revoke an AI Identity credential",
-    "detail": "Revoke active credential material for an existing AI Identity without deleting the AI Identity.",
+    "detail": "Revoke removes active credential material and can immediately interrupt clients using it. The explicit command is the operator approval; no additional confirmation prompt is used.",
     "examples": [
       "system credential revoke ai-identity automation-ai"
     ],
@@ -1963,9 +2107,9 @@
     "tail": null,
     "internal": null,
     "aliases": [],
-    "destructive": false,
+    "destructive": true,
     "hidden": false,
-    "risk": "none",
+    "risk": "outage",
     "confirmation": "none",
     "surface": "",
     "flags": []
@@ -1980,7 +2124,7 @@
     "roles": "server",
     "category": "AI Access",
     "summary": "Configure AI Identity authentication",
-    "detail": "Configure Static Bearer or OAuth authentication for an existing AI Identity, or register an OAuth redirect URI.",
+    "detail": "Change the authentication mode or OAuth redirect configuration for an existing AI Identity. This can change which clients can authenticate. The explicit command is the operator approval; no additional confirmation prompt is used.",
     "examples": [
       "system credential configure ai-identity automation-ai authentication static-bearer",
       "system credential configure ai-identity interactive-ai authentication oauth",
@@ -2009,9 +2153,9 @@
     "tail": null,
     "internal": null,
     "aliases": [],
-    "destructive": false,
+    "destructive": true,
     "hidden": false,
-    "risk": "none",
+    "risk": "security_change",
     "confirmation": "none",
     "surface": "",
     "flags": []
@@ -2025,7 +2169,7 @@
     "roles": "server",
     "category": "AI Access",
     "summary": "Deny a pending OAuth authorization request",
-    "detail": "Deny operator consent for one pending OAuth authorization request. The browser continuation receives access_denied.",
+    "detail": "Deny operator consent for one pending OAuth authorization request. The browser continuation receives access_denied. The explicit deny command is the operator decision; no additional confirmation prompt is used.",
     "examples": [
       "system credential deny-oauth <PENDING-ID>"
     ],
@@ -2041,7 +2185,7 @@
     "aliases": [],
     "destructive": false,
     "hidden": false,
-    "risk": "none",
+    "risk": "security_change",
     "confirmation": "none",
     "surface": "",
     "flags": []
@@ -2055,7 +2199,7 @@
     "roles": "server",
     "category": "AI Access",
     "summary": "Approve a pending OAuth authorization request",
-    "detail": "Operator consent for the built-in authorization server. Issues a one-time authorization code. Does not display access or refresh tokens. Unbound DCR/CIMD requests require AI-IDENTITY. Already-bound requests accept the pending ID alone.",
+    "detail": "Approve operator consent for one pending OAuth authorization request and issue a one-time authorization code through the browser continuation. The explicit approve command is the operator decision; no additional confirmation prompt is used.",
     "examples": [
       "system credential approve-oauth <PENDING-ID>",
       "system credential approve-oauth <PENDING-ID> <AI-IDENTITY>"
@@ -2077,7 +2221,7 @@
     "aliases": [],
     "destructive": false,
     "hidden": false,
-    "risk": "none",
+    "risk": "security_widening",
     "confirmation": "none",
     "surface": "",
     "flags": []

@@ -307,6 +307,7 @@ system diff <REVISION_A> <REVISION_B>
 system rollback <REVISION>
 
 system backup
+system backup validate <FILE>
 system restore <FILE>
 
 test configuration <FILE|->
@@ -319,6 +320,12 @@ system certificate import <CERT> <KEY> [CHAIN]
 system certificate renew
 system certificate status
 system certificate preflight
+
+system credential rotate ai-identity <IDENTITY>
+system credential revoke ai-identity <IDENTITY>
+system credential configure ai-identity <IDENTITY> authentication <static-bearer|oauth>
+system credential approve-oauth <PENDING-ID> [AI-IDENTITY]
+system credential deny-oauth <PENDING-ID>
 
 system update product
 system update engine

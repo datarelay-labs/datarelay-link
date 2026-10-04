@@ -49,6 +49,18 @@ Automation/custom AI may use OAuth Client Credentials where supported.
 
 The exact public MCP/OAuth endpoint design and host interoperability must remain consistent with `SECURITY.md` and exact-HEAD qualification evidence.
 
+Operator credential / OAuth lifecycle:
+
+```text
+system credential rotate ai-identity <IDENTITY>
+system credential revoke ai-identity <IDENTITY>
+system credential configure ai-identity <IDENTITY> authentication <static-bearer|oauth>
+system credential approve-oauth <PENDING-ID> [AI-IDENTITY]
+system credential deny-oauth <PENDING-ID>
+```
+
+Credential rotate/revoke/configure are security-sensitive authentication changes; revoke can interrupt active clients. OAuth approve is an explicit authorization decision that can widen access, while deny rejects the pending authorization. These explicit commands are themselves operator approval and do not add a second confirmation prompt.
+
 Public MCP is served only through the `single443` HTTPS frontend. `direct` deployment mode uses its public control port for the FRP listener and therefore must not advertise or activate `https://<host>/mcp`; `set mcp-tls` and certificate mutation commands fail closed until the Server is reconfigured to `single443`. The supported transition is to re-run the Data Relay Link Server installer from the same immutable release/source ref with `FRP_DEPLOYMENT_MODE=single443`, confirming the cutover by typing `SWITCH` on a TTY or setting `FRP_CONFIRM_MODE_SWITCH=yes` for a non-interactive run. A stale TLS intent or certificate from an earlier configuration does not make Direct mode MCP-capable.
 
 ### v2.4.0 release status

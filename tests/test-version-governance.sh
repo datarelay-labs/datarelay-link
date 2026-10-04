@@ -115,6 +115,17 @@ if not fast_tail or fast_tail[0].strip() != "if: github.event_name == 'pull_requ
 if "run: bash tests/run-fast-pr.sh" not in "\n".join(fast_tail[:3]):
     raise SystemExit("lint.yml fast gate must execute run-fast-pr.sh")
 
+fast_script = Path("tests/run-fast-pr.sh").read_text(encoding="utf-8")
+for required_gate in (
+    "python3 tests/test-public-cli-grammar-parity.py",
+    "python3 tests/test-cli-feature-scenario-remediation.py",
+    "bash tests/test-change-closure-artifacts.sh",
+):
+    if required_gate not in fast_script:
+        raise SystemExit(
+            "run-fast-pr.sh missing bounded change-closure gate: %s" % required_gate
+        )
+
 full_marker = "      - name: Full local non-Docker suite\n"
 pos = lint.find(full_marker)
 if pos < 0:

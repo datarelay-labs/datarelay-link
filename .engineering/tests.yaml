@@ -15,6 +15,56 @@ paths:
   "tests/**":
     domains:
       - "shared"
+  "**":
+    domains:
+      - "artifact-integrity"
+    invalidates:
+      - "DRLINK-DERIVED-ARTIFACT-INTEGRITY-001"
+  "tools/drlink":
+    domains:
+      - "public-surface"
+    invalidates:
+      - "DRLINK-PUBLIC-SURFACE-PARITY-001"
+  "tools/frpctl":
+    domains:
+      - "public-surface"
+    invalidates:
+      - "DRLINK-PUBLIC-SURFACE-PARITY-001"
+  "lib/frp_cli_catalog.py":
+    domains:
+      - "public-surface"
+    invalidates:
+      - "DRLINK-PUBLIC-SURFACE-PARITY-001"
+  "lib/frp_ctl_grammar.py":
+    domains:
+      - "public-surface"
+    invalidates:
+      - "DRLINK-PUBLIC-SURFACE-PARITY-001"
+  "lib/frp_ctl_repl.py":
+    domains:
+      - "public-surface"
+    invalidates:
+      - "DRLINK-PUBLIC-SURFACE-PARITY-001"
+  "lib/drlink_*cli.py":
+    domains:
+      - "public-surface"
+    invalidates:
+      - "DRLINK-PUBLIC-SURFACE-PARITY-001"
+  "install-*.sh":
+    domains:
+      - "public-surface"
+    invalidates:
+      - "DRLINK-PUBLIC-SURFACE-PARITY-001"
+  "README*.md":
+    domains:
+      - "public-surface"
+    invalidates:
+      - "DRLINK-PUBLIC-SURFACE-PARITY-001"
+  "docs/**":
+    domains:
+      - "public-surface"
+    invalidates:
+      - "DRLINK-PUBLIC-SURFACE-PARITY-001"
 
 scenarios:
   - id: ADOPTED-TEST-001
@@ -34,6 +84,46 @@ scenarios:
     command: "bash tests/run-fast-pr.sh"
     invariants:
       - "fast deterministic project-native checks remain green for affected changes"
+    release_gate: true
+
+  - id: DRLINK-PUBLIC-SURFACE-PARITY-001
+    name: Public surface parity and Surface Delta supporting evidence
+    level: ux
+    domains:
+      - "public-surface"
+    triggers:
+      - affected
+    cost: medium
+    estimated_seconds: 25
+    timeout_seconds: 120
+    agent_default: true
+    platforms:
+      - "linux"
+    command: "bash tests/test-cli-catalog-parity.sh && python3 tests/test-public-cli-grammar-parity.py && python3 tests/test-cli-feature-scenario-remediation.py && python3 tests/test-v24-cli-workflow-semantic-parity.py"
+    invariants:
+      - "catalog, grammar, help, completion, menu and canonical workflow semantics remain in parity"
+      - "deterministic output is supporting evidence and never substitutes for ChatGPT direct Surface Delta Reconciliation when public UX materially changes"
+    release_gate: true
+
+  - id: DRLINK-DERIVED-ARTIFACT-INTEGRITY-001
+    name: Derived bundles checksum and release metadata closure
+    level: static
+    domains:
+      - "artifact-integrity"
+    triggers:
+      - affected
+    cost: cheap
+    estimated_seconds: 15
+    timeout_seconds: 90
+    agent_default: true
+    platforms:
+      - "linux"
+    command: "bash tests/test-change-closure-artifacts.sh"
+    invariants:
+      - "generated bootstrap bundles equal deterministic rebuild output at exact HEAD"
+      - "SHA256SUMS covers current tracked source bytes"
+      - "release manifest provenance and artifact hashes remain coherent"
+      - "verification fails closed and never refreshes tracked metadata in the caller worktree"
     release_gate: true
 
   - id: DRLINK-CLI-FEATURE-SCENARIO-RELEASE

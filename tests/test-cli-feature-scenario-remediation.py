@@ -154,6 +154,70 @@ class CliFeatureScenarioRemediation(unittest.TestCase):
             self.assertEqual(row["risk"], "none")
             self.assertEqual(row["confirmation"], "none")
 
+    def test_access_enforcement_child_metadata_matches_runtime_effects(self):
+        rows = json.loads((LIB / "frp_cli_final_commands.json").read_text(encoding="utf-8"))
+        by_path = {tuple(row["path"]): row for row in rows}
+        expected = {
+            ("set", "remote-access", "enabled"): ("security_change", "none", "saved mode and Rules"),
+            ("set", "remote-access", "disabled"): ("security_widening", "conditional_y_n", "ALLOW ALL"),
+            ("set", "internet-access", "enabled"): ("security_widening", "conditional_y_n", "may become ALLOW"),
+            ("set", "internet-access", "disabled"): ("outage", "conditional_y_n", "DENY ALL"),
+            ("set", "ai-access", "enabled"): ("security_widening", "conditional_y_n", "authorize AI operations"),
+            ("set", "ai-access", "disabled"): ("outage", "conditional_y_n", "DENY ALL"),
+        }
+        for path, (risk, confirmation, marker) in expected.items():
+            with self.subTest(path=path):
+                row = by_path[path]
+                self.assertEqual(row["risk"], risk)
+                self.assertEqual(row["confirmation"], confirmation)
+                self.assertIn(marker, row["detail"])
+                help_result = grammar.match([*path, "?"], role="server")
+                self.assertEqual(help_result.get("status"), "ok", help_result)
+                text = str(help_result.get("message") or "")
+                self.assertIn("Risk: %s" % risk, text)
+                if confirmation != "none":
+                    self.assertIn("Confirmation: %s" % confirmation, text)
+
+    def test_ai_credential_and_oauth_leaf_risk_metadata_is_truthful(self):
+        rows = json.loads((LIB / "frp_cli_final_commands.json").read_text(encoding="utf-8"))
+        by_path = {tuple(row["path"]): row for row in rows}
+        expected = {
+            ("system", "credential", "rotate", "ai-identity"): (True, "security_change"),
+            ("system", "credential", "revoke", "ai-identity"): (True, "outage"),
+            ("system", "credential", "configure", "ai-identity"): (True, "security_change"),
+            ("system", "credential", "approve-oauth"): (False, "security_widening"),
+            ("system", "credential", "deny-oauth"): (False, "security_change"),
+        }
+        for path, (destructive, risk) in expected.items():
+            with self.subTest(path=path):
+                row = by_path[path]
+                self.assertEqual(bool(row["destructive"]), destructive)
+                self.assertEqual(row["risk"], risk)
+                self.assertEqual(row["confirmation"], "none")
+                self.assertIn("explicit", row["detail"].lower())
+                help_result = grammar.match([*path, "?"], role="server")
+                self.assertEqual(help_result.get("status"), "ok", help_result)
+                self.assertIn("Risk: %s" % risk, str(help_result.get("message") or ""))
+
+    def test_canonical_docs_cover_current_server_lifecycle_commands(self):
+        master = (ROOT / "docs/DATA_RELAY_LINK_CLI_AI_MASTER_v2.4_FINAL.md").read_text(encoding="utf-8")
+        reference = (ROOT / "docs/CLI_REFERENCE.md").read_text(encoding="utf-8")
+        ai = (ROOT / "docs/AI_ACCESS_MCP.md").read_text(encoding="utf-8")
+        required_server = (
+            "system backup validate <FILE>",
+            "system credential rotate ai-identity <IDENTITY>",
+            "system credential revoke ai-identity <IDENTITY>",
+            "system credential configure ai-identity <IDENTITY> authentication <static-bearer|oauth>",
+            "system credential approve-oauth <PENDING-ID> [AI-IDENTITY]",
+            "system credential deny-oauth <PENDING-ID>",
+            "system update check-engine",
+        )
+        for command in required_server:
+            self.assertIn(command, master, command)
+            self.assertIn(command, reference, command)
+        for command in required_server[1:6]:
+            self.assertIn(command, ai, command)
+
     def test_restricted_plane_help_is_whitelist_only(self):
         internet = catalog.domain_help("internet-access", "server") or ""
         ai = catalog.domain_help("ai-access", "server") or ""
