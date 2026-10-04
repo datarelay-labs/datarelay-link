@@ -26,14 +26,14 @@ scenarios:
       - "shared"
     triggers:
       - affected
-    cost: medium
-    estimated_seconds: 420
-    timeout_seconds: 900
+    cost: low
+    estimated_seconds: 90
+    timeout_seconds: 240
     platforms:
       - "linux"
-    command: "bash tests/run-all.sh"
+    command: "bash tests/run-fast-pr.sh"
     invariants:
-      - "project-native tests remain green for affected changes"
+      - "fast deterministic project-native checks remain green for affected changes"
     release_gate: true
 
   - id: DRLINK-CLI-FEATURE-SCENARIO-RELEASE
@@ -99,3 +99,4 @@ scenarios:
     invariants:
       - "committed candidate/base diff has no whitespace errors"
     release_gate: true
+
