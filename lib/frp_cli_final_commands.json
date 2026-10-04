@@ -2091,7 +2091,7 @@
     "roles": "any",
     "category": "System",
     "summary": "Export redacted ConfigurationBundle",
-    "detail": "Export current server-owned configuration as a redacted ConfigurationBundle YAML suitable for review and AI-assisted editing. Secrets are never exported.",
+    "detail": "Export configuration owned by this host role as a redacted ConfigurationBundle YAML suitable for review and AI-assisted editing. Secrets are never exported.",
     "examples": [
       "system export configuration drlink.yaml"
     ],

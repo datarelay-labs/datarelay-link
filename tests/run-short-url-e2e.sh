@@ -270,9 +270,10 @@ pass "BOOTSTRAP_HOSTNAME_CONFIGURED"
 # Purge any previous short-url client on the target.
 ssh_client 'sudo bash -s --' <"$ROOT/dist/uninstall-client.sh" >"$OUT_DIR/client-purge.log" 2>&1 || true
 
-# Create short URL enrollment and capture exact printed command.
+# Create short URL enrollment through the canonical guided Zero-Touch path and capture exact printed command.
 CREATE_OUT="$OUT_DIR/create.out"
-ssh_server "sudo /usr/local/bin/drlink enrollment create --one-line --ssh --ssh-user '$TUNNEL_SSH_USER' --client-name '$CLIENT_LABEL' --note 'short-url-e2e'" \
+payload="$(printf '%s\\n' '1' "$CLIENT_LABEL" 'short-url-e2e' '1' "$TUNNEL_SSH_USER" '22' | base64 -w0 2>/dev/null || printf '%s\\n' '1' "$CLIENT_LABEL" 'short-url-e2e' '1' "$TUNNEL_SSH_USER" '22' | base64)"
+ssh_server "sudo env FRP_CTL_TEST_INPUT=\"\$(printf '%s' '$payload' | base64 -d)\" /usr/local/bin/drlink set enrollment zero-touch" \
   >"$CREATE_OUT" 2>&1 || { cat "$CREATE_OUT"; fail "create enrollment"; }
 
 CMD="$(python3 - "$CREATE_OUT" <<'PY'
@@ -379,7 +380,8 @@ BAD_HOST="untrusted-bootstrap.invalid"
 # Ensure zt1 fallback still works after cert failure path.
 ssh_server "sudo /usr/local/bin/drlink unset server bootstrap-hostname" >/dev/null
 FALLBACK_OUT="$OUT_DIR/zt1-fallback.out"
-ssh_server "sudo /usr/local/bin/drlink enrollment create --one-line --client-name '${CLIENT_LABEL}-zt1' --note 'zt1-fallback'" \
+fallback_payload="$(printf '%s\\n' '1' "${CLIENT_LABEL}-zt1" 'zt1-fallback' '1' "$TUNNEL_SSH_USER" '22' | base64 -w0 2>/dev/null || printf '%s\\n' '1' "${CLIENT_LABEL}-zt1" 'zt1-fallback' '1' "$TUNNEL_SSH_USER" '22' | base64)"
+ssh_server "sudo env FRP_CTL_TEST_INPUT=\"\$(printf '%s' '$fallback_payload' | base64 -d)\" /usr/local/bin/drlink set enrollment zero-touch" \
   >"$FALLBACK_OUT" 2>&1 || { cat "$FALLBACK_OUT"; fail "zt1 create"; }
 grep -q 'zt1\.' "$FALLBACK_OUT" || fail "zt1 fallback not printed after unset"
 pass "ZT1_FALLBACK_AFTER_CERT_PATH"

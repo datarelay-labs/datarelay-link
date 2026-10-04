@@ -299,7 +299,7 @@ ROOTS = (
     ("show", "any", "View", "View Managed Hosts, Remote Services, policies and status"),
     ("set", "any", "Change", "Create, add, change or enable configuration"),
     ("unset", "any", "Change", "Remove, delete, revoke, release or disable configuration"),
-    ("test", "server", "Validate", "Check policy decisions without changing configuration"),
+    ("test", "any", "Validate", "Validate configuration without changing product state"),
     ("system", "any", "System", "Updates, backup, restore, diagnostics and system operations"),
     ("menu", "any", "Session", "Open the guided menu"),
     ("help", "any", "Session", "Show help"),
@@ -734,7 +734,12 @@ def root_rows(role):
             elif server and not client:
                 summary = "Remove, delete, revoke, release or disable Server configuration"
         elif name == "test":
-            summary = "Check policy decisions without changing configuration"
+            if client and not server:
+                summary = "Validate ConfigurationBundle without mutation"
+            elif server and not client:
+                summary = "Check policy decisions and ConfigurationBundle without changing configuration"
+            else:
+                summary = "Validate configuration without changing product state"
         elif name == "system":
             if client and not server:
                 summary = "Updates, diagnostics and Agent system operations"
