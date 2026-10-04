@@ -43,4 +43,3 @@ bash tests/test-release-artifact-ordering.sh >/dev/null ||
 echo "PASS RELEASE_ARTIFACT_ORDERING"
 
 echo "DRLINK_DERIVED_ARTIFACT_INTEGRITY=PASS"
-
