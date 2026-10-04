@@ -19,6 +19,8 @@ domains:
 - server
 - client
 - shared
+- public-surface
+- artifact-integrity
 platforms:
 - linux
 operations:
