@@ -572,6 +572,11 @@ class ManagementChangeService:
             self._mark_plan(change_plan_id, "invalid", now=now)
             raise ControlPlaneError("Change Plan payload is invalid.") from exc
 
+        planned_action = str(payload.get("operation") or "")
+        required_action = str(expected_operation or "").strip().lower()
+        if required_action and planned_action != required_action:
+            raise ControlPlaneError("Operation does not match the requested action.")
+
         expected_revision = int(row["expected_revision"])
         if payload.get("no_change"):
             current = self.plane.current_revision()
@@ -594,12 +599,7 @@ class ManagementChangeService:
         family = str(payload.get("plane") or "")
         kind = str(payload.get("scope_kind") or "")
         ref = str(payload.get("scope_ref") or "")
-        action = str(payload.get("operation") or "")
-        expected_action = str(expected_operation or "").strip().lower()
-        if expected_action and action != expected_action:
-            raise ControlPlaneError(
-                "Emergency Cutoff Change Plan operation does not match the requested action."
-            )
+        action = planned_action
         reason = str(payload.get("reason") or "")
         timestamp = _utc_text(now or _utc_now())
 
