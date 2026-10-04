@@ -338,4 +338,3 @@ grep -q 'Real ChatGPT owner/UI authentication on a currently supported full-MCP 
 pass "MCP_V2_4_SCOPE_AND_CHATGPT_AUTH_GATE"
 
 echo "VERSION_GOVERNANCE=PASS"
-
