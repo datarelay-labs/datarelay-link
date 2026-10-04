@@ -2512,7 +2512,7 @@ def check_egress_control(report, paths, facts, cfg):
                 'EGRESS_TCP_LISTEN', FAIL,
                 'tcp relay has invalid listen_port',
                 str(rid),
-                'fix with: sudo drlink egress tcp show %s' % (relay.get('name') or rid),
+                'Run: sudo drlink show service-objects; then inspect the owning Agent Host with sudo drlink show managed-host <HOST> remote-services',
                 'state',
             )
             continue
@@ -2565,7 +2565,7 @@ def check_egress_control(report, paths, facts, cfg):
                     'EGRESS_TCP_EFFECTIVE', FAIL,
                     'Fixed TCP Egress effective runtime is unhealthy (fail-closed)',
                     str(effective_tcp.get('load_error') or ''),
-                    'fix Fixed TCP Egress with: sudo drlink egress tcp list',
+                    'Run: sudo drlink show service-objects; then inspect the owning Agent Host with sudo drlink show managed-host <HOST> remote-services',
                     'runtime',
                 )
         except Exception as exc:
@@ -2648,7 +2648,7 @@ def check_egress_control(report, paths, facts, cfg):
                     'EGRESS_EFFECTIVE_CONFIG', FAIL,
                     'egress effective policy is unhealthy (fail-closed)',
                     'generation=%s path=%s' % (generation, effective_rel),
-                    'fix Controlled Egress policy with: sudo drlink show internet-profiles',
+                    'Run: sudo drlink show internet-access',
                     'runtime',
                 )
             report.add(

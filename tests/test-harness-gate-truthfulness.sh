@@ -68,6 +68,69 @@ if grep -n 'run_feature shorturl' "$ROOT/tests/run-production-realistic-qualific
 fi
 pass "shorturl gating"
 
+# Current v2.4 targeted feature gates must never be satisfied by a historical
+# skip harness or by retired Service Profile / configurable target-health models.
+python3 - "$ROOT/tests/run-access-control-e2e.sh" "$ROOT/tests/run-production-realistic-qualification.sh" <<'PY' \
+  || fail "current targeted E2E gate ownership is not truthful"
+from pathlib import Path
+import sys
+access = Path(sys.argv[1]).read_text(encoding="utf-8")
+qual = Path(sys.argv[2]).read_text(encoding="utf-8")
+head = "\n".join(access.splitlines()[:20]).lower()
+assert "historical legacy" not in head
+assert "skip:" not in head
+assert "exit 0" not in head
+for required in (
+    "set remote-access",
+    "test remote-access",
+    "system export configuration",
+    "system apply configuration",
+    "ACCESS_REAL_E2E=PASS",
+):
+    assert required in access, required
+for retired in (
+    "SERVICE_PROFILES_REAL_E2E",
+    "TARGET_HEALTH_REAL_E2E",
+    "run-service-profiles-e2e.sh",
+    "run-target-health-e2e.sh",
+):
+    assert retired not in qual, retired
+for required in (
+    "BACKUP_RESTORE_REAL_FLEET",
+    "CORRUPT_CURRENT_RESTORE_CONTRACT",
+    "SERVICE_LIFECYCLE_REAL_E2E",
+):
+    assert required in qual, required
+print("ok")
+PY
+pass "current targeted E2E gates cannot false-pass through retired harnesses"
+
+python3 - \
+  "$ROOT/tests/run-access-control-e2e.sh" \
+  "$ROOT/tests/run-backup-restore-integrity-e2e.sh" \
+  "$ROOT/tests/run-short-url-e2e.sh" \
+  "$ROOT/tests/run-support-bundle-e2e.sh" <<'PY' \
+  || fail "current targeted E2E harness contains retired public grammar"
+from pathlib import Path
+import re, sys
+forbidden = (
+    r"\bdrlink\s+egress\b",
+    r"\bdrlink\s+enrollment\s+(?:create|revoke|list)\b",
+    r"\bdrlink\s+create\s+backup\b",
+    r"\bdrlink\s+support-bundle\s+--output\b",
+    r"\bdrlink\s+(?:disable|enable)\s+service\b",
+    r"\bdrlink\s+(?:apply|discard)\b",
+    r"\bdrlink\s+(?:add|delete|create|set)\s+(?:service|profile)\b",
+    r"\bdrlink\s+release\s+service\b",
+)
+for raw in sys.argv[1:]:
+    text = Path(raw).read_text(encoding="utf-8")
+    for pattern in forbidden:
+        assert not re.search(pattern, text), (raw, pattern)
+print("ok")
+PY
+pass "current targeted E2E harness grammar is canonical"
+
 # Require PERFORMANCE_BASELINE FAIL path exists for missing artifact / null metrics.
 grep -q 'PERFORMANCE_BASELINE FAIL' "$ROOT/tests/run-prod-qual-extended.sh"
 grep -q 'PERF_BASELINE_HTTP_METRICS' "$ROOT/tests/run-prod-qual-extended.sh" \

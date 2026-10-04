@@ -96,7 +96,7 @@ pass "REMOTE_FEATURE_SYNC"
 run_remote_bundle() {
   local host="$1" label="$2"
   local remote_path="/tmp/frp-support-e2e-${label}.tar.gz"
-  sshx "$host" "sudo drlink support-bundle --output ${remote_path} && sudo chmod a+r ${remote_path}" \
+  sshx "$host" "sudo drlink system support-bundle ${remote_path} && sudo chmod a+r ${remote_path}" \
     | tee "$OUT_DIR/${label}.create.log"
   sshx "$host" "test -f ${remote_path} && tar -tzf ${remote_path} | head"
   # shellcheck disable=SC2029
