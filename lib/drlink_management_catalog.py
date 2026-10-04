@@ -201,6 +201,7 @@ MANAGEMENT_TOOLS = (
             actor="string",
             resource="string",
             result="string",
+            correlation="string",
             cursor="string",
             limit="integer",
         ),
