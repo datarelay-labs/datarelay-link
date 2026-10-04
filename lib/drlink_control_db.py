@@ -1058,6 +1058,7 @@ def ensure_v30_schema(conn: sqlite3.Connection) -> None:
         ("matched_policy_json", "TEXT"),
         ("source_meta_json", "TEXT"),
         ("destination_meta_json", "TEXT"),
+        ("duration_ms", "INTEGER"),
     )
     for column, decl in audit_additions:
         if audit_cols and column not in audit_cols:
@@ -1141,6 +1142,212 @@ def ensure_v30_schema(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_v30_audit_correlation "
         "ON audit_events(correlation_id, occurred_at DESC, id DESC)"
     )
+
+
+LEGACY_AI_ACTIVITY_CONVERGENCE_BATCH = 200
+
+
+def converge_legacy_ai_activity(
+    conn: sqlite3.Connection,
+    *,
+    limit: int = LEGACY_AI_ACTIVITY_CONVERGENCE_BATCH,
+) -> dict:
+    """Boundedly converge legacy ai_activity rows into unified v3 audit_events.
+
+    ai_activity remains a compatibility migration source only. New 3.0 activity
+    is written directly to audit_events; this routine adopts the legacy
+    companion audit row when one exists, avoiding duplicate history.
+    """
+    tables = {
+        str(row[0])
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name IN ('ai_activity','audit_events')"
+        ).fetchall()
+    }
+    if {"ai_activity", "audit_events"} - tables:
+        return {"processed": 0, "remaining": 0}
+
+    columns = {
+        str(row[1]) for row in conn.execute("PRAGMA table_info(audit_events)")
+    }
+    required = {
+        "event_id",
+        "schema_version",
+        "category",
+        "event_type",
+        "occurred_at",
+        "source",
+        "source_sequence",
+        "actor_type",
+        "actor_id",
+        "interface",
+        "revision_after",
+        "matched_policy_json",
+        "source_meta_json",
+        "destination_meta_json",
+        "duration_ms",
+    }
+    if not required <= columns:
+        return {"processed": 0, "remaining": 0}
+
+    batch = max(1, min(int(limit), 1000))
+    rows = conn.execute(
+        "SELECT a.* FROM ai_activity a "
+        "WHERE NOT EXISTS ("
+        "SELECT 1 FROM audit_events e "
+        "WHERE e.source='legacy-ai_activity' AND e.source_sequence=a.id"
+        ") ORDER BY a.id DESC LIMIT ?",
+        (batch,),
+    ).fetchall()
+    if not rows:
+        return {"processed": 0, "remaining": 0}
+
+    processed = 0
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        for row in rows:
+            ident = int(row["id"])
+            occurred = str(row["timestamp"])
+            principal = str(row["principal_name"] or "")
+            endpoint = str(row["endpoint_name"] or "")
+            capability = str(row["capability"] or "")
+            result = str(row["result"] or "")
+            matched = str(row["matched_rule"] or "")
+            revision = row["revision"]
+            revision_fk = (
+                int(revision) if revision is not None and int(revision) > 0 else None
+            )
+            operand = str(row["operand_summary"] or "")[:200]
+            duration = row["duration_ms"]
+            event_id = "legacy-ai-activity-%020d" % ident
+            matched_json = json.dumps(
+                [matched] if matched else [],
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            source_meta = json.dumps(
+                {"ai_identity": principal} if principal else {},
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            destination_meta = json.dumps(
+                {"host": endpoint} if endpoint else {},
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+
+            # v2.4 record_ai_activity dual-wrote a companion audit row. Adopt it
+            # in place when possible so convergence does not duplicate history.
+            candidate = conn.execute(
+                "SELECT id FROM audit_events "
+                "WHERE event_id IS NULL AND timestamp=? AND actor=? "
+                "AND action=? AND operation=? AND result=? "
+                "ORDER BY id DESC LIMIT 1",
+                (
+                    occurred,
+                    principal,
+                    "ai %s" % capability,
+                    capability,
+                    result,
+                ),
+            ).fetchone()
+            if candidate:
+                conn.execute(
+                    "UPDATE audit_events SET "
+                    "event_id=?,schema_version=1,category='ACCESS_DECISION',"
+                    "event_type='ai.tool',occurred_at=?,source='legacy-ai_activity',"
+                    "source_sequence=?,actor_type='ai-identity',actor_id=?,"
+                    "interface='MCP',entity_type='managed-endpoint',entity_id=?,"
+                    "revision_after=COALESCE(revision_after,revision),"
+                    "matched_policy_json=?,source_meta_json=?,destination_meta_json=?,"
+                    "after_summary=?,duration_ms=? WHERE id=?",
+                    (
+                        event_id,
+                        occurred,
+                        ident,
+                        principal,
+                        endpoint,
+                        matched_json,
+                        source_meta,
+                        destination_meta,
+                        operand,
+                        duration,
+                        int(candidate["id"]),
+                    ),
+                )
+            else:
+                conn.execute(
+                    "INSERT OR IGNORE INTO audit_events("
+                    "timestamp,revision,actor,action,entity_type,entity_id,operation,"
+                    "before_summary,after_summary,impact_summary,result,event_id,"
+                    "schema_version,category,event_type,occurred_at,source,source_sequence,"
+                    "actor_type,actor_id,delegated_actor_id,interface,reason_code,"
+                    "correlation_id,request_id,session_id,revision_before,revision_after,"
+                    "matched_policy_json,source_meta_json,destination_meta_json,duration_ms"
+                    ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        occurred,
+                        revision_fk,
+                        principal,
+                        "ai %s" % capability,
+                        "managed-endpoint",
+                        endpoint,
+                        capability,
+                        "",
+                        operand,
+                        "",
+                        result,
+                        event_id,
+                        1,
+                        "ACCESS_DECISION",
+                        "ai.tool",
+                        occurred,
+                        "legacy-ai_activity",
+                        ident,
+                        "ai-identity",
+                        principal,
+                        "",
+                        "MCP",
+                        "",
+                        "",
+                        "",
+                        "",
+                        None,
+                        revision,
+                        matched_json,
+                        source_meta,
+                        destination_meta,
+                        duration,
+                    ),
+                )
+            processed += 1
+        conn.execute("COMMIT")
+    except Exception:
+        try:
+            conn.execute("ROLLBACK")
+        except sqlite3.Error:
+            pass
+        raise
+
+    remaining = int(
+        conn.execute(
+            "SELECT COUNT(*) FROM ai_activity a "
+            "WHERE NOT EXISTS ("
+            "SELECT 1 FROM audit_events e "
+            "WHERE e.source='legacy-ai_activity' AND e.source_sequence=a.id"
+            ")"
+        ).fetchone()[0]
+        or 0
+    )
+    conn.execute(
+        "INSERT OR REPLACE INTO system_meta(key,value) VALUES (?,?)",
+        (
+            "v30_ai_activity_convergence",
+            "complete" if remaining == 0 else "in-progress",
+        ),
+    )
+    return {"processed": processed, "remaining": remaining}
 
 
 def initialize(conn: sqlite3.Connection) -> None:
@@ -1266,6 +1473,15 @@ def initialize(conn: sqlite3.Connection) -> None:
 def open_control_db(root: Optional[str] = None, *, create: bool = True) -> sqlite3.Connection:
     conn = connect(root=root, create=create)
     initialize(conn)
+    # Fully converge legacy AI activity before returning the writable Core DB,
+    # but keep every writer hold bounded to one migration batch.
+    while True:
+        state = converge_legacy_ai_activity(conn)
+        if int(state.get("remaining") or 0) == 0:
+            break
+        if int(state.get("processed") or 0) == 0:
+            conn.close()
+            raise ControlPlaneError("Legacy AI activity convergence made no progress.")
     return conn
 
 

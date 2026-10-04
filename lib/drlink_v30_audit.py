@@ -25,6 +25,34 @@ DEFAULT_SEGMENT_BYTES = 256 * 1024
 DEFAULT_HIGH_WATER_BYTES = 64 * 1024 * 1024
 DEFAULT_MAX_SEGMENTS_PER_INGEST = 4
 
+# Pre-3.0 connection JSONL lacks the stable event identity and attribution
+# guarantees required by the unified v3 audit authority. Preserve it only as
+# forensic evidence under the existing backup/rotation lifecycle; never import
+# it as authoritative audit or use it as a live/query backend.
+LEGACY_CONNECTION_EVIDENCE_POLICY = "PRESERVE_PRE_V3_FORENSIC"
+LEGACY_CONNECTION_EVIDENCE_RELATIVE_PATHS = (
+    "var/log/drlink/access/connections.jsonl",
+    "var/log/drlink/access-conn.jsonl",
+    "var/log/drlink/egress/connections.jsonl",
+    "var/log/drlink/egress-conn.jsonl",
+)
+
+
+def legacy_connection_evidence_contract(root: Optional[str] = None) -> dict[str, Any]:
+    resolved = resolve_root(root)
+    base = Path(resolved) if resolved else Path("/")
+    return {
+        "policy": LEGACY_CONNECTION_EVIDENCE_POLICY,
+        "state_class": "FORENSIC_EVIDENCE",
+        "authoritative": False,
+        "import_to_unified_audit": False,
+        "query_backend": False,
+        "live_backend": False,
+        "upgrade_action": "PRESERVE_IN_PLACE",
+        "paths": [str(base / rel) for rel in LEGACY_CONNECTION_EVIDENCE_RELATIVE_PATHS],
+    }
+
+
 SOURCE_META_KEYS = frozenset({
     "ip", "managed_host_id", "managed_host_name",
     "ai_identity", "relay_id", "relay_name",

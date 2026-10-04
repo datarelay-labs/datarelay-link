@@ -24,6 +24,7 @@ class StatePathSpec:
     support_bundle_policy: str = "include"
     sensitivity: str = "standard"
     rotation_pattern: str | None = None
+    migration_policy: str = "none"
 
 
 # Canonical relative paths (from filesystem root / test root).
@@ -131,6 +132,7 @@ ACCESS_CONN_LOG = StatePathSpec(
     support_bundle_policy="prefer_new",
     sensitivity="operational",
     rotation_pattern="connections.jsonl.*",
+    migration_policy="retain-pre-v3-forensic-no-import",
 )
 ACCESS_CONN_LOG_LEGACY = StatePathSpec(
     path="var/log/drlink/access-conn.jsonl",
@@ -140,6 +142,7 @@ ACCESS_CONN_LOG_LEGACY = StatePathSpec(
     support_bundle_policy="legacy_fallback",
     sensitivity="operational",
     rotation_pattern="access-conn.jsonl.*",
+    migration_policy="retain-pre-v3-forensic-no-import",
 )
 EGRESS_CONN_LOG = StatePathSpec(
     path="var/log/drlink/egress/connections.jsonl",
@@ -150,6 +153,7 @@ EGRESS_CONN_LOG = StatePathSpec(
     support_bundle_policy="prefer_new",
     sensitivity="operational",
     rotation_pattern="connections.jsonl.*",
+    migration_policy="retain-pre-v3-forensic-no-import",
 )
 EGRESS_CONN_LOG_LEGACY = StatePathSpec(
     path="var/log/drlink/egress-conn.jsonl",
@@ -159,6 +163,7 @@ EGRESS_CONN_LOG_LEGACY = StatePathSpec(
     support_bundle_policy="legacy_fallback",
     sensitivity="operational",
     rotation_pattern="egress-conn.jsonl.*",
+    migration_policy="retain-pre-v3-forensic-no-import",
 )
 
 STATE_PATHS: tuple[StatePathSpec, ...] = (

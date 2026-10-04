@@ -920,13 +920,16 @@ operations need it.
 Upgrade convergence:
 
 - existing SQLite `audit_events` become CONTROL-compatible rows under the new schema;
-- `ai_activity` stops being a second long-term audit authority after its migration/
-  compatibility contract is complete;
+- `ai_activity` is a bounded migration/compatibility source only. Existing rows converge
+  idempotently into versioned `audit_events`; new AI activity writes directly to unified
+  audit, and compatibility reads are projected back from unified audit rather than treating
+  `ai_activity` as a second long-term authority;
 - current Remote/Internet connection JSONL files are legacy evidence, not the 3.0 live
   query backend;
-- DRL3-0 freezes whether retained legacy connection files are one-time imported or kept as
-  explicitly labeled pre-3.0 forensic artifacts. Implementation must not silently discard
-  them.
+- retained Remote/Internet connection JSONL files are kept as explicitly labeled pre-3.0
+  forensic artifacts and are **not** one-time imported into v3 audit because their legacy
+  schemas do not carry the full v3 attribution/fidelity contract. Backup/support surfaces
+  may preserve them, but management/live/audit queries must not treat them as v3 authority.
 
 Backup/restore must account for pending durable spool state. The backup contract either
 drains/checkpoints all spools before the SQLite snapshot or includes spool segments plus

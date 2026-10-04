@@ -332,10 +332,9 @@ class AiAuthConvergence(unittest.TestCase):
             action="allow",
         )
         self._call("get_system_info")
-        row = self.plane.conn.execute(
-            "SELECT principal_name, endpoint_name, capability, result, matched_rule "
-            "FROM ai_activity ORDER BY id DESC LIMIT 1"
-        ).fetchone()
+        rows = self.plane.list_ai_activity(principal="bot", endpoint="host-a")
+        self.assertTrue(rows)
+        row = rows[0]
         self.assertEqual(row["principal_name"], "bot")
         self.assertEqual(row["endpoint_name"], "host-a")
         self.assertEqual(row["capability"], "get_system_info")

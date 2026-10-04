@@ -5751,60 +5751,118 @@ class ControlPlane:
         duration_ms: Optional[int] = None,
         operand: Optional[str] = None,
     ) -> None:
-        p = self.get_principal(principal)
+        """Write AI activity directly to the unified 3.0 audit authority."""
         summary = str(operand or "")
         if len(summary) > 200:
             summary = summary[:197] + "..."
+        occurred = utc_now_iso()
+        revision = self.current_revision()
+        audit_revision = revision if int(revision) > 0 else None
+        matched = [str(rule)] if str(rule or "").strip() else []
         self.conn.execute(
-            "INSERT INTO ai_activity(timestamp, principal_id, principal_name, endpoint_id, endpoint_name, "
-            "capability, matched_rule, result, duration_ms, revision, operand_summary) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                utc_now_iso(),
-                p["id"] if p else None,
-                principal,
-                None,
-                endpoint,
-                capability,
-                rule or "",
-                result,
-                duration_ms,
-                self.current_revision(),
-                summary,
-            ),
-        )
-        self.conn.execute(
-            "INSERT INTO audit_events(timestamp, revision, actor, action, entity_type, "
-            "entity_id, operation, before_summary, after_summary, impact_summary, result) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                utc_now_iso(),
-                self.current_revision(),
-                principal,
-                "ai %s" % capability,
-                "ai-principal",
-                principal,
-                capability,
-                "",
-                "%s %s" % (endpoint, summary[:80]),
-                rule or "",
-                result,
-            ),
+            "INSERT INTO audit_events("
+            "timestamp,revision,actor,action,entity_type,entity_id,operation,"
+            "before_summary,after_summary,impact_summary,result,event_id,"
+            "schema_version,category,event_type,occurred_at,source,source_sequence,"
+            "actor_type,actor_id,delegated_actor_id,interface,reason_code,"
+            "correlation_id,request_id,session_id,revision_before,revision_after,"
+            "matched_policy_json,source_meta_json,destination_meta_json,duration_ms"
+            ") VALUES ("
+            ":timestamp,:revision,:actor,:action,:entity_type,:entity_id,:operation,"
+            ":before_summary,:after_summary,:impact_summary,:result,:event_id,"
+            ":schema_version,:category,:event_type,:occurred_at,:source,:source_sequence,"
+            ":actor_type,:actor_id,:delegated_actor_id,:interface,:reason_code,"
+            ":correlation_id,:request_id,:session_id,:revision_before,:revision_after,"
+            ":matched_policy_json,:source_meta_json,:destination_meta_json,:duration_ms"
+            ")",
+            {
+                "timestamp": occurred,
+                "revision": audit_revision,
+                "actor": principal,
+                "action": "ai %s" % capability,
+                "entity_type": "managed-endpoint",
+                "entity_id": endpoint,
+                "operation": capability,
+                "before_summary": "",
+                "after_summary": summary,
+                "impact_summary": "",
+                "result": result,
+                "event_id": "evt_ai_" + secrets.token_hex(16),
+                "schema_version": 1,
+                "category": "ACCESS_DECISION",
+                "event_type": "ai.tool",
+                "occurred_at": occurred,
+                "source": "ai-mcp",
+                "source_sequence": None,
+                "actor_type": "ai-identity",
+                "actor_id": principal,
+                "delegated_actor_id": "",
+                "interface": "MCP",
+                "reason_code": "",
+                "correlation_id": "",
+                "request_id": "",
+                "session_id": "",
+                "revision_before": None,
+                "revision_after": revision,
+                "matched_policy_json": json.dumps(
+                    matched, sort_keys=True, separators=(",", ":")
+                ),
+                "source_meta_json": json.dumps(
+                    {"ai_identity": principal},
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                "destination_meta_json": json.dumps(
+                    {"host": endpoint},
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                "duration_ms": duration_ms,
+            },
         )
 
-    def list_ai_activity(self, *, principal: Optional[str] = None, endpoint: Optional[str] = None) -> list[dict]:
-        sql = "SELECT * FROM ai_activity WHERE 1=1"
+    def list_ai_activity(
+        self,
+        *,
+        principal: Optional[str] = None,
+        endpoint: Optional[str] = None,
+    ) -> list[dict]:
+        """Compatibility projection over unified v3 audit_events."""
+        sql = (
+            "SELECT * FROM audit_events "
+            "WHERE category='ACCESS_DECISION' AND event_type='ai.tool' "
+            "AND source IN ('ai-mcp','legacy-ai_activity')"
+        )
         args: list[Any] = []
         if principal:
-            sql += " AND principal_name = ?"
+            sql += " AND actor_id = ?"
             args.append(principal)
         if endpoint:
-            sql += " AND endpoint_name = ?"
+            sql += " AND entity_id = ?"
             args.append(endpoint)
         sql += " ORDER BY id DESC LIMIT 200"
         out = []
         for row in self.conn.execute(sql, args):
-            out.append(dict(row))
+            try:
+                matched = json.loads(str(row["matched_policy_json"] or "[]"))
+            except (TypeError, ValueError):
+                matched = []
+            out.append(
+                {
+                    "id": row["id"],
+                    "timestamp": row["occurred_at"] or row["timestamp"],
+                    "principal_id": None,
+                    "principal_name": row["actor_id"] or row["actor"],
+                    "endpoint_id": None,
+                    "endpoint_name": row["entity_id"],
+                    "capability": row["operation"],
+                    "matched_rule": str(matched[0]) if matched else "",
+                    "result": row["result"],
+                    "duration_ms": row["duration_ms"],
+                    "revision": row["revision_after"] or row["revision"],
+                    "operand_summary": row["after_summary"] or "",
+                }
+            )
         return out
 
     def format_ai_activity(self, rows: list[dict]) -> str:

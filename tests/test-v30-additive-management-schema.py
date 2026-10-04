@@ -59,10 +59,14 @@ class V30AdditiveManagementSchemaTests(unittest.TestCase):
         ensure_v30_schema(conn)
         columns = {row[1] for row in conn.execute("PRAGMA table_info(clients)")}
         indexes = {row[1] for row in conn.execute("PRAGMA index_list(clients)")}
+        audit_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(audit_events)")
+        }
         self.assertIn("agent_platform", columns)
         self.assertIn("agent_version", columns)
         self.assertIn("idx_v30_clients_agent_version", indexes)
         self.assertIn("idx_v30_clients_platform", indexes)
+        self.assertIn("duration_ms", audit_columns)
         conn.close()
 
     def test_inventory_change_bypasses_heartbeat_coalescing_without_revision(self):
