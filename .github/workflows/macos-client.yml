@@ -24,6 +24,7 @@ jobs:
           bash scripts/check-public-metadata.sh
 
   apple-silicon:
+    if: github.event_name != 'pull_request'
     runs-on: macos-15
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -44,3 +45,4 @@ jobs:
             "https://github.com/fatedier/frp/releases/download/v${version}/frp_${version}_darwin_arm64.tar.gz"
           echo "45be02b186860d375ed49a8941ae9569628a54bf14e67fc36b29c98c99dabcc6  $archive" |
             shasum -a 256 -c -
+

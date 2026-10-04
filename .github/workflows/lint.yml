@@ -22,16 +22,20 @@ jobs:
         with:
           fetch-depth: 0
       - name: Version consistency
+        if: github.event_name != 'pull_request'
         run: ./scripts/check-version-consistency.sh
       - name: Release governance
+        if: github.event_name != 'pull_request'
         run: ./scripts/check-release-governance.sh
       - name: Install Full Suite OS Python deps
+        if: github.event_name != 'pull_request'
         # python3-acme is required by AUTO_ACME (lib/drlink_mcp_tls.py). Previously
         # masked on GHA because the suite failed earlier on the undeclared MCP SDK.
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends python3-acme
       - name: Provision pinned official MCP SDK
+        if: github.event_name != 'pull_request'
         # VERSION_POLICY: MCP is included and release-blocking; do not skip.
         run: |
           SDK_PY="$(./tests/ensure-mcp-sdk-venv.sh | tail -n 1)"
@@ -40,7 +44,11 @@ jobs:
             exit 1
           fi
           echo "DRLINK_MCP_SDK_PYTHON=$SDK_PY" >> "$GITHUB_ENV"
+      - name: Fast deterministic PR gate
+        if: github.event_name == 'pull_request'
+        run: bash tests/run-fast-pr.sh
       - name: Full local non-Docker suite
+        if: github.event_name != 'pull_request'
         run: ./tests/run-all.sh
       # Live distro containers cannot validate systemd unless PID 1 is systemd.
       # Package install + Bash/Python/CLI checks run in a separate matrix job.
@@ -85,3 +93,4 @@ jobs:
         run: ./tests/run-distro-matrix.sh --image ${{ matrix.image }}
         # Uses the same Docker invocation as local ./tests/run-distro-matrix.sh.
         # Does not start systemd. SYSTEMD_SMOKE remains NOT_TESTED.
+

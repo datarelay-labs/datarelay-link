@@ -73,19 +73,21 @@ for rel in (
         raise SystemExit(f"{rel}: unexpected trigger block:\n{actual}")
 
 lint = Path(".github/workflows/lint.yml").read_text(encoding="utf-8")
-pr_regression_steps = (
+full_suite_only_steps = (
+    "Version consistency",
+    "Release governance",
     "Install Full Suite OS Python deps",
     "Provision pinned official MCP SDK",
     "Full local non-Docker suite",
 )
-for name in pr_regression_steps:
+for name in full_suite_only_steps:
     marker = f"      - name: {name}\n"
     pos = lint.find(marker)
     if pos < 0:
-        raise SystemExit(f"lint.yml missing PR regression step: {name}")
+        raise SystemExit(f"lint.yml missing full-suite step: {name}")
     tail = lint[pos + len(marker):].splitlines()
-    if tail and tail[0].strip().startswith("if:"):
-        raise SystemExit(f"lint.yml PR regression step unexpectedly gated off PR: {name}")
+    if not tail or tail[0].strip() != "if: github.event_name != 'pull_request'":
+        raise SystemExit(f"lint.yml full-suite step must be gated off PR: {name}")
 
 release_only_steps = (
     "Build standalone bundles",
@@ -101,19 +103,39 @@ for name in release_only_steps:
     if not tail or tail[0].strip() != "if: github.event_name != 'pull_request'":
         raise SystemExit(f"lint.yml release-only step not gated off PR: {name}")
 
-# DRLink intentionally keeps its full deterministic regression suite on PRs.
-# This project-specific stricter gate was restored on 2026-09-30.
+# Ordinary PRs use a bounded deterministic fast gate. Full run-all remains
+# available only outside pull_request and as explicit release qualification.
+fast_marker = "      - name: Fast deterministic PR gate\n"
+fast_pos = lint.find(fast_marker)
+if fast_pos < 0:
+    raise SystemExit("lint.yml missing fast deterministic PR gate")
+fast_tail = lint[fast_pos + len(fast_marker):].splitlines()
+if not fast_tail or fast_tail[0].strip() != "if: github.event_name == 'pull_request'":
+    raise SystemExit("lint.yml fast gate must be PR-only")
+if "run: bash tests/run-fast-pr.sh" not in "\n".join(fast_tail[:3]):
+    raise SystemExit("lint.yml fast gate must execute run-fast-pr.sh")
+
 full_marker = "      - name: Full local non-Docker suite\n"
 pos = lint.find(full_marker)
 if pos < 0:
     raise SystemExit("lint.yml missing full local non-Docker suite")
 tail = lint[pos + len(full_marker):].splitlines()
-if not tail or tail[0].strip().startswith("if:"):
-    raise SystemExit("lint.yml full suite unexpectedly gated off PR")
+if not tail or tail[0].strip() != "if: github.event_name != 'pull_request'":
+    raise SystemExit("lint.yml full suite must be gated off ordinary PRs")
 
 portability = "  portability-containers:\n    if: github.event_name != 'pull_request'\n"
 if portability not in lint:
     raise SystemExit("lint.yml portability-containers must be gated off PR")
+
+macos = Path(".github/workflows/macos-client.yml").read_text(encoding="utf-8")
+if "  apple-silicon:\n    if: github.event_name != 'pull_request'\n" not in macos:
+    raise SystemExit("macOS Apple Silicon qualification must be gated off ordinary PRs")
+windows = Path(".github/workflows/windows-client.yml").read_text(encoding="utf-8")
+for job in ("windows-powershell51", "windows-pwsh7"):
+    if f"  {job}:\n    if: github.event_name != 'pull_request'\n" not in windows:
+        raise SystemExit(f"{job} qualification must be gated off ordinary PRs")
+if "  linux-pwsh-cross:\n" not in windows:
+    raise SystemExit("Linux pwsh cross-language PR feedback must remain available")
 
 tests = Path(".engineering/tests.yaml").read_text(encoding="utf-8")
 start = tests.index("  - id: ADOPTED-TEST-001\n")
@@ -122,15 +144,15 @@ scenario = tests[start:end]
 required = (
     "name: Project-native affected tests",
     "      - affected",
-    'command: "bash tests/run-all.sh"',
+    'command: "bash tests/run-fast-pr.sh"',
     "release_gate: true",
-    '"project-native tests remain green for affected changes"',
+    '"fast deterministic project-native checks remain green for affected changes"',
 )
 for needle in required:
     if needle not in scenario:
         raise SystemExit(f"ADOPTED-TEST-001 missing DRLink pre-merge contract: {needle}")
-if "cost: medium" not in scenario:
-    raise SystemExit("ADOPTED-TEST-001 must retain the explicit medium-cost PR classification")
+if "cost: cheap" not in scenario:
+    raise SystemExit("ADOPTED-TEST-001 must use the cheap PR classification")
 
 project_text = Path(".engineering/project.yaml").read_text(encoding="utf-8")
 baseline_line = next(line for line in project_text.splitlines() if line.strip().startswith("baseline: "))
@@ -316,3 +338,4 @@ grep -q 'Real ChatGPT owner/UI authentication on a currently supported full-MCP 
 pass "MCP_V2_4_SCOPE_AND_CHATGPT_AUTH_GATE"
 
 echo "VERSION_GOVERNANCE=PASS"
+

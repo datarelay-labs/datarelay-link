@@ -6,7 +6,7 @@ sbom_required: true
 setup_command: ''
 preflight_required: true
 preflight_command: python3 scripts/check-pre-release-exhaustive-gates.py --gate all
-qualification_command: bash scripts/check-release-governance.sh
+qualification_command: bash -lc 'tests/run-all.sh && scripts/check-release-governance.sh'
 artifact_hash_command: bash scripts/verify-sha256sums.sh
 provenance_command: python3 scripts/sync-release-manifest-provenance.py --check
 sbom_command: bash -lc 'python3 scripts/generate-sbom.py -o dist/sbom.spdx.json && bash scripts/verify-sbom.sh'
@@ -48,3 +48,4 @@ human_equivalent_user_tests:
     mandatory: true
     contract: docs/FULL_USER_E2E_SCENARIOS.md
     minimum_passes: 1
+
