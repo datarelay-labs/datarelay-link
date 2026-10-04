@@ -48,4 +48,3 @@ human_equivalent_user_tests:
     mandatory: true
     contract: docs/FULL_USER_E2E_SCENARIOS.md
     minimum_passes: 1
-

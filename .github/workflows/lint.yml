@@ -93,4 +93,3 @@ jobs:
         run: ./tests/run-distro-matrix.sh --image ${{ matrix.image }}
         # Uses the same Docker invocation as local ./tests/run-distro-matrix.sh.
         # Does not start systemd. SYSTEMD_SMOKE remains NOT_TESTED.
-
