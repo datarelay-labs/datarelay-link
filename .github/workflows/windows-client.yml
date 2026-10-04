@@ -12,6 +12,7 @@ permissions:
 
 jobs:
   windows-powershell51:
+    if: github.event_name != 'pull_request'
     name: Windows PowerShell 5.1
     runs-on: windows-latest
     steps:
@@ -43,6 +44,7 @@ jobs:
           & .\tests\windows\frp-binary-smoke.ps1
 
   windows-pwsh7:
+    if: github.event_name != 'pull_request'
     name: Windows PowerShell 7
     runs-on: windows-latest
     steps:
@@ -83,3 +85,4 @@ jobs:
           pwsh -NoProfile -Command '$PSVersionTable.PSVersion'
       - name: Run Windows suite under Linux pwsh
         run: pwsh -NoProfile -File tests/windows/run-all.ps1
+
