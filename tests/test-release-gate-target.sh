@@ -129,11 +129,14 @@ fi
 if grep -q 'V2_3_1' "$ROOT/tests/run-production-realistic-qualification.sh"; then
   fail "stale v2.3.1 qualification phase label remains"
 fi
-if ! grep -q 'PHASE=DATA_RELAY_LINK_V2_4_0_FINAL_PRODUCTION_REALISTIC_QUALIFICATION' \
+if ! grep -q 'PHASE=DATA_RELAY_LINK_${PROJECT_VERSION//./_}_FINAL_PRODUCTION_REALISTIC_QUALIFICATION' \
   "$ROOT/tests/run-production-realistic-qualification.sh"; then
-  fail "v2.4.0 qualification phase label missing"
+  fail "version-aware qualification phase label missing"
 fi
-echo "PASS V240_QUALIFICATION_PHASE_LABEL"
+if ! grep -q 'PROJECT_VERSION=.*VERSION' "$ROOT/tests/run-production-realistic-qualification.sh"; then
+  fail "qualification phase is not bound to repository PROJECT_VERSION"
+fi
+echo "PASS VERSION_AWARE_QUALIFICATION_PHASE_LABEL"
 python3 - "$ROOT/tests/run-release-qualification-pass.sh" <<'PY'
 import sys
 from pathlib import Path
