@@ -121,7 +121,7 @@ class V30WebDraftTests(unittest.TestCase):
                 actor = self.server.app._actor(principal)
                 self.assertEqual(self.server.app.adapter.core._draft_authority(actor), expected)
 
-    def test_draft_preview_apply_export_and_csrf(self):
+    def test_draft_test_diff_apply_and_configuration_export(self):
         self.login()
         plane = ControlPlane(self.tmp)
         try:
@@ -152,15 +152,30 @@ class V30WebDraftTests(unittest.TestCase):
         self.assertEqual(status, 200, draft)
         draft_id = draft["id"]
 
+        status, _, tested = self.request(
+            "POST",
+            f"/api/v1/drafts/{draft_id}/test",
+            {},
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, tested)
+        self.assertEqual(tested["status"], "PASS")
+        self.assertTrue(tested["valid"])
+        self.assertFalse(tested["no_change"])
+        self.assertEqual(tested["change_count"], 1)
+        self.assertFalse(tested["authoritative_mutation"])
+
         status, _, preview = self.request(
             "POST",
-            f"/api/v1/drafts/{draft_id}/preview",
+            f"/api/v1/drafts/{draft_id}/diff",
             {},
             headers={"X-CSRF-Token": self.csrf},
         )
         self.assertEqual(status, 200, preview)
         self.assertFalse(preview["no_change"])
+        self.assertEqual(preview["diff_result"], "CHANGES_PENDING")
         self.assertEqual(preview["changes"][0]["kind"], "network-object")
+        self.assertFalse(preview["authoritative_mutation"])
 
         plane = ControlPlane(self.tmp)
         try:
@@ -174,6 +189,15 @@ class V30WebDraftTests(unittest.TestCase):
         )
         self.assertEqual(status, 200, exported)
         self.assertEqual(exported["bundle_text"], bundle)
+
+        status, _, current_export = self.request(
+            "GET", "/api/v1/configuration/export"
+        )
+        self.assertEqual(status, 200, current_export)
+        self.assertTrue(current_export["redacted"])
+        self.assertFalse(current_export["authoritative_mutation"])
+        self.assertIn("configurationBundle:", current_export["bundle_text"])
+        self.assertNotIn("web-office", current_export["bundle_text"])
 
         status, _, applied = self.request(
             "POST",
@@ -191,13 +215,62 @@ class V30WebDraftTests(unittest.TestCase):
         finally:
             plane.close()
 
+        status, _, applied_export = self.request(
+            "GET", "/api/v1/configuration/export"
+        )
+        self.assertEqual(status, 200, applied_export)
+        self.assertIn("web-office", applied_export["bundle_text"])
+        self.assertIn(
+            f"sourceRevision: {revision + 1}", applied_export["bundle_text"]
+        )
+
+    def test_invalid_bundle_test_is_fail_closed_and_zero_mutation(self):
+        self.login()
+        plane = ControlPlane(self.tmp)
+        try:
+            revision = plane.current_revision()
+        finally:
+            plane.close()
+        bad = (
+            "configurationBundle:\n"
+            "  context: server\n"
+            f"  sourceRevision: {revision}\n"
+            "  networkObjects:\n"
+            "    - name: bad-object\n"
+            "      type: cidr\n"
+            "      value: definitely-not-a-cidr\n"
+        )
+        status, _, draft = self.request(
+            "POST",
+            "/api/v1/drafts",
+            {"bundle_text": bad},
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, draft)
+        status, _, result = self.request(
+            "POST",
+            f"/api/v1/drafts/{draft['id']}/test",
+            {},
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 400, result)
+        plane = ControlPlane(self.tmp)
+        try:
+            self.assertEqual(plane.current_revision(), revision)
+            self.assertIsNone(plane.get_object("bad-object"))
+        finally:
+            plane.close()
+
 
     def test_http_layer_has_no_direct_draft_service_dependency(self):
         source = (ROOT / "lib/drlink_web_service.py").read_text(encoding="utf-8")
         self.assertNotIn("ManagementDraftService", source)
         self.assertNotIn(".conn.execute(", source)
+        self.assertIn("adapter.draft_test", source)
+        self.assertIn("adapter.draft_diff", source)
         self.assertIn("adapter.draft_preview", source)
         self.assertIn("adapter.draft_apply", source)
+        self.assertIn("adapter.configuration_export", source)
 
 
 if __name__ == "__main__":

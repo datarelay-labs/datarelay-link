@@ -251,6 +251,8 @@ class WebApplication:
                 actor=actor,
                 limit=_int_arg(_first(query, "limit"), 50, high=100),
             )
+        if path == "/api/v1/configuration/export":
+            return self.adapter.configuration_export(actor=actor)
         if path == "/api/v1/drafts":
             return self.adapter.draft_list(
                 actor=actor,
@@ -393,6 +395,10 @@ class WebApplication:
                 return self.adapter.draft_update(
                     draft_id, actor=actor, bundle_text=str(body.get("bundle_text") or "")
                 )
+            if action == "test":
+                return self.adapter.draft_test(draft_id, actor=actor)
+            if action == "diff":
+                return self.adapter.draft_diff(draft_id, actor=actor)
             if action == "preview":
                 return self.adapter.draft_preview(draft_id, actor=actor)
             if action == "apply":

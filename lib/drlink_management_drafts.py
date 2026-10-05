@@ -11,7 +11,13 @@ from typing import Any, Optional
 from drlink_control_db import ControlPlaneError, utc_now_iso
 from drlink_control_plane import ConcurrencyError
 from drlink_management_change import CONFIRM_CHANGE, ManagementChangeService
-from drlink_v24_bundle import BundleError, apply_v24_plan, format_v24_plan, prepare_v24_plan
+from drlink_v24_bundle import (
+    BundleError,
+    apply_v24_plan,
+    export_configuration_v24,
+    format_v24_plan,
+    prepare_v24_plan,
+)
 
 DRAFT_OBSERVE = "OBSERVE"
 DRAFT_OPERATE = "OPERATE"
@@ -219,14 +225,14 @@ class ManagementDraftService(ManagementChangeService):
         )
         return self.get(str(row["id"]), actor_id=str(row["actor_id"]), now=now)
 
-    def preview(
+    def _prepare_draft_bundle(
         self,
         draft_id: str,
         *,
         actor_id: str,
         authority: str,
         now: Optional[datetime] = None,
-    ) -> dict[str, Any]:
+    ):
         _authority(authority)
         row = self._load(draft_id, actor_id=actor_id, now=now)
         current_revision = int(self.plane.current_revision())
@@ -267,6 +273,77 @@ class ManagementDraftService(ManagementChangeService):
         )
         security_impact = list(plan.security_impact or [])
         requires_admin = bool(policy_change or security_impact)
+        return (
+            row,
+            text,
+            plan,
+            changes,
+            security_impact,
+            requires_admin,
+            base_revision,
+            current_revision,
+        )
+
+    def test_bundle(
+        self,
+        draft_id: str,
+        *,
+        actor_id: str,
+        authority: str,
+        now: Optional[datetime] = None,
+    ) -> dict[str, Any]:
+        (
+            row,
+            _text,
+            plan,
+            changes,
+            security_impact,
+            requires_admin,
+            base_revision,
+            current_revision,
+        ) = self._prepare_draft_bundle(
+            draft_id,
+            actor_id=actor_id,
+            authority=authority,
+            now=now,
+        )
+        return {
+            "draft_id": str(row["id"]),
+            "status": "PASS",
+            "valid": True,
+            "base_revision": base_revision,
+            "current_revision": current_revision,
+            "no_change": bool(plan.no_change),
+            "change_count": len(changes),
+            "security_impact": security_impact,
+            "requires_admin": requires_admin,
+            "formatted_plan": format_v24_plan(plan),
+            "authoritative_mutation": False,
+        }
+
+    def preview(
+        self,
+        draft_id: str,
+        *,
+        actor_id: str,
+        authority: str,
+        now: Optional[datetime] = None,
+    ) -> dict[str, Any]:
+        (
+            row,
+            text,
+            plan,
+            changes,
+            security_impact,
+            requires_admin,
+            base_revision,
+            current_revision,
+        ) = self._prepare_draft_bundle(
+            draft_id,
+            actor_id=actor_id,
+            authority=authority,
+            now=now,
+        )
         bundle_sha256 = hashlib.sha256(text.encode("utf-8")).hexdigest()
         issued = self._issue_plan(
             actor_id=actor_id,
@@ -301,7 +378,24 @@ class ManagementDraftService(ManagementChangeService):
             "requires_admin": requires_admin,
             "formatted_plan": format_v24_plan(plan),
             "bundle_text": text,
+            "diff_result": "NO_CHANGE" if plan.no_change else "CHANGES_PENDING",
+            "authoritative_mutation": False,
         }
+
+    def diff(
+        self,
+        draft_id: str,
+        *,
+        actor_id: str,
+        authority: str,
+        now: Optional[datetime] = None,
+    ) -> dict[str, Any]:
+        return self.preview(
+            draft_id,
+            actor_id=actor_id,
+            authority=authority,
+            now=now,
+        )
 
     def apply(
         self,
@@ -425,3 +519,6 @@ class ManagementDraftService(ManagementChangeService):
             draft_id, actor_id=actor_id, require_draft=False
         )
         return str(row["bundle_text"] or "")
+
+    def export_current_configuration(self) -> str:
+        return export_configuration_v24(self.plane)

@@ -390,14 +390,35 @@ class ManagementCoreService:
         with ManagementDraftService(self.root) as service:
             return service.update(draft_id, actor_id=actor.actor_id, bundle_text=bundle_text)
 
-    def draft_preview(self, draft_id: str, *, actor: ManagementActor) -> dict[str, Any]:
+    def draft_test(self, draft_id: str, *, actor: ManagementActor) -> dict[str, Any]:
         authority = self._draft_authority(actor)
         if authority == DRAFT_OBSERVE:
-            raise ManagementAuthorizationError("Read Only authority cannot preview a mutable Draft.")
+            raise ManagementAuthorizationError("Read Only authority cannot test a mutable Draft.")
         with ManagementDraftService(self.root) as service:
-            return service.preview(
+            return service.test_bundle(
                 draft_id, actor_id=actor.actor_id, authority=authority
             )
+
+    def draft_diff(self, draft_id: str, *, actor: ManagementActor) -> dict[str, Any]:
+        authority = self._draft_authority(actor)
+        if authority == DRAFT_OBSERVE:
+            raise ManagementAuthorizationError("Read Only authority cannot diff a mutable Draft.")
+        with ManagementDraftService(self.root) as service:
+            return service.diff(
+                draft_id, actor_id=actor.actor_id, authority=authority
+            )
+
+    def draft_preview(self, draft_id: str, *, actor: ManagementActor) -> dict[str, Any]:
+        return self.draft_diff(draft_id, actor=actor)
+
+    def configuration_export(self, *, actor: ManagementActor) -> dict[str, Any]:
+        self._draft_authority(actor)
+        with ManagementDraftService(self.root) as service:
+            return {
+                "bundle_text": service.export_current_configuration(),
+                "redacted": True,
+                "authoritative_mutation": False,
+            }
 
     def draft_apply(
         self,

@@ -490,11 +490,15 @@ Management MCP/Plugin tool list above.
 The DRL3-3 Draft Workspace follows the same authority boundary even though Draft CRUD is
 Web-only operational state rather than an MCP tool. Browser routes call the Web adapter,
 which calls `ManagementCoreService`; the HTTP layer never calls the Draft service or
-SQLite directly. Draft Preview issues an opaque Core Change Plan bound to the actor,
-Server, exact authoritative revision, Draft ID, and Draft bundle digest. Apply requires
-that exact still-pending plan; cross-actor reuse, revision drift, or editing the Draft
-after Preview fails closed and requires a fresh Preview. Cancel never mutates
-authoritative configuration.
+SQLite directly. ConfigurationBundle **Test** validates through the canonical v2.4
+bundle parser/plan engine with zero authoritative mutation. **Diff & Preview** uses that
+same engine and issues an opaque Core Change Plan bound to the actor, Server, exact
+authoritative revision, Draft ID, and Draft bundle digest. Apply requires that exact
+still-pending plan; cross-actor reuse, revision drift, or editing the Draft after Preview
+fails closed and requires a fresh Preview. **Export Current** serializes the canonical
+redacted Server ConfigurationBundle through the same export engine used by the CLI.
+Draft export/copy remains non-authoritative, and Cancel never mutates authoritative
+configuration.
 
 DRL3-0 additionally freezes:
 

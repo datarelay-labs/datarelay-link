@@ -56,8 +56,17 @@ class ManagementWebApiAdapter:
     ) -> dict[str, Any]:
         return self.core.draft_update(draft_id, actor=actor, bundle_text=bundle_text)
 
+    def draft_test(self, draft_id: str, *, actor: ManagementActor) -> dict[str, Any]:
+        return self.core.draft_test(draft_id, actor=actor)
+
+    def draft_diff(self, draft_id: str, *, actor: ManagementActor) -> dict[str, Any]:
+        return self.core.draft_diff(draft_id, actor=actor)
+
     def draft_preview(self, draft_id: str, *, actor: ManagementActor) -> dict[str, Any]:
         return self.core.draft_preview(draft_id, actor=actor)
+
+    def configuration_export(self, *, actor: ManagementActor) -> dict[str, Any]:
+        return self.core.configuration_export(actor=actor)
 
     def draft_apply(
         self,

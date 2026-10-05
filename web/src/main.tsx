@@ -54,6 +54,7 @@ function Login({onLogin}:{onLogin:(op:any)=>void}){
 function DraftWorkspace(){
   const [bundle,setBundle]=useState("configurationBundle:\n  context: server\n  networkObjects: []\n");
   const [draftId,setDraftId]=useState("");
+  const [testResult,setTestResult]=useState<any>(null);
   const [preview,setPreview]=useState<any>(null);
   const [confirmation,setConfirmation]=useState("");
   const [message,setMessage]=useState("");
@@ -68,20 +69,29 @@ function DraftWorkspace(){
     setDraftId(created.id);
     return created.id as string;
   }
-  async function doPreview(){
+  async function doTest(){
     setError("");setMessage("");
     try{
       const id=await ensureDraft();
-      const result=await api("/api/v1/drafts/"+id+"/preview",{method:"POST",body:"{}"});
-      setPreview(result);setConfirmation("");
-    }catch(e:any){setError(e.message||String(e))}
+      const result=await api("/api/v1/drafts/"+id+"/test",{method:"POST",body:"{}"});
+      setTestResult(result);setPreview(null);setConfirmation("");
+      setMessage("ConfigurationBundle test PASS");
+    }catch(e:any){setTestResult(null);setError(e.message||String(e))}
+  }
+  async function doDiff(){
+    setError("");setMessage("");
+    try{
+      const id=await ensureDraft();
+      const result=await api("/api/v1/drafts/"+id+"/diff",{method:"POST",body:"{}"});
+      setPreview(result);setTestResult(null);setConfirmation("");
+    }catch(e:any){setPreview(null);setError(e.message||String(e))}
   }
   async function doApply(){
     setError("");setMessage("");
     try{
       const id=await ensureDraft();
       const result=await api("/api/v1/drafts/"+id+"/apply",{method:"POST",body:JSON.stringify({change_plan_id:preview?.change_plan_id||"",confirmation})});
-      setMessage("Applied at revision "+result.revision);setPreview(null);setDraftId("");setConfirmation("");
+      setMessage("Applied at revision "+result.revision);setPreview(null);setTestResult(null);setDraftId("");setConfirmation("");
     }catch(e:any){setError(e.message||String(e))}
   }
   async function doCancel(){
@@ -89,32 +99,43 @@ function DraftWorkspace(){
     setError("");
     try{
       await api("/api/v1/drafts/"+draftId+"/cancel",{method:"POST",body:"{}"});
-      setMessage("Draft cancelled with zero authoritative mutation");setDraftId("");setPreview(null);setConfirmation("");
+      setMessage("Draft cancelled with zero authoritative mutation");setDraftId("");setPreview(null);setTestResult(null);setConfirmation("");
     }catch(e:any){setError(e.message||String(e))}
   }
-  async function doExport(){
+  async function doExportDraft(){
     if(!draftId)return;
     setError("");
     try{
       const result=await api("/api/v1/drafts/"+draftId+"/export");
-      setBundle(result.bundle_text);setMessage("Draft exported to the editor");
+      setBundle(result.bundle_text);setMessage("Draft ConfigurationBundle exported to the editor");
+    }catch(e:any){setError(e.message||String(e))}
+  }
+  async function doExportCurrent(){
+    setError("");setMessage("");
+    try{
+      const result=await api("/api/v1/configuration/export");
+      setBundle(result.bundle_text);setPreview(null);setTestResult(null);setConfirmation("");
+      setMessage("Current redacted configuration exported to the editor");
     }catch(e:any){setError(e.message||String(e))}
   }
   return <div className="draft-layout">
     <div className="card">
       <h3>Configuration Draft</h3>
-      <div className="muted">Non-authoritative until Apply. Preview uses the canonical ConfigurationBundle engine and revision guard.</div>
+      <div className="muted">Non-authoritative until Apply. Test and Diff use the canonical ConfigurationBundle engine; Apply is revision-bound.</div>
       {error&&<div className="error">{error}</div>}{message&&<div className="notice">{message}</div>}
       <textarea className="draft-editor" value={bundle} onChange={e=>setBundle(e.target.value)} spellCheck={false}/>
       <div className="toolbar">
-        <button className="primary" onClick={doPreview}>Preview</button>
-        <button className="secondary" onClick={doExport} disabled={!draftId}>Export</button>
+        <button className="primary" onClick={doTest}>Test</button>
+        <button className="primary" onClick={doDiff}>Diff & Preview</button>
+        <button className="secondary" onClick={doExportCurrent}>Export Current</button>
+        <button className="secondary" onClick={doExportDraft} disabled={!draftId}>Export Draft</button>
         <button className="secondary" onClick={doCancel} disabled={!draftId}>Cancel Draft</button>
       </div>
+      {testResult&&<div className="notice">Validation PASS · {testResult.change_count} pending change(s) · {testResult.no_change?"NO CHANGE":"CHANGES PENDING"}</div>}
     </div>
     <div className="card">
       <h3>Change Plan</h3>
-      {!preview&&<div className="muted">Preview the Draft to validate references, dependency ordering, revision, and security impact.</div>}
+      {!preview&&<div className="muted">Run Diff & Preview to validate references, dependency ordering, revision, and security impact before Apply.</div>}
       {preview&&<>
         <pre className="plan">{preview.formatted_plan}</pre>
         {(preview.security_impact||[]).length>0&&<div className="warning-box">{preview.security_impact.map((x:string)=><div key={x}>{x}</div>)}</div>}
