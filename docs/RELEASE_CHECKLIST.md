@@ -12,15 +12,15 @@ Published tags are immutable. Preparing the 3.0.0 immutable tag is a later quali
 
 ## 1. Candidate identity
 
-- [ ] `PROJECT_VERSION=2.4.0`.
-- [ ] Candidate identity is an exact-SHA development build, or an optional `2.4.0-rc.N` / `preview` build. Preview/RC is not mandatory.
+- [ ] `PROJECT_VERSION=3.0.0`.
+- [ ] Candidate identity is an exact-SHA development build, or an optional `3.0.0-rc.N` / `preview` build. Preview/RC is not mandatory.
 - [ ] `SOURCE_HEAD` is the exact 40-character SHA.
 - [ ] Branch/worktree recorded.
 - [ ] Worktree clean.
 - [ ] Remote synchronized.
 - [ ] Product and FRP versions recorded separately.
 - [ ] Historical tags unchanged.
-- [ ] `v2.4.0` does not already point elsewhere.
+- [ ] `v3.0.0` does not already point elsewhere.
 
 Evidence:
 
@@ -49,9 +49,9 @@ CONTROL_DB_SCHEMA_VERSION=
 - [ ] Agent-owned Remote Service model implemented.
 - [ ] Remote Access BLACKLIST / WHITELIST policy implemented.
 - [ ] Internet Access BLACKLIST / WHITELIST policy implemented.
-- [ ] AI Access/MCP included and implemented (`MCP_INCLUDED_IN_V2_4_0=YES`).
-- [ ] Real ChatGPT Plus user authentication is a mandatory v2.4.0 release gate.
-- [ ] ConfigurationBundle included in the v2.4.0 stable target.
+- [ ] AI Access/MCP included and implemented in the 3.0.0 candidate.
+- [ ] Real ChatGPT user authentication is a mandatory 3.0.0 release gate whenever public MCP/AI Access is claimed.
+- [ ] ConfigurationBundle included in the 3.0.0 stable target.
 - [ ] direct CLI, AI-generated CLI, and ConfigurationBundle share one Change Plan/mutation engine.
 - [ ] ConfigurationBundle is an idempotent change set, not a second SSOT.
 - [ ] Zero-Touch ticket issuance is server-bounded to max 10/request and max 10 active unused, unique single-use tickets.
@@ -231,7 +231,7 @@ DB_CORRUPTION_FAIL_CLOSED=
 - [ ] owner/UI evidence capture time is at/after the exact provenance commit and not implausibly in the future.
 - [ ] qualification rejects missing/stale/incomplete ChatGPT owner/UI evidence before destructive Real E2E begins.
 - [ ] stable attestation revalidates the actual owner/UI evidence payload and derives acceptance/hash/HEAD instead of trusting free-form PASS/hash inputs.
-- [ ] stable v2.4.0 attestation requires protected GitHub Environment `stable-release-owner-ui` approval; caller input cannot synthesize `trusted_owner_ui_review=PASS`.
+- [ ] stable v3.0.0 attestation requires protected GitHub Environment `stable-release-owner-ui` approval; caller input cannot synthesize `trusted_owner_ui_review=PASS`.
 - [ ] `stable-release-owner-ui` has at least one required reviewer and administrator bypass is disabled.
 - [ ] denied, cancelled, skipped, or unconfigured protected owner/UI review fails closed before stable attestation proceeds.
 - [ ] Claude interoperability tested if claimed supported.
@@ -304,7 +304,7 @@ CHATGPT_PLUS_ALLOW_DENY=
 - [ ] root help, `?`, Tab, menu, `help commands`, command-specific help, and errors expose the same supported surface; no supported command requires memorization.
 - [ ] every behavior-changing setting/subcommand has an explicit disposition; family-level parsing alone does not count as coverage.
 - [ ] no duplicate public mutation path exists for the same operation without an explicit product reason.
-- [ ] unreleased/greenfield v2.4 exposes no compatibility-only root-bypass alias or executable obsolete hidden grammar.
+- [ ] the 3.0 candidate exposes no unjustified compatibility-only root-bypass alias or executable obsolete hidden grammar.
 - [ ] installer completion text, enrollment instructions, diagnostics, update recommendations, and recovery text point only to current canonical commands or exact documented installer actions.
 - [ ] active documentation examples use canonical public grammar or an explicitly justified installer-only lifecycle.
 - [ ] no supported workflow ends with a non-actionable recovery instruction or legacy alias.
@@ -399,7 +399,7 @@ Stop or skip only the specific downstream check when continuing it would be unsa
 
 ### Qualification execution order
 
-Use this order for v2.4 release closure:
+Use this order for v3.0 release closure:
 
 1. CLI Feature/Scenario reconciliation PASS1; accumulate findings and finish the pass.
 2. Batch remediation if required; freeze a new candidate.
@@ -407,7 +407,7 @@ Use this order for v2.4 release closure:
 4. Full User E2E PASS1; accumulate findings and finish the pass.
 5. Batch remediation if required; any source/product/doc change invalidates affected evidence.
 6. Full User E2E PASS2 must PASS on the unchanged final candidate.
-7. Execute A-019 and remaining release-specific qualification.
+7. Execute the version-aware prior-stable upgrade gate (`v2.4 -> v3.0` for the supported 3.0 transition) and remaining release-specific qualification.
 8. Run final exact-head CI and automated regression, artifact, provenance, governance, and attestation gates.
 9. Perform final release audit, then merge/tag/publish only if every required gate is green.
 
@@ -445,7 +445,7 @@ Any change resets the pass counter.
 - [ ] artifacts built from `FINAL_QUALIFIED_HEAD`.
 - [ ] artifact SHA256 recorded.
 - [ ] manifest exact source HEAD/ref/FRP version/features correct.
-- [ ] `features.mcp_included=true` whenever the v2.4.0 candidate bytes contain MCP Bridge/AI Access; this flag records feature presence, not qualification status.
+- [ ] `features.mcp_included=true` whenever the 3.0.0 candidate bytes contain MCP Bridge/AI Access; this flag records feature presence, not qualification status.
 - [ ] no secret/private lab metadata.
 - [ ] final stable artifacts immutable.
 
@@ -483,7 +483,7 @@ Only after all gates:
 ## 24. Final record
 
 ```text
-RELEASE_VERSION=2.4.0
+RELEASE_VERSION=3.0.0
 FINAL_QUALIFIED_HEAD=
 FINAL_STATUS=PASS|PARTIAL|FAIL
 RELEASE_READY=YES|NO
@@ -503,7 +503,7 @@ REVISION_AUDIT=
 RUNTIME_GENERATION_CONSISTENCY=
 BACKUP_RESTORE=
 MCP_REAL_E2E=
-MCP_INCLUDED_IN_V2_4_0=YES
+MCP_INCLUDED_IN_3_0_0=YES
 CHATGPT_PLUS_USER_AUTH_ACCEPTANCE=REQUIRED
 CHATGPT_PLUS_USER_AUTH_STATUS=PASS|BLOCKED
 CONFIGURATION_BUNDLE=

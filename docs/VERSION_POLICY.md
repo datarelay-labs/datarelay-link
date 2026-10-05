@@ -126,7 +126,7 @@ Source HEAD: <exact 40-character SHA>
 ### Release candidate
 
 ```text
-2.4.0-rc.N
+3.0.0-rc.N
 Channel: preview
 Source HEAD: <exact 40-character SHA>
 ```
@@ -136,10 +136,10 @@ Code/dependency changes after an RC require a new RC identity and reset final do
 ### Stable
 
 ```text
-2.4.0
+3.0.0
 Channel: stable
 Source HEAD: <exact qualified 40-character SHA>
-Tag: v2.4.0
+Tag: v3.0.0
 ```
 
 Stable exists only after immutable tag + artifacts + qualification evidence are all present.

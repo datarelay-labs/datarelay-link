@@ -468,7 +468,7 @@ Stop or skip only the specific downstream check when continuing it would be unsa
 
 ### Qualification execution order
 
-Use this order for v2.4 release closure:
+Use this order for v3.0 release closure:
 
 1. CLI Feature/Scenario reconciliation PASS1; accumulate findings and finish the pass.
 2. Batch remediation if required; freeze a new candidate.
@@ -476,7 +476,7 @@ Use this order for v2.4 release closure:
 4. Full User E2E PASS1; accumulate findings and finish the pass.
 5. Batch remediation if required; any source/product/doc change invalidates affected evidence.
 6. Full User E2E PASS2 must PASS on the unchanged final candidate.
-7. Execute A-019 and remaining release-specific qualification.
+7. Execute the version-aware prior-stable upgrade gate (`v2.4 -> v3.0` for the supported 3.0 transition) and remaining release-specific qualification.
 8. Run final exact-head CI and automated regression, artifact, provenance, governance, and attestation gates.
 9. Perform final release audit, then merge/tag/publish only if every required gate is green.
 
@@ -777,7 +777,7 @@ the package SHA256.
 ## 30. Final result format
 
 ```text
-PHASE=V2_4_0_FINAL_RELEASE_QUALIFICATION
+PHASE=V3_0_0_FINAL_RELEASE_QUALIFICATION
 FINAL_STATUS=PASS|PARTIAL|FAIL
 SOURCE_HEAD=
 CONTROL_PLANE_DB=
@@ -802,7 +802,7 @@ MCP_CAPABILITY_ENFORCEMENT=
 MCP_FILE_SCOPE=
 MCP_AUDIT=
 MCP_REAL_E2E=
-MCP_INCLUDED_IN_V2_4_0=YES
+MCP_INCLUDED_IN_3_0_0=YES
 CHATGPT_PLUS_USER_AUTH_STATUS=PASS|BLOCKED
 CONFIGURATION_BUNDLE=
 CONFIGURATION_DIRECT_CLI_PARITY=
