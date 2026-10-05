@@ -288,6 +288,18 @@ keyboard command search, Escape-close dialogs, and deterministic UX contract reg
 also implemented. Remaining release work is real-browser owner/user UX validation, any
 resulting targeted fixes, and exact-candidate qualification after the UI is frozen.
 
+Owner browser review fixes completed in the current implementation cycle:
+
+- Jobs fleet-metadata form converted from a dense one-line control strip into sectioned
+  target / metadata / group-membership form grids with bounded responsive spacing;
+- Audit Explorer filters and retention controls aligned to deterministic grids and action
+  rows instead of mixed-width toolbar wrapping;
+- Health replaced raw-JSON-first presentation with structured Core / DB / policy-plane /
+  job-capacity views; raw payload is now an explicit advanced disclosure only;
+- MFA enrollment treats the setup secret as an ephemeral challenge: the raw key is hidden
+  by default, recovery codes appear only after successful verification, and Cancel setup
+  immediately revokes the pending challenge so the next login receives a different key.
+
 Current evidence state:
 
 ```text

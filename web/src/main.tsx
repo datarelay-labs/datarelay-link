@@ -99,7 +99,7 @@ function LoginCardHeader({title="Welcome to Data Relay Link",subtitle="Please si
 
 function Login({onLogin}:{onLogin:(op:any)=>void}){
   const [username,setUsername]=useState("admin"),[password,setPassword]=useState(""),[totp,setTotp]=useState(""),[recovery,setRecovery]=useState(""),[showMfa,setShowMfa]=useState(false),[showPassword,setShowPassword]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState("");
-  const [setup,setSetup]=useState<any>(null),[setupCode,setSetupCode]=useState(""),[recoveryCodes,setRecoveryCodes]=useState<string[]>([]),[pendingOperator,setPendingOperator]=useState<any>(null);
+  const [setup,setSetup]=useState<any>(null),[setupCode,setSetupCode]=useState(""),[showSetupSecret,setShowSetupSecret]=useState(false),[copiedSecret,setCopiedSecret]=useState(false),[recoveryCodes,setRecoveryCodes]=useState<string[]>([]),[pendingOperator,setPendingOperator]=useState<any>(null);
   async function submit(e:React.FormEvent){
     e.preventDefault();setError("");setBusy(true);
     try{
@@ -115,8 +115,16 @@ function Login({onLogin}:{onLogin:(op:any)=>void}){
       csrf=d.csrf_token;setRecoveryCodes(d.recovery_codes||[]);setPendingOperator(d.operator);
     }catch(err:any){setError(err.message||String(err))}finally{setBusy(false)}
   }
+  async function cancelMfaSetup(){
+    if(!setup?.enrollment_token){setSetup(null);return}
+    setBusy(true);setError("");
+    try{await api("/api/v1/auth/mfa/enroll/cancel",{method:"POST",body:JSON.stringify({enrollment_token:setup.enrollment_token})})}catch{}finally{setBusy(false);setSetup(null);setSetupCode("");setShowSetupSecret(false);setCopiedSecret(false);setPassword("")}
+  }
+  async function copySetupSecret(){
+    try{await navigator.clipboard.writeText(String(setup?.totp_secret||""));setCopiedSecret(true);window.setTimeout(()=>setCopiedSecret(false),1400)}catch{setError("Copy is unavailable in this browser. Use Show key and copy it manually.")}
+  }
   if(recoveryCodes.length&&pendingOperator)return <AuthScaffold><LoginCardHeader title="MFA enabled" subtitle="Store these recovery codes offline. They are displayed only now."/><pre className="dr-login-recovery">{recoveryCodes.join("\n")}</pre><button className="dr-login-submit" onClick={()=>onLogin(pendingOperator)}>I saved the recovery codes</button></AuthScaffold>;
-  if(setup)return <AuthScaffold><LoginCardHeader title="Set up MFA" subtitle="Your administrator requires MFA for this account."/><form className="dr-login-form" onSubmit={finishMfa}>{error&&<div className="dr-login-error">{error}</div>}<label>TOTP secret<input readOnly value={setup.totp_secret||""}/></label><details className="dr-login-details"><summary>Authenticator URI</summary><pre>{setup.otpauth_uri}</pre></details><label>MFA code<input inputMode="numeric" autoComplete="one-time-code" value={setupCode} onChange={e=>setSetupCode(e.target.value)} placeholder="6-digit TOTP"/></label><button className="dr-login-submit" type="submit" disabled={busy||!/^\d{6}$/.test(setupCode)}>{busy?"Enabling…":"Enable MFA and sign in"}</button><button className="dr-login-secondary" type="button" onClick={()=>{setSetup(null);setSetupCode("");setPassword("")}}>Cancel</button></form></AuthScaffold>;
+  if(setup)return <AuthScaffold><LoginCardHeader title="Set up MFA" subtitle="MFA is required for this account. The temporary setup key is not active until you verify a current code."/><form className="dr-login-form" onSubmit={finishMfa}>{error&&<div className="dr-login-error">{error}</div>}<div className="dr-mfa-setup-note"><strong>1. Add Data Relay Link to your authenticator app</strong><span>This setup challenge expires at {setup.expires_at||"the displayed expiry"}. Cancelling discards the temporary key.</span></div><div className="dr-mfa-secret-row"><div><span className="dr-field-label">Authenticator key</span><code>{showSetupSecret?String(setup.totp_secret||""):"•••• •••• •••• •••• •••• ••••"}</code></div><div className="dr-inline-actions"><button className="dr-login-secondary compact" type="button" onClick={()=>setShowSetupSecret(!showSetupSecret)}>{showSetupSecret?"Hide key":"Show key"}</button><button className="dr-login-secondary compact" type="button" onClick={copySetupSecret}>{copiedSecret?"Copied":"Copy"}</button></div></div><details className="dr-login-details"><summary>Advanced: authenticator URI</summary><pre>{setup.otpauth_uri}</pre></details><div className="dr-mfa-setup-note"><strong>2. Verify setup</strong><span>Enter the current 6-digit code. Recovery codes are issued only after verification succeeds.</span></div><label>MFA code<input inputMode="numeric" autoComplete="one-time-code" value={setupCode} onChange={e=>setSetupCode(e.target.value)} placeholder="6-digit TOTP"/></label><button className="dr-login-submit" type="submit" disabled={busy||!/^\d{6}$/.test(setupCode)}>{busy?"Verifying…":"Verify MFA and sign in"}</button><button className="dr-login-secondary" type="button" onClick={cancelMfaSetup} disabled={busy}>Cancel setup</button></form></AuthScaffold>;
   return <AuthScaffold>
     <LoginCardHeader/>
     <form className="dr-login-form" onSubmit={submit}>
@@ -911,37 +919,32 @@ function AuditExplorer({operator}:{operator:any}){
   }));
   return <>
     {error&&<div className="error">{error}</div>}{message&&<div className="notice">{message}</div>}
-    <div className="card">
-      <h3>Audit Explorer</h3>
-      <div className="muted">Unified CONTROL / ACCESS_DECISION / SECURITY_LIFECYCLE history with stable event IDs and bounded keyset pagination.</div>
-      <div className="toolbar">
-        <input value={start} onChange={e=>setStart(e.target.value)} placeholder="Start UTC"/>
-        <input value={end} onChange={e=>setEnd(e.target.value)} placeholder="End UTC"/>
-        <select value={category} onChange={e=>setCategory(e.target.value)}><option value="">All categories</option><option value="CONTROL">CONTROL</option><option value="ACCESS_DECISION">ACCESS_DECISION</option><option value="SECURITY_LIFECYCLE">SECURITY_LIFECYCLE</option></select>
-        <input value={eventType} onChange={e=>setEventType(e.target.value)} placeholder="Event type"/>
-        <input value={actor} onChange={e=>setActor(e.target.value)} placeholder="Actor"/>
-        <input value={resource} onChange={e=>setResource(e.target.value)} placeholder="Resource ID"/>
-        <input value={result} onChange={e=>setResult(e.target.value)} placeholder="Result"/>
-        <input value={correlation} onChange={e=>setCorrelation(e.target.value)} placeholder="Correlation ID"/>
-        <button className="primary" onClick={()=>load()}>Search</button>
-        <button className="secondary" onClick={exportAudit}>Export NDJSON</button>
+    <section className="card dr-audit-card">
+      <div className="dr-section-head"><div><p className="dr-eyebrow">Observability</p><h3>Audit Explorer</h3><p className="muted">Unified control, access-decision and security-lifecycle history with bounded keyset pagination.</p></div><button className="secondary" onClick={exportAudit}>Export NDJSON</button></div>
+      <div className="dr-audit-filter-grid">
+        <label className="dr-field"><span>Start UTC</span><input value={start} onChange={e=>setStart(e.target.value)} placeholder="YYYY-MM-DDTHH:MM:SSZ"/></label>
+        <label className="dr-field"><span>End UTC</span><input value={end} onChange={e=>setEnd(e.target.value)} placeholder="YYYY-MM-DDTHH:MM:SSZ"/></label>
+        <label className="dr-field"><span>Category</span><select value={category} onChange={e=>setCategory(e.target.value)}><option value="">All categories</option><option value="CONTROL">CONTROL</option><option value="ACCESS_DECISION">ACCESS_DECISION</option><option value="SECURITY_LIFECYCLE">SECURITY_LIFECYCLE</option></select></label>
+        <label className="dr-field"><span>Event type</span><input value={eventType} onChange={e=>setEventType(e.target.value)} placeholder="web.login.succeeded"/></label>
+        <label className="dr-field"><span>Actor</span><input value={actor} onChange={e=>setActor(e.target.value)} placeholder="Actor ID"/></label>
+        <label className="dr-field"><span>Resource</span><input value={resource} onChange={e=>setResource(e.target.value)} placeholder="Resource ID"/></label>
+        <label className="dr-field"><span>Result</span><input value={result} onChange={e=>setResult(e.target.value)} placeholder="success / deny"/></label>
+        <label className="dr-field"><span>Correlation ID</span><input value={correlation} onChange={e=>setCorrelation(e.target.value)} placeholder="Correlation ID"/></label>
       </div>
-      <Table items={rows}/>
-      {data?.next_cursor&&<button className="secondary" onClick={()=>load(data.next_cursor)}>Next page</button>}
+      <div className="dr-form-actions"><button className="primary" onClick={()=>load()}>Search audit</button><button className="secondary" onClick={()=>{setStart("");setEnd("");setCategory("");setEventType("");setActor("");setResource("");setResult("");setCorrelation("")}}>Clear filters</button></div>
+      <div className="dr-audit-table"><Table items={rows}/></div>
+      {data?.next_cursor&&<div className="dr-form-actions"><button className="secondary" onClick={()=>load(data.next_cursor)}>Next page</button></div>}
       {exportResult&&<pre className="plan">{JSON.stringify({path:exportResult.path,event_count:exportResult.event_count,schema_version:exportResult.schema_version,sha256:exportResult.sha256,download_exposed:exportResult.download_exposed},null,2)}</pre>}
-    </div>
-    <div className="card">
-      <h3>Audit Retention</h3>
-      {retention&&<div className="grid"><Metric label="Events" value={retention.total_events}/><Metric label="DB bytes" value={retention.db_size_bytes}/><Metric label="Capacity exceeded" value={retention.capacity_exceeded?"YES":"NO"}/></div>}
-      <div className="muted">{retention?.capacity_policy||"CONTROL/SECURITY and ACCESS_DECISION use split retention."}</div>
-      {operator.role==="Admin"&&<div className="toolbar">
-        <input value={controlDays} onChange={e=>setControlDays(e.target.value)} placeholder="CONTROL days"/>
-        <input value={accessDays} onChange={e=>setAccessDays(e.target.value)} placeholder="ACCESS days"/>
-        <input value={maxEvents} onChange={e=>setMaxEvents(e.target.value)} placeholder="Max events"/>
-        <button className="secondary" onClick={configureRetention}>Configure</button>
-        <button className="danger" onClick={runRetention}>Run Retention</button>
-      </div>}
-    </div>
+    </section>
+    <section className="card dr-retention-card">
+      <div className="dr-section-head"><div><p className="dr-eyebrow">Storage policy</p><h3>Audit Retention</h3><p className="muted">{retention?.capacity_policy||"CONTROL/SECURITY and ACCESS_DECISION use split retention."}</p></div></div>
+      {retention&&<div className="dr-kpi-strip dr-retention-metrics"><div><span>Events</span><strong>{retention.total_events||0}</strong><small>Retained audit events</small></div><div><span>DB bytes</span><strong>{retention.db_size_bytes||0}</strong><small>Current database size</small></div><div><span>Capacity</span><strong>{retention.capacity_exceeded?"Exceeded":"Normal"}</strong><small>{retention.capacity_exceeded?"Action required":"Within configured bound"}</small></div></div>}
+      {operator.role==="Admin"&&<div className="dr-retention-config"><div className="dr-form-grid three">
+        <label className="dr-field"><span>Control / security days</span><input value={controlDays} onChange={e=>setControlDays(e.target.value)} inputMode="numeric"/></label>
+        <label className="dr-field"><span>Access decision days</span><input value={accessDays} onChange={e=>setAccessDays(e.target.value)} inputMode="numeric"/></label>
+        <label className="dr-field"><span>Maximum events</span><input value={maxEvents} onChange={e=>setMaxEvents(e.target.value)} inputMode="numeric"/></label>
+      </div><div className="dr-form-actions"><button className="secondary" onClick={configureRetention}>Save policy</button><button className="danger" onClick={runRetention}>Run retention now</button></div></div>}
+    </section>
   </>;
 }
 
@@ -1032,25 +1035,28 @@ function JobOperations({operator}:{operator:any}){
       {inventoryExport&&<pre className="plan">{JSON.stringify({path:inventoryExport.path,record_count:inventoryExport.record_count,counts:inventoryExport.counts,sha256:inventoryExport.sha256,download_exposed:inventoryExport.download_exposed},null,2)}</pre>}
       <Table items={rows}/>
     </div>
-    {operator.role!=="Read Only"&&<div className="card">
-      <h3>Fleet Metadata Change Plan</h3>
-      <div className="muted">Bounded to 100 trusted Managed Hosts. Description, tags, and Managed Host Group membership apply atomically as one revision after Preview.</div>
-      <div className="toolbar">
-        <select value={fleetResourceType} onChange={e=>{setFleetResourceType(e.target.value);setFleetResource("");setFleetPreview(null)}}><option value="managed-host">Managed Host(s)</option><option value="managed-host-group">Managed Host Group</option></select>
-        <input value={fleetResource} onChange={e=>{setFleetResource(e.target.value);setFleetPreview(null)}} placeholder={fleetResourceType==="managed-host"?"Host selector; blank = all trusted":"Managed Host Group name / ID"}/>
-      </div>
-      <label>Description<input value={fleetDescription} onChange={e=>{setFleetDescription(e.target.value);setFleetPreview(null)}} placeholder="Optional description applied to all selected Hosts"/></label>
-      <label>Tags JSON<input value={fleetTags} onChange={e=>{setFleetTags(e.target.value);setFleetPreview(null)}} placeholder='{"site":"lab","owner":"secops"}'/></label>
-      <label>Remove tags<input value={fleetRemoveTags} onChange={e=>{setFleetRemoveTags(e.target.value);setFleetPreview(null)}} placeholder="comma,separated,tag-keys"/></label>
-      <label>Add Managed Host Groups<input value={fleetAddGroups} onChange={e=>{setFleetAddGroups(e.target.value);setFleetPreview(null)}} placeholder="group-a,group-b"/></label>
-      <label>Remove Managed Host Groups<input value={fleetRemoveGroups} onChange={e=>{setFleetRemoveGroups(e.target.value);setFleetPreview(null)}} placeholder="group-c"/></label>
-      <button className="primary" onClick={previewFleetMetadata} disabled={fleetResourceType==="managed-host-group"&&!fleetResource.trim()}>Preview Fleet Change</button>
-      {fleetPreview&&<>
+    {operator.role!=="Read Only"&&<section className="card dr-fleet-card">
+      <div className="dr-section-head"><div><p className="dr-eyebrow">Fleet change</p><h3>Fleet Metadata Change Plan</h3><p className="muted">Bounded to 100 trusted Managed Hosts. Changes apply atomically as one revision after Preview.</p></div></div>
+      <div className="dr-form-section"><h4>Target scope</h4><div className="dr-form-grid two">
+        <label className="dr-field"><span>Target type</span><select value={fleetResourceType} onChange={e=>{setFleetResourceType(e.target.value);setFleetResource("");setFleetPreview(null)}}><option value="managed-host">Managed Host(s)</option><option value="managed-host-group">Managed Host Group</option></select></label>
+        <label className="dr-field"><span>Target selector</span><input value={fleetResource} onChange={e=>{setFleetResource(e.target.value);setFleetPreview(null)}} placeholder={fleetResourceType==="managed-host"?"Blank selects all trusted hosts":"Managed Host Group name / ID"}/></label>
+      </div></div>
+      <div className="dr-form-section"><h4>Metadata</h4><div className="dr-form-grid two">
+        <label className="dr-field"><span>Description</span><input value={fleetDescription} onChange={e=>{setFleetDescription(e.target.value);setFleetPreview(null)}} placeholder="Optional description for selected hosts"/></label>
+        <label className="dr-field"><span>Tags JSON</span><input value={fleetTags} onChange={e=>{setFleetTags(e.target.value);setFleetPreview(null)}} placeholder='{"site":"lab","owner":"secops"}'/></label>
+        <label className="dr-field"><span>Remove tag keys</span><input value={fleetRemoveTags} onChange={e=>{setFleetRemoveTags(e.target.value);setFleetPreview(null)}} placeholder="owner,environment"/></label>
+      </div></div>
+      <div className="dr-form-section"><h4>Group membership</h4><div className="dr-form-grid two">
+        <label className="dr-field"><span>Add groups</span><input value={fleetAddGroups} onChange={e=>{setFleetAddGroups(e.target.value);setFleetPreview(null)}} placeholder="group-a, group-b"/></label>
+        <label className="dr-field"><span>Remove groups</span><input value={fleetRemoveGroups} onChange={e=>{setFleetRemoveGroups(e.target.value);setFleetPreview(null)}} placeholder="group-c"/></label>
+      </div></div>
+      <div className="dr-form-actions"><button className="primary" onClick={previewFleetMetadata} disabled={fleetResourceType==="managed-host-group"&&!fleetResource.trim()}>Preview fleet change</button></div>
+      {fleetPreview&&<div className="dr-preview-panel">
         <pre className="plan">{JSON.stringify({selection:fleetPreview.selection,changes:fleetPreview.changes,preview:fleetPreview.preview,impact:fleetPreview.impact},null,2)}</pre>
-        <label className="apply-label">Type APPLY<input value={fleetConfirm} onChange={e=>setFleetConfirm(e.target.value)} placeholder="APPLY"/></label>
+        <label className="apply-label">Type APPLY to commit<input value={fleetConfirm} onChange={e=>setFleetConfirm(e.target.value)} placeholder="APPLY"/></label>
         <button className="danger" onClick={applyFleetMetadata} disabled={fleetConfirm!=="APPLY"}>Apply Fleet Metadata</button>
-      </>}
-    </div>}
+      </div>}
+    </section>}
     {detail&&<div className="card">
       <h3>Job Detail</h3>
       <div className="grid"><Metric label="Status" value={detail.status}/><Metric label="Targets" value={detail.target_count}/><Metric label="Type" value={detail.job_type}/></div>
@@ -1169,6 +1175,26 @@ function CommandCenter({data,operator,onNavigate}:{data:any,operator:any,onNavig
   </div>;
 }
 
+function HealthWorkspace({data,onNavigate}:{data:any,onNavigate?:(id:string,groupId?:string)=>void}){
+  const generations=data.generations||{};
+  const jobs=data.management_jobs||{};
+  const planes=["remote","internet","ai"].map(name=>({name,value:generations[name]||{}}));
+  const coreHealthy=!!data.db_healthy&&!data.mismatch;
+  const configuredPlanes=planes.filter(row=>row.value.status==="active").length;
+  return <div className="dr-resource-workspace">
+    <section className="dr-page-intro"><div><p className="dr-eyebrow">Observability</p><h2>Health</h2><p className="muted">Core readiness, runtime generations and bounded management capacity without raw-debug-first presentation.</p></div><div className="dr-page-actions"><button className="secondary" onClick={()=>onNavigate?.("doctor","observability")}>Troubleshoot</button><button className="secondary" onClick={()=>onNavigate?.("system","administration")}>System readiness</button></div></section>
+    <section className="dr-health-summary">
+      <article className="card dr-health-card"><span>Core</span><strong className={coreHealthy?"healthy":"attention"}>{coreHealthy?"Healthy":"Attention"}</strong><small>{data.mismatch?"Runtime generation mismatch":data.db_healthy?"Control database healthy":"Control database issue"}</small></article>
+      <article className="card dr-health-card"><span>Control DB</span><strong className={data.db_healthy?"healthy":"critical-text"}>{data.db_healthy?"Healthy":"Critical"}</strong><small>Schema {data.schema??"—"} · Revision {data.revision??"—"}</small></article>
+      <article className="card dr-health-card"><span>Access planes</span><strong>{configuredPlanes} / 3</strong><small>{data.ai_configured?"Remote, Internet and AI configured":"AI may be intentionally unconfigured"}</small></article>
+      <article className="card dr-health-card"><span>Management jobs</span><strong className={jobs.saturated?"attention":"healthy"}>{jobs.saturated?"Saturated":"Healthy"}</strong><small>{jobs.active_jobs||0} active · {jobs.queued_jobs||0} queued</small></article>
+    </section>
+    <section className="card dr-health-section"><div className="dr-section-head"><div><p className="dr-eyebrow">Runtime</p><h3>Policy planes</h3><p className="muted">Compiled generation state stays separate from configured policy state.</p></div></div><div className="dr-health-plane-list">{planes.map(row=>{const state=String(row.value.status||"unknown");const good=state==="active"||state==="not_configured";return <div className="dr-health-plane" key={row.name}><span className={good?"dr-severity-dot":"dr-severity-dot warning"}/><div><strong>{row.name[0].toUpperCase()+row.name.slice(1)}</strong><small>DB rev {row.value.db_revision??"—"} · generation {row.value.generation??"—"}</small></div><span className={state==="active"?"dr-state active":"dr-state"}><i/>{state.replaceAll("_"," ")}</span>{row.value.error&&<small className="dr-health-error">{row.value.error}</small>}</div>})}</div></section>
+    <section className="card dr-health-section"><div className="dr-section-head"><div><p className="dr-eyebrow">Capacity</p><h3>Management workload</h3><p className="muted">Bounded job engine status for asynchronous fleet operations.</p></div><button className="dr-text-action" onClick={()=>onNavigate?.("jobs","operations")}>Open jobs →</button></div><div className="dr-kpi-strip"><div><span>Active</span><strong>{jobs.active_jobs||0}</strong><small>Currently active jobs</small></div><div><span>Queued</span><strong>{jobs.queued_jobs||0}</strong><small>{jobs.queued_targets||0} queued targets</small></div><div><span>Running</span><strong>{jobs.running_jobs||0}</strong><small>{jobs.running_targets||0} running targets</small></div><div><span>Failed</span><strong>{jobs.failed_jobs||0}</strong><small>Completed with failure</small></div></div></section>
+    <details className="card dr-advanced-details"><summary>Advanced · raw health payload</summary><p className="muted">For diagnostics and support. Normal operation should use the structured health views above.</p><pre className="plan">{JSON.stringify(data,null,2)}</pre></details>
+  </div>;
+}
+
 function View({active,operator,onNavigate}:{active:string,operator:any,onNavigate?:(id:string,groupId?:string)=>void}){
   const [data,setData]=useState<any>(null),[error,setError]=useState(""),[query,setQuery]=useState("");
   useEffect(()=>{
@@ -1198,7 +1224,7 @@ function View({active,operator,onNavigate}:{active:string,operator:any,onNavigat
   if(active==="services"&&data)return <><ResourceWorkspace kind="service" items={data.items||[]} operator={operator} onNavigate={onNavigate}/>{operator.role!=="Read Only"&&<RemoteServicePanel/>}</>;
   if(active==="policies"&&data)return <><PolicyWorkspace data={data} operator={operator} onNavigate={onNavigate}/><PolicySafetyPanel operator={operator}/>{operator.role!=="Read Only"&&<><GuidedPolicySettingsPanel/><GuidedPolicyRulePanel/><TemporaryAccessPanel/></>}</>;
   if(active==="doctor"&&data)return <><div className="grid"><Metric label="Attention" value={data.attention?.count}/><Metric label="Checks" value={(data.checks||[]).length}/></div><Table items={data.checks||[]}/></>;
-  if(active==="health"&&data)return <pre className="card">{JSON.stringify(data,null,2)}</pre>;
+  if(active==="health"&&data)return <HealthWorkspace data={data} onNavigate={onNavigate}/>;
   if(active==="views"&&data)return <SavedViews data={data} refresh={()=>api("/api/v1/saved-views").then(setData)}/>;
   if(data)return <Table items={data.items||[]}/>;
   return <PageSkeleton/>;

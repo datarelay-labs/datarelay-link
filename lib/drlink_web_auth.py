@@ -839,6 +839,20 @@ class WebAuthService:
                 new_counter=new_counter, consumed_hash=consumed_hash,
             )
 
+    def cancel_mfa_enrollment(self, enrollment_token: str) -> bool:
+        token_hash = _sha256_text(str(enrollment_token or "").strip())
+        with self._lock:
+            item = self._mfa_enrollments.pop(token_hash, None)
+            if not item:
+                return False
+            operator_id = str(item.get("operator_id") or "")
+            self._audit(
+                "web.operator.mfa.enrollment.cancelled",
+                actor_id=operator_id,
+                resource_id=operator_id,
+            )
+            return True
+
     def confirm_mfa_enrollment(
         self,
         *,

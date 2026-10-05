@@ -159,6 +159,12 @@ class WebApplication:
             payload["recovery_codes"] = list(recovery_codes)
         return payload
 
+    def cancel_mfa_enrollment(self, body: dict[str, Any]) -> dict[str, Any]:
+        cancelled = self.auth.cancel_mfa_enrollment(
+            str(body.get("enrollment_token") or "")
+        )
+        return {"cancelled": bool(cancelled)}
+
     def confirm_mfa_enrollment(
         self, body: dict[str, Any], *, source_addr: str, user_agent: str
     ) -> dict[str, Any]:
@@ -946,6 +952,15 @@ class DrlinkWebHandler(BaseHTTPRequestHandler):
                 )
             except ControlPlaneError:
                 self._error(401, "invalid credentials or MFA")
+            except Exception:
+                self._error(500, "internal error")
+            return
+        if parsed.path == "/api/v1/auth/mfa/enroll/cancel":
+            try:
+                body = self._body_json()
+                self._json(200, self.app.cancel_mfa_enrollment(body))
+            except ControlPlaneError as exc:
+                self._error(400, str(exc))
             except Exception:
                 self._error(500, "internal error")
             return

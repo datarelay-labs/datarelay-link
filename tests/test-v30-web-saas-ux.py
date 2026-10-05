@@ -98,6 +98,29 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         ):
             self.assertTrue(marker in SOURCE or marker in CSS, marker)
 
+    def test_owner_review_pages_use_spacious_structured_workspaces(self):
+        for source_marker in (
+            "dr-fleet-card",
+            "Target scope",
+            "Group membership",
+            "dr-audit-filter-grid",
+            "Audit Retention",
+            "HealthWorkspace",
+            "Advanced · raw health payload",
+            "temporary setup key is not active until you verify",
+            "/api/v1/auth/mfa/enroll/cancel",
+            "Show key",
+            "Recovery codes are issued only after verification succeeds",
+        ):
+            self.assertIn(source_marker, SOURCE)
+        for style_marker in (
+            ".dr-form-grid.two",
+            ".dr-audit-filter-grid",
+            ".dr-health-summary",
+            ".dr-mfa-secret-row",
+        ):
+            self.assertIn(style_marker, CSS)
+
     def test_responsive_and_keyboard_contract_is_present(self):
         for marker in (
             "@media(max-width:850px)",

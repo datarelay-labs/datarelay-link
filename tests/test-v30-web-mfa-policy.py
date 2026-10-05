@@ -116,6 +116,29 @@ class V30WebMfaPolicyTests(unittest.TestCase):
             WebSessionIssue,
         )
 
+    def test_cancelled_mfa_enrollment_discards_temporary_secret(self):
+        self.auth.set_operator_mfa_required(
+            self.admin["operator_id"], required=True, actor_id=self.admin["operator_id"]
+        )
+        challenge = self.auth.authenticate(
+            username="admin", password="ValidPass1", now=self.now
+        )
+        self.assertIsInstance(challenge, WebMfaEnrollmentChallenge)
+        code, _ = totp_code(challenge.totp_secret, at=self.now)
+        self.assertTrue(self.auth.cancel_mfa_enrollment(challenge.enrollment_token))
+        self.assertFalse(self.auth.cancel_mfa_enrollment(challenge.enrollment_token))
+        with self.assertRaisesRegex(ControlPlaneError, "expired"):
+            self.auth.confirm_mfa_enrollment(
+                enrollment_token=challenge.enrollment_token,
+                totp_value=code,
+                now=self.now,
+            )
+        replacement = self.auth.authenticate(
+            username="admin", password="ValidPass1", now=self.now + timedelta(seconds=1)
+        )
+        self.assertIsInstance(replacement, WebMfaEnrollmentChallenge)
+        self.assertNotEqual(replacement.totp_secret, challenge.totp_secret)
+
     def test_local_recovery_preserves_default_off_mfa_policy(self):
         session = self.auth.authenticate(
             username="admin",

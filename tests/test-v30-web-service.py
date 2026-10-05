@@ -172,6 +172,15 @@ class V30WebServiceTests(unittest.TestCase):
         self.assertNotIn('href="http://', index)
         self.assertNotIn('href="https://', index)
 
+    def test_mfa_enrollment_cancel_route_is_pre_session_and_idempotent(self):
+        status, _, payload = self.request(
+            "POST",
+            "/api/v1/auth/mfa/enroll/cancel",
+            {"enrollment_token": "not-a-live-challenge"},
+        )
+        self.assertEqual(status, 200, payload)
+        self.assertFalse(payload["cancelled"])
+
     def test_remote_bind_requires_tls(self):
         with self.assertRaises(ControlPlaneError):
             validate_web_bind("0.0.0.0")
