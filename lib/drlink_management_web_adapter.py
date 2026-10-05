@@ -37,3 +37,42 @@ class ManagementWebApiAdapter:
             actor=actor,
             surface=SURFACE_WEB,
         )
+    def draft_list(self, *, actor: ManagementActor, limit: int = 50) -> dict[str, Any]:
+        return self.core.draft_list(actor=actor, limit=limit)
+
+    def draft_get(self, draft_id: str, *, actor: ManagementActor) -> dict[str, Any]:
+        return self.core.draft_get(draft_id, actor=actor)
+
+    def draft_export(self, draft_id: str, *, actor: ManagementActor) -> dict[str, Any]:
+        return self.core.draft_export(draft_id, actor=actor)
+
+    def draft_create(
+        self, *, actor: ManagementActor, bundle_text: str
+    ) -> dict[str, Any]:
+        return self.core.draft_create(actor=actor, bundle_text=bundle_text)
+
+    def draft_update(
+        self, draft_id: str, *, actor: ManagementActor, bundle_text: str
+    ) -> dict[str, Any]:
+        return self.core.draft_update(draft_id, actor=actor, bundle_text=bundle_text)
+
+    def draft_preview(self, draft_id: str, *, actor: ManagementActor) -> dict[str, Any]:
+        return self.core.draft_preview(draft_id, actor=actor)
+
+    def draft_apply(
+        self,
+        draft_id: str,
+        *,
+        actor: ManagementActor,
+        change_plan_id: str,
+        confirmation: str,
+    ) -> dict[str, Any]:
+        return self.core.draft_apply(
+            draft_id,
+            actor=actor,
+            change_plan_id=change_plan_id,
+            confirmation=confirmation,
+        )
+
+    def draft_cancel(self, draft_id: str, *, actor: ManagementActor) -> dict[str, Any]:
+        return self.core.draft_cancel(draft_id, actor=actor)

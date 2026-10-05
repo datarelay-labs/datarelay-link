@@ -568,7 +568,7 @@ else
   if [[ -d "$libdir" && ! -L "$libdir" ]]; then
     for f in frp-port-allocator.py frp-access-plugin.py frp-egress-gateway.py drlink-tcp-egress.py drlink-audit-ingest.py frp_access_control.py frp_egress_control.py frp_egress_runtime.py frp_pki.py frp_frontend.py frp_client_registry.py \
       frp_enrollment_lifecycle.py frp_audit.py frp_zero_touch.py drlink_qualified_artifacts.py \
-      drlink_v30_temporal.py drlink_v30_cutoff.py drlink_v30_audit.py drlink_v30_live.py drlink_v30_jobs.py drlink_v30_capability.py drlink_v30_readmodels.py drlink_management_catalog.py drlink_management_service.py drlink_management_change.py drlink_management_core.py drlink_management_mcp_adapter.py drlink_management_web_adapter.py \
+      drlink_v30_temporal.py drlink_v30_cutoff.py drlink_v30_audit.py drlink_v30_live.py drlink_v30_jobs.py drlink_v30_capability.py drlink_v30_readmodels.py drlink_management_catalog.py drlink_management_service.py drlink_management_change.py drlink_management_drafts.py drlink_management_guided.py drlink_management_core.py drlink_management_mcp_adapter.py drlink_management_web_adapter.py \
       frp_install_txn.py frp_health_check.py frp_service_profiles.py \
       frp-server-upgrade.sh frp_project_files.py frp_control_locks.py frp_server_config.py \
       frp-role-ownership.sh \

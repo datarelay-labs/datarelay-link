@@ -18,7 +18,7 @@ from drlink_control_db import ControlPlaneError
 from drlink_management_core import ManagementActor
 from drlink_management_service import ManagementQueryService
 from drlink_management_web_adapter import ManagementWebApiAdapter
-from drlink_web_auth import ROLE_ADMIN, WebAuthService, WebPrincipal
+from drlink_web_auth import WebAuthService, WebPrincipal
 
 DEFAULT_WEB_LISTEN = "127.0.0.1"
 DEFAULT_WEB_PORT = 8741
@@ -105,6 +105,7 @@ class WebApplication:
         return ManagementActor.authenticated(
             "web:%s" % principal.operator_id,
             principal.permissions,
+            role=principal.role,
         )
 
     def authenticate(
@@ -245,6 +246,22 @@ class WebApplication:
         if path == "/api/v1/doctor":
             with ManagementQueryService(self.root) as service:
                 return service.doctor_summary()
+        if path == "/api/v1/drafts":
+            return self.adapter.draft_list(
+                actor=actor,
+                limit=_int_arg(_first(query, "limit"), 50, high=50),
+            )
+        if path.startswith("/api/v1/drafts/"):
+            suffix = path[len("/api/v1/drafts/") :]
+            parts = [item for item in suffix.split("/") if item]
+            if not parts:
+                raise ControlPlaneError("Draft was not found.")
+            draft_id = parts[0]
+            if len(parts) == 1:
+                return self.adapter.draft_get(draft_id, actor=actor)
+            if len(parts) == 2 and parts[1] == "export":
+                return self.adapter.draft_export(draft_id, actor=actor)
+            raise ControlPlaneError("Web API route was not found.")
         if path == "/api/v1/saved-views":
             return {"items": self.auth.list_saved_views(principal.operator_id)}
         if path == "/api/v1/sessions":
@@ -262,6 +279,53 @@ class WebApplication:
                 principal.session_id, actor_id=principal.operator_id
             )
             return {"status": "logged_out"}
+        if path == "/api/v1/guided/preview":
+            change_type = str(body.get("change_type") or "").strip()
+            payload = body.get("payload")
+            if not isinstance(payload, dict):
+                raise ControlPlaneError("Guided change payload must be an object.")
+            return self.adapter.invoke(
+                operation="drlink_guided_change_preview",
+                payload={"change_type": change_type, "payload": payload},
+                actor=self._actor(principal),
+            )
+        if path == "/api/v1/guided/apply":
+            return self.adapter.invoke(
+                operation="drlink_guided_change_apply",
+                payload={
+                    "change_plan_id": str(body.get("change_plan_id") or ""),
+                    "confirmation": str(body.get("confirmation") or ""),
+                },
+                actor=self._actor(principal),
+            )
+        actor = self._actor(principal)
+        if path == "/api/v1/drafts":
+            return self.adapter.draft_create(
+                actor=actor,
+                bundle_text=str(body.get("bundle_text") or ""),
+            )
+        if path.startswith("/api/v1/drafts/"):
+            suffix = path[len("/api/v1/drafts/") :]
+            parts = [item for item in suffix.split("/") if item]
+            if len(parts) != 2:
+                raise ControlPlaneError("Web API route was not found.")
+            draft_id, action = parts
+            if action == "update":
+                return self.adapter.draft_update(
+                    draft_id, actor=actor, bundle_text=str(body.get("bundle_text") or "")
+                )
+            if action == "preview":
+                return self.adapter.draft_preview(draft_id, actor=actor)
+            if action == "apply":
+                return self.adapter.draft_apply(
+                    draft_id,
+                    actor=actor,
+                    change_plan_id=str(body.get("change_plan_id") or ""),
+                    confirmation=str(body.get("confirmation") or ""),
+                )
+            if action == "cancel":
+                return self.adapter.draft_cancel(draft_id, actor=actor)
+            raise ControlPlaneError("Web API route was not found.")
         if path == "/api/v1/saved-views":
             return self.auth.save_view(
                 principal.operator_id,

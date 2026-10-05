@@ -186,7 +186,8 @@ command-exec
 
 Granting any of those must **never** imply permission to mutate Data Relay Link itself.
 
-DRL3-0 freezes the following exact management permission values:
+DRL3-0 freezes the baseline management permission values below, and DRL3-3 adds
+`management-config` for guided Core configuration parity:
 
 ```text
 management-read
@@ -196,6 +197,7 @@ management-temporary-access
 management-emergency-cutoff
 management-job-observe
 management-job-run
+management-config
 ```
 
 These names are public 3.0 capability values. They are separate from target-OS permissions
@@ -460,6 +462,27 @@ drlink_diagnostic_job_start
 Their required permission, operation class, Plugin exposure, input schema, and MCP
 annotations are defined by `lib/drlink_management_catalog.py`. The catalog is Core data;
 the Plugin relay must pass descriptors through rather than maintaining a copied list.
+
+DRL3-3 adds these Core/Web-only guided configuration operations:
+
+```text
+drlink_guided_change_preview
+drlink_guided_change_apply
+```
+
+They require `management-config`, delegate validation and mutation semantics to the
+existing Core CRUD/Change Plan path, and use `PLUGIN_NO`. They are therefore available to
+the first-party Web adapter when authorized but are **not** added to the admitted
+Management MCP/Plugin tool list above.
+
+The DRL3-3 Draft Workspace follows the same authority boundary even though Draft CRUD is
+Web-only operational state rather than an MCP tool. Browser routes call the Web adapter,
+which calls `ManagementCoreService`; the HTTP layer never calls the Draft service or
+SQLite directly. Draft Preview issues an opaque Core Change Plan bound to the actor,
+Server, exact authoritative revision, Draft ID, and Draft bundle digest. Apply requires
+that exact still-pending plan; cross-actor reuse, revision drift, or editing the Draft
+after Preview fails closed and requires a fresh Preview. Cancel never mutates
+authoritative configuration.
 
 DRL3-0 additionally freezes:
 

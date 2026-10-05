@@ -25,6 +25,7 @@ class V30WebServiceTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="drlink-v30-web-service-")
         os.environ["DRLINK_WEB_QUIET"] = "1"
+        os.environ["DRLINK_SKIP_ACTIVATION"] = "1"
         Path(self.tmp, "etc/drlink").mkdir(parents=True, exist_ok=True)
         Path(self.tmp, "etc/drlink/config.json").write_text(
             '{"role":"server"}\n', encoding="utf-8"
@@ -79,6 +80,7 @@ class V30WebServiceTests(unittest.TestCase):
         self.thread.join(timeout=2)
         self.server.server_close()
         os.environ.pop("DRLINK_WEB_QUIET", None)
+        os.environ.pop("DRLINK_SKIP_ACTIVATION", None)
 
     def request(self, method, path, body=None, headers=None):
         conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
@@ -207,6 +209,60 @@ class V30WebServiceTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(payload["status"], "logged_out")
         self.assertIn("Max-Age=0", headers.get("set-cookie", ""))
+
+    def test_guided_change_preview_and_apply_use_csrf_and_core_plan(self):
+        self.login()
+        status, _, payload = self.request(
+            "POST",
+            "/api/v1/guided/preview",
+            {
+                "change_type": "network-object",
+                "payload": {
+                    "name": "web-office",
+                    "type": "ip",
+                    "value": "198.51.100.44",
+                },
+            },
+        )
+        self.assertEqual(status, 403)
+
+        status, _, preview = self.request(
+            "POST",
+            "/api/v1/guided/preview",
+            {
+                "change_type": "network-object",
+                "payload": {
+                    "name": "web-office",
+                    "type": "ip",
+                    "value": "198.51.100.44",
+                },
+            },
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, preview)
+        plane = ControlPlane(self.tmp)
+        try:
+            self.assertIsNone(plane.get_object("web-office"))
+            before = plane.current_revision()
+        finally:
+            plane.close()
+
+        status, _, applied = self.request(
+            "POST",
+            "/api/v1/guided/apply",
+            {
+                "change_plan_id": preview["change_plan_id"],
+                "confirmation": "APPLY",
+            },
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, applied)
+        self.assertEqual(applied["revision"], before + 1)
+        plane = ControlPlane(self.tmp)
+        try:
+            self.assertIsNotNone(plane.get_object("web-office"))
+        finally:
+            plane.close()
 
     def test_no_generic_management_mutation_endpoint(self):
         self.login()

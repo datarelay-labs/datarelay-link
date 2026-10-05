@@ -14,7 +14,7 @@ sys.path.insert(0, str(ROOT / "lib"))
 
 from drlink_control_db import ControlPlaneError
 from drlink_control_plane import ControlPlane
-from drlink_management_catalog import MANAGEMENT_PERMISSION_NAMES
+from drlink_management_catalog import MANAGEMENT_PERMISSION_NAMES, PLUGIN_NO, management_tool
 from drlink_management_core import (
     ManagementActor,
     ManagementAuthorizationError,
@@ -96,10 +96,18 @@ class V30ManagementAdapterTests(unittest.TestCase):
 
     def test_advertisement_is_catalog_driven_and_contract_only_tools_stay_hidden(self):
         ready = set(implemented_management_tool_names())
+        mcp_expected = {
+            name
+            for name in ready
+            if management_tool(name) is not None
+            and management_tool(name).plugin_exposure != PLUGIN_NO
+        }
         mcp_names = {item["name"] for item in self.mcp.list_tools(actor=self.actor)}
         web_names = set(self.web.capability_names(actor=self.actor))
-        self.assertEqual(mcp_names, ready)
+        self.assertEqual(mcp_names, mcp_expected)
         self.assertEqual(web_names, ready)
+        self.assertNotIn("drlink_guided_change_preview", mcp_names)
+        self.assertIn("drlink_guided_change_preview", web_names)
         self.assertNotIn("drlink_diagnose_connection", ready)
         self.assertNotIn("drlink_diagnostic_job_start", ready)
 

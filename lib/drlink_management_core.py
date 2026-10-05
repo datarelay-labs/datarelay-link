@@ -27,6 +27,17 @@ from drlink_management_service import (
     IMPLEMENTED_MANAGEMENT_TOOLS,
     ManagementQueryService,
 )
+from drlink_management_guided import GuidedChangeService
+from drlink_management_drafts import (
+    DRAFT_ADMIN,
+    DRAFT_OBSERVE,
+    DRAFT_OPERATE,
+    ManagementDraftService,
+)
+
+IMPLEMENTED_GUIDED_CHANGE_TOOLS = frozenset(
+    {"drlink_guided_change_preview", "drlink_guided_change_apply"}
+)
 
 SURFACE_MCP = "MCP"
 SURFACE_WEB = "WEB"
@@ -41,10 +52,15 @@ class ManagementAuthorizationError(ControlPlaneError):
 class ManagementActor:
     actor_id: str
     permissions: frozenset[str]
+    role: str = ""
 
     @classmethod
     def authenticated(
-        cls, actor_id: str, permissions: set[str] | frozenset[str] | tuple[str, ...]
+        cls,
+        actor_id: str,
+        permissions: set[str] | frozenset[str] | tuple[str, ...],
+        *,
+        role: str = "",
     ) -> "ManagementActor":
         ident = str(actor_id or "").strip()
         if not ident:
@@ -53,13 +69,15 @@ class ManagementActor:
             raise ManagementAuthorizationError("Management actor identity is too long.")
         normalized = frozenset(str(item or "").strip().lower() for item in permissions)
         normalized = frozenset(item for item in normalized if item)
-        return cls(ident, normalized)
+        return cls(ident, normalized, str(role or "").strip())
 
 
 def implemented_management_tool_names() -> frozenset[str]:
     """Derive readiness from Core service registries, not a copied adapter list."""
-    names = frozenset(IMPLEMENTED_MANAGEMENT_TOOLS) | frozenset(
-        IMPLEMENTED_MANAGEMENT_CHANGE_TOOLS
+    names = (
+        frozenset(IMPLEMENTED_MANAGEMENT_TOOLS)
+        | frozenset(IMPLEMENTED_MANAGEMENT_CHANGE_TOOLS)
+        | frozenset(IMPLEMENTED_GUIDED_CHANGE_TOOLS)
     )
     catalog = frozenset(tool.name for tool in MANAGEMENT_TOOLS)
     unknown = names - catalog
@@ -95,6 +113,10 @@ def _validate_input(tool, arguments: Mapping[str, Any]) -> dict[str, Any]:
             isinstance(value, bool) or not isinstance(value, int)
         ):
             raise ControlPlaneError("Management input '%s' must be an integer." % name)
+        if expected == "object" and not isinstance(value, Mapping):
+            raise ControlPlaneError("Management input '%s' must be an object." % name)
+        if expected == "array" and not isinstance(value, list):
+            raise ControlPlaneError("Management input '%s' must be an array." % name)
     return data
 
 
@@ -250,6 +272,112 @@ class ManagementCoreService:
         del actor
         with ManagementQueryService(self.root) as service:
             return service.job_get(data["job_id"])
+
+    @staticmethod
+    def _draft_authority(actor: ManagementActor) -> str:
+        role = str(actor.role or "").strip().lower()
+        if role == "admin":
+            if "management-config" not in actor.permissions:
+                raise ManagementAuthorizationError("Admin Draft authority requires management-config.")
+            return DRAFT_ADMIN
+        if role == "operator":
+            if "management-config" not in actor.permissions:
+                raise ManagementAuthorizationError("Operator Draft authority requires management-config.")
+            return DRAFT_OPERATE
+        if role == "read only":
+            if "management-read" not in actor.permissions:
+                raise ManagementAuthorizationError("Read Only Draft authority requires management-read.")
+            return DRAFT_OBSERVE
+        raise ManagementAuthorizationError("Draft Workspace requires a trusted Web operator role.")
+
+    def draft_list(self, *, actor: ManagementActor, limit: int = 50) -> dict[str, Any]:
+        authority = self._draft_authority(actor)
+        del authority
+        with ManagementDraftService(self.root) as service:
+            return {"items": service.list(actor_id=actor.actor_id, limit=limit)}
+
+    def draft_get(self, draft_id: str, *, actor: ManagementActor) -> dict[str, Any]:
+        self._draft_authority(actor)
+        with ManagementDraftService(self.root) as service:
+            return service.get(draft_id, actor_id=actor.actor_id)
+
+    def draft_export(self, draft_id: str, *, actor: ManagementActor) -> dict[str, Any]:
+        self._draft_authority(actor)
+        with ManagementDraftService(self.root) as service:
+            return {
+                "draft_id": draft_id,
+                "bundle_text": service.export(draft_id, actor_id=actor.actor_id),
+            }
+
+    def draft_create(self, *, actor: ManagementActor, bundle_text: str) -> dict[str, Any]:
+        authority = self._draft_authority(actor)
+        if authority == DRAFT_OBSERVE:
+            raise ManagementAuthorizationError("Read Only authority cannot create a Draft.")
+        with ManagementDraftService(self.root) as service:
+            return service.create(actor_id=actor.actor_id, bundle_text=bundle_text)
+
+    def draft_update(
+        self, draft_id: str, *, actor: ManagementActor, bundle_text: str
+    ) -> dict[str, Any]:
+        authority = self._draft_authority(actor)
+        if authority == DRAFT_OBSERVE:
+            raise ManagementAuthorizationError("Read Only authority cannot update a Draft.")
+        with ManagementDraftService(self.root) as service:
+            return service.update(draft_id, actor_id=actor.actor_id, bundle_text=bundle_text)
+
+    def draft_preview(self, draft_id: str, *, actor: ManagementActor) -> dict[str, Any]:
+        authority = self._draft_authority(actor)
+        if authority == DRAFT_OBSERVE:
+            raise ManagementAuthorizationError("Read Only authority cannot preview a mutable Draft.")
+        with ManagementDraftService(self.root) as service:
+            return service.preview(
+                draft_id, actor_id=actor.actor_id, authority=authority
+            )
+
+    def draft_apply(
+        self,
+        draft_id: str,
+        *,
+        actor: ManagementActor,
+        change_plan_id: str,
+        confirmation: str,
+    ) -> dict[str, Any]:
+        authority = self._draft_authority(actor)
+        with ManagementDraftService(self.root) as service:
+            return service.apply(
+                draft_id,
+                actor_id=actor.actor_id,
+                authority=authority,
+                change_plan_id=change_plan_id,
+                confirmation=confirmation,
+            )
+
+    def draft_cancel(self, draft_id: str, *, actor: ManagementActor) -> dict[str, Any]:
+        authority = self._draft_authority(actor)
+        if authority == DRAFT_OBSERVE:
+            raise ManagementAuthorizationError("Read Only authority cannot cancel a Draft.")
+        with ManagementDraftService(self.root) as service:
+            return service.cancel(draft_id, actor_id=actor.actor_id)
+
+    def _invoke_drlink_guided_change_preview(
+        self, actor: ManagementActor, data: dict
+    ) -> dict:
+        with GuidedChangeService(self.root) as service:
+            return service.preview_guided_change(
+                actor_id=actor.actor_id,
+                change_type=data["change_type"],
+                payload=dict(data["payload"]),
+            )
+
+    def _invoke_drlink_guided_change_apply(
+        self, actor: ManagementActor, data: dict
+    ) -> dict:
+        with GuidedChangeService(self.root) as service:
+            return service.apply_guided_change(
+                actor_id=actor.actor_id,
+                change_plan_id=data["change_plan_id"],
+                confirmation=data["confirmation"],
+            )
 
     def _invoke_drlink_temporary_access_preview(
         self, actor: ManagementActor, data: dict

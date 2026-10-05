@@ -1080,6 +1080,22 @@ CREATE TABLE IF NOT EXISTS web_saved_views (
   UNIQUE(operator_id, name),
   FOREIGN KEY (operator_id) REFERENCES web_operators(id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS management_drafts (
+  id TEXT PRIMARY KEY,
+  actor_id TEXT NOT NULL,
+  base_revision INTEGER NOT NULL,
+  bundle_text TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'DRAFT',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  applied_revision INTEGER,
+  last_error TEXT NOT NULL DEFAULT ''
+);
+
+CREATE INDEX IF NOT EXISTS idx_management_drafts_actor_status
+  ON management_drafts(actor_id, status, updated_at DESC, id DESC);
 """
 
 

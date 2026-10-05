@@ -56,6 +56,8 @@ for f in \
   "$BASE_DIR/lib/drlink_management_catalog.py" \
   "$BASE_DIR/lib/drlink_management_service.py" \
   "$BASE_DIR/lib/drlink_management_change.py" \
+  "$BASE_DIR/lib/drlink_management_drafts.py" \
+  "$BASE_DIR/lib/drlink_management_guided.py" \
   "$BASE_DIR/lib/drlink_management_core.py" \
   "$BASE_DIR/lib/drlink_management_mcp_adapter.py" \
   "$BASE_DIR/lib/drlink_management_web_adapter.py" \

@@ -52,6 +52,7 @@ _READ_PERMISSIONS = frozenset(
 _OPERATOR_PERMISSIONS = _READ_PERMISSIONS | frozenset(
     {
         "management-temporary-access",
+        "management-config",
         "management-job-run",
     }
 )
