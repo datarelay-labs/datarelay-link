@@ -45,7 +45,7 @@ def main() -> int:
                 ).fetchall()
                 for row in rows:
                     print(
-                        "%s\t%s\t%s\t%s\t%s"
+                        "%s\t%s\t%s\t%s\t%s\t%s"
                         % (
                             row["username"],
                             row["role"],
