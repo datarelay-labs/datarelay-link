@@ -244,6 +244,8 @@ class WebApplication:
                     plane=_first(query, "plane") or None,
                     limit=_int_arg(_first(query, "limit"), 50),
                 )
+        if path == "/api/v1/policy-tests":
+            return self.adapter.policy_regression_list(actor=actor)
         if path == "/api/v1/objects-groups":
             with ManagementQueryService(self.root) as service:
                 return service.inventory_snapshot(
@@ -419,6 +421,38 @@ class WebApplication:
                 actor=self._actor(principal),
             )
         actor = self._actor(principal)
+        if path == "/api/v1/policy/trace":
+            return self.adapter.policy_decision_trace(
+                actor=actor,
+                plane=str(body.get("plane") or ""),
+                source=str(body.get("source") or ""),
+                destination=str(body.get("destination") or ""),
+                service=str(body.get("service") or ""),
+                permission=str(body.get("permission") or ""),
+                path=str(body.get("path") or ""),
+            )
+        if path == "/api/v1/policy-tests/run":
+            return self.adapter.policy_regression_run(
+                actor=actor,
+                required_only=bool(body.get("required_only", False)),
+            )
+        if path == "/api/v1/policy-tests/preview":
+            definition = body.get("definition")
+            if not isinstance(definition, dict):
+                raise ControlPlaneError(
+                    "Policy Regression Test definition must be an object."
+                )
+            return self.adapter.policy_regression_preview(
+                actor=actor,
+                operation=str(body.get("operation") or "set"),
+                definition=dict(definition),
+            )
+        if path == "/api/v1/policy-tests/apply":
+            return self.adapter.policy_regression_apply(
+                actor=actor,
+                change_plan_id=str(body.get("change_plan_id") or ""),
+                confirmation=str(body.get("confirmation") or ""),
+            )
         if path == "/api/v1/managed-hosts/lifecycle/preview":
             return self.adapter.managed_host_lifecycle_preview(
                 host=str(body.get("host") or ""),

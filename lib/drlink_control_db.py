@@ -1081,6 +1081,28 @@ CREATE TABLE IF NOT EXISTS web_saved_views (
   FOREIGN KEY (operator_id) REFERENCES web_operators(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS management_policy_tests (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  plane TEXT NOT NULL,
+  source TEXT NOT NULL,
+  destination TEXT NOT NULL,
+  service TEXT NOT NULL DEFAULT '',
+  permission TEXT NOT NULL DEFAULT '',
+  path TEXT NOT NULL DEFAULT '',
+  expected TEXT NOT NULL,
+  required INTEGER NOT NULL DEFAULT 1,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  row_version INTEGER NOT NULL DEFAULT 1,
+  created_revision INTEGER,
+  updated_revision INTEGER,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_management_policy_tests_plane
+  ON management_policy_tests(plane, enabled, required, name);
+
 CREATE TABLE IF NOT EXISTS management_drafts (
   id TEXT PRIMARY KEY,
   actor_id TEXT NOT NULL,

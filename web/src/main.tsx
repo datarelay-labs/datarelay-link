@@ -395,6 +395,113 @@ function TemporaryAccessPanel(){
   </div>;
 }
 
+function PolicySafetyPanel({operator}:{operator:any}){
+  const [plane,setPlane]=useState("remote"),[source,setSource]=useState(""),[destination,setDestination]=useState(""),[selector,setSelector]=useState(""),[path,setPath]=useState("");
+  const [trace,setTrace]=useState<any>(null),[tests,setTests]=useState<any[]>([]),[runResult,setRunResult]=useState<any>(null);
+  const [selected,setSelected]=useState(""),[testName,setTestName]=useState(""),[expected,setExpected]=useState("ALLOW"),[required,setRequired]=useState(true),[enabled,setEnabled]=useState(true);
+  const [preview,setPreview]=useState<any>(null),[confirmation,setConfirmation]=useState(""),[message,setMessage]=useState(""),[error,setError]=useState("");
+
+  async function loadTests(){
+    try{const result=await api("/api/v1/policy-tests");setTests(result.items||[])}
+    catch(e:any){setError(e.message||String(e))}
+  }
+  useEffect(()=>{loadTests()},[]);
+
+  function flow(){
+    const body:any={plane,source,destination};
+    if(plane==="ai"){body.permission=selector;if(path)body.path=path}
+    else body.service=selector;
+    return body;
+  }
+  async function simulate(){
+    setError("");setTrace(null);
+    try{setTrace(await api("/api/v1/policy/trace",{method:"POST",body:JSON.stringify(flow())}))}
+    catch(e:any){setError(e.message||String(e))}
+  }
+  async function runSaved(){
+    setError("");setRunResult(null);
+    try{setRunResult(await api("/api/v1/policy-tests/run",{method:"POST",body:JSON.stringify({required_only:false})}))}
+    catch(e:any){setError(e.message||String(e))}
+  }
+  function choose(value:string){
+    setSelected(value);setPreview(null);setConfirmation("");setMessage("");
+    if(!value){setTestName("");setExpected("ALLOW");setRequired(true);setEnabled(true);return}
+    const item=tests.find((x:any)=>x.id===value);
+    if(!item)return;
+    setTestName(item.name||"");setPlane(item.plane||"remote");setSource(item.source||"");setDestination(item.destination||"");
+    setSelector(item.plane==="ai"?(item.permission||""):(item.service||""));setPath(item.path||"");
+    setExpected(item.expected||"ALLOW");setRequired(!!item.required);setEnabled(!!item.enabled);
+  }
+  async function previewSave(){
+    setError("");setMessage("");
+    try{
+      const definition:any={name:testName,...flow(),expected,required,enabled};
+      const result=await api("/api/v1/policy-tests/preview",{method:"POST",body:JSON.stringify({operation:"set",definition})});
+      setPreview(result);setConfirmation("");
+    }catch(e:any){setError(e.message||String(e))}
+  }
+  async function previewDelete(){
+    setError("");setMessage("");
+    try{
+      const result=await api("/api/v1/policy-tests/preview",{method:"POST",body:JSON.stringify({operation:"delete",definition:{name:testName}})});
+      setPreview(result);setConfirmation("");
+    }catch(e:any){setError(e.message||String(e))}
+  }
+  async function applyChange(){
+    setError("");setMessage("");
+    try{
+      const result=await api("/api/v1/policy-tests/apply",{method:"POST",body:JSON.stringify({change_plan_id:preview?.change_plan_id||"",confirmation})});
+      setMessage("Policy Regression Test applied at revision "+result.revision);setPreview(null);setConfirmation("");setSelected("");setTestName("");await loadTests();
+    }catch(e:any){setError(e.message||String(e))}
+  }
+  const ready=source&&destination&&selector;
+  const requiredConfirmation=preview?.confirmation_class||"";
+  return <>
+    <div className="card">
+      <h3>Policy Simulator / Decision Trace</h3>
+      <div className="muted">Uses the same Core evaluator as CLI/runtime policy tests. A simulated ALLOW does not imply target reachability.</div>
+      {error&&<div className="error">{error}</div>}{message&&<div className="notice">{message}</div>}
+      <div className="toolbar">
+        <select value={plane} onChange={e=>{setPlane(e.target.value);setSelector("");setPath("")}}><option value="remote">Remote</option><option value="internet">Internet</option><option value="ai">AI</option></select>
+        <input value={source} onChange={e=>setSource(e.target.value)} placeholder={plane==="ai"?"AI Identity":"Source object/group"}/>
+        <input value={destination} onChange={e=>setDestination(e.target.value)} placeholder="Destination"/>
+        <input value={selector} onChange={e=>setSelector(e.target.value)} placeholder={plane==="ai"?"Permission object/group":"Service object/group"}/>
+        {plane==="ai"&&<input value={path} onChange={e=>setPath(e.target.value)} placeholder="Optional path"/>}
+        <button className="primary" onClick={simulate} disabled={!ready}>Simulate</button>
+      </div>
+      {trace&&<pre className="plan">{JSON.stringify(trace,null,2)}</pre>}
+    </div>
+    <div className="card">
+      <h3>Saved Policy Regression Tests</h3>
+      <div className="muted">Required enabled tests are re-run against proposed security-relevant policy changes before Apply. A failure blocks mutation.</div>
+      <div className="toolbar">
+        <button className="secondary" onClick={runSaved}>Run Saved Tests</button>
+        <select value={selected} onChange={e=>choose(e.target.value)}>
+          <option value="">New test</option>
+          {tests.map((x:any)=><option key={x.id} value={x.id}>{x.name}</option>)}
+        </select>
+      </div>
+      {runResult&&<pre className="plan">{JSON.stringify(runResult,null,2)}</pre>}
+      <Table items={tests.map((x:any)=>({name:x.name,plane:x.plane,expected:x.expected,required:x.required,enabled:x.enabled}))}/>
+      {operator.role!=="Read Only"&&<>
+        <div className="toolbar">
+          <input value={testName} onChange={e=>setTestName(e.target.value)} placeholder="Test name"/>
+          <select value={expected} onChange={e=>setExpected(e.target.value)}><option value="ALLOW">Expect ALLOW</option><option value="DENY">Expect DENY</option></select>
+          <label><input type="checkbox" checked={required} onChange={e=>setRequired(e.target.checked)}/> Required</label>
+          <label><input type="checkbox" checked={enabled} onChange={e=>setEnabled(e.target.checked)}/> Enabled</label>
+          <button className="primary" onClick={previewSave} disabled={!testName||!ready}>Preview Save</button>
+          <button className="danger" onClick={previewDelete} disabled={!selected}>Preview Delete</button>
+        </div>
+      </>}
+      {preview&&<div className="warning-box">
+        <pre className="plan">{JSON.stringify({preview:preview.preview,impact:preview.impact,valid_until:preview.valid_until},null,2)}</pre>
+        <label className="apply-label">Type {requiredConfirmation} to commit<input value={confirmation} onChange={e=>setConfirmation(e.target.value)} placeholder={requiredConfirmation}/></label>
+        <button className="danger" onClick={applyChange} disabled={confirmation!==requiredConfirmation}>Apply Saved Test Change</button>
+      </div>}
+    </div>
+  </>;
+}
+
 function SystemPanel({data,operator}:{data:any,operator:any}){
   const [backupPath,setBackupPath]=useState("/var/lib/drlink/backups/");
   const [renewConfirmation,setRenewConfirmation]=useState(""),[restoreConfirmation,setRestoreConfirmation]=useState("");
@@ -509,7 +616,7 @@ function View({active,operator}:{active:string,operator:any}){
   if(active==="objects"&&data){const rows=Object.entries(data.resources||{}).flatMap(([type,page]:any)=>(page.items||[]).map((item:any)=>({type,id:item.id,name:item.name||item.id,description:item.description||"",status:item.status||""})));return <><Table items={rows}/>{operator.role!=="Read Only"&&<GuidedObjectPanel/>}</>;}
   if(active==="hosts"&&data)return <><Table items={data.items||[]}/>{operator.role!=="Read Only"&&<ManagedHostMetadataPanel/>}{operator.role==="Admin"&&<ManagedHostLifecyclePanel/>}</>;
   if(active==="services"&&data)return <><Table items={data.items||[]}/>{operator.role!=="Read Only"&&<RemoteServicePanel/>}</>;
-  if(active==="policies"&&data)return <><Table items={data.items||[]}/>{operator.role!=="Read Only"&&<><GuidedPolicySettingsPanel/><GuidedPolicyRulePanel/><TemporaryAccessPanel/></>}</>;
+  if(active==="policies"&&data)return <><Table items={data.items||[]}/><PolicySafetyPanel operator={operator}/>{operator.role!=="Read Only"&&<><GuidedPolicySettingsPanel/><GuidedPolicyRulePanel/><TemporaryAccessPanel/></>}</>;
   if(active==="doctor"&&data)return <><div className="grid"><Metric label="Attention" value={data.attention?.count}/><Metric label="Checks" value={(data.checks||[]).length}/></div><Table items={data.checks||[]}/></>;
   if(active==="health"&&data)return <pre className="card">{JSON.stringify(data,null,2)}</pre>;
   if(active==="views"&&data)return <SavedViews data={data} refresh={()=>api("/api/v1/saved-views").then(setData)}/>;

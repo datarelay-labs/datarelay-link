@@ -31,6 +31,8 @@ from drlink_management_guided import GuidedChangeService
 from drlink_management_enrollment import ManagementEnrollmentService
 from drlink_management_remote_service import ManagementRemoteServiceService
 from drlink_management_host_lifecycle import ManagedHostLifecycleService
+from drlink_policy_safety import PolicySafetyService
+import drlink_policy_safety as policy_safety
 from drlink_management_system import ManagementSystemService
 from drlink_management_drafts import (
     DRAFT_ADMIN,
@@ -293,6 +295,93 @@ class ManagementCoreService:
                 "This Web management operation requires role: %s." % ", ".join(sorted(roles))
             )
         return role
+
+    def policy_decision_trace(
+        self,
+        *,
+        actor: ManagementActor,
+        plane: str,
+        source: str,
+        destination: str,
+        service: str = "",
+        permission: str = "",
+        path: str = "",
+    ) -> dict[str, Any]:
+        if "management-policy-test" not in actor.permissions:
+            raise ManagementAuthorizationError(
+                "management-policy-test is required for Decision Trace."
+            )
+        self._require_web_role(actor, "Admin", "Operator", "Read Only")
+        with PolicySafetyService.open_read_only(self.root) as safety:
+            return safety.decision_trace(
+                plane=plane,
+                source=source,
+                destination=destination,
+                service=service,
+                permission=permission,
+                path=path,
+            )
+
+    def policy_regression_list(self, *, actor: ManagementActor) -> dict[str, Any]:
+        if "management-policy-test" not in actor.permissions:
+            raise ManagementAuthorizationError(
+                "management-policy-test is required for Policy Regression Tests."
+            )
+        self._require_web_role(actor, "Admin", "Operator", "Read Only")
+        with PolicySafetyService.open_read_only(self.root) as safety:
+            return safety.list_tests()
+
+    def policy_regression_run(
+        self,
+        *,
+        actor: ManagementActor,
+        required_only: bool = False,
+    ) -> dict[str, Any]:
+        if "management-policy-test" not in actor.permissions:
+            raise ManagementAuthorizationError(
+                "management-policy-test is required for Policy Regression Tests."
+            )
+        self._require_web_role(actor, "Admin", "Operator", "Read Only")
+        with PolicySafetyService.open_read_only(self.root) as safety:
+            return safety.run_tests(required_only=required_only)
+
+    def policy_regression_preview(
+        self,
+        *,
+        actor: ManagementActor,
+        operation: str,
+        definition: dict[str, Any],
+    ) -> dict[str, Any]:
+        self._require_web_role(actor, "Admin", "Operator")
+        if "management-config" not in actor.permissions:
+            raise ManagementAuthorizationError(
+                "management-config is required to change Policy Regression Tests."
+            )
+        with PolicySafetyService(self.root) as safety:
+            return safety.preview_definition(
+                actor_id=actor.actor_id,
+                operation=operation,
+                definition=definition,
+            )
+
+    def policy_regression_apply(
+        self,
+        *,
+        actor: ManagementActor,
+        change_plan_id: str,
+        confirmation: str,
+    ) -> dict[str, Any]:
+        self._require_web_role(actor, "Admin", "Operator")
+        if "management-config" not in actor.permissions:
+            raise ManagementAuthorizationError(
+                "management-config is required to change Policy Regression Tests."
+            )
+        with PolicySafetyService(self.root) as safety:
+            return safety.apply_definition(
+                actor_id=actor.actor_id,
+                change_plan_id=change_plan_id,
+                confirmation=confirmation,
+            )
 
     def managed_host_lifecycle_preview(
         self,

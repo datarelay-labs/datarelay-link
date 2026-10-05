@@ -571,6 +571,131 @@ class V30WebServiceTests(unittest.TestCase):
         self.assertEqual(payload["status"], "logged_out")
         self.assertIn("Max-Age=0", headers.get("set-cookie", ""))
 
+    def test_policy_trace_and_saved_regression_test_routes(self):
+        self.login()
+        plane = ControlPlane(self.tmp)
+        try:
+            v24.set_network_object(
+                plane, "trace-src", type="ip", value="198.51.100.10",
+                oneshot=True, confirm=True,
+            )
+            v24.set_network_object(
+                plane, "trace-dst", type="ip", value="198.51.100.20",
+                oneshot=True, confirm=True,
+            )
+            v24.set_service_object(
+                plane, "trace-ssh", type="tcp", port=22,
+                oneshot=True, confirm=True,
+            )
+            v24.set_access_rule(
+                plane,
+                "remote",
+                "trace-allow",
+                mode="whitelist",
+                source="trace-src",
+                destination="trace-dst",
+                service="trace-ssh",
+                enabled=True,
+                oneshot=True,
+                confirm=True,
+            )
+            revision = plane.current_revision()
+        finally:
+            plane.close()
+
+        flow = {
+            "plane": "remote",
+            "source": "trace-src",
+            "destination": "trace-dst",
+            "service": "trace-ssh",
+        }
+        status, _, _ = self.request(
+            "POST", "/api/v1/policy/trace", flow
+        )
+        self.assertEqual(status, 403)
+
+        status, _, trace = self.request(
+            "POST",
+            "/api/v1/policy/trace",
+            flow,
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, trace)
+        self.assertEqual(trace["final"]["result"], "ALLOW")
+        self.assertIn("trace-allow", trace["policy"]["matched_rules"])
+
+        status, _, listed = self.request("GET", "/api/v1/policy-tests")
+        self.assertEqual(status, 200, listed)
+        self.assertEqual(listed["count"], 0)
+
+        definition = {
+            "name": "web-critical-ssh",
+            **flow,
+            "expected": "ALLOW",
+            "required": True,
+            "enabled": True,
+        }
+        status, _, preview = self.request(
+            "POST",
+            "/api/v1/policy-tests/preview",
+            {"operation": "set", "definition": definition},
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, preview)
+        self.assertEqual(preview["confirmation_class"], "APPLY")
+        self.assertTrue(preview["preview"]["assertion_ok"])
+
+        plane = ControlPlane(self.tmp)
+        try:
+            self.assertEqual(plane.current_revision(), revision)
+            self.assertEqual(
+                plane.conn.execute(
+                    "SELECT COUNT(*) FROM management_policy_tests"
+                ).fetchone()[0],
+                0,
+            )
+        finally:
+            plane.close()
+
+        status, _, denied = self.request(
+            "POST",
+            "/api/v1/policy-tests/apply",
+            {
+                "change_plan_id": preview["change_plan_id"],
+                "confirmation": "SAVE",
+            },
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 400, denied)
+
+        status, _, applied = self.request(
+            "POST",
+            "/api/v1/policy-tests/apply",
+            {
+                "change_plan_id": preview["change_plan_id"],
+                "confirmation": "APPLY",
+            },
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, applied)
+        self.assertEqual(applied["status"], "APPLIED")
+
+        status, _, run = self.request(
+            "POST",
+            "/api/v1/policy-tests/run",
+            {"required_only": True},
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, run)
+        self.assertTrue(run["ok"])
+        self.assertEqual(run["passed"], 1)
+        self.assertEqual(run["required_failed"], 0)
+
+        status, _, listed = self.request("GET", "/api/v1/policy-tests")
+        self.assertEqual(status, 200, listed)
+        self.assertEqual(listed["count"], 1)
+        self.assertEqual(listed["items"][0]["name"], "web-critical-ssh")
+
     def test_managed_host_lifecycle_requires_admin_csrf_and_typed_confirmation(self):
         login = self.login()
         operator_id = login["operator"]["id"]

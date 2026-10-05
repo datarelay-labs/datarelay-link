@@ -675,6 +675,14 @@ until the configuration or expected test is explicitly corrected.
 
 Tests are versioned/audited management state and must survive backup/restore.
 
+DRL3-4 persists saved assertions in the authoritative SQLite management schema so normal
+backup/restore preserves them. Definition create/edit/delete uses actor/Server/revision-bound
+Core Change Plans; Decision Trace, list, and run are query-only and must not create
+configuration or operational metadata. Required enabled tests are executed against the
+**proposed** state during security-relevant guided policy preview and are executed again
+immediately before Apply. Any required mismatch or evaluator error blocks Apply with zero
+authoritative mutation.
+
 ### 20.2 Effective Access Graph
 
 The graph answers:

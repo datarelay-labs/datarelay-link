@@ -88,6 +88,64 @@ class ManagementWebApiAdapter:
     def enrollment_list(self, *, actor: ManagementActor, limit: int = 50) -> dict[str, Any]:
         return self.core.enrollment_list(actor=actor, limit=limit)
 
+    def policy_decision_trace(
+        self,
+        *,
+        actor: ManagementActor,
+        plane: str,
+        source: str,
+        destination: str,
+        service: str = "",
+        permission: str = "",
+        path: str = "",
+    ) -> dict[str, Any]:
+        return self.core.policy_decision_trace(
+            actor=actor,
+            plane=plane,
+            source=source,
+            destination=destination,
+            service=service,
+            permission=permission,
+            path=path,
+        )
+
+    def policy_regression_list(self, *, actor: ManagementActor) -> dict[str, Any]:
+        return self.core.policy_regression_list(actor=actor)
+
+    def policy_regression_run(
+        self, *, actor: ManagementActor, required_only: bool = False
+    ) -> dict[str, Any]:
+        return self.core.policy_regression_run(
+            actor=actor,
+            required_only=required_only,
+        )
+
+    def policy_regression_preview(
+        self,
+        *,
+        actor: ManagementActor,
+        operation: str,
+        definition: dict[str, Any],
+    ) -> dict[str, Any]:
+        return self.core.policy_regression_preview(
+            actor=actor,
+            operation=operation,
+            definition=definition,
+        )
+
+    def policy_regression_apply(
+        self,
+        *,
+        actor: ManagementActor,
+        change_plan_id: str,
+        confirmation: str,
+    ) -> dict[str, Any]:
+        return self.core.policy_regression_apply(
+            actor=actor,
+            change_plan_id=change_plan_id,
+            confirmation=confirmation,
+        )
+
     def managed_host_lifecycle_preview(
         self,
         *,

@@ -527,9 +527,27 @@ class GuidedChangeService(ManagementChangeService):
         )
         return dict(impact or {"requires_confirmation": False, "destructive": False})
 
+    @staticmethod
+    def _needs_policy_regression(
+        kind: str,
+        impact: dict[str, Any],
+    ) -> bool:
+        return bool(
+            kind in {
+                "remote-access-policy",
+                "internet-access-policy",
+                "ai-access-policy",
+                "remote-access-rule",
+                "internet-access-rule",
+                "ai-access-rule",
+            }
+            or impact.get("access_broadened")
+            or impact.get("access_narrowed")
+        )
+
     def _dry_run(
         self, kind: str, payload: dict[str, Any]
-    ) -> tuple[dict[str, Any], dict[str, Any]]:
+    ) -> tuple[dict[str, Any], dict[str, Any], Optional[dict[str, Any]]]:
         savepoint = "drlink_guided_preview"
         previous_batch = self.plane._batch_mode
         previous_results = self.plane._batch_results
@@ -538,7 +556,17 @@ class GuidedChangeService(ManagementChangeService):
         self.plane._batch_results = []
         try:
             impact = self._impact(kind, payload)
-            return self._execute(kind, payload), impact
+            preview = self._execute(kind, payload)
+            regression = None
+            if self._needs_policy_regression(kind, impact):
+                from drlink_policy_safety import run_saved_policy_tests
+
+                regression = run_saved_policy_tests(
+                    self.plane,
+                    required_only=True,
+                    enabled_only=True,
+                )
+            return preview, impact, regression
         finally:
             if self.plane.conn.in_transaction:
                 try:
@@ -557,8 +585,16 @@ class GuidedChangeService(ManagementChangeService):
     ) -> dict[str, Any]:
         kind, normalized = self._normalize(change_type, payload)
         expected_revision = int(self.plane.current_revision())
-        preview, impact = self._dry_run(kind, normalized)
+        preview, impact, regression = self._dry_run(kind, normalized)
         no_change = str(preview.get("operation") or "").lower() == "noop"
+        if regression is not None:
+            impact = {
+                **impact,
+                "required_policy_tests": int(regression.get("count") or 0),
+                "required_policy_test_failures": int(
+                    regression.get("required_failed") or 0
+                ),
+            }
         resource_ref = str(
             normalized.get("name")
             or normalized.get("host")
@@ -585,6 +621,7 @@ class GuidedChangeService(ManagementChangeService):
                 "preview": preview,
                 "no_change": no_change,
                 "change_type": kind,
+                "policy_regression": regression,
             }
         )
         return issued
@@ -619,21 +656,41 @@ class GuidedChangeService(ManagementChangeService):
             raise ControlPlaneError("Change Plan payload is invalid.") from exc
 
         expected_revision = int(row["expected_revision"])
+        current = int(self.plane.current_revision())
+        if current != expected_revision:
+            self._mark_plan(change_plan_id, "stale")
+            raise ConcurrencyError(
+                "REVISION_CONFLICT\nExpected revision %s but current revision is %s.\n"
+                "No changes were applied.\nReview current state and retry."
+                % (expected_revision, current)
+            )
         if bool(document.get("no_change")):
-            current = int(self.plane.current_revision())
-            if current != expected_revision:
-                self._mark_plan(change_plan_id, "stale")
-                raise ConcurrencyError(
-                    "REVISION_CONFLICT\nExpected revision %s but current revision is %s.\n"
-                    "No changes were applied.\nReview current state and retry."
-                    % (expected_revision, current)
-                )
             self._mark_plan(change_plan_id, "applied")
             return {
                 "status": "NO_CHANGE",
                 "revision": current,
                 "change_type": kind,
             }
+
+        if self._needs_policy_regression(kind, impact):
+            _preview, _fresh_impact, regression = self._dry_run(kind, payload)
+            if regression is not None and not bool(regression.get("ok")):
+                self._mark_plan(change_plan_id, "failed")
+                failures = [
+                    "%s expect=%s got=%s"
+                    % (
+                        item.get("name"),
+                        item.get("expected"),
+                        item.get("got"),
+                    )
+                    for item in regression.get("items") or []
+                    if item.get("required") and not item.get("ok")
+                ]
+                raise ControlPlaneError(
+                    "Required Policy Regression Tests failed.\n"
+                    "No changes were applied.\n"
+                    + "\n".join("  - %s" % item for item in failures)
+                )
 
         def writer():
             previous_batch = self.plane._batch_mode
