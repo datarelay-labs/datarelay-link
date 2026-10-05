@@ -22,7 +22,7 @@ sudo drlink
 
 ## 2. Source identity before stable release
 
-Until an immutable `v2.4.0` tag exists, do not install from a future tag, mutable `main`, or an unqualified `latest` path.
+Until an immutable `v3.0.0` tag exists, do not install from a future tag, mutable `main`, or an unqualified `latest` path.
 
 Development/pre-release installation uses an exact immutable Git SHA or an explicitly qualified candidate artifact.
 

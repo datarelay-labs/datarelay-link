@@ -140,7 +140,7 @@ Remote Service mutation is local to the Agent Host that owns it. Server inspecti
 
 ## Safe quick start / discovery
 
-Until an immutable `v2.4.0` tag exists, install only from an exact SHA or owner-directed candidate artifact. A future-looking tag URL such as `v2.4.0/dist/bootstrap-server.sh` would 404 until that tag is created.
+Until an immutable `v3.0.0` tag exists, install only from an exact SHA or owner-directed candidate artifact. A future-looking tag URL such as `v3.0.0/dist/bootstrap-server.sh` would 404 until that tag is created.
 
 After install, prefer discovery commands that do not mutate state:
 
@@ -290,7 +290,7 @@ Do not invent a current stable designation from a historical tag alone.
 Pre-tag installers/bootstrap must use an immutable exact SHA or immutable candidate artifact, never a future nonexistent stable tag. Intended post-tag form:
 
 ```text
-.../datarelay-labs/datarelay-link/v2.4.0/dist/bootstrap-server.sh
+.../datarelay-labs/datarelay-link/v3.0.0/dist/bootstrap-server.sh
 ```
 
 That path would 404 until the immutable tag exists.

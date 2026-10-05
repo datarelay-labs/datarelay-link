@@ -472,7 +472,7 @@ Any change resets the pass counter.
 
 Only after all gates:
 
-- [ ] create immutable `v2.4.0` tag on final qualified HEAD.
+- [ ] create immutable `v3.0.0` tag on final qualified HEAD.
 - [ ] verify remote tag resolves to same HEAD.
 - [ ] publish GitHub Release/artifacts/checksums/manifest.
 - [ ] publish final release notes.
