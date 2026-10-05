@@ -1028,21 +1028,15 @@ class WebAuthService:
         *,
         username: str,
         new_password: str,
-        totp_secret: str,
-        recovery_codes: list[str],
-        totp_value: str,
+        totp_secret: str = "",
+        recovery_codes: Optional[list[str]] = None,
+        totp_value: str = "",
         now: Optional[datetime] = None,
     ) -> dict[str, Any]:
         name = _validate_username(username)
         password = _validate_password(new_password)
         current = now or _utc_now()
-        counter = verify_totp(totp_secret, totp_value, at=current)
-        if counter is None:
-            raise ControlPlaneError("TOTP verification failed.")
-        master = _master_key(self.root)
-        salt = os.urandom(16)
         now_text = _utc_text(current)
-        code_hashes = sorted({_recovery_hash(master, code) for code in recovery_codes})
         with self._lock:
             row = self.conn.execute(
                 "SELECT * FROM web_operators WHERE username=? COLLATE NOCASE "
@@ -1052,18 +1046,35 @@ class WebAuthService:
             if not row:
                 raise ControlPlaneError("Local recovery Admin was not found.")
             operator_id = str(row["id"])
+            require_mfa = bool(int(row["mfa_required"] or 0))
+            master: Optional[bytes] = None
+            counter: Optional[int] = None
+            cipher = ""
+            code_hashes: list[str] = []
+            if require_mfa:
+                counter = verify_totp(totp_secret, totp_value, at=current)
+                if counter is None:
+                    raise ControlPlaneError("TOTP verification failed.")
+                codes = list(recovery_codes or [])
+                if len(codes) < 5:
+                    raise ControlPlaneError("Recovery code set is incomplete.")
+                master = _master_key(self.root)
+                cipher = encrypt_token_pbkdf2(totp_secret, master)
+                code_hashes = sorted({_recovery_hash(master, code) for code in codes})
+            salt = os.urandom(16)
             self.conn.execute("BEGIN IMMEDIATE")
             try:
                 self.conn.execute(
                     "UPDATE web_operators SET password_salt=?,password_hash=?,"
-                    "password_kdf=?,mfa_secret_ciphertext=?,mfa_enrolled=1,"
+                    "password_kdf=?,mfa_secret_ciphertext=?,mfa_enrolled=?,"
                     "mfa_last_counter=?,enabled=1,row_version=row_version+1,updated_at=? "
                     "WHERE id=?",
                     (
                         base64.b64encode(salt).decode("ascii"),
                         _password_hash(password, salt),
                         PASSWORD_KDF,
-                        encrypt_token_pbkdf2(totp_secret, master),
+                        cipher,
+                        1 if require_mfa else 0,
                         counter,
                         now_text,
                         operator_id,
@@ -1073,11 +1084,12 @@ class WebAuthService:
                     "DELETE FROM web_recovery_codes WHERE operator_id=?",
                     (operator_id,),
                 )
-                self.conn.executemany(
-                    "INSERT INTO web_recovery_codes(operator_id,code_hash,created_at) "
-                    "VALUES (?,?,?)",
-                    [(operator_id, digest, now_text) for digest in code_hashes],
-                )
+                if code_hashes:
+                    self.conn.executemany(
+                        "INSERT INTO web_recovery_codes(operator_id,code_hash,created_at) "
+                        "VALUES (?,?,?)",
+                        [(operator_id, digest, now_text) for digest in code_hashes],
+                    )
                 self.conn.execute(
                     "UPDATE web_sessions SET revoked_at=? "
                     "WHERE operator_id=? AND revoked_at IS NULL",
@@ -1087,6 +1099,7 @@ class WebAuthService:
                     "web.operator.local_recovery",
                     actor_id=operator_id,
                     resource_id=operator_id,
+                    reason_code="MFA_ON" if require_mfa else "MFA_OFF",
                 )
                 self.conn.execute("COMMIT")
             except Exception:
@@ -1095,7 +1108,13 @@ class WebAuthService:
                 except Exception:
                     pass
                 raise
-        return {"operator_id": operator_id, "username": name, "recovered": True}
+        return {
+            "operator_id": operator_id,
+            "username": name,
+            "recovered": True,
+            "mfa_required": require_mfa,
+            "mfa_enrolled": require_mfa,
+        }
 
     def list_saved_views(self, operator_id: str) -> list[dict[str, Any]]:
         rows = self.conn.execute(
