@@ -244,6 +244,67 @@ class V30WebServiceTests(unittest.TestCase):
         finally:
             plane.close()
 
+    def test_system_artifact_routes_are_csrf_protected_and_bounded(self):
+        self.login()
+
+        def fake_run(command, **kwargs):
+            output = Path(command[-1])
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_bytes(b"web-artifact")
+            return __import__("subprocess").CompletedProcess(
+                args=command, returncode=0, stdout="created\n", stderr=""
+            )
+
+        for path in (
+            "/api/v1/system/backup/create",
+            "/api/v1/system/support-bundle",
+        ):
+            status, _, _ = self.request("POST", path, {})
+            self.assertEqual(status, 403, path)
+
+        from unittest import mock
+        with mock.patch(
+            "drlink_management_system.subprocess.run", side_effect=fake_run
+        ):
+            status, _, backup = self.request(
+                "POST",
+                "/api/v1/system/backup/create",
+                {},
+                headers={"X-CSRF-Token": self.csrf},
+            )
+            self.assertEqual(status, 200, backup)
+            self.assertEqual(backup["status"], "CREATED")
+            self.assertTrue(backup["protected_artifact"])
+            self.assertFalse(backup["download_exposed"])
+            self.assertTrue(
+                backup["path"].startswith("/var/lib/drlink/backups/")
+            )
+
+            status, _, support = self.request(
+                "POST",
+                "/api/v1/system/support-bundle",
+                {},
+                headers={"X-CSRF-Token": self.csrf},
+            )
+            self.assertEqual(status, 200, support)
+            self.assertEqual(support["status"], "CREATED")
+            self.assertTrue(support["sanitized"])
+            self.assertFalse(support["download_exposed"])
+            self.assertTrue(
+                support["path"].startswith("/var/lib/drlink/support-bundles/")
+            )
+
+        plane = ControlPlane(self.tmp)
+        try:
+            self.assertEqual(
+                plane.conn.execute(
+                    "SELECT COUNT(*) FROM config_revisions"
+                ).fetchone()[0],
+                plane.current_revision(),
+            )
+        finally:
+            plane.close()
+
     def test_csrf_protects_web_preferences_and_logout(self):
         self.login()
         status, _, _ = self.request(

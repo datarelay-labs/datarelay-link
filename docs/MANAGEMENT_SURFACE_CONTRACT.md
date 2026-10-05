@@ -503,6 +503,17 @@ redacted Server ConfigurationBundle through the same export engine used by the C
 Draft export/copy remains non-authoritative, and Cancel never mutates authoritative
 configuration.
 
+DRL3-3 system/lifecycle Web operations also remain Core-owned and are not new Management
+MCP tools. System status, certificate preflight, and backup validation are bounded
+OBSERVE/TEST behavior. Protected backup creation requires local Web Admin plus
+`management-config`; its archive remains server-side under
+`/var/lib/drlink/backups/` and is never returned through Web. Sanitized support-bundle
+creation requires Admin/Operator plus `management-job-run` and writes only under
+`/var/lib/drlink/support-bundles/`. The browser cannot select an arbitrary output path,
+archive contents are not exposed, and the authenticated Web actor/interface is propagated
+to the canonical tool boundary. Restore remains `RECOVERY_AUTHORITY` and is not implied
+by backup validation or backup creation.
+
 DRL3-0 additionally freezes:
 
 - Change Plan identifiers as short-lived opaque Core-issued IDs bound to authenticated

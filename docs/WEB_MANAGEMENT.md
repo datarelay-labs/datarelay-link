@@ -868,7 +868,24 @@ including:
 
 Irreversible or high-impact actions require explicit confirmation and clear consequences.
 
-DRL3-3 first exposes the side-effect-free subset through the shared Core boundary: installed product/Relay Engine provenance, a redacted certificate status view, certificate hostname preflight, and disaster-recovery backup validation. Certificate responses must not expose raw persisted TLS state, private-key paths, or private key material. Backup validation delegates to the same canonical restore validator used by the CLI and never implies restore authority. Restore remains `RECOVERY_AUTHORITY`; update, certificate mutation, backup creation, support-bundle generation, and restore are added only through their canonical lifecycle/Job/confirmation semantics rather than by shelling out directly from the HTTP layer.
+DRL3-3 first exposes the side-effect-free subset through the shared Core boundary:
+installed product/Relay Engine provenance, a redacted certificate status view, certificate
+hostname preflight, and disaster-recovery backup validation. Certificate responses must
+not expose raw persisted TLS state, private-key paths, or private key material. Backup
+validation delegates to the same canonical restore validator used by the CLI and never
+implies restore authority.
+
+The first artifact-producing Web operations also reuse canonical tools behind the Core
+boundary. Protected Server backup creation is Admin-only and writes to
+`/var/lib/drlink/backups/`; the browser never supplies an output path or receives archive
+contents. Sanitized support-bundle creation is available to Admin/Operator and writes to
+`/var/lib/drlink/support-bundles/`, again without archive download through this surface.
+Both propagate the authenticated Web actor/interface to the canonical tool environment,
+bound output, reject symlink/path escape, and do not create a configuration revision.
+
+Restore remains `RECOVERY_AUTHORITY`. Product/Relay update, certificate mutation, and
+restore are added only through their canonical lifecycle/confirmation/rollback semantics,
+never by shelling out directly from the HTTP layer.
 
 ### 24.1 Bounded multi-host operations
 

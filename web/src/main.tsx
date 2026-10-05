@@ -359,12 +359,14 @@ function TemporaryAccessPanel(){
   </div>;
 }
 
-function SystemPanel({data}:{data:any}){
+function SystemPanel({data,operator}:{data:any,operator:any}){
   const [backupPath,setBackupPath]=useState("/var/lib/drlink/backups/");
-  const [preflight,setPreflight]=useState<any>(null),[validation,setValidation]=useState<any>(null),[error,setError]=useState("");
+  const [preflight,setPreflight]=useState<any>(null),[validation,setValidation]=useState<any>(null),[backupArtifact,setBackupArtifact]=useState<any>(null),[supportArtifact,setSupportArtifact]=useState<any>(null),[error,setError]=useState("");
   async function runPreflight(){setError("");try{setPreflight(await api("/api/v1/system/certificate/preflight",{method:"POST",body:"{}"}))}catch(e:any){setError(e.message||String(e))}}
   async function validateBackup(){setError("");try{setValidation(await api("/api/v1/system/backup/validate",{method:"POST",body:JSON.stringify({path:backupPath})}))}catch(e:any){setError(e.message||String(e))}}
-  const identity=data.identity||{},certificate=data.certificate||{},backup=data.backup||{};
+  async function createBackup(){setError("");setBackupArtifact(null);try{setBackupArtifact(await api("/api/v1/system/backup/create",{method:"POST",body:"{}"}))}catch(e:any){setError(e.message||String(e))}}
+  async function createSupportBundle(){setError("");setSupportArtifact(null);try{setSupportArtifact(await api("/api/v1/system/support-bundle",{method:"POST",body:"{}"}))}catch(e:any){setError(e.message||String(e))}}
+  const identity=data.identity||{},certificate=data.certificate||{},backup=data.backup||{},support=data.support_bundle||{};
   return <>
     {error&&<div className="error">{error}</div>}
     <div className="grid">
@@ -384,10 +386,20 @@ function SystemPanel({data}:{data:any}){
       {preflight&&<pre className="plan">{JSON.stringify(preflight,null,2)}</pre>}
     </div>
     <div className="card">
-      <h3>Backup Validation</h3>
+      <h3>Backup</h3>
+      <div className="muted">Backup archives are protected server-side artifacts containing secrets. Web never downloads or displays their contents.</div>
+      {operator.role==="Admin"&&<button className="primary" onClick={createBackup} disabled={!backup.create_available}>Create Protected Backup</button>}
+      {backupArtifact&&<pre className="plan">{JSON.stringify(backupArtifact,null,2)}</pre>}
+      <h4>Validate Existing Backup</h4>
       <div className="muted">Validation is read-only and uses the same disaster-recovery validator as CLI restore preflight.</div>
       <div className="toolbar"><input value={backupPath} onChange={e=>setBackupPath(e.target.value)} placeholder="/var/lib/drlink/backups/server-backup-....tar.gz"/><button className="secondary" onClick={validateBackup} disabled={!backupPath}>Validate Backup</button></div>
       {validation&&<pre className="plan">{JSON.stringify(validation,null,2)}</pre>}
+    </div>
+    <div className="card">
+      <h3>Support Bundle</h3>
+      <div className="muted">Creates a sanitized diagnostic archive in {support.directory||"/var/lib/drlink/support-bundles"}. Archive contents are not exposed through Web.</div>
+      {operator.role!=="Read Only"&&<button className="secondary" onClick={createSupportBundle} disabled={!support.create_available}>Create Sanitized Support Bundle</button>}
+      {supportArtifact&&<pre className="plan">{JSON.stringify(supportArtifact,null,2)}</pre>}
     </div>
   </>;
 }
@@ -411,7 +423,7 @@ function View({active,operator}:{active:string,operator:any}){
   if(active==="search")return <div><div className="toolbar"><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search resources and policy"/><button className="primary" onClick={()=>api("/api/v1/search?q="+encodeURIComponent(query)+"&limit=50").then(setData).catch((e:any)=>setError(e.message))}>Search</button></div>{data&&<Table items={(data.items||[]).map((x:any)=>({type:x.resource_type,id:x.id,name:x.name}))}/>}</div>;
   if(active==="overview"&&data){const h=data.overview?.managed_hosts||{},s=data.overview?.remote_services||{},j=data.overview?.management_jobs||{};return <><div className="grid"><Metric label="Managed Hosts" value={h.total}/><Metric label="Connected" value={h.connected}/><Metric label="Remote Services" value={s.total}/><Metric label="Active Jobs" value={j.active_jobs}/></div><div className="card"><h3>Attention Center</h3>{(data.attention?.items||[]).map((x:any)=><span key={x.kind} className={"badge "+x.severity}>{x.label}: {x.count}</span>)}{!(data.attention?.items||[]).length&&<div className="muted">No current attention items</div>}</div></>};
   if(active==="versions"&&data)return <><div className="grid"><Metric label="Server version" value={data.server_version}/><Metric label="Drift" value={data.drift_count}/><Metric label="Unknown" value={data.unknown_count}/></div><Table items={data.hosts||[]}/></>;
-  if(active==="system"&&data)return <SystemPanel data={data}/>;
+  if(active==="system"&&data)return <SystemPanel data={data} operator={operator}/>;
   if(active==="objects"&&data){const rows=Object.entries(data.resources||{}).flatMap(([type,page]:any)=>(page.items||[]).map((item:any)=>({type,id:item.id,name:item.name||item.id,description:item.description||"",status:item.status||""})));return <><Table items={rows}/>{operator.role!=="Read Only"&&<GuidedObjectPanel/>}</>;}
   if(active==="hosts"&&data)return <><Table items={data.items||[]}/>{operator.role!=="Read Only"&&<ManagedHostMetadataPanel/>}</>;
   if(active==="services"&&data)return <><Table items={data.items||[]}/>{operator.role!=="Read Only"&&<RemoteServicePanel/>}</>;

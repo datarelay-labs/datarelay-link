@@ -315,6 +315,26 @@ class ManagementCoreService:
         self._require_web_role(actor, "Admin", "Operator", "Read Only")
         return ManagementSystemService(self.root).backup_validate(path)
 
+    def backup_create(self, *, actor: ManagementActor) -> dict[str, Any]:
+        self._require_web_role(actor, "Admin")
+        if "management-config" not in actor.permissions:
+            raise ManagementAuthorizationError(
+                "management-config is required for backup creation."
+            )
+        return ManagementSystemService(self.root).backup_create(
+            actor_id=actor.actor_id
+        )
+
+    def support_bundle_create(self, *, actor: ManagementActor) -> dict[str, Any]:
+        self._require_web_role(actor, "Admin", "Operator")
+        if "management-job-run" not in actor.permissions:
+            raise ManagementAuthorizationError(
+                "management-job-run is required for support-bundle generation."
+            )
+        return ManagementSystemService(self.root).support_bundle_create(
+            actor_id=actor.actor_id
+        )
+
     def enrollment_issue_manual(
         self,
         *,

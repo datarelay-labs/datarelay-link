@@ -1,14 +1,18 @@
 """Browser-safe DRLink 3.0 system/lifecycle management helpers.
 
-This service exposes only bounded OBSERVE/TEST operations. It reuses the
-canonical version, certificate, and disaster-recovery validators without
-creating a parallel authority path.
+This service exposes bounded system operations through the shared Core boundary.
+It reuses canonical version, certificate, disaster-recovery, and support-bundle
+tools without creating a parallel authority path. Artifact-producing operations
+write only to Core-owned directories and never expose archive contents via Web.
 """
 from __future__ import annotations
 
+import hashlib
 import os
+import secrets
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -185,8 +189,139 @@ class ManagementSystemService:
             "authoritative_mutation": False,
         }
 
+    def _owned_output_dir(self, relative: str) -> Path:
+        base = self.root_path.resolve()
+        directory = self.root_path / relative
+        current = self.root_path
+        for part in Path(relative).parts:
+            current = current / part
+            if current.exists() and current.is_symlink():
+                raise ControlPlaneError(
+                    "Refusing system artifact directory that traverses a symlink."
+                )
+        existed = directory.exists()
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        resolved = directory.resolve()
+        try:
+            resolved.relative_to(base)
+        except ValueError as exc:
+            raise ControlPlaneError(
+                "System artifact directory escaped the Data Relay Link root."
+            ) from exc
+        if not existed:
+            os.chmod(resolved, 0o700)
+        return resolved
+
+    @staticmethod
+    def _artifact_digest(path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    def _artifact_path(
+        self,
+        *,
+        directory: str,
+        prefix: str,
+    ) -> tuple[str, Path]:
+        output_dir = self._owned_output_dir(directory)
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        name = "%s-%s-%s.tar.gz" % (prefix, stamp, secrets.token_hex(4))
+        actual = output_dir / name
+        canonical = "/" + str(Path(directory) / name)
+        return canonical, actual
+
+    def _artifact_env(self, *, actor_id: str) -> dict[str, str]:
+        env = os.environ.copy()
+        env.pop("DRLINK_CONFIRM", None)
+        env.pop("FRP_RESTORE_YES", None)
+        env["DRLINK_ACTOR"] = str(actor_id or "").strip()
+        env["DRLINK_INTERFACE"] = "WEB"
+        if self.root and self.root != "/":
+            env["FRP_DEPLOY_TEST_ROOT"] = self.root
+        return env
+
+    def _run_artifact_tool(
+        self,
+        *,
+        command: list[str],
+        canonical_path: str,
+        actual_path: Path,
+        actor_id: str,
+        timeout: int,
+        protected: bool,
+        sanitized: bool,
+    ) -> dict[str, Any]:
+        try:
+            proc = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,
+                env=self._artifact_env(actor_id=actor_id),
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise ControlPlaneError("System artifact generation timed out.") from exc
+        if proc.returncode != 0:
+            detail = _safe_text(proc.stderr or proc.stdout).strip()
+            if detail:
+                raise ControlPlaneError(
+                    "System artifact generation failed: %s" % detail
+                )
+            raise ControlPlaneError("System artifact generation failed.")
+        if not actual_path.is_file() or actual_path.is_symlink():
+            raise ControlPlaneError(
+                "System artifact generation reported success without a safe output file."
+            )
+        return {
+            "status": "CREATED",
+            "path": canonical_path,
+            "size_bytes": int(actual_path.stat().st_size),
+            "sha256": self._artifact_digest(actual_path),
+            "protected_artifact": bool(protected),
+            "sanitized": bool(sanitized),
+            "download_exposed": False,
+            "authoritative_mutation": False,
+        }
+
+    def backup_create(self, *, actor_id: str) -> dict[str, Any]:
+        canonical, actual = self._artifact_path(
+            directory="var/lib/drlink/backups",
+            prefix="server-backup",
+        )
+        tool = _tool_path(self.root_path, "frp-backup")
+        return self._run_artifact_tool(
+            command=[sys.executable, str(tool), str(actual)],
+            canonical_path=canonical,
+            actual_path=actual,
+            actor_id=actor_id,
+            timeout=120,
+            protected=True,
+            sanitized=False,
+        )
+
+    def support_bundle_create(self, *, actor_id: str) -> dict[str, Any]:
+        canonical, actual = self._artifact_path(
+            directory="var/lib/drlink/support-bundles",
+            prefix="drlink-support",
+        )
+        tool = _tool_path(self.root_path, "frp-support-bundle")
+        return self._run_artifact_tool(
+            command=[sys.executable, str(tool), "--output", str(actual)],
+            canonical_path=canonical,
+            actual_path=actual,
+            actor_id=actor_id,
+            timeout=60,
+            protected=False,
+            sanitized=True,
+        )
+
     def status(self) -> dict[str, Any]:
         backup_dir = self.root_path / "var/lib/drlink/backups"
+        support_dir = self.root_path / "var/lib/drlink/support-bundles"
         return {
             "read_only": True,
             "side_effect_free": True,
@@ -198,6 +333,12 @@ class ManagementSystemService:
                 "create_available": self._tool_available("frp-backup"),
                 "validate_available": self._tool_available("frp-restore"),
                 "restore_available": self._tool_available("frp-restore"),
+            },
+            "support_bundle": {
+                "directory": "/var/lib/drlink/support-bundles",
+                "directory_present": support_dir.is_dir(),
+                "create_available": self._tool_available("frp-support-bundle"),
+                "sanitized": True,
             },
         }
 

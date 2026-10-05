@@ -372,6 +372,10 @@ class WebApplication:
                 str(body.get("path") or ""),
                 actor=actor,
             )
+        if path == "/api/v1/system/backup/create":
+            return self.adapter.backup_create(actor=actor)
+        if path == "/api/v1/system/support-bundle":
+            return self.adapter.support_bundle_create(actor=actor)
         if path == "/api/v1/enrollments/manual":
             return self.adapter.enrollment_issue_manual(
                 actor=actor,

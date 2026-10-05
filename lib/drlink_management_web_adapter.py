@@ -97,6 +97,12 @@ class ManagementWebApiAdapter:
     def backup_validate(self, path: str, *, actor: ManagementActor) -> dict[str, Any]:
         return self.core.backup_validate(path, actor=actor)
 
+    def backup_create(self, *, actor: ManagementActor) -> dict[str, Any]:
+        return self.core.backup_create(actor=actor)
+
+    def support_bundle_create(self, *, actor: ManagementActor) -> dict[str, Any]:
+        return self.core.support_bundle_create(actor=actor)
+
     def enrollment_issue_manual(
         self,
         *,

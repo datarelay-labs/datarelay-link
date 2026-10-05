@@ -125,6 +125,55 @@ class V30ManagementSystemTests(unittest.TestCase):
                 ):
                     service.backup_validate(path)
 
+    def test_artifact_generation_uses_owned_paths_and_never_exposes_download(self):
+        def fake_run(command, **kwargs):
+            del kwargs
+            output = Path(command[-1])
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_bytes(b"artifact")
+            return subprocess.CompletedProcess(
+                args=command, returncode=0, stdout="created\n", stderr=""
+            )
+
+        service = ManagementSystemService(self.tmp)
+        with mock.patch(
+            "drlink_management_system.subprocess.run", side_effect=fake_run
+        ) as run:
+            backup = service.backup_create(actor_id="web:admin")
+            support = service.support_bundle_create(actor_id="web:operator")
+
+        self.assertEqual(backup["status"], "CREATED")
+        self.assertTrue(backup["protected_artifact"])
+        self.assertFalse(backup["sanitized"])
+        self.assertFalse(backup["download_exposed"])
+        self.assertTrue(backup["path"].startswith("/var/lib/drlink/backups/"))
+        self.assertEqual(len(backup["sha256"]), 64)
+
+        self.assertEqual(support["status"], "CREATED")
+        self.assertFalse(support["protected_artifact"])
+        self.assertTrue(support["sanitized"])
+        self.assertFalse(support["download_exposed"])
+        self.assertTrue(
+            support["path"].startswith("/var/lib/drlink/support-bundles/")
+        )
+        self.assertEqual(len(support["sha256"]), 64)
+
+        calls = run.call_args_list
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0].kwargs["env"]["DRLINK_ACTOR"], "web:admin")
+        self.assertEqual(calls[0].kwargs["env"]["DRLINK_INTERFACE"], "WEB")
+        self.assertEqual(calls[1].kwargs["env"]["DRLINK_ACTOR"], "web:operator")
+
+    def test_artifact_generation_rejects_symlinked_owned_directory(self):
+        service = ManagementSystemService(self.tmp)
+        backups = Path(self.tmp, "var/lib/drlink/backups")
+        backups.rmdir()
+        target = Path(self.tmp, "outside")
+        target.mkdir()
+        backups.symlink_to(target, target_is_directory=True)
+        with self.assertRaisesRegex(ControlPlaneError, "symlink"):
+            service.backup_create(actor_id="web:admin")
+
     def test_core_role_and_permission_guard(self):
         core = ManagementCoreService(self.tmp)
         reader = ManagementActor.authenticated(
@@ -132,12 +181,52 @@ class V30ManagementSystemTests(unittest.TestCase):
             {"management-read", "management-diagnose"},
             role="Read Only",
         )
+        operator = ManagementActor.authenticated(
+            "web:operator",
+            {
+                "management-read",
+                "management-diagnose",
+                "management-job-run",
+                "management-config",
+            },
+            role="Operator",
+        )
+        admin = ManagementActor.authenticated(
+            "web:admin",
+            {
+                "management-read",
+                "management-diagnose",
+                "management-job-run",
+                "management-config",
+            },
+            role="Admin",
+        )
         self.assertTrue(core.system_status(actor=reader)["read_only"])
         denied = ManagementActor.authenticated(
             "web:denied", {"management-read"}, role="Read Only"
         )
         with self.assertRaises(ManagementAuthorizationError):
             core.certificate_preflight(actor=denied)
+        with self.assertRaises(ManagementAuthorizationError):
+            core.backup_create(actor=operator)
+        with mock.patch.object(
+            ManagementSystemService,
+            "backup_create",
+            return_value={"status": "CREATED"},
+        ):
+            self.assertEqual(
+                core.backup_create(actor=admin)["status"], "CREATED"
+            )
+        with mock.patch.object(
+            ManagementSystemService,
+            "support_bundle_create",
+            return_value={"status": "CREATED"},
+        ):
+            self.assertEqual(
+                core.support_bundle_create(actor=operator)["status"], "CREATED"
+            )
+        with self.assertRaises(ManagementAuthorizationError):
+            core.support_bundle_create(actor=reader)
 
 
 if __name__ == "__main__":
