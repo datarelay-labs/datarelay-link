@@ -398,5 +398,53 @@ class V30GuidedChangeTests(unittest.TestCase):
             self.assertEqual(service.plane.current_revision(), before)
 
 
+    def test_access_policy_enforcement_and_reset_use_core_semantics(self):
+        plane = ControlPlane(self.tmp)
+        try:
+            v24.set_network_object(plane, "p-src", type="ip", value="198.51.100.10", oneshot=True)
+            v24.set_network_object(plane, "p-dst", type="ip", value="198.51.100.20", oneshot=True)
+            v24.set_service_object(plane, "p-ssh", type="tcp", port=22, oneshot=True)
+            v24.set_access_rule(
+                plane, "remote", "allow-p", mode="whitelist", source="p-src",
+                destination="p-dst", service="p-ssh", enabled=True,
+                oneshot=True, confirm=True,
+            )
+        finally:
+            plane.close()
+        with GuidedChangeService(self.tmp) as service:
+            before = service.plane.current_revision()
+            preview = service.preview_guided_change(
+                actor_id="web:admin",
+                change_type="remote-access-policy",
+                payload={"operation": "set-enforcement", "enabled": False},
+            )
+            self.assertEqual(service.plane.current_revision(), before)
+            self.assertTrue(preview["impact"]["access_broadened"])
+            service.apply_guided_change(
+                actor_id="web:admin",
+                change_plan_id=preview["change_plan_id"],
+                confirmation="APPLY",
+            )
+            self.assertEqual(
+                v24.get_access_policy(service.plane, "remote")["enforcement"],
+                "disabled",
+            )
+            reset = service.preview_guided_change(
+                actor_id="web:admin",
+                change_type="remote-access-policy",
+                payload={"operation": "reset"},
+            )
+            self.assertTrue(reset["impact"]["destructive"])
+            service.apply_guided_change(
+                actor_id="web:admin",
+                change_plan_id=reset["change_plan_id"],
+                confirmation="APPLY",
+            )
+            policy = v24.get_access_policy(service.plane, "remote")
+            self.assertIsNone(policy["mode"])
+            self.assertEqual(policy["enforcement"], "enabled")
+            self.assertIsNone(service.plane._get_rule("remote", "allow-p"))
+
+
 if __name__ == "__main__":
     unittest.main()

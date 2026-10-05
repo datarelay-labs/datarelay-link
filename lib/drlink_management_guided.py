@@ -24,6 +24,9 @@ GUIDED_CHANGE_TYPES = frozenset(
         "remote-access-rule",
         "internet-access-rule",
         "ai-access-rule",
+        "remote-access-policy",
+        "internet-access-policy",
+        "ai-access-policy",
     }
 )
 MAX_GUIDED_MEMBERS = 100
@@ -81,6 +84,18 @@ class GuidedChangeService(ManagementChangeService):
             raise ControlPlaneError("Guided change payload must be an object.")
         data = dict(payload)
         operation = str(data.get("operation") or "set").strip().lower()
+        if kind in ("remote-access-policy", "internet-access-policy", "ai-access-policy"):
+            if operation not in ("set-enforcement", "reset"):
+                raise ControlPlaneError(
+                    "Access Policy operation must be 'set-enforcement' or 'reset'."
+                )
+            if operation == "reset":
+                _reject_unknown(data, {"operation"}, kind)
+                return kind, {"operation": "reset"}
+            _reject_unknown(data, {"operation", "enabled"}, kind)
+            if not isinstance(data.get("enabled"), bool):
+                raise ControlPlaneError("Access Policy enabled must be a boolean.")
+            return kind, {"operation": "set-enforcement", "enabled": bool(data["enabled"])}
         if operation not in ("set", "delete"):
             raise ControlPlaneError("Guided change operation must be 'set' or 'delete'.")
 
@@ -288,6 +303,13 @@ class GuidedChangeService(ManagementChangeService):
         import drlink_v24 as v24
 
         op = payload["operation"]
+        if kind in ("remote-access-policy", "internet-access-policy", "ai-access-policy"):
+            family = kind.split("-", 1)[0]
+            if op == "reset":
+                return v24.reset_access_policy(self.plane, family, confirm=True)
+            return v24.set_policy_enforcement(
+                self.plane, family, bool(payload["enabled"]), confirm=True
+            )
         if kind in ("remote-access-rule", "internet-access-rule", "ai-access-rule"):
             name = payload["name"]
             if kind == "ai-access-rule":
@@ -383,6 +405,32 @@ class GuidedChangeService(ManagementChangeService):
 
     def _impact(self, kind: str, payload: dict[str, Any]) -> dict[str, Any]:
         import drlink_v24 as v24
+
+        if kind in ("remote-access-policy", "internet-access-policy", "ai-access-policy"):
+            family = kind.split("-", 1)[0]
+            policy = v24.get_access_policy(self.plane, family)
+            if payload["operation"] == "reset":
+                return {
+                    "requires_confirmation": True,
+                    "destructive": True,
+                    "access_broadened": True,
+                    "access_narrowed": False,
+                    "before": "mode=%s enforcement=%s" % (
+                        policy.get("mode") or "none", policy.get("enforcement") or "enabled"
+                    ),
+                    "after": "mode removed / rules removed / effective result ALLOW",
+                    "warning": "Reset removes this Access Policy mode and all of its rules.",
+                }
+            desired = bool(payload["enabled"])
+            current_enabled = str(policy.get("enforcement") or "enabled").lower() == "enabled"
+            return {
+                "requires_confirmation": True,
+                "destructive": False,
+                "access_broadened": bool(current_enabled and not desired),
+                "access_narrowed": bool((not current_enabled) and desired),
+                "before": "enforcement %s" % ("ENABLED" if current_enabled else "DISABLED"),
+                "after": "enforcement %s" % ("ENABLED" if desired else "DISABLED"),
+            }
 
         if kind in ("remote-access-rule", "internet-access-rule", "ai-access-rule"):
             family = (

@@ -482,7 +482,7 @@ drlink_remote_service_apply
 ```
 
 They require `management-config`, delegate Managed Host metadata, Object/Group, and
-Remote/Internet/AI Access Rule lifecycle validation and mutation semantics to the existing
+Remote/Internet/AI Access Policy/Rule lifecycle validation and mutation semantics to the existing
 Core CRUD/Change Plan path, and use `PLUGIN_NO`. They are therefore available to
 the first-party Web adapter when authorized but are **not** added to the admitted
 Management MCP/Plugin tool list above.
