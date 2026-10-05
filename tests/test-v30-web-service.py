@@ -142,8 +142,12 @@ class V30WebServiceTests(unittest.TestCase):
         self.assertIn("Data Relay Link", body)
         self.assertIn("content-security-policy", headers)
 
-        status, _, body = self.request("GET", "/app.js")
+        status, app_headers, body = self.request("GET", "/app.js")
         self.assertEqual(status, 200)
+        self.assertEqual(app_headers.get("cache-control"), "no-cache")
+        status, css_headers, _ = self.request("GET", "/styles.css")
+        self.assertEqual(status, 200)
+        self.assertEqual(css_headers.get("cache-control"), "no-cache")
         # DR Control parity persists only non-security UX preferences locally.
         # Session/authentication material remains cookie/Core-owned.
         source = (ROOT / "web/src/main.tsx").read_text(encoding="utf-8")

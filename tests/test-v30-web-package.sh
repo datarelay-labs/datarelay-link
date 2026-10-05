@@ -69,9 +69,14 @@ for style_marker in 'dr-detail-drawer' 'dr-access-map' 'dr-resource-table' 'dr-s
     echo "FAIL modern SaaS resource/access style missing: $style_marker" >&2; exit 1;
   }
 done
-grep -q 'box-shadow:none' "$TMP/usr/local/share/drlink-web/styles.css" || {
-  echo "FAIL DR Control flat-surface parity missing" >&2; exit 1;
+grep -q 'box-shadow:0 1px 2px rgba(0,0,0,.05)' "$TMP/usr/local/share/drlink-web/styles.css" || {
+  echo "FAIL DR Control shadow-sm card parity missing" >&2; exit 1;
 }
+for global_marker in 'text-rendering:optimizeLegibility' 'scrollbar-width:thin' '::selection'; do
+  grep -q -- "$global_marker" "$TMP/usr/local/share/drlink-web/styles.css" || {
+    echo "FAIL DR Control global visual parity missing: $global_marker" >&2; exit 1;
+  }
+done
 for token in '--dr-layout-sidebar-expanded:260px' '--dr-layout-sidebar-collapsed:57px' '--dr-layout-content-max:1440px' '--dr-brand-mark:#00d084' '--dr-brand-relay:#007e4f' '--dr-font-size-base:14px' '--dr-radius-card:8px' '--dr-surface-page:oklch(98.75% 0 0)' '--dr-text-primary:oklch(21% .006 285.885)' '--dr-action-primary:oklch(54.6% .245 262.881)'; do
   grep -q -- "$token" "$TMP/usr/local/share/drlink-web/styles.css" || {
     echo "FAIL DR Control visual token parity missing: $token" >&2; exit 1;

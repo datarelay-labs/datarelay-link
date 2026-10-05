@@ -42,6 +42,14 @@ function Table({items}:{items:any[]}){
 }
 function Metric({label,value}:{label:string,value:any}){return <div className="card"><div className="muted">{label}</div><div className="metric">{String(value??0)}</div></div>}
 
+function PageSkeleton(){
+  return <div className="dr-page-skeleton" aria-label="Loading page" aria-busy="true">
+    <div className="dr-skeleton-line title"/><div className="dr-skeleton-line subtitle"/>
+    <div className="dr-skeleton-grid">{[0,1,2,3].map(i=><div className="dr-skeleton-card" key={i}><div className="dr-skeleton-line short"/><div className="dr-skeleton-line metric"/></div>)}</div>
+    <div className="dr-skeleton-panel"><div className="dr-skeleton-line short"/>{[0,1,2,3,4].map(i=><div className="dr-skeleton-row" key={i}><span/><span/><span/></div>)}</div>
+  </div>;
+}
+
 function LoginIcon({kind}:{kind:"user"|"lock"|"eye"|"eyeoff"}){
   if(kind==="user")return <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c.8-4.6 3.5-7 8-7s7.2 2.4 8 7"/></svg>;
   if(kind==="eye")return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12s3.4-6 9.5-6 9.5 6 9.5 6-3.4 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/></svg>;
@@ -1193,7 +1201,7 @@ function View({active,operator,onNavigate}:{active:string,operator:any,onNavigat
   if(active==="health"&&data)return <pre className="card">{JSON.stringify(data,null,2)}</pre>;
   if(active==="views"&&data)return <SavedViews data={data} refresh={()=>api("/api/v1/saved-views").then(setData)}/>;
   if(data)return <Table items={data.items||[]}/>;
-  return <div className="empty">Loading…</div>;
+  return <PageSkeleton/>;
 }
 
 function SavedViews({data,refresh}:{data:any,refresh:()=>void}){
@@ -1216,6 +1224,7 @@ function WorkspaceIcon({kind}:{kind:string}){
   if(kind==="sun")return <svg {...common}><circle cx="12" cy="12" r="3"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>;
   if(kind==="collapse")return <svg {...common}><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M15 9l-3 3 3 3"/></svg>;
   if(kind==="expand")return <svg {...common}><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M12 9l3 3-3 3"/></svg>;
+  if(kind==="logout")return <svg {...common}><path d="M10 17l5-5-5-5M15 12H3"/><path d="M13 4h5a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-5"/></svg>;
   return <svg {...common}><circle cx="12" cy="12" r="8"/></svg>;
 }
 
@@ -1327,9 +1336,10 @@ function Shell({operator,onLogout}:{operator:any,onLogout:()=>void}){
       </nav>
       <div className="dr-sidebar-footer">
         {!collapsed&&<div className="dr-environment"><span className="dr-status-dot"/><span><small>Environment</small><strong>Development</strong></span></div>}
-        <button className="dr-user-chip" onClick={()=>operator.role==="Admin"&&activate("users","administration")} title={collapsed?operator.username:undefined}>
+        <button className="dr-user-chip" onClick={()=>operator.role==="Admin"&&activate("users","administration")} title={collapsed?`${operator.username} · ${operator.role}`:undefined}>
           <span className="dr-avatar">{String(operator.username||"?").slice(0,2).toUpperCase()}</span><span className="dr-user-copy"><strong>{operator.username}</strong><small>{operator.role}</small></span>
         </button>
+        <button className="dr-sidebar-signout" onClick={logout} title={collapsed?"Sign out":undefined} aria-label="Sign out"><span className="dr-nav-icon"><WorkspaceIcon kind="logout"/></span><span className="dr-user-copy">Sign out</span></button>
       </div>
     </aside>
     <div className="dr-shell-main">
@@ -1339,7 +1349,6 @@ function Shell({operator,onLogout}:{operator:any,onLogout:()=>void}){
           <button className="dr-search-trigger" onClick={()=>setSearchOpen(true)}><WorkspaceIcon kind="search"/><span>Search</span><kbd>⌘K</kbd></button>
           <button className="dr-icon-button" onClick={()=>setRefreshNonce(x=>x+1)} title="Refresh"><WorkspaceIcon kind="refresh"/></button>
           <button className="dr-icon-button" onClick={()=>setDark(!dark)} title="Toggle theme"><WorkspaceIcon kind={dark?"sun":"moon"}/></button>
-          <button className="dr-signout" onClick={logout}>Sign out</button>
         </div>
       </header>
       <main id="drlink-main-content" className="content dr-workspace" tabIndex={-1}><div className="dr-content-frame"><View key={active+":"+refreshNonce} active={active} operator={operator} onNavigate={activate}/></div></main>

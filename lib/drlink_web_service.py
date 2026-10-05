@@ -1022,7 +1022,14 @@ class DrlinkWebHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(raw_bytes)))
-        self.send_header("Cache-Control", "no-cache" if target.name == "index.html" else "public, max-age=3600")
+        # app.js/styles.css use stable names, so browsers must revalidate them
+        # after Web package upgrades. Long-lived caching is safe only for
+        # ancillary assets whose stale copy cannot keep an old application UI.
+        revalidate = target.name in {"index.html", "app.js", "styles.css"}
+        self.send_header(
+            "Cache-Control",
+            "no-cache" if revalidate else "public, max-age=3600",
+        )
         self._security_headers(api=False)
         self.end_headers()
         self.wfile.write(raw_bytes)

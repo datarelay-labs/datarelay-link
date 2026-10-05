@@ -63,7 +63,7 @@ Reference pages used for this 3.0 decision:
 
 DRLink copies the visual system semantics, not Control application code.
 
-Last implementation verification source (2026-10-05):
+Last implementation verification source (re-verified 2026-10-06):
 
 ```text
 repository   datarelay-labs/datarelay-control
@@ -206,7 +206,8 @@ Role filtering remains server-authoritative. Hiding an item is never authorizati
 - group headings are quiet labels, not high-contrast buttons;
 - active page uses a subtle neutral row highlight, not a bright NOC selection block;
 - collapse/expand is persistent local preference only;
-- account/environment summary belongs at the bottom rather than consuming page content.
+- account/environment summary belongs at the bottom rather than consuming page content;
+- Sign out lives with the account panel in the sidebar, matching Control rather than becoming a top-header primary action.
 
 ### 5.2 Top header
 
@@ -222,7 +223,8 @@ The sticky 58 px header contains:
 
 - page background is near-white neutral, not blue-gray;
 - content is centered/bounded to 1440 px where practical;
-- use white cards with 8 px radius and subtle border/shadow;
+- use white cards with 8 px radius, subtle neutral border, and Control-equivalent `shadow-sm`;
+- use Control-equivalent optimized text rendering, selection color, and thin neutral scrollbars;
 - semantic color is reserved for action/status, not decorative chrome.
 
 ## 6. Command Center Overview
@@ -276,12 +278,29 @@ preview, and recent access decisions from the same context.
 
 ## 10. DRL3-7A implementation order
 
-Current implementation checkpoint (2026-10-05): semantic token parity, Control-compatible
-App Shell, collapsible navigation, sticky header, light/dark theme, Command Center home,
-contextual global search, Managed Host/Remote Service list-detail drawers, and the first
-relationship-oriented Access workspace are implemented. Remaining work focuses on deeper
-resource context, removing the remaining utility destinations from permanent navigation,
-accessibility/responsive browser validation, and exact-candidate UX qualification.
+Current implementation checkpoint (2026-10-05): implementation-order items 1–6 are now
+in the Web package. This includes semantic token parity, Control-compatible App Shell,
+collapsible navigation, sticky header, light/dark theme, actionable Command Center, global
+search/command palette, contextual removal of Search/Saved Views/Connect Agent/Draft/Doctor
+from permanent navigation, Managed Host/Remote Service/Object/Policy list-detail workspaces,
+and the relationship-oriented Access workspace. Responsive shell rules, skip navigation,
+keyboard command search, Escape-close dialogs, and deterministic UX contract regression are
+also implemented. Remaining release work is real-browser owner/user UX validation, any
+resulting targeted fixes, and exact-candidate qualification after the UI is frozen.
+
+Current evidence state:
+
+```text
+DR_CONTROL_VISUAL_TOKEN_PARITY=PASS
+SAAS_SHELL_PARITY=PASS
+BOUNDED_ROOT_NAVIGATION=PASS
+COLLAPSIBLE_SIDEBAR=PASS
+LIGHT_DARK_THEME=PASS
+COMMAND_CENTER_OVERVIEW=PASS
+CONTEXTUAL_WORKSPACE_NAV=PASS
+WEB_PACKAGE_VISUAL_PARITY=PASS
+BROWSER_REAL_USER_UX=PENDING_REAL_BROWSER_REVIEW
+```
 
 1. foundation semantic tokens + authenticated shell parity;
 2. collapsible grouped sidebar + sticky top header + theme/local preference;
