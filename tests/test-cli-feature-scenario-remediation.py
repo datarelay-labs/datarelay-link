@@ -64,6 +64,11 @@ class CliFeatureScenarioRemediation(unittest.TestCase):
         with redirect_stderr(errors), self.assertRaises(SystemExit):
             enrollment.require_onboarding_config({})
         self.assertIn("Agent onboarding", errors.getvalue())
+        with patch.object(enrollment, "is_interactive_stdin", return_value=True), \
+                patch.object(enrollment, "read_prompt", return_value="n") as prompt, \
+                redirect_stdout(io.StringIO()):
+            self.assertFalse(enrollment.confirm_client_setup())
+        prompt.assert_called_once_with("Create this Agent setup? [Y/n]: ")
 
     def _completion_payload(self, root_key="FRP_CTL_TEST_ROOT"):
         env = {key: value for key, value in os.environ.items()

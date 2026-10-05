@@ -315,7 +315,7 @@ def preflight_installer_url(url, *, label='Agent installer'):
 def confirm_client_setup():
     if not is_interactive_stdin():
         return True
-    entered = read_prompt('Create this client setup? [Y/n]: ')
+    entered = read_prompt('Create this Agent setup? [Y/n]: ')
     if entered is None:
         return False
     text = str(entered).strip().lower()

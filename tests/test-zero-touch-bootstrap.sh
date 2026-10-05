@@ -482,7 +482,9 @@ padded = parts[1] + ('=' * (-len(parts[1]) % 4))
 payload = json.loads(base64.urlsafe_b64decode(padded.encode('ascii')).decode('utf-8'))
 if payload.get('u') != 'https://203.0.113.10/enroll;id':
     raise SystemExit('allocator URL not preserved in package')
-if 'rm -rf /' in text.split('Zero-touch client command', 1)[-1].split('Expires:', 1)[0].replace('trap "rm -rf $d"', ''):
+if 'Zero-touch Agent command' not in text:
+    raise SystemExit('missing Agent command header')
+if 'rm -rf /' in text.split('Zero-touch Agent command', 1)[1].split('Expires:', 1)[0].replace('trap "rm -rf $d"', ''):
     raise SystemExit('note leaked into command')
 print('ok')
 PY

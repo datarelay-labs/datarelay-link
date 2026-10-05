@@ -300,7 +300,8 @@ class BackendProductOutputTests(unittest.TestCase):
         self.assertNotEqual(proc.returncode, 0)
         self.assertNotIn("Traceback", combined)
         self.assertNotIn("KeyError", combined)
-        self.assertIn("Client onboarding cannot continue", combined)
+        self.assertIn("Agent onboarding cannot continue", combined)
+        self.assertNotIn("Client onboarding", combined)
         self.assertIn("enrollments_dir", combined)
         self.assertIn("system diagnostics", combined)
 

@@ -77,7 +77,7 @@ env["FRP_SKIP_SYSTEMD"] = "1"
 env.pop("FRP_CTL_TEST_INPUT", None)
 env.pop("FRP_CTL_DRY_RUN", None)
 
-CONFIRM = b"Create this client setup? [Y/n]:"
+CONFIRM = b"Create this Agent setup? [Y/n]:"
 PROMPT = b"drlink> "
 
 def run_session(answers_after_confirm, label):
@@ -149,17 +149,17 @@ def run_session(answers_after_confirm, label):
         pass
     text = buf.decode("utf-8", "replace").replace("\r\n", "\n").replace("\r", "\n")
     collapsed = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", text)
-    same = "Create this client setup? [Y/n]: drlink>" in collapsed.replace(" ", " ")
+    same = "Create this Agent setup? [Y/n]: drlink>" in collapsed.replace(" ", " ")
     # Also catch prompt glued with optional spaces but no newline.
-    glued = bool(re.search(r"Create this client setup\? \[Y/n\]: *drlink>", collapsed))
+    glued = bool(re.search(r"Create this Agent setup\? \[Y/n\]: *drlink>", collapsed))
     # Confirm the REPL prompt after the confirm line starts on a new line.
-    new_line = bool(re.search(r"Create this client setup\? \[Y/n\]:.*\n(?:.*\n)*drlink>", collapsed))
+    new_line = bool(re.search(r"Create this Agent setup\? \[Y/n\]:.*\n(?:.*\n)*drlink>", collapsed))
     Path(work, label + ".out").write_text(collapsed, encoding="utf-8")
     return {
         "label": label,
         "same": same or glued,
         "new_line": new_line,
-        "created": "Zero-touch client command" in collapsed or "Client setup created" in collapsed
+        "created": "Zero-touch Agent command" in collapsed or "Agent setup created" in collapsed
         or "Enrollment ID:" in collapsed,
         "text": collapsed,
     }
@@ -186,7 +186,7 @@ set +e
 direct_rc=$?
 set -e
 [[ "$direct_rc" -ne 0 ]] || fail "direct guided invocation unexpectedly succeeded"
-if grep -q 'Create this client setup? [Y/n]: drlink>' "$WORKDIR/direct.out" "$WORKDIR/direct.err"; then
+if grep -q 'Create this Agent setup? [Y/n]: drlink>' "$WORKDIR/direct.out" "$WORKDIR/direct.err"; then
   fail "direct command glued REPL prompt"
 fi
 # A direct guided invocation must never print the persistent REPL prompt.
