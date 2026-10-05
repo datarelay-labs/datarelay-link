@@ -22,6 +22,7 @@ from drlink_web_auth import (
     SESSION_LIFETIME_SECONDS,
     WebAuthService,
     _master_key_path,
+    _validate_password,
     permissions_for_role,
     totp_code,
 )
@@ -36,7 +37,7 @@ class V30WebAuthTests(unittest.TestCase):
         code, _ = totp_code(self.material["totp_secret"], at=self.base)
         self.admin = self.auth.create_first_admin(
             username="admin",
-            password="correct horse battery staple",
+            password="ValidPass1",
             totp_secret=self.material["totp_secret"],
             recovery_codes=self.material["recovery_codes"],
             totp_value=code,
@@ -46,7 +47,13 @@ class V30WebAuthTests(unittest.TestCase):
     def tearDown(self):
         self.auth.close()
 
-    def _login_totp(self, *, seconds=30, password="correct horse battery staple"):
+    def test_password_policy_accepts_eight_chars_with_upper_lower_and_digit(self):
+        self.assertEqual(_validate_password("Abcdefg1"), "Abcdefg1")
+        for candidate in ("Abcdef1", "abcdefg1", "ABCDEFG1", "Abcdefgh"):
+            with self.assertRaises(ControlPlaneError):
+                _validate_password(candidate)
+
+    def _login_totp(self, *, seconds=30, password="ValidPass1"):
         at = self.base + timedelta(seconds=seconds)
         code, _ = totp_code(self.material["totp_secret"], at=at)
         return self.auth.authenticate(
@@ -74,7 +81,7 @@ class V30WebAuthTests(unittest.TestCase):
         with self.assertRaises(ControlPlaneError):
             self.auth.create_first_admin(
                 username="admin2",
-                password="another correct horse password",
+                password="Another1",
                 totp_secret=self.material["totp_secret"],
                 recovery_codes=self.material["recovery_codes"],
                 totp_value=totp_code(
@@ -85,7 +92,7 @@ class V30WebAuthTests(unittest.TestCase):
 
     def test_plaintext_password_mfa_and_recovery_codes_are_not_in_database(self):
         db_bytes = Path(self.tmp, "var/lib/drlink/drlink.db").read_bytes()
-        self.assertNotIn(b"correct horse battery staple", db_bytes)
+        self.assertNotIn(b"ValidPass1", db_bytes)
         self.assertNotIn(self.material["totp_secret"].encode("ascii"), db_bytes)
         for code in self.material["recovery_codes"]:
             self.assertNotIn(code.encode("ascii"), db_bytes)
@@ -169,7 +176,7 @@ class V30WebAuthTests(unittest.TestCase):
         with self.assertRaises(ControlPlaneError):
             self.auth.authenticate(
                 username="admin",
-                password="correct horse battery staple",
+                password="ValidPass1",
                 totp_value=code,
                 source_addr="127.0.0.2",
                 now=self.base + timedelta(seconds=31),
@@ -178,7 +185,7 @@ class V30WebAuthTests(unittest.TestCase):
         recovery = self.material["recovery_codes"][0]
         recovered = self.auth.authenticate(
             username="admin",
-            password="correct horse battery staple",
+            password="ValidPass1",
             recovery_code=recovery,
             source_addr="127.0.0.3",
             now=self.base + timedelta(seconds=35),
@@ -187,7 +194,7 @@ class V30WebAuthTests(unittest.TestCase):
         with self.assertRaises(ControlPlaneError):
             self.auth.authenticate(
                 username="admin",
-                password="correct horse battery staple",
+                password="ValidPass1",
                 recovery_code=recovery,
                 source_addr="127.0.0.4",
                 now=self.base + timedelta(seconds=36),
@@ -200,7 +207,7 @@ class V30WebAuthTests(unittest.TestCase):
         code, _ = totp_code(material["totp_secret"], at=at)
         result = self.auth.recover_admin(
             username="admin",
-            new_password="new correct horse battery staple",
+            new_password="new ValidPass1",
             totp_secret=material["totp_secret"],
             recovery_codes=material["recovery_codes"],
             totp_value=code,
@@ -217,7 +224,7 @@ class V30WebAuthTests(unittest.TestCase):
         new_code, _ = totp_code(material["totp_secret"], at=next_at)
         new_session = self.auth.authenticate(
             username="admin",
-            password="new correct horse battery staple",
+            password="new ValidPass1",
             totp_value=new_code,
             source_addr="127.0.0.1",
             now=next_at,
@@ -226,7 +233,7 @@ class V30WebAuthTests(unittest.TestCase):
         with self.assertRaises(ControlPlaneError):
             self.auth.authenticate(
                 username="admin",
-                password="correct horse battery staple",
+                password="ValidPass1",
                 recovery_code=material["recovery_codes"][1],
                 source_addr="127.0.0.8",
                 now=next_at + timedelta(seconds=1),
@@ -256,7 +263,7 @@ class V30WebAuthTests(unittest.TestCase):
             created = self.auth.create_operator_local(
                 username=username,
                 role=role,
-                password="role specific correct horse password",
+                password="RolePass1",
                 totp_secret=material["totp_secret"],
                 recovery_codes=material["recovery_codes"],
                 totp_value=code,
@@ -267,7 +274,7 @@ class V30WebAuthTests(unittest.TestCase):
             next_code, _ = totp_code(material["totp_secret"], at=login_at)
             issued = self.auth.authenticate(
                 username=username,
-                password="role specific correct horse password",
+                password="RolePass1",
                 totp_value=next_code,
                 source_addr="127.0.0.%d" % offset,
                 now=login_at,
@@ -291,7 +298,7 @@ class V30WebAuthTests(unittest.TestCase):
         with self.assertRaisesRegex(ControlPlaneError, "Invalid credentials or MFA"):
             self.auth.authenticate(
                 username="admin",
-                password="correct horse battery staple",
+                password="ValidPass1",
                 totp_value=totp_code(
                     self.material["totp_secret"],
                     at=self.base + timedelta(seconds=30),

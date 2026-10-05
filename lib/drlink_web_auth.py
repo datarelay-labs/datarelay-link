@@ -139,10 +139,16 @@ def _password_hash(password: str, salt: bytes) -> str:
 
 def _validate_password(password: str) -> str:
     value = str(password or "")
-    if len(value) < 12:
-        raise ControlPlaneError("Web operator password must be at least 12 characters.")
+    if len(value) < 8:
+        raise ControlPlaneError("Web operator password must be at least 8 characters.")
     if len(value) > 1024:
         raise ControlPlaneError("Web operator password is too long.")
+    if not re.search(r"[A-Z]", value):
+        raise ControlPlaneError("Web operator password must include an uppercase letter.")
+    if not re.search(r"[a-z]", value):
+        raise ControlPlaneError("Web operator password must include a lowercase letter.")
+    if not re.search(r"[0-9]", value):
+        raise ControlPlaneError("Web operator password must include a digit.")
     return value
 
 

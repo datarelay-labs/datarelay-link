@@ -340,8 +340,10 @@ A local privileged bootstrap flow creates the first Web operator. Exact CLI gram
 left to the implementation-phase CLI design, but plaintext passwords, bootstrap secrets,
 or reusable session tokens must never be stored in normal audit or browser storage.
 
-For password-backed local operators, use a modern salted password KDF and bounded login
-rate limits. TOTP MFA is available per operator but is **disabled by default**. A Web Admin
+For password-backed local operators, require at least 8 characters including at least one
+uppercase letter, one lowercase letter, and one digit; special characters are allowed but
+not mandatory. Store only a modern salted password KDF and enforce bounded login rate
+limits. TOTP MFA is available per operator but is **disabled by default**. A Web Admin
 may enable or disable MFA for each Web operator from the Users page. Enabling MFA revokes
 that operator's active browser sessions; the next successful password authentication enters
 a user-owned enrollment flow that displays the TOTP seed only to that user, verifies a

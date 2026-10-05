@@ -57,7 +57,7 @@ class V30WebServiceTests(unittest.TestCase):
         code, _ = totp_code(material["totp_secret"], at=now_dt)
         self.auth.create_first_admin(
             username="admin",
-            password="correct horse battery staple",
+            password="ValidPass1",
             totp_secret=material["totp_secret"],
             recovery_codes=material["recovery_codes"],
             totp_value=code,
@@ -115,7 +115,7 @@ class V30WebServiceTests(unittest.TestCase):
             "/api/v1/auth/login",
             {
                 "username": "admin",
-                "password": "correct horse battery staple",
+                "password": "ValidPass1",
                 "recovery_code": self.recovery_code,
             },
         )

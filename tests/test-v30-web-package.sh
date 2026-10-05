@@ -23,7 +23,7 @@ material=auth.prepare_mfa_material("admin")
 now=datetime(2026,10,4,3,0,tzinfo=timezone.utc)
 code,_=totp_code(material["totp_secret"],at=now)
 auth.create_first_admin(
-    username="admin", password="correct horse battery staple",
+    username="admin", password="ValidPass1",
     totp_secret=material["totp_secret"], recovery_codes=material["recovery_codes"],
     totp_value=code, now=now,
 )

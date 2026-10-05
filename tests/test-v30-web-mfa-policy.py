@@ -28,7 +28,7 @@ class V30WebMfaPolicyTests(unittest.TestCase):
         self.auth = WebAuthService(self.tmp)
         self.admin = self.auth.create_first_admin(
             username="admin",
-            password="correct horse battery staple",
+            password="ValidPass1",
             now=self.now,
         )
 
@@ -44,7 +44,7 @@ class V30WebMfaPolicyTests(unittest.TestCase):
 
         initial = self.auth.authenticate(
             username="admin",
-            password="correct horse battery staple",
+            password="ValidPass1",
             now=self.now,
         )
         self.assertIsInstance(initial, WebSessionIssue)
@@ -58,7 +58,7 @@ class V30WebMfaPolicyTests(unittest.TestCase):
 
         challenge = self.auth.authenticate(
             username="admin",
-            password="correct horse battery staple",
+            password="ValidPass1",
             now=self.now + timedelta(seconds=1),
         )
         self.assertIsInstance(challenge, WebMfaEnrollmentChallenge)
@@ -82,14 +82,14 @@ class V30WebMfaPolicyTests(unittest.TestCase):
         with self.assertRaisesRegex(ControlPlaneError, "Invalid credentials or MFA"):
             self.auth.authenticate(
                 username="admin",
-                password="correct horse battery staple",
+                password="ValidPass1",
                 now=self.now + timedelta(seconds=31),
             )
         next_code, _ = totp_code(challenge.totp_secret, at=self.now + timedelta(seconds=31))
         self.assertIsInstance(
             self.auth.authenticate(
                 username="admin",
-                password="correct horse battery staple",
+                password="ValidPass1",
                 totp_value=next_code,
                 now=self.now + timedelta(seconds=31),
             ),
@@ -110,7 +110,7 @@ class V30WebMfaPolicyTests(unittest.TestCase):
         self.assertIsInstance(
             self.auth.authenticate(
                 username="admin",
-                password="correct horse battery staple",
+                password="ValidPass1",
                 now=self.now + timedelta(seconds=61),
             ),
             WebSessionIssue,
@@ -119,12 +119,12 @@ class V30WebMfaPolicyTests(unittest.TestCase):
     def test_local_recovery_preserves_default_off_mfa_policy(self):
         session = self.auth.authenticate(
             username="admin",
-            password="correct horse battery staple",
+            password="ValidPass1",
             now=self.now,
         )
         result = self.auth.recover_admin(
             username="admin",
-            new_password="new correct horse battery staple",
+            new_password="new ValidPass1",
             now=self.now + timedelta(seconds=1),
         )
         self.assertTrue(result["recovered"])
@@ -138,7 +138,7 @@ class V30WebMfaPolicyTests(unittest.TestCase):
         self.assertIsInstance(
             self.auth.authenticate(
                 username="admin",
-                password="new correct horse battery staple",
+                password="new ValidPass1",
                 now=self.now + timedelta(seconds=3),
             ),
             WebSessionIssue,
@@ -148,18 +148,18 @@ class V30WebMfaPolicyTests(unittest.TestCase):
         operator = self.auth.create_operator_local(
             username="operator",
             role=ROLE_OPERATOR,
-            password="another correct horse battery staple",
+            password="another ValidPass1",
             now=self.now,
         )
         self.assertFalse(operator["mfa_required"])
         admin_session = self.auth.authenticate(
             username="admin",
-            password="correct horse battery staple",
+            password="ValidPass1",
             now=self.now,
         )
         operator_session = self.auth.authenticate(
             username="operator",
-            password="another correct horse battery staple",
+            password="another ValidPass1",
             now=self.now,
         )
         self.auth.close()
