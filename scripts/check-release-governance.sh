@@ -152,7 +152,12 @@ if [[ "$PROJECT_VERSION" == 2.4.* ]]; then
   else
     fail "MCP_SURFACE_PRESENT"
   fi
-  if grep -q 'SCHEMA_VERSION = 2' lib/drlink_control_db.py &&
+  project_major="${PROJECT_VERSION%%.*}"
+  expected_schema=2
+  if [[ "$project_major" =~ ^[0-9]+$ ]] && (( project_major >= 3 )); then
+    expected_schema=3
+  fi
+  if grep -q "SCHEMA_VERSION = ${expected_schema}" lib/drlink_control_db.py &&
      grep -q 'APPLICATION_ID = 0x44524C4B' lib/drlink_control_db.py; then
     pass "CONTROL_PLANE_SCHEMA_COMPATIBLE"
   else

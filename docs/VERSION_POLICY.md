@@ -1,7 +1,7 @@
 # Data Relay Link Version Policy
 
 > **Document role:** Normative product versioning, release-channel, tag, provenance, and release-line policy
-> **Target:** v2.4.0 development
+> **Target:** v3.0.0 development
 > **Related:** `PRODUCT_MASTER.md`, `CONTROL_PLANE_ARCHITECTURE.md`, `RELEASE_CHECKLIST.md`, `CHANGELOG.md`
 
 ## 1. Version source of truth
@@ -31,7 +31,7 @@ Rules:
 Documented stable baseline             v2.3.0
 Older published release                v2.2.1
 Not manufactured                       v2.3.1
-Current development target             2.4.0
+Current development target             3.0.0
 Current release channel                development
 Pinned Relay Engine                    FRP 0.71.0
 MCP included in final 2.4.0 target     YES
@@ -118,7 +118,7 @@ Once v2.4.0 is stable, incompatible changes to its supported public surface requ
 ### Development
 
 ```text
-2.4.0-dev+g<SHORT_SHA>
+3.0.0-dev+g<SHORT_SHA>
 Channel: development
 Source HEAD: <exact 40-character SHA>
 ```
