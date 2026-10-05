@@ -232,6 +232,19 @@ class ManagementCoreService:
         with ManagementQueryService(self.root) as service:
             return service.health()
 
+    def _invoke_drlink_diagnose_connection(
+        self, actor: ManagementActor, data: dict
+    ) -> dict:
+        del actor
+        with ManagementQueryService(self.root) as service:
+            return service.connection_diagnosis(
+                plane=data["plane"],
+                source=data.get("source"),
+                destination=data.get("destination"),
+                service=data.get("service"),
+                permission=data.get("permission"),
+            )
+
     def _invoke_drlink_policy_test(self, actor: ManagementActor, data: dict) -> dict:
         del actor
         with ManagementQueryService(self.root) as service:

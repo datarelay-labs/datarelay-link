@@ -108,7 +108,7 @@ class V30ManagementAdapterTests(unittest.TestCase):
         self.assertEqual(web_names, ready)
         self.assertNotIn("drlink_guided_change_preview", mcp_names)
         self.assertIn("drlink_guided_change_preview", web_names)
-        self.assertNotIn("drlink_diagnose_connection", ready)
+        self.assertIn("drlink_diagnose_connection", ready)
         self.assertNotIn("drlink_diagnostic_job_start", ready)
 
         mcp_source = inspect.getsource(
@@ -189,6 +189,26 @@ class V30ManagementAdapterTests(unittest.TestCase):
         )
         self.assertEqual(live_mcp, live_web)
         self.assertEqual(live_mcp["fidelity"], "UNKNOWN")
+
+        diagnosis_args = {
+            "plane": "remote",
+            "source": "src",
+            "destination": "dst",
+            "service": "ssh",
+        }
+        diagnosis_mcp = self.mcp.call_tool(
+            name="drlink_diagnose_connection",
+            arguments=diagnosis_args,
+            actor=self.actor,
+        )
+        diagnosis_web = self.web.invoke(
+            operation="drlink_diagnose_connection",
+            payload=diagnosis_args,
+            actor=self.actor,
+        )
+        self.assertEqual(diagnosis_mcp, diagnosis_web)
+        self.assertTrue(diagnosis_mcp["side_effect_free"])
+        self.assertFalse(diagnosis_mcp["network_probe_performed"])
 
     def test_change_plan_can_cross_adapters_without_semantic_fork(self):
         expiry = _future()

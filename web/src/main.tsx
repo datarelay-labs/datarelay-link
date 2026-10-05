@@ -3,7 +3,7 @@ import {createRoot} from "react-dom/client";
 
 type Json = Record<string, any>;
 const nav=[
-  ["overview","Overview"],["hosts","Managed Hosts"],["services","Remote Services"],
+  ["overview","Overview"],["hosts","Managed Hosts"],["services","Remote Services"],["access","Access Operations"],
   ["objects","Objects & Groups"],["policies","Policies"],["versions","Version Drift"],["system","System"],
   ["audit","Audit"],["revisions","Revisions"],["doctor","Doctor"],["health","Health"],
   ["search","Search"],["views","Saved Views"],["enrollments","Connect Agent"],["drafts","Draft Workspace"],
@@ -649,6 +649,104 @@ function SystemPanel({data,operator}:{data:any,operator:any}){
   </>;
 }
 
+function AccessOperations({operator}:{operator:any}){
+  const [plane,setPlane]=useState("remote"),[source,setSource]=useState(""),[destination,setDestination]=useState(""),[selector,setSelector]=useState("");
+  const [diagnosis,setDiagnosis]=useState<any>(null),[live,setLive]=useState<any>(null),[error,setError]=useState("");
+  const [liveResource,setLiveResource]=useState("");
+  const [scopeKind,setScopeKind]=useState("plane"),[scopeRef,setScopeRef]=useState(""),[cutoffOperation,setCutoffOperation]=useState("apply"),[reason,setReason]=useState("");
+  const [cutoffPreview,setCutoffPreview]=useState<any>(null),[cutoffConfirm,setCutoffConfirm]=useState(""),[cutoffMessage,setCutoffMessage]=useState("");
+  const scopeOptions:Record<string,string[]>={remote:["plane","remote-service"],internet:["plane","managed-host"],ai:["plane","ai-identity"]};
+
+  function changePlane(value:string){setPlane(value);setSelector("");setDiagnosis(null);setLive(null);setScopeKind("plane");setScopeRef("");setCutoffPreview(null);setCutoffConfirm("")}
+  async function runDiagnosis(){
+    setError("");setDiagnosis(null);
+    try{
+      const body:any={plane,source,destination};
+      if(plane==="ai")body.permission=selector;else body.service=selector;
+      setDiagnosis(await api("/api/v1/diagnose",{method:"POST",body:JSON.stringify(body)}));
+    }catch(e:any){setError(e.message||String(e))}
+  }
+  async function loadLive(){
+    setError("");
+    try{
+      const q=new URLSearchParams({plane,limit:"50"});
+      if(liveResource)q.set("resource",liveResource);
+      setLive(await api("/api/v1/live-access?"+q.toString()));
+    }catch(e:any){setError(e.message||String(e))}
+  }
+  async function previewCutoff(){
+    setError("");setCutoffMessage("");setCutoffConfirm("");
+    try{
+      const body:any={plane,scope_kind:scopeKind,operation:cutoffOperation,reason};
+      if(scopeKind!=="plane")body.scope_ref=scopeRef;
+      setCutoffPreview(await api("/api/v1/emergency-cutoff/preview",{method:"POST",body:JSON.stringify(body)}));
+    }catch(e:any){setCutoffPreview(null);setError(e.message||String(e))}
+  }
+  async function applyCutoff(){
+    setError("");
+    try{
+      const result=await api("/api/v1/emergency-cutoff/apply",{method:"POST",body:JSON.stringify({
+        operation:cutoffOperation,
+        change_plan_id:cutoffPreview?.change_plan_id||"",
+        confirmation:cutoffConfirm,
+      })});
+      setCutoffMessage((cutoffOperation==="clear"?"Cutoff cleared":"Cutoff applied")+" at revision "+result.revision+"; existing sessions terminated: "+String(result.active_sessions_terminated));
+      setCutoffPreview(null);setCutoffConfirm("");
+      await loadLive();
+    }catch(e:any){setError(e.message||String(e))}
+  }
+  const layers=(diagnosis?.layers||[]).map((x:any)=>({layer:x.layer,status:x.status,summary:x.summary}));
+  return <>
+    {error&&<div className="error">{error}</div>}
+    <div className="card">
+      <h3>Connection Diagnosis</h3>
+      <div className="muted">Side-effect-free Core correlation. No browser-triggered DNS or target probe is launched; missing evidence stays UNKNOWN.</div>
+      <div className="toolbar">
+        <select value={plane} onChange={e=>changePlane(e.target.value)}><option value="remote">Remote</option><option value="internet">Internet</option><option value="ai">AI</option></select>
+        <input value={source} onChange={e=>setSource(e.target.value)} placeholder={plane==="ai"?"AI Identity / source":"Source Object / Group"}/>
+        <input value={destination} onChange={e=>setDestination(e.target.value)} placeholder="Destination Object / Group"/>
+        <input value={selector} onChange={e=>setSelector(e.target.value)} placeholder={plane==="ai"?"Permission Object / Group":"Service Object / Group"}/>
+        <button className="primary" onClick={runDiagnosis}>Diagnose</button>
+      </div>
+      {diagnosis&&<>
+        <div className="grid"><Metric label="Overall" value={diagnosis.overall}/><Metric label="Network probe" value={diagnosis.network_probe_performed?"YES":"NO"}/></div>
+        <Table items={layers}/>
+        <div className="muted">Next action: {diagnosis.next_action}</div>
+      </>}
+    </div>
+    <div className="card">
+      <h3>Live Access Visibility</h3>
+      <div className="muted">Bounded current-use evidence only. Remote Access remains UNKNOWN unless official FRP can prove exact lifecycle state.</div>
+      <div className="toolbar">
+        <input value={liveResource} onChange={e=>setLiveResource(e.target.value)} placeholder="Optional resource/session/identity filter"/>
+        <button className="secondary" onClick={loadLive}>Refresh {plane} live access</button>
+      </div>
+      {live&&<>
+        <div className="grid"><Metric label="Fidelity" value={live.fidelity}/><Metric label="Active count" value={live.active_count??"UNKNOWN"}/><Metric label="Returned" value={(live.observations||[]).length}/></div>
+        {live.reason&&<div className="warning-box">{live.reason}</div>}
+        <Table items={live.observations||[]}/>
+      </>}
+    </div>
+    {operator.role==="Admin"&&<div className="card">
+      <h3>Emergency New-Access Cutoff</h3>
+      <div className="warning-box">This reversible override affects new authorization only. Existing sessions are not claimed to be terminated.</div>
+      {cutoffMessage&&<div className="notice">{cutoffMessage}</div>}
+      <div className="toolbar">
+        <select value={cutoffOperation} onChange={e=>{setCutoffOperation(e.target.value);setCutoffPreview(null)}}><option value="apply">Apply cutoff</option><option value="clear">Clear cutoff</option></select>
+        <select value={scopeKind} onChange={e=>{setScopeKind(e.target.value);setScopeRef("");setCutoffPreview(null)}}>{scopeOptions[plane].map(x=><option key={x} value={x}>{x}</option>)}</select>
+        {scopeKind!=="plane"&&<input value={scopeRef} onChange={e=>setScopeRef(e.target.value)} placeholder={scopeKind+" selector"}/>}
+        {cutoffOperation==="apply"&&<input value={reason} onChange={e=>setReason(e.target.value)} placeholder="Incident reason (optional)"/>}
+        <button className="danger" onClick={previewCutoff}>Preview cutoff</button>
+      </div>
+      {cutoffPreview&&<>
+        <pre className="plan">{JSON.stringify({scope_kind:cutoffPreview.scope_kind,scope_ref:cutoffPreview.scope_ref,scope_display:cutoffPreview.scope_display,currently_active:cutoffPreview.currently_active,desired_active:cutoffPreview.desired_active,impact:cutoffPreview.impact,active_sessions_terminated:cutoffPreview.active_sessions_terminated},null,2)}</pre>
+        <label className="apply-label">Type CONFIRM CUTOFF<input value={cutoffConfirm} onChange={e=>setCutoffConfirm(e.target.value)} placeholder="CONFIRM CUTOFF"/></label>
+        <button className="danger" onClick={applyCutoff} disabled={cutoffConfirm!=="CONFIRM CUTOFF"}>{cutoffOperation==="clear"?"Clear Cutoff":"Apply Cutoff"}</button>
+      </>}
+    </div>}
+  </>;
+}
+
 function View({active,operator}:{active:string,operator:any}){
   const [data,setData]=useState<any>(null),[error,setError]=useState(""),[query,setQuery]=useState("");
   useEffect(()=>{
@@ -664,6 +762,7 @@ function View({active,operator}:{active:string,operator:any}){
   },[active]);
   if(error)return <div className="error">{error}</div>;
   if(active==="drafts")return <DraftWorkspace/>;
+  if(active==="access")return <AccessOperations operator={operator}/>;
   if(active==="enrollments"&&data)return <EnrollmentPanel data={data} refresh={()=>api("/api/v1/enrollments?limit=50").then(setData)}/>;
   if(active==="search")return <div><div className="toolbar"><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search resources and policy"/><button className="primary" onClick={()=>api("/api/v1/search?q="+encodeURIComponent(query)+"&limit=50").then(setData).catch((e:any)=>setError(e.message))}>Search</button></div>{data&&<Table items={(data.items||[]).map((x:any)=>({type:x.resource_type,id:x.id,name:x.name}))}/>}</div>;
   if(active==="overview"&&data){const h=data.overview?.managed_hosts||{},s=data.overview?.remote_services||{},j=data.overview?.management_jobs||{};return <><div className="grid"><Metric label="Managed Hosts" value={h.total}/><Metric label="Connected" value={h.connected}/><Metric label="Remote Services" value={s.total}/><Metric label="Active Jobs" value={j.active_jobs}/></div><div className="card"><h3>Attention Center</h3>{(data.attention?.items||[]).map((x:any)=><span key={x.kind} className={"badge "+x.severity}>{x.label}: {x.count}</span>)}{!(data.attention?.items||[]).length&&<div className="muted">No current attention items</div>}</div></>};

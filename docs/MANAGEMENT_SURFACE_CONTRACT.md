@@ -477,6 +477,12 @@ Their required permission, operation class, Plugin exposure, input schema, and M
 annotations are defined by `lib/drlink_management_catalog.py`. The catalog is Core data;
 the Plugin relay must pass descriptors through rather than maintaining a copied list.
 
+DRL3-5 activates `drlink_diagnose_connection` as a READY TEST operation. MCP and Web
+therefore receive the same bounded side-effect-free correlation result from
+`ManagementQueryService`; neither adapter may perform its own probes or diagnosis logic.
+The admitted schema remains unchanged. Missing DNS/target/runtime/activity evidence is
+reported as UNKNOWN/N/A rather than triggering browser-originated network work.
+
 DRL3-3 adds these Core/Web-only guided configuration operations:
 
 ```text

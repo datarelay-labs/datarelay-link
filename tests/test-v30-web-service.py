@@ -1080,6 +1080,198 @@ class V30WebServiceTests(unittest.TestCase):
         finally:
             plane.close()
 
+    def test_access_operations_diagnosis_live_and_cutoff_web_paths(self):
+        self.login()
+        plane = ControlPlane(self.tmp)
+        try:
+            plane.upsert_client(
+                "diag-host-id",
+                label="diag-host",
+                hostname="diag-host.example",
+                connected=True,
+                addresses=[{"address": "10.20.30.40", "active": True}],
+            )
+            plane.set_published_service(
+                "diag-host-id",
+                "diag-ssh-admin",
+                service_type="ssh",
+                target_mode="self",
+                target_port=22,
+                public_port=6101,
+                enabled=True,
+            )
+            v24.set_network_object(
+                plane,
+                "diag-src",
+                type="ip",
+                value="198.51.100.44",
+                oneshot=True,
+            )
+            v24.set_service_object(
+                plane,
+                "diag-ssh",
+                type="tcp",
+                port=22,
+                oneshot=True,
+            )
+            v24.set_access_rule(
+                plane,
+                "remote",
+                "diag-allow",
+                mode="whitelist",
+                source="diag-src",
+                destination="diag-host",
+                service="diag-ssh",
+                enabled=True,
+                oneshot=True,
+            )
+            revision = plane.current_revision()
+        finally:
+            plane.close()
+
+        status, _, denied = self.request(
+            "POST",
+            "/api/v1/diagnose",
+            {
+                "plane": "remote",
+                "source": "diag-src",
+                "destination": "diag-host",
+                "service": "diag-ssh",
+            },
+        )
+        self.assertEqual(status, 403, denied)
+
+        status, _, diagnosis = self.request(
+            "POST",
+            "/api/v1/diagnose",
+            {
+                "plane": "remote",
+                "source": "diag-src",
+                "destination": "diag-host",
+                "service": "diag-ssh",
+            },
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, diagnosis)
+        layers = {item["layer"]: item for item in diagnosis["layers"]}
+        self.assertEqual(layers["policy"]["status"], "HEALTHY")
+        self.assertEqual(layers["managed_host"]["status"], "HEALTHY")
+        self.assertEqual(layers["remote_service"]["status"], "HEALTHY")
+        self.assertEqual(layers["target_reachability"]["status"], "UNKNOWN")
+        self.assertFalse(diagnosis["network_probe_performed"])
+        self.assertTrue(diagnosis["side_effect_free"])
+        check = ControlPlane(self.tmp, read_only=True)
+        try:
+            self.assertEqual(check.current_revision(), revision)
+        finally:
+            check.close()
+
+        status, _, live = self.request(
+            "GET", "/api/v1/live-access?plane=remote&limit=10"
+        )
+        self.assertEqual(status, 200, live)
+        self.assertEqual(live["fidelity"], "UNKNOWN")
+        self.assertIsNone(live["active_count"])
+        self.assertIn("official FRP", live["reason"])
+
+        cutoff_body = {
+            "plane": "remote",
+            "scope_kind": "plane",
+            "operation": "apply",
+            "reason": "web-test",
+        }
+        status, _, _ = self.request(
+            "POST", "/api/v1/emergency-cutoff/preview", cutoff_body
+        )
+        self.assertEqual(status, 403)
+
+        status, _, preview = self.request(
+            "POST",
+            "/api/v1/emergency-cutoff/preview",
+            cutoff_body,
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, preview)
+        self.assertFalse(preview["currently_active"])
+        self.assertTrue(preview["desired_active"])
+        self.assertFalse(preview["active_sessions_terminated"])
+
+        status, _, wrong = self.request(
+            "POST",
+            "/api/v1/emergency-cutoff/apply",
+            {
+                "operation": "apply",
+                "change_plan_id": preview["change_plan_id"],
+                "confirmation": "APPLY",
+            },
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 400, wrong)
+
+        status, _, applied = self.request(
+            "POST",
+            "/api/v1/emergency-cutoff/apply",
+            {
+                "operation": "apply",
+                "change_plan_id": preview["change_plan_id"],
+                "confirmation": "CONFIRM CUTOFF",
+            },
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, applied)
+        self.assertTrue(applied["active"])
+        self.assertFalse(applied["active_sessions_terminated"])
+
+        status, _, overview = self.request("GET", "/api/v1/overview")
+        self.assertEqual(status, 200, overview)
+        cutoff_attention = next(
+            item
+            for item in overview["attention"]["items"]
+            if item["kind"] == "emergency-cutoff"
+        )
+        self.assertEqual(cutoff_attention["severity"], "critical")
+
+        status, _, blocked = self.request(
+            "POST",
+            "/api/v1/diagnose",
+            {
+                "plane": "remote",
+                "source": "diag-src",
+                "destination": "diag-host",
+                "service": "diag-ssh",
+            },
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, blocked)
+        cutoff_layer = next(
+            item for item in blocked["layers"] if item["layer"] == "emergency_cutoff"
+        )
+        self.assertEqual(cutoff_layer["status"], "FAILED")
+
+        status, _, clear_preview = self.request(
+            "POST",
+            "/api/v1/emergency-cutoff/preview",
+            {
+                "plane": "remote",
+                "scope_kind": "plane",
+                "operation": "clear",
+            },
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, clear_preview)
+        status, _, cleared = self.request(
+            "POST",
+            "/api/v1/emergency-cutoff/apply",
+            {
+                "operation": "clear",
+                "change_plan_id": clear_preview["change_plan_id"],
+                "confirmation": "CONFIRM CUTOFF",
+            },
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, cleared)
+        self.assertFalse(cleared["active"])
+
     def test_system_status_certificate_preflight_and_backup_validate(self):
         self.login()
 

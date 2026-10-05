@@ -886,6 +886,25 @@ The 3.0 cutoff contract must:
 - expose active/recovered state in relevant resource, Attention, and Diagnosis views;
 - use the same Core authorization/revision/audit/runtime path as other security mutations.
 
+The current DRL3-5 implementation contract keeps these operations Core-owned:
+
+- `drlink_diagnose_connection` is now a READY TEST operation shared by MCP and Web.
+  It correlates current policy evaluation, Managed Host/Agent presence, Remote Service and
+  runtime-generation facts, active cutoff state, and bounded recent access-decision
+  evidence. Opening diagnosis never changes authoritative state.
+- Diagnosis does not launch ad-hoc DNS or target probes from a browser request. Missing
+  DNS, target-health, runtime, or activity evidence remains explicit `UNKNOWN`/N/A.
+  AI file permissions without concrete path context are reported as unknown context while
+  the underlying authorization remains fail-closed.
+- `GET /api/v1/live-access` projects the existing bounded Core live-access read model.
+  Internet and AI retain their proven fidelity; Remote Access remains `UNKNOWN` until
+  supported official-FRP evidence exists.
+- Web Emergency Cutoff uses the existing Core preview/apply/clear catalog operations and
+  typed `CONFIRM CUTOFF`; it never rewrites normal policy and never claims established
+  sessions were terminated.
+- Attention Center derives an Emergency Cutoff item from authoritative active cutoff
+  rows. Bounded cutoff reads report total/returned counts and truncation explicitly.
+
 ### 23.5 Active connection termination — P2 / conditional
 
 Active termination is **not a 3.0 GA blocker**. It may ship per access plane only where

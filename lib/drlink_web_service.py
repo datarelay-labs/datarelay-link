@@ -304,6 +304,16 @@ class WebApplication:
             return self.adapter.invoke(
                 operation="drlink_health", payload={}, actor=actor
             )
+        if path == "/api/v1/live-access":
+            payload: dict[str, Any] = {"plane": _first(query, "plane")}
+            for key in ("resource_type", "resource", "cursor"):
+                value = _first(query, key)
+                if value:
+                    payload[key] = value
+            payload["limit"] = _int_arg(_first(query, "limit"), 50)
+            return self.adapter.invoke(
+                operation="drlink_live_access", payload=payload, actor=actor
+            )
         if path == "/api/v1/doctor":
             with ManagementQueryService(self.root) as service:
                 return service.doctor_summary()
@@ -358,6 +368,17 @@ class WebApplication:
                 principal.session_id, actor_id=principal.operator_id
             )
             return {"status": "logged_out"}
+        if path == "/api/v1/diagnose":
+            payload = {"plane": str(body.get("plane") or "")}
+            for key in ("source", "destination", "service", "permission"):
+                value = body.get(key)
+                if value is not None:
+                    payload[key] = str(value)
+            return self.adapter.invoke(
+                operation="drlink_diagnose_connection",
+                payload=payload,
+                actor=self._actor(principal),
+            )
         if path == "/api/v1/guided/preview":
             change_type = str(body.get("change_type") or "").strip()
             payload = body.get("payload")
@@ -419,6 +440,35 @@ class WebApplication:
         if path == "/api/v1/temporary-access/apply":
             return self.adapter.invoke(
                 operation="drlink_temporary_access_apply",
+                payload={
+                    "change_plan_id": str(body.get("change_plan_id") or ""),
+                    "confirmation": str(body.get("confirmation") or ""),
+                },
+                actor=self._actor(principal),
+            )
+        if path == "/api/v1/emergency-cutoff/preview":
+            payload = {
+                "plane": str(body.get("plane") or ""),
+                "scope_kind": str(body.get("scope_kind") or ""),
+                "scope_ref": str(body.get("scope_ref") or ""),
+                "operation": str(body.get("operation") or "apply"),
+            }
+            if body.get("reason") is not None:
+                payload["reason"] = str(body.get("reason") or "")
+            return self.adapter.invoke(
+                operation="drlink_emergency_cutoff_preview",
+                payload=payload,
+                actor=self._actor(principal),
+            )
+        if path == "/api/v1/emergency-cutoff/apply":
+            operation = str(body.get("operation") or "apply").strip().lower()
+            tool = (
+                "drlink_emergency_cutoff_clear"
+                if operation == "clear"
+                else "drlink_emergency_cutoff_apply"
+            )
+            return self.adapter.invoke(
+                operation=tool,
                 payload={
                     "change_plan_id": str(body.get("change_plan_id") or ""),
                     "confirmation": str(body.get("confirmation") or ""),

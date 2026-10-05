@@ -148,6 +148,188 @@ class V30ManagementQueryServiceTests(unittest.TestCase):
         self.assertEqual(result["result"], "ALLOW")
         self.assertEqual(result["matched_rules"], ["allow-ssh"])
 
+    def test_connection_diagnosis_correlates_core_facts_without_probes(self):
+        plane = ControlPlane(self.tmp)
+        try:
+            plane.set_published_service(
+                "client-a",
+                "ssh-admin",
+                service_type="ssh",
+                target_mode="self",
+                target_port=22,
+                public_port=6001,
+                enabled=True,
+            )
+            v24.set_access_rule(
+                plane,
+                "remote",
+                "allow-alpha-ssh",
+                mode="whitelist",
+                source="src",
+                destination="alpha",
+                service="ssh",
+                enabled=True,
+                oneshot=True,
+            )
+            plane.conn.execute(
+                "INSERT OR REPLACE INTO runtime_generations"
+                "(plane,db_revision,generation,status,artifact_path,activated_at,error) "
+                "VALUES ('remote',?,1,'active','',?,NULL)",
+                (plane.current_revision(), __import__("drlink_control_db").utc_now_iso()),
+            )
+            expected_revision = plane.current_revision()
+        finally:
+            plane.close()
+
+        diagnosis = self.service.connection_diagnosis(
+            plane="remote",
+            source="src",
+            destination="alpha",
+            service="ssh",
+        )
+        by_layer = {item["layer"]: item for item in diagnosis["layers"]}
+        self.assertEqual(by_layer["policy"]["status"], "HEALTHY")
+        self.assertEqual(by_layer["managed_host"]["status"], "HEALTHY")
+        self.assertEqual(by_layer["remote_service"]["status"], "HEALTHY")
+        self.assertEqual(by_layer["runtime"]["status"], "HEALTHY")
+        self.assertEqual(by_layer["target_reachability"]["status"], "UNKNOWN")
+        self.assertEqual(by_layer["recent_activity"]["status"], "UNKNOWN")
+        self.assertFalse(diagnosis["network_probe_performed"])
+        self.assertTrue(diagnosis["side_effect_free"])
+        self.assertEqual(diagnosis["overall"], "UNKNOWN")
+
+        check = ControlPlane(self.tmp, read_only=True)
+        try:
+            self.assertEqual(check.current_revision(), expected_revision)
+        finally:
+            check.close()
+
+    def test_internet_diagnosis_never_launches_live_dns(self):
+        plane = ControlPlane(self.tmp)
+        try:
+            v24.set_network_object(
+                plane,
+                "internet-src",
+                type="ip",
+                value="198.51.100.60",
+                oneshot=True,
+            )
+            v24.set_network_object(
+                plane,
+                "internet-dst",
+                type="fqdn",
+                value="updates.example.test",
+                oneshot=True,
+            )
+            v24.set_service_object(
+                plane,
+                "https",
+                type="tcp",
+                port=443,
+                oneshot=True,
+            )
+            v24.set_access_rule(
+                plane,
+                "internet",
+                "allow-updates",
+                mode="whitelist",
+                source="internet-src",
+                destination="internet-dst",
+                service="https",
+                enabled=True,
+                oneshot=True,
+            )
+            revision = plane.current_revision()
+        finally:
+            plane.close()
+
+        diagnosis = self.service.connection_diagnosis(
+            plane="internet",
+            source="internet-src",
+            destination="internet-dst",
+            service="https",
+        )
+        policy = next(item for item in diagnosis["layers"] if item["layer"] == "policy")
+        dns = next(item for item in diagnosis["layers"] if item["layer"] == "dns")
+        self.assertEqual(policy["status"], "UNKNOWN")
+        self.assertEqual(dns["status"], "UNKNOWN")
+        self.assertIn("live DNS", policy["summary"])
+        self.assertFalse(diagnosis["network_probe_performed"])
+        check = ControlPlane(self.tmp, read_only=True)
+        try:
+            self.assertEqual(check.current_revision(), revision)
+        finally:
+            check.close()
+
+    def test_ai_file_diagnosis_marks_missing_path_context_unknown(self):
+        plane = ControlPlane(self.tmp)
+        try:
+            plane.set_ai_principal("diag-bot", enabled=True)
+            plane.conn.execute(
+                "UPDATE ai_principals SET credential_status='verified' "
+                "WHERE name='diag-bot'"
+            )
+            v24.set_permission_object(
+                plane,
+                "diag-file-read",
+                permissions=["file-read"],
+                oneshot=True,
+            )
+            v24.set_ai_access_rule(
+                plane,
+                "diag-file-rule",
+                mode="whitelist",
+                source="diag-bot",
+                destination="alpha",
+                permission="diag-file-read",
+                paths=["/srv/**"],
+                enabled=True,
+                oneshot=True,
+            )
+        finally:
+            plane.close()
+
+        diagnosis = self.service.connection_diagnosis(
+            plane="ai",
+            source="diag-bot",
+            destination="alpha",
+            permission="diag-file-read",
+        )
+        policy = next(item for item in diagnosis["layers"] if item["layer"] == "policy")
+        self.assertEqual(policy["status"], "UNKNOWN")
+        self.assertTrue(policy["evidence"]["trace"]["path_required"])
+        self.assertIn("path context", policy["summary"])
+        self.assertFalse(diagnosis["network_probe_performed"])
+
+    def test_cutoff_attention_and_diagnosis_reflect_active_override(self):
+        plane = ControlPlane(self.tmp)
+        try:
+            now = __import__("drlink_control_db").utc_now_iso()
+            plane.conn.execute(
+                "INSERT INTO emergency_cutoffs("
+                "id,plane,scope_kind,scope_ref,active,reason,row_version,created_at,updated_at"
+                ") VALUES ('cut-test','remote','plane','',1,'incident',1,?,?)",
+                (now, now),
+            )
+        finally:
+            plane.close()
+
+        attention = self.service.attention_summary()
+        item = next(x for x in attention["items"] if x["kind"] == "emergency-cutoff")
+        self.assertEqual(item["severity"], "critical")
+        self.assertEqual(item["count"], 1)
+
+        diagnosis = self.service.connection_diagnosis(
+            plane="remote",
+            source="src",
+            destination="dst",
+            service="ssh",
+        )
+        cutoff = next(x for x in diagnosis["layers"] if x["layer"] == "emergency_cutoff")
+        self.assertEqual(cutoff["status"], "FAILED")
+        self.assertFalse(cutoff["evidence"]["active_sessions_terminated"])
+        self.assertEqual(diagnosis["overall"], "FAILED")
+
     def test_live_access_is_truthfully_unknown_until_adapter_exists(self):
         result = self.service.live_access(plane="remote", resource="alpha")
         self.assertEqual(result["fidelity"], "UNKNOWN")
@@ -171,6 +353,7 @@ class V30ManagementQueryServiceTests(unittest.TestCase):
                 "drlink_inventory_list",
                 "drlink_inventory_get",
                 "drlink_health",
+                "drlink_diagnose_connection",
                 "drlink_policy_test",
                 "drlink_audit_query",
                 "drlink_live_access",

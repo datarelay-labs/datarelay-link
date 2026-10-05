@@ -30,6 +30,7 @@ IMPLEMENTED_MANAGEMENT_TOOLS = frozenset(
         "drlink_inventory_list",
         "drlink_inventory_get",
         "drlink_health",
+        "drlink_diagnose_connection",
         "drlink_policy_test",
         "drlink_audit_query",
         "drlink_live_access",
@@ -652,6 +653,411 @@ class ManagementQueryService:
             "drift_count": drift_count, "unknown_count": unknown_count, "limit": 200,
         }
 
+    def _diagnosis_managed_hosts(self, selector: str) -> list[dict[str, Any]]:
+        text = str(selector or "").strip()
+        if not text:
+            return []
+        core = ControlPlane(self.root, read_only=True)
+        try:
+            rows = []
+            obj = core.get_object(text)
+            members = []
+            if obj is not None:
+                members = [obj]
+            else:
+                group = core.get_object_group(text)
+                if group is not None:
+                    members = list(core._expand_group_members(str(group["id"]), set()))
+            seen = set()
+            for item in members:
+                if str(item["type"]) != "managed_endpoint":
+                    continue
+                object_id = str(item["id"])
+                endpoint = core.conn.execute(
+                    "SELECT client_id FROM managed_endpoints WHERE object_id=?",
+                    (object_id,),
+                ).fetchone()
+                client_id = str(endpoint["client_id"]) if endpoint and endpoint["client_id"] else ""
+                if not client_id or client_id in seen:
+                    continue
+                client = core.conn.execute(
+                    "SELECT id,label,hostname,status,trust_status,connected,last_seen,"
+                    "agent_heartbeat_at,agent_lifecycle_state,agent_platform,agent_version "
+                    "FROM clients WHERE id=?",
+                    (client_id,),
+                ).fetchone()
+                if client is not None:
+                    rows.append({key: client[key] for key in client.keys()})
+                    seen.add(client_id)
+            return rows[:100]
+        finally:
+            core.close()
+
+    def active_cutoff_summary(self, *, plane: Optional[str] = None) -> dict[str, Any]:
+        family = str(plane or "").strip().lower()
+        if family and family not in ("remote", "internet", "ai"):
+            raise ControlPlaneError("Unsupported access plane: %s" % plane)
+        where = " WHERE active=1"
+        args: list[Any] = []
+        if family:
+            where += " AND plane=?"
+            args.append(family)
+        count_row = self.conn.execute(
+            "SELECT COUNT(*) FROM emergency_cutoffs" + where,
+            tuple(args),
+        ).fetchone()
+        total = int(count_row[0] or 0)
+        rows = self.conn.execute(
+            "SELECT id,plane,scope_kind,scope_ref,reason,row_version,updated_at "
+            "FROM emergency_cutoffs" + where
+            + " ORDER BY plane,CASE scope_kind WHEN 'plane' THEN 0 ELSE 1 END,"
+            "scope_kind,scope_ref LIMIT 200",
+            tuple(args),
+        ).fetchall()
+        items = [{key: row[key] for key in row.keys()} for row in rows]
+        return {
+            "items": items,
+            "count": total,
+            "returned": len(items),
+            "plane": family or "all",
+            "active": total > 0,
+            "limit": 200,
+            "truncated": total > len(items),
+        }
+
+    def connection_diagnosis(
+        self,
+        *,
+        plane: str,
+        source: Optional[str] = None,
+        destination: Optional[str] = None,
+        service: Optional[str] = None,
+        permission: Optional[str] = None,
+        path: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """Correlate bounded Core facts without probes or authoritative mutation."""
+        family = str(plane or "").strip().lower()
+        if family not in ("remote", "internet", "ai"):
+            raise ControlPlaneError("Unsupported access plane: %s" % plane)
+        source_text = str(source or "").strip()
+        destination_text = str(destination or "").strip()
+        selector_text = str(permission if family == "ai" else service or "").strip()
+        layers: list[dict[str, Any]] = []
+
+        def add(layer: str, status: str, summary: str, **evidence: Any) -> None:
+            item = {"layer": layer, "status": status, "summary": summary}
+            if evidence:
+                item["evidence"] = evidence
+            layers.append(item)
+
+        missing = []
+        if not source_text:
+            missing.append("source")
+        if not destination_text:
+            missing.append("destination")
+        if not selector_text:
+            missing.append("permission" if family == "ai" else "service")
+        if missing:
+            add(
+                "input",
+                "FAILED",
+                "Diagnosis input is incomplete.",
+                missing=missing,
+            )
+        else:
+            add("input", "HEALTHY", "Required flow selectors are present.")
+
+        policy_trace = None
+        if not missing:
+            def no_live_dns(hostname: str):
+                raise RuntimeError(
+                    "live DNS is not performed by Connection Diagnosis for %s" % hostname
+                )
+
+            core = ControlPlane(self.root, read_only=True)
+            try:
+                from drlink_policy_safety import evaluate_policy_flow
+
+                try:
+                    policy_trace = evaluate_policy_flow(
+                        core,
+                        plane=family,
+                        source=source_text,
+                        destination=destination_text,
+                        service=str(service or ""),
+                        permission=str(permission or ""),
+                        path=str(path or ""),
+                        resolve_fn=no_live_dns if family == "internet" else None,
+                    )
+                    result = str(policy_trace.get("final", {}).get("result") or "DENY")
+                    path_context_missing = bool(
+                        family == "ai"
+                        and policy_trace.get("path_required")
+                        and not str(path or "").strip()
+                    )
+                    if path_context_missing:
+                        add(
+                            "policy",
+                            "UNKNOWN",
+                            "AI file permission requires concrete path context; runtime remains fail-closed without it.",
+                            trace=policy_trace,
+                        )
+                    else:
+                        add(
+                            "policy",
+                            "HEALTHY" if result == "ALLOW" else "FAILED",
+                            "Core policy result is %s." % result,
+                            trace=policy_trace,
+                        )
+                except Exception as exc:
+                    message = str(exc)
+                    status = "UNKNOWN" if "live DNS is not performed" in message else "FAILED"
+                    add("policy", status, message)
+            finally:
+                core.close()
+        else:
+            add("policy", "N_A", "Policy evaluation requires complete flow selectors.")
+
+        host_selector = destination_text if family in ("remote", "ai") else source_text
+        hosts = self._diagnosis_managed_hosts(host_selector)
+        if not host_selector:
+            add("managed_host", "N_A", "No Managed Host selector is available.")
+        elif not hosts:
+            add(
+                "managed_host",
+                "N_A",
+                "The selected flow does not resolve to a Managed Host in current inventory.",
+            )
+        else:
+            connected = sum(1 for item in hosts if bool(item.get("connected")))
+            trusted = sum(
+                1 for item in hosts if str(item.get("trust_status") or "").lower() == "trusted"
+            )
+            if connected == len(hosts) and trusted == len(hosts):
+                status = "HEALTHY"
+                summary = "All selected Managed Hosts are connected and trusted."
+            elif connected == 0:
+                status = "FAILED"
+                summary = "Selected Managed Host is not connected."
+            else:
+                status = "UNKNOWN"
+                summary = "Managed Host group has mixed connection/trust state."
+            add(
+                "managed_host",
+                status,
+                summary,
+                count=len(hosts),
+                connected=connected,
+                trusted=trusted,
+                hosts=hosts[:20],
+            )
+
+        remote_service = None
+        if family == "remote":
+            if len(hosts) == 1:
+                client_id = str(hosts[0]["id"])
+                candidates = self.conn.execute(
+                    "SELECT id,name,service_type,target_host,target_port,public_port,"
+                    "enabled,released FROM published_services "
+                    "WHERE client_id=? AND released=0 ORDER BY name COLLATE NOCASE LIMIT 50",
+                    (client_id,),
+                ).fetchall()
+                direct = [
+                    row for row in candidates
+                    if str(row["name"]).casefold() == selector_text.casefold()
+                    or str(row["id"]).casefold() == selector_text.casefold()
+                ]
+                if len(direct) == 1:
+                    remote_service = direct[0]
+                if remote_service is None:
+                    svc = self.conn.execute(
+                        "SELECT type,port FROM service_objects WHERE name=? COLLATE NOCASE",
+                        (selector_text,),
+                    ).fetchone()
+                    if svc is not None:
+                        by_port = [
+                            row for row in candidates
+                            if int(row["target_port"]) == int(svc["port"])
+                        ]
+                        if len(by_port) == 1:
+                            remote_service = by_port[0]
+            if remote_service is None:
+                add(
+                    "remote_service",
+                    "UNKNOWN",
+                    "No unique published Remote Service could be correlated to this flow.",
+                )
+            else:
+                row = remote_service
+                healthy = bool(row["enabled"]) and not bool(row["released"])
+                add(
+                    "remote_service",
+                    "HEALTHY" if healthy else "FAILED",
+                    "Remote Service is enabled." if healthy else "Remote Service is disabled or released.",
+                    id=row["id"],
+                    name=row["name"],
+                    public_port=row["public_port"],
+                    target_host=row["target_host"],
+                    target_port=row["target_port"],
+                )
+        else:
+            add("remote_service", "N_A", "Remote Service correlation applies only to Remote Access.")
+
+        runtime = self.conn.execute(
+            "SELECT plane,db_revision,generation,status,activated_at,error "
+            "FROM runtime_generations WHERE plane=?",
+            (family,),
+        ).fetchone()
+        if runtime is None:
+            add("runtime", "UNKNOWN", "No runtime-generation evidence is available.")
+        else:
+            runtime_status = str(runtime["status"] or "unknown").lower()
+            state = "HEALTHY" if runtime_status == "active" else (
+                "N_A" if runtime_status == "not_configured" else "FAILED"
+            )
+            add(
+                "runtime",
+                state,
+                "Runtime generation status is %s." % runtime_status,
+                runtime_status=runtime_status,
+                db_revision=runtime["db_revision"],
+                generation=runtime["generation"],
+                activated_at=runtime["activated_at"],
+                error=runtime["error"] or "",
+            )
+
+        if family == "internet":
+            dest_obj = self.conn.execute(
+                "SELECT type FROM objects WHERE name=? COLLATE NOCASE",
+                (destination_text,),
+            ).fetchone()
+            if dest_obj is not None and str(dest_obj["type"]) in ("ip", "cidr"):
+                add("dns", "N_A", "Destination is IP/CIDR based; DNS is not required.")
+            else:
+                add(
+                    "dns",
+                    "UNKNOWN",
+                    "No live DNS probe was launched; DNS/path validation is unknown unless already captured by access evidence.",
+                )
+        else:
+            add("dns", "N_A", "DNS destination validation is not applicable to this access plane.")
+
+        if family == "remote":
+            add(
+                "target_reachability",
+                "UNKNOWN",
+                "No configured target-health evidence was found; Connection Diagnosis does not launch an ad-hoc probe.",
+            )
+        else:
+            add("target_reachability", "N_A", "Target reachability probe is not applicable here.")
+
+        active = self.active_cutoff_summary(plane=family)
+        relevant = []
+        for cutoff in active["items"]:
+            kind = str(cutoff["scope_kind"])
+            ref = str(cutoff["scope_ref"] or "")
+            if kind == "plane":
+                relevant.append(cutoff)
+            elif family == "internet" and kind == "managed-host":
+                if any(str(host["id"]).casefold() == ref.casefold() for host in hosts):
+                    relevant.append(cutoff)
+            elif family == "ai" and kind == "ai-identity":
+                if source_text.casefold() == ref.casefold():
+                    relevant.append(cutoff)
+            elif family == "remote" and kind == "remote-service" and remote_service is not None:
+                if str(remote_service["id"]).casefold() == ref.casefold():
+                    relevant.append(cutoff)
+        add(
+            "emergency_cutoff",
+            "FAILED" if relevant else "HEALTHY",
+            (
+                "Emergency New-Access Cutoff blocks this flow."
+                if relevant
+                else "No active Emergency New-Access Cutoff is known to block this flow."
+            ),
+            matching=relevant,
+            active_plane_count=active["count"],
+            active_sessions_terminated=False,
+        )
+
+        sources = {
+            "remote": ("remote-access",),
+            "internet": ("internet-access",),
+            "ai": ("ai-mcp",),
+        }[family]
+        placeholders = ",".join("?" for _ in sources)
+        audit_rows = self.conn.execute(
+            "SELECT id,event_id,event_type,occurred_at,source,result,reason_code,"
+            "matched_policy_json,source_meta_json,destination_meta_json "
+            "FROM audit_events WHERE category='ACCESS_DECISION' "
+            "AND source IN (%s) ORDER BY occurred_at DESC,id DESC LIMIT 20" % placeholders,
+            tuple(sources),
+        ).fetchall()
+        evidence = []
+        needles = {source_text.casefold(), destination_text.casefold(), selector_text.casefold()}
+        needles.discard("")
+        for row in audit_rows:
+            meta_text = " ".join(
+                str(row[key] or "") for key in ("source_meta_json", "destination_meta_json")
+            ).casefold()
+            if needles and not any(needle in meta_text for needle in needles):
+                continue
+            evidence.append(
+                {
+                    "event_id": row["event_id"],
+                    "event_type": row["event_type"],
+                    "occurred_at": row["occurred_at"],
+                    "result": row["result"],
+                    "reason_code": row["reason_code"],
+                    "matched_policy": _json_field(row["matched_policy_json"], []),
+                    "source_meta": _json_field(row["source_meta_json"], {}),
+                    "destination_meta": _json_field(row["destination_meta_json"], {}),
+                }
+            )
+            if len(evidence) >= 5:
+                break
+        if evidence:
+            add(
+                "recent_activity",
+                "HEALTHY",
+                "Recent bounded access-decision evidence reached the Data Relay Link data path.",
+                events=evidence,
+            )
+        else:
+            add(
+                "recent_activity",
+                "UNKNOWN",
+                "No matching recent access-decision evidence proves the attempt reached the Data Relay Link data path.",
+                events=[],
+            )
+
+        failed = [item for item in layers if item["status"] == "FAILED"]
+        unknown = [item for item in layers if item["status"] == "UNKNOWN"]
+        overall = "FAILED" if failed else ("UNKNOWN" if unknown else "HEALTHY")
+        first = failed[0] if failed else (unknown[0] if unknown else None)
+        if first is None:
+            next_action = "No failing layer is currently proven."
+        elif first["status"] == "FAILED":
+            next_action = "Investigate the first failed layer: %s." % first["layer"]
+        else:
+            next_action = "Collect evidence for the first unknown layer: %s." % first["layer"]
+        return {
+            "plane": family,
+            "input": {
+                "source": source_text,
+                "destination": destination_text,
+                "service": str(service or ""),
+                "permission": str(permission or ""),
+                "path": str(path or ""),
+            },
+            "overall": overall,
+            "layers": layers,
+            "next_action": next_action,
+            "side_effect_free": True,
+            "network_probe_performed": False,
+            "policy_trace": policy_trace,
+        }
+
     def attention_summary(self) -> dict[str, Any]:
         """Return derived attention items without becoming operational authority."""
         overview = self.overview_summary()
@@ -673,6 +1079,14 @@ class ManagementQueryService:
             items.append({"kind": "failed-jobs", "label": "Failed Management Jobs", "count": int(jobs["failed_jobs"]), "severity": "warning"})
         if bool(jobs.get("saturated")):
             items.append({"kind": "job-saturation", "label": "Management Job Queue Saturated", "count": int(jobs.get("active_jobs") or 0), "severity": "critical"})
+        cutoffs = self.active_cutoff_summary()
+        if int(cutoffs.get("count") or 0):
+            items.append({
+                "kind": "emergency-cutoff",
+                "label": "Emergency New-Access Cutoff Active",
+                "count": int(cutoffs["count"]),
+                "severity": "critical",
+            })
         return {"items": items, "count": len(items), "authoritative": False}
 
     def health(self) -> dict[str, Any]:
