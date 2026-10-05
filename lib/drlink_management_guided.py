@@ -547,26 +547,50 @@ class GuidedChangeService(ManagementChangeService):
 
     def _dry_run(
         self, kind: str, payload: dict[str, Any]
-    ) -> tuple[dict[str, Any], dict[str, Any], Optional[dict[str, Any]]]:
+    ) -> tuple[
+        dict[str, Any],
+        dict[str, Any],
+        Optional[dict[str, Any]],
+        Optional[dict[str, Any]],
+        Optional[dict[str, Any]],
+    ]:
+        from drlink_policy_safety import (
+            build_effective_access_graph,
+            diff_effective_access_graphs,
+            evaluate_graph_paths,
+            run_saved_policy_tests,
+        )
+
         savepoint = "drlink_guided_preview"
         previous_batch = self.plane._batch_mode
         previous_results = self.plane._batch_results
+        preview: dict[str, Any] = {}
+        impact: dict[str, Any] = {}
+        regression: Optional[dict[str, Any]] = None
+        current_graph: Optional[dict[str, Any]] = None
+        proposed_graph: Optional[dict[str, Any]] = None
+        proposed_for_current: dict[str, dict[str, Any]] = {}
+        needs_policy_safety = False
         self.plane.conn.execute("SAVEPOINT %s" % savepoint)
         self.plane._batch_mode = True
         self.plane._batch_results = []
         try:
             impact = self._impact(kind, payload)
+            needs_policy_safety = self._needs_policy_regression(kind, impact)
+            if needs_policy_safety:
+                current_graph = build_effective_access_graph(self.plane)
             preview = self._execute(kind, payload)
-            regression = None
-            if self._needs_policy_regression(kind, impact):
-                from drlink_policy_safety import run_saved_policy_tests
-
+            if needs_policy_safety:
                 regression = run_saved_policy_tests(
                     self.plane,
                     required_only=True,
                     enabled_only=True,
                 )
-            return preview, impact, regression
+                proposed_graph = build_effective_access_graph(self.plane)
+                proposed_for_current = evaluate_graph_paths(
+                    self.plane,
+                    list((current_graph or {}).get("paths") or []),
+                )
         finally:
             if self.plane.conn.in_transaction:
                 try:
@@ -575,6 +599,98 @@ class GuidedChangeService(ManagementChangeService):
                     self.plane.conn.execute("RELEASE SAVEPOINT %s" % savepoint)
             self.plane._batch_mode = previous_batch
             self.plane._batch_results = previous_results
+
+        blast_radius = None
+        graph_overlay = None
+        if needs_policy_safety and current_graph is not None and proposed_graph is not None:
+            current_for_proposed = evaluate_graph_paths(
+                self.plane,
+                list(proposed_graph.get("paths") or []),
+            )
+            blast_radius = diff_effective_access_graphs(
+                current_graph,
+                proposed_graph,
+                current_for_proposed=current_for_proposed,
+                proposed_for_current=proposed_for_current,
+            )
+            added = [
+                str(item.get("id"))
+                for item in blast_radius.get("references_added") or []
+                if item.get("id")
+            ]
+            removed = [
+                str(item.get("id"))
+                for item in blast_radius.get("references_removed") or []
+                if item.get("id")
+            ]
+            current_ids = {
+                str(item.get("id"))
+                for item in current_graph.get("edges") or []
+                if item.get("id")
+            }
+            proposed_ids = {
+                str(item.get("id"))
+                for item in proposed_graph.get("edges") or []
+                if item.get("id")
+            }
+            graph_overlay = {
+                "current": current_graph,
+                "proposed": proposed_graph,
+                "added_edge_ids": added,
+                "removed_edge_ids": removed,
+                "unchanged_edge_ids": sorted(current_ids & proposed_ids),
+                "decision_changes": list(blast_radius.get("decision_changes") or []),
+                "limits": dict(blast_radius.get("limits") or {}),
+                "bounded": True,
+            }
+            impact = {
+                **impact,
+                "access_broadened": bool(
+                    impact.get("access_broadened")
+                    or blast_radius.get("access_broadened")
+                ),
+                "access_narrowed": bool(
+                    impact.get("access_narrowed")
+                    or blast_radius.get("access_narrowed")
+                ),
+                "blast_radius": {
+                    "affected_rules": list(blast_radius.get("affected_rules") or []),
+                    "affected_managed_hosts": list(
+                        blast_radius.get("affected_managed_hosts") or []
+                    ),
+                    "affected_remote_services": list(
+                        blast_radius.get("affected_remote_services") or []
+                    ),
+                    "affected_destinations": list(
+                        blast_radius.get("affected_destinations") or []
+                    ),
+                    "decision_change_count": len(
+                        blast_radius.get("decision_changes") or []
+                    ),
+                    "newly_reachable_count": len(
+                        blast_radius.get("newly_reachable") or []
+                    ),
+                    "newly_blocked_count": len(
+                        blast_radius.get("newly_blocked") or []
+                    ),
+                    "references_added_count": len(
+                        blast_radius.get("references_added") or []
+                    ),
+                    "references_removed_count": len(
+                        blast_radius.get("references_removed") or []
+                    ),
+                    "unknown_count": len(blast_radius.get("unknowns") or []),
+                    "limits": dict(blast_radius.get("limits") or {}),
+                    "truncated": bool(
+                        (blast_radius.get("limits") or {}).get("truncated")
+                    ),
+                    "truncated_by": list(
+                        (blast_radius.get("limits") or {}).get("truncated_by") or []
+                    ),
+                    "bounded": True,
+                },
+            }
+        return preview, impact, regression, blast_radius, graph_overlay
 
     def preview_guided_change(
         self,
@@ -585,7 +701,9 @@ class GuidedChangeService(ManagementChangeService):
     ) -> dict[str, Any]:
         kind, normalized = self._normalize(change_type, payload)
         expected_revision = int(self.plane.current_revision())
-        preview, impact, regression = self._dry_run(kind, normalized)
+        preview, impact, regression, blast_radius, graph_overlay = self._dry_run(
+            kind, normalized
+        )
         no_change = str(preview.get("operation") or "").lower() == "noop"
         if regression is not None:
             impact = {
@@ -622,6 +740,8 @@ class GuidedChangeService(ManagementChangeService):
                 "no_change": no_change,
                 "change_type": kind,
                 "policy_regression": regression,
+                "blast_radius": blast_radius,
+                "graph_overlay": graph_overlay,
             }
         )
         return issued
@@ -673,7 +793,9 @@ class GuidedChangeService(ManagementChangeService):
             }
 
         if self._needs_policy_regression(kind, impact):
-            _preview, _fresh_impact, regression = self._dry_run(kind, payload)
+            _preview, _fresh_impact, regression, _blast_radius, _graph_overlay = (
+                self._dry_run(kind, payload)
+            )
             if regression is not None and not bool(regression.get("ok")):
                 self._mark_plan(change_plan_id, "failed")
                 failures = [

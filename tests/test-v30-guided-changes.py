@@ -373,6 +373,72 @@ class V30GuidedChangeTests(unittest.TestCase):
             )
             self.assertIsNone(service.plane._get_rule("remote", "remote-allow-ssh"))
 
+    def test_security_preview_returns_blast_radius_and_draft_graph_overlay(self):
+        plane = ControlPlane(self.tmp)
+        try:
+            v24.set_network_object(
+                plane, "blast-src", type="ip", value="198.51.100.40", oneshot=True
+            )
+            v24.set_network_object(
+                plane, "blast-dst", type="ip", value="198.51.100.41", oneshot=True
+            )
+            v24.set_service_object(
+                plane, "blast-ssh", type="tcp", port=22, oneshot=True
+            )
+            v24.set_access_rule(
+                plane,
+                "remote",
+                "blast-allow",
+                mode="whitelist",
+                source="blast-src",
+                destination="blast-dst",
+                service="blast-ssh",
+                enabled=True,
+                oneshot=True,
+            )
+            before = plane.current_revision()
+        finally:
+            plane.close()
+
+        with GuidedChangeService(self.tmp) as service:
+            preview = service.preview_guided_change(
+                actor_id="web:operator",
+                change_type="remote-access-rule",
+                payload={
+                    "operation": "set",
+                    "name": "blast-allow",
+                    "enabled": False,
+                },
+            )
+            self.assertEqual(service.plane.current_revision(), before)
+            self.assertTrue(bool(service.plane._get_rule("remote", "blast-allow")["enabled"]))
+            blast = preview["blast_radius"]
+            self.assertIsNotNone(blast)
+            self.assertTrue(blast["access_narrowed"])
+            self.assertFalse(blast["access_broadened"])
+            self.assertIn("blast-allow", blast["affected_rules"])
+            change = next(
+                item
+                for item in blast["decision_changes"]
+                if item["flow"].get("source") == "blast-src"
+                and item["flow"].get("destination") == "blast-dst"
+                and item["flow"].get("service") == "blast-ssh"
+            )
+            self.assertEqual(change["current"], "ALLOW")
+            self.assertEqual(change["proposed"], "DENY")
+            self.assertTrue(blast["newly_blocked"])
+            self.assertFalse(blast["limits"]["truncated"])
+            overlay = preview["graph_overlay"]
+            self.assertIsNotNone(overlay)
+            self.assertTrue(overlay["current"]["nodes"])
+            self.assertTrue(overlay["proposed"]["nodes"])
+            self.assertGreater(len(overlay["unchanged_edge_ids"]), 0)
+            self.assertEqual(overlay["limits"], blast["limits"])
+            self.assertEqual(
+                preview["impact"]["blast_radius"]["newly_blocked_count"],
+                len(blast["newly_blocked"]),
+            )
+
     def test_ai_access_rule_preview_reuses_identity_validation(self):
         plane = ControlPlane(self.tmp)
         try:

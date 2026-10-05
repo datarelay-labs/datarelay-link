@@ -286,6 +286,60 @@ class ManagementChangeService:
                 self.plane, family, rule_name, expires_at=mutation_value
             )
 
+        policy_safety = None
+        if not no_change:
+            from drlink_policy_safety import preview_rule_expiry_policy_safety
+
+            policy_safety = preview_rule_expiry_policy_safety(
+                self.plane,
+                family=family,
+                rule_name=rule_name,
+                expires_at=mutation_value,
+            )
+            blast = dict(policy_safety.get("blast_radius") or {})
+            regression = dict(policy_safety.get("policy_regression") or {})
+            impact = {
+                **impact,
+                "access_broadened": bool(
+                    impact.get("access_broadened") or blast.get("access_broadened")
+                ),
+                "access_narrowed": bool(
+                    impact.get("access_narrowed") or blast.get("access_narrowed")
+                ),
+                "required_policy_tests": int(regression.get("count") or 0),
+                "required_policy_test_failures": int(
+                    regression.get("required_failed") or 0
+                ),
+                "blast_radius": {
+                    "affected_rules": list(blast.get("affected_rules") or []),
+                    "affected_managed_hosts": list(
+                        blast.get("affected_managed_hosts") or []
+                    ),
+                    "affected_remote_services": list(
+                        blast.get("affected_remote_services") or []
+                    ),
+                    "affected_destinations": list(
+                        blast.get("affected_destinations") or []
+                    ),
+                    "decision_change_count": len(
+                        blast.get("decision_changes") or []
+                    ),
+                    "newly_reachable_count": len(
+                        blast.get("newly_reachable") or []
+                    ),
+                    "newly_blocked_count": len(
+                        blast.get("newly_blocked") or []
+                    ),
+                    "unknown_count": len(blast.get("unknowns") or []),
+                    "limits": dict(blast.get("limits") or {}),
+                    "truncated": bool((blast.get("limits") or {}).get("truncated")),
+                    "truncated_by": list(
+                        (blast.get("limits") or {}).get("truncated_by") or []
+                    ),
+                    "bounded": True,
+                },
+            }
+
         expected_revision = self.plane.current_revision()
         issued = self._issue_plan(
             actor_id=actor_id,
@@ -311,6 +365,15 @@ class ManagementChangeService:
                 "current_expires_at": current_expiry,
                 "desired_expires_at": desired_expiry,
                 "no_change": no_change,
+                "policy_regression": (
+                    policy_safety.get("policy_regression") if policy_safety else None
+                ),
+                "blast_radius": (
+                    policy_safety.get("blast_radius") if policy_safety else None
+                ),
+                "graph_overlay": (
+                    policy_safety.get("graph_overlay") if policy_safety else None
+                ),
             }
         )
         return issued
@@ -363,6 +426,28 @@ class ManagementChangeService:
         rule_name = str(payload.get("rule") or "")
         desired = payload.get("expires_at")
         mutation_value = "" if desired is None else str(desired)
+        from drlink_policy_safety import preview_rule_expiry_policy_safety
+
+        policy_safety = preview_rule_expiry_policy_safety(
+            self.plane,
+            family=family,
+            rule_name=rule_name,
+            expires_at=mutation_value,
+        )
+        regression = dict(policy_safety.get("policy_regression") or {})
+        if not bool(regression.get("ok")):
+            self._mark_plan(change_plan_id, "failed", now=now)
+            failures = [
+                "%s expect=%s got=%s"
+                % (item.get("name"), item.get("expected"), item.get("got"))
+                for item in regression.get("items") or []
+                if item.get("required") and not item.get("ok")
+            ]
+            raise ControlPlaneError(
+                "Required Policy Regression Tests failed.\n"
+                "No changes were applied.\n"
+                + "\n".join("  - %s" % item for item in failures)
+            )
         try:
             if family == "ai":
                 result = v24.set_ai_access_rule(

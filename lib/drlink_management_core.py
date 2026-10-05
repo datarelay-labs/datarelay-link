@@ -322,6 +322,21 @@ class ManagementCoreService:
                 path=path,
             )
 
+    def policy_effective_access_graph(
+        self,
+        *,
+        actor: ManagementActor,
+        plane: str = "",
+    ) -> dict[str, Any]:
+        if "management-policy-test" not in actor.permissions:
+            raise ManagementAuthorizationError(
+                "management-policy-test is required for Effective Access Graph."
+            )
+        self._require_web_role(actor, "Admin", "Operator", "Read Only")
+        planes = [str(plane).strip().lower()] if str(plane or "").strip() else None
+        with PolicySafetyService.open_read_only(self.root) as safety:
+            return safety.effective_access_graph(planes=planes)
+
     def policy_regression_list(self, *, actor: ManagementActor) -> dict[str, Any]:
         if "management-policy-test" not in actor.permissions:
             raise ManagementAuthorizationError(

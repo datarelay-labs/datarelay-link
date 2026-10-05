@@ -17,6 +17,7 @@ from drlink_v24_bundle import (
     export_configuration_v24,
     format_v24_plan,
     prepare_v24_plan,
+    proposed_v24_plan_state,
 )
 
 DRAFT_OBSERVE = "OBSERVE"
@@ -284,6 +285,99 @@ class ManagementDraftService(ManagementChangeService):
             current_revision,
         )
 
+    def _policy_safety_evidence(self, plan) -> dict[str, Any]:
+        from drlink_policy_safety import (
+            build_effective_access_graph,
+            diff_effective_access_graphs,
+            evaluate_graph_paths,
+            run_saved_policy_tests,
+        )
+
+        current_graph = build_effective_access_graph(self.plane)
+        proposed_graph: dict[str, Any]
+        proposed_for_current: dict[str, dict[str, Any]]
+        regression: dict[str, Any]
+        with proposed_v24_plan_state(self.plane, plan):
+            regression = run_saved_policy_tests(
+                self.plane,
+                required_only=True,
+                enabled_only=True,
+            )
+            proposed_graph = build_effective_access_graph(self.plane)
+            proposed_for_current = evaluate_graph_paths(
+                self.plane,
+                list(current_graph.get("paths") or []),
+            )
+        current_for_proposed = evaluate_graph_paths(
+            self.plane,
+            list(proposed_graph.get("paths") or []),
+        )
+        blast = diff_effective_access_graphs(
+            current_graph,
+            proposed_graph,
+            current_for_proposed=current_for_proposed,
+            proposed_for_current=proposed_for_current,
+        )
+        current_ids = {
+            str(item.get("id"))
+            for item in current_graph.get("edges") or []
+            if item.get("id")
+        }
+        proposed_ids = {
+            str(item.get("id"))
+            for item in proposed_graph.get("edges") or []
+            if item.get("id")
+        }
+        overlay = {
+            "current": current_graph,
+            "proposed": proposed_graph,
+            "added_edge_ids": [
+                str(item.get("id"))
+                for item in blast.get("references_added") or []
+                if item.get("id")
+            ],
+            "removed_edge_ids": [
+                str(item.get("id"))
+                for item in blast.get("references_removed") or []
+                if item.get("id")
+            ],
+            "unchanged_edge_ids": sorted(current_ids & proposed_ids),
+            "decision_changes": list(blast.get("decision_changes") or []),
+            "limits": dict(blast.get("limits") or {}),
+            "bounded": True,
+        }
+        return {
+            "policy_regression": regression,
+            "blast_radius": blast,
+            "graph_overlay": overlay,
+        }
+
+    @staticmethod
+    def _blast_summary(evidence: Optional[dict[str, Any]]) -> dict[str, Any]:
+        blast = dict((evidence or {}).get("blast_radius") or {})
+        if not blast:
+            return {}
+        return {
+            "access_broadened": bool(blast.get("access_broadened")),
+            "access_narrowed": bool(blast.get("access_narrowed")),
+            "affected_rules": list(blast.get("affected_rules") or []),
+            "affected_managed_hosts": list(blast.get("affected_managed_hosts") or []),
+            "affected_remote_services": list(blast.get("affected_remote_services") or []),
+            "affected_destinations": list(blast.get("affected_destinations") or []),
+            "decision_change_count": len(blast.get("decision_changes") or []),
+            "newly_reachable_count": len(blast.get("newly_reachable") or []),
+            "newly_blocked_count": len(blast.get("newly_blocked") or []),
+            "references_added_count": len(blast.get("references_added") or []),
+            "references_removed_count": len(blast.get("references_removed") or []),
+            "unknown_count": len(blast.get("unknowns") or []),
+            "limits": dict(blast.get("limits") or {}),
+            "truncated": bool((blast.get("limits") or {}).get("truncated")),
+            "truncated_by": list(
+                (blast.get("limits") or {}).get("truncated_by") or []
+            ),
+            "bounded": True,
+        }
+
     def test_bundle(
         self,
         draft_id: str,
@@ -307,6 +401,7 @@ class ManagementDraftService(ManagementChangeService):
             authority=authority,
             now=now,
         )
+        policy_safety = self._policy_safety_evidence(plan) if requires_admin else None
         return {
             "draft_id": str(row["id"]),
             "status": "PASS",
@@ -318,6 +413,12 @@ class ManagementDraftService(ManagementChangeService):
             "security_impact": security_impact,
             "requires_admin": requires_admin,
             "formatted_plan": format_v24_plan(plan),
+            "policy_regression": (
+                policy_safety.get("policy_regression") if policy_safety else None
+            ),
+            "blast_radius": (
+                policy_safety.get("blast_radius") if policy_safety else None
+            ),
             "authoritative_mutation": False,
         }
 
@@ -344,6 +445,8 @@ class ManagementDraftService(ManagementChangeService):
             authority=authority,
             now=now,
         )
+        policy_safety = self._policy_safety_evidence(plan) if requires_admin else None
+        blast_summary = self._blast_summary(policy_safety)
         bundle_sha256 = hashlib.sha256(text.encode("utf-8")).hexdigest()
         issued = self._issue_plan(
             actor_id=actor_id,
@@ -363,6 +466,17 @@ class ManagementDraftService(ManagementChangeService):
                 "requires_admin": requires_admin,
                 "security_impact": security_impact,
                 "change_count": len(changes),
+                "blast_radius": blast_summary,
+                "required_policy_tests": int(
+                    ((policy_safety or {}).get("policy_regression") or {}).get("count")
+                    or 0
+                ),
+                "required_policy_test_failures": int(
+                    ((policy_safety or {}).get("policy_regression") or {}).get(
+                        "required_failed"
+                    )
+                    or 0
+                ),
             },
             confirmation_class=CONFIRM_CHANGE,
             now=now,
@@ -377,6 +491,15 @@ class ManagementDraftService(ManagementChangeService):
             "security_impact": security_impact,
             "requires_admin": requires_admin,
             "formatted_plan": format_v24_plan(plan),
+            "policy_regression": (
+                policy_safety.get("policy_regression") if policy_safety else None
+            ),
+            "blast_radius": (
+                policy_safety.get("blast_radius") if policy_safety else None
+            ),
+            "graph_overlay": (
+                policy_safety.get("graph_overlay") if policy_safety else None
+            ),
             "bundle_text": text,
             "diff_result": "NO_CHANGE" if plan.no_change else "CHANGES_PENDING",
             "authoritative_mutation": False,
@@ -457,6 +580,22 @@ class ManagementDraftService(ManagementChangeService):
         if int(bundle_plan.base_revision or 0) != expected_revision:
             self._mark_plan(change_plan_id, "stale", now=now)
             raise ConcurrencyError("Draft ConfigurationBundle revision no longer matches its Change Plan.")
+        if bool(payload.get("requires_admin")):
+            policy_safety = self._policy_safety_evidence(bundle_plan)
+            regression = dict(policy_safety.get("policy_regression") or {})
+            if not bool(regression.get("ok")):
+                self._mark_plan(change_plan_id, "failed", now=now)
+                failures = [
+                    "%s expect=%s got=%s"
+                    % (item.get("name"), item.get("expected"), item.get("got"))
+                    for item in regression.get("items") or []
+                    if item.get("required") and not item.get("ok")
+                ]
+                raise ControlPlaneError(
+                    "Required Policy Regression Tests failed.\n"
+                    "No changes were applied.\n"
+                    + "\n".join("  - %s" % item for item in failures)
+                )
         try:
             result = apply_v24_plan(
                 self.plane,

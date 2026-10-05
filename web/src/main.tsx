@@ -139,6 +139,7 @@ function DraftWorkspace(){
       {preview&&<>
         <pre className="plan">{preview.formatted_plan}</pre>
         {(preview.security_impact||[]).length>0&&<div className="warning-box">{preview.security_impact.map((x:string)=><div key={x}>{x}</div>)}</div>}
+        <BlastRadiusView preview={preview}/>
         <label className="apply-label">Type APPLY to commit<input value={confirmation} onChange={e=>setConfirmation(e.target.value)} placeholder="APPLY"/></label>
         <button className="danger" onClick={doApply} disabled={confirmation!=="APPLY"}>Apply Draft</button>
       </>}
@@ -146,11 +147,44 @@ function DraftWorkspace(){
   </div>;
 }
 
+function BlastRadiusView({preview}:{preview:any}){
+  const blast=preview?.blast_radius;
+  const overlay=preview?.graph_overlay;
+  const regression=preview?.policy_regression;
+  if(!blast&&!overlay&&!regression)return null;
+  const limits=blast?.limits||{};
+  const changes=(blast?.decision_changes||[]).map((x:any)=>({
+    plane:x.flow?.plane||"",
+    source:x.flow?.source||"",
+    destination:x.flow?.destination||"",
+    selector:x.flow?.service||x.flow?.permission||"",
+    current:x.current,
+    proposed:x.proposed,
+  }));
+  return <div className="card">
+    <h4>Blast Radius / Draft Graph Overlay</h4>
+    <div className="muted">Core-computed policy/inventory facts only. Unknowns are explicit; this is not network-topology discovery.</div>
+    {blast&&<div className="grid">
+      <Metric label="Broadens access" value={blast.access_broadened?"YES":"NO"}/>
+      <Metric label="Narrows access" value={blast.access_narrowed?"YES":"NO"}/>
+      <Metric label="Newly reachable" value={limits.newly_reachable_total??(blast.newly_reachable||[]).length}/>
+      <Metric label="Newly blocked" value={limits.newly_blocked_total??(blast.newly_blocked||[]).length}/>
+      <Metric label="Truncated" value={limits.truncated?"YES":"NO"}/>
+    </div>}
+    {limits.truncated&&<div className="warning-box">Blast Radius is bounded/truncated: {(limits.truncated_by||[]).join(", ")||"limit reached"}. Review the limit metadata before Apply.</div>}
+    {regression&&<div className={regression.ok?"notice":"warning-box"}>Required Policy Tests: {regression.passed}/{regression.count} pass · failures {regression.required_failed}</div>}
+    {blast&&<div className="muted">Affected rules: {(blast.affected_rules||[]).join(", ")||"none"} · Managed Hosts: {(blast.affected_managed_hosts||[]).join(", ")||"none"} · Remote Services: {(blast.affected_remote_services||[]).join(", ")||"none"}</div>}
+    {changes.length>0&&<Table items={changes}/>}
+    {overlay&&<div className="muted">Graph edges · added {limits.references_added_total??(overlay.added_edge_ids||[]).length} · removed {limits.references_removed_total??(overlay.removed_edge_ids||[]).length} · unchanged {(overlay.unchanged_edge_ids||[]).length}</div>}
+    {(blast?.unknowns||[]).length>0&&<div className="warning-box">Unknown / not deterministically modeled: {(blast.unknowns||[]).slice(0,10).join(" · ")}</div>}
+  </div>;
+}
+
 function GuidedApplyPanel({title,build}:{title:string,build:()=>any}){
   const [preview,setPreview]=useState<any>(null),[confirmation,setConfirmation]=useState(""),[message,setMessage]=useState(""),[error,setError]=useState("");
   async function doPreview(){setError("");setMessage("");try{const req=build();const result=await api("/api/v1/guided/preview",{method:"POST",body:JSON.stringify(req)});setPreview(result);setConfirmation("")}catch(e:any){setError(e.message||String(e))}}
   async function doApply(){setError("");try{const result=await api("/api/v1/guided/apply",{method:"POST",body:JSON.stringify({change_plan_id:preview?.change_plan_id||"",confirmation})});setMessage("Applied at revision "+result.revision);setPreview(null);setConfirmation("")}catch(e:any){setError(e.message||String(e))}}
-  return <div className="card"><h3>{title}</h3>{error&&<div className="error">{error}</div>}{message&&<div className="notice">{message}</div>}<button className="primary" onClick={doPreview}>Preview</button>{preview&&<div className="card"><pre className="plan">{JSON.stringify({change_type:preview.change_type,preview:preview.preview,impact:preview.impact,valid_until:preview.valid_until},null,2)}</pre><label className="apply-label">Type APPLY to commit<input value={confirmation} onChange={e=>setConfirmation(e.target.value)} placeholder="APPLY"/></label><button className="danger" onClick={doApply} disabled={confirmation!=="APPLY"}>Apply</button></div>}</div>;
+  return <div className="card"><h3>{title}</h3>{error&&<div className="error">{error}</div>}{message&&<div className="notice">{message}</div>}<button className="primary" onClick={doPreview}>Preview</button>{preview&&<div className="card"><pre className="plan">{JSON.stringify({change_type:preview.change_type,preview:preview.preview,impact:preview.impact,valid_until:preview.valid_until},null,2)}</pre><BlastRadiusView preview={preview}/><label className="apply-label">Type APPLY to commit<input value={confirmation} onChange={e=>setConfirmation(e.target.value)} placeholder="APPLY"/></label><button className="danger" onClick={doApply} disabled={confirmation!=="APPLY"}>Apply</button></div>}</div>;
 }
 
 function ManagedHostMetadataPanel(){
@@ -349,6 +383,7 @@ function GuidedPolicyRulePanel(){
     {preview&&<div className="card">
       {preview.impact?.warning&&<div className="warning-box">{preview.impact.warning}</div>}
       <pre className="plan">{JSON.stringify({resource:preview.resource_ref,impact:preview.impact,preview:preview.preview},null,2)}</pre>
+      <BlastRadiusView preview={preview}/>
       <label className="apply-label">Type APPLY to commit<input value={confirmation} onChange={e=>setConfirmation(e.target.value)} placeholder="APPLY"/></label>
       <button className="danger" onClick={doApply} disabled={confirmation!=="APPLY"}>Apply Access Rule</button>
     </div>}
@@ -389,6 +424,7 @@ function TemporaryAccessPanel(){
       <div><strong>Current:</strong> {preview.current_expires_at||"none"}</div>
       <div><strong>Desired:</strong> {preview.desired_expires_at||"none"}</div>
       <div><strong>Valid until:</strong> {preview.valid_until}</div>
+      <BlastRadiusView preview={preview}/>
       <label className="apply-label">Type APPLY to commit<input value={confirmation} onChange={e=>setConfirmation(e.target.value)} placeholder="APPLY"/></label>
       <button className="danger" onClick={doApply} disabled={confirmation!=="APPLY"}>Apply Temporary Access</button>
     </div>}
@@ -397,7 +433,7 @@ function TemporaryAccessPanel(){
 
 function PolicySafetyPanel({operator}:{operator:any}){
   const [plane,setPlane]=useState("remote"),[source,setSource]=useState(""),[destination,setDestination]=useState(""),[selector,setSelector]=useState(""),[path,setPath]=useState("");
-  const [trace,setTrace]=useState<any>(null),[tests,setTests]=useState<any[]>([]),[runResult,setRunResult]=useState<any>(null);
+  const [trace,setTrace]=useState<any>(null),[graph,setGraph]=useState<any>(null),[tests,setTests]=useState<any[]>([]),[runResult,setRunResult]=useState<any>(null);
   const [selected,setSelected]=useState(""),[testName,setTestName]=useState(""),[expected,setExpected]=useState("ALLOW"),[required,setRequired]=useState(true),[enabled,setEnabled]=useState(true);
   const [preview,setPreview]=useState<any>(null),[confirmation,setConfirmation]=useState(""),[message,setMessage]=useState(""),[error,setError]=useState("");
 
@@ -416,6 +452,11 @@ function PolicySafetyPanel({operator}:{operator:any}){
   async function simulate(){
     setError("");setTrace(null);
     try{setTrace(await api("/api/v1/policy/trace",{method:"POST",body:JSON.stringify(flow())}))}
+    catch(e:any){setError(e.message||String(e))}
+  }
+  async function loadGraph(){
+    setError("");setGraph(null);
+    try{setGraph(await api("/api/v1/policy/graph?plane="+encodeURIComponent(plane)))}
     catch(e:any){setError(e.message||String(e))}
   }
   async function runSaved(){
@@ -470,6 +511,21 @@ function PolicySafetyPanel({operator}:{operator:any}){
         <button className="primary" onClick={simulate} disabled={!ready}>Simulate</button>
       </div>
       {trace&&<pre className="plan">{JSON.stringify(trace,null,2)}</pre>}
+    </div>
+    <div className="card">
+      <h3>Effective Access Graph</h3>
+      <div className="muted">Bounded policy/inventory graph from Core state and the canonical evaluator. It does not scan or infer network topology.</div>
+      <div className="toolbar"><button className="secondary" onClick={loadGraph}>Refresh {plane} graph</button></div>
+      {graph&&<>
+        <div className="grid">
+          <Metric label="Nodes" value={graph.limits?.node_count||0}/>
+          <Metric label="Edges" value={graph.limits?.edge_count||0}/>
+          <Metric label="Modeled flows" value={graph.limits?.path_count||0}/>
+          <Metric label="Truncated" value={graph.limits?.truncated?"YES":"NO"}/>
+        </div>
+        <Table items={(graph.paths||[]).map((x:any)=>({source:x.input?.source,destination:x.input?.destination,selector:x.input?.service||x.input?.permission,rules:(x.rules||[]).join(","),decision:x.decision,status:x.status}))}/>
+        {(graph.unknowns||[]).length>0&&<div className="warning-box">Unknown / not deterministically modeled: {(graph.unknowns||[]).slice(0,10).join(" · ")}</div>}
+      </>}
     </div>
     <div className="card">
       <h3>Saved Policy Regression Tests</h3>

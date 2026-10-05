@@ -14,6 +14,7 @@ sys.path.insert(0, str(ROOT / "lib"))
 from drlink_control_db import ControlPlaneError
 from drlink_control_plane import ConcurrencyError, ControlPlane
 from drlink_management_change import ManagementChangeService
+from drlink_policy_safety import PolicySafetyService
 import drlink_v24 as v24
 
 
@@ -292,6 +293,56 @@ class V30ManagementChangePlanTests(unittest.TestCase):
         )
         self.assertEqual(result["status"], "APPLIED")
         self.assertEqual(self._row_expiry("ai", "allow-info"), expiry)
+
+    def test_required_saved_policy_failure_blocks_temporary_access_apply(self):
+        with PolicySafetyService(self.tmp) as safety:
+            saved = safety.preview_definition(
+                actor_id="web:admin",
+                operation="set",
+                definition={
+                    "name": "baseline-deny-check",
+                    "plane": "remote",
+                    "source": "src",
+                    "destination": "dst",
+                    "service": "ssh",
+                    "expected": "DENY",
+                    "required": True,
+                    "enabled": True,
+                },
+            )
+            safety.apply_definition(
+                actor_id="web:admin",
+                change_plan_id=saved["change_plan_id"],
+                confirmation="APPLY",
+            )
+
+        before = self.service.plane.current_revision()
+        preview = self.service.preview_temporary_access(
+            actor_id="web:admin",
+            plane="remote",
+            rule="allow-ssh",
+            operation="set",
+            expires_at=_future(),
+        )
+        self.assertIsNotNone(preview["policy_regression"])
+        self.assertFalse(preview["policy_regression"]["ok"])
+        self.assertEqual(preview["policy_regression"]["required_failed"], 1)
+        self.assertIsNotNone(preview["blast_radius"])
+        self.assertIsNotNone(preview["graph_overlay"])
+        self.assertEqual(
+            preview["impact"]["required_policy_test_failures"],
+            1,
+        )
+        with self.assertRaisesRegex(
+            ControlPlaneError, "Required Policy Regression Tests failed"
+        ):
+            self.service.apply_temporary_access(
+                actor_id="web:admin",
+                change_plan_id=preview["change_plan_id"],
+                confirmation="APPLY",
+            )
+        self.assertEqual(self.service.plane.current_revision(), before)
+        self.assertIsNone(self._row_expiry("remote", "allow-ssh"))
 
     def test_blacklist_rule_cannot_get_temporary_access_plan(self):
         self.service.plane.conn.execute(

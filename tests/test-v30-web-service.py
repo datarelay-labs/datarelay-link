@@ -624,6 +624,45 @@ class V30WebServiceTests(unittest.TestCase):
         self.assertEqual(trace["final"]["result"], "ALLOW")
         self.assertIn("trace-allow", trace["policy"]["matched_rules"])
 
+        status, _, graph = self.request(
+            "GET", "/api/v1/policy/graph?plane=remote"
+        )
+        self.assertEqual(status, 200, graph)
+        graph_flow = next(
+            item
+            for item in graph["paths"]
+            if item["input"].get("source") == "trace-src"
+            and item["input"].get("destination") == "trace-dst"
+            and item["input"].get("service") == "trace-ssh"
+        )
+        self.assertEqual(graph_flow["decision"], "ALLOW")
+        self.assertIn("trace-allow", graph_flow["rules"])
+        self.assertFalse(graph["network_topology"])
+
+        status, _, guided = self.request(
+            "POST",
+            "/api/v1/guided/preview",
+            {
+                "change_type": "remote-access-rule",
+                "payload": {
+                    "operation": "set",
+                    "name": "trace-allow",
+                    "enabled": False,
+                },
+            },
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, guided)
+        self.assertTrue(guided["blast_radius"]["access_narrowed"])
+        self.assertTrue(guided["blast_radius"]["newly_blocked"])
+        self.assertIsNotNone(guided["graph_overlay"])
+        plane = ControlPlane(self.tmp)
+        try:
+            self.assertEqual(plane.current_revision(), revision)
+            self.assertTrue(bool(plane._get_rule("remote", "trace-allow")["enabled"]))
+        finally:
+            plane.close()
+
         status, _, listed = self.request("GET", "/api/v1/policy-tests")
         self.assertEqual(status, 200, listed)
         self.assertEqual(listed["count"], 0)

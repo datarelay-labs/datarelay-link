@@ -18,7 +18,11 @@ from drlink_management_core import (
     ManagementCoreService,
 )
 from drlink_management_guided import GuidedChangeService
-from drlink_policy_safety import PolicySafetyService
+from drlink_policy_safety import (
+    MAX_GRAPH_PATHS,
+    PolicySafetyService,
+    diff_effective_access_graphs,
+)
 
 
 class V30PolicySafetyTests(unittest.TestCase):
@@ -108,6 +112,111 @@ class V30PolicySafetyTests(unittest.TestCase):
         self.assertEqual(trace["normalized_input"]["source"], "src")
         self.assertEqual(trace["normalized_input"]["destination"], "dst")
         self.assertIn("reason", trace["final"])
+
+    def test_effective_access_graph_is_query_only_bounded_and_matches_core_decision(self):
+        plane = ControlPlane(self.tmp)
+        try:
+            before_revision = plane.current_revision()
+            before_meta = int(
+                plane.conn.execute("SELECT COUNT(*) FROM system_meta").fetchone()[0]
+            )
+        finally:
+            plane.close()
+
+        with PolicySafetyService.open_read_only(self.tmp) as service:
+            graph = service.effective_access_graph(planes=["remote"])
+        self.assertEqual(graph["scope"], "policy-and-inventory")
+        self.assertFalse(graph["network_topology"])
+        self.assertLessEqual(graph["limits"]["host_count"], 100)
+        self.assertFalse(graph["limits"]["truncated"])
+        self.assertTrue(
+            any(
+                item["kind"] == "policy-rule" and item.get("rule") == "allow-ssh"
+                for item in graph["nodes"]
+            )
+        )
+        flow = next(
+            item
+            for item in graph["paths"]
+            if item["input"] == {
+                "plane": "remote",
+                "source": "src",
+                "destination": "dst",
+                "service": "ssh",
+            }
+        )
+        self.assertEqual(flow["decision"], "ALLOW")
+        self.assertEqual(flow["status"], "computed")
+        self.assertIn("allow-ssh", flow["rules"])
+
+        core = ManagementCoreService(self.tmp)
+        via_core = core.policy_effective_access_graph(
+            actor=self._reader(),
+            plane="remote",
+        )
+        self.assertEqual(via_core["paths"][0]["decision"], "ALLOW")
+        plane = ControlPlane(self.tmp)
+        try:
+            self.assertEqual(plane.current_revision(), before_revision)
+            self.assertEqual(
+                int(plane.conn.execute("SELECT COUNT(*) FROM system_meta").fetchone()[0]),
+                before_meta,
+            )
+        finally:
+            plane.close()
+
+    def test_blast_radius_reports_bounded_truncation_metadata(self):
+        count = MAX_GRAPH_PATHS + 1
+        current_paths = []
+        proposed_paths = []
+        for index in range(count):
+            key = "remote|src-%s|dst|ssh|" % index
+            flow = {
+                "plane": "remote",
+                "source": "src-%s" % index,
+                "destination": "dst",
+                "service": "ssh",
+            }
+            current_paths.append(
+                {
+                    "key": key,
+                    "input": flow,
+                    "decision": "DENY",
+                    "status": "computed",
+                    "rules": ["rule-%s" % index],
+                }
+            )
+            proposed_paths.append(
+                {
+                    "key": key,
+                    "input": flow,
+                    "decision": "ALLOW",
+                    "status": "computed",
+                    "rules": ["rule-%s" % index],
+                }
+            )
+        blast = diff_effective_access_graphs(
+            {
+                "paths": current_paths,
+                "edges": [],
+                "nodes": [],
+                "unknowns": [],
+                "limits": {"truncated": False},
+            },
+            {
+                "paths": proposed_paths,
+                "edges": [],
+                "nodes": [],
+                "unknowns": [],
+                "limits": {"truncated": False},
+            },
+        )
+        self.assertEqual(len(blast["decision_changes"]), MAX_GRAPH_PATHS)
+        self.assertEqual(blast["limits"]["decision_changes_total"], count)
+        self.assertEqual(blast["limits"]["newly_reachable_total"], count)
+        self.assertTrue(blast["limits"]["truncated"])
+        self.assertIn("decision_changes", blast["limits"]["truncated_by"])
+        self.assertIn("newly_reachable", blast["limits"]["truncated_by"])
 
     def test_saved_test_preview_apply_run_and_delete_are_revision_bound(self):
         with PolicySafetyService(self.tmp) as service:

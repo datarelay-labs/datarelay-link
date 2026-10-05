@@ -698,6 +698,28 @@ The graph is not a general network-discovery or packet-topology system.
 A Draft overlay visibly separates current access from proposed additions/removals.
 Selecting a path opens the underlying resource/rule and its Decision Trace.
 
+DRL3-4 implementation contract:
+- GET /api/v1/policy/graph is a query-only Web projection of the Core Effective
+  Access Graph and requires the same policy-test authority as Decision Trace;
+- graph construction is bounded to the 100-Host product target and returns explicit
+  node/edge/path/host limits plus truncation metadata;
+- Blast Radius separately reports result limits, total-vs-returned bounded counts, and
+  explicit `truncated_by` reasons so a bounded preview is never presented as exhaustive;
+- Internet destinations that would require live DNS during visualization are reported as
+  UNKNOWN rather than causing the graph to perform network I/O or invent a decision;
+- graph paths use the canonical Remote/Internet/AI policy evaluators, including AI
+  path-required fail-closed semantics;
+- Guided Change preview and Configuration Draft Workspace both evaluate current and
+  rollback-only proposed state, then return added/removed/unchanged relationships and
+  deterministic decision changes;
+- only DENY -> ALLOW is labeled newly reachable and only ALLOW -> DENY is labeled
+  newly blocked; UNKNOWN transitions remain explicit unknown/decision-change evidence;
+- required Saved Policy Regression Tests run against proposed state during both guided
+  and Configuration Draft preview and are re-run immediately before security-relevant
+  Apply;
+- the graph remains policy/inventory visualization only and is not exposed as a new
+  Plugin/MCP capability in this slice.
+
 ## 21. AI Access
 AI Access Web Management includes:
 

@@ -22,6 +22,7 @@ from drlink_management_drafts import (
     MAX_ACTIVE_DRAFTS_PER_ACTOR,
     ManagementDraftService,
 )
+from drlink_policy_safety import PolicySafetyService
 
 
 def object_bundle(revision: int, name: str = "office") -> str:
@@ -175,6 +176,108 @@ class V30ManagementDraftTests(unittest.TestCase):
             service_name="ssh",
         )
         self.assertEqual(decision["result"], "ALLOW")
+
+    def test_policy_draft_preview_has_overlay_and_required_test_blocks_apply(self):
+        v24.set_network_object(
+            self.service.plane,
+            "safe-src",
+            type="ip",
+            value="198.51.100.60",
+            oneshot=True,
+        )
+        v24.set_network_object(
+            self.service.plane,
+            "safe-dst",
+            type="ip",
+            value="198.51.100.61",
+            oneshot=True,
+        )
+        v24.set_service_object(
+            self.service.plane,
+            "safe-ssh",
+            type="tcp",
+            port=22,
+            oneshot=True,
+        )
+        v24.set_access_rule(
+            self.service.plane,
+            "remote",
+            "safe-allow",
+            mode="whitelist",
+            source="safe-src",
+            destination="safe-dst",
+            service="safe-ssh",
+            enabled=True,
+            oneshot=True,
+        )
+        with PolicySafetyService(self.tmp) as safety:
+            saved = safety.preview_definition(
+                actor_id="web:admin",
+                operation="set",
+                definition={
+                    "name": "must-allow-safe-ssh",
+                    "plane": "remote",
+                    "source": "safe-src",
+                    "destination": "safe-dst",
+                    "service": "safe-ssh",
+                    "expected": "ALLOW",
+                    "required": True,
+                    "enabled": True,
+                },
+            )
+            safety.apply_definition(
+                actor_id="web:admin",
+                change_plan_id=saved["change_plan_id"],
+                confirmation="APPLY",
+            )
+
+        revision = self.service.plane.current_revision()
+        bundle = self.service.export_current_configuration()
+        self.assertIn("name: safe-allow", bundle)
+        # Narrow the exact current configuration while preserving every dependency.
+        bundle = bundle.replace(
+            "      enabled: true\n",
+            "      enabled: false\n",
+            1,
+        )
+        self.assertIn("name: safe-allow", bundle)
+        self.assertIn("enabled: false", bundle)
+        draft = self.service.create(
+            actor_id="web:admin",
+            bundle_text=bundle,
+            now=self.base_time,
+        )
+        preview = self.service.preview(
+            draft["id"],
+            actor_id="web:admin",
+            authority=DRAFT_ADMIN,
+            now=self.base_time + timedelta(seconds=1),
+        )
+        self.assertEqual(self.service.plane.current_revision(), revision)
+        self.assertTrue(bool(self.service.plane._get_rule("remote", "safe-allow")["enabled"]))
+        self.assertIsNotNone(preview["graph_overlay"])
+        self.assertIsNotNone(preview["blast_radius"])
+        self.assertTrue(preview["blast_radius"]["access_narrowed"])
+        self.assertTrue(preview["blast_radius"]["newly_blocked"])
+        self.assertFalse(preview["policy_regression"]["ok"])
+        self.assertEqual(preview["policy_regression"]["required_failed"], 1)
+        self.assertEqual(
+            preview["impact"]["required_policy_test_failures"],
+            1,
+        )
+        with self.assertRaisesRegex(
+            ControlPlaneError, "Required Policy Regression Tests failed"
+        ):
+            self.service.apply(
+                draft["id"],
+                actor_id="web:admin",
+                authority=DRAFT_ADMIN,
+                change_plan_id=preview["change_plan_id"],
+                confirmation="APPLY",
+                now=self.base_time + timedelta(seconds=2),
+            )
+        self.assertEqual(self.service.plane.current_revision(), revision)
+        self.assertTrue(bool(self.service.plane._get_rule("remote", "safe-allow")["enabled"]))
 
     def test_stale_revision_fails_closed_without_rebase(self):
         revision = self.service.plane.current_revision()

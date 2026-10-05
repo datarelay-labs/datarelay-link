@@ -109,6 +109,17 @@ class ManagementWebApiAdapter:
             path=path,
         )
 
+    def policy_effective_access_graph(
+        self,
+        *,
+        actor: ManagementActor,
+        plane: str = "",
+    ) -> dict[str, Any]:
+        return self.core.policy_effective_access_graph(
+            actor=actor,
+            plane=plane,
+        )
+
     def policy_regression_list(self, *, actor: ManagementActor) -> dict[str, Any]:
         return self.core.policy_regression_list(actor=actor)
 

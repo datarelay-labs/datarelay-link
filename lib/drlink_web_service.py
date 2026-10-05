@@ -244,6 +244,11 @@ class WebApplication:
                     plane=_first(query, "plane") or None,
                     limit=_int_arg(_first(query, "limit"), 50),
                 )
+        if path == "/api/v1/policy/graph":
+            return self.adapter.policy_effective_access_graph(
+                actor=actor,
+                plane=_first(query, "plane"),
+            )
         if path == "/api/v1/policy-tests":
             return self.adapter.policy_regression_list(actor=actor)
         if path == "/api/v1/objects-groups":

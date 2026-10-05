@@ -10,6 +10,7 @@ and rejects malformed Markdown/prose pastes atomically.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 import copy
 import io
 import json
@@ -809,6 +810,35 @@ def _validate_server_plan_applyability(
         # Bundle resources, so the savepoint remains valid on ordinary
         # validation failures. Be defensive if an unexpected path ended the
         # transaction.
+        if plane.conn.in_transaction:
+            try:
+                plane.conn.execute("ROLLBACK TO SAVEPOINT %s" % savepoint)
+            finally:
+                plane.conn.execute("RELEASE SAVEPOINT %s" % savepoint)
+        plane._batch_mode = previous_batch
+        plane._batch_results = previous_results
+
+
+@contextmanager
+def proposed_v24_plan_state(plane: ControlPlane, plan: V24Plan):
+    """Expose exact proposed Server Bundle state inside a rollback-only savepoint.
+
+    Uses the same dependency order and Core mutation helpers as real Apply.
+    No revision, audit event, runtime activation, or authoritative mutation survives.
+    """
+    fresh = _resolve_plan_for_apply(plane, plan)
+    ordered = _ordered_v24_changes(fresh.mutating_changes)
+    savepoint = "drlink_bundle_proposed_state"
+    previous_batch = plane._batch_mode
+    previous_results = plane._batch_results
+    plane.conn.execute("SAVEPOINT %s" % savepoint)
+    plane._batch_mode = True
+    plane._batch_results = []
+    try:
+        for change in ordered:
+            _apply_one(plane, change)
+        yield fresh
+    finally:
         if plane.conn.in_transaction:
             try:
                 plane.conn.execute("ROLLBACK TO SAVEPOINT %s" % savepoint)
