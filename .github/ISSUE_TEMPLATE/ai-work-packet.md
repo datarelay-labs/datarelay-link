@@ -1,12 +1,12 @@
 ---
 name: AI Work Packet
-about: Repository-scoped current state for ChatGPT implementation continuity
+about: Repository-scoped current state for selected execution-profile continuity
 title: "[AI Work] "
 labels: []
 assignees: []
 ---
 
-PACKET_VERSION=2
+PACKET_VERSION=3
 TARGET_REPO=owner/repository
 WORKSTREAM=replace-with-stable-slug
 STATUS=ACTIVE
@@ -17,7 +17,8 @@ LAST_VERIFIED_HEAD=UNKNOWN
 PRIORITY=NORMAL
 INTENT_REVISION=1
 CHANGE_RISK=MEDIUM
-IMPLEMENTER=CHATGPT_CHAT
+EXECUTION_PROFILE=datarelay-managed
+EXECUTION_PROFILE_REVISION=3
 
 ## Goal
 
@@ -79,6 +80,8 @@ Record meaningful out-of-scope findings as linked Issues/Work Packets. Do not si
 ```text
 HEAD=UNKNOWN
 TARGETED_TESTS=NOT_RUN
+AFFECTED_CONVERGENCE=NOT_RUN
+FULL_CONFIRMATION=NOT_RUN
 CI=NOT_RUN
 ```
 
