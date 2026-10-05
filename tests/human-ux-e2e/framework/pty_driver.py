@@ -89,11 +89,22 @@ def run_pty_script(
             end = time.time() + 0.12
         return data
 
-    # Allow prompt to appear
+    # Allow prompt to appear, then keep draining until the child exits.  The
+    # previous implementation drained for a fixed interval and then blocked in
+    # waitpid(), which could discard user-visible output emitted after that
+    # interval (for example the final APPLIED result after an interactive
+    # ConfigurationBundle confirmation).
     pre = drain(0.4)
     feed(master)
-    out = pre + drain(drain_timeout)
-    _, status = os.waitpid(pid, 0)
+    out = pre
+    status = None
+    while status is None:
+        out += drain(max(0.2, min(0.5, drain_timeout)))
+        done, child_status = os.waitpid(pid, os.WNOHANG)
+        if done == pid:
+            status = child_status
+            out += drain(0.15)
+            break
     exit_code = os.waitstatus_to_exitcode(status) if hasattr(os, "waitstatus_to_exitcode") else status
     text = out.decode("utf-8", "replace")
     return PtyResult(output=text, visual=_interpret_visual(text), exit_code=exit_code)

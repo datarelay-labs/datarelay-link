@@ -1,10 +1,34 @@
 """ConfigurationBundle scenarios HUX-BUNDLE-001..008."""
 from __future__ import annotations
 
+import shlex
+
 from framework.assertions import expect_any, expect_true
+from framework.pty_driver import feed_bytes, run_pty_script
 from framework.scenario_api import ScenarioEnv, scenario
 from framework.session import CliSession
 from framework.types import ExecutionContext, InteractionMode, Layer
+
+
+def _interactive_apply(env: ScenarioEnv, root, path):
+    command = shlex.join(
+        [str(env.repo / "tools" / "drlink"), "system", "apply", "configuration", str(path)]
+    )
+
+    def feed(master: int) -> None:
+        feed_bytes(master, b"y\n")
+
+    env.recorder.command(ExecutionContext.DRLINK_SERVER.value, command)
+    env.recorder.keys("y; Enter")
+    result = run_pty_script(
+        command,
+        feed=feed,
+        env={"FRP_DEPLOY_TEST_ROOT": str(root), "DRLINK_CONFIRM": ""},
+        drain_timeout=2.0,
+    )
+    env.recorder.output(result.visual)
+    env.recorder.note("exit_code=%s" % result.exit_code)
+    return result
 
 
 def _yaml_bundle(*, context: str = "server") -> str:
@@ -86,35 +110,34 @@ def hux_bundle_003(env: ScenarioEnv) -> None:
     "HUX-BUNDLE-004",
     "Apply configuration",
     execution_context=ExecutionContext.DRLINK_SERVER,
-    interaction_mode=InteractionMode.ONE_SHOT,
-    layer=Layer.NORMAL,
+    interaction_mode=InteractionMode.PTY,
+    layer=Layer.PTY,
     domain="bundle",
 )
 def hux_bundle_004(env: ScenarioEnv) -> None:
     h = env.ensure_server()
     path = h.server_root / "bundle-apply.yaml"
     path.write_text(_yaml_bundle(), encoding="utf-8")
-    s = CliSession(root=h.server_root, context=ExecutionContext.DRLINK_SERVER, recorder=env.recorder)
-    r = s.run("system", "apply", "configuration", str(path))
-    expect_true(r.rc == 0, "apply failed", evidence=r.combined)
-    expect_any(r.combined, ("APPLIED", "Applied", "applied", "NO_CHANGE", "NO CHANGE"))
+    r = _interactive_apply(env, h.server_root, path)
+    expect_true(r.exit_code == 0, "apply failed", evidence=r.visual)
+    expect_any(r.visual, ("APPLIED", "Applied", "applied", "NO_CHANGE", "NO CHANGE"))
 
 
 @scenario(
     "HUX-BUNDLE-005",
     "Reapply produces NO CHANGE",
     execution_context=ExecutionContext.DRLINK_SERVER,
-    interaction_mode=InteractionMode.ONE_SHOT,
-    layer=Layer.NORMAL,
+    interaction_mode=InteractionMode.MIXED,
+    layer=Layer.PTY,
     domain="bundle",
 )
 def hux_bundle_005(env: ScenarioEnv) -> None:
     h = env.ensure_server()
     path = h.server_root / "bundle-reapply.yaml"
     path.write_text(_yaml_bundle(), encoding="utf-8")
+    r1 = _interactive_apply(env, h.server_root, path)
+    expect_true(r1.exit_code == 0, "first apply failed", evidence=r1.visual)
     s = CliSession(root=h.server_root, context=ExecutionContext.DRLINK_SERVER, recorder=env.recorder)
-    r1 = s.run("system", "apply", "configuration", str(path))
-    expect_true(r1.rc == 0, "first apply failed", evidence=r1.combined)
     r2 = s.run("system", "apply", "configuration", str(path))
     expect_true(r2.rc == 0, "reapply failed", evidence=r2.combined)
     expect_any(r2.combined, ("NO_CHANGE", "NO CHANGE", "No change", "no change"))

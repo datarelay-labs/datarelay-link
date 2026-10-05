@@ -25,6 +25,7 @@ from drlink_configuration_bundle import (
     read_bundle_from_path_or_stdin,
 )
 import drlink_control_cli as cli
+from drlink_v24_bundle import prepare_v24_plan
 
 
 class TTYInput(io.StringIO):
@@ -54,6 +55,25 @@ class ConfigurationBundleTests(unittest.TestCase):
     def tearDown(self):
         self.plane.close()
         os.environ.pop("DRLINK_CONFIRM", None)
+
+    def test_canonical_v24_plan_validates_from_true_read_only_plane_without_mutation(self):
+        raw = """configurationBundle:
+  context: server
+  networkObjects:
+    - name: shadow-only
+      type: cidr
+      value: 203.0.113.10/32
+"""
+        before = self.plane.current_revision()
+        read_only = ControlPlane(self.tmp, read_only=True)
+        try:
+            plan = prepare_v24_plan(read_only, raw)
+            self.assertFalse(plan.no_change)
+            self.assertTrue(plan.mutating_changes)
+        finally:
+            read_only.close()
+        self.assertEqual(self.plane.current_revision(), before)
+        self.assertIsNone(self.plane.get_object("shadow-only"))
 
     def test_secret_field_rejected(self):
         raw = _bundle(
