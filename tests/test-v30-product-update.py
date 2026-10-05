@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 import io
+import json
+import os
 import sys
 import tempfile
 import unittest
@@ -80,6 +82,60 @@ class V30ProductUpdateTests(unittest.TestCase):
         dest.mkdir()
         with self.assertRaisesRegex(update.ProductUpdateError, "unsafe path"):
             update._safe_extract(bundle, dest)
+
+    def test_web_package_identity_must_match_exact_core_ref_and_channel(self):
+        package = Path(self.tmp) / "package"
+        package.mkdir()
+        manifest = {
+            "project_version": "3.0.0",
+            "channel": "development",
+            "git_ref": HEAD,
+            "source_head": HEAD,
+        }
+        (package / "release-manifest.json").write_text(
+            json.dumps(manifest), encoding="utf-8"
+        )
+        identity = update._package_identity(package, HEAD, "development")
+        self.assertEqual(identity["source_head"], HEAD)
+        with self.assertRaisesRegex(update.ProductUpdateError, "source ref"):
+            update._package_identity(package, "f" * 40, "development")
+        with self.assertRaisesRegex(update.ProductUpdateError, "channel"):
+            update._package_identity(package, HEAD, "stable")
+
+    def test_core_web_identity_mismatch_after_core_update_fails_recovery_required(self):
+        queued = update.create_request(
+            self.tmp, actor_id="web:admin", identity=self.identity
+        )
+        target = "f" * 40
+        with mock.patch.dict(
+            os.environ,
+            {"DRLINK_PRODUCT_UPDATE_SOURCE": str(ROOT)},
+            clear=False,
+        ), mock.patch.object(
+            update,
+            "_local_package",
+            return_value=(
+                ROOT,
+                {
+                    "project_version": "3.0.0",
+                    "source_ref": target,
+                    "source_head": target,
+                    "release_channel": "development",
+                },
+                "local-source:" + target,
+            ),
+        ), mock.patch.object(
+            update,
+            "_run_checked",
+            return_value=mock.Mock(returncode=0, stdout="", stderr=""),
+        ):
+            with self.assertRaisesRegex(
+                update.ProductUpdateError, "does not match the verified Web package"
+            ):
+                update.run_job(queued["job_id"], self.tmp)
+        status = update.read_status(self.tmp, queued["job_id"])
+        self.assertEqual(status["status"], "FAILED")
+        self.assertTrue(status["recovery_required"])
 
 
 if __name__ == "__main__":
