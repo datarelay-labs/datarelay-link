@@ -354,6 +354,21 @@ class V30WebServiceTests(unittest.TestCase):
         self.assertNotIn("command", serialized.lower())
         self.assertNotIn("secret", serialized.lower())
 
+        status, _, manual = self.request(
+            "POST",
+            "/api/v1/enrollments/manual",
+            {"platform": "linux", "ttl_seconds": 600, "label": "manual-web-agent"},
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, manual)
+        self.assertTrue(manual["enrollment_code"])
+        self.assertNotIn(manual["enrollment_code"], manual["command"])
+        status, _, listing = self.request("GET", "/api/v1/enrollments?limit=10")
+        self.assertEqual(status, 200, listing)
+        self.assertEqual(listing["total"], 2)
+        serialized = json.dumps(listing)
+        self.assertNotIn(manual["enrollment_code"], serialized)
+
     def test_guided_remote_access_rule_web_parity(self):
         self.login()
         plane = ControlPlane(self.tmp)

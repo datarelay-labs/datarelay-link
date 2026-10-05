@@ -165,29 +165,33 @@ function RemoteServicePanel(){
 }
 
 function EnrollmentPanel({data,refresh}:{data:any,refresh:()=>void}){
-  const [platform,setPlatform]=useState("linux"),[ttl,setTtl]=useState("3600"),[label,setLabel]=useState(""),[note,setNote]=useState("");
+  const [mode,setMode]=useState("zero-touch"),[platform,setPlatform]=useState("linux"),[ttl,setTtl]=useState("3600"),[label,setLabel]=useState(""),[note,setNote]=useState("");
   const [issued,setIssued]=useState<any>(null),[error,setError]=useState("");
   async function issue(){
     setError("");setIssued(null);
     try{
-      const result=await api("/api/v1/enrollments/zero-touch",{method:"POST",body:JSON.stringify({platform,ttl_seconds:ttl,label,note})});
+      const path=mode==="manual"?"/api/v1/enrollments/manual":"/api/v1/enrollments/zero-touch";
+      const result=await api(path,{method:"POST",body:JSON.stringify({platform,ttl_seconds:ttl,label,note})});
       setIssued(result);refresh();
     }catch(e:any){setError(e.message||String(e))}
   }
+  const maxTtl=mode==="manual"?"2592000":"86400";
   return <>
-    <div className="card"><h3>Connect Agent · Zero-Touch</h3>
-      <div className="muted">Creates one short-lived, single-use management enrollment. The install command is display-once and is not recoverable from enrollment history.</div>
+    <div className="card"><h3>Connect Agent</h3>
+      <div className="muted">Zero-Touch is recommended. Manual Enrollment keeps the credential out of the install command and prompts for it interactively. Secret-bearing material is display-once.</div>
       {error&&<div className="error">{error}</div>}
       <div className="toolbar">
-        <select value={platform} onChange={e=>setPlatform(e.target.value)}><option value="linux">Linux</option><option value="macos">macOS</option><option value="windows">Windows</option></select>
-        <input value={ttl} onChange={e=>setTtl(e.target.value)} placeholder="TTL seconds (60-86400)"/>
+        <select value={mode} onChange={e=>{setMode(e.target.value);setIssued(null);setTtl(e.target.value==="manual"?"600":"3600")}}><option value="zero-touch">Zero-Touch</option><option value="manual">Manual Enrollment</option></select>
+        <select value={platform} onChange={e=>setPlatform(e.target.value)}><option value="linux">Linux</option><option value="macos">macOS</option>{mode!=="manual"&&<option value="windows">Windows</option>}</select>
+        <input value={ttl} onChange={e=>setTtl(e.target.value)} placeholder={"TTL seconds (60-"+maxTtl+")"}/>
         <input value={label} onChange={e=>setLabel(e.target.value)} placeholder="Managed Host label"/>
         <input value={note} onChange={e=>setNote(e.target.value)} placeholder="Optional note"/>
-        <button className="primary" onClick={issue}>Issue Zero-Touch</button>
+        <button className="primary" onClick={issue}>Issue Enrollment</button>
       </div>
       {issued&&<div className="warning-box">
         <strong>Display once · expires {issued.expires_at}</strong>
-        <pre className="plan">{issued.command}</pre>
+        {issued.enrollment_code&&<><div>Enrollment Code</div><pre className="plan">{issued.enrollment_code}</pre></>}
+        <div>Install command</div><pre className="plan">{issued.command}</pre>
         <div>{issued.next_step}</div>
       </div>}
     </div>

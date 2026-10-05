@@ -79,6 +79,23 @@ class ManagementWebApiAdapter:
     def enrollment_list(self, *, actor: ManagementActor, limit: int = 50) -> dict[str, Any]:
         return self.core.enrollment_list(actor=actor, limit=limit)
 
+    def enrollment_issue_manual(
+        self,
+        *,
+        actor: ManagementActor,
+        platform: str,
+        ttl_seconds: int | None = None,
+        label: str = "",
+        note: str = "",
+    ) -> dict[str, Any]:
+        return self.core.enrollment_issue_manual(
+            actor=actor,
+            platform=platform,
+            ttl_seconds=ttl_seconds,
+            label=label,
+            note=note,
+        )
+
     def enrollment_issue_zero_touch(
         self,
         *,

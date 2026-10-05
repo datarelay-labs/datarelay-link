@@ -474,6 +474,11 @@ Server-local installer artifacts plus the existing allocator CA trust contract. 
 credential-bearing install command is returned only by the issuance response; ordinary
 Web enrollment history exposes lifecycle/status/expiry metadata only and cannot recover
 that command or bootstrap credential.
+ Manual Enrollment reuses the existing interactive Enrollment Code format: Linux/macOS
+use a display-once Enrollment Code plus a separate pinned-CA install command that does not
+embed the code; the default TTL is 10 minutes and the existing 30-day maximum remains in
+force. Windows Manual Enrollment is not introduced by Web; Windows continues to use the
+existing Zero-Touch path.
 
 The UI may provide copy actions for generated bootstrap guidance, but copying does not
 change credential lifetime or security semantics.

@@ -361,6 +361,14 @@ class WebApplication:
                 actor=self._actor(principal),
             )
         actor = self._actor(principal)
+        if path == "/api/v1/enrollments/manual":
+            return self.adapter.enrollment_issue_manual(
+                actor=actor,
+                platform=str(body.get("platform") or ""),
+                ttl_seconds=body.get("ttl_seconds"),
+                label=str(body.get("label") or ""),
+                note=str(body.get("note") or ""),
+            )
         if path == "/api/v1/enrollments/zero-touch":
             ttl_value = body.get("ttl_seconds")
             return self.adapter.enrollment_issue_zero_touch(

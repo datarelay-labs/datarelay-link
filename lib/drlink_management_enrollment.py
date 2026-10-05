@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import secrets
+import shlex
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -12,6 +16,7 @@ from drlink_control_db import ControlPlaneError
 import drlink_qualified_artifacts as artifacts
 import frp_enrollment_lifecycle as lifecycle
 import frp_audit
+import frp_control_locks
 import frp_pki
 import frp_server_config
 import frp_zero_touch
@@ -19,6 +24,8 @@ import frp_zero_touch
 SUPPORTED_PLATFORMS = frozenset({"linux", "macos", "windows"})
 DEFAULT_ZERO_TOUCH_TTL = 3600
 MAX_ZERO_TOUCH_TTL = 24 * 3600
+DEFAULT_MANUAL_TTL = 600
+MAX_MANUAL_TTL = 30 * 86400
 MAX_LABEL = 128
 MAX_NOTE = 1024
 
@@ -82,6 +89,37 @@ def _ttl(value: Any) -> int:
     if ttl < 60 or ttl > MAX_ZERO_TOUCH_TTL:
         raise ControlPlaneError("Zero-Touch TTL must be between 60 and 86400 seconds.")
     return ttl
+
+
+def _manual_ttl(value: Any) -> int:
+    if value is None:
+        return DEFAULT_MANUAL_TTL
+    if isinstance(value, bool):
+        raise ControlPlaneError("Enrollment TTL must be an integer number of seconds.")
+    try:
+        ttl = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ControlPlaneError("Enrollment TTL must be an integer number of seconds.") from exc
+    if ttl < 60 or ttl > MAX_MANUAL_TTL:
+        raise ControlPlaneError("Manual Enrollment TTL must be between 60 and 2592000 seconds.")
+    return ttl
+
+
+def _iso_from_epoch(value: int) -> str:
+    return datetime.fromtimestamp(int(value), timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _manual_command(context: dict[str, str]) -> str:
+    env_parts = [
+        "FRP_ALLOCATOR_URL=%s" % shlex.quote(context["allocator_url"]),
+        "FRP_ALLOCATOR_CA_SHA256=%s" % shlex.quote(context["ca_sha256"]),
+    ]
+    return frp_zero_touch.pinned_ca_manual_linux_command(
+        context["installer_url"],
+        context["allocator_url"],
+        context["ca_sha256"],
+        env_parts,
+    )
 
 
 def _state_paths(root: Optional[str], cfg: dict[str, Any]) -> tuple[Path, Path]:
@@ -243,6 +281,92 @@ class ManagementEnrollmentService:
             "display_once": True,
             "management_only": True,
             "next_step": "Run the command once on the target Agent host, then watch Managed Hosts for the first successful connection.",
+        }
+
+    def issue_manual(
+        self,
+        *,
+        platform: str,
+        ttl_seconds: Optional[int] = None,
+        label: str = "",
+        note: str = "",
+        actor_id: str = "web:unknown",
+    ) -> dict[str, Any]:
+        target = str(platform or "").strip().lower()
+        if target not in ("linux", "macos"):
+            raise ControlPlaneError(
+                "Manual Enrollment supports Linux/macOS; use Zero-Touch for Windows."
+            )
+        ttl = _manual_ttl(ttl_seconds)
+        safe_label = _text(label, "Managed Host label", MAX_LABEL)
+        safe_note = _text(note, "Enrollment note", MAX_NOTE)
+        cfg = _config(self.root)
+        context = _installer_context(self.root, cfg, target)
+        enrollments, _bootstrap = _state_paths(self.root, cfg)
+        allocator = _load_allocator()
+        enrollments.mkdir(parents=True, exist_ok=True)
+        try:
+            os.chmod(enrollments, 0o700)
+        except OSError:
+            pass
+        state_dir = enrollments.resolve().parent
+        record = None
+        for _attempt in range(8):
+            enrollment_id = secrets.token_hex(8)
+            secret = secrets.token_hex(32)
+            path = enrollments / (enrollment_id + ".json")
+            if path.exists():
+                continue
+            now = int(time.time())
+            record = {
+                "id": enrollment_id,
+                "secret": secret,
+                "created_at": _iso_from_epoch(now),
+                "expires_at": now + ttl,
+                "expires_at_iso": _iso_from_epoch(now + ttl),
+                "bound_machine_id": None,
+                "used_at": None,
+                "note": safe_note,
+                "label": safe_label,
+            }
+            with frp_control_locks.acquire_state_dir_control_locks(state_dir):
+                if path.exists():
+                    record = None
+                    continue
+                allocator.atomic_write_json(path, record, mode=0o600)
+            break
+        if record is None:
+            raise ControlPlaneError("Failed to allocate a unique Manual Enrollment Code.")
+        try:
+            lifecycle.maybe_run_retention_cleanup(
+                _allocator_cfg(self.root, cfg), force=True, audit_emit=frp_audit.try_emit
+            )
+        except Exception:
+            pass
+        command = _manual_command(context)
+        frp_audit.try_emit(
+            "enrollment.created",
+            actor=str(actor_id or "web:unknown"),
+            details={
+                "mode": "manual",
+                "platform": target,
+                "label": safe_label,
+                "enrollment_id": record["id"],
+                "ttl_seconds": ttl,
+            },
+        )
+        return {
+            "enrollment_id": record["id"],
+            "mode": "manual",
+            "platform": target,
+            "state": "pending",
+            "expires_at": record["expires_at_iso"],
+            "ttl_seconds": ttl,
+            "enrollment_code": "%s.%s" % (record["id"], record["secret"]),
+            "command": command,
+            "display_once": True,
+            "management_only": True,
+            "next_step": "Run the command on the target host and enter the displayed Enrollment Code when prompted.",
         }
 
     def list_enrollments(self, *, limit: int = 50) -> dict[str, Any]:

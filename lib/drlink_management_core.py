@@ -292,6 +292,26 @@ class ManagementCoreService:
             )
         return role
 
+    def enrollment_issue_manual(
+        self,
+        *,
+        actor: ManagementActor,
+        platform: str,
+        ttl_seconds: Optional[int] = None,
+        label: str = "",
+        note: str = "",
+    ) -> dict[str, Any]:
+        self._require_web_role(actor, "Admin")
+        if "management-config" not in actor.permissions:
+            raise ManagementAuthorizationError("management-config is required for enrollment issuance.")
+        return ManagementEnrollmentService(self.root).issue_manual(
+            platform=platform,
+            ttl_seconds=ttl_seconds,
+            label=label,
+            note=note,
+            actor_id=actor.actor_id,
+        )
+
     def enrollment_list(self, *, actor: ManagementActor, limit: int = 50) -> dict[str, Any]:
         if "management-read" not in actor.permissions:
             raise ManagementAuthorizationError("management-read is required for enrollment status.")

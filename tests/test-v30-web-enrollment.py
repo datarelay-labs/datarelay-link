@@ -83,6 +83,29 @@ class V30WebEnrollmentTests(unittest.TestCase):
         self.assertEqual(self.service.list_enrollments()["total"], 0)
 
 
+    def test_manual_enrollment_is_display_once_and_not_recoverable_from_history(self):
+        issued = self.service.issue_manual(
+            platform="linux", ttl_seconds=600, label="manual-agent", note="manual-lab"
+        )
+        self.assertTrue(issued["display_once"])
+        self.assertIn(".", issued["enrollment_code"])
+        self.assertNotIn(issued["enrollment_code"], issued["command"])
+        self.assertIn("curl", issued["command"])
+        history = self.service.list_enrollments()
+        serialized = json.dumps(history)
+        self.assertEqual(history["total"], 1)
+        self.assertNotIn(issued["enrollment_code"], serialized)
+        self.assertNotIn("command", serialized.lower())
+        self.assertNotIn("secret", serialized.lower())
+
+    def test_manual_platform_and_ttl_follow_existing_cli_contract(self):
+        macos = self.service.issue_manual(platform="macos", ttl_seconds=2592000)
+        self.assertEqual(macos["platform"], "macos")
+        with self.assertRaisesRegex(ControlPlaneError, "Zero-Touch for Windows"):
+            self.service.issue_manual(platform="windows", ttl_seconds=600)
+        with self.assertRaisesRegex(ControlPlaneError, "between 60 and 2592000"):
+            self.service.issue_manual(platform="linux", ttl_seconds=2592001)
+
     def test_core_role_boundary_and_audit_attribution(self):
         core = ManagementCoreService(self.tmp)
         admin = ManagementActor.authenticated(
