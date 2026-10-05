@@ -160,5 +160,68 @@ class V30ManagementMixedLoadTests(unittest.TestCase):
             engine.close()
 
 
+    def test_100_host_dashboard_search_and_policy_test_profile(self):
+        plane = ControlPlane(self.tmp)
+        try:
+            v24.set_network_object(
+                plane, "scale-src", type="ip", value="198.51.100.10", oneshot=True
+            )
+            v24.set_network_object(
+                plane, "scale-dst", type="ip", value="198.51.100.20", oneshot=True
+            )
+            v24.set_service_object(plane, "scale-ssh", type="tcp", port=22, oneshot=True)
+            v24.set_access_rule(
+                plane, "remote", "scale-allow-ssh", mode="whitelist",
+                source="scale-src", destination="scale-dst", service="scale-ssh",
+                enabled=True, oneshot=True,
+            )
+        finally:
+            plane.close()
+
+        with ManagementQueryService(self.tmp) as query:
+            summary = query.overview_summary()
+            self.assertEqual(summary["managed_hosts"]["total"], 100)
+            first = query.list_inventory("managed-host", limit=50)
+            self.assertEqual(len(first.items), 50)
+            self.assertIsNotNone(first.next_cursor)
+            second = query.list_inventory(
+                "managed-host", limit=50, cursor=first.next_cursor
+            )
+            self.assertEqual(len(second.items), 50)
+            self.assertIsNone(second.next_cursor)
+            found = query.global_search("host-099", limit=20)
+            self.assertEqual(
+                [row["id"] for row in found["items"] if row["resource_type"] == "managed-host"],
+                ["host-099"],
+            )
+            decision = query.policy_test(
+                plane="remote", source="scale-src", destination="scale-dst",
+                service="scale-ssh",
+            )
+            self.assertEqual(decision["result"], "ALLOW")
+            self.assertEqual(decision["matched_rules"], ["scale-allow-ssh"])
+
+    def test_100_host_disconnect_reconnect_storm_preserves_revision_and_invalidates_runtime_truth(self):
+        plane = ControlPlane(self.tmp)
+        try:
+            revision = plane.current_revision()
+            for idx in range(100):
+                ident = "host-%03d" % idx
+                self.assertTrue(plane.refresh_agent_lifecycle(ident, "disconnected"))
+                self.assertTrue(
+                    plane.refresh_agent_lifecycle(
+                        ident, "connected", agent_platform="linux", agent_version="3.0.0"
+                    )
+                )
+            self.assertEqual(plane.current_revision(), revision)
+            row = plane.conn.execute(
+                "SELECT COUNT(*) AS n FROM clients "
+                "WHERE agent_lifecycle_state='connected' AND connected=1"
+            ).fetchone()
+            self.assertEqual(int(row["n"]), 100)
+        finally:
+            plane.close()
+
+
 if __name__ == "__main__":
     unittest.main()

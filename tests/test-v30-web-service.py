@@ -1718,5 +1718,17 @@ class V30WebServiceTests(unittest.TestCase):
             self.server.app.adapter.invoke = original
 
 
+    def test_request_body_over_64k_is_rejected_before_core_dispatch(self):
+        self.login()
+        status, _, payload = self.request(
+            "POST",
+            "/api/v1/system/update/check",
+            {"target": "product", "padding": "x" * (70 * 1024)},
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 400, payload)
+        self.assertIn("too large", str(payload).lower())
+
+
 if __name__ == "__main__":
     unittest.main()
