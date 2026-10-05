@@ -787,36 +787,51 @@ def _validate_server_plan_applyability(
 ) -> None:
     """Dry-run Server mutations using the same CRUD/order as real Apply.
 
-    Validation runs inside a SQLite savepoint with batch mode enabled, so the
-    exact authoritative CRUD dependency checks execute but every mutation is
-    rolled back and no revision/audit/runtime activation is produced. This
-    keeps test/diff/apply dependency semantics aligned.
+    Writable callers validate in a rollback-only savepoint on their existing
+    transaction-capable connection. Public ``test configuration`` and
+    ``system diff configuration`` intentionally open the authoritative DB in
+    SQLite read-only/query-only mode; for those callers we copy that exact DB
+    image into an in-memory shadow and run the same CRUD validation there.
+    The authoritative database therefore remains genuinely read-only while
+    test/diff/apply dependency semantics stay identical.
     """
     ordered = _ordered_v24_changes(changes)
     if not ordered:
         return
 
+    validation_plane = plane
+    shadow_plane: Optional[ControlPlane] = None
+    if getattr(plane, "_read_only", False):
+        shadow_conn = sqlite3.connect(":memory:", isolation_level=None)
+        shadow_conn.row_factory = sqlite3.Row
+        plane.conn.backup(shadow_conn)
+        shadow_conn.execute("PRAGMA foreign_keys = ON")
+        shadow_plane = ControlPlane(root=plane.root, conn=shadow_conn)
+        validation_plane = shadow_plane
+
     savepoint = "drlink_bundle_applyability"
-    previous_batch = plane._batch_mode
-    previous_results = plane._batch_results
-    plane.conn.execute("SAVEPOINT %s" % savepoint)
-    plane._batch_mode = True
-    plane._batch_results = []
+    previous_batch = validation_plane._batch_mode
+    previous_results = validation_plane._batch_results
+    validation_plane.conn.execute("SAVEPOINT %s" % savepoint)
+    validation_plane._batch_mode = True
+    validation_plane._batch_results = []
     try:
         for change in ordered:
-            _apply_one(plane, change)
+            _apply_one(validation_plane, change)
     finally:
         # _apply_one() uses batch-aware control-plane mutations for Server
         # Bundle resources, so the savepoint remains valid on ordinary
         # validation failures. Be defensive if an unexpected path ended the
         # transaction.
-        if plane.conn.in_transaction:
+        if validation_plane.conn.in_transaction:
             try:
-                plane.conn.execute("ROLLBACK TO SAVEPOINT %s" % savepoint)
+                validation_plane.conn.execute("ROLLBACK TO SAVEPOINT %s" % savepoint)
             finally:
-                plane.conn.execute("RELEASE SAVEPOINT %s" % savepoint)
-        plane._batch_mode = previous_batch
-        plane._batch_results = previous_results
+                validation_plane.conn.execute("RELEASE SAVEPOINT %s" % savepoint)
+        validation_plane._batch_mode = previous_batch
+        validation_plane._batch_results = previous_results
+        if shadow_plane is not None:
+            shadow_plane.close()
 
 
 @contextmanager
