@@ -33,6 +33,32 @@ Current security/SASE/ZTNA products converge on a few durable patterns relevant 
 DRLink adopts these patterns selectively. It does **not** become a SOC analytics product,
 a generic infrastructure dashboard, or an identity-governance suite.
 
+### 2.1 Competitive reference matrix
+
+| Product | Current pattern relevant to DRLink | Adopt | Explicitly do not copy |
+|---|---|---|---|
+| Cloudflare One | task-oriented navigation, consolidated Networks/Insights, resource-aware search | bounded workspace navigation, global search, contextual settings | mega-product navigation or Cloudflare product taxonomy |
+| Palo Alto Strata Cloud Manager | Command Center as operational home with health/security/relationship drill-down | actionable home and source → control → destination relationship framing | SOC-scale telemetry density |
+| NetBird | Control Center relationship graph and Draft Mode | bounded access relationship view and change-preview context | topology graph for decoration |
+| Twingate | Policies grouped under one workspace with policy-type tabs | Remote/Internet/AI policy work in one access workspace | flattening distinct DRLink security semantics |
+| Tailscale | compact admin console and visual policy editor | simple list/detail and visual policy context | raw ACL-file-first UX |
+| Teleport | resource/session/access workflows nested under task areas | detail-centric resource workflow and contextual actions | full identity-governance scope |
+| HashiCorp Boundary | resource hierarchy and session/target context | relationship-first detail surfaces | Boundary scope model as product authority |
+| Netskope | role/action-oriented dashboard widgets with drill-down | small actionable attention/posture modules | large customizable NOC widget catalog |
+| NordLayer | restrained modern SaaS shell, refined surfaces and responsive components | visual polish/accessibility patterns | external identity/device-posture platform scope |
+
+Reference pages used for this 3.0 decision:
+
+- Cloudflare One navigation update: https://developers.cloudflare.com/changelog/post/new-cloudflare-one-navigation-and-product-experience/
+- Strata Cloud Manager Command Center: https://docs.paloaltonetworks.com/strata-cloud-manager/getting-started/command-center
+- NetBird Control Center: https://docs.netbird.io/manage/control-center
+- Twingate security policies: https://www.twingate.com/docs/security-policies
+- Tailscale visual policy editor: https://tailscale.com/docs/features/visual-editor
+- Teleport Web UI: https://goteleport.com/docs/connect-your-client/teleport-clients/web-ui/
+- Boundary console: https://developer.hashicorp.com/boundary/tutorials/get-started-community/community-get-started-console
+- Netskope dashboards: https://docs.netskope.com/en/netskope-dashboards
+- NordLayer Control Panel 2.0: https://help.nordlayer.com/docs/control-panel-2
+
 ## 3. DR Control visual parity contract
 
 DRLink copies the visual system semantics, not Control application code.
@@ -144,12 +170,12 @@ Infrastructure
   Managed Hosts
   Remote Services
   Objects & Groups
-  Connect Agent (converges toward contextual CTA)
+  Connect Agent is contextual only (Overview / host workspace / command palette)
 
 Access Control
   Access Operations
   Policies
-  Draft Workspace (converges toward contextual mode)
+  Draft Workspace is contextual only (Access workspace)
 
 Operations
   Jobs
@@ -158,10 +184,10 @@ Operations
 
 Observability
   Audit
-  Doctor / Troubleshoot
   Health
-  Search (converges toward global search)
-  Saved Views (converges toward local list action)
+  Doctor / Troubleshoot is contextual only
+  Search is the global command/search surface
+  Saved Views is contextual through search/list workflows
 
 Administration
   Users
@@ -249,6 +275,13 @@ preview, and recent access decisions from the same context.
 - visual simplification may reduce navigation noise but never reduce authorization checks.
 
 ## 10. DRL3-7A implementation order
+
+Current implementation checkpoint (2026-10-05): semantic token parity, Control-compatible
+App Shell, collapsible navigation, sticky header, light/dark theme, Command Center home,
+contextual global search, Managed Host/Remote Service list-detail drawers, and the first
+relationship-oriented Access workspace are implemented. Remaining work focuses on deeper
+resource context, removing the remaining utility destinations from permanent navigation,
+accessibility/responsive browser validation, and exact-candidate UX qualification.
 
 1. foundation semantic tokens + authenticated shell parity;
 2. collapsible grouped sidebar + sticky top header + theme/local preference;
