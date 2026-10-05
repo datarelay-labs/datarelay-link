@@ -193,6 +193,7 @@ class DurableAuditSpool:
         *,
         segment_bytes: int = DEFAULT_SEGMENT_BYTES,
         high_water_bytes: int = DEFAULT_HIGH_WATER_BYTES,
+        create: bool = True,
     ):
         self.root = Path(root)
         self.source = _safe_text(source, limit=128)
@@ -200,11 +201,12 @@ class DurableAuditSpool:
             raise ValueError("audit spool source is required")
         self.segment_bytes = max(MAX_EVENT_BYTES * 2, int(segment_bytes))
         self.high_water_bytes = max(self.segment_bytes * 2, int(high_water_bytes))
-        self.root.mkdir(parents=True, exist_ok=True)
-        try:
-            os.chmod(self.root, 0o700)
-        except OSError:
-            pass
+        if create:
+            self.root.mkdir(parents=True, exist_ok=True)
+            try:
+                os.chmod(self.root, 0o700)
+            except OSError:
+                pass
         self.lock_path = self.root / ".lock"
         self.state_path = self.root / "state.json"
         self.active_path = self.root / "active.jsonl"

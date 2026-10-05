@@ -11,6 +11,7 @@ from __future__ import annotations
 import base64
 import json
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -21,6 +22,10 @@ from drlink_management_catalog import mcp_management_descriptors
 DEFAULT_PAGE_SIZE = 50
 MAX_PAGE_SIZE = 200
 _CURSOR_VERSION = 1
+ATTENTION_DENY_WINDOW = timedelta(minutes=15)
+ATTENTION_DENY_THRESHOLD = 3
+ATTENTION_EXPIRY_WINDOW = timedelta(hours=24)
+ATTENTION_AUDIT_BACKLOG_SECONDS = 300
 
 # A catalog entry is not advertised merely because its name/schema is frozen.
 # Only handlers implemented by this service may be projected by a future MCP
@@ -857,9 +862,13 @@ class ManagementQueryService:
             if len(hosts) == 1:
                 client_id = str(hosts[0]["id"])
                 candidates = self.conn.execute(
-                    "SELECT id,name,service_type,target_host,target_port,public_port,"
-                    "enabled,released FROM published_services "
-                    "WHERE client_id=? AND released=0 ORDER BY name COLLATE NOCASE LIMIT 50",
+                    "SELECT s.id,s.name,s.service_type,s.target_host,s.target_port,"
+                    "s.public_port,s.enabled,s.released,m.status AS runtime_status,"
+                    "m.pending_allocation,m.reason AS runtime_reason,m.runtime_verified "
+                    "FROM published_services s "
+                    "LEFT JOIN remote_service_meta m ON m.service_id=s.id "
+                    "WHERE s.client_id=? AND s.released=0 "
+                    "ORDER BY s.name COLLATE NOCASE LIMIT 50",
                     (client_id,),
                 ).fetchall()
                 direct = [
@@ -889,16 +898,41 @@ class ManagementQueryService:
                 )
             else:
                 row = remote_service
-                healthy = bool(row["enabled"]) and not bool(row["released"])
+                enabled = bool(row["enabled"]) and not bool(row["released"])
+                runtime_status = str(row["runtime_status"] or "").upper()
+                runtime_verified = bool(row["runtime_verified"])
+                pending_allocation = bool(row["pending_allocation"])
+                runtime_reason = str(row["runtime_reason"] or "")
+                if not enabled:
+                    state = "FAILED"
+                    summary = "Remote Service is disabled or released."
+                elif runtime_status == "HEALTHY" and runtime_verified and not pending_allocation:
+                    state = "HEALTHY"
+                    summary = "Remote Service runtime is verified HEALTHY."
+                elif runtime_status in ("DEGRADED", "DISABLED"):
+                    state = "FAILED"
+                    summary = runtime_reason or (
+                        "Remote Service runtime is %s." % runtime_status
+                    )
+                else:
+                    state = "UNKNOWN"
+                    summary = (
+                        runtime_reason
+                        or "Remote Service runtime verification is unavailable or pending."
+                    )
                 add(
                     "remote_service",
-                    "HEALTHY" if healthy else "FAILED",
-                    "Remote Service is enabled." if healthy else "Remote Service is disabled or released.",
+                    state,
+                    summary,
                     id=row["id"],
                     name=row["name"],
                     public_port=row["public_port"],
                     target_host=row["target_host"],
                     target_port=row["target_port"],
+                    runtime_status=runtime_status or "UNKNOWN",
+                    runtime_verified=runtime_verified,
+                    pending_allocation=pending_allocation,
+                    reason=runtime_reason,
                 )
         else:
             add("remote_service", "N_A", "Remote Service correlation applies only to Remote Access.")
@@ -943,11 +977,37 @@ class ManagementQueryService:
             add("dns", "N_A", "DNS destination validation is not applicable to this access plane.")
 
         if family == "remote":
-            add(
-                "target_reachability",
-                "UNKNOWN",
-                "No configured target-health evidence was found; Connection Diagnosis does not launch an ad-hoc probe.",
-            )
+            if remote_service is None:
+                add(
+                    "target_reachability",
+                    "UNKNOWN",
+                    "No unique Remote Service was correlated, so target health cannot be determined.",
+                )
+            else:
+                rs_status = str(remote_service["runtime_status"] or "").upper()
+                rs_verified = bool(remote_service["runtime_verified"])
+                rs_reason = str(remote_service["runtime_reason"] or "")
+                if rs_status == "HEALTHY" and rs_verified:
+                    add(
+                        "target_reachability",
+                        "HEALTHY",
+                        "Agent runtime verification reports the Remote Service target path HEALTHY.",
+                        reason=rs_reason,
+                    )
+                elif rs_status == "DEGRADED":
+                    add(
+                        "target_reachability",
+                        "FAILED",
+                        rs_reason or "Agent/runtime evidence reports the Remote Service target path DEGRADED.",
+                        reason=rs_reason,
+                    )
+                else:
+                    add(
+                        "target_reachability",
+                        "UNKNOWN",
+                        "No verified target-health result is available; Connection Diagnosis does not launch an ad-hoc probe.",
+                        reason=rs_reason,
+                    )
         else:
             add("target_reachability", "N_A", "Target reachability probe is not applicable here.")
 
@@ -1058,12 +1118,231 @@ class ManagementQueryService:
             "policy_trace": policy_trace,
         }
 
+    @staticmethod
+    def _attention_utc_text(value: datetime) -> str:
+        return value.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace(
+            "+00:00", "Z"
+        )
+
+    def _remote_service_attention(self) -> dict[str, Any]:
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS degraded FROM published_services s "
+            "JOIN remote_service_meta m ON m.service_id=s.id "
+            "WHERE s.released=0 AND UPPER(COALESCE(m.status,''))='DEGRADED'"
+        ).fetchone()
+        return {"degraded": int(row["degraded"] or 0)}
+
+    def _runtime_attention(self) -> dict[str, Any]:
+        core = ControlPlane(self.root, read_only=True)
+        try:
+            current_revision = int(core.current_revision())
+        finally:
+            core.close()
+        rows = self.conn.execute(
+            "SELECT plane,db_revision,generation,status,error FROM runtime_generations "
+            "ORDER BY plane"
+        ).fetchall()
+        mismatches = []
+        failures = []
+        for row in rows:
+            status = str(row["status"] or "unknown").lower()
+            item = {
+                "plane": str(row["plane"]),
+                "db_revision": row["db_revision"],
+                "generation": row["generation"],
+                "status": status,
+                "error": str(row["error"] or ""),
+            }
+            if status in ("failed", "mismatch"):
+                failures.append(item)
+                continue
+            if (
+                status == "active"
+                and row["generation"] is not None
+                and int(row["generation"]) != current_revision
+            ):
+                mismatches.append(item)
+        return {
+            "current_revision": current_revision,
+            "mismatches": mismatches,
+            "failures": failures,
+            "count": len(mismatches) + len(failures),
+        }
+
+    def _deny_attention(self, *, now: datetime) -> dict[str, Any]:
+        since = self._attention_utc_text(now - ATTENTION_DENY_WINDOW)
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS n FROM audit_events "
+            "WHERE category='ACCESS_DECISION' AND UPPER(COALESCE(result,''))='DENY' "
+            "AND occurred_at>=?",
+            (since,),
+        ).fetchone()
+        count = int(row["n"] or 0)
+        return {
+            "count": count,
+            "since": since,
+            "threshold": ATTENTION_DENY_THRESHOLD,
+            "repeated": count >= ATTENTION_DENY_THRESHOLD,
+        }
+
+    @staticmethod
+    def _parse_attention_timestamp(value: str) -> Optional[datetime]:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            return None
+        return parsed.astimezone(timezone.utc)
+
+    def _temporary_access_attention(self, *, now: datetime) -> dict[str, Any]:
+        from drlink_v30_temporal import ACTIVE, CLOCK_UNTRUSTED, temporary_access_state
+
+        rows = list(
+            self.conn.execute(
+                "SELECT plane,name,expires_at,created_at FROM policy_rules "
+                "WHERE enabled=1 AND expires_at IS NOT NULL AND expires_at<>''"
+            )
+        )
+        rows.extend(
+            self.conn.execute(
+                "SELECT 'ai' AS plane,name,expires_at,created_at FROM ai_policy_rules "
+                "WHERE enabled=1 AND expires_at IS NOT NULL AND expires_at<>''"
+            )
+        )
+        expiring = []
+        clock_untrusted = []
+        horizon = now + ATTENTION_EXPIRY_WINDOW
+        for row in rows:
+            state = temporary_access_state(
+                row["expires_at"],
+                created_at=row["created_at"],
+                now=now,
+            )
+            item = {
+                "plane": str(row["plane"]),
+                "name": str(row["name"]),
+                "expires_at": state.expires_at,
+                "status": state.status,
+            }
+            if state.status == CLOCK_UNTRUSTED:
+                clock_untrusted.append(item)
+                continue
+            expiry = self._parse_attention_timestamp(str(state.expires_at or ""))
+            if state.status == ACTIVE and expiry is not None and expiry <= horizon:
+                expiring.append(item)
+        return {
+            "expiring": expiring[:100],
+            "expiring_count": len(expiring),
+            "clock_untrusted": clock_untrusted[:100],
+            "clock_untrusted_count": len(clock_untrusted),
+            "window_hours": int(ATTENTION_EXPIRY_WINDOW.total_seconds() // 3600),
+        }
+
+    def _audit_spool_attention(self) -> dict[str, Any]:
+        from drlink_v30_audit import DurableAuditSpool, default_access_spool_root
+
+        health = []
+        degraded = []
+        for plane, source in (
+            ("remote", "remote-access"),
+            ("internet", "internet-access"),
+        ):
+            spool = DurableAuditSpool(
+                default_access_spool_root(plane, self.root),
+                source,
+                create=False,
+            )
+            one = dict(spool.health())
+            one["plane"] = plane
+            health.append(one)
+            unhealthy = bool(
+                one.get("high_water")
+                or int(one.get("enqueue_failures") or 0) > 0
+                or int(one.get("dropped_deny_count") or 0) > 0
+                or (
+                    int(one.get("segment_count") or 0) > 0
+                    and int(one.get("oldest_segment_age_seconds") or 0)
+                    >= ATTENTION_AUDIT_BACKLOG_SECONDS
+                )
+            )
+            if unhealthy:
+                degraded.append(one)
+        return {
+            "items": health,
+            "degraded": degraded,
+            "degraded_count": len(degraded),
+            "backlog_seconds": ATTENTION_AUDIT_BACKLOG_SECONDS,
+        }
+
+    def _system_readiness_attention(self) -> dict[str, Any]:
+        from drlink_management_system import ManagementSystemService
+
+        try:
+            status = ManagementSystemService(self.root).status()
+        except Exception as exc:
+            return {
+                "certificate_problem": False,
+                "backup_problem": False,
+                "update_problem": False,
+                "error": str(exc)[:512],
+            }
+        certificate = dict(status.get("certificate") or {})
+        cert_state = str(certificate.get("certificate") or "").upper()
+        configured = (
+            str(certificate.get("mode") or "").lower() != "not configured"
+            or str(certificate.get("hostname") or "").lower() != "not configured"
+        )
+        certificate_problem = bool(
+            cert_state
+            in {
+                "RENEWAL_DUE",
+                "RENEWAL_FAILED_USING_CURRENT_CERT",
+                "EXPIRED",
+                "INVALID",
+                "PENDING_ISSUANCE",
+            }
+            or (configured and cert_state == "ABSENT")
+            or certificate.get("last_failure_class")
+        )
+        backup = dict(status.get("backup") or {})
+        backup_problem = not bool(
+            backup.get("create_available") and backup.get("validate_available")
+        )
+        update = dict(status.get("update") or {})
+        update_problem = not bool(
+            update.get("product_check_available") and update.get("engine_check_available")
+        )
+        return {
+            "certificate_problem": certificate_problem,
+            "certificate": certificate,
+            "backup_problem": backup_problem,
+            "backup": backup,
+            "update_problem": update_problem,
+            "update": update,
+            "error": "",
+        }
+
     def attention_summary(self) -> dict[str, Any]:
-        """Return derived attention items without becoming operational authority."""
+        """Return bounded derived operator attention without becoming authority."""
         overview = self.overview_summary()
         hosts = overview.get("managed_hosts") or {}
         jobs = overview.get("management_jobs") or {}
         version = self.version_drift()
+        now = datetime.now(timezone.utc)
+        remote_services = self._remote_service_attention()
+        runtime = self._runtime_attention()
+        denies = self._deny_attention(now=now)
+        temporary = self._temporary_access_attention(now=now)
+        audit_spool = self._audit_spool_attention()
+        system = self._system_readiness_attention()
+        cutoffs = self.active_cutoff_summary()
+
         items: list[dict[str, Any]] = []
         for key, label, severity in (
             ("disconnected", "Disconnected Managed Hosts", "warning"),
@@ -1073,13 +1352,97 @@ class ManagementQueryService:
             count = int(hosts.get(key) or 0)
             if count:
                 items.append({"kind": key, "label": label, "count": count, "severity": severity})
+        if int(remote_services.get("degraded") or 0):
+            items.append({
+                "kind": "degraded-remote-services",
+                "label": "DEGRADED Remote Services",
+                "count": int(remote_services["degraded"]),
+                "severity": "warning",
+            })
+        if int(runtime.get("count") or 0):
+            items.append({
+                "kind": "runtime-mismatch",
+                "label": "Policy / Runtime Revision or Activation Problem",
+                "count": int(runtime["count"]),
+                "severity": "critical" if runtime.get("failures") else "warning",
+            })
+        if bool(denies.get("repeated")):
+            items.append({
+                "kind": "repeated-policy-denies",
+                "label": "Repeated Policy Denies",
+                "count": int(denies["count"]),
+                "severity": "warning",
+            })
         if version["drift_count"]:
-            items.append({"kind": "version-drift", "label": "Agent Version Drift", "count": int(version["drift_count"]), "severity": "warning"})
+            items.append({
+                "kind": "version-drift",
+                "label": "Agent Version Drift",
+                "count": int(version["drift_count"]),
+                "severity": "warning",
+            })
+        if int(temporary.get("clock_untrusted_count") or 0):
+            items.append({
+                "kind": "temporary-access-clock",
+                "label": "Temporary Access Clock Trust Problem",
+                "count": int(temporary["clock_untrusted_count"]),
+                "severity": "critical",
+            })
+        if int(temporary.get("expiring_count") or 0):
+            items.append({
+                "kind": "temporary-access-expiring",
+                "label": "Temporary Access Nearing Expiry",
+                "count": int(temporary["expiring_count"]),
+                "severity": "warning",
+            })
+        if int(audit_spool.get("degraded_count") or 0):
+            items.append({
+                "kind": "audit-spool",
+                "label": "Audit Spool / High-Water Degradation",
+                "count": int(audit_spool["degraded_count"]),
+                "severity": "critical",
+            })
+        if bool(system.get("certificate_problem")):
+            items.append({
+                "kind": "certificate-readiness",
+                "label": "Certificate / TLS Readiness",
+                "count": 1,
+                "severity": "warning",
+            })
+        if bool(system.get("backup_problem")):
+            items.append({
+                "kind": "backup-readiness",
+                "label": "Backup / Restore Readiness",
+                "count": 1,
+                "severity": "warning",
+            })
+        if bool(system.get("update_problem")):
+            items.append({
+                "kind": "update-readiness",
+                "label": "Update / Provenance Readiness",
+                "count": 1,
+                "severity": "warning",
+            })
+        if system.get("error"):
+            items.append({
+                "kind": "system-readiness",
+                "label": "System Readiness Check Unavailable",
+                "count": 1,
+                "severity": "warning",
+            })
         if int(jobs.get("failed_jobs") or 0):
-            items.append({"kind": "failed-jobs", "label": "Failed Management Jobs", "count": int(jobs["failed_jobs"]), "severity": "warning"})
+            items.append({
+                "kind": "failed-jobs",
+                "label": "Failed Management Jobs",
+                "count": int(jobs["failed_jobs"]),
+                "severity": "warning",
+            })
         if bool(jobs.get("saturated")):
-            items.append({"kind": "job-saturation", "label": "Management Job Queue Saturated", "count": int(jobs.get("active_jobs") or 0), "severity": "critical"})
-        cutoffs = self.active_cutoff_summary()
+            items.append({
+                "kind": "job-saturation",
+                "label": "Management Job Queue Saturated",
+                "count": int(jobs.get("active_jobs") or 0),
+                "severity": "critical",
+            })
         if int(cutoffs.get("count") or 0):
             items.append({
                 "kind": "emergency-cutoff",
@@ -1087,7 +1450,26 @@ class ManagementQueryService:
                 "count": int(cutoffs["count"]),
                 "severity": "critical",
             })
-        return {"items": items, "count": len(items), "authoritative": False}
+        return {
+            "items": items,
+            "count": len(items),
+            "authoritative": False,
+            "generated_at": self._attention_utc_text(now),
+            "signals": {
+                "remote_services": remote_services,
+                "runtime": runtime,
+                "denies": denies,
+                "temporary_access": temporary,
+                "audit_spool": audit_spool,
+                "system_readiness": system,
+                "cutoffs": cutoffs,
+                "jobs": dict(jobs),
+                "version": {
+                    "drift_count": int(version.get("drift_count") or 0),
+                    "unknown_count": int(version.get("unknown_count") or 0),
+                },
+            },
+        }
 
     def health(self) -> dict[str, Any]:
         """Return bounded Core health without creating configuration state."""

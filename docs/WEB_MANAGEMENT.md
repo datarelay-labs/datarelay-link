@@ -904,6 +904,21 @@ The current DRL3-5 implementation contract keeps these operations Core-owned:
   sessions were terminated.
 - Attention Center derives an Emergency Cutoff item from authoritative active cutoff
   rows. Bounded cutoff reads report total/returned counts and truncation explicitly.
+- Connection Diagnosis uses Remote Service runtime evidence only when
+  `remote_service_meta.status/runtime_verified/pending_allocation/reason` proves it;
+  an enabled Published Service without runtime verification remains UNKNOWN rather than
+  being displayed as healthy. Verified DEGRADED target/runtime evidence is surfaced as a
+  failed layer without launching a new probe.
+- Attention Center is a bounded derived view over existing signals: disconnected/stale
+  Hosts, DEGRADED Remote Services, canonical runtime-generation mismatch/failure,
+  repeated recent access DENYs, version drift, Temporary Access nearing expiry or
+  clock-trust failure, audit-spool/high-water degradation, certificate/backup/update
+  readiness, failed/saturated Jobs, and active Emergency Cutoff state.
+- Audit-spool health inspection is read-only: an absent spool stays absent merely because
+  Overview/Attention was opened. Existing spool state is read without modifying its
+  sequence/error files.
+- `GET /api/v1/emergency-cutoffs` exposes bounded active/recovered cutoff state to the
+  Web view; mutation still uses only the existing Core preview/apply/clear operations.
 
 ### 23.5 Active connection termination — P2 / conditional
 

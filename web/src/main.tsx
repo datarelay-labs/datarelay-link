@@ -652,11 +652,15 @@ function SystemPanel({data,operator}:{data:any,operator:any}){
 function AccessOperations({operator}:{operator:any}){
   const [plane,setPlane]=useState("remote"),[source,setSource]=useState(""),[destination,setDestination]=useState(""),[selector,setSelector]=useState("");
   const [diagnosis,setDiagnosis]=useState<any>(null),[live,setLive]=useState<any>(null),[error,setError]=useState("");
-  const [liveResource,setLiveResource]=useState("");
+  const [liveResource,setLiveResource]=useState(""),[cutoffState,setCutoffState]=useState<any>(null);
   const [scopeKind,setScopeKind]=useState("plane"),[scopeRef,setScopeRef]=useState(""),[cutoffOperation,setCutoffOperation]=useState("apply"),[reason,setReason]=useState("");
   const [cutoffPreview,setCutoffPreview]=useState<any>(null),[cutoffConfirm,setCutoffConfirm]=useState(""),[cutoffMessage,setCutoffMessage]=useState("");
   const scopeOptions:Record<string,string[]>={remote:["plane","remote-service"],internet:["plane","managed-host"],ai:["plane","ai-identity"]};
 
+  async function loadCutoffs(){
+    try{setCutoffState(await api("/api/v1/emergency-cutoffs?plane="+encodeURIComponent(plane)))}catch(e:any){setError(e.message||String(e))}
+  }
+  useEffect(()=>{loadCutoffs()},[plane]);
   function changePlane(value:string){setPlane(value);setSelector("");setDiagnosis(null);setLive(null);setScopeKind("plane");setScopeRef("");setCutoffPreview(null);setCutoffConfirm("")}
   async function runDiagnosis(){
     setError("");setDiagnosis(null);
@@ -693,6 +697,7 @@ function AccessOperations({operator}:{operator:any}){
       setCutoffMessage((cutoffOperation==="clear"?"Cutoff cleared":"Cutoff applied")+" at revision "+result.revision+"; existing sessions terminated: "+String(result.active_sessions_terminated));
       setCutoffPreview(null);setCutoffConfirm("");
       await loadLive();
+      await loadCutoffs();
     }catch(e:any){setError(e.message||String(e))}
   }
   const layers=(diagnosis?.layers||[]).map((x:any)=>({layer:x.layer,status:x.status,summary:x.summary}));
@@ -726,6 +731,12 @@ function AccessOperations({operator}:{operator:any}){
         {live.reason&&<div className="warning-box">{live.reason}</div>}
         <Table items={live.observations||[]}/>
       </>}
+    </div>
+    <div className="card">
+      <h3>Active Emergency Cutoffs</h3>
+      <div className="muted">Authoritative active override state for the selected plane. Clearing a cutoff reveals the unchanged normal policy.</div>
+      {cutoffState&&<div className="grid"><Metric label="Active" value={cutoffState.count||0}/><Metric label="Returned" value={cutoffState.returned||0}/><Metric label="Truncated" value={cutoffState.truncated?"YES":"NO"}/></div>}
+      <Table items={cutoffState?.items||[]}/>
     </div>
     {operator.role==="Admin"&&<div className="card">
       <h3>Emergency New-Access Cutoff</h3>

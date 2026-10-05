@@ -5,6 +5,7 @@ import os
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -160,6 +161,17 @@ class V30ManagementQueryServiceTests(unittest.TestCase):
                 public_port=6001,
                 enabled=True,
             )
+            published = plane.conn.execute(
+                "SELECT id FROM published_services WHERE client_id='client-a' "
+                "AND name='ssh-admin'"
+            ).fetchone()
+            plane.conn.execute(
+                "INSERT OR REPLACE INTO remote_service_meta("
+                "service_id,status,pool_class,pending_allocation,delete_pending,"
+                "reason,runtime_verified"
+                ") VALUES (?,'HEALTHY','normal',0,0,'',1)",
+                (published["id"],),
+            )
             v24.set_access_rule(
                 plane,
                 "remote",
@@ -192,7 +204,7 @@ class V30ManagementQueryServiceTests(unittest.TestCase):
         self.assertEqual(by_layer["managed_host"]["status"], "HEALTHY")
         self.assertEqual(by_layer["remote_service"]["status"], "HEALTHY")
         self.assertEqual(by_layer["runtime"]["status"], "HEALTHY")
-        self.assertEqual(by_layer["target_reachability"]["status"], "UNKNOWN")
+        self.assertEqual(by_layer["target_reachability"]["status"], "HEALTHY")
         self.assertEqual(by_layer["recent_activity"]["status"], "UNKNOWN")
         self.assertFalse(diagnosis["network_probe_performed"])
         self.assertTrue(diagnosis["side_effect_free"])
@@ -203,6 +215,56 @@ class V30ManagementQueryServiceTests(unittest.TestCase):
             self.assertEqual(check.current_revision(), expected_revision)
         finally:
             check.close()
+
+    def test_remote_service_degraded_runtime_is_failed_without_probe(self):
+        plane = ControlPlane(self.tmp)
+        try:
+            plane.set_published_service(
+                "client-a",
+                "ssh-degraded",
+                service_type="ssh",
+                target_mode="self",
+                target_port=22,
+                public_port=6002,
+                enabled=True,
+            )
+            published = plane.conn.execute(
+                "SELECT id FROM published_services WHERE client_id='client-a' "
+                "AND name='ssh-degraded'"
+            ).fetchone()
+            plane.conn.execute(
+                "INSERT OR REPLACE INTO remote_service_meta("
+                "service_id,status,pool_class,pending_allocation,delete_pending,"
+                "reason,runtime_verified"
+                ") VALUES (?,'DEGRADED','normal',0,0,'target refused connection',0)",
+                (published["id"],),
+            )
+            v24.set_access_rule(
+                plane,
+                "remote",
+                "allow-alpha-ssh-degraded",
+                mode="whitelist",
+                source="src",
+                destination="alpha",
+                service="ssh",
+                enabled=True,
+                oneshot=True,
+            )
+        finally:
+            plane.close()
+
+        diagnosis = self.service.connection_diagnosis(
+            plane="remote",
+            source="src",
+            destination="alpha",
+            service="ssh-degraded",
+        )
+        by_layer = {item["layer"]: item for item in diagnosis["layers"]}
+        self.assertEqual(by_layer["remote_service"]["status"], "FAILED")
+        self.assertEqual(by_layer["target_reachability"]["status"], "FAILED")
+        self.assertIn("target refused", by_layer["target_reachability"]["summary"])
+        self.assertFalse(diagnosis["network_probe_performed"])
+        self.assertEqual(diagnosis["overall"], "FAILED")
 
     def test_internet_diagnosis_never_launches_live_dns(self):
         plane = ControlPlane(self.tmp)
@@ -329,6 +391,116 @@ class V30ManagementQueryServiceTests(unittest.TestCase):
         self.assertEqual(cutoff["status"], "FAILED")
         self.assertFalse(cutoff["evidence"]["active_sessions_terminated"])
         self.assertEqual(diagnosis["overall"], "FAILED")
+
+    def test_attention_center_derives_required_local_signals_without_spool_creation(self):
+        from drlink_control_db import utc_now_iso
+        from drlink_v30_audit import default_access_spool_root
+
+        remote_spool = default_access_spool_root("remote", self.tmp)
+        internet_spool = default_access_spool_root("internet", self.tmp)
+        self.assertFalse(remote_spool.exists())
+        self.assertFalse(internet_spool.exists())
+
+        plane = ControlPlane(self.tmp)
+        try:
+            plane.set_published_service(
+                "client-a",
+                "attention-ssh",
+                service_type="ssh",
+                target_mode="self",
+                target_port=22,
+                public_port=6003,
+                enabled=True,
+            )
+            published = plane.conn.execute(
+                "SELECT id FROM published_services WHERE client_id='client-a' "
+                "AND name='attention-ssh'"
+            ).fetchone()
+            plane.conn.execute(
+                "INSERT OR REPLACE INTO remote_service_meta("
+                "service_id,status,pool_class,pending_allocation,delete_pending,"
+                "reason,runtime_verified"
+                ") VALUES (?,'DEGRADED','normal',0,0,'runtime degraded',0)",
+                (published["id"],),
+            )
+            current = plane.current_revision()
+            plane.conn.execute(
+                "INSERT OR REPLACE INTO runtime_generations"
+                "(plane,db_revision,generation,status,artifact_path,activated_at,error) "
+                "VALUES ('internet',?,?, 'active','',?,NULL)",
+                (current, max(current - 1, 0), utc_now_iso()),
+            )
+            expiry = (
+                datetime.now(timezone.utc) + timedelta(hours=1)
+            ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+            plane.conn.execute(
+                "UPDATE policy_rules SET expires_at=? "
+                "WHERE plane='remote' AND name='allow-ssh'",
+                (expiry,),
+            )
+            occurred = datetime.now(timezone.utc).replace(
+                microsecond=0
+            ).isoformat().replace("+00:00", "Z")
+            for index in range(3):
+                plane.conn.execute(
+                    "INSERT INTO audit_events("
+                    "timestamp,revision,actor,action,entity_type,entity_id,operation,"
+                    "result,category,occurred_at,source"
+                    ") VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        occurred,
+                        None,
+                        "runtime",
+                        "authorize",
+                        "access",
+                        "deny-%s" % index,
+                        "authorize",
+                        "DENY",
+                        "ACCESS_DECISION",
+                        occurred,
+                        "remote-access",
+                    ),
+                )
+        finally:
+            plane.close()
+
+        attention = self.service.attention_summary()
+        kinds = {item["kind"] for item in attention["items"]}
+        self.assertIn("degraded-remote-services", kinds)
+        self.assertIn("runtime-mismatch", kinds)
+        self.assertIn("repeated-policy-denies", kinds)
+        self.assertIn("temporary-access-expiring", kinds)
+        self.assertEqual(
+            attention["signals"]["denies"]["threshold"], 3
+        )
+        self.assertEqual(
+            attention["signals"]["temporary_access"]["expiring_count"], 1
+        )
+        self.assertFalse(remote_spool.exists())
+        self.assertFalse(internet_spool.exists())
+        self.assertFalse(attention["authoritative"])
+
+    def test_attention_reports_existing_audit_spool_degradation_read_only(self):
+        from drlink_v30_audit import default_access_spool_root
+
+        spool_root = default_access_spool_root("remote", self.tmp)
+        spool_root.mkdir(parents=True, exist_ok=True)
+        state_path = spool_root / "state.json"
+        state_path.write_text(
+            '{"next_sequence":2,"enqueue_failures":1,'
+            '"dropped_deny_count":0,"last_error_at":"2026-10-05T00:00:00Z"}\n',
+            encoding="utf-8",
+        )
+        before = state_path.read_bytes()
+        attention = self.service.attention_summary()
+        item = next(
+            row for row in attention["items"] if row["kind"] == "audit-spool"
+        )
+        self.assertEqual(item["severity"], "critical")
+        self.assertEqual(
+            attention["signals"]["audit_spool"]["degraded_count"], 1
+        )
+        self.assertEqual(state_path.read_bytes(), before)
 
     def test_live_access_is_truthfully_unknown_until_adapter_exists(self):
         result = self.service.live_access(plane="remote", resource="alpha")

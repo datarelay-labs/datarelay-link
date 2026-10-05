@@ -1100,6 +1100,17 @@ class V30WebServiceTests(unittest.TestCase):
                 public_port=6101,
                 enabled=True,
             )
+            published = plane.conn.execute(
+                "SELECT id FROM published_services WHERE client_id='diag-host-id' "
+                "AND name='diag-ssh-admin'"
+            ).fetchone()
+            plane.conn.execute(
+                "INSERT OR REPLACE INTO remote_service_meta("
+                "service_id,status,pool_class,pending_allocation,delete_pending,"
+                "reason,runtime_verified"
+                ") VALUES (?,'HEALTHY','normal',0,0,'',1)",
+                (published["id"],),
+            )
             v24.set_network_object(
                 plane,
                 "diag-src",
@@ -1157,7 +1168,7 @@ class V30WebServiceTests(unittest.TestCase):
         self.assertEqual(layers["policy"]["status"], "HEALTHY")
         self.assertEqual(layers["managed_host"]["status"], "HEALTHY")
         self.assertEqual(layers["remote_service"]["status"], "HEALTHY")
-        self.assertEqual(layers["target_reachability"]["status"], "UNKNOWN")
+        self.assertEqual(layers["target_reachability"]["status"], "HEALTHY")
         self.assertFalse(diagnosis["network_probe_performed"])
         self.assertTrue(diagnosis["side_effect_free"])
         check = ControlPlane(self.tmp, read_only=True)
@@ -1222,6 +1233,14 @@ class V30WebServiceTests(unittest.TestCase):
         self.assertTrue(applied["active"])
         self.assertFalse(applied["active_sessions_terminated"])
 
+        status, _, active_cutoffs = self.request(
+            "GET", "/api/v1/emergency-cutoffs?plane=remote"
+        )
+        self.assertEqual(status, 200, active_cutoffs)
+        self.assertEqual(active_cutoffs["count"], 1)
+        self.assertEqual(active_cutoffs["returned"], 1)
+        self.assertEqual(active_cutoffs["items"][0]["scope_kind"], "plane")
+
         status, _, overview = self.request("GET", "/api/v1/overview")
         self.assertEqual(status, 200, overview)
         cutoff_attention = next(
@@ -1271,6 +1290,12 @@ class V30WebServiceTests(unittest.TestCase):
         )
         self.assertEqual(status, 200, cleared)
         self.assertFalse(cleared["active"])
+        status, _, recovered = self.request(
+            "GET", "/api/v1/emergency-cutoffs?plane=remote"
+        )
+        self.assertEqual(status, 200, recovered)
+        self.assertEqual(recovered["count"], 0)
+        self.assertEqual(recovered["items"], [])
 
     def test_system_status_certificate_preflight_and_backup_validate(self):
         self.login()

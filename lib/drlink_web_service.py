@@ -314,6 +314,11 @@ class WebApplication:
             return self.adapter.invoke(
                 operation="drlink_live_access", payload=payload, actor=actor
             )
+        if path == "/api/v1/emergency-cutoffs":
+            with ManagementQueryService(self.root) as service:
+                return service.active_cutoff_summary(
+                    plane=_first(query, "plane") or None
+                )
         if path == "/api/v1/doctor":
             with ManagementQueryService(self.root) as service:
                 return service.doctor_summary()
