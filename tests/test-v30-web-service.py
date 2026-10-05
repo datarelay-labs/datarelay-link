@@ -144,8 +144,24 @@ class V30WebServiceTests(unittest.TestCase):
 
         status, _, body = self.request("GET", "/app.js")
         self.assertEqual(status, 200)
-        self.assertNotIn("localStorage", body)
-        self.assertNotIn("sessionStorage", body)
+        # DR Control parity persists only non-security UX preferences locally.
+        # Session/authentication material remains cookie/Core-owned.
+        source = (ROOT / "web/src/main.tsx").read_text(encoding="utf-8")
+        storage_lines = [line.strip() for line in source.splitlines() if "localStorage." in line]
+        self.assertEqual(len(storage_lines), 4, storage_lines)
+        self.assertTrue(all(
+            "drlink_web_theme" in line or "drlink_web_sidebar_collapsed" in line
+            for line in storage_lines
+        ))
+        self.assertNotIn("sessionStorage", source)
+        for forbidden in (
+            "drlink_session", "session_token", "csrf_token", "password",
+            "totp_secret", "recovery_codes", "enrollment_token",
+        ):
+            self.assertFalse(
+                any(forbidden in line for line in storage_lines),
+                "security material must not be persisted in localStorage: %s" % forbidden,
+            )
         index = (ROOT / "web/dist/index.html").read_text(encoding="utf-8")
         self.assertNotIn('src="http://', index)
         self.assertNotIn('src="https://', index)
