@@ -378,7 +378,7 @@ def _audit(root: Optional[str], *, actor: str, action: str, result: str, reason:
                 interface="WEB",
                 category="SECURITY_LIFECYCLE",
                 result=result,
-                reason_code=reason,
+                impact=reason,
             )
         finally:
             plane.close()

@@ -565,7 +565,7 @@ function SystemPanel({data,operator}:{data:any,operator:any}){
   const [certHostname,setCertHostname]=useState(data.certificate?.hostname||""),[certEmail,setCertEmail]=useState(data.certificate?.contact_email||""),[acmeEnv,setAcmeEnv]=useState(String(data.certificate?.acme_environment||"PRODUCTION").toLowerCase());
   const [certConfigConfirmation,setCertConfigConfirmation]=useState(""),[issueConfirmation,setIssueConfirmation]=useState(""),[importConfirmation,setImportConfirmation]=useState("");
   const [certPem,setCertPem]=useState(""),[keyPem,setKeyPem]=useState(""),[chainPem,setChainPem]=useState("");
-  const [engineUpdateConfirmation,setEngineUpdateConfirmation]=useState("");
+  const [productUpdateConfirmation,setProductUpdateConfirmation]=useState(""),[engineUpdateConfirmation,setEngineUpdateConfirmation]=useState("");
   const [preflight,setPreflight]=useState<any>(null),[renewal,setRenewal]=useState<any>(null),[certAction,setCertAction]=useState<any>(null),[updateResult,setUpdateResult]=useState<any>(null),[validation,setValidation]=useState<any>(null),[backupArtifact,setBackupArtifact]=useState<any>(null),[supportArtifact,setSupportArtifact]=useState<any>(null),[error,setError]=useState("");
   async function runPreflight(){setError("");try{setPreflight(await api("/api/v1/system/certificate/preflight",{method:"POST",body:"{}"}))}catch(e:any){setError(e.message||String(e))}}
   async function configureCertificate(){setError("");setCertAction(null);try{setCertAction(await api("/api/v1/system/certificate/configure",{method:"POST",body:JSON.stringify({mode:certMode,hostname:certHostname,contact_email:certEmail,acme_environment:acmeEnv,confirmation:certConfigConfirmation})}));setCertConfigConfirmation("")}catch(e:any){setError(e.message||String(e))}}
@@ -573,6 +573,8 @@ function SystemPanel({data,operator}:{data:any,operator:any}){
   async function importCertificate(){setError("");setCertAction(null);try{setCertAction(await api("/api/v1/system/certificate/import",{method:"POST",body:JSON.stringify({cert_pem:certPem,key_pem:keyPem,chain_pem:chainPem,confirmation:importConfirmation})}));setImportConfirmation("");setCertPem("");setKeyPem("");setChainPem("")}catch(e:any){setError(e.message||String(e))}}
   async function renewCertificate(){setError("");setRenewal(null);try{setRenewal(await api("/api/v1/system/certificate/renew",{method:"POST",body:JSON.stringify({confirmation:renewConfirmation})}));setRenewConfirmation("")}catch(e:any){setError(e.message||String(e))}}
   async function checkUpdate(target:string){setError("");setUpdateResult(null);try{setUpdateResult(await api("/api/v1/system/update/check",{method:"POST",body:JSON.stringify({target})}))}catch(e:any){setError(e.message||String(e))}}
+  async function updateProduct(){setError("");setUpdateResult(null);try{setUpdateResult(await api("/api/v1/system/update/product",{method:"POST",body:JSON.stringify({confirmation:productUpdateConfirmation})}));setProductUpdateConfirmation("")}catch(e:any){setError(e.message||String(e))}}
+  async function refreshProductUpdate(){if(!updateResult?.job_id)return;setError("");try{setUpdateResult(await api("/api/v1/system/update/product/status?job_id="+encodeURIComponent(updateResult.job_id)))}catch(e:any){setError(e.message||String(e))}}
   async function updateEngine(){setError("");setUpdateResult(null);try{setUpdateResult(await api("/api/v1/system/update/engine",{method:"POST",body:JSON.stringify({confirmation:engineUpdateConfirmation})}));setEngineUpdateConfirmation("")}catch(e:any){setError(e.message||String(e))}}
   async function validateBackup(){setError("");setRestoreConfirmation("");try{setValidation(await api("/api/v1/system/backup/validate",{method:"POST",body:JSON.stringify({path:backupPath})}))}catch(e:any){setValidation(null);setError(e.message||String(e))}}
   async function restoreBackup(){setError("");try{await api("/api/v1/system/restore",{method:"POST",body:JSON.stringify({path:backupPath,confirmation:restoreConfirmation})});window.location.reload()}catch(e:any){setError(e.message||String(e))}}
@@ -593,13 +595,15 @@ function SystemPanel({data,operator}:{data:any,operator:any}){
     </div>
     <div className="card">
       <h3>Update</h3>
-      <div className="muted">Checks use the canonical read-only updater paths. Core product apply remains CLI-only until DRL3-7 qualifies Web package update/reinstall semantics.</div>
+      <div className="muted">Checks use the canonical read-only updater paths. Product apply is queued to a fixed privileged one-shot: Web is stopped before Core mutation and restarts only after an exact-source Web package passes SHA256 and Core/Web identity coupling.</div>
       <div className="toolbar">
         <button className="secondary" onClick={()=>checkUpdate("product")} disabled={!update.product_check_available}>Check Product Update</button>
         <button className="secondary" onClick={()=>checkUpdate("engine")} disabled={!update.engine_check_available}>Check Relay Engine Update</button>
       </div>
+      {operator.role==="Admin"&&update.product_apply_via_web&&<div className="toolbar"><input value={productUpdateConfirmation} onChange={e=>setProductUpdateConfirmation(e.target.value)} placeholder="Type UPDATE PRODUCT"/><button className="danger" onClick={updateProduct} disabled={productUpdateConfirmation!=="UPDATE PRODUCT"}>Update Data Relay Link</button></div>}
       {operator.role==="Admin"&&update.engine_apply_via_web&&<div className="toolbar"><input value={engineUpdateConfirmation} onChange={e=>setEngineUpdateConfirmation(e.target.value)} placeholder="Type UPDATE ENGINE"/><button className="danger" onClick={updateEngine} disabled={engineUpdateConfirmation!=="UPDATE ENGINE"}>Update Relay Engine</button></div>}
-      <div className="muted">Product update apply via Web: {update.product_apply_via_web?"enabled":"deferred to "+(update.product_apply_phase||"DRL3-7")}</div>
+      <div className="muted">Product update apply via Web: {update.product_apply_via_web?"enabled — exact-build queued mode":"unavailable; use local CLI recovery/update"}</div>
+      {updateResult?.job_id&&<button className="secondary" onClick={refreshProductUpdate}>Refresh Product Update Status</button>}
       {updateResult&&<pre className="plan">{JSON.stringify(updateResult,null,2)}</pre>}
     </div>
     <div className="card">
