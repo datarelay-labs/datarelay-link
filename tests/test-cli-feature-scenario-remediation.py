@@ -4,10 +4,12 @@ from __future__ import annotations
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
@@ -504,6 +506,129 @@ class CliFeatureScenarioRemediation(unittest.TestCase):
         self.assertIn("sudo drlink set enrollment manual", surfaces["retire"])
         self.assertIn("drlink unset enrollment", surfaces["enrollment-purge"])
         self.assertIn("drlink show enrollments", surfaces["enrollment-revoke"])
+
+    def test_repl_history_uses_canonical_command_and_rejects_retired_roots(self):
+        import frp_ctl_repl as repl
+
+        calls = []
+
+        def backend(argv, **kwargs):
+            tokens = argv[1:]
+            calls.append(tokens)
+            result = grammar.match(tokens, "server")
+            if tokens == ["system", "history"]:
+                print("(no session history)")
+            return subprocess.CompletedProcess(argv, result.get("exit_code", 0))
+
+        out = io.StringIO()
+        with patch("builtins.input", side_effect=[
+            "show status", "set enrollment --auth-token TEST_SECRET_HISTORY",
+            "system history", "history", "q", "quit",
+            "exit extra", "system history", "exit",
+        ]), patch.object(repl.subprocess, "run", side_effect=backend), \
+                patch.object(repl.LineEditor, "bind"), redirect_stdout(out):
+            self.assertEqual(repl.run_repl("drlink", {"role": "server"}), 0)
+        self.assertIn("  show status", out.getvalue())
+        self.assertNotIn("(no session history)", out.getvalue())
+        self.assertNotIn("TEST_SECRET_HISTORY", out.getvalue())
+        self.assertNotIn(["system", "history"], calls)
+        for tokens in (["history"], ["q"], ["quit"], ["exit", "extra"]):
+            self.assertIn(tokens, calls)
+
+    def test_unreadable_install_state_is_not_reported_as_wrong_role(self):
+        env = os.environ.copy()
+        preexec = None
+        if os.geteuid() == 0:
+            import pwd
+            account = pwd.getpwnam("nobody")
+
+            def drop_test_privilege():
+                os.setgroups([])
+                os.setgid(account.pw_gid)
+                os.setuid(account.pw_uid)
+
+            preexec = drop_test_privilege
+        # Keep the public launcher traversable even when root CI runs from a
+        # private home directory and the subprocess drops to nobody.
+        with tempfile.TemporaryDirectory(prefix="drlink-unreadable-role-", dir="/tmp") as tmp:
+            root = Path(tmp)
+            root.chmod(0o755)
+            (root / "tools").mkdir()
+            for name in ("drlink", "frpctl"):
+                shutil.copy2(ROOT / "tools" / name, root / "tools" / name)
+            shutil.copytree(LIB, root / "lib")
+            state = root / "etc/drlink"
+            state.mkdir(parents=True)
+            (state / "config.json").write_text('{"role":"server"}\n')
+            state.chmod(0)
+            env.update(FRP_CTL_TEST_ROOT=tmp, FRP_DEPLOY_TEST_ROOT=tmp, FRP_CTL_DRY_RUN="1")
+            try:
+                proc = subprocess.run(
+                    ["bash", str(root / "tools/drlink"), "show", "managed-hosts"],
+                    env=env, text=True, capture_output=True, preexec_fn=preexec,
+                )
+            finally:
+                state.chmod(0o755)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("cannot read the install state", proc.stderr)
+        self.assertIn("sudo drlink", proc.stderr)
+        self.assertNotIn("Run this command on the DRLink Server", proc.stderr)
+
+    def test_terminal_enrollment_menu_dispatches_canonical_unset(self):
+        script = '''source "$1"
+frpctl_nav_prompt_id() { printf '%s' terminal-id; }
+frpctl_dispatch() { printf '%s\\n' "$@"; }
+frpctl_nav_workflow delete_enrollment
+'''
+        env = os.environ.copy()
+        env["FRP_CTL_SOURCED"] = "1"
+        proc = subprocess.run(
+            ["bash", "-c", script, "audit-regression", str(ROOT / "tools/frpctl")],
+            env=env, text=True, capture_output=True,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stdout.splitlines(), ["unset", "enrollment", "terminal-id"])
+        self.assertEqual(grammar.match(proc.stdout.splitlines(), "server")["status"], "ok")
+
+    def test_installer_help_and_cutover_guidance_use_agent_model(self):
+        proc = subprocess.run(
+            ["bash", str(ROOT / "install-client.sh"), "--help"],
+            text=True, capture_output=True,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("Agent enrollment", proc.stdout)
+        for phrase in ("First-time client", "existing client", "installed client"):
+            self.assertNotIn(phrase, proc.stdout)
+        deployment = (ROOT / "docs/DEPLOYMENT_MODES.md").read_text()
+        current = deployment.split("Recommended sequence:", 1)[1].split("## Firewall notes", 1)[0]
+        self.assertIn("sudo drlink system synchronize", current)
+        self.assertIn("sudo drlink system uninstall", current)
+        self.assertIn("sudo drlink set enrollment zero-touch", current)
+        self.assertNotIn("On each client, Apply", current)
+        self.assertIn("does not\nchange the configured connection transport", deployment)
+
+    def test_readme_capability_table_keeps_restricted_planes_whitelist_only(self):
+        for name in ("README.md", "README.ko.md"):
+            text = (ROOT / name).read_text()
+            row = next(line for line in text.splitlines() if "**Access Policy**" in line)
+            for semantic in ("Remote", "Internet", "AI", "BLACKLIST", "WHITELIST-only", "deny-by-default"):
+                self.assertIn(semantic, row, name)
+
+    def test_missing_grammar_recovery_names_current_update_command(self):
+        script = '''source "$1"
+frpctl_lib_candidate() { return 1; }
+frpctl_grammar_py
+'''
+        env = os.environ.copy()
+        env.update(FRP_CTL_SOURCED="1", FRP_CTL_CMD_NAME="drlink")
+        proc = subprocess.run(
+            ["bash", "-c", script, "audit-regression", str(ROOT / "tools/frpctl")],
+            env=env, text=True, capture_output=True,
+        )
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("drlink system update product", proc.stderr)
+        self.assertNotIn("drlink update product", proc.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

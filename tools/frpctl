@@ -231,18 +231,26 @@ frpctl_role_label() {
   fi
 }
 
+frpctl_install_state_unreadable() {
+  local path dir
+  for path in /etc/drlink /var/lib/drlink /etc/frp; do
+    dir="$(frpctl_path "$path")"
+    if [[ -d "$dir" && ( ! -r "$dir" || ! -x "$dir" ) ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 frpctl_require_install() {
   if frpctl_is_client || frpctl_is_server; then
     return 0
   fi
   # Distinguish missing install from permission-denied on root-owned state dirs.
-  if [[ -e /etc/drlink || -e /var/lib/drlink || -e /etc/frp ]]; then
-    if [[ ! -r /etc/drlink && ! -r /var/lib/drlink ]]; then
-      echo "ERROR: Data Relay Link appears installed, but this user cannot read the install state." >&2
-      echo "Retry with: sudo ${FRP_CTL_CMD_NAME}" >&2
-      echo "Or grant this account access to /etc/drlink and /var/lib/drlink." >&2
-      return 1
-    fi
+  if frpctl_install_state_unreadable; then
+    echo "ERROR: Data Relay Link appears installed, but this user cannot read the install state." >&2
+    echo "Retry with: sudo ${FRP_CTL_CMD_NAME}" >&2
+    return 1
   fi
   echo "ERROR: no ${FRP_CTL_PRODUCT_NAME} installation was found on this host." >&2
   echo "Install the Server or Agent bootstrap first." >&2
@@ -433,7 +441,7 @@ frpctl_grammar_py() {
     return 0
   fi
   echo "ERROR: the ${FRP_CTL_PRODUCT_NAME} CLI backend is incomplete (command grammar module not found)." >&2
-  echo "Reinstall or run: ${FRP_CTL_CMD_NAME} update product" >&2
+  echo "Reinstall or run: ${FRP_CTL_CMD_NAME} system update product" >&2
   return 1
 }
 
@@ -1157,7 +1165,7 @@ frpctl_nav_workflow() {
       ;;
     delete_enrollment)
       id="$(frpctl_nav_prompt_id "Enrollment ID: ")" || return 1
-      frpctl_dispatch delete enrollment "$id" || true
+      frpctl_dispatch unset enrollment "$id" || true
       ;;
     client_services)
       id="$(frpctl_select_inventory clients "CLIENT: ")" || return 1
@@ -1302,11 +1310,11 @@ PY
       frpctl_dispatch set server bootstrap-hostname "$value" || true
       ;;
     set_installer_url)
-      value="$(frpctl_nav_prompt_id "Linux/macOS client installer URL: ")" || return 1
+      value="$(frpctl_nav_prompt_id "Linux/macOS Agent installer URL: ")" || return 1
       frpctl_dispatch set server installer-url "$value" || true
       ;;
     set_windows_installer_url)
-      value="$(frpctl_nav_prompt_id "Windows client installer URL: ")" || return 1
+      value="$(frpctl_nav_prompt_id "Windows Agent installer URL: ")" || return 1
       frpctl_dispatch set server windows-installer-url "$value" || true
       ;;
     restore_backup)
@@ -3825,6 +3833,10 @@ frpctl_dispatch_canonical() {
       return 0
       ;;
     role)
+      if ! frpctl_is_client && ! frpctl_is_server && frpctl_install_state_unreadable; then
+        frpctl_require_install || _FRP_CTL_RC=$?
+        return 0
+      fi
       _err_msg="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("message",""))' "$result")"
       if [[ -n "$_err_msg" ]]; then
         printf '%s\n' "$_err_msg" >&2

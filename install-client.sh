@@ -1046,12 +1046,12 @@ frp_client_installer_usage() {
   cat <<'EOF'
 Usage: install-client.sh [--upgrade] [--source DIR] [--check]
 
-  (default)   First-time client enrollment and FRP install
-  --upgrade   Upgrade management tools on an existing client
+  (default)   First-time Agent enrollment and Relay Engine (FRP) install
+  --upgrade   Upgrade management tools on an existing Agent Host
   --source    Source tree for --upgrade (default: this installer tree)
   --check     With --upgrade, report versions without changing files
 
-An already-installed client is not re-enrolled. Use --upgrade / drlink system update product
+An already-installed Agent is not re-enrolled. Use --upgrade / drlink system update product
 for software updates. An Enrollment Code is not required for a software update.
 EOF
 }

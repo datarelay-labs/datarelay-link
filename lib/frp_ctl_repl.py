@@ -400,9 +400,9 @@ def run_repl(frpctl_bin, payload):
         if tokens[0].startswith("!") or tokens[0] in grammar.SHELL_REJECT:
             sys.stderr.write("ERROR: arbitrary shell execution is not allowed.\n")
             continue
-        if tokens[0] in ("exit", "quit", "q"):
+        if tokens == ["exit"]:
             return 0
-        if tokens[0] == "history" and (len(tokens) == 1 or tokens[-1] != "?"):
+        if tokens == ["system", "history"]:
             if not hist:
                 print("(no session history)")
             else:

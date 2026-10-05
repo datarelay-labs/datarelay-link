@@ -117,7 +117,7 @@ Docker Server deployment is not part of the v2.4 target; it is roadmap work for 
 | **Stable endpoints** | Public-port reservations preserved across normal lifecycle operations |
 | **Remote Services** | Agent-owned TCP and Fixed TCP connectivity (UDP Remote Service is rejected) |
 | **LAN reachability** | Publish on the local Managed Host or another reachable internal-LAN host |
-| **Access Policy** | BLACKLIST / WHITELIST for Remote, Internet, and AI Access |
+| **Access Policy** | Remote Access BLACKLIST / WHITELIST; Internet / AI Access WHITELIST-only, deny-by-default |
 | **AI Access / MCP** | Verified AI Identity → approved target permissions via MCP Bridge |
 | **ConfigurationBundle** | Multi-resource AI/operator change sets with Server/Agent atomicity |
 | **Health & operations** | Doctor, support bundles, lifecycle commands, backup/restore |
