@@ -1,4 +1,4 @@
-# Data Relay Link — v2.4.0 Release Checklist
+# Data Relay Link — v3.0.0 Release Checklist
 
 > **Purpose:** Exact-HEAD stable qualification checklist
 > **Rule:** A checked item requires retained evidence. Architecture documentation is not implementation evidence.
@@ -8,7 +8,7 @@ Do **not** tag a tree whose `PROJECT_VERSION` does not match the intended immuta
 
 FRP_VERSION=0.71.0
 
-Published tags are immutable. Preparing the 2.4.0 immutable tag is a later qualification step. Published tags remain immutable and must never be moved, recreated, retargeted, or deleted.
+Published tags are immutable. Preparing the 3.0.0 immutable tag is a later qualification step. Published tags remain immutable and must never be moved, recreated, retargeted, or deleted.
 
 ## 1. Candidate identity
 

@@ -1,9 +1,9 @@
-# Data Relay Link — v2.4.0 Release Validation
+# Data Relay Link — v3.0.0 Release Validation
 
 > **Purpose:** Validation plan for the final Control Plane / Object / Policy / MCP architecture
 > **Rule:** Final stable evidence must come from the same exact source HEAD.
 
-Current project version **2.4.0** / FRP **0.71.0**
+Current project version **3.0.0** / FRP **0.71.0**
 
 Published tags are immutable.
 

@@ -4,7 +4,7 @@
 > **Status:** v2.4.0 target architecture; implementation qualification pending
 > **Public SSOT:** `PRODUCT_MASTER.md` + `DATA_RELAY_LINK_CLI_AI_MASTER_v2.4_FINAL.md`
 
-`Data Relay Link` **2.4.0**
+`Data Relay Link` **3.0.0**
 Pinned FRP version: **0.71.0**
 
 ## 1. Security principle

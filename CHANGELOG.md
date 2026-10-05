@@ -16,6 +16,10 @@ Released tags/artifacts are immutable. Historical source is never rewritten to m
   max 10 per issue, max 10 active unused, default TTL 1h, max TTL 24h, verifier-only persistence,
   batch revoke by `batch_id`. Bundle enrollment plans issue zero tickets.
 
+## 3.0.0 — development target
+
+- Optional Full Web Management generation with Core/CLI independence, management parity, audit/lifecycle hardening, and 100-host qualification.
+
 ## 2.4.0 — development target
 
 ### Candidate target: 2.4.0

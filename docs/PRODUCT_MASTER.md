@@ -7,7 +7,7 @@
 > **CLI/AI SSOT:** `docs/DATA_RELAY_LINK_CLI_AI_MASTER_v2.4_FINAL.md`
 > **Version governance:** `docs/VERSION_POLICY.md`
 
-Current project version: **2.4.0**
+Current project version: **3.0.0**
 
 Development builds must display an identity equivalent to `2.4.0-dev+g<shortsha>`
 (with exact Source HEAD shown separately), not plain `2.4.0`.

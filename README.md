@@ -269,7 +269,7 @@ RELEASE_CHANNEL=development
 FRP_VERSION=0.71.0
 ```
 
-Current project version: **2.4.0**<br>
+Current project version: **3.0.0**<br>
 Current pinned FRP version: **v0.71.0**
 
 This repository tree is the **v2.4.0 development target** on branch
