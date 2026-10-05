@@ -80,12 +80,108 @@ def _execute_management_job(claim: dict, root: Optional[str] = None) -> dict:
     payload = claim.get("payload") or {}
     if not isinstance(payload, dict):
         raise ValueError("Management Job payload must be an object")
+
+    if kind == "doctor":
+        import frp_doctor
+
+        _text, code, report = frp_doctor.run_doctor(
+            root or "",
+            {},
+            fmt="json",
+            quiet=True,
+            verbose=False,
+            skip_network=True,
+        )
+        counts: dict[str, int] = {}
+        findings = []
+        for check in list(report.checks):
+            status = str(check.get("status") or "UNKNOWN").upper()
+            counts[status] = counts.get(status, 0) + 1
+            if status in ("FAIL", "WARN", "ERROR") and len(findings) < 20:
+                findings.append(
+                    {
+                        "id": str(check.get("id") or "")[:128],
+                        "status": status,
+                        "message": str(check.get("message") or "")[:256],
+                    }
+                )
+        return {
+            "operation": "doctor",
+            "overall": str(report.overall() or "UNKNOWN"),
+            "exit_code": int(code),
+            "check_count": len(report.checks),
+            "counts": counts,
+            "findings": findings,
+            "network_probe_performed": False,
+        }
+
+    if kind == "version-check":
+        from frp_version_identity import read_version_file
+
+        base = Path(root) if root and str(root) not in ("", "/") else Path("/")
+        version_file = base / "etc/drlink/version"
+        try:
+            values = read_version_file(version_file)
+        except (OSError, ValueError):
+            values = {}
+        project_version = str(values.get("PROJECT_VERSION") or "unknown")
+        relay_engine_version = str(values.get("FRP_VERSION") or "unknown")
+        target_project = str(payload.get("target_project_version") or "unknown")
+        target_engine = str(payload.get("target_relay_engine_version") or "unknown")
+
+        def availability(current: str, target: str):
+            if current == "unknown" or target == "unknown":
+                return None
+            return current != target
+
+        return {
+            "operation": "version-check",
+            "project_version": project_version,
+            "relay_engine_version": relay_engine_version,
+            "release_channel": str(values.get("RELEASE_CHANNEL") or "unknown"),
+            "source_ref": str(values.get("SOURCE_REF") or "unknown"),
+            "source_head": str(values.get("SOURCE_HEAD") or "unknown"),
+            "target_project_version": target_project,
+            "target_relay_engine_version": target_engine,
+            "target_release_channel": str(
+                payload.get("target_release_channel") or "unknown"
+            ),
+            "product_update_available": availability(project_version, target_project),
+            "relay_engine_update_available": availability(
+                relay_engine_version, target_engine
+            ),
+        }
+
     from drlink_control_plane import ControlPlane
-    from drlink_v24 import ensure_v2_schema, set_remote_service_agent, unset_remote_service_agent
+    from drlink_v24 import (
+        ensure_v2_schema,
+        set_remote_service_agent,
+        synchronize_agent_remote_services,
+        unset_remote_service_agent,
+    )
 
     plane = ControlPlane(root)
     try:
         ensure_v2_schema(plane.conn)
+        if kind == "refresh":
+            result = synchronize_agent_remote_services(plane, root=root)
+            affected = []
+            for item in list((result or {}).get("affected") or [])[:20]:
+                if isinstance(item, dict):
+                    affected.append(
+                        {
+                            "name": str(item.get("name") or "")[:128],
+                            "reason": str(item.get("reason") or "")[:256],
+                        }
+                    )
+            return {
+                "operation": "refresh",
+                "status": str((result or {}).get("status") or "UNKNOWN"),
+                "updated": int((result or {}).get("updated") or 0),
+                "projected": int((result or {}).get("projected") or 0),
+                "affected": affected,
+                "runtime_error": str((result or {}).get("runtime_error") or "")[:512],
+            }
         if kind == "remote-service-set":
             name = str(payload.get("name") or "").strip()
             destination = str(payload.get("destination") or "").strip()

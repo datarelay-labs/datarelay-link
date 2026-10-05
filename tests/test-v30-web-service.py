@@ -176,6 +176,7 @@ class V30WebServiceTests(unittest.TestCase):
             "/api/v1/audit?limit=10",
             "/api/v1/revisions?limit=10",
             "/api/v1/health",
+            "/api/v1/jobs?limit=10",
             "/api/v1/saved-views",
             "/api/v1/sessions",
         ):
@@ -1079,6 +1080,108 @@ class V30WebServiceTests(unittest.TestCase):
             )
         finally:
             plane.close()
+
+    def test_bounded_management_job_web_start_list_detail_and_cancel(self):
+        self.login()
+
+        status, _, denied = self.request(
+            "POST",
+            "/api/v1/jobs/diagnostic",
+            {
+                "job_type": "doctor",
+                "resource_type": "managed-host",
+                "resource": "host-a",
+            },
+        )
+        self.assertEqual(status, 403, denied)
+
+        status, _, started = self.request(
+            "POST",
+            "/api/v1/jobs/diagnostic",
+            {
+                "job_type": "doctor",
+                "resource_type": "managed-host",
+                "resource": "host-a",
+            },
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, started)
+        job = started["job"]
+        self.assertEqual(job["job_type"], "doctor")
+        self.assertEqual(job["status"], "QUEUED")
+        self.assertEqual(job["target_count"], 1)
+        self.assertEqual(started["selection"]["target_count"], 1)
+        self.assertEqual(job["targets"][0]["target_id"], "host-a")
+
+        status, _, jobs = self.request("GET", "/api/v1/jobs?limit=10")
+        self.assertEqual(status, 200, jobs)
+        self.assertIn(job["id"], {item["id"] for item in jobs["items"]})
+
+        status, _, detail = self.request(
+            "GET", "/api/v1/jobs/" + job["id"]
+        )
+        self.assertEqual(status, 200, detail)
+        self.assertEqual(detail["id"], job["id"])
+        self.assertEqual(detail["targets"][0]["status"], "QUEUED")
+
+        status, _, denied_cancel = self.request(
+            "POST",
+            "/api/v1/jobs/cancel",
+            {"job_id": job["id"]},
+        )
+        self.assertEqual(status, 403, denied_cancel)
+
+        status, _, cancelled = self.request(
+            "POST",
+            "/api/v1/jobs/cancel",
+            {"job_id": job["id"]},
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, cancelled)
+        self.assertEqual(cancelled["id"], job["id"])
+        self.assertEqual(cancelled["status"], "CANCELLED")
+        self.assertTrue(cancelled["cancel_requested"])
+        self.assertEqual(cancelled["targets"][0]["status"], "CANCELLED")
+        self.assertEqual(
+            cancelled["targets"][0]["error"], "CANCELLED_BY_OPERATOR"
+        )
+
+        status, _, version_started = self.request(
+            "POST",
+            "/api/v1/jobs/diagnostic",
+            {
+                "job_type": "version-check",
+                "resource_type": "managed-host",
+                "resource": "host-a",
+            },
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, version_started)
+        version_job = version_started["job"]
+        self.assertEqual(
+            version_job["payload"]["target_project_version"], "3.0.0"
+        )
+        self.assertIn("target_relay_engine_version", version_job["payload"])
+        status, _, _ = self.request(
+            "POST",
+            "/api/v1/jobs/cancel",
+            {"job_id": version_job["id"]},
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200)
+
+        status, _, invalid = self.request(
+            "POST",
+            "/api/v1/jobs/diagnostic",
+            {
+                "job_type": "remote-service-delete",
+                "resource_type": "managed-host",
+                "resource": "host-a",
+            },
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 400, invalid)
+        self.assertIn("doctor, refresh, or version-check", invalid["error"])
 
     def test_access_operations_diagnosis_live_and_cutoff_web_paths(self):
         self.login()

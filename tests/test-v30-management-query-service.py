@@ -502,6 +502,55 @@ class V30ManagementQueryServiceTests(unittest.TestCase):
         )
         self.assertEqual(state_path.read_bytes(), before)
 
+    def test_management_job_target_resolution_is_bounded_and_stable(self):
+        one = self.service.resolve_management_job_targets(
+            resource_type="managed-host",
+            resource="alpha",
+        )
+        self.assertEqual(one["targets"], ["client-a"])
+        self.assertEqual(one["target_count"], 1)
+        self.assertEqual(one["resource_ref"], "client-a")
+
+        all_hosts = self.service.resolve_management_job_targets(
+            resource_type="managed-host",
+            resource="",
+        )
+        self.assertEqual(
+            set(all_hosts["targets"]), {"client-a", "client-b", "client-c"}
+        )
+        self.assertEqual(all_hosts["target_count"], 3)
+        self.assertEqual(all_hosts["resource_ref"], "all")
+
+    def test_management_job_target_resolution_supports_managed_host_group(self):
+        plane = ControlPlane(self.tmp)
+        try:
+            plane.set_client_group("ops")
+            plane.set_client_group_member("ops", "client-a")
+            plane.set_client_group_member("ops", "client-c")
+        finally:
+            plane.close()
+        grouped = self.service.resolve_management_job_targets(
+            resource_type="managed-host-group",
+            resource="ops",
+        )
+        self.assertEqual(set(grouped["targets"]), {"client-a", "client-c"})
+        self.assertEqual(grouped["target_count"], 2)
+        self.assertEqual(grouped["resource_display"], "ops")
+
+    def test_management_job_target_resolution_rejects_untrusted_host(self):
+        plane = ControlPlane(self.tmp)
+        try:
+            plane.conn.execute(
+                "UPDATE clients SET trust_status='revoked' WHERE id='client-b'"
+            )
+        finally:
+            plane.close()
+        with self.assertRaisesRegex(ControlPlaneError, "not trusted"):
+            self.service.resolve_management_job_targets(
+                resource_type="managed-host",
+                resource="Beta",
+            )
+
     def test_live_access_is_truthfully_unknown_until_adapter_exists(self):
         result = self.service.live_access(plane="remote", resource="alpha")
         self.assertEqual(result["fidelity"], "UNKNOWN")

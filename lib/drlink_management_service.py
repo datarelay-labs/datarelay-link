@@ -1655,6 +1655,104 @@ class ManagementQueryService:
             limit=page_limit,
         )
 
+    def resolve_management_job_targets(
+        self,
+        *,
+        resource_type: Optional[str] = None,
+        resource: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """Resolve a bounded immutable Managed Host target set for safe Jobs."""
+        from drlink_v30_jobs import MAX_JOB_TARGETS
+
+        kind = str(resource_type or "managed-host").strip().lower()
+        selector = str(resource or "").strip()
+        if kind not in ("managed-host", "managed-host-group"):
+            raise ControlPlaneError(
+                "Diagnostic Job resource_type must be managed-host or managed-host-group."
+            )
+
+        if kind == "managed-host":
+            if selector:
+                core = ControlPlane(self.root, read_only=True)
+                try:
+                    row = core.require_client(selector)
+                    if str(row["trust_status"] or "").strip().lower() != "trusted":
+                        raise ControlPlaneError(
+                            "Diagnostic Job target Managed Host is not trusted."
+                        )
+                    targets = [str(row["id"])]
+                    display = str(row["label"] or row["hostname"] or row["id"])
+                finally:
+                    core.close()
+                return {
+                    "targets": targets,
+                    "target_count": 1,
+                    "resource_type": kind,
+                    "resource_ref": targets[0],
+                    "resource_display": display,
+                }
+
+            rows = self.conn.execute(
+                "SELECT id,label,hostname FROM clients "
+                "WHERE LOWER(COALESCE(trust_status,''))='trusted' "
+                "ORDER BY LOWER(COALESCE(NULLIF(label,''),NULLIF(hostname,''),id)),id "
+                "LIMIT ?",
+                (MAX_JOB_TARGETS + 1,),
+            ).fetchall()
+            if len(rows) > MAX_JOB_TARGETS:
+                raise ControlPlaneError(
+                    "Diagnostic Job target selection exceeds the %d-Host bound."
+                    % MAX_JOB_TARGETS
+                )
+            if not rows:
+                raise ControlPlaneError("No trusted Managed Hosts are available.")
+            return {
+                "targets": [str(row["id"]) for row in rows],
+                "target_count": len(rows),
+                "resource_type": kind,
+                "resource_ref": "all",
+                "resource_display": "All trusted Managed Hosts",
+            }
+
+        if not selector:
+            raise ControlPlaneError("managed-host-group Diagnostic Job requires resource.")
+        groups = self.conn.execute(
+            "SELECT id,name FROM client_groups "
+            "WHERE id=? OR name=? COLLATE NOCASE ORDER BY id LIMIT 3",
+            (selector, selector),
+        ).fetchall()
+        if not groups:
+            raise ControlPlaneError("Managed Host Group '%s' was not found." % selector)
+        if len(groups) > 1:
+            raise ControlPlaneError(
+                "Managed Host Group selector '%s' is ambiguous; use its immutable ID."
+                % selector
+            )
+        group = groups[0]
+        rows = self.conn.execute(
+            "SELECT c.id,c.label,c.hostname FROM client_group_members m "
+            "JOIN clients c ON c.id=m.client_id "
+            "WHERE m.group_id=? AND LOWER(COALESCE(c.trust_status,''))='trusted' "
+            "ORDER BY LOWER(COALESCE(NULLIF(c.label,''),NULLIF(c.hostname,''),c.id)),c.id "
+            "LIMIT ?",
+            (group["id"], MAX_JOB_TARGETS + 1),
+        ).fetchall()
+        if len(rows) > MAX_JOB_TARGETS:
+            raise ControlPlaneError(
+                "Managed Host Group exceeds the %d-Host Job bound." % MAX_JOB_TARGETS
+            )
+        if not rows:
+            raise ControlPlaneError(
+                "Managed Host Group '%s' has no trusted members." % group["name"]
+            )
+        return {
+            "targets": [str(row["id"]) for row in rows],
+            "target_count": len(rows),
+            "resource_type": kind,
+            "resource_ref": str(group["id"]),
+            "resource_display": str(group["name"]),
+        }
+
     def _reconcile_management_job_deadlines(self) -> None:
         from drlink_v30_jobs import ManagementJobEngine
 

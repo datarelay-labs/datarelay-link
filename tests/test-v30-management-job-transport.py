@@ -124,6 +124,72 @@ class V30ManagementJobTransportTests(unittest.TestCase):
         finally:
             engine.close()
 
+    def test_safe_diagnostic_jobs_execute_on_agent_and_return_bounded_results(self):
+        Path(self.agent_tmp, "etc/drlink/version").write_text(
+            "PROJECT_VERSION=3.0.0\n"
+            "FRP_VERSION=0.61.1\n"
+            "RELEASE_CHANNEL=dev\n"
+            "SOURCE_REF=feature/v3.0-drl3-0\n"
+            "SOURCE_HEAD=0123456789abcdef\n",
+            encoding="utf-8",
+        )
+        engine = ManagementJobEngine(self.server_tmp)
+        try:
+            jobs = {}
+            for kind in ("doctor", "refresh", "version-check"):
+                payload = {}
+                if kind == "version-check":
+                    payload = {
+                        "target_project_version": "3.0.1",
+                        "target_relay_engine_version": "0.61.1",
+                        "target_release_channel": "dev",
+                    }
+                jobs[kind] = engine.enqueue(
+                    job_type=kind,
+                    targets=[MACHINE_A],
+                    requested_by="web:admin",
+                    resource_type="managed-host",
+                    resource_ref=MACHINE_A,
+                    payload=payload,
+                )
+            result = process_management_jobs_once(self.agent_tmp, limit=4)
+            self.assertEqual(result, {"processed": 3, "failed": 0})
+
+            doctor = engine.get(jobs["doctor"]["id"])
+            self.assertEqual(doctor["status"], SUCCEEDED)
+            doctor_result = doctor["targets"][0]["result"]
+            self.assertEqual(doctor_result["operation"], "doctor")
+            self.assertFalse(doctor_result["network_probe_performed"])
+            self.assertLessEqual(len(doctor_result["findings"]), 20)
+            self.assertLess(
+                len(json.dumps(doctor_result, sort_keys=True).encode("utf-8")),
+                16 * 1024,
+            )
+
+            refresh = engine.get(jobs["refresh"]["id"])
+            self.assertEqual(refresh["status"], SUCCEEDED)
+            refresh_result = refresh["targets"][0]["result"]
+            self.assertEqual(refresh_result["operation"], "refresh")
+            self.assertIn(
+                refresh_result["status"],
+                ("SYNCHRONIZED", "DEGRADED", "OFFLINE"),
+            )
+            self.assertLessEqual(len(refresh_result["affected"]), 20)
+
+            version = engine.get(jobs["version-check"]["id"])
+            self.assertEqual(version["status"], SUCCEEDED)
+            version_result = version["targets"][0]["result"]
+            self.assertEqual(version_result["operation"], "version-check")
+            self.assertEqual(version_result["project_version"], "3.0.0")
+            self.assertEqual(version_result["relay_engine_version"], "0.61.1")
+            self.assertEqual(version_result["target_project_version"], "3.0.1")
+            self.assertEqual(version_result["target_relay_engine_version"], "0.61.1")
+            self.assertTrue(version_result["product_update_available"])
+            self.assertFalse(version_result["relay_engine_update_available"])
+            self.assertNotIn("token", json.dumps(version_result).lower())
+        finally:
+            engine.close()
+
     def test_remote_service_job_executes_on_agent_and_completes_truthfully(self):
         engine = ManagementJobEngine(self.server_tmp)
         try:

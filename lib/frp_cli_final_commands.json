@@ -1790,6 +1790,89 @@
   {
     "path": [
       "system",
+      "jobs"
+    ],
+    "roles": "server",
+    "category": "System",
+    "summary": "List bounded Management Jobs",
+    "detail": "List Management Jobs; optional recover reconciles restart-interrupted jobs, expired deadlines, and expired worker leases fail-closed.",
+    "examples": [
+      "system jobs",
+      "system jobs recover"
+    ],
+    "args": [],
+    "tail": "any",
+    "internal": null,
+    "aliases": [],
+    "destructive": false,
+    "hidden": false,
+    "risk": "none",
+    "confirmation": "none",
+    "surface": "",
+    "flags": []
+  },
+  {
+    "path": [
+      "system",
+      "job",
+      "cancel"
+    ],
+    "roles": "server",
+    "category": "System",
+    "summary": "Cancel one Management Job",
+    "detail": "Cancel queued targets and request cancellation for running work. Running targets are not claimed terminated.",
+    "examples": [
+      "system job cancel mjob_..."
+    ],
+    "args": [
+      {
+        "name": "<JOB-ID>",
+        "complete": null,
+        "required": true
+      }
+    ],
+    "tail": null,
+    "internal": null,
+    "aliases": [],
+    "destructive": false,
+    "hidden": false,
+    "risk": "none",
+    "confirmation": "none",
+    "surface": "",
+    "flags": []
+  },
+  {
+    "path": [
+      "system",
+      "job"
+    ],
+    "roles": "server",
+    "category": "System",
+    "summary": "Show one Management Job",
+    "detail": "Show bounded per-target state for one Management Job without exposing request secrets.",
+    "examples": [
+      "system job mjob_..."
+    ],
+    "args": [
+      {
+        "name": "<JOB-ID>",
+        "complete": null,
+        "required": true
+      }
+    ],
+    "tail": null,
+    "internal": null,
+    "aliases": [],
+    "destructive": false,
+    "hidden": false,
+    "risk": "none",
+    "confirmation": "none",
+    "surface": "",
+    "flags": []
+  },
+  {
+    "path": [
+      "system",
       "revisions"
     ],
     "roles": "server",

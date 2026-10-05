@@ -347,6 +347,19 @@ class WebApplication:
             if len(parts) == 2 and parts[1] == "export":
                 return self.adapter.draft_export(draft_id, actor=actor)
             raise ControlPlaneError("Web API route was not found.")
+        if path == "/api/v1/jobs":
+            payload: dict[str, Any] = {
+                "limit": _int_arg(_first(query, "limit"), 50)
+            }
+            for key in ("cursor", "status", "job_type"):
+                value = _first(query, key)
+                if value:
+                    payload[key] = value
+            return self.adapter.invoke(
+                operation="drlink_job_list",
+                payload=payload,
+                actor=actor,
+            )
         if path.startswith("/api/v1/jobs/"):
             job_id = path[len("/api/v1/jobs/") :].strip()
             if not job_id or "/" in job_id:
@@ -373,6 +386,24 @@ class WebApplication:
                 principal.session_id, actor_id=principal.operator_id
             )
             return {"status": "logged_out"}
+        if path == "/api/v1/jobs/diagnostic":
+            payload = {"job_type": str(body.get("job_type") or "")}
+            for key in ("resource_type", "resource"):
+                if body.get(key) is not None:
+                    payload[key] = str(body.get(key) or "")
+            return self.adapter.invoke(
+                operation="drlink_diagnostic_job_start",
+                payload=payload,
+                actor=self._actor(principal),
+            )
+        if path == "/api/v1/jobs/cancel":
+            job_id = str(body.get("job_id") or "").strip()
+            if not job_id:
+                raise ControlPlaneError("job_id is required.")
+            return self.adapter.job_cancel(
+                job_id,
+                actor=self._actor(principal),
+            )
         if path == "/api/v1/diagnose":
             payload = {"plane": str(body.get("plane") or "")}
             for key in ("source", "destination", "service", "permission"):

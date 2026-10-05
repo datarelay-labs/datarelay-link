@@ -3,7 +3,7 @@ import {createRoot} from "react-dom/client";
 
 type Json = Record<string, any>;
 const nav=[
-  ["overview","Overview"],["hosts","Managed Hosts"],["services","Remote Services"],["access","Access Operations"],
+  ["overview","Overview"],["hosts","Managed Hosts"],["services","Remote Services"],["access","Access Operations"],["jobs","Jobs"],
   ["objects","Objects & Groups"],["policies","Policies"],["versions","Version Drift"],["system","System"],
   ["audit","Audit"],["revisions","Revisions"],["doctor","Doctor"],["health","Health"],
   ["search","Search"],["views","Saved Views"],["enrollments","Connect Agent"],["drafts","Draft Workspace"],
@@ -758,6 +758,66 @@ function AccessOperations({operator}:{operator:any}){
   </>;
 }
 
+function JobOperations({operator}:{operator:any}){
+  const [jobs,setJobs]=useState<any>(null),[detail,setDetail]=useState<any>(null),[error,setError]=useState(""),[message,setMessage]=useState("");
+  const [jobType,setJobType]=useState("doctor"),[resourceType,setResourceType]=useState("managed-host"),[resource,setResource]=useState(""),[detailId,setDetailId]=useState("");
+  async function refresh(){
+    setError("");
+    try{setJobs(await api("/api/v1/jobs?limit=50"))}catch(e:any){setError(e.message||String(e))}
+  }
+  useEffect(()=>{refresh()},[]);
+  async function start(){
+    setError("");setMessage("");
+    try{
+      const body:any={job_type:jobType,resource_type:resourceType};
+      if(resource)body.resource=resource;
+      const result=await api("/api/v1/jobs/diagnostic",{method:"POST",body:JSON.stringify(body)});
+      setDetail(result.job);
+      setDetailId(result.job?.id||"");
+      setMessage("Queued "+jobType+" for "+String(result.selection?.target_count||0)+" Managed Host(s)");
+      await refresh();
+    }catch(e:any){setError(e.message||String(e))}
+  }
+  async function loadDetail(id?:string){
+    const target=(id||detailId).trim();if(!target)return;
+    setError("");
+    try{const result=await api("/api/v1/jobs/"+encodeURIComponent(target));setDetail(result);setDetailId(target)}catch(e:any){setError(e.message||String(e))}
+  }
+  async function cancelJob(){
+    if(!detail?.id)return;
+    setError("");setMessage("");
+    try{
+      const result=await api("/api/v1/jobs/cancel",{method:"POST",body:JSON.stringify({job_id:detail.id})});
+      setDetail(result);
+      setMessage("Cancellation requested. Queued targets are cancelled; running targets are not claimed terminated.");
+      await refresh();
+    }catch(e:any){setError(e.message||String(e))}
+  }
+  const rows=(jobs?.items||[]).map((x:any)=>({id:x.id,job_type:x.job_type,status:x.status,resource_type:x.resource_type,resource_ref:x.resource_ref,target_count:x.target_count,created_at:x.created_at,finished_at:x.finished_at||""}));
+  return <>
+    {error&&<div className="error">{error}</div>}{message&&<div className="notice">{message}</div>}
+    <div className="card">
+      <h3>Bounded Management Jobs</h3>
+      <div className="muted">Safe fleet operations only. Jobs are bounded to at most 100 trusted Managed Hosts and use the signed Agent claim/complete transport.</div>
+      {operator.role!=="Read Only"&&<div className="toolbar">
+        <select value={jobType} onChange={e=>setJobType(e.target.value)}><option value="doctor">Doctor diagnostics</option><option value="refresh">Synchronize / refresh</option><option value="version-check">Version check</option></select>
+        <select value={resourceType} onChange={e=>{setResourceType(e.target.value);setResource("")}}><option value="managed-host">Managed Host(s)</option><option value="managed-host-group">Managed Host Group</option></select>
+        <input value={resource} onChange={e=>setResource(e.target.value)} placeholder={resourceType==="managed-host"?"Host selector; blank = all trusted":"Managed Host Group name / ID"}/>
+        <button className="primary" onClick={start} disabled={resourceType==="managed-host-group"&&!resource.trim()}>Start Job</button>
+      </div>}
+      <div className="toolbar"><button className="secondary" onClick={refresh}>Refresh Jobs</button><input value={detailId} onChange={e=>setDetailId(e.target.value)} placeholder="Job ID"/><button className="secondary" onClick={()=>loadDetail()}>Load Detail</button></div>
+      <Table items={rows}/>
+    </div>
+    {detail&&<div className="card">
+      <h3>Job Detail</h3>
+      <div className="grid"><Metric label="Status" value={detail.status}/><Metric label="Targets" value={detail.target_count}/><Metric label="Type" value={detail.job_type}/></div>
+      {operator.role!=="Read Only"&&["QUEUED","RUNNING"].includes(String(detail.status||""))&&<button className="danger" onClick={cancelJob}>Cancel Job</button>}
+      <Table items={(detail.targets||[]).map((x:any)=>({target_id:x.target_id,status:x.status,attempt:x.attempt,error:x.error||"",updated_at:x.updated_at}))}/>
+      <pre className="plan">{JSON.stringify({id:detail.id,resource_type:detail.resource_type,resource_ref:detail.resource_ref,deadline_at:detail.deadline_at,last_error:detail.last_error,targets:(detail.targets||[]).map((x:any)=>({target_id:x.target_id,status:x.status,result:x.result,error:x.error}))},null,2)}</pre>
+    </div>}
+  </>;
+}
+
 function View({active,operator}:{active:string,operator:any}){
   const [data,setData]=useState<any>(null),[error,setError]=useState(""),[query,setQuery]=useState("");
   useEffect(()=>{
@@ -774,6 +834,7 @@ function View({active,operator}:{active:string,operator:any}){
   if(error)return <div className="error">{error}</div>;
   if(active==="drafts")return <DraftWorkspace/>;
   if(active==="access")return <AccessOperations operator={operator}/>;
+  if(active==="jobs")return <JobOperations operator={operator}/>;
   if(active==="enrollments"&&data)return <EnrollmentPanel data={data} refresh={()=>api("/api/v1/enrollments?limit=50").then(setData)}/>;
   if(active==="search")return <div><div className="toolbar"><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search resources and policy"/><button className="primary" onClick={()=>api("/api/v1/search?q="+encodeURIComponent(query)+"&limit=50").then(setData).catch((e:any)=>setError(e.message))}>Search</button></div>{data&&<Table items={(data.items||[]).map((x:any)=>({type:x.resource_type,id:x.id,name:x.name}))}/>}</div>;
   if(active==="overview"&&data){const h=data.overview?.managed_hosts||{},s=data.overview?.remote_services||{},j=data.overview?.management_jobs||{};return <><div className="grid"><Metric label="Managed Hosts" value={h.total}/><Metric label="Connected" value={h.connected}/><Metric label="Remote Services" value={s.total}/><Metric label="Active Jobs" value={j.active_jobs}/></div><div className="card"><h3>Attention Center</h3>{(data.attention?.items||[]).map((x:any)=><span key={x.kind} className={"badge "+x.severity}>{x.label}: {x.count}</span>)}{!(data.attention?.items||[]).length&&<div className="muted">No current attention items</div>}</div></>};

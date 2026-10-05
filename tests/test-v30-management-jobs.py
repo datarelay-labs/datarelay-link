@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import io
 import sys
 import tempfile
 import threading
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -12,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 
 from drlink_control_db import ControlPlaneError, open_control_db
+import drlink_control_cli as control_cli
 from drlink_management_service import ManagementQueryService
 from drlink_v30_jobs import (
     BoundedAgentRpcWorkerPool,
@@ -266,6 +269,76 @@ class V30ManagementJobTests(unittest.TestCase):
             self.assertNotIn("drlink_diagnostic_job_start", ready)
         finally:
             query.close()
+
+    def test_public_cli_job_inspect_cancel_and_recovery(self):
+        job = self._enqueue(targets=("host-a", "host-b"))
+        claim = self.engine.claim_targets(
+            worker_id="worker-a", limit=1, now=self.now + timedelta(seconds=1)
+        )[0]
+
+        out = io.StringIO()
+        err = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            rc = control_cli.dispatch(["system", "jobs"], root=self.tmp)
+        self.assertEqual(rc, 0, err.getvalue())
+        self.assertIn(job["id"], out.getvalue())
+        self.assertIn("RUNNING", out.getvalue())
+
+        out = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            rc = control_cli.dispatch(
+                ["system", "job", job["id"]], root=self.tmp
+            )
+        self.assertEqual(rc, 0, err.getvalue())
+        self.assertIn("Management Job: %s" % job["id"], out.getvalue())
+        self.assertIn("host-a", out.getvalue())
+        self.assertIn("host-b", out.getvalue())
+
+        out = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            rc = control_cli.dispatch(
+                ["system", "job", "cancel", job["id"]], root=self.tmp
+            )
+        self.assertEqual(rc, 0, err.getvalue())
+        current = self.engine.get(job["id"])
+        self.assertEqual(current["status"], RUNNING)
+        self.assertTrue(current["cancel_requested"])
+        queued = [
+            item for item in current["targets"] if item["target_id"] != claim["target_id"]
+        ][0]
+        self.assertEqual(queued["status"], CANCELLED)
+        self.assertIn("not claimed terminated", out.getvalue())
+
+        self.engine.complete_target(
+            job_id=claim["job_id"],
+            target_id=claim["target_id"],
+            claim_token=claim["claim_token"],
+            status=SUCCEEDED,
+            result={"completed_before_cancel": True},
+            now=self.now + timedelta(seconds=2),
+        )
+        self.assertEqual(self.engine.get(job["id"])["status"], CANCELLED)
+
+        interrupted = self._enqueue(
+            targets=("host-c", "host-d"),
+            now=self.now + timedelta(seconds=10),
+        )
+        self.engine.claim_targets(
+            worker_id="worker-b",
+            limit=1,
+            now=self.now + timedelta(seconds=11),
+        )
+        out = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            rc = control_cli.dispatch(["system", "jobs", "recover"], root=self.tmp)
+        self.assertEqual(rc, 0, err.getvalue())
+        recovered = self.engine.get(interrupted["id"])
+        self.assertEqual(recovered["status"], FAILED)
+        self.assertEqual(
+            {item["error"] for item in recovered["targets"]},
+            {"SERVER_RESTART_INTERRUPTED"},
+        )
+        self.assertIn("failed closed", out.getvalue())
 
     def test_job_read_reconciles_unclaimed_deadline_to_failed(self):
         old = self.now - timedelta(seconds=30)

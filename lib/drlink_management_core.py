@@ -50,6 +50,12 @@ IMPLEMENTED_GUIDED_CHANGE_TOOLS = frozenset(
     }
 )
 
+IMPLEMENTED_MANAGEMENT_JOB_TOOLS = frozenset(
+    {
+        "drlink_diagnostic_job_start",
+    }
+)
+
 SURFACE_MCP = "MCP"
 SURFACE_WEB = "WEB"
 SUPPORTED_SURFACES = frozenset({SURFACE_MCP, SURFACE_WEB})
@@ -89,6 +95,7 @@ def implemented_management_tool_names() -> frozenset[str]:
         frozenset(IMPLEMENTED_MANAGEMENT_TOOLS)
         | frozenset(IMPLEMENTED_MANAGEMENT_CHANGE_TOOLS)
         | frozenset(IMPLEMENTED_GUIDED_CHANGE_TOOLS)
+        | frozenset(IMPLEMENTED_MANAGEMENT_JOB_TOOLS)
     )
     catalog = frozenset(tool.name for tool in MANAGEMENT_TOOLS)
     unknown = names - catalog
@@ -298,6 +305,75 @@ class ManagementCoreService:
         del actor
         with ManagementQueryService(self.root) as service:
             return service.job_get(data["job_id"])
+
+    def _invoke_drlink_diagnostic_job_start(
+        self, actor: ManagementActor, data: dict
+    ) -> dict:
+        from drlink_v30_jobs import ManagementJobEngine
+
+        job_type = str(data.get("job_type") or "").strip().lower()
+        if job_type not in ("doctor", "refresh", "version-check"):
+            raise ControlPlaneError(
+                "Diagnostic Job type must be doctor, refresh, or version-check."
+            )
+        with ManagementQueryService(self.root) as service:
+            selection = service.resolve_management_job_targets(
+                resource_type=data.get("resource_type"),
+                resource=data.get("resource"),
+            )
+        payload = {
+            "job_type": job_type,
+            "resource_display": selection["resource_display"],
+        }
+        if job_type == "version-check":
+            identity = ManagementSystemService(self.root)._read_identity()
+            payload.update(
+                {
+                    "target_project_version": str(
+                        identity.get("project_version") or "unknown"
+                    ),
+                    "target_relay_engine_version": str(
+                        identity.get("relay_engine_version") or "unknown"
+                    ),
+                    "target_release_channel": str(
+                        identity.get("channel") or "unknown"
+                    ),
+                }
+            )
+        with ManagementJobEngine(self.root) as engine:
+            job = engine.enqueue(
+                job_type=job_type,
+                targets=selection["targets"],
+                requested_by=actor.actor_id,
+                resource_type=selection["resource_type"],
+                resource_ref=selection["resource_ref"],
+                payload=payload,
+            )
+        return {
+            "job": job,
+            "selection": {
+                key: selection[key]
+                for key in (
+                    "resource_type",
+                    "resource_ref",
+                    "resource_display",
+                    "target_count",
+                )
+            },
+        }
+
+    def job_cancel(
+        self, job_id: str, *, actor: ManagementActor
+    ) -> dict[str, Any]:
+        self._require_web_role(actor, "Admin", "Operator")
+        if "management-job-run" not in actor.permissions:
+            raise ManagementAuthorizationError(
+                "management-job-run is required to cancel Management Jobs."
+            )
+        from drlink_v30_jobs import ManagementJobEngine
+
+        with ManagementJobEngine(self.root) as engine:
+            return engine.cancel(job_id)
 
     @staticmethod
     def _require_web_role(actor: ManagementActor, *roles: str) -> str:

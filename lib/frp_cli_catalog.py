@@ -1114,6 +1114,8 @@ def to_internal(tokens):
         ("system", "revision"),
         ("system", "diff"),
         ("system", "rollback"),
+        ("system", "jobs"),
+        ("system", "job"),
     ):
         return list(work)
 
@@ -1807,6 +1809,10 @@ def domain_help(topic, role):
                     "  system diff <REVISION_A> <REVISION_B>",
                     "  system rollback <REVISION>",
                     "  system audit",
+                    "  system jobs",
+                    "  system job <JOB-ID>",
+                    "  system job cancel <JOB-ID>",
+                    "  system jobs recover",
                     "  system export configuration <PATH>",
                     "  test configuration <PATH|->",
                     "  system diff configuration <PATH|->",
@@ -2385,6 +2391,7 @@ NAVIGATION_TREE = {
         ("server_sys_updates", "Updates", "", "submenu", "server.system.updates"),
         ("server_sys_diag", "Diagnostics", "", "submenu", "server.system.diagnostics"),
         ("server_sys_audit", "Audit Log", "", "command", "system audit"),
+        ("server_sys_jobs", "Management Jobs", "", "command", "system jobs"),
         ("server_sys_export", "Export configuration", "", "command", "system export configuration"),
         ("server_sys_version", "Version Information", "", "command", "system version"),
         ("server_sys_uninstall", "Uninstall Data Relay Link", "", "command", "system uninstall"),

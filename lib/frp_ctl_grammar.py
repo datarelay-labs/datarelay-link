@@ -130,6 +130,8 @@ CONTROL_PLANE_SYSTEM = frozenset(
         "apply",
         "certificate",
         "synchronize",
+        "jobs",
+        "job",
     }
 )
 

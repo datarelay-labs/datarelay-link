@@ -268,6 +268,9 @@ class ManagementWebApiAdapter:
     def support_bundle_create(self, *, actor: ManagementActor) -> dict[str, Any]:
         return self.core.support_bundle_create(actor=actor)
 
+    def job_cancel(self, job_id: str, *, actor: ManagementActor) -> dict[str, Any]:
+        return self.core.job_cancel(job_id, actor=actor)
+
     def enrollment_issue_manual(
         self,
         *,

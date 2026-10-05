@@ -1015,6 +1015,36 @@ The initial 3.0 scope does not expose broad bulk delete/revoke/release/policy-re
 unbounded mass update/restart. Those actions require a separate future risk/rollback
 contract.
 
+Current DRL3-6 bounded Job implementation:
+
+- the frozen `drlink_diagnostic_job_start` catalog operation is READY for exactly
+  `doctor`, `refresh`, and `version-check`; destructive or Remote Service mutation Job
+  families cannot be started through this operation;
+- target selection resolves immutable trusted Managed Host IDs only and is bounded to
+  100 targets. A blank `managed-host` selector means all trusted Hosts only when the
+  bounded result is at most 100; `managed-host-group` resolves existing Client Group
+  membership and fails closed on empty/untrusted/oversized selection;
+- Agent execution uses the existing signed target-bound Management Job claim/complete
+  transport. Doctor runs with network probes disabled and returns a bounded redacted
+  summary; refresh delegates to canonical Agent synchronization; version-check compares
+  local product/Relay Engine versions to the Server-pinned target carried in the Job,
+  providing offline-safe update-availability drift without a fleet-wide Internet check;
+- public CLI recovery is available as `system jobs`, `system job <JOB-ID>`,
+  `system job cancel <JOB-ID>`, and `system jobs recover`. Opaque Job IDs are never
+  truncated. Recovery fails restart-interrupted work closed rather than silently
+  resuming it;
+- Web Jobs provides start/list/detail/per-target progress and cancel. Web cancellation
+  is a Core/Web-only operation using the existing Job Engine and
+  `management-job-run`; it does not add a new MCP tool or claim running RPC work was
+  forcibly terminated;
+- queue saturation, target-count limits, worker leases, deadlines, cancellation,
+  per-target partial failure, and bounded worker-pool backpressure remain owned by the
+  existing Job Engine. No SQLite write transaction spans Agent RPC.
+
+The remaining safe-bulk candidates in this section (fleet support-bundle artifacts,
+inventory export, and bounded metadata/group/tag assignment) require their own artifact or
+Change Plan semantics and are not implicitly enabled by `drlink_diagnostic_job_start`.
+
 ## 25. Search, filtering, and scale
 
 The qualified 3.0 target is 1–100 Managed Hosts.

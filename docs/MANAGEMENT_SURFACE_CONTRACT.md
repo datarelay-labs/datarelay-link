@@ -483,6 +483,22 @@ therefore receive the same bounded side-effect-free correlation result from
 The admitted schema remains unchanged. Missing DNS/target/runtime/activity evidence is
 reported as UNKNOWN/N/A rather than triggering browser-originated network work.
 
+DRL3-6 activates the already-frozen `drlink_diagnostic_job_start` as a READY JOB
+operation without changing the admitted MCP tool list or schema. The operation accepts
+only `doctor`, `refresh`, and `version-check`, resolves at most 100 trusted immutable
+Managed Host IDs, and enqueues through the canonical Management Job Engine. Agent workers
+claim only their own signed target row and return bounded per-target results. Doctor
+disables network probes; refresh uses canonical Agent synchronization; version-check
+compares local identity to the Server-pinned product/Relay Engine target carried in the
+Job so isolated networks do not require one external version lookup per Host.
+
+Job inspection remains `drlink_job_list` / `drlink_job_get` for MCP. Cancellation and
+restart recovery are not new MCP tools: local CLI provides `system jobs`,
+`system job <JOB-ID>`, `system job cancel <JOB-ID>`, and `system jobs recover`, while
+the first-party Web adapter exposes Core-owned cancel UX to Admin/Operator with
+`management-job-run`. Cancelling queued work never implies that already-running Agent
+RPC was forcibly terminated.
+
 DRL3-3 adds these Core/Web-only guided configuration operations:
 
 ```text

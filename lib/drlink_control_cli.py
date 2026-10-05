@@ -358,6 +358,10 @@ def _public_command_is_read_only(tokens) -> bool:
     op = str(tokens[1])
     if op in ("diagnostics", "revisions", "revision", "diff", "audit"):
         return True
+    if op == "jobs" and len(tokens) == 2:
+        return True
+    if op == "job" and len(tokens) == 3:
+        return True
     if op == "export" and len(tokens) >= 3 and tokens[2] == "configuration":
         return True
     if op == "certificate" and len(tokens) >= 3 and tokens[2] in ("status", "preflight"):
@@ -1451,6 +1455,98 @@ def _system_revision_rollback(plane: ControlPlane, value: str) -> int:
     return 0
 
 
+def _system_jobs_list(plane: ControlPlane) -> int:
+    from drlink_management_service import ManagementQueryService
+
+    with ManagementQueryService(plane.root) as service:
+        page = service.job_list(limit=50)
+    rows = list(page.items)
+    if not rows:
+        sys.stdout.write("No Management Jobs found.\n")
+        return 0
+    sys.stdout.write("%-32s %-14s %-10s %-7s %-24s\n" % (
+        "JOB ID", "TYPE", "STATUS", "TARGETS", "CREATED",
+    ))
+    for row in rows:
+        sys.stdout.write("%-32s %-14s %-10s %-7s %-24s\n" % (
+            str(row.get("id") or ""),
+            str(row.get("job_type") or "")[:14],
+            str(row.get("status") or "")[:10],
+            str(row.get("target_count") or 0),
+            str(row.get("created_at") or "")[:24],
+        ))
+    if page.next_cursor:
+        sys.stdout.write("More Jobs exist; use Web Management for paginated history.\n")
+    return 0
+
+
+def _system_job_show(plane: ControlPlane, job_id: str) -> int:
+    from drlink_management_service import ManagementQueryService
+
+    with ManagementQueryService(plane.root) as service:
+        job = service.job_get(job_id)
+    sys.stdout.write(
+        "Management Job: %s\nType: %s\nStatus: %s\nTargets: %s\n"
+        "Resource: %s %s\nCreated: %s\nDeadline: %s\n"
+        "Cancel requested: %s\nLast error: %s\n"
+        % (
+            job.get("id"),
+            job.get("job_type"),
+            job.get("status"),
+            job.get("target_count"),
+            job.get("resource_type") or "-",
+            job.get("resource_ref") or "-",
+            job.get("created_at") or "-",
+            job.get("deadline_at") or "-",
+            "yes" if job.get("cancel_requested") else "no",
+            job.get("last_error") or "-",
+        )
+    )
+    targets = list(job.get("targets") or [])
+    if targets:
+        sys.stdout.write("\n%-36s %-10s %-7s %s\n" % (
+            "TARGET", "STATUS", "ATTEMPT", "ERROR",
+        ))
+        for item in targets[:100]:
+            sys.stdout.write("%-36s %-10s %-7s %s\n" % (
+                str(item.get("target_id") or "")[:36],
+                str(item.get("status") or "")[:10],
+                str(item.get("attempt") or 0),
+                str(item.get("error") or "")[:256],
+            ))
+    return 0
+
+
+def _system_job_cancel(plane: ControlPlane, job_id: str) -> int:
+    from drlink_v30_jobs import ManagementJobEngine
+
+    with ManagementJobEngine(plane.root) as engine:
+        result = engine.cancel(job_id)
+    sys.stdout.write(
+        "Management Job cancel requested: %s\nStatus: %s\n"
+        "Running targets are not claimed terminated; queued targets are cancelled.\n"
+        % (result.get("id"), result.get("status"))
+    )
+    return 0
+
+
+def _system_jobs_recover(plane: ControlPlane) -> int:
+    from drlink_v30_jobs import ManagementJobEngine
+
+    with ManagementJobEngine(plane.root) as engine:
+        interrupted = engine.recover_interrupted()
+        deadlines = engine.expire_deadlines()
+        leases = engine.recover_expired_claims()
+    sys.stdout.write(
+        "Management Job recovery complete.\n"
+        "Interrupted jobs failed closed: %s\n"
+        "Expired deadlines reconciled: %s\n"
+        "Expired worker leases reconciled: %s\n"
+        % (interrupted, deadlines, leases)
+    )
+    return 0
+
+
 def _system(plane: ControlPlane, rest):
     if not rest:
         raise SystemExit("Missing system operation.")
@@ -1460,6 +1556,18 @@ def _system(plane: ControlPlane, rest):
         return _configuration_diff(plane, rest[2:])
     if rest[0] == "apply" and len(rest) >= 2 and rest[1] == "configuration":
         return _configuration_apply(plane, rest[2:])
+    if rest[0] == "jobs":
+        if len(rest) == 1:
+            return _system_jobs_list(plane)
+        if len(rest) == 2 and rest[1] == "recover":
+            return _system_jobs_recover(plane)
+        raise SystemExit("Usage: system jobs [recover]")
+    if rest[0] == "job":
+        if len(rest) == 2:
+            return _system_job_show(plane, rest[1])
+        if len(rest) == 3 and rest[1] == "cancel":
+            return _system_job_cancel(plane, rest[2])
+        raise SystemExit("Usage: system job <JOB-ID> | system job cancel <JOB-ID>")
     if rest[0] == "synchronize":
         import drlink_v24 as v24
 

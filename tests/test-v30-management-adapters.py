@@ -109,7 +109,9 @@ class V30ManagementAdapterTests(unittest.TestCase):
         self.assertNotIn("drlink_guided_change_preview", mcp_names)
         self.assertIn("drlink_guided_change_preview", web_names)
         self.assertIn("drlink_diagnose_connection", ready)
-        self.assertNotIn("drlink_diagnostic_job_start", ready)
+        self.assertIn("drlink_diagnostic_job_start", ready)
+        self.assertIn("drlink_diagnostic_job_start", mcp_names)
+        self.assertIn("drlink_diagnostic_job_start", web_names)
 
         mcp_source = inspect.getsource(
             __import__("drlink_management_mcp_adapter")
@@ -158,10 +160,16 @@ class V30ManagementAdapterTests(unittest.TestCase):
                 arguments={"resource_type": "managed-host", "unexpected": "x"},
                 actor=self.actor,
             )
-        with self.assertRaises(ControlPlaneError):
+        with self.assertRaises(ManagementAuthorizationError):
             self.mcp.call_tool(
                 name="drlink_diagnostic_job_start",
                 arguments={"job_type": "doctor"},
+                actor=read_actor,
+            )
+        with self.assertRaises(ControlPlaneError):
+            self.mcp.call_tool(
+                name="drlink_diagnostic_job_start",
+                arguments={"job_type": "remote-service-delete"},
                 actor=self.actor,
             )
 
