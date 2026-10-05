@@ -28,7 +28,7 @@ CANCELLED = "CANCELLED"
 JOB_STATUSES = frozenset({QUEUED, RUNNING, SUCCEEDED, FAILED, CANCELLED})
 TERMINAL_STATUSES = frozenset({SUCCEEDED, FAILED, CANCELLED})
 
-ADMITTED_JOB_TYPES = frozenset({"doctor", "refresh", "version-check"})
+ADMITTED_JOB_TYPES = frozenset({"doctor", "refresh", "version-check", "remote-service-set", "remote-service-delete"})
 DEFAULT_JOB_TIMEOUT_SECONDS = 300
 MAX_JOB_TIMEOUT_SECONDS = 3600
 DEFAULT_LEASE_SECONDS = 60
@@ -343,6 +343,7 @@ class ManagementJobEngine:
         *,
         worker_id: str,
         limit: int = 1,
+        target_id: Optional[str] = None,
         now: Optional[datetime] = None,
     ) -> list[dict[str, Any]]:
         worker = _bounded_text(worker_id, field="Management Job worker")
@@ -354,15 +355,27 @@ class ManagementJobEngine:
         self.recover_expired_claims(now=current_dt)
         self._begin()
         try:
-            rows = self.conn.execute(
-                "SELECT t.job_id,t.target_id,j.job_type,j.payload_json,j.deadline_at "
-                "FROM management_job_targets t "
-                "JOIN management_jobs j ON j.id=t.job_id "
-                "WHERE t.status='QUEUED' AND j.status IN ('QUEUED','RUNNING') "
-                "AND j.cancel_requested=0 AND j.deadline_at>? "
-                "ORDER BY j.created_at,t.target_id LIMIT ?",
-                (current, count),
-            ).fetchall()
+            target_filter = str(target_id or "").strip()
+            if target_filter:
+                rows = self.conn.execute(
+                    "SELECT t.job_id,t.target_id,j.job_type,j.payload_json,j.deadline_at "
+                    "FROM management_job_targets t "
+                    "JOIN management_jobs j ON j.id=t.job_id "
+                    "WHERE t.status='QUEUED' AND j.status IN ('QUEUED','RUNNING') "
+                    "AND j.cancel_requested=0 AND j.deadline_at>? AND t.target_id=? "
+                    "ORDER BY j.created_at,t.target_id LIMIT ?",
+                    (current, target_filter, count),
+                ).fetchall()
+            else:
+                rows = self.conn.execute(
+                    "SELECT t.job_id,t.target_id,j.job_type,j.payload_json,j.deadline_at "
+                    "FROM management_job_targets t "
+                    "JOIN management_jobs j ON j.id=t.job_id "
+                    "WHERE t.status='QUEUED' AND j.status IN ('QUEUED','RUNNING') "
+                    "AND j.cancel_requested=0 AND j.deadline_at>? "
+                    "ORDER BY j.created_at,t.target_id LIMIT ?",
+                    (current, count),
+                ).fetchall()
             claimed: list[dict[str, Any]] = []
             for row in rows:
                 token = secrets.token_hex(16)
@@ -589,6 +602,23 @@ class ManagementJobEngine:
     def claim_targets(self, **kwargs) -> list[dict[str, Any]]:
         with self._lock:
             return self._claim_targets_unlocked(**kwargs)
+
+    def claim_targets_for_target(
+        self,
+        *,
+        target_id: str,
+        worker_id: str,
+        limit: int = 1,
+        now: Optional[datetime] = None,
+    ) -> list[dict[str, Any]]:
+        target = _bounded_text(target_id, field="Management Job target")
+        with self._lock:
+            return self._claim_targets_unlocked(
+                worker_id=worker_id,
+                limit=limit,
+                target_id=target,
+                now=now,
+            )
 
     def complete_target(self, **kwargs) -> dict[str, Any]:
         with self._lock:

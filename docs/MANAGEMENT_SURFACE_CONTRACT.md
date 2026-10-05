@@ -434,6 +434,15 @@ No Plugin release should require copying Core management semantics into relay so
 - policy/revision changes between preview and apply → apply fails stale/conflict.
 - Agent becomes unavailable → Agent-owned operation returns truthful blocked/unavailable;
   no false success.
+
+DRL3-3 Agent-owned Remote Service mutation uses the existing enrolled-Agent signed
+management transport plus target-bound Management Jobs. The Server queues work only for
+an immutable Managed Host ID; an Agent may claim and complete only its own target row.
+The Agent lifecycle worker executes the existing Agent-side Remote Service Core operation,
+then reports the terminal Job result. An unreachable Agent therefore cannot produce a
+successful completion; work remains non-terminal until claimed or fails through the Job
+execution/deadline contract. Server-side desired state alone never implies Agent runtime
+HEALTHY.
 - Emergency cutoff runtime activation cannot be verified → report failure/degraded state
   and follow the Core rollback/recovery contract.
 

@@ -75,11 +75,112 @@ def disconnect_once(root: Optional[str] = None) -> dict:
     return report_agent_lifecycle_on_server(root=root, state="disconnected")
 
 
+def _execute_management_job(claim: dict, root: Optional[str] = None) -> dict:
+    kind = str(claim.get("job_type") or "").strip().lower()
+    payload = claim.get("payload") or {}
+    if not isinstance(payload, dict):
+        raise ValueError("Management Job payload must be an object")
+    from drlink_control_plane import ControlPlane
+    from drlink_v24 import ensure_v2_schema, set_remote_service_agent, unset_remote_service_agent
+
+    plane = ControlPlane(root)
+    try:
+        ensure_v2_schema(plane.conn)
+        if kind == "remote-service-set":
+            name = str(payload.get("name") or "").strip()
+            destination = str(payload.get("destination") or "").strip()
+            service = str(payload.get("service") or "").strip()
+            enabled = payload.get("enabled")
+            if not name or not destination or not service or not isinstance(enabled, bool):
+                raise ValueError("Remote Service set job payload is incomplete")
+            result = set_remote_service_agent(
+                plane,
+                name,
+                destination=destination,
+                service=service,
+                enabled=enabled,
+                oneshot=True,
+                root=root,
+                server_reachable=True,
+            )
+            view = result.get("view") if isinstance(result, dict) else None
+            return {
+                "operation": "remote-service-set",
+                "name": name,
+                "runtime_status": str((view or {}).get("status") or "UNKNOWN"),
+                "reason": str((view or {}).get("reason") or ""),
+                "endpoint": (view or {}).get("endpoint"),
+            }
+        if kind == "remote-service-delete":
+            name = str(payload.get("name") or "").strip()
+            if not name:
+                raise ValueError("Remote Service delete job payload is incomplete")
+            result = unset_remote_service_agent(
+                plane,
+                name,
+                root=root,
+                server_reachable=True,
+            )
+            return {
+                "operation": "remote-service-delete",
+                "name": name,
+                "status": str((result or {}).get("status") or "DELETED"),
+            }
+        raise ValueError("Unsupported Agent Management Job type: %s" % kind)
+    finally:
+        plane.close()
+
+
+def process_management_jobs_once(root: Optional[str] = None, *, limit: int = 4) -> dict:
+    from drlink_mgmt_sync import (
+        claim_management_jobs_on_server,
+        complete_management_job_on_server,
+    )
+
+    response = claim_management_jobs_on_server(root=root, limit=limit)
+    jobs = response.get("jobs") if isinstance(response, dict) else None
+    if jobs is None:
+        jobs = []
+    if not isinstance(jobs, list):
+        raise ValueError("Management Job claim response is malformed")
+    processed = 0
+    failed = 0
+    for claim in jobs:
+        if not isinstance(claim, dict):
+            continue
+        job_id = str(claim.get("job_id") or "")
+        claim_token = str(claim.get("claim_token") or "")
+        if not job_id or not claim_token:
+            continue
+        try:
+            result = _execute_management_job(claim, root=root)
+            complete_management_job_on_server(
+                root=root,
+                job_id=job_id,
+                claim_token=claim_token,
+                status="SUCCEEDED",
+                result=result,
+            )
+        except Exception as exc:
+            failed += 1
+            complete_management_job_on_server(
+                root=root,
+                job_id=job_id,
+                claim_token=claim_token,
+                status="FAILED",
+                result={},
+                error=str(exc)[:1024],
+            )
+        processed += 1
+    return {"processed": processed, "failed": failed}
+
+
 def reconcile_once(root: Optional[str] = None) -> dict:
     if load_lifecycle_intent(root) == "paused":
         return {"status": "PAUSED", "updated": 0}
     heartbeat = heartbeat_once(root)
     force_sync = bool((heartbeat or {}).get("reconcile_required", False))
+    jobs = process_management_jobs_once(root)
     from drlink_control_plane import ControlPlane
     from drlink_v24 import ensure_v2_schema, synchronize_agent_remote_services
 
@@ -87,8 +188,17 @@ def reconcile_once(root: Optional[str] = None) -> dict:
     try:
         ensure_v2_schema(plane.conn)
         if not force_sync and not reconciliation_needed(plane):
-            return {"status": "HEARTBEAT", "updated": 0}
-        return synchronize_agent_remote_services(plane, root=root)
+            return {
+                "status": "HEARTBEAT",
+                "updated": 0,
+                "management_jobs_processed": int(jobs.get("processed") or 0),
+                "management_jobs_failed": int(jobs.get("failed") or 0),
+            }
+        result = synchronize_agent_remote_services(plane, root=root)
+        if isinstance(result, dict):
+            result["management_jobs_processed"] = int(jobs.get("processed") or 0)
+            result["management_jobs_failed"] = int(jobs.get("failed") or 0)
+        return result
     finally:
         plane.close()
 

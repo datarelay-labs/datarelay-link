@@ -528,6 +528,10 @@ def _canonical_operation(method: str, path: str) -> Optional[tuple[str, str]]:
         return MGMT.MGMT_OP_AI_JOB_CLAIM, parsed
     if method_u == "POST" and parsed == "/v1/ai-jobs/complete":
         return MGMT.MGMT_OP_AI_JOB_COMPLETE, parsed
+    if method_u == "POST" and parsed == "/v1/management-jobs/claim":
+        return MGMT.MGMT_OP_MANAGEMENT_JOB_CLAIM, parsed
+    if method_u == "POST" and parsed == "/v1/management-jobs/complete":
+        return MGMT.MGMT_OP_MANAGEMENT_JOB_COMPLETE, parsed
     return None
 
 
@@ -865,6 +869,52 @@ def complete_ai_job_on_server(
         "POST",
         base + "/v1/ai-jobs/complete",
         body,
+        root=root,
+    )
+
+
+def claim_management_jobs_on_server(*, root: Optional[str] = None, limit: int = 4) -> dict:
+    """Claim queued Management Jobs for this authenticated Managed Host only."""
+    base = resolve_mgmt_base_url(root)
+    if not base:
+        raise MgmtSyncError(
+            "ERROR:\nNo Server management URL is configured for Management Job claim.\n\n"
+            "No changes were applied."
+        )
+    return _request_json(
+        "POST",
+        base + "/v1/management-jobs/claim",
+        {"limit": int(limit)},
+        root=root,
+    )
+
+
+def complete_management_job_on_server(
+    *,
+    root: Optional[str] = None,
+    job_id: str,
+    claim_token: str,
+    status: str,
+    result: Optional[dict] = None,
+    error: str = "",
+) -> dict:
+    """Complete one claimed Management Job target for this Managed Host."""
+    base = resolve_mgmt_base_url(root)
+    if not base:
+        raise MgmtSyncError(
+            "ERROR:\nNo Server management URL is configured for Management Job completion.\n\n"
+            "No changes were applied."
+        )
+    return _request_json(
+        "POST",
+        base + "/v1/management-jobs/complete",
+        {
+            "id": str(job_id),
+            "claim_token": str(claim_token),
+            "status": str(status),
+            "result": dict(result or {}),
+            "error": str(error or ""),
+        },
         root=root,
     )
 
@@ -1523,6 +1573,60 @@ def server_complete_ai_job(plane, auth: MgmtAuthContext, body: dict) -> dict:
     return {"ok": True}
 
 
+def server_claim_management_jobs(plane, auth: MgmtAuthContext, body: dict) -> dict:
+    """Claim only Management Job targets addressed to this authenticated Managed Host."""
+    from drlink_v30_jobs import ManagementJobEngine
+
+    machine_id = auth.machine_id
+    _require_managed_host(plane, machine_id)
+    try:
+        limit = max(1, min(int((body or {}).get("limit") or 4), 16))
+    except (TypeError, ValueError) as exc:
+        raise MgmtSyncError("Management Job claim limit must be an integer") from exc
+    engine = ManagementJobEngine(getattr(plane, "root", None))
+    try:
+        jobs = engine.claim_targets_for_target(
+            target_id=machine_id,
+            worker_id="agent:%s" % machine_id,
+            limit=limit,
+        )
+    finally:
+        engine.close()
+    return {"jobs": jobs}
+
+
+def server_complete_management_job(plane, auth: MgmtAuthContext, body: dict) -> dict:
+    """Complete only the authenticated Managed Host's currently claimed target."""
+    from drlink_v30_jobs import ManagementJobEngine, FAILED, SUCCEEDED
+
+    machine_id = auth.machine_id
+    _require_managed_host(plane, machine_id)
+    job_id = str((body or {}).get("id") or "").strip()
+    claim_token = str((body or {}).get("claim_token") or "").strip()
+    status = str((body or {}).get("status") or "").strip().upper()
+    result = (body or {}).get("result") or {}
+    error = str((body or {}).get("error") or "")[:1024]
+    if not job_id or not claim_token:
+        raise MgmtSyncError("Management Job id and claim token are required")
+    if status not in (SUCCEEDED, FAILED):
+        raise MgmtSyncError("Management Job completion status must be SUCCEEDED or FAILED")
+    if not isinstance(result, dict):
+        raise MgmtSyncError("Management Job result must be an object")
+    engine = ManagementJobEngine(getattr(plane, "root", None))
+    try:
+        job = engine.complete_target(
+            job_id=job_id,
+            target_id=machine_id,
+            claim_token=claim_token,
+            status=status,
+            result=result,
+            error=error,
+        )
+    finally:
+        engine.close()
+    return {"ok": True, "job": job}
+
+
 def _allocator_registry_state(auth: MgmtAuthContext):
     allocator = getattr(auth, "allocator", None)
     if allocator is None:
@@ -1870,6 +1974,18 @@ def handle_allocator_http(
             if not isinstance(data, dict):
                 return 400, {"error": "invalid JSON"}
             result = server_complete_ai_job(plane, auth, data)
+            return 200, _with_response_mac(result, auth)
+        if method.upper() == "POST" and parsed == "/v1/management-jobs/claim":
+            data = json.loads(raw.decode("utf-8") or "{}") if raw else {}
+            if not isinstance(data, dict):
+                return 400, {"error": "invalid JSON"}
+            result = server_claim_management_jobs(plane, auth, data)
+            return 200, _with_response_mac(result, auth)
+        if method.upper() == "POST" and parsed == "/v1/management-jobs/complete":
+            data = json.loads(raw.decode("utf-8") or "{}") if raw else {}
+            if not isinstance(data, dict):
+                return 400, {"error": "invalid JSON"}
+            result = server_complete_management_job(plane, auth, data)
             return 200, _with_response_mac(result, auth)
     except MgmtAuthError as exc:
         return 403, _public_auth_error(str(exc))

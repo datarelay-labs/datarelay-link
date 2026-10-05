@@ -154,6 +154,24 @@ class V30ManagementJobTests(unittest.TestCase):
         result_by_target = {item["target_id"]: item["result"] for item in final["targets"]}
         self.assertEqual(result_by_target[first["target_id"]], {"doctor": "pass"})
 
+    def test_target_filtered_claim_cannot_take_another_agent_job(self):
+        self._enqueue(targets=("agent-a",), now=self.now)
+        self._enqueue(targets=("agent-b",), now=self.now)
+        claims = self.engine.claim_targets_for_target(
+            target_id="agent-a",
+            worker_id="agent-a",
+            limit=4,
+            now=self.now + timedelta(seconds=1),
+        )
+        self.assertEqual(len(claims), 1)
+        self.assertEqual(claims[0]["target_id"], "agent-a")
+        remaining = self.engine.conn.execute(
+            "SELECT target_id,status FROM management_job_targets ORDER BY target_id"
+        ).fetchall()
+        states = {str(row["target_id"]): str(row["status"]) for row in remaining}
+        self.assertEqual(states["agent-a"], RUNNING)
+        self.assertEqual(states["agent-b"], QUEUED)
+
     def test_cancel_stops_queued_targets_without_claiming_running_target_terminated(self):
         job = self._enqueue(targets=("host-a", "host-b"))
         claim = self.engine.claim_targets(
