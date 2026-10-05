@@ -166,6 +166,42 @@ function ManagedHostMetadataPanel(){
   return <div><div className="card"><h3>Guided Managed Host Metadata</h3><div className="toolbar"><input value={host} onChange={e=>setHost(e.target.value)} placeholder="Managed Host ID/name"/><input value={label} onChange={e=>setLabel(e.target.value)} placeholder="Optional label"/><input value={description} onChange={e=>setDescription(e.target.value)} placeholder="Description (blank clears)"/><input value={tags} onChange={e=>setTags(e.target.value)} placeholder="tags: env=prod,owner=netops"/></div></div><GuidedApplyPanel title="Managed Host Change Plan" build={request}/></div>;
 }
 
+function ManagedHostLifecyclePanel(){
+  const [host,setHost]=useState(""),[operation,setOperation]=useState("revoke-trust");
+  const [preview,setPreview]=useState<any>(null),[confirmation,setConfirmation]=useState(""),[message,setMessage]=useState(""),[error,setError]=useState("");
+  async function doPreview(){
+    setError("");setMessage("");
+    try{
+      const result=await api("/api/v1/managed-hosts/lifecycle/preview",{method:"POST",body:JSON.stringify({host,operation})});
+      setPreview(result);setConfirmation("");
+    }catch(e:any){setPreview(null);setError(e.message||String(e))}
+  }
+  async function doApply(){
+    setError("");setMessage("");
+    try{
+      const result=await api("/api/v1/managed-hosts/lifecycle/apply",{method:"POST",body:JSON.stringify({change_plan_id:preview?.change_plan_id||"",confirmation})});
+      setMessage((operation==="retire"?"Managed Host retired":"Managed Host trust revoked")+" at revision "+result.revision);
+      setPreview(null);setConfirmation("");
+    }catch(e:any){setError(e.message||String(e))}
+  }
+  const required=preview?.confirmation_class||"";
+  return <div className="card">
+    <h3>Managed Host Lifecycle</h3>
+    <div className="muted">Trust revoke keeps the Managed Host record, Remote Services, and public port reservations but requires re-enrollment. Retire permanently removes reference-safe server-owned Host state and owned Remote Services/port reservations.</div>
+    {error&&<div className="error">{error}</div>}{message&&<div className="notice">{message}</div>}
+    <div className="toolbar">
+      <input value={host} onChange={e=>setHost(e.target.value)} placeholder="Managed Host ID/name"/>
+      <select value={operation} onChange={e=>{setOperation(e.target.value);setPreview(null);setConfirmation("")}}><option value="revoke-trust">Revoke trust</option><option value="retire">Retire Managed Host</option></select>
+      <button className="primary" onClick={doPreview} disabled={!host}>Preview Impact</button>
+    </div>
+    {preview&&<div className="warning-box">
+      <pre className="plan">{JSON.stringify({preview:preview.preview,impact:preview.impact,valid_until:preview.valid_until},null,2)}</pre>
+      <label className="apply-label">Type {required} to continue<input value={confirmation} onChange={e=>setConfirmation(e.target.value)} placeholder={required}/></label>
+      <button className="danger" onClick={doApply} disabled={confirmation!==required}>{operation==="retire"?"Retire Managed Host":"Revoke Managed Host Trust"}</button>
+    </div>}
+  </div>;
+}
+
 function GuidedObjectPanel(){
   const [kind,setKind]=useState("network-object"),[operation,setOperation]=useState("set"),[name,setName]=useState(""),[value,setValue]=useState(""),[subtype,setSubtype]=useState("ip"),[port,setPort]=useState("22"),[items,setItems]=useState("");
   function request(){
@@ -471,7 +507,7 @@ function View({active,operator}:{active:string,operator:any}){
   if(active==="versions"&&data)return <><div className="grid"><Metric label="Server version" value={data.server_version}/><Metric label="Drift" value={data.drift_count}/><Metric label="Unknown" value={data.unknown_count}/></div><Table items={data.hosts||[]}/></>;
   if(active==="system"&&data)return <SystemPanel data={data} operator={operator}/>;
   if(active==="objects"&&data){const rows=Object.entries(data.resources||{}).flatMap(([type,page]:any)=>(page.items||[]).map((item:any)=>({type,id:item.id,name:item.name||item.id,description:item.description||"",status:item.status||""})));return <><Table items={rows}/>{operator.role!=="Read Only"&&<GuidedObjectPanel/>}</>;}
-  if(active==="hosts"&&data)return <><Table items={data.items||[]}/>{operator.role!=="Read Only"&&<ManagedHostMetadataPanel/>}</>;
+  if(active==="hosts"&&data)return <><Table items={data.items||[]}/>{operator.role!=="Read Only"&&<ManagedHostMetadataPanel/>}{operator.role==="Admin"&&<ManagedHostLifecyclePanel/>}</>;
   if(active==="services"&&data)return <><Table items={data.items||[]}/>{operator.role!=="Read Only"&&<RemoteServicePanel/>}</>;
   if(active==="policies"&&data)return <><Table items={data.items||[]}/>{operator.role!=="Read Only"&&<><GuidedPolicySettingsPanel/><GuidedPolicyRulePanel/><TemporaryAccessPanel/></>}</>;
   if(active==="doctor"&&data)return <><div className="grid"><Metric label="Attention" value={data.attention?.count}/><Metric label="Checks" value={(data.checks||[]).length}/></div><Table items={data.checks||[]}/></>;

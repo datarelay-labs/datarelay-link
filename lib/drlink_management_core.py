@@ -30,6 +30,7 @@ from drlink_management_service import (
 from drlink_management_guided import GuidedChangeService
 from drlink_management_enrollment import ManagementEnrollmentService
 from drlink_management_remote_service import ManagementRemoteServiceService
+from drlink_management_host_lifecycle import ManagedHostLifecycleService
 from drlink_management_system import ManagementSystemService
 from drlink_management_drafts import (
     DRAFT_ADMIN,
@@ -292,6 +293,44 @@ class ManagementCoreService:
                 "This Web management operation requires role: %s." % ", ".join(sorted(roles))
             )
         return role
+
+    def managed_host_lifecycle_preview(
+        self,
+        *,
+        host: str,
+        operation: str,
+        actor: ManagementActor,
+    ) -> dict[str, Any]:
+        self._require_web_role(actor, "Admin")
+        if "management-config" not in actor.permissions:
+            raise ManagementAuthorizationError(
+                "management-config is required for Managed Host lifecycle."
+            )
+        with ManagedHostLifecycleService(self.root) as service:
+            return service.preview(
+                actor_id=actor.actor_id,
+                host=host,
+                operation=operation,
+            )
+
+    def managed_host_lifecycle_apply(
+        self,
+        *,
+        change_plan_id: str,
+        confirmation: str,
+        actor: ManagementActor,
+    ) -> dict[str, Any]:
+        self._require_web_role(actor, "Admin")
+        if "management-config" not in actor.permissions:
+            raise ManagementAuthorizationError(
+                "management-config is required for Managed Host lifecycle."
+            )
+        with ManagedHostLifecycleService(self.root) as service:
+            return service.apply(
+                actor_id=actor.actor_id,
+                change_plan_id=change_plan_id,
+                confirmation=confirmation,
+            )
 
     def system_status(self, *, actor: ManagementActor) -> dict[str, Any]:
         if "management-read" not in actor.permissions:

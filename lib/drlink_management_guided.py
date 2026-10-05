@@ -675,6 +675,8 @@ class GuidedChangeService(ManagementChangeService):
                 expected_revision=expected_revision,
                 impact=impact,
                 confirm=True,
+                actor=actor_id,
+                interface="WEB",
             )
         except ConcurrencyError:
             self._mark_plan(change_plan_id, "stale")

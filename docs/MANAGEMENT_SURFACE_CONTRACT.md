@@ -492,6 +492,16 @@ Core CRUD/Change Plan path, and use `PLUGIN_NO`. They are therefore available to
 the first-party Web adapter when authorized but are **not** added to the admitted
 Management MCP/Plugin tool list above.
 
+Managed Host lifecycle is also a first-party Web/Core-only DRL3-3 surface. Local Web Admin
+plus `management-config` may preview/apply **trust revoke** or **reference-safe retirement**
+through actor/Server/revision-bound Change Plans. Trust revoke requires typed `REVOKE`
+and delegates to canonical `remove_client(..., revoke_only=True)`, preserving the Host
+inventory record, published services, and active port reservations while preventing the
+current management identity from authenticating again. Retirement requires typed `RETIRE`
+and delegates to canonical `unset_managed_host`, including reference refusal and exact
+owned service/port cleanup impact. Both operations record the actual Web actor/interface;
+neither is added to Plugin/MCP.
+
 The DRL3-3 Draft Workspace follows the same authority boundary even though Draft CRUD is
 Web-only operational state rather than an MCP tool. Browser routes call the Web adapter,
 which calls `ManagementCoreService`; the HTTP layer never calls the Draft service or

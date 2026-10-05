@@ -88,6 +88,32 @@ class ManagementWebApiAdapter:
     def enrollment_list(self, *, actor: ManagementActor, limit: int = 50) -> dict[str, Any]:
         return self.core.enrollment_list(actor=actor, limit=limit)
 
+    def managed_host_lifecycle_preview(
+        self,
+        *,
+        host: str,
+        operation: str,
+        actor: ManagementActor,
+    ) -> dict[str, Any]:
+        return self.core.managed_host_lifecycle_preview(
+            host=host,
+            operation=operation,
+            actor=actor,
+        )
+
+    def managed_host_lifecycle_apply(
+        self,
+        *,
+        change_plan_id: str,
+        confirmation: str,
+        actor: ManagementActor,
+    ) -> dict[str, Any]:
+        return self.core.managed_host_lifecycle_apply(
+            change_plan_id=change_plan_id,
+            confirmation=confirmation,
+            actor=actor,
+        )
+
     def system_status(self, *, actor: ManagementActor) -> dict[str, Any]:
         return self.core.system_status(actor=actor)
 

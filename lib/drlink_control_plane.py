@@ -723,6 +723,8 @@ class ControlPlane:
         impact: Optional[dict] = None,
         confirm: Optional[bool] = None,
         compile_runtime: bool = True,
+        actor: Optional[str] = None,
+        interface: Optional[str] = None,
     ) -> Any:
         if impact and not _confirm_requested(confirm):
             needs_confirm = bool(
@@ -818,7 +820,12 @@ class ControlPlane:
                             "Review current state and retry."
                         )
             result = writer()
-            rev = self._write_revision(command, summary, snapshot={"summary": summary})
+            rev = self._write_revision(
+                command,
+                summary,
+                snapshot={"summary": summary},
+                actor=actor,
+            )
             if isinstance(result, dict):
                 result["revision"] = rev
                 entity = result.get("entity") or {}
@@ -830,6 +837,8 @@ class ControlPlane:
                     operation=str(result.get("operation") or command),
                     after=str(result.get("after") or summary),
                     impact=json.dumps(impact or {}, sort_keys=True)[:2000],
+                    actor=actor,
+                    interface=interface,
                 )
             else:
                 self._audit(
@@ -840,6 +849,8 @@ class ControlPlane:
                     operation=command,
                     after=summary,
                     impact=json.dumps(impact or {}, sort_keys=True)[:2000],
+                    actor=actor,
+                    interface=interface,
                 )
             self._commit_open_transaction()
             if public_expected_revision is not None:
@@ -1968,7 +1979,15 @@ class ControlPlane:
         self.conn.execute("DELETE FROM client_tags WHERE client_id = ?", (client_id,))
         return cleaned
 
-    def remove_client(self, selector: str, *, revoke_only: bool = False) -> dict:
+    def remove_client(
+        self,
+        selector: str,
+        *,
+        revoke_only: bool = False,
+        expected_revision: Optional[int] = None,
+        actor: Optional[str] = None,
+        interface: Optional[str] = None,
+    ) -> dict:
         client = self.require_client(selector)
         ep = self.conn.execute(
             "SELECT o.* FROM objects o JOIN managed_endpoints e ON e.object_id = o.id WHERE e.client_id = ?",
@@ -2014,10 +2033,19 @@ class ControlPlane:
             "system revoke client" if revoke_only else "unset client %s" % selector,
             "revoke" if revoke_only else "remove client",
             write,
+            expected_revision=expected_revision,
+            actor=actor,
+            interface=interface,
         )
 
     def unset_managed_host(
-        self, selector: str, *, confirm: Optional[bool] = None
+        self,
+        selector: str,
+        *,
+        confirm: Optional[bool] = None,
+        expected_revision: Optional[int] = None,
+        actor: Optional[str] = None,
+        interface: Optional[str] = None,
     ) -> dict:
         """Canonical server-side Managed Host retirement with impact review."""
         client = self.get_client(selector)
@@ -2104,8 +2132,11 @@ class ControlPlane:
             "unset managed-host %s" % host_name,
             "retire managed host",
             write,
+            expected_revision=expected_revision,
             impact=impact,
             confirm=confirm,
+            actor=actor,
+            interface=interface,
         )
 
     def set_client_label(self, selector: str, label: str) -> dict:

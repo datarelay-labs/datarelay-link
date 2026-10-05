@@ -444,6 +444,13 @@ updater. Core product self-update apply waits for DRL3-7 because that phase expl
 qualifies optional Web package update/uninstall/reinstall compatibility; DRL3-3 must not
 create a Core/Web build-skew path merely to claim surface parity.
 
+For Managed Host lifecycle parity, DRL3-3 supports two distinct Admin-only operations:
+management-trust revoke keeps the Host inventory/Remote Services/port reservations and
+requires re-enrollment, while reference-safe retirement delegates to canonical
+`unset_managed_host`, refuses live references, and cleans owned service/port state only
+after typed impact confirmation. These meanings must never be collapsed into one generic
+delete action.
+
 Add a non-authoritative **Draft Workspace**:
 - compose multiple related changes;
 - show generated Change Plan;

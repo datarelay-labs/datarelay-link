@@ -571,6 +571,88 @@ class V30WebServiceTests(unittest.TestCase):
         self.assertEqual(payload["status"], "logged_out")
         self.assertIn("Max-Age=0", headers.get("set-cookie", ""))
 
+    def test_managed_host_lifecycle_requires_admin_csrf_and_typed_confirmation(self):
+        login = self.login()
+        operator_id = login["operator"]["id"]
+
+        status, _, _ = self.request(
+            "POST",
+            "/api/v1/managed-hosts/lifecycle/preview",
+            {"host": "host-a", "operation": "revoke-trust"},
+        )
+        self.assertEqual(status, 403)
+
+        plane = ControlPlane(self.tmp)
+        try:
+            before = plane.current_revision()
+            trust_before = str(plane.require_client("host-a")["trust_status"])
+        finally:
+            plane.close()
+
+        status, _, preview = self.request(
+            "POST",
+            "/api/v1/managed-hosts/lifecycle/preview",
+            {"host": "host-a", "operation": "revoke-trust"},
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, preview)
+        self.assertEqual(preview["confirmation_class"], "REVOKE")
+        self.assertIn("published services", preview["impact"]["kept"])
+
+        plane = ControlPlane(self.tmp)
+        try:
+            self.assertEqual(plane.current_revision(), before)
+            self.assertEqual(
+                str(plane.require_client("host-a")["trust_status"]),
+                trust_before,
+            )
+        finally:
+            plane.close()
+
+        status, _, denied = self.request(
+            "POST",
+            "/api/v1/managed-hosts/lifecycle/apply",
+            {
+                "change_plan_id": preview["change_plan_id"],
+                "confirmation": "APPLY",
+            },
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 400, denied)
+        self.assertIn("REVOKE", denied["error"])
+
+        status, _, applied = self.request(
+            "POST",
+            "/api/v1/managed-hosts/lifecycle/apply",
+            {
+                "change_plan_id": preview["change_plan_id"],
+                "confirmation": "REVOKE",
+            },
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, applied)
+        self.assertEqual(applied["status"], "APPLIED")
+
+        plane = ControlPlane(self.tmp)
+        try:
+            row = plane.require_client("host-a")
+            self.assertEqual(str(row["trust_status"]), "revoked")
+            self.assertEqual(plane.current_revision(), before + 1)
+            revision = plane.conn.execute(
+                "SELECT actor FROM config_revisions WHERE revision=?",
+                (before + 1,),
+            ).fetchone()
+            self.assertEqual(revision["actor"], "web:%s" % operator_id)
+            audit = plane.conn.execute(
+                "SELECT actor_id,interface FROM audit_events "
+                "WHERE revision=? ORDER BY id DESC LIMIT 1",
+                (before + 1,),
+            ).fetchone()
+            self.assertEqual(audit["actor_id"], "web:%s" % operator_id)
+            self.assertEqual(audit["interface"], "WEB")
+        finally:
+            plane.close()
+
     def test_guided_change_preview_and_apply_use_csrf_and_core_plan(self):
         self.login()
         status, _, payload = self.request(

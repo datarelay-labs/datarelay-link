@@ -506,6 +506,22 @@ Detail view requires:
 
 The UI must not imply that label or hostname is the immutable identity.
 
+DRL3-3 exposes two Admin-only Managed Host lifecycle operations through actor/revision-bound
+Core Change Plans:
+
+- **Revoke trust** — typed `REVOKE`; marks the current management identity revoked and
+  disconnected so it cannot authenticate/claim new work. The Managed Host inventory record,
+  Remote Services, and public port reservations remain. Re-enrollment is required to
+  establish trust again.
+- **Retire Managed Host** — typed `RETIRE`; delegates to canonical
+  `unset_managed_host` semantics. Preview shows owned Remote Services/port cleanup, and
+  reference checks run before plan issuance and again under the expected revision at Apply.
+  If a policy, group, Remote Service destination, or other supported Core reference still
+  depends on the Host, retirement fails closed with no mutation.
+
+These operations are deliberately distinct; Web must never label trust revocation as
+deletion or imply that retirement uninstalls software on the remote Host.
+
 ## 17. Objects and Groups
 
 Web Management provides complete supported lifecycle for:
