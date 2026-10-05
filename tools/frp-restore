@@ -710,6 +710,7 @@ def post_restore_reconcile(root: Path, payload_source: Path | None = None) -> No
     plane = ControlPlane(str(root))
     try:
         plane.reconcile_ai_jobs_after_disaster_recovery()
+        plane.reconcile_management_after_disaster_recovery()
         plane.compile_runtime()
         try:
             project_client_inventory_from_control_plane(

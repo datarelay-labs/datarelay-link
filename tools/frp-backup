@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import fcntl
 import hashlib
 import importlib.util
 import json
@@ -13,6 +14,7 @@ import sys
 import tarfile
 import tempfile
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 FORMAT = "data-relay-link-server-backup"
@@ -67,6 +69,14 @@ OPTIONAL_TREES = (
     *_STATE_PATHS.backup_tree_roots(),
 )
 CONTROL_DB_REL = "var/lib/drlink/drlink.db"
+AUDIT_SPOOL_ROOTS = (
+    _STATE_PATHS.ACCESS_AUDIT_SPOOL_TREE.path,
+    _STATE_PATHS.EGRESS_AUDIT_SPOOL_TREE.path,
+)
+
+
+def _is_audit_spool_rel(rel: str) -> bool:
+    return any(rel == root or rel.startswith(root + "/") for root in AUDIT_SPOOL_ROOTS)
 
 
 def fail(message: str) -> "NoReturn":
@@ -229,12 +239,45 @@ def collect_files(root: Path) -> list[tuple[str, Path]]:
             if source.is_symlink():
                 fail(f"refusing symlink in control state: /{child_rel}")
             if source.is_file():
+                # Audit spool flock files are synchronization primitives, not
+                # recoverable state. Restore creates fresh lock files as needed.
+                if source.name == ".lock" and _is_audit_spool_rel(child_rel):
+                    continue
                 found[child_rel] = source
             elif not source.is_dir():
                 fail(f"unsupported control-state entry: /{child_rel}")
     for child_rel, source in _STATE_PATHS.collect_present_rotated_files(root):
         found[child_rel] = source
     return sorted(found.items())
+
+
+@contextmanager
+def _audit_spool_snapshot_locks(root: Path):
+    """Freeze both durable access-audit journals for the DB/spool snapshot pair."""
+    fds: list[int] = []
+    try:
+        for rel in AUDIT_SPOOL_ROOTS:
+            spool_root = root / rel
+            if spool_root.is_symlink():
+                fail(f"refusing symlink in control state: /{rel}")
+            spool_root.mkdir(parents=True, exist_ok=True)
+            if not spool_root.is_dir():
+                fail(f"expected audit spool directory: /{rel}")
+            try:
+                os.chmod(spool_root, 0o700)
+            except OSError:
+                pass
+            lock_path = spool_root / ".lock"
+            fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o600)
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            fds.append(fd)
+        yield
+    finally:
+        for fd in reversed(fds):
+            try:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            finally:
+                os.close(fd)
 
 
 def _hold_lock_hook() -> None:
@@ -330,7 +373,11 @@ def _stage_backup(root: Path, output: Path, files: list[tuple[str, Path]], *, se
         stage = Path(tmp_name)
         payload = stage / "payload"
         entries = []
-        for rel, source in files:
+        staged: set[str] = set()
+
+        def stage_one(rel: str, source: Path) -> None:
+            if rel in staged:
+                return
             target = payload / rel
             target.parent.mkdir(parents=True, exist_ok=True)
             if rel == CONTROL_DB_REL:
@@ -348,6 +395,29 @@ def _stage_backup(root: Path, output: Path, files: list[tuple[str, Path]], *, se
                 mode = stat.S_IMODE(source.stat().st_mode)
             os.chmod(target, mode)
             entries.append({"path": rel, "sha256": sha256(target), "mode": mode})
+            staged.add(rel)
+
+        # A durable ACCESS_DECISION may move from a spool segment into SQLite
+        # while backup is running. Freeze both spool writers/ingestors, refresh
+        # their file inventory, copy the journals first, and snapshot SQLite
+        # before releasing those locks. This gives restore the union needed for
+        # lossless idempotent replay (duplicates are safe by event_id).
+        with _audit_spool_snapshot_locks(root):
+            fresh = collect_files(root)
+            protected = [
+                item
+                for item in fresh
+                if item[0] == CONTROL_DB_REL or _is_audit_spool_rel(item[0])
+            ]
+            protected.sort(key=lambda item: (item[0] == CONTROL_DB_REL, item[0]))
+            for rel, source in protected:
+                stage_one(rel, source)
+
+        for rel, source in files:
+            if rel == CONTROL_DB_REL or _is_audit_spool_rel(rel):
+                continue
+            stage_one(rel, source)
+        entries.sort(key=lambda entry: entry["path"])
 
         identity = read_identity(root / "etc/drlink/version")
         control_db = None

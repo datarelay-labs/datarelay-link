@@ -84,6 +84,26 @@ RUNTIME_TREE = StatePathSpec(
     restore_policy="ignore",
     sensitivity="standard",
 )
+# Pending v3 ACCESS_DECISION audit journals are durable transport state. They
+# must survive DR so not-yet-ingested security events are not lost. The
+# checkpoint remains in the authoritative SQLite snapshot; event_id uniqueness
+# makes a restored segment safe to replay when it was also present in SQLite.
+ACCESS_AUDIT_SPOOL_TREE = StatePathSpec(
+    path="var/log/drlink/access/audit-spool",
+    type="tree",
+    backup_policy="tree",
+    restore_policy="tree",
+    support_bundle_policy="exclude",
+    sensitivity="critical",
+)
+EGRESS_AUDIT_SPOOL_TREE = StatePathSpec(
+    path="var/log/drlink/egress/audit-spool",
+    type="tree",
+    backup_policy="tree",
+    restore_policy="tree",
+    support_bundle_policy="exclude",
+    sensitivity="critical",
+)
 ENROLLMENTS_TREE = StatePathSpec(
     path="var/lib/drlink/enrollments",
     type="tree",
@@ -173,6 +193,8 @@ STATE_PATHS: tuple[StatePathSpec, ...] = (
     SERVICE_PROFILES,
     CONTROL_DB,
     RUNTIME_TREE,
+    ACCESS_AUDIT_SPOOL_TREE,
+    EGRESS_AUDIT_SPOOL_TREE,
     ENROLLMENTS_TREE,
     BOOTSTRAP_TREE,
     MCP_TLS_TREE,

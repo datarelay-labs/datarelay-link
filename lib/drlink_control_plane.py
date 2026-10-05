@@ -496,8 +496,16 @@ class ControlPlane:
         impact: str = "",
         actor: Optional[str] = None,
         interface: Optional[str] = None,
+        category: str = "CONTROL",
     ) -> None:
         occurred = utc_now_iso()
+        audit_category = str(category or "CONTROL").strip().upper()
+        if audit_category not in {
+            "CONTROL",
+            "ACCESS_DECISION",
+            "SECURITY_LIFECYCLE",
+        }:
+            raise ControlPlaneError("unsupported audit category")
         revision_value = (
             int(revision) if revision is not None and int(revision) > 0 else None
         )
@@ -528,7 +536,7 @@ class ControlPlane:
                 result,
                 event_id,
                 1,
-                "CONTROL",
+                audit_category,
                 operation,
                 occurred,
                 "core",
@@ -6305,6 +6313,76 @@ class ControlPlane:
             )
         self.conn.commit()
         return {"expired": expired, "recovery_required": recovery, "total": len(rows)}
+
+    def reconcile_management_after_disaster_recovery(self) -> dict:
+        """Invalidate restored transient management authority fail-closed.
+
+        Durable configuration, Web operators, Saved Views, saved policy tests,
+        revisions, and audit history remain authoritative in the restored DB.
+        Browser sessions, pending Change Plans/Drafts, and queued/running
+        Management Jobs represent pre-restore operational intent and must never
+        silently resume after disaster recovery.
+        """
+        now = utc_now_iso()
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            sessions = self.conn.execute(
+                "UPDATE web_sessions SET revoked_at=? WHERE revoked_at IS NULL",
+                (now,),
+            ).rowcount
+            plans = self.conn.execute(
+                "UPDATE management_change_plans SET status='expired',"
+                "consumed_at=COALESCE(consumed_at,?) WHERE status='pending'",
+                (now,),
+            ).rowcount
+            drafts = self.conn.execute(
+                "UPDATE management_drafts SET status='EXPIRED',updated_at=?,"
+                "last_error='RESTORE_REQUIRES_REVIEW' WHERE status='DRAFT'",
+                (now,),
+            ).rowcount
+            targets = self.conn.execute(
+                "UPDATE management_job_targets SET status='FAILED',finished_at=?,"
+                "lease_expires_at=NULL,updated_at=?,error='RESTORE_INTERRUPTED' "
+                "WHERE status IN ('QUEUED','RUNNING')",
+                (now, now),
+            ).rowcount
+            jobs = self.conn.execute(
+                "UPDATE management_jobs SET status='FAILED',finished_at=?,updated_at=?,"
+                "last_error='RESTORE_INTERRUPTED' "
+                "WHERE status IN ('QUEUED','RUNNING')",
+                (now, now),
+            ).rowcount
+            summary = {
+                "sessions_revoked": int(sessions or 0),
+                "change_plans_expired": int(plans or 0),
+                "drafts_expired": int(drafts or 0),
+                "job_targets_failed": int(targets or 0),
+                "jobs_failed": int(jobs or 0),
+            }
+            self._audit(
+                revision=0,
+                action="reconcile restored management state",
+                entity_type="system-recovery",
+                entity_id="management",
+                operation="system.restore.management-reconcile",
+                after=json.dumps(summary, sort_keys=True, separators=(",", ":")),
+                impact=(
+                    "durable configuration/operators/preferences/history preserved; "
+                    "transient pre-restore authority invalidated"
+                ),
+                result="ok",
+                actor="system:restore",
+                interface="SYSTEM",
+                category="SECURITY_LIFECYCLE",
+            )
+            self.conn.execute("COMMIT")
+        except Exception:
+            try:
+                self.conn.execute("ROLLBACK")
+            except sqlite3.Error:
+                pass
+            raise
+        return summary
 
     # --- backup / restore -------------------------------------------------
     def backup(self, dest: str) -> str:

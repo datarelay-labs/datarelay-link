@@ -499,50 +499,63 @@ class AuditIngestor:
     def ingest(
         self, *, max_segments: int = DEFAULT_MAX_SEGMENTS_PER_INGEST
     ) -> dict[str, Any]:
+        """Import a bounded batch while holding the source-spool lock.
+
+        The lock spans segment sealing, SQLite commit, checkpoint update, and
+        segment removal. Besides preventing concurrent ingestors, this gives
+        disaster-recovery backup a real snapshot boundary: backup can take the
+        same flock, copy pending spool state, then snapshot SQLite without an
+        event moving from the spool into the database between those two copies.
+        """
         limit = max(1, min(int(max_segments), 32))
-        self.spool.seal_active()
-        segments = self.spool.segments()[:limit]
         inserted = 0
         deduplicated = 0
         last_sequence = None
         processed = 0
+        fd = self.spool._lock()
+        try:
+            state = self.spool._load_state_locked()
+            self.spool._seal_active_locked(int(state["next_sequence"]) - 1)
+            segments = self.spool.segments()[:limit]
 
-        for segment in segments:
-            events = self._load_segment(segment)
-            self.conn.execute("BEGIN IMMEDIATE")
-            try:
-                seg_last = 0
-                for event in events:
-                    if self._insert_event(event):
-                        inserted += 1
-                    else:
-                        deduplicated += 1
-                    seg_last = max(seg_last, int(event["source_sequence"]))
-                self.conn.execute(
-                    "INSERT INTO audit_ingest_checkpoints("
-                    "source,last_sequence,last_segment,updated_at"
-                    ") VALUES (?,?,?,?) "
-                    "ON CONFLICT(source) DO UPDATE SET "
-                    "last_sequence=MAX(last_sequence,excluded.last_sequence),"
-                    "last_segment=excluded.last_segment,updated_at=excluded.updated_at",
-                    (self.spool.source, seg_last, segment.name, utc_now_iso()),
-                )
-                self.conn.execute("COMMIT")
-                last_sequence = max(int(last_sequence or 0), seg_last)
-            except Exception:
+            for segment in segments:
+                events = self._load_segment(segment)
+                self.conn.execute("BEGIN IMMEDIATE")
                 try:
-                    self.conn.execute("ROLLBACK")
-                except sqlite3.Error:
+                    seg_last = 0
+                    for event in events:
+                        if self._insert_event(event):
+                            inserted += 1
+                        else:
+                            deduplicated += 1
+                        seg_last = max(seg_last, int(event["source_sequence"]))
+                    self.conn.execute(
+                        "INSERT INTO audit_ingest_checkpoints("
+                        "source,last_sequence,last_segment,updated_at"
+                        ") VALUES (?,?,?,?) "
+                        "ON CONFLICT(source) DO UPDATE SET "
+                        "last_sequence=MAX(last_sequence,excluded.last_sequence),"
+                        "last_segment=excluded.last_segment,updated_at=excluded.updated_at",
+                        (self.spool.source, seg_last, segment.name, utc_now_iso()),
+                    )
+                    self.conn.execute("COMMIT")
+                    last_sequence = max(int(last_sequence or 0), seg_last)
+                except Exception:
+                    try:
+                        self.conn.execute("ROLLBACK")
+                    except sqlite3.Error:
+                        pass
+                    raise
+                try:
+                    segment.unlink()
+                    _fsync_dir(self.spool.root)
+                except OSError:
+                    # DB commit is authoritative; retained segment is harmless:
+                    # event_id uniqueness makes re-ingest idempotent.
                     pass
-                raise
-            try:
-                segment.unlink()
-                _fsync_dir(self.spool.root)
-            except OSError:
-                # DB commit is authoritative; retained segment is harmless:
-                # event_id uniqueness makes re-ingest idempotent.
-                pass
-            processed += 1
+                processed += 1
+        finally:
+            self.spool._unlock(fd)
 
         return {
             "source": self.spool.source,

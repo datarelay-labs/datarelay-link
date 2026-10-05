@@ -18,6 +18,8 @@ sys.path.insert(0, str(ROOT / "lib"))
 
 from drlink_control_db import SCHEMA_VERSION, ensure_ai_jobs_safety_schema
 from drlink_control_plane import ControlPlane
+from drlink_management_service import ManagementQueryService
+from drlink_v30_audit import DurableAuditSpool, build_access_decision_event
 import drlink_v24 as v24
 from frp_ctl_grammar import match
 
@@ -401,6 +403,195 @@ class UnifiedDisasterRecoveryTests(unittest.TestCase):
             "SELECT label FROM clients WHERE id='cccccccccccccccccccccccccccccccc'"
         ).fetchone()[0]
         self.assertEqual(label, "orig")
+
+
+    def test_11_v30_management_restore_preserves_durable_state_and_revokes_transient_authority(self):
+        now = "2026-10-05T11:00:00+00:00"
+        later = "2026-10-06T11:00:00+00:00"
+        self.plane.conn.execute(
+            "INSERT INTO web_operators("
+            "id,username,role,enabled,recovery_admin,password_salt,password_hash,password_kdf,"
+            "mfa_secret_ciphertext,mfa_enrolled,row_version,created_at,updated_at"
+            ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                "wop_admin", "restore-admin", "ADMIN", 1, 1, "salt", "hash", "scrypt",
+                "ciphertext", 1, 1, now, now,
+            ),
+        )
+        self.plane.conn.execute(
+            "INSERT INTO web_sessions("
+            "id,operator_id,token_hash,csrf_hash,created_at,last_seen_at,expires_at,idle_expires_at,"
+            "source_addr,user_agent_hash"
+            ") VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (
+                "ws_restore", "wop_admin", "token-hash", "csrf-hash", now, now, later, later,
+                "127.0.0.1", "ua-hash",
+            ),
+        )
+        self.plane.conn.execute(
+            "INSERT INTO web_saved_views(id,operator_id,name,payload_json,created_at,updated_at) "
+            "VALUES (?,?,?,?,?,?)",
+            ("wsv_restore", "wop_admin", "Restore View", '{"resource":"managed-host"}', now, now),
+        )
+        self.plane.conn.execute(
+            "INSERT INTO management_policy_tests("
+            "id,name,plane,source,destination,service,permission,path,expected,required,enabled,"
+            "row_version,created_at,updated_at"
+            ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                "mpt_restore", "Restore Policy Test", "remote", "src", "dst", "ssh", "", "",
+                "DENY", 1, 1, 1, now, now,
+            ),
+        )
+        self.plane.conn.execute(
+            "INSERT INTO management_change_plans("
+            "token_hash,actor_id,server_id,operation_class,operation,resource_type,resource_ref,"
+            "expected_revision,payload_json,impact_json,confirmation_class,status,created_at,"
+            "expires_at"
+            ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                "plan-hash", "wop_admin", "server", "SECURITY", "set-policy", "policy", "p1",
+                self.plane.current_revision(), "{}", "{}", "TYPED", "pending", now, later,
+            ),
+        )
+        self.plane.conn.execute(
+            "INSERT INTO management_drafts("
+            "id,actor_id,base_revision,bundle_text,status,created_at,updated_at,expires_at,last_error"
+            ") VALUES (?,?,?,?,?,?,?,?,?)",
+            (
+                "draft_restore", "wop_admin", self.plane.current_revision(), "schema_version: 1\n",
+                "DRAFT", now, now, later, "",
+            ),
+        )
+        self.plane.conn.execute(
+            "INSERT INTO management_jobs("
+            "id,job_type,requested_by,resource_type,resource_ref,payload_json,status,cancel_requested,"
+            "target_count,created_at,started_at,deadline_at,updated_at,last_error"
+            ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                "mjob_restore", "doctor", "wop_admin", "managed-host", "host-a", "{}",
+                "RUNNING", 0, 1, now, now, later, now, "",
+            ),
+        )
+        self.plane.conn.execute(
+            "INSERT INTO management_job_targets("
+            "job_id,target_id,status,worker_id,claim_token,attempt,started_at,lease_expires_at,"
+            "updated_at,result_json,error"
+            ") VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                "mjob_restore", "cccccccccccccccccccccccccccccccc", "RUNNING", "worker-a",
+                "claim-a", 1, now, later, now, "{}", "",
+            ),
+        )
+        self.plane.conn.commit()
+        revision_before = self.plane.current_revision()
+
+        archive = self._backup()
+        proc = run_tool(RESTORE, str(archive))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.plane.close()
+        self.plane = ControlPlane(str(self.tree))
+
+        operator = self.plane.conn.execute(
+            "SELECT enabled,recovery_admin FROM web_operators WHERE id='wop_admin'"
+        ).fetchone()
+        self.assertEqual((operator["enabled"], operator["recovery_admin"]), (1, 1))
+        self.assertEqual(
+            self.plane.conn.execute(
+                "SELECT name FROM web_saved_views WHERE id='wsv_restore'"
+            ).fetchone()["name"],
+            "Restore View",
+        )
+        self.assertEqual(
+            self.plane.conn.execute(
+                "SELECT expected FROM management_policy_tests WHERE id='mpt_restore'"
+            ).fetchone()["expected"],
+            "DENY",
+        )
+        self.assertIsNotNone(
+            self.plane.conn.execute(
+                "SELECT revoked_at FROM web_sessions WHERE id='ws_restore'"
+            ).fetchone()["revoked_at"]
+        )
+        self.assertEqual(
+            self.plane.conn.execute(
+                "SELECT status FROM management_change_plans WHERE token_hash='plan-hash'"
+            ).fetchone()["status"],
+            "expired",
+        )
+        draft = self.plane.conn.execute(
+            "SELECT status,last_error FROM management_drafts WHERE id='draft_restore'"
+        ).fetchone()
+        self.assertEqual((draft["status"], draft["last_error"]), ("EXPIRED", "RESTORE_REQUIRES_REVIEW"))
+        job = self.plane.conn.execute(
+            "SELECT status,last_error FROM management_jobs WHERE id='mjob_restore'"
+        ).fetchone()
+        self.assertEqual((job["status"], job["last_error"]), ("FAILED", "RESTORE_INTERRUPTED"))
+        target = self.plane.conn.execute(
+            "SELECT status,error,lease_expires_at FROM management_job_targets "
+            "WHERE job_id='mjob_restore'"
+        ).fetchone()
+        self.assertEqual((target["status"], target["error"]), ("FAILED", "RESTORE_INTERRUPTED"))
+        self.assertIsNone(target["lease_expires_at"])
+        self.assertEqual(self.plane.current_revision(), revision_before)
+        lifecycle = self.plane.conn.execute(
+            "SELECT category,actor_id,interface FROM audit_events "
+            "WHERE operation='system.restore.management-reconcile' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        self.assertIsNotNone(lifecycle)
+        self.assertEqual(
+            (lifecycle["category"], lifecycle["actor_id"], lifecycle["interface"]),
+            ("SECURITY_LIFECYCLE", "system:restore", "SYSTEM"),
+        )
+
+        query = ManagementQueryService(str(self.tree))
+        try:
+            overview = query.overview_summary()
+            self.assertIn("managed_hosts", overview)
+            page = query.list_inventory("managed-host", limit=10).as_dict()
+            self.assertEqual(len(page["items"]), 1)
+            self.assertEqual(page["items"][0]["id"], "cccccccccccccccccccccccccccccccc")
+        finally:
+            query.close()
+
+    def test_12_v30_pending_access_audit_spool_survives_backup_restore(self):
+        spool_root = self.tree / "var/log/drlink/access/audit-spool"
+        spool = DurableAuditSpool(spool_root, "remote")
+        event = build_access_decision_event(
+            source="remote",
+            event_type="remote.authorize",
+            result="ALLOW",
+            actor_type="managed-host",
+            actor_id="cccccccccccccccccccccccccccccccc",
+            interface="ENFORCEMENT",
+            reason_code="POLICY_ALLOW",
+            source_meta={"managed_host_id": "cccccccccccccccccccccccccccccccc"},
+            destination_meta={"host": "127.0.0.1", "port": 22, "protocol": "tcp"},
+        )
+        record = spool.enqueue(event)
+        self.assertTrue((spool_root / "active.jsonl").is_file())
+        archive = self._backup()
+        names = archive_paths(archive)
+        self.assertIn("payload/var/log/drlink/access/audit-spool/state.json", names)
+        self.assertIn("payload/var/log/drlink/access/audit-spool/active.jsonl", names)
+        self.assertNotIn("payload/var/log/drlink/access/audit-spool/.lock", names)
+
+        for path in spool_root.glob("*"):
+            if path.is_file():
+                path.unlink()
+        proc = run_tool(RESTORE, str(archive))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+        restored = [
+            json.loads(line)
+            for line in (spool_root / "active.jsonl").read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        self.assertEqual(len(restored), 1)
+        self.assertEqual(restored[0]["event_id"], record["event_id"])
+        self.assertEqual(restored[0]["source_sequence"], record["source_sequence"])
+        state = json.loads((spool_root / "state.json").read_text(encoding="utf-8"))
+        self.assertGreaterEqual(int(state["next_sequence"]), int(record["source_sequence"]) + 1)
 
 
 if __name__ == "__main__":
