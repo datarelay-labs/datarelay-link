@@ -1,7 +1,7 @@
 engineering_system:
   version: 1.7.0
   mode: adopted
-  baseline: 5d9db9ff0bfec846fb11c64b99b8207cf434fc51
+  baseline: e8e694589aab17246a37313e5a4e15de5542acce
   ci_mode: native
   native_ci_workflows:
   - .github/workflows/lint.yml
