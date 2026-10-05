@@ -116,6 +116,34 @@ class V30WebMfaPolicyTests(unittest.TestCase):
             WebSessionIssue,
         )
 
+    def test_local_recovery_preserves_default_off_mfa_policy(self):
+        session = self.auth.authenticate(
+            username="admin",
+            password="correct horse battery staple",
+            now=self.now,
+        )
+        result = self.auth.recover_admin(
+            username="admin",
+            new_password="new correct horse battery staple",
+            now=self.now + timedelta(seconds=1),
+        )
+        self.assertTrue(result["recovered"])
+        self.assertFalse(result["mfa_required"])
+        self.assertFalse(result["mfa_enrolled"])
+        self.assertIsNone(
+            self.auth.validate_session(
+                session.session_token, now=self.now + timedelta(seconds=2)
+            )
+        )
+        self.assertIsInstance(
+            self.auth.authenticate(
+                username="admin",
+                password="new correct horse battery staple",
+                now=self.now + timedelta(seconds=3),
+            ),
+            WebSessionIssue,
+        )
+
     def test_additional_operator_defaults_mfa_off_and_admin_api_controls_it(self):
         operator = self.auth.create_operator_local(
             username="operator",
@@ -129,10 +157,23 @@ class V30WebMfaPolicyTests(unittest.TestCase):
             password="correct horse battery staple",
             now=self.now,
         )
+        operator_session = self.auth.authenticate(
+            username="operator",
+            password="another correct horse battery staple",
+            now=self.now,
+        )
         self.auth.close()
 
         app = WebApplication(self.tmp, static_root=str(ROOT / "web/dist"))
         try:
+            with self.assertRaisesRegex(ControlPlaneError, "Admin role"):
+                app.read_api("/api/v1/operators", {}, operator_session.principal)
+            with self.assertRaisesRegex(ControlPlaneError, "Admin role"):
+                app.write_api(
+                    "/api/v1/operators/%s/mfa" % operator["operator_id"],
+                    {"required": True},
+                    operator_session.principal,
+                )
             users = app.read_api("/api/v1/operators", {}, admin_session.principal)
             item = next(x for x in users["items"] if x["id"] == operator["operator_id"])
             self.assertFalse(item["mfa_required"])
