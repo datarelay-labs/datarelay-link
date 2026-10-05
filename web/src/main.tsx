@@ -31,50 +31,85 @@ function Table({items}:{items:any[]}){
 }
 function Metric({label,value}:{label:string,value:any}){return <div className="card"><div className="muted">{label}</div><div className="metric">{String(value??0)}</div></div>}
 
+function LoginIcon({kind}:{kind:"user"|"lock"|"eye"|"eyeoff"}){
+  if(kind==="user")return <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21c.8-4.6 3.5-7 8-7s7.2 2.4 8 7"/></svg>;
+  if(kind==="eye")return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12s3.4-6 9.5-6 9.5 6 9.5 6-3.4 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/></svg>;
+  if(kind==="eyeoff")return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3l18 18M10.6 6.2A10.7 10.7 0 0 1 12 6c6.1 0 9.5 6 9.5 6a14.7 14.7 0 0 1-3.1 3.6M6.1 6.2C3.8 8 2.5 12 2.5 12S5.9 18 12 18c1 0 1.9-.2 2.8-.4"/></svg>;
+  return <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>;
+}
+
+const loginResources=[
+  ["Documentation","datarelay.run/docs","https://datarelay.run/docs","DOC"],
+  ["Quick Start Guide","datarelay.run/quickstart","https://datarelay.run/quickstart","GO"],
+  ["Release Notes","datarelay.run/releases","https://datarelay.run/releases","REL"],
+  ["DataRelay Website","datarelay.run","https://datarelay.run","WEB"],
+  ["Support","support@datarelay.run","mailto:support@datarelay.run","SUP"],
+] as const;
+
+function AuthScaffold({children}:{children:React.ReactNode}){
+  return <div className="dr-login-page">
+    <div className="dr-login-main">
+      <div className="dr-login-grid">
+        <section className="dr-login-identity">
+          <header className="dr-login-brand-block">
+            <img className="dr-login-logo" src="/logo/datarelay-logo.svg" alt="DataRelay logo"/>
+            <div className="dr-login-wordmark"><span>Data</span><strong>Relay</strong></div>
+            <p className="dr-login-product">Data Relay Link</p>
+            <p className="dr-login-tagline">Secure Connectivity for Isolated Networks</p>
+            <p className="dr-login-description">Relay only the connections that are actually needed. Manage Remote Access, Internet Access, and AI Access from one bounded control surface.</p>
+          </header>
+          <section className="dr-login-resources" aria-labelledby="dr-login-resources-title">
+            <h2 id="dr-login-resources-title">Resources</h2>
+            {loginResources.map(([title,subtitle,href,mark])=><a className="dr-login-resource" href={href} target={href.startsWith("http")?"_blank":undefined} rel={href.startsWith("http")?"noopener noreferrer":undefined} key={title}>
+              <span className="dr-login-resource-icon">{mark}</span>
+              <span className="dr-login-resource-copy"><strong>{title}</strong><small>{subtitle}</small></span>
+              {href.startsWith("http")&&<span className="dr-login-external" aria-hidden="true">↗</span>}
+            </a>)}
+          </section>
+        </section>
+        <section className="dr-login-card">{children}</section>
+      </div>
+    </div>
+    <footer className="dr-login-footer"><p>© 2026 DataRelay. All rights reserved.</p><p><a href="https://datarelay.run/privacy" target="_blank" rel="noopener noreferrer">Privacy Policy</a><span>|</span><a href="https://datarelay.run/terms" target="_blank" rel="noopener noreferrer">Terms of Use</a><span>|</span><a href="https://datarelay.run/security" target="_blank" rel="noopener noreferrer">Security</a></p></footer>
+  </div>;
+}
+
+function LoginCardHeader({title="Welcome to Data Relay Link",subtitle="Please sign in to continue."}:{title?:string,subtitle?:string}){
+  return <div className="dr-login-card-head"><div className="dr-login-lock"><LoginIcon kind="lock"/></div><h1>{title}</h1><p>{subtitle}</p></div>;
+}
+
 function Login({onLogin}:{onLogin:(op:any)=>void}){
-  const [username,setUsername]=useState("admin"),[password,setPassword]=useState(""),[totp,setTotp]=useState(""),[recovery,setRecovery]=useState(""),[showMfa,setShowMfa]=useState(false),[error,setError]=useState("");
+  const [username,setUsername]=useState("admin"),[password,setPassword]=useState(""),[totp,setTotp]=useState(""),[recovery,setRecovery]=useState(""),[showMfa,setShowMfa]=useState(false),[showPassword,setShowPassword]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState("");
   const [setup,setSetup]=useState<any>(null),[setupCode,setSetupCode]=useState(""),[recoveryCodes,setRecoveryCodes]=useState<string[]>([]),[pendingOperator,setPendingOperator]=useState<any>(null);
   async function submit(e:React.FormEvent){
-    e.preventDefault();setError("");
+    e.preventDefault();setError("");setBusy(true);
     try{
       const d=await api("/api/v1/auth/login",{method:"POST",body:JSON.stringify({username,password,totp,recovery_code:recovery})});
       if(d.mfa_setup_required){setSetup(d);setSetupCode("");return}
       csrf=d.csrf_token;onLogin(d.operator);
-    }catch(err:any){setError(err.message||String(err))}
+    }catch(err:any){setError(err.message||String(err))}finally{setBusy(false)}
   }
   async function finishMfa(e:React.FormEvent){
-    e.preventDefault();setError("");
+    e.preventDefault();setError("");setBusy(true);
     try{
       const d=await api("/api/v1/auth/mfa/enroll/confirm",{method:"POST",body:JSON.stringify({enrollment_token:setup.enrollment_token,totp:setupCode})});
       csrf=d.csrf_token;setRecoveryCodes(d.recovery_codes||[]);setPendingOperator(d.operator);
-    }catch(err:any){setError(err.message||String(err))}
+    }catch(err:any){setError(err.message||String(err))}finally{setBusy(false)}
   }
-  if(recoveryCodes.length&&pendingOperator)return <div className="login-wrap"><div className="login">
-    <h1>MFA enabled</h1><div className="muted">Store these recovery codes offline. They are displayed only now.</div>
-    <pre className="plan">{recoveryCodes.join("\n")}</pre>
-    <button className="primary" onClick={()=>onLogin(pendingOperator)}>I saved the recovery codes</button>
-  </div></div>;
-  if(setup)return <div className="login-wrap"><form className="login" onSubmit={finishMfa}>
-    <h1>Set up MFA</h1><div className="muted">Your administrator requires MFA for this account. Add the secret below to your authenticator app, then enter the current 6-digit code.</div>
-    {error&&<div className="error">{error}</div>}
-    <label>TOTP secret<input readOnly value={setup.totp_secret||""}/></label>
-    <details><summary>Authenticator URI</summary><pre className="plan">{setup.otpauth_uri}</pre></details>
-    <label>MFA code<input inputMode="numeric" autoComplete="one-time-code" value={setupCode} onChange={e=>setSetupCode(e.target.value)} placeholder="6-digit TOTP"/></label>
-    <button className="primary" type="submit" disabled={!/^\d{6}$/.test(setupCode)}>Enable MFA and sign in</button>
-    <button className="secondary" type="button" onClick={()=>{setSetup(null);setSetupCode("");setPassword("")}}>Cancel</button>
-  </form></div>;
-  return <div className="login-wrap"><form className="login" onSubmit={submit}>
-    <h1>Data Relay Link</h1><div className="muted">Optional Web Management · local authentication</div>
-    {error&&<div className="error">{error}</div>}
-    <label>Username<input autoComplete="username" value={username} onChange={e=>setUsername(e.target.value)}/></label>
-    <label>Password<input type="password" autoComplete="current-password" value={password} onChange={e=>setPassword(e.target.value)}/></label>
-    <button className="secondary" type="button" onClick={()=>setShowMfa(!showMfa)}>{showMfa?"Hide MFA / recovery":"Use MFA / recovery"}</button>
-    {showMfa&&<>
-      <label>MFA code<input inputMode="numeric" autoComplete="one-time-code" value={totp} onChange={e=>setTotp(e.target.value)} placeholder="6-digit TOTP"/></label>
-      <label>Recovery code<input value={recovery} onChange={e=>setRecovery(e.target.value)} placeholder="or recovery code"/></label>
-    </>}
-    <button className="primary" type="submit">Sign in</button>
-  </form></div>
+  if(recoveryCodes.length&&pendingOperator)return <AuthScaffold><LoginCardHeader title="MFA enabled" subtitle="Store these recovery codes offline. They are displayed only now."/><pre className="dr-login-recovery">{recoveryCodes.join("\n")}</pre><button className="dr-login-submit" onClick={()=>onLogin(pendingOperator)}>I saved the recovery codes</button></AuthScaffold>;
+  if(setup)return <AuthScaffold><LoginCardHeader title="Set up MFA" subtitle="Your administrator requires MFA for this account."/><form className="dr-login-form" onSubmit={finishMfa}>{error&&<div className="dr-login-error">{error}</div>}<label>TOTP secret<input readOnly value={setup.totp_secret||""}/></label><details className="dr-login-details"><summary>Authenticator URI</summary><pre>{setup.otpauth_uri}</pre></details><label>MFA code<input inputMode="numeric" autoComplete="one-time-code" value={setupCode} onChange={e=>setSetupCode(e.target.value)} placeholder="6-digit TOTP"/></label><button className="dr-login-submit" type="submit" disabled={busy||!/^\d{6}$/.test(setupCode)}>{busy?"Enabling…":"Enable MFA and sign in"}</button><button className="dr-login-secondary" type="button" onClick={()=>{setSetup(null);setSetupCode("");setPassword("")}}>Cancel</button></form></AuthScaffold>;
+  return <AuthScaffold>
+    <LoginCardHeader/>
+    <form className="dr-login-form" onSubmit={submit}>
+      {error&&<div className="dr-login-error" role="alert">{error}</div>}
+      <div><label htmlFor="drlink-login-user">Username</label><div className="dr-login-field"><span className="dr-login-field-icon"><LoginIcon kind="user"/></span><input id="drlink-login-user" name="username" autoComplete="username" value={username} onChange={e=>setUsername(e.target.value)} placeholder="Enter your username"/></div></div>
+      <div><label htmlFor="drlink-login-password">Password</label><div className="dr-login-field"><span className="dr-login-field-icon"><LoginIcon kind="lock"/></span><input id="drlink-login-password" name="password" type={showPassword?"text":"password"} autoComplete="current-password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="Enter your password"/><button className="dr-login-eye" type="button" onClick={()=>setShowPassword(!showPassword)} aria-label={showPassword?"Hide password":"Show password"}><LoginIcon kind={showPassword?"eyeoff":"eye"}/></button></div></div>
+      <button className="dr-login-mfa-toggle" type="button" onClick={()=>setShowMfa(!showMfa)}>{showMfa?"Hide MFA / recovery":"Use MFA / recovery"}</button>
+      {showMfa&&<div className="dr-login-mfa-fields"><label>MFA code<input inputMode="numeric" autoComplete="one-time-code" value={totp} onChange={e=>setTotp(e.target.value)} placeholder="6-digit TOTP"/></label><label>Recovery code<input value={recovery} onChange={e=>setRecovery(e.target.value)} placeholder="or recovery code"/></label></div>}
+      <button className="dr-login-submit" type="submit" disabled={busy}>{busy?"Signing in…":"Sign In"}</button>
+      <p className="dr-login-admin-note">Accounts are created by an administrator. Self-service registration is not available.</p>
+    </form>
+  </AuthScaffold>;
 }
 
 function DraftWorkspace(){

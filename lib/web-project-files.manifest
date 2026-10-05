@@ -10,3 +10,4 @@ tools/drlink-web-operator usr/local/bin/drlink-web-operator 0755 python
 web/dist/index.html usr/local/share/drlink-web/index.html 0644 static
 web/dist/app.js usr/local/share/drlink-web/app.js 0644 static
 web/dist/styles.css usr/local/share/drlink-web/styles.css 0644 static
+web/dist/logo/datarelay-logo.svg usr/local/share/drlink-web/logo/datarelay-logo.svg 0644 static

@@ -39,12 +39,20 @@ for f in \
   /usr/local/share/drlink-web/index.html \
   /usr/local/share/drlink-web/app.js \
   /usr/local/share/drlink-web/styles.css \
+  /usr/local/share/drlink-web/logo/datarelay-logo.svg \
   /usr/local/bin/drlink-web-bootstrap \
   /usr/local/bin/drlink-web-recovery \
   /usr/local/bin/drlink-web-operator \
   /etc/systemd/system/drlink-web.service; do
   [[ -f "$TMP$f" ]] || { echo "FAIL missing installed Web file: $f" >&2; exit 1; }
 done
+
+grep -q 'Welcome to Data Relay Link' "$TMP/usr/local/share/drlink-web/app.js" || {
+  echo "FAIL DR Control-aligned login UI missing from built Web app" >&2; exit 1;
+}
+grep -q 'DR Control-aligned authentication surface' "$TMP/usr/local/share/drlink-web/styles.css" || {
+  echo "FAIL DR Control-aligned login styles missing from Web package" >&2; exit 1;
+}
 
 grep -q -- '--listen 127.0.0.1 --port 8741' "$TMP/etc/systemd/system/drlink-web.service" || {
   echo "FAIL Web service default is not loopback-only" >&2; exit 1;
