@@ -28,6 +28,7 @@ from drlink_management_service import (
     ManagementQueryService,
 )
 from drlink_management_guided import GuidedChangeService
+from drlink_management_enrollment import ManagementEnrollmentService
 from drlink_management_drafts import (
     DRAFT_ADMIN,
     DRAFT_OBSERVE,
@@ -272,6 +273,42 @@ class ManagementCoreService:
         del actor
         with ManagementQueryService(self.root) as service:
             return service.job_get(data["job_id"])
+
+    @staticmethod
+    def _require_web_role(actor: ManagementActor, *roles: str) -> str:
+        role = str(actor.role or "").strip().lower()
+        allowed = {str(item).strip().lower() for item in roles}
+        if role not in allowed:
+            raise ManagementAuthorizationError(
+                "This Web management operation requires role: %s." % ", ".join(sorted(roles))
+            )
+        return role
+
+    def enrollment_list(self, *, actor: ManagementActor, limit: int = 50) -> dict[str, Any]:
+        if "management-read" not in actor.permissions:
+            raise ManagementAuthorizationError("management-read is required for enrollment status.")
+        self._require_web_role(actor, "Admin", "Operator", "Read Only")
+        return ManagementEnrollmentService(self.root).list_enrollments(limit=limit)
+
+    def enrollment_issue_zero_touch(
+        self,
+        *,
+        actor: ManagementActor,
+        platform: str,
+        ttl_seconds: Optional[int] = None,
+        label: str = "",
+        note: str = "",
+    ) -> dict[str, Any]:
+        self._require_web_role(actor, "Admin")
+        if "management-config" not in actor.permissions:
+            raise ManagementAuthorizationError("management-config is required for enrollment issuance.")
+        return ManagementEnrollmentService(self.root).issue_zero_touch(
+            platform=platform,
+            ttl_seconds=ttl_seconds,
+            label=label,
+            note=note,
+            actor_id=actor.actor_id,
+        )
 
     @staticmethod
     def _draft_authority(actor: ManagementActor) -> str:

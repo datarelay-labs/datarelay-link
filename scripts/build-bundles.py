@@ -72,6 +72,7 @@ files=[
  'lib/drlink_management_change.py',
  'lib/drlink_management_drafts.py',
  'lib/drlink_management_guided.py',
+ 'lib/drlink_management_enrollment.py',
  'lib/drlink_management_core.py',
  'lib/drlink_management_mcp_adapter.py',
  'lib/drlink_management_web_adapter.py',

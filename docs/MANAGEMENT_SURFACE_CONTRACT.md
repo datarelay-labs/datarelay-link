@@ -503,6 +503,14 @@ DRL3-0 additionally freezes:
 Exact serialization details for opaque Change Plan IDs and internal cursor encodings may
 remain implementation details as long as these frozen semantics are preserved.
 
+DRL3-3 Zero-Touch enrollment issuance is a first-party Web/Core workflow, not a Management
+MCP tool. Non-secret enrollment lifecycle/status may be observed through Web under
+`management-read`, but issuing a short-lived credential requires an authenticated local
+Web Admin plus `management-config`. Core delegates pair creation, TTL/capacity enforcement,
+and bootstrap credential handling to the existing allocator authority. The credential-
+bearing install command is display-once in the issuance response and is never returned by
+normal enrollment history. Plugin/MCP receives no enrollment credential issuance surface.
+
 ## 14. Acceptance
 
 3.0 design/implementation is not surface-coherent until evidence proves:

@@ -467,6 +467,14 @@ Required enrollment UX:
 - Platform-specific guidance exists for Linux, Windows, and macOS where supported.
 - The user can proceed directly from enrollment to Remote Service and policy setup.
 
+DRL3-3 implements Zero-Touch issuance through the existing Server allocator authority rather
+than a Web-specific credential store. Issuance is Admin-only, TTL remains bounded by the
+existing Zero-Touch 24-hour ceiling, and Linux/macOS/Windows guidance uses qualified
+Server-local installer artifacts plus the existing allocator CA trust contract. The
+credential-bearing install command is returned only by the issuance response; ordinary
+Web enrollment history exposes lifecycle/status/expiry metadata only and cannot recover
+that command or bootstrap credential.
+
 The UI may provide copy actions for generated bootstrap guidance, but copying does not
 change credential lifetime or security semantics.
 

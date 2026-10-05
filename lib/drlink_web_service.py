@@ -246,6 +246,11 @@ class WebApplication:
         if path == "/api/v1/doctor":
             with ManagementQueryService(self.root) as service:
                 return service.doctor_summary()
+        if path == "/api/v1/enrollments":
+            return self.adapter.enrollment_list(
+                actor=actor,
+                limit=_int_arg(_first(query, "limit"), 50, high=100),
+            )
         if path == "/api/v1/drafts":
             return self.adapter.draft_list(
                 actor=actor,
@@ -321,6 +326,15 @@ class WebApplication:
                 actor=self._actor(principal),
             )
         actor = self._actor(principal)
+        if path == "/api/v1/enrollments/zero-touch":
+            ttl_value = body.get("ttl_seconds")
+            return self.adapter.enrollment_issue_zero_touch(
+                actor=actor,
+                platform=str(body.get("platform") or ""),
+                ttl_seconds=ttl_value,
+                label=str(body.get("label") or ""),
+                note=str(body.get("note") or ""),
+            )
         if path == "/api/v1/drafts":
             return self.adapter.draft_create(
                 actor=actor,

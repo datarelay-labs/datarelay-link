@@ -76,3 +76,22 @@ class ManagementWebApiAdapter:
 
     def draft_cancel(self, draft_id: str, *, actor: ManagementActor) -> dict[str, Any]:
         return self.core.draft_cancel(draft_id, actor=actor)
+    def enrollment_list(self, *, actor: ManagementActor, limit: int = 50) -> dict[str, Any]:
+        return self.core.enrollment_list(actor=actor, limit=limit)
+
+    def enrollment_issue_zero_touch(
+        self,
+        *,
+        actor: ManagementActor,
+        platform: str,
+        ttl_seconds: int | None = None,
+        label: str = "",
+        note: str = "",
+    ) -> dict[str, Any]:
+        return self.core.enrollment_issue_zero_touch(
+            actor=actor,
+            platform=platform,
+            ttl_seconds=ttl_seconds,
+            label=label,
+            note=note,
+        )

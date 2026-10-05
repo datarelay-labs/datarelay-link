@@ -17,6 +17,7 @@ sys.path.insert(0, str(ROOT / "lib"))
 
 from drlink_control_db import ControlPlaneError
 import drlink_v24 as v24
+import frp_pki
 from drlink_control_plane import ControlPlane
 from drlink_web_auth import WebAuthService, totp_code
 from drlink_web_service import create_server, validate_web_bind
@@ -27,6 +28,7 @@ class V30WebServiceTests(unittest.TestCase):
         self.tmp = tempfile.mkdtemp(prefix="drlink-v30-web-service-")
         os.environ["DRLINK_WEB_QUIET"] = "1"
         os.environ["DRLINK_SKIP_ACTIVATION"] = "1"
+        os.environ["FRP_DEPLOY_TEST_ROOT"] = self.tmp
         Path(self.tmp, "etc/drlink").mkdir(parents=True, exist_ok=True)
         Path(self.tmp, "etc/drlink/config.json").write_text(
             '{"role":"server"}\n', encoding="utf-8"
@@ -82,6 +84,7 @@ class V30WebServiceTests(unittest.TestCase):
         self.server.server_close()
         os.environ.pop("DRLINK_WEB_QUIET", None)
         os.environ.pop("DRLINK_SKIP_ACTIVATION", None)
+        os.environ.pop("FRP_DEPLOY_TEST_ROOT", None)
 
     def request(self, method, path, body=None, headers=None):
         conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
@@ -264,6 +267,41 @@ class V30WebServiceTests(unittest.TestCase):
             self.assertIsNotNone(plane.get_object("web-office"))
         finally:
             plane.close()
+
+    def test_zero_touch_enrollment_is_admin_csrf_protected_and_redacted_in_history(self):
+        self.login()
+        material = frp_pki.ensure_pki(Path(self.tmp, "etc/drlink/pki"), "127.0.0.1")
+        Path(self.tmp, "etc/drlink/config.json").write_text(
+            json.dumps({
+                "role": "server",
+                "allocator_public_url": "https://127.0.0.1:9443/enroll",
+                "tls_ca_cert": "/etc/drlink/pki/ca.crt",
+                "enrollments_dir": "/var/lib/drlink/enrollments",
+                "bootstrap_dir": "/var/lib/drlink/bootstrap",
+                "registry_file": "/var/lib/drlink/registry.json",
+                "enrollment_retention_days": 30,
+            }) + "\n", encoding="utf-8"
+        )
+        self.assertTrue(Path(material["ca_crt"]).is_file())
+        body = {"platform": "linux", "ttl_seconds": 600, "label": "web-agent"}
+        status, _, _ = self.request("POST", "/api/v1/enrollments/zero-touch", body)
+        self.assertEqual(status, 403)
+        status, _, issued = self.request(
+            "POST",
+            "/api/v1/enrollments/zero-touch",
+            body,
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, issued)
+        self.assertTrue(issued["display_once"])
+        self.assertTrue(issued["command"])
+        status, _, listing = self.request("GET", "/api/v1/enrollments?limit=10")
+        self.assertEqual(status, 200, listing)
+        self.assertEqual(listing["total"], 1)
+        serialized = json.dumps(listing)
+        self.assertNotIn(issued["command"], serialized)
+        self.assertNotIn("command", serialized.lower())
+        self.assertNotIn("secret", serialized.lower())
 
     def test_guided_remote_access_rule_web_parity(self):
         self.login()

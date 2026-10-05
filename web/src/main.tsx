@@ -6,7 +6,7 @@ const nav=[
   ["overview","Overview"],["hosts","Managed Hosts"],["services","Remote Services"],
   ["objects","Objects & Groups"],["policies","Policies"],["versions","Version Drift"],
   ["audit","Audit"],["revisions","Revisions"],["doctor","Doctor"],["health","Health"],
-  ["search","Search"],["views","Saved Views"],["drafts","Draft Workspace"],
+  ["search","Search"],["views","Saved Views"],["enrollments","Connect Agent"],["drafts","Draft Workspace"],
 ];
 let csrf="";
 
@@ -125,6 +125,37 @@ function DraftWorkspace(){
   </div>;
 }
 
+function EnrollmentPanel({data,refresh}:{data:any,refresh:()=>void}){
+  const [platform,setPlatform]=useState("linux"),[ttl,setTtl]=useState("3600"),[label,setLabel]=useState(""),[note,setNote]=useState("");
+  const [issued,setIssued]=useState<any>(null),[error,setError]=useState("");
+  async function issue(){
+    setError("");setIssued(null);
+    try{
+      const result=await api("/api/v1/enrollments/zero-touch",{method:"POST",body:JSON.stringify({platform,ttl_seconds:ttl,label,note})});
+      setIssued(result);refresh();
+    }catch(e:any){setError(e.message||String(e))}
+  }
+  return <>
+    <div className="card"><h3>Connect Agent · Zero-Touch</h3>
+      <div className="muted">Creates one short-lived, single-use management enrollment. The install command is display-once and is not recoverable from enrollment history.</div>
+      {error&&<div className="error">{error}</div>}
+      <div className="toolbar">
+        <select value={platform} onChange={e=>setPlatform(e.target.value)}><option value="linux">Linux</option><option value="macos">macOS</option><option value="windows">Windows</option></select>
+        <input value={ttl} onChange={e=>setTtl(e.target.value)} placeholder="TTL seconds (60-86400)"/>
+        <input value={label} onChange={e=>setLabel(e.target.value)} placeholder="Managed Host label"/>
+        <input value={note} onChange={e=>setNote(e.target.value)} placeholder="Optional note"/>
+        <button className="primary" onClick={issue}>Issue Zero-Touch</button>
+      </div>
+      {issued&&<div className="warning-box">
+        <strong>Display once · expires {issued.expires_at}</strong>
+        <pre className="plan">{issued.command}</pre>
+        <div>{issued.next_step}</div>
+      </div>}
+    </div>
+    <div className="card"><h3>Enrollment status</h3><Table items={data?.items||[]}/></div>
+  </>;
+}
+
 function GuidedPolicyRulePanel(){
   const [plane,setPlane]=useState("remote"),[operation,setOperation]=useState("set"),[name,setName]=useState(""),[mode,setMode]=useState("whitelist");
   const [source,setSource]=useState(""),[destination,setDestination]=useState(""),[selector,setSelector]=useState(""),[enabled,setEnabled]=useState(true),[expiresAt,setExpiresAt]=useState(""),[paths,setPaths]=useState("");
@@ -232,12 +263,13 @@ function View({active,operator}:{active:string,operator:any}){
       services:"/api/v1/inventory?resource_type=remote-service&limit=100",
       objects:"/api/v1/objects-groups?limit=50",policies:"/api/v1/policies?limit=100",
       versions:"/api/v1/versions",audit:"/api/v1/audit?limit=100",revisions:"/api/v1/revisions?limit=100",
-      doctor:"/api/v1/doctor",health:"/api/v1/health",views:"/api/v1/saved-views",
+      doctor:"/api/v1/doctor",health:"/api/v1/health",views:"/api/v1/saved-views",enrollments:"/api/v1/enrollments?limit=50",
     };
     if(paths[active])api(paths[active]).then(setData).catch((e:any)=>setError(e.message||String(e)));
   },[active]);
   if(error)return <div className="error">{error}</div>;
   if(active==="drafts")return <DraftWorkspace/>;
+  if(active==="enrollments"&&data)return <EnrollmentPanel data={data} refresh={()=>api("/api/v1/enrollments?limit=50").then(setData)}/>;
   if(active==="search")return <div><div className="toolbar"><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search resources and policy"/><button className="primary" onClick={()=>api("/api/v1/search?q="+encodeURIComponent(query)+"&limit=50").then(setData).catch((e:any)=>setError(e.message))}>Search</button></div>{data&&<Table items={(data.items||[]).map((x:any)=>({type:x.resource_type,id:x.id,name:x.name}))}/>}</div>;
   if(active==="overview"&&data){const h=data.overview?.managed_hosts||{},s=data.overview?.remote_services||{},j=data.overview?.management_jobs||{};return <><div className="grid"><Metric label="Managed Hosts" value={h.total}/><Metric label="Connected" value={h.connected}/><Metric label="Remote Services" value={s.total}/><Metric label="Active Jobs" value={j.active_jobs}/></div><div className="card"><h3>Attention Center</h3>{(data.attention?.items||[]).map((x:any)=><span key={x.kind} className={"badge "+x.severity}>{x.label}: {x.count}</span>)}{!(data.attention?.items||[]).length&&<div className="muted">No current attention items</div>}</div></>};
   if(active==="versions"&&data)return <><div className="grid"><Metric label="Server version" value={data.server_version}/><Metric label="Drift" value={data.drift_count}/><Metric label="Unknown" value={data.unknown_count}/></div><Table items={data.hosts||[]}/></>;
@@ -259,7 +291,11 @@ function SavedViews({data,refresh}:{data:any,refresh:()=>void}){
 function Shell({operator,onLogout}:{operator:any,onLogout:()=>void}){
   const [active,setActive]=useState("overview");
   async function logout(){try{await api("/api/v1/auth/logout",{method:"POST",body:"{}"})}finally{csrf="";onLogout()}}
-  const visibleNav=nav.filter(([id])=>id!=="drafts"||operator.role!=="Read Only");
+  const visibleNav=nav.filter(([id])=>{
+    if(id==="drafts")return operator.role!=="Read Only";
+    if(id==="enrollments")return operator.role==="Admin";
+    return true;
+  });
   const title=visibleNav.find(x=>x[0]===active)?.[1]||"Overview";
   return <div className="shell"><aside className="sidebar"><div className="brand">Data Relay Link<small>Web Management 3.0</small></div><div className="nav">{visibleNav.map(([id,label])=><button key={id} className={id===active?"active":""} onClick={()=>setActive(id)}>{label}</button>)}</div></aside><section className="content"><div className="top"><div><div className="title">{title}</div><div className="muted">{operator.username} · {operator.role}</div></div><button className="secondary" onClick={logout}>Sign out</button></div><View active={active} operator={operator}/></section></div>;
 }
