@@ -136,7 +136,7 @@ class V30ManagementJobTransportTests(unittest.TestCase):
         engine = ManagementJobEngine(self.server_tmp)
         try:
             jobs = {}
-            for kind in ("doctor", "refresh", "version-check"):
+            for kind in ("doctor", "refresh", "version-check", "support-bundle"):
                 payload = {}
                 if kind == "version-check":
                     payload = {
@@ -153,7 +153,7 @@ class V30ManagementJobTransportTests(unittest.TestCase):
                     payload=payload,
                 )
             result = process_management_jobs_once(self.agent_tmp, limit=4)
-            self.assertEqual(result, {"processed": 3, "failed": 0})
+            self.assertEqual(result, {"processed": 4, "failed": 0})
 
             doctor = engine.get(jobs["doctor"]["id"])
             self.assertEqual(doctor["status"], SUCCEEDED)
@@ -187,6 +187,25 @@ class V30ManagementJobTransportTests(unittest.TestCase):
             self.assertTrue(version_result["product_update_available"])
             self.assertFalse(version_result["relay_engine_update_available"])
             self.assertNotIn("token", json.dumps(version_result).lower())
+
+            support = engine.get(jobs["support-bundle"]["id"])
+            self.assertEqual(support["status"], SUCCEEDED)
+            support_result = support["targets"][0]["result"]
+            self.assertEqual(support_result["operation"], "support-bundle")
+            self.assertTrue(support_result["sanitized"])
+            self.assertTrue(
+                support_result["artifact_path"].startswith(
+                    "/var/lib/drlink/support-bundles/"
+                )
+            )
+            self.assertGreater(support_result["size"], 0)
+            self.assertEqual(len(support_result["sha256"]), 64)
+            artifact = Path(
+                self.agent_tmp, support_result["artifact_path"].lstrip("/")
+            )
+            self.assertTrue(artifact.is_file())
+            self.assertNotIn("sections", support_result)
+
         finally:
             engine.close()
 

@@ -2199,6 +2199,30 @@
   },
   {
     "path": [
+      "system",
+      "export",
+      "inventory"
+    ],
+    "roles": "server",
+    "category": "System",
+    "summary": "Export bounded inventory snapshot",
+    "detail": "Create a sanitized bounded NDJSON inventory artifact under the Core-owned exports directory. No secret material or browser download is exposed.",
+    "examples": [
+      "system export inventory"
+    ],
+    "args": [],
+    "tail": null,
+    "internal": null,
+    "aliases": [],
+    "destructive": false,
+    "hidden": false,
+    "risk": "none",
+    "confirmation": "none",
+    "surface": "",
+    "flags": []
+  },
+  {
+    "path": [
       "test",
       "configuration"
     ],

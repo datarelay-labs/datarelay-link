@@ -1,16 +1,20 @@
 from __future__ import annotations
 
+import json
+import io
 import os
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 
+import drlink_control_cli as control_cli
 import drlink_mcp_tls as mcp_tls
 from drlink_control_db import ControlPlaneError
 from drlink_control_plane import ControlPlane
@@ -419,6 +423,118 @@ class V30ManagementSystemTests(unittest.TestCase):
                     ControlPlaneError, "/var/lib/drlink/backups/"
                 ):
                     service.backup_validate(path)
+
+    def test_inventory_export_is_bounded_sanitized_and_non_authoritative(self):
+        plane = ControlPlane(self.tmp)
+        try:
+            before = plane.current_revision()
+            plane.upsert_client(
+                "host-export",
+                label="export-host",
+                hostname="export.example",
+                connected=True,
+            )
+            plane.set_client_tag("host-export", "site", "lab")
+            plane.set_client_group("export-group")
+            plane.set_client_group_member("export-group", "host-export")
+            plane.set_published_service(
+                "host-export",
+                "ssh-export",
+                service_type="ssh",
+                target_mode="self",
+                target_port=22,
+                public_port=6060,
+                enabled=True,
+            )
+            seeded = plane.current_revision()
+            self.assertGreater(seeded, before)
+        finally:
+            plane.close()
+
+        result = ManagementSystemService(self.tmp).inventory_export_create(
+            actor_id="web:reader"
+        )
+        self.assertEqual(result["status"], "CREATED")
+        self.assertTrue(result["path"].startswith("/var/lib/drlink/exports/"))
+        self.assertTrue(result["path"].endswith(".ndjson"))
+        self.assertTrue(result["sanitized"])
+        self.assertFalse(result["download_exposed"])
+        self.assertFalse(result["authoritative_mutation"])
+        actual = Path(self.tmp, result["path"].lstrip("/"))
+        self.assertTrue(actual.is_file())
+        self.assertEqual(actual.stat().st_mode & 0o777, 0o600)
+        rows = [
+            json.loads(line)
+            for line in actual.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        self.assertEqual(rows[0]["record_type"], "inventory-export-meta")
+        self.assertTrue(rows[0]["bounded"])
+        resources = {row.get("resource_type") for row in rows[1:]}
+        self.assertIn("managed-host", resources)
+        self.assertIn("remote-service", resources)
+        self.assertIn("managed-host-group", resources)
+        self.assertIn("managed-host-tag", resources)
+        self.assertNotIn("password", actual.read_text(encoding="utf-8").lower())
+        plane = ControlPlane(self.tmp, read_only=True)
+        try:
+            self.assertEqual(plane.current_revision(), seeded)
+        finally:
+            plane.close()
+
+    def test_public_cli_inventory_export_uses_same_bounded_artifact_contract(self):
+        plane = ControlPlane(self.tmp)
+        try:
+            plane.upsert_client(
+                "cli-export-host",
+                label="cli-export-host",
+                hostname="cli-export.example",
+                connected=True,
+            )
+            revision = plane.current_revision()
+        finally:
+            plane.close()
+
+        out = io.StringIO()
+        err = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            rc = control_cli.dispatch(
+                ["system", "export", "inventory"], root=self.tmp
+            )
+        self.assertEqual(rc, 0, err.getvalue())
+        self.assertIn("Inventory export created", out.getvalue())
+        exports = sorted(
+            Path(self.tmp, "var/lib/drlink/exports").glob("*.ndjson")
+        )
+        self.assertEqual(len(exports), 1)
+        self.assertEqual(exports[0].stat().st_mode & 0o777, 0o600)
+        meta = json.loads(
+            exports[0].read_text(encoding="utf-8").splitlines()[0]
+        )
+        self.assertTrue(meta["bounded"])
+        self.assertEqual(meta["counts"]["managed_hosts"], 1)
+        check = ControlPlane(self.tmp, read_only=True)
+        try:
+            self.assertEqual(check.current_revision(), revision)
+        finally:
+            check.close()
+
+    def test_inventory_export_fails_closed_above_host_bound(self):
+        plane = ControlPlane(self.tmp)
+        try:
+            for index in range(101):
+                plane.upsert_client(
+                    "bound-%03d" % index,
+                    label="bound-%03d" % index,
+                    hostname="bound-%03d.example" % index,
+                    connected=False,
+                )
+        finally:
+            plane.close()
+        with self.assertRaises(ControlPlaneError):
+            ManagementSystemService(self.tmp).inventory_export_create(
+                actor_id="web:reader"
+            )
 
     def test_artifact_generation_uses_owned_paths_and_never_exposes_download(self):
         def fake_run(command, **kwargs):

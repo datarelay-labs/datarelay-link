@@ -1081,6 +1081,160 @@ class V30WebServiceTests(unittest.TestCase):
         finally:
             plane.close()
 
+    def test_fleet_artifact_and_metadata_web_paths_are_bounded_and_atomic(self):
+        self.login()
+        plane = ControlPlane(self.tmp)
+        try:
+            plane.upsert_client(
+                "host-b",
+                label="beta",
+                hostname="beta.example",
+                connected=True,
+            )
+            before = plane.current_revision()
+        finally:
+            plane.close()
+
+        status, _, denied_export = self.request(
+            "POST", "/api/v1/inventory/export", {}
+        )
+        self.assertEqual(status, 403, denied_export)
+
+        status, _, exported = self.request(
+            "POST",
+            "/api/v1/inventory/export",
+            {},
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, exported)
+        self.assertTrue(exported["path"].startswith("/var/lib/drlink/exports/"))
+        self.assertFalse(exported["download_exposed"])
+        self.assertTrue(exported["sanitized"])
+        self.assertEqual(exported["counts"]["managed_hosts"], 2)
+        export_path = Path(self.tmp) / exported["path"].lstrip("/")
+        self.assertTrue(export_path.is_file())
+        lines = [
+            json.loads(line)
+            for line in export_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        self.assertEqual(lines[0]["record_type"], "inventory-export-meta")
+        self.assertEqual(
+            sum(1 for item in lines if item.get("resource_type") == "managed-host"),
+            2,
+        )
+        self.assertNotIn("password", export_path.read_text(encoding="utf-8").lower())
+
+        status, _, support_job = self.request(
+            "POST",
+            "/api/v1/jobs/diagnostic",
+            {
+                "job_type": "support-bundle",
+                "resource_type": "managed-host",
+                "resource": "host-a",
+            },
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, support_job)
+        self.assertEqual(support_job["job"]["job_type"], "support-bundle")
+        self.assertEqual(support_job["job"]["target_count"], 1)
+        self.request(
+            "POST",
+            "/api/v1/jobs/cancel",
+            {"job_id": support_job["job"]["id"]},
+            headers={"X-CSRF-Token": self.csrf},
+        )
+
+        changes = {
+            "description": "fleet-web",
+            "tags": {"site": "lab"},
+            "add_groups": ["web-fleet"],
+        }
+        status, _, denied_preview = self.request(
+            "POST",
+            "/api/v1/fleet/metadata/preview",
+            {
+                "resource_type": "managed-host",
+                "resource": "",
+                "changes": changes,
+            },
+        )
+        self.assertEqual(status, 403, denied_preview)
+
+        status, _, preview = self.request(
+            "POST",
+            "/api/v1/fleet/metadata/preview",
+            {
+                "resource_type": "managed-host",
+                "resource": "",
+                "changes": changes,
+            },
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, preview)
+        self.assertEqual(preview["selection"]["target_count"], 2)
+        plane = ControlPlane(self.tmp, read_only=True)
+        try:
+            self.assertEqual(plane.current_revision(), before)
+            self.assertIsNone(
+                plane.conn.execute(
+                    "SELECT 1 FROM client_groups WHERE name='web-fleet'"
+                ).fetchone()
+            )
+        finally:
+            plane.close()
+
+        status, _, wrong = self.request(
+            "POST",
+            "/api/v1/fleet/metadata/apply",
+            {
+                "change_plan_id": preview["change_plan_id"],
+                "confirmation": "CONFIRM",
+            },
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 400, wrong)
+
+        status, _, applied = self.request(
+            "POST",
+            "/api/v1/fleet/metadata/apply",
+            {
+                "change_plan_id": preview["change_plan_id"],
+                "confirmation": "APPLY",
+            },
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, applied)
+        self.assertEqual(applied["revision"], before + 1)
+        self.assertEqual(applied["result"]["target_count"], 2)
+
+        plane = ControlPlane(self.tmp, read_only=True)
+        try:
+            group = plane.conn.execute(
+                "SELECT id FROM client_groups WHERE name='web-fleet'"
+            ).fetchone()
+            self.assertIsNotNone(group)
+            for host in ("host-a", "host-b"):
+                row = plane.require_client(host)
+                self.assertEqual(row["description"], "fleet-web")
+                self.assertEqual(
+                    plane.conn.execute(
+                        "SELECT value FROM client_tags "
+                        "WHERE client_id=? AND key='site'",
+                        (row["id"],),
+                    ).fetchone()["value"],
+                    "lab",
+                )
+                self.assertIsNotNone(
+                    plane.conn.execute(
+                        "SELECT 1 FROM client_group_members "
+                        "WHERE group_id=? AND client_id=?",
+                        (group["id"], row["id"]),
+                    ).fetchone()
+                )
+        finally:
+            plane.close()
+
     def test_bounded_management_job_web_start_list_detail_and_cancel(self):
         self.login()
 
@@ -1181,7 +1335,7 @@ class V30WebServiceTests(unittest.TestCase):
             headers={"X-CSRF-Token": self.csrf},
         )
         self.assertEqual(status, 400, invalid)
-        self.assertIn("doctor, refresh, or version-check", invalid["error"])
+        self.assertIn("doctor, refresh, version-check, or support-bundle", invalid["error"])
 
     def test_access_operations_diagnosis_live_and_cutoff_web_paths(self):
         self.login()

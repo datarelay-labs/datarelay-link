@@ -759,8 +759,9 @@ function AccessOperations({operator}:{operator:any}){
 }
 
 function JobOperations({operator}:{operator:any}){
-  const [jobs,setJobs]=useState<any>(null),[detail,setDetail]=useState<any>(null),[error,setError]=useState(""),[message,setMessage]=useState("");
+  const [jobs,setJobs]=useState<any>(null),[detail,setDetail]=useState<any>(null),[error,setError]=useState(""),[message,setMessage]=useState(""),[inventoryExport,setInventoryExport]=useState<any>(null);
   const [jobType,setJobType]=useState("doctor"),[resourceType,setResourceType]=useState("managed-host"),[resource,setResource]=useState(""),[detailId,setDetailId]=useState("");
+  const [fleetResourceType,setFleetResourceType]=useState("managed-host"),[fleetResource,setFleetResource]=useState(""),[fleetDescription,setFleetDescription]=useState(""),[fleetTags,setFleetTags]=useState(""),[fleetRemoveTags,setFleetRemoveTags]=useState(""),[fleetAddGroups,setFleetAddGroups]=useState(""),[fleetRemoveGroups,setFleetRemoveGroups]=useState(""),[fleetPreview,setFleetPreview]=useState<any>(null),[fleetConfirm,setFleetConfirm]=useState("");
   async function refresh(){
     setError("");
     try{setJobs(await api("/api/v1/jobs?limit=50"))}catch(e:any){setError(e.message||String(e))}
@@ -783,6 +784,41 @@ function JobOperations({operator}:{operator:any}){
     setError("");
     try{const result=await api("/api/v1/jobs/"+encodeURIComponent(target));setDetail(result);setDetailId(target)}catch(e:any){setError(e.message||String(e))}
   }
+  function csvList(value:string){return value.split(",").map(x=>x.trim()).filter(Boolean)}
+  async function previewFleetMetadata(){
+    setError("");setMessage("");setFleetConfirm("");
+    try{
+      const changes:any={};
+      if(fleetDescription!=="")changes.description=fleetDescription;
+      if(fleetTags.trim())changes.tags=JSON.parse(fleetTags);
+      const removeTags=csvList(fleetRemoveTags);if(removeTags.length)changes.remove_tags=removeTags;
+      const addGroups=csvList(fleetAddGroups);if(addGroups.length)changes.add_groups=addGroups;
+      const removeGroups=csvList(fleetRemoveGroups);if(removeGroups.length)changes.remove_groups=removeGroups;
+      const result=await api("/api/v1/fleet/metadata/preview",{method:"POST",body:JSON.stringify({
+        resource_type:fleetResourceType,resource:fleetResource,changes
+      })});
+      setFleetPreview(result);
+    }catch(e:any){setFleetPreview(null);setError(e.message||String(e))}
+  }
+  async function applyFleetMetadata(){
+    if(!fleetPreview)return;
+    setError("");setMessage("");
+    try{
+      const result=await api("/api/v1/fleet/metadata/apply",{method:"POST",body:JSON.stringify({
+        change_plan_id:fleetPreview.change_plan_id,confirmation:fleetConfirm
+      })});
+      setMessage("Fleet metadata applied at revision "+String(result.revision)+" to "+String(result.result?.target_count||0)+" Managed Host(s)");
+      setFleetPreview(null);setFleetConfirm("");
+    }catch(e:any){setError(e.message||String(e))}
+  }
+  async function exportInventory(){
+    setError("");setMessage("");
+    try{
+      const result=await api("/api/v1/inventory/export",{method:"POST",body:"{}"});
+      setInventoryExport(result);
+      setMessage("Inventory export created at "+String(result.path||""));
+    }catch(e:any){setError(e.message||String(e))}
+  }
   async function cancelJob(){
     if(!detail?.id)return;
     setError("");setMessage("");
@@ -800,14 +836,34 @@ function JobOperations({operator}:{operator:any}){
       <h3>Bounded Management Jobs</h3>
       <div className="muted">Safe fleet operations only. Jobs are bounded to at most 100 trusted Managed Hosts and use the signed Agent claim/complete transport.</div>
       {operator.role!=="Read Only"&&<div className="toolbar">
-        <select value={jobType} onChange={e=>setJobType(e.target.value)}><option value="doctor">Doctor diagnostics</option><option value="refresh">Synchronize / refresh</option><option value="version-check">Version check</option></select>
+        <select value={jobType} onChange={e=>setJobType(e.target.value)}><option value="doctor">Doctor diagnostics</option><option value="refresh">Synchronize / refresh</option><option value="version-check">Version check</option><option value="support-bundle">Support bundle</option></select>
         <select value={resourceType} onChange={e=>{setResourceType(e.target.value);setResource("")}}><option value="managed-host">Managed Host(s)</option><option value="managed-host-group">Managed Host Group</option></select>
         <input value={resource} onChange={e=>setResource(e.target.value)} placeholder={resourceType==="managed-host"?"Host selector; blank = all trusted":"Managed Host Group name / ID"}/>
         <button className="primary" onClick={start} disabled={resourceType==="managed-host-group"&&!resource.trim()}>Start Job</button>
       </div>}
-      <div className="toolbar"><button className="secondary" onClick={refresh}>Refresh Jobs</button><input value={detailId} onChange={e=>setDetailId(e.target.value)} placeholder="Job ID"/><button className="secondary" onClick={()=>loadDetail()}>Load Detail</button></div>
+      <div className="toolbar"><button className="secondary" onClick={refresh}>Refresh Jobs</button><input value={detailId} onChange={e=>setDetailId(e.target.value)} placeholder="Job ID"/><button className="secondary" onClick={()=>loadDetail()}>Load Detail</button><button className="secondary" onClick={exportInventory}>Export Inventory</button></div>
+      {inventoryExport&&<pre className="plan">{JSON.stringify({path:inventoryExport.path,record_count:inventoryExport.record_count,counts:inventoryExport.counts,sha256:inventoryExport.sha256,download_exposed:inventoryExport.download_exposed},null,2)}</pre>}
       <Table items={rows}/>
     </div>
+    {operator.role!=="Read Only"&&<div className="card">
+      <h3>Fleet Metadata Change Plan</h3>
+      <div className="muted">Bounded to 100 trusted Managed Hosts. Description, tags, and Managed Host Group membership apply atomically as one revision after Preview.</div>
+      <div className="toolbar">
+        <select value={fleetResourceType} onChange={e=>{setFleetResourceType(e.target.value);setFleetResource("");setFleetPreview(null)}}><option value="managed-host">Managed Host(s)</option><option value="managed-host-group">Managed Host Group</option></select>
+        <input value={fleetResource} onChange={e=>{setFleetResource(e.target.value);setFleetPreview(null)}} placeholder={fleetResourceType==="managed-host"?"Host selector; blank = all trusted":"Managed Host Group name / ID"}/>
+      </div>
+      <label>Description<input value={fleetDescription} onChange={e=>{setFleetDescription(e.target.value);setFleetPreview(null)}} placeholder="Optional description applied to all selected Hosts"/></label>
+      <label>Tags JSON<input value={fleetTags} onChange={e=>{setFleetTags(e.target.value);setFleetPreview(null)}} placeholder='{"site":"lab","owner":"secops"}'/></label>
+      <label>Remove tags<input value={fleetRemoveTags} onChange={e=>{setFleetRemoveTags(e.target.value);setFleetPreview(null)}} placeholder="comma,separated,tag-keys"/></label>
+      <label>Add Managed Host Groups<input value={fleetAddGroups} onChange={e=>{setFleetAddGroups(e.target.value);setFleetPreview(null)}} placeholder="group-a,group-b"/></label>
+      <label>Remove Managed Host Groups<input value={fleetRemoveGroups} onChange={e=>{setFleetRemoveGroups(e.target.value);setFleetPreview(null)}} placeholder="group-c"/></label>
+      <button className="primary" onClick={previewFleetMetadata} disabled={fleetResourceType==="managed-host-group"&&!fleetResource.trim()}>Preview Fleet Change</button>
+      {fleetPreview&&<>
+        <pre className="plan">{JSON.stringify({selection:fleetPreview.selection,changes:fleetPreview.changes,preview:fleetPreview.preview,impact:fleetPreview.impact},null,2)}</pre>
+        <label className="apply-label">Type APPLY<input value={fleetConfirm} onChange={e=>setFleetConfirm(e.target.value)} placeholder="APPLY"/></label>
+        <button className="danger" onClick={applyFleetMetadata} disabled={fleetConfirm!=="APPLY"}>Apply Fleet Metadata</button>
+      </>}
+    </div>}
     {detail&&<div className="card">
       <h3>Job Detail</h3>
       <div className="grid"><Metric label="Status" value={detail.status}/><Metric label="Targets" value={detail.target_count}/><Metric label="Type" value={detail.job_type}/></div>

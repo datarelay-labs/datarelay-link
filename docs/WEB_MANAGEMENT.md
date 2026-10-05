@@ -1041,9 +1041,31 @@ Current DRL3-6 bounded Job implementation:
   per-target partial failure, and bounded worker-pool backpressure remain owned by the
   existing Job Engine. No SQLite write transaction spans Agent RPC.
 
-The remaining safe-bulk candidates in this section (fleet support-bundle artifacts,
-inventory export, and bounded metadata/group/tag assignment) require their own artifact or
-Change Plan semantics and are not implicitly enabled by `drlink_diagnostic_job_start`.
+The remaining safe-bulk candidates are implemented through explicit non-overlapping
+contracts rather than by widening arbitrary fleet control:
+
+- `support-bundle` is an admitted bounded Agent Job family. Each target Agent creates a
+  unique sanitized local archive with the existing Support Bundle builder and returns only
+  bounded artifact metadata (path, size, SHA-256, sanitized flag/counts) through the signed
+  Job result; archive contents and private material are never relayed through the Server.
+- inventory export is a Server-side bounded read artifact, not an Agent Job. Core writes
+  allowlisted Managed Host, Remote Service, Managed Host Group, and tag metadata as
+  `0600` NDJSON under `/var/lib/drlink/exports/`; 100-host and explicit related-resource
+  limits fail closed instead of truncating silently. CLI `system export inventory` and Web
+  use the same generator, and Web returns only path/count/hash metadata with no download
+  endpoint.
+- bounded fleet description/tag/Managed Host Group assignment uses one revision-bound
+  Change Plan for at most 100 trusted immutable Managed Host IDs. Preview is rollback-only,
+  typed `APPLY` is required, apply is atomic in one SQLite revision, and a stale revision
+  fails without partial target mutation. Bulk label/rename is intentionally excluded so
+  unique public-name semantics are not weakened.
+- Managed Host Group add assignment preserves the canonical single-host behavior:
+  assigning a new group name creates that inventory group atomically inside the same Change
+  Plan; Managed Host Groups remain inventory-only and are not Network Group policy
+  selectors.
+
+With these additions, the initial DRL3-6 safe-bulk scope is covered without adding broad
+delete/revoke/release/policy-reset or unbounded update/restart controls.
 
 ## 25. Search, filtering, and scale
 

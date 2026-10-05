@@ -379,8 +379,8 @@ MANAGEMENT_TOOLS = (
     ),
     ManagementTool(
         "drlink_diagnostic_job_start",
-        "Start safe diagnostic Job",
-        "Start an explicitly admitted bounded diagnostic Job.",
+        "Start safe bounded fleet Job",
+        "Start an explicitly admitted bounded safe Job family.",
         "management-job-run",
         JOB,
         PLUGIN_CONTROLLED,

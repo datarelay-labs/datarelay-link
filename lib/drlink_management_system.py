@@ -8,6 +8,7 @@ write only to Core-owned directories and never expose archive contents via Web.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import secrets
 import subprocess
@@ -538,6 +539,183 @@ class ManagementSystemService:
             "sha256": self._artifact_digest(actual_path),
             "protected_artifact": bool(protected),
             "sanitized": bool(sanitized),
+            "download_exposed": False,
+            "authoritative_mutation": False,
+        }
+
+    def inventory_export_create(self, *, actor_id: str) -> dict[str, Any]:
+        """Create a bounded sanitized inventory NDJSON artifact."""
+        from drlink_control_db import connect_read_only
+
+        limits = {
+            "managed_hosts": 100,
+            "remote_services": 1000,
+            "managed_host_groups": 200,
+            "managed_host_tags": 1000,
+        }
+        conn = connect_read_only(root=self.root)
+        try:
+            counts = {
+                "managed_hosts": int(
+                    conn.execute("SELECT COUNT(*) FROM clients").fetchone()[0] or 0
+                ),
+                "remote_services": int(
+                    conn.execute(
+                        "SELECT COUNT(*) FROM published_services WHERE released=0"
+                    ).fetchone()[0]
+                    or 0
+                ),
+                "managed_host_groups": int(
+                    conn.execute("SELECT COUNT(*) FROM client_groups").fetchone()[0] or 0
+                ),
+                "managed_host_tags": int(
+                    conn.execute("SELECT COUNT(*) FROM client_tags").fetchone()[0] or 0
+                ),
+            }
+            exceeded = [
+                key for key, value in counts.items() if value > limits[key]
+            ]
+            if exceeded:
+                raise ControlPlaneError(
+                    "Inventory export exceeds bounded 3.0 limits: %s."
+                    % ", ".join(
+                        "%s=%s>%s" % (key, counts[key], limits[key])
+                        for key in exceeded
+                    )
+                )
+
+            records: list[dict[str, Any]] = []
+            for row in conn.execute(
+                "SELECT id,label,hostname,status,trust_status,connected,last_seen,"
+                "agent_heartbeat_at,agent_lifecycle_state,agent_platform,agent_version "
+                "FROM clients ORDER BY LOWER(COALESCE(NULLIF(label,''),NULLIF(hostname,''),id)),id"
+            ):
+                records.append(
+                    {
+                        "resource_type": "managed-host",
+                        "id": row["id"],
+                        "label": row["label"] or "",
+                        "hostname": row["hostname"] or "",
+                        "status": row["status"],
+                        "trust_status": row["trust_status"],
+                        "connected": bool(row["connected"]),
+                        "last_seen": row["last_seen"],
+                        "agent_heartbeat_at": row["agent_heartbeat_at"],
+                        "agent_lifecycle_state": row["agent_lifecycle_state"],
+                        "agent_platform": row["agent_platform"],
+                        "agent_version": row["agent_version"],
+                    }
+                )
+            for row in conn.execute(
+                "SELECT s.id,s.name,s.client_id,"
+                "COALESCE(NULLIF(c.label,''),NULLIF(c.hostname,''),c.id) AS managed_host,"
+                "s.service_type,s.target_mode,s.target_host,s.target_port,s.public_port,"
+                "s.enabled FROM published_services s "
+                "LEFT JOIN clients c ON c.id=s.client_id "
+                "WHERE s.released=0 ORDER BY LOWER(s.name),s.id"
+            ):
+                records.append(
+                    {
+                        "resource_type": "remote-service",
+                        "id": row["id"],
+                        "name": row["name"],
+                        "managed_host_id": row["client_id"],
+                        "managed_host": row["managed_host"] or row["client_id"],
+                        "service_type": row["service_type"],
+                        "target_mode": row["target_mode"],
+                        "target_host": row["target_host"],
+                        "target_port": row["target_port"],
+                        "public_port": row["public_port"],
+                        "enabled": bool(row["enabled"]),
+                    }
+                )
+            for row in conn.execute(
+                "SELECT id,name,description FROM client_groups ORDER BY LOWER(name),id"
+            ):
+                members = [
+                    str(item[0])
+                    for item in conn.execute(
+                        "SELECT client_id FROM client_group_members "
+                        "WHERE group_id=? ORDER BY client_id",
+                        (row["id"],),
+                    )
+                ]
+                records.append(
+                    {
+                        "resource_type": "managed-host-group",
+                        "id": row["id"],
+                        "name": row["name"],
+                        "description": row["description"] or "",
+                        "managed_host_ids": members,
+                    }
+                )
+            for row in conn.execute(
+                "SELECT client_id,key,value FROM client_tags "
+                "ORDER BY client_id,key"
+            ):
+                records.append(
+                    {
+                        "resource_type": "managed-host-tag",
+                        "managed_host_id": row["client_id"],
+                        "key": row["key"],
+                        "value": row["value"],
+                    }
+                )
+        finally:
+            conn.close()
+
+        output_dir = self._owned_output_dir("var/lib/drlink/exports")
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        name = "drlink-inventory-%s-%s.ndjson" % (stamp, secrets.token_hex(4))
+        actual = output_dir / name
+        canonical = "/" + str(Path("var/lib/drlink/exports") / name)
+        fd, tmp_name = tempfile.mkstemp(
+            prefix=".drlink-inventory-", suffix=".tmp", dir=str(output_dir)
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                meta = {
+                    "record_type": "inventory-export-meta",
+                    "schema_version": 1,
+                    "generated_at": datetime.now(timezone.utc)
+                    .replace(microsecond=0)
+                    .isoformat()
+                    .replace("+00:00", "Z"),
+                    "actor": str(actor_id or "")[:256],
+                    "counts": counts,
+                    "limits": limits,
+                    "bounded": True,
+                    "authoritative": False,
+                }
+                handle.write(
+                    json.dumps(meta, sort_keys=True, separators=(",", ":"))
+                    + "\n"
+                )
+                for record in records:
+                    handle.write(
+                        json.dumps(record, sort_keys=True, separators=(",", ":"))
+                        + "\n"
+                    )
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.chmod(tmp_name, 0o600)
+            os.replace(tmp_name, actual)
+            os.chmod(actual, 0o600)
+        finally:
+            if os.path.exists(tmp_name):
+                try:
+                    os.unlink(tmp_name)
+                except OSError:
+                    pass
+        return {
+            "status": "CREATED",
+            "path": canonical,
+            "size_bytes": int(actual.stat().st_size),
+            "sha256": self._artifact_digest(actual),
+            "record_count": len(records),
+            "counts": counts,
+            "limits": limits,
+            "sanitized": True,
             "download_exposed": False,
             "authoritative_mutation": False,
         }

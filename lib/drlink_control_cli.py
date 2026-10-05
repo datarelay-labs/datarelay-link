@@ -362,7 +362,7 @@ def _public_command_is_read_only(tokens) -> bool:
         return True
     if op == "job" and len(tokens) == 3:
         return True
-    if op == "export" and len(tokens) >= 3 and tokens[2] == "configuration":
+    if op == "export" and len(tokens) >= 3 and tokens[2] in ("configuration", "inventory"):
         return True
     if op == "certificate" and len(tokens) >= 3 and tokens[2] in ("status", "preflight"):
         return True
@@ -1455,6 +1455,27 @@ def _system_revision_rollback(plane: ControlPlane, value: str) -> int:
     return 0
 
 
+def _system_inventory_export(plane: ControlPlane) -> int:
+    from drlink_management_system import ManagementSystemService
+
+    result = ManagementSystemService(plane.root).inventory_export_create(
+        actor_id="cli:local"
+    )
+    sys.stdout.write(
+        "Inventory export created\n"
+        "  path    : %s\n"
+        "  records : %s\n"
+        "  sha256  : %s\n"
+        "  download: not exposed by Web\n"
+        % (
+            result.get("path"),
+            result.get("record_count"),
+            result.get("sha256"),
+        )
+    )
+    return 0
+
+
 def _system_jobs_list(plane: ControlPlane) -> int:
     from drlink_management_service import ManagementQueryService
 
@@ -1552,6 +1573,8 @@ def _system(plane: ControlPlane, rest):
         raise SystemExit("Missing system operation.")
     if rest[0] == "export" and len(rest) >= 2 and rest[1] == "configuration":
         return _configuration_export(plane, rest[2:])
+    if rest[0] == "export" and len(rest) == 2 and rest[1] == "inventory":
+        return _system_inventory_export(plane)
     if rest[0] == "diff" and len(rest) >= 2 and rest[1] == "configuration":
         return _configuration_diff(plane, rest[2:])
     if rest[0] == "apply" and len(rest) >= 2 and rest[1] == "configuration":

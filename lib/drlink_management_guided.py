@@ -692,6 +692,317 @@ class GuidedChangeService(ManagementChangeService):
             }
         return preview, impact, regression, blast_radius, graph_overlay
 
+    def _normalize_fleet_metadata_changes(
+        self, changes: dict[str, Any]
+    ) -> dict[str, Any]:
+        if not isinstance(changes, dict):
+            raise ControlPlaneError("Fleet metadata changes must be an object.")
+        _reject_unknown(
+            changes,
+            {"description", "tags", "remove_tags", "add_groups", "remove_groups"},
+            "Fleet Managed Host metadata",
+        )
+        normalized: dict[str, Any] = {}
+        if "description" in changes:
+            normalized["description"] = _text(
+                changes.get("description"),
+                field="Managed Host description",
+                max_len=1024,
+                required=False,
+            )
+        if "tags" in changes:
+            tags = changes.get("tags")
+            if not isinstance(tags, dict):
+                raise ControlPlaneError("Fleet Managed Host tags must be an object.")
+            if len(tags) > MAX_GUIDED_TAGS:
+                raise ControlPlaneError(
+                    "Fleet Managed Host tags exceed the %d-tag bound."
+                    % MAX_GUIDED_TAGS
+                )
+            normalized["tags"] = {
+                _text(key, field="Managed Host tag key", max_len=64): _text(
+                    value,
+                    field="Managed Host tag value",
+                    max_len=256,
+                    required=False,
+                )
+                for key, value in tags.items()
+            }
+        if "remove_tags" in changes:
+            normalized["remove_tags"] = _list_strings(
+                changes.get("remove_tags"),
+                field="Fleet Managed Host remove_tags",
+                max_items=MAX_GUIDED_TAGS,
+            )
+        for key, field in (
+            ("add_groups", "Fleet Managed Host add_groups"),
+            ("remove_groups", "Fleet Managed Host remove_groups"),
+        ):
+            if key in changes:
+                normalized[key] = _list_strings(
+                    changes.get(key),
+                    field=field,
+                    max_items=32,
+                )
+        if set(normalized.get("tags") or {}) & set(
+            normalized.get("remove_tags") or []
+        ):
+            raise ControlPlaneError(
+                "A Fleet metadata Change Plan cannot set and remove the same tag."
+            )
+        if set(normalized.get("add_groups") or []) & set(
+            normalized.get("remove_groups") or []
+        ):
+            raise ControlPlaneError(
+                "A Fleet metadata Change Plan cannot add and remove the same group."
+            )
+        if not normalized or not any(
+            (
+                "description" in normalized,
+                bool(normalized.get("tags")),
+                bool(normalized.get("remove_tags")),
+                bool(normalized.get("add_groups")),
+                bool(normalized.get("remove_groups")),
+            )
+        ):
+            raise ControlPlaneError(
+                "Fleet metadata change requires description, tags, remove_tags, "
+                "add_groups, or remove_groups."
+            )
+        return normalized
+
+    def _execute_fleet_metadata(
+        self, targets: list[str], changes: dict[str, Any]
+    ) -> dict[str, Any]:
+        applied = 0
+        target_results = []
+        for target in targets:
+            row = self.plane.require_client(target)
+            if str(row["trust_status"] or "").strip().lower() != "trusted":
+                raise ControlPlaneError(
+                    "Fleet metadata target Managed Host is no longer trusted: %s"
+                    % target
+                )
+            operations = []
+            if "description" in changes:
+                operations.append(
+                    self.plane.set_client_description(
+                        target, changes["description"]
+                    )
+                )
+            for key, value in (changes.get("tags") or {}).items():
+                operations.append(self.plane.set_client_tag(target, key, value))
+            for key in changes.get("remove_tags") or []:
+                operations.append(self.plane.unset_client_tag(target, key))
+            for group in changes.get("add_groups") or []:
+                operations.append(
+                    self.plane.set_client_group_member(group, target)
+                )
+            for group in changes.get("remove_groups") or []:
+                operations.append(
+                    self.plane.unset_client_group_member(group, target)
+                )
+            applied += len(operations)
+            target_results.append(
+                {
+                    "managed_host_id": str(row["id"]),
+                    "operation_count": len(operations),
+                }
+            )
+        return {
+            "target_count": len(targets),
+            "operation_count": applied,
+            "targets": target_results[:100],
+        }
+
+    def preview_fleet_metadata(
+        self,
+        *,
+        actor_id: str,
+        resource_type: str,
+        resource: str,
+        changes: dict[str, Any],
+    ) -> dict[str, Any]:
+        from drlink_management_service import ManagementQueryService
+
+        normalized = self._normalize_fleet_metadata_changes(changes)
+        with ManagementQueryService(self.root) as query:
+            selection = query.resolve_management_job_targets(
+                resource_type=resource_type,
+                resource=resource,
+            )
+        targets = list(selection["targets"])
+        expected_revision = int(self.plane.current_revision())
+
+        self.plane.conn.execute("SAVEPOINT drlink_fleet_metadata_preview")
+        previous_batch = self.plane._batch_mode
+        previous_results = self.plane._batch_results
+        self.plane._batch_mode = True
+        self.plane._batch_results = []
+        try:
+            preview = self._execute_fleet_metadata(targets, normalized)
+        except Exception:
+            self.plane.conn.execute("ROLLBACK TO drlink_fleet_metadata_preview")
+            self.plane.conn.execute("RELEASE drlink_fleet_metadata_preview")
+            raise
+        else:
+            self.plane.conn.execute("ROLLBACK TO drlink_fleet_metadata_preview")
+            self.plane.conn.execute("RELEASE drlink_fleet_metadata_preview")
+        finally:
+            self.plane._batch_mode = previous_batch
+            self.plane._batch_results = previous_results
+
+        impact = {
+            "access_broadened": False,
+            "access_narrowed": False,
+            "requires_confirmation": True,
+            "destructive": False,
+            "target_count": len(targets),
+            "operation_count": int(preview.get("operation_count") or 0),
+            "warning": (
+                "Apply bounded metadata/group/tag changes to %d Managed Host(s) "
+                "as one revision." % len(targets)
+            ),
+        }
+        issued = self._issue_plan(
+            actor_id=actor_id,
+            operation_class="CHANGE",
+            operation="fleet-metadata.apply",
+            resource_type="managed-host-fleet",
+            resource_ref=str(selection["resource_ref"]),
+            expected_revision=expected_revision,
+            payload={
+                "targets": targets,
+                "selection": {
+                    key: selection[key]
+                    for key in (
+                        "resource_type",
+                        "resource_ref",
+                        "resource_display",
+                        "target_count",
+                    )
+                },
+                "changes": normalized,
+            },
+            impact=impact,
+            confirmation_class=CONFIRM_CHANGE,
+        )
+        issued.update(
+            {
+                "selection": {
+                    key: selection[key]
+                    for key in (
+                        "resource_type",
+                        "resource_ref",
+                        "resource_display",
+                        "target_count",
+                    )
+                },
+                "changes": normalized,
+                "preview": preview,
+            }
+        )
+        return issued
+
+    def apply_fleet_metadata(
+        self,
+        *,
+        actor_id: str,
+        change_plan_id: str,
+        confirmation: str,
+    ) -> dict[str, Any]:
+        if str(confirmation or "").strip().upper() != CONFIRM_CHANGE:
+            raise ControlPlaneError(
+                "Fleet metadata apply requires explicit confirmation 'APPLY'."
+            )
+        row = self._load_plan(actor_id, change_plan_id)
+        if (
+            str(row["operation_class"]) != "CHANGE"
+            or str(row["operation"]) != "fleet-metadata.apply"
+        ):
+            raise ControlPlaneError(
+                "Change Plan is not a Fleet metadata change."
+            )
+        try:
+            document = json.loads(str(row["payload_json"]))
+            targets = [str(item) for item in document.get("targets") or []]
+            changes = self._normalize_fleet_metadata_changes(
+                dict(document.get("changes") or {})
+            )
+            selection = dict(document.get("selection") or {})
+            impact = json.loads(str(row["impact_json"] or "{}"))
+        except Exception as exc:
+            self._mark_plan(change_plan_id, "invalid")
+            if isinstance(exc, ControlPlaneError):
+                raise
+            raise ControlPlaneError("Fleet metadata Change Plan is invalid.") from exc
+        if not targets or len(targets) > 100:
+            self._mark_plan(change_plan_id, "invalid")
+            raise ControlPlaneError(
+                "Fleet metadata Change Plan target set is invalid."
+            )
+        expected_revision = int(row["expected_revision"])
+        if int(self.plane.current_revision()) != expected_revision:
+            self._mark_plan(change_plan_id, "stale")
+            raise ConcurrencyError(
+                "REVISION_CONFLICT\nExpected revision %s but current revision is %s.\n"
+                "No changes were applied.\nReview current state and retry."
+                % (expected_revision, self.plane.current_revision())
+            )
+
+        def writer():
+            previous_batch = self.plane._batch_mode
+            previous_results = self.plane._batch_results
+            self.plane._batch_mode = True
+            self.plane._batch_results = []
+            try:
+                fleet_result = self._execute_fleet_metadata(targets, changes)
+            finally:
+                self.plane._batch_mode = previous_batch
+                self.plane._batch_results = previous_results
+            return {
+                "entity": {
+                    "type": "managed-host-fleet",
+                    "id": str(selection.get("resource_ref") or "fleet"),
+                    "name": str(selection.get("resource_display") or "Managed Host Fleet"),
+                },
+                "operation": "fleet-metadata",
+                "after": json.dumps(
+                    {
+                        "target_count": fleet_result["target_count"],
+                        "operation_count": fleet_result["operation_count"],
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                "fleet_result": fleet_result,
+            }
+
+        try:
+            result = self.plane._mutate(
+                "web fleet metadata %s"
+                % str(selection.get("resource_ref") or "fleet"),
+                "apply bounded Managed Host metadata/group/tag change",
+                writer,
+                expected_revision=expected_revision,
+                impact=impact,
+                confirm=True,
+                compile_runtime=False,
+                actor=actor_id,
+                interface="WEB",
+            )
+        except ConcurrencyError:
+            self._mark_plan(change_plan_id, "stale")
+            raise
+        self._mark_plan(change_plan_id, "applied")
+        return {
+            "status": "APPLIED",
+            "revision": result.get("revision"),
+            "selection": selection,
+            "changes": changes,
+            "result": result.get("fleet_result"),
+        }
+
     def preview_guided_change(
         self,
         *,

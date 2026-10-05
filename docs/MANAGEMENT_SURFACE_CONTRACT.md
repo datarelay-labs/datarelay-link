@@ -485,8 +485,8 @@ reported as UNKNOWN/N/A rather than triggering browser-originated network work.
 
 DRL3-6 activates the already-frozen `drlink_diagnostic_job_start` as a READY JOB
 operation without changing the admitted MCP tool list or schema. The operation accepts
-only `doctor`, `refresh`, and `version-check`, resolves at most 100 trusted immutable
-Managed Host IDs, and enqueues through the canonical Management Job Engine. Agent workers
+only `doctor`, `refresh`, `version-check`, and `support-bundle`, resolves at most 100
+trusted immutable Managed Host IDs, and enqueues through the canonical Management Job Engine. Agent workers
 claim only their own signed target row and return bounded per-target results. Doctor
 disables network probes; refresh uses canonical Agent synchronization; version-check
 compares local identity to the Server-pinned product/Relay Engine target carried in the
@@ -498,6 +498,13 @@ restart recovery are not new MCP tools: local CLI provides `system jobs`,
 the first-party Web adapter exposes Core-owned cancel UX to Admin/Operator with
 `management-job-run`. Cancelling queued work never implies that already-running Agent
 RPC was forcibly terminated.
+
+DRL3-6 also keeps the rest of the safe fleet scope outside new MCP nouns:
+`support-bundle` is an admitted value of the existing diagnostic Job operation and
+creates sanitized artifacts locally on each Agent; inventory export is a Core-owned
+Server read artifact shared by CLI/Web; and fleet description/tag/Managed Host Group
+assignment is a Core/Web revision-bound Change Plan. These paths deliberately do not add
+generic bulk mutation or arbitrary artifact-download MCP tools.
 
 DRL3-3 adds these Core/Web-only guided configuration operations:
 

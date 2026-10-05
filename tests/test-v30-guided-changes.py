@@ -162,6 +162,181 @@ class V30GuidedChangeTests(unittest.TestCase):
             }
             self.assertEqual(tags, {"site": "lab", "owner": "secops"})
 
+    def test_fleet_metadata_change_plan_is_bounded_atomic_and_revision_bound(self):
+        plane = ControlPlane(self.tmp)
+        try:
+            for index in range(3):
+                plane.upsert_client(
+                    "fleet-%s" % index,
+                    label="fleet-%s" % index,
+                    hostname="fleet-%s.example" % index,
+                    connected=True,
+                )
+        finally:
+            plane.close()
+
+        with GuidedChangeService(self.tmp) as service:
+            before = service.plane.current_revision()
+            preview = service.preview_fleet_metadata(
+                actor_id="web:operator",
+                resource_type="managed-host",
+                resource="",
+                changes={
+                    "description": "managed fleet",
+                    "tags": {"site": "lab", "owner": "secops"},
+                    "add_groups": ["ops-fleet"],
+                },
+            )
+            self.assertEqual(preview["selection"]["target_count"], 3)
+            self.assertEqual(service.plane.current_revision(), before)
+            self.assertIsNone(
+                service.plane.conn.execute(
+                    "SELECT id FROM client_groups WHERE name='ops-fleet'"
+                ).fetchone()
+            )
+            self.assertEqual(
+                service.plane.conn.execute(
+                    "SELECT COUNT(*) FROM client_tags WHERE key='site'"
+                ).fetchone()[0],
+                0,
+            )
+
+            applied = service.apply_fleet_metadata(
+                actor_id="web:operator",
+                change_plan_id=preview["change_plan_id"],
+                confirmation="APPLY",
+            )
+            self.assertEqual(applied["revision"], before + 1)
+            self.assertEqual(applied["result"]["target_count"], 3)
+            self.assertEqual(
+                service.plane.conn.execute(
+                    "SELECT COUNT(*) FROM clients WHERE description='managed fleet'"
+                ).fetchone()[0],
+                3,
+            )
+            self.assertEqual(
+                service.plane.conn.execute(
+                    "SELECT COUNT(*) FROM client_tags "
+                    "WHERE key='site' AND value='lab'"
+                ).fetchone()[0],
+                3,
+            )
+            group = service.plane.conn.execute(
+                "SELECT id FROM client_groups WHERE name='ops-fleet'"
+            ).fetchone()
+            self.assertIsNotNone(group)
+            self.assertEqual(
+                service.plane.conn.execute(
+                    "SELECT COUNT(*) FROM client_group_members WHERE group_id=?",
+                    (group["id"],),
+                ).fetchone()[0],
+                3,
+            )
+
+            stale = service.preview_fleet_metadata(
+                actor_id="web:operator",
+                resource_type="managed-host-group",
+                resource="ops-fleet",
+                changes={"tags": {"wave": "two"}},
+            )
+            service.plane.set_client_description("fleet-0", "revision drift")
+            with self.assertRaises(ConcurrencyError):
+                service.apply_fleet_metadata(
+                    actor_id="web:operator",
+                    change_plan_id=stale["change_plan_id"],
+                    confirmation="APPLY",
+                )
+            self.assertEqual(
+                service.plane.conn.execute(
+                    "SELECT COUNT(*) FROM client_tags WHERE key='wave'"
+                ).fetchone()[0],
+                0,
+            )
+
+    def test_fleet_metadata_change_plan_is_atomic_single_revision(self):
+        plane = ControlPlane(self.tmp)
+        try:
+            plane.upsert_client("host-a", label="host-a", hostname="a.local")
+            plane.upsert_client("host-b", label="host-b", hostname="b.local")
+            plane.set_client_group("old-group")
+            plane.set_client_group("new-group")
+            plane.set_client_group_member("old-group", "host-a")
+            plane.set_client_group_member("old-group", "host-b")
+            plane.set_client_tag("host-a", "legacy", "yes")
+            plane.set_client_tag("host-b", "legacy", "yes")
+        finally:
+            plane.close()
+
+        with GuidedChangeService(self.tmp) as service:
+            before = service.plane.current_revision()
+            preview = service.preview_fleet_metadata(
+                actor_id="web:operator",
+                resource_type="managed-host",
+                resource="",
+                changes={
+                    "description": "fleet-managed",
+                    "tags": {"site": "lab", "owner": "secops"},
+                    "remove_tags": ["legacy"],
+                    "add_groups": ["new-group"],
+                    "remove_groups": ["old-group"],
+                },
+            )
+            self.assertEqual(preview["selection"]["target_count"], 2)
+            self.assertEqual(preview["preview"]["target_count"], 2)
+            self.assertEqual(service.plane.current_revision(), before)
+            for host in ("host-a", "host-b"):
+                row = service.plane.require_client(host)
+                self.assertNotEqual(row["description"], "fleet-managed")
+                tags = {
+                    item["key"]: item["value"]
+                    for item in service.plane.conn.execute(
+                        "SELECT key,value FROM client_tags WHERE client_id=?",
+                        (row["id"],),
+                    )
+                }
+                self.assertEqual(tags, {"legacy": "yes"})
+
+            applied = service.apply_fleet_metadata(
+                actor_id="web:operator",
+                change_plan_id=preview["change_plan_id"],
+                confirmation="APPLY",
+            )
+            self.assertEqual(applied["status"], "APPLIED")
+            self.assertEqual(applied["revision"], before + 1)
+            self.assertEqual(applied["result"]["target_count"], 2)
+
+            new_group = service.plane.conn.execute(
+                "SELECT id FROM client_groups WHERE name='new-group'"
+            ).fetchone()
+            old_group = service.plane.conn.execute(
+                "SELECT id FROM client_groups WHERE name='old-group'"
+            ).fetchone()
+            for host in ("host-a", "host-b"):
+                row = service.plane.require_client(host)
+                self.assertEqual(row["description"], "fleet-managed")
+                tags = {
+                    item["key"]: item["value"]
+                    for item in service.plane.conn.execute(
+                        "SELECT key,value FROM client_tags WHERE client_id=?",
+                        (row["id"],),
+                    )
+                }
+                self.assertEqual(tags, {"owner": "secops", "site": "lab"})
+                self.assertIsNotNone(
+                    service.plane.conn.execute(
+                        "SELECT 1 FROM client_group_members "
+                        "WHERE group_id=? AND client_id=?",
+                        (new_group["id"], row["id"]),
+                    ).fetchone()
+                )
+                self.assertIsNone(
+                    service.plane.conn.execute(
+                        "SELECT 1 FROM client_group_members "
+                        "WHERE group_id=? AND client_id=?",
+                        (old_group["id"], row["id"]),
+                    ).fetchone()
+                )
+
     def test_group_preview_reuses_core_reference_validation(self):
         with GuidedChangeService(self.tmp) as service:
             with self.assertRaises(ControlPlaneError):

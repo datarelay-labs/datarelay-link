@@ -312,9 +312,9 @@ class ManagementCoreService:
         from drlink_v30_jobs import ManagementJobEngine
 
         job_type = str(data.get("job_type") or "").strip().lower()
-        if job_type not in ("doctor", "refresh", "version-check"):
+        if job_type not in ("doctor", "refresh", "version-check", "support-bundle"):
             raise ControlPlaneError(
-                "Diagnostic Job type must be doctor, refresh, or version-check."
+                "Diagnostic Job type must be doctor, refresh, version-check, or support-bundle."
             )
         with ManagementQueryService(self.root) as service:
             selection = service.resolve_management_job_targets(
@@ -482,6 +482,46 @@ class ManagementCoreService:
             )
         with PolicySafetyService(self.root) as safety:
             return safety.apply_definition(
+                actor_id=actor.actor_id,
+                change_plan_id=change_plan_id,
+                confirmation=confirmation,
+            )
+
+    def fleet_metadata_preview(
+        self,
+        *,
+        actor: ManagementActor,
+        resource_type: str,
+        resource: str,
+        changes: dict[str, Any],
+    ) -> dict[str, Any]:
+        self._require_web_role(actor, "Admin", "Operator")
+        if "management-config" not in actor.permissions:
+            raise ManagementAuthorizationError(
+                "management-config is required for Fleet metadata changes."
+            )
+        with GuidedChangeService(self.root) as service:
+            return service.preview_fleet_metadata(
+                actor_id=actor.actor_id,
+                resource_type=resource_type,
+                resource=resource,
+                changes=changes,
+            )
+
+    def fleet_metadata_apply(
+        self,
+        *,
+        actor: ManagementActor,
+        change_plan_id: str,
+        confirmation: str,
+    ) -> dict[str, Any]:
+        self._require_web_role(actor, "Admin", "Operator")
+        if "management-config" not in actor.permissions:
+            raise ManagementAuthorizationError(
+                "management-config is required for Fleet metadata changes."
+            )
+        with GuidedChangeService(self.root) as service:
+            return service.apply_fleet_metadata(
                 actor_id=actor.actor_id,
                 change_plan_id=change_plan_id,
                 confirmation=confirmation,
@@ -689,6 +729,18 @@ class ManagementCoreService:
             path,
             actor_id=actor.actor_id,
             confirmation=confirmation,
+        )
+
+    def inventory_export_create(
+        self, *, actor: ManagementActor
+    ) -> dict[str, Any]:
+        if "management-read" not in actor.permissions:
+            raise ManagementAuthorizationError(
+                "management-read is required for inventory export."
+            )
+        self._require_web_role(actor, "Admin", "Operator", "Read Only")
+        return ManagementSystemService(self.root).inventory_export_create(
+            actor_id=actor.actor_id
         )
 
     def support_bundle_create(self, *, actor: ManagementActor) -> dict[str, Any]:

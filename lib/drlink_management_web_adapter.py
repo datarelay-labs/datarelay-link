@@ -157,6 +157,34 @@ class ManagementWebApiAdapter:
             confirmation=confirmation,
         )
 
+    def fleet_metadata_preview(
+        self,
+        *,
+        actor: ManagementActor,
+        resource_type: str,
+        resource: str,
+        changes: dict[str, Any],
+    ) -> dict[str, Any]:
+        return self.core.fleet_metadata_preview(
+            actor=actor,
+            resource_type=resource_type,
+            resource=resource,
+            changes=changes,
+        )
+
+    def fleet_metadata_apply(
+        self,
+        *,
+        actor: ManagementActor,
+        change_plan_id: str,
+        confirmation: str,
+    ) -> dict[str, Any]:
+        return self.core.fleet_metadata_apply(
+            actor=actor,
+            change_plan_id=change_plan_id,
+            confirmation=confirmation,
+        )
+
     def managed_host_lifecycle_preview(
         self,
         *,
@@ -264,6 +292,9 @@ class ManagementWebApiAdapter:
             confirmation=confirmation,
             actor=actor,
         )
+
+    def inventory_export_create(self, *, actor: ManagementActor) -> dict[str, Any]:
+        return self.core.inventory_export_create(actor=actor)
 
     def support_bundle_create(self, *, actor: ManagementActor) -> dict[str, Any]:
         return self.core.support_bundle_create(actor=actor)

@@ -28,7 +28,7 @@ CANCELLED = "CANCELLED"
 JOB_STATUSES = frozenset({QUEUED, RUNNING, SUCCEEDED, FAILED, CANCELLED})
 TERMINAL_STATUSES = frozenset({SUCCEEDED, FAILED, CANCELLED})
 
-ADMITTED_JOB_TYPES = frozenset({"doctor", "refresh", "version-check", "remote-service-set", "remote-service-delete"})
+ADMITTED_JOB_TYPES = frozenset({"doctor", "refresh", "version-check", "support-bundle", "remote-service-set", "remote-service-delete"})
 DEFAULT_JOB_TIMEOUT_SECONDS = 300
 MAX_JOB_TIMEOUT_SECONDS = 3600
 DEFAULT_LEASE_SECONDS = 60

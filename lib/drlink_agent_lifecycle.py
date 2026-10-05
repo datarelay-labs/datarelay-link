@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import platform
@@ -113,6 +114,48 @@ def _execute_management_job(claim: dict, root: Optional[str] = None) -> dict:
             "counts": counts,
             "findings": findings,
             "network_probe_performed": False,
+        }
+
+    if kind == "support-bundle":
+        import frp_support_bundle
+
+        root_path = (
+            Path(root)
+            if root and str(root) not in ("", "/")
+            else Path("/")
+        )
+        default_output = frp_support_bundle.default_output_path(root_path)
+        job_suffix = "".join(
+            ch for ch in str(claim.get("job_id") or "") if ch.isalnum()
+        )[-12:] or "job"
+        base_name = default_output.name
+        if base_name.endswith(".tar.gz"):
+            base_name = base_name[:-7]
+        output = default_output.with_name(
+            "%s-%s.tar.gz" % (base_name, job_suffix)
+        )
+        result = frp_support_bundle.create_support_bundle(
+            root_path, output, secure_parent=True
+        )
+        digest_state = hashlib.sha256()
+        with output.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest_state.update(chunk)
+        digest = digest_state.hexdigest()
+        try:
+            rel = output.relative_to(root_path).as_posix()
+            artifact_path = "/" + rel
+        except ValueError:
+            artifact_path = str(output)
+        return {
+            "operation": "support-bundle",
+            "artifact_path": artifact_path,
+            "size": int(result.get("size") or 0),
+            "sha256": digest,
+            "sanitized": True,
+            "section_count": len(result.get("sections") or []),
+            "skipped_count": len(result.get("skipped") or []),
+            "role": str(result.get("role") or ""),
         }
 
     if kind == "version-check":

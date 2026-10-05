@@ -1105,6 +1105,7 @@ def to_internal(tokens):
         return list(work)
     if path[:3] in (
         ("system", "export", "configuration"),
+        ("system", "export", "inventory"),
         ("system", "apply", "configuration"),
         ("system", "diff", "configuration"),
     ):
@@ -1814,6 +1815,7 @@ def domain_help(topic, role):
                     "  system job cancel <JOB-ID>",
                     "  system jobs recover",
                     "  system export configuration <PATH>",
+                    "  system export inventory",
                     "  test configuration <PATH|->",
                     "  system diff configuration <PATH|->",
                     "  system apply configuration <PATH|->",

@@ -415,6 +415,26 @@ class WebApplication:
                 payload=payload,
                 actor=self._actor(principal),
             )
+        if path == "/api/v1/inventory/export":
+            return self.adapter.inventory_export_create(
+                actor=self._actor(principal)
+            )
+        if path == "/api/v1/fleet/metadata/preview":
+            changes = body.get("changes")
+            if not isinstance(changes, dict):
+                raise ControlPlaneError("Fleet metadata changes must be an object.")
+            return self.adapter.fleet_metadata_preview(
+                actor=self._actor(principal),
+                resource_type=str(body.get("resource_type") or "managed-host"),
+                resource=str(body.get("resource") or ""),
+                changes=dict(changes),
+            )
+        if path == "/api/v1/fleet/metadata/apply":
+            return self.adapter.fleet_metadata_apply(
+                actor=self._actor(principal),
+                change_plan_id=str(body.get("change_plan_id") or ""),
+                confirmation=str(body.get("confirmation") or ""),
+            )
         if path == "/api/v1/guided/preview":
             change_type = str(body.get("change_type") or "").strip()
             payload = body.get("payload")
