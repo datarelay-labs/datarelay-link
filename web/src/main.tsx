@@ -125,6 +125,64 @@ function DraftWorkspace(){
   </div>;
 }
 
+function GuidedPolicyRulePanel(){
+  const [plane,setPlane]=useState("remote"),[operation,setOperation]=useState("set"),[name,setName]=useState(""),[mode,setMode]=useState("whitelist");
+  const [source,setSource]=useState(""),[destination,setDestination]=useState(""),[selector,setSelector]=useState(""),[enabled,setEnabled]=useState(true),[expiresAt,setExpiresAt]=useState(""),[paths,setPaths]=useState("");
+  const [preview,setPreview]=useState<any>(null),[confirmation,setConfirmation]=useState(""),[message,setMessage]=useState(""),[error,setError]=useState("");
+  async function doPreview(){
+    setError("");setMessage("");
+    try{
+      const payload:any={operation,name};
+      if(operation==="set"){
+        payload.mode=mode;payload.source=source;payload.destination=destination;payload.enabled=enabled;
+        if(expiresAt)payload.expires_at=expiresAt;
+        if(plane==="ai"){
+          payload.permission=selector;
+          if(paths.trim())payload.paths=paths.split(",").map(x=>x.trim()).filter(Boolean);
+        }else payload.service=selector;
+      }
+      const result=await api("/api/v1/guided/preview",{method:"POST",body:JSON.stringify({change_type:plane+"-access-rule",payload})});
+      setPreview(result);setConfirmation("");
+    }catch(e:any){setError(e.message||String(e))}
+  }
+  async function doApply(){
+    setError("");setMessage("");
+    try{
+      const result=await api("/api/v1/guided/apply",{method:"POST",body:JSON.stringify({change_plan_id:preview?.change_plan_id||"",confirmation})});
+      setMessage("Access Rule applied at revision "+result.revision);setPreview(null);setConfirmation("");
+    }catch(e:any){setError(e.message||String(e))}
+  }
+  const ready=name&&(
+    operation==="delete"||(source&&destination&&selector)
+  );
+  return <div className="card">
+    <h3>Guided Access Rule</h3>
+    <div className="muted">Preview and apply Remote, Internet, or AI Access rules through the same Core Change Plan path as CLI.</div>
+    {error&&<div className="error">{error}</div>}{message&&<div className="notice">{message}</div>}
+    <div className="toolbar">
+      <select value={plane} onChange={e=>setPlane(e.target.value)}><option value="remote">Remote</option><option value="internet">Internet</option><option value="ai">AI</option></select>
+      <select value={operation} onChange={e=>setOperation(e.target.value)}><option value="set">Create / edit</option><option value="delete">Delete</option></select>
+      <input value={name} onChange={e=>setName(e.target.value)} placeholder="Rule name"/>
+      {operation==="set"&&<>
+        <select value={mode} onChange={e=>setMode(e.target.value)}><option value="whitelist">Whitelist</option><option value="blacklist">Blacklist</option></select>
+        <input value={source} onChange={e=>setSource(e.target.value)} placeholder={plane==="ai"?"AI Identity":"Source object/group"}/>
+        <input value={destination} onChange={e=>setDestination(e.target.value)} placeholder="Destination object/group"/>
+        <input value={selector} onChange={e=>setSelector(e.target.value)} placeholder={plane==="ai"?"Permission object/group":"Service object/group"}/>
+        {plane==="ai"&&<input value={paths} onChange={e=>setPaths(e.target.value)} placeholder="Optional paths, comma-separated"/>}
+        <input value={expiresAt} onChange={e=>setExpiresAt(e.target.value)} placeholder="Optional expiry ISO8601"/>
+        <label><input type="checkbox" checked={enabled} onChange={e=>setEnabled(e.target.checked)}/> Enabled</label>
+      </>}
+      <button className="primary" onClick={doPreview} disabled={!ready}>Preview</button>
+    </div>
+    {preview&&<div className="card">
+      {preview.impact?.warning&&<div className="warning-box">{preview.impact.warning}</div>}
+      <pre className="plan">{JSON.stringify({resource:preview.resource_ref,impact:preview.impact,preview:preview.preview},null,2)}</pre>
+      <label className="apply-label">Type APPLY to commit<input value={confirmation} onChange={e=>setConfirmation(e.target.value)} placeholder="APPLY"/></label>
+      <button className="danger" onClick={doApply} disabled={confirmation!=="APPLY"}>Apply Access Rule</button>
+    </div>}
+  </div>;
+}
+
 function TemporaryAccessPanel(){
   const [plane,setPlane]=useState("remote"),[rule,setRule]=useState(""),[operation,setOperation]=useState("set"),[expiresAt,setExpiresAt]=useState("");
   const [preview,setPreview]=useState<any>(null),[confirmation,setConfirmation]=useState(""),[message,setMessage]=useState(""),[error,setError]=useState("");
@@ -184,7 +242,7 @@ function View({active,operator}:{active:string,operator:any}){
   if(active==="overview"&&data){const h=data.overview?.managed_hosts||{},s=data.overview?.remote_services||{},j=data.overview?.management_jobs||{};return <><div className="grid"><Metric label="Managed Hosts" value={h.total}/><Metric label="Connected" value={h.connected}/><Metric label="Remote Services" value={s.total}/><Metric label="Active Jobs" value={j.active_jobs}/></div><div className="card"><h3>Attention Center</h3>{(data.attention?.items||[]).map((x:any)=><span key={x.kind} className={"badge "+x.severity}>{x.label}: {x.count}</span>)}{!(data.attention?.items||[]).length&&<div className="muted">No current attention items</div>}</div></>};
   if(active==="versions"&&data)return <><div className="grid"><Metric label="Server version" value={data.server_version}/><Metric label="Drift" value={data.drift_count}/><Metric label="Unknown" value={data.unknown_count}/></div><Table items={data.hosts||[]}/></>;
   if(active==="objects"&&data){const rows=Object.entries(data.resources||{}).flatMap(([type,page]:any)=>(page.items||[]).map((item:any)=>({type,id:item.id,name:item.name||item.id,description:item.description||"",status:item.status||""})));return <Table items={rows}/>;}
-  if(active==="policies"&&data)return <><Table items={data.items||[]}/>{operator.role!=="Read Only"&&<TemporaryAccessPanel/>}</>;
+  if(active==="policies"&&data)return <><Table items={data.items||[]}/>{operator.role!=="Read Only"&&<><GuidedPolicyRulePanel/><TemporaryAccessPanel/></>}</>;
   if(active==="doctor"&&data)return <><div className="grid"><Metric label="Attention" value={data.attention?.count}/><Metric label="Checks" value={(data.checks||[]).length}/></div><Table items={data.checks||[]}/></>;
   if(active==="health"&&data)return <pre className="card">{JSON.stringify(data,null,2)}</pre>;
   if(active==="views"&&data)return <SavedViews data={data} refresh={()=>api("/api/v1/saved-views").then(setData)}/>;

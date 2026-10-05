@@ -265,6 +265,52 @@ class V30WebServiceTests(unittest.TestCase):
         finally:
             plane.close()
 
+    def test_guided_remote_access_rule_web_parity(self):
+        self.login()
+        plane = ControlPlane(self.tmp)
+        try:
+            v24.set_network_object(plane, "web-src", type="ip", value="198.51.100.10", oneshot=True)
+            v24.set_network_object(plane, "web-dst", type="ip", value="198.51.100.20", oneshot=True)
+            v24.set_service_object(plane, "web-ssh", type="tcp", port=22, oneshot=True)
+            before = plane.current_revision()
+        finally:
+            plane.close()
+        status, _, preview = self.request(
+            "POST",
+            "/api/v1/guided/preview",
+            {
+                "change_type": "remote-access-rule",
+                "payload": {
+                    "name": "web-allow-ssh",
+                    "mode": "whitelist",
+                    "source": "web-src",
+                    "destination": "web-dst",
+                    "service": "web-ssh",
+                    "enabled": True,
+                },
+            },
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, preview)
+        plane = ControlPlane(self.tmp)
+        try:
+            self.assertEqual(plane.current_revision(), before)
+            self.assertIsNone(plane._get_rule("remote", "web-allow-ssh"))
+        finally:
+            plane.close()
+        status, _, applied = self.request(
+            "POST",
+            "/api/v1/guided/apply",
+            {"change_plan_id": preview["change_plan_id"], "confirmation": "APPLY"},
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, applied)
+        plane = ControlPlane(self.tmp)
+        try:
+            self.assertIsNotNone(plane._get_rule("remote", "web-allow-ssh"))
+        finally:
+            plane.close()
+
     def test_temporary_access_preview_apply_uses_core_change_plan(self):
         self.login()
         plane = ControlPlane(self.tmp)

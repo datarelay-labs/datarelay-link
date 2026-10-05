@@ -217,7 +217,7 @@ MANAGEMENT_TOOLS = (
     ManagementTool(
         "drlink_guided_change_preview",
         "Preview guided management change",
-        "Preview one guided Managed Host metadata or Object/Group lifecycle change through the existing Core CRUD path.",
+        "Preview one guided Managed Host metadata, Object/Group, or Access Rule lifecycle change through existing Core semantics.",
         "management-config",
         TEST,
         PLUGIN_NO,

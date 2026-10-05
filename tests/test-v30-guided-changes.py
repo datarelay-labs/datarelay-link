@@ -295,5 +295,108 @@ class V30GuidedChangeTests(unittest.TestCase):
                 )
 
 
+    def test_remote_internet_and_ai_access_rule_lifecycle_uses_core_semantics(self):
+        plane = ControlPlane(self.tmp)
+        try:
+            v24.set_network_object(plane, "policy-src", type="ip", value="198.51.100.10", oneshot=True)
+            v24.set_network_object(plane, "policy-dst-remote", type="ip", value="198.51.100.20", oneshot=True)
+            v24.set_network_object(plane, "policy-dst-internet", type="fqdn", value="example.com", oneshot=True)
+            v24.set_service_object(plane, "policy-ssh", type="tcp", port=22, oneshot=True)
+            v24.set_permission_object(plane, "policy-read", permissions=["host-info"], oneshot=True)
+            plane.set_ai_principal("assistant-a", enabled=True)
+            plane.rotate_ai_credential("assistant-a")
+        finally:
+            plane.close()
+
+        with GuidedChangeService(self.tmp) as service:
+            for family in ("remote", "internet"):
+                before = service.plane.current_revision()
+                preview = service.preview_guided_change(
+                    actor_id="web:operator",
+                    change_type=f"{family}-access-rule",
+                    payload={
+                        "name": f"{family}-allow-ssh",
+                        "mode": "whitelist",
+                        "source": "policy-src",
+                        "destination": "policy-dst-remote" if family == "remote" else "policy-dst-internet",
+                        "service": "policy-ssh",
+                        "enabled": True,
+                    },
+                )
+                self.assertEqual(service.plane.current_revision(), before)
+                self.assertTrue(preview["impact"]["access_broadened"])
+                self.assertIsNone(service.plane._get_rule(family, f"{family}-allow-ssh"))
+                applied = service.apply_guided_change(
+                    actor_id="web:operator",
+                    change_plan_id=preview["change_plan_id"],
+                    confirmation="APPLY",
+                )
+                self.assertEqual(applied["status"], "APPLIED")
+                self.assertIsNotNone(service.plane._get_rule(family, f"{family}-allow-ssh"))
+
+            before = service.plane.current_revision()
+            preview = service.preview_guided_change(
+                actor_id="web:operator",
+                change_type="ai-access-rule",
+                payload={
+                    "name": "ai-read-host",
+                    "mode": "whitelist",
+                    "source": "assistant-a",
+                    "destination": "policy-dst-remote",
+                    "permission": "policy-read",
+                    "enabled": True,
+                },
+            )
+            self.assertEqual(service.plane.current_revision(), before)
+            applied = service.apply_guided_change(
+                actor_id="web:operator",
+                change_plan_id=preview["change_plan_id"],
+                confirmation="APPLY",
+            )
+            self.assertEqual(applied["status"], "APPLIED")
+            self.assertIsNotNone(
+                service.plane.conn.execute(
+                    "SELECT id FROM ai_policy_rules WHERE name='ai-read-host'"
+                ).fetchone()
+            )
+
+            delete_preview = service.preview_guided_change(
+                actor_id="web:operator",
+                change_type="remote-access-rule",
+                payload={"operation": "delete", "name": "remote-allow-ssh"},
+            )
+            self.assertTrue(delete_preview["impact"]["destructive"])
+            service.apply_guided_change(
+                actor_id="web:operator",
+                change_plan_id=delete_preview["change_plan_id"],
+                confirmation="APPLY",
+            )
+            self.assertIsNone(service.plane._get_rule("remote", "remote-allow-ssh"))
+
+    def test_ai_access_rule_preview_reuses_identity_validation(self):
+        plane = ControlPlane(self.tmp)
+        try:
+            v24.set_network_object(plane, "ai-dst", type="ip", value="203.0.113.20", oneshot=True)
+            v24.set_permission_object(plane, "ai-read", permissions=["host-info"], oneshot=True)
+        finally:
+            plane.close()
+        with GuidedChangeService(self.tmp) as service:
+            before = service.plane.current_revision()
+            with self.assertRaisesRegex(ControlPlaneError, "does not exist"):
+                service.preview_guided_change(
+                    actor_id="web:operator",
+                    change_type="ai-access-rule",
+                    payload={
+                        "name": "missing-ai",
+                        "mode": "whitelist",
+                        "source": "missing-identity",
+                        "destination": "ai-dst",
+                        "permission": "ai-read",
+                        "enabled": True,
+                    },
+                )
+            self.assertEqual(service.plane.current_revision(), before)
+
+
 if __name__ == "__main__":
     unittest.main()

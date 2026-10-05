@@ -21,6 +21,9 @@ GUIDED_CHANGE_TYPES = frozenset(
         "service-group",
         "permission-object",
         "permission-group",
+        "remote-access-rule",
+        "internet-access-rule",
+        "ai-access-rule",
     }
 )
 MAX_GUIDED_MEMBERS = 100
@@ -80,6 +83,44 @@ class GuidedChangeService(ManagementChangeService):
         operation = str(data.get("operation") or "set").strip().lower()
         if operation not in ("set", "delete"):
             raise ControlPlaneError("Guided change operation must be 'set' or 'delete'.")
+
+        if kind in ("remote-access-rule", "internet-access-rule", "ai-access-rule"):
+            common = {"operation", "name"}
+            if kind == "ai-access-rule":
+                allowed = common | {
+                    "mode", "source", "destination", "permission", "paths",
+                    "enabled", "expires_at",
+                }
+            else:
+                allowed = common | {
+                    "mode", "source", "destination", "service", "enabled", "expires_at",
+                }
+            _reject_unknown(data, allowed, kind)
+            name = _text(data.get("name"), field="Access Rule name", max_len=128)
+            normalized: dict[str, Any] = {"operation": operation, "name": name}
+            if operation == "delete":
+                if set(data) - common:
+                    raise ControlPlaneError("Access Rule delete accepts only operation and name.")
+                return kind, normalized
+            for field in ("mode", "source", "destination"):
+                if field in data:
+                    normalized[field] = _text(data.get(field), field=field, max_len=256).lower() if field == "mode" else _text(data.get(field), field=field, max_len=256)
+            if "enabled" in data:
+                if not isinstance(data.get("enabled"), bool):
+                    raise ControlPlaneError("Access Rule enabled must be a boolean.")
+                normalized["enabled"] = bool(data["enabled"])
+            if "expires_at" in data:
+                normalized["expires_at"] = _text(
+                    data.get("expires_at"), field="expires_at", max_len=64, required=False
+                )
+            if kind == "ai-access-rule":
+                if "permission" in data:
+                    normalized["permission"] = _text(data.get("permission"), field="permission", max_len=128)
+                if "paths" in data:
+                    normalized["paths"] = _list_strings(data.get("paths"), field="AI Access paths")
+            elif "service" in data:
+                normalized["service"] = _text(data.get("service"), field="service", max_len=128)
+            return kind, normalized
 
         if kind == "managed-host-metadata":
             if operation != "set":
@@ -247,6 +288,30 @@ class GuidedChangeService(ManagementChangeService):
         import drlink_v24 as v24
 
         op = payload["operation"]
+        if kind in ("remote-access-rule", "internet-access-rule", "ai-access-rule"):
+            name = payload["name"]
+            if kind == "ai-access-rule":
+                if op == "delete":
+                    return v24.unset_ai_access_rule(self.plane, name, confirm=True)
+                kwargs = {
+                    key: payload[key]
+                    for key in ("mode", "source", "destination", "permission", "paths", "enabled", "expires_at")
+                    if key in payload
+                }
+                return v24.set_ai_access_rule(
+                    self.plane, name, oneshot=True, confirm=True, **kwargs
+                )
+            family = "remote" if kind == "remote-access-rule" else "internet"
+            if op == "delete":
+                return v24.unset_access_rule(self.plane, family, name, confirm=True)
+            kwargs = {
+                key: payload[key]
+                for key in ("mode", "source", "destination", "service", "enabled", "expires_at")
+                if key in payload
+            }
+            return v24.set_access_rule(
+                self.plane, family, name, oneshot=True, confirm=True, **kwargs
+            )
         if kind == "managed-host-metadata":
             return self._managed_host_metadata(payload)
         name = payload["name"]
@@ -318,6 +383,72 @@ class GuidedChangeService(ManagementChangeService):
 
     def _impact(self, kind: str, payload: dict[str, Any]) -> dict[str, Any]:
         import drlink_v24 as v24
+
+        if kind in ("remote-access-rule", "internet-access-rule", "ai-access-rule"):
+            family = (
+                "ai" if kind == "ai-access-rule"
+                else "remote" if kind == "remote-access-rule"
+                else "internet"
+            )
+            name = payload["name"]
+            if family == "ai":
+                existing = self.plane.conn.execute(
+                    "SELECT * FROM ai_policy_rules WHERE name=? COLLATE NOCASE", (name,)
+                ).fetchone()
+            else:
+                existing = self.plane._get_rule(family, name)
+            policy = v24.get_access_policy(self.plane, family)
+            mode = str(payload.get("mode") or policy.get("mode") or "").lower()
+            if payload["operation"] == "delete":
+                if existing is None:
+                    return {"requires_confirmation": True, "destructive": True}
+                special = v24.last_enabled_rule_mutation_impact(
+                    self.plane, family, name, disabling=False
+                )
+                if special:
+                    return {"destructive": True, "requires_confirmation": True, **dict(special)}
+                enabled = bool(existing["enabled"])
+                return {
+                    "requires_confirmation": True,
+                    "destructive": True,
+                    "access_broadened": bool(enabled and mode == "blacklist"),
+                    "access_narrowed": bool(enabled and mode == "whitelist"),
+                    "affected_rules": [name],
+                    "warning": "Deleting this enabled %s rule changes effective access." % mode.upper() if enabled and mode else "Delete Access Rule '%s'." % name,
+                }
+            if existing is not None:
+                if family == "ai":
+                    result = v24.ai_access_rule_update_security_impact(
+                        self.plane,
+                        name,
+                        source=payload.get("source"),
+                        destination=payload.get("destination"),
+                        permission=payload.get("permission"),
+                        paths=payload.get("paths"),
+                        enabled=payload.get("enabled"),
+                        expires_at=payload.get("expires_at") if "expires_at" in payload else None,
+                    )
+                else:
+                    result = v24.access_rule_update_security_impact(
+                        self.plane,
+                        family,
+                        name,
+                        source=payload.get("source"),
+                        destination=payload.get("destination"),
+                        service=payload.get("service"),
+                        enabled=payload.get("enabled"),
+                        expires_at=payload.get("expires_at") if "expires_at" in payload else None,
+                    )
+                if result:
+                    return dict(result)
+            enabled = payload.get("enabled")
+            return {
+                "requires_confirmation": True,
+                "destructive": False,
+                "access_broadened": bool(existing is None and enabled is not False and mode == "whitelist"),
+                "access_narrowed": bool(existing is None and enabled is not False and mode == "blacklist"),
+                "affected_rules": [name],
+            }
 
         if payload["operation"] == "delete":
             label = kind.replace("-", " ").title()
