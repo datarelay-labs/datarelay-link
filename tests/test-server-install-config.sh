@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Server installer config resolution without touching a live FRP install.
 set -euo pipefail
+# This suite is intentionally non-interactive; missing-input cases must fail closed, not wait on an inherited TTY.
+exec </dev/null
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORKDIR="$(mktemp -d)"
