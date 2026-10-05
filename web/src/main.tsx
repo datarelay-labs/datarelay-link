@@ -32,7 +32,7 @@ function Table({items}:{items:any[]}){
 function Metric({label,value}:{label:string,value:any}){return <div className="card"><div className="muted">{label}</div><div className="metric">{String(value??0)}</div></div>}
 
 function Login({onLogin}:{onLogin:(op:any)=>void}){
-  const [username,setUsername]=useState("admin"),[password,setPassword]=useState(""),[totp,setTotp]=useState(""),[recovery,setRecovery]=useState(""),[error,setError]=useState("");
+  const [username,setUsername]=useState("admin"),[password,setPassword]=useState(""),[totp,setTotp]=useState(""),[recovery,setRecovery]=useState(""),[showMfa,setShowMfa]=useState(false),[error,setError]=useState("");
   const [setup,setSetup]=useState<any>(null),[setupCode,setSetupCode]=useState(""),[recoveryCodes,setRecoveryCodes]=useState<string[]>([]),[pendingOperator,setPendingOperator]=useState<any>(null);
   async function submit(e:React.FormEvent){
     e.preventDefault();setError("");
@@ -68,8 +68,11 @@ function Login({onLogin}:{onLogin:(op:any)=>void}){
     {error&&<div className="error">{error}</div>}
     <label>Username<input autoComplete="username" value={username} onChange={e=>setUsername(e.target.value)}/></label>
     <label>Password<input type="password" autoComplete="current-password" value={password} onChange={e=>setPassword(e.target.value)}/></label>
-    <label>MFA code <span className="muted">(if enabled)</span><input inputMode="numeric" autoComplete="one-time-code" value={totp} onChange={e=>setTotp(e.target.value)} placeholder="6-digit TOTP"/></label>
-    <label>Recovery code <span className="muted">(if MFA enabled)</span><input value={recovery} onChange={e=>setRecovery(e.target.value)} placeholder="or recovery code"/></label>
+    <button className="secondary" type="button" onClick={()=>setShowMfa(!showMfa)}>{showMfa?"Hide MFA / recovery":"Use MFA / recovery"}</button>
+    {showMfa&&<>
+      <label>MFA code<input inputMode="numeric" autoComplete="one-time-code" value={totp} onChange={e=>setTotp(e.target.value)} placeholder="6-digit TOTP"/></label>
+      <label>Recovery code<input value={recovery} onChange={e=>setRecovery(e.target.value)} placeholder="or recovery code"/></label>
+    </>}
     <button className="primary" type="submit">Sign in</button>
   </form></div>
 }
