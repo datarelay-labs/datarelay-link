@@ -469,6 +469,8 @@ class ManagementDraftService(ManagementChangeService):
                     "actor_id": str(row["actor_id"]),
                     "change_plan_id": str(change_plan_id),
                 },
+                actor_id=str(row["actor_id"]),
+                interface="WEB",
             )
         except ConcurrencyError:
             self._mark_plan(change_plan_id, "stale", now=now)

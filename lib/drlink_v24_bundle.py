@@ -1441,6 +1441,8 @@ def apply_v24_plan(
     command: str = "system apply configuration",
     summary: str = "apply configuration bundle",
     snapshot_meta: Optional[dict] = None,
+    actor_id: Optional[str] = None,
+    interface: Optional[str] = None,
 ) -> dict:
     """Apply a prepared plan against *current* authoritative state.
 
@@ -1491,6 +1493,7 @@ def apply_v24_plan(
                 command,
                 summary,
                 snapshot=revision_snapshot,
+                actor=actor_id,
             )
             plane._audit(
                 revision=int(rev),
@@ -1507,6 +1510,8 @@ def apply_v24_plan(
                     },
                     sort_keys=True,
                 )[:2000],
+                actor=actor_id,
+                interface=interface,
             )
             plane._commit_open_transaction()
         except ConfirmationRequired:

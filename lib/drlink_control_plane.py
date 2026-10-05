@@ -405,13 +405,21 @@ class ControlPlane:
         except Exception as exc:
             return None, "%s: %s" % (type(exc).__name__, exc)
 
-    def _write_revision(self, command: str, summary: str, snapshot: Optional[dict] = None) -> int:
+    def _write_revision(
+        self,
+        command: str,
+        summary: str,
+        snapshot: Optional[dict] = None,
+        *,
+        actor: Optional[str] = None,
+    ) -> int:
         rev = self._next_revision()
         now = utc_now_iso()
+        revision_actor = str(actor or "").strip() or _actor()
         self.conn.execute(
             "INSERT INTO config_revisions(revision, actor, command, created_at, summary) "
             "VALUES (?, ?, ?, ?, ?)",
-            (rev, _actor(), command, now, summary),
+            (rev, revision_actor, command, now, summary),
         )
         payload_obj = dict(snapshot or {})
         payload_obj.setdefault("summary", summary)
@@ -486,9 +494,16 @@ class ControlPlane:
         before: str = "",
         after: str = "",
         impact: str = "",
+        actor: Optional[str] = None,
+        interface: Optional[str] = None,
     ) -> None:
         occurred = utc_now_iso()
-        actor = _actor()
+        audit_actor = str(actor or "").strip() or _actor()
+        audit_interface = (
+            str(interface or "").strip()
+            or os.environ.get("DRLINK_INTERFACE")
+            or "UNKNOWN"
+        )
         event_id = "evt_" + secrets.token_hex(16)
         self.conn.execute(
             "INSERT INTO audit_events(timestamp, revision, actor, action, entity_type, "
@@ -499,7 +514,7 @@ class ControlPlane:
             (
                 occurred,
                 revision,
-                actor,
+                audit_actor,
                 action,
                 entity_type,
                 entity_id,
@@ -515,8 +530,8 @@ class ControlPlane:
                 occurred,
                 "core",
                 "operator",
-                actor,
-                os.environ.get("DRLINK_INTERFACE") or "UNKNOWN",
+                audit_actor,
+                audit_interface,
                 "" if str(result).lower() in ("ok", "applied", "no_change") else str(result),
                 (int(revision) - 1) if int(revision) > 0 else None,
                 int(revision) if int(revision) >= 0 else None,

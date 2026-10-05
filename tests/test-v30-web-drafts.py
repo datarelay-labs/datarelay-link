@@ -102,6 +102,7 @@ class V30WebDraftTests(unittest.TestCase):
         self.assertEqual(status, 200, payload)
         self.cookie = (headers.get("set-cookie") or "").split(";", 1)[0]
         self.csrf = payload["csrf_token"]
+        self.operator_id = payload["operator"]["id"]
 
     def test_web_roles_map_to_core_draft_authority(self):
         cases = (
@@ -212,6 +213,27 @@ class V30WebDraftTests(unittest.TestCase):
         try:
             self.assertIsNotNone(plane.get_object("web-office"))
             self.assertEqual(plane.current_revision(), revision + 1)
+            revision_row = plane.conn.execute(
+                "SELECT actor,command FROM config_revisions WHERE revision=?",
+                (revision + 1,),
+            ).fetchone()
+            self.assertEqual(
+                revision_row["actor"], "web:%s" % self.operator_id
+            )
+            self.assertTrue(
+                revision_row["command"].startswith("web draft apply draft_")
+            )
+            audit_row = plane.conn.execute(
+                "SELECT actor_id,interface,action FROM audit_events "
+                "WHERE revision=? AND entity_type='configuration-bundle' "
+                "ORDER BY id DESC LIMIT 1",
+                (revision + 1,),
+            ).fetchone()
+            self.assertEqual(
+                audit_row["actor_id"], "web:%s" % self.operator_id
+            )
+            self.assertEqual(audit_row["interface"], "WEB")
+            self.assertTrue(audit_row["action"].startswith("web draft apply draft_"))
         finally:
             plane.close()
 
