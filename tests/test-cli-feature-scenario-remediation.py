@@ -28,6 +28,133 @@ import frp_cli_catalog as catalog
 
 
 class CliFeatureScenarioRemediation(unittest.TestCase):
+    def _completion_payload(self, root_key="FRP_CTL_TEST_ROOT"):
+        env = {key: value for key, value in os.environ.items()
+               if not key.startswith(("FRP_", "DRLINK_"))}
+        env[root_key] = self.tmp
+        result = subprocess.run(
+            ["bash", str(ROOT / "tools/frpctl"), "--print-grammar-payload"],
+            env=env, text=True, capture_output=True, check=True,
+        )
+        return json.loads(result.stdout)
+
+    def test_completion_reads_authoritative_agent_names_without_mutation(self):
+        root = Path(self.tmp)
+        (root / "etc/drlink/config.json").unlink()
+        state = root / "etc/frp/client-state.json"
+        state.parent.mkdir(parents=True)
+        state.write_text('{"services":{"stale-json-service":{}}}\n')
+        v24.ensure_v2_schema(self.plane.conn)
+        for name, enabled, deleted in (("http", 1, 0), ("disabled-service", 0, 0),
+                                       ("pending-delete", 1, 1)):
+            self.plane.conn.execute(
+                "INSERT INTO agent_remote_services "
+                "(name, destination, service_object, enabled, delete_pending, updated_at) "
+                "VALUES (?, 'this-host', 'http', ?, ?, 'now')",
+                (name, enabled, deleted),
+            )
+        before = self.plane.current_revision()
+        payload = self._completion_payload("FRP_CLIENT_TEST_ROOT")
+        self.assertEqual(payload["local_services"], ["disabled-service", "http"])
+        self.assertFalse(payload["inventory_warning"])
+        self.assertEqual(grammar.completion_candidates(
+            "show remote-service h", "client", [], {}, payload["local_services"],
+        ), ["http"])
+        self.assertEqual(self.plane.current_revision(), before)
+        self.assertEqual(self.plane.conn.execute(
+            "SELECT count(*) FROM agent_remote_services").fetchone()[0], 3)
+
+    def test_completion_reads_canonical_hosts_and_unambiguous_selectors(self):
+        mids = ["12345678a" + "0" * 23, "12345678b" + "0" * 23]
+        for mid, label in zip(mids, ("audit-rocky9", "audit-rocky8")):
+            self.plane.upsert_client(mid, label=label, hostname="duplicate-hostname")
+        before = self.plane.current_revision()
+        payload = self._completion_payload()
+        self.assertFalse(payload["inventory_warning"])
+        self.assertIn("audit-rocky9", payload["names"])
+        self.assertIn("audit-rocky8", payload["names"])
+        self.assertIn("12345678a", payload["names"])
+        self.assertIn("12345678b", payload["names"])
+        self.assertNotIn("12345678", payload["names"])
+        self.assertNotIn("duplicate-hostname", payload["names"])
+        self.assertEqual(grammar.completion_candidates(
+            "show managed-host audit-rocky9", "server", payload["names"], {}, [],
+        ), ["audit-rocky9"])
+        self.assertEqual(self.plane.current_revision(), before)
+
+    def test_completion_empty_database_wins_over_stale_json_inventory(self):
+        root = Path(self.tmp)
+        state = root / "etc/frp/client-state.json"
+        state.parent.mkdir(parents=True)
+        state.write_text('{"services":{"stale-service":{}}}\n')
+        v24.ensure_v2_schema(self.plane.conn)
+        payload = self._completion_payload()
+        self.assertEqual(payload["names"], [])
+        self.assertEqual(payload["local_services"], [])
+        self.assertFalse(payload["inventory_warning"])
+
+    def test_completion_unreadable_database_does_not_use_stale_json(self):
+        root = Path(self.tmp)
+        state = root / "etc/frp/client-state.json"
+        state.parent.mkdir(parents=True)
+        state.write_text('{"services":{"stale-service":{}}}\n')
+        self.plane.close()
+        db = root / "var/lib/drlink/drlink.db"
+        db.write_bytes(b"not a SQLite database")
+        payload = self._completion_payload()
+        self.assertEqual(payload["names"], [])
+        self.assertEqual(payload["local_services"], [])
+        self.assertTrue(payload["inventory_warning"])
+        self.assertEqual(db.read_bytes(), b"not a SQLite database")
+
+    def test_completion_does_not_create_a_missing_database(self):
+        self.plane.close()
+        db = Path(self.tmp) / "var/lib/drlink/drlink.db"
+        db.unlink()
+        self._completion_payload()
+        self.assertFalse(db.exists())
+
+    def test_private_inventory_rpc_is_not_a_public_frontend_root(self):
+        env = dict(os.environ, FRP_CTL_TEST_ROOT=self.tmp)
+        result = subprocess.run(
+            ["bash", str(ROOT / "tools/drlink"), "--print-grammar-payload"],
+            env=env, text=True, capture_output=True,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("help commands", result.stderr)
+        self.assertNotIn('"inventory_warning"', result.stdout)
+        self.assertIsInstance(self._completion_payload(), dict)
+
+    def test_guided_menu_identifies_each_host_role(self):
+        self.assertIn("DRLink Server", catalog.render_guided_menu("server"))
+        self.assertIn("Agent Host", catalog.render_guided_menu("client"))
+        for role, title in (("server", "DRLink Server"),
+                            ("client", "Agent Host")):
+            result = subprocess.run(
+                ["bash", "-c", 'source "$1"; frpctl_render_nav_menu "$2"',
+                 "menu-renderer-test", str(ROOT / "tools/frpctl"), role],
+                env=dict(os.environ, FRP_CTL_TEST_ROOT=self.tmp,
+                         FRP_CTL_SOURCED="1"),
+                capture_output=True, text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("Data Relay Link — " + title, result.stdout)
+
+    def test_membership_help_does_not_claim_retirement_confirmation(self):
+        tokens = ["unset", "managed-host", "audit-host", "group", "edge"]
+        member = catalog.find(tokens)
+        self.assertFalse(member["destructive"])
+        self.assertEqual(member["risk"], "none")
+        self.assertEqual(member["confirmation"], "none")
+        text = grammar.context_help(tokens, "server")
+        self.assertIn("explicit command", text)
+        self.assertNotIn("Confirmation: y_n", text)
+        retirement = catalog.find(tokens[:3])
+        self.assertTrue(retirement["destructive"])
+        self.assertEqual(retirement["risk"], "irreversible")
+        self.assertEqual(retirement["confirmation"], "y_n")
+        self.assertEqual(grammar.match(tokens, "server")["action"], "remove_group_member")
+
     def test_policy_selector_consumes_only_first_host(self):
         class Network:
             network_address = ipaddress.ip_address("198.51.100.0")

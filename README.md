@@ -66,13 +66,17 @@ Remote Access
 Internet Access
 AI Access
 
-BLACKLIST / WHITELIST
+Remote Access: BLACKLIST / WHITELIST
+Internet Access: WHITELIST only, deny-by-default
+AI Access: WHITELIST only, deny-by-default
 
 ConfigurationBundle
 ```
 
-Initial policy state is No Policy / No Rules with effective access ALLOW.
-When a policy is created, BLACKLIST means matching enabled Rules deny and
+Initial policy state is plane-specific: Remote Access has effective access
+ALLOW with No Policy / No Rules; Internet Access and AI Access deny by default.
+Remote Access supports BLACKLIST and WHITELIST; Internet Access and AI Access
+support WHITELIST only. BLACKLIST means matching enabled Rules deny;
 WHITELIST means matching enabled Rules allow. Rules are not ordered and do not
 carry per-rule ALLOW/DENY actions. A policy Rule authorizes or denies access;
 it never creates connectivity.

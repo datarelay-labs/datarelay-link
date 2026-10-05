@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -51,6 +52,33 @@ class DocConsistencyV24(unittest.TestCase):
         self.assertIn("Fixed TCP is a Service Object subtype", text)
         self.assertIn("UDP Remote Service is not supported", text)
         self.assertIn("AI Identity", text)
+
+    def test_agent_navigation_matches_master_and_current_menu(self):
+        def roots(path, heading):
+            text = path.read_text(encoding="utf-8").split(heading, 1)[1]
+            block = text.split("```text", 1)[1].split("```", 1)[0]
+            return re.findall(r"^[├└]── (\d+)\. (.+)$", block, re.MULTILINE)
+
+        master = roots(MASTER, "# 51. Agent Host local menu")
+        self.assertEqual(roots(IA, "## 6. Canonical Agent Host menu"), master)
+        import sys
+        sys.path.insert(0, str(ROOT / "lib"))
+        import frp_cli_catalog as catalog
+        actual = [(str(n), label) for n, _action, label, _hint
+                  in catalog.guided_menu_entries("client")]
+        self.assertEqual(actual, master)
+
+    def test_restricted_plane_guidance_has_no_blacklist_allow_fallback(self):
+        master = MASTER.read_text(encoding="utf-8")
+        product = PRODUCT.read_text(encoding="utf-8")
+        self.assertNotIn("BLACKLIST evaluation fails closed instead of falling through to unmatched ALLOW", master)
+        self.assertNotIn("If a BLACKLIST rule's destination and service match but the observed proxy source", product)
+        self.assertNotIn("**Security consequence:** In BLACKLIST mode", product)
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        model = readme.split("## Current v2.4 public model", 1)[1].split("## Architecture", 1)[0]
+        self.assertIn("Internet Access: WHITELIST only, deny-by-default", model)
+        self.assertIn("AI Access: WHITELIST only, deny-by-default", model)
+        self.assertNotIn("Initial policy state is No Policy / No Rules with effective access ALLOW", model)
 
 
 if __name__ == "__main__":

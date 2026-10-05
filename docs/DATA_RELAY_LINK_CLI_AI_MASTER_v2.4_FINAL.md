@@ -413,8 +413,9 @@ Network Group 'mixed-destinations' contains Managed Host 'ubuntu-prod'.
 
 Managed Hosts are valid Internet Access sources,
 but source identity is address-backed because the egress proxy is agentless.
-If the observed proxy source cannot be proven to be the selected Managed Host,
-BLACKLIST evaluation fails closed instead of falling through to unmatched ALLOW.
+Internet Access is WHITELIST-only. If the observed proxy source cannot be
+proven to be the selected Managed Host, the selector does not match and access
+is denied. Persisted unsupported BLACKLIST state is denied regardless of matches.
 Managed Hosts cannot be used as Internet Access destinations.
 
 No changes were applied.
@@ -2498,7 +2499,7 @@ unset mcp-tls purge
 
 `unset enrollment <ENROLLMENT>`, `unset network-object`, `unset network-group`, `unset service-object`, `unset service-group`, `unset permission-object`, `unset permission-group`, and `unset ai-identity` are destructive lifecycle operations and require explicit `y/N` confirmation after existence/reference validation. Default is No and cancellation applies no change. These are normal `y_n` flows rather than TTY-only flows, so controlled automation may provide `y`/`yes` on stdin; there is no public hidden environment-variable or `--yes` bypass for these commands. Policy Rule deletion uses effect-aware `conditional_y_n`: confirmation is required when the calculated change broadens or materially narrows access, while full `unset <plane>-access policy` reset always requires explicit confirmation.
 
-Bare `unset managed-host <HOST>` remains the reference-safe Managed Host retirement operation. `unset managed-host <HOST> group <GROUP>` removes only inventory membership. `unset managed-host-group <GROUP>` requires interactive y/N confirmation and does not expose a public `--yes` bypass.
+Bare `unset managed-host <HOST>` remains the reference-safe Managed Host retirement operation with explicit y/N confirmation. `unset managed-host <HOST> group <GROUP>` removes only inventory membership; the explicit command approves this metadata edit without an additional prompt. `unset managed-host-group <GROUP>` requires interactive y/N confirmation and does not expose a public `--yes` bypass.
 
 ---
 
@@ -2564,7 +2565,7 @@ system uninstall
 # 50. Server main menu
 
 ```text
-Data Relay Link
+Data Relay Link — DRLink Server
 ├── 1. Managed Hosts
 │   ├── List Managed Hosts
 │   ├── Connect New Host

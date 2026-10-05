@@ -41,6 +41,60 @@ def _load_catalog():
 
 CATALOG = _load_catalog()
 
+
+def read_only_completion_inventory(role, root=""):
+    """Prefer canonical SQLite names; return None only when no DB exists.
+
+    Completion must never create/migrate the database or use stale JSON when
+    an authoritative database exists but cannot be read. The caller exposes
+    the usual inventory warning on errors.
+    """
+    from collections import Counter
+    from drlink_control_db import connect_read_only, db_path
+
+    if not db_path(root).is_file():
+        return None
+    result = {"names": [], "clients": [], "services": {},
+              "local_services": [], "groups": []}
+    conn = connect_read_only(root=root)
+    try:
+        conn.execute("BEGIN")  # One read snapshot, never a writer transaction.
+        client, server = CATALOG.role_parts(role)
+        if server:
+            hosts = conn.execute("SELECT id, label, hostname FROM clients ORDER BY id").fetchall()
+            mids = [str(host["id"]) for host in hosts]
+            labels = Counter(str(host["label"] or "").casefold() for host in hosts)
+            hostnames = Counter(str(host["hostname"] or "").casefold() for host in hosts)
+            service_rows = conn.execute(
+                "SELECT client_id, name FROM published_services WHERE released = 0 ORDER BY name"
+            ).fetchall()
+            for host in hosts:
+                mid = str(host["id"])
+                length = min(8, len(mid))
+                while length < len(mid) and sum(other.startswith(mid[:length]) for other in mids) > 1:
+                    length += 1
+                short = mid[:length]
+                label, hostname = str(host["label"] or ""), str(host["hostname"] or "")
+                selectors = [short]
+                if label and labels[label.casefold()] == 1:
+                    selectors.append(label)
+                if hostname and hostnames[hostname.casefold()] == 1:
+                    selectors.append(hostname)
+                result["names"].extend(selectors)
+                result["clients"].append({"id": short, "label": label, "hostname": hostname})
+                names = [str(row["name"]) for row in service_rows if row["client_id"] == mid]
+                for selector in selectors + [mid]:
+                    result["services"][selector] = names
+            result["groups"] = [str(row["name"]) for row in conn.execute(
+                "SELECT name FROM client_groups ORDER BY name")]
+        if client:
+            result["local_services"] = [str(row["name"]) for row in conn.execute(
+                "SELECT name FROM agent_remote_services WHERE delete_pending = 0 ORDER BY name")]
+        result["names"] = sorted(set(result["names"]))
+        return result
+    finally:
+        conn.close()
+
 CONTROL_PLANE_SHOW = frozenset(
     {
         "status",

@@ -98,7 +98,7 @@ system system and configuration operations
 ## 5. Canonical Server menu
 
 ```text
-Data Relay Link
+Data Relay Link — DRLink Server
 ├── 1. Managed Hosts
 │   ├── List Managed Hosts
 │   ├── Connect New Host
@@ -140,28 +140,36 @@ The root must identify the role as `DRLink Server`.
 
 ```text
 Data Relay Link — Agent Host
-├── 1. Status
-├── 2. Remote Services
-│   ├── List
-│   ├── Create
-│   └── Manage
+├── 1. Remote Services
+│   ├── List Remote Services
+│   ├── Create Remote Service
+│   └── Manage Remote Service
 │
-├── 3. Agent
+├── 2. Agent
 │   ├── Pause
 │   ├── Resume
 │   ├── Restart
-│   ├── Autostart
-│   └── Update
+│   └── Autostart
 │
-├── 4. Configuration
+├── 3. Configuration
 │   ├── Test
 │   ├── Diff
 │   ├── Apply
 │   └── Export
 │
-├── 5. Diagnostics
-├── 6. Help
-└── 7. Exit
+├── 4. System
+│   ├── Status
+│   ├── Connection Information
+│   ├── Diagnostics
+│   ├── Support Bundle
+│   ├── Version Information
+│   ├── Updates
+│   │   ├── Update Data Relay Link
+│   │   └── Update Relay Engine
+│   └── Uninstall Data Relay Link
+│
+├── 5. Help
+└── 6. Exit
 ```
 
 The root and `show status` must identify the role as `Agent Host`.

@@ -3,6 +3,14 @@
 # Internal dispatcher remains tools/frpctl (not installed on PATH).
 set -euo pipefail
 
+# The private backend RPC is used only by REPL inventory refresh. It must not
+# bypass the canonical grammar through the public frontend.
+if [[ "${1:-}" == "--print-grammar-payload" ]]; then
+  echo "ERROR: that option is not a public Data Relay Link command." >&2
+  echo "Use: drlink help commands" >&2
+  exit 2
+fi
+
 export FRP_CTL_CMD_NAME="drlink"
 export FRP_CTL_PROMPT="drlink> "
 export FRP_CTL_PRODUCT_NAME="${FRP_CTL_PRODUCT_NAME:-Data Relay Link}"

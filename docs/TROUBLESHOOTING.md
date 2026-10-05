@@ -200,14 +200,17 @@ Remove or change dependent references first. Data Relay Link does not cascade-de
 
 ## 11. Policy mode change rejected
 
-A configured BLACKLIST is not directly flipped to WHITELIST, and vice versa.
+A configured Remote Access BLACKLIST is not directly flipped to WHITELIST,
+and vice versa. Internet Access and AI Access support WHITELIST only; an
+unsupported persisted mode fails closed and must be reset and recreated as
+WHITELIST.
 
 Use:
 
 ```text
 1. export/record existing policy if needed
 2. unset <access-policy> policy
-3. create the first rule in the new mode
+3. create the first rule in the supported mode
 4. recreate required rules
 ```
 

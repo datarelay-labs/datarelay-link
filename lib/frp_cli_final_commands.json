@@ -3690,6 +3690,7 @@
     "args": [
       {
         "name": "NAME",
+        "complete": "local-services",
         "required": true
       }
     ],
@@ -3720,6 +3721,7 @@
     "args": [
       {
         "name": "NAME",
+        "complete": "local-services",
         "required": true
       }
     ],
@@ -3748,6 +3750,7 @@
     "args": [
       {
         "name": "NAME",
+        "complete": "local-services",
         "required": true
       }
     ],

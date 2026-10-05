@@ -477,10 +477,11 @@ frpctl_grammar_payload() {
   fi
   local built=""
   built="$(python3 - "$(frpctl_role_token)" "$(frpctl_path /etc/drlink/config.json)" \
-    "${FRP_CTL_TEST_ROOT:-${FRP_DEPLOY_TEST_ROOT:-}}" "$(frpctl_path /etc/frp/client-state.json)" <<'PY'
+    "${FRP_CTL_TEST_ROOT:-${FRP_CLIENT_TEST_ROOT:-${FRP_DEPLOY_TEST_ROOT:-${FRP_UPDATE_ROOT:-}}}}" \
+    "$(frpctl_path /etc/frp/client-state.json)" "$(frpctl_grammar_py)" <<'PY'
 import json, sys
 from pathlib import Path
-role, cfg_path, root, state_path = sys.argv[1:5]
+role, cfg_path, root, state_path, grammar_path = sys.argv[1:6]
 names, services, local_services, clients_meta, groups = [], {}, [], [], []
 egress, access_lists, service_profiles = [], [], []
 inventory_warning = False
@@ -613,7 +614,7 @@ if _is_file(st):
             local_services = sorted(str(s) for s in raw_services if s)
     except Exception:
         inventory_warning = True
-json.dump({
+payload = {
     "role": role,
     "names": sorted(set(names)),
     "clients": clients_meta,
@@ -624,7 +625,21 @@ json.dump({
     "access_lists": sorted(set(item for item in access_lists if item)),
     "service_profiles": sorted(set(item for item in service_profiles if item)),
     "inventory_warning": inventory_warning,
-}, sys.stdout)
+}
+# JSON is only a prior-release/isolated-fixture fallback. Current Server and
+# Agent completion reads the same SQLite authority as public show commands.
+sys.path.insert(0, str(Path(grammar_path).parent))
+try:
+    from frp_ctl_grammar import read_only_completion_inventory
+    canonical = read_only_completion_inventory(role, root)
+    if canonical is not None:
+        payload.update(canonical)
+        payload['inventory_warning'] = False
+except Exception:
+    # Never advertise stale legacy selectors after an authoritative read fails.
+    payload.update(names=[], clients=[], services={}, local_services=[], groups=[])
+    payload['inventory_warning'] = True
+json.dump(payload, sys.stdout)
 PY
 )" || return 1
   FRP_CTL_GRAMMAR_PAYLOAD="$built"
@@ -912,7 +927,8 @@ mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
 if not title:
     if menu_key in ("server", "both", "client"):
-        title = "Data Relay Link"
+        sys.stdout.write(mod.render_guided_menu(menu_key))
+        raise SystemExit(0)
     elif menu_key.endswith(".clients") or menu_key.endswith(".hosts"):
         title = "Managed Hosts"
     elif menu_key.endswith(".services") and "internet" not in menu_key:

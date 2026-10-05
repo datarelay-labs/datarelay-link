@@ -801,6 +801,17 @@ def find(tokens, role=None, include_aliases=False):
             if len(path) > best_len:
                 best = cmd
                 best_len = len(path)
+    if best is not None and best["path"] == ("unset", "managed-host") \
+            and len(tokens) >= 4 and tokens[3] == "group":
+        # This positional leaf removes inventory membership, not the Host.
+        # Return a copy so retirement metadata stays unchanged in the catalog.
+        best = dict(best, destructive=False, risk="none", confirmation="none")
+        best["summary"] = "Remove a Managed Host Group membership"
+        best["detail"] = (
+            "Remove only this Managed Host Group membership. Identity, Remote "
+            "Services and public ports are unchanged. The explicit command "
+            "is sufficient approval; no additional confirmation is required."
+        )
     return best
 
 
@@ -2593,7 +2604,9 @@ def guided_menu_entries(role):
 def render_guided_menu(role):
     """Text block for the numbered guided menu (root domains only)."""
     key = _guided_menu_key(role)
-    title = "Data Relay Link"
+    title = "Data Relay Link — " + (
+        "Agent Host" if key == "client" else "DRLink Server"
+    )
     return render_navigation_menu(key, title=title)
 
 

@@ -210,7 +210,7 @@ Rule disable excludes only that Rule from evaluation.
 
 ## 5. Policy semantics
 
-Initial state:
+Remote Access initial state:
 
 ```text
 No Policy
@@ -218,19 +218,23 @@ No Rules
 Effective = ALLOW
 ```
 
-BLACKLIST:
+Remote Access BLACKLIST:
 
 ```text
 match    → DENY
 no match → ALLOW
 ```
 
-WHITELIST:
+WHITELIST (all three planes):
 
 ```text
 match    → ALLOW
 no match → DENY
 ```
+
+Internet Access and AI Access support WHITELIST only. No Policy, No Rules,
+no match, disabled enforcement, and unsupported/invalid mode all mean DENY.
+Remote Access disabled enforcement means ALLOW ALL.
 
 There is no public rule-order command and no per-rule `allow|deny` action field.
 
@@ -277,7 +281,7 @@ Referenced Objects/Groups/Identities/Managed Hosts are protected from deletion u
 
 `unset enrollment <ENROLLMENT>`, `unset network-object`, `unset network-group`, `unset service-object`, `unset service-group`, `unset permission-object`, `unset permission-group`, and `unset ai-identity` are destructive lifecycle operations and require explicit `y/N` confirmation after existence/reference validation. Default is No and cancellation applies no change. These are normal `y_n` flows rather than TTY-only flows, so controlled automation may provide `y`/`yes` on stdin; there is no public hidden environment-variable or `--yes` bypass for these commands. Policy Rule deletion uses effect-aware `conditional_y_n`: confirmation is required when the calculated change broadens or materially narrows access, while full `unset <plane>-access policy` reset always requires explicit confirmation.
 
-A **Managed Host Group** is an inventory grouping of registered Managed Hosts. It is distinct from a **Network Group**, which is a reusable policy selector made from Network Objects. Adding or removing Managed Host Group membership does not retire the Managed Host, change Remote Services, reallocate public ports, or create/change a Network Group. Bare `unset managed-host <HOST>` remains the reference-safe Managed Host retirement operation. `unset managed-host-group <GROUP>` requires interactive y/N confirmation; public `--yes` is not supported.
+A **Managed Host Group** is an inventory grouping of registered Managed Hosts. It is distinct from a **Network Group**, which is a reusable policy selector made from Network Objects. Adding or removing Managed Host Group membership does not retire the Managed Host, change Remote Services, reallocate public ports, or create/change a Network Group. The explicit `unset managed-host <HOST> group <GROUP>` command approves that metadata edit without an additional prompt. Bare `unset managed-host <HOST>` remains reference-safe irreversible retirement with explicit y/N confirmation. `unset managed-host-group <GROUP>` requires interactive y/N confirmation; public `--yes` is not supported.
 
 ## 7. Policy test commands
 
