@@ -49,6 +49,11 @@ done
 grep -q -- '--listen 127.0.0.1 --port 8741' "$TMP/etc/systemd/system/drlink-web.service" || {
   echo "FAIL Web service default is not loopback-only" >&2; exit 1;
 }
+for setting in 'Restart=on-failure' 'MemoryMax=256M' 'TasksMax=128' 'LimitNOFILE=4096'; do
+  grep -q -- "$setting" "$TMP/etc/systemd/system/drlink-web.service" || {
+    echo "FAIL Web service resource/recovery bound missing: $setting" >&2; exit 1;
+  }
+done
 
 if grep -Eq 'drlink[-_]web|usr/local/share/drlink-web' "$ROOT/lib/server-project-files.manifest"; then
   echo "FAIL base server project manifest depends on optional Web" >&2
