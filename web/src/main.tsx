@@ -1127,6 +1127,40 @@ function UsersPanel({operator}:{operator:any}){
   </div></>;
 }
 
+function CommandCenter({data,operator,onNavigate}:{data:any,operator:any,onNavigate?:(id:string,groupId?:string)=>void}){
+  const [activity,setActivity]=useState<any[]>([]),[changes,setChanges]=useState<any[]>([]);
+  useEffect(()=>{
+    let cancelled=false;
+    Promise.allSettled([api("/api/v1/audit?limit=6"),api("/api/v1/revisions?limit=6")]).then(results=>{
+      if(cancelled)return;
+      const [auditResult,revisionResult]=results;
+      if(auditResult.status==="fulfilled")setActivity(auditResult.value.items||[]);
+      if(revisionResult.status==="fulfilled")setChanges(revisionResult.value.items||[]);
+    });
+    return()=>{cancelled=true};
+  },[]);
+  const h=data.overview?.managed_hosts||{},svc=data.overview?.remote_services||{},j=data.overview?.management_jobs||{},pol=data.overview?.policies||{};
+  const attention=data.attention?.items||[];
+  const policyRows=[
+    {label:"Remote Access",key:"remote",value:pol.remote||{}},
+    {label:"Internet Access",key:"internet",value:pol.internet||{}},
+    {label:"AI Access",key:"ai",value:pol.ai||{}},
+  ];
+  return <div className="dr-command-center">
+    <section className="dr-hero-row"><div><p className="dr-eyebrow">Command Center</p><h2>Manage connectivity with the next action in context.</h2><p className="muted">Current Core posture, access policy coverage, recent change and operator attention in one bounded workspace.</p></div><div className="dr-hero-actions">{operator.role==="Admin"&&<button className="primary" onClick={()=>onNavigate?.("enrollments","infrastructure")}>Connect Agent</button>}<button className="secondary" onClick={()=>onNavigate?.("policies","access")}>Review Access</button></div></section>
+    <section className="dr-kpi-strip"><div><span>Managed Hosts</span><strong>{h.total||0}</strong><small>{h.connected||0} connected</small></div><div><span>Remote Services</span><strong>{svc.total||0}</strong><small>{svc.enabled||0} enabled</small></div><div><span>Active Jobs</span><strong>{j.active_jobs||0}</strong><small>{j.failed_jobs||0} failed</small></div><div><span>Needs Attention</span><strong>{attention.length}</strong><small>{attention.some((x:any)=>x.severity==="critical")?"Critical item present":"Current findings"}</small></div></section>
+    <div className="dr-overview-columns">
+      <section className="card dr-attention-card"><div className="dr-section-head"><div><p className="dr-eyebrow">Posture</p><h3>Needs Attention</h3></div><button className="dr-text-action" onClick={()=>onNavigate?.("doctor","observability")}>Troubleshoot →</button></div>{attention.length?<div className="dr-attention-list">{attention.slice(0,8).map((x:any)=><div className="dr-attention-row" key={x.kind}><span className={"dr-severity-dot "+x.severity}/><span><strong>{x.label}</strong><small>{x.count} affected</small></span><span className={"badge "+x.severity}>{x.severity}</span></div>)}</div>:<div className="dr-good-state"><span className="dr-good-mark">✓</span><div><strong>No current attention items</strong><p>Core-derived checks are not reporting operator action.</p></div></div>}</section>
+      <section className="card dr-access-card"><div className="dr-section-head"><div><p className="dr-eyebrow">Access</p><h3>Policy Coverage</h3></div><button className="dr-text-action" onClick={()=>onNavigate?.("access","access")}>Open workspace →</button></div><div className="dr-access-posture">{policyRows.map(row=><button key={row.key} onClick={()=>onNavigate?.("policies","access")}><span className="dr-access-icon"><WorkspaceIcon kind="access"/></span><span><strong>{row.label}</strong><small>{Number(row.value.enabled||0)} enabled of {Number(row.value.total||0)}</small></span><b>{Number(row.value.enabled||0)}</b></button>)}</div></section>
+    </div>
+    <div className="dr-overview-columns">
+      <section className="card"><div className="dr-section-head"><div><p className="dr-eyebrow">Activity</p><h3>Recent Activity</h3></div><button className="dr-text-action" onClick={()=>onNavigate?.("audit","observability")}>Open audit →</button></div>{activity.length?<div className="dr-activity-list">{activity.map((item:any,i:number)=><button key={item.event_id||item.id||i} onClick={()=>onNavigate?.("audit","observability")}><span className={item.result==="deny"||item.result==="failed"?"dr-activity-mark warning":"dr-activity-mark"}/><span><strong>{item.event_type||item.action||item.operation||"Activity"}</strong><small>{item.actor_id||item.actor||"system"} · {item.occurred_at||item.timestamp||""}</small></span><span>{item.result||item.category||""}</span></button>)}</div>:<div className="dr-compact-empty">No retained recent activity.</div>}</section>
+      <section className="card"><div className="dr-section-head"><div><p className="dr-eyebrow">Configuration</p><h3>Recent Changes</h3></div><button className="dr-text-action" onClick={()=>onNavigate?.("revisions","operations")}>Change history →</button></div>{changes.length?<div className="dr-activity-list">{changes.map((item:any,i:number)=><button key={item.revision||item.id||i} onClick={()=>onNavigate?.("revisions","operations")}><span className="dr-change-index">{item.revision??"#"}</span><span><strong>{item.summary||item.message||item.operation||"Configuration revision"}</strong><small>{item.actor||item.actor_id||"system"} · {item.timestamp||item.created_at||""}</small></span><span>→</span></button>)}</div>:<div className="dr-compact-empty">No retained configuration changes.</div>}</section>
+    </div>
+    <section className="card dr-quick-actions"><div className="dr-section-head"><div><p className="dr-eyebrow">Workspace</p><h3>Common Tasks</h3></div></div><div className="dr-action-grid"><button onClick={()=>onNavigate?.("hosts","infrastructure")}><WorkspaceIcon kind="infrastructure"/><span><strong>Inspect a host</strong><small>Connectivity, services, version, lifecycle</small></span></button><button onClick={()=>onNavigate?.("access","access")}><WorkspaceIcon kind="access"/><span><strong>Explain access</strong><small>Current use, policy test, cutoff state</small></span></button><button onClick={()=>onNavigate?.("audit","observability")}><WorkspaceIcon kind="observability"/><span><strong>Review activity</strong><small>Audit events and access decisions</small></span></button><button onClick={()=>onNavigate?.("system","administration")}><WorkspaceIcon kind="administration"/><span><strong>System readiness</strong><small>Backup, certificate, update, support</small></span></button></div></section>
+  </div>;
+}
+
 function View({active,operator,onNavigate}:{active:string,operator:any,onNavigate?:(id:string,groupId?:string)=>void}){
   const [data,setData]=useState<any>(null),[error,setError]=useState(""),[query,setQuery]=useState("");
   useEffect(()=>{
@@ -1148,24 +1182,7 @@ function View({active,operator,onNavigate}:{active:string,operator:any,onNavigat
   if(active==="audit")return <AuditExplorer operator={operator}/>;
   if(active==="enrollments"&&data)return <EnrollmentPanel data={data} refresh={()=>api("/api/v1/enrollments?limit=50").then(setData)}/>;
   if(active==="search")return <div><div className="toolbar"><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search resources and policy"/><button className="primary" onClick={()=>api("/api/v1/search?q="+encodeURIComponent(query)+"&limit=50").then(setData).catch((e:any)=>setError(e.message))}>Search</button></div>{data&&<Table items={(data.items||[]).map((x:any)=>({type:x.resource_type,id:x.id,name:x.name}))}/>}</div>;
-  if(active==="overview"&&data){
-    const h=data.overview?.managed_hosts||{},svc=data.overview?.remote_services||{},j=data.overview?.management_jobs||{},pol=data.overview?.policies||{};
-    const attention=data.attention?.items||[];
-    const policyRows=[
-      {label:"Remote Access",key:"remote",value:pol.remote||{}},
-      {label:"Internet Access",key:"internet",value:pol.internet||{}},
-      {label:"AI Access",key:"ai",value:pol.ai||{}},
-    ];
-    return <div className="dr-command-center">
-      <section className="dr-hero-row"><div><p className="dr-eyebrow">Command Center</p><h2>Manage connectivity with the next action in context.</h2><p className="muted">Current Core posture, access policy coverage, and operator attention in one bounded workspace.</p></div><div className="dr-hero-actions">{operator.role==="Admin"&&<button className="primary" onClick={()=>onNavigate?.("enrollments","infrastructure")}>Connect Agent</button>}<button className="secondary" onClick={()=>onNavigate?.("policies","access")}>Review Access</button></div></section>
-      <section className="dr-kpi-strip"><div><span>Managed Hosts</span><strong>{h.total||0}</strong><small>{h.connected||0} connected</small></div><div><span>Remote Services</span><strong>{svc.total||0}</strong><small>{svc.enabled||0} enabled</small></div><div><span>Active Jobs</span><strong>{j.active_jobs||0}</strong><small>{j.failed_jobs||0} failed</small></div><div><span>Needs Attention</span><strong>{attention.length}</strong><small>{attention.some((x:any)=>x.severity==="critical")?"Critical item present":"Current findings"}</small></div></section>
-      <div className="dr-overview-columns">
-        <section className="card dr-attention-card"><div className="dr-section-head"><div><p className="dr-eyebrow">Posture</p><h3>Needs Attention</h3></div><button className="dr-text-action" onClick={()=>onNavigate?.("doctor","observability")}>Troubleshoot →</button></div>{attention.length?<div className="dr-attention-list">{attention.slice(0,8).map((x:any)=><div className="dr-attention-row" key={x.kind}><span className={"dr-severity-dot "+x.severity}/><span><strong>{x.label}</strong><small>{x.count} affected</small></span><span className={"badge "+x.severity}>{x.severity}</span></div>)}</div>:<div className="dr-good-state"><span className="dr-good-mark">✓</span><div><strong>No current attention items</strong><p>Core-derived checks are not reporting operator action.</p></div></div>}</section>
-        <section className="card dr-access-card"><div className="dr-section-head"><div><p className="dr-eyebrow">Access</p><h3>Policy Coverage</h3></div><button className="dr-text-action" onClick={()=>onNavigate?.("access","access")}>Open workspace →</button></div><div className="dr-access-posture">{policyRows.map(row=><button key={row.key} onClick={()=>onNavigate?.("policies","access")}><span className="dr-access-icon"><WorkspaceIcon kind="access"/></span><span><strong>{row.label}</strong><small>{Number(row.value.enabled||0)} enabled of {Number(row.value.total||0)}</small></span><b>{Number(row.value.enabled||0)}</b></button>)}</div></section>
-      </div>
-      <section className="card dr-quick-actions"><div className="dr-section-head"><div><p className="dr-eyebrow">Workspace</p><h3>Common Tasks</h3></div></div><div className="dr-action-grid"><button onClick={()=>onNavigate?.("hosts","infrastructure")}><WorkspaceIcon kind="infrastructure"/><span><strong>Inspect a host</strong><small>Connectivity, services, version, lifecycle</small></span></button><button onClick={()=>onNavigate?.("access","access")}><WorkspaceIcon kind="access"/><span><strong>Explain access</strong><small>Current use, policy test, cutoff state</small></span></button><button onClick={()=>onNavigate?.("audit","observability")}><WorkspaceIcon kind="observability"/><span><strong>Review activity</strong><small>Audit events and access decisions</small></span></button><button onClick={()=>onNavigate?.("system","administration")}><WorkspaceIcon kind="administration"/><span><strong>System readiness</strong><small>Backup, certificate, update, support</small></span></button></div></section>
-    </div>;
-  };
+  if(active==="overview"&&data)return <CommandCenter data={data} operator={operator} onNavigate={onNavigate}/>;
   if(active==="versions"&&data)return <><div className="grid"><Metric label="Server version" value={data.server_version}/><Metric label="Drift" value={data.drift_count}/><Metric label="Unknown" value={data.unknown_count}/></div><Table items={data.hosts||[]}/></>;
   if(active==="system"&&data)return <SystemPanel data={data} operator={operator}/>;
   if(active==="objects"&&data)return <><ObjectsWorkspace data={data} onNavigate={onNavigate}/>{operator.role!=="Read Only"&&<GuidedObjectPanel/>}</>;

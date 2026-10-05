@@ -77,7 +77,7 @@ for token in '--dr-layout-sidebar-expanded:260px' '--dr-layout-sidebar-collapsed
     echo "FAIL DR Control visual token parity missing: $token" >&2; exit 1;
   }
 done
-for marker in 'drlink_web_sidebar_collapsed' 'drlink_web_theme' 'Command Center' 'Core management' 'Search hosts, services, policies, identities' 'Quick actions' 'Access Workspace' 'Policy Simulator' 'Filter hosts' 'Access context' 'Objects & Groups' 'Filter objects and groups' 'Filter policies' 'Test / explain' 'Skip to content' 'drlink-main-content'; do
+for marker in 'drlink_web_sidebar_collapsed' 'drlink_web_theme' 'Command Center' 'Core management' 'Search hosts, services, policies, identities' 'Quick actions' 'Access Workspace' 'Policy Simulator' 'Filter hosts' 'Access context' 'Objects & Groups' 'Filter objects and groups' 'Filter policies' 'Test / explain' 'Skip to content' 'drlink-main-content' 'Recent Activity' 'Recent Changes'; do
   grep -q -- "$marker" "$TMP/usr/local/share/drlink-web/app.js" || {
     echo "FAIL modern SaaS shell marker missing: $marker" >&2; exit 1;
   }
