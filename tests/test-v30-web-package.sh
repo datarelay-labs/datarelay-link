@@ -86,10 +86,34 @@ PY
 CLI_OUT="$(DRLINK_TEST_ROOT="$TMP" PYTHONPATH="$ROOT/lib" python3 "$ROOT/lib/drlink_control_cli.py" show status)"
 grep -q 'Control DB.*Healthy' <<<"$CLI_OUT" || { echo "FAIL CLI unavailable after Web uninstall" >&2; exit 1; }
 
+# Reinstalling the optional Web package must bind the current Web build to the
+# already-authoritative Core without recreating or replacing Core state.
+DRLINK_WEB_INSTALL_ROOT="$TMP" "$ROOT/install-web.sh" >/tmp/drlink-web-reinstall-test.log
+[[ -f "$TMP/etc/systemd/system/drlink-web.service" ]] || { echo "FAIL Web service missing after reinstall" >&2; exit 1; }
+[[ -f "$TMP/usr/local/share/drlink-web/app.js" ]] || { echo "FAIL Web assets missing after reinstall" >&2; exit 1; }
+
+PYTHONPATH="$ROOT/lib" python3 - "$TMP" <<'PY'
+import sys
+from drlink_control_plane import ControlPlane
+import drlink_v24 as v24
+root=sys.argv[1]
+plane=ControlPlane(root)
+try:
+    row=plane.conn.execute("SELECT username,recovery_admin FROM web_operators WHERE username='admin'").fetchone()
+    assert row is not None and int(row["recovery_admin"]) == 1
+    decision=v24.evaluate_selector_policy(
+        plane,"remote",source_name="src",destination_name="dst",service_name="ssh"
+    )
+    assert decision["result"] == "ALLOW", decision
+finally:
+    plane.close()
+PY
+
 echo "WEB_NOT_INSTALLED_CORE=PASS"
 echo "WEB_STOPPED_CORE=PASS"
 echo "WEB_UNINSTALLED_CORE=PASS"
 echo "WEB_FAILURE_DOES_NOT_CHANGE_POLICY=PASS"
 echo "CLI_FULL_CAPABILITY_WITHOUT_WEB=PASS"
 echo "NO_WEB_AUTHORITATIVE_DB=PASS"
+echo "WEB_REINSTALL_PRESERVES_CORE=PASS"
 echo "WEB_PACKAGE_LIFECYCLE=PASS"
