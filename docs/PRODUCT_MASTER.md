@@ -9,8 +9,8 @@
 
 Current project version: **3.0.0**
 
-Development builds must display an identity equivalent to `2.4.0-dev+g<shortsha>`
-(with exact Source HEAD shown separately), not plain `2.4.0`.
+Development builds must display an identity equivalent to `3.0.0-dev+g<shortsha>`
+(with exact Source HEAD shown separately), not plain `3.0.0`.
 Current pinned Relay Engine (FRP): **v0.71.0**
 
 ## 1. Product definition

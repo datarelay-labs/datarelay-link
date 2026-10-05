@@ -1,7 +1,7 @@
 # Data Relay Link — Security Architecture
 
 > **Document role:** Canonical security invariants and trust boundaries
-> **Status:** v2.4.0 target architecture; implementation qualification pending
+> **Status:** v3.0.0 target architecture; implementation qualification pending
 > **Public SSOT:** `PRODUCT_MASTER.md` + `DATA_RELAY_LINK_CLI_AI_MASTER_v2.4_FINAL.md`
 
 `Data Relay Link` **3.0.0**

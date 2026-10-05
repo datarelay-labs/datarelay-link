@@ -272,7 +272,7 @@ FRP_VERSION=0.71.0
 Current project version: **3.0.0**<br>
 Current pinned FRP version: **v0.71.0**
 
-This repository tree is the **v2.4.0 development target** on branch
+This repository tree is the **v3.0.0 development target** on branch
 [`feature/v2.4.0-final-product-closure`](https://github.com/datarelay-labs/datarelay-link/tree/feature/v2.4.0-final-product-closure).
 There is no stable `v2.4.0` tag until exact-HEAD qualification completes. Do not treat this branch as a stable, RC, or preview release unless repository metadata actually changes to that channel.
 
