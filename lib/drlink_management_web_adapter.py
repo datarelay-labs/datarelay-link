@@ -88,6 +88,15 @@ class ManagementWebApiAdapter:
     def enrollment_list(self, *, actor: ManagementActor, limit: int = 50) -> dict[str, Any]:
         return self.core.enrollment_list(actor=actor, limit=limit)
 
+    def system_status(self, *, actor: ManagementActor) -> dict[str, Any]:
+        return self.core.system_status(actor=actor)
+
+    def certificate_preflight(self, *, actor: ManagementActor) -> dict[str, Any]:
+        return self.core.certificate_preflight(actor=actor)
+
+    def backup_validate(self, path: str, *, actor: ManagementActor) -> dict[str, Any]:
+        return self.core.backup_validate(path, actor=actor)
+
     def enrollment_issue_manual(
         self,
         *,

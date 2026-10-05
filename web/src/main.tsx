@@ -4,7 +4,7 @@ import {createRoot} from "react-dom/client";
 type Json = Record<string, any>;
 const nav=[
   ["overview","Overview"],["hosts","Managed Hosts"],["services","Remote Services"],
-  ["objects","Objects & Groups"],["policies","Policies"],["versions","Version Drift"],
+  ["objects","Objects & Groups"],["policies","Policies"],["versions","Version Drift"],["system","System"],
   ["audit","Audit"],["revisions","Revisions"],["doctor","Doctor"],["health","Health"],
   ["search","Search"],["views","Saved Views"],["enrollments","Connect Agent"],["drafts","Draft Workspace"],
 ];
@@ -359,6 +359,39 @@ function TemporaryAccessPanel(){
   </div>;
 }
 
+function SystemPanel({data}:{data:any}){
+  const [backupPath,setBackupPath]=useState("/var/lib/drlink/backups/");
+  const [preflight,setPreflight]=useState<any>(null),[validation,setValidation]=useState<any>(null),[error,setError]=useState("");
+  async function runPreflight(){setError("");try{setPreflight(await api("/api/v1/system/certificate/preflight",{method:"POST",body:"{}"}))}catch(e:any){setError(e.message||String(e))}}
+  async function validateBackup(){setError("");try{setValidation(await api("/api/v1/system/backup/validate",{method:"POST",body:JSON.stringify({path:backupPath})}))}catch(e:any){setError(e.message||String(e))}}
+  const identity=data.identity||{},certificate=data.certificate||{},backup=data.backup||{};
+  return <>
+    {error&&<div className="error">{error}</div>}
+    <div className="grid">
+      <Metric label="Data Relay Link" value={identity.display_identity||identity.project_version}/>
+      <Metric label="Relay Engine" value={identity.relay_engine_version}/>
+      <Metric label="Channel" value={identity.channel}/>
+      <Metric label="Backup Ready" value={backup.create_available&&backup.validate_available?"YES":"NO"}/>
+    </div>
+    <div className="card">
+      <h3>Release Provenance</h3>
+      <Table items={[{source_ref:identity.source_ref,source_head:identity.source_head,bundle_sha256:identity.bundle_sha256||"not recorded"}]}/>
+    </div>
+    <div className="card">
+      <h3>Certificate Status</h3>
+      <Table items={[{mode:certificate.mode,hostname:certificate.hostname,certificate:certificate.certificate,issuer:certificate.issuer,expires:certificate.expires,days_remaining:certificate.days_remaining,auto_renewal:certificate.auto_renewal}]}/>
+      <button className="secondary" onClick={runPreflight}>Run Certificate Preflight</button>
+      {preflight&&<pre className="plan">{JSON.stringify(preflight,null,2)}</pre>}
+    </div>
+    <div className="card">
+      <h3>Backup Validation</h3>
+      <div className="muted">Validation is read-only and uses the same disaster-recovery validator as CLI restore preflight.</div>
+      <div className="toolbar"><input value={backupPath} onChange={e=>setBackupPath(e.target.value)} placeholder="/var/lib/drlink/backups/server-backup-....tar.gz"/><button className="secondary" onClick={validateBackup} disabled={!backupPath}>Validate Backup</button></div>
+      {validation&&<pre className="plan">{JSON.stringify(validation,null,2)}</pre>}
+    </div>
+  </>;
+}
+
 function View({active,operator}:{active:string,operator:any}){
   const [data,setData]=useState<any>(null),[error,setError]=useState(""),[query,setQuery]=useState("");
   useEffect(()=>{
@@ -367,7 +400,7 @@ function View({active,operator}:{active:string,operator:any}){
       overview:"/api/v1/overview",hosts:"/api/v1/inventory?resource_type=managed-host&limit=100",
       services:"/api/v1/inventory?resource_type=remote-service&limit=100",
       objects:"/api/v1/objects-groups?limit=50",policies:"/api/v1/policies?limit=100",
-      versions:"/api/v1/versions",audit:"/api/v1/audit?limit=100",revisions:"/api/v1/revisions?limit=100",
+      versions:"/api/v1/versions",system:"/api/v1/system",audit:"/api/v1/audit?limit=100",revisions:"/api/v1/revisions?limit=100",
       doctor:"/api/v1/doctor",health:"/api/v1/health",views:"/api/v1/saved-views",enrollments:"/api/v1/enrollments?limit=50",
     };
     if(paths[active])api(paths[active]).then(setData).catch((e:any)=>setError(e.message||String(e)));
@@ -378,6 +411,7 @@ function View({active,operator}:{active:string,operator:any}){
   if(active==="search")return <div><div className="toolbar"><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search resources and policy"/><button className="primary" onClick={()=>api("/api/v1/search?q="+encodeURIComponent(query)+"&limit=50").then(setData).catch((e:any)=>setError(e.message))}>Search</button></div>{data&&<Table items={(data.items||[]).map((x:any)=>({type:x.resource_type,id:x.id,name:x.name}))}/>}</div>;
   if(active==="overview"&&data){const h=data.overview?.managed_hosts||{},s=data.overview?.remote_services||{},j=data.overview?.management_jobs||{};return <><div className="grid"><Metric label="Managed Hosts" value={h.total}/><Metric label="Connected" value={h.connected}/><Metric label="Remote Services" value={s.total}/><Metric label="Active Jobs" value={j.active_jobs}/></div><div className="card"><h3>Attention Center</h3>{(data.attention?.items||[]).map((x:any)=><span key={x.kind} className={"badge "+x.severity}>{x.label}: {x.count}</span>)}{!(data.attention?.items||[]).length&&<div className="muted">No current attention items</div>}</div></>};
   if(active==="versions"&&data)return <><div className="grid"><Metric label="Server version" value={data.server_version}/><Metric label="Drift" value={data.drift_count}/><Metric label="Unknown" value={data.unknown_count}/></div><Table items={data.hosts||[]}/></>;
+  if(active==="system"&&data)return <SystemPanel data={data}/>;
   if(active==="objects"&&data){const rows=Object.entries(data.resources||{}).flatMap(([type,page]:any)=>(page.items||[]).map((item:any)=>({type,id:item.id,name:item.name||item.id,description:item.description||"",status:item.status||""})));return <><Table items={rows}/>{operator.role!=="Read Only"&&<GuidedObjectPanel/>}</>;}
   if(active==="hosts"&&data)return <><Table items={data.items||[]}/>{operator.role!=="Read Only"&&<ManagedHostMetadataPanel/>}</>;
   if(active==="services"&&data)return <><Table items={data.items||[]}/>{operator.role!=="Read Only"&&<RemoteServicePanel/>}</>;

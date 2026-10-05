@@ -165,7 +165,10 @@ Its highest-value 3.0 uses are:
 - Job inspection and safe diagnostic operations.
 
 Recovery authority, operator-security administration, and other high-risk system lifecycle
-operations remain outside the default Plugin surface.
+operations remain outside the default Plugin surface. DRL3-3 Web system status, redacted
+certificate status, certificate preflight, and backup validation are Core-owned OBSERVE/TEST
+operations and are not new Plugin tools. Backup validation reuses the canonical restore
+validator with zero authoritative mutation; restore itself remains `RECOVERY_AUTHORITY`.
 
 ## 5. Management permission boundary
 

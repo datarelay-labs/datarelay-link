@@ -172,6 +172,7 @@ class V30WebServiceTests(unittest.TestCase):
             "/api/v1/search?q=alpha&limit=10",
             "/api/v1/policies?limit=10",
             "/api/v1/versions",
+            "/api/v1/system",
             "/api/v1/audit?limit=10",
             "/api/v1/revisions?limit=10",
             "/api/v1/health",
@@ -185,6 +186,63 @@ class V30WebServiceTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(versions["server_version"], "3.0.0")
         self.assertEqual(versions["drift_count"], 1)
+
+        status, _, system = self.request("GET", "/api/v1/system")
+        self.assertEqual(status, 200, system)
+        self.assertTrue(system["read_only"])
+        self.assertTrue(system["side_effect_free"])
+        self.assertEqual(system["identity"]["project_version"], "3.0.0")
+        self.assertEqual(system["backup"]["directory"], "/var/lib/drlink/backups")
+
+    def test_system_validation_routes_are_csrf_protected_and_non_mutating(self):
+        self.login()
+        plane = ControlPlane(self.tmp)
+        try:
+            revision = plane.current_revision()
+        finally:
+            plane.close()
+
+        status, _, _ = self.request(
+            "POST", "/api/v1/system/certificate/preflight", {}
+        )
+        self.assertEqual(status, 403)
+
+        status, _, preflight = self.request(
+            "POST",
+            "/api/v1/system/certificate/preflight",
+            {},
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 400, preflight)
+        self.assertIn("hostname", preflight["error"].lower())
+
+        status, _, outside = self.request(
+            "POST",
+            "/api/v1/system/backup/validate",
+            {"path": "/etc/passwd"},
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 400, outside)
+        self.assertIn("/var/lib/drlink/backups/", outside["error"])
+
+        status, _, missing = self.request(
+            "POST",
+            "/api/v1/system/backup/validate",
+            {"path": "/var/lib/drlink/backups/missing.tar.gz"},
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, missing)
+        self.assertFalse(missing["valid"])
+        self.assertFalse(missing["authoritative_mutation"])
+        self.assertEqual(
+            missing["path"], "/var/lib/drlink/backups/missing.tar.gz"
+        )
+
+        plane = ControlPlane(self.tmp)
+        try:
+            self.assertEqual(plane.current_revision(), revision)
+        finally:
+            plane.close()
 
     def test_csrf_protects_web_preferences_and_logout(self):
         self.login()
@@ -476,6 +534,40 @@ class V30WebServiceTests(unittest.TestCase):
             )
         finally:
             plane.close()
+
+    def test_system_status_certificate_preflight_and_backup_validate(self):
+        self.login()
+
+        status, _, system = self.request("GET", "/api/v1/system")
+        self.assertEqual(status, 200, system)
+        self.assertTrue(system["read_only"])
+        self.assertEqual(system["identity"]["project_version"], "3.0.0")
+        self.assertNotIn("raw", system["certificate"])
+        self.assertNotIn("active_key_path", system["certificate"])
+
+        status, _, _ = self.request(
+            "POST", "/api/v1/system/certificate/preflight", {}
+        )
+        self.assertEqual(status, 403)
+
+        status, _, preflight = self.request(
+            "POST",
+            "/api/v1/system/certificate/preflight",
+            {},
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 400, preflight)
+        self.assertIn("hostname", preflight["error"].lower())
+
+        status, _, validation = self.request(
+            "POST",
+            "/api/v1/system/backup/validate",
+            {"path": "/var/lib/drlink/backups/not-present.tar.gz"},
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, validation)
+        self.assertFalse(validation["valid"])
+        self.assertFalse(validation["authoritative_mutation"])
 
     def test_no_generic_management_mutation_endpoint(self):
         self.login()

@@ -30,6 +30,7 @@ from drlink_management_service import (
 from drlink_management_guided import GuidedChangeService
 from drlink_management_enrollment import ManagementEnrollmentService
 from drlink_management_remote_service import ManagementRemoteServiceService
+from drlink_management_system import ManagementSystemService
 from drlink_management_drafts import (
     DRAFT_ADMIN,
     DRAFT_OBSERVE,
@@ -291,6 +292,28 @@ class ManagementCoreService:
                 "This Web management operation requires role: %s." % ", ".join(sorted(roles))
             )
         return role
+
+    def system_status(self, *, actor: ManagementActor) -> dict[str, Any]:
+        if "management-read" not in actor.permissions:
+            raise ManagementAuthorizationError("management-read is required for system status.")
+        self._require_web_role(actor, "Admin", "Operator", "Read Only")
+        return ManagementSystemService(self.root).status()
+
+    def certificate_preflight(self, *, actor: ManagementActor) -> dict[str, Any]:
+        if "management-diagnose" not in actor.permissions:
+            raise ManagementAuthorizationError(
+                "management-diagnose is required for certificate preflight."
+            )
+        self._require_web_role(actor, "Admin", "Operator", "Read Only")
+        return ManagementSystemService(self.root).certificate_preflight()
+
+    def backup_validate(self, path: str, *, actor: ManagementActor) -> dict[str, Any]:
+        if "management-diagnose" not in actor.permissions:
+            raise ManagementAuthorizationError(
+                "management-diagnose is required for backup validation."
+            )
+        self._require_web_role(actor, "Admin", "Operator", "Read Only")
+        return ManagementSystemService(self.root).backup_validate(path)
 
     def enrollment_issue_manual(
         self,

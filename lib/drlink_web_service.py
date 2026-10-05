@@ -251,6 +251,8 @@ class WebApplication:
                 actor=actor,
                 limit=_int_arg(_first(query, "limit"), 50, high=100),
             )
+        if path == "/api/v1/system":
+            return self.adapter.system_status(actor=actor)
         if path == "/api/v1/configuration/export":
             return self.adapter.configuration_export(actor=actor)
         if path == "/api/v1/drafts":
@@ -363,6 +365,13 @@ class WebApplication:
                 actor=self._actor(principal),
             )
         actor = self._actor(principal)
+        if path == "/api/v1/system/certificate/preflight":
+            return self.adapter.certificate_preflight(actor=actor)
+        if path == "/api/v1/system/backup/validate":
+            return self.adapter.backup_validate(
+                str(body.get("path") or ""),
+                actor=actor,
+            )
         if path == "/api/v1/enrollments/manual":
             return self.adapter.enrollment_issue_manual(
                 actor=actor,
@@ -379,6 +388,12 @@ class WebApplication:
                 ttl_seconds=ttl_value,
                 label=str(body.get("label") or ""),
                 note=str(body.get("note") or ""),
+            )
+        if path == "/api/v1/system/certificate/preflight":
+            return self.adapter.certificate_preflight(actor=actor)
+        if path == "/api/v1/system/backup/validate":
+            return self.adapter.backup_validate(
+                str(body.get("path") or ""), actor=actor
             )
         if path == "/api/v1/drafts":
             return self.adapter.draft_create(
