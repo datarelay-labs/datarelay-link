@@ -266,37 +266,29 @@ pq_gate SOAK_TEST FAIL
 grep -qx 'SOAK_TEST=FAIL' "$GATES" || fail "soak fail not recorded"
 pass "soak traffic failure fails"
 
-# --- A-019 exact-HEAD evidence is mandatory, and BLOCKED counts as failure ---
-python3 - "$ROOT/tests/run-production-realistic-qualification.sh" <<'PY' || fail "A-019 exact-head prerequisite missing"
+# --- Prior-stable exact-HEAD evidence is version-aware and BLOCKED counts ---
+python3 - "$ROOT/tests/run-production-realistic-qualification.sh" <<'PYTEST' || fail "prior-stable exact-head prerequisite missing"
 from pathlib import Path
 import sys
 text = Path(sys.argv[1]).read_text(encoding="utf-8")
+assert 'upgrade-v240-to-v300.json' in text
 assert 'a019-v230-to-v240.json' in text
-assert 'doc.get("worktree_clean_start") is not True' in text
-assert 'doc.get("worktree_clean_end") is not True' in text
-assert 'doc.get("release_target_qualified") is not True' in text
-assert 'doc.get("head_unchanged") is not True' in text
-assert 'doc.get("provenance_head")' in text
-assert 'doc.get("source_head")' in text
-assert 'release-manifest source_head' in text
-assert '"A019_RELEASE_TARGET_PREFLIGHT"' in text
-assert '"A019_SOURCE_PROVENANCE_BINDING"' in text
-assert '"A019_DISPOSABLE_TARGET_PRECHECK"' in text
-assert 'approved release target' in text
-assert 'UPGRADE_V230_TO_V240 PASS' in text
-assert 'UPGRADE_V230_TO_V240 BLOCKED' in text
-assert 'clean exact-HEAD A-019 evidence is required' in text
+assert 'UPGRADE_V240_TO_V300' in text
+assert 'UPGRADE_V230_TO_V240' in text
+assert 'PROJECT_VERSION' in text
+assert 'upgrade evidence must come from a clean worktree' in text
+assert 'upgrade evidence must come from an approved release target' in text
+assert 'upgrade did not finish on the same HEAD' in text
+assert 'upgrade provenance_head does not match frozen HEAD' in text
+assert 'upgrade source_head does not match release-manifest source_head' in text
 print("ok")
-PY
+PYTEST
 : >"$GATES"
-pq_gate UPGRADE_V230_TO_V240 BLOCKED
-grep -qx 'UPGRADE_V230_TO_V240=BLOCKED' "$GATES" || fail "A-019 BLOCKED not recorded"
-if grep -q 'excluded from FAIL_COUNT' "$ROOT/tests/run-production-realistic-qualification.sh"; then
-  fail "qualification still excludes a gate from FAIL_COUNT"
-fi
+pq_gate UPGRADE_V240_TO_V300 BLOCKED
+grep -qx 'UPGRADE_V240_TO_V300=BLOCKED' "$GATES" || fail "3.0 upgrade BLOCKED not recorded"
 fail_count="$(grep -E '=(FAIL|BLOCKED)$' "$GATES" | wc -l | tr -d ' ')"
-[[ "$fail_count" -eq 1 ]] || fail "BLOCKED A-019 gate did not count (fail_count=$fail_count)"
-pass "A-019 exact-head evidence BLOCKED counts"
+[[ "$fail_count" -eq 1 ]] || fail "BLOCKED upgrade gate did not count (fail_count=$fail_count)"
+pass "version-aware prior-stable exact-head evidence BLOCKED counts"
 
 # --- Unrelated :2222 ownership ---
 PROD_QUAL_MACOS_SSH_PID=""

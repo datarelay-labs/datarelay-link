@@ -31,7 +31,8 @@ export FRP_E2E_QUAL_SERVER_REBOOT="${FRP_E2E_QUAL_SERVER_REBOOT:-0}"
 # CI already green for candidate; local run-all still runs unless skipped.
 export FRP_E2E_QUAL_SKIP_LOCAL="${FRP_E2E_QUAL_SKIP_LOCAL:-0}"
 
-pq_note "PHASE=DATA_RELAY_LINK_V2_4_0_FINAL_PRODUCTION_REALISTIC_QUALIFICATION"
+PROJECT_VERSION="$(awk -F= '/^PROJECT_VERSION=/{print $2}' "$ROOT/VERSION")"
+pq_note "PHASE=DATA_RELAY_LINK_${PROJECT_VERSION//./_}_FINAL_PRODUCTION_REALISTIC_QUALIFICATION"
 pq_note "PASS_NAME=$PASS_NAME RUN_ID=$RUN_ID OUT=$OUT"
 pq_note "FROZEN_HEAD=$FROZEN_HEAD"
 pq_note "STARTED=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -40,79 +41,50 @@ echo "PASS_NAME=$PASS_NAME" >>"$PROD_QUAL_GATES"
 echo "FROZEN_HEAD=$FROZEN_HEAD" >>"$PROD_QUAL_GATES"
 echo "${PASS_NAME}_HEAD=$FROZEN_HEAD" >>"$PROD_QUAL_GATES"
 
-# A-019 prior-stable upgrade evidence is a mandatory exact-HEAD prerequisite.
-# It is produced only by a clean run of run-v230-to-v240-upgrade-e2e.sh.
-A019_EVIDENCE="${FRP_E2E_A019_EVIDENCE:-$ROOT/e2e-reports/release-qualification/a019-v230-to-v240.json}"
-A019_LOG="$OUT/a019-upgrade-evidence.log"
-if python3 - "$A019_EVIDENCE" "$FROZEN_HEAD" "$ROOT/release-manifest.json" >"$A019_LOG" 2>&1 <<'PY'
+# Prior-stable upgrade evidence is a mandatory exact-HEAD prerequisite.
+# v2.4 keeps historical A-019. v3.0 owns a v2.4 -> v3.0 transition record.
+if [[ "$PROJECT_VERSION" == 3.* ]]; then
+  UPGRADE_EVIDENCE="${FRP_E2E_UPGRADE_EVIDENCE:-$ROOT/e2e-reports/release-qualification/upgrade-v240-to-v300.json}"
+  UPGRADE_GATE=UPGRADE_V240_TO_V300
+  UPGRADE_LABEL="v2.4 -> v3.0"
+  REQUIRED_UPGRADE_GATES="UPGRADE_RELEASE_TARGET_PREFLIGHT,UPGRADE_SOURCE_PROVENANCE_BINDING,UPGRADE_DISPOSABLE_TARGET_PRECHECK,V240_BOOTSTRAP_STAGED,V240_VERSION_IDENTITY,V240_BACKUP,V240_BACKUP_RESTORABLE,V300_BOOTSTRAP_STAGED,UPGRADE_CONTROL_DB_MIGRATED,UPGRADE_POLICY_STATE_PRESERVED,UPGRADE_MANAGED_HOST_STATE_PRESERVED,UPGRADE_RUNTIME_HEALTH,UPGRADE_V240_BACKUP_RETAINED,UPGRADE_REBOOT_RECOVERY,UPGRADE_WEB_OPTIONALITY_PRESERVED,UPGRADE_HEAD_UNCHANGED,LIVE_V240_TO_V300_UPGRADE"
+else
+  UPGRADE_EVIDENCE="${FRP_E2E_A019_EVIDENCE:-$ROOT/e2e-reports/release-qualification/a019-v230-to-v240.json}"
+  UPGRADE_GATE=UPGRADE_V230_TO_V240
+  UPGRADE_LABEL="v2.3 -> v2.4 A-019"
+  REQUIRED_UPGRADE_GATES="A019_RELEASE_TARGET_PREFLIGHT,A019_SOURCE_PROVENANCE_BINDING,A019_DISPOSABLE_TARGET_PRECHECK,V230_BOOTSTRAP_STAGED,V230_VERSION_IDENTITY,V230_LEGACY_LAYOUT_RUNTIME,V230_STATE_SEED,V230_NO_EGRESS_FIXTURE,V230_BACKUP,V230_BACKUP_RESTORABLE,V230_GOLDEN_EVIDENCE,V240_BOOTSTRAP_STAGED,UPGRADE_CLIENT_ID_PRESERVED,UPGRADE_PUBLIC_PORT_PRESERVED,UPGRADE_GROUP_TAG_STATE_PRESERVED,UPGRADE_METADATA_MIGRATION_MARKED,UPGRADE_RESTRICTIVE_POLICY_PRESERVED,UPGRADE_RUNTIME_HEALTH,UPGRADE_V230_BACKUP_RETAINED,UPGRADE_REBOOT_RECOVERY,UPGRADE_FIXED_TCP_AVAILABLE,A019_HEAD_UNCHANGED,LIVE_V230_TO_V240_UPGRADE"
+fi
+UPGRADE_LOG="$OUT/prior-stable-upgrade-evidence.log"
+if python3 - "$UPGRADE_EVIDENCE" "$FROZEN_HEAD" "$ROOT/release-manifest.json" "$REQUIRED_UPGRADE_GATES" >"$UPGRADE_LOG" 2>&1 <<'PY'
 import json, sys
 from pathlib import Path
-path, expected, manifest_path = Path(sys.argv[1]), sys.argv[2].lower(), Path(sys.argv[3])
-if not path.is_file():
-    raise SystemExit("A-019 evidence missing: %s" % path)
-doc = json.loads(path.read_text(encoding="utf-8"))
-if doc.get("schema_version") != 1:
-    raise SystemExit("A-019 evidence schema_version must be 1")
-if str(doc.get("git_head") or "").lower() != expected:
-    raise SystemExit("A-019 git_head does not match frozen HEAD")
-if str(doc.get("provenance_head") or "").lower() != expected:
-    raise SystemExit("A-019 provenance_head does not match frozen HEAD")
-manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-expected_source = str(manifest.get("source_head") or "").lower()
-if not expected_source or str(doc.get("source_head") or "").lower() != expected_source:
-    raise SystemExit("A-019 source_head does not match release-manifest source_head")
-if str(doc.get("end_head") or "").lower() != expected or doc.get("head_unchanged") is not True:
-    raise SystemExit("A-019 did not finish on the same HEAD")
-if doc.get("worktree_clean_start") is not True or doc.get("worktree_clean_end") is not True:
-    raise SystemExit("A-019 canonical evidence must come from a clean worktree")
-if doc.get("release_target_qualified") is not True:
-    raise SystemExit("A-019 canonical evidence must come from an approved release target")
-if doc.get("final_status") != "PASS":
-    raise SystemExit("A-019 final_status is not PASS")
-gates = doc.get("gates")
-if not isinstance(gates, dict):
-    raise SystemExit("A-019 gates are missing")
-required = (
-    "A019_RELEASE_TARGET_PREFLIGHT",
-    "A019_SOURCE_PROVENANCE_BINDING",
-    "A019_DISPOSABLE_TARGET_PRECHECK",
-    "V230_BOOTSTRAP_STAGED",
-    "V230_VERSION_IDENTITY",
-    "V230_LEGACY_LAYOUT_RUNTIME",
-    "V230_STATE_SEED",
-    "V230_NO_EGRESS_FIXTURE",
-    "V230_BACKUP",
-    "V230_BACKUP_RESTORABLE",
-    "V230_GOLDEN_EVIDENCE",
-    "V240_BOOTSTRAP_STAGED",
-    "UPGRADE_CLIENT_ID_PRESERVED",
-    "UPGRADE_PUBLIC_PORT_PRESERVED",
-    "UPGRADE_GROUP_TAG_STATE_PRESERVED",
-    "UPGRADE_METADATA_MIGRATION_MARKED",
-    "UPGRADE_RESTRICTIVE_POLICY_PRESERVED",
-    "UPGRADE_RUNTIME_HEALTH",
-    "UPGRADE_V230_BACKUP_RETAINED",
-    "UPGRADE_REBOOT_RECOVERY",
-    "UPGRADE_FIXED_TCP_AVAILABLE",
-    "A019_HEAD_UNCHANGED",
-    "LIVE_V230_TO_V240_UPGRADE",
-)
-for key in required:
-    if gates.get(key) != "PASS":
-        raise SystemExit("A-019 required gate %s=%s" % (key, gates.get(key)))
-for key, value in gates.items():
-    if value in {"FAIL", "BLOCKED", "NOT_RUN"}:
-        raise SystemExit("A-019 blocking gate %s=%s" % (key, value))
-print("A019_EVIDENCE=PASS")
-print("A019_HEAD=%s" % expected)
+path, expected, manifest_path, required_csv = Path(sys.argv[1]), sys.argv[2].lower(), Path(sys.argv[3]), sys.argv[4]
+if not path.is_file(): raise SystemExit("upgrade evidence missing: %s" % path)
+doc=json.loads(path.read_text(encoding="utf-8"))
+if doc.get("schema_version") != 1: raise SystemExit("upgrade evidence schema_version must be 1")
+if str(doc.get("git_head") or "").lower()!=expected: raise SystemExit("upgrade git_head does not match frozen HEAD")
+if str(doc.get("provenance_head") or "").lower()!=expected: raise SystemExit("upgrade provenance_head does not match frozen HEAD")
+manifest=json.loads(manifest_path.read_text(encoding="utf-8")); expected_source=str(manifest.get("source_head") or "").lower()
+if not expected_source or str(doc.get("source_head") or "").lower()!=expected_source: raise SystemExit("upgrade source_head does not match release-manifest source_head")
+if str(doc.get("end_head") or "").lower()!=expected or doc.get("head_unchanged") is not True: raise SystemExit("upgrade did not finish on the same HEAD")
+if doc.get("worktree_clean_start") is not True or doc.get("worktree_clean_end") is not True: raise SystemExit("upgrade evidence must come from a clean worktree")
+if doc.get("release_target_qualified") is not True: raise SystemExit("upgrade evidence must come from an approved release target")
+if doc.get("final_status") != "PASS": raise SystemExit("upgrade final_status is not PASS")
+gates=doc.get("gates")
+if not isinstance(gates,dict): raise SystemExit("upgrade gates are missing")
+for key in filter(None, required_csv.split(',')):
+    if gates.get(key)!="PASS": raise SystemExit("upgrade required gate %s=%s"%(key,gates.get(key)))
+for key,value in gates.items():
+    if value in {"FAIL","BLOCKED","NOT_RUN"}: raise SystemExit("upgrade blocking gate %s=%s"%(key,value))
+print("PRIOR_STABLE_UPGRADE_EVIDENCE=PASS"); print("UPGRADE_HEAD=%s"%expected)
 PY
 then
-  cat "$A019_LOG"
-  pq_gate UPGRADE_V230_TO_V240 PASS
+  cat "$UPGRADE_LOG"
+  pq_gate "$UPGRADE_GATE" PASS
 else
-  cat "$A019_LOG" >&2 || true
-  pq_gate UPGRADE_V230_TO_V240 BLOCKED
-  pq_note "ERROR: clean exact-HEAD A-019 evidence is required before production-realistic qualification"
+  cat "$UPGRADE_LOG" >&2 || true
+  pq_gate "$UPGRADE_GATE" BLOCKED
+  pq_note "ERROR: clean exact-HEAD $UPGRADE_LABEL evidence is required before production-realistic qualification"
   exit 1
 fi
 
@@ -125,7 +97,7 @@ if ! pq_precheck_hosts; then
   exit 1
 fi
 
-# v2.4 stable qualification requires retained real ChatGPT Plus owner/UI
+# Stable qualification requires retained real ChatGPT owner/UI
 # acceptance evidence bound to this exact provenance/content bundle. Fail before
 # any matrix install/reboot when the evidence is missing, stale, or incomplete.
 CHATGPT_OWNER_EVIDENCE="${FRP_E2E_CHATGPT_OWNER_EVIDENCE:-$ROOT/e2e-reports/chatgpt-owner-acceptance.json}"
