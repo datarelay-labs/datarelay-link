@@ -579,7 +579,7 @@ frp_identity_derive_and_store_mac() {
 }
 
 frp_identity_public_fingerprint() {
-  # SHA-256 fingerprint (hex) of this client's management public key, when a
+  # SHA-256 fingerprint (hex) of this Agent Host's management public key, when a
   # local identity exists. Used only for crash-safe recovery bookkeeping
   # (lib/frp-client-common.sh pending-enrollment helpers); never required for
   # trust decisions, which remain signature-based.
@@ -596,14 +596,14 @@ import re, sys
 from pathlib import Path
 path = Path(sys.argv[1])
 if not path.is_file():
-    raise SystemExit('ERROR: existing FRP client configuration is missing; re-enroll this client.')
+    raise SystemExit('ERROR: existing FRP client configuration is missing; re-enroll this Agent Host.')
 text = path.read_text(encoding='utf-8')
 for line in text.splitlines():
     m = re.match(r'^\s*auth\.token\s*=\s*"(.*)"\s*$', line)
     if m:
         sys.stdout.write(m.group(1))
         raise SystemExit(0)
-raise SystemExit('ERROR: existing FRP client configuration is missing the FRP token; re-enroll this client.')
+raise SystemExit('ERROR: existing FRP client configuration is missing the FRP token; re-enroll this Agent Host.')
 PY
 }
 
@@ -1119,7 +1119,7 @@ frp_ux_intro() {
  Data Relay Link Agent Setup
 =========================================
 
-This installer publishes services on this Linux system
+This installer creates Remote Services on this Linux system
 through your Data Relay Link server.
 
 Before continuing, you need an Enrollment Code.
@@ -1130,8 +1130,8 @@ Generate one on the Data Relay Link server with:
 
 The Enrollment Code is short-lived. Enter it only here.
 It authorizes this first enrollment (or a later recovery).
-It is not stored on this client and it is not the FRP token.
-After enrollment, this client uses a local management identity
+It is not stored on this Agent Host and it is not the FRP token.
+After enrollment, this Agent Host uses a local management identity
 for ordinary configuration changes.
 
 Tip:
@@ -1148,8 +1148,8 @@ Enrollment Code
   Short-lived bootstrap/recovery credential. Entered interactively.
   Not stored. Not the FRP token.
   Needed for first enrollment, recovering a lost local identity,
-  or after an administrator revokes this client's management access.
-  Ordinary later changes use this client's local management identity.
+  or after an administrator revokes this Agent Host's management access.
+  Ordinary later changes use this Agent Host's local management identity.
 
 EOF
 }
@@ -1317,7 +1317,7 @@ You may publish one or more services.
 SSH is optional.
 
 Initial onboarding requires at least one service.
-An enrolled client may later have zero published services
+An enrolled Agent Host may later have zero Remote Services
 after reservations are released.
 
 EOF
@@ -1749,8 +1749,8 @@ path = Path(sys.argv[1])
 want = int(sys.argv[2])
 if not path.is_file():
     raise SystemExit(
-        'ERROR: This client predates local management state.\n'
-        'Re-enroll once with the current bootstrap installer to initialize frp-client management.'
+        'ERROR: This Agent Host predates local management state.\n'
+        'Re-enroll once with the current bootstrap installer to initialize Data Relay Link Agent management.'
     )
 try:
     data = json.loads(path.read_text(encoding='utf-8'))
@@ -1759,7 +1759,7 @@ except Exception:
 if not isinstance(data, dict) or data.get('schema_version') != want:
     raise SystemExit(
         f'ERROR: unsupported client-state schema version {data.get("schema_version")!r}.\n'
-        'Re-enroll once with the current bootstrap installer to initialize frp-client management.'
+        'Re-enroll once with the current bootstrap installer to initialize Data Relay Link Agent management.'
     )
 if not isinstance(data.get('services'), dict):
     raise SystemExit('ERROR: client-state.json services must be a map')
@@ -3037,7 +3037,7 @@ frp_client_apply_reconcile_runtime() {
   return 0
 }
 
-# Reconcile local client state against the allocator.
+# Reconcile local Agent state against the allocator.
 # Arg1: 1 = strict (explicit sync: missing identity is a failure)
 #       0/empty = apply/pre-sync (skip quietly when not enrolled)
 # Returns 0 for NO_CHANGE and SUCCESS, 1 for FAILURE.
@@ -3067,7 +3067,7 @@ frp_client_reconcile_released_services() {
   fi
   if [[ "${FRP_CLIENT_HOOK_RECONCILE_STATE:-}" == "1" ]]; then
     FRP_RECONCILE_STATUS=FAILURE
-    frp_client_reconcile_fail STATE_WRITE_FAILED "failed to update local client state"
+    frp_client_reconcile_fail STATE_WRITE_FAILED "failed to update local Agent state"
     return 1
   fi
 
@@ -3194,7 +3194,7 @@ hostname_changed = apply_public_hostname(state, payload)
 try:
     state_path.write_text(json.dumps(state, indent=2, sort_keys=True) + '\n', encoding='utf-8')
 except OSError:
-    fail('failed to update local client state', 'STATE_WRITE_FAILED')
+    fail('failed to update local Agent state', 'STATE_WRITE_FAILED')
 prune_draft(os.environ.get('DRAFT_PATH') or '', ids, committed_ids)
 cand = os.environ.get('CANDIDATE_PATH') or ''
 if cand and cand != os.environ.get('DRAFT_PATH'):
@@ -3226,7 +3226,7 @@ PY
   if [[ "$(frp_identity_status)" != enrolled ]]; then
     if [[ "$strict" == "1" ]]; then
       FRP_RECONCILE_STATUS=FAILURE
-      frp_client_reconcile_fail MANAGEMENT_IDENTITY "this client does not have a usable management identity"
+      frp_client_reconcile_fail MANAGEMENT_IDENTITY "this Agent Host does not have a usable management identity"
       return 1
     fi
     return 0
@@ -3237,7 +3237,7 @@ PY
   hostname_value="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1],encoding="utf-8")).get("hostname") or "")' "$path")"
   if [[ -z "$allocator_url" || -z "$machine_id" ]]; then
     FRP_RECONCILE_STATUS=FAILURE
-    frp_client_reconcile_fail MANAGEMENT_IDENTITY "client state is missing allocator URL or machine ID"
+    frp_client_reconcile_fail MANAGEMENT_IDENTITY "Agent state is missing allocator URL or machine ID"
     return 1
   fi
 
@@ -3408,7 +3408,7 @@ hostname_changed = apply_public_hostname(state, payload)
 try:
     state_path.write_text(json.dumps(state, indent=2, sort_keys=True) + '\n', encoding='utf-8')
 except OSError:
-    fail('failed to update local client state', 'STATE_WRITE_FAILED')
+    fail('failed to update local Agent state', 'STATE_WRITE_FAILED')
 prune_draft(os.environ.get('DRAFT_PATH') or '', ids, committed_ids)
 cand = os.environ.get('CANDIDATE_PATH') or ''
 if cand and cand != os.environ.get('DRAFT_PATH'):
@@ -3894,7 +3894,8 @@ if mode == 'pending':
     print()
     print('Current public workflow:')
     print('  show remote-services')
-    print('  set/unset remote-service <NAME> ...')
+    print('  set remote-service <NAME> ...')
+    print('  unset remote-service <NAME>')
     print('  system synchronize')
     print()
     print('Pending changes:')
@@ -4085,7 +4086,7 @@ frp_acquire_client_lock() {
   if [[ -d "$lock" ]]; then
     pid="$(tr -d '\n' <"$lock/pid" 2>/dev/null || true)"
     if frp_lock_pid_alive "$pid"; then
-      echo "ERROR: another frp-client management operation is already running." >&2
+      echo "ERROR: another Data Relay Link Agent management operation is already running." >&2
       return 1
     fi
     rm -rf "$lock"
@@ -4096,7 +4097,7 @@ frp_acquire_client_lock() {
       pid="$(tr -d '\n' <"${lock}.pid")"
     fi
     if frp_lock_pid_alive "$pid" && ! command -v flock >/dev/null 2>&1; then
-      echo "ERROR: another frp-client management operation is already running." >&2
+      echo "ERROR: another Data Relay Link Agent management operation is already running." >&2
       return 1
     fi
     if [[ -z "${FRP_CLIENT_LOCK_FD:-}" ]] && ! command -v flock >/dev/null 2>&1; then
@@ -4110,7 +4111,7 @@ frp_acquire_client_lock() {
       exec {FRP_CLIENT_LOCK_FD}>>"$lock"
     fi
     if ! flock -n "$FRP_CLIENT_LOCK_FD"; then
-      echo "ERROR: another frp-client management operation is already running." >&2
+      echo "ERROR: another Data Relay Link Agent management operation is already running." >&2
       exec {FRP_CLIENT_LOCK_FD}>&-
       unset FRP_CLIENT_LOCK_FD
       return 1
@@ -4122,12 +4123,12 @@ frp_acquire_client_lock() {
   if ! mkdir "$lock" 2>/dev/null; then
     pid="$(tr -d '\n' <"$lock/pid" 2>/dev/null || true)"
     if frp_lock_pid_alive "$pid"; then
-      echo "ERROR: another frp-client management operation is already running." >&2
+      echo "ERROR: another Data Relay Link Agent management operation is already running." >&2
       return 1
     fi
     rm -rf "$lock"
     if ! mkdir "$lock" 2>/dev/null; then
-      echo "ERROR: another frp-client management operation is already running." >&2
+      echo "ERROR: another Data Relay Link Agent management operation is already running." >&2
       return 1
     fi
   fi
@@ -5896,7 +5897,7 @@ frp_client_apply_upgrade() {
       fi
     else
       if [[ -z "$recovered" || ! -d "$recovered" ]]; then
-        echo "ERROR: pending client update does not name a usable snapshot; refusing to guess the newest backup." >&2
+        echo "ERROR: pending Agent software update does not name a usable snapshot; refusing to guess the newest backup." >&2
         frp_emit_failure_class RECOVERY_REQUIRED
         return 1
       fi
@@ -6252,7 +6253,7 @@ frp_verify_client_update_artifact() {
   fi
   expected="$(printf '%s' "$expected" | tr '[:upper:]' '[:lower:]')"
   if [[ ! "$expected" =~ ^[0-9a-f]{64}$ ]]; then
-    echo "ERROR: malformed SHA256 in client update integrity metadata" >&2
+    echo "ERROR: malformed SHA256 in Agent software update integrity metadata" >&2
     frp_emit_failure_class INTEGRITY_FAILED
     return 1
   fi
@@ -6265,7 +6266,7 @@ frp_verify_client_update_artifact() {
     fi
   fi
   if ! frp_verify_sha256 "$expected" "$archive" >/dev/null; then
-    echo "ERROR: downloaded client update failed SHA256 verification" >&2
+    echo "ERROR: downloaded Agent software update failed SHA256 verification" >&2
     frp_emit_failure_class INTEGRITY_FAILED
     return 1
   fi
@@ -6390,7 +6391,7 @@ frp_client_fetch_and_upgrade() {
     return $?
   fi
   if [[ "${FRP_CLIENT_UPGRADE_HOOK_DOWNLOAD_FAIL:-}" == "1" ]]; then
-    echo "ERROR: failed to download the client update bundle" >&2
+    echo "ERROR: failed to download the Agent software update bundle" >&2
     return 1
   fi
   if [[ ${EUID} -ne 0 && -z "${FRP_CLIENT_TEST_ROOT:-}" ]]; then
@@ -6466,7 +6467,7 @@ frp_client_fetch_and_upgrade() {
     }
     curl -fL --retry 3 --connect-timeout 10 --max-time 120 --cacert "$ca" \
       -o "$archive" "${origin}/artifacts/agent/bootstrap-client.sh" || {
-      echo "ERROR: failed to download Server-local client update bundle" >&2
+      echo "ERROR: failed to download Server-local Agent software update bundle" >&2
       frp_emit_failure_class DOWNLOAD_FAILED
       return 1
     }
@@ -6477,11 +6478,11 @@ frp_client_fetch_and_upgrade() {
     server_local=1
   else
     if ! frp_validate_https_url "$FRP_CLIENT_UPDATE_URL"; then
-      echo "ERROR: client update URL must be a valid HTTPS URL" >&2
+      echo "ERROR: Agent software update URL must be a valid HTTPS URL" >&2
       return 1
     fi
     if ! frp_validate_https_url "$FRP_CLIENT_UPDATE_METADATA_URL"; then
-      echo "ERROR: client update metadata URL must be a valid HTTPS URL" >&2
+      echo "ERROR: Agent software update metadata URL must be a valid HTTPS URL" >&2
       return 1
     fi
     if [[ -n "$explicit_channel" ]]; then
@@ -6502,18 +6503,18 @@ frp_client_fetch_and_upgrade() {
     fi
     if ! frp_url_has_source_ref "$FRP_CLIENT_UPDATE_URL" "$source_ref" \
       || ! frp_url_has_source_ref "$FRP_CLIENT_UPDATE_METADATA_URL" "$source_ref"; then
-      echo "ERROR: client update artifact and metadata URLs must use source ref ${source_ref}" >&2
+      echo "ERROR: Agent software update artifact and metadata URLs must use source ref ${source_ref}" >&2
       return 1
     fi
 
     echo "Downloading Data Relay Link Agent update bundle..."
     curl -fL --retry 3 --connect-timeout 10 --max-time 120 -o "$metadata" "$FRP_CLIENT_UPDATE_METADATA_URL" || {
-      echo "ERROR: failed to download client update integrity metadata" >&2
+      echo "ERROR: failed to download Agent software update integrity metadata" >&2
       frp_emit_failure_class INTEGRITY_FAILED
       return 1
     }
     curl -fL --retry 3 --connect-timeout 10 --max-time 120 -o "$archive" "$FRP_CLIENT_UPDATE_URL" || {
-      echo "ERROR: failed to download the client update bundle" >&2
+      echo "ERROR: failed to download the Agent software update bundle" >&2
       frp_emit_failure_class DOWNLOAD_FAILED
       return 1
     }

@@ -2239,9 +2239,22 @@ When removal is allowed, DRLink cleans up server-side trust/inventory state and 
 
 The operation must show impact before destructive cleanup.
 
+Policy Rule and referenced Network/Service/Permission Object or Group edits
+calculate their security impact before mutation. The calculated access
+widening or material narrowing requires y/N approval. Safe creation and
+no-change paths need no additional confirmation; cancellation preserves state.
+
 ---
 
 # 47. Agent local lifecycle
+
+Pause, restart, synchronization and complete Remote Service edits are approved
+by the explicit local command invocation, with no additional confirmation
+prompt. They may interrupt connections; name-only Remote Service edits retain
+their reviewed wizard. Autostart disable changes future startup only and does
+not stop the current runtime. Autostart enable reverses that setting; resume
+enables automatic startup and starts the Agent. Inspect `show status` after a
+runtime change.
 
 Agent Host local commands:
 

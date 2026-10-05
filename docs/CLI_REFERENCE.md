@@ -344,7 +344,20 @@ Managed Host lifecycle is never performed through `set/unset network-object`.
 
 Internet Access source may use a Managed Host. Because the egress proxy is agentless, that selector is proven only when the observed proxy peer IP matches an eligible active address for the Managed Host. Internet Access is WHITELIST-only, so an unprovable or NAT-translated Managed Host source does not match and is denied. Behind NAT, prefer an IP/CIDR selector for the proxy-visible source. Internet Access destination may not use a Managed Host, directly or through a Network Group.
 
+Policy Rule and referenced Network/Service/Permission Object or Group edits
+calculate security impact before mutation. A y/N confirmation is required for
+calculated access widening or material narrowing. Safe creation and no-change
+paths do not need an additional confirmation; cancellation preserves state.
+
 ## 10. Agent Host commands
+
+Agent lifecycle commands act on the local Agent Host. The explicit command
+authorizes pause, restart, synchronization and complete Remote Service edits;
+these operations can interrupt connections and use no additional confirmation
+prompt. The name-only Remote Service form still reviews its wizard draft before
+apply. `system autostart disable` leaves the current runtime alone but prevents
+automatic startup after the next boot; `system autostart enable` reverses that
+setting. `system resume` restores automatic startup and starts the Agent.
 
 ```text
 show status

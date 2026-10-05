@@ -318,8 +318,9 @@ frp_confirm_mode_switch() {
   local from_mode="$1" to_mode="$2"
   echo
   echo "WARNING: switching deployment mode from ${from_mode} to ${to_mode} is a cutover." >&2
-  echo "WARNING: existing clients using the previous FRP control transport will disconnect" >&2
-  echo "WARNING: until they run a 2.1.0+ client apply against the new server." >&2
+  echo "WARNING: Agent Hosts using the previous Relay Engine control transport will disconnect." >&2
+  echo "WARNING: first export each Agent configuration: sudo drlink system export configuration agent.yaml" >&2
+  echo "WARNING: follow the explicit Agent uninstall/re-enrollment/reapply workflow in docs/DEPLOYMENT_MODES.md." >&2
   echo "WARNING: this is not a zero-downtime migration." >&2
   if frp_has_tty; then
     local answer=""

@@ -2317,7 +2317,7 @@ NAVIGATION_TREE = {
     "server.hosts": (
         ("server_hosts_list", "List Managed Hosts", "", "command", "show managed-hosts"),
         ("server_zt", "Connect New Host", "", "workflow", "create_zero_touch"),
-        ("server_hosts_manage", "Manage Host", "", "command", "show managed-hosts"),
+        ("server_hosts_manage", "Manage Host", "", "workflow", "manage_host"),
         ("server_enrollments", "Enrollments", "", "submenu", "server.clients.enrollments"),
         ("back", "Back", "", "back", None),
     ),

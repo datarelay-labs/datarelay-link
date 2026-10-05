@@ -209,6 +209,135 @@ frpctl_nav_workflow manage_remote_service
             self.assertIn("HOST ID", text)
             self.assertNotIn("CLIENT ID", text)
 
+    def test_manage_host_menu_inspects_selected_host_without_mutating_on_back(self):
+        item = next(r for r in catalog.NAVIGATION_TREE["server.hosts"] if r[0] == "server_hosts_manage")
+        self.assertEqual(item[3:], ("workflow", "manage_host"))
+        script = '''source "$1"
+frpctl_nav_prompt_id() { printf audit-agent; }
+frpctl_read() { local choice; read -r choice; printf '%s' "$choice"; }
+frpctl_dispatch() { printf 'DISPATCH'; printf ' <%s>' "$@"; printf '\\n'; }
+frpctl_nav_workflow manage_host
+'''
+        proc = subprocess.run(["bash", "-c", script, "regression", str(ROOT / "tools/frpctl")],
+                              env=dict(os.environ, FRP_CTL_SOURCED="1"), input="1\n5\n",
+                              text=True, capture_output=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("DISPATCH <show> <managed-host> <audit-agent>", proc.stdout)
+        self.assertIn("DISPATCH <show> <managed-host> <audit-agent> <agent>", proc.stdout)
+        self.assertNotIn("DISPATCH <set>", proc.stdout)
+        self.assertNotIn("DISPATCH <unset>", proc.stdout)
+
+    def test_agent_outage_leaves_disclose_effect_and_invocation_approval(self):
+        paths = [("system", "pause"), ("system", "restart"), ("system", "autostart", "disable"),
+                 ("system", "synchronize"), ("set", "remote-service")]
+        rows = {tuple(r["path"]): r for r in catalog.COMMANDS}
+        for path in paths:
+            with self.subTest(path=path):
+                row = rows[path]
+                self.assertTrue(row["destructive"])
+                self.assertEqual(row["risk"], "outage")
+                self.assertEqual(row["confirmation"], "none")
+                self.assertIn("explicit", row["detail"].lower())
+        self.assertFalse(rows[("system", "autostart")]["destructive"])
+        self.assertEqual(rows[("system", "autostart")]["risk"], "none")
+
+    def test_managed_host_remote_services_empty_state_names_agent_next_action(self):
+        v24.ensure_v2_schema(self.plane.conn)
+        self.plane.upsert_client("c" * 32, label="empty-agent", hostname="empty-agent")
+        before = self.plane.current_revision()
+        rc, out, err = self._dispatch(["show", "managed-host", "empty-agent", "remote-services"])
+        self.assertEqual(rc, 0, err)
+        self.assertIn("No Remote Services", out)
+        self.assertIn("Agent Host", out)
+        self.assertIn("show remote-services", out)
+        self.assertEqual(self.plane.current_revision(), before)
+
+    def test_calculated_policy_and_referenced_edit_confirmation_is_discoverable(self):
+        rows = {tuple(r["path"]): r for r in catalog.COMMANDS}
+        for res in ("remote-access", "internet-access", "ai-access", "network-object", "network-group",
+                    "service-object", "service-group", "permission-object", "permission-group"):
+            with self.subTest(resource=res):
+                row = rows[("set", res)]
+                self.assertTrue(row["destructive"])
+                self.assertEqual(row["risk"], "security_change")
+                self.assertEqual(row["confirmation"], "conditional_y_n")
+                self.assertIn("calculated", row["detail"].lower())
+
+    def test_agent_obsolete_client_error_names_server_owner(self):
+        result = grammar.match(["client", "?"], "client")
+        self.assertEqual(result["status"], "error")
+        self.assertIn("DRLink Server", result["message"])
+
+    def test_generated_enrollment_and_partial_role_use_agent_host_nouns(self):
+        proc = subprocess.run(["bash", "-c", 'source "$1"; frp_ux_intro; frp_ux_enrollment_help',
+                               "regression", str(LIB / "frp-client-common.sh")], text=True, capture_output=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("Agent Host", proc.stdout)
+        self.assertNotIn("this client", proc.stdout)
+        import frp_doctor as doctor
+        self.assertIn("Managed Hosts", doctor.validate_registry({"schema_version": 2, "clients": {}})[1])
+        partial = Path(self.tmp) / "partial-agent"
+        (partial / "etc/frp").mkdir(parents=True)
+        (partial / "etc/frp/client-state.json").write_text("{}")
+        self.assertIn("Agent Host", doctor.detect_role(doctor.Paths(str(partial)))["label"])
+        switch = (ROOT / "install-server.sh").read_text().split("frp_confirm_mode_switch() {", 1)[1].split("\n}", 1)[0]
+        self.assertNotIn("client apply", switch)
+        self.assertIn("DEPLOYMENT_MODES.md", switch)
+
+    def test_installed_endpoint_fallback_reads_live_default_root(self):
+        import frp_server_config as server_config
+        import drlink_v24_cli as public_cli
+        config = Path(self.tmp) / "etc/drlink/config.json"
+        config.write_text(json.dumps({"public_ip": "203.0.113.10"}))
+        def fixture_root(value):
+            return Path(self.tmp) if str(value) == "/" else Path(value)
+        with patch.object(server_config, "Path", side_effect=fixture_root), \
+                patch.dict(os.environ, {"DRLINK_HOST": ""}):
+            self.assertEqual(server_config.resolve_public_endpoint_host(root=None), "203.0.113.10")
+            self.assertEqual(public_cli._public_endpoint_host(unittest.mock.Mock(root=None)), "203.0.113.10")
+            config.write_text(json.dumps({"public_ip": "203.0.113.10", "public_hostname": "relay.example.test"}))
+            self.assertEqual(server_config.resolve_public_endpoint_host(root=None), "relay.example.test")
+
+    def test_partial_agent_doctor_enrollment_recovery_names_server_owner(self):
+        partial = Path(self.tmp) / "partial-agent"
+        (partial / "etc/frp").mkdir(parents=True)
+        (partial / "etc/frp/client-state.json").write_text('{"schema_version": 1, "services": {}}')
+        (partial / "etc/frp/client-identity.key").write_text("disposable-test-identity\n")
+        env = dict(os.environ, FRP_CTL_TEST_ROOT=str(partial), FRP_CLIENT_TEST_ROOT=str(partial),
+                   FRP_DEPLOY_TEST_ROOT=str(partial), FRP_SKIP_SYSTEMD="1", FRP_DOCTOR_SKIP_NETWORK="1")
+        proc = subprocess.run([str(ROOT / "tools/drlink"), "system", "diagnostics", "--json"],
+                              env=env, text=True, capture_output=True)
+        self.assertNotEqual(proc.returncode, 0)
+        data = json.loads(proc.stdout)
+        check = next(c for c in data["checks"] if c["id"] == "client_identity")
+        self.assertIn("on the DRLink Server", check["recommendation"])
+        self.assertIn("re-enroll this Agent Host", check["recommendation"])
+
+    def test_update_fixture_copy_excludes_audit_evidence_before_reading(self):
+        for fallback in (False, True):
+            with self.subTest(fallback=fallback):
+                source = Path(self.tmp) / ("source-fallback" if fallback else "source-rsync")
+                dest = Path(self.tmp) / ("copy-fallback" if fallback else "copy-rsync")
+                source.mkdir()
+                (source / "release-manifest.json").write_text("{}")
+                (source / "VERSION").write_text("VERSION=2.4.0\n")
+                for name in (".git", "dist", "e2e-reports"):
+                    (source / name).mkdir()
+                    leaf = source / name / "excluded"
+                    leaf.write_text("disposable audit artifact")
+                    leaf.chmod(0)
+                script = 'source "$1"\n'
+                if fallback:
+                    script += 'command() { if [[ "${1:-}" == "-v" && "${2:-}" == "rsync" ]]; then return 1; fi; builtin command "$@"; }\n'
+                script += 'frp_test_copy_repo_tree "$2" "$3"'
+                proc = subprocess.run(["bash", "-c", script, "regression",
+                                       str(ROOT / "tests/lib/frp-test-safe-copy.sh"), str(source), str(dest)],
+                                      text=True, capture_output=True)
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                self.assertEqual((dest / "VERSION").read_text(), "VERSION=2.4.0\n")
+                for name in (".git", "dist", "e2e-reports"):
+                    self.assertFalse((dest / name).exists())
+
     def test_remote_service_edit_keeps_disabled_default_until_review(self):
         import drlink_v24_wizard as wizard
         self.plane.conn.execute("INSERT INTO agent_remote_services(name,destination,service_object,enabled,updated_at) VALUES ('http','this-host','http',0,'2026-10-05T00:00:00Z')")
@@ -234,6 +363,7 @@ frpctl_nav_workflow manage_remote_service
         self.plane.close()
         os.environ.pop("FRP_DEPLOY_TEST_ROOT", None)
         os.environ.pop("DRLINK_SKIP_ACTIVATION", None)
+        shutil.rmtree(self.tmp)
 
     def _dispatch(self, tokens, stdin_text=""):
         out, err = io.StringIO(), io.StringIO()

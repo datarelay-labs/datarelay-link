@@ -1352,7 +1352,7 @@ def context_help(tokens, role, names=None, clients=None):
         ),
         "client": (
             '"client" is not a current public root.\n\n'
-            "Use Managed Hosts and Enrollment:\n"
+            "Use Managed Hosts and Enrollment on the DRLink Server:\n"
             "  show managed-hosts\n"
             "  show managed-host <HOST>\n"
             "  set enrollment zero-touch|manual\n"

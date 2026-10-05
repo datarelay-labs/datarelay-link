@@ -378,14 +378,22 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         client = plane.require_client(rest[1])
         view = rest[2] if len(rest) > 2 else "overview"
         if view == "remote-services":
-            sys.stdout.write("%-18s %-14s %-10s %-24s %s\n" % ("NAME", "DESTINATION", "SERVICE", "ENDPOINT", "STATUS"))
-            for s in plane.conn.execute(
+            services = plane.conn.execute(
                 "SELECT s.name, s.public_port, s.enabled, m.destination_name, m.status, "
                 "m.service_object_id, m.pending_allocation, m.runtime_verified "
                 "FROM published_services s LEFT JOIN remote_service_meta m ON m.service_id = s.id "
                 "WHERE s.client_id = ? AND s.released = 0 ORDER BY s.name",
                 (client["id"],),
-            ):
+            ).fetchall()
+            if not services:
+                sys.stdout.write(
+                    "No Remote Services reported for this Managed Host.\n"
+                    "On the Agent Host, inspect: show remote-services\n"
+                    "To configure a service on the Agent Host: set remote-service <NAME>\n"
+                )
+                return 0
+            sys.stdout.write("%-18s %-14s %-10s %-24s %s\n" % ("NAME", "DESTINATION", "SERVICE", "ENDPOINT", "STATUS"))
+            for s in services:
                 sobj = None
                 if s["service_object_id"]:
                     sobj = plane.conn.execute(

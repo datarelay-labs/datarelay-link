@@ -1145,6 +1145,28 @@ frpctl_nav_workflow() {
     create_zero_touch) frpctl_guided_client_onboarding ;;
     create_enrollment) frpctl_guided_manual_enrollment ;;
     manage_client) frpctl_manage_clients ;;
+    manage_host)
+      frpctl_dispatch show managed-hosts || return $?
+      id="$(frpctl_nav_prompt_id "Managed Host name (empty cancels): ")" || return 1
+      frpctl_dispatch show managed-host "$id" || return $?
+      echo "Group membership: set managed-host $id group <GROUP>"
+      while true; do
+        echo "1) Agent details"
+        echo "2) Remote Services"
+        echo "3) Addresses"
+        echo "4) Retire Managed Host (reference checks and confirmation required)"
+        echo "5) Back"
+        value="$(frpctl_read "Select: " "5")" || return 1
+        case "$value" in
+          1) frpctl_dispatch show managed-host "$id" agent || return $? ;;
+          2) frpctl_dispatch show managed-host "$id" remote-services || return $? ;;
+          3) frpctl_dispatch show managed-host "$id" addresses || return $? ;;
+          4) if frpctl_dispatch unset managed-host "$id"; then return 0; fi ;;
+          5|'') return 0 ;;
+          *) echo "ERROR: select a valid menu number" >&2 ;;
+        esac
+      done
+      ;;
     create_remote_service)
       id="$(frpctl_nav_prompt_id "Remote Service name: ")" || return 1
       # Dispatch the canonical name-only form so the v2.4 backend enters the
