@@ -61,6 +61,19 @@ done
 grep -q 'nav-group-toggle' "$TMP/usr/local/share/drlink-web/styles.css" || {
   echo "FAIL grouped Web navigation styles missing" >&2; exit 1;
 }
+grep -q 'box-shadow:none' "$TMP/usr/local/share/drlink-web/styles.css" || {
+  echo "FAIL DR Control flat-surface parity missing" >&2; exit 1;
+}
+for token in '--dr-layout-sidebar-expanded:260px' '--dr-layout-sidebar-collapsed:57px' '--dr-layout-content-max:1440px' '--dr-brand-mark:#00d084' '--dr-brand-relay:#007e4f' '--dr-font-size-base:14px' '--dr-radius-card:8px' '--dr-surface-page:oklch(98.75% 0 0)' '--dr-text-primary:oklch(21% .006 285.885)' '--dr-action-primary:oklch(54.6% .245 262.881)'; do
+  grep -q -- "$token" "$TMP/usr/local/share/drlink-web/styles.css" || {
+    echo "FAIL DR Control visual token parity missing: $token" >&2; exit 1;
+  }
+done
+for marker in 'drlink_web_sidebar_collapsed' 'drlink_web_theme' 'Command Center' 'Core management'; do
+  grep -q -- "$marker" "$TMP/usr/local/share/drlink-web/app.js" || {
+    echo "FAIL modern SaaS shell marker missing: $marker" >&2; exit 1;
+  }
+done
 
 grep -q -- '--listen 127.0.0.1 --port 8741' "$TMP/etc/systemd/system/drlink-web.service" || {
   echo "FAIL Web service default is not loopback-only" >&2; exit 1;

@@ -37,6 +37,25 @@ a generic infrastructure dashboard, or an identity-governance suite.
 
 DRLink copies the visual system semantics, not Control application code.
 
+Last implementation verification source (2026-10-05):
+
+```text
+repository   datarelay-labs/datarelay-control
+branch       main-v2
+verified HEAD 41a561b769fb589f081e84ec5014de6f48881985
+foundation   frontend/src/foundation-semantic-tokens.css
+global CSS   frontend/src/index.css
+shell        frontend/src/components/layout/sidebar.tsx
+              frontend/src/components/layout/top-header.tsx
+              frontend/src/components/shell/app-shell.tsx
+components   frontend/src/lib/gdc-ui-tokens.ts
+              frontend/src/components/ui/card.tsx
+```
+
+The values below are copied from that semantic foundation. If Control changes later, DRLink
+updates only through an explicit UX-contract change; runtime coupling or importing Control
+frontend code remains forbidden.
+
 ### 3.1 Typography
 
 ```text

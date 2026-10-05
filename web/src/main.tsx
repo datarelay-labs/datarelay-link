@@ -1053,7 +1053,7 @@ function UsersPanel({operator}:{operator:any}){
   </div></>;
 }
 
-function View({active,operator}:{active:string,operator:any}){
+function View({active,operator,onNavigate}:{active:string,operator:any,onNavigate?:(id:string,groupId?:string)=>void}){
   const [data,setData]=useState<any>(null),[error,setError]=useState(""),[query,setQuery]=useState("");
   useEffect(()=>{
     setData(null);setError("");
@@ -1074,7 +1074,24 @@ function View({active,operator}:{active:string,operator:any}){
   if(active==="audit")return <AuditExplorer operator={operator}/>;
   if(active==="enrollments"&&data)return <EnrollmentPanel data={data} refresh={()=>api("/api/v1/enrollments?limit=50").then(setData)}/>;
   if(active==="search")return <div><div className="toolbar"><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search resources and policy"/><button className="primary" onClick={()=>api("/api/v1/search?q="+encodeURIComponent(query)+"&limit=50").then(setData).catch((e:any)=>setError(e.message))}>Search</button></div>{data&&<Table items={(data.items||[]).map((x:any)=>({type:x.resource_type,id:x.id,name:x.name}))}/>}</div>;
-  if(active==="overview"&&data){const h=data.overview?.managed_hosts||{},s=data.overview?.remote_services||{},j=data.overview?.management_jobs||{};return <><div className="grid"><Metric label="Managed Hosts" value={h.total}/><Metric label="Connected" value={h.connected}/><Metric label="Remote Services" value={s.total}/><Metric label="Active Jobs" value={j.active_jobs}/></div><div className="card"><h3>Attention Center</h3>{(data.attention?.items||[]).map((x:any)=><span key={x.kind} className={"badge "+x.severity}>{x.label}: {x.count}</span>)}{!(data.attention?.items||[]).length&&<div className="muted">No current attention items</div>}</div></>};
+  if(active==="overview"&&data){
+    const h=data.overview?.managed_hosts||{},svc=data.overview?.remote_services||{},j=data.overview?.management_jobs||{},pol=data.overview?.policies||{};
+    const attention=data.attention?.items||[];
+    const policyRows=[
+      {label:"Remote Access",key:"remote",value:pol.remote||{}},
+      {label:"Internet Access",key:"internet",value:pol.internet||{}},
+      {label:"AI Access",key:"ai",value:pol.ai||{}},
+    ];
+    return <div className="dr-command-center">
+      <section className="dr-hero-row"><div><p className="dr-eyebrow">Command Center</p><h2>Manage connectivity with the next action in context.</h2><p className="muted">Current Core posture, access policy coverage, and operator attention in one bounded workspace.</p></div><div className="dr-hero-actions">{operator.role==="Admin"&&<button className="primary" onClick={()=>onNavigate?.("enrollments","infrastructure")}>Connect Agent</button>}<button className="secondary" onClick={()=>onNavigate?.("policies","access")}>Review Access</button></div></section>
+      <section className="dr-kpi-strip"><div><span>Managed Hosts</span><strong>{h.total||0}</strong><small>{h.connected||0} connected</small></div><div><span>Remote Services</span><strong>{svc.total||0}</strong><small>{svc.enabled||0} enabled</small></div><div><span>Active Jobs</span><strong>{j.active_jobs||0}</strong><small>{j.failed_jobs||0} failed</small></div><div><span>Needs Attention</span><strong>{attention.length}</strong><small>{attention.some((x:any)=>x.severity==="critical")?"Critical item present":"Current findings"}</small></div></section>
+      <div className="dr-overview-columns">
+        <section className="card dr-attention-card"><div className="dr-section-head"><div><p className="dr-eyebrow">Posture</p><h3>Needs Attention</h3></div><button className="dr-text-action" onClick={()=>onNavigate?.("doctor","observability")}>Troubleshoot →</button></div>{attention.length?<div className="dr-attention-list">{attention.slice(0,8).map((x:any)=><div className="dr-attention-row" key={x.kind}><span className={"dr-severity-dot "+x.severity}/><span><strong>{x.label}</strong><small>{x.count} affected</small></span><span className={"badge "+x.severity}>{x.severity}</span></div>)}</div>:<div className="dr-good-state"><span className="dr-good-mark">✓</span><div><strong>No current attention items</strong><p>Core-derived checks are not reporting operator action.</p></div></div>}</section>
+        <section className="card dr-access-card"><div className="dr-section-head"><div><p className="dr-eyebrow">Access</p><h3>Policy Coverage</h3></div><button className="dr-text-action" onClick={()=>onNavigate?.("access","access")}>Open workspace →</button></div><div className="dr-access-posture">{policyRows.map(row=><button key={row.key} onClick={()=>onNavigate?.("policies","access")}><span className="dr-access-icon"><WorkspaceIcon kind="access"/></span><span><strong>{row.label}</strong><small>{Number(row.value.enabled||0)} enabled of {Number(row.value.total||0)}</small></span><b>{Number(row.value.enabled||0)}</b></button>)}</div></section>
+      </div>
+      <section className="card dr-quick-actions"><div className="dr-section-head"><div><p className="dr-eyebrow">Workspace</p><h3>Common Tasks</h3></div></div><div className="dr-action-grid"><button onClick={()=>onNavigate?.("hosts","infrastructure")}><WorkspaceIcon kind="infrastructure"/><span><strong>Inspect a host</strong><small>Connectivity, services, version, lifecycle</small></span></button><button onClick={()=>onNavigate?.("access","access")}><WorkspaceIcon kind="access"/><span><strong>Explain access</strong><small>Current use, policy test, cutoff state</small></span></button><button onClick={()=>onNavigate?.("audit","observability")}><WorkspaceIcon kind="observability"/><span><strong>Review activity</strong><small>Audit events and access decisions</small></span></button><button onClick={()=>onNavigate?.("system","administration")}><WorkspaceIcon kind="administration"/><span><strong>System readiness</strong><small>Backup, certificate, update, support</small></span></button></div></section>
+    </div>;
+  };
   if(active==="versions"&&data)return <><div className="grid"><Metric label="Server version" value={data.server_version}/><Metric label="Drift" value={data.drift_count}/><Metric label="Unknown" value={data.unknown_count}/></div><Table items={data.hosts||[]}/></>;
   if(active==="system"&&data)return <SystemPanel data={data} operator={operator}/>;
   if(active==="objects"&&data){const rows=Object.entries(data.resources||{}).flatMap(([type,page]:any)=>(page.items||[]).map((item:any)=>({type,id:item.id,name:item.name||item.id,description:item.description||"",status:item.status||""})));return <><Table items={rows}/>{operator.role!=="Read Only"&&<GuidedObjectPanel/>}</>;}
@@ -1094,10 +1111,43 @@ function SavedViews({data,refresh}:{data:any,refresh:()=>void}){
   return <>{error&&<div className="error">{error}</div>}<div className="toolbar"><input placeholder="View name" value={name} onChange={e=>setName(e.target.value)}/><input placeholder="Filter text" value={filter} onChange={e=>setFilter(e.target.value)}/><button className="primary" onClick={save}>Save current view</button></div><Table items={(data.items||[]).map((x:any)=>({id:x.id,name:x.name,updated_at:x.updated_at}))}/></>;
 }
 
+function WorkspaceIcon({kind}:{kind:string}){
+  const common={viewBox:"0 0 24 24",fill:"none",stroke:"currentColor",strokeWidth:1.8,strokeLinecap:"round" as const,strokeLinejoin:"round" as const,"aria-hidden":true};
+  if(kind==="overview")return <svg {...common}><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>;
+  if(kind==="infrastructure")return <svg {...common}><rect x="4" y="4" width="16" height="6" rx="2"/><rect x="4" y="14" width="16" height="6" rx="2"/><path d="M8 7h.01M8 17h.01M12 7h5M12 17h5"/></svg>;
+  if(kind==="access")return <svg {...common}><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>;
+  if(kind==="operations")return <svg {...common}><path d="M4 12h3l2-5 4 10 2-5h5"/></svg>;
+  if(kind==="observability")return <svg {...common}><path d="M2.5 12s3.4-6 9.5-6 9.5 6 9.5 6-3.4 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/></svg>;
+  if(kind==="administration")return <svg {...common}><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3A1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/></svg>;
+  if(kind==="search")return <svg {...common}><circle cx="11" cy="11" r="6"/><path d="m16 16 4 4"/></svg>;
+  if(kind==="refresh")return <svg {...common}><path d="M20 6v5h-5M4 18v-5h5"/><path d="M18.2 9A7 7 0 0 0 6.4 6.4L4 9m16 6-2.4 2.6A7 7 0 0 1 5.8 15"/></svg>;
+  if(kind==="moon")return <svg {...common}><path d="M20 15.5A8 8 0 0 1 8.5 4 8.5 8.5 0 1 0 20 15.5Z"/></svg>;
+  if(kind==="sun")return <svg {...common}><circle cx="12" cy="12" r="3"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>;
+  if(kind==="collapse")return <svg {...common}><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M15 9l-3 3 3 3"/></svg>;
+  if(kind==="expand")return <svg {...common}><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M12 9l3 3-3 3"/></svg>;
+  return <svg {...common}><circle cx="12" cy="12" r="8"/></svg>;
+}
+
 function Shell({operator,onLogout}:{operator:any,onLogout:()=>void}){
   const [active,setActive]=useState("overview");
+  const [collapsed,setCollapsed]=useState(()=>{try{return localStorage.getItem("drlink_web_sidebar_collapsed")==="1"}catch{return false}});
+  const [dark,setDark]=useState(()=>{try{return localStorage.getItem("drlink_web_theme")==="dark"}catch{return false}});
+  const [refreshNonce,setRefreshNonce]=useState(0);
+  const [coreHealthy,setCoreHealthy]=useState<boolean|undefined>(undefined);
   const activeGroup=navGroups.find(group=>group.items.some(([id])=>id===active))?.id||"";
   const [expanded,setExpanded]=useState<Record<string,boolean>>(()=>Object.fromEntries(navGroups.map(group=>[group.id,group.id===activeGroup||group.id==="infrastructure"])));
+
+  useEffect(()=>{
+    document.documentElement.setAttribute("data-dr-theme",dark?"dark":"light");
+    try{localStorage.setItem("drlink_web_theme",dark?"dark":"light")}catch{}
+  },[dark]);
+  useEffect(()=>{try{localStorage.setItem("drlink_web_sidebar_collapsed",collapsed?"1":"0")}catch{}},[collapsed]);
+  useEffect(()=>{api("/api/v1/health").then(()=>setCoreHealthy(true)).catch(()=>setCoreHealthy(false))},[refreshNonce]);
+  useEffect(()=>{
+    function onKey(e:KeyboardEvent){if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="k"){e.preventDefault();activate("search","observability")}}
+    window.addEventListener("keydown",onKey);return()=>window.removeEventListener("keydown",onKey);
+  },[]);
+
   async function logout(){try{await api("/api/v1/auth/logout",{method:"POST",body:"{}"})}finally{csrf="";onLogout()}}
   function visible(id:string){
     if(id==="users")return operator.role==="Admin";
@@ -1109,26 +1159,56 @@ function Shell({operator,onLogout}:{operator:any,onLogout:()=>void}){
     setActive(id);
     if(groupId)setExpanded(prev=>({...prev,[groupId]:true}));
   }
+  function chooseGroup(groupId:string){
+    if(collapsed){setCollapsed(false);setExpanded(prev=>({...prev,[groupId]:true}));return}
+    setExpanded(prev=>({...prev,[groupId]:!prev[groupId]}));
+  }
   const currentItem=navGroups.flatMap(group=>group.items).find(([id])=>id===active);
   const title=active==="overview"?"Overview":currentItem?.[1]||"Overview";
-  return <div className="shell"><aside className="sidebar">
-    <div className="brand">Data Relay Link<small>Web Management 3.0</small></div>
-    <nav className="nav" aria-label="Primary">
-      <button className={active==="overview"?"active nav-home":"nav-home"} onClick={()=>activate("overview")}>Overview</button>
-      {navGroups.map(group=>{
-        const items=group.items.filter(([id])=>visible(id));
-        if(!items.length)return null;
-        const open=!!expanded[group.id];
-        const hasActive=items.some(([id])=>id===active);
-        return <section className={hasActive?"nav-group has-active":"nav-group"} key={group.id}>
-          <button className="nav-group-toggle" aria-expanded={open} onClick={()=>setExpanded(prev=>({...prev,[group.id]:!open}))}>
-            <span>{group.label}</span><span className="nav-chevron" aria-hidden="true">{open?"▾":"▸"}</span>
-          </button>
-          {open&&<div className="nav-group-items">{items.map(([id,label])=><button key={id} className={id===active?"active":""} onClick={()=>activate(id,group.id)}>{label}</button>)}</div>}
-        </section>;
-      })}
-    </nav>
-  </aside><section className="content"><div className="top"><div><div className="title">{title}</div><div className="muted">{operator.username} · {operator.role}</div></div><button className="secondary" onClick={logout}>Sign out</button></div><View active={active} operator={operator}/></section></div>;
+  const healthText=coreHealthy===undefined?"Checking":coreHealthy?"Healthy":"Attention";
+  return <div className={collapsed?"shell dr-shell is-collapsed":"shell dr-shell"}>
+    <aside className={collapsed?"sidebar dr-sidebar is-collapsed":"sidebar dr-sidebar"}>
+      <div className="dr-sidebar-brand">
+        <button className="dr-brand-home" onClick={()=>activate("overview")} aria-label="DataRelay Link — Overview">
+          <img src="/logo/datarelay-logo.svg" alt=""/><span className="dr-brand-copy"><strong><span>Data</span><em>Relay</em></strong><small>Data Relay Link</small></span>
+        </button>
+        <button className="dr-icon-button dr-collapse" onClick={()=>setCollapsed(!collapsed)} aria-label={collapsed?"Expand menu":"Collapse menu"}><WorkspaceIcon kind={collapsed?"expand":"collapse"}/></button>
+      </div>
+      <nav className="nav dr-nav" aria-label="Primary navigation">
+        <button className={active==="overview"?"active nav-home":"nav-home"} onClick={()=>activate("overview")} title={collapsed?"Overview":undefined}><span className="dr-nav-icon"><WorkspaceIcon kind="overview"/></span><span className="dr-nav-label">Overview</span></button>
+        {navGroups.map(group=>{
+          const items=group.items.filter(([id])=>visible(id));
+          if(!items.length)return null;
+          const open=!!expanded[group.id];
+          const hasActive=items.some(([id])=>id===active);
+          return <section className={hasActive?"nav-group has-active":"nav-group"} key={group.id}>
+            <button className="nav-group-toggle" aria-expanded={open} onClick={()=>chooseGroup(group.id)} title={collapsed?group.label:undefined}>
+              <span className="dr-nav-icon"><WorkspaceIcon kind={group.id}/></span><span className="dr-nav-label">{group.label}</span><span className="nav-chevron" aria-hidden="true">{open?"▾":"▸"}</span>
+            </button>
+            {!collapsed&&open&&<div className="nav-group-items">{items.map(([id,label])=><button key={id} className={id===active?"active":""} onClick={()=>activate(id,group.id)}>{label}</button>)}</div>}
+          </section>;
+        })}
+      </nav>
+      <div className="dr-sidebar-footer">
+        {!collapsed&&<div className="dr-environment"><span className="dr-status-dot"/><span><small>Environment</small><strong>Development</strong></span></div>}
+        <button className="dr-user-chip" onClick={()=>operator.role==="Admin"&&activate("users","administration")} title={collapsed?operator.username:undefined}>
+          <span className="dr-avatar">{String(operator.username||"?").slice(0,2).toUpperCase()}</span><span className="dr-user-copy"><strong>{operator.username}</strong><small>{operator.role}</small></span>
+        </button>
+      </div>
+    </aside>
+    <div className="dr-shell-main">
+      <header className="dr-topbar">
+        <div className="dr-topbar-context"><h1>{title}</h1><span className={coreHealthy===false?"dr-health-pill attention":"dr-health-pill"}><i/>{healthText}</span><span className="dr-runtime-summary">Core management · Web 3.0</span></div>
+        <div className="dr-topbar-actions">
+          <button className="dr-search-trigger" onClick={()=>activate("search","observability")}><WorkspaceIcon kind="search"/><span>Search</span><kbd>⌘K</kbd></button>
+          <button className="dr-icon-button" onClick={()=>setRefreshNonce(x=>x+1)} title="Refresh"><WorkspaceIcon kind="refresh"/></button>
+          <button className="dr-icon-button" onClick={()=>setDark(!dark)} title="Toggle theme"><WorkspaceIcon kind={dark?"sun":"moon"}/></button>
+          <button className="dr-signout" onClick={logout}>Sign out</button>
+        </div>
+      </header>
+      <main className="content dr-workspace"><div className="dr-content-frame"><View key={active+":"+refreshNonce} active={active} operator={operator} onNavigate={activate}/></div></main>
+    </div>
+  </div>;
 }
 
 function App(){
