@@ -395,6 +395,30 @@ class V30WebServiceTests(unittest.TestCase):
         self.assertEqual(checked["availability"], "AVAILABLE")
         check.assert_called_once_with("product")
 
+        status, _, denied_product = self.request(
+            "POST",
+            "/api/v1/system/update/product",
+            {"confirmation": ""},
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 400, denied_product)
+        with mock.patch(
+            "drlink_management_core.ManagementSystemService.update_product_apply",
+            return_value={
+                "target": "product",
+                "status": "UPDATED",
+                "authoritative_mutation": True,
+            },
+        ) as product_update:
+            status, _, product_updated = self.request(
+                "POST",
+                "/api/v1/system/update/product",
+                {"confirmation": "UPDATE PRODUCT"},
+                headers={"X-CSRF-Token": self.csrf},
+            )
+        self.assertEqual(status, 200, product_updated)
+        product_update.assert_called_once_with(actor_id="web:%s" % operator_id)
+
         status, _, denied = self.request(
             "POST",
             "/api/v1/system/update/engine",

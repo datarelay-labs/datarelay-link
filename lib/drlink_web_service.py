@@ -638,6 +638,11 @@ class WebApplication:
                 str(body.get("target") or ""),
                 actor=actor,
             )
+        if path == "/api/v1/system/update/product":
+            return self.adapter.update_product_apply(
+                actor=actor,
+                confirmation=str(body.get("confirmation") or ""),
+            )
         if path == "/api/v1/system/update/engine":
             return self.adapter.update_engine_apply(
                 actor=actor,

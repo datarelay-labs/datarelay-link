@@ -1293,6 +1293,54 @@ class ManagementSystemService:
             "authoritative_mutation": False,
         }
 
+    def update_product_apply(self, *, actor_id: str) -> dict[str, Any]:
+        tool = _tool_path(self.root_path, "frp-project-update")
+        env = self._artifact_env(actor_id=actor_id)
+        if self.root and self.root != "/":
+            env["FRP_SERVER_TEST_ROOT"] = self.root
+        try:
+            proc = subprocess.run(
+                ["bash", str(tool)],
+                capture_output=True,
+                text=True,
+                timeout=300,
+                check=False,
+                env=env,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise ControlPlaneError(
+                "Product update timed out. Check update/recovery status before retrying."
+            ) from exc
+        output = _safe_text(proc.stdout)
+        error = _safe_text(proc.stderr)
+        if proc.returncode != 0:
+            combined = (output + "\n" + error).strip()
+            suffix = " RECOVERY_REQUIRED" if "RECOVERY_REQUIRED" in combined else ""
+            detail = (error or output).strip()
+            raise ControlPlaneError(
+                "Product update failed.%s%s"
+                % (suffix, ((" " + detail) if detail else ""))
+            )
+        plane = ControlPlane(self.root)
+        try:
+            plane._audit(
+                revision=int(plane.current_revision()),
+                action="web product update",
+                entity_type="system-update",
+                entity_id="product",
+                operation="update",
+                actor=actor_id,
+                interface="WEB",
+            )
+        finally:
+            plane.close()
+        return {
+            "target": "product",
+            "status": "UPDATED",
+            "output": output,
+            "authoritative_mutation": True,
+        }
+
     def update_engine_apply(self, *, actor_id: str) -> dict[str, Any]:
         tool = _tool_path(self.root_path, "frp-update")
         env = self._artifact_env(actor_id=actor_id)
@@ -1369,8 +1417,7 @@ class ManagementSystemService:
             },
             "update": {
                 "product_check_available": self._tool_available("frp-project-update"),
-                "product_apply_via_web": False,
-                "product_apply_phase": "DRL3-7_WEB_PACKAGE_LIFECYCLE",
+                "product_apply_via_web": self._tool_available("frp-project-update"),
                 "engine_check_available": self._tool_available("frp-update"),
                 "engine_apply_via_web": self._tool_available("frp-update"),
             },

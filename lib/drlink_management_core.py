@@ -676,6 +676,25 @@ class ManagementCoreService:
         self._require_web_role(actor, "Admin", "Operator", "Read Only")
         return ManagementSystemService(self.root).update_check(target)
 
+    def update_product_apply(
+        self,
+        *,
+        actor: ManagementActor,
+        confirmation: str,
+    ) -> dict[str, Any]:
+        self._require_web_role(actor, "Admin")
+        if "management-config" not in actor.permissions:
+            raise ManagementAuthorizationError(
+                "management-config is required for product update."
+            )
+        if str(confirmation or "").strip().upper() != "UPDATE PRODUCT":
+            raise ControlPlaneError(
+                "Product update requires explicit confirmation 'UPDATE PRODUCT'."
+            )
+        return ManagementSystemService(self.root).update_product_apply(
+            actor_id=actor.actor_id
+        )
+
     def update_engine_apply(
         self,
         *,

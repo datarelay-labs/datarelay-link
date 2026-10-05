@@ -266,6 +266,14 @@ class ManagementWebApiAdapter:
     def update_check(self, target: str, *, actor: ManagementActor) -> dict[str, Any]:
         return self.core.update_check(target, actor=actor)
 
+    def update_product_apply(
+        self, *, actor: ManagementActor, confirmation: str
+    ) -> dict[str, Any]:
+        return self.core.update_product_apply(
+            actor=actor,
+            confirmation=confirmation,
+        )
+
     def update_engine_apply(
         self, *, actor: ManagementActor, confirmation: str
     ) -> dict[str, Any]:

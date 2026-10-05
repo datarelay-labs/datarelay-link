@@ -221,11 +221,14 @@ class V30ManagementSystemTests(unittest.TestCase):
         ):
             product = service.update_check("product")
             engine = service.update_check("engine")
+            product_applied = service.update_product_apply(actor_id="web:admin")
             applied = service.update_engine_apply(actor_id="web:admin")
         self.assertEqual(product["availability"], "AVAILABLE")
         self.assertEqual(engine["availability"], "NOT_NEEDED")
         self.assertFalse(product["authoritative_mutation"])
         self.assertFalse(engine["authoritative_mutation"])
+        self.assertEqual(product_applied["status"], "UPDATED")
+        self.assertTrue(product_applied["authoritative_mutation"])
         self.assertEqual(applied["status"], "UPDATED")
         self.assertTrue(applied["authoritative_mutation"])
         self.assertEqual(calls[-1][1]["env"]["DRLINK_ACTOR"], "web:admin")
@@ -915,6 +918,13 @@ class V30ManagementSystemTests(unittest.TestCase):
                 "product",
             )
             check.assert_called_once_with("product")
+        with self.assertRaises(ManagementAuthorizationError):
+            core.update_product_apply(
+                actor=operator,
+                confirmation="UPDATE PRODUCT",
+            )
+        with self.assertRaisesRegex(ControlPlaneError, "confirmation"):
+            core.update_product_apply(actor=admin, confirmation="")
         with self.assertRaises(ManagementAuthorizationError):
             core.update_engine_apply(
                 actor=operator,
