@@ -86,7 +86,11 @@ def run_pty_script(
             if not chunk:
                 break
             data += chunk
-            end = time.time() + 0.12
+            # Never shorten the caller-requested drain window after an early
+            # echo/prompt chunk. Slow CLI work may emit the meaningful result
+            # hundreds of milliseconds later; truncating to 120 ms produced
+            # false UX failures with only the echoed keystroke retained.
+            end = max(end, time.time() + 0.12)
         return data
 
     # Allow prompt to appear, then keep draining until the child exits.  The
