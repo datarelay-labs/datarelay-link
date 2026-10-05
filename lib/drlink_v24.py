@@ -2505,6 +2505,28 @@ def effective_policy_result(
     return "DENY"
 
 
+def restricted_policy_readiness(
+    plane: str, mode: Optional[str], enforcement: str
+) -> tuple[str, Optional[str]]:
+    """Describe fail-closed Internet/AI policy readiness for public output."""
+    plane_n = _plane_key(plane)
+    if plane_n not in ("internet", "ai"):
+        return "READY", None
+    mode_n = str(mode or "").strip().lower() or None
+    enforcement_n = str(enforcement or "enabled").strip().lower()
+    if mode_n is None:
+        return "FAIL CLOSED (NO POLICY)", None
+    if mode_n != "whitelist":
+        resource = "internet-access" if plane_n == "internet" else "ai-access"
+        return (
+            "FAIL CLOSED (UNSUPPORTED MODE)",
+            "unset %s policy; then configure enabled WHITELIST rule(s)." % resource,
+        )
+    if enforcement_n != "enabled":
+        return "DISABLED (DENY ALL)", None
+    return "READY", None
+
+
 # ---------------------------------------------------------------------------
 # Network objects / groups
 # ---------------------------------------------------------------------------
@@ -4373,14 +4395,22 @@ def format_policy_test(family: str, evaluation: dict, selectors: dict, remote_se
         "ai": "AI Access Test",
     }
     plane = evaluation["plane"]
+    mode = evaluation.get("mode")
+    enforcement = evaluation.get("enforcement")
+    display_enforcement = "-" if mode is None else str(enforcement).upper()
     lines = [
         titles.get(plane, "Access Test"),
         "=" * len(titles.get(plane, "Access Test")),
         "",
-        "Mode        : %s" % (evaluation["mode"].upper() if evaluation["mode"] else "No Policy"),
-        "Enforcement : %s" % str(evaluation["enforcement"]).upper(),
+        "Mode        : %s" % (str(mode).upper() if mode else "No Policy"),
+        "Enforcement : %s" % display_enforcement,
         "",
     ]
+    if plane in ("internet", "ai"):
+        readiness, recovery = restricted_policy_readiness(plane, mode, enforcement)
+        lines.insert(5, "Readiness   : %s" % readiness)
+        if recovery:
+            lines.insert(6, "Recovery    : %s" % recovery)
     for key, label in (
         ("source", "Source"),
         ("destination", "Destination"),

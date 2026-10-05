@@ -225,6 +225,30 @@ class SliceARemoteServiceConfirmationTests(unittest.TestCase):
             )
         return rc, out.getvalue(), err.getvalue()
 
+    def test_pending_runtime_detail_gives_exact_recovery_and_verification(self):
+        self.plane.conn.execute(
+            "UPDATE agent_remote_services SET status = 'DEGRADED', "
+            "reason = 'Runtime activation pending.', pending_allocation = 0, "
+            "endpoint_host = 'relay.example.test', endpoint_port = 6002 "
+            "WHERE name = ?",
+            ("confirm-delete",),
+        )
+        self.plane.conn.commit()
+        out = io.StringIO()
+        err = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            rc = cli.dispatch(
+                ["show", "remote-service", "confirm-delete"],
+                root=self.tmp,
+                plane=self.plane,
+            )
+        text = out.getvalue()
+        self.assertEqual(rc, 0, err.getvalue() + text)
+        self.assertIn("Reason: Runtime activation pending.", text)
+        self.assertIn("Next action:\n  system synchronize", text)
+        self.assertIn("Then verify:\n  show remote-service confirm-delete", text)
+        self.assertIn("  show status", text)
+
     def test_remote_service_delete_tty_no_cancels_without_mutation(self):
         self.assertEqual(self._delete_pending(), 0)
         rc, out, err = self._unset(_Tty("n\n"))
@@ -276,7 +300,54 @@ class SliceAInternetCommandTests(unittest.TestCase):
         self.assertIn("Internet Access", out)
         self.assertIn("Mode        : No Policy", out)
         self.assertIn("Unmatched   : DENY", out)
+        self.assertIn("Readiness   : FAIL CLOSED (NO POLICY)", out)
         self.assertNotIn("frp-egress", out + err)
+
+    def test_restricted_plane_output_explains_unsupported_and_no_policy_state(self):
+        self.plane.conn.execute(
+            "INSERT INTO access_policies(plane, mode, enforcement, updated_at) "
+            "VALUES ('internet', 'blacklist', 'enabled', 'now') "
+            "ON CONFLICT(plane) DO UPDATE SET mode = excluded.mode, "
+            "enforcement = excluded.enforcement, updated_at = excluded.updated_at"
+        )
+        self.plane.conn.commit()
+        rc, out, err = self._run(["show", "internet-access"])
+        self.assertEqual(rc, 0, err + out)
+        self.assertIn("Mode        : BLACKLIST", out)
+        self.assertIn("Readiness   : FAIL CLOSED (UNSUPPORTED MODE)", out)
+        self.assertIn(
+            "Recovery    : unset internet-access policy; then configure enabled WHITELIST rule(s).",
+            out,
+        )
+
+        internet_test = v24.format_policy_test(
+            "internet",
+            {
+                "plane": "internet",
+                "mode": "blacklist",
+                "enforcement": "enabled",
+                "matched_rules": [],
+                "result": "DENY",
+            },
+            {"source": "src", "destination": "dst", "service": "https"},
+        )
+        self.assertIn("Readiness   : FAIL CLOSED (UNSUPPORTED MODE)", internet_test)
+        self.assertIn("Recovery    : unset internet-access policy", internet_test)
+
+        ai_test = v24.format_policy_test(
+            "ai",
+            {
+                "plane": "ai",
+                "mode": None,
+                "enforcement": "enabled",
+                "matched_rules": [],
+                "result": "DENY",
+            },
+            {"source": "automation", "destination": "host", "permission": "host-info"},
+        )
+        self.assertIn("Mode        : No Policy", ai_test)
+        self.assertIn("Enforcement : -", ai_test)
+        self.assertIn("Readiness   : FAIL CLOSED (NO POLICY)", ai_test)
 
     def test_test_internet_evaluates_policy_and_dns_without_connection(self):
         real_getaddrinfo = __import__("socket").getaddrinfo

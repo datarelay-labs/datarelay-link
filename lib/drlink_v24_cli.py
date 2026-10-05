@@ -623,6 +623,18 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         )
         if row["reason"]:
             sys.stdout.write("Reason: %s\n" % row["reason"])
+            reason = str(row["reason"]).strip().lower()
+            if (
+                "synchron" in reason
+                or ("pending" in reason and ("runtime" in reason or "activation" in reason))
+            ):
+                sys.stdout.write(
+                    "Next action:\n"
+                    "  system synchronize\n"
+                    "Then verify:\n"
+                    "  show remote-service %s\n"
+                    "  show status\n" % row["name"]
+                )
         return 0
     return None
 
@@ -662,6 +674,13 @@ def _show_policy(plane: ControlPlane, family: str, rest: list[str]) -> int:
                 "Mode        : %s\nEnforcement : %s\nUnmatched   : %s\n"
                 % (pol["mode"].upper(), str(pol["enforcement"]).upper(), eff)
             )
+        if family == "internet":
+            readiness, recovery = v24.restricted_policy_readiness(
+                family, pol["mode"], pol["enforcement"]
+            )
+            sys.stdout.write("Readiness   : %s\n" % readiness)
+            if recovery:
+                sys.stdout.write("Recovery    : %s\n" % recovery)
         sys.stdout.write("\nRules:\n")
         rows = list(
             plane.conn.execute(
@@ -714,6 +733,12 @@ def _show_ai_policy(plane: ControlPlane, rest: list[str]) -> int:
                 "Mode        : %s\nEnforcement : %s\nUnmatched   : %s\n"
                 % (pol["mode"].upper(), str(pol["enforcement"]).upper(), eff)
             )
+        readiness, recovery = v24.restricted_policy_readiness(
+            "ai", pol["mode"], pol["enforcement"]
+        )
+        sys.stdout.write("Readiness   : %s\n" % readiness)
+        if recovery:
+            sys.stdout.write("Recovery    : %s\n" % recovery)
         sys.stdout.write("\nRules:\n")
         rows = list(plane.conn.execute("SELECT name, enabled FROM ai_policy_rules ORDER BY name"))
         if not rows:
