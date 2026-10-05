@@ -284,7 +284,7 @@ NEW_CLIENT_SHA="$(file_sha "$ENROLLED/usr/local/bin/frp-client")"
 grep -q 'old-client' "$ENROLLED/usr/local/bin/frp-client" && fail "old frp-client content remains"
 grep -q 'Enrollment Code : NOT REQUIRED' "$WORKDIR/enrolled.out" || fail "enrollment not required message"
 grep -q 'frpc restarted  : NO' "$WORKDIR/enrolled.out" || fail "no restart message"
-grep -q 'Client state    : preserved' "$WORKDIR/enrolled.out" || fail "state preserved message"
+grep -q 'Agent state     : preserved' "$WORKDIR/enrolled.out" || fail "state preserved message"
 grep -q "1.1.0 -> ${PROJECT_VERSION}" "$WORKDIR/enrolled.out" || fail "version transition"
 if grep -qx enroll "$HOOK"; then fail "upgrade contacted allocator"; fi
 if grep -qx restart "$HOOK"; then fail "upgrade restarted frpc"; fi

@@ -182,7 +182,7 @@ run_repl "$SERVER" "$WORKDIR/zt-mgmt-menu.out" \
   "set enrollment zero-touch" 1 zt-back "optional note" 3 exit \
   || fail "zero-touch back option"
 grep -q '1) SSH only' "$WORKDIR/zt-mgmt-menu.out" || fail "ssh only option missing"
-grep -q '2) Choose services' "$WORKDIR/zt-mgmt-menu.out" || fail "choose services option missing"
+grep -q '2) Choose Remote Services' "$WORKDIR/zt-mgmt-menu.out" || fail "choose services option missing"
 grep -q '3) Back' "$WORKDIR/zt-mgmt-menu.out" || fail "back option missing"
 ! grep -q 'Connect this machine only' "$WORKDIR/zt-mgmt-menu.out" \
   || fail "management-only option must be removed from initial onboarding"
