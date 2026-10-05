@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import io
+import importlib.machinery
+import importlib.util
 import json
 import os
 import shutil
@@ -28,6 +30,41 @@ import frp_cli_catalog as catalog
 
 
 class CliFeatureScenarioRemediation(unittest.TestCase):
+    def test_generated_enrollment_guidance_uses_agent_nouns(self):
+        loader = importlib.machinery.SourceFileLoader(
+            "enrollment_guidance_regression", str(ROOT / "tools/frp-create-client")
+        )
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        enrollment = importlib.util.module_from_spec(spec)
+        loader.exec_module(enrollment)
+        output = io.StringIO()
+        with redirect_stdout(output):
+            enrollment.print_manual(
+                {}, {"id": "example", "secret": "example", "expires_at_iso": "example"},
+                600, "203.0.113.10", 443, "https://203.0.113.10/enroll", "0" * 64,
+                "https://203.0.113.10/artifacts/agent/bootstrap-client.sh",
+            )
+            enrollment.print_one_line(
+                "example-ticket", 600, "", "203.0.113.10", 443,
+                "https://203.0.113.10/enroll", "0" * 64,
+                "https://203.0.113.10/artifacts/agent/bootstrap-client.sh",
+                "", 22, legacy_env=True, cfg={},
+            )
+            enrollment.print_one_line_windows(
+                "example-ticket", 600, "", "203.0.113.10", 443,
+                "https://203.0.113.10/enroll", "0" * 64,
+                "https://203.0.113.10/artifacts/agent/bootstrap-client.ps1", cfg={},
+            )
+        rendered = output.getvalue()
+        self.assertIn("Agent install:", rendered)
+        self.assertIn("Zero-touch Agent command", rendered)
+        self.assertIn("Zero-touch Windows Agent command", rendered)
+        self.assertNotRegex(rendered, r"(?i)\bclient (install|command|after enrollment)")
+        errors = io.StringIO()
+        with redirect_stderr(errors), self.assertRaises(SystemExit):
+            enrollment.require_onboarding_config({})
+        self.assertIn("Agent onboarding", errors.getvalue())
+
     def _completion_payload(self, root_key="FRP_CTL_TEST_ROOT"):
         env = {key: value for key, value in os.environ.items()
                if not key.startswith(("FRP_", "DRLINK_"))}

@@ -268,7 +268,7 @@ def resolve_configured_installer_url(cfg, *, windows=False):
     return server_local_installer_url(cfg, windows=windows)
 
 
-def preflight_installer_url(url, *, label='Client installer'):
+def preflight_installer_url(url, *, label='Agent installer'):
     """Bounded read-only preflight. Confirmed 404 blocks; uncertain does not."""
     import ssl
     import urllib.error
@@ -363,7 +363,7 @@ def require_onboarding_config(cfg):
     """Fail with a product-owned error when enrollment config is incomplete."""
     if not isinstance(cfg, dict):
         fail(
-            "Client onboarding cannot continue because the server configuration is incomplete.\n"
+            "Agent onboarding cannot continue because the server configuration is incomplete.\n"
             "\n"
             "Missing setting:\n"
             "  enrollments_dir\n"
@@ -374,7 +374,7 @@ def require_onboarding_config(cfg):
     value = cfg.get('enrollments_dir')
     if value is None or not str(value).strip():
         fail(
-            "Client onboarding cannot continue because the server configuration is incomplete.\n"
+            "Agent onboarding cannot continue because the server configuration is incomplete.\n"
             "\n"
             "Missing setting:\n"
             "  enrollments_dir\n"
@@ -588,7 +588,7 @@ _TEST_INPUT_LINES = None
 
 def parse_args(argv=None):
     p = argparse.ArgumentParser(
-        description='Create a short-lived Data Relay Link client enrollment code',
+        description='Create a short-lived Data Relay Link Agent enrollment code',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             'examples:\n'
@@ -627,7 +627,7 @@ def parse_args(argv=None):
     p.add_argument(
         '--one-line',
         action='store_true',
-        help='Print a one-line zero-touch client install command',
+        help='Print a one-line zero-touch Agent install command',
     )
     p.add_argument(
         '--ssh',
@@ -660,7 +660,7 @@ def parse_args(argv=None):
         '--platform',
         choices=('linux', 'windows'),
         default='linux',
-        help='Client platform for the one-line command (default: linux)',
+        help='Agent platform for the one-line command (default: linux)',
     )
     p.add_argument(
         '--rdp',
@@ -1011,14 +1011,14 @@ def print_manual(cfg, record, ttl, public_host, control_public, allocator, ca_fp
             )
         except ValueError as exc:
             fail('%s. No changes were applied.' % exc)
-        print('Client install:')
+        print('Agent install:')
         print(command)
         print()
         print('The enrollment code is entered interactively. It is not placed on the command line.')
         print('The command retrieves the allocator CA, checks its SHA-256, then downloads the installer with that CA.')
     elif installer and allocator:
         env_parts = ['FRP_ALLOCATOR_URL=%s' % shell_quote(allocator)]
-        print('Client install:')
+        print('Agent install:')
         print(
             'curl -fsSL %s | sudo env %s bash'
             % (shell_quote(installer), ' '.join(env_parts))
@@ -1027,13 +1027,13 @@ def print_manual(cfg, record, ttl, public_host, control_public, allocator, ca_fp
         print('The enrollment code is entered interactively. It is not placed on the command line.')
         print('WARNING: CA SHA256 is not available, so this command cannot pin the allocator CA.')
     elif installer:
-        print('Client install:')
+        print('Agent install:')
         print('curl -fsSL %s | sudo bash' % shell_quote(installer))
         print()
         print('WARNING: allocator public URL is not configured.')
-        print('Set FRP_ALLOCATOR_URL on the client, or re-run the server installer.')
+        print('Set FRP_ALLOCATOR_URL on the Agent Host, or re-run the server installer.')
     else:
-        print('Set the client installer URL, then re-run this command:')
+        print('Set the Agent installer URL, then re-run this command:')
         print('  sudo drlink set server installer-url <URL>')
         suggested = default_client_installer_url(cfg)
         if suggested and not _is_forbidden_public_installer_url(suggested):
@@ -1117,8 +1117,8 @@ def print_one_line_windows(
 
     tracking_id = str(ticket_id or '').strip()
     print()
-    print('Zero-touch Windows client command')
-    print('=================================')
+    print('Zero-touch Windows Agent command')
+    print('================================')
     print()
     print('This command contains a short-lived one-time bootstrap ticket.')
     print('Treat the command as sensitive until it expires or is used.')
@@ -1227,8 +1227,8 @@ def print_one_line(ticket, ttl, note, public_host, control_public, allocator, ca
             )
 
     print()
-    print('Zero-touch client command')
-    print('=========================')
+    print('Zero-touch Agent command')
+    print('========================')
     print()
     print('This command contains a short-lived one-time bootstrap ticket.')
     print('Treat the command as sensitive until it expires or is used.')
@@ -1254,7 +1254,7 @@ def print_one_line(ticket, ttl, note, public_host, control_public, allocator, ca
     if management_only:
         print('This enrolls management identity only; no service or public port is created.')
     print()
-    print('The ticket is not the FRP token. It cannot manage the client after enrollment.')
+    print('The ticket is not the FRP token. It cannot manage the Agent after enrollment.')
     print('It cannot be reused by another machine once bound.')
     if tracking_id:
         print()
@@ -1320,10 +1320,10 @@ def main(argv=None):
     ca_fp = fingerprint_from_cert(ca_path) if ca_path.is_file() else ''
     if platform == 'windows':
         installer = resolve_configured_installer_url(cfg, windows=True)
-        installer_label = 'Windows client installer URL'
+        installer_label = 'Windows Agent installer URL'
     else:
         installer = resolve_configured_installer_url(cfg, windows=False)
-        installer_label = 'client installer URL'
+        installer_label = 'Agent installer URL'
 
     reject_control_chars('--note', a.note)
     reject_control_chars('--client-name', a.client_name)
@@ -1373,11 +1373,11 @@ def main(argv=None):
     if not installer:
         if platform == 'windows':
             fail(
-                'Windows client installer URL is not configured; '
-                'set server windows-installer-url <URL> before creating a Windows Zero-Touch client'
+                'Windows Agent installer URL is not configured; '
+                'set server windows-installer-url <URL> before creating a Windows Zero-Touch Agent'
             )
         fail(
-            'client installer URL is not configured; '
+            'Agent installer URL is not configured; '
             'run: set server installer-url <URL>'
         )
     if not allocator:
@@ -1422,7 +1422,7 @@ def main(argv=None):
     if not confirm_client_setup():
         return 0
 
-    installer_label = 'Windows client installer' if platform == 'windows' else 'Client installer'
+    installer_label = 'Windows Agent installer' if platform == 'windows' else 'Agent installer'
     preflight_installer_url(installer, label=installer_label)
 
     bootstrap_cfg = str(cfg.get('bootstrap_dir') or '').strip()
