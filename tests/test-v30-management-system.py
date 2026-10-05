@@ -90,6 +90,91 @@ class V30ManagementSystemTests(unittest.TestCase):
         finally:
             plane.close()
 
+    def test_certificate_renew_reuses_canonical_lifecycle_and_redacts_response(self):
+        plane = ControlPlane(self.tmp)
+        try:
+            state = mcp_tls.default_state()
+            state["hostname"] = "mcp.example.test"
+            state["mode"] = mcp_tls.MODE_PRIVATE_CA
+            state["renewal_enabled"] = True
+            mcp_tls.save_state(plane, state)
+            revision = plane.current_revision()
+        finally:
+            plane.close()
+
+        status_view = {
+            "hostname": "mcp.example.test",
+            "mode": mcp_tls.MODE_PRIVATE_CA,
+            "certificate": "VALID",
+            "fingerprint_sha256": "abc",
+            "raw": {"private_key": "must-not-leak"},
+            "active_key_path": "/secret/key",
+        }
+        with mock.patch(
+            "drlink_management_system.mcp_tls.require_public_frontend"
+        ) as frontend, mock.patch(
+            "drlink_management_system.mcp_tls.renew_if_due",
+            return_value={"renewed": False, "reason": "not_due", "state": state},
+        ) as renew, mock.patch(
+            "drlink_management_system.mcp_tls.status_view",
+            return_value=status_view,
+        ):
+            result = ManagementSystemService(self.tmp).certificate_renew(
+                actor_id="web:admin"
+            )
+
+        frontend.assert_called_once_with(self.tmp)
+        renew.assert_called_once()
+        self.assertFalse(result["renewed"])
+        self.assertEqual(result["reason"], "not_due")
+        self.assertFalse(result["authoritative_mutation"])
+        self.assertNotIn("raw", result["certificate"])
+        self.assertNotIn("active_key_path", result["certificate"])
+
+        plane = ControlPlane(self.tmp)
+        try:
+            self.assertEqual(plane.current_revision(), revision)
+            audit = plane.conn.execute(
+                "SELECT actor_id,interface,action,result FROM audit_events "
+                "WHERE entity_type='certificate' ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            self.assertEqual(audit["actor_id"], "web:admin")
+            self.assertEqual(audit["interface"], "WEB")
+            self.assertEqual(audit["action"], "web certificate renew")
+            self.assertEqual(audit["result"], "ok")
+        finally:
+            plane.close()
+
+    def test_certificate_renew_reports_failed_attempt_as_state_mutation(self):
+        plane = ControlPlane(self.tmp)
+        try:
+            state = mcp_tls.default_state()
+            state["hostname"] = "mcp.example.test"
+            state["mode"] = mcp_tls.MODE_PRIVATE_CA
+            mcp_tls.save_state(plane, state)
+        finally:
+            plane.close()
+        with mock.patch(
+            "drlink_management_system.mcp_tls.require_public_frontend"
+        ), mock.patch(
+            "drlink_management_system.mcp_tls.renew_if_due",
+            return_value={
+                "renewed": False,
+                "reason": "failed",
+                "failure_class": "TLS_TEST_FAILURE",
+                "state": state,
+            },
+        ), mock.patch(
+            "drlink_management_system.mcp_tls.status_view",
+            return_value={"hostname": "mcp.example.test", "certificate": "RENEWAL_FAILED"},
+        ):
+            result = ManagementSystemService(self.tmp).certificate_renew(
+                actor_id="web:admin"
+            )
+        self.assertFalse(result["renewed"])
+        self.assertTrue(result["authoritative_mutation"])
+        self.assertEqual(result["failure_class"], "TLS_TEST_FAILURE")
+
     def test_backup_validate_delegates_to_canonical_restore_validator(self):
         completed = subprocess.CompletedProcess(
             args=[], returncode=0, stdout="Backup valid.\n", stderr=""
@@ -112,6 +197,54 @@ class V30ManagementSystemTests(unittest.TestCase):
         self.assertEqual(env["FRP_DEPLOY_TEST_ROOT"], self.tmp)
         self.assertNotIn("DRLINK_CONFIRM", env)
         self.assertNotIn("FRP_RESTORE_YES", env)
+
+    def test_restore_requires_confirmation_revalidates_and_uses_canonical_recovery(self):
+        service = ManagementSystemService(self.tmp)
+        with self.assertRaisesRegex(ControlPlaneError, "confirmation"):
+            service.restore_apply(
+                "/var/lib/drlink/backups/test.tar.gz",
+                actor_id="web:admin",
+                confirmation="",
+            )
+
+        calls = []
+
+        def fake_run(command, **kwargs):
+            calls.append((list(command), dict(kwargs)))
+            if "--validate" in command:
+                return subprocess.CompletedProcess(
+                    args=command,
+                    returncode=0,
+                    stdout="Backup valid.\n",
+                    stderr="",
+                )
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout=(
+                    "Restore completed. Pre-restore snapshot: "
+                    "server-backup-pre-restore.tar.gz (VALIDATED)\n"
+                ),
+                stderr="",
+            )
+
+        with mock.patch(
+            "drlink_management_system.subprocess.run", side_effect=fake_run
+        ):
+            result = service.restore_apply(
+                "/var/lib/drlink/backups/test.tar.gz",
+                actor_id="web:admin",
+                confirmation="RESTORE",
+            )
+        self.assertEqual(result["status"], "RESTORED")
+        self.assertTrue(result["authoritative_mutation"])
+        self.assertTrue(result["web_reauth_required"])
+        self.assertTrue(result["sessions_must_be_revoked"])
+        self.assertEqual(len(calls), 2)
+        self.assertIn("--validate", calls[0][0])
+        self.assertIn("--yes", calls[1][0])
+        self.assertEqual(calls[1][1]["env"]["DRLINK_ACTOR"], "web:admin")
+        self.assertEqual(calls[1][1]["env"]["DRLINK_INTERFACE"], "WEB")
 
     def test_backup_validate_rejects_paths_outside_canonical_backup_directory(self):
         service = ManagementSystemService(self.tmp)
@@ -198,6 +331,7 @@ class V30ManagementSystemTests(unittest.TestCase):
                 "management-diagnose",
                 "management-job-run",
                 "management-config",
+                "management-recovery",
             },
             role="Admin",
         )
@@ -208,7 +342,46 @@ class V30ManagementSystemTests(unittest.TestCase):
         with self.assertRaises(ManagementAuthorizationError):
             core.certificate_preflight(actor=denied)
         with self.assertRaises(ManagementAuthorizationError):
+            core.certificate_renew(actor=operator, confirmation="RENEW")
+        with self.assertRaisesRegex(ControlPlaneError, "confirmation"):
+            core.certificate_renew(actor=admin, confirmation="")
+        with mock.patch.object(
+            ManagementSystemService,
+            "certificate_renew",
+            return_value={"renewed": False, "reason": "not_due"},
+        ) as renew:
+            result = core.certificate_renew(
+                actor=admin,
+                confirmation="RENEW",
+            )
+            self.assertEqual(result["reason"], "not_due")
+            renew.assert_called_once_with(actor_id="web:admin")
+        with self.assertRaises(ManagementAuthorizationError):
             core.backup_create(actor=operator)
+        with self.assertRaises(ManagementAuthorizationError):
+            core.restore_apply(
+                "/var/lib/drlink/backups/test.tar.gz",
+                actor=operator,
+                confirmation="RESTORE",
+            )
+        with mock.patch.object(
+            ManagementSystemService,
+            "restore_apply",
+            return_value={"status": "RESTORED"},
+        ) as restore:
+            self.assertEqual(
+                core.restore_apply(
+                    "/var/lib/drlink/backups/test.tar.gz",
+                    actor=admin,
+                    confirmation="RESTORE",
+                )["status"],
+                "RESTORED",
+            )
+            restore.assert_called_once_with(
+                "/var/lib/drlink/backups/test.tar.gz",
+                actor_id="web:admin",
+                confirmation="RESTORE",
+            )
         with mock.patch.object(
             ManagementSystemService,
             "backup_create",

@@ -101,6 +101,11 @@ MANAGEMENT_PERMISSIONS = (
         "Start or cancel explicitly admitted safe management Job families.",
         frozenset({JOB}),
     ),
+    ManagementPermission(
+        "management-recovery",
+        "Perform local high-risk recovery operations that require explicit confirmation.",
+        frozenset({RECOVERY_AUTHORITY}),
+    ),
 )
 
 MANAGEMENT_PERMISSION_NAMES = frozenset(p.name for p in MANAGEMENT_PERMISSIONS)

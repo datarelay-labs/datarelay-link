@@ -307,6 +307,25 @@ class ManagementCoreService:
         self._require_web_role(actor, "Admin", "Operator", "Read Only")
         return ManagementSystemService(self.root).certificate_preflight()
 
+    def certificate_renew(
+        self,
+        *,
+        actor: ManagementActor,
+        confirmation: str,
+    ) -> dict[str, Any]:
+        self._require_web_role(actor, "Admin")
+        if "management-config" not in actor.permissions:
+            raise ManagementAuthorizationError(
+                "management-config is required for certificate renewal."
+            )
+        if str(confirmation or "").strip().upper() != "RENEW":
+            raise ControlPlaneError(
+                "Certificate renewal requires explicit confirmation 'RENEW'."
+            )
+        return ManagementSystemService(self.root).certificate_renew(
+            actor_id=actor.actor_id
+        )
+
     def backup_validate(self, path: str, *, actor: ManagementActor) -> dict[str, Any]:
         if "management-diagnose" not in actor.permissions:
             raise ManagementAuthorizationError(
@@ -323,6 +342,24 @@ class ManagementCoreService:
             )
         return ManagementSystemService(self.root).backup_create(
             actor_id=actor.actor_id
+        )
+
+    def restore_apply(
+        self,
+        path: str,
+        *,
+        confirmation: str,
+        actor: ManagementActor,
+    ) -> dict[str, Any]:
+        self._require_web_role(actor, "Admin")
+        if "management-recovery" not in actor.permissions:
+            raise ManagementAuthorizationError(
+                "management-recovery is required for restore."
+            )
+        return ManagementSystemService(self.root).restore_apply(
+            path,
+            actor_id=actor.actor_id,
+            confirmation=confirmation,
         )
 
     def support_bundle_create(self, *, actor: ManagementActor) -> dict[str, Any]:

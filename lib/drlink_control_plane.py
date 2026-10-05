@@ -498,6 +498,9 @@ class ControlPlane:
         interface: Optional[str] = None,
     ) -> None:
         occurred = utc_now_iso()
+        revision_value = (
+            int(revision) if revision is not None and int(revision) > 0 else None
+        )
         audit_actor = str(actor or "").strip() or _actor()
         audit_interface = (
             str(interface or "").strip()
@@ -513,7 +516,7 @@ class ControlPlane:
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 occurred,
-                revision,
+                revision_value,
                 audit_actor,
                 action,
                 entity_type,
@@ -533,8 +536,8 @@ class ControlPlane:
                 audit_actor,
                 audit_interface,
                 "" if str(result).lower() in ("ok", "applied", "no_change") else str(result),
-                (int(revision) - 1) if int(revision) > 0 else None,
-                int(revision) if int(revision) >= 0 else None,
+                (revision_value - 1) if revision_value is not None else None,
+                revision_value,
             ),
         )
 

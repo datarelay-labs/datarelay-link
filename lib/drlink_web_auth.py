@@ -743,6 +743,21 @@ class WebAuthService:
             )
             return int(changed or 0)
 
+    def revoke_all_sessions(self, *, actor_id: str, reason: str = "restore") -> int:
+        now = utc_now_iso()
+        with self._lock:
+            changed = self.conn.execute(
+                "UPDATE web_sessions SET revoked_at=? WHERE revoked_at IS NULL",
+                (now,),
+            ).rowcount
+            self._audit(
+                "web.session.revoke_all_global",
+                actor_id=actor_id,
+                resource_id=str(reason or "system"),
+            )
+            self.conn.commit()
+            return int(changed or 0)
+
     def list_sessions(self, operator_id: str) -> list[dict[str, Any]]:
         rows = self.conn.execute(
             "SELECT id,created_at,last_seen_at,expires_at,idle_expires_at,revoked_at,"

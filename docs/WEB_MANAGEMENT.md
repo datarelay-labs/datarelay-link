@@ -883,9 +883,25 @@ contents. Sanitized support-bundle creation is available to Admin/Operator and w
 Both propagate the authenticated Web actor/interface to the canonical tool environment,
 bound output, reject symlink/path escape, and do not create a configuration revision.
 
-Restore remains `RECOVERY_AUTHORITY`. Product/Relay update, certificate mutation, and
-restore are added only through their canonical lifecycle/confirmation/rollback semantics,
-never by shelling out directly from the HTTP layer.
+Certificate lifecycle initially adds **Admin-only renew-if-due**. The browser requires an
+explicit typed `RENEW` confirmation and delegates to canonical `drlink_mcp_tls.renew_if_due`
+with no private-key material or raw TLS state returned. Canonical renewal retains the
+previous valid certificate on issuance/activation failure and records backoff/failure
+state; Web adds actor/interface audit attribution and truthfully distinguishes renewed,
+not-due/backoff, and failed outcomes.
+
+Restore is **Admin-only `RECOVERY_AUTHORITY`**. The browser accepts only a canonical
+backup path under `/var/lib/drlink/backups/`, requires successful validation plus explicit
+typed `RESTORE`, and Core revalidates again before invoking canonical `frp-restore --yes`.
+The restore engine still recalculates access security impact immediately before cutover,
+creates a pre-restore snapshot, and rolls back on failure when the previous state is
+valid. Web enters maintenance for the restore call, reopens its auth DB afterward, revokes
+all restored browser sessions, clears the caller cookie, and requires login again so
+operational session state never resumes from backup.
+
+Product/Relay update and certificate import/mode mutation are added only through their
+canonical lifecycle/confirmation/rollback semantics, never by shelling out directly from
+the HTTP layer.
 
 ### 24.1 Bounded multi-host operations
 

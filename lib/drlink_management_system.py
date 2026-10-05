@@ -88,12 +88,8 @@ class ManagementSystemService:
             "bundle_sha256": str(values.get("BUNDLE_SHA256") or ""),
         }
 
-    def certificate_status(self) -> dict[str, Any]:
-        plane = ControlPlane(self.root, read_only=True)
-        try:
-            view = mcp_tls.status_view(plane, self.root)
-        finally:
-            plane.close()
+    @staticmethod
+    def _redacted_certificate_view(view: dict[str, Any]) -> dict[str, Any]:
         allowed = (
             "url",
             "frontend_available",
@@ -113,6 +109,14 @@ class ManagementSystemService:
             "last_renewal_at",
         )
         return {key: view.get(key) for key in allowed}
+
+    def certificate_status(self) -> dict[str, Any]:
+        plane = ControlPlane(self.root, read_only=True)
+        try:
+            view = mcp_tls.status_view(plane, self.root)
+        finally:
+            plane.close()
+        return self._redacted_certificate_view(view)
 
     def certificate_preflight(self) -> dict[str, Any]:
         plane = ControlPlane(self.root, read_only=True)
@@ -136,6 +140,70 @@ class ManagementSystemService:
         result["mode"] = mode
         result["authoritative_mutation"] = False
         return result
+
+    def certificate_renew(self, *, actor_id: str) -> dict[str, Any]:
+        mcp_tls.require_public_frontend(self.root)
+        plane = ControlPlane(self.root)
+        try:
+            hostname = str(mcp_tls.load_state(plane).get("hostname") or "").strip()
+            if not hostname:
+                raise ControlPlaneError(
+                    "Certificate hostname is not configured. Configure MCP TLS hostname first."
+                )
+            try:
+                result = dict(
+                    mcp_tls.renew_if_due(
+                        plane,
+                        self.root,
+                        force=False,
+                    )
+                )
+            except mcp_tls.McpTlsError as exc:
+                plane._audit(
+                    revision=int(plane.current_revision()),
+                    action="web certificate renew",
+                    entity_type="certificate",
+                    entity_id=hostname,
+                    operation="renew",
+                    result="failed",
+                    impact=str(exc.failure_class or "TLS_RENEW_FAILED"),
+                    actor=actor_id,
+                    interface="WEB",
+                )
+                raise ControlPlaneError(
+                    "%s (%s)" % (exc, exc.failure_class)
+                ) from exc
+            renewed = bool(result.get("renewed"))
+            reason = str(result.get("reason") or ("renewed" if renewed else "unknown"))
+            failure_class = str(result.get("failure_class") or "")
+            plane._audit(
+                revision=int(plane.current_revision()),
+                action="web certificate renew",
+                entity_type="certificate",
+                entity_id=hostname,
+                operation="renew",
+                result="ok" if renewed or reason in (
+                    "not_due",
+                    "backoff",
+                    "renewal_not_applicable",
+                    "renewal_disabled",
+                ) else "failed",
+                impact=failure_class or reason,
+                actor=actor_id,
+                interface="WEB",
+            )
+            view = self._redacted_certificate_view(
+                mcp_tls.status_view(plane, self.root)
+            )
+            return {
+                "renewed": renewed,
+                "reason": reason,
+                "failure_class": failure_class,
+                "certificate": view,
+                "authoritative_mutation": renewed or reason == "failed",
+            }
+        finally:
+            plane.close()
 
     def _backup_target(self, path: str) -> tuple[str, Path]:
         requested = str(path or "").strip()
@@ -302,6 +370,59 @@ class ManagementSystemService:
             protected=True,
             sanitized=False,
         )
+
+    def restore_apply(
+        self,
+        path: str,
+        *,
+        actor_id: str,
+        confirmation: str,
+    ) -> dict[str, Any]:
+        if str(confirmation or "").strip().upper() != "RESTORE":
+            raise ControlPlaneError(
+                "Restore requires explicit confirmation 'RESTORE'."
+            )
+        requested, actual = self._backup_target(path)
+        validation = self.backup_validate(requested)
+        if not bool(validation.get("valid")):
+            detail = _safe_text(
+                str(validation.get("error") or validation.get("output") or "")
+            ).strip()
+            raise ControlPlaneError(
+                "Backup validation failed before restore."
+                + ((" " + detail) if detail else "")
+            )
+        tool = _tool_path(self.root_path, "frp-restore")
+        try:
+            proc = subprocess.run(
+                [sys.executable, str(tool), "--yes", str(actual)],
+                capture_output=True,
+                text=True,
+                timeout=300,
+                check=False,
+                env=self._artifact_env(actor_id=actor_id),
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise ControlPlaneError(
+                "Restore timed out. Check recovery status before retrying."
+            ) from exc
+        output = _safe_text(proc.stdout)
+        error = _safe_text(proc.stderr)
+        if proc.returncode != 0:
+            detail = (error or output).strip()
+            raise ControlPlaneError(
+                "Restore failed through the canonical recovery path."
+                + ((" " + detail) if detail else "")
+            )
+        return {
+            "status": "RESTORED",
+            "path": requested,
+            "summary": "Restore completed through the canonical recovery path.",
+            "web_reauth_required": True,
+            "sessions_must_be_revoked": True,
+            "recovery_authority": True,
+            "authoritative_mutation": True,
+        }
 
     def support_bundle_create(self, *, actor_id: str) -> dict[str, Any]:
         canonical, actual = self._artifact_path(

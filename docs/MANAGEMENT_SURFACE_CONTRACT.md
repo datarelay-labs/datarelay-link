@@ -190,7 +190,8 @@ command-exec
 Granting any of those must **never** imply permission to mutate Data Relay Link itself.
 
 DRL3-0 freezes the baseline management permission values below, and DRL3-3 adds
-`management-config` for guided Core configuration parity:
+`management-config` for guided Core configuration parity plus
+`management-recovery` for local Admin-only recovery authority:
 
 ```text
 management-read
@@ -201,6 +202,7 @@ management-emergency-cutoff
 management-job-observe
 management-job-run
 management-config
+management-recovery
 ```
 
 These names are public 3.0 capability values. They are separate from target-OS permissions
@@ -511,8 +513,17 @@ OBSERVE/TEST behavior. Protected backup creation requires local Web Admin plus
 creation requires Admin/Operator plus `management-job-run` and writes only under
 `/var/lib/drlink/support-bundles/`. The browser cannot select an arbitrary output path,
 archive contents are not exposed, and the authenticated Web actor/interface is propagated
-to the canonical tool boundary. Restore remains `RECOVERY_AUTHORITY` and is not implied
-by backup validation or backup creation.
+to the canonical tool boundary. Certificate renew-if-due is local Web Admin only, requires
+`management-config` plus explicit typed `RENEW`, delegates to canonical TLS renewal,
+returns only the redacted certificate view, and records the actual Web actor/interface.
+Restore is local Web Admin-only `RECOVERY_AUTHORITY`, requires
+`management-recovery` plus explicit typed `RESTORE`, is restricted to the canonical
+backup directory, revalidates the archive immediately before invoking canonical
+`frp-restore --yes`, and relies on that engine's pre-restore snapshot/rollback/security-
+impact recheck. The Web auth DB connection is reopened after restore, all restored browser
+sessions are revoked, and the current session cookie is cleared so restored operational
+session state cannot silently resume. Restore is not implied by backup validation or
+backup creation and remains absent from Plugin/MCP.
 
 DRL3-0 additionally freezes:
 

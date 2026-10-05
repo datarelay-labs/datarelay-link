@@ -239,7 +239,10 @@ class V30WebAuthTests(unittest.TestCase):
         self.assertIn("management-read", read)
         self.assertNotIn("management-temporary-access", read)
         self.assertIn("management-temporary-access", operator)
+        self.assertNotIn("management-recovery", read)
+        self.assertNotIn("management-recovery", operator)
         self.assertIn("management-emergency-cutoff", admin)
+        self.assertIn("management-recovery", admin)
         for permissions in (read, operator, admin):
             self.assertNotIn("command-exec", permissions)
             self.assertNotIn("file-write", permissions)

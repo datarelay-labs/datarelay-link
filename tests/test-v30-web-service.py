@@ -244,6 +244,111 @@ class V30WebServiceTests(unittest.TestCase):
         finally:
             plane.close()
 
+    def test_certificate_renew_route_requires_csrf_and_explicit_confirmation(self):
+        login = self.login()
+        operator_id = login["operator"]["id"]
+
+        status, _, _ = self.request(
+            "POST",
+            "/api/v1/system/certificate/renew",
+            {"confirmation": "RENEW"},
+        )
+        self.assertEqual(status, 403)
+
+        status, _, denied = self.request(
+            "POST",
+            "/api/v1/system/certificate/renew",
+            {"confirmation": ""},
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 400, denied)
+        self.assertIn("confirmation", denied["error"].lower())
+
+        from unittest import mock
+        with mock.patch(
+            "drlink_management_core.ManagementSystemService.certificate_renew",
+            return_value={
+                "renewed": False,
+                "reason": "not_due",
+                "failure_class": "",
+                "certificate": {"hostname": "mcp.example.test"},
+                "authoritative_mutation": False,
+            },
+        ) as renew:
+            status, _, result = self.request(
+                "POST",
+                "/api/v1/system/certificate/renew",
+                {"confirmation": "RENEW"},
+                headers={"X-CSRF-Token": self.csrf},
+            )
+        self.assertEqual(status, 200, result)
+        self.assertFalse(result["renewed"])
+        renew.assert_called_once_with(actor_id="web:%s" % operator_id)
+
+    def test_restore_requires_admin_confirmation_revokes_sessions_and_clears_cookie(self):
+        login = self.login()
+        operator_id = login["operator"]["id"]
+
+        status, _, _ = self.request(
+            "POST",
+            "/api/v1/system/restore",
+            {
+                "path": "/var/lib/drlink/backups/test.tar.gz",
+                "confirmation": "RESTORE",
+            },
+        )
+        self.assertEqual(status, 403)
+
+        status, _, denied = self.request(
+            "POST",
+            "/api/v1/system/restore",
+            {
+                "path": "/var/lib/drlink/backups/test.tar.gz",
+                "confirmation": "",
+            },
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 400, denied)
+        self.assertIn("confirmation", denied["error"].lower())
+
+        status, _, session = self.request("GET", "/api/v1/session")
+        self.assertEqual(status, 200, session)
+
+        from unittest import mock
+        with mock.patch(
+            "drlink_management_core.ManagementSystemService.restore_apply",
+            return_value={
+                "status": "RESTORED",
+                "path": "/var/lib/drlink/backups/test.tar.gz",
+                "web_reauth_required": True,
+                "sessions_must_be_revoked": True,
+                "recovery_authority": True,
+                "authoritative_mutation": True,
+            },
+        ) as restore:
+            status, headers, result = self.request(
+                "POST",
+                "/api/v1/system/restore",
+                {
+                    "path": "/var/lib/drlink/backups/test.tar.gz",
+                    "confirmation": "RESTORE",
+                },
+                headers={"X-CSRF-Token": self.csrf},
+            )
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result["status"], "RESTORED")
+        self.assertTrue(result["web_reauth_required"])
+        self.assertGreaterEqual(result["web_sessions_revoked"], 1)
+        self.assertIn("Max-Age=0", headers.get("set-cookie", ""))
+        restore.assert_called_once_with(
+            "/var/lib/drlink/backups/test.tar.gz",
+            actor_id="web:%s" % operator_id,
+            confirmation="RESTORE",
+        )
+
+        status, _, _ = self.request("GET", "/api/v1/session")
+        self.assertEqual(status, 401)
+
     def test_system_artifact_routes_are_csrf_protected_and_bounded(self):
         self.login()
 

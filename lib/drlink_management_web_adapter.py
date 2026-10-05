@@ -94,11 +94,32 @@ class ManagementWebApiAdapter:
     def certificate_preflight(self, *, actor: ManagementActor) -> dict[str, Any]:
         return self.core.certificate_preflight(actor=actor)
 
+    def certificate_renew(
+        self, *, actor: ManagementActor, confirmation: str
+    ) -> dict[str, Any]:
+        return self.core.certificate_renew(
+            actor=actor,
+            confirmation=confirmation,
+        )
+
     def backup_validate(self, path: str, *, actor: ManagementActor) -> dict[str, Any]:
         return self.core.backup_validate(path, actor=actor)
 
     def backup_create(self, *, actor: ManagementActor) -> dict[str, Any]:
         return self.core.backup_create(actor=actor)
+
+    def restore_apply(
+        self,
+        path: str,
+        *,
+        confirmation: str,
+        actor: ManagementActor,
+    ) -> dict[str, Any]:
+        return self.core.restore_apply(
+            path,
+            confirmation=confirmation,
+            actor=actor,
+        )
 
     def support_bundle_create(self, *, actor: ManagementActor) -> dict[str, Any]:
         return self.core.support_bundle_create(actor=actor)

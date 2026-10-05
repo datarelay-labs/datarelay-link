@@ -361,9 +361,12 @@ function TemporaryAccessPanel(){
 
 function SystemPanel({data,operator}:{data:any,operator:any}){
   const [backupPath,setBackupPath]=useState("/var/lib/drlink/backups/");
-  const [preflight,setPreflight]=useState<any>(null),[validation,setValidation]=useState<any>(null),[backupArtifact,setBackupArtifact]=useState<any>(null),[supportArtifact,setSupportArtifact]=useState<any>(null),[error,setError]=useState("");
+  const [renewConfirmation,setRenewConfirmation]=useState(""),[restoreConfirmation,setRestoreConfirmation]=useState("");
+  const [preflight,setPreflight]=useState<any>(null),[renewal,setRenewal]=useState<any>(null),[validation,setValidation]=useState<any>(null),[backupArtifact,setBackupArtifact]=useState<any>(null),[supportArtifact,setSupportArtifact]=useState<any>(null),[error,setError]=useState("");
   async function runPreflight(){setError("");try{setPreflight(await api("/api/v1/system/certificate/preflight",{method:"POST",body:"{}"}))}catch(e:any){setError(e.message||String(e))}}
-  async function validateBackup(){setError("");try{setValidation(await api("/api/v1/system/backup/validate",{method:"POST",body:JSON.stringify({path:backupPath})}))}catch(e:any){setError(e.message||String(e))}}
+  async function renewCertificate(){setError("");setRenewal(null);try{setRenewal(await api("/api/v1/system/certificate/renew",{method:"POST",body:JSON.stringify({confirmation:renewConfirmation})}));setRenewConfirmation("")}catch(e:any){setError(e.message||String(e))}}
+  async function validateBackup(){setError("");setRestoreConfirmation("");try{setValidation(await api("/api/v1/system/backup/validate",{method:"POST",body:JSON.stringify({path:backupPath})}))}catch(e:any){setValidation(null);setError(e.message||String(e))}}
+  async function restoreBackup(){setError("");try{await api("/api/v1/system/restore",{method:"POST",body:JSON.stringify({path:backupPath,confirmation:restoreConfirmation})});window.location.reload()}catch(e:any){setError(e.message||String(e))}}
   async function createBackup(){setError("");setBackupArtifact(null);try{setBackupArtifact(await api("/api/v1/system/backup/create",{method:"POST",body:"{}"}))}catch(e:any){setError(e.message||String(e))}}
   async function createSupportBundle(){setError("");setSupportArtifact(null);try{setSupportArtifact(await api("/api/v1/system/support-bundle",{method:"POST",body:"{}"}))}catch(e:any){setError(e.message||String(e))}}
   const identity=data.identity||{},certificate=data.certificate||{},backup=data.backup||{},support=data.support_bundle||{};
@@ -383,7 +386,9 @@ function SystemPanel({data,operator}:{data:any,operator:any}){
       <h3>Certificate Status</h3>
       <Table items={[{mode:certificate.mode,hostname:certificate.hostname,certificate:certificate.certificate,issuer:certificate.issuer,expires:certificate.expires,days_remaining:certificate.days_remaining,auto_renewal:certificate.auto_renewal}]}/>
       <button className="secondary" onClick={runPreflight}>Run Certificate Preflight</button>
+      {operator.role==="Admin"&&<div className="toolbar"><input value={renewConfirmation} onChange={e=>setRenewConfirmation(e.target.value)} placeholder="Type RENEW"/><button className="danger" onClick={renewCertificate} disabled={renewConfirmation!=="RENEW"}>Renew Certificate If Due</button></div>}
       {preflight&&<pre className="plan">{JSON.stringify(preflight,null,2)}</pre>}
+      {renewal&&<pre className="plan">{JSON.stringify(renewal,null,2)}</pre>}
     </div>
     <div className="card">
       <h3>Backup</h3>
@@ -392,8 +397,9 @@ function SystemPanel({data,operator}:{data:any,operator:any}){
       {backupArtifact&&<pre className="plan">{JSON.stringify(backupArtifact,null,2)}</pre>}
       <h4>Validate Existing Backup</h4>
       <div className="muted">Validation is read-only and uses the same disaster-recovery validator as CLI restore preflight.</div>
-      <div className="toolbar"><input value={backupPath} onChange={e=>setBackupPath(e.target.value)} placeholder="/var/lib/drlink/backups/server-backup-....tar.gz"/><button className="secondary" onClick={validateBackup} disabled={!backupPath}>Validate Backup</button></div>
+      <div className="toolbar"><input value={backupPath} onChange={e=>{setBackupPath(e.target.value);setValidation(null);setRestoreConfirmation("")}} placeholder="/var/lib/drlink/backups/server-backup-....tar.gz"/><button className="secondary" onClick={validateBackup} disabled={!backupPath}>Validate Backup</button></div>
       {validation&&<pre className="plan">{JSON.stringify(validation,null,2)}</pre>}
+      {operator.role==="Admin"&&validation?.valid&&<div className="warning-box"><strong>Restore replaces persistent Data Relay Link state.</strong><div>Canonical restore revalidates the archive, creates a pre-restore snapshot, rolls back on failure when possible, and revokes all Web sessions after success.</div><div className="toolbar"><input value={restoreConfirmation} onChange={e=>setRestoreConfirmation(e.target.value)} placeholder="Type RESTORE"/><button className="danger" onClick={restoreBackup} disabled={restoreConfirmation!=="RESTORE"}>Restore Validated Backup</button></div></div>}
     </div>
     <div className="card">
       <h3>Support Bundle</h3>

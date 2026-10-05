@@ -8,6 +8,7 @@ import json
 import mimetypes
 import os
 import ssl
+import threading
 from http import cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -96,6 +97,8 @@ class WebApplication:
         self.secure_cookie = bool(secure_cookie)
         self.auth = WebAuthService(root)
         self.adapter = ManagementWebApiAdapter(root)
+        self._restore_lock = threading.RLock()
+        self._restore_in_progress = False
 
     def close(self) -> None:
         self.auth.close()
@@ -143,11 +146,62 @@ class WebApplication:
         csrf_token: Optional[str] = None,
         require_csrf: bool = False,
     ) -> Optional[WebPrincipal]:
+        if self._restore_in_progress:
+            return None
         return self.auth.validate_session(
             token,
             csrf_token=csrf_token,
             require_csrf=require_csrf,
         )
+
+    def _restore_apply(
+        self,
+        *,
+        actor: ManagementActor,
+        path: str,
+        confirmation: str,
+    ) -> dict[str, Any]:
+        if str(confirmation or "").strip().upper() != "RESTORE":
+            raise ControlPlaneError(
+                "Restore requires explicit confirmation 'RESTORE'."
+            )
+        with self._restore_lock:
+            if self._restore_in_progress:
+                raise ControlPlaneError("Restore is already in progress.")
+            self._restore_in_progress = True
+            auth_ready = False
+            try:
+                self.auth.close()
+                result = self.adapter.restore_apply(
+                    path,
+                    confirmation=confirmation,
+                    actor=actor,
+                )
+                self.auth = WebAuthService(self.root)
+                auth_ready = True
+                revoked = self.auth.revoke_all_sessions(
+                    actor_id=actor.actor_id,
+                    reason="restore",
+                )
+                return {
+                    **result,
+                    "web_sessions_revoked": revoked,
+                    "web_reauth_required": True,
+                }
+            except Exception as restore_exc:
+                if not auth_ready:
+                    try:
+                        self.auth = WebAuthService(self.root)
+                        auth_ready = True
+                    except Exception as auth_exc:
+                        self._restore_in_progress = True
+                        raise ControlPlaneError(
+                            "Web authentication is unavailable after the recovery attempt. "
+                            "Use local CLI recovery before retrying Web management."
+                        ) from auth_exc
+                raise restore_exc
+            finally:
+                self._restore_in_progress = not auth_ready
 
     def read_api(
         self,
@@ -367,6 +421,11 @@ class WebApplication:
         actor = self._actor(principal)
         if path == "/api/v1/system/certificate/preflight":
             return self.adapter.certificate_preflight(actor=actor)
+        if path == "/api/v1/system/certificate/renew":
+            return self.adapter.certificate_renew(
+                actor=actor,
+                confirmation=str(body.get("confirmation") or ""),
+            )
         if path == "/api/v1/system/backup/validate":
             return self.adapter.backup_validate(
                 str(body.get("path") or ""),
@@ -374,6 +433,12 @@ class WebApplication:
             )
         if path == "/api/v1/system/backup/create":
             return self.adapter.backup_create(actor=actor)
+        if path == "/api/v1/system/restore":
+            return self._restore_apply(
+                actor=actor,
+                path=str(body.get("path") or ""),
+                confirmation=str(body.get("confirmation") or ""),
+            )
         if path == "/api/v1/system/support-bundle":
             return self.adapter.support_bundle_create(actor=actor)
         if path == "/api/v1/enrollments/manual":
@@ -392,12 +457,6 @@ class WebApplication:
                 ttl_seconds=ttl_value,
                 label=str(body.get("label") or ""),
                 note=str(body.get("note") or ""),
-            )
-        if path == "/api/v1/system/certificate/preflight":
-            return self.adapter.certificate_preflight(actor=actor)
-        if path == "/api/v1/system/backup/validate":
-            return self.adapter.backup_validate(
-                str(body.get("path") or ""), actor=actor
             )
         if path == "/api/v1/drafts":
             return self.adapter.draft_create(
@@ -620,7 +679,10 @@ class DrlinkWebHandler(BaseHTTPRequestHandler):
         try:
             body = self._body_json()
             payload = self.app.write_api(parsed.path, body, principal)
-            clear = parsed.path == "/api/v1/auth/logout"
+            clear = parsed.path in (
+                "/api/v1/auth/logout",
+                "/api/v1/system/restore",
+            )
             self._json(
                 200,
                 payload,
