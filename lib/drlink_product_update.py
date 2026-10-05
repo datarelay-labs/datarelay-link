@@ -255,8 +255,8 @@ def _safe_extract(bundle: Path, dest: Path) -> Path:
                 raise ProductUpdateError("Web package contains an unsupported link/device entry.")
         tf.extractall(dest, filter="data")
     root = dest / "data-relay-link-web"
-    if not (root / "install-web.sh").is_file() or not (root / "release-manifest.json").is_file():
-        raise ProductUpdateError("Web package is missing required release identity/install files.")
+    if not (root / "install-web.sh").is_file():
+        raise ProductUpdateError("Web package is missing its installer.")
     return root
 
 
@@ -284,10 +284,12 @@ def _package_identity(package_root: Path, requested_ref: str, requested_channel:
 
 def _download_exact_package(ref: str, channel: str, temp: Path) -> tuple[Path, dict[str, str], str]:
     sums = temp / "SHA256SUMS"
+    manifest = temp / "release-manifest.json"
     bundle = temp / "data-relay-link-web.tar.gz"
     base = "%s/%s" % (RAW_BASE, ref)
     for url, dest in (
         (base + "/SHA256SUMS", sums),
+        (base + "/release-manifest.json", manifest),
         (base + "/" + WEB_ARTIFACT, bundle),
     ):
         proc = subprocess.run(
@@ -306,6 +308,7 @@ def _download_exact_package(ref: str, channel: str, temp: Path) -> tuple[Path, d
     extracted = temp / "web"
     extracted.mkdir()
     package_root = _safe_extract(bundle, extracted)
+    shutil.copy2(manifest, package_root / "release-manifest.json")
     identity = _package_identity(package_root, ref, channel)
     return package_root, identity, actual
 
