@@ -104,13 +104,21 @@ class CliFeatureScenarioRemediation(unittest.TestCase):
         backend = Path(self.tmp) / "blocking_backend.py"
         pids = Path(self.tmp) / "command_pids.json"
         backend.write_text('''import json, os, signal, sys, time
+ready_read, ready_write = os.pipe()
 child = os.fork()
 if child == 0:
+    os.close(ready_read)
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    os.write(ready_write, b"1")
+    os.close(ready_write)
     while True:
         time.sleep(1)
-with open(sys.argv[1], "w") as f:
+os.close(ready_write)
+assert os.read(ready_read, 1) == b"1"
+os.close(ready_read)
+with open(sys.argv[1] + ".tmp", "w") as f:
     json.dump([os.getpid(), child], f)
+os.replace(sys.argv[1] + ".tmp", sys.argv[1])
 while True:
     time.sleep(1)
 ''')
@@ -141,8 +149,12 @@ while True:
                 self.assertFalse(active(pid), "command descendant survived")
         finally:
             if proc.poll() is None:
-                proc.kill()
-                proc.wait()
+                proc.send_signal(signal.SIGINT)
+                try:
+                    proc.communicate(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait()
             if owned:
                 try:
                     os.killpg(owned[0], signal.SIGKILL)
