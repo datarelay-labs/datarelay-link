@@ -613,6 +613,9 @@ frpctl_nav_workflow delete_enrollment
             row = next(line for line in text.splitlines() if "**Access Policy**" in line)
             for semantic in ("Remote", "Internet", "AI", "BLACKLIST", "WHITELIST-only", "deny-by-default"):
                 self.assertIn(semantic, row, name)
+            internet = text.split("### Internet Access", 1)[1].split("### AI Access", 1)[0]
+            self.assertIn("WHITELIST-only deny-by-default policy enforcement", internet, name)
+            self.assertNotIn("BLACKLIST", internet, name)
 
     def test_missing_grammar_recovery_names_current_update_command(self):
         script = '''source "$1"

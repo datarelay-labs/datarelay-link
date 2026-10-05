@@ -214,7 +214,7 @@ Protected hosts can use standard HTTP/HTTPS proxy settings. The gateway allows o
 Security includes:
 
 ```text
-BLACKLIST / WHITELIST policy enforcement
+WHITELIST-only deny-by-default policy enforcement
 fail-closed unsafe-destination checks
 server-side DNS
 DNS rebinding resistance
