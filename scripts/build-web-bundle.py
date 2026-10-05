@@ -11,6 +11,8 @@ ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "dist/data-relay-link-web.tar.gz"
 MANIFEST = ROOT / "lib/web-project-files.manifest"
 BUILD_FILES = (
+    "VERSION",
+    "release-manifest.json",
     "install-web.sh",
     "uninstall-web.sh",
     "lib/web-project-files.manifest",

@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import drlink_mcp_tls as mcp_tls
+import drlink_product_update as product_update
 from drlink_control_db import ControlPlaneError
 from drlink_control_plane import ControlPlane
 from frp_version_identity import identity_from_kv, read_version_file
@@ -1293,52 +1294,88 @@ class ManagementSystemService:
             "authoritative_mutation": False,
         }
 
-    def update_product_apply(self, *, actor_id: str) -> dict[str, Any]:
-        tool = _tool_path(self.root_path, "frp-project-update")
-        env = self._artifact_env(actor_id=actor_id)
-        if self.root and self.root != "/":
-            env["FRP_SERVER_TEST_ROOT"] = self.root
+    def _product_update_available(self) -> bool:
+        if not self._tool_available("drlink-product-update-worker"):
+            return False
+        unit = self.root_path / "etc/systemd/system/drlink-product-update@.service"
+        return unit.is_file() and str(self.root_path) == "/"
+
+    def _activate_product_update(self, job_id: str) -> None:
+        if str(self.root_path) != "/" and os.environ.get(
+            "DRLINK_PRODUCT_UPDATE_TEST_ACTIVATE"
+        ) != "1":
+            raise ControlPlaneError(
+                "Product update activation is unavailable in an isolated test root."
+            )
+        unit = "drlink-product-update@%s.service" % job_id
         try:
             proc = subprocess.run(
-                ["bash", str(tool)],
+                ["systemctl", "start", "--no-block", unit],
                 capture_output=True,
                 text=True,
-                timeout=300,
+                timeout=30,
                 check=False,
-                env=env,
             )
         except subprocess.TimeoutExpired as exc:
-            raise ControlPlaneError(
-                "Product update timed out. Check update/recovery status before retrying."
-            ) from exc
-        output = _safe_text(proc.stdout)
-        error = _safe_text(proc.stderr)
+            raise ControlPlaneError("Product update activation timed out.") from exc
         if proc.returncode != 0:
-            combined = (output + "\n" + error).strip()
-            suffix = " RECOVERY_REQUIRED" if "RECOVERY_REQUIRED" in combined else ""
-            detail = (error or output).strip()
+            detail = _safe_text(proc.stderr or proc.stdout).strip()
             raise ControlPlaneError(
-                "Product update failed.%s%s"
-                % (suffix, ((" " + detail) if detail else ""))
+                "Product update activation failed."
+                + ((" " + detail) if detail else "")
             )
+
+    def update_product_apply(self, *, actor_id: str) -> dict[str, Any]:
+        if not self._tool_available("drlink-product-update-worker"):
+            raise ControlPlaneError("Product update worker is not installed.")
+        identity = self._read_identity()
+        try:
+            queued = product_update.create_request(
+                self.root,
+                actor_id=actor_id,
+                identity=identity,
+            )
+        except product_update.ProductUpdateError as exc:
+            raise ControlPlaneError(str(exc)) from exc
+        job_id = str(queued["job_id"])
         plane = ControlPlane(self.root)
         try:
             plane._audit(
                 revision=int(plane.current_revision()),
-                action="web product update",
+                action="web product update queued",
                 entity_type="system-update",
                 entity_id="product",
                 operation="update",
                 actor=actor_id,
                 interface="WEB",
+                impact="job_id=%s source_ref=%s" % (job_id, queued["source_ref"]),
             )
         finally:
             plane.close()
+        try:
+            self._activate_product_update(job_id)
+        except Exception as exc:
+            product_update.mark_failed(self.root, job_id, str(exc))
+            raise
         return {
             "target": "product",
-            "status": "UPDATED",
-            "output": output,
+            "status": "QUEUED",
+            "job_id": job_id,
+            "source_ref": queued["source_ref"],
+            "source_head": queued["source_head"],
             "authoritative_mutation": True,
+            "web_reconnect_expected": True,
+        }
+
+    def update_product_status(self, job_id: str) -> dict[str, Any]:
+        try:
+            status = product_update.read_status(self.root, job_id)
+        except product_update.ProductUpdateError as exc:
+            raise ControlPlaneError(str(exc)) from exc
+        return {
+            **status,
+            "target": "product",
+            "authoritative_mutation": False,
         }
 
     def update_engine_apply(self, *, actor_id: str) -> dict[str, Any]:
@@ -1417,7 +1454,8 @@ class ManagementSystemService:
             },
             "update": {
                 "product_check_available": self._tool_available("frp-project-update"),
-                "product_apply_via_web": self._tool_available("frp-project-update"),
+                "product_apply_via_web": self._product_update_available(),
+                "product_apply_mode": "QUEUED_EXACT_BUILD",
                 "engine_check_available": self._tool_available("frp-update"),
                 "engine_apply_via_web": self._tool_available("frp-update"),
             },

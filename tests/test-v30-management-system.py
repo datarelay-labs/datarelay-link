@@ -42,6 +42,11 @@ class V30ManagementSystemTests(unittest.TestCase):
             "BUNDLE_SHA256=" + ("a" * 64) + "\n",
             encoding="utf-8",
         )
+        (root / "usr/local/lib/drlink").mkdir(parents=True, exist_ok=True)
+        (root / "usr/local/lib/drlink/drlink-product-update-worker").write_text("worker\n", encoding="utf-8")
+        (root / "etc/systemd/system").mkdir(parents=True, exist_ok=True)
+        (root / "etc/systemd/system/drlink-product-update@.service").write_text("unit\n", encoding="utf-8")
+        (root / "etc/systemd/system/drlink-web.service").write_text("web\n", encoding="utf-8")
         plane = ControlPlane(self.tmp)
         plane.close()
 
@@ -218,7 +223,7 @@ class V30ManagementSystemTests(unittest.TestCase):
             plane.close()
         with mock.patch(
             "drlink_management_system.subprocess.run", side_effect=fake_run
-        ):
+        ), mock.patch.object(service, "_activate_product_update") as activate:
             product = service.update_check("product")
             engine = service.update_check("engine")
             product_applied = service.update_product_apply(actor_id="web:admin")
@@ -227,8 +232,10 @@ class V30ManagementSystemTests(unittest.TestCase):
         self.assertEqual(engine["availability"], "NOT_NEEDED")
         self.assertFalse(product["authoritative_mutation"])
         self.assertFalse(engine["authoritative_mutation"])
-        self.assertEqual(product_applied["status"], "UPDATED")
+        self.assertEqual(product_applied["status"], "QUEUED")
         self.assertTrue(product_applied["authoritative_mutation"])
+        self.assertTrue(product_applied["web_reconnect_expected"])
+        activate.assert_called_once_with(product_applied["job_id"])
         self.assertEqual(applied["status"], "UPDATED")
         self.assertTrue(applied["authoritative_mutation"])
         self.assertEqual(calls[-1][1]["env"]["DRLINK_ACTOR"], "web:admin")
@@ -243,6 +250,13 @@ class V30ManagementSystemTests(unittest.TestCase):
             self.assertEqual(audit["actor_id"], "web:admin")
             self.assertEqual(audit["interface"], "WEB")
             self.assertEqual(audit["action"], "web relay-engine update")
+            product_audit = plane.conn.execute(
+                "SELECT actor_id,interface,action FROM audit_events "
+                "WHERE action='web product update queued' ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            self.assertIsNotNone(product_audit)
+            self.assertEqual(product_audit["actor_id"], "web:admin")
+            self.assertEqual(product_audit["interface"], "WEB")
         finally:
             plane.close()
 

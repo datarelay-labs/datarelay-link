@@ -274,6 +274,11 @@ class ManagementWebApiAdapter:
             confirmation=confirmation,
         )
 
+    def update_product_status(
+        self, job_id: str, *, actor: ManagementActor
+    ) -> dict[str, Any]:
+        return self.core.update_product_status(job_id, actor=actor)
+
     def update_engine_apply(
         self, *, actor: ManagementActor, confirmation: str
     ) -> dict[str, Any]:

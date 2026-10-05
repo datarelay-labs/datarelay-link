@@ -58,6 +58,7 @@ for f in \
   "$BASE_DIR/lib/drlink_management_change.py" \
   "$BASE_DIR/lib/drlink_management_drafts.py" \
   "$BASE_DIR/lib/drlink_management_guided.py" \
+  "$BASE_DIR/lib/drlink_product_update.py" \
   "$BASE_DIR/lib/drlink_management_core.py" \
   "$BASE_DIR/lib/drlink_management_mcp_adapter.py" \
   "$BASE_DIR/lib/drlink_management_web_adapter.py" \
@@ -74,6 +75,7 @@ for f in \
   "$BASE_DIR/server/drlink-audit-ingest.py" \
   "$BASE_DIR/server/drlink-audit-ingest.service" \
   "$BASE_DIR/server/drlink-audit-ingest.timer" \
+  "$BASE_DIR/server/drlink-product-update@.service" \
   "$BASE_DIR/lib/frp_ctl_repl.py" \
   "$BASE_DIR/lib/frp_machine_id.py" \
   "$BASE_DIR/lib/frp_bounded_server.py" \
@@ -100,6 +102,7 @@ for f in \
   "$BASE_DIR/tools/frp-server-set" \
   "$BASE_DIR/tools/frp-server-status" \
   "$BASE_DIR/tools/frp-project-update" \
+  "$BASE_DIR/tools/drlink-product-update-worker" \
   "$BASE_DIR/tools/frp-backup" \
   "$BASE_DIR/tools/frp-restore" \
   "$BASE_DIR/tools/frp-support-bundle" \

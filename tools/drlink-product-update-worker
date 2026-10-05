@@ -1,0 +1,22 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+import os
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve()
+for candidate in (HERE.parent.parent / "lib", Path("/usr/local/lib/drlink")):
+    if (candidate / "drlink_product_update.py").is_file():
+        sys.path.insert(0, str(candidate))
+        break
+
+from drlink_product_update import ProductUpdateError, run_job
+
+if len(sys.argv) != 2:
+    print("ERROR: product update worker requires one job ID.", file=sys.stderr)
+    raise SystemExit(2)
+try:
+    run_job(sys.argv[1], os.environ.get("DRLINK_PRODUCT_UPDATE_ROOT"))
+except ProductUpdateError as exc:
+    print("ERROR: %s" % exc, file=sys.stderr)
+    raise SystemExit(1)

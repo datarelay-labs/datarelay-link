@@ -695,6 +695,19 @@ class ManagementCoreService:
             actor_id=actor.actor_id
         )
 
+    def update_product_status(
+        self,
+        job_id: str,
+        *,
+        actor: ManagementActor,
+    ) -> dict[str, Any]:
+        if "management-diagnose" not in actor.permissions:
+            raise ManagementAuthorizationError(
+                "management-diagnose is required for product update status."
+            )
+        self._require_web_role(actor, "Admin", "Operator", "Read Only")
+        return ManagementSystemService(self.root).update_product_status(job_id)
+
     def update_engine_apply(
         self,
         *,

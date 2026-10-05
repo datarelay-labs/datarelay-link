@@ -329,6 +329,11 @@ class WebApplication:
                 actor=actor,
                 limit=_int_arg(_first(query, "limit"), 50, high=100),
             )
+        if path == "/api/v1/system/update/product/status":
+            return self.adapter.update_product_status(
+                _first(query, "job_id"),
+                actor=actor,
+            )
         if path == "/api/v1/system":
             return self.adapter.system_status(actor=actor)
         if path == "/api/v1/configuration/export":

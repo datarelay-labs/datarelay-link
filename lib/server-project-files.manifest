@@ -65,6 +65,7 @@ project usr/local/lib/drlink/drlink_management_remote_service.py 0644 lib/drlink
 project usr/local/lib/drlink/drlink_management_host_lifecycle.py 0644 lib/drlink_management_host_lifecycle.py python
 project usr/local/lib/drlink/drlink_policy_safety.py 0644 lib/drlink_policy_safety.py python
 project usr/local/lib/drlink/drlink_management_system.py 0644 lib/drlink_management_system.py python
+project usr/local/lib/drlink/drlink_product_update.py 0644 lib/drlink_product_update.py python
 project usr/local/lib/drlink/drlink_management_core.py 0644 lib/drlink_management_core.py python
 project usr/local/lib/drlink/drlink_management_mcp_adapter.py 0644 lib/drlink_management_mcp_adapter.py python
 project usr/local/lib/drlink/drlink_management_web_adapter.py 0644 lib/drlink_management_web_adapter.py python
@@ -113,6 +114,7 @@ unit etc/systemd/system/drlink-mcp-tls-renew.service 0644 server/drlink-mcp-tls-
 unit etc/systemd/system/drlink-mcp-tls-renew.timer 0644 server/drlink-mcp-tls-renew.timer none
 unit etc/systemd/system/drlink-audit-ingest.service 0644 server/drlink-audit-ingest.service none
 unit etc/systemd/system/drlink-audit-ingest.timer 0644 server/drlink-audit-ingest.timer none
+unit etc/systemd/system/drlink-product-update@.service 0644 server/drlink-product-update@.service none
 unit-single443 etc/systemd/system/drlink-frontend.service 0644 server/drlink-frontend.service none
 project usr/local/lib/drlink/frp-create-client 0755 tools/frp-create-client python
 project usr/local/lib/drlink/frp-enrollments 0755 tools/frp-enrollments python
@@ -132,6 +134,7 @@ project usr/local/lib/drlink/frp-set-client-installer-url 0755 tools/frp-set-cli
 project usr/local/lib/drlink/frp-server-set 0755 tools/frp-server-set python
 project usr/local/lib/drlink/frp-server-status 0755 tools/frp-server-status bash
 project usr/local/lib/drlink/frp-project-update 0755 tools/frp-project-update bash
+project usr/local/lib/drlink/drlink-product-update-worker 0755 tools/drlink-product-update-worker python
 project usr/local/lib/drlink/frp-backup 0755 tools/frp-backup python
 project usr/local/lib/drlink/frp-restore 0755 tools/frp-restore python
 project usr/local/lib/drlink/frp-support-bundle 0755 tools/frp-support-bundle python
