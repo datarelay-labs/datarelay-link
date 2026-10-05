@@ -408,6 +408,27 @@ class PreReleaseExhaustiveGateTests(unittest.TestCase):
         self.assertTrue(any("server_runtime_match" in item for item in errors))
         self.assertTrue(any("github_report_readback" in item for item in errors))
 
+    def test_cli_feature_development_manifest_may_precede_exact_evidence_head(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            run = repo / "run"
+            write_cli_ledgers(run)
+            (repo / "docs").mkdir(parents=True)
+            contract = ROOT / "docs" / "CLI_FEATURE_SCENARIO_RECONCILIATION.md"
+            (repo / "docs" / contract.name).write_bytes(contract.read_bytes())
+            (repo / "lib").mkdir(parents=True)
+            (repo / "lib" / "frp_cli_final_commands.json").write_bytes(
+                (ROOT / "lib" / "frp_cli_final_commands.json").read_bytes()
+            )
+            (repo / "release-manifest.json").write_text(
+                json.dumps({"source_head": "1" * 40, "channel": "development"}), encoding="utf-8"
+            )
+            data = cli_evidence()
+            data["evidence_root"] = str(run)
+            data["test_contract_file_sha256"] = hashlib.sha256(contract.read_bytes()).hexdigest()
+            errors = MOD.validate_cli_feature(data, HEAD, repo)
+            self.assertFalse(any("release-manifest source_head" in item for item in errors), errors)
+
     def test_cli_feature_ledger_summary_mismatch_blocks(self):
         with tempfile.TemporaryDirectory() as td:
             repo = Path(td)

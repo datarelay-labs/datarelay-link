@@ -856,8 +856,25 @@ def validate_cli_feature(data: dict, head: str, repo_root: Path | None = None) -
             except Exception as exc:
                 errors.append(f"{label}: unable to read release-manifest.json: {exc}")
             else:
-                if manifest_source and manifest_source != product_source_head:
-                    errors.append(f"{label}: product_source_head must equal release-manifest source_head {manifest_source}")
+                # A committed development manifest cannot contain the SHA of the
+                # commit that contains that manifest. The release provenance
+                # contract therefore treats source_head as the immutable source
+                # snapshot stamped into generated artifacts, while repo_head/end_head
+                # bind this exhaustive evidence to the exact candidate commit.
+                # Stable candidates are different: their tag/manifest provenance
+                # is immutable and must match the qualified product source.
+                try:
+                    manifest_channel = str(
+                        json.loads(manifest.read_text(encoding="utf-8")).get("channel") or ""
+                    ).strip().lower()
+                except Exception:
+                    manifest_channel = ""
+                if (
+                    manifest_source
+                    and manifest_source != product_source_head
+                    and manifest_channel == "stable"
+                ):
+                    errors.append(f"{label}: product_source_head must equal stable release-manifest source_head {manifest_source}")
         errors += _validate_cli_ledgers(data, repo_root, label)
         errors += _validate_cli_catalog_binding(data, repo_root, label)
     return errors
