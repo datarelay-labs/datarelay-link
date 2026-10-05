@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 
 from drlink_control_db import ControlPlaneError
+import drlink_v24 as v24
 from drlink_control_plane import ControlPlane
 from drlink_web_auth import WebAuthService, totp_code
 from drlink_web_service import create_server, validate_web_bind
@@ -261,6 +262,68 @@ class V30WebServiceTests(unittest.TestCase):
         plane = ControlPlane(self.tmp)
         try:
             self.assertIsNotNone(plane.get_object("web-office"))
+        finally:
+            plane.close()
+
+    def test_temporary_access_preview_apply_uses_core_change_plan(self):
+        self.login()
+        plane = ControlPlane(self.tmp)
+        try:
+            v24.set_network_object(plane, "temp-src", type="ip", value="198.51.100.10", oneshot=True)
+            v24.set_network_object(plane, "temp-dst", type="ip", value="198.51.100.20", oneshot=True)
+            v24.set_service_object(plane, "temp-ssh", type="tcp", port=22, oneshot=True)
+            v24.set_access_rule(
+                plane,
+                "remote",
+                "temp-rule",
+                mode="whitelist",
+                source="temp-src",
+                destination="temp-dst",
+                service="temp-ssh",
+                enabled=True,
+                oneshot=True,
+                confirm=True,
+            )
+            before = plane.current_revision()
+        finally:
+            plane.close()
+
+        status, _, _ = self.request(
+            "POST",
+            "/api/v1/temporary-access/preview",
+            {"plane": "remote", "rule": "temp-rule", "operation": "set", "expires_at": "2099-01-01T00:00:00Z"},
+        )
+        self.assertEqual(status, 403)
+
+        status, _, preview = self.request(
+            "POST",
+            "/api/v1/temporary-access/preview",
+            {"plane": "remote", "rule": "temp-rule", "operation": "set", "expires_at": "2099-01-01T00:00:00Z"},
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, preview)
+        self.assertTrue(preview["change_plan_id"].startswith("cp_"))
+        plane = ControlPlane(self.tmp)
+        try:
+            self.assertEqual(plane.current_revision(), before)
+            self.assertIsNone(plane._get_rule("remote", "temp-rule")["expires_at"])
+        finally:
+            plane.close()
+
+        status, _, applied = self.request(
+            "POST",
+            "/api/v1/temporary-access/apply",
+            {"change_plan_id": preview["change_plan_id"], "confirmation": "APPLY"},
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, applied)
+        plane = ControlPlane(self.tmp)
+        try:
+            self.assertEqual(plane.current_revision(), before + 1)
+            self.assertEqual(
+                plane._get_rule("remote", "temp-rule")["expires_at"],
+                "2099-01-01T00:00:00Z",
+            )
         finally:
             plane.close()
 

@@ -125,7 +125,47 @@ function DraftWorkspace(){
   </div>;
 }
 
-function View({active}:{active:string}){
+function TemporaryAccessPanel(){
+  const [plane,setPlane]=useState("remote"),[rule,setRule]=useState(""),[operation,setOperation]=useState("set"),[expiresAt,setExpiresAt]=useState("");
+  const [preview,setPreview]=useState<any>(null),[confirmation,setConfirmation]=useState(""),[message,setMessage]=useState(""),[error,setError]=useState("");
+  async function doPreview(){
+    setError("");setMessage("");
+    try{
+      const body:any={plane,rule,operation};
+      if(operation==="set")body.expires_at=expiresAt;
+      const result=await api("/api/v1/temporary-access/preview",{method:"POST",body:JSON.stringify(body)});
+      setPreview(result);setConfirmation("");
+    }catch(e:any){setError(e.message||String(e))}
+  }
+  async function doApply(){
+    setError("");setMessage("");
+    try{
+      const result=await api("/api/v1/temporary-access/apply",{method:"POST",body:JSON.stringify({change_plan_id:preview?.change_plan_id||"",confirmation})});
+      setMessage("Temporary Access applied at revision "+result.revision);setPreview(null);setConfirmation("");
+    }catch(e:any){setError(e.message||String(e))}
+  }
+  return <div className="card">
+    <h3>Temporary Access</h3>
+    <div className="muted">Set, change, or clear server-authoritative expiry on an existing WHITELIST grant.</div>
+    {error&&<div className="error">{error}</div>}{message&&<div className="notice">{message}</div>}
+    <div className="toolbar">
+      <select value={plane} onChange={e=>setPlane(e.target.value)}><option value="remote">Remote</option><option value="internet">Internet</option><option value="ai">AI</option></select>
+      <input value={rule} onChange={e=>setRule(e.target.value)} placeholder="Rule name"/>
+      <select value={operation} onChange={e=>setOperation(e.target.value)}><option value="set">Set / change expiry</option><option value="clear">Clear expiry</option></select>
+      {operation==="set"&&<input value={expiresAt} onChange={e=>setExpiresAt(e.target.value)} placeholder="2030-01-01T00:00:00Z"/>}
+      <button className="primary" onClick={doPreview} disabled={!rule||operation==="set"&&!expiresAt}>Preview</button>
+    </div>
+    {preview&&<div className="card">
+      <div><strong>Current:</strong> {preview.current_expires_at||"none"}</div>
+      <div><strong>Desired:</strong> {preview.desired_expires_at||"none"}</div>
+      <div><strong>Valid until:</strong> {preview.valid_until}</div>
+      <label className="apply-label">Type APPLY to commit<input value={confirmation} onChange={e=>setConfirmation(e.target.value)} placeholder="APPLY"/></label>
+      <button className="danger" onClick={doApply} disabled={confirmation!=="APPLY"}>Apply Temporary Access</button>
+    </div>}
+  </div>;
+}
+
+function View({active,operator}:{active:string,operator:any}){
   const [data,setData]=useState<any>(null),[error,setError]=useState(""),[query,setQuery]=useState("");
   useEffect(()=>{
     setData(null);setError("");
@@ -144,6 +184,7 @@ function View({active}:{active:string}){
   if(active==="overview"&&data){const h=data.overview?.managed_hosts||{},s=data.overview?.remote_services||{},j=data.overview?.management_jobs||{};return <><div className="grid"><Metric label="Managed Hosts" value={h.total}/><Metric label="Connected" value={h.connected}/><Metric label="Remote Services" value={s.total}/><Metric label="Active Jobs" value={j.active_jobs}/></div><div className="card"><h3>Attention Center</h3>{(data.attention?.items||[]).map((x:any)=><span key={x.kind} className={"badge "+x.severity}>{x.label}: {x.count}</span>)}{!(data.attention?.items||[]).length&&<div className="muted">No current attention items</div>}</div></>};
   if(active==="versions"&&data)return <><div className="grid"><Metric label="Server version" value={data.server_version}/><Metric label="Drift" value={data.drift_count}/><Metric label="Unknown" value={data.unknown_count}/></div><Table items={data.hosts||[]}/></>;
   if(active==="objects"&&data){const rows=Object.entries(data.resources||{}).flatMap(([type,page]:any)=>(page.items||[]).map((item:any)=>({type,id:item.id,name:item.name||item.id,description:item.description||"",status:item.status||""})));return <Table items={rows}/>;}
+  if(active==="policies"&&data)return <><Table items={data.items||[]}/>{operator.role!=="Read Only"&&<TemporaryAccessPanel/>}</>;
   if(active==="doctor"&&data)return <><div className="grid"><Metric label="Attention" value={data.attention?.count}/><Metric label="Checks" value={(data.checks||[]).length}/></div><Table items={data.checks||[]}/></>;
   if(active==="health"&&data)return <pre className="card">{JSON.stringify(data,null,2)}</pre>;
   if(active==="views"&&data)return <SavedViews data={data} refresh={()=>api("/api/v1/saved-views").then(setData)}/>;
@@ -162,7 +203,7 @@ function Shell({operator,onLogout}:{operator:any,onLogout:()=>void}){
   async function logout(){try{await api("/api/v1/auth/logout",{method:"POST",body:"{}"})}finally{csrf="";onLogout()}}
   const visibleNav=nav.filter(([id])=>id!=="drafts"||operator.role!=="Read Only");
   const title=visibleNav.find(x=>x[0]===active)?.[1]||"Overview";
-  return <div className="shell"><aside className="sidebar"><div className="brand">Data Relay Link<small>Web Management 3.0</small></div><div className="nav">{visibleNav.map(([id,label])=><button key={id} className={id===active?"active":""} onClick={()=>setActive(id)}>{label}</button>)}</div></aside><section className="content"><div className="top"><div><div className="title">{title}</div><div className="muted">{operator.username} · {operator.role}</div></div><button className="secondary" onClick={logout}>Sign out</button></div><View active={active}/></section></div>;
+  return <div className="shell"><aside className="sidebar"><div className="brand">Data Relay Link<small>Web Management 3.0</small></div><div className="nav">{visibleNav.map(([id,label])=><button key={id} className={id===active?"active":""} onClick={()=>setActive(id)}>{label}</button>)}</div></aside><section className="content"><div className="top"><div><div className="title">{title}</div><div className="muted">{operator.username} · {operator.role}</div></div><button className="secondary" onClick={logout}>Sign out</button></div><View active={active} operator={operator}/></section></div>;
 }
 
 function App(){

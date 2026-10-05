@@ -298,6 +298,28 @@ class WebApplication:
                 },
                 actor=self._actor(principal),
             )
+        if path == "/api/v1/temporary-access/preview":
+            payload = {
+                "plane": str(body.get("plane") or ""),
+                "rule": str(body.get("rule") or ""),
+                "operation": str(body.get("operation") or ""),
+            }
+            if body.get("expires_at") is not None:
+                payload["expires_at"] = str(body.get("expires_at") or "")
+            return self.adapter.invoke(
+                operation="drlink_temporary_access_preview",
+                payload=payload,
+                actor=self._actor(principal),
+            )
+        if path == "/api/v1/temporary-access/apply":
+            return self.adapter.invoke(
+                operation="drlink_temporary_access_apply",
+                payload={
+                    "change_plan_id": str(body.get("change_plan_id") or ""),
+                    "confirmation": str(body.get("confirmation") or ""),
+                },
+                actor=self._actor(principal),
+            )
         actor = self._actor(principal)
         if path == "/api/v1/drafts":
             return self.adapter.draft_create(
