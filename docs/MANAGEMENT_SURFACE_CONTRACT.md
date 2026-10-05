@@ -513,9 +513,21 @@ OBSERVE/TEST behavior. Protected backup creation requires local Web Admin plus
 creation requires Admin/Operator plus `management-job-run` and writes only under
 `/var/lib/drlink/support-bundles/`. The browser cannot select an arbitrary output path,
 archive contents are not exposed, and the authenticated Web actor/interface is propagated
-to the canonical tool boundary. Certificate renew-if-due is local Web Admin only, requires
-`management-config` plus explicit typed `RENEW`, delegates to canonical TLS renewal,
-returns only the redacted certificate view, and records the actual Web actor/interface.
+to the canonical tool boundary. Certificate mutation is local Web Admin only and requires
+`management-config`: intent configuration uses typed `APPLY`, AUTO_ACME/PRIVATE_CA
+issuance uses typed `ISSUE`, USER_CERTIFICATE PEM import uses typed `IMPORT`, and renewal
+uses typed `RENEW`. All delegate to canonical `drlink_mcp_tls`; PEM/private-key material
+is never returned, imported material exists only in a private ephemeral staging directory,
+and Web records the actual actor/interface.
+
+Product and Relay Engine update checks are OBSERVE/TEST-style canonical `--check`
+operations available under `management-diagnose`. Relay Engine apply is local Web Admin
+only, requires `management-config` plus typed `UPDATE ENGINE`, and delegates to
+canonical `frp-update` including rollback/RECOVERY_REQUIRED behavior. Core product
+self-update apply remains intentionally unavailable through Web until DRL3-7 qualifies
+the optional Web package update/uninstall/reinstall compatibility lifecycle; there is no
+hidden `/api/v1/system/update/product` mutation route in DRL3-3.
+
 Restore is local Web Admin-only `RECOVERY_AUTHORITY`, requires
 `management-recovery` plus explicit typed `RESTORE`, is restricted to the canonical
 backup directory, revalidates the archive immediately before invoking canonical

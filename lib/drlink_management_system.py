@@ -12,6 +12,7 @@ import os
 import secrets
 import subprocess
 import sys
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -103,6 +104,7 @@ class ManagementSystemService:
             "auto_renewal",
             "fingerprint_sha256",
             "acme_environment",
+            "contact_email",
             "cloud_compatible",
             "private_ca_warning",
             "last_failure_class",
@@ -140,6 +142,191 @@ class ManagementSystemService:
         result["mode"] = mode
         result["authoritative_mutation"] = False
         return result
+
+    def certificate_configure(
+        self,
+        settings: dict[str, Any],
+        *,
+        actor_id: str,
+    ) -> dict[str, Any]:
+        allowed = {
+            "mode",
+            "hostname",
+            "contact_email",
+            "acme_environment",
+        }
+        supplied = {
+            key: settings[key]
+            for key in allowed
+            if key in settings
+        }
+        if not supplied:
+            raise ControlPlaneError("At least one certificate setting is required.")
+        mcp_tls.require_public_frontend(self.root)
+        plane = ControlPlane(self.root)
+        try:
+            try:
+                state = mcp_tls.configure_intent(
+                    plane,
+                    mode=supplied.get("mode"),
+                    hostname=supplied.get("hostname"),
+                    contact_email=supplied.get("contact_email"),
+                    acme_environment=supplied.get("acme_environment"),
+                    actor=actor_id,
+                )
+            except mcp_tls.McpTlsError as exc:
+                raise ControlPlaneError(
+                    "%s (%s)" % (exc, exc.failure_class)
+                ) from exc
+            plane._audit(
+                revision=int(plane.current_revision()),
+                action="web certificate configure",
+                entity_type="certificate",
+                entity_id=str(state.get("hostname") or "mcp-tls"),
+                operation="configure",
+                after="mode=%s" % str(state.get("mode") or ""),
+                actor=actor_id,
+                interface="WEB",
+            )
+            return {
+                "status": "CONFIGURED",
+                "certificate": self._redacted_certificate_view(
+                    mcp_tls.status_view(plane, self.root)
+                ),
+                "authoritative_mutation": True,
+            }
+        finally:
+            plane.close()
+
+    def certificate_issue(self, *, actor_id: str) -> dict[str, Any]:
+        mcp_tls.require_public_frontend(self.root)
+        plane = ControlPlane(self.root)
+        try:
+            state = mcp_tls.load_state(plane)
+            hostname = str(state.get("hostname") or "").strip()
+            if not hostname:
+                raise ControlPlaneError(
+                    "Certificate hostname is not configured. Configure MCP TLS hostname first."
+                )
+            try:
+                mcp_tls.issue_and_activate(
+                    plane,
+                    self.root,
+                )
+            except mcp_tls.McpTlsError as exc:
+                plane._audit(
+                    revision=int(plane.current_revision()),
+                    action="web certificate issue",
+                    entity_type="certificate",
+                    entity_id=hostname,
+                    operation="issue",
+                    result="failed",
+                    impact=str(exc.failure_class or "TLS_ISSUE_FAILED"),
+                    actor=actor_id,
+                    interface="WEB",
+                )
+                raise ControlPlaneError(
+                    "%s (%s)" % (exc, exc.failure_class)
+                ) from exc
+            plane._audit(
+                revision=int(plane.current_revision()),
+                action="web certificate issue",
+                entity_type="certificate",
+                entity_id=hostname,
+                operation="issue",
+                actor=actor_id,
+                interface="WEB",
+            )
+            return {
+                "status": "ISSUED",
+                "certificate": self._redacted_certificate_view(
+                    mcp_tls.status_view(plane, self.root)
+                ),
+                "authoritative_mutation": True,
+            }
+        finally:
+            plane.close()
+
+    def certificate_import(
+        self,
+        *,
+        cert_pem: str,
+        key_pem: str,
+        chain_pem: str = "",
+        actor_id: str,
+    ) -> dict[str, Any]:
+        cert_text = str(cert_pem or "")
+        key_text = str(key_pem or "")
+        chain_text = str(chain_pem or "")
+        if not cert_text.strip() or not key_text.strip():
+            raise ControlPlaneError("Certificate and private key PEM are required.")
+        if len(cert_text) > 32 * 1024 or len(key_text) > 24 * 1024 or len(chain_text) > 32 * 1024:
+            raise ControlPlaneError("Certificate import material is too large.")
+        mcp_tls.require_public_frontend(self.root)
+        staging = self._owned_output_dir("var/lib/drlink/certificate-import-staging")
+        plane = ControlPlane(self.root)
+        try:
+            state = mcp_tls.load_state(plane)
+            hostname = str(state.get("hostname") or "").strip()
+            if not hostname:
+                raise ControlPlaneError(
+                    "Certificate hostname is not configured. Configure MCP TLS hostname first."
+                )
+            with tempfile.TemporaryDirectory(prefix="web-cert-", dir=str(staging)) as tmp:
+                work = Path(tmp)
+                cert_path = work / "certificate.pem"
+                key_path = work / "private-key.pem"
+                chain_path = work / "chain.pem"
+                cert_path.write_text(cert_text, encoding="utf-8")
+                key_path.write_text(key_text, encoding="utf-8")
+                os.chmod(cert_path, 0o600)
+                os.chmod(key_path, 0o600)
+                chain_arg: Optional[str] = None
+                if chain_text.strip():
+                    chain_path.write_text(chain_text, encoding="utf-8")
+                    os.chmod(chain_path, 0o600)
+                    chain_arg = str(chain_path)
+                try:
+                    mcp_tls.import_user_certificate(
+                        plane,
+                        self.root,
+                        cert_path=str(cert_path),
+                        key_path=str(key_path),
+                        chain_path=chain_arg,
+                    )
+                except mcp_tls.McpTlsError as exc:
+                    plane._audit(
+                        revision=int(plane.current_revision()),
+                        action="web certificate import",
+                        entity_type="certificate",
+                        entity_id=hostname,
+                        operation="import",
+                        result="failed",
+                        impact=str(exc.failure_class or "TLS_IMPORT_FAILED"),
+                        actor=actor_id,
+                        interface="WEB",
+                    )
+                    raise ControlPlaneError(
+                        "%s (%s)" % (exc, exc.failure_class)
+                    ) from exc
+            plane._audit(
+                revision=int(plane.current_revision()),
+                action="web certificate import",
+                entity_type="certificate",
+                entity_id=hostname,
+                operation="import",
+                actor=actor_id,
+                interface="WEB",
+            )
+            return {
+                "status": "IMPORTED",
+                "certificate": self._redacted_certificate_view(
+                    mcp_tls.status_view(plane, self.root)
+                ),
+                "authoritative_mutation": True,
+            }
+        finally:
+            plane.close()
 
     def certificate_renew(self, *, actor_id: str) -> dict[str, Any]:
         mcp_tls.require_public_frontend(self.root)
@@ -440,6 +627,123 @@ class ManagementSystemService:
             sanitized=True,
         )
 
+    @staticmethod
+    def _update_state(output: str) -> str:
+        for line in str(output or "").splitlines():
+            key, sep, value = line.partition(":")
+            if not sep or key.strip().lower() != "update":
+                continue
+            normalized = value.strip().lower()
+            if normalized == "available":
+                return "AVAILABLE"
+            if normalized in ("not needed", "up to date", "current"):
+                return "NOT_NEEDED"
+        return "UNKNOWN"
+
+    def update_check(self, target: str) -> dict[str, Any]:
+        normalized = str(target or "").strip().lower()
+        if normalized == "product":
+            tool = _tool_path(self.root_path, "frp-project-update")
+            command = ["bash", str(tool), "--check"]
+            timeout = 180
+        elif normalized in ("engine", "relay-engine"):
+            tool = _tool_path(self.root_path, "frp-update")
+            command = ["bash", str(tool), "--check"]
+            timeout = 120
+            normalized = "engine"
+        else:
+            raise ControlPlaneError("Update target must be product or engine.")
+        env = os.environ.copy()
+        env.pop("DRLINK_CONFIRM", None)
+        env.pop("FRP_RESTORE_YES", None)
+        if self.root and self.root != "/":
+            if normalized == "product":
+                env["FRP_SERVER_TEST_ROOT"] = self.root
+            else:
+                env["FRP_UPDATE_ROOT"] = self.root
+                env["FRP_UPDATE_TEST_HARNESS"] = "1"
+                env["FRP_UPDATE_HOOK_SKIP_SYSTEMD"] = "1"
+        try:
+            proc = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,
+                env=env,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise ControlPlaneError("Update check timed out.") from exc
+        output = _safe_text(proc.stdout)
+        error = _safe_text(proc.stderr)
+        if proc.returncode != 0:
+            detail = (error or output).strip()
+            raise ControlPlaneError(
+                "Update check failed."
+                + ((" " + detail) if detail else "")
+            )
+        return {
+            "target": normalized,
+            "status": "CHECKED",
+            "availability": self._update_state(output),
+            "output": output,
+            "error": error,
+            "authoritative_mutation": False,
+        }
+
+    def update_engine_apply(self, *, actor_id: str) -> dict[str, Any]:
+        tool = _tool_path(self.root_path, "frp-update")
+        env = self._artifact_env(actor_id=actor_id)
+        if self.root and self.root != "/":
+            env["FRP_UPDATE_ROOT"] = self.root
+            env["FRP_UPDATE_TEST_HARNESS"] = "1"
+            env["FRP_UPDATE_HOOK_SKIP_SYSTEMD"] = "1"
+        try:
+            proc = subprocess.run(
+                ["bash", str(tool)],
+                capture_output=True,
+                text=True,
+                timeout=300,
+                check=False,
+                env=env,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise ControlPlaneError(
+                "Relay Engine update timed out. Check update/recovery status before retrying."
+            ) from exc
+        output = _safe_text(proc.stdout)
+        error = _safe_text(proc.stderr)
+        if proc.returncode != 0:
+            combined = (output + "\n" + error).strip()
+            suffix = " RECOVERY_REQUIRED" if "RECOVERY_REQUIRED" in combined else ""
+            detail = (error or output).strip()
+            raise ControlPlaneError(
+                "Relay Engine update failed.%s%s"
+                % (
+                    suffix,
+                    ((" " + detail) if detail else ""),
+                )
+            )
+        plane = ControlPlane(self.root)
+        try:
+            plane._audit(
+                revision=int(plane.current_revision()),
+                action="web relay-engine update",
+                entity_type="system-update",
+                entity_id="relay-engine",
+                operation="update",
+                actor=actor_id,
+                interface="WEB",
+            )
+        finally:
+            plane.close()
+        return {
+            "target": "engine",
+            "status": "UPDATED",
+            "output": output,
+            "authoritative_mutation": True,
+        }
+
     def status(self) -> dict[str, Any]:
         backup_dir = self.root_path / "var/lib/drlink/backups"
         support_dir = self.root_path / "var/lib/drlink/support-bundles"
@@ -460,6 +764,13 @@ class ManagementSystemService:
                 "directory_present": support_dir.is_dir(),
                 "create_available": self._tool_available("frp-support-bundle"),
                 "sanitized": True,
+            },
+            "update": {
+                "product_check_available": self._tool_available("frp-project-update"),
+                "product_apply_via_web": False,
+                "product_apply_phase": "DRL3-7_WEB_PACKAGE_LIFECYCLE",
+                "engine_check_available": self._tool_available("frp-update"),
+                "engine_apply_via_web": self._tool_available("frp-update"),
             },
         }
 

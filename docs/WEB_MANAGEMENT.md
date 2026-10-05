@@ -883,12 +883,23 @@ contents. Sanitized support-bundle creation is available to Admin/Operator and w
 Both propagate the authenticated Web actor/interface to the canonical tool environment,
 bound output, reject symlink/path escape, and do not create a configuration revision.
 
-Certificate lifecycle initially adds **Admin-only renew-if-due**. The browser requires an
-explicit typed `RENEW` confirmation and delegates to canonical `drlink_mcp_tls.renew_if_due`
-with no private-key material or raw TLS state returned. Canonical renewal retains the
-previous valid certificate on issuance/activation failure and records backoff/failure
-state; Web adds actor/interface audit attribution and truthfully distinguishes renewed,
-not-due/backoff, and failed outcomes.
+Certificate lifecycle is Admin-only for mutation. Web can configure the canonical
+hostname/mode/contact-email/ACME-environment intent with typed `APPLY`, issue and activate
+AUTO_ACME or PRIVATE_CA material with typed `ISSUE`, import USER_CERTIFICATE PEM material
+with typed `IMPORT`, and run renew-if-due with typed `RENEW`. All operations delegate to
+`drlink_mcp_tls`; no private-key path, raw TLS state, or PEM is returned. User-certificate
+PEM is staged only in a private Core-owned temporary directory, the private key is mode
+0600, and the staging files are deleted immediately after canonical import. Canonical
+issue/import/renew activation retains or restores previous valid material according to
+the existing TLS lifecycle, while Web adds authenticated actor/interface audit attribution.
+
+Update checks for both Data Relay Link product management files and the pinned Relay
+Engine reuse the canonical `--check` paths and remain read-only. Admin-only Relay Engine
+apply requires typed `UPDATE ENGINE` and delegates to canonical `frp-update`, including
+its rollback/RECOVERY_REQUIRED semantics. **Core product self-update apply is intentionally
+not exposed from Web in DRL3-3** because it can change Core management files while the
+optional Web package remains at its prior build. That apply path closes in DRL3-7 together
+with the explicitly required Web update/uninstall/reinstall compatibility lifecycle.
 
 Restore is **Admin-only `RECOVERY_AUTHORITY`**. The browser accepts only a canonical
 backup path under `/var/lib/drlink/backups/`, requires successful validation plus explicit
@@ -898,10 +909,6 @@ creates a pre-restore snapshot, and rolls back on failure when the previous stat
 valid. Web enters maintenance for the restore call, reopens its auth DB afterward, revokes
 all restored browser sessions, clears the caller cookie, and requires login again so
 operational session state never resumes from backup.
-
-Product/Relay update and certificate import/mode mutation are added only through their
-canonical lifecycle/confirmation/rollback semantics, never by shelling out directly from
-the HTTP layer.
 
 ### 24.1 Bounded multi-host operations
 

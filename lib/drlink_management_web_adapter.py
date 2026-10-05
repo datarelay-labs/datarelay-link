@@ -94,10 +94,59 @@ class ManagementWebApiAdapter:
     def certificate_preflight(self, *, actor: ManagementActor) -> dict[str, Any]:
         return self.core.certificate_preflight(actor=actor)
 
+    def certificate_configure(
+        self,
+        settings: dict[str, Any],
+        *,
+        actor: ManagementActor,
+        confirmation: str,
+    ) -> dict[str, Any]:
+        return self.core.certificate_configure(
+            settings,
+            actor=actor,
+            confirmation=confirmation,
+        )
+
+    def certificate_issue(
+        self, *, actor: ManagementActor, confirmation: str
+    ) -> dict[str, Any]:
+        return self.core.certificate_issue(
+            actor=actor,
+            confirmation=confirmation,
+        )
+
+    def certificate_import(
+        self,
+        *,
+        actor: ManagementActor,
+        cert_pem: str,
+        key_pem: str,
+        chain_pem: str,
+        confirmation: str,
+    ) -> dict[str, Any]:
+        return self.core.certificate_import(
+            actor=actor,
+            cert_pem=cert_pem,
+            key_pem=key_pem,
+            chain_pem=chain_pem,
+            confirmation=confirmation,
+        )
+
     def certificate_renew(
         self, *, actor: ManagementActor, confirmation: str
     ) -> dict[str, Any]:
         return self.core.certificate_renew(
+            actor=actor,
+            confirmation=confirmation,
+        )
+
+    def update_check(self, target: str, *, actor: ManagementActor) -> dict[str, Any]:
+        return self.core.update_check(target, actor=actor)
+
+    def update_engine_apply(
+        self, *, actor: ManagementActor, confirmation: str
+    ) -> dict[str, Any]:
+        return self.core.update_engine_apply(
             actor=actor,
             confirmation=confirmation,
         )

@@ -438,6 +438,12 @@ Required workflows:
   Remote / Internet / AI grants;
 - system/update/certificate/backup/restore operations where browser-appropriate.
 
+For the DRL3-3 update slice, browser-appropriate scope is product + Relay Engine
+availability checks and local Relay Engine apply through the canonical rollback-capable
+updater. Core product self-update apply waits for DRL3-7 because that phase explicitly
+qualifies optional Web package update/uninstall/reinstall compatibility; DRL3-3 must not
+create a Core/Web build-skew path merely to claim surface parity.
+
 Add a non-authoritative **Draft Workspace**:
 - compose multiple related changes;
 - show generated Change Plan;

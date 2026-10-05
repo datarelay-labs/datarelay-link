@@ -362,14 +362,24 @@ function TemporaryAccessPanel(){
 function SystemPanel({data,operator}:{data:any,operator:any}){
   const [backupPath,setBackupPath]=useState("/var/lib/drlink/backups/");
   const [renewConfirmation,setRenewConfirmation]=useState(""),[restoreConfirmation,setRestoreConfirmation]=useState("");
-  const [preflight,setPreflight]=useState<any>(null),[renewal,setRenewal]=useState<any>(null),[validation,setValidation]=useState<any>(null),[backupArtifact,setBackupArtifact]=useState<any>(null),[supportArtifact,setSupportArtifact]=useState<any>(null),[error,setError]=useState("");
+  const [certMode,setCertMode]=useState(String(data.certificate?.mode||"AUTO_ACME").toLowerCase().replaceAll("_","-"));
+  const [certHostname,setCertHostname]=useState(data.certificate?.hostname||""),[certEmail,setCertEmail]=useState(data.certificate?.contact_email||""),[acmeEnv,setAcmeEnv]=useState(String(data.certificate?.acme_environment||"PRODUCTION").toLowerCase());
+  const [certConfigConfirmation,setCertConfigConfirmation]=useState(""),[issueConfirmation,setIssueConfirmation]=useState(""),[importConfirmation,setImportConfirmation]=useState("");
+  const [certPem,setCertPem]=useState(""),[keyPem,setKeyPem]=useState(""),[chainPem,setChainPem]=useState("");
+  const [engineUpdateConfirmation,setEngineUpdateConfirmation]=useState("");
+  const [preflight,setPreflight]=useState<any>(null),[renewal,setRenewal]=useState<any>(null),[certAction,setCertAction]=useState<any>(null),[updateResult,setUpdateResult]=useState<any>(null),[validation,setValidation]=useState<any>(null),[backupArtifact,setBackupArtifact]=useState<any>(null),[supportArtifact,setSupportArtifact]=useState<any>(null),[error,setError]=useState("");
   async function runPreflight(){setError("");try{setPreflight(await api("/api/v1/system/certificate/preflight",{method:"POST",body:"{}"}))}catch(e:any){setError(e.message||String(e))}}
+  async function configureCertificate(){setError("");setCertAction(null);try{setCertAction(await api("/api/v1/system/certificate/configure",{method:"POST",body:JSON.stringify({mode:certMode,hostname:certHostname,contact_email:certEmail,acme_environment:acmeEnv,confirmation:certConfigConfirmation})}));setCertConfigConfirmation("")}catch(e:any){setError(e.message||String(e))}}
+  async function issueCertificate(){setError("");setCertAction(null);try{setCertAction(await api("/api/v1/system/certificate/issue",{method:"POST",body:JSON.stringify({confirmation:issueConfirmation})}));setIssueConfirmation("")}catch(e:any){setError(e.message||String(e))}}
+  async function importCertificate(){setError("");setCertAction(null);try{setCertAction(await api("/api/v1/system/certificate/import",{method:"POST",body:JSON.stringify({cert_pem:certPem,key_pem:keyPem,chain_pem:chainPem,confirmation:importConfirmation})}));setImportConfirmation("");setCertPem("");setKeyPem("");setChainPem("")}catch(e:any){setError(e.message||String(e))}}
   async function renewCertificate(){setError("");setRenewal(null);try{setRenewal(await api("/api/v1/system/certificate/renew",{method:"POST",body:JSON.stringify({confirmation:renewConfirmation})}));setRenewConfirmation("")}catch(e:any){setError(e.message||String(e))}}
+  async function checkUpdate(target:string){setError("");setUpdateResult(null);try{setUpdateResult(await api("/api/v1/system/update/check",{method:"POST",body:JSON.stringify({target})}))}catch(e:any){setError(e.message||String(e))}}
+  async function updateEngine(){setError("");setUpdateResult(null);try{setUpdateResult(await api("/api/v1/system/update/engine",{method:"POST",body:JSON.stringify({confirmation:engineUpdateConfirmation})}));setEngineUpdateConfirmation("")}catch(e:any){setError(e.message||String(e))}}
   async function validateBackup(){setError("");setRestoreConfirmation("");try{setValidation(await api("/api/v1/system/backup/validate",{method:"POST",body:JSON.stringify({path:backupPath})}))}catch(e:any){setValidation(null);setError(e.message||String(e))}}
   async function restoreBackup(){setError("");try{await api("/api/v1/system/restore",{method:"POST",body:JSON.stringify({path:backupPath,confirmation:restoreConfirmation})});window.location.reload()}catch(e:any){setError(e.message||String(e))}}
   async function createBackup(){setError("");setBackupArtifact(null);try{setBackupArtifact(await api("/api/v1/system/backup/create",{method:"POST",body:"{}"}))}catch(e:any){setError(e.message||String(e))}}
   async function createSupportBundle(){setError("");setSupportArtifact(null);try{setSupportArtifact(await api("/api/v1/system/support-bundle",{method:"POST",body:"{}"}))}catch(e:any){setError(e.message||String(e))}}
-  const identity=data.identity||{},certificate=data.certificate||{},backup=data.backup||{},support=data.support_bundle||{};
+  const identity=data.identity||{},certificate=data.certificate||{},backup=data.backup||{},support=data.support_bundle||{},update=data.update||{};
   return <>
     {error&&<div className="error">{error}</div>}
     <div className="grid">
@@ -383,11 +393,41 @@ function SystemPanel({data,operator}:{data:any,operator:any}){
       <Table items={[{source_ref:identity.source_ref,source_head:identity.source_head,bundle_sha256:identity.bundle_sha256||"not recorded"}]}/>
     </div>
     <div className="card">
+      <h3>Update</h3>
+      <div className="muted">Checks use the canonical read-only updater paths. Core product apply remains CLI-only until DRL3-7 qualifies Web package update/reinstall semantics.</div>
+      <div className="toolbar">
+        <button className="secondary" onClick={()=>checkUpdate("product")} disabled={!update.product_check_available}>Check Product Update</button>
+        <button className="secondary" onClick={()=>checkUpdate("engine")} disabled={!update.engine_check_available}>Check Relay Engine Update</button>
+      </div>
+      {operator.role==="Admin"&&update.engine_apply_via_web&&<div className="toolbar"><input value={engineUpdateConfirmation} onChange={e=>setEngineUpdateConfirmation(e.target.value)} placeholder="Type UPDATE ENGINE"/><button className="danger" onClick={updateEngine} disabled={engineUpdateConfirmation!=="UPDATE ENGINE"}>Update Relay Engine</button></div>}
+      <div className="muted">Product update apply via Web: {update.product_apply_via_web?"enabled":"deferred to "+(update.product_apply_phase||"DRL3-7")}</div>
+      {updateResult&&<pre className="plan">{JSON.stringify(updateResult,null,2)}</pre>}
+    </div>
+    <div className="card">
       <h3>Certificate Status</h3>
       <Table items={[{mode:certificate.mode,hostname:certificate.hostname,certificate:certificate.certificate,issuer:certificate.issuer,expires:certificate.expires,days_remaining:certificate.days_remaining,auto_renewal:certificate.auto_renewal}]}/>
       <button className="secondary" onClick={runPreflight}>Run Certificate Preflight</button>
-      {operator.role==="Admin"&&<div className="toolbar"><input value={renewConfirmation} onChange={e=>setRenewConfirmation(e.target.value)} placeholder="Type RENEW"/><button className="danger" onClick={renewCertificate} disabled={renewConfirmation!=="RENEW"}>Renew Certificate If Due</button></div>}
+      {operator.role==="Admin"&&<>
+        <h4>Certificate Intent</h4>
+        <div className="toolbar">
+          <select value={certMode} onChange={e=>setCertMode(e.target.value)}><option value="auto-acme">AUTO_ACME</option><option value="user-certificate">USER_CERTIFICATE</option><option value="private-ca">PRIVATE_CA</option></select>
+          <input value={certHostname} onChange={e=>setCertHostname(e.target.value)} placeholder="mcp.example.com"/>
+          <input value={certEmail} onChange={e=>setCertEmail(e.target.value)} placeholder="ACME contact email"/>
+          <select value={acmeEnv} onChange={e=>setAcmeEnv(e.target.value)}><option value="production">Production</option><option value="staging">Staging</option></select>
+        </div>
+        <div className="toolbar"><input value={certConfigConfirmation} onChange={e=>setCertConfigConfirmation(e.target.value)} placeholder="Type APPLY"/><button className="danger" onClick={configureCertificate} disabled={certConfigConfirmation!=="APPLY"}>Apply Certificate Settings</button></div>
+        {certMode!=="user-certificate"&&<div className="toolbar"><input value={issueConfirmation} onChange={e=>setIssueConfirmation(e.target.value)} placeholder="Type ISSUE"/><button className="danger" onClick={issueCertificate} disabled={issueConfirmation!=="ISSUE"}>Issue & Activate Certificate</button></div>}
+        {certMode==="user-certificate"&&<div className="card">
+          <div className="muted">PEM material is sent only in this request, staged under a private Core-owned directory, imported by the canonical TLS engine, then deleted.</div>
+          <textarea className="draft-editor" value={certPem} onChange={e=>setCertPem(e.target.value)} placeholder="Certificate PEM"/>
+          <textarea className="draft-editor" value={keyPem} onChange={e=>setKeyPem(e.target.value)} placeholder="Private key PEM"/>
+          <textarea className="draft-editor" value={chainPem} onChange={e=>setChainPem(e.target.value)} placeholder="Optional chain PEM"/>
+          <div className="toolbar"><input value={importConfirmation} onChange={e=>setImportConfirmation(e.target.value)} placeholder="Type IMPORT"/><button className="danger" onClick={importCertificate} disabled={importConfirmation!=="IMPORT"||!certPem||!keyPem}>Import & Activate Certificate</button></div>
+        </div>}
+        <div className="toolbar"><input value={renewConfirmation} onChange={e=>setRenewConfirmation(e.target.value)} placeholder="Type RENEW"/><button className="danger" onClick={renewCertificate} disabled={renewConfirmation!=="RENEW"}>Renew Certificate If Due</button></div>
+      </>}
       {preflight&&<pre className="plan">{JSON.stringify(preflight,null,2)}</pre>}
+      {certAction&&<pre className="plan">{JSON.stringify(certAction,null,2)}</pre>}
       {renewal&&<pre className="plan">{JSON.stringify(renewal,null,2)}</pre>}
     </div>
     <div className="card">

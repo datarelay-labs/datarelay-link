@@ -307,6 +307,71 @@ class ManagementCoreService:
         self._require_web_role(actor, "Admin", "Operator", "Read Only")
         return ManagementSystemService(self.root).certificate_preflight()
 
+    def certificate_configure(
+        self,
+        settings: dict[str, Any],
+        *,
+        actor: ManagementActor,
+        confirmation: str,
+    ) -> dict[str, Any]:
+        self._require_web_role(actor, "Admin")
+        if "management-config" not in actor.permissions:
+            raise ManagementAuthorizationError(
+                "management-config is required for certificate configuration."
+            )
+        if str(confirmation or "").strip().upper() != "APPLY":
+            raise ControlPlaneError(
+                "Certificate configuration requires explicit confirmation 'APPLY'."
+            )
+        return ManagementSystemService(self.root).certificate_configure(
+            settings,
+            actor_id=actor.actor_id,
+        )
+
+    def certificate_issue(
+        self,
+        *,
+        actor: ManagementActor,
+        confirmation: str,
+    ) -> dict[str, Any]:
+        self._require_web_role(actor, "Admin")
+        if "management-config" not in actor.permissions:
+            raise ManagementAuthorizationError(
+                "management-config is required for certificate issuance."
+            )
+        if str(confirmation or "").strip().upper() != "ISSUE":
+            raise ControlPlaneError(
+                "Certificate issuance requires explicit confirmation 'ISSUE'."
+            )
+        return ManagementSystemService(self.root).certificate_issue(
+            actor_id=actor.actor_id
+        )
+
+    def certificate_import(
+        self,
+        *,
+        actor: ManagementActor,
+        cert_pem: str,
+        key_pem: str,
+        chain_pem: str,
+        confirmation: str,
+    ) -> dict[str, Any]:
+        self._require_web_role(actor, "Admin")
+        if "management-config" not in actor.permissions:
+            raise ManagementAuthorizationError(
+                "management-config is required for certificate import."
+            )
+        if str(confirmation or "").strip().upper() != "IMPORT":
+            raise ControlPlaneError(
+                "Certificate import requires explicit confirmation 'IMPORT'."
+            )
+        return ManagementSystemService(self.root).certificate_import(
+            cert_pem=cert_pem,
+            key_pem=key_pem,
+            chain_pem=chain_pem,
+            actor_id=actor.actor_id,
+        )
+
     def certificate_renew(
         self,
         *,
@@ -323,6 +388,38 @@ class ManagementCoreService:
                 "Certificate renewal requires explicit confirmation 'RENEW'."
             )
         return ManagementSystemService(self.root).certificate_renew(
+            actor_id=actor.actor_id
+        )
+
+    def update_check(
+        self,
+        target: str,
+        *,
+        actor: ManagementActor,
+    ) -> dict[str, Any]:
+        if "management-diagnose" not in actor.permissions:
+            raise ManagementAuthorizationError(
+                "management-diagnose is required for update checks."
+            )
+        self._require_web_role(actor, "Admin", "Operator", "Read Only")
+        return ManagementSystemService(self.root).update_check(target)
+
+    def update_engine_apply(
+        self,
+        *,
+        actor: ManagementActor,
+        confirmation: str,
+    ) -> dict[str, Any]:
+        self._require_web_role(actor, "Admin")
+        if "management-config" not in actor.permissions:
+            raise ManagementAuthorizationError(
+                "management-config is required for Relay Engine update."
+            )
+        if str(confirmation or "").strip().upper() != "UPDATE ENGINE":
+            raise ControlPlaneError(
+                "Relay Engine update requires explicit confirmation 'UPDATE ENGINE'."
+            )
+        return ManagementSystemService(self.root).update_engine_apply(
             actor_id=actor.actor_id
         )
 

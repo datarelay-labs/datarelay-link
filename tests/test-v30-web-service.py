@@ -285,6 +285,139 @@ class V30WebServiceTests(unittest.TestCase):
         self.assertFalse(result["renewed"])
         renew.assert_called_once_with(actor_id="web:%s" % operator_id)
 
+    def test_certificate_lifecycle_and_update_routes_use_core_guards(self):
+        login = self.login()
+        operator_id = login["operator"]["id"]
+
+        status, _, denied = self.request(
+            "POST",
+            "/api/v1/system/certificate/configure",
+            {"mode": "private-ca", "hostname": "mcp.example.test"},
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 400, denied)
+        self.assertIn("confirmation", denied["error"].lower())
+
+        from unittest import mock
+        with mock.patch(
+            "drlink_management_core.ManagementSystemService.certificate_configure",
+            return_value={
+                "status": "CONFIGURED",
+                "certificate": {"hostname": "mcp.example.test"},
+                "authoritative_mutation": True,
+            },
+        ) as configure:
+            status, _, configured = self.request(
+                "POST",
+                "/api/v1/system/certificate/configure",
+                {
+                    "mode": "private-ca",
+                    "hostname": "mcp.example.test",
+                    "contact_email": "ops@example.test",
+                    "acme_environment": "staging",
+                    "confirmation": "APPLY",
+                },
+                headers={"X-CSRF-Token": self.csrf},
+            )
+        self.assertEqual(status, 200, configured)
+        configure.assert_called_once_with(
+            {
+                "mode": "private-ca",
+                "hostname": "mcp.example.test",
+                "contact_email": "ops@example.test",
+                "acme_environment": "staging",
+            },
+            actor_id="web:%s" % operator_id,
+        )
+
+        with mock.patch(
+            "drlink_management_core.ManagementSystemService.certificate_issue",
+            return_value={
+                "status": "ISSUED",
+                "certificate": {"hostname": "mcp.example.test"},
+                "authoritative_mutation": True,
+            },
+        ) as issue:
+            status, _, issued = self.request(
+                "POST",
+                "/api/v1/system/certificate/issue",
+                {"confirmation": "ISSUE"},
+                headers={"X-CSRF-Token": self.csrf},
+            )
+        self.assertEqual(status, 200, issued)
+        issue.assert_called_once_with(actor_id="web:%s" % operator_id)
+
+        with mock.patch(
+            "drlink_management_core.ManagementSystemService.certificate_import",
+            return_value={
+                "status": "IMPORTED",
+                "certificate": {"hostname": "mcp.example.test"},
+                "authoritative_mutation": True,
+            },
+        ) as imported:
+            status, _, imported_result = self.request(
+                "POST",
+                "/api/v1/system/certificate/import",
+                {
+                    "cert_pem": "CERTIFICATE-PEM",
+                    "key_pem": "PRIVATE-KEY-PEM",
+                    "chain_pem": "CHAIN-PEM",
+                    "confirmation": "IMPORT",
+                },
+                headers={"X-CSRF-Token": self.csrf},
+            )
+        self.assertEqual(status, 200, imported_result)
+        self.assertNotIn("PRIVATE-KEY-PEM", json.dumps(imported_result))
+        imported.assert_called_once_with(
+            cert_pem="CERTIFICATE-PEM",
+            key_pem="PRIVATE-KEY-PEM",
+            chain_pem="CHAIN-PEM",
+            actor_id="web:%s" % operator_id,
+        )
+
+        with mock.patch(
+            "drlink_management_core.ManagementSystemService.update_check",
+            return_value={
+                "target": "product",
+                "status": "CHECKED",
+                "availability": "AVAILABLE",
+                "authoritative_mutation": False,
+            },
+        ) as check:
+            status, _, checked = self.request(
+                "POST",
+                "/api/v1/system/update/check",
+                {"target": "product"},
+                headers={"X-CSRF-Token": self.csrf},
+            )
+        self.assertEqual(status, 200, checked)
+        self.assertEqual(checked["availability"], "AVAILABLE")
+        check.assert_called_once_with("product")
+
+        status, _, denied = self.request(
+            "POST",
+            "/api/v1/system/update/engine",
+            {"confirmation": ""},
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 400, denied)
+        with mock.patch(
+            "drlink_management_core.ManagementSystemService.update_engine_apply",
+            return_value={
+                "target": "engine",
+                "status": "UPDATED",
+                "authoritative_mutation": True,
+            },
+        ) as update:
+            status, _, updated = self.request(
+                "POST",
+                "/api/v1/system/update/engine",
+                {"confirmation": "UPDATE ENGINE"},
+                headers={"X-CSRF-Token": self.csrf},
+            )
+        self.assertEqual(status, 200, updated)
+        update.assert_called_once_with(actor_id="web:%s" % operator_id)
+
     def test_restore_requires_admin_confirmation_revokes_sessions_and_clears_cookie(self):
         login = self.login()
         operator_id = login["operator"]["id"]

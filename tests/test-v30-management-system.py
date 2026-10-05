@@ -90,6 +90,168 @@ class V30ManagementSystemTests(unittest.TestCase):
         finally:
             plane.close()
 
+    def test_certificate_configure_issue_and_import_reuse_canonical_tls_boundary(self):
+        service = ManagementSystemService(self.tmp)
+        with mock.patch(
+            "drlink_management_system.mcp_tls.require_public_frontend"
+        ), mock.patch(
+            "drlink_management_system.mcp_tls.status_view",
+            return_value={
+                "hostname": "mcp.example.test",
+                "mode": mcp_tls.MODE_PRIVATE_CA,
+                "certificate": "VALID",
+                "raw": {"secret": "no"},
+                "active_key_path": "/secret/key",
+            },
+        ):
+            configured = service.certificate_configure(
+                {
+                    "mode": "private-ca",
+                    "hostname": "mcp.example.test",
+                    "contact_email": "ops@example.test",
+                    "acme_environment": "staging",
+                },
+                actor_id="web:admin",
+            )
+        self.assertEqual(configured["status"], "CONFIGURED")
+        self.assertNotIn("raw", configured["certificate"])
+        self.assertNotIn("active_key_path", configured["certificate"])
+
+        plane = ControlPlane(self.tmp)
+        try:
+            state = mcp_tls.load_state(plane)
+            self.assertEqual(state["mode"], mcp_tls.MODE_PRIVATE_CA)
+            self.assertEqual(state["hostname"], "mcp.example.test")
+            self.assertEqual(state["contact_email"], "ops@example.test")
+        finally:
+            plane.close()
+
+        with mock.patch(
+            "drlink_management_system.mcp_tls.require_public_frontend"
+        ), mock.patch(
+            "drlink_management_system.mcp_tls.issue_and_activate",
+            return_value={"status": "VALID"},
+        ) as issue, mock.patch(
+            "drlink_management_system.mcp_tls.status_view",
+            return_value={
+                "hostname": "mcp.example.test",
+                "mode": mcp_tls.MODE_PRIVATE_CA,
+                "certificate": "VALID",
+            },
+        ):
+            issued = service.certificate_issue(actor_id="web:admin")
+        self.assertEqual(issued["status"], "ISSUED")
+        issue.assert_called_once()
+
+        captured = {}
+        def fake_import(plane, root, *, cert_path, key_path, chain_path=None, **kwargs):
+            del plane, root, kwargs
+            cert = Path(cert_path)
+            key = Path(key_path)
+            captured["cert"] = cert.read_text(encoding="utf-8")
+            captured["key"] = key.read_text(encoding="utf-8")
+            captured["key_mode"] = key.stat().st_mode & 0o777
+            captured["chain"] = (
+                Path(chain_path).read_text(encoding="utf-8")
+                if chain_path
+                else ""
+            )
+            return {"status": "VALID"}
+
+        with mock.patch(
+            "drlink_management_system.mcp_tls.require_public_frontend"
+        ), mock.patch(
+            "drlink_management_system.mcp_tls.import_user_certificate",
+            side_effect=fake_import,
+        ) as imported, mock.patch(
+            "drlink_management_system.mcp_tls.status_view",
+            return_value={
+                "hostname": "mcp.example.test",
+                "mode": mcp_tls.MODE_USER_CERTIFICATE,
+                "certificate": "VALID",
+            },
+        ):
+            result = service.certificate_import(
+                cert_pem="-----BEGIN CERTIFICATE-----\nCERT\n-----END CERTIFICATE-----\n",
+                key_pem="-----BEGIN PRIVATE KEY-----\nKEY\n-----END PRIVATE KEY-----\n",
+                chain_pem="-----BEGIN CERTIFICATE-----\nCHAIN\n-----END CERTIFICATE-----\n",
+                actor_id="web:admin",
+            )
+        self.assertEqual(result["status"], "IMPORTED")
+        imported.assert_called_once()
+        self.assertIn("CERT", captured["cert"])
+        self.assertIn("KEY", captured["key"])
+        self.assertEqual(captured["key_mode"], 0o600)
+        self.assertIn("CHAIN", captured["chain"])
+        staging = Path(self.tmp, "var/lib/drlink/certificate-import-staging")
+        self.assertTrue(staging.is_dir())
+        self.assertEqual(list(staging.iterdir()), [])
+
+    def test_update_check_is_read_only_and_engine_apply_uses_canonical_updater(self):
+        service = ManagementSystemService(self.tmp)
+        calls = []
+        def fake_run(command, **kwargs):
+            calls.append((list(command), dict(kwargs)))
+            if "--check" in command:
+                if "frp-project-update" in command[1]:
+                    out = "Update                    : available\nState mutation             : NO\n"
+                else:
+                    out = "Update      : not needed\n"
+                return subprocess.CompletedProcess(
+                    args=command, returncode=0, stdout=out, stderr=""
+                )
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout="Relay Engine update completed.\n",
+                stderr="",
+            )
+        plane = ControlPlane(self.tmp)
+        try:
+            revision = plane.current_revision()
+        finally:
+            plane.close()
+        with mock.patch(
+            "drlink_management_system.subprocess.run", side_effect=fake_run
+        ):
+            product = service.update_check("product")
+            engine = service.update_check("engine")
+            applied = service.update_engine_apply(actor_id="web:admin")
+        self.assertEqual(product["availability"], "AVAILABLE")
+        self.assertEqual(engine["availability"], "NOT_NEEDED")
+        self.assertFalse(product["authoritative_mutation"])
+        self.assertFalse(engine["authoritative_mutation"])
+        self.assertEqual(applied["status"], "UPDATED")
+        self.assertTrue(applied["authoritative_mutation"])
+        self.assertEqual(calls[-1][1]["env"]["DRLINK_ACTOR"], "web:admin")
+        self.assertEqual(calls[-1][1]["env"]["DRLINK_INTERFACE"], "WEB")
+        plane = ControlPlane(self.tmp)
+        try:
+            self.assertEqual(plane.current_revision(), revision)
+            audit = plane.conn.execute(
+                "SELECT actor_id,interface,action FROM audit_events "
+                "WHERE entity_type='system-update' ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            self.assertEqual(audit["actor_id"], "web:admin")
+            self.assertEqual(audit["interface"], "WEB")
+            self.assertEqual(audit["action"], "web relay-engine update")
+        finally:
+            plane.close()
+
+    def test_update_engine_failure_surfaces_recovery_required(self):
+        service = ManagementSystemService(self.tmp)
+        failed = subprocess.CompletedProcess(
+            args=[],
+            returncode=1,
+            stdout="UPDATE_ROLLBACK_FAILED\nRECOVERY_REQUIRED\n",
+            stderr="update failed\n",
+        )
+        with mock.patch(
+            "drlink_management_system.subprocess.run", return_value=failed
+        ):
+            with self.assertRaisesRegex(ControlPlaneError, "RECOVERY_REQUIRED"):
+                service.update_engine_apply(actor_id="web:admin")
+
     def test_certificate_renew_reuses_canonical_lifecycle_and_redacts_response(self):
         plane = ControlPlane(self.tmp)
         try:
@@ -342,9 +504,48 @@ class V30ManagementSystemTests(unittest.TestCase):
         with self.assertRaises(ManagementAuthorizationError):
             core.certificate_preflight(actor=denied)
         with self.assertRaises(ManagementAuthorizationError):
+            core.certificate_configure(
+                {"mode": "private-ca"},
+                actor=operator,
+                confirmation="APPLY",
+            )
+        with self.assertRaisesRegex(ControlPlaneError, "confirmation"):
+            core.certificate_configure(
+                {"mode": "private-ca"},
+                actor=admin,
+                confirmation="",
+            )
+        with self.assertRaises(ManagementAuthorizationError):
+            core.certificate_issue(actor=operator, confirmation="ISSUE")
+        with self.assertRaises(ManagementAuthorizationError):
+            core.certificate_import(
+                actor=operator,
+                cert_pem="cert",
+                key_pem="key",
+                chain_pem="",
+                confirmation="IMPORT",
+            )
+        with self.assertRaises(ManagementAuthorizationError):
             core.certificate_renew(actor=operator, confirmation="RENEW")
         with self.assertRaisesRegex(ControlPlaneError, "confirmation"):
             core.certificate_renew(actor=admin, confirmation="")
+        with mock.patch.object(
+            ManagementSystemService,
+            "update_check",
+            return_value={"target": "product", "status": "CHECKED"},
+        ) as check:
+            self.assertEqual(
+                core.update_check("product", actor=reader)["target"],
+                "product",
+            )
+            check.assert_called_once_with("product")
+        with self.assertRaises(ManagementAuthorizationError):
+            core.update_engine_apply(
+                actor=operator,
+                confirmation="UPDATE ENGINE",
+            )
+        with self.assertRaisesRegex(ControlPlaneError, "confirmation"):
+            core.update_engine_apply(actor=admin, confirmation="")
         with mock.patch.object(
             ManagementSystemService,
             "certificate_renew",

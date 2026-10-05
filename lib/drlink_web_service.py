@@ -421,8 +421,47 @@ class WebApplication:
         actor = self._actor(principal)
         if path == "/api/v1/system/certificate/preflight":
             return self.adapter.certificate_preflight(actor=actor)
+        if path == "/api/v1/system/certificate/configure":
+            settings = {
+                key: body[key]
+                for key in (
+                    "mode",
+                    "hostname",
+                    "contact_email",
+                    "acme_environment",
+                )
+                if key in body
+            }
+            return self.adapter.certificate_configure(
+                settings,
+                actor=actor,
+                confirmation=str(body.get("confirmation") or ""),
+            )
+        if path == "/api/v1/system/certificate/issue":
+            return self.adapter.certificate_issue(
+                actor=actor,
+                confirmation=str(body.get("confirmation") or ""),
+            )
+        if path == "/api/v1/system/certificate/import":
+            return self.adapter.certificate_import(
+                actor=actor,
+                cert_pem=str(body.get("cert_pem") or ""),
+                key_pem=str(body.get("key_pem") or ""),
+                chain_pem=str(body.get("chain_pem") or ""),
+                confirmation=str(body.get("confirmation") or ""),
+            )
         if path == "/api/v1/system/certificate/renew":
             return self.adapter.certificate_renew(
+                actor=actor,
+                confirmation=str(body.get("confirmation") or ""),
+            )
+        if path == "/api/v1/system/update/check":
+            return self.adapter.update_check(
+                str(body.get("target") or ""),
+                actor=actor,
+            )
+        if path == "/api/v1/system/update/engine":
+            return self.adapter.update_engine_apply(
                 actor=actor,
                 confirmation=str(body.get("confirmation") or ""),
             )
