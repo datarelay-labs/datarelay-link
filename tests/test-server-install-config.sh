@@ -35,6 +35,8 @@ reset_env
 export FRP_SERVER_SOURCED=1
 # shellcheck source=../install-server.sh
 . "$ROOT/install-server.sh"
+# Config-resolution cases in this file are the non-interactive lane even when the test runner itself owns /dev/tty.
+frp_has_tty() { return 1; }
 
 # CASE B — non-interactive env vars.
 export FRP_PUBLIC_HOST='203.0.113.10'
