@@ -573,9 +573,12 @@ Product and Relay Engine update checks are OBSERVE/TEST-style canonical `--check
 operations available under `management-diagnose`. Relay Engine apply is local Web Admin
 only, requires `management-config` plus typed `UPDATE ENGINE`, and delegates to
 canonical `frp-update` including rollback/RECOVERY_REQUIRED behavior. Core product
-self-update apply remains intentionally unavailable through Web until DRL3-7 qualifies
-the optional Web package update/uninstall/reinstall compatibility lifecycle; there is no
-hidden `/api/v1/system/update/product` mutation route in DRL3-3.
+self-update apply remains intentionally unavailable through Web in DRL3-3. DRL3-7 adds
+Admin-only typed `UPDATE PRODUCT` through the same Management Core boundary. The request
+is queued to a fixed privileged one-shot; Web stops before Core mutation and restarts only
+after the canonical updater succeeds and a SHA256-verified Web package proves the same
+immutable source ref/HEAD and release channel. Build skew fails closed with recovery
+required, and the Web package never becomes a Core dependency.
 
 Restore is local Web Admin-only `RECOVERY_AUTHORITY`, requires
 `management-recovery` plus explicit typed `RESTORE`, is restricted to the canonical

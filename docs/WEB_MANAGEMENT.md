@@ -987,8 +987,12 @@ Engine reuse the canonical `--check` paths and remain read-only. Admin-only Rela
 apply requires typed `UPDATE ENGINE` and delegates to canonical `frp-update`, including
 its rollback/RECOVERY_REQUIRED semantics. **Core product self-update apply is intentionally
 not exposed from Web in DRL3-3** because it can change Core management files while the
-optional Web package remains at its prior build. That apply path closes in DRL3-7 together
-with the explicitly required Web update/uninstall/reinstall compatibility lifecycle.
+optional Web package remains at its prior build. DRL3-7 closes that gap with Admin-only
+typed `UPDATE PRODUCT`: Core creates a bounded root-owned request, activates a fixed
+privileged one-shot, stops Web before Core mutation, runs the canonical product updater,
+verifies the optional Web package against SHA256 plus the same immutable source ref/HEAD
+and release channel, and only then reinstalls/restarts Web. A Core/Web identity mismatch
+fails closed with recovery required; CLI/local recovery remains authoritative.
 
 Restore is **Admin-only `RECOVERY_AUTHORITY`**. The browser accepts only a canonical
 backup path under `/var/lib/drlink/backups/`, requires successful validation plus explicit
