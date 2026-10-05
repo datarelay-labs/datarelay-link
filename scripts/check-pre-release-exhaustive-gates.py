@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import csv
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -733,6 +734,61 @@ def _require_exact_head(data: dict, head: str, label: str, key: str) -> list[str
         )
     return errors
 
+
+def _validate_manifest_candidate_binding(repo_root: Path, candidate: str, label: str) -> list[str]:
+    """Bind installed candidate identity to its documented content parent.
+
+    A follow-on provenance commit may change generated artifacts only. Reuse
+    the attestation gate's path/status rules; arbitrary ancestors and product
+    changes cannot stand in for the exact runtime candidate.
+    """
+    manifest = repo_root / "release-manifest.json"
+    if not manifest.is_file():
+        return []
+    try:
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            return [f"{label}: release-manifest.json must be an object"]
+        source = str(data.get("source_head") or "").strip().lower()
+    except (OSError, ValueError) as exc:
+        return [f"{label}: unable to read release-manifest.json: {exc}"]
+    if not SHA_RE.fullmatch(source):
+        return [f"{label}: release-manifest source_head must be a 40-character SHA"]
+    if source == candidate:
+        return []
+    try:
+        actual = subprocess.check_output(["git", "-C", str(repo_root), "rev-parse", "HEAD"], text=True, stderr=subprocess.PIPE).strip().lower()
+        parent = subprocess.check_output(["git", "-C", str(repo_root), "rev-parse", "--verify", f"{candidate}^1"], text=True, stderr=subprocess.PIPE).strip().lower()
+        manifest_diff = subprocess.run(["git", "-C", str(repo_root), "diff", "--quiet", candidate, "--", "release-manifest.json"], capture_output=True, check=False)
+    except (OSError, subprocess.CalledProcessError) as exc:
+        return [f"{label}: cannot prove manifest content-parent binding: {exc}"]
+    if actual != candidate or source != parent:
+        return [f"{label}: manifest source_head {source} must equal the exact candidate's first content parent ({parent}); checked-out HEAD={actual}, candidate={candidate}"]
+    if manifest_diff.returncode != 0:
+        return [f"{label}: content-parent binding requires the committed candidate manifest, without working-tree or staged changes"]
+
+    module_name = "_drlink_exhaustive_provenance_binding"
+    binding = sys.modules.get(module_name)
+    if binding is None:
+        spec = importlib.util.spec_from_file_location(module_name, Path(__file__).with_name("check-release-attest-binding.py"))
+        if spec is None or spec.loader is None:
+            return [f"{label}: provenance binding rules unavailable"]
+        binding = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = binding
+        try:
+            spec.loader.exec_module(binding)
+        except Exception as exc:
+            sys.modules.pop(module_name, None)
+            return [f"{label}: cannot load provenance binding rules: {exc}"]
+    try:
+        changed = binding._changed_paths(repo_root, parent, candidate)
+    except binding.BindingError as exc:
+        return [f"{label}: invalid provenance commit: {error}" for error in exc.errors]
+    unexpected = sorted(set(changed) - binding.PROVENANCE_PATHS)
+    if not changed or "release-manifest.json" not in changed or unexpected:
+        return [f"{label}: candidate content-parent binding requires a generated-only provenance commit updating release-manifest.json; non-generated paths={unexpected}"]
+    return []
+
 def validate_cli_feature(data: dict, head: str, repo_root: Path | None = None) -> list[str]:
     label = "CLI_FEATURE_SCENARIO_RECONCILIATION"
     errors: list[str] = []
@@ -766,6 +822,7 @@ def validate_cli_feature(data: dict, head: str, repo_root: Path | None = None) -
     product_source_head = str(data.get("product_source_head") or "").strip().lower()
     if not SHA_RE.fullmatch(product_source_head):
         errors.append(f"{label}: product_source_head must be a 40-character SHA")
+    errors += _require_exact_head(data, head, label, "product_source_head")
     for key in ("server_source_head", "agent_source_head"):
         got = str(data.get(key) or "").strip().lower()
         if got != product_source_head:
@@ -849,15 +906,7 @@ def validate_cli_feature(data: dict, head: str, repo_root: Path | None = None) -
             ).returncode
             if dirty != 0:
                 errors.append(f"{label}: canonical contract differs from committed HEAD")
-        manifest = repo_root / "release-manifest.json"
-        if manifest.is_file():
-            try:
-                manifest_source = str(json.loads(manifest.read_text(encoding="utf-8")).get("source_head") or "").strip().lower()
-            except Exception as exc:
-                errors.append(f"{label}: unable to read release-manifest.json: {exc}")
-            else:
-                if manifest_source and manifest_source != product_source_head:
-                    errors.append(f"{label}: product_source_head must equal release-manifest source_head {manifest_source}")
+        errors += _validate_manifest_candidate_binding(repo_root, head, label)
         errors += _validate_cli_ledgers(data, repo_root, label)
         errors += _validate_cli_catalog_binding(data, repo_root, label)
     return errors
@@ -879,6 +928,7 @@ def validate_full_user(data: dict, head: str, pass_name: str, repo_root: Path | 
     product_source_head = str(data.get("product_source_head") or "").strip().lower()
     if not SHA_RE.fullmatch(product_source_head):
         errors.append(f"{label}: product_source_head must be a 40-character SHA")
+    errors += _require_exact_head(data, head, label, "product_source_head")
     if data.get("summary_derived_from_ledger") is not True:
         errors.append(f"{label}: summary_derived_from_ledger must be true")
     if str(data.get("primary_user_evidence_mode") or "").strip().upper() != "PERSONA_LED_PUBLIC_UX":
@@ -894,15 +944,7 @@ def validate_full_user(data: dict, head: str, pass_name: str, repo_root: Path | 
     if not str(data.get("evidence_root") or "").strip():
         errors.append(f"{label}: evidence_root is required")
     if repo_root is not None:
-        manifest = repo_root / "release-manifest.json"
-        if manifest.is_file():
-            try:
-                manifest_source = str(json.loads(manifest.read_text(encoding="utf-8")).get("source_head") or "").strip().lower()
-            except Exception as exc:
-                errors.append(f"{label}: unable to read release-manifest.json: {exc}")
-            else:
-                if manifest_source and manifest_source != product_source_head:
-                    errors.append(f"{label}: product_source_head must equal release-manifest source_head {manifest_source}")
+        errors += _validate_manifest_candidate_binding(repo_root, head, label)
         errors += _validate_full_ledgers(data, repo_root, label)
     return errors
 
