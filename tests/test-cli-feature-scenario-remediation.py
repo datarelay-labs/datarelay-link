@@ -474,6 +474,10 @@ class CliFeatureScenarioRemediation(unittest.TestCase):
         surfaces = {
             "doctor": (LIB / "frp_doctor.py").read_text(encoding="utf-8"),
             "agent": (ROOT / "tools/frp-client").read_text(encoding="utf-8"),
+            "agent-common": (LIB / "frp-client-common.sh").read_text(encoding="utf-8"),
+            "cli": (ROOT / "tools/frpctl").read_text(encoding="utf-8"),
+            "installer": (ROOT / "install-client.sh").read_text(encoding="utf-8"),
+            "catalog": (LIB / "frp_cli_final_commands.json").read_text(encoding="utf-8"),
             "retire": (ROOT / "tools/frp-revoke-client").read_text(encoding="utf-8"),
             "enrollment-purge": (ROOT / "tools/frp-enrollment-purge").read_text(encoding="utf-8"),
             "enrollment-revoke": (ROOT / "tools/frp-enrollment-revoke").read_text(encoding="utf-8"),
@@ -485,8 +489,16 @@ class CliFeatureScenarioRemediation(unittest.TestCase):
             "drlink enrollment create",
             "drlink enrollment revoke",
             "drlink enrollment list",
+            "system services apply",
+            "system services discard",
         ):
             self.assertNotIn(retired, combined, retired)
+        self.assertNotIn("Published services", surfaces["installer"])
+        self.assertNotIn("Published service reservations", surfaces["cli"])
+        self.assertNotIn("Show local client connection information", surfaces["catalog"])
+        self.assertIn("Data Relay Link Agent setup complete", surfaces["installer"])
+        self.assertIn("Remote Services", surfaces["installer"])
+        self.assertIn("system synchronize", surfaces["agent"])
         self.assertIn("sudo drlink show internet-access", surfaces["doctor"])
         self.assertIn("sudo drlink set enrollment manual", surfaces["agent"])
         self.assertIn("sudo drlink set enrollment manual", surfaces["retire"])

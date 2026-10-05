@@ -70,7 +70,7 @@ done
 [[ ! -e "$ROOT/client/com.datarelay.frp-auto-deploy.frpc.plist" ]] || fail "legacy macOS plist duplicate remains"
 [[ -f "$ROOT/server/drlink-egress.service" ]] || fail "missing drlink-egress.service"
 grep -q 'Description=Data Relay Link Server' "$ROOT/server/drlink-server.service" || fail "server unit description"
-grep -q 'Description=Data Relay Link Client' "$ROOT/client/drlink-client.service" || fail "client unit description"
+grep -q 'Description=Data Relay Link Agent' "$ROOT/client/drlink-client.service" || fail "Agent unit description"
 
 # Manifest installs drlink on PATH and keeps frpctl internal.
 grep -q 'usr/local/bin/drlink' "$ROOT/lib/server-project-files.manifest" || fail "manifest missing drlink"

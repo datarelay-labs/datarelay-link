@@ -495,7 +495,7 @@ frp_identity_ensure() {
   chmod 700 "$(dirname "$key")" 2>/dev/null || true
   status="$(frp_identity_status)"
   if [[ "$status" == corrupt ]]; then
-    echo "ERROR: this client's management identity is unusable." >&2
+    echo "ERROR: this Agent's management identity is unusable." >&2
     echo "The local identity file exists but cannot be used." >&2
     echo "Create a new Enrollment Code on the Data Relay Link server with sudo drlink set enrollment manual" >&2
     echo "Move the damaged identity aside, then re-enroll this Agent Host." >&2
@@ -560,7 +560,7 @@ frp_identity_load_mac() {
   local path
   path="$(frp_client_identity_mac_path)"
   if [[ ! -f "$path" ]]; then
-    echo "ERROR: management identity is missing a response key; re-enroll this client." >&2
+    echo "ERROR: management identity is missing a response key; re-enroll this Agent." >&2
     return 1
   fi
   tr -d '\n' <"$path"
@@ -770,7 +770,7 @@ frp_client_explicit_expected_channel() {
 }
 
 frp_client_emit_legacy_secure_bridge() {
-  echo "ERROR: this client has no trustworthy persisted release identity." >&2
+  echo "ERROR: this Agent has no trustworthy persisted release identity." >&2
   echo "A pre-P2.20 updater cannot retroactively verify an artifact before executing it." >&2
   echo "A bundle hashing itself is identity, not external verification." >&2
   echo "Perform the documented one-time verified bridge; do not pipe main into sudo." >&2
@@ -1116,7 +1116,7 @@ frp_ux_intro() {
   cat <<'EOF'
 
 =========================================
- Data Relay Link Client Setup
+ Data Relay Link Agent Setup
 =========================================
 
 This installer publishes services on this Linux system
@@ -1468,13 +1468,13 @@ print('Ready to install')
 print('================')
 print()
 if not services:
-    print('No services will be published (management-only).')
+    print('No Remote Services will be published (management-only).')
     print()
     print('This machine will be enrolled and manageable, and no public port')
     print('is reserved. Publish a service later with: sudo drlink')
     print()
 else:
-    print('The following services will be published:')
+    print('The following Remote Services will be published:')
     print()
     for item in services:
         name = item.get('name') or item.get('id')
@@ -3617,7 +3617,7 @@ PY
   if [[ "$auth_mode" == identity ]]; then
     key_path="$(frp_client_identity_key_path)"
     if [[ "$(frp_identity_status)" != enrolled ]]; then
-      echo "ERROR: this client does not have a usable management identity." >&2
+      echo "ERROR: this Agent does not have a usable management identity." >&2
       rm -f "$curl_err"
       return 1
     fi
@@ -3892,11 +3892,10 @@ if mode == 'pending':
         raise SystemExit(0)
     print('Pending change saved.')
     print()
-    print('Apply:')
-    print('  system services apply')
-    print()
-    print('Discard:')
-    print('  system services discard')
+    print('Current public workflow:')
+    print('  show remote-services')
+    print('  set/unset remote-service <NAME> ...')
+    print('  system synchronize')
     print()
     print('Pending changes:')
     print()
@@ -3940,14 +3939,14 @@ if overall == 'local':
     print('These changes affect local connection information only.')
     print('The Data Relay Link server and running proxy do not need to be changed.')
 elif overall == 'runtime':
-    print('Applying this configuration will restart the Data Relay Link client.')
+    print('Applying this configuration will restart the Data Relay Link Agent.')
 cand_enabled = [sid for sid, item in new.items() if enabled(item)]
 if new and not cand_enabled:
     print()
-    print('No services will be enabled after apply.')
-    print('The client remains registered for management.')
+    print('No Remote Services will be enabled after apply.')
+    print('The Agent remains registered for management.')
     print('Public port reservations remain on the server until released.')
-    print('Use the server CLI to release the published service reservation.')
+    print('Use the Server CLI to remove the Remote Service and release its public-port reservation.')
 print()
 PY
 }
@@ -4344,7 +4343,7 @@ frp_lifecycle_recover() {
   fi
   if [[ ! -f "$access" ]]; then
     if frp_regenerate_access_from_state; then
-      echo "Regenerated missing access-info.txt from local client state."
+      echo "Regenerated missing access-info.txt from local Agent state."
     else
       echo "ERROR: access-info.txt is missing and could not be regenerated." >&2
       frp_emit_failure_class RECOVERY_REQUIRED
@@ -4359,12 +4358,12 @@ frp_lifecycle_recover() {
     fi
     if [[ -z "$token" ]]; then
       echo "ERROR: frpc.toml is missing and the FRP token is not available from backups." >&2
-      echo "RECOVERY_REQUIRED: restore frpc.toml from backup or re-enroll this client." >&2
+      echo "RECOVERY_REQUIRED: restore frpc.toml from backup or re-enroll this Agent." >&2
       frp_emit_failure_class RECOVERY_REQUIRED
       return 2
     fi
     if frp_regenerate_toml_from_state "$token"; then
-      echo "Regenerated missing frpc.toml from local client state."
+      echo "Regenerated missing frpc.toml from local Agent state."
     else
       echo "ERROR: frpc.toml is missing and could not be regenerated." >&2
       frp_emit_failure_class RECOVERY_REQUIRED
@@ -4382,7 +4381,7 @@ frp_lifecycle_recover() {
     if [[ -n "$token" ]] && frp_regenerate_toml_from_state "$token" && frp_regenerate_access_from_state; then
       echo "Repaired local runtime artifacts from client-state.json."
     else
-      echo "ERROR: local client artifacts are inconsistent." >&2
+      echo "ERROR: local Agent artifacts are inconsistent." >&2
       frp_emit_failure_class RECOVERY_REQUIRED
       return 2
     fi
@@ -4392,7 +4391,8 @@ frp_lifecycle_recover() {
       frp_pending_clear
     else
       echo "ERROR: an Apply was interrupted and local state needs recovery." >&2
-      echo "RECOVERY_REQUIRED: run: sudo drlink system services apply" >&2
+      echo "RECOVERY_REQUIRED: run: sudo drlink system diagnostics" >&2
+      echo "Then: sudo drlink system synchronize" >&2
       frp_emit_failure_class RECOVERY_REQUIRED
       return 2
     fi
@@ -5000,15 +5000,15 @@ frp_client_pause_cmd() {
     export FRP_CLIENT_TEST_AUTOSTART
   fi
   if [[ "$already" == "1" ]]; then
-    echo "Client is already paused."
+    echo "Agent is already paused."
     echo "Runtime is stopped and autostart is disabled."
     return 0
   fi
-  echo "Client paused."
+  echo "Agent paused."
   echo "Runtime    : stopped"
   echo "Autostart  : disabled"
   echo "Identity   : preserved"
-  echo "Services   : preserved"
+  echo "Remote Services: preserved"
   echo "Public ports: preserved"
 }
 
@@ -5017,7 +5017,7 @@ frp_client_resume_cmd() {
   frp_client_runtime_active && was_active=1
   frp_client_autostart_enabled && was_auto=1
   if [[ "$was_active" == "1" && "$was_auto" == "1" ]]; then
-    echo "Client is already active."
+    echo "Agent is already active."
     echo "Runtime    : active"
     echo "Autostart  : enabled"
     echo "Identity   : preserved"
@@ -5033,7 +5033,7 @@ frp_client_resume_cmd() {
     FRP_CLIENT_TEST_AUTOSTART=enabled
     export FRP_CLIENT_TEST_AUTOSTART
   fi
-  echo "Client resumed."
+  echo "Agent resumed."
   echo "Runtime    : active"
   echo "Autostart  : enabled"
   echo "Identity   : preserved"
@@ -5069,7 +5069,7 @@ frp_client_restart_runtime_cmd() {
   FRP_PROXY_WAIT_CURSOR="$(frp_client_journal_cursor 2>/dev/null || true)"
   export FRP_PROXY_WAIT_CURSOR
   if [[ "${FRP_SKIP_SYSTEMD:-}" == "1" || -n "${FRP_CLIENT_TEST_ROOT:-}" ]]; then
-    echo "Client restarted."
+    echo "Agent restarted."
     echo "Identity and public port reservations were preserved."
     return 0
   fi
@@ -5086,13 +5086,13 @@ frp_client_restart_runtime_cmd() {
     if ! systemctl restart drlink-client >/dev/null 2>&1; then
       if [[ "$(systemctl is-active drlink-client 2>/dev/null || true)" != "active" ]]; then
         if ! systemctl start drlink-client >/dev/null 2>&1; then
-          echo "ERROR: failed to restart Data Relay Link client runtime." >&2
+          echo "ERROR: failed to restart Data Relay Link Agent runtime." >&2
           return 1
         fi
       fi
     fi
   fi
-  echo "Client restarted."
+  echo "Agent restarted."
   echo "Identity and public port reservations were preserved."
 }
 
@@ -5142,7 +5142,7 @@ frp_client_autostart_cmd() {
           case "$en" in
             disabled|static|masked|indirect) ;;
             *)
-              echo "ERROR: failed to disable Data Relay Link client autostart." >&2
+              echo "ERROR: failed to disable Data Relay Link Agent autostart." >&2
               return 1
               ;;
           esac
@@ -5216,7 +5216,7 @@ for (sid, item), target in zip(ordered, targets):
         print(f"   Public port : {remote}")
     print(f"   State       : {state}")
     print(f"   Health      : {HC.format_health_config(item.get('health_check'))}")
-    print(f"   CLIENT      : {client_label}")
+    print(f"   AGENT       : {client_label}")
     print(f"   TUNNEL      : {HC.tunnel_status_label(item)}")
     print(f"   TARGET      : {target}")
     print()
@@ -5471,8 +5471,8 @@ frp_client_upgrade_validate_existing() {
   state="$(frp_client_state_path)"
   toml="$(frp_client_toml_path)"
   [[ -f "$state" ]] || {
-    echo "ERROR: no existing FRP client installation was found." >&2
-    echo "Use the client bootstrap installer to enroll a new client." >&2
+    echo "ERROR: no existing Data Relay Link Agent installation was found." >&2
+    echo "Use the Agent bootstrap installer to enroll a new Managed Host." >&2
     return 1
   }
   frp_load_client_state "$state" || return 1
@@ -5481,7 +5481,7 @@ frp_client_upgrade_validate_existing() {
   fi
   ident="$(frp_identity_status)"
   if [[ "$ident" == corrupt ]]; then
-    echo "WARNING: this client's management identity is unusable." >&2
+    echo "WARNING: this Agent's management identity is unusable." >&2
     echo "Software upgrade will continue without regenerating identity files." >&2
   fi
   return 0
@@ -5535,8 +5535,8 @@ PY
     return 0
   fi
   echo "ERROR: SERVER_VERSION_TOO_OLD" >&2
-  echo "Server project version ${server_ver} is older than client candidate ${candidate_ver}." >&2
-  echo "Upgrade the server first, then upgrade clients." >&2
+  echo "Server project version ${server_ver} is older than Agent candidate ${candidate_ver}." >&2
+  echo "Upgrade the Server first, then upgrade Agents." >&2
   frp_emit_failure_class SERVER_VERSION_TOO_OLD
   return 1
 }
@@ -6022,7 +6022,7 @@ frp_client_apply_upgrade() {
     echo "State mutation           : NO"
     echo
     echo "A software update does not require an Enrollment Code."
-    echo "Client state, public ports, and management identity are preserved."
+    echo "Agent state, public ports, and management identity are preserved."
     return 0
   fi
 
@@ -6031,7 +6031,7 @@ frp_client_apply_upgrade() {
     return 0
   fi
 
-  echo "Checking existing client state..."
+  echo "Checking existing Agent state..."
   state_before="$(frp_client_digest "$(frp_client_state_path)")"
   toml_before="$(frp_client_digest "$(frp_client_toml_path)")"
   access_before="$(frp_client_digest "$(frp_client_access_path)")"
@@ -6099,7 +6099,7 @@ frp_client_apply_upgrade() {
     _lifecycle_converged=1
   else
     if ! frp_client_activate_linux_runtime_units "$_restart_client_unit"; then
-      echo "ERROR: failed to converge Linux client units; restoring previous management files." >&2
+      echo "ERROR: failed to converge Linux Agent units; restoring previous management files." >&2
       frp_client_upgrade_rollback "$backup" HEALTH_CHECK_FAILED || return 2
       return 1
     fi
@@ -6215,7 +6215,7 @@ frp_client_apply_upgrade() {
   else
     echo "FRP version     : ${frp_before} -> ${frp_after}"
   fi
-  echo "Client state    : preserved"
+  echo "Agent state     : preserved"
   echo "Management ID   : ${ident_after}"
   if [[ "${_frp_client_relay_restarted:-0}" == "1" ]]; then
     echo "frpc restarted  : YES"
@@ -6506,7 +6506,7 @@ frp_client_fetch_and_upgrade() {
       return 1
     fi
 
-    echo "Downloading Data Relay Link client update bundle..."
+    echo "Downloading Data Relay Link Agent update bundle..."
     curl -fL --retry 3 --connect-timeout 10 --max-time 120 -o "$metadata" "$FRP_CLIENT_UPDATE_METADATA_URL" || {
       echo "ERROR: failed to download client update integrity metadata" >&2
       frp_emit_failure_class INTEGRITY_FAILED

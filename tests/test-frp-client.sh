@@ -255,7 +255,7 @@ grep -q 'Data Relay Link Server: 203.0.113.10' "$WORKDIR/info.out" || fail "info
 grep -q 'ssh -p 18200 aella@203.0.113.10' "$WORKDIR/info.out" || fail "info ssh connect"
 : >"$HOOK"
 FRP_CLIENT_TEST_MENU=1 "$ROOT/tools/frp-client" >"$WORKDIR/menu.out"
-grep -q 'Data Relay Link Client Management' "$WORKDIR/menu.out" || fail "menu header"
+grep -q 'Data Relay Link Agent Management' "$WORKDIR/menu.out" || fail "menu header"
 grep -q '1) Add service' "$WORKDIR/menu.out" || fail "menu add"
 if grep -qx enroll "$HOOK"; then fail "menu contacted allocator"; fi
 if grep -qx restart "$HOOK"; then fail "menu restarted frpc"; fi
@@ -394,7 +394,7 @@ grep -q '203.0.113.10:18201' "$TREE/etc/frp/access-info.txt" || fail "access-inf
 if grep -q 'Enrollment Code' "$WORKDIR/add.out"; then
   fail "post-enroll add asked for Enrollment Code"
 fi
-grep -q 'existing client identity' "$WORKDIR/add.out" || fail "add should use client identity"
+grep -q 'existing Agent identity' "$WORKDIR/add.out" || fail "add should use client identity"
 pass "add service preserves ssh port"
 
 # Edit grafana target
@@ -421,7 +421,7 @@ grep -q 'Target: 127.0.0.1:3000 -> 10.10.20.30:3000' "$WORKDIR/edit.out" || fail
 if grep -q 'Enrollment Code' "$WORKDIR/edit.out"; then
   fail "post-enroll edit asked for Enrollment Code"
 fi
-grep -q 'existing client identity' "$WORKDIR/edit.out" || fail "edit should use client identity"
+grep -q 'existing Agent identity' "$WORKDIR/edit.out" || fail "edit should use client identity"
 pass "edit target preserves remote port"
 
 # Mixed name + target is runtime
@@ -443,7 +443,7 @@ grep -q 'Display name: Grafana -> Dash' "$WORKDIR/mixed-pending.out" || fail "mi
 grep -q 'Target: 10.10.20.30:3000 -> 10.10.20.31:3000' "$WORKDIR/mixed-pending.out" || fail "mixed pending target"
 grep -q 'Display name: Grafana -> Dash' "$WORKDIR/mixed-summary.out" || fail "mixed summary name"
 grep -q 'Target: 10.10.20.30:3000 -> 10.10.20.31:3000' "$WORKDIR/mixed-summary.out" || fail "mixed summary target"
-grep -q 'will restart the Data Relay Link client' "$WORKDIR/mixed-summary.out" || fail "mixed is runtime"
+grep -q 'will restart the Data Relay Link Agent' "$WORKDIR/mixed-summary.out" || fail "mixed is runtime"
 "$ROOT/tools/frp-client" apply >"$WORKDIR/mixed.out"
 if ! grep -qx enroll "$HOOK"; then fail "mixed did not enroll"; fi
 if ! grep -qx restart "$HOOK"; then fail "mixed did not restart"; fi
@@ -765,13 +765,13 @@ export FRP_SERVICES_JSON='[{"id":"ssh","name":"SSH","protocol":"tcp","local_ip":
 if frp_client_main >"$WORKDIR/reinstall.out" 2>"$WORKDIR/reinstall.err"; then
   fail "installer should refuse an existing client"
 fi
-grep -q 'already has a Data Relay Link client installed' "$WORKDIR/reinstall.err" || fail "existing-install refusal message"
+grep -q 'already has a Data Relay Link Agent installed' "$WORKDIR/reinstall.err" || fail "existing-install refusal message"
 grep -qE 'drlink (system )?update( product)?' "$WORKDIR/reinstall.err" \
   || fail "existing-install should point at upgrade"
 fp_after="$(python3 "$ROOT/lib/frp_mgmt_auth.py" fingerprint "$TREE/etc/frp/client-identity.pub")"
 [[ "$fp_before" == "$fp_after" ]] || fail "refused reinstall rotated identity"
 cmp -s "$TREE/etc/frp/client-identity.key" "$WORKDIR/key.before" || fail "refused reinstall replaced key"
-pass "installer refuses to re-enroll an existing client"
+pass "installer refuses to re-enroll an existing Agent"
 
 # Legacy P2 client: one-time Enrollment Code, then identity
 rm -f "$TREE/etc/frp/client-identity.key" "$TREE/etc/frp/client-identity.pub" "$TREE/etc/frp/client-identity.mac"
@@ -825,7 +825,7 @@ export FRP_CLIENT_CANDIDATE="$CAND"
 if grep -q 'Enrollment Code' "$WORKDIR/legacy2.out"; then
   fail "second legacy apply asked for Enrollment Code"
 fi
-grep -q 'existing client identity' "$WORKDIR/legacy2.out" || fail "second apply should use identity"
+grep -q 'existing Agent identity' "$WORKDIR/legacy2.out" || fail "second apply should use identity"
 pass "legacy client migrates with one Enrollment Code"
 
 # Key without MAC is not treated as enrolled (half-enrollment)
@@ -912,7 +912,7 @@ export FRP_CLIENT_CANDIDATE="$CAND"
 if grep -q 'Enrollment Code' "$WORKDIR/after-revoke.out"; then
   fail "apply after re-enroll asked for Enrollment Code"
 fi
-grep -q 'existing client identity' "$WORKDIR/after-revoke.out" || fail "apply after re-enroll should use identity"
+grep -q 'existing Agent identity' "$WORKDIR/after-revoke.out" || fail "apply after re-enroll should use identity"
 pass "revoked identity recovers with Enrollment Code"
 
 # Interactive recoverable errors
@@ -927,7 +927,7 @@ grep -q 'case-insensitive' "$WORKDIR/recover.err" "$WORKDIR/recover.out" || fail
 grep -q 'ERROR: select 1-8' "$WORKDIR/recover.err" "$WORKDIR/recover.out" || fail "invalid menu not recovered"
 grep -q 'invalid service number' "$WORKDIR/recover.err" "$WORKDIR/recover.out" || fail "invalid service number not recovered"
 grep -q 'invalid local_port' "$WORKDIR/recover.err" "$WORKDIR/recover.out" || fail "invalid port not recovered"
-grep -q 'Data Relay Link Client Management' "$WORKDIR/recover.out" || fail "menu did not continue"
+grep -q 'Data Relay Link Agent Management' "$WORKDIR/recover.out" || fail "menu did not continue"
 python3 - "$STATE" <<'PY' || fail "recovery corrupted state"
 import json,sys
 from pathlib import Path

@@ -245,7 +245,7 @@ frpctl_require_install() {
     fi
   fi
   echo "ERROR: no ${FRP_CTL_PRODUCT_NAME} installation was found on this host." >&2
-  echo "Install the server or client bootstrap first." >&2
+  echo "Install the Server or Agent bootstrap first." >&2
   return 1
 }
 
@@ -881,8 +881,8 @@ frpctl_print_server_menu() {
 }
 
 frpctl_print_both_menu() {
-  echo "This host has both a Data Relay Link server and client installed."
-  echo "Navigation uses the server product domains; local client services"
+  echo "This host has both Data Relay Link Server and Agent roles installed."
+  echo "Navigation uses the Server product domains; local Agent Remote Services"
   echo "are under Services when applicable."
   echo
   frpctl_render_nav_menu both
@@ -1189,7 +1189,7 @@ frpctl_nav_workflow() {
       echo "Current ACL assignment:"
       frpctl_dispatch show access-service "$id" "$value" || true
       echo
-      echo "This will make the published service PUBLIC."
+      echo "This will make the Remote Service PUBLIC."
       path="$(frpctl_read "Continue? [y/N]: " "N")" || return 1
       case "$(printf '%s' "$path" | tr '[:upper:]' '[:lower:]')" in
         y|yes)
@@ -1294,7 +1294,7 @@ PY
       frpctl_dispatch set internet-profile "$profile" template "$id" || true
       ;;
     set_public_hostname)
-      value="$(frpctl_nav_prompt_id "Published service hostname: ")" || return 1
+      value="$(frpctl_nav_prompt_id "Remote Service public hostname: ")" || return 1
       frpctl_dispatch set server public-hostname "$value" || true
       ;;
     set_bootstrap_hostname)
@@ -1336,7 +1336,7 @@ PY
           value="$(frpctl_nav_prompt_id "New value: ")" || return 1
           frpctl_dispatch set service "$id" "$path" "$value" || true
           echo
-          echo "Pending change recorded. Run: system services apply"
+          echo "Legacy local service draft recorded. Use current Remote Service commands, then run: system synchronize"
           ;;
         enable_service) frpctl_dispatch set service "$id" enabled || true ;;
         disable_service) frpctl_dispatch unset service "$id" enabled || true ;;
@@ -1904,10 +1904,10 @@ frpctl_zt_run_services() {
 frpctl_guided_zero_touch_linux() {
   local choice
   echo
-  echo "How do you want to configure this client?"
+  echo "How do you want to configure this Managed Host?"
   echo
   echo "1) SSH only"
-  echo "2) Choose services"
+  echo "2) Choose Remote Services"
   echo "3) Back"
   echo
   choice="$(frpctl_read "Select: " "")" || return 1
@@ -1925,11 +1925,11 @@ frpctl_guided_zero_touch_linux() {
 frpctl_guided_zero_touch_windows() {
   local choice
   echo
-  echo "How do you want to configure this client?"
+  echo "How do you want to configure this Managed Host?"
   echo
   echo "1) RDP only"
   echo "2) SSH only"
-  echo "3) Choose services"
+  echo "3) Choose Remote Services"
   echo "4) Back"
   echo
   choice="$(frpctl_read "Select: " "")" || return 1
@@ -1950,10 +1950,10 @@ frpctl_guided_zero_touch_macos() {
   # and installs launchd. Do not add a dead menu entry — this is the real path.
   local choice
   echo
-  echo "How do you want to configure this client?"
+  echo "How do you want to configure this Managed Host?"
   echo
   echo "1) SSH only"
-  echo "2) Choose services"
+  echo "2) Choose Remote Services"
   echo "3) Back"
   echo
   choice="$(frpctl_read "Select: " "")" || return 1
@@ -2095,11 +2095,11 @@ frpctl_guided_enroll() {
 
 frpctl_print_manage_client_actions() {
   echo "1) Overview"
-  echo "2) Services"
+  echo "2) Remote Services"
   echo "3) Details and tags"
   echo "4) Groups"
   echo "5) Revoke management trust"
-  echo "6) Remove client from server"
+  echo "6) Remove Managed Host from Server"
   echo "7) Back"
 }
 
@@ -2107,7 +2107,7 @@ frpctl_manage_one_client() {
   local mid="$1" action sid label note tag sub value
   while true; do
     echo
-    echo "Client: $mid"
+    echo "Managed Host: $mid"
     frpctl_run frp-client-info "$mid" || return 1
     echo
     frpctl_print_manage_client_actions
@@ -2120,8 +2120,8 @@ frpctl_manage_one_client() {
       2)
         frpctl_dispatch show client "$mid" services || true
         echo
-        echo "Service definitions are changed on the client."
-        echo "Use drlink on that client to add or edit services."
+        echo "Remote Service definitions are changed on the Agent Host."
+        echo "Use drlink on that Agent Host to add or edit Remote Services."
         echo
         echo "1) Release a service reservation"
         echo "2) Back"
@@ -2175,8 +2175,8 @@ frpctl_manage_one_client() {
       4)
         frpctl_dispatch show client "$mid" groups || true
         echo
-        echo "1) Add client to group"
-        echo "2) Remove client from group"
+        echo "1) Add Managed Host to group"
+        echo "2) Remove Managed Host from group"
         echo "3) Back"
         sub="$(frpctl_read "Select: " "")" || continue
         case "$sub" in
@@ -2240,7 +2240,7 @@ if mod is None:
     sys.stderr.write('ERROR: missing frp_client_registry.py\n')
     raise SystemExit(1)
 if not cfg_path.is_file():
-    print('(no registered clients)')
+    print('(no registered Managed Hosts)')
     raise SystemExit(0)
 cfg = json.loads(cfg_path.read_text(encoding='utf-8'))
 reg = Path(str(cfg.get('registry_file') or ''))
@@ -2249,7 +2249,7 @@ if root and not str(reg).startswith(root):
 state = json.loads(reg.read_text(encoding='utf-8')) if reg.is_file() else {'clients': {}}
 clients = mod.sorted_clients(state)
 if not clients:
-    print('(no registered clients)')
+    print('(no registered Managed Hosts)')
     raise SystemExit(0)
 for idx, (mid, client) in enumerate(clients, start=1):
     print('%s. %s' % (idx, mod.sanitize_display(mod.display_name(client, mid))))
@@ -2258,7 +2258,7 @@ for idx, (mid, client) in enumerate(clients, start=1):
     print('   State    : %s' % mod.mgmt_status(client))
     print()
 PY
-  choice="$(frpctl_read "Select client number: " "")" || return 1
+  choice="$(frpctl_read "Select Managed Host number: " "")" || return 1
   [[ -n "$choice" ]] || return 0
   mid="$(python3 - "$cfg" "$root" "$libdir" "$choice" <<'PY'
 import importlib.util
@@ -2297,7 +2297,7 @@ if idx < 1 or idx > len(clients):
 print(clients[idx - 1][0])
 PY
 )" || {
-    echo "ERROR: invalid client number" >&2
+    echo "ERROR: invalid Managed Host number" >&2
     return 1
   }
   [[ -n "$mid" ]] || return 1
@@ -2308,8 +2308,8 @@ frpctl_print_manage_group_actions() {
   echo "1) Overview"
   echo "2) Rename / description"
   echo "3) View members"
-  echo "4) Add client"
-  echo "5) Remove client"
+  echo "4) Add Managed Host"
+  echo "5) Remove Managed Host"
   echo "6) Delete group"
   echo "7) Back"
 }
@@ -2727,7 +2727,7 @@ frpctl_manage_one_fixed_tcp() {
 
 frpctl_status_both() {
   echo
-  echo "----- Client -----"
+  echo "----- Agent Host -----"
   echo
   frpctl_run frp-client status || true
   echo
@@ -2778,7 +2778,7 @@ frpctl_update() {
   frpctl_is_client && client=1
   frpctl_is_server && server=1
   if [[ "$client" == "1" && "$server" == "1" ]]; then
-    echo "This host has both roles. Updating client management tools, then the upstream FRP server binary."
+    echo "This host has both roles. Updating Agent management tools, then the upstream Relay Engine server binary."
     echo
     frpctl_client_update "$@"
     echo
@@ -2806,7 +2806,7 @@ frpctl_interactive() {
 
 frpctl_require_client() {
   if ! frpctl_is_client; then
-    echo "ERROR: this command is for an installed Data Relay Link client." >&2
+    echo "ERROR: this command is for an installed Data Relay Link Agent." >&2
     return 1
   fi
 }
@@ -2860,9 +2860,9 @@ frpctl_repl_help() {
     echo "${FRP_CTL_PRODUCT_NAME} — Commands"
     echo "=========================="
     echo
-    echo "This host has both a Data Relay Link client and server installed."
+    echo "This host has both Data Relay Link Agent and Server roles installed."
     echo
-    echo "Client commands"
+    echo "Agent Host commands"
     echo "---------------"
     echo "Server commands"
     echo "---------------"
@@ -2988,7 +2988,7 @@ print("  Created     : %s" % created)
 print("  Version     : %s" % (backup_ver or "unknown"))
 print("  Role        : %s" % role)
 if clients is not None:
-    print("  Clients     : %s" % clients)
+    print("  Managed Hosts: %s" % clients)
 if reservations is not None:
     print("  Reservations: %s" % reservations)
 print()
@@ -4018,7 +4018,7 @@ frpctl_dispatch_canonical() {
       frpctl_require_client || return 1
       if frpctl_is_server; then
         echo
-        echo "Scope: CLIENT role only (server remains running)."
+        echo "Scope: AGENT role only (Server remains running)."
         echo
       fi
       frpctl_invoke frp-client pause
@@ -4027,7 +4027,7 @@ frpctl_dispatch_canonical() {
       frpctl_require_client || return 1
       if frpctl_is_server; then
         echo
-        echo "Scope: CLIENT role only."
+        echo "Scope: AGENT role only."
         echo
       fi
       frpctl_invoke frp-client resume
@@ -4036,7 +4036,7 @@ frpctl_dispatch_canonical() {
       frpctl_require_client || return 1
       if frpctl_is_server; then
         echo
-        echo "Scope: CLIENT role only (server is not restarted)."
+        echo "Scope: AGENT role only (Server is not restarted)."
         echo
       fi
       frpctl_invoke frp-client restart
@@ -4326,12 +4326,12 @@ frpctl_dispatch_canonical() {
         # loses the failure code under bash.
         frpctl_with_pt frpctl_client_update || _frp_up_rc=$?
         if [[ "${_frp_up_rc}" -ne 0 ]]; then
-          echo "ERROR: client role product update failed; server role update was not started." >&2
+          echo "ERROR: Agent role product update failed; Server role update was not started." >&2
           echo "DUAL_ROLE_PRODUCT_UPDATE=FAIL_FAST" >&2
         else
           frpctl_with_pt frpctl_run frp-project-update || _frp_up_rc=$?
           if [[ "${_frp_up_rc}" -ne 0 ]]; then
-            echo "ERROR: server role product update failed after client role update." >&2
+            echo "ERROR: Server role product update failed after Agent role update." >&2
             echo "DUAL_ROLE_PRODUCT_UPDATE=SERVER_FAILED_AFTER_CLIENT" >&2
             echo "Shared management files may require recovery; run diagnostics before retrying." >&2
             frpctl_verify_dual_role_shared_runtime || true
@@ -4505,7 +4505,7 @@ frpctl_run_uninstaller() {
 frpctl_client_uninstall_flow() {
   local script ans yes=0 pt rc
   script="$(frpctl_find_uninstaller client)" || {
-    echo "ERROR: client uninstaller is not installed on this host." >&2
+    echo "ERROR: Agent uninstaller is not installed on this host." >&2
     echo "Install or update Data Relay Link, then retry: system uninstall" >&2
     return 1
   }
@@ -4513,28 +4513,28 @@ frpctl_client_uninstall_flow() {
     [[ "$pt" == "--yes" ]] && yes=1
   done
   echo
-  echo "Uninstall Data Relay Link client"
+  echo "Uninstall Data Relay Link Agent"
   echo "================================"
   echo
   echo "WHAT WILL BE REMOVED"
   echo
   echo "Local Data Relay Link software"
-  echo "Local client identity"
-  echo "Local client configuration"
-  echo "Local service state"
+  echo "Local Agent identity"
+  echo "Local Agent configuration"
+  echo "Local Remote Service state"
   echo "Local autostart configuration"
   echo
   echo "WHAT WILL REMAIN ON THE SERVER"
   echo
-  echo "Client record"
-  echo "Published service reservations"
+  echo "Managed Host record"
+  echo "Remote Service reservations"
   echo "Public port reservations"
   echo "Server-side policy state"
   echo
   echo "This uninstall does not contact the server and does not release ports."
   echo
   if [[ "$yes" != "1" ]]; then
-    ans="$(frpctl_read "Remove local Data Relay Link client? [y/N]: " "N")" || return 1
+    ans="$(frpctl_read "Remove local Data Relay Link Agent? [y/N]: " "N")" || return 1
     case "$(printf '%s' "$ans" | tr '[:upper:]' '[:lower:]')" in
       y|yes) ;;
       *) echo "Cancelled."; return 0 ;;
@@ -4573,11 +4573,11 @@ frpctl_server_uninstall_flow() {
   echo "Runtime services"
   echo "Server configuration"
   echo "CA / PKI state"
-  echo "Client registry"
+  echo "Managed Host registry"
   echo "Enrollment state"
-  echo "Service reservations"
+  echo "Remote Service reservations"
   echo "Public port reservations"
-  echo "ACLs"
+  echo "Remote Access configuration"
   echo "Internet Access configuration"
   echo "Other Data Relay Link server-owned local state"
   echo "Empty product directories"
@@ -4624,9 +4624,9 @@ frpctl_system_uninstall() {
     echo "Uninstall Data Relay Link"
     echo "========================"
     echo
-    echo "This host has both server and client roles."
+    echo "This host has both Server and Agent roles."
     echo
-    echo "1) Uninstall client role"
+    echo "1) Uninstall Agent role"
     echo "2) Uninstall server role"
     echo "3) Back"
     echo

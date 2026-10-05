@@ -99,8 +99,8 @@ export FRP_CLIENT_TEST_ROOT="$STATE_ONLY"
 if frp_client_main >"$WORKDIR/state-only.out" 2>"$WORKDIR/state-only.err"; then
   fail "state-only should fail closed"
 fi
-if grep -q 'This client is already installed' "$WORKDIR/state-only.err" \
-  || grep -q 'already has a Data Relay Link client installed' "$WORKDIR/state-only.err"; then
+if grep -q 'This Agent is already installed' "$WORKDIR/state-only.err" \
+  || grep -q 'already has a Data Relay Link Agent installed' "$WORKDIR/state-only.err"; then
   fail "state-only false already-installed"
 fi
 grep -qi 'partial or broken' "$WORKDIR/state-only.err" || fail "state-only recovery wording"
@@ -154,7 +154,7 @@ unset FRP_ZERO_TOUCH FRP_BOOTSTRAP_TICKET
   cat "$WORKDIR/dp1.out" "$WORKDIR/dp1.err" >&2
   fail "DP1_REPAIR_PATH"
 }
-if grep -q 'This client is already installed' "$WORKDIR/dp1.out" "$WORKDIR/dp1.err"; then
+if grep -q 'This Agent is already installed' "$WORKDIR/dp1.out" "$WORKDIR/dp1.err"; then
   fail "DP1_ALREADY_INSTALLED_MESSAGE"
 fi
 grep -qi 'partial or broken' "$WORKDIR/dp1.err" "$WORKDIR/dp1.out" || fail "DP1 repair wording"
@@ -186,7 +186,7 @@ export FRP_ENROLLMENT_CODE='deadbeef.deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdea
 if frp_client_main >"$WORKDIR/complete.out" 2>"$WORKDIR/complete.err"; then
   fail "complete install must refuse re-enrollment"
 fi
-grep -q 'already has a Data Relay Link client installed' "$WORKDIR/complete.err" \
+grep -q 'already has a Data Relay Link Agent installed' "$WORKDIR/complete.err" \
   || fail "complete refuse message"
 [[ "$(sha256sum "$COMPLETE/etc/frp/client-identity.key" | awk '{print $1}')" == "$KEY_C" ]] \
   || fail "complete re-enroll mutated identity"

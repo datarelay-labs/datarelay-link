@@ -7,7 +7,7 @@
     "roles": "any",
     "category": "Status",
     "summary": "Show host status",
-    "detail": "Role-aware host status. On a dual-role host both the client and the server sections are printed.",
+    "detail": "Role-aware host status. On a dual-role host both the Agent Host and Server sections are printed.",
     "examples": [
       "show status"
     ],
@@ -524,7 +524,7 @@
     "roles": "server",
     "category": "Server",
     "summary": "Change server settings",
-    "detail": "Configure Server public/bootstrap hostnames and Linux/macOS or Windows client installer URLs.",
+    "detail": "Configure Server public/bootstrap hostnames and Linux/macOS or Windows Agent installer URLs.",
     "examples": [
       "set server public-hostname frp.example.com",
       "set server bootstrap-hostname bootstrap.example.com",
@@ -717,8 +717,8 @@
     ],
     "roles": "client",
     "category": "System",
-    "summary": "Show local client connection information",
-    "detail": "Connection information for this installed client host.",
+    "summary": "Show local Agent Host connection information",
+    "detail": "Connection information for this installed Agent Host.",
     "examples": [
       "system info"
     ],
@@ -837,7 +837,7 @@
     "roles": "any",
     "category": "System",
     "summary": "Update Data Relay Link management software",
-    "detail": "A software update does not re-enroll clients and does not rotate the CA, token, or ports.",
+    "detail": "A software update does not re-enroll Agent Hosts and does not rotate the CA, token, or ports.",
     "examples": [
       "system update product"
     ],
@@ -1090,8 +1090,8 @@
     ],
     "roles": "client",
     "category": "System",
-    "summary": "Pause the local Data Relay Link client",
-    "detail": "Stop the local relay runtime and disable automatic startup. Client identity, registration, service definitions, and server-side reservations are preserved.",
+    "summary": "Pause the local Data Relay Link Agent",
+    "detail": "Stop the local relay runtime and disable automatic startup. Agent identity, registration, Remote Service definitions, and server-side reservations are preserved.",
     "examples": [
       "system pause"
     ],
@@ -1115,8 +1115,8 @@
     ],
     "roles": "client",
     "category": "System",
-    "summary": "Resume a paused Data Relay Link client",
-    "detail": "Enable automatic startup and start the local relay runtime. Identity, services, and public ports are unchanged.",
+    "summary": "Resume a paused Data Relay Link Agent",
+    "detail": "Enable automatic startup and start the local relay runtime. Agent identity, Remote Services, and public ports are unchanged.",
     "examples": [
       "system resume"
     ],
@@ -1140,8 +1140,8 @@
     ],
     "roles": "client",
     "category": "System",
-    "summary": "Restart the local Data Relay Link client runtime",
-    "detail": "Restart only the local client relay runtime. Identity, service definitions, public ports, and server registration are preserved.",
+    "summary": "Restart the local Data Relay Link Agent runtime",
+    "detail": "Restart only the local Agent relay runtime. Agent identity, Remote Service definitions, public ports, and server registration are preserved.",
     "examples": [
       "system restart"
     ],
@@ -1165,8 +1165,8 @@
     ],
     "roles": "client",
     "category": "System",
-    "summary": "Show whether the client starts automatically",
-    "detail": "Read-only autostart status for the local Data Relay Link client.",
+    "summary": "Show whether the Agent starts automatically",
+    "detail": "Read-only autostart status for the local Data Relay Link Agent.",
     "examples": [
       "system autostart"
     ],
@@ -1191,8 +1191,8 @@
     ],
     "roles": "client",
     "category": "System",
-    "summary": "Enable automatic client startup",
-    "detail": "Enable product-owned automatic startup for the local client.",
+    "summary": "Enable automatic Agent startup",
+    "detail": "Enable product-owned automatic startup for the local Agent.",
     "examples": [
       "system autostart enable"
     ],
@@ -1218,8 +1218,8 @@
     ],
     "roles": "client",
     "category": "System",
-    "summary": "Disable automatic client startup",
-    "detail": "Disable product-owned automatic startup for the local client.",
+    "summary": "Disable automatic Agent startup",
+    "detail": "Disable product-owned automatic startup for the local Agent.",
     "examples": [
       "system autostart disable"
     ],
@@ -1357,7 +1357,7 @@
     "detail": "",
     "examples": [
       "help",
-      "help client",
+      "help remote-services",
       "help workflows"
     ],
     "args": [],

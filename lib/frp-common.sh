@@ -830,7 +830,7 @@ frp_legacy_client_unit_is_product_owned() {
     *) return 1 ;;
   esac
   case "$desc" in
-    'FRP Client'|'Data Relay Link Client'|'Data Relay Link Client (legacy unit name; use drlink-client)')
+    'FRP Client'|'Data Relay Link Client'|'Data Relay Link Agent'|'Data Relay Link Client (legacy unit name; use drlink-client)')
       return 0
       ;;
     *)
@@ -1053,7 +1053,7 @@ frp_migrate_legacy_systemd_units() {
             cp -a "$unit_src" "${unitdir}/drlink-client.service"
           else
             # Fallback: rewrite Description/name on the existing unit file.
-            sed 's/^Description=.*/Description=Data Relay Link Client/' \
+            sed 's/^Description=.*/Description=Data Relay Link Agent/' \
               "${unitdir}/frpc.service" >"${unitdir}/drlink-client.service"
           fi
           chmod 0644 "${unitdir}/drlink-client.service" 2>/dev/null || true
