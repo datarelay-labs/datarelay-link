@@ -280,7 +280,7 @@ The additional 3.0 security/operations features are intentionally split by prior
 
 | Priority | Capability | 3.0 release meaning |
 |---|---|---|
-| P0 security baseline | Local Web-admin MFA + session revocation/recovery | Required before remote Web administration is considered production-ready; not a differentiating product feature |
+| P0 security baseline | Per-user local Web MFA capability + session revocation/recovery | MFA capability is required, disabled by default, and Admin-controlled per operator; not a differentiating product feature |
 | P1 Must Ship | Time-bounded Temporary Access | Required product-value feature; expiry affects new authorization only |
 | P1 Must Ship | Live Access Visibility | Required operations feature; exact/aggregate/unknown fidelity must be explicit |
 | P1 Must Ship | Emergency New-Access Cutoff | Required incident-response feature; reversible deny override for new authorization |
@@ -415,7 +415,7 @@ Required:
 - authenticated browser sessions;
 - Web-admin local security baseline:
   - local recovery Admin remains available;
-  - local password-backed operators require offline-capable MFA;
+  - local password-backed operators support offline-capable TOTP MFA, disabled by default and enabled per user by a Web Admin;
   - bounded session lifetime/idle timeout and explicit session revocation;
   - no SSO/IdP dependency in 3.0;
 - Admin / Operator / Read Only roles;
@@ -432,8 +432,7 @@ No state-changing Web operation is required to pass this phase.
 
 Acceptance must prove Web can be stopped/uninstalled while Core, CLI, enforcement,
 Agent connectivity, backup/restore, and recovery remain functional. Authentication
-acceptance must also prove local MFA, bounded browser-session lifetime/idle timeout,
-explicit session revocation, and local recovery with no SSO/IdP dependency.
+acceptance must also prove MFA defaults OFF, Admin per-user enable/disable, user-owned TOTP enrollment/recovery-code issuance, bounded browser-session lifetime/idle timeout, explicit session revocation, and local recovery with no SSO/IdP dependency.
 
 ## 13. DRL3-3 — Guided Configuration and Full Management Parity
 
@@ -748,7 +747,7 @@ functional claims. Synthetic scale evidence never substitutes for real-user corr
 Management Scalability Layer
 Full CLI-management parity in Web
 Admin / Operator / Read Only
-Offline-capable local Web-admin MFA
+Per-user offline-capable local Web MFA (default OFF)
 Dashboard + Attention Center
 Inventory + search/filter/Saved Views
 Guided enrollment

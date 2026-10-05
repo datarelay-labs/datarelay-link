@@ -340,15 +340,19 @@ A local privileged bootstrap flow creates the first Web operator. Exact CLI gram
 left to the implementation-phase CLI design, but plaintext passwords, bootstrap secrets,
 or reusable session tokens must never be stored in normal audit or browser storage.
 
-For password-backed local operators, use a modern salted password KDF, bounded login
-rate limits, and offline-capable MFA. The 3.0 baseline is deliberately small: TOTP plus
-one-time recovery codes. Recovery codes are stored only as verifiers/hashes, and TOTP seed
-material follows protected credential handling. WebAuthn/passkeys or other factors may be
-added later if field demand justifies them.
+For password-backed local operators, use a modern salted password KDF and bounded login
+rate limits. TOTP MFA is available per operator but is **disabled by default**. A Web Admin
+may enable or disable MFA for each Web operator from the Users page. Enabling MFA revokes
+that operator's active browser sessions; the next successful password authentication enters
+a user-owned enrollment flow that displays the TOTP seed only to that user, verifies a
+current TOTP, then displays one-time recovery codes once. Recovery codes are stored only as
+verifiers/hashes, and TOTP seed material follows protected credential handling. Disabling
+MFA clears the enrolled factor/recovery codes and revokes active sessions so stale factors
+do not remain authoritative. WebAuthn/passkeys or other factors may be added later.
 
-The first privileged bootstrap must complete local MFA setup before remote Web
-administration is considered production-ready. A local recovery Admin remains available
-for isolated operation and is protected by the same local MFA/recovery rules.
+The first privileged bootstrap creates a recovery Admin with MFA disabled. MFA policy is
+then managed per user by Web Admins rather than being forced during bootstrap. Local
+recovery remains available for isolated operation and does not depend on an external IdP.
 
 SSO/OIDC/IdP integration is **not part of Data Relay Link 3.0**. Web administration and
 CLI/Core recovery must not depend on an external identity provider.

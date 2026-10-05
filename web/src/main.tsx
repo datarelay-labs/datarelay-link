@@ -6,7 +6,7 @@ const nav=[
   ["overview","Overview"],["hosts","Managed Hosts"],["services","Remote Services"],["access","Access Operations"],["jobs","Jobs"],
   ["objects","Objects & Groups"],["policies","Policies"],["versions","Version Drift"],["system","System"],
   ["audit","Audit"],["revisions","Revisions"],["doctor","Doctor"],["health","Health"],
-  ["search","Search"],["views","Saved Views"],["enrollments","Connect Agent"],["drafts","Draft Workspace"],
+  ["search","Search"],["views","Saved Views"],["users","Users"],["enrollments","Connect Agent"],["drafts","Draft Workspace"],
 ];
 let csrf="";
 
@@ -33,20 +33,43 @@ function Metric({label,value}:{label:string,value:any}){return <div className="c
 
 function Login({onLogin}:{onLogin:(op:any)=>void}){
   const [username,setUsername]=useState("admin"),[password,setPassword]=useState(""),[totp,setTotp]=useState(""),[recovery,setRecovery]=useState(""),[error,setError]=useState("");
+  const [setup,setSetup]=useState<any>(null),[setupCode,setSetupCode]=useState(""),[recoveryCodes,setRecoveryCodes]=useState<string[]>([]),[pendingOperator,setPendingOperator]=useState<any>(null);
   async function submit(e:React.FormEvent){
     e.preventDefault();setError("");
     try{
       const d=await api("/api/v1/auth/login",{method:"POST",body:JSON.stringify({username,password,totp,recovery_code:recovery})});
+      if(d.mfa_setup_required){setSetup(d);setSetupCode("");return}
       csrf=d.csrf_token;onLogin(d.operator);
     }catch(err:any){setError(err.message||String(err))}
   }
+  async function finishMfa(e:React.FormEvent){
+    e.preventDefault();setError("");
+    try{
+      const d=await api("/api/v1/auth/mfa/enroll/confirm",{method:"POST",body:JSON.stringify({enrollment_token:setup.enrollment_token,totp:setupCode})});
+      csrf=d.csrf_token;setRecoveryCodes(d.recovery_codes||[]);setPendingOperator(d.operator);
+    }catch(err:any){setError(err.message||String(err))}
+  }
+  if(recoveryCodes.length&&pendingOperator)return <div className="login-wrap"><div className="login">
+    <h1>MFA enabled</h1><div className="muted">Store these recovery codes offline. They are displayed only now.</div>
+    <pre className="plan">{recoveryCodes.join("\n")}</pre>
+    <button className="primary" onClick={()=>onLogin(pendingOperator)}>I saved the recovery codes</button>
+  </div></div>;
+  if(setup)return <div className="login-wrap"><form className="login" onSubmit={finishMfa}>
+    <h1>Set up MFA</h1><div className="muted">Your administrator requires MFA for this account. Add the secret below to your authenticator app, then enter the current 6-digit code.</div>
+    {error&&<div className="error">{error}</div>}
+    <label>TOTP secret<input readOnly value={setup.totp_secret||""}/></label>
+    <details><summary>Authenticator URI</summary><pre className="plan">{setup.otpauth_uri}</pre></details>
+    <label>MFA code<input inputMode="numeric" autoComplete="one-time-code" value={setupCode} onChange={e=>setSetupCode(e.target.value)} placeholder="6-digit TOTP"/></label>
+    <button className="primary" type="submit" disabled={!/^\d{6}$/.test(setupCode)}>Enable MFA and sign in</button>
+    <button className="secondary" type="button" onClick={()=>{setSetup(null);setSetupCode("");setPassword("")}}>Cancel</button>
+  </form></div>;
   return <div className="login-wrap"><form className="login" onSubmit={submit}>
     <h1>Data Relay Link</h1><div className="muted">Optional Web Management · local authentication</div>
     {error&&<div className="error">{error}</div>}
     <label>Username<input autoComplete="username" value={username} onChange={e=>setUsername(e.target.value)}/></label>
     <label>Password<input type="password" autoComplete="current-password" value={password} onChange={e=>setPassword(e.target.value)}/></label>
-    <label>MFA code<input inputMode="numeric" autoComplete="one-time-code" value={totp} onChange={e=>setTotp(e.target.value)} placeholder="6-digit TOTP"/></label>
-    <label>Recovery code<input value={recovery} onChange={e=>setRecovery(e.target.value)} placeholder="or recovery code"/></label>
+    <label>MFA code <span className="muted">(if enabled)</span><input inputMode="numeric" autoComplete="one-time-code" value={totp} onChange={e=>setTotp(e.target.value)} placeholder="6-digit TOTP"/></label>
+    <label>Recovery code <span className="muted">(if MFA enabled)</span><input value={recovery} onChange={e=>setRecovery(e.target.value)} placeholder="or recovery code"/></label>
     <button className="primary" type="submit">Sign in</button>
   </form></div>
 }
@@ -969,6 +992,27 @@ function JobOperations({operator}:{operator:any}){
   </>;
 }
 
+function UsersPanel({operator}:{operator:any}){
+  const [data,setData]=useState<any>({items:[]}),[error,setError]=useState(""),[busy,setBusy]=useState("");
+  async function refresh(){try{setData(await api("/api/v1/operators"));setError("")}catch(e:any){setError(e.message||String(e))}}
+  useEffect(()=>{refresh()},[]);
+  async function setMfa(id:string,required:boolean){
+    setBusy(id);setError("");
+    try{
+      await api("/api/v1/operators/"+encodeURIComponent(id)+"/mfa",{method:"POST",body:JSON.stringify({required})});
+      if(id===operator.id){window.location.reload();return}
+      await refresh();
+    }catch(e:any){setError(e.message||String(e))}finally{setBusy("")}
+  }
+  return <>{error&&<div className="error">{error}</div>}<div className="card">
+    <h3>Web Users</h3>
+    <div className="muted">MFA is disabled by default. Enable it per user. Enabling MFA revokes that user's active sessions; on the next password sign-in the user completes TOTP setup and receives recovery codes directly.</div>
+    <table><thead><tr><th>User</th><th>Role</th><th>Status</th><th>MFA</th><th>Last login</th><th>Action</th></tr></thead><tbody>
+      {(data.items||[]).map((x:any)=>{const mfa=x.mfa_required?(x.mfa_enrolled?"Enabled":"Setup pending"):"Disabled";return <tr key={x.id}><td>{x.username}{x.recovery_admin?" · recovery admin":""}</td><td>{x.role}</td><td>{x.enabled?"Enabled":"Disabled"}</td><td>{mfa}</td><td>{x.last_login_at||"-"}</td><td><button className={x.mfa_required?"secondary":"primary"} disabled={busy===x.id} onClick={()=>setMfa(x.id,!x.mfa_required)}>{x.mfa_required?"Disable MFA":"Enable MFA"}</button></td></tr>})}
+    </tbody></table>
+  </div></>;
+}
+
 function View({active,operator}:{active:string,operator:any}){
   const [data,setData]=useState<any>(null),[error,setError]=useState(""),[query,setQuery]=useState("");
   useEffect(()=>{
@@ -983,6 +1027,7 @@ function View({active,operator}:{active:string,operator:any}){
     if(paths[active])api(paths[active]).then(setData).catch((e:any)=>setError(e.message||String(e)));
   },[active]);
   if(error)return <div className="error">{error}</div>;
+  if(active==="users")return <UsersPanel operator={operator}/>;
   if(active==="drafts")return <DraftWorkspace/>;
   if(active==="access")return <AccessOperations operator={operator}/>;
   if(active==="jobs")return <JobOperations operator={operator}/>;
@@ -1014,6 +1059,7 @@ function Shell({operator,onLogout}:{operator:any,onLogout:()=>void}){
   async function logout(){try{await api("/api/v1/auth/logout",{method:"POST",body:"{}"})}finally{csrf="";onLogout()}}
   const visibleNav=nav.filter(([id])=>{
     if(id==="drafts")return operator.role!=="Read Only";
+    if(id==="users")return operator.role==="Admin";
     if(id==="enrollments")return operator.role==="Admin";
     return true;
   });

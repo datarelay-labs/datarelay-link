@@ -54,6 +54,27 @@ class V30AdditiveManagementSchemaTests(unittest.TestCase):
               entity_type TEXT,
               entity_id TEXT
             );
+            CREATE TABLE web_operators (
+              id TEXT PRIMARY KEY,
+              username TEXT NOT NULL UNIQUE,
+              role TEXT NOT NULL,
+              enabled INTEGER NOT NULL DEFAULT 1,
+              recovery_admin INTEGER NOT NULL DEFAULT 0,
+              password_salt TEXT NOT NULL,
+              password_hash TEXT NOT NULL,
+              password_kdf TEXT NOT NULL,
+              mfa_secret_ciphertext TEXT NOT NULL,
+              mfa_enrolled INTEGER NOT NULL DEFAULT 0,
+              mfa_last_counter INTEGER,
+              row_version INTEGER NOT NULL DEFAULT 1,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL,
+              last_login_at TEXT
+            );
+            INSERT INTO web_operators(
+              id,username,role,enabled,recovery_admin,password_salt,password_hash,password_kdf,
+              mfa_secret_ciphertext,mfa_enrolled,row_version,created_at,updated_at
+            ) VALUES ('legacy-admin','legacy-admin','Admin',1,1,'s','h','k','cipher',1,1,'now','now');
             """
         )
         ensure_v30_schema(conn)
@@ -67,6 +88,12 @@ class V30AdditiveManagementSchemaTests(unittest.TestCase):
         self.assertIn("idx_v30_clients_agent_version", indexes)
         self.assertIn("idx_v30_clients_platform", indexes)
         self.assertIn("duration_ms", audit_columns)
+        web_columns = {row[1] for row in conn.execute("PRAGMA table_info(web_operators)")}
+        self.assertIn("mfa_required", web_columns)
+        legacy_mfa = conn.execute(
+            "SELECT mfa_required,mfa_enrolled FROM web_operators WHERE id='legacy-admin'"
+        ).fetchone()
+        self.assertEqual((legacy_mfa["mfa_required"], legacy_mfa["mfa_enrolled"]), (1, 1))
         conn.close()
 
     def test_inventory_change_bypasses_heartbeat_coalescing_without_revision(self):

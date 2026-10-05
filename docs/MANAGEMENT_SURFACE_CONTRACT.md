@@ -316,7 +316,7 @@ NO          intentionally not exposed in 3.0
 | Restore | FULL | FULL | NO | recovery authority |
 | Product/Relay update mutation | FULL | FULL where supported | NO | lifecycle authority |
 | Certificate/private-key mutation | FULL | FULL where supported | NO | credential/security authority |
-| Web operator / role / MFA administration | FULL | FULL | NO | management-security authority |
+| Web operator / role / per-user MFA policy | FULL | FULL | NO | MFA defaults OFF; Admin toggles policy, user self-enrolls; management-security authority |
 | Enrollment secret issuance/display | FULL | FULL | NO | protected credential workflow |
 | Support-bundle generation | FULL | FULL | CONTROLLED | only if output transport/redaction contract is safe |
 

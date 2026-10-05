@@ -19,7 +19,7 @@ from drlink_control_db import ControlPlaneError
 from drlink_management_core import ManagementActor
 from drlink_management_service import ManagementQueryService
 from drlink_management_web_adapter import ManagementWebApiAdapter
-from drlink_web_auth import WebAuthService, WebPrincipal
+from drlink_web_auth import ROLE_ADMIN, WebAuthService, WebMfaEnrollmentChallenge, WebPrincipal
 
 DEFAULT_WEB_LISTEN = "127.0.0.1"
 DEFAULT_WEB_PORT = 8741
@@ -126,7 +126,24 @@ class WebApplication:
             source_addr=source_addr,
             user_agent=user_agent,
         )
-        return {
+        if isinstance(issued, WebMfaEnrollmentChallenge):
+            return {
+                "mfa_setup_required": True,
+                "enrollment_token": issued.enrollment_token,
+                "totp_secret": issued.totp_secret,
+                "otpauth_uri": issued.otpauth_uri,
+                "expires_at": issued.expires_at,
+                "operator": {
+                    "id": issued.operator_id,
+                    "username": issued.username,
+                    "role": issued.role,
+                },
+            }
+        return self._session_payload(issued)
+
+    @staticmethod
+    def _session_payload(issued, *, recovery_codes: Optional[list[str]] = None) -> dict[str, Any]:
+        payload = {
             "session_id": issued.session_id,
             "csrf_token": issued.csrf_token,
             "expires_at": issued.expires_at,
@@ -138,6 +155,20 @@ class WebApplication:
             },
             "_session_token": issued.session_token,
         }
+        if recovery_codes is not None:
+            payload["recovery_codes"] = list(recovery_codes)
+        return payload
+
+    def confirm_mfa_enrollment(
+        self, body: dict[str, Any], *, source_addr: str, user_agent: str
+    ) -> dict[str, Any]:
+        issued, recovery_codes = self.auth.confirm_mfa_enrollment(
+            enrollment_token=str(body.get("enrollment_token") or ""),
+            totp_value=str(body.get("totp") or ""),
+            source_addr=source_addr,
+            user_agent=user_agent,
+        )
+        return self._session_payload(issued, recovery_codes=recovery_codes)
 
     def session_principal(
         self,
@@ -376,6 +407,10 @@ class WebApplication:
                 payload={"job_id": job_id},
                 actor=actor,
             )
+        if path == "/api/v1/operators":
+            if principal.role != ROLE_ADMIN:
+                raise ControlPlaneError("Admin role is required for Web operator management.")
+            return {"items": self.auth.list_operators()}
         if path == "/api/v1/saved-views":
             return {"items": self.auth.list_saved_views(principal.operator_id)}
         if path == "/api/v1/sessions":
@@ -388,6 +423,19 @@ class WebApplication:
         body: dict[str, Any],
         principal: WebPrincipal,
     ) -> dict[str, Any]:
+        if path.startswith("/api/v1/operators/") and path.endswith("/mfa"):
+            if principal.role != ROLE_ADMIN:
+                raise ControlPlaneError("Admin role is required for Web operator management.")
+            operator_id = path[len("/api/v1/operators/") : -len("/mfa")].strip("/")
+            if not operator_id or "/" in operator_id:
+                raise ControlPlaneError("Web operator was not found.")
+            if not isinstance(body.get("required"), bool):
+                raise ControlPlaneError("required must be a boolean.")
+            return self.auth.set_operator_mfa_required(
+                operator_id,
+                required=bool(body["required"]),
+                actor_id=principal.operator_id,
+            )
         if path == "/api/v1/auth/logout":
             self.auth.revoke_session(
                 principal.session_id, actor_id=principal.operator_id
@@ -888,14 +936,35 @@ class DrlinkWebHandler(BaseHTTPRequestHandler):
                     source_addr=str(self.client_address[0]),
                     user_agent=self.headers.get("User-Agent") or "",
                 )
+                token = payload.pop("_session_token", None)
+                self._json(
+                    200,
+                    payload,
+                    cookie=_session_cookie(str(token), secure=self.app.secure_cookie)
+                    if token
+                    else None,
+                )
+            except ControlPlaneError:
+                self._error(401, "invalid credentials or MFA")
+            except Exception:
+                self._error(500, "internal error")
+            return
+        if parsed.path == "/api/v1/auth/mfa/enroll/confirm":
+            try:
+                body = self._body_json()
+                payload = self.app.confirm_mfa_enrollment(
+                    body,
+                    source_addr=str(self.client_address[0]),
+                    user_agent=self.headers.get("User-Agent") or "",
+                )
                 token = str(payload.pop("_session_token"))
                 self._json(
                     200,
                     payload,
                     cookie=_session_cookie(token, secure=self.app.secure_cookie),
                 )
-            except ControlPlaneError:
-                self._error(401, "invalid credentials or MFA")
+            except ControlPlaneError as exc:
+                self._error(400, str(exc))
             except Exception:
                 self._error(500, "internal error")
             return

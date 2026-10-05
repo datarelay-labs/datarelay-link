@@ -16,7 +16,7 @@ else:
     sys.path.insert(0, str(SOURCE_LIB))
 
 from drlink_control_db import ControlPlaneError
-from drlink_web_auth import WebAuthService, totp_code
+from drlink_web_auth import WebAuthService
 
 
 def main() -> int:
@@ -35,25 +35,15 @@ def main() -> int:
             confirm = getpass.getpass("Confirm password: ")
             if password != confirm:
                 raise ControlPlaneError("Passwords do not match.")
-            material = auth.prepare_mfa_material(args.username)
-            print("\nTOTP setup URI (displayed once):")
-            print(material["otpauth_uri"])
-            print("\nTOTP secret (displayed once):")
-            print(material["totp_secret"])
-            print("\nRecovery codes (store offline; displayed once):")
-            for code in material["recovery_codes"]:
-                print(code)
-            supplied = input("\nEnter a current 6-digit TOTP code to finish bootstrap: ").strip()
             result = auth.create_first_admin(
                 username=args.username,
                 password=password,
-                totp_secret=material["totp_secret"],
-                recovery_codes=material["recovery_codes"],
-                totp_value=supplied,
             )
             print("\nWEB_ADMIN_BOOTSTRAP=PASS")
             print("USERNAME=%s" % result["username"])
             print("ROLE=%s" % result["role"])
+            print("MFA_REQUIRED=NO")
+            print("MFA can be enabled per user from Web Management > Users.")
             return 0
     except (ControlPlaneError, OSError, ValueError) as exc:
         print("ERROR: %s" % exc, file=sys.stderr)

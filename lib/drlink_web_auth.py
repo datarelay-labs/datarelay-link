@@ -37,6 +37,8 @@ PASSWORD_KDF = "pbkdf2-hmac-sha256-i600000"
 TOTP_STEP_SECONDS = 30
 TOTP_DIGITS = 6
 RECOVERY_CODE_COUNT = 10
+MFA_ENROLLMENT_SECONDS = 10 * 60
+MFA_ENROLLMENT_LIMIT = 1024
 
 _USERNAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9._-]{0,63}$")
 _RECOVERY_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
@@ -76,6 +78,17 @@ class WebSessionIssue:
     expires_at: str
     idle_expires_at: str
     principal: WebPrincipal
+
+
+@dataclass(frozen=True)
+class WebMfaEnrollmentChallenge:
+    enrollment_token: str
+    totp_secret: str
+    otpauth_uri: str
+    expires_at: str
+    operator_id: str
+    username: str
+    role: str
 
 
 def permissions_for_role(role: str) -> frozenset[str]:
@@ -251,6 +264,7 @@ class WebAuthService:
         self.conn = open_control_db(root)
         self._lock = threading.RLock()
         self._failures: dict[str, list[float]] = {}
+        self._mfa_enrollments: dict[str, dict[str, Any]] = {}
 
     def close(self) -> None:
         self.conn.close()
@@ -337,25 +351,33 @@ class WebAuthService:
         *,
         username: str,
         password: str,
-        totp_secret: str,
-        recovery_codes: list[str],
-        totp_value: str,
+        totp_secret: str = "",
+        recovery_codes: Optional[list[str]] = None,
+        totp_value: str = "",
+        mfa_required: bool = False,
         now: Optional[datetime] = None,
     ) -> dict[str, Any]:
+        """Create the first local Admin. MFA is off unless explicitly supplied/enabled."""
         name = _validate_username(username)
         password_value = _validate_password(password)
         current = now or _utc_now()
-        counter = verify_totp(totp_secret, totp_value, at=current)
-        if counter is None:
-            raise ControlPlaneError("TOTP verification failed.")
-        if len(recovery_codes) < 5:
-            raise ControlPlaneError("Recovery code set is incomplete.")
-        master = _master_key(self.root)
+        require_mfa = bool(mfa_required or str(totp_secret or "").strip())
+        codes = list(recovery_codes or [])
+        counter: Optional[int] = None
+        cipher = ""
+        code_hashes: list[str] = []
+        if require_mfa:
+            counter = verify_totp(totp_secret, totp_value, at=current)
+            if counter is None:
+                raise ControlPlaneError("TOTP verification failed.")
+            if len(codes) < 5:
+                raise ControlPlaneError("Recovery code set is incomplete.")
+            master = _master_key(self.root)
+            cipher = encrypt_token_pbkdf2(totp_secret, master)
+            code_hashes = sorted({_recovery_hash(master, code) for code in codes})
         salt = os.urandom(16)
         operator_id = "wop_" + secrets.token_hex(12)
         created = _utc_text(current)
-        cipher = encrypt_token_pbkdf2(totp_secret, master)
-        code_hashes = sorted({_recovery_hash(master, code) for code in recovery_codes})
         with self._lock:
             self.conn.execute("BEGIN IMMEDIATE")
             try:
@@ -366,9 +388,9 @@ class WebAuthService:
                 self.conn.execute(
                     "INSERT INTO web_operators("
                     "id,username,role,enabled,recovery_admin,password_salt,password_hash,"
-                    "password_kdf,mfa_secret_ciphertext,mfa_enrolled,mfa_last_counter,"
+                    "password_kdf,mfa_secret_ciphertext,mfa_required,mfa_enrolled,mfa_last_counter,"
                     "created_at,updated_at"
-                    ") VALUES (?,?,?,1,1,?,?,?,?,1,?,?,?)",
+                    ") VALUES (?,?,?,1,1,?,?,?,?,?,?,?, ?,?)",
                     (
                         operator_id,
                         name,
@@ -377,20 +399,24 @@ class WebAuthService:
                         _password_hash(password_value, salt),
                         PASSWORD_KDF,
                         cipher,
+                        1 if require_mfa else 0,
+                        1 if require_mfa else 0,
                         counter,
                         created,
                         created,
                     ),
                 )
-                self.conn.executemany(
-                    "INSERT INTO web_recovery_codes(operator_id,code_hash,created_at) "
-                    "VALUES (?,?,?)",
-                    [(operator_id, digest, created) for digest in code_hashes],
-                )
+                if code_hashes:
+                    self.conn.executemany(
+                        "INSERT INTO web_recovery_codes(operator_id,code_hash,created_at) "
+                        "VALUES (?,?,?)",
+                        [(operator_id, digest, created) for digest in code_hashes],
+                    )
                 self._audit(
                     "web.operator.bootstrap",
                     actor_id=operator_id,
                     resource_id=operator_id,
+                    reason_code="MFA_ON" if require_mfa else "MFA_OFF_DEFAULT",
                 )
                 self.conn.execute("COMMIT")
             except Exception:
@@ -403,7 +429,8 @@ class WebAuthService:
             "operator_id": operator_id,
             "username": name,
             "role": ROLE_ADMIN,
-            "mfa_enrolled": True,
+            "mfa_required": require_mfa,
+            "mfa_enrolled": require_mfa,
             "recovery_admin": True,
         }
 
@@ -413,29 +440,36 @@ class WebAuthService:
         username: str,
         role: str,
         password: str,
-        totp_secret: str,
-        recovery_codes: list[str],
-        totp_value: str,
+        totp_secret: str = "",
+        recovery_codes: Optional[list[str]] = None,
+        totp_value: str = "",
+        mfa_required: bool = False,
         now: Optional[datetime] = None,
     ) -> dict[str, Any]:
-        """Create an additional local Web operator; caller must be privileged locally."""
+        """Create an additional local Web operator; MFA defaults to disabled."""
         name = _validate_username(username)
         role_name = str(role or "").strip()
         if role_name not in WEB_ROLES:
             raise ControlPlaneError("Unsupported Web operator role.")
         password_value = _validate_password(password)
         current = now or _utc_now()
-        counter = verify_totp(totp_secret, totp_value, at=current)
-        if counter is None:
-            raise ControlPlaneError("TOTP verification failed.")
-        if len(recovery_codes) < 5:
-            raise ControlPlaneError("Recovery code set is incomplete.")
-        master = _master_key(self.root)
+        require_mfa = bool(mfa_required or str(totp_secret or "").strip())
+        codes = list(recovery_codes or [])
+        counter: Optional[int] = None
+        cipher = ""
+        code_hashes: list[str] = []
+        if require_mfa:
+            counter = verify_totp(totp_secret, totp_value, at=current)
+            if counter is None:
+                raise ControlPlaneError("TOTP verification failed.")
+            if len(codes) < 5:
+                raise ControlPlaneError("Recovery code set is incomplete.")
+            master = _master_key(self.root)
+            cipher = encrypt_token_pbkdf2(totp_secret, master)
+            code_hashes = sorted({_recovery_hash(master, code) for code in codes})
         salt = os.urandom(16)
         operator_id = "wop_" + secrets.token_hex(12)
         created = _utc_text(current)
-        cipher = encrypt_token_pbkdf2(totp_secret, master)
-        code_hashes = sorted({_recovery_hash(master, code) for code in recovery_codes})
         with self._lock:
             recovery = self.conn.execute(
                 "SELECT COUNT(*) FROM web_operators WHERE recovery_admin=1 AND enabled=1"
@@ -447,24 +481,27 @@ class WebAuthService:
                 self.conn.execute(
                     "INSERT INTO web_operators("
                     "id,username,role,enabled,recovery_admin,password_salt,password_hash,"
-                    "password_kdf,mfa_secret_ciphertext,mfa_enrolled,mfa_last_counter,"
+                    "password_kdf,mfa_secret_ciphertext,mfa_required,mfa_enrolled,mfa_last_counter,"
                     "created_at,updated_at"
-                    ") VALUES (?,?,?,1,0,?,?,?,?,1,?,?,?)",
+                    ") VALUES (?,?,?,1,0,?,?,?,?,?,?,?, ?,?)",
                     (
                         operator_id, name, role_name,
                         base64.b64encode(salt).decode("ascii"),
                         _password_hash(password_value, salt), PASSWORD_KDF, cipher,
+                        1 if require_mfa else 0, 1 if require_mfa else 0,
                         counter, created, created,
                     ),
                 )
-                self.conn.executemany(
-                    "INSERT INTO web_recovery_codes(operator_id,code_hash,created_at) VALUES (?,?,?)",
-                    [(operator_id, digest, created) for digest in code_hashes],
-                )
+                if code_hashes:
+                    self.conn.executemany(
+                        "INSERT INTO web_recovery_codes(operator_id,code_hash,created_at) VALUES (?,?,?)",
+                        [(operator_id, digest, created) for digest in code_hashes],
+                    )
                 self._audit(
                     "web.operator.created",
                     actor_id="local-root",
                     resource_id=operator_id,
+                    reason_code="MFA_ON" if require_mfa else "MFA_OFF_DEFAULT",
                 )
                 self.conn.execute("COMMIT")
             except Exception:
@@ -473,7 +510,101 @@ class WebAuthService:
                 except Exception:
                     pass
                 raise
-        return {"operator_id": operator_id, "username": name, "role": role_name}
+        return {
+            "operator_id": operator_id,
+            "username": name,
+            "role": role_name,
+            "mfa_required": require_mfa,
+            "mfa_enrolled": require_mfa,
+        }
+
+    def list_operators(self) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            "SELECT id,username,role,enabled,recovery_admin,mfa_required,mfa_enrolled,"
+            "created_at,updated_at,last_login_at FROM web_operators "
+            "ORDER BY username COLLATE NOCASE,id"
+        ).fetchall()
+        return [
+            {
+                "id": str(row["id"]),
+                "username": str(row["username"]),
+                "role": str(row["role"]),
+                "enabled": bool(row["enabled"]),
+                "recovery_admin": bool(row["recovery_admin"]),
+                "mfa_required": bool(row["mfa_required"]),
+                "mfa_enrolled": bool(row["mfa_enrolled"]),
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+                "last_login_at": row["last_login_at"],
+            }
+            for row in rows
+        ]
+
+    def _drop_mfa_challenges(self, operator_id: str) -> None:
+        stale = [
+            key for key, item in self._mfa_enrollments.items()
+            if str(item.get("operator_id") or "") == str(operator_id)
+        ]
+        for key in stale:
+            self._mfa_enrollments.pop(key, None)
+
+    def set_operator_mfa_required(
+        self, operator_id: str, *, required: bool, actor_id: str
+    ) -> dict[str, Any]:
+        ident = str(operator_id or "").strip()
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT id,username,mfa_required FROM web_operators WHERE id=?", (ident,)
+            ).fetchone()
+            if not row:
+                raise ControlPlaneError("Web operator was not found.")
+            target = 1 if bool(required) else 0
+            changed = int(row["mfa_required"] or 0) != target
+            now = utc_now_iso()
+            revoked = 0
+            if changed:
+                self.conn.execute("BEGIN IMMEDIATE")
+                try:
+                    self.conn.execute(
+                        "UPDATE web_operators SET mfa_required=?,mfa_enrolled=0,"
+                        "mfa_secret_ciphertext='',mfa_last_counter=NULL,"
+                        "row_version=row_version+1,updated_at=? WHERE id=?",
+                        (target, now, ident),
+                    )
+                    self.conn.execute(
+                        "DELETE FROM web_recovery_codes WHERE operator_id=?", (ident,)
+                    )
+                    revoked = self.conn.execute(
+                        "UPDATE web_sessions SET revoked_at=? "
+                        "WHERE operator_id=? AND revoked_at IS NULL",
+                        (now, ident),
+                    ).rowcount
+                    self._audit(
+                        "web.operator.mfa.enabled" if target else "web.operator.mfa.disabled",
+                        actor_id=str(actor_id or ""),
+                        resource_id=ident,
+                        reason_code="ADMIN_MFA_POLICY_CHANGE",
+                    )
+                    self.conn.execute("COMMIT")
+                except Exception:
+                    try:
+                        self.conn.execute("ROLLBACK")
+                    except Exception:
+                        pass
+                    raise
+                self._drop_mfa_challenges(ident)
+            return {
+                "operator_id": ident,
+                "username": str(row["username"]),
+                "mfa_required": bool(target),
+                "mfa_enrolled": False if changed else bool(
+                    self.conn.execute(
+                        "SELECT mfa_enrolled FROM web_operators WHERE id=?", (ident,)
+                    ).fetchone()[0]
+                ),
+                "sessions_revoked": int(revoked),
+                "changed": changed,
+            }
 
     def _failure_key(self, username: str, source_addr: str) -> str:
         return _sha256_text("%s\n%s" % (str(username).lower(), str(source_addr)))[:32]
@@ -495,6 +626,128 @@ class WebAuthService:
             self._failures.pop(oldest, None)
         self._failures.setdefault(key, []).append(now_mono)
 
+    def _begin_mfa_enrollment(
+        self, row, *, current: datetime
+    ) -> WebMfaEnrollmentChallenge:
+        now_mono = time.monotonic()
+        for key, item in list(self._mfa_enrollments.items()):
+            if float(item.get("expires_mono") or 0) <= now_mono:
+                self._mfa_enrollments.pop(key, None)
+        if len(self._mfa_enrollments) >= MFA_ENROLLMENT_LIMIT:
+            oldest = min(
+                self._mfa_enrollments,
+                key=lambda key: float(self._mfa_enrollments[key].get("created_mono") or 0),
+            )
+            self._mfa_enrollments.pop(oldest, None)
+        self._drop_mfa_challenges(str(row["id"]))
+        token = secrets.token_urlsafe(32)
+        token_hash = _sha256_text(token)
+        secret = generate_totp_secret()
+        expires_dt = current + timedelta(seconds=MFA_ENROLLMENT_SECONDS)
+        label = quote("Data Relay Link:%s" % str(row["username"]), safe="")
+        issuer = quote("Data Relay Link", safe="")
+        uri = "otpauth://totp/%s?secret=%s&issuer=%s&digits=%d&period=%d" % (
+            label, secret, issuer, TOTP_DIGITS, TOTP_STEP_SECONDS
+        )
+        self._mfa_enrollments[token_hash] = {
+            "operator_id": str(row["id"]),
+            "secret": secret,
+            "created_mono": now_mono,
+            "expires_mono": now_mono + MFA_ENROLLMENT_SECONDS,
+            "attempts": 0,
+        }
+        self._audit(
+            "web.operator.mfa.enrollment.started",
+            actor_id=str(row["id"]),
+            resource_id=str(row["id"]),
+        )
+        return WebMfaEnrollmentChallenge(
+            enrollment_token=token,
+            totp_secret=secret,
+            otpauth_uri=uri,
+            expires_at=_utc_text(expires_dt),
+            operator_id=str(row["id"]),
+            username=str(row["username"]),
+            role=str(row["role"]),
+        )
+
+    def _issue_session(
+        self,
+        row,
+        *,
+        current: datetime,
+        source_addr: str,
+        user_agent: str,
+        new_counter: Optional[int] = None,
+        consumed_hash: Optional[str] = None,
+    ) -> WebSessionIssue:
+        operator_id = str(row["id"])
+        session_id = "ws_" + secrets.token_hex(12)
+        token = secrets.token_urlsafe(32)
+        csrf = secrets.token_urlsafe(24)
+        created = _utc_text(current)
+        expires_dt = current + timedelta(seconds=SESSION_LIFETIME_SECONDS)
+        idle_dt = min(expires_dt, current + timedelta(seconds=SESSION_IDLE_SECONDS))
+        expires = _utc_text(expires_dt)
+        idle = _utc_text(idle_dt)
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            if consumed_hash:
+                changed = self.conn.execute(
+                    "UPDATE web_recovery_codes SET consumed_at=? "
+                    "WHERE operator_id=? AND code_hash=? AND consumed_at IS NULL",
+                    (created, operator_id, consumed_hash),
+                ).rowcount
+                if changed != 1:
+                    raise ControlPlaneError("Invalid credentials or MFA.")
+            if new_counter is not None:
+                self.conn.execute(
+                    "UPDATE web_operators SET mfa_last_counter=?,last_login_at=?,"
+                    "updated_at=? WHERE id=?",
+                    (new_counter, created, created, operator_id),
+                )
+            else:
+                self.conn.execute(
+                    "UPDATE web_operators SET last_login_at=?,updated_at=? WHERE id=?",
+                    (created, created, operator_id),
+                )
+            self.conn.execute(
+                "INSERT INTO web_sessions("
+                "id,operator_id,token_hash,csrf_hash,created_at,last_seen_at,"
+                "expires_at,idle_expires_at,source_addr,user_agent_hash"
+                ") VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (
+                    session_id, operator_id, _sha256_text(token), _sha256_text(csrf),
+                    created, created, expires, idle, str(source_addr or "")[:128],
+                    _user_agent_hash(user_agent),
+                ),
+            )
+            self._audit(
+                "web.login.succeeded", actor_id=operator_id, resource_id=session_id
+            )
+            self.conn.execute("COMMIT")
+        except Exception:
+            try:
+                self.conn.execute("ROLLBACK")
+            except Exception:
+                pass
+            raise
+        principal = WebPrincipal(
+            operator_id=operator_id,
+            username=str(row["username"]),
+            role=str(row["role"]),
+            permissions=permissions_for_role(str(row["role"])),
+            session_id=session_id,
+        )
+        return WebSessionIssue(
+            session_id=session_id,
+            session_token=token,
+            csrf_token=csrf,
+            expires_at=expires,
+            idle_expires_at=idle,
+            principal=principal,
+        )
+
     def authenticate(
         self,
         *,
@@ -505,7 +758,7 @@ class WebAuthService:
         source_addr: str = "",
         user_agent: str = "",
         now: Optional[datetime] = None,
-    ) -> WebSessionIssue:
+    ) -> WebSessionIssue | WebMfaEnrollmentChallenge:
         current = now or _utc_now()
         now_mono = time.monotonic()
         key = self._failure_key(username, source_addr)
@@ -517,7 +770,6 @@ class WebAuthService:
                 "SELECT * FROM web_operators WHERE username=? COLLATE NOCASE",
                 (str(username or "").strip(),),
             ).fetchone()
-            master = _master_key(self.root, create=False)
             dummy_salt = b"\x00" * 16
             salt = dummy_salt
             expected = _password_hash("not-the-password", dummy_salt)
@@ -529,103 +781,114 @@ class WebAuthService:
                     pass
             actual = _password_hash(str(password or ""), salt)
             password_ok = bool(row) and hmac.compare_digest(actual, expected)
-            enabled = bool(row and int(row["enabled"] or 0) and int(row["mfa_enrolled"] or 0))
+            enabled = bool(row and int(row["enabled"] or 0))
             if not password_ok or not enabled:
                 self._note_failure(key, now_mono)
                 self._audit("web.login.failed", result="deny", reason_code="INVALID_AUTH")
                 raise ControlPlaneError("Invalid credentials or MFA.")
 
             operator_id = str(row["id"])
-            mfa_ok = False
+            required = bool(int(row["mfa_required"] or 0))
+            enrolled = bool(int(row["mfa_enrolled"] or 0))
+            if required and not enrolled:
+                self._failures.pop(key, None)
+                return self._begin_mfa_enrollment(row, current=current)
+
             new_counter: Optional[int] = None
             consumed_hash: Optional[str] = None
-            if str(totp_value or "").strip():
-                try:
-                    secret = decrypt_token_pbkdf2(
-                        str(row["mfa_secret_ciphertext"]), master
+            if required:
+                master = _master_key(self.root, create=False)
+                mfa_ok = False
+                if str(totp_value or "").strip():
+                    try:
+                        secret = decrypt_token_pbkdf2(
+                            str(row["mfa_secret_ciphertext"]), master
+                        )
+                        new_counter = verify_totp(
+                            secret, totp_value, at=current,
+                            last_counter=row["mfa_last_counter"],
+                        )
+                        mfa_ok = new_counter is not None
+                    except Exception:
+                        mfa_ok = False
+                elif str(recovery_code or "").strip():
+                    consumed_hash = _recovery_hash(master, recovery_code)
+                    recovery = self.conn.execute(
+                        "SELECT consumed_at FROM web_recovery_codes "
+                        "WHERE operator_id=? AND code_hash=?",
+                        (operator_id, consumed_hash),
+                    ).fetchone()
+                    mfa_ok = bool(recovery and recovery["consumed_at"] is None)
+                if not mfa_ok:
+                    self._note_failure(key, now_mono)
+                    self._audit(
+                        "web.login.failed", actor_id=operator_id, resource_id=operator_id,
+                        result="deny", reason_code="INVALID_MFA",
                     )
-                    new_counter = verify_totp(
-                        secret,
-                        totp_value,
-                        at=current,
-                        last_counter=row["mfa_last_counter"],
-                    )
-                    mfa_ok = new_counter is not None
-                except Exception:
-                    mfa_ok = False
-            elif str(recovery_code or "").strip():
-                consumed_hash = _recovery_hash(master, recovery_code)
-                recovery = self.conn.execute(
-                    "SELECT consumed_at FROM web_recovery_codes "
-                    "WHERE operator_id=? AND code_hash=?",
-                    (operator_id, consumed_hash),
-                ).fetchone()
-                mfa_ok = bool(recovery and recovery["consumed_at"] is None)
+                    raise ControlPlaneError("Invalid credentials or MFA.")
 
-            if not mfa_ok:
-                self._note_failure(key, now_mono)
-                self._audit(
-                    "web.login.failed",
-                    actor_id=operator_id,
-                    resource_id=operator_id,
-                    result="deny",
-                    reason_code="INVALID_MFA",
-                )
-                raise ControlPlaneError("Invalid credentials or MFA.")
-
-            session_id = "ws_" + secrets.token_hex(12)
-            token = secrets.token_urlsafe(32)
-            csrf = secrets.token_urlsafe(24)
-            created = _utc_text(current)
-            expires_dt = current + timedelta(seconds=SESSION_LIFETIME_SECONDS)
-            idle_dt = min(
-                expires_dt, current + timedelta(seconds=SESSION_IDLE_SECONDS)
+            self._failures.pop(key, None)
+            return self._issue_session(
+                row, current=current, source_addr=source_addr, user_agent=user_agent,
+                new_counter=new_counter, consumed_hash=consumed_hash,
             )
-            expires = _utc_text(expires_dt)
-            idle = _utc_text(idle_dt)
+
+    def confirm_mfa_enrollment(
+        self,
+        *,
+        enrollment_token: str,
+        totp_value: str,
+        source_addr: str = "",
+        user_agent: str = "",
+        now: Optional[datetime] = None,
+    ) -> tuple[WebSessionIssue, list[str]]:
+        current = now or _utc_now()
+        token_hash = _sha256_text(str(enrollment_token or "").strip())
+        with self._lock:
+            item = self._mfa_enrollments.get(token_hash)
+            if not item or float(item.get("expires_mono") or 0) <= time.monotonic():
+                self._mfa_enrollments.pop(token_hash, None)
+                raise ControlPlaneError("MFA enrollment expired; sign in again.")
+            operator_id = str(item.get("operator_id") or "")
+            row = self.conn.execute(
+                "SELECT * FROM web_operators WHERE id=?", (operator_id,)
+            ).fetchone()
+            if not row or not int(row["enabled"] or 0) or not int(row["mfa_required"] or 0):
+                self._mfa_enrollments.pop(token_hash, None)
+                raise ControlPlaneError("MFA enrollment is no longer required.")
+            if int(row["mfa_enrolled"] or 0):
+                self._mfa_enrollments.pop(token_hash, None)
+                raise ControlPlaneError("MFA is already enrolled.")
+            secret = str(item.get("secret") or "")
+            counter = verify_totp(secret, totp_value, at=current)
+            if counter is None:
+                item["attempts"] = int(item.get("attempts") or 0) + 1
+                if int(item["attempts"]) >= 5:
+                    self._mfa_enrollments.pop(token_hash, None)
+                raise ControlPlaneError("Invalid MFA enrollment code.")
+            recovery_codes = generate_recovery_codes()
+            master = _master_key(self.root)
+            code_hashes = sorted({_recovery_hash(master, code) for code in recovery_codes})
+            now_text = _utc_text(current)
             self.conn.execute("BEGIN IMMEDIATE")
             try:
-                if consumed_hash:
-                    changed = self.conn.execute(
-                        "UPDATE web_recovery_codes SET consumed_at=? "
-                        "WHERE operator_id=? AND code_hash=? AND consumed_at IS NULL",
-                        (created, operator_id, consumed_hash),
-                    ).rowcount
-                    if changed != 1:
-                        raise ControlPlaneError("Invalid credentials or MFA.")
-                if new_counter is not None:
-                    self.conn.execute(
-                        "UPDATE web_operators SET mfa_last_counter=?,last_login_at=?,"
-                        "updated_at=? WHERE id=?",
-                        (new_counter, created, created, operator_id),
-                    )
-                else:
-                    self.conn.execute(
-                        "UPDATE web_operators SET last_login_at=?,updated_at=? WHERE id=?",
-                        (created, created, operator_id),
-                    )
                 self.conn.execute(
-                    "INSERT INTO web_sessions("
-                    "id,operator_id,token_hash,csrf_hash,created_at,last_seen_at,"
-                    "expires_at,idle_expires_at,source_addr,user_agent_hash"
-                    ") VALUES (?,?,?,?,?,?,?,?,?,?)",
-                    (
-                        session_id,
-                        operator_id,
-                        _sha256_text(token),
-                        _sha256_text(csrf),
-                        created,
-                        created,
-                        expires,
-                        idle,
-                        str(source_addr or "")[:128],
-                        _user_agent_hash(user_agent),
-                    ),
+                    "UPDATE web_operators SET mfa_secret_ciphertext=?,mfa_enrolled=1,"
+                    "mfa_last_counter=?,row_version=row_version+1,updated_at=? WHERE id=?",
+                    (encrypt_token_pbkdf2(secret, master), counter, now_text, operator_id),
+                )
+                self.conn.execute(
+                    "DELETE FROM web_recovery_codes WHERE operator_id=?", (operator_id,)
+                )
+                self.conn.executemany(
+                    "INSERT INTO web_recovery_codes(operator_id,code_hash,created_at) "
+                    "VALUES (?,?,?)",
+                    [(operator_id, digest, now_text) for digest in code_hashes],
                 )
                 self._audit(
-                    "web.login.succeeded",
+                    "web.operator.mfa.enrollment.completed",
                     actor_id=operator_id,
-                    resource_id=session_id,
+                    resource_id=operator_id,
                 )
                 self.conn.execute("COMMIT")
             except Exception:
@@ -634,22 +897,15 @@ class WebAuthService:
                 except Exception:
                     pass
                 raise
-            self._failures.pop(key, None)
-            principal = WebPrincipal(
-                operator_id=operator_id,
-                username=str(row["username"]),
-                role=str(row["role"]),
-                permissions=permissions_for_role(str(row["role"])),
-                session_id=session_id,
+            self._mfa_enrollments.pop(token_hash, None)
+            row = self.conn.execute(
+                "SELECT * FROM web_operators WHERE id=?", (operator_id,)
+            ).fetchone()
+            issued = self._issue_session(
+                row, current=current, source_addr=source_addr, user_agent=user_agent,
+                new_counter=counter,
             )
-            return WebSessionIssue(
-                session_id=session_id,
-                session_token=token,
-                csrf_token=csrf,
-                expires_at=expires,
-                idle_expires_at=idle,
-                principal=principal,
-            )
+            return issued, recovery_codes
 
     def validate_session(
         self,

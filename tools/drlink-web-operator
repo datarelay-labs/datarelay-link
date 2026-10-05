@@ -40,7 +40,7 @@ def main() -> int:
         with WebAuthService(args.root) as auth:
             if args.command == "list":
                 rows = auth.conn.execute(
-                    "SELECT username,role,enabled,recovery_admin,last_login_at "
+                    "SELECT username,role,enabled,recovery_admin,mfa_required,mfa_enrolled,last_login_at "
                     "FROM web_operators ORDER BY username COLLATE NOCASE"
                 ).fetchall()
                 for row in rows:
@@ -51,6 +51,13 @@ def main() -> int:
                             row["role"],
                             "enabled" if int(row["enabled"] or 0) else "disabled",
                             "recovery-admin" if int(row["recovery_admin"] or 0) else "-",
+                            (
+                                "mfa-active"
+                                if int(row["mfa_required"] or 0) and int(row["mfa_enrolled"] or 0)
+                                else "mfa-pending"
+                                if int(row["mfa_required"] or 0)
+                                else "mfa-off"
+                            ),
                             row["last_login_at"] or "-",
                         )
                     )
@@ -59,26 +66,16 @@ def main() -> int:
             confirm = getpass.getpass("Confirm password: ")
             if password != confirm:
                 raise ControlPlaneError("Passwords do not match.")
-            material = auth.prepare_mfa_material(args.username)
-            print("\nTOTP setup URI (displayed once):")
-            print(material["otpauth_uri"])
-            print("\nTOTP secret (displayed once):")
-            print(material["totp_secret"])
-            print("\nRecovery codes (displayed once):")
-            for code in material["recovery_codes"]:
-                print(code)
-            supplied = input("\nEnter a current 6-digit TOTP code: ").strip()
             result = auth.create_operator_local(
                 username=args.username,
                 role=args.role,
                 password=password,
-                totp_secret=material["totp_secret"],
-                recovery_codes=material["recovery_codes"],
-                totp_value=supplied,
             )
             print("\nWEB_OPERATOR_ADD=PASS")
             print("USERNAME=%s" % result["username"])
             print("ROLE=%s" % result["role"])
+            print("MFA_REQUIRED=NO")
+            print("MFA can be enabled per user by a Web Admin.")
             return 0
     except (ControlPlaneError, OSError, ValueError) as exc:
         print("ERROR: %s" % exc, file=sys.stderr)

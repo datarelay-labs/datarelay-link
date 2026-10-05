@@ -1030,6 +1030,7 @@ CREATE TABLE IF NOT EXISTS web_operators (
   password_hash TEXT NOT NULL,
   password_kdf TEXT NOT NULL,
   mfa_secret_ciphertext TEXT NOT NULL,
+  mfa_required INTEGER NOT NULL DEFAULT 0,
   mfa_enrolled INTEGER NOT NULL DEFAULT 0,
   mfa_last_counter INTEGER,
   row_version INTEGER NOT NULL DEFAULT 1,
@@ -1135,6 +1136,18 @@ def ensure_v30_schema(conn: sqlite3.Connection) -> None:
     if ai_cols and "expires_at" not in ai_cols:
         conn.execute("ALTER TABLE ai_policy_rules ADD COLUMN expires_at TEXT")
 
+    web_operator_cols = {str(row[1]) for row in conn.execute("PRAGMA table_info(web_operators)")}
+    if web_operator_cols and "mfa_required" not in web_operator_cols:
+        conn.execute(
+            "ALTER TABLE web_operators ADD COLUMN mfa_required INTEGER NOT NULL DEFAULT 0"
+        )
+        # Existing 3.0 preview operators were created with mandatory MFA.
+        # Preserve that security posture across the additive migration while
+        # keeping newly created operators MFA-off by default.
+        conn.execute(
+            "UPDATE web_operators SET mfa_required=1 WHERE mfa_enrolled=1"
+        )
+
     audit_cols = {str(row[1]) for row in conn.execute("PRAGMA table_info(audit_events)")}
     audit_additions = (
         ("event_id", "TEXT"),
@@ -1158,6 +1171,7 @@ def ensure_v30_schema(conn: sqlite3.Connection) -> None:
         ("source_meta_json", "TEXT"),
         ("destination_meta_json", "TEXT"),
         ("duration_ms", "INTEGER"),
+        ("result", "TEXT"),
     )
     for column, decl in audit_additions:
         if audit_cols and column not in audit_cols:

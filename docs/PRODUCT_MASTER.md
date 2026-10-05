@@ -740,9 +740,12 @@ Link into a different product category or forcing repeated Core redesign.
 **Decision:** Keep the selected 3.0 additions small and priority-separated rather than
 treating them as one feature bundle.
 
-**P0 security baseline — Local Web MFA:** Password-backed Web administration requires an
-offline-capable local MFA factor, bounded/revocable browser sessions, and local recovery.
-SSO/OIDC/IdP integration is excluded from 3.0; the product must remain fully operable in
+**P0 security baseline — Local Web MFA capability:** Password-backed Web administration
+supports offline-capable local TOTP MFA per operator, bounded/revocable browser sessions,
+and local recovery. MFA is disabled by default and a Web Admin enables it per user. The
+user completes their own TOTP enrollment on the next password sign-in and receives
+one-time recovery codes directly; the Admin never receives the user's TOTP seed.
+SSO/OIDC/IdP integration is excluded from 3.0; the product remains fully operable in
 isolated environments without external identity infrastructure.
 
 **P1 product value — Temporary Access:** Add server-authoritative expiry to supported
