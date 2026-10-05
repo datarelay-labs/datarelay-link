@@ -377,6 +377,9 @@ Required baseline:
 One-time enrollment/install credentials may be displayed only according to their
 existing one-time/TTL rules. The Web UI must make their credential nature visible.
 
+The cross-product visual and SaaS workspace contract is `WEB_SAAS_UX_SYSTEM.md`.
+Authenticated Web pages must follow its DR Control token and App Shell parity requirements.
+
 ## 12. UX principles
 
 The Web UI optimizes for operators who understand the network task but do not know the

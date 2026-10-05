@@ -296,6 +296,7 @@ DRL3-3  Temporary Access CLI/Bundle/Web mutation parity
 DRL3-4  Temporary Access preview/test UX
 DRL3-5  Live Access Visibility → Emergency New-Access Cutoff
 DRL3-7  hardening/recovery/scale
+DRL3-7A modern SaaS workspace + DR Control visual parity
 DRL3-8  exact-candidate qualification
 ```
 
@@ -672,6 +673,59 @@ Required:
 No new external datastore may be introduced merely to pass the 100-host target. If
 measured evidence proves SQLite insufficient, that is a new architecture decision, not
 an implementation shortcut.
+
+## 17A. DRL3-7A — Modern SaaS Workspace and DR Control Visual Parity
+
+**Goal:** replace the remaining NOC-style management-console presentation with a modern
+task-oriented SaaS workspace while preserving Core/CLI authority and capability parity.
+
+Canonical UX authority: `docs/WEB_SAAS_UX_SYSTEM.md`.
+
+Required:
+
+- authenticated Web shell uses the same visual foundation as Data Relay Control:
+  Inter/system typography, semantic light/dark surface tokens, 8 px controls/cards,
+  260 px expanded / 57 px collapsed navigation, 58 px sticky header, neutral borders,
+  bounded 1440 px content canvas, DataRelay green brand accent, and matching primary/
+  secondary/status color semantics;
+- default authenticated workspace is light, with Control-compatible dark theme available;
+- sidebar is collapsible and task-oriented rather than a flat NOC menu;
+- root navigation remains bounded to Overview plus Infrastructure, Access Control,
+  Operations, Observability, and Administration;
+- utility capabilities such as Search, Saved Views, troubleshooting, enrollment, and
+  Draft Workspace move toward contextual actions/workspaces instead of multiplying root
+  navigation;
+- sticky top header carries page identity, health/attention context, global search entry,
+  refresh/theme/account actions, matching the Control shell hierarchy;
+- Overview evolves from KPI-only cards into an actionable Command Center: posture,
+  attention, recent activity/change, and access relationships before raw tables;
+- list pages use SaaS list/detail patterns with compact tables, bounded filters, detail
+  drawers/pages, tabs, contextual actions, empty states, and skeleton/loading treatment;
+- Access workspace converges Remote / Internet / AI Access around an access relationship
+  view, policy test/explain, draft/change preview, and Temporary Access context without
+  merging their security semantics;
+- authenticated page style and component density remain visually consistent with DR Control
+  even though DRLink remains a separate product and does not import Control runtime code;
+- responsive behavior preserves desktop-first operations and keyboard accessibility;
+- package and browser regressions prove visual assets/navigation remain present after Web
+  install/reinstall and that visual modernization does not create a Core dependency.
+
+Acceptance evidence includes:
+
+```text
+DR_CONTROL_VISUAL_TOKEN_PARITY=PASS
+SAAS_SHELL_PARITY=PASS
+BOUNDED_ROOT_NAVIGATION=PASS
+COLLAPSIBLE_SIDEBAR=PASS
+LIGHT_DARK_THEME=PASS
+COMMAND_CENTER_OVERVIEW=PASS
+CONTEXTUAL_WORKSPACE_NAV=PASS
+WEB_PACKAGE_VISUAL_PARITY=PASS
+BROWSER_REAL_USER_UX=PASS
+```
+
+This slice is release-bearing UX work. Any product/UI change after DRL3-7A invalidates
+DRL3-8 exact-candidate browser evidence and must be re-qualified on the new HEAD.
 
 ## 18. DRL3-8 — 3.0 Qualification and Stable Release
 
