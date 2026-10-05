@@ -837,7 +837,7 @@
     "roles": "any",
     "category": "System",
     "summary": "Update Data Relay Link management software",
-    "detail": "A software update does not re-enroll Agent Hosts and does not rotate the CA, token, or ports.",
+    "detail": "A software update does not re-enroll Agent Hosts and does not rotate the CA, token, or ports. Invoking this command authorizes the update and any required service restart; active connections may be interrupted. Check show status and system diagnostics afterward.",
     "examples": [
       "system update product"
     ],
@@ -848,9 +848,9 @@
       "project"
     ],
     "aliases": [],
-    "destructive": false,
+    "destructive": true,
     "hidden": false,
-    "risk": "none",
+    "risk": "outage",
     "confirmation": "none",
     "surface": "",
     "flags": [
@@ -877,7 +877,7 @@
     "roles": "any",
     "category": "System",
     "summary": "Update Relay Engine (FRP)",
-    "detail": "Updates the official upstream FRP / Relay Engine binary.",
+    "detail": "Updates the official upstream FRP / Relay Engine binary. Invoking this command authorizes the update and any required service restart; active connections may be interrupted. Check show status and system diagnostics afterward.",
     "examples": [
       "system update engine"
     ],
@@ -888,9 +888,9 @@
       "frp"
     ],
     "aliases": [],
-    "destructive": false,
+    "destructive": true,
     "hidden": false,
-    "risk": "none",
+    "risk": "outage",
     "confirmation": "none",
     "surface": "",
     "flags": [
@@ -3711,10 +3711,11 @@
     "roles": "client",
     "category": "Remote Services",
     "summary": "Create or edit a Remote Service",
-    "detail": "Create or edit a Remote Service",
+    "detail": "Create or edit a Remote Service. The name-only form opens a reviewed edit wizard. Use enabled or disabled in the complete form to change activation.",
     "examples": [
-      "set remote-service",
-      "set remote-service ssh-access destination this-host service ssh enabled"
+      "set remote-service <NAME>",
+      "set remote-service ssh-access destination this-host service ssh enabled",
+      "set remote-service ssh-access destination this-host service ssh disabled"
     ],
     "args": [
       {

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import subprocess
 import sys
 
@@ -348,6 +349,35 @@ def _refresh_editor_inventory(editor, frpctl_bin):
     editor.service_profiles = payload.get("service_profiles") or []
 
 
+def _run_backend(argv, env):
+    # Isolate the command tree so Ctrl+C can cancel every descendant without
+    # signalling the interactive CLI or other operator sessions.
+    proc = subprocess.Popen(argv, env=env, start_new_session=True)
+    try:
+        proc.wait()
+    except KeyboardInterrupt:
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        try:
+            proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            proc.wait()
+        # A descendant may ignore SIGTERM even after the backend exits.
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        sys.stderr.write("\nCommand interrupted. Check the current state before retrying.\n")
+        return None
+    return proc
+
+
 def run_repl(frpctl_bin, payload):
     grammar = _load_grammar()
     editor = LineEditor(payload)
@@ -414,11 +444,13 @@ def run_repl(frpctl_bin, payload):
         env.pop("FRP_CTL_SOURCED", None)
         env.pop("FRP_CTL_TEST_INPUT", None)
         try:
-            proc = subprocess.run([frpctl_bin] + tokens, env=env, check=False)
+            proc = _run_backend([frpctl_bin] + tokens, env=env)
         except OSError as exc:
             sys.stderr.write(
                 "ERROR: could not run the Data Relay Link CLI backend: %s\n" % exc
             )
+            continue
+        if proc is None:
             continue
         # Successful uninstall of the active product role exits the REPL cleanly
         # before any deleted backend can be invoked again.

@@ -17,27 +17,12 @@ from drlink_control_plane import (
 )
 from drlink_configuration_bundle import (
     BundleError,
-    apply_change_plan,
-    export_configuration,
-    format_plan_review,
-    prepare_plan,
     read_bundle_from_path_or_stdin,
 )
 import drlink_mcp_tls as mcp_tls
 from drlink_mcp_tls import McpTlsError
 
 USAGE_HINT = "No changes were applied."
-
-
-def _looks_like_v24_bundle(raw: str) -> bool:
-    text = str(raw or "")
-    stripped = text.lstrip()
-    return stripped.startswith("configurationBundle:") or "configurationBundle:" in text[:400]
-
-
-def _looks_like_legacy_bundle(raw: str) -> bool:
-    head = str(raw or "")[:800]
-    return "kind: ConfigurationBundle" in head or 'kind: "ConfigurationBundle"' in head or "kind: 'ConfigurationBundle'" in head
 
 
 def _exit_bundle_error(exc: BaseException) -> None:
@@ -48,18 +33,10 @@ def _exit_bundle_error(exc: BaseException) -> None:
 
 
 def _prepare_public_bundle(plane: ControlPlane, raw: str):
-    """Public CLI always prefers the canonical v2.4 bundle parser.
+    """The public CLI accepts only the canonical v2.4 schema."""
+    from drlink_v24_bundle import prepare_v24_plan
 
-    Legacy apiVersion/kind documents remain accepted only when that schema is
-    explicit, so existing transition tests keep working. Garbage / prose / invalid
-    YAML is routed through the v2.4 parser so operators always see
-    'No changes were applied.'
-    """
-    if _looks_like_v24_bundle(raw) or not _looks_like_legacy_bundle(raw):
-        from drlink_v24_bundle import prepare_v24_plan
-
-        return "v24", prepare_v24_plan(plane, raw)
-    return "legacy", prepare_plan(plane, raw, input_path="cli", run_tests=True)
+    return prepare_v24_plan(plane, raw)
 
 
 def _parse_output_flag(tokens):
@@ -91,13 +68,9 @@ def _configuration_export(plane: ControlPlane, rest):
         raise SystemExit(
             "Missing output path.\n\nUsage:\n  system export configuration <file>\n  system export configuration --output <file>"
         )
-    # Prefer canonical v2.4 export when available.
-    try:
-        from drlink_v24_bundle import export_configuration_v24
+    from drlink_v24_bundle import export_configuration_v24
 
-        text = export_configuration_v24(plane)
-    except Exception:
-        text = export_configuration(plane)
+    text = export_configuration_v24(plane)
     Path = __import__("pathlib").Path
     Path(out_path).write_text(text, encoding="utf-8")
     sys.stdout.write("Configuration exported (redacted): %s\n" % out_path)
@@ -109,16 +82,12 @@ def _configuration_test(plane: ControlPlane, rest):
         raise SystemExit("Missing configuration path.\n\nUsage:\n  test configuration <file|->")
     raw, label = _read_config_input(rest[0])
     try:
-        kind, plan = _prepare_public_bundle(plane, raw)
+        plan = _prepare_public_bundle(plane, raw)
     except Exception as exc:
         _exit_bundle_error(exc)
-    if kind == "v24":
-        from drlink_v24_bundle import format_v24_plan
+    from drlink_v24_bundle import format_v24_plan
 
-        sys.stdout.write(format_v24_plan(plan))
-        return 0
-    sys.stdout.write(format_plan_review(plan))
-    sys.stdout.write("Configuration test: PASS\n")
+    sys.stdout.write(format_v24_plan(plan))
     return 0
 
 
@@ -127,20 +96,13 @@ def _configuration_diff(plane: ControlPlane, rest):
         raise SystemExit("Missing configuration path.\n\nUsage:\n  system diff configuration <file|->")
     raw, label = _read_config_input(rest[0])
     try:
-        kind, plan = _prepare_public_bundle(plane, raw)
+        plan = _prepare_public_bundle(plane, raw)
     except Exception as exc:
         _exit_bundle_error(exc)
-    if kind == "v24":
-        from drlink_v24_bundle import format_v24_plan
+    from drlink_v24_bundle import format_v24_plan
 
-        sys.stdout.write(format_v24_plan(plan))
-        if plan.no_change:
-            sys.stdout.write("Diff result: NO CHANGE\n")
-        else:
-            sys.stdout.write("Diff result: CHANGES PENDING (no mutation performed)\n")
-        return 0
-    sys.stdout.write(format_plan_review(plan))
-    if not plan.mutating_changes and not plan.client_action_required:
+    sys.stdout.write(format_v24_plan(plan))
+    if plan.no_change:
         sys.stdout.write("Diff result: NO CHANGE\n")
     else:
         sys.stdout.write("Diff result: CHANGES PENDING (no mutation performed)\n")
@@ -154,11 +116,8 @@ def _stdin_is_interactive() -> bool:
         return False
 
 
-def _bundle_has_mutation(kind: str, plan) -> bool:
-    changes = getattr(plan, "mutating_changes", None) or []
-    if kind == "v24":
-        return bool(changes) and not bool(getattr(plan, "no_change", False))
-    return bool(changes)
+def _bundle_has_mutation(plan) -> bool:
+    return bool(getattr(plan, "mutating_changes", None)) and not bool(plan.no_change)
 
 
 def _approve_configuration_mutation(operation: str = "system apply configuration") -> str:
@@ -185,62 +144,29 @@ def _configuration_apply(plane: ControlPlane, rest):
         raise SystemExit("Missing configuration path.\n\nUsage:\n  system apply configuration <file|->")
     raw, label = _read_config_input(rest[0])
     try:
-        kind, plan = _prepare_public_bundle(plane, raw)
+        plan = _prepare_public_bundle(plane, raw)
     except Exception as exc:
         _exit_bundle_error(exc)
-    if kind == "v24":
-        from drlink_v24_bundle import apply_v24_plan, format_v24_plan
+    from drlink_v24_bundle import apply_v24_plan, format_v24_plan
 
-        sys.stdout.write(format_v24_plan(plan).replace("No changes were applied.\n", ""))
-        confirm = False
-        if _bundle_has_mutation(kind, plan):
-            decision = _approve_configuration_mutation()
-            if decision == "cancel":
-                return 0
-            if decision == "refuse":
-                return 1
-            confirm = True
-        result = _run(apply_v24_plan, plane, plan, confirm=confirm)
-        if isinstance(result, dict) and result.get("cancelled"):
-            return 1
-        if isinstance(result, dict) and result.get("status") == "NO_CHANGE":
-            sys.stdout.write("NO CHANGE\nConfiguration already matches the requested state.\n")
-            return 0
-        sys.stdout.write("Apply result: APPLIED\n")
-        if isinstance(result, dict):
-            sys.stdout.write("Revision: %s\n" % result.get("revision"))
-        return 0
-    try:
-        plan = prepare_plan(plane, raw, input_path=label, run_tests=True)
-    except BundleError as exc:
-        _exit_bundle_error(exc)
-    sys.stdout.write(format_plan_review(plan))
+    sys.stdout.write(format_v24_plan(plan).replace("No changes were applied.\n", ""))
     confirm = False
-    if _bundle_has_mutation("legacy", plan):
+    if _bundle_has_mutation(plan):
         decision = _approve_configuration_mutation()
         if decision == "cancel":
             return 0
         if decision == "refuse":
             return 1
         confirm = True
-    result = _run(apply_change_plan, plane, plan, confirm=confirm)
+    result = _run(apply_v24_plan, plane, plan, confirm=confirm)
     if isinstance(result, dict) and result.get("cancelled"):
         return 1
-    if not isinstance(result, dict):
+    if isinstance(result, dict) and result.get("status") == "NO_CHANGE":
+        sys.stdout.write("NO CHANGE\nConfiguration already matches the requested state.\n")
         return 0
-    status = result.get("status")
-    if status == "NO_CHANGE":
-        sys.stdout.write("Apply result: NO CHANGE\n")
+    sys.stdout.write("Apply result: APPLIED\n")
+    if isinstance(result, dict):
         sys.stdout.write("Revision: %s\n" % result.get("revision"))
-    elif status == "CLIENT_ACTION_REQUIRED":
-        sys.stdout.write("Apply result: CLIENT_ACTION_REQUIRED\n")
-        sys.stdout.write("Server mutations: none for client-local targets.\n")
-    else:
-        sys.stdout.write("Apply result: APPLIED\n")
-        sys.stdout.write("Revision: %s\n" % result.get("revision"))
-        sys.stdout.write("Zero-Touch tickets issued: %s\n" % result.get("tickets_issued", 0))
-        if result.get("client_action_required"):
-            sys.stdout.write("CLIENT_ACTION_REQUIRED: yes (see planned changes)\n")
     return 0
 
 

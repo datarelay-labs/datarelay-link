@@ -1151,6 +1151,21 @@ frpctl_nav_workflow() {
       # interactive Remote Service wizard instead of a bare usage dead-end.
       frpctl_dispatch set remote-service "$id" || true
       ;;
+    manage_remote_service)
+      frpctl_dispatch show remote-services || return $?
+      id="$(frpctl_nav_prompt_id "Remote Service name (empty cancels): ")" || return 1
+      frpctl_dispatch show remote-service "$id" || return $?
+      echo "1) Edit destination, Service Object or enabled state (review before apply)"
+      echo "2) Delete (interactive confirmation required)"
+      echo "3) Back"
+      value="$(frpctl_read "Select: " "3")" || return 1
+      case "$value" in
+        1) frpctl_dispatch set remote-service "$id" ;;
+        2) frpctl_dispatch unset remote-service "$id" ;;
+        3|'') return 0 ;;
+        *) echo "ERROR: select a valid menu number" >&2; return 1 ;;
+      esac
+      ;;
     create_group)
       id="$(frpctl_nav_prompt_id "Group name: ")" || return 1
       frpctl_dispatch set managed-host-group "$id" || true

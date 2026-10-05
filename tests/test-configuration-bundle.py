@@ -25,6 +25,14 @@ from drlink_configuration_bundle import (
     read_bundle_from_path_or_stdin,
 )
 import drlink_control_cli as cli
+from drlink_v24_bundle import prepare_v24_plan, apply_v24_plan
+
+
+def _public_bundle(name, address):
+    import yaml
+    return yaml.safe_dump({"configurationBundle": {"context": "server", "networkObjects": [
+        {"name": name, "type": "ip", "value": address}
+    ]}}, sort_keys=False)
 
 
 class TTYInput(io.StringIO):
@@ -229,24 +237,20 @@ class ConfigurationBundleTests(unittest.TestCase):
         self.assertNotIn("client_secret", a)
 
     def test_stdin_and_file_cli(self):
-        raw = _bundle(
-            objects=[{"name": "cli-obj", "type": "Host", "values": ["198.51.100.3"]}]
-        )
+        raw = _public_bundle("cli-obj", "198.51.100.3")
         path = Path(self.tmp) / "bundle.yaml"
         path.write_text(raw, encoding="utf-8")
         rc = cli.dispatch(["test", "configuration", str(path)], root=self.tmp)
         self.assertEqual(rc, 0)
         text, label = read_bundle_from_path_or_stdin("-", stdin_text=raw)
         self.assertEqual(label, "stdin")
-        plan = prepare_plan(self.plane, text, input_path=label)
-        result = apply_change_plan(self.plane, plan, confirm=True)
+        plan = prepare_v24_plan(self.plane, text)
+        result = apply_v24_plan(self.plane, plan, confirm=True)
         self.assertEqual(result["status"], "APPLIED")
-        self.assertEqual(result["tickets_issued"], 0)
+        self.assertIsNotNone(self.plane.get_object("cli-obj"))
 
     def test_cancelled_apply_returns_zero_and_preserves_state(self):
-        raw = _bundle(
-            objects=[{"name": "cancelled-obj", "type": "Host", "values": ["198.51.100.44"]}]
-        )
+        raw = _public_bundle("cancelled-obj", "198.51.100.44")
         path = Path(self.tmp) / "cancelled.yaml"
         path.write_text(raw, encoding="utf-8")
         out, err = io.StringIO(), io.StringIO()

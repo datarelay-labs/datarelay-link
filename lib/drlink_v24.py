@@ -3964,8 +3964,7 @@ def _representative_ip_from_value(value: str) -> str:
         net = ipaddress.ip_network(text, strict=False)
     except ValueError as exc:
         raise ControlPlaneError(cli_error("Value '%s' is not a usable IP or CIDR." % text)) from exc
-    hosts = list(net.hosts())
-    return str(hosts[0] if hosts else net.network_address)
+    return str(next(iter(net.hosts()), net.network_address))
 
 
 def _resolve_test_source_ip(plane_db, source_name: str) -> str:

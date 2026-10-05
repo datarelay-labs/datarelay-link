@@ -648,7 +648,7 @@ def missing_client_help(usage_lines, names=None, tip="Press Tab after \"show cli
     parts = ["Missing client.", ""]
     available = _safe_names(names)
     if available:
-        parts.append("Available CLIENT IDs:")
+        parts.append("Available HOST IDs:")
         for name in available:
             parts.append("  %s" % name)
         parts.append("")
@@ -882,7 +882,7 @@ def _show_help(rest, role):
             "  show client <ID>\n"
             "  show client <ID> services\n"
             "  show client <ID> tags\n\n"
-            "CLIENT ID is the immutable selector. A unique label or hostname\n"
+            "HOST ID is the immutable selector. A unique label or hostname\n"
             "is also accepted as a shortcut.\n\n"
             "Examples:\n"
             "  show client 24cd7856\n"
@@ -906,7 +906,7 @@ def _show_help(rest, role):
             "  show profiles\n"
             "  show profile <PROFILE>\n\n"
             "Profiles are server-owned creation templates. They do not store\n"
-            "public ports, CLIENT IDs, Service IDs, or ACL assignments.\n"
+            "public ports, HOST IDs, Remote Service IDs, or ACL assignments.\n"
         )
     return "Usage:\n  show %s\n" % topic
 
@@ -1698,8 +1698,8 @@ def _context_client_list(names, clients):
         for name in _safe_names(names):
             rows.append((name, "-", "-"))
     if not rows:
-        return "(no registered clients)\n"
-    parts = ["%-10s %-10s %s" % ("CLIENT ID", "LABEL", "HOSTNAME")]
+        return "(no Managed Hosts)\n"
+    parts = ["%-10s %-10s %s" % ("HOST ID", "LABEL", "HOSTNAME")]
     for cid, label, host in rows:
         parts.append("%-10s %-10s %s" % (cid, label, host))
     return "\n".join(parts) + "\n"
@@ -4390,7 +4390,7 @@ def format_tab_candidates(line, matches, role, names=None, clients=None):
         for item in clients or []:
             if isinstance(item, dict) and item.get("id"):
                 by_id[str(item["id"])] = item
-        lines = ["%-10s %-10s %s" % ("CLIENT ID", "LABEL", "HOSTNAME")]
+        lines = ["%-10s %-10s %s" % ("HOST ID", "LABEL", "HOSTNAME")]
         for mid in matches:
             item = by_id.get(mid) or {}
             lines.append(

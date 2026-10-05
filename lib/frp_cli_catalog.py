@@ -1732,7 +1732,9 @@ def domain_help(topic, role):
             "UDP Remote Service is not supported.\n\n"
             "Everyday commands:\n"
             "  show remote-services\n"
-            "  set remote-service <NAME> destination <DEST|this-host> service <SERVICE> enabled\n"
+            "  show remote-service <NAME>\n"
+            "  set remote-service <NAME>   (reviewed create/edit wizard)\n"
+            "  set remote-service <NAME> destination <DEST|this-host> service <SERVICE> enabled|disabled\n"
             "  unset remote-service <NAME>   (interactive y/N confirmation required)\n"
         )
     if topic == "internet-access":
@@ -2215,7 +2217,7 @@ NAVIGATION_TREE = {
     "client.remote_services": (
         ("client_rs_list", "List Remote Services", "", "command", "show remote-services"),
         ("client_rs_create", "Create Remote Service", "", "workflow", "create_remote_service"),
-        ("client_rs_manage", "Manage Remote Service", "", "command", "show remote-services"),
+        ("client_rs_manage", "Manage Remote Service", "", "workflow", "manage_remote_service"),
         ("back", "Back", "", "back", None),
     ),
     "client.agent": (

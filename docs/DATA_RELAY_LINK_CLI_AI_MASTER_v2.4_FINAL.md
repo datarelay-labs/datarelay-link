@@ -503,7 +503,7 @@ SSH        → TCP/22
 HTTP       → TCP/80
 HTTPS      → TCP/443
 RDP        → TCP/3389
-Custom TCP → TCP/<user port>   (normal published-service port pool)
+Custom TCP → TCP/<user port>   (normal Remote Service port pool)
 Fixed TCP  → Fixed TCP/<destination port>  (public endpoint port is allocated separately from the Fixed TCP endpoint pool)
 ```
 
@@ -843,7 +843,7 @@ Example first screen:
 Data Relay Link
 
 Access policies:
-  Remote Access   — no policy; published services use compatibility ALLOW
+  Remote Access   — no policy; Remote Services use compatibility ALLOW
   Internet Access — no policy; DENY ALL
   AI Access       — no policy; DENY ALL after authentication
 
@@ -3817,7 +3817,7 @@ Expected:
 Role: DRLink Server
 
 No access policies are currently configured.
-Remote Access compatibility default is ALLOW for explicitly published services.
+Remote Access compatibility default is ALLOW for explicitly published Remote Services.
 Internet Access and AI Access are DENY by default.
 ```
 
@@ -3863,7 +3863,7 @@ show `<username>` rather than inventing an unverified account name.
 Enrollment Code semantics are strictly one-time. A consumed code is rejected
 before a fresh manual install enters service selection and cannot be reused
 after uninstall/reinstall. Crash/lost-response recovery is not a second
-enrollment: the client preserves the original pending transaction and its
+enrollment: the Agent preserves the original pending transaction and its
 `operation_id`, and the Server accepts an already-consumed code only for that
 same operation ID with the same management identity and service set. Starting
 a new install/apply operation requires a new Enrollment Code.

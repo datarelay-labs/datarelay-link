@@ -1226,8 +1226,12 @@ def validate_registry(state, cfg=None):
             if port in seen_ports and seen_ports[port][0] != 'reserved':
                 issues.append('duplicate public port %s' % port)
             seen_ports[port] = (mid, key)
-            if port_start is not None and port_end is not None:
-                if port < port_start or port > port_end:
+            service_start, service_end = port_start, port_end
+            if cfg and str(svc.get('pool_class') or '').strip().lower() == 'fixed-tcp':
+                from frp_infrastructure_ports import tcp_relay_port_range
+                service_start, service_end = tcp_relay_port_range(cfg)
+            if service_start is not None and service_end is not None:
+                if port < service_start or port > service_end:
                     outside.append(port)
             if port in protected:
                 issues.append('allocated port %s collides with a control port' % port)
@@ -3086,7 +3090,7 @@ def check_server(report, paths, facts, skip_network):
             if alloc_ok:
                 rec = (
                     'allocator backend /healthz succeeded but the public frontend proxy failed. '
-                    'Clients cannot use TCP/443. Re-run the server installer; do not disable proxy_ssl_verify.'
+                    'Agents cannot use TCP/443. Re-run the server installer; do not disable proxy_ssl_verify.'
                 )
             report.add(
                 'frontend_proxy_health', FAIL,
@@ -3857,7 +3861,7 @@ def run_doctor(root, facts, fmt='human', quiet=False, verbose=False, skip_networ
         role_info['reason'],
         'server_signals=%s client_signals=%s' % (role_info['server_signals'], role_info['client_signals']),
         {
-            'partial_client': 'complete the client install or run sudo drlink system update product; do not re-enroll over a damaged identity',
+            'partial_client': 'complete the Agent install or run sudo drlink system update product; do not re-enroll over a damaged identity',
             'partial_server': 're-run the server installer to complete missing components',
             'ambiguous': 'inspect leftover server and client files before taking further action',
             'uninstalled': 'install the server or client bootstrap first',

@@ -806,6 +806,8 @@ def _validate_server_plan_applyability(
 ) -> None:
     """Dry-run Server mutations using the same CRUD/order as real Apply.
 
+    Read-only callers validate on an in-memory snapshot. Writable Apply callers
+    already holding a transaction retain its state and use a savepoint.
     Validation runs inside a SQLite savepoint with batch mode enabled, so the
     exact authoritative CRUD dependency checks execute but every mutation is
     rolled back and no revision/audit/runtime activation is produced. This
@@ -813,6 +815,18 @@ def _validate_server_plan_applyability(
     """
     ordered = _ordered_v24_changes(changes)
     if not ordered:
+        return
+
+    if getattr(plane, "_read_only", False):
+        scratch = sqlite3.connect(":memory:", isolation_level=None)
+        scratch.row_factory = sqlite3.Row
+        try:
+            plane.conn.backup(scratch)
+            scratch.execute("PRAGMA foreign_keys = ON")
+            preview = ControlPlane(plane.root, conn=scratch)
+            _validate_server_plan_applyability(preview, ordered)
+        finally:
+            scratch.close()
         return
 
     savepoint = "drlink_bundle_applyability"

@@ -8,6 +8,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import ipaddress
+import signal
+import time
 import unittest
 from unittest.mock import patch
 from contextlib import redirect_stderr, redirect_stdout
@@ -25,6 +28,187 @@ import frp_cli_catalog as catalog
 
 
 class CliFeatureScenarioRemediation(unittest.TestCase):
+    def test_policy_selector_consumes_only_first_host(self):
+        class Network:
+            network_address = ipaddress.ip_address("198.51.100.0")
+
+            def hosts(self):
+                yield ipaddress.ip_address("198.51.100.1")
+                raise AssertionError("policy tests must not enumerate the network")
+
+        with patch.object(v24.ipaddress, "ip_network", return_value=Network()):
+            self.assertEqual(v24._representative_ip_from_value("198.51.100.0/24"), "198.51.100.1")
+        for value, expected in (("198.51.100.0/31", "198.51.100.0"),
+                                ("198.51.100.1/32", "198.51.100.1"),
+                                ("2001:db8::/127", "2001:db8::"),
+                                ("2001:db8::1/128", "2001:db8::1")):
+            self.assertEqual(v24._representative_ip_from_value(value), expected)
+
+    def test_public_bundle_rejects_legacy_schema_before_any_effect(self):
+        path = Path(self.tmp) / "legacy.yaml"
+        path.write_text("apiVersion: drlink.datarelay.run/v1alpha1\nkind: ConfigurationBundle\nspec:\n  objects:\n    - name: legacy-input\n      type: Host\n      values: [198.51.100.3]\n")
+        before = self.plane.conn.total_changes
+        for tokens in (["test", "configuration"], ["system", "diff", "configuration"],
+                       ["system", "apply", "configuration"]):
+            with self.subTest(tokens=tokens):
+                with self.assertRaises(SystemExit) as exc:
+                    self._dispatch(tokens + [str(path)])
+                self.assertIn("No changes were applied", str(exc.exception))
+            self.assertIsNone(self.plane.get_object("legacy-input"))
+        self.assertEqual(self.plane.conn.total_changes, before)
+
+    def test_configuration_export_failure_does_not_emit_legacy_file(self):
+        path = Path(self.tmp) / "export.yaml"
+        with patch("drlink_v24_bundle.export_configuration_v24", side_effect=RuntimeError("export failed")):
+            with self.assertRaises(RuntimeError):
+                cli._configuration_export(self.plane, [str(path)])
+        self.assertFalse(path.exists())
+
+    def test_public_configuration_preview_keeps_authority_read_only(self):
+        path = Path(self.tmp) / "canonical.yaml"
+        path.write_text("configurationBundle:\n  context: server\n  networkObjects:\n    - name: preview-only\n      type: ip\n      value: 198.51.100.3\n")
+        before = self.plane.current_revision()
+        query = ControlPlane(self.tmp, read_only=True)
+        try:
+            original = query.conn
+            for tokens in (["test", "configuration"], ["system", "diff", "configuration"]):
+                with redirect_stdout(io.StringIO()):
+                    self.assertEqual(cli.dispatch(tokens + [str(path)], root=self.tmp, plane=query), 0)
+                self.assertIs(query.conn, original)
+                self.assertTrue(query._read_only)
+                self.assertIsNone(query.get_object("preview-only"))
+                self.assertEqual(query.current_revision(), before)
+                self.assertEqual(query.conn.total_changes, 0)
+        finally:
+            query.close()
+
+    def test_repl_interrupt_terminates_command_group_and_retains_prompt(self):
+        import signal
+        import frp_ctl_repl as repl
+        backend = unittest.mock.Mock(pid=123456, returncode=-signal.SIGTERM)
+        backend.wait.side_effect = [KeyboardInterrupt(), -signal.SIGTERM]
+        err = io.StringIO()
+        with patch.object(repl.subprocess, "Popen", return_value=backend) as launch, \
+                patch.object(repl.os, "killpg") as terminate, \
+                patch("builtins.input", side_effect=["show status", "exit"]), \
+                patch.object(repl.LineEditor, "bind"), redirect_stderr(err):
+            self.assertEqual(repl.run_repl("drlink", {"role": "server"}), 0)
+        self.assertTrue(launch.call_args.kwargs["start_new_session"])
+        self.assertEqual(terminate.call_args_list, [unittest.mock.call(backend.pid, signal.SIGTERM),
+                                                    unittest.mock.call(backend.pid, signal.SIGKILL)])
+        self.assertIn("Command interrupted", err.getvalue())
+        self.assertNotIn("Traceback", err.getvalue())
+        self.assertNotIn("No changes were applied", err.getvalue())
+
+    def test_repl_interrupt_stops_real_backend_and_stubborn_descendant(self):
+        backend = Path(self.tmp) / "blocking_backend.py"
+        pids = Path(self.tmp) / "command_pids.json"
+        backend.write_text('''import json, os, signal, sys, time
+child = os.fork()
+if child == 0:
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    while True:
+        time.sleep(1)
+with open(sys.argv[1], "w") as f:
+    json.dump([os.getpid(), child], f)
+while True:
+    time.sleep(1)
+''')
+        runner = "import sys,os;sys.path.insert(0,sys.argv[1]);from frp_ctl_repl import _run_backend;assert _run_backend([sys.executable,sys.argv[2],sys.argv[3]],os.environ.copy()) is None;print('PROMPT_RECOVERED')"
+        proc = subprocess.Popen([sys.executable, "-c", runner, str(LIB), str(backend), str(pids)],
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        owned = []
+        try:
+            deadline = time.monotonic() + 5
+            while not pids.exists() and time.monotonic() < deadline:
+                time.sleep(0.02)
+            self.assertTrue(pids.exists(), "test backend did not start")
+            owned = json.loads(pids.read_text())
+            proc.send_signal(signal.SIGINT)
+            out, err = proc.communicate(timeout=5)
+            self.assertEqual(proc.returncode, 0, err)
+            self.assertIn("PROMPT_RECOVERED", out)
+            self.assertIn("Command interrupted", err)
+            self.assertNotIn("Traceback", err)
+            def active(pid):
+                status = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)],
+                                        text=True, capture_output=True)
+                return status.returncode == 0 and bool(status.stdout.strip()) and not status.stdout.strip().startswith("Z")
+            for pid in owned:
+                deadline = time.monotonic() + 2
+                while active(pid) and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                self.assertFalse(active(pid), "command descendant survived")
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+            if owned:
+                try:
+                    os.killpg(owned[0], signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+
+    def test_doctor_checks_endpoint_against_its_own_pool(self):
+        import frp_doctor as doctor
+        cfg = {"port_start": 6000, "port_end": 6098}
+        def registry(*services):
+            return {"schema_version": 2, "clients": {"a" * 32: {
+                "hostname": "agent", "services": {str(i): s for i, s in enumerate(services)}}}}
+        fixed = {"remote_port": 6200, "pool_class": "fixed-tcp"}
+        normal = {"remote_port": 6000, "pool_class": "normal"}
+        self.assertEqual(doctor.validate_registry(registry(fixed, normal), cfg)[0], doctor.PASS)
+        self.assertEqual(doctor.validate_registry(registry({**normal, "remote_port": 6200}), cfg)[0], doctor.WARN)
+        self.assertEqual(doctor.validate_registry(registry({**fixed, "remote_port": 6000}), cfg)[0], doctor.WARN)
+        cfg.update(tcp_relay_port_start=6300, tcp_relay_port_end=6399)
+        self.assertEqual(doctor.validate_registry(registry(fixed), cfg)[0], doctor.WARN)
+        self.assertEqual(doctor.validate_registry(registry({**fixed, "remote_port": 6300}), cfg)[0], doctor.PASS)
+        self.assertEqual(doctor.validate_registry(registry(fixed, fixed), cfg)[0], doctor.FAIL)
+
+    def test_update_leaves_disclose_outage_without_extra_confirmation(self):
+        rows = {tuple(r["path"]): r for r in json.loads((LIB / "frp_cli_final_commands.json").read_text())}
+        for target in ("product", "engine"):
+            row = rows[("system", "update", target)]
+            self.assertTrue(row["destructive"])
+            self.assertEqual(row["risk"], "outage")
+            self.assertEqual(row["confirmation"], "none")
+            self.assertIn("restart", row["detail"])
+
+    def test_remote_service_manage_opens_detail_and_cancel_is_read_only(self):
+        item = next(r for r in catalog.NAVIGATION_TREE["client.remote_services"] if r[0] == "client_rs_manage")
+        self.assertEqual(item[3:], ("workflow", "manage_remote_service"))
+        script = '''source "$1"
+frpctl_nav_prompt_id() { printf http; }
+frpctl_read() { printf 3; }
+frpctl_dispatch() { printf 'DISPATCH'; printf ' <%s>' "$@"; printf '\\n'; }
+frpctl_nav_workflow manage_remote_service
+'''
+        env = dict(os.environ, FRP_CTL_SOURCED="1")
+        proc = subprocess.run(["bash", "-c", script, "regression", str(ROOT / "tools/frpctl")], env=env, text=True, capture_output=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("DISPATCH <show> <remote-service> <http>", proc.stdout)
+        self.assertNotIn("DISPATCH <set>", proc.stdout)
+        self.assertNotIn("DISPATCH <unset>", proc.stdout)
+
+    def test_managed_host_selector_help_uses_current_noun(self):
+        hosts = [{"id": "abcd1234", "label": "agent", "hostname": "agent"}]
+        for text in (grammar.context_help(["unset", "managed-host"], "server", names=["abcd1234"], clients=hosts),
+                     grammar.format_tab_candidates("unset managed-host ", ["abcd1234"], "server", clients=hosts)):
+            self.assertIn("HOST ID", text)
+            self.assertNotIn("CLIENT ID", text)
+
+    def test_remote_service_edit_keeps_disabled_default_until_review(self):
+        import drlink_v24_wizard as wizard
+        self.plane.conn.execute("INSERT INTO agent_remote_services(name,destination,service_object,enabled,updated_at) VALUES ('http','this-host','http',0,'2026-10-05T00:00:00Z')")
+        with patch.object(wizard, "_io"), patch.object(wizard, "_ask_text", return_value="this-host"), \
+                patch.object(wizard, "_ask_choice", return_value="http"), \
+                patch.object(wizard, "_ask_yes_no", return_value=False) as enabled, \
+                patch.object(wizard, "_review_menu", return_value="cancel"), \
+                redirect_stdout(io.StringIO()):
+            self.assertEqual(wizard.run_remote_service_wizard(self.plane, "http"), 0)
+        self.assertFalse(enabled.call_args.kwargs["default"])
+        self.assertEqual(self.plane.conn.execute("SELECT enabled FROM agent_remote_services WHERE name='http'").fetchone()[0], 0)
+
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="drlink-cli-fcs-remediation-")
         root = Path(self.tmp)
@@ -525,7 +709,7 @@ class CliFeatureScenarioRemediation(unittest.TestCase):
             "show status", "set enrollment --auth-token TEST_SECRET_HISTORY",
             "system history", "history", "q", "quit",
             "exit extra", "system history", "exit",
-        ]), patch.object(repl.subprocess, "run", side_effect=backend), \
+        ]), patch.object(repl, "_run_backend", side_effect=backend), \
                 patch.object(repl.LineEditor, "bind"), redirect_stdout(out):
             self.assertEqual(repl.run_repl("drlink", {"role": "server"}), 0)
         self.assertIn("  show status", out.getvalue())
