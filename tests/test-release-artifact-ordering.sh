@@ -77,6 +77,31 @@ if SBOM_PATH="$TMPDIR_SBOM/a.json" SBOM_EXPECTED_COMMIT="$WRONG_COMMIT" \
 fi
 pass "VERIFY_SBOM_REJECTS_MISMATCH"
 
+# --- Default verifier follows manifest source_head, not wrapper HEAD ---------
+# A generated artifact/provenance commit cannot be embedded in the artifacts it
+# contains. When the checked-in candidate wraps an earlier content source, the
+# default verifier validates that manifest-bound source rather than wrapper HEAD.
+MANIFEST_SOURCE="$(python3 -c 'import json; print(json.load(open("release-manifest.json"))["source_head"])')"
+if [[ -s dist/sbom.spdx.json ]]; then
+  got_sbom_source="$(python3 - <<'PYIN'
+import json
+doc=json.load(open("dist/sbom.spdx.json"))
+root=next(p for p in doc["packages"] if p.get("SPDXID")=="SPDXRef-Package-DataRelayLink")
+refs={r.get("referenceType"):r.get("referenceLocator") for r in root.get("externalRefs",[])}
+print(refs.get("gitCommit") or "")
+PYIN
+)"
+  if [[ "$got_sbom_source" == "$MANIFEST_SOURCE" ]]; then
+    ./scripts/verify-sbom.sh >/dev/null ||
+      fail "VERIFY_SBOM_DEFAULTS_TO_MANIFEST_SOURCE: manifest-bound wrapper candidate rejected"
+    pass "VERIFY_SBOM_DEFAULTS_TO_MANIFEST_SOURCE"
+  else
+    echo "SKIP VERIFY_SBOM_DEFAULTS_TO_MANIFEST_SOURCE (generated SBOM not bound to current manifest)"
+  fi
+else
+  echo "SKIP VERIFY_SBOM_DEFAULTS_TO_MANIFEST_SOURCE (dist/sbom.spdx.json absent)"
+fi
+
 # --- Convergence: only a clean tree can assert the full chain ----------------
 if [[ -n "$(git status --porcelain)" ]]; then
   echo "SKIP RELEASE_CHAIN_CONVERGES (working tree dirty; run on a clean tree)"

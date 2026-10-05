@@ -2,8 +2,10 @@
 # Gate: the SBOM must bind to the actual release source commit and must agree
 # with SHA256SUMS entry-for-entry.
 #
-# The expected commit defaults to the checked-out HEAD. A release workflow that
-# has already resolved an immutable ref should pass that commit explicitly:
+# The expected commit defaults to release-manifest.json source_head. The manifest
+# records the content commit from which generated artifacts were built; a later
+# artifact/provenance wrapper commit cannot self-reference its own SHA. A release
+# workflow that has already resolved an immutable source may override explicitly:
 #
 #   SBOM_EXPECTED_COMMIT=<40-hex> ./scripts/verify-sbom.sh
 #
@@ -21,7 +23,15 @@ fi
 
 expected="${SBOM_EXPECTED_COMMIT:-}"
 if [[ -z "$expected" ]]; then
-  expected="$(git rev-parse HEAD)"
+  expected="$(python3 - <<'PY'
+import json
+from pathlib import Path
+value = str(json.loads(Path("release-manifest.json").read_text(encoding="utf-8")).get("source_head") or "").strip()
+if len(value) != 40 or any(c not in "0123456789abcdefABCDEF" for c in value):
+    raise SystemExit("release-manifest source_head is not a 40-character SHA")
+print(value)
+PY
+)"
 fi
 
 SBOM_PATH="$SBOM_PATH" SBOM_EXPECTED_COMMIT="$expected" python3 - <<'PY'
