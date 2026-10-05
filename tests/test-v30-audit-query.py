@@ -113,6 +113,44 @@ class V30AuditQueryTests(unittest.TestCase):
         second_ids = {item["row_id"] for item in second.items}
         self.assertFalse(first_ids & second_ids)
 
+    def test_time_range_filters_are_bounded_and_query_indexes_exist(self):
+        access = self.query.audit_query(category="ACCESS_DECISION", limit=10)
+        self.assertEqual(len(access.items), 1)
+        occurred = access.items[0]["occurred_at"]
+        same = self.query.audit_query(
+            start=occurred,
+            end=occurred,
+            category="ACCESS_DECISION",
+            event_type="remote.access.decision",
+            result="ALLOW",
+            limit=10,
+        )
+        self.assertEqual(len(same.items), 1)
+        self.assertEqual(same.items[0]["event_id"], access.items[0]["event_id"])
+        before = self.query.audit_query(
+            end="2000-01-01T00:00:00Z",
+            category="ACCESS_DECISION",
+            limit=10,
+        )
+        self.assertEqual(before.items, ())
+
+        indexes = {
+            row[0]
+            for row in self.plane.conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='index'"
+            )
+        }
+        for name in (
+            "idx_v30_audit_time",
+            "idx_v30_audit_category_time",
+            "idx_v30_audit_actor_time",
+            "idx_v30_audit_resource_time",
+            "idx_v30_audit_correlation",
+            "idx_v30_audit_event_type_time",
+            "idx_v30_audit_result_time",
+        ):
+            self.assertIn(name, indexes)
+
     def test_invalid_or_cross_type_cursor_fails_closed(self):
         with self.assertRaises(ControlPlaneError):
             self.query.audit_query(cursor="not-a-cursor")

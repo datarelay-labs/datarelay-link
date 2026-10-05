@@ -758,6 +758,97 @@ function AccessOperations({operator}:{operator:any}){
   </>;
 }
 
+function AuditExplorer({operator}:{operator:any}){
+  const [data,setData]=useState<any>(null),[retention,setRetention]=useState<any>(null),[error,setError]=useState(""),[message,setMessage]=useState(""),[exportResult,setExportResult]=useState<any>(null);
+  const [start,setStart]=useState(""),[end,setEnd]=useState(""),[category,setCategory]=useState(""),[eventType,setEventType]=useState(""),[actor,setActor]=useState(""),[resource,setResource]=useState(""),[result,setResult]=useState(""),[correlation,setCorrelation]=useState("");
+  const [controlDays,setControlDays]=useState("365"),[accessDays,setAccessDays]=useState("90"),[maxEvents,setMaxEvents]=useState("500000");
+
+  function filterParams(){
+    const q=new URLSearchParams({limit:"50"});
+    for(const [key,value] of [["start",start],["end",end],["category",category],["event_type",eventType],["actor",actor],["resource",resource],["result",result],["correlation_id",correlation]] as string[][]){if(value.trim())q.set(key,value.trim())}
+    return q;
+  }
+  function exportFilters(){
+    const out:any={};
+    for(const [key,value] of [["start",start],["end",end],["category",category],["event_type",eventType],["actor",actor],["resource",resource],["result",result],["correlation",correlation]] as string[][]){if(value.trim())out[key]=value.trim()}
+    return out;
+  }
+  async function load(cursor?:string){
+    setError("");
+    try{const q=filterParams();if(cursor)q.set("cursor",cursor);setData(await api("/api/v1/audit?"+q.toString()))}catch(e:any){setError(e.message||String(e))}
+  }
+  async function loadRetention(){
+    try{
+      const value=await api("/api/v1/audit/retention");
+      setRetention(value);
+      if(value?.config){setControlDays(String(value.config.control_days));setAccessDays(String(value.config.access_days));setMaxEvents(String(value.config.max_events))}
+    }catch(e:any){setError(e.message||String(e))}
+  }
+  useEffect(()=>{load();loadRetention()},[]);
+  async function exportAudit(){
+    setError("");setMessage("");
+    try{const value=await api("/api/v1/audit/export",{method:"POST",body:JSON.stringify({filters:exportFilters()})});setExportResult(value);setMessage("Audit export created: "+String(value.path||""))}catch(e:any){setError(e.message||String(e))}
+  }
+  async function configureRetention(){
+    setError("");setMessage("");
+    try{
+      const value=await api("/api/v1/audit/retention/configure",{method:"POST",body:JSON.stringify({control_days:Number(controlDays),access_days:Number(accessDays),max_events:Number(maxEvents)})});
+      setMessage("Audit retention configured.");
+      setRetention((prev:any)=>({...prev,config:value.config}));
+      await load();
+    }catch(e:any){setError(e.message||String(e))}
+  }
+  async function runRetention(){
+    setError("");setMessage("");
+    try{const value=await api("/api/v1/audit/retention/run",{method:"POST",body:"{}"});setMessage("Audit retention: "+value.status+" · deleted "+String((value.control_deleted||0)+(value.access_deleted||0)+(value.capacity_deleted||0)));await load();await loadRetention()}catch(e:any){setError(e.message||String(e))}
+  }
+  const rows=(data?.items||[]).map((x:any)=>({
+    event_id:x.event_id||("legacy:"+x.row_id),
+    occurred_at:x.occurred_at,
+    category:x.category,
+    event_type:x.event_type,
+    actor:x.actor_id,
+    interface:x.interface,
+    resource:(x.resource_type||"")+":"+(x.resource_id||""),
+    result:x.result,
+    reason:x.reason_code||"",
+  }));
+  return <>
+    {error&&<div className="error">{error}</div>}{message&&<div className="notice">{message}</div>}
+    <div className="card">
+      <h3>Audit Explorer</h3>
+      <div className="muted">Unified CONTROL / ACCESS_DECISION / SECURITY_LIFECYCLE history with stable event IDs and bounded keyset pagination.</div>
+      <div className="toolbar">
+        <input value={start} onChange={e=>setStart(e.target.value)} placeholder="Start UTC"/>
+        <input value={end} onChange={e=>setEnd(e.target.value)} placeholder="End UTC"/>
+        <select value={category} onChange={e=>setCategory(e.target.value)}><option value="">All categories</option><option value="CONTROL">CONTROL</option><option value="ACCESS_DECISION">ACCESS_DECISION</option><option value="SECURITY_LIFECYCLE">SECURITY_LIFECYCLE</option></select>
+        <input value={eventType} onChange={e=>setEventType(e.target.value)} placeholder="Event type"/>
+        <input value={actor} onChange={e=>setActor(e.target.value)} placeholder="Actor"/>
+        <input value={resource} onChange={e=>setResource(e.target.value)} placeholder="Resource ID"/>
+        <input value={result} onChange={e=>setResult(e.target.value)} placeholder="Result"/>
+        <input value={correlation} onChange={e=>setCorrelation(e.target.value)} placeholder="Correlation ID"/>
+        <button className="primary" onClick={()=>load()}>Search</button>
+        <button className="secondary" onClick={exportAudit}>Export NDJSON</button>
+      </div>
+      <Table items={rows}/>
+      {data?.next_cursor&&<button className="secondary" onClick={()=>load(data.next_cursor)}>Next page</button>}
+      {exportResult&&<pre className="plan">{JSON.stringify({path:exportResult.path,event_count:exportResult.event_count,schema_version:exportResult.schema_version,sha256:exportResult.sha256,download_exposed:exportResult.download_exposed},null,2)}</pre>}
+    </div>
+    <div className="card">
+      <h3>Audit Retention</h3>
+      {retention&&<div className="grid"><Metric label="Events" value={retention.total_events}/><Metric label="DB bytes" value={retention.db_size_bytes}/><Metric label="Capacity exceeded" value={retention.capacity_exceeded?"YES":"NO"}/></div>}
+      <div className="muted">{retention?.capacity_policy||"CONTROL/SECURITY and ACCESS_DECISION use split retention."}</div>
+      {operator.role==="Admin"&&<div className="toolbar">
+        <input value={controlDays} onChange={e=>setControlDays(e.target.value)} placeholder="CONTROL days"/>
+        <input value={accessDays} onChange={e=>setAccessDays(e.target.value)} placeholder="ACCESS days"/>
+        <input value={maxEvents} onChange={e=>setMaxEvents(e.target.value)} placeholder="Max events"/>
+        <button className="secondary" onClick={configureRetention}>Configure</button>
+        <button className="danger" onClick={runRetention}>Run Retention</button>
+      </div>}
+    </div>
+  </>;
+}
+
 function JobOperations({operator}:{operator:any}){
   const [jobs,setJobs]=useState<any>(null),[detail,setDetail]=useState<any>(null),[error,setError]=useState(""),[message,setMessage]=useState(""),[inventoryExport,setInventoryExport]=useState<any>(null);
   const [jobType,setJobType]=useState("doctor"),[resourceType,setResourceType]=useState("managed-host"),[resource,setResource]=useState(""),[detailId,setDetailId]=useState("");
@@ -882,7 +973,7 @@ function View({active,operator}:{active:string,operator:any}){
       overview:"/api/v1/overview",hosts:"/api/v1/inventory?resource_type=managed-host&limit=100",
       services:"/api/v1/inventory?resource_type=remote-service&limit=100",
       objects:"/api/v1/objects-groups?limit=50",policies:"/api/v1/policies?limit=100",
-      versions:"/api/v1/versions",system:"/api/v1/system",audit:"/api/v1/audit?limit=100",revisions:"/api/v1/revisions?limit=100",
+      versions:"/api/v1/versions",system:"/api/v1/system",revisions:"/api/v1/revisions?limit=100",
       doctor:"/api/v1/doctor",health:"/api/v1/health",views:"/api/v1/saved-views",enrollments:"/api/v1/enrollments?limit=50",
     };
     if(paths[active])api(paths[active]).then(setData).catch((e:any)=>setError(e.message||String(e)));
@@ -891,6 +982,7 @@ function View({active,operator}:{active:string,operator:any}){
   if(active==="drafts")return <DraftWorkspace/>;
   if(active==="access")return <AccessOperations operator={operator}/>;
   if(active==="jobs")return <JobOperations operator={operator}/>;
+  if(active==="audit")return <AuditExplorer operator={operator}/>;
   if(active==="enrollments"&&data)return <EnrollmentPanel data={data} refresh={()=>api("/api/v1/enrollments?limit=50").then(setData)}/>;
   if(active==="search")return <div><div className="toolbar"><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search resources and policy"/><button className="primary" onClick={()=>api("/api/v1/search?q="+encodeURIComponent(query)+"&limit=50").then(setData).catch((e:any)=>setError(e.message))}>Search</button></div>{data&&<Table items={(data.items||[]).map((x:any)=>({type:x.resource_type,id:x.id,name:x.name}))}/>}</div>;
   if(active==="overview"&&data){const h=data.overview?.managed_hosts||{},s=data.overview?.remote_services||{},j=data.overview?.management_jobs||{};return <><div className="grid"><Metric label="Managed Hosts" value={h.total}/><Metric label="Connected" value={h.connected}/><Metric label="Remote Services" value={s.total}/><Metric label="Active Jobs" value={j.active_jobs}/></div><div className="card"><h3>Attention Center</h3>{(data.attention?.items||[]).map((x:any)=><span key={x.kind} className={"badge "+x.severity}>{x.label}: {x.count}</span>)}{!(data.attention?.items||[]).length&&<div className="muted">No current attention items</div>}</div></>};

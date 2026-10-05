@@ -356,8 +356,16 @@ def _public_command_is_read_only(tokens) -> bool:
     if verb != "system" or len(tokens) < 2:
         return False
     op = str(tokens[1])
-    if op in ("diagnostics", "revisions", "revision", "diff", "audit"):
+    if op in ("diagnostics", "revisions", "revision", "diff"):
         return True
+    if op == "audit":
+        return not (
+            len(tokens) >= 3
+            and tokens[2] in ("export",)
+            or len(tokens) >= 4
+            and tokens[2] == "retention"
+            and tokens[3] in ("set", "run")
+        )
     if op == "jobs" and len(tokens) == 2:
         return True
     if op == "job" and len(tokens) == 3:
@@ -1455,6 +1463,131 @@ def _system_revision_rollback(plane: ControlPlane, value: str) -> int:
     return 0
 
 
+def _system_audit_retention(plane: ControlPlane, rest) -> int:
+    from drlink_management_system import ManagementSystemService
+
+    service = ManagementSystemService(plane.root)
+    if not rest:
+        status = service.audit_retention_status()
+        cfg = status["config"]
+        sys.stdout.write(
+            "Audit retention\n"
+            "  CONTROL/SECURITY days : %s\n"
+            "  ACCESS_DECISION days  : %s\n"
+            "  Max events            : %s\n"
+            "  Current events        : %s\n"
+            "  DB size bytes         : %s\n"
+            "  Capacity exceeded     : %s\n"
+            % (
+                cfg["control_days"],
+                cfg["access_days"],
+                cfg["max_events"],
+                status["total_events"],
+                status["db_size_bytes"],
+                "yes" if status["capacity_exceeded"] else "no",
+            )
+        )
+        return 0
+    if rest[0] == "set":
+        if len(rest) != 4:
+            raise SystemExit(
+                "Usage: system audit retention set "
+                "<CONTROL_DAYS> <ACCESS_DAYS> <MAX_EVENTS>"
+            )
+        result = service.audit_retention_configure(
+            control_days=rest[1],
+            access_days=rest[2],
+            max_events=rest[3],
+            actor_id="cli:local",
+            interface="CLI",
+        )
+        sys.stdout.write(
+            "Audit retention configured: CONTROL/SECURITY=%s days, "
+            "ACCESS_DECISION=%s days, max_events=%s\n"
+            % (
+                result["config"]["control_days"],
+                result["config"]["access_days"],
+                result["config"]["max_events"],
+            )
+        )
+        return 0
+    if rest[0] == "run":
+        if len(rest) != 1:
+            raise SystemExit("Usage: system audit retention run")
+        result = service.audit_retention_run(
+            actor_id="cli:local",
+            interface="CLI",
+        )
+        sys.stdout.write(
+            "Audit retention: %s\n"
+            "  CONTROL/SECURITY deleted : %s\n"
+            "  ACCESS_DECISION deleted  : %s\n"
+            "  Capacity deleted         : %s\n"
+            "  Remaining excess         : %s\n"
+            % (
+                result["status"],
+                result["control_deleted"],
+                result["access_deleted"],
+                result["capacity_deleted"],
+                result["remaining_excess"],
+            )
+        )
+        return 0 if result["capacity_guardrail_satisfied"] else 1
+    raise SystemExit(
+        "Usage: system audit retention | "
+        "system audit retention set <CONTROL_DAYS> <ACCESS_DAYS> <MAX_EVENTS> | "
+        "system audit retention run"
+    )
+
+
+def _system_audit_export(plane: ControlPlane, rest) -> int:
+    from drlink_management_system import ManagementSystemService
+
+    if len(rest) % 2:
+        raise SystemExit(
+            "Usage: system audit export "
+            "[start <UTC>] [end <UTC>] [category <CATEGORY>] "
+            "[event-type <TYPE>] [actor <ACTOR>] [resource <RESOURCE>] "
+            "[result <RESULT>] [correlation <ID>]"
+        )
+    allowed = {
+        "start": "start",
+        "end": "end",
+        "category": "category",
+        "event-type": "event_type",
+        "actor": "actor",
+        "resource": "resource",
+        "result": "result",
+        "correlation": "correlation",
+    }
+    filters = {}
+    for index in range(0, len(rest), 2):
+        key = str(rest[index]).strip().lower()
+        if key not in allowed:
+            raise SystemExit("Unknown audit export filter: %s" % rest[index])
+        filters[allowed[key]] = str(rest[index + 1])
+    result = ManagementSystemService(plane.root).audit_export_create(
+        filters=filters,
+        actor_id="cli:local",
+        interface="CLI",
+    )
+    sys.stdout.write(
+        "Audit export created\n"
+        "  path    : %s\n"
+        "  events  : %s\n"
+        "  schema  : %s\n"
+        "  sha256  : %s\n"
+        "  download: not exposed by Web\n"
+        % (
+            result["path"],
+            result["event_count"],
+            result["schema_version"],
+            result["sha256"],
+        )
+    )
+    return 0
+
+
 def _system_inventory_export(plane: ControlPlane) -> int:
     from drlink_management_system import ManagementSystemService
 
@@ -1647,6 +1780,10 @@ def _system(plane: ControlPlane, rest):
             raise SystemExit("Usage: system rollback <REVISION>")
         return _system_revision_rollback(plane, rest[1])
     if rest[0] == "audit":
+        if len(rest) >= 2 and rest[1] == "retention":
+            return _system_audit_retention(plane, rest[2:])
+        if len(rest) >= 2 and rest[1] == "export":
+            return _system_audit_export(plane, rest[2:])
         kwargs = {}
         if len(rest) >= 3 and rest[1] == "revision":
             kwargs["revision"] = int(rest[2])

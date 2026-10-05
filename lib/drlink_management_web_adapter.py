@@ -293,6 +293,39 @@ class ManagementWebApiAdapter:
             actor=actor,
         )
 
+    def audit_retention_status(
+        self, *, actor: ManagementActor
+    ) -> dict[str, Any]:
+        return self.core.audit_retention_status(actor=actor)
+
+    def audit_retention_configure(
+        self,
+        *,
+        actor: ManagementActor,
+        control_days: int,
+        access_days: int,
+        max_events: int,
+    ) -> dict[str, Any]:
+        return self.core.audit_retention_configure(
+            actor=actor,
+            control_days=control_days,
+            access_days=access_days,
+            max_events=max_events,
+        )
+
+    def audit_retention_run(
+        self, *, actor: ManagementActor
+    ) -> dict[str, Any]:
+        return self.core.audit_retention_run(actor=actor)
+
+    def audit_export_create(
+        self,
+        *,
+        actor: ManagementActor,
+        filters: dict[str, Any],
+    ) -> dict[str, Any]:
+        return self.core.audit_export_create(actor=actor, filters=filters)
+
     def inventory_export_create(self, *, actor: ManagementActor) -> dict[str, Any]:
         return self.core.inventory_export_create(actor=actor)
 

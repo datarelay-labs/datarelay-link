@@ -1061,13 +1061,14 @@
     ],
     "roles": "server",
     "category": "System",
-    "summary": "Show recent Data Relay Link audit events",
-    "detail": "Default output is a concise human-readable table of recent events. Lightweight filters: last <N>, managed-host <HOST>, event <EVENT>.",
+    "summary": "Query, retain, and export Data Relay Link audit events",
+    "detail": "Default output shows recent audit events. DRL3-7 adds bounded retention status/configuration/run and filtered NDJSON export through the same Core audit authority.",
     "examples": [
       "system audit",
-      "system audit last 20",
-      "system audit managed-host ubuntu-prod",
-      "system audit event backup.created"
+      "system audit retention",
+      "system audit retention set 365 90 500000",
+      "system audit retention run",
+      "system audit export category ACCESS_DECISION result DENY"
     ],
     "args": [],
     "tail": "any",

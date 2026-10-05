@@ -2452,6 +2452,8 @@ def _match_system(tokens, role, names=None):
         "revision",
         "entity",
         "object",
+        "retention",
+        "export",
     ):
         return _control_plane_ok(tokens)
     if op == "revoke":

@@ -274,6 +274,8 @@ class WebApplication:
         if path == "/api/v1/versions":
             with ManagementQueryService(self.root) as service:
                 return service.version_drift()
+        if path == "/api/v1/audit/retention":
+            return self.adapter.audit_retention_status(actor=actor)
         if path == "/api/v1/audit":
             payload = {}
             for key in (
@@ -414,6 +416,25 @@ class WebApplication:
                 operation="drlink_diagnose_connection",
                 payload=payload,
                 actor=self._actor(principal),
+            )
+        if path == "/api/v1/audit/export":
+            filters = body.get("filters") or {}
+            if not isinstance(filters, dict):
+                raise ControlPlaneError("Audit export filters must be an object.")
+            return self.adapter.audit_export_create(
+                actor=self._actor(principal),
+                filters=dict(filters),
+            )
+        if path == "/api/v1/audit/retention/configure":
+            return self.adapter.audit_retention_configure(
+                actor=self._actor(principal),
+                control_days=body.get("control_days"),
+                access_days=body.get("access_days"),
+                max_events=body.get("max_events"),
+            )
+        if path == "/api/v1/audit/retention/run":
+            return self.adapter.audit_retention_run(
+                actor=self._actor(principal)
             )
         if path == "/api/v1/inventory/export":
             return self.adapter.inventory_export_create(

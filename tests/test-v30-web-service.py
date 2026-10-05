@@ -1081,6 +1081,88 @@ class V30WebServiceTests(unittest.TestCase):
         finally:
             plane.close()
 
+    def test_audit_export_and_retention_web_routes_are_csrf_and_role_guarded(self):
+        self.login()
+
+        status, _, retention = self.request("GET", "/api/v1/audit/retention")
+        self.assertEqual(status, 200, retention)
+        self.assertEqual(retention["config"]["control_days"], 365)
+        self.assertEqual(retention["config"]["access_days"], 90)
+
+        status, _, denied = self.request(
+            "POST",
+            "/api/v1/audit/retention/configure",
+            {
+                "control_days": 180,
+                "access_days": 30,
+                "max_events": 100000,
+            },
+        )
+        self.assertEqual(status, 403, denied)
+
+        status, _, configured = self.request(
+            "POST",
+            "/api/v1/audit/retention/configure",
+            {
+                "control_days": 180,
+                "access_days": 30,
+                "max_events": 100000,
+            },
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, configured)
+        self.assertEqual(configured["config"]["control_days"], 180)
+        self.assertEqual(configured["config"]["access_days"], 30)
+        self.assertEqual(configured["config"]["max_events"], 100000)
+
+        status, _, denied_export = self.request(
+            "POST",
+            "/api/v1/audit/export",
+            {"filters": {"category": "CONTROL"}},
+        )
+        self.assertEqual(status, 403, denied_export)
+
+        status, _, exported = self.request(
+            "POST",
+            "/api/v1/audit/export",
+            {"filters": {"category": "CONTROL"}},
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, exported)
+        self.assertTrue(
+            exported["path"].startswith("/var/lib/drlink/audit-exports/")
+        )
+        self.assertEqual(exported["schema_version"], 1)
+        self.assertFalse(exported["download_exposed"])
+        path = Path(self.tmp, exported["path"].lstrip("/"))
+        self.assertTrue(path.is_file())
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
+        status, _, retained = self.request(
+            "POST",
+            "/api/v1/audit/retention/run",
+            {},
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, retained)
+        self.assertIn(retained["status"], ("COMPLETE", "ATTENTION_REQUIRED"))
+
+        plane = ControlPlane(self.tmp, read_only=True)
+        try:
+            rows = plane.conn.execute(
+                "SELECT operation,actor_id,interface FROM audit_events "
+                "WHERE operation IN ("
+                "'audit.retention.configure','audit.export','audit.retention.run'"
+                ") ORDER BY id"
+            ).fetchall()
+            self.assertEqual(len(rows), 3)
+            self.assertTrue(all(row["interface"] == "WEB" for row in rows))
+            self.assertTrue(
+                all(str(row["actor_id"]).startswith("web:") for row in rows)
+            )
+        finally:
+            plane.close()
+
     def test_fleet_artifact_and_metadata_web_paths_are_bounded_and_atomic(self):
         self.login()
         plane = ControlPlane(self.tmp)

@@ -1403,7 +1403,14 @@ def to_internal(tokens):
             return ["support-bundle", "--output", rest[0]] + list(rest[1:])
         return ["support-bundle"]
     if path == ("system", "audit"):
-        if rest and rest[0] in ("ai-principal", "revision", "entity", "object"):
+        if rest and rest[0] in (
+            "ai-principal",
+            "revision",
+            "entity",
+            "object",
+            "retention",
+            "export",
+        ):
             return ["system", "audit"] + rest
         return ["show", "audit"] + rest
     if path == ("system", "export", "internet-profile"):

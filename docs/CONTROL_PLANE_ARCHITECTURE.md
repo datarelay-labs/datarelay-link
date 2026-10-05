@@ -917,6 +917,29 @@ Retention uses bounded chunk deletion and bounded page/WAL maintenance. A retent
 must not hold the writer slot for an unbounded purge or VACUUM while relay/control
 operations need it.
 
+DRL3-7 freezes the first implementation guardrails as follows:
+
+```text
+CONTROL + SECURITY_LIFECYCLE default retention   365 days
+ACCESS_DECISION default retention                 90 days
+default total event capacity                      500000
+retention-day bounds                              1..3650
+event-capacity bounds                             1000..5000000
+capacity prune target                             oldest ACCESS_DECISION only
+maximum capacity prune per explicit run           100000
+manual NDJSON export                              <=50000 events and <=64 MiB
+export directory                                  /var/lib/drlink/audit-exports/
+export file mode                                  0600
+Web artifact download endpoint                    none
+```
+
+Age expiry is evaluated separately for CONTROL/SECURITY_LIFECYCLE and ACCESS_DECISION.
+Capacity pressure never authorizes silent deletion of CONTROL or SECURITY_LIFECYCLE
+history. If ACCESS_DECISION pruning cannot satisfy the configured capacity without
+touching protected history, retention reports ATTENTION_REQUIRED and leaves the protected
+history intact. Retention configuration/run and filtered export execution write CONTROL
+events with actor/interface attribution while remaining configuration-revision neutral.
+
 Upgrade convergence:
 
 - existing SQLite `audit_events` become CONTROL-compatible rows under the new schema;

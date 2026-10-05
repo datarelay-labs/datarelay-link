@@ -14,7 +14,7 @@ import secrets
 import subprocess
 import sys
 import tempfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -24,6 +24,17 @@ from drlink_control_plane import ControlPlane
 from frp_version_identity import identity_from_kv, read_version_file
 
 _MAX_TOOL_OUTPUT = 16 * 1024
+AUDIT_RETENTION_CONTROL_DAYS_DEFAULT = 365
+AUDIT_RETENTION_ACCESS_DAYS_DEFAULT = 90
+AUDIT_RETENTION_MAX_EVENTS_DEFAULT = 500_000
+AUDIT_RETENTION_MIN_DAYS = 1
+AUDIT_RETENTION_MAX_DAYS = 3650
+AUDIT_RETENTION_MIN_EVENTS = 1_000
+AUDIT_RETENTION_MAX_EVENTS = 5_000_000
+AUDIT_RETENTION_MAX_CAPACITY_PRUNE = 100_000
+AUDIT_EXPORT_SCHEMA_VERSION = 1
+AUDIT_EXPORT_MAX_EVENTS = 50_000
+AUDIT_EXPORT_MAX_BYTES = 64 * 1024 * 1024
 
 
 def _root_path(root: Optional[str]) -> Path:
@@ -539,6 +550,419 @@ class ManagementSystemService:
             "sha256": self._artifact_digest(actual_path),
             "protected_artifact": bool(protected),
             "sanitized": bool(sanitized),
+            "download_exposed": False,
+            "authoritative_mutation": False,
+        }
+
+    @staticmethod
+    def _audit_retention_config_from_conn(conn) -> dict[str, int]:
+        defaults = {
+            "audit_retention_control_days": AUDIT_RETENTION_CONTROL_DAYS_DEFAULT,
+            "audit_retention_access_days": AUDIT_RETENTION_ACCESS_DAYS_DEFAULT,
+            "audit_retention_max_events": AUDIT_RETENTION_MAX_EVENTS_DEFAULT,
+        }
+        out: dict[str, int] = {}
+        for key, default in defaults.items():
+            row = conn.execute(
+                "SELECT value FROM system_meta WHERE key=?", (key,)
+            ).fetchone()
+            try:
+                value = int(row[0]) if row is not None else int(default)
+            except (TypeError, ValueError):
+                value = int(default)
+            out[key] = value
+        return {
+            "control_days": out["audit_retention_control_days"],
+            "access_days": out["audit_retention_access_days"],
+            "max_events": out["audit_retention_max_events"],
+        }
+
+    @staticmethod
+    def _validate_audit_retention(
+        *, control_days: int, access_days: int, max_events: int
+    ) -> dict[str, int]:
+        try:
+            control = int(control_days)
+            access = int(access_days)
+            capacity = int(max_events)
+        except (TypeError, ValueError) as exc:
+            raise ControlPlaneError(
+                "Audit retention values must be integers."
+            ) from exc
+        if control < AUDIT_RETENTION_MIN_DAYS or control > AUDIT_RETENTION_MAX_DAYS:
+            raise ControlPlaneError(
+                "CONTROL retention must be between %d and %d days."
+                % (AUDIT_RETENTION_MIN_DAYS, AUDIT_RETENTION_MAX_DAYS)
+            )
+        if access < AUDIT_RETENTION_MIN_DAYS or access > AUDIT_RETENTION_MAX_DAYS:
+            raise ControlPlaneError(
+                "ACCESS_DECISION retention must be between %d and %d days."
+                % (AUDIT_RETENTION_MIN_DAYS, AUDIT_RETENTION_MAX_DAYS)
+            )
+        if capacity < AUDIT_RETENTION_MIN_EVENTS or capacity > AUDIT_RETENTION_MAX_EVENTS:
+            raise ControlPlaneError(
+                "Audit event capacity must be between %d and %d."
+                % (AUDIT_RETENTION_MIN_EVENTS, AUDIT_RETENTION_MAX_EVENTS)
+            )
+        return {
+            "control_days": control,
+            "access_days": access,
+            "max_events": capacity,
+        }
+
+    def audit_retention_status(self) -> dict[str, Any]:
+        from drlink_control_db import connect_read_only, db_path
+
+        conn = connect_read_only(root=self.root)
+        try:
+            config = self._audit_retention_config_from_conn(conn)
+            rows = conn.execute(
+                "SELECT COALESCE(category,'CONTROL') AS category,COUNT(*) AS n "
+                "FROM audit_events GROUP BY COALESCE(category,'CONTROL') "
+                "ORDER BY category"
+            ).fetchall()
+            counts = {str(row["category"]): int(row["n"] or 0) for row in rows}
+            total = sum(counts.values())
+            oldest = conn.execute(
+                "SELECT occurred_at FROM audit_events WHERE occurred_at IS NOT NULL "
+                "ORDER BY occurred_at ASC,id ASC LIMIT 1"
+            ).fetchone()
+            newest = conn.execute(
+                "SELECT occurred_at FROM audit_events WHERE occurred_at IS NOT NULL "
+                "ORDER BY occurred_at DESC,id DESC LIMIT 1"
+            ).fetchone()
+        finally:
+            conn.close()
+        path = db_path(self.root)
+        try:
+            db_size = int(path.stat().st_size)
+        except OSError:
+            db_size = 0
+        return {
+            "config": config,
+            "counts": counts,
+            "total_events": total,
+            "oldest_event_at": str(oldest[0]) if oldest else "",
+            "newest_event_at": str(newest[0]) if newest else "",
+            "db_size_bytes": db_size,
+            "capacity_exceeded": total > int(config["max_events"]),
+            "capacity_policy": (
+                "Age retention applies separately to CONTROL/SECURITY_LIFECYCLE and "
+                "ACCESS_DECISION. Capacity pruning removes oldest ACCESS_DECISION only; "
+                "CONTROL/SECURITY is never silently deleted for capacity."
+            ),
+            "authoritative_mutation": False,
+        }
+
+    def audit_retention_configure(
+        self,
+        *,
+        control_days: int,
+        access_days: int,
+        max_events: int,
+        actor_id: str,
+        interface: str,
+    ) -> dict[str, Any]:
+        new_config = self._validate_audit_retention(
+            control_days=control_days,
+            access_days=access_days,
+            max_events=max_events,
+        )
+        plane = ControlPlane(self.root)
+        try:
+            old_config = self._audit_retention_config_from_conn(plane.conn)
+            plane.conn.execute("BEGIN IMMEDIATE")
+            try:
+                for key, value in (
+                    ("audit_retention_control_days", new_config["control_days"]),
+                    ("audit_retention_access_days", new_config["access_days"]),
+                    ("audit_retention_max_events", new_config["max_events"]),
+                ):
+                    plane.conn.execute(
+                        "INSERT OR REPLACE INTO system_meta(key,value) VALUES (?,?)",
+                        (key, str(value)),
+                    )
+                plane._audit(
+                    revision=0,
+                    action="configure audit retention",
+                    entity_type="audit-retention",
+                    entity_id="global",
+                    operation="audit.retention.configure",
+                    before=json.dumps(old_config, sort_keys=True, separators=(",", ":")),
+                    after=json.dumps(new_config, sort_keys=True, separators=(",", ":")),
+                    impact="retention configuration only; no events deleted",
+                    result="ok",
+                    actor=actor_id,
+                    interface=interface,
+                )
+                plane.conn.execute("COMMIT")
+            except Exception:
+                plane.conn.execute("ROLLBACK")
+                raise
+        finally:
+            plane.close()
+        return {
+            "status": "CONFIGURED",
+            "config": new_config,
+            "previous": old_config,
+            "authoritative_mutation": True,
+            "configuration_revision_created": False,
+        }
+
+    def audit_retention_run(
+        self,
+        *,
+        actor_id: str,
+        interface: str,
+        now: Optional[datetime] = None,
+    ) -> dict[str, Any]:
+        current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        plane = ControlPlane(self.root)
+        try:
+            config = self._audit_retention_config_from_conn(plane.conn)
+            control_cutoff = (
+                current - timedelta(days=int(config["control_days"]))
+            ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+            access_cutoff = (
+                current - timedelta(days=int(config["access_days"]))
+            ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+            plane.conn.execute("BEGIN IMMEDIATE")
+            try:
+                control_deleted = plane.conn.execute(
+                    "DELETE FROM audit_events "
+                    "WHERE category IN ('CONTROL','SECURITY_LIFECYCLE') "
+                    "AND occurred_at IS NOT NULL AND occurred_at < ?",
+                    (control_cutoff,),
+                ).rowcount
+                access_deleted = plane.conn.execute(
+                    "DELETE FROM audit_events "
+                    "WHERE category='ACCESS_DECISION' "
+                    "AND occurred_at IS NOT NULL AND occurred_at < ?",
+                    (access_cutoff,),
+                ).rowcount
+                total = int(
+                    plane.conn.execute("SELECT COUNT(*) FROM audit_events").fetchone()[0]
+                    or 0
+                )
+                target_before_audit = max(0, int(config["max_events"]) - 1)
+                excess = max(0, total - target_before_audit)
+                prune_requested = min(
+                    excess, AUDIT_RETENTION_MAX_CAPACITY_PRUNE
+                )
+                capacity_ids = [
+                    int(row[0])
+                    for row in plane.conn.execute(
+                        "SELECT id FROM audit_events "
+                        "WHERE category='ACCESS_DECISION' "
+                        "ORDER BY occurred_at ASC,id ASC LIMIT ?",
+                        (prune_requested,),
+                    ).fetchall()
+                ] if prune_requested else []
+                capacity_deleted = 0
+                for offset in range(0, len(capacity_ids), 500):
+                    chunk = capacity_ids[offset : offset + 500]
+                    placeholders = ",".join("?" for _ in chunk)
+                    capacity_deleted += plane.conn.execute(
+                        "DELETE FROM audit_events WHERE id IN (%s)" % placeholders,
+                        tuple(chunk),
+                    ).rowcount
+                remaining_before_audit = int(
+                    plane.conn.execute("SELECT COUNT(*) FROM audit_events").fetchone()[0]
+                    or 0
+                )
+                remaining_excess = max(
+                    0, remaining_before_audit - target_before_audit
+                )
+                summary = {
+                    "control_deleted": int(control_deleted or 0),
+                    "access_deleted": int(access_deleted or 0),
+                    "capacity_deleted": int(capacity_deleted or 0),
+                    "remaining_excess": remaining_excess,
+                    "control_cutoff": control_cutoff,
+                    "access_cutoff": access_cutoff,
+                    "max_events": int(config["max_events"]),
+                }
+                plane._audit(
+                    revision=0,
+                    action="run audit retention",
+                    entity_type="audit-retention",
+                    entity_id="global",
+                    operation="audit.retention.run",
+                    after=json.dumps(summary, sort_keys=True, separators=(",", ":")),
+                    impact=(
+                        "explicit age/capacity retention; capacity pruning targets "
+                        "ACCESS_DECISION only"
+                    ),
+                    result="ok" if remaining_excess == 0 else "capacity_guardrail_exceeded",
+                    actor=actor_id,
+                    interface=interface,
+                )
+                plane.conn.execute("COMMIT")
+            except Exception:
+                plane.conn.execute("ROLLBACK")
+                raise
+        finally:
+            plane.close()
+        return {
+            "status": (
+                "COMPLETE" if summary["remaining_excess"] == 0 else "ATTENTION_REQUIRED"
+            ),
+            "config": config,
+            **summary,
+            "capacity_guardrail_satisfied": summary["remaining_excess"] == 0,
+            "max_capacity_prune_per_run": AUDIT_RETENTION_MAX_CAPACITY_PRUNE,
+            "authoritative_mutation": True,
+            "configuration_revision_created": False,
+        }
+
+    def audit_export_create(
+        self,
+        *,
+        filters: dict[str, Any],
+        actor_id: str,
+        interface: str,
+    ) -> dict[str, Any]:
+        from drlink_management_service import ManagementQueryService
+
+        allowed = {
+            "start",
+            "end",
+            "category",
+            "event_type",
+            "actor",
+            "resource",
+            "result",
+            "correlation",
+        }
+        unknown = sorted(set(filters or {}) - allowed)
+        if unknown:
+            raise ControlPlaneError(
+                "Audit export has unsupported filters: %s." % ", ".join(unknown)
+            )
+        clean = {
+            key: str(value or "").strip()
+            for key, value in dict(filters or {}).items()
+            if str(value or "").strip()
+        }
+        output_dir = self._owned_output_dir("var/lib/drlink/audit-exports")
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        name = "drlink-audit-%s-%s.ndjson" % (stamp, secrets.token_hex(4))
+        actual = output_dir / name
+        canonical = "/" + str(Path("var/lib/drlink/audit-exports") / name)
+        fd, tmp_name = tempfile.mkstemp(
+            prefix=".drlink-audit-", suffix=".tmp", dir=str(output_dir)
+        )
+        count = 0
+        bytes_written = 0
+        cursor: Optional[str] = None
+        try:
+            with os.fdopen(fd, "wb") as handle, ManagementQueryService(
+                self.root
+            ) as query:
+                meta = {
+                    "record_type": "audit-export-meta",
+                    "schema_version": AUDIT_EXPORT_SCHEMA_VERSION,
+                    "generated_at": datetime.now(timezone.utc)
+                    .replace(microsecond=0)
+                    .isoformat()
+                    .replace("+00:00", "Z"),
+                    "filters": clean,
+                    "max_events": AUDIT_EXPORT_MAX_EVENTS,
+                    "max_bytes": AUDIT_EXPORT_MAX_BYTES,
+                }
+                first = (
+                    json.dumps(meta, sort_keys=True, separators=(",", ":")) + "\n"
+                ).encode("utf-8")
+                handle.write(first)
+                bytes_written += len(first)
+                while True:
+                    page = query.audit_query(
+                        start=clean.get("start"),
+                        end=clean.get("end"),
+                        category=clean.get("category"),
+                        event_type=clean.get("event_type"),
+                        actor=clean.get("actor"),
+                        resource=clean.get("resource"),
+                        result=clean.get("result"),
+                        correlation=clean.get("correlation"),
+                        cursor=cursor,
+                        limit=200,
+                    )
+                    for item in page.items:
+                        if count >= AUDIT_EXPORT_MAX_EVENTS:
+                            raise ControlPlaneError(
+                                "Audit export exceeds the %d-event bound."
+                                % AUDIT_EXPORT_MAX_EVENTS
+                            )
+                        line = (
+                            json.dumps(
+                                {
+                                    "record_type": "audit-event",
+                                    "schema_version": AUDIT_EXPORT_SCHEMA_VERSION,
+                                    "event": item,
+                                },
+                                sort_keys=True,
+                                separators=(",", ":"),
+                            )
+                            + "\n"
+                        ).encode("utf-8")
+                        if bytes_written + len(line) > AUDIT_EXPORT_MAX_BYTES:
+                            raise ControlPlaneError(
+                                "Audit export exceeds the %d-byte bound."
+                                % AUDIT_EXPORT_MAX_BYTES
+                            )
+                        handle.write(line)
+                        bytes_written += len(line)
+                        count += 1
+                    cursor = page.next_cursor
+                    if not cursor:
+                        break
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.chmod(tmp_name, 0o600)
+            os.replace(tmp_name, actual)
+            os.chmod(actual, 0o600)
+        except Exception:
+            try:
+                os.unlink(tmp_name)
+            except FileNotFoundError:
+                pass
+            raise
+
+        plane = ControlPlane(self.root)
+        try:
+            plane._audit(
+                revision=0,
+                action="export audit",
+                entity_type="audit-export",
+                entity_id=canonical,
+                operation="audit.export",
+                after=json.dumps(
+                    {
+                        "path": canonical,
+                        "event_count": count,
+                        "filters": clean,
+                        "sha256": self._artifact_digest(actual),
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                impact="manual filtered NDJSON export; no audit rows modified",
+                result="ok",
+                actor=actor_id,
+                interface=interface,
+            )
+        finally:
+            plane.close()
+        return {
+            "status": "CREATED",
+            "path": canonical,
+            "size_bytes": int(actual.stat().st_size),
+            "sha256": self._artifact_digest(actual),
+            "event_count": count,
+            "filters": clean,
+            "schema_version": AUDIT_EXPORT_SCHEMA_VERSION,
+            "sanitized": True,
             "download_exposed": False,
             "authoritative_mutation": False,
         }

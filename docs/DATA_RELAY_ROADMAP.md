@@ -246,13 +246,27 @@ Product rules:
 Default active-local retention targets:
 
 ~~~text
-CONTROL + SECURITY_LIFECYCLE   180 days
-ACCESS_DECISION                 30 days
+CONTROL + SECURITY_LIFECYCLE   365 days
+ACCESS_DECISION                 90 days
+TOTAL EVENT CAPACITY            500000 events
 ~~~
 
-DRL3-0 freezes supported configuration bounds, storage-capacity guardrails, migration,
-and exact failure behavior. The product may not silently discard not-yet-expired security
-audit to recover space.
+DRL3-7 freezes the supported configuration bounds at 1–3650 days per retention class and
+1000–5000000 total events. Age retention is applied independently to
+CONTROL/SECURITY_LIFECYCLE and ACCESS_DECISION. Capacity pruning may remove only the
+oldest ACCESS_DECISION rows, is bounded to 100000 events per explicit retention run, and
+must never silently delete CONTROL or SECURITY_LIFECYCLE rows merely to satisfy capacity.
+If protected history keeps the database above the configured capacity, the run reports
+ATTENTION_REQUIRED instead of deleting protected history.
+
+Manual filtered NDJSON export is Core-owned, schema-versioned, mode 0600, stored only under
+`/var/lib/drlink/audit-exports/`, and hard-bounded to 50000 events / 64 MiB. Web returns
+artifact metadata/path only and exposes no archive download endpoint. Retention
+configuration, explicit retention execution, and audit export execution are themselves
+CONTROL-audited with actor/interface attribution and do not create a configuration
+revision.
+
+The product may not silently discard not-yet-expired security audit to recover space.
 
 Backup/restore preserves retained event IDs, ordering, schema versions, and revision links.
 Restore completion creates a new lifecycle event after restored state is authoritative.

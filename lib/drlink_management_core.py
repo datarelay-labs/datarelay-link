@@ -731,6 +731,65 @@ class ManagementCoreService:
             confirmation=confirmation,
         )
 
+    def audit_retention_status(
+        self, *, actor: ManagementActor
+    ) -> dict[str, Any]:
+        if "management-read" not in actor.permissions:
+            raise ManagementAuthorizationError(
+                "management-read is required for Audit retention status."
+            )
+        return ManagementSystemService(self.root).audit_retention_status()
+
+    def audit_retention_configure(
+        self,
+        *,
+        actor: ManagementActor,
+        control_days: int,
+        access_days: int,
+        max_events: int,
+    ) -> dict[str, Any]:
+        self._require_web_role(actor, "Admin")
+        if "management-config" not in actor.permissions:
+            raise ManagementAuthorizationError(
+                "management-config is required for Audit retention configuration."
+            )
+        return ManagementSystemService(self.root).audit_retention_configure(
+            control_days=control_days,
+            access_days=access_days,
+            max_events=max_events,
+            actor_id=actor.actor_id,
+            interface="WEB",
+        )
+
+    def audit_retention_run(
+        self, *, actor: ManagementActor
+    ) -> dict[str, Any]:
+        self._require_web_role(actor, "Admin")
+        if "management-config" not in actor.permissions:
+            raise ManagementAuthorizationError(
+                "management-config is required to run Audit retention."
+            )
+        return ManagementSystemService(self.root).audit_retention_run(
+            actor_id=actor.actor_id,
+            interface="WEB",
+        )
+
+    def audit_export_create(
+        self,
+        *,
+        actor: ManagementActor,
+        filters: dict[str, Any],
+    ) -> dict[str, Any]:
+        if "management-read" not in actor.permissions:
+            raise ManagementAuthorizationError(
+                "management-read is required for Audit export."
+            )
+        return ManagementSystemService(self.root).audit_export_create(
+            filters=filters,
+            actor_id=actor.actor_id,
+            interface="WEB",
+        )
+
     def inventory_export_create(
         self, *, actor: ManagementActor
     ) -> dict[str, Any]:

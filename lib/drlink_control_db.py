@@ -1241,6 +1241,14 @@ def ensure_v30_schema(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_v30_audit_correlation "
         "ON audit_events(correlation_id, occurred_at DESC, id DESC)"
     )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_v30_audit_event_type_time "
+        "ON audit_events(event_type, occurred_at DESC, id DESC)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_v30_audit_result_time "
+        "ON audit_events(result, occurred_at DESC, id DESC)"
+    )
 
 
 LEGACY_AI_ACTIVITY_CONVERGENCE_BATCH = 200

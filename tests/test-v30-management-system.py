@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -424,6 +425,196 @@ class V30ManagementSystemTests(unittest.TestCase):
                 ):
                     service.backup_validate(path)
 
+    def test_audit_retention_configure_run_is_audited_and_revision_neutral(self):
+        plane = ControlPlane(self.tmp)
+        try:
+            revision = plane.current_revision()
+
+            def seed(event_id, category, occurred_at, actor_id, result):
+                plane.conn.execute(
+                    "INSERT INTO audit_events("
+                    "timestamp,revision,actor,action,entity_type,entity_id,operation,"
+                    "result,event_id,schema_version,category,event_type,occurred_at,"
+                    "source,actor_type,actor_id,interface"
+                    ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        occurred_at,
+                        None,
+                        actor_id,
+                        "seed",
+                        "test",
+                        event_id,
+                        "seed.event",
+                        result,
+                        event_id,
+                        1,
+                        category,
+                        "seed.event",
+                        occurred_at,
+                        "test",
+                        "operator",
+                        actor_id,
+                        "TEST",
+                    ),
+                )
+
+            seed(
+                "evt-old-control",
+                "CONTROL",
+                "2026-08-01T00:00:00Z",
+                "old-control",
+                "ok",
+            )
+            seed(
+                "evt-new-control",
+                "CONTROL",
+                "2026-10-04T00:00:00Z",
+                "new-control",
+                "ok",
+            )
+            seed(
+                "evt-old-access",
+                "ACCESS_DECISION",
+                "2026-09-01T00:00:00Z",
+                "old-access",
+                "DENY",
+            )
+            seed(
+                "evt-new-access",
+                "ACCESS_DECISION",
+                "2026-10-04T00:00:00Z",
+                "new-access",
+                "ALLOW",
+            )
+        finally:
+            plane.close()
+
+        service = ManagementSystemService(self.tmp)
+        configured = service.audit_retention_configure(
+            control_days=30,
+            access_days=7,
+            max_events=1000,
+            actor_id="web:admin",
+            interface="WEB",
+        )
+        self.assertEqual(configured["status"], "CONFIGURED")
+        self.assertFalse(configured["configuration_revision_created"])
+        result = service.audit_retention_run(
+            actor_id="web:admin",
+            interface="WEB",
+            now=datetime(2026, 10, 5, tzinfo=timezone.utc),
+        )
+        self.assertEqual(result["status"], "COMPLETE")
+        self.assertEqual(result["control_deleted"], 1)
+        self.assertEqual(result["access_deleted"], 1)
+        self.assertTrue(result["capacity_guardrail_satisfied"])
+
+        plane = ControlPlane(self.tmp, read_only=True)
+        try:
+            self.assertEqual(plane.current_revision(), revision)
+            ids = {
+                row["event_id"]
+                for row in plane.conn.execute(
+                    "SELECT event_id FROM audit_events WHERE event_id IS NOT NULL"
+                )
+            }
+            self.assertNotIn("evt-old-control", ids)
+            self.assertNotIn("evt-old-access", ids)
+            self.assertIn("evt-new-control", ids)
+            self.assertIn("evt-new-access", ids)
+            ops = {
+                row["operation"]: (row["actor_id"], row["interface"])
+                for row in plane.conn.execute(
+                    "SELECT operation,actor_id,interface FROM audit_events "
+                    "WHERE operation IN ('audit.retention.configure','audit.retention.run')"
+                )
+            }
+            self.assertEqual(
+                ops["audit.retention.configure"], ("web:admin", "WEB")
+            )
+            self.assertEqual(
+                ops["audit.retention.run"], ("web:admin", "WEB")
+            )
+        finally:
+            plane.close()
+
+    def test_audit_export_is_filtered_bounded_and_execution_is_audited(self):
+        plane = ControlPlane(self.tmp)
+        try:
+            revision = plane.current_revision()
+            for event_id, actor_id, result in (
+                ("evt-export-a", "client-a", "DENY"),
+                ("evt-export-b", "client-b", "ALLOW"),
+            ):
+                occurred = "2026-10-04T12:00:00Z"
+                plane.conn.execute(
+                    "INSERT INTO audit_events("
+                    "timestamp,revision,actor,action,entity_type,entity_id,operation,"
+                    "result,event_id,schema_version,category,event_type,occurred_at,"
+                    "source,actor_type,actor_id,interface"
+                    ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        occurred,
+                        None,
+                        actor_id,
+                        "authorize",
+                        "remote-service",
+                        "svc-export",
+                        "authorize",
+                        result,
+                        event_id,
+                        1,
+                        "ACCESS_DECISION",
+                        "remote.access.decision",
+                        occurred,
+                        "remote-access",
+                        "network-client",
+                        actor_id,
+                        "FRP_PLUGIN",
+                    ),
+                )
+        finally:
+            plane.close()
+
+        result = ManagementSystemService(self.tmp).audit_export_create(
+            filters={
+                "category": "ACCESS_DECISION",
+                "actor": "client-a",
+                "result": "DENY",
+            },
+            actor_id="web:reader",
+            interface="WEB",
+        )
+        self.assertEqual(result["status"], "CREATED")
+        self.assertEqual(result["event_count"], 1)
+        self.assertEqual(result["schema_version"], 1)
+        self.assertFalse(result["download_exposed"])
+        path = Path(self.tmp, result["path"].lstrip("/"))
+        self.assertTrue(path.is_file())
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        records = [
+            json.loads(line)
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        self.assertEqual(records[0]["record_type"], "audit-export-meta")
+        self.assertEqual(records[1]["event"]["event_id"], "evt-export-a")
+        self.assertNotIn("evt-export-b", path.read_text(encoding="utf-8"))
+
+        plane = ControlPlane(self.tmp, read_only=True)
+        try:
+            self.assertEqual(plane.current_revision(), revision)
+            audit = plane.conn.execute(
+                "SELECT actor_id,interface,after_summary FROM audit_events "
+                "WHERE operation='audit.export' ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            self.assertIsNotNone(audit)
+            self.assertEqual(audit["actor_id"], "web:reader")
+            self.assertEqual(audit["interface"], "WEB")
+            self.assertIn(result["path"], audit["after_summary"])
+        finally:
+            plane.close()
+
     def test_inventory_export_is_bounded_sanitized_and_non_authoritative(self):
         plane = ControlPlane(self.tmp)
         try:
@@ -479,6 +670,75 @@ class V30ManagementSystemTests(unittest.TestCase):
         plane = ControlPlane(self.tmp, read_only=True)
         try:
             self.assertEqual(plane.current_revision(), seeded)
+        finally:
+            plane.close()
+
+    def test_public_cli_audit_retention_and_export_use_core_contract(self):
+        out = io.StringIO()
+        err = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            rc = control_cli.dispatch(
+                ["system", "audit", "retention"], root=self.tmp
+            )
+        self.assertEqual(rc, 0, err.getvalue())
+        self.assertIn("Audit retention", out.getvalue())
+
+        out = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            rc = control_cli.dispatch(
+                [
+                    "system",
+                    "audit",
+                    "retention",
+                    "set",
+                    "180",
+                    "30",
+                    "100000",
+                ],
+                root=self.tmp,
+            )
+        self.assertEqual(rc, 0, err.getvalue())
+        self.assertIn("configured", out.getvalue())
+
+        out = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            rc = control_cli.dispatch(
+                ["system", "audit", "export", "category", "CONTROL"],
+                root=self.tmp,
+            )
+        self.assertEqual(rc, 0, err.getvalue())
+        self.assertIn("Audit export created", out.getvalue())
+        exports = sorted(
+            Path(self.tmp, "var/lib/drlink/audit-exports").glob("*.ndjson")
+        )
+        self.assertEqual(len(exports), 1)
+
+        out = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            rc = control_cli.dispatch(
+                ["system", "audit", "retention", "run"], root=self.tmp
+            )
+        self.assertEqual(rc, 0, err.getvalue())
+        self.assertIn("Audit retention: COMPLETE", out.getvalue())
+
+        plane = ControlPlane(self.tmp, read_only=True)
+        try:
+            operations = {
+                row["operation"]: (row["actor_id"], row["interface"])
+                for row in plane.conn.execute(
+                    "SELECT operation,actor_id,interface FROM audit_events "
+                    "WHERE operation IN ("
+                    "'audit.retention.configure','audit.export','audit.retention.run'"
+                    ")"
+                )
+            }
+            self.assertEqual(
+                operations["audit.retention.configure"], ("cli:local", "CLI")
+            )
+            self.assertEqual(operations["audit.export"], ("cli:local", "CLI"))
+            self.assertEqual(
+                operations["audit.retention.run"], ("cli:local", "CLI")
+            )
         finally:
             plane.close()
 

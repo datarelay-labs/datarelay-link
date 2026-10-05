@@ -297,7 +297,9 @@ NO          intentionally not exposed in 3.0
 | Policy test / Decision Trace | FULL | FULL | READ | same evaluator |
 | Effective Access explanation | FULL | FULL | READ | graph visualization remains Web-rich |
 | Audit query/detail | FULL | FULL | READ | bounded query; secrets redacted |
-| Bulk NDJSON audit export | FULL | FULL | NO | avoid large artifact transport through chat |
+| Audit retention status | FULL | FULL | READ | 365/90-day defaults; 500000-event default capacity |
+| Audit retention configure/run | FULL | FULL | NO | Admin/local authority; CONTROL-audited, revision-neutral |
+| Bulk NDJSON audit export | FULL | FULL | NO | Core-owned 0600 artifact; <=50000 events / 64 MiB; no Web download |
 | Temporary Access preview | FULL | FULL | READ | before/at/after expiry semantics |
 | Temporary Access set/change/clear | FULL | FULL | CONTROLLED | dedicated management permission |
 | Live Access Visibility | FULL | FULL | READ | EXACT / AGGREGATE / UNKNOWN |
@@ -376,6 +378,14 @@ Active connection termination is a separate conditional operation and is not imp
 
 Plugin/MCP may query bounded redacted audit and diagnosis results, then explain them in
 natural language.
+
+DRL3-7 keeps audit lifecycle authority local to CLI/Web/Core. Retention defaults are
+365 days for CONTROL/SECURITY_LIFECYCLE and 90 days for ACCESS_DECISION with a 500000-event
+capacity. Capacity pruning is ACCESS_DECISION-only and never silently removes
+CONTROL/SECURITY_LIFECYCLE rows. Manual filtered export is schema-versioned and hard-bounded
+to 50000 events / 64 MiB, written mode 0600 under `/var/lib/drlink/audit-exports/`.
+Web receives only artifact metadata/path and provides no download endpoint. Plugin/MCP may
+query bounded audit but receives neither retention mutation nor bulk export authority.
 
 The Plugin must not:
 

@@ -799,7 +799,11 @@ second policy authority.
 
 **UX:** Audit uses bounded indexed queries, cursor pagination, retention/storage
 guardrails, backup/restore continuity, CLI/Web query parity, Audit/Revision Explorer, and
-manual filtered NDJSON export from CLI and Web in 3.0.
+manual filtered NDJSON export from CLI and Web in 3.0. DRL3-7 defaults retained local
+history to 365 days for CONTROL/SECURITY_LIFECYCLE and 90 days for ACCESS_DECISION with a
+500000-event capacity; capacity pruning is ACCESS_DECISION-only. Manual export is a
+Core-owned mode-0600 NDJSON artifact under `/var/lib/drlink/audit-exports/`, bounded to
+50000 events / 64 MiB, and is not exposed through a Web download endpoint.
 
 **Scope:** Continuous SIEM/S3/syslog/webhook streaming is later-additive. Session recording,
 payload capture, and a SIEM/reporting platform remain out of scope. Append-only product

@@ -763,14 +763,23 @@ application payloads, TLS contents, credentials, tokens, private keys, or sensit
 query strings as normal audit fields.
 
 The UI uses bounded cursor pagination and manual filtered NDJSON export over the same
-versioned Core schema. Export is audited. The Audit/Attention surfaces also expose
-ingestion lag, oldest pending event age, spool-capacity/high-water state, and audit-degraded
-health without pretending un-ingested events are already queryable. Continuous
-SIEM/S3/syslog/webhook streaming is not a 3.0 GA dependency.
+versioned Core schema. Export is audited. The Core writes each export as a mode-0600,
+schema-versioned artifact under `/var/lib/drlink/audit-exports/`, hard-bounded to 50000
+events / 64 MiB. Web exposes only the resulting metadata/path; it has no audit-artifact
+download endpoint. The Audit/Attention surfaces also expose ingestion lag, oldest pending
+event age, spool-capacity/high-water state, and audit-degraded health without pretending
+un-ingested events are already queryable. Continuous SIEM/S3/syslog/webhook streaming is
+not a 3.0 GA dependency.
 
-Active-local retention targets are 180 days for CONTROL and SECURITY_LIFECYCLE and 30 days
-for ACCESS_DECISION, subject to bounds frozen in DRL3-0. The UI shows retention/capacity
-status but offers no arbitrary audit-row edit/delete.
+Active-local defaults are 365 days for CONTROL and SECURITY_LIFECYCLE, 90 days for
+ACCESS_DECISION, and 500000 total events. Supported configuration bounds are 1–3650 days
+and 1000–5000000 events. Age retention is split by category. Capacity pruning removes only
+the oldest ACCESS_DECISION rows, at most 100000 per explicit run, and never silently
+deletes CONTROL/SECURITY_LIFECYCLE rows to satisfy capacity. If protected history keeps
+the database over capacity, the UI reports attention required. Retention configuration,
+retention execution, and export execution are CONTROL-audited with the authenticated
+actor/interface and do not create a configuration revision. The UI offers no arbitrary
+audit-row edit/delete.
 
 Diff and rollback reuse Core revision semantics. Backup/restore preserves retained event
 identity/order and revision links; restore completion becomes a new lifecycle event after
