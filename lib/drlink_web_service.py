@@ -267,6 +267,15 @@ class WebApplication:
             if len(parts) == 2 and parts[1] == "export":
                 return self.adapter.draft_export(draft_id, actor=actor)
             raise ControlPlaneError("Web API route was not found.")
+        if path.startswith("/api/v1/jobs/"):
+            job_id = path[len("/api/v1/jobs/") :].strip()
+            if not job_id or "/" in job_id:
+                raise ControlPlaneError("Management Job was not found.")
+            return self.adapter.invoke(
+                operation="drlink_job_get",
+                payload={"job_id": job_id},
+                actor=actor,
+            )
         if path == "/api/v1/saved-views":
             return {"items": self.auth.list_saved_views(principal.operator_id)}
         if path == "/api/v1/sessions":
@@ -297,6 +306,32 @@ class WebApplication:
         if path == "/api/v1/guided/apply":
             return self.adapter.invoke(
                 operation="drlink_guided_change_apply",
+                payload={
+                    "change_plan_id": str(body.get("change_plan_id") or ""),
+                    "confirmation": str(body.get("confirmation") or ""),
+                },
+                actor=self._actor(principal),
+            )
+        if path == "/api/v1/remote-services/preview":
+            payload = {
+                "owner": str(body.get("owner") or ""),
+                "name": str(body.get("name") or ""),
+                "operation": str(body.get("operation") or ""),
+            }
+            if body.get("destination") is not None:
+                payload["destination"] = str(body.get("destination") or "")
+            if body.get("service") is not None:
+                payload["service"] = str(body.get("service") or "")
+            if body.get("enabled") is not None:
+                payload["enabled"] = body.get("enabled")
+            return self.adapter.invoke(
+                operation="drlink_remote_service_preview",
+                payload=payload,
+                actor=self._actor(principal),
+            )
+        if path == "/api/v1/remote-services/apply":
+            return self.adapter.invoke(
+                operation="drlink_remote_service_apply",
                 payload={
                     "change_plan_id": str(body.get("change_plan_id") or ""),
                     "confirmation": str(body.get("confirmation") or ""),

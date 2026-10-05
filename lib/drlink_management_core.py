@@ -29,6 +29,7 @@ from drlink_management_service import (
 )
 from drlink_management_guided import GuidedChangeService
 from drlink_management_enrollment import ManagementEnrollmentService
+from drlink_management_remote_service import ManagementRemoteServiceService
 from drlink_management_drafts import (
     DRAFT_ADMIN,
     DRAFT_OBSERVE,
@@ -37,7 +38,12 @@ from drlink_management_drafts import (
 )
 
 IMPLEMENTED_GUIDED_CHANGE_TOOLS = frozenset(
-    {"drlink_guided_change_preview", "drlink_guided_change_apply"}
+    {
+        "drlink_guided_change_preview",
+        "drlink_guided_change_apply",
+        "drlink_remote_service_preview",
+        "drlink_remote_service_apply",
+    }
 )
 
 SURFACE_MCP = "MCP"
@@ -118,6 +124,8 @@ def _validate_input(tool, arguments: Mapping[str, Any]) -> dict[str, Any]:
             raise ControlPlaneError("Management input '%s' must be an object." % name)
         if expected == "array" and not isinstance(value, list):
             raise ControlPlaneError("Management input '%s' must be an array." % name)
+        if expected == "boolean" and not isinstance(value, bool):
+            raise ControlPlaneError("Management input '%s' must be a boolean." % name)
     return data
 
 
@@ -411,6 +419,30 @@ class ManagementCoreService:
     ) -> dict:
         with GuidedChangeService(self.root) as service:
             return service.apply_guided_change(
+                actor_id=actor.actor_id,
+                change_plan_id=data["change_plan_id"],
+                confirmation=data["confirmation"],
+            )
+
+    def _invoke_drlink_remote_service_preview(
+        self, actor: ManagementActor, data: dict
+    ) -> dict:
+        with ManagementRemoteServiceService(self.root) as service:
+            return service.preview(
+                actor_id=actor.actor_id,
+                owner=data["owner"],
+                name=data["name"],
+                operation=data["operation"],
+                destination=data.get("destination"),
+                service=data.get("service"),
+                enabled=data.get("enabled"),
+            )
+
+    def _invoke_drlink_remote_service_apply(
+        self, actor: ManagementActor, data: dict
+    ) -> dict:
+        with ManagementRemoteServiceService(self.root) as service:
+            return service.apply(
                 actor_id=actor.actor_id,
                 change_plan_id=data["change_plan_id"],
                 confirmation=data["confirmation"],

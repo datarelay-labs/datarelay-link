@@ -859,6 +859,16 @@ class ManagementQueryService:
             limit=page_limit,
         )
 
+    def _reconcile_management_job_deadlines(self) -> None:
+        from drlink_v30_jobs import ManagementJobEngine
+
+        engine = ManagementJobEngine(self.root)
+        try:
+            engine.expire_deadlines()
+            engine.recover_expired_claims()
+        finally:
+            engine.close()
+
     def job_list(
         self,
         *,
@@ -870,6 +880,7 @@ class ManagementQueryService:
         """Read a bounded keyset page of management Jobs."""
         from drlink_v30_jobs import JOB_STATUSES
 
+        self._reconcile_management_job_deadlines()
         page_limit = _bounded_limit(limit)
         after = _decode_job_cursor(cursor)
         where: list[str] = []
@@ -915,6 +926,7 @@ class ManagementQueryService:
         """Read one management Job and its bounded per-target terminal/progress truth."""
         from drlink_v30_jobs import MAX_JOB_TARGETS
 
+        self._reconcile_management_job_deadlines()
         ident = str(job_id or "").strip()
         if not ident:
             raise ControlPlaneError("Management Job ID is required.")

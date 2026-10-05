@@ -477,6 +477,8 @@ DRL3-3 adds these Core/Web-only guided configuration operations:
 ```text
 drlink_guided_change_preview
 drlink_guided_change_apply
+drlink_remote_service_preview
+drlink_remote_service_apply
 ```
 
 They require `management-config`, delegate Managed Host metadata, Object/Group, and

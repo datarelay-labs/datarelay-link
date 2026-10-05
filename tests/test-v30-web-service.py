@@ -268,6 +268,57 @@ class V30WebServiceTests(unittest.TestCase):
         finally:
             plane.close()
 
+    def test_remote_service_preview_apply_queues_agent_job_without_false_success(self):
+        self.login()
+        plane = ControlPlane(self.tmp)
+        try:
+            v24.set_service_object(plane, "web-rs-ssh", type="tcp", port=22, oneshot=True)
+            plane.refresh_agent_lifecycle("host-a", "connected")
+            before = plane.current_revision()
+        finally:
+            plane.close()
+        body = {
+            "owner": "host-a",
+            "name": "web-rs",
+            "operation": "set",
+            "destination": "this-host",
+            "service": "web-rs-ssh",
+            "enabled": True,
+        }
+        status, _, _ = self.request("POST", "/api/v1/remote-services/preview", body)
+        self.assertEqual(status, 403)
+        status, _, preview = self.request(
+            "POST", "/api/v1/remote-services/preview", body,
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, preview)
+        self.assertEqual(preview["owner"]["connectivity"], "connected")
+        plane = ControlPlane(self.tmp)
+        try:
+            self.assertEqual(plane.current_revision(), before)
+            self.assertIsNone(
+                plane.conn.execute("SELECT id FROM published_services WHERE name='web-rs'").fetchone()
+            )
+        finally:
+            plane.close()
+        status, _, queued = self.request(
+            "POST",
+            "/api/v1/remote-services/apply",
+            {"change_plan_id": preview["change_plan_id"], "confirmation": "APPLY"},
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, queued)
+        self.assertEqual(queued["status"], "QUEUED")
+        status, _, job = self.request("GET", "/api/v1/jobs/" + queued["job_id"])
+        self.assertEqual(status, 200, job)
+        self.assertEqual(job["status"], "QUEUED")
+        self.assertEqual(job["targets"][0]["target_id"], "host-a")
+        plane = ControlPlane(self.tmp)
+        try:
+            self.assertEqual(plane.current_revision(), before)
+        finally:
+            plane.close()
+
     def test_zero_touch_enrollment_is_admin_csrf_protected_and_redacted_in_history(self):
         self.login()
         material = frp_pki.ensure_pki(Path(self.tmp, "etc/drlink/pki"), "127.0.0.1")

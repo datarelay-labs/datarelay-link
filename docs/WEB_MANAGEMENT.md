@@ -517,6 +517,8 @@ There is no cascade-delete shortcut around the Core reference-protection contrac
 
 ## 18. Remote Services
 
+Remote Service create/edit/delete uses a Core Change Plan followed by a target-bound Agent Management Job. The Web Apply response is `QUEUED`, not success. The owner Agent must claim the signed job with its enrolled management identity, execute the existing Agent-side Remote Service Core operation, and complete the Job before Web may show a terminal outcome. A disconnected or stale owner is blocked before enqueue, and runtime `DEGRADED` remains visible even when the configuration Job itself completed.
+
 Remote Service pages show both configuration and effective runtime state:
 
 ```text

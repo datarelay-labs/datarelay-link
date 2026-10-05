@@ -61,6 +61,7 @@ project usr/local/lib/drlink/drlink_management_change.py 0644 lib/drlink_managem
 project usr/local/lib/drlink/drlink_management_drafts.py 0644 lib/drlink_management_drafts.py python
 project usr/local/lib/drlink/drlink_management_guided.py 0644 lib/drlink_management_guided.py python
 project usr/local/lib/drlink/drlink_management_enrollment.py 0644 lib/drlink_management_enrollment.py python
+project usr/local/lib/drlink/drlink_management_remote_service.py 0644 lib/drlink_management_remote_service.py python
 project usr/local/lib/drlink/drlink_management_core.py 0644 lib/drlink_management_core.py python
 project usr/local/lib/drlink/drlink_management_mcp_adapter.py 0644 lib/drlink_management_mcp_adapter.py python
 project usr/local/lib/drlink/drlink_management_web_adapter.py 0644 lib/drlink_management_web_adapter.py python

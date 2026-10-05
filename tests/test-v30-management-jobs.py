@@ -267,6 +267,18 @@ class V30ManagementJobTests(unittest.TestCase):
         finally:
             query.close()
 
+    def test_job_read_reconciles_unclaimed_deadline_to_failed(self):
+        old = self.now - timedelta(seconds=30)
+        job = self._enqueue(targets=("offline-agent",), timeout_seconds=1, now=old)
+        query = ManagementQueryService(self.tmp)
+        try:
+            detail = query.job_get(job["id"])
+            self.assertEqual(detail["status"], FAILED)
+            self.assertEqual(detail["targets"][0]["status"], FAILED)
+            self.assertEqual(detail["targets"][0]["error"], "DEADLINE_EXCEEDED")
+        finally:
+            query.close()
+
     def test_operational_summary_is_rebuildable_and_reports_saturation(self):
         self._enqueue(targets=("host-a",))
         summary = job_operational_summary(self.engine.conn, max_active_jobs=1)
