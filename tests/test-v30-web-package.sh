@@ -64,7 +64,7 @@ grep -q 'nav-group-toggle' "$TMP/usr/local/share/drlink-web/styles.css" || {
 grep -q 'dr-command-palette' "$TMP/usr/local/share/drlink-web/styles.css" || {
   echo "FAIL contextual global search styles missing" >&2; exit 1;
 }
-for style_marker in 'dr-detail-drawer' 'dr-access-map' 'dr-resource-table'; do
+for style_marker in 'dr-detail-drawer' 'dr-access-map' 'dr-resource-table' 'dr-skip-link'; do
   grep -q "$style_marker" "$TMP/usr/local/share/drlink-web/styles.css" || {
     echo "FAIL modern SaaS resource/access style missing: $style_marker" >&2; exit 1;
   }
@@ -77,7 +77,7 @@ for token in '--dr-layout-sidebar-expanded:260px' '--dr-layout-sidebar-collapsed
     echo "FAIL DR Control visual token parity missing: $token" >&2; exit 1;
   }
 done
-for marker in 'drlink_web_sidebar_collapsed' 'drlink_web_theme' 'Command Center' 'Core management' 'Search hosts, services, policies, identities' 'Quick actions' 'Access Workspace' 'Policy Simulator' 'Filter hosts' 'Access context' 'Objects & Groups' 'Filter objects and groups' 'Filter policies' 'Test / explain'; do
+for marker in 'drlink_web_sidebar_collapsed' 'drlink_web_theme' 'Command Center' 'Core management' 'Search hosts, services, policies, identities' 'Quick actions' 'Access Workspace' 'Policy Simulator' 'Filter hosts' 'Access context' 'Objects & Groups' 'Filter objects and groups' 'Filter policies' 'Test / explain' 'Skip to content' 'drlink-main-content'; do
   grep -q -- "$marker" "$TMP/usr/local/share/drlink-web/app.js" || {
     echo "FAIL modern SaaS shell marker missing: $marker" >&2; exit 1;
   }
