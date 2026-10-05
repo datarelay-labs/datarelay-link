@@ -2,12 +2,14 @@ import React, {useEffect, useState} from "react";
 import {createRoot} from "react-dom/client";
 
 type Json = Record<string, any>;
-const nav=[
-  ["overview","Overview"],["hosts","Managed Hosts"],["services","Remote Services"],["access","Access Operations"],["jobs","Jobs"],
-  ["objects","Objects & Groups"],["policies","Policies"],["versions","Version Drift"],["system","System"],
-  ["audit","Audit"],["revisions","Revisions"],["doctor","Doctor"],["health","Health"],
-  ["search","Search"],["views","Saved Views"],["users","Users"],["enrollments","Connect Agent"],["drafts","Draft Workspace"],
-];
+const navGroups=[
+  {id:"infrastructure",label:"Infrastructure",items:[["hosts","Managed Hosts"],["services","Remote Services"],["objects","Objects & Groups"],["enrollments","Connect Agent"]]},
+  {id:"access",label:"Access Control",items:[["access","Access Operations"],["policies","Policies"],["drafts","Draft Workspace"]]},
+  {id:"operations",label:"Operations",items:[["jobs","Jobs"],["versions","Version Drift"],["revisions","Revisions"]]},
+  {id:"observability",label:"Observability",items:[["audit","Audit"],["doctor","Doctor"],["health","Health"],["search","Search"],["views","Saved Views"]]},
+  {id:"administration",label:"Administration",items:[["users","Users"],["system","System"]]},
+] as const;
+
 let csrf="";
 
 async function api(path:string, init:RequestInit={}):Promise<Json>{
@@ -1094,15 +1096,39 @@ function SavedViews({data,refresh}:{data:any,refresh:()=>void}){
 
 function Shell({operator,onLogout}:{operator:any,onLogout:()=>void}){
   const [active,setActive]=useState("overview");
+  const activeGroup=navGroups.find(group=>group.items.some(([id])=>id===active))?.id||"";
+  const [expanded,setExpanded]=useState<Record<string,boolean>>(()=>Object.fromEntries(navGroups.map(group=>[group.id,group.id===activeGroup||group.id==="infrastructure"])));
   async function logout(){try{await api("/api/v1/auth/logout",{method:"POST",body:"{}"})}finally{csrf="";onLogout()}}
-  const visibleNav=nav.filter(([id])=>{
-    if(id==="drafts")return operator.role!=="Read Only";
+  function visible(id:string){
     if(id==="users")return operator.role==="Admin";
     if(id==="enrollments")return operator.role==="Admin";
+    if(id==="drafts")return operator.role!=="Read Only";
     return true;
-  });
-  const title=visibleNav.find(x=>x[0]===active)?.[1]||"Overview";
-  return <div className="shell"><aside className="sidebar"><div className="brand">Data Relay Link<small>Web Management 3.0</small></div><div className="nav">{visibleNav.map(([id,label])=><button key={id} className={id===active?"active":""} onClick={()=>setActive(id)}>{label}</button>)}</div></aside><section className="content"><div className="top"><div><div className="title">{title}</div><div className="muted">{operator.username} · {operator.role}</div></div><button className="secondary" onClick={logout}>Sign out</button></div><View active={active} operator={operator}/></section></div>;
+  }
+  function activate(id:string,groupId?:string){
+    setActive(id);
+    if(groupId)setExpanded(prev=>({...prev,[groupId]:true}));
+  }
+  const currentItem=navGroups.flatMap(group=>group.items).find(([id])=>id===active);
+  const title=active==="overview"?"Overview":currentItem?.[1]||"Overview";
+  return <div className="shell"><aside className="sidebar">
+    <div className="brand">Data Relay Link<small>Web Management 3.0</small></div>
+    <nav className="nav" aria-label="Primary">
+      <button className={active==="overview"?"active nav-home":"nav-home"} onClick={()=>activate("overview")}>Overview</button>
+      {navGroups.map(group=>{
+        const items=group.items.filter(([id])=>visible(id));
+        if(!items.length)return null;
+        const open=!!expanded[group.id];
+        const hasActive=items.some(([id])=>id===active);
+        return <section className={hasActive?"nav-group has-active":"nav-group"} key={group.id}>
+          <button className="nav-group-toggle" aria-expanded={open} onClick={()=>setExpanded(prev=>({...prev,[group.id]:!open}))}>
+            <span>{group.label}</span><span className="nav-chevron" aria-hidden="true">{open?"▾":"▸"}</span>
+          </button>
+          {open&&<div className="nav-group-items">{items.map(([id,label])=><button key={id} className={id===active?"active":""} onClick={()=>activate(id,group.id)}>{label}</button>)}</div>}
+        </section>;
+      })}
+    </nav>
+  </aside><section className="content"><div className="top"><div><div className="title">{title}</div><div className="muted">{operator.username} · {operator.role}</div></div><button className="secondary" onClick={logout}>Sign out</button></div><View active={active} operator={operator}/></section></div>;
 }
 
 function App(){

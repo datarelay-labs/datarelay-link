@@ -53,6 +53,14 @@ grep -q 'Welcome to Data Relay Link' "$TMP/usr/local/share/drlink-web/app.js" ||
 grep -q 'DR Control-aligned authentication surface' "$TMP/usr/local/share/drlink-web/styles.css" || {
   echo "FAIL DR Control-aligned login styles missing from Web package" >&2; exit 1;
 }
+for label in 'Infrastructure' 'Access Control' 'Operations' 'Observability' 'Administration'; do
+  grep -q "$label" "$TMP/usr/local/share/drlink-web/app.js" || {
+    echo "FAIL grouped Web navigation missing: $label" >&2; exit 1;
+  }
+done
+grep -q 'nav-group-toggle' "$TMP/usr/local/share/drlink-web/styles.css" || {
+  echo "FAIL grouped Web navigation styles missing" >&2; exit 1;
+}
 
 grep -q -- '--listen 127.0.0.1 --port 8741' "$TMP/etc/systemd/system/drlink-web.service" || {
   echo "FAIL Web service default is not loopback-only" >&2; exit 1;

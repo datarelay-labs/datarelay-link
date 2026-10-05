@@ -397,26 +397,45 @@ Rules:
 
 ## 13. Information architecture
 
-Primary navigation:
+Primary navigation uses task-oriented groups instead of exposing every page as a root item:
 
 ```text
 Overview
-Managed Hosts
-Remote Services
-Objects & Groups
-Access Policies
-AI Access
-Enrollments
-Audit & Revisions
-Health & Troubleshooting
-System
+Infrastructure
+  Managed Hosts
+  Remote Services
+  Objects & Groups
+  Connect Agent
+Access Control
+  Access Operations
+  Policies
+  Draft Workspace
+Operations
+  Jobs
+  Version Drift
+  Revisions
+Observability
+  Audit
+  Doctor
+  Health
+  Search
+  Saved Views
+Administration
+  Users
+  System
 ```
 
-"Objects & Groups" contains Network, Service, and Permission resources without merging
-their semantics.
+The sidebar should keep the number of root-level choices small and group pages by operator
+workflow. This follows the same general information-architecture direction used by current
+zero-trust/admin products: consolidate analytics/logs/troubleshooting under an observability
+area, keep resources/network inventory together, keep policy work together, and keep
+identity/system administration separate from day-to-day operations. Product/internal names
+should not become top-level navigation merely because they are implementation modules.
 
-"Access Policies" contains Remote Access and Internet Access as separate policy families.
-AI Access remains separate because identity, permission, and authentication differ.
+"Objects & Groups" contains Network, Service, and Permission resources without merging
+their semantics. "Policies" contains Remote Access, Internet Access, and AI Access as
+separate policy families within one access-control workspace; their identity/permission
+semantics remain distinct inside the page.
 
 Contextual detail pages should cross-link related entities. Example:
 
