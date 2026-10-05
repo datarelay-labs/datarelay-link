@@ -10,6 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 
+from drlink_control_db import open_control_db
 from drlink_control_plane import ControlPlane
 from drlink_management_service import ManagementQueryService
 from drlink_v30_jobs import BoundedAgentRpcWorkerPool, ManagementJobEngine, RUNNING, SUCCEEDED
@@ -219,6 +220,44 @@ class V30ManagementMixedLoadTests(unittest.TestCase):
                 "WHERE agent_lifecycle_state='connected' AND connected=1"
             ).fetchone()
             self.assertEqual(int(row["n"]), 100)
+        finally:
+            plane.close()
+
+
+    def test_sqlite_writer_contention_waits_bounded_and_recovers_after_lock_release(self):
+        holder = open_control_db(self.tmp)
+        holder.execute("BEGIN IMMEDIATE")
+        done = threading.Event()
+        errors: list[BaseException] = []
+
+        def competing_writer() -> None:
+            plane = ControlPlane(self.tmp)
+            try:
+                v24.set_network_object(
+                    plane, "contention-object", type="ip", value="198.51.100.77", oneshot=True
+                )
+            except BaseException as exc:
+                errors.append(exc)
+            finally:
+                plane.close()
+                done.set()
+
+        thread = threading.Thread(target=competing_writer)
+        thread.start()
+        try:
+            self.assertFalse(done.wait(0.2), "writer bypassed active SQLite write lock")
+            with ManagementQueryService(self.tmp) as query:
+                self.assertEqual(query.overview_summary()["managed_hosts"]["total"], 100)
+        finally:
+            holder.execute("ROLLBACK")
+            holder.close()
+        self.assertTrue(done.wait(5), "writer did not recover after lock release")
+        thread.join(timeout=1)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(errors, [])
+        plane = ControlPlane(self.tmp)
+        try:
+            self.assertIsNotNone(plane.get_object("contention-object"))
         finally:
             plane.close()
 
