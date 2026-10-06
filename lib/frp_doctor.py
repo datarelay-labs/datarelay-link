@@ -2565,7 +2565,7 @@ def check_egress_control(report, paths, facts, cfg):
                     'EGRESS_TCP_EFFECTIVE', FAIL,
                     'Fixed TCP Egress effective runtime is unhealthy (fail-closed)',
                     str(effective_tcp.get('load_error') or ''),
-                    'fix Fixed TCP Egress with: sudo drlink egress tcp list',
+                    'inspect Fixed TCP services with: sudo drlink show service-objects',
                     'runtime',
                 )
         except Exception as exc:
@@ -2648,7 +2648,7 @@ def check_egress_control(report, paths, facts, cfg):
                     'EGRESS_EFFECTIVE_CONFIG', FAIL,
                     'egress effective policy is unhealthy (fail-closed)',
                     'generation=%s path=%s' % (generation, effective_rel),
-                    'fix Controlled Egress policy with: sudo drlink show internet-profiles',
+                    'inspect Internet Access with: sudo drlink show internet-access',
                     'runtime',
                 )
             report.add(
@@ -2704,7 +2704,7 @@ def check_egress_control(report, paths, facts, cfg):
             status,
             '%s: %s' % (cls, issue.get('message') or 'issue'),
             '',
-            'inspect Internet Access with show internet-profiles',
+            'inspect Internet Access with show internet-access',
             'state',
         )
 

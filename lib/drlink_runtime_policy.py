@@ -104,8 +104,13 @@ def root_from_cfg(cfg: Optional[dict] = None) -> Optional[str]:
     return None
 
 
-def open_plane(cfg: Optional[dict] = None, root: Optional[str] = None) -> ControlPlane:
-    return ControlPlane(root or root_from_cfg(cfg))
+def open_plane(
+    cfg: Optional[dict] = None,
+    root: Optional[str] = None,
+    *,
+    read_only: bool = False,
+) -> ControlPlane:
+    return ControlPlane(root or root_from_cfg(cfg), read_only=read_only)
 
 
 def generation_status(plane: ControlPlane, plane_name: str) -> dict:
@@ -682,7 +687,7 @@ class ControlPlaneCache:
                             self.plane.close()
                         except Exception:
                             pass
-                    self.plane = open_plane(self.cfg, root=root)
+                    self.plane = open_plane(self.cfg, root=root, read_only=True)
                 fp = self._fingerprint(self.plane)
                 if not force and fp == self.fingerprint and self.load_error is None:
                     return
