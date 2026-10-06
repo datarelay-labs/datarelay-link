@@ -6016,12 +6016,18 @@ def set_remote_service_agent(
 
     # Refresh synchronized Managed Host inventory before binding/resolving so
     # runtime targets follow current hostname/address for a stable client_id.
+    import drlink_mgmt_sync as mgmt
+
     if server_reachable:
         try:
-            import drlink_mgmt_sync as mgmt
-
             if mgmt.use_live_mgmt_path(root):
                 sync_agent_catalog_from_server(plane_db, root=root)
+        except mgmt.MgmtUnavailableError:
+            # No remote write has been attempted. Use the existing offline
+            # desired-state queue when the frontend is up but its backend is down.
+            server_reachable = False
+        except mgmt.MgmtAuthError:
+            raise
         except Exception:
             pass
 
@@ -6693,6 +6699,14 @@ def unset_remote_service_agent(plane_db, name: str, *, root: Optional[str] = Non
     import drlink_mgmt_sync as mgmt
 
     live_mgmt = bool(server_reachable and mgmt.use_live_mgmt_path(root))
+    if live_mgmt:
+        try:
+            # Establish backend availability before attempting a remote delete.
+            # A failed POST is never reclassified as safe offline intent.
+            mgmt.fetch_server_catalog(root)
+        except mgmt.MgmtUnavailableError:
+            server_reachable = False
+            live_mgmt = False
     if live_mgmt:
         prev_mgmt = _agent_remote_service_mgmt_snapshot(
             plane_db, existing, root=root, host_name=host_name

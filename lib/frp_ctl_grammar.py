@@ -5049,4 +5049,13 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        status = main()
+        # Flush here so an ordinary early-closing reader is handled before
+        # interpreter shutdown, which otherwise prints an ignored exception.
+        sys.stdout.flush()
+    except BrokenPipeError:
+        with open(os.devnull, "w") as sink:
+            os.dup2(sink.fileno(), sys.stdout.fileno())
+        status = 0
+    raise SystemExit(status)

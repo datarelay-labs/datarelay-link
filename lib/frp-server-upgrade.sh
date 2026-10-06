@@ -1092,7 +1092,9 @@ try:
         elif rec.get("ok") and rec.get("skipped"):
             print("CONTROL_DB_RECONCILE_SKIPPED")
         elif not rec.get("ok"):
-            print("CONTROL_DB_RECONCILE_WARNING %s" % rec.get("error"))
+            # Propagate migration failure to the existing upgrade rollback.
+            # An empty initialized DB cannot replace restrictive legacy state.
+            raise SystemExit("ERROR: CONTROL_DB_RECONCILE_FAILED %s" % rec.get("error"))
     # Legacy reconciliation can advance the authoritative DB revision after
     # the initial control-plane bootstrap. Compile runtime *after* reconciliation
     # so access/egress health checks never restart against the previous revision.

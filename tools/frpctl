@@ -2126,6 +2126,58 @@ frpctl_guided_manual_enrollment() {
   frpctl_run frp-create-client "${args[@]}"
 }
 
+frpctl_guided_bulk_enrollment() {
+  local choice count prefix csv_path user note lifetime confirm
+  local -a args=()
+  if [[ ! -t 0 ]]; then
+    echo "ERROR: run 'drlink set enrollment bulk' in a terminal and follow the count or CSV prompts." >&2
+    return 2
+  fi
+  echo
+  echo "Bulk enrollment"
+  echo "==============="
+  echo "1) Issue by count (1-10)"
+  echo "2) Import CSV (label,ssh_user,note; at most 10 rows)"
+  echo "3) Cancel"
+  choice="$(frpctl_read "Select: " "3")" || return 1
+  case "$choice" in
+    1)
+      count="$(frpctl_read "Count [1-10]: " "")" || return 1
+      case "$count" in
+        [1-9]|10) ;;
+        *) echo "ERROR: count must be between 1 and 10. No enrollments were issued." >&2; return 2 ;;
+      esac
+      prefix="$(frpctl_read "Managed Host label prefix [agent]: " "agent")" || return 1
+      user="$(frpctl_read "SSH username [optional; empty is management only]: " "")" || return 1
+      note="$(frpctl_read "Note [optional]: " "")" || return 1
+      args=(--count "$count" --label-prefix "$prefix" --ssh-user "$user" --note "$note")
+      ;;
+    2)
+      csv_path="$(frpctl_read "CSV path: " "")" || return 1
+      if [[ ! -f "$csv_path" || ! -r "$csv_path" ]]; then
+        echo "ERROR: cannot read CSV. Check the file path and permissions, then retry 'set enrollment bulk'." >&2
+        return 2
+      fi
+      args=(--csv "$csv_path")
+      ;;
+    3|"") echo "Cancelled."; return 0 ;;
+    *) echo "ERROR: select 1-3. No enrollments were issued." >&2; return 2 ;;
+  esac
+  lifetime="$(frpctl_read "Lifetime [1h; maximum 24h]: " "1h")" || return 1
+  args+=(--ttl "$lifetime")
+  echo
+  echo "Review"
+  [[ "$choice" == 1 ]] && printf '  Count: %s; label prefix: %s; SSH username: %s\n' "$count" "$prefix" "${user:-none}"
+  [[ "$choice" == 2 ]] && printf '  CSV: %s\n' "$csv_path"
+  printf '  Lifetime: %s\n' "$lifetime"
+  echo "Each row issues a separate one-time enrollment command. Protect the output."
+  confirm="$(frpctl_read "Issue enrollments? [y/N]: " "N")" || return 1
+  case "$confirm" in
+    y|Y|yes|YES) frpctl_run frp-enroll-bulk "${args[@]}" ;;
+    *) echo "Cancelled." ;;
+  esac
+}
+
 frpctl_guided_enroll() {
   local choice
   echo
@@ -3469,6 +3521,8 @@ def _result(rec):
             return str(val)
     if rec.get("error"):
         return "error"
+    if details.get("error") or str(rec.get("event") or "").endswith(".failed"):
+        return "failure"
     return "success"
 
 if not filtered:
@@ -4127,7 +4181,11 @@ frpctl_dispatch_canonical() {
     create_enrollments)
       frpctl_require_server || return 1
       frpctl_load_passthrough "$result"
-      frpctl_with_pt frpctl_invoke frp-enroll-bulk
+      if ((${#_frpctl_pt[@]} == 0)); then
+        frpctl_guided_bulk_enrollment
+      else
+        frpctl_with_pt frpctl_invoke frp-enroll-bulk
+      fi
       ;;
     create_backup)
       frpctl_require_server || return 1

@@ -31,6 +31,9 @@ if [[ -z "${FRP_COMMON_LOADED:-}" ]]; then
     . '/Library/Application Support/drlink/lib/frp-common.sh'
   fi
 fi
+if declare -F frp_select_compatible_python >/dev/null 2>&1; then
+  frp_select_compatible_python || true
+fi
 _FRP_CLIENT_UPDATE_URL_EXPLICIT=0
 _FRP_CLIENT_UPDATE_METADATA_URL_EXPLICIT=0
 if [[ -n "${FRP_CLIENT_UPDATE_URL:-}" ]]; then
@@ -4603,7 +4606,7 @@ frp_client_systemctl() {
 }
 
 frp_client_unit_file_needs_converge() {
-  local source="${1:-}" unit="${2:-}" live src
+  local source="${1:-}" unit="${2:-}" live src rendered same=0
   if declare -F frp_is_darwin >/dev/null 2>&1 && frp_is_darwin; then
     return 1
   fi
@@ -4614,7 +4617,14 @@ frp_client_unit_file_needs_converge() {
   [[ -n "$src" ]] || return 1
   live="$(frp_client_path "/etc/systemd/system/${unit}")"
   [[ -f "$live" ]] || return 0
-  [[ "$(frp_client_digest "$live")" == "$(frp_client_digest "$src")" ]] && return 1
+  rendered="$(mktemp)"
+  if ! frp_write_compatible_systemd_unit "$src" "$rendered"; then
+    rm -f "$rendered"
+    return 0
+  fi
+  [[ "$(frp_client_digest "$live")" == "$(frp_client_digest "$rendered")" ]] && same=1
+  rm -f "$rendered"
+  [[ "$same" == 1 ]] && return 1
   return 0
 }
 

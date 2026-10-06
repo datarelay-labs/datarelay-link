@@ -1052,9 +1052,18 @@ def validate_to_temp(
     """
     temp = tempfile.TemporaryDirectory(prefix="frp-restore-", dir=str(parent) if parent else None)
     extracted = Path(temp.name)
-    extract_and_validate(archive, extracted)
-    if require_semantic:
-        validate_staged_control_payload(extracted)
+    try:
+        extract_and_validate(archive, extracted)
+        if require_semantic:
+            validate_staged_control_payload(extracted)
+    except (EOFError, tarfile.TarError) as exc:
+        temp.cleanup()
+        raise RestoreError(
+            "backup archive is incomplete or unreadable; use a complete, unmodified backup"
+        ) from exc
+    except BaseException:
+        temp.cleanup()
+        raise
     return temp, extracted
 
 
@@ -1403,7 +1412,7 @@ def main() -> int:
         return 0
     except (RestoreError, OSError, subprocess.SubprocessError, ValueError) as exc:
         error(str(exc))
-        _audit_emit("restore.failed", details={"error": type(exc).__name__})
+        _audit_emit("restore.failed", result="failure", details={"error": type(exc).__name__})
         return 1
     finally:
         if rollback_temp is not None:

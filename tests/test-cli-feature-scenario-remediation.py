@@ -12,6 +12,8 @@ import sys
 import tempfile
 import ipaddress
 import signal
+import pty
+import select
 import time
 import unittest
 from unittest.mock import patch
@@ -30,6 +32,60 @@ import frp_cli_catalog as catalog
 
 
 class CliFeatureScenarioRemediation(unittest.TestCase):
+    def test_public_bulk_enrollment_bounded_tty_can_review_and_cancel(self):
+        master, slave = pty.openpty()
+        proc = subprocess.Popen(
+            ["bash", str(ROOT / "tools/drlink"), "set", "enrollment", "bulk"],
+            stdin=slave, stdout=slave, stderr=slave,
+            env=dict(os.environ, FRP_CTL_TEST_ROOT=self.tmp, FRP_CTL_BIN_DIR=str(ROOT / "tools")),
+        )
+        os.close(slave)
+        output = bytearray()
+        try:
+            os.write(master, b"1\n2\nreview-node\n\n\n1h\nn\n")
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                if select.select([master], [], [], 0.2)[0]:
+                    try:
+                        part = os.read(master, 65536)
+                    except OSError:
+                        break
+                    if not part:
+                        break
+                    output.extend(part)
+                if proc.poll() is not None:
+                    break
+            proc.wait(timeout=max(1, deadline - time.monotonic()))
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+            os.close(master)
+        text = output.decode("utf-8", "replace")
+        self.assertEqual(proc.returncode, 0, text)
+        self.assertIn("Count [1-10]", text)
+        self.assertIn("Cancelled.", text)
+        self.assertNotIn("--count", text)
+        self.assertNotIn("frp-enroll-bulk", text)
+        self.assertFalse((Path(self.tmp) / "var/lib/drlink/bootstrap").exists())
+
+    def test_public_help_allows_early_pipeline_close_without_traceback(self):
+        root = Path(self.tmp)
+        (root / "etc/drlink/config.json").unlink()
+        state = root / "etc/frp/client-state.json"
+        state.parent.mkdir(parents=True)
+        state.write_text('{"services":{}}\n')
+        env = dict(os.environ, FRP_CTL_TEST_ROOT=self.tmp)
+        for _ in range(3):
+            proc = subprocess.run(
+                ["bash", "-c", 'bash "$1" help commands | head -n 1',
+                 "pipeline-regression", str(ROOT / "tools/drlink")],
+                env=env, capture_output=True, text=True, timeout=30,
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertNotIn("BrokenPipeError", proc.stderr)
+            self.assertNotIn("Traceback", proc.stderr)
+
     def test_generated_enrollment_guidance_uses_agent_nouns(self):
         loader = importlib.machinery.SourceFileLoader(
             "enrollment_guidance_regression", str(ROOT / "tools/frp-create-client")

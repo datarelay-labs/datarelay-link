@@ -1701,12 +1701,26 @@ frp_systemd_supports_service_hardening() {
 frp_write_compatible_systemd_unit() {
   local src="$1" dest="$2"
   local tmp
-  if frp_systemd_supports_service_hardening; then
+  if frp_systemd_supports_service_hardening && [[ -z "${_FRP_COMPAT_PYTHON_BIN:-}" ]]; then
     install -m 0644 "$src" "$dest"
     return 0
   fi
   tmp="$(mktemp)"
-  grep -vE '^(NoNewPrivileges|ProtectSystem|ReadWritePaths|ReadOnlyPaths)=' "$src" >"$tmp"
+  if frp_systemd_supports_service_hardening; then
+    cp "$src" "$tmp"
+  else
+    grep -vE '^(NoNewPrivileges|ProtectSystem|ReadWritePaths|ReadOnlyPaths)=' "$src" >"$tmp"
+  fi
+  if [[ -n "${_FRP_COMPAT_PYTHON_BIN:-}" ]]; then
+    python3 - "$tmp" "$_FRP_COMPAT_PYTHON_BIN" <<'PY' || { rm -f "$tmp"; return 1; }
+import re, sys
+from pathlib import Path
+path = Path(sys.argv[1])
+text = re.sub(r'(?m)^(ExecStart(?:Pre)?=-?)/usr/bin/python3(?=\s)',
+              lambda match: match.group(1) + sys.argv[2], path.read_text())
+path.write_text(text)
+PY
+  fi
   install -m 0644 "$tmp" "$dest"
   rm -f "$tmp"
 }
@@ -1747,6 +1761,27 @@ frp_require_python() {
 frp_python_version_ok() {
   frp_command_exists python3 || return 1
   frp_invoke python3 -c "import sys; raise SystemExit(0 if sys.version_info >= (${FRP_PYTHON_MIN_MAJOR}, ${FRP_PYTHON_MIN_MINOR}) else 1)"
+}
+
+frp_select_compatible_python() {
+  # Existing EL8 maintenance must use its installed newer interpreter even
+  # before installer dependency setup. Selection is process-local: no shim or
+  # distribution interpreter is changed. Units pin the same durable binary.
+  local candidate bin
+  bin="$(type -P python3 2>/dev/null || true)"
+  if [[ -n "$bin" ]] && "$bin" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 7) else 1)' >/dev/null 2>&1; then
+    return 0
+  fi
+  for candidate in python3.13 python3.12 python3.11 python3.10 python3.9 python3.8 python3.7; do
+    bin="$(type -P "$candidate" 2>/dev/null || true)"
+    [[ -n "$bin" ]] || continue
+    if "$bin" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 7) else 1)' >/dev/null 2>&1; then
+      _FRP_COMPAT_PYTHON_BIN="$bin"
+      python3() { command "$_FRP_COMPAT_PYTHON_BIN" "$@"; }
+      return 0
+    fi
+  done
+  return 1
 }
 
 frp_el8_family() {
