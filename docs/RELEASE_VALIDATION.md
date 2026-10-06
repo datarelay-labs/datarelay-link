@@ -535,7 +535,7 @@ CLEANUP_RESIDUE_COUNT=0
 RUNTIME_MUTATION_ATTEMPT_COUNT=0
 ```
 
-For the unreleased/greenfield v2.4 CLI, compatibility-only aliases, root-bypass aliases, duplicate mutation routes, and executable obsolete hidden grammar are not accepted as release justification. If a future released version requires compatibility, each exception must be explicit, documented, bounded, and separately tested.
+For the current 3.0 CLI candidate, compatibility-only aliases, root-bypass aliases, duplicate mutation routes, and executable obsolete hidden grammar are not accepted as release justification unless an inherited compatibility path is explicit, bounded, documented, and separately tested. If a future released version requires compatibility, each exception must be explicit, documented, bounded, and separately tested.
 
 The reconciliation must treat installer completion output, generated enrollment instructions, contextual help, completion, diagnostics/update recommendations, error recovery, and active documentation command examples as part of the public surface. A feature is not considered reachable when its command exists but its required lifecycle variant is undiscoverable, when the advertised next action is obsolete/hidden, or when a recovery message does not name an actionable supported path.
 

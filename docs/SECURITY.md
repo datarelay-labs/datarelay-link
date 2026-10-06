@@ -25,7 +25,7 @@ Each plane has separate semantics but shares durable identity, revisions, audit,
 
 ## 2. Authoritative state
 
-The v2.4.0 target authoritative control-plane state is:
+The 3.0.0 authoritative control-plane state remains:
 
 ```text
 /var/lib/drlink/drlink.db
@@ -502,7 +502,7 @@ No fallback to legacy JSON authority is permitted in the stable target.
 
 ## 33. Release security gates
 
-v2.4.0 stable requires evidence for:
+3.0.0 stable inherits the v2.4 security baseline and requires evidence for:
 
 ```text
 SQLITE_INTEGRITY=PASS
@@ -530,8 +530,32 @@ ZERO_TOUCH_DOUBLE_USE_ATOMIC_DENY=PASS
 ZERO_TOUCH_RAW_SECRET_NOT_STORED=PASS
 SECRET_SCAN=PASS
 PUBLIC_METADATA_SCAN=PASS
+
+MANAGEMENT_SURFACE_CONTRACT=PASS
+MCP_CORE_SEMANTIC_PARITY=PASS
+PLUGIN_WEB_API_DEPENDENCY=NO
+TARGET_OS_PERMISSION_IMPLIES_MANAGEMENT_PERMISSION=NO
+WEB_AUTH_RBAC=PASS
+WEB_LOCAL_MFA=PASS
+WEB_LOCAL_RECOVERY=PASS
+WEB_SESSION_TIMEOUT_REVOCATION=PASS
+WEB_SSO_IDP_DEPENDENCY=NO
+WEB_FAILURE_ISOLATION=PASS
+AUDIT_CONTROL_TXN_ATOMICITY=PASS
+AUDIT_ACCESS_DURABLE_ENQUEUE=PASS
+AUDIT_INGEST_DEDUP_CHECKPOINT=PASS
+AUDIT_SPOOL_BACKPRESSURE=PASS
+AUDIT_PENDING_SPOOL_BACKUP_RESTORE=PASS
+EGRESS_SQLITE_WRITE_ACCESS=NO
+BACKUP_RESTORE_3_0=PASS
+SECURITY_REVIEW=PASS
 ```
 
-For the v2.4 stable target, Zero-Touch bootstrap tickets are unique single-use credentials whose raw value is displayed only at issuance. Server-side persistent state stores a verifier/hash plus lifecycle metadata rather than a redisplayable raw ticket. Post-success reuse is classified as `BOOTSTRAP_TICKET_USED`, and concurrent double-use must have exactly one successful consumer.
+`SECURITY_REVIEW=PASS` is a release-review disposition, not a substitute for the individual
+gates above. It may be recorded only after the exact candidate's deterministic security
+regressions, artifact/provenance checks, and applicable real E2E gates have been reviewed
+with no unresolved P0/P1 or user-blocking P2 finding.
+
+For the 3.0 stable target, Zero-Touch bootstrap tickets remain unique single-use credentials whose raw value is displayed only at issuance. Server-side persistent state stores a verifier/hash plus lifecycle metadata rather than a redisplayable raw ticket. Post-success reuse is classified as `BOOTSTRAP_TICKET_USED`, and concurrent double-use must have exactly one successful consumer.
 
 Manual Enrollment Codes are likewise not reusable as fresh-install credentials after a successful enrollment. Current clients bind crash-safe enrollment recovery to the original per-install operation plus the established management identity and service set; a new install/reinstall operation must use a newly issued Enrollment Code. The local pending-enrollment record may replay only the original request after a lost response or interruption, preserving idempotent recovery without reopening a consumed Code as authorization.

@@ -253,7 +253,7 @@ STATUS_DOC_RUNTIME_MISMATCH_COUNT=
 CLEANUP_RESIDUE_COUNT=
 ~~~
 
-A stable candidate requires `CLI_PRODUCT_SURFACE_RECONCILIATION=PASS`. For the unreleased/greenfield v2.4 CLI, every applicable gap/mismatch/duplicate/compatibility/discovery/dead-end/confirmation/document-example/cleanup counter above must be zero unless the entry is an explicitly justified installer-only lifecycle. Any P0/P1 or user-blocking P2 found here blocks candidate freeze even if Full User E2E is otherwise green.
+A stable candidate requires `CLI_PRODUCT_SURFACE_RECONCILIATION=PASS`. For the current 3.0 CLI candidate, every applicable gap/mismatch/duplicate/compatibility/discovery/dead-end/confirmation/document-example/cleanup counter above must be zero unless the entry is an explicitly justified installer-only lifecycle. Any P0/P1 or user-blocking P2 found here blocks candidate freeze even if Full User E2E is otherwise green.
 
 ## 5. Mandatory scenario matrix
 

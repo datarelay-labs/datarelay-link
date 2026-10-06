@@ -271,7 +271,7 @@ Primary inputs:
 Runtime existence does not make a command canonical.
 A hidden parser path is not acceptable merely because it works.
 A stale document cannot override the current product authority.
-For unreleased/greenfield v2.4, do not invent compatibility requirements.
+For the current 3.0 candidate, do not invent compatibility-only CLI requirements; retain the v2.4 public grammar only where 3.0 explicitly carries it forward.
 
 ## 4. Onboarding — active repository
 

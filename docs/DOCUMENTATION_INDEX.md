@@ -1,7 +1,7 @@
 # Data Relay Link — Documentation Index
 
 > **Purpose:** Identify the authoritative specification for each product area and prevent historical/internal documents from being mistaken for the current public contract.
-> **Target:** v2.4.0 development
+> **Target:** v3.0.0 development; v2.4 CLI/security foundations remain inherited where explicitly retained
 
 ## Authority order
 
@@ -36,6 +36,7 @@ External copies, Project/chat attachments, exported snapshots, and same-named do
 | Exhaustive AI-assisted command audit | `AI_ASSISTED_COMMAND_EXHAUSTIVE_AUDIT.md` |
 | Internal control-plane/schema history | `CONTROL_PLANE_ARCHITECTURE.md` |
 | Optional Full Web Management design | `WEB_MANAGEMENT.md` |
+| Modern SaaS Web UX / DR Control visual parity | `WEB_SAAS_UX_SYSTEM.md` |
 | 3.0 CLI/Web/MCP/Plugin management-surface contract | `MANAGEMENT_SURFACE_CONTRACT.md` |
 
 ## Operator lifecycle documents
@@ -85,7 +86,7 @@ Together, a clean `CLI_FEATURE_SCENARIO_RECONCILIATION=PASS` and `FULL_USER_E2E=
 - `WINDOWS_CLIENT_DESIGN.md` — platform design notes; public command behavior remains governed by the CLI/AI Master.
 - `PRIVILEGE_SEPARATION_DEFERRED.md` — deferred privilege-separation record for the current v2.4 target. v2.3.1 was not manufactured.
 
-## Current v2.4 public model
+## Current 3.0 public model
 
 ```text
 Managed Host / DRLink Agent
@@ -104,8 +105,13 @@ AI Access
 BLACKLIST / WHITELIST
 
 ConfigurationBundle
+
+Optional Web Management 3.0
+Management Core shared by CLI / Web / MCP projections
 ```
 
+The 3.0 CLI keeps the v2.4 action-first public grammar as its baseline while adding the
+3.0 management/Web capabilities defined by the management-surface and Web contracts.
 Public command examples should use `drlink`, not internal `frp-*` helpers.
 
 ## Engineering development standard
