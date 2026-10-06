@@ -8,6 +8,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = (ROOT / "web/src/main.tsx").read_text(encoding="utf-8")
 CSS = (ROOT / "web/dist/styles.css").read_text(encoding="utf-8")
+PACKAGE = (ROOT / "web/package.json").read_text(encoding="utf-8")
+PACKAGE_LOCK = (ROOT / "web/package-lock.json").read_text(encoding="utf-8")
 UX = (ROOT / "docs/WEB_SAAS_UX_SYSTEM.md").read_text(encoding="utf-8")
 
 
@@ -108,6 +110,9 @@ class V30WebSaasUxContractTests(unittest.TestCase):
             "HealthWorkspace",
             "Advanced · raw health payload",
             "temporary setup key is not active until you verify",
+            "QRCodeSVG",
+            "1. Scan the QR code",
+            "Nothing is sent to an external QR service",
             "/api/v1/auth/mfa/enroll/cancel",
             "Show key",
             "Recovery codes are issued only after verification succeeds",
@@ -118,8 +123,12 @@ class V30WebSaasUxContractTests(unittest.TestCase):
             ".dr-audit-filter-grid",
             ".dr-health-summary",
             ".dr-mfa-secret-row",
+            ".dr-mfa-qr-panel",
         ):
             self.assertIn(style_marker, CSS)
+        self.assertIn('"qrcode.react"', PACKAGE)
+        self.assertIn('"node_modules/qrcode.react"', PACKAGE_LOCK)
+        self.assertIn('"version": "4.2.0"', PACKAGE_LOCK)
 
     def test_responsive_and_keyboard_contract_is_present(self):
         for marker in (

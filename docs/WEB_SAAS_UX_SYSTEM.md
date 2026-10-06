@@ -296,9 +296,11 @@ Owner browser review fixes completed in the current implementation cycle:
   rows instead of mixed-width toolbar wrapping;
 - Health replaced raw-JSON-first presentation with structured Core / DB / policy-plane /
   job-capacity views; raw payload is now an explicit advanced disclosure only;
-- MFA enrollment treats the setup secret as an ephemeral challenge: the raw key is hidden
-  by default, recovery codes appear only after successful verification, and Cancel setup
-  immediately revokes the pending challenge so the next login receives a different key.
+- MFA enrollment is QR-first and keeps the setup secret ephemeral: the QR is rendered
+  locally from the temporary `otpauth://` challenge with no external QR service, the raw
+  fallback key is hidden by default with explicit reveal/copy, recovery codes appear only
+  after successful verification, and Cancel setup immediately revokes the pending challenge
+  so the next login receives a different key.
 
 Current evidence state:
 
