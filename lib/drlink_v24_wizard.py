@@ -6,6 +6,7 @@ Inline Object drafts are part of the same Change Plan as the parent Wizard.
 """
 from __future__ import annotations
 
+import getpass
 import os
 import re
 import sys
@@ -46,6 +47,9 @@ class WizardIO:
     def ask(self, prompt: str = "") -> str:
         raise NotImplementedError
 
+    def ask_secret(self, prompt: str = "") -> str:
+        return self.ask(prompt)
+
     def is_interactive(self) -> bool:
         return True
 
@@ -58,6 +62,12 @@ class TtyIO(WizardIO):
     def ask(self, prompt: str = "") -> str:
         try:
             return input(prompt)
+        except (EOFError, KeyboardInterrupt) as exc:
+            raise WizardCancelled() from exc
+
+    def ask_secret(self, prompt: str = "") -> str:
+        try:
+            return getpass.getpass(prompt)
         except (EOFError, KeyboardInterrupt) as exc:
             raise WizardCancelled() from exc
 
