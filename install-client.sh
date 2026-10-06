@@ -717,10 +717,10 @@ frp_client_main() {
   SERVICES_FILE="$(mktemp)"
   ALLOCATED_FILE="$(mktemp)"
   ENROLL_META_FILE="$(mktemp)"
-  TMPDIR="$(frp_secure_mktemp_dir)"
+  _FRP_CLIENT_ENROLL_TMPDIR="$(frp_secure_mktemp_dir)"
   chmod 600 "$SERVICES_FILE" "$ALLOCATED_FILE" "$ENROLL_META_FILE"
   _frp_client_enroll_tmp_cleanup() {
-    rm -rf "$TMPDIR" "$SERVICES_FILE" "$ALLOCATED_FILE" "$ENROLL_META_FILE"
+    rm -rf "$_FRP_CLIENT_ENROLL_TMPDIR" "$SERVICES_FILE" "$ALLOCATED_FILE" "$ENROLL_META_FILE"
     unset FRP_TOKEN ENROLL_SECRET FRP_ENROLLMENT_CODE TOKEN_CIPHERTEXT FRP_BOOTSTRAP_TICKET FRP_CLIENT_OPERATION_ID
   }
   # Sourced callers (tests, frpctl wrappers) already own EXIT. Replacing or
@@ -856,7 +856,7 @@ frp_client_main() {
   fi
 
   if [[ "${FRP_SKIP_DOWNLOAD:-}" != "1" ]]; then
-    ARCHIVE="$TMPDIR/frp.tar.gz"
+    ARCHIVE="$_FRP_CLIENT_ENROLL_TMPDIR/frp.tar.gz"
     if [[ -z "${ALLOCATOR_URL:-}" ]]; then
       frp_qualified_artifact_missing "$(frp_os)" "$FRP_ARCH"
       frp_emit_failure_class DOWNLOAD_FAILED
@@ -903,7 +903,7 @@ frp_client_main() {
         exit 1
       fi
     fi
-    extracted="$(frp_extract_frp_member "$ARCHIVE" "$TMPDIR" frpc)" || {
+    extracted="$(frp_extract_frp_member "$ARCHIVE" "$_FRP_CLIENT_ENROLL_TMPDIR" frpc)" || {
       frp_emit_failure_class STAGING_FAILED
       exit 1
     }

@@ -3,6 +3,10 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# A caller-provided standard temporary directory must survive sourced installer
+# success, rejection, and retry. Export it even when using the normal /tmp default.
+export TMPDIR="${TMPDIR:-/tmp}"
+CALLER_TMPDIR="$TMPDIR"
 WORKDIR="$(mktemp -d)"
 ALLOC_PID=""
 LISTEN_PID=""
@@ -897,6 +901,9 @@ run_zero_touch() {
   frp_client_main >"$out" 2>"${out%.out}.err" </dev/null
   rc=$?
   set -e
+  if [[ "$TMPDIR" != "$CALLER_TMPDIR" || ! -d "$CALLER_TMPDIR" ]]; then
+    fail "sourced installer changed or removed caller TMPDIR"
+  fi
   return "$rc"
 }
 

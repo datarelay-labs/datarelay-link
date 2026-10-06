@@ -309,11 +309,11 @@ def reject_obsolete_surface(tokens):
                        "For configuration history, use system revision <REVISION>." % focus[2],
         }
     if focus[:3] == ["system", "export", "configuration"] and any(
-        token.split("=", 1)[0] in ("--output", "-o") for token in focus[3:]
+        token.startswith("-") and token != "-" for token in focus[3:]
     ):
         return {
             "status": "error", "exit_code": 2,
-            "message": "Configuration export uses a positional file, not an output option.\n"
+            "message": "Configuration export uses a positional file, not command options.\n"
                        "Use system export configuration <FILE>.",
         }
     if focus[:2] == ["system", "revoke"]:

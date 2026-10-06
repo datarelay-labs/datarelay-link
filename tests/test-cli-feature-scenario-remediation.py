@@ -33,6 +33,43 @@ import frp_cli_catalog as catalog
 
 
 class CliFeatureScenarioRemediation(unittest.TestCase):
+    def test_export_nonpublic_options_reject_all_positions_and_surfaces(self):
+        for role in ("server", "client"):
+            for option in ("--scope", "--redacted", "--format=json", "--unknown", "--output", "-o"):
+                for arguments in ([option, "all"], ["config.yaml", option, "all"]):
+                    tokens = ["system", "export", "configuration"] + arguments
+                    for form in (tokens, tokens + ["?"], ["help"] + tokens):
+                        with self.subTest(role=role, form=form):
+                            result = grammar.match(form, role)
+                            self.assertEqual(result.get("status"), "error", result)
+                            self.assertEqual(result.get("exit_code"), 2, result)
+                            self.assertIn("system export configuration <FILE>", result["message"])
+                            self.assertNotIn("config.yaml all", result["message"])
+                    self.assertEqual(grammar.completion_candidates(
+                        " ".join(tokens) + " ", role, [], {}, []), [])
+            for filename in ("config.yaml", "./--scope", "-"):
+                self.assertIn(grammar.match(
+                    ["system", "export", "configuration", filename, "?"], role).get("status"), ("ok", "help"))
+
+    def test_native_export_option_questions_reject_without_creating_files(self):
+        for role in ("server", "client"):
+            with tempfile.TemporaryDirectory(prefix="drlink-export-questions-") as temp:
+                root = Path(temp)
+                config = root / ("etc/drlink/config.json" if role == "server" else "etc/frp/client-state.json")
+                config.parent.mkdir(parents=True)
+                config.write_text('{"role":"server"}\n' if role == "server" else '{"services":{}}\n')
+                before = {str(p.relative_to(root)): p.read_bytes() for p in root.rglob('*') if p.is_file()}
+                env = dict(os.environ, FRP_CTL_TEST_ROOT=temp, FRP_DEPLOY_TEST_ROOT=temp)
+                for arguments in (["--scope", "all"], ["config.yaml", "--scope", "all"], ["--redacted"]):
+                    for prefix, suffix in (([], ["?"]), (["help"], [])):
+                        tokens = prefix + ["system", "export", "configuration"] + arguments + suffix
+                        with self.subTest(role=role, tokens=tokens):
+                            proc = subprocess.run(["bash", str(ROOT / "tools/drlink")] + tokens,
+                                                  cwd=temp, env=env, capture_output=True, text=True, timeout=30)
+                            self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+                            self.assertIn("system export configuration <FILE>", proc.stdout + proc.stderr)
+                self.assertEqual(before, {str(p.relative_to(root)): p.read_bytes() for p in root.rglob('*') if p.is_file()})
+
     def test_obsolete_update_check_option_rejects_every_prefix_and_surface(self):
         for role in ("server", "client"):
             for target in ([], ["product"], ["engine"], ["check-engine"]):
