@@ -342,11 +342,19 @@ frpctl_run() {
   # prompt. Always sanitize captured stderr so public failures never leak
   # backend argparse / frp-* command names.
   if [[ -t 0 && -t 1 && -z "${FRP_CTL_TEST_INPUT:-}" ]]; then
-    "$bin" "$@"
+    if [[ "$name" == "frp-support-bundle" ]]; then
+      python3 "$bin" "$@"
+    else
+      "$bin" "$@"
+    fi
     return $?
   fi
   err="$(mktemp)"
-  "$bin" "$@" 2>"$err"
+  if [[ "$name" == "frp-support-bundle" ]]; then
+    python3 "$bin" "$@" 2>"$err"
+  else
+    "$bin" "$@" 2>"$err"
+  fi
   rc=$?
   if [[ -s "$err" ]]; then
     frpctl_sanitize_backend_stream <"$err" >&2 || cat "$err" >&2

@@ -481,6 +481,52 @@ print('ok')
 PY
 pass "FRPCTL_GRAMMAR"
 
+# Rocky Linux 8 compatibility: sudo secure_path can resolve unversioned python3
+# to Python 3.6. frpctl must route the Python support-bundle entrypoint through
+# its >=3.7 resolver instead of executing the shebang with that interpreter.
+COMPAT_BIN="$WORKDIR/python-compat-bin"
+COMPAT_HELPERS="$WORKDIR/python-compat-helpers"
+mkdir -p "$COMPAT_BIN" "$COMPAT_HELPERS"
+cat >"$COMPAT_BIN/python3" <<'SH'
+#!/usr/bin/env sh
+if [ "${1:-}" = "-c" ]; then
+  exit 1
+fi
+echo "ERROR: incompatible unversioned python3 was used" >&2
+exit 91
+SH
+chmod +x "$COMPAT_BIN/python3"
+REAL_TEST_PYTHON="$(command -v python3)"
+for minor in 13 12 11 10 9 8 7; do
+  ln -s "$REAL_TEST_PYTHON" "$COMPAT_BIN/python3.$minor"
+done
+cat >"$COMPAT_HELPERS/frp-support-bundle" <<'PYCODE'
+#!/usr/bin/env python3
+from __future__ import annotations
+import sys
+if sys.version_info < (3, 7):
+    raise SystemExit(92)
+print("COMPAT_SUPPORT_BUNDLE_OK")
+PYCODE
+chmod +x "$COMPAT_HELPERS/frp-support-bundle"
+(
+  export FRP_CTL_SOURCED=1
+  # shellcheck source=../tools/frpctl
+  . "$ROOT/tools/frpctl"
+  export FRP_CTL_BIN_DIR="$COMPAT_HELPERS"
+  unset FRP_PYTHON _FRPCTL_PYTHON || true
+  export PATH="$COMPAT_BIN:/usr/bin:/bin"
+  frpctl_run frp-support-bundle
+) >"$WORKDIR/python-compat.out" 2>"$WORKDIR/python-compat.err" || {
+  cat "$WORKDIR/python-compat.out" "$WORKDIR/python-compat.err" >&2
+  fail "support-bundle did not use compatible Python resolver"
+}
+grep -q '^COMPAT_SUPPORT_BUNDLE_OK$' "$WORKDIR/python-compat.out" \
+  || fail "support-bundle compatible Python marker missing"
+! grep -q 'incompatible unversioned python3' "$WORKDIR/python-compat.err" \
+  || fail "support-bundle used incompatible unversioned python3"
+pass "FRPCTL_SUPPORT_BUNDLE_PYTHON_COMPAT"
+
 # Target health: built from registry/client health_check state (not legacy helper files).
 assert_member "$ARCHIVE_SERVER" "target-health/from-state.json"
 tar -xOzf "$ARCHIVE_SERVER" target-health/from-state.json | grep -q 'health_check' \
