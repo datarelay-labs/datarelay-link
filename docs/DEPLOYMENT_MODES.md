@@ -153,7 +153,7 @@ the distro unit. Uninstall never enables or starts distro `nginx.service`.
 
 ## TLS termination (single-443)
 
-- Clients open TLS to public TCP/443 (looks like HTTPS).
+- Managed Hosts (DRLink Agents) open TLS to public TCP/443 (looks like HTTPS).
 - nginx presents the existing project `server.crt` / `server.key` under the
   existing private CA.
 - `/ca.crt`, `/healthz`, `/enroll`, and `/bootstrap/redeem` are an nginx
