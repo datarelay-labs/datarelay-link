@@ -35,7 +35,7 @@ def _agent_service_status(plane, row, runtime_level):
         return 'DISABLED'
     from drlink_agent_lifecycle import load_lifecycle_intent
     if load_lifecycle_intent(plane.root) == 'paused':
-        return 'PAUSED'
+        return 'DEGRADED'
     stored = str(row['status'] or 'DEGRADED')
     if stored == 'HEALTHY' and (not row['runtime_verified'] or runtime_level != 'Healthy'):
         return 'DEGRADED'
@@ -643,7 +643,10 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
                 "YES" if row["enabled"] else "NO",
             )
         )
-        if row["reason"]:
+        from drlink_agent_lifecycle import load_lifecycle_intent
+        if row['enabled'] and load_lifecycle_intent(plane.root) == 'paused':
+            sys.stdout.write('Reason: Agent runtime is intentionally paused.\n')
+        elif row["reason"]:
             sys.stdout.write("Reason: %s\n" % row["reason"])
             reason = str(row["reason"]).strip().lower()
             if (

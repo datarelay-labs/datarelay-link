@@ -483,7 +483,10 @@ class AgentShowStatusRuntime(_Base):
         for tokens in (('show', 'remote-services'), ('show', 'remote-service', 'paused-web')):
             rc, out, err = self._run(*tokens)
             self.assertEqual(rc, 0, err)
-            self.assertIn('PAUSED', out)
+            self.assertIn('DEGRADED', out)
+            self.assertNotIn('Status: PAUSED', out)
+            if len(tokens) == 3:
+                self.assertIn('Reason: Agent runtime is intentionally paused.', out)
             self.assertNotIn('HEALTHY', out)
             self.assertIn('203.0.113.31:6001', out)
             self.assertNotIn('127.0.0.1:6001', out)
