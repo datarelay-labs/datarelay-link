@@ -56,6 +56,13 @@ class EmptyStateCliTests(unittest.TestCase):
                 self.assertIn(marker, out)
                 self.assertEqual(err, "")
 
+    def test_missing_managed_host_uses_public_terminology(self):
+        rc, out, err = self.dispatch(["show", "managed-host", "missing-host"])
+        self.assertNotEqual(rc, 0)
+        self.assertEqual(out, "")
+        self.assertIn("Managed Host not found: missing-host", err)
+        self.assertNotIn("client not found", err.lower())
+
     def test_policy_and_ai_log_empty_states_are_explicit(self):
         self.plane.conn.execute(
             "UPDATE access_policies SET mode = 'blacklist', enforcement = 'enabled' "
