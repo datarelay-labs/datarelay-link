@@ -946,7 +946,7 @@ class ControlPlane:
     def require_client(self, selector: str) -> sqlite3.Row:
         row = self.get_client(selector)
         if row is None:
-            raise ControlPlaneError("client not found: %s" % selector)
+            raise ControlPlaneError("Managed Host not found: %s" % selector)
         return row
 
     def resolve_ref(self, token: str) -> tuple[str, sqlite3.Row]:

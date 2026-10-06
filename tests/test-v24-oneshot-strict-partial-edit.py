@@ -324,6 +324,8 @@ class OneshotStrictPartialEdit(unittest.TestCase):
         text_ai = catalog.domain_help("ai-access", role="server")
         self.assertIn("set network-object <NAME> value <VALUE>", text_no)
         self.assertIn("set service-object <NAME> port <PORT>", text_so)
+        self.assertIn("6200-6299", text_so)
+        self.assertIn("100 endpoints", text_so)
         self.assertIn("set ai-access <RULE> enabled|disabled", text_ai)
 
 

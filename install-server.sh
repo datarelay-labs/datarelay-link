@@ -3048,9 +3048,24 @@ Backup:
 EOF2
 }
 
+frp_server_usage() {
+  cat <<'EOF'
+Usage:
+  sudo ./install-server.sh
+  sudo ./install-server.sh --upgrade [--check|--dry-run] [--source DIR]
+  ./install-server.sh --help
+
+Options:
+  -h, --help   Show this help and exit without changing the system.
+EOF
+}
+
 # Executed-as-program path must ignore leaked FRP_SERVER_SOURCED from sourced tests.
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
-  if [[ "${1:-}" == "--upgrade" || "${1:-}" == "upgrade" ]]; then
+  if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+    frp_server_usage
+    exit 0
+  elif [[ "${1:-}" == "--upgrade" || "${1:-}" == "upgrade" ]]; then
     shift
     FRP_SERVER_UPGRADE_CHECK=0
     FRP_SERVER_UPGRADE_SOURCE="$BASE_DIR"
