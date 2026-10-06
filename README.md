@@ -303,7 +303,7 @@ Repository: [`datarelay-labs/datarelay-link`](https://github.com/datarelay-labs/
 
 Following mutable `main` is not a normal install or update path. Development and pre-release validation use an exact immutable source SHA or an explicitly qualified candidate artifact.
 
-Development-channel install/update is explicit operator opt-in only. Operators who intentionally need that path must set `FRP_RELEASE_CHANNEL=dev` (with the expected development provenance, typically `FRP_EXPECTED_SOURCE_REF=main`) against a verified immutable candidate — see `docs/FRP_UPGRADE.md`. That is not the normal stable install or update path.
+Development-channel install/update is explicit operator opt-in only. Select `FRP_RELEASE_CHANNEL=development` and bind both `FRP_EXPECTED_SOURCE_REF` and `FRP_EXPECTED_SOURCE_HEAD` to the verified candidate's full 40-character SHA. For a qualified local checkout, use the canonical installer's state-preserving `--upgrade --source DIR` path described in `docs/FRP_UPGRADE.md`. Public product updates use the installed channel and verified artifact metadata.
 
 A legacy client on an older updater may require a one-time verified bridge; that compatibility mechanism does not replace the current immutable-source update policy.
 

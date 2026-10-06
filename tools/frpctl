@@ -1562,7 +1562,7 @@ frpctl_try_read() {
       return 1
     fi
   else
-    echo "ERROR: no TTY for interactive menu; pass a command such as: ${FRP_CTL_CMD_NAME} status" >&2
+    echo "ERROR: no TTY for interactive menu; pass a command such as: ${FRP_CTL_CMD_NAME} show status" >&2
     return 1
   fi
   printf '%s' "$value"

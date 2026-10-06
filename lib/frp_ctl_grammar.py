@@ -290,6 +290,45 @@ def reject_obsolete_surface(tokens):
         return None
     raw = [str(t) for t in tokens]
     verb = raw[0]
+    # Reject retired nested forms before help or legacy system fallthrough
+    # can turn them into an executable operation or successful discovery.
+    focus = raw[1:] if verb == "help" else raw
+    if focus[:3] == ["system", "audit", "ai-principal"]:
+        return {
+            "status": "error", "exit_code": 2,
+            "message": "Retired AI Principal audit selector is not public grammar.\n"
+                       "Use show ai-access-log identity <IDENTITY> or system audit.",
+        }
+    if focus[:2] == ["system", "revoke"]:
+        return {
+            "status": "error", "exit_code": 2,
+            "message": "Retired system revoke is not a public command.\n"
+                       "Use unset enrollment <ID> or reference-safe unset managed-host <HOST>.\n"
+                       "See: help commands",
+        }
+    if focus[:2] == ["system", "update"] and len(focus) >= 3:
+        target = focus[2]
+        if target in ("project", "frp"):
+            current = "product" if target == "project" else "engine"
+            return {
+                "status": "error", "exit_code": 2,
+                "message": "Retired update target '%s'.\nUse system update %s.\n"
+                           "For a read-only upstream check on the Server, use system update check-engine."
+                           % (target, current),
+            }
+        if target in ("product", "engine") and any(t.split("=", 1)[0] == "--check" for t in focus[3:]):
+            return {
+                "status": "error", "exit_code": 2,
+                "message": "--check is not a public update option.\n"
+                           "system update product and system update engine authorize software updates.\n"
+                           "For a read-only upstream check on the Server, use system update check-engine.",
+            }
+    if focus[:2] == ["system", "uninstall"] and any(t.split("=", 1)[0] == "--yes" for t in focus[2:]):
+        return {
+            "status": "error", "exit_code": 2,
+            "message": "--yes is not a public uninstall option.\n"
+                       "Run system uninstall and review its explicit y/N confirmation (default No).",
+        }
     if verb == "help" and len(raw) >= 2 and raw[1] == "legacy":
         return {
             "status": "error",
@@ -725,6 +764,9 @@ def missing_client_help(usage_lines, names=None, tip="Press Tab after \"show cli
 
 def help_text(tokens, role):
     tokens = [t for t in tokens if t and t != "help"]
+    rejected = reject_obsolete_surface(["help"] + tokens)
+    if rejected is not None:
+        return "Unknown help topic: %s\n\n%s\n" % (" ".join(tokens), rejected["message"])
     client, server = _role_parts(role)
     if not tokens:
         return _root_help(role)
@@ -1306,6 +1348,9 @@ def context_help(tokens, role, names=None, clients=None):
     """Enter-submitted '?' help. Tab must never call this."""
     client, server = _role_parts(role)
     tokens = [t for t in (tokens or []) if t != "?"]
+    rejected = reject_obsolete_surface(tokens)
+    if rejected is not None:
+        return rejected["message"]
     if not tokens:
         return _concise_root(role)
     hidden_roots = {
@@ -1955,18 +2000,6 @@ def _machine_allowed_flags(tokens):
     allowed = set()
     if toks and toks[0] == "doctor":
         allowed.update({"--json", "--verbose"})
-    if toks[:2] in (
-        ["update", "product"],
-        ["update", "engine"],
-        ["update", "project"],
-        ["update", "frp"],
-    ) or toks[:3] in (
-        ["system", "update", "product"],
-        ["system", "update", "engine"],
-        ["system", "update", "project"],
-        ["system", "update", "frp"],
-    ):
-        allowed.add("--check")
     if toks[:1] == ["release-client"] or toks[:2] == ["release", "client"]:
         allowed.add("--yes")
     # Flag allowlisting must use the canonical public path only. Alias lookup
@@ -4205,6 +4238,8 @@ def completion_candidates(
     try:
         tokens = tokenize(line)
     except ParseError:
+        return []
+    if reject_obsolete_surface(tokens) is not None:
         return []
     if trailing is None:
         trailing = bool(line) and line[-1] in " \t"

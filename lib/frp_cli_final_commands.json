@@ -853,20 +853,7 @@
     "risk": "outage",
     "confirmation": "none",
     "surface": "",
-    "flags": [
-      {
-        "name": "--check",
-        "arity": 0,
-        "choices": [],
-        "hidden": true,
-        "required": false,
-        "description": "",
-        "metavar": "",
-        "examples": [],
-        "effect": "",
-        "risk": ""
-      }
-    ]
+    "flags": []
   },
   {
     "path": [
@@ -893,20 +880,7 @@
     "risk": "outage",
     "confirmation": "none",
     "surface": "",
-    "flags": [
-      {
-        "name": "--check",
-        "arity": 0,
-        "choices": [],
-        "hidden": true,
-        "required": false,
-        "description": "",
-        "metavar": "",
-        "examples": [],
-        "effect": "",
-        "risk": ""
-      }
-    ]
+    "flags": []
   },
   {
     "path": [
@@ -1260,20 +1234,7 @@
     "risk": "irreversible",
     "confirmation": "y_n",
     "surface": "",
-    "flags": [
-      {
-        "name": "--yes",
-        "arity": 0,
-        "choices": [],
-        "hidden": true,
-        "required": false,
-        "description": "Skip interactive confirmation",
-        "metavar": "",
-        "examples": [],
-        "effect": "Skips y/N confirmation for complete local uninstall",
-        "risk": "irreversible"
-      }
-    ]
+    "flags": []
   },
   {
     "path": [

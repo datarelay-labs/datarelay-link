@@ -247,7 +247,7 @@ unset FRP_RELEASE_CHANNEL FRP_CLIENT_UPDATE_SHA256 FRP_RELEASE_SHA256SUMS_FILE |
 
 snapshot_preserved_state "$CLIENT" "$WORKDIR/runtime.before"
 CHECK_TOOL_SHA="$(sha "$CLIENT/usr/local/bin/drlink")"
-"$CLIENT/usr/local/bin/drlink" system update product --check >"$WORKDIR/check.out" 2>"$WORKDIR/check.err"
+"$CLIENT/usr/local/lib/drlink/frp-client" update --check >"$WORKDIR/check.out" 2>"$WORKDIR/check.err"
 grep -q 'Update                    : available' "$WORKDIR/check.out" || fail "same-version build not available"
 grep -q 'Installed project version :' "$WORKDIR/check.out" || fail "check missing installed version"
 grep -q 'Target project version    :' "$WORKDIR/check.out" || fail "check missing target version"
@@ -279,7 +279,7 @@ fi
 pass "REMOTE_INSTALLED_CLIENT_UPDATE"
 pass "DEV_MAIN_UPDATE"
 pass "SHA256_VALID"
-"$CLIENT/usr/local/bin/drlink" system update product --check >"$WORKDIR/same-build-check.out" 2>"$WORKDIR/same-build-check.err"
+"$CLIENT/usr/local/lib/drlink/frp-client" update --check >"$WORKDIR/same-build-check.out" 2>"$WORKDIR/same-build-check.err"
 grep -q "Installed bundle SHA256   : ${B_SHA}" "$WORKDIR/same-build-check.out" || fail "same-build installed sha"
 grep -q "Target bundle SHA256      : ${B_SHA}" "$WORKDIR/same-build-check.out" || fail "same-build target sha"
 grep -q 'Update                    : not needed' "$WORKDIR/same-build-check.out" || fail "same verified build should be not needed"
@@ -321,7 +321,7 @@ pass "STABLE_IMMUTABLE_DEFAULT_URLS"
 
 : >"$MOCK_CURL_LOG"
 if FRP_CLIENT_LIB="$CLIENT/usr/local/lib/drlink/frp-client-common.sh" \
-  "$CLIENT/usr/local/bin/drlink" system update product --check \
+  "$CLIENT/usr/local/lib/drlink/frp-client" update --check \
   >"$WORKDIR/stable-check.out" 2>"$WORKDIR/stable-check.err"; then
   fail "stable expected channel must not accept a dev Server-local candidate"
 fi
@@ -404,7 +404,7 @@ SINGLE443_STATE_SHA="$(sha "$SINGLE443_CLIENT/etc/frp/client-state.json")"
 : >"$MOCK_CURL_LOG"
 FRP_CLIENT_TEST_ROOT="$SINGLE443_CLIENT" FRP_CTL_TEST_ROOT="$SINGLE443_CLIENT" \
   FRP_CLIENT_LIB="$SINGLE443_CLIENT/usr/local/lib/drlink/frp-client-common.sh" \
-  "$SINGLE443_CLIENT/usr/local/bin/drlink" system update product --check \
+  "$SINGLE443_CLIENT/usr/local/lib/drlink/frp-client" update --check \
   >"$WORKDIR/single443-server-local-check.out" 2>"$WORKDIR/single443-server-local-check.err"
 grep -qx 'https://allocator.example.test/artifacts/manifest.json' "$MOCK_CURL_LOG" \
   || fail "single443 update manifest did not use public frontend origin"
@@ -422,7 +422,7 @@ pass "SINGLE443_UPDATE_CHECK_READONLY"
 
 : >"$MOCK_CURL_LOG"
 FRP_CLIENT_LIB="$CLIENT/usr/local/lib/drlink/frp-client-common.sh" \
-  "$CLIENT/usr/local/bin/drlink" system update product --check \
+  "$CLIENT/usr/local/lib/drlink/frp-client" update --check \
   >"$WORKDIR/server-local-check.out" 2>"$WORKDIR/server-local-check.err"
 grep -q 'Update                    : available' "$WORKDIR/server-local-check.out" || fail "server-local check availability"
 grep -q "Target source ref         : ${LOCAL_REF}" "$WORKDIR/server-local-check.out" || fail "server-local exact source ref"

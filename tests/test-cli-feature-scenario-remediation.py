@@ -32,6 +32,88 @@ import frp_cli_catalog as catalog
 
 
 class CliFeatureScenarioRemediation(unittest.TestCase):
+    def test_retired_nested_system_variants_never_dispatch(self):
+        retired = [
+            ["system", "update", "project"],
+            ["system", "update", "frp"],
+            ["system", "update", "product", "--check"],
+            ["system", "update", "engine", "--check"],
+            ["system", "revoke", "example-host"],
+            ["system", "revoke", "client", "example-host"],
+            ["system", "revoke", "enrollment", "example-id"],
+            ["system", "uninstall", "--yes"],
+            ["system", "audit", "ai-principal", "example-ai"],
+        ]
+        for role in ("server", "client"):
+            for tokens in retired:
+                for form in (tokens, tokens + ["?"], ["help"] + tokens):
+                    with self.subTest(role=role, form=form):
+                        result = grammar.match(form, role)
+                        self.assertEqual(result.get("status"), "error", result)
+                        self.assertEqual(result.get("exit_code"), 2, result)
+                        self.assertIn("system" if tokens[1] != "revoke" else "unset",
+                                      result.get("message", ""))
+                self.assertEqual(grammar.completion_candidates(
+                    " ".join(tokens) + " ", role, [], {}, []), [])
+        for role in ("server", "client"):
+            self.assertEqual(grammar.match(["system", "update", "product"], role)["action"],
+                             "update_project")
+            self.assertEqual(grammar.match(["system", "update", "engine"], role)["action"],
+                             "update_frp")
+            self.assertEqual(grammar.match(["system", "uninstall"], role)["action"],
+                             "system_uninstall")
+        self.assertEqual(grammar.match(["system", "update", "check-engine"], "server")["status"], "ok")
+        self.assertEqual(grammar.match(["system", "update", "check-engine"], "client")["status"], "role")
+
+    def test_public_uninstall_default_no_preserves_local_state(self):
+        root = Path(self.tmp)
+        uninstaller = root / "usr/local/lib/drlink/uninstall-server.sh"
+        uninstaller.parent.mkdir(parents=True)
+        marker = root / "uninstaller-called"
+        uninstaller.write_text("#!/bin/sh\n: > '" + str(marker) + "'\n")
+        config = root / "etc/drlink/config.json"
+        before = config.read_bytes()
+        master, slave = pty.openpty()
+        proc = subprocess.Popen(
+            ["bash", str(ROOT / "tools/drlink"), "system", "uninstall"],
+            stdin=slave, stdout=slave, stderr=slave,
+            env=dict(os.environ, FRP_CTL_TEST_ROOT=self.tmp),
+        )
+        os.close(slave)
+        output = bytearray()
+        try:
+            os.write(master, b"\n")
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                if select.select([master], [], [], 0.2)[0]:
+                    try:
+                        data = os.read(master, 65536)
+                    except OSError:
+                        break
+                    output.extend(data)
+                if proc.poll() is not None:
+                    break
+            proc.wait(timeout=max(1, deadline - time.monotonic()))
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+            os.close(master)
+        text = output.decode("utf-8", "replace")
+        self.assertEqual(proc.returncode, 0, text)
+        self.assertIn("Cancelled.", text)
+        self.assertFalse(marker.exists())
+        self.assertEqual(config.read_bytes(), before)
+        no_tty = subprocess.run(
+            ["bash", str(ROOT / "tools/drlink"), "system", "uninstall"],
+            input="", capture_output=True, text=True, timeout=30,
+            env=dict(os.environ, FRP_CTL_TEST_ROOT=self.tmp),
+        )
+        self.assertNotEqual(no_tty.returncode, 0)
+        self.assertIn("drlink show status", no_tty.stderr)
+        self.assertFalse(marker.exists())
+        self.assertEqual(config.read_bytes(), before)
+
     def test_public_bulk_enrollment_bounded_tty_can_review_and_cancel(self):
         master, slave = pty.openpty()
         proc = subprocess.Popen(
