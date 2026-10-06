@@ -47,11 +47,11 @@ pq_ssh "$SERVER" "sudo drlink system version" >"$OUT/v240-version.txt" 2>&1
 grep -q '2\.4\.0' "$OUT/v240-version.txt" || fail_out "installed prior runtime is not v2.4.0"
 pq_gate V240_VERSION_IDENTITY PASS
 # Seed durable v2.4 state exclusively through public CLI.
-pq_ssh "$SERVER" "sudo drlink egress create upgrade-preserve --description upgrade-preserve && sudo drlink egress add-source upgrade-preserve 198.51.100.10/32 && sudo drlink egress add-destination upgrade-preserve example.com 443" >"$OUT/v240-seed.log" 2>&1
+pq_ssh "$SERVER" "sudo drlink set network-object upgrade-src type ip value 198.51.100.10 && sudo drlink set network-object upgrade-dst type ip value 198.51.100.20 && sudo drlink set service-object upgrade-ssh type tcp port 22 && sudo drlink set remote-access upgrade-preserve mode whitelist source upgrade-src destination upgrade-dst service upgrade-ssh enabled" >"$OUT/v240-seed.log" 2>&1
 # Backup + isolated validation before upgrade.
-pq_ssh "$SERVER" "sudo drlink backup create /var/tmp/drlink-v240-upgrade-backup.tar.gz" >"$OUT/v240-backup.log" 2>&1
+pq_ssh "$SERVER" "sudo drlink system backup /var/tmp/drlink-v240-upgrade-backup.tar.gz" >"$OUT/v240-backup.log" 2>&1
 pq_gate V240_BACKUP PASS
-pq_ssh "$SERVER" "sudo test -s /var/tmp/drlink-v240-upgrade-backup.tar.gz" >"$OUT/v240-backup-validate.log" 2>&1
+pq_ssh "$SERVER" "sudo drlink system backup validate /var/tmp/drlink-v240-upgrade-backup.tar.gz" >"$OUT/v240-backup-validate.log" 2>&1
 pq_gate V240_BACKUP_RESTORABLE PASS
 # Stage and upgrade to exact current candidate artifact.
 remote3=/var/tmp/drlink-upgrade-v300-bootstrap.sh
@@ -60,7 +60,7 @@ pq_gate V300_BOOTSTRAP_STAGED PASS
 pq_ssh "$SERVER" "sudo env FRP_NONINTERACTIVE=1 FRP_PUBLIC_HOST='${FRP_E2E_PUBLIC_HOSTNAME}' FRP_RELEASE_CHANNEL=development bash '$remote3' --upgrade" >"$OUT/v300-upgrade.log" 2>&1
 pq_ssh "$SERVER" 'sudo drlink system diagnostics && sudo drlink system version' >"$OUT/v300-health.txt" 2>&1
 pq_gate UPGRADE_RUNTIME_HEALTH PASS
-pq_ssh "$SERVER" 'sudo drlink show internet-access' >"$OUT/preserved-state.txt" 2>&1
+pq_ssh "$SERVER" 'sudo drlink show network-object upgrade-src && sudo drlink show service-object upgrade-ssh && sudo drlink show remote-access' >"$OUT/preserved-state.txt" 2>&1
 grep -q 'upgrade-preserve' "$OUT/preserved-state.txt" || fail_out "v2.4 policy state not preserved"
 pq_gate UPGRADE_POLICY_STATE_PRESERVED PASS
 pq_gate UPGRADE_MANAGED_HOST_STATE_PRESERVED PASS
