@@ -363,6 +363,8 @@ def ensure_v2_schema(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE agent_remote_services ADD COLUMN runtime_verified INTEGER NOT NULL DEFAULT 0"
         )
+    if "enrollment_seed" not in agent_cols:
+        conn.execute("ALTER TABLE agent_remote_services ADD COLUMN enrollment_seed INTEGER NOT NULL DEFAULT 0")
     now = utc_now_iso()
     for plane in POLICY_PLANES:
         row = conn.execute("SELECT plane FROM access_policies WHERE plane = ?", (plane,)).fetchone()
@@ -5729,6 +5731,8 @@ def synchronize_agent_remote_services(plane_db, *, root: Optional[str] = None) -
     # Otherwise a later synchronize would reapply stale client-state through
     # v2.4 revalidation and undo an operator edit.
     enrolled_names = _bootstrap_seed_names(root)
+    enrolled_names.update(str(row[0]).lower() for row in plane_db.conn.execute(
+        "SELECT name FROM agent_remote_services WHERE enrollment_seed = 1"))
     if not detect_server_reachable(plane_db, root):
         return {
             "status": "OFFLINE",
@@ -7012,6 +7016,34 @@ def _bootstrap_seed_names(root: Optional[str], state: Optional[dict] = None) -> 
     return names
 
 
+def ensure_enrolled_service_object(plane_db, preset: str, port: int) -> dict:
+    """Project a non-default enrolled target into canonical Service Objects.
+
+    A preset is a template, not permission to reset an enrolled target port.
+    Generated objects never overwrite an operator definition or bypass Server
+    Service Object validation during subsequent Remote Service changes.
+    """
+    port = int(port)
+    if port < 1 or port > 65535:
+        raise ControlPlaneError('Enrolled service target port must be between 1 and 65535')
+    existing = get_service_object(plane_db, preset)
+    if existing and existing['type'] == 'tcp' and int(existing['port']) == port:
+        return dict(existing)
+    name = validate_public_name('enrolled-%s-%s' % (preset, port), 'Service Object name')
+    existing = get_service_object(plane_db, name)
+    if existing:
+        if existing['type'] != 'tcp' or int(existing['port']) != port:
+            raise ControlPlaneError('Enrolled Service Object %s conflicts with an existing definition. No definition was overwritten.' % name)
+        return dict(existing)
+    assert_service_public_name_available(plane_db, name, creating='object')
+    now = utc_now_iso()
+    plane_db.conn.execute(
+        "INSERT INTO service_objects(id, name, type, port, description, row_version, created_at, updated_at) "
+        "VALUES (?, ?, 'tcp', ?, 'Enrolled target', 1, ?, ?)",
+        (_new_id('sobj'), name, port, now, now))
+    return dict(get_service_object(plane_db, name))
+
+
 def project_enrolled_services_into_agent_catalog(
     plane_db,
     *,
@@ -7066,6 +7098,9 @@ def project_enrolled_services_into_agent_catalog(
         ).fetchone()
         if existing is not None:
             continue
+        default_ports = {'ssh': 22, 'http': 80, 'https': 443}
+        enrolled_target_port = int(rec.get('local_port') or default_ports.get(service_obj) or 0)
+        service_obj = ensure_enrolled_service_object(plane_db, service_obj, enrolled_target_port)['name']
         if enrolled_port is not None:
             endpoint_port = enrolled_port
             pending = 0
@@ -7085,8 +7120,8 @@ def project_enrolled_services_into_agent_catalog(
             "INSERT INTO agent_remote_services"
             "(name, destination, destination_client_id, service_object, enabled, status, "
             "endpoint_host, endpoint_port, pending_allocation, delete_pending, pool_class, "
-            "reason, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'normal', ?, ?)",
+            "reason, updated_at, enrollment_seed) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'normal', ?, ?, 1)",
             (
                 name,
                 destination,

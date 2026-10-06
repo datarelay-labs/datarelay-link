@@ -233,14 +233,11 @@ def build_desired_runtime_services(
         try:
             import drlink_v24 as v24
 
-            sobj = v24.get_service_object(plane_db, row["service_object"])
-            if sobj is None:
-                cat = plane_db.conn.execute(
-                    "SELECT payload FROM agent_object_catalog WHERE kind='service-object' AND name=? COLLATE NOCASE",
-                    (row["service_object"],),
-                ).fetchone()
-                if cat:
-                    sobj = json.loads(cat["payload"])
+            cat = plane_db.conn.execute(
+                "SELECT payload FROM agent_object_catalog WHERE kind='service-object' AND name=? COLLATE NOCASE",
+                (row["service_object"],),
+            ).fetchone()
+            sobj = json.loads(cat["payload"]) if cat else v24.get_service_object(plane_db, row["service_object"])
             if sobj is not None:
                 target_port = int(sobj["port"] if not isinstance(sobj, dict) else sobj.get("port"))
             dest = str(row["destination"] or "")

@@ -586,6 +586,9 @@ def sync_enrolled_client(
             mode = "routed"
             target_host = str(svc.get("target_host") or local_ip)
         service_name = str(sid).strip().lower()
+        import drlink_v24 as v24
+        service_object = v24.ensure_enrolled_service_object(
+            plane, stype, local_port or (22 if stype == 'ssh' else 0))
         plane.set_published_service(
             client_id,
             service_name,
@@ -613,12 +616,13 @@ def sync_enrolled_client(
                 pub_enabled = bool(pub["enabled"])
                 plane.conn.execute(
                     "INSERT INTO remote_service_meta"
-                    "(service_id, status, pool_class, destination_name, destination_client_id, "
+                    "(service_id, status, pool_class, service_object_id, destination_name, destination_client_id, "
                     "pending_allocation, delete_pending, reason) "
-                    "VALUES (?, ?, 'normal', 'this-host', ?, ?, 0, ?)",
+                    "VALUES (?, ?, 'normal', ?, 'this-host', ?, ?, 0, ?)",
                     (
                         pub["id"],
                         "DISABLED" if not pub_enabled else "DEGRADED",
+                        service_object['id'],
                         client_id,
                         0 if pub["public_port"] is not None else 1,
                         "" if not pub_enabled else "Runtime activation pending.",

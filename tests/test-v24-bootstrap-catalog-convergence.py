@@ -10,6 +10,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from unittest import mock
 from contextlib import redirect_stdout
 from pathlib import Path
 
@@ -28,6 +29,43 @@ MACHINE = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 
 
 class BootstrapCatalogConvergenceTests(unittest.TestCase):
+    def test_repeated_runtime_projection_preserves_seed_target_and_origin(self):
+        state_path = Path(self.agent_tmp) / 'etc/frp/client-state.json'
+        state = json.loads(state_path.read_text())
+        state['frp_server_port'] = 443
+        state_path.write_text(json.dumps(state))
+        (state_path.parent / 'frpc.toml').write_text('serverAddr = "203.0.113.10"\nauth.token = "fixture-token"\n')
+        agent = ControlPlane(self.agent_tmp)
+        self.addCleanup(agent.close)
+        v24.project_enrolled_services_into_agent_catalog(agent, root=self.agent_tmp)
+        with mock.patch.object(V24R, 'runtime_should_apply', return_value=True), \
+                mock.patch.object(v24, 'detect_server_reachable', return_value=True), \
+                mock.patch.object(mgmt, 'use_live_mgmt_path', return_value=False):
+            for _ in range(3):
+                result = V24R.apply_agent_runtime(agent, root=self.agent_tmp)
+                self.assertTrue(result['ok'], result)
+                v24.synchronize_agent_remote_services(agent, root=self.agent_tmp)
+                state = json.loads(state_path.read_text())
+                self.assertEqual(state['services']['rs-ssh']['local_port'], self.local_port)
+                self.assertEqual(state['services']['rs-ssh']['remote_port'], 6000)
+                row = agent.conn.execute("SELECT * FROM agent_remote_services WHERE name='ssh'").fetchone()
+                self.assertEqual(row['enrollment_seed'], 1)
+        v24.set_remote_service_agent(agent, 'ssh', enabled=False, root=self.agent_tmp, server_reachable=False)
+        row = agent.conn.execute("SELECT * FROM agent_remote_services WHERE name='ssh'").fetchone()
+        self.assertEqual(row['enrollment_seed'], 0)
+        self.assertEqual(row['enabled'], 0)
+        self.assertEqual(row['endpoint_port'], 6000)
+
+    def test_enrollment_target_object_collision_never_overwrites_operator_state(self):
+        agent = ControlPlane(self.agent_tmp)
+        self.addCleanup(agent.close)
+        name = 'enrolled-ssh-%s' % self.local_port
+        v24.set_service_object(agent, name, type='tcp', port=1, oneshot=True)
+        with self.assertRaisesRegex(Exception, 'conflicts with an existing definition'):
+            v24.project_enrolled_services_into_agent_catalog(agent, root=self.agent_tmp)
+        self.assertEqual(v24.get_service_object(agent, name)['port'], 1)
+        self.assertIsNone(agent.conn.execute("SELECT name FROM agent_remote_services WHERE name='ssh'").fetchone())
+
     def setUp(self):
         self.agent_tmp = tempfile.mkdtemp(prefix="drlink-boot-agt-")
         self.server_tmp = tempfile.mkdtemp(prefix="drlink-boot-srv-")
@@ -166,6 +204,7 @@ class BootstrapCatalogConvergenceTests(unittest.TestCase):
         self.assertNotIn("ssh", desired)
         self.assertIn("rs-ssh", desired)
         self.assertEqual(int(desired["rs-ssh"]["remote_port"]), 6000)
+        self.assertEqual(int(desired["rs-ssh"]["local_port"]), self.local_port)
         agent_runtime.close()
 
         agent = ControlPlane(self.agent_tmp)

@@ -110,6 +110,16 @@ A normal project upgrade must preserve:
 
 Update is never re-enrollment.
 
+Enrollment presets must preserve the actual target port during v2.4 migration.
+For a non-default target, migration creates a canonical TCP Service Object such
+as `enrolled-ssh-4022` on Server and Agent, preserving the existing public port.
+It never rewrites an existing operator definition or silently substitutes the
+SSH template's port 22. A conflicting generated name fails closed. The Agent
+records enrollment origin in its canonical Remote Service row, so rebuilding
+client runtime artifacts does not lose origin or cause endpoint reallocation.
+An explicit Remote Service change supersedes that seed; subsequent reconnect
+processing uses the operator's desired state and Server Service Object catalog.
+
 ### Backup / restore version policy
 
 ```text
