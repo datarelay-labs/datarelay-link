@@ -110,6 +110,22 @@ A normal project upgrade must preserve:
 
 Update is never re-enrollment.
 
+An immutable local-source upgrade preserves the installed release channel by
+default. A prior stable installation therefore rejects a development candidate;
+retrying does not change that selection. For an owner-approved development
+test transition, select `FRP_RELEASE_CHANNEL=development` together with the
+canonical installer's `--upgrade --source DIR` and immutable full-SHA source
+expectations. This is an engineering test path, not an implicit channel change
+in `drlink system update product`. Public updates require the verified artifact
+and checksum metadata to exist for their resolved channel and source ref.
+
+The generated Windows installer binds its actual outer file SHA256 to the
+Server's qualified Windows Agent manifest through the pinned allocator CA and
+hostname check before redeeming a ticket. Permanent version metadata separates
+the exact installed Source HEAD from the embedded content Source HEAD. Engine
+updates retain that provenance. A different, unverified local source tree reports
+UNKNOWN rather than inheriting the previous candidate's Source HEAD.
+
 Enrollment presets must preserve the actual target port during v2.4 migration.
 For a non-default target, migration creates a canonical TCP Service Object such
 as `enrolled-ssh-4022` on Server and Agent, preserving the existing public port.

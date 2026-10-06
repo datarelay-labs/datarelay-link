@@ -838,6 +838,13 @@ def _validate_plan_applyability(
     try:
         for change in ordered:
             _apply_one(plane, change, server_reachable_override=False if agent else None)
+            if agent and change.get('kind') == 'remote-service' and change.get('op') == 'DELETE':
+                # Preview models the final desired local state, without RPC.
+                # Offline deletion tombstones belong to execution/reconnect,
+                # and must not falsely conflict with an online replacement.
+                plane.conn.execute(
+                    'DELETE FROM agent_remote_services WHERE name = ? COLLATE NOCASE AND delete_pending = 1',
+                    (change.get('name'),))
     except ControlPlaneError as exc:
         if agent:
             raise BundleError(str(exc)) from exc

@@ -31,6 +31,26 @@ def _server_root(tmp: str) -> None:
 
 
 class BundleStalePlanSafety(unittest.TestCase):
+    def test_agent_preview_allows_delete_then_replace_same_binding_without_rpc(self):
+        v24.set_remote_service_agent(self.plane, 'old-name', destination='this-host',
+                                    service='ssh', enabled=True, server_reachable=False, oneshot=True)
+        before = self.plane.current_revision()
+        raw = '''configurationBundle:
+  context: agent
+  remoteServices:
+    - name: old-name
+      state: absent
+    - name: replacement
+      destination: this-host
+      service: ssh
+      enabled: true
+'''
+        with mock.patch('drlink_mgmt_sync.delete_remote_service_on_server', side_effect=AssertionError('network write')):
+            plan = prepare_v24_plan(self.plane, raw, role='agent')
+        self.assertEqual(len(plan.mutating_changes), 2)
+        self.assertEqual(self.plane.current_revision(), before)
+        self.assertEqual([row['name'] for row in self.plane.conn.execute('SELECT name FROM agent_remote_services')], ['old-name'])
+
     def test_concurrent_same_name_create_returns_reviewable_conflict(self):
         barrier = threading.Barrier(2)
         mutate = ControlPlane._mutate

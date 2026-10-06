@@ -94,7 +94,8 @@ done
 
 echo "Downloading release checksum metadata..."
 curl -fL --retry 3 --connect-timeout 10 --max-time 120 -o "$sums" "$sums_url" || {
-  echo "ERROR: failed to download SHA256SUMS" >&2
+  echo "ERROR: release checksum metadata is unavailable for channel ${FRP_RESOLVED_RELEASE_CHANNEL}, source ${FRP_RESOLVED_SOURCE_REF}." >&2
+  echo "No update changes were applied. Retry drlink system update product after verified artifacts for this release are available." >&2
   exit 1
 }
 expected="$(frp_sha256sum_entry "$sums" dist/bootstrap-server.sh 2>/dev/null || true)"
@@ -105,7 +106,8 @@ fi
 
 echo "Downloading server project update bundle..."
 curl -fL --retry 3 --connect-timeout 10 --max-time 120 -o "$bundle" "$bundle_url" || {
-  echo "ERROR: failed to download the server project update bundle" >&2
+  echo "ERROR: the verified product update artifact is unavailable for channel ${FRP_RESOLVED_RELEASE_CHANNEL}, source ${FRP_RESOLVED_SOURCE_REF}." >&2
+  echo "No update changes were applied. Retry drlink system update product after verified artifacts for this release are available." >&2
   exit 1
 }
 frp_verify_sha256 "$expected" "$bundle" >/dev/null || {

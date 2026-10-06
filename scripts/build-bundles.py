@@ -254,7 +254,7 @@ win_files = [
     path.relative_to(root).as_posix()
     for path in sorted((root / 'windows').rglob('*'))
     if path.is_file()
-]
+] + ['VERSION', 'release-manifest.json']
 ps_lines = [
     '#Requires -Version 5.1',
     "$ErrorActionPreference = 'Stop'",
@@ -262,9 +262,10 @@ ps_lines = [
     "$tmp = Join-Path $env:TEMP ('frp-win-bundle-' + [guid]::NewGuid().ToString('N'))",
     'New-Item -ItemType Directory -Force -Path $tmp | Out-Null',
     'try {',
+    '  $env:FRP_WINDOWS_BOOTSTRAP_PATH = $PSCommandPath',
 ]
 for rel in win_files:
-    data = base64.b64encode((root / rel).read_bytes()).decode('ascii')
+    data = base64.b64encode(bundle_payload(rel)).decode('ascii')
     parent = str(Path(rel).parent).replace('\\', '/')
     ps_lines.append(f"  $dir = Join-Path $tmp '{parent}'")
     ps_lines.append('  New-Item -ItemType Directory -Force -Path $dir | Out-Null')
@@ -281,6 +282,7 @@ ps_lines.extend([
     '  & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer @args',
     '  exit $LASTEXITCODE',
     '} finally {',
+    '  Remove-Item Env:FRP_WINDOWS_BOOTSTRAP_PATH -ErrorAction SilentlyContinue',
     '  Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue',
     '}',
 ])

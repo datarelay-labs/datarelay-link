@@ -21,6 +21,84 @@ function Clear-FrpSecretEnv {
     }
 }
 
+function Get-FrpPackagedManifest {
+    param([string]$SourceRoot = $script:FrpWindowsSrcRoot)
+    if (-not $SourceRoot) { return $null }
+    $path = Join-Path (Split-Path -Parent $SourceRoot) 'release-manifest.json'
+    if (-not (Test-Path -LiteralPath $path)) {
+        $path = Join-Path $SourceRoot 'release-manifest.json'
+    }
+    if (-not (Test-Path -LiteralPath $path)) { return $null }
+    return (Get-Content -LiteralPath $path -Raw | ConvertFrom-Json)
+}
+
+function Get-FrpPackagedSourceHead {
+    param($Manifest)
+    foreach ($value in @([string]$Manifest.source_head, [string]$Manifest.git_ref)) {
+        if ($value -match '^[0-9a-f]{40}$') { return $value }
+    }
+    return 'UNKNOWN'
+}
+
+function Confirm-FrpWindowsSourceProvenance {
+    param([Parameter(Mandatory = $true)][string]$AllocatorUrl)
+    # The generated outer bootstrap remains on disk while its child installer
+    # executes. Bind its actual bytes to the Server's CA-verified manifest.
+    if (-not $env:FRP_WINDOWS_BOOTSTRAP_PATH) { return }
+    $digest = Get-FrpSha256HexOfFile -Path $env:FRP_WINDOWS_BOOTSTRAP_PATH
+    if ($script:FrpVerifiedBootstrapDigest -ceq $digest) { return }
+    $origin = Get-FrpAllocatorOrigin -AllocatorUrl $AllocatorUrl
+    $manifest = (Invoke-FrpHttpsJson -Method GET -Url "$origin/artifacts/manifest.json") | ConvertFrom-Json
+    $packaged = Get-FrpPackagedManifest
+    $installerEntries = @($manifest.artifacts | Where-Object {
+        $_.artifact_type -eq 'agent-installer' -and $_.platform -eq 'windows' -and
+        $_.architecture -eq 'amd64' -and $_.filename -eq 'bootstrap-client.ps1'
+    })
+    if ($installerEntries.Count -ne 1 -or $installerEntries[0].sha256 -cne $digest -or
+        $manifest.source_head -notmatch '^[0-9a-f]{40}$' -or
+        $installerEntries[0].source_head -cne $manifest.source_head -or
+        $manifest.channel -notin @('development','preview','stable') -or
+        $manifest.qualification_status -ne 'PASS' -or -not $packaged -or
+        $manifest.project_version -cne $packaged.project_version) {
+        throw 'ERROR: Windows installer source provenance does not match the qualified Server artifact. No enrollment was attempted.'
+    }
+    $provenance = [ordered]@{
+        source_head = [string]$manifest.source_head
+        content_source_head = Get-FrpPackagedSourceHead -Manifest $packaged
+        channel = [string]$manifest.channel
+        bootstrap_sha256 = $digest
+    }
+    $path = Join-Path (Get-FrpWindowsRoot) 'source-provenance.json'
+    [IO.File]::WriteAllText("$path.tmp", ($provenance | ConvertTo-Json))
+    Move-Item -LiteralPath "$path.tmp" -Destination $path -Force
+    $script:FrpVerifiedBootstrapDigest = $digest
+}
+
+function Write-FrpInstalledVersion {
+    param([string]$SourceRoot = $script:FrpWindowsSrcRoot, [string]$EngineSha256 = (Get-FrpWindowsAmd64Sha256))
+    $packaged = Get-FrpPackagedManifest -SourceRoot $SourceRoot
+    $source = 'UNKNOWN'
+    $content = 'UNKNOWN'
+    $channel = 'UNKNOWN'
+    $project = Get-FrpProjectVersion
+    if ($packaged) {
+        $project = [string]$packaged.project_version
+        $content = Get-FrpPackagedSourceHead -Manifest $packaged
+        $channel = [string]$packaged.channel
+    }
+    $path = Join-Path (Get-FrpWindowsRoot) 'source-provenance.json'
+    if (Test-Path -LiteralPath $path) {
+        $p = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+        if ($p.content_source_head -ceq $content -and $p.channel -ceq $channel -and
+            $p.source_head -match '^[0-9a-f]{40}$') { $source = [string]$p.source_head }
+    }
+    $text = @("PROJECT_VERSION=$project", "FRP_VERSION=$(Get-FrpUpstreamVersion)",
+        "FRP_SHA256_WINDOWS_AMD64=$EngineSha256", 'ROLE=AgentHost',
+        "RELEASE_CHANNEL=$channel", "SOURCE_HEAD=$source", "CONTENT_SOURCE_HEAD=$content") -join "`n"
+    [IO.File]::WriteAllText((Get-FrpVersionPath) + '.tmp', $text + "`n")
+    Move-Item -LiteralPath ((Get-FrpVersionPath) + '.tmp') -Destination (Get-FrpVersionPath) -Force
+}
+
 function Expand-FrpZipSafe {
     param(
         [Parameter(Mandatory = $true)][string]$ZipPath,
@@ -112,13 +190,7 @@ No changes were applied.
         if (-not (Test-Path -LiteralPath $dest)) {
             throw 'ERROR: frpc.exe extract failed'
         }
-        $verPath = Get-FrpVersionPath
-        $verText = @(
-            "PROJECT_VERSION=$(Get-FrpProjectVersion)"
-            "FRP_VERSION=$(Get-FrpUpstreamVersion)"
-            "FRP_SHA256_WINDOWS_AMD64=$expected"
-        ) -join "`n"
-        [System.IO.File]::WriteAllText($verPath, $verText + "`n")
+        Write-FrpInstalledVersion -EngineSha256 $expected
         return $dest
     } finally {
         Remove-Item -LiteralPath $tmpZip -Force -ErrorAction SilentlyContinue
@@ -278,6 +350,10 @@ function Complete-FrpZeroTouchPostEnroll {
         [switch]$SkipDownload,
         [object]$Services
     )
+    if ($env:FRP_WINDOWS_BOOTSTRAP_PATH) {
+        $client = Read-FrpClientState
+        Confirm-FrpWindowsSourceProvenance -AllocatorUrl ([string]$client.allocator_url)
+    }
     $enabledCount = Get-FrpEnabledServiceCount -Services $Services
     if (-not $Services) {
         try {
@@ -334,6 +410,12 @@ function Complete-FrpZeroTouchPostEnroll {
             }
         }
     }
+
+    $manifestSource = Join-Path (Split-Path -Parent $script:FrpWindowsSrcRoot) 'release-manifest.json'
+    if (Test-Path -LiteralPath $manifestSource) {
+        Copy-Item -LiteralPath $manifestSource -Destination (Join-Path (Get-FrpWindowsRoot) 'release-manifest.json') -Force
+    }
+    Write-FrpInstalledVersion
 
     # Documented UX is a bare `drlink ...` from any shell, so the installed
     # tools directory goes on the system PATH. Never fatal: the client is
@@ -1282,6 +1364,8 @@ function Invoke-FrpZeroTouch {
             Write-Host 'Bootstrapping allocator CA (pin verify)...'
             Get-FrpCaCertificate -AllocatorUrl $AllocatorUrl -ExpectedSha256 $CaSha256 | Out-Null
         }
+
+        Confirm-FrpWindowsSourceProvenance -AllocatorUrl $AllocatorUrl
 
         $enrollmentId = $null
         $enrollmentSecret = $null

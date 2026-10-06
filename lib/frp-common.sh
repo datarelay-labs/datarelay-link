@@ -587,7 +587,8 @@ if expected_channel:
     if exp == "dev":
         exp = "development"
     if channel != exp:
-        sys.stderr.write("ERROR: release metadata channel mismatch\n")
+        sys.stderr.write("ERROR: release metadata channel mismatch: installed/requested %s, candidate %s.\n" % (exp, channel))
+        sys.stderr.write("Choose a verified candidate in the installed release channel. An intentional channel change requires the documented installer procedure; retrying the same update cannot change channels.\n")
         raise SystemExit(1)
 out_ref = expected_ref if expected_is_sha else git_ref
 sys.stdout.write("%s\t%s\t%s\n" % (project, channel, out_ref))
