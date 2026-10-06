@@ -253,9 +253,17 @@ text = Path(sys.argv[1]).read_text(encoding="utf-8")
 assert 'doc.get("provenance_head")' in text
 assert 'doc.get("source_head")' in text
 assert 'release-manifest.json' in text
-assert '"A019_RELEASE_TARGET_PREFLIGHT"' in text
-assert '"A019_SOURCE_PROVENANCE_BINDING"' in text
-assert '"A019_DISPOSABLE_TARGET_PRECHECK"' in text
+# v2.4 keeps A-019; v3.0 owns the v2.4 -> v3.0 transition. The
+# orchestrator must validate the safety/provenance triplet for both branches.
+for key in (
+    "A019_RELEASE_TARGET_PREFLIGHT",
+    "A019_SOURCE_PROVENANCE_BINDING",
+    "A019_DISPOSABLE_TARGET_PRECHECK",
+    "UPGRADE_RELEASE_TARGET_PREFLIGHT",
+    "UPGRADE_SOURCE_PROVENANCE_BINDING",
+    "UPGRADE_DISPOSABLE_TARGET_PRECHECK",
+):
+    assert key in text, key
 print("ok")
 PY
 pass "A-019 qualification evidence binds source/provenance and target safety"
