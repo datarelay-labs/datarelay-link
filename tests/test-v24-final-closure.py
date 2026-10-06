@@ -141,7 +141,7 @@ class PublicGrammarClosure(unittest.TestCase):
             (["system", "update", "product"], "client", "update_project"),
             (["system", "info"], "client", "show_info"),
             (["unset", "managed-host", "x"], "server", "control_plane"),
-            (["system", "revoke", "client", "x"], "server", "revoke_client"),
+            (["unset", "enrollment", "x"], "server", "unset_enrollment"),
         )
         for tokens, role, action in cases:
             result = grammar.match(list(tokens), role=role)
@@ -153,6 +153,7 @@ class PublicGrammarClosure(unittest.TestCase):
             (["update", "product"], None),
             (["info"], None),
             (["show", "info"], "system info"),
+            (["system", "revoke", "client", "x"], "unset managed-host"),
             (["pause"], None),
             (["stop"], None),
         )
