@@ -2707,12 +2707,20 @@ def check_egress_control(report, paths, facts, cfg):
         cls = str(issue.get('class') or 'EGRESS_CONFIG_ERROR')
         severity = str(issue.get('severity') or 'error').lower()
         status = FAIL if severity == 'error' else (WARN if severity == 'warn' else INFO)
+        message = '%s: %s' % (cls, issue.get('message') or 'issue')
+        if paths.is_file('/var/lib/drlink/drlink.db'):
+            # Legacy profile metadata is not the current authorization policy.
+            # Preserve its validation severity and all runtime health probes,
+            # but never infer current allow/deny from obsolete profile counts.
+            message = 'obsolete egress-control.json: %s; SQLite Internet Access is authoritative' % (
+                'profile metadata only' if severity == 'info' else (issue.get('message') or 'issue')
+            )
         report.add(
             cls,
             status,
-            '%s: %s' % (cls, issue.get('message') or 'issue'),
+            message,
             '',
-            'inspect Internet Access with show internet-profiles',
+            'inspect Internet Access with sudo drlink show internet-access',
             'state',
         )
 

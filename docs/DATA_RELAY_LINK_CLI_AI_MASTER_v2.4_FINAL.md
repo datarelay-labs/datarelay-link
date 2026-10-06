@@ -4462,7 +4462,7 @@ Expected:
 ```text
 Policy Mode      : WHITELIST
 Policy Enforcement: DISABLED
-Effective Policy : ALLOW ALL
+Effective Policy : DENY ALL
 ```
 
 But:
@@ -5011,7 +5011,8 @@ Wizard Cancel
 
 ```text
 No Policy
-→ ALLOW
+→ Remote Access: ALLOW
+→ Internet Access and AI Access: DENY ALL
 ```
 
 ```text
@@ -5028,7 +5029,8 @@ WHITELIST
 
 ```text
 Policy Enforcement DISABLED
-→ ALLOW ALL
+→ Remote Access: ALLOW ALL
+→ Internet Access and AI Access: DENY ALL
 → saved Mode/Rules preserved
 ```
 
@@ -5036,7 +5038,8 @@ Policy Enforcement DISABLED
 Policy Reset
 → Mode removed
 → Rules removed
-→ ALLOW
+→ Remote Access: ALLOW
+→ Internet Access and AI Access: DENY ALL
 ```
 
 ```text
@@ -5084,7 +5087,7 @@ A v2.4 CLI implementation is conformant only if the following can all be demonst
 ## First-use
 
 - `drlink` clearly identifies Server vs Agent Host role.
-- Initial access is understandable as ALLOW without requiring a Rule.
+- Initial Remote Access is understandable as ALLOW without requiring a Rule; Internet Access and AI Access start at DENY ALL until explicitly authorized by their WHITELIST Rules.
 - Help/menu leads to Objects, Policies, Managed Hosts, and Agent functions correctly.
 
 ## Objects

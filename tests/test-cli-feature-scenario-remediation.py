@@ -33,6 +33,102 @@ import frp_cli_catalog as catalog
 
 
 class CliFeatureScenarioRemediation(unittest.TestCase):
+    def test_obsolete_update_check_option_rejects_every_prefix_and_surface(self):
+        for role in ("server", "client"):
+            for target in ([], ["product"], ["engine"], ["check-engine"]):
+                for option in ("--check", "--check=true"):
+                    tokens = ["system", "update"] + target + [option]
+                    for form in (tokens, tokens + ["?"], ["help"] + tokens):
+                        with self.subTest(role=role, form=form):
+                            result = grammar.match(form, role)
+                            self.assertEqual(result.get("status"), "error", result)
+                            self.assertEqual(result.get("exit_code"), 2, result)
+                            self.assertIn("system update check-engine", result["message"])
+                    self.assertEqual(grammar.completion_candidates(
+                        " ".join(tokens) + " ", role, [], {}, []), [])
+
+    def test_retired_client_nouns_reject_all_current_action_surfaces(self):
+        for role in ("server", "client"):
+            for action in ("show", "set", "unset", "test"):
+                for noun in ("client", "clients"):
+                    tokens = [action, noun]
+                    for form in (tokens, tokens + ["?"], ["help"] + tokens):
+                        with self.subTest(role=role, form=form):
+                            result = grammar.match(form, role)
+                            self.assertEqual(result.get("status"), "error", result)
+                            self.assertEqual(result.get("exit_code"), 2, result)
+                            self.assertIn("managed-host", result["message"])
+                    self.assertEqual(grammar.completion_candidates(
+                        " ".join(tokens) + " ", role, [], {}, []), [])
+
+    def test_native_obsolete_questions_are_typed_failures_without_state_changes(self):
+        before = list(self.plane.conn.iterdump())
+        for role in ("server", "client"):
+            with tempfile.TemporaryDirectory(prefix="drlink-obsolete-question-") as temp:
+                root = Path(temp)
+                config = root / ("etc/drlink/config.json" if role == "server" else "etc/frp/client-state.json")
+                config.parent.mkdir(parents=True)
+                config.write_text('{"role":"server"}\n' if role == "server" else '{"services":{}}\n')
+                before_files = {str(p.relative_to(root)): p.read_bytes() for p in root.rglob('*') if p.is_file()}
+                env = dict(os.environ, FRP_CTL_TEST_ROOT=temp, FRP_DEPLOY_TEST_ROOT=temp)
+                for tokens in (["system", "update", "--check", "?"],
+                               ["system", "update", "check-engine", "--check=true", "?"],
+                               ["set", "clients", "?"], ["unset", "clients", "?"],
+                               ["test", "client", "?"], ["test", "clients", "?"]):
+                    with self.subTest(role=role, tokens=tokens):
+                        proc = subprocess.run(["bash", str(ROOT / "tools/drlink")] + tokens,
+                                              cwd=temp, env=env, capture_output=True, text=True, timeout=30)
+                        self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+                        self.assertTrue((proc.stdout + proc.stderr).strip())
+                self.assertEqual(before_files, {str(p.relative_to(root)): p.read_bytes()
+                                              for p in root.rglob('*') if p.is_file()})
+        self.assertEqual(list(self.plane.conn.iterdump()), before)
+
+    def test_master_ai_disabled_scenario_preserves_fail_closed_authorization(self):
+        text = (ROOT / "docs/DATA_RELAY_LINK_CLI_AI_MASTER_v2.4_FINAL.md").read_text()
+        scenario = text.split('# 89.', 1)[1].split('# 90.', 1)[0]
+        self.assertIn('Effective Policy : DENY ALL', scenario)
+        self.assertNotIn('ALLOW ALL', scenario)
+        self.assertIn('still required', scenario)
+
+    def test_master_invariants_and_first_use_distinguish_policy_planes(self):
+        text = (ROOT / "docs/DATA_RELAY_LINK_CLI_AI_MASTER_v2.4_FINAL.md").read_text()
+        section = text.split('# 104.', 1)[1].split('# 105.', 1)[0]
+        for name in ('No Policy', 'Policy Enforcement DISABLED', 'Policy Reset'):
+            block = next(b for b in section.split('```text')[1:] if b.lstrip().startswith(name)).split('```', 1)[0]
+            self.assertIn('Remote Access', block)
+            self.assertIn('Internet Access and AI Access', block)
+            self.assertIn('DENY ALL', block)
+        first = text.split('# 105.', 1)[1].split('## Objects', 1)[0]
+        self.assertIn('Initial Remote Access', first)
+        self.assertIn('Internet Access and AI Access', first)
+        self.assertIn('DENY', first)
+
+    def test_doctor_obsolete_egress_does_not_claim_current_policy_default(self):
+        import frp_doctor as doctor
+        root = Path(self.tmp)
+        legacy = root / 'var/lib/drlink/egress-control.json'
+        legacy.parent.mkdir(parents=True, exist_ok=True)
+        legacy.write_text('{"schema_version":1,"egress_profiles":{},"tcp_relays":{}}\n')
+        for name in ('egress', 'tcp-egress'):
+            path = root / ('run/drlink/' + name + '/effective.json')
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('{"healthy":true,"policy_generation":3}\n')
+        before = {str(p.relative_to(root)): p.read_bytes() for p in root.rglob('*') if p.is_file()}
+        report = doctor.Report()
+        doctor.check_egress_control(report, doctor.Paths(self.tmp), {}, {})
+        issues = [c for c in report.checks if c['id'] == 'EGRESS_CONFIG_INFO']
+        self.assertTrue(issues, report.checks)
+        for issue in issues:
+            self.assertIn('obsolete', issue['message'])
+            self.assertIn('SQLite Internet Access is authoritative', issue['message'])
+            self.assertNotIn('default DENY', issue['message'])
+            self.assertIn('show internet-access', issue['recommendation'])
+            self.assertNotIn('internet-profiles', issue['recommendation'])
+        for name in ('EGRESS_UNIT', 'EGRESS_TCP_UNIT', 'EGRESS_EFFECTIVE_CONFIG', 'EGRESS_TCP_EFFECTIVE'):
+            self.assertTrue(any(c['id'] == name for c in report.checks), name)
+        self.assertEqual(before, {str(p.relative_to(root)): p.read_bytes() for p in root.rglob('*') if p.is_file()})
+
     def test_hidden_export_and_audit_variants_reject_every_public_surface(self):
         variants = [
             ["system", "export", "configuration", "--output", "out.yaml"],

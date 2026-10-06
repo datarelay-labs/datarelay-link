@@ -333,7 +333,7 @@ def reject_obsolete_surface(tokens):
                            "For a read-only upstream check on the Server, use system update check-engine."
                            % (target, current),
             }
-        if target in ("product", "engine") and any(t.split("=", 1)[0] == "--check" for t in focus[3:]):
+        if any(t.split("=", 1)[0] == "--check" for t in focus[2:]):
             return {
                 "status": "error", "exit_code": 2,
                 "message": "--check is not a public update option.\n"
@@ -376,14 +376,20 @@ def reject_obsolete_surface(tokens):
                 % (verb, tip)
             ),
         }
-    if verb == "show" and len(raw) >= 2 and raw[1] in ("clients", "client"):
+    if len(focus) >= 2 and focus[0] in ("show", "set", "unset", "test") and focus[1] in ("clients", "client"):
+        guidance = {
+            "show": "Use show managed-hosts / show managed-host <HOST> instead.",
+            "set": "Use set managed-host <HOST> … instead.",
+            "unset": "Use unset managed-host <HOST> instead.",
+            "test": "Inspect hosts with show managed-host <HOST>; use test remote-access, internet-access, or ai-access for authorization.",
+        }
         return {
             "status": "error",
             "exit_code": 2,
             "message": (
                 "Obsolete resource '%s' is not part of the current Data Relay Link grammar.\n"
-                "Use show managed-hosts / show managed-host <HOST> instead."
-                % raw[1]
+                "%s"
+                % (focus[1], guidance[focus[0]])
             ),
         }
     if verb == "show" and len(raw) >= 2 and raw[1] in _HIDDEN_SHOW_RESOURCES:
@@ -393,24 +399,6 @@ def reject_obsolete_surface(tokens):
             "message": (
                 "Noncanonical resource '%s' is not part of the current Data Relay Link grammar.\n%s"
                 % (raw[1], _HIDDEN_SHOW_RESOURCES[raw[1]])
-            ),
-        }
-    if verb == "set" and len(raw) >= 2 and raw[1] == "client":
-        return {
-            "status": "error",
-            "exit_code": 2,
-            "message": (
-                "Obsolete resource 'client' is not part of the current Data Relay Link grammar.\n"
-                "Use set managed-host <HOST> … instead."
-            ),
-        }
-    if verb == "unset" and len(raw) >= 2 and raw[1] == "client":
-        return {
-            "status": "error",
-            "exit_code": 2,
-            "message": (
-                "Obsolete resource 'client' is not part of the current Data Relay Link grammar.\n"
-                "Use unset managed-host <HOST> instead."
             ),
         }
     if len(raw) >= 2 and raw[1] in ("service", "services"):
