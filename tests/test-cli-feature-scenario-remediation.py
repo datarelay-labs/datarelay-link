@@ -14,6 +14,7 @@ import ipaddress
 import signal
 import pty
 import select
+import sqlite3
 import time
 import unittest
 from unittest.mock import patch
@@ -1352,6 +1353,133 @@ frpctl_grammar_py
         self.assertNotEqual(proc.returncode, 0)
         self.assertIn("drlink system update product", proc.stderr)
         self.assertNotIn("drlink update product", proc.stderr)
+
+
+class ServerProjectUpdateDbGuard(unittest.TestCase):
+    def setUp(self):
+        self.fixture = tempfile.TemporaryDirectory(prefix="drlink-update-db-guard-")
+        self.root = Path(self.fixture.name)
+        self.db = self.root / "var/lib/drlink/drlink.db"
+        self.db.parent.mkdir(parents=True)
+        with sqlite3.connect(self.db) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("CREATE TABLE retained(value INTEGER)")
+            conn.execute("INSERT INTO retained VALUES (1)")
+        self.proc = None
+
+    def tearDown(self):
+        if self.proc is not None:
+            if self.proc.poll() is None:
+                self.proc.kill()
+            self.proc.communicate(timeout=5)
+            for stream in (self.proc.stdin, self.proc.stdout, self.proc.stderr):
+                if stream is not None:
+                    stream.close()
+        self.fixture.cleanup()
+
+    def start_guard(self):
+        script = '. "$1"; frp_server_upgrade_acquire_db_guard; printf "READY\\n"; read -r line; frp_server_upgrade_release_db_guard'
+        self.proc = subprocess.Popen(
+            ["bash", "-c", script, "update-guard-regression", str(ROOT / "install-server.sh")],
+            env=dict(os.environ, FRP_SERVER_TEST_ROOT=str(self.root)),
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        self.assertTrue(select.select([self.proc.stdout], [], [], 15)[0], "Guard readiness timeout")
+        self.assertEqual(self.proc.stdout.readline().strip(), "READY")
+        self.assertIsNone(self.proc.poll())
+
+    def test_writers_serialize_readers_continue_and_release_preserves_state(self):
+        self.start_guard()
+        with sqlite3.connect("file:" + str(self.db) + "?mode=ro", uri=True) as conn:
+            self.assertEqual(conn.execute("SELECT value FROM retained").fetchall(), [(1,)])
+        with sqlite3.connect(self.db, timeout=.1) as conn:
+            with self.assertRaises(sqlite3.OperationalError):
+                conn.execute("INSERT INTO retained VALUES (2)")
+        _, err = self.proc.communicate("release\n", timeout=5)
+        self.assertEqual(self.proc.returncode, 0, err)
+        with sqlite3.connect(self.db, timeout=.1) as conn:
+            conn.execute("INSERT INTO retained VALUES (2)")
+            self.assertEqual(conn.execute("SELECT value FROM retained").fetchall(), [(1,), (2,)])
+
+    def test_owner_exit_releases_writer_lock_without_orphan(self):
+        self.start_guard()
+        self.proc.terminate()
+        self.proc.wait(timeout=5)
+        deadline = time.monotonic() + 5
+        while True:
+            try:
+                with sqlite3.connect(self.db, timeout=.1) as conn:
+                    conn.execute("BEGIN IMMEDIATE")
+                    conn.rollback()
+                break
+            except sqlite3.OperationalError:
+                if time.monotonic() >= deadline:
+                    self.fail("Writer guard remained held after its owner exited")
+                time.sleep(.05)
+
+    def test_missing_database_is_not_created_by_guard(self):
+        self.db.unlink()
+        self.start_guard()
+        _, err = self.proc.communicate("release\n", timeout=5)
+        self.assertEqual(self.proc.returncode, 0, err)
+        self.assertFalse(self.db.exists())
+
+    def protected_digest(self):
+        proc = subprocess.run(
+            ["bash", "-c", '. "$1"; frp_server_upgrade_tree_digest "$2"',
+             "digest-regression", str(ROOT / "install-server.sh"), str(self.db)],
+            env=dict(os.environ, FRP_SERVER_TEST_ROOT=str(self.root)),
+            capture_output=True, text=True, timeout=15,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return proc.stdout.strip()
+
+    def test_checkpoint_does_not_change_preserved_database_state(self):
+        writer = sqlite3.connect(self.db)
+        try:
+            writer.execute("INSERT INTO retained VALUES (2)")
+            writer.commit()  # Retain committed rows in WAL before checkpoint.
+            self.start_guard()
+            before = self.protected_digest()
+            writer.execute("PRAGMA wal_checkpoint(PASSIVE)")
+            self.assertEqual(self.protected_digest(), before)
+            self.proc.communicate("release\n", timeout=5)
+        finally:
+            writer.close()
+
+    def test_preserved_digest_detects_committed_rows_still_in_wal(self):
+        writer = sqlite3.connect(self.db)
+        try:
+            before = self.protected_digest()
+            writer.execute("INSERT INTO retained VALUES (2)")
+            writer.commit()
+            self.assertNotEqual(self.protected_digest(), before)
+        finally:
+            writer.close()
+
+    def test_preserved_digest_detects_text_suffix_after_nul(self):
+        with sqlite3.connect(self.db) as conn:
+            conn.execute("CREATE TABLE notes(value TEXT)")
+            conn.execute("INSERT INTO notes VALUES (?)", ("kept\0one",))
+        before = self.protected_digest()
+        with sqlite3.connect(self.db) as conn:
+            conn.execute("UPDATE notes SET value=?", ("kept\0two",))
+        self.assertNotEqual(self.protected_digest(), before)
+
+    def test_preserved_digest_retains_blob_storage_type_and_duplicate_rows(self):
+        with sqlite3.connect(self.db) as conn:
+            conn.execute("CREATE TABLE payload(value)")
+            conn.execute("INSERT INTO payload VALUES (?)", (b"kept\0one",))
+        previous = self.protected_digest()
+        for value in (b"kept\0two", "kept\0two", 7, 7.0):
+            with sqlite3.connect(self.db) as conn:
+                conn.execute("UPDATE payload SET value=?", (value,))
+            current = self.protected_digest()
+            self.assertNotEqual(current, previous)
+            previous = current
+        with sqlite3.connect(self.db) as conn:
+            conn.execute("INSERT INTO payload SELECT value FROM payload")
+        self.assertNotEqual(self.protected_digest(), previous)
 
 
 if __name__ == "__main__":

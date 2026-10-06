@@ -192,8 +192,10 @@ PY
 frp_server_upgrade_tree_digest() {
   python3 - "$@" <<'PY'
 import hashlib
+import sqlite3
 import sys
 from pathlib import Path
+from urllib.parse import quote
 
 h = hashlib.sha256()
 for raw in sorted(sys.argv[1:]):
@@ -201,7 +203,38 @@ for raw in sorted(sys.argv[1:]):
     h.update((raw + "\0").encode())
     if path.is_file():
         h.update(b"F")
-        h.update(path.read_bytes())
+        # The main SQLite file can omit committed WAL rows, or change during
+        # a checkpoint with identical state. Protect the entire logical DB
+        # (including schema/version metadata), not its physical page layout.
+        with path.open("rb") as source:
+            sqlite_db = path.name == "drlink.db" and source.read(16) == b"SQLite format 3\0"
+        if sqlite_db:
+            conn = sqlite3.connect("file:" + quote(str(path.resolve())) + "?mode=ro", uri=True)
+            try:
+                conn.execute("BEGIN")
+                h.update(b"SQLITE_CONTENT\0")
+                for pragma in ("application_id", "user_version", "journal_mode"):
+                    h.update((pragma + "=" + str(conn.execute("PRAGMA " + pragma).fetchone()) + "\0").encode())
+                # SQL dumps truncate TEXT at embedded NUL. Hash complete typed
+                # values instead, with row order independent of page layout.
+                schema = conn.execute(
+                    "SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY type, name"
+                ).fetchall()
+                h.update(repr(schema).encode())
+                for kind, name, _, _ in schema:
+                    if kind != "table":
+                        continue
+                    table = '"' + name.replace('"', '""') + '"'
+                    rows = [hashlib.sha256(repr(tuple(
+                        (type(value).__name__, value) for value in row
+                    )).encode()).digest() for row in conn.execute("SELECT * FROM " + table)]
+                    h.update(repr((name, len(rows))).encode())
+                    for row_digest in sorted(rows):
+                        h.update(row_digest)
+            finally:
+                conn.close()
+        else:
+            h.update(path.read_bytes())
     elif path.is_dir():
         h.update(b"D")
         for child in sorted(p for p in path.rglob("*") if p.is_file()):
@@ -238,6 +271,71 @@ for raw in sys.argv[1:]:
         h.update(child.read_bytes())
 print(h.hexdigest())
 PY
+}
+
+frp_server_upgrade_acquire_db_guard() {
+  # Lifecycle flock does not cover authenticated Agent SQLite writers. Hold
+  # the existing DB writer lock only while installing files/checking state;
+  # WAL readers keep working, and migrations run after this guard releases.
+  local db ready read_fd write_fd
+  db="$(frp_server_fs /var/lib/drlink/drlink.db)"
+  [[ -f "$db" ]] || return 0
+  coproc FRP_UPGRADE_DB_GUARD {
+    python3 -c '
+import select, sqlite3, sys
+from pathlib import Path
+from urllib.parse import quote
+conn = None
+try:
+    conn = sqlite3.connect("file:" + quote(str(Path(sys.argv[1]).resolve())) + "?mode=rw",
+                           uri=True, timeout=8, isolation_level=None)
+    conn.execute("BEGIN IMMEDIATE")
+    print("READY", flush=True)
+    if not select.select([sys.stdin], [], [], 120)[0]:
+        raise RuntimeError("protected-state guard timed out")
+    sys.stdin.readline()  # Explicit release or EOF when the owner exits.
+except Exception as exc:
+    print("ERROR: protected-state DB guard: %s" % exc, file=sys.stderr)
+    raise SystemExit(1)
+finally:
+    if conn is not None:
+        if conn.in_transaction:
+            conn.rollback()
+        conn.close()
+' "$db"
+  }
+  _FRP_UPGRADE_DB_GUARD_PID="$FRP_UPGRADE_DB_GUARD_PID"
+  read_fd="${FRP_UPGRADE_DB_GUARD[0]}"
+  write_fd="${FRP_UPGRADE_DB_GUARD[1]}"
+  # Keep a stable descriptor even after Bash removes the coprocess array.
+  exec {_FRP_UPGRADE_DB_GUARD_WRITE_FD}>&"$write_fd"
+  exec {write_fd}>&-
+  if ! read -r -t 10 ready <&"$read_fd" || [[ "$ready" != "READY" ]]; then
+    exec {read_fd}<&-
+    frp_server_upgrade_release_db_guard || true
+    echo "ERROR: could not serialize protected server state before file install" >&2
+    return 1
+  fi
+  exec {read_fd}<&-
+}
+
+frp_server_upgrade_release_db_guard() {
+  local rc=0
+  if [[ -n "${_FRP_UPGRADE_DB_GUARD_WRITE_FD:-}" ]]; then
+    printf 'RELEASE\n' >&"$_FRP_UPGRADE_DB_GUARD_WRITE_FD" 2>/dev/null || true
+    exec {_FRP_UPGRADE_DB_GUARD_WRITE_FD}>&-
+    unset _FRP_UPGRADE_DB_GUARD_WRITE_FD
+  fi
+  if [[ -n "${_FRP_UPGRADE_DB_GUARD_PID:-}" ]]; then
+    wait "$_FRP_UPGRADE_DB_GUARD_PID" || rc=$?
+    unset _FRP_UPGRADE_DB_GUARD_PID
+  fi
+  return "$rc"
+}
+
+frp_server_upgrade_release_locks() {
+  frp_server_upgrade_release_db_guard || true
+  frp_release_server_lock
 }
 
 frp_server_upgrade_preserved_digest() {
@@ -830,6 +928,8 @@ frp_server_upgrade_restore_snapshot_files() {
 
 frp_server_upgrade_rollback() {
   local snapshot="$1"
+  # Runtime restoration may need SQLite writes; never keep our copy guard.
+  frp_server_upgrade_release_db_guard || true
   if [[ "${_FRP_UPGRADE_ROLLBACK_DONE:-0}" == "1" ]]; then
     return "${_FRP_UPGRADE_ROLLBACK_RC:-1}"
   fi
@@ -1321,8 +1421,7 @@ frp_server_apply_project_upgrade() {
   frp_txn_adopt_legacy_marker server || return 1
 
   frp_acquire_server_lock || return 1
-  trap 'frp_release_server_lock; rm -rf "'"$staged"'"' RETURN
-  preserved_before="$(frp_server_upgrade_preserved_digest)"
+  trap 'frp_server_upgrade_release_locks; rm -rf "'"$staged"'"' RETURN
   backups="$(frp_server_fs /var/lib/drlink/backups)"
   snapshot="${backups}/project-update-$(date -u +%Y%m%dT%H%M%SZ)"
   FRP_INSTALL_SNAPSHOT="$snapshot"
@@ -1370,8 +1469,11 @@ frp_server_apply_project_upgrade() {
     _FRP_UPGRADE_ERRTRACE_WAS=0
     set -E
   fi
-  trap '_frp_server_upgrade_err; frp_release_server_lock; rm -rf "'"$staged"'"; if [[ "${_FRP_UPGRADE_ERRTRACE_WAS}" != "1" ]]; then set +E; fi; exit 1' ERR
-  trap 'if [[ "${_FRP_UPGRADE_ERRTRACE_WAS}" != "1" ]]; then set +E; fi; trap - ERR; frp_release_server_lock; rm -rf "'"$staged"'"' RETURN
+  trap '_frp_server_upgrade_err; frp_server_upgrade_release_locks; rm -rf "'"$staged"'"; if [[ "${_FRP_UPGRADE_ERRTRACE_WAS}" != "1" ]]; then set +E; fi; exit 1' ERR
+  trap 'if [[ "${_FRP_UPGRADE_ERRTRACE_WAS}" != "1" ]]; then set +E; fi; trap - ERR; frp_server_upgrade_release_locks; rm -rf "'"$staged"'"' RETURN
+
+  frp_server_upgrade_acquire_db_guard || return 1
+  preserved_before="$(frp_server_upgrade_preserved_digest)"
 
   FRP_TXN_RELEASE_CHANNEL="$target_channel" \
   FRP_TXN_SOURCE_REF="$target_ref" \
@@ -1394,6 +1496,11 @@ frp_server_apply_project_upgrade() {
   # Project file install must not mutate protected runtime state.
   if [[ "$(frp_server_upgrade_preserved_digest)" != "$preserved_before" ]]; then
     echo "ERROR: protected server state changed during project file install" >&2
+    frp_server_upgrade_rollback "$snapshot"
+    frp_emit_failure_class STATE_PRESERVATION_FAILED
+    return 1
+  fi
+  if ! frp_server_upgrade_release_db_guard; then
     frp_server_upgrade_rollback "$snapshot"
     frp_emit_failure_class STATE_PRESERVATION_FAILED
     return 1
@@ -1421,6 +1528,10 @@ frp_server_apply_project_upgrade() {
   # Controlled Egress / control-plane bootstrap may intentionally add keys to
   # config.json and create protected state (egress-control.json / drlink.db).
   # Re-baseline after those deliberate migration steps.
+  if ! frp_server_upgrade_acquire_db_guard; then
+    frp_server_upgrade_rollback "$snapshot"
+    return 1
+  fi
   preserved_before="$(frp_server_upgrade_preserved_digest)"
   if ! frp_server_upgrade_post_mutation_guard; then
     frp_server_upgrade_rollback "$snapshot"
@@ -1435,6 +1546,11 @@ frp_server_apply_project_upgrade() {
   fi
   if [[ "$(frp_server_upgrade_preserved_digest)" != "$preserved_before" ]]; then
     echo "ERROR: protected server state changed during project update" >&2
+    frp_server_upgrade_rollback "$snapshot"
+    frp_emit_failure_class STATE_PRESERVATION_FAILED
+    return 1
+  fi
+  if ! frp_server_upgrade_release_db_guard; then
     frp_server_upgrade_rollback "$snapshot"
     frp_emit_failure_class STATE_PRESERVATION_FAILED
     return 1
