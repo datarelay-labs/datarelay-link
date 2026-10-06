@@ -8,7 +8,7 @@ engineering_system:
   - .github/workflows/macos-client.yml
   - .github/workflows/windows-client.yml
   merge_gate_status: advisory
-  policy_epoch: 13
+  policy_epoch: 19
   governance_epoch: 0
 project:
   name: datarelay-link
