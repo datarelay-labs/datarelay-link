@@ -31,8 +31,8 @@ class StatePathSpec:
 # SQLite client + published-service state used by the allocator transport.
 # Disaster-recovery restores must not re-apply it as service/policy authority;
 # rebuild client/service/reservation maps from DB, then merge machine-id-matched
-# management-auth identity fields from this forensic backup copy (those fields
-# are not stored in SQLite).
+# management-auth identity and public Managed Host Group metadata from this
+# forensic backup copy (these fields are not stored in SQLite).
 CLIENT_INVENTORY = StatePathSpec(
     path="var/lib/drlink/runtime/client-inventory.json",
     legacy_paths=("var/lib/drlink/registry.json",),

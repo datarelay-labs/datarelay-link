@@ -88,6 +88,7 @@ def test_backend_identity_ip_and_dns():
         for route in (
             'catalog',
             'remote-services-status',
+            'agent-lifecycle',
             'ai-jobs/claim',
             'ai-jobs/complete',
             'remote-services/[^/]+',
@@ -536,6 +537,23 @@ def test_live_management_routes_through_frontend():
             ids = [job['id'] for job in claimed.get('jobs') or []]
             if job_id not in ids:
                 fail('signed claim through frontend', claimed)
+            lifecycle = mgmt.report_agent_lifecycle_on_server(root=str(agent_root), state='connected')
+            if lifecycle.get('state') != 'connected' or not lifecycle.get('reconcile_required'):
+                fail('signed lifecycle through frontend', lifecycle)
+            unsigned_lifecycle = urllib.request.Request(
+                'https://127.0.0.1:%s/v1/agent-lifecycle' % frontend_port,
+                data=b'{"state":"disconnected"}',
+                headers={'Content-Type': 'application/json'}, method='POST',
+            )
+            try:
+                urllib.request.urlopen(unsigned_lifecycle, context=ctx, timeout=5)
+                fail('unsigned lifecycle was accepted')
+            except urllib.error.HTTPError as exc:
+                if exc.code != 403:
+                    fail('unsigned lifecycle', (exc.code, exc.read()[:300]))
+            second = mgmt.report_agent_lifecycle_on_server(root=str(agent_root), state='connected')
+            if second.get('reconcile_required'):
+                fail('fresh heartbeat still requests reconnect', second)
             token = next(job['claim_token'] for job in claimed['jobs'] if job['id'] == job_id)
             attempt = next(job['attempt_id'] for job in claimed['jobs'] if job['id'] == job_id)
             completed = mgmt.complete_ai_job_on_server(

@@ -286,6 +286,38 @@ def _db_fd_count(db_path: str) -> int:
 class InternetAccessDbFdIsolation(unittest.TestCase):
     """A long-lived control connection must not keep fds from request planes."""
 
+    @unittest.skipUnless(Path('/proc/self/fd').is_dir(), 'Linux fd accounting required')
+    def test_readonly_database_requests_release_descriptors(self):
+        import frp_egress_runtime as rt
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            os.environ['FRP_DEPLOY_TEST_ROOT'] = tmp
+            self.addCleanup(os.environ.pop, 'FRP_DEPLOY_TEST_ROOT', None)
+            cfg = root / 'etc/drlink/config.json'
+            cfg.parent.mkdir(parents=True)
+            cfg.write_text('{}\n', encoding='utf-8')
+            _seed_internet_allow(root)
+            cache = rt.PolicyCache(cfg)
+            db = cache._cp.plane.db_file
+            self.assertEqual(cache._cp.plane.conn.execute('PRAGMA query_only').fetchone()[0], 1)
+            # Runtime auth runs with a read-only control DB under systemd's
+            # ProtectSystem=strict. SQLite's implicit RW -> RO fallback keeps
+            # unmatched deferred-close fds while the cached plane stays open.
+            db.chmod(0o444)
+            before = _db_fd_count(str(db))
+            try:
+                for _ in range(100):
+                    decision = cache.authorize(
+                        source_ip='127.0.0.1', hostname='allowed.test', port=443,
+                        protocol='https', candidate_ips=['1.2.3.4'],
+                    )
+                    self.assertEqual(decision['decision'], 'ALLOW')
+                self.assertLessEqual(_db_fd_count(str(db)), before + 1)
+            finally:
+                db.chmod(0o600)
+                cache._cp.plane.close()
+
     def test_concurrent_isolated_planes_do_not_accumulate_db_fds(self):
         import frp_egress_runtime as rt
         import drlink_v24 as v24
@@ -321,6 +353,7 @@ class InternetAccessDbFdIsolation(unittest.TestCase):
         finally:
             plane.close()
         cache = rt.PolicyCache(cfg_path)
+        self.addCleanup(cache._cp.plane.close)
         db_path = str(cache._cp.plane.db_file)
         before = _db_fd_count(db_path)
 

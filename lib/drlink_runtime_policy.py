@@ -25,7 +25,6 @@ from drlink_control_db import (
     ControlPlaneError,
     DatabaseCorruptError,
     SchemaTooNewError,
-    connect,
     db_path,
     resolve_root,
     runtime_dir,
@@ -678,7 +677,11 @@ class ControlPlaneCache:
                             self.plane.close()
                         except Exception:
                             pass
-                    self.plane = open_plane(self.cfg, root=root)
+                    # Packet authorization only reads the already-migrated DB.
+                    # Explicit RO avoids SQLite's RW -> RO fallback under a
+                    # hardened service mount, whose unmatched deferred-close
+                    # descriptors accumulate beside this long-lived plane.
+                    self.plane = ControlPlane(root, read_only=True)
                 fp = self._fingerprint(self.plane)
                 if not force and fp == self.fingerprint and self.load_error is None:
                     return
@@ -723,8 +726,8 @@ class ControlPlaneCache:
         _ISOLATED_CONN_LOCK.acquire()
         conn = None
         try:
-            conn = connect(root=root, create=False)
-            plane = ControlPlane(root, conn=conn)
+            plane = ControlPlane(root, read_only=True)
+            conn = plane.conn
         except Exception as exc:
             if conn is not None:
                 try:

@@ -3738,6 +3738,7 @@ def make_handler(allocator):
                     if path in (
                         '/v1/remote-services',
                         '/v1/remote-services-status',
+                        '/v1/agent-lifecycle',
                         '/v1/ai-jobs/claim',
                         '/v1/ai-jobs/complete',
                     ) and MGMT_SYNC is not None:

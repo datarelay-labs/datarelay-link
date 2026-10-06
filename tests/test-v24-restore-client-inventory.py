@@ -369,6 +369,34 @@ class RestoreClientInventoryTests(unittest.TestCase):
         self.assertEqual(after["clients"][MID]["services"]["ssh"]["remote_port"], 6001)
         self.plane = ControlPlane(str(self.tree))
 
+    def test_restore_preserves_public_managed_host_groups(self):
+        self._seed_clients_and_services()
+        self._inject_mgmt_identity({MID: self.MGMT_A, MID2: self.MGMT_B})
+        group_tool = ROOT / 'tools/frp-group-set'
+        for args in (
+            ('create', 'operators', '--description', 'on-call hosts'),
+            ('create', 'empty-group'),
+            ('add-member', MID, 'operators'),
+            ('add-member', MID2, 'operators'),
+        ):
+            proc = run_tool(group_tool, *args)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+        path = self.tree / 'var/lib/drlink/runtime/client-inventory.json'
+        before = json.loads(path.read_text(encoding='utf-8'))
+        archive = self.outdir / 'groups.tar.gz'
+        proc = run_tool(BACKUP, str(archive))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.plane.close()
+        proc = run_tool(RESTORE, str(archive))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        after = json.loads(path.read_text(encoding='utf-8'))
+        self.assertEqual(after.get('groups'), before['groups'])
+        for cid in (MID, MID2):
+            self.assertEqual(after['clients'][cid].get('group_ids'), before['clients'][cid]['group_ids'])
+            self._assert_mgmt_preserved(after['clients'][cid], before['clients'][cid])
+            self.assertNotIn('evil-stale', after['clients'][cid]['services'])
+        self.plane = ControlPlane(str(self.tree))
+
     def test_rollback_preserves_mgmt_identity(self):
         self._seed_clients_and_services()
         self._inject_mgmt_identity({MID: self.MGMT_A, MID2: self.MGMT_B})
@@ -400,6 +428,29 @@ class RestoreClientInventoryTests(unittest.TestCase):
         self.assertIn(extra, after["clients"])
         self._assert_mgmt_preserved(after["clients"][MID], self.MGMT_A)
         self._assert_mgmt_preserved(after["clients"][MID2], self.MGMT_B)
+        self.plane = ControlPlane(str(self.tree))
+
+    def test_preflight_rejects_dangling_group_membership_before_mutation(self):
+        self._seed_clients_and_services()
+        self._inject_mgmt_identity({MID: self.MGMT_A, MID2: self.MGMT_B})
+        archive = self.outdir / 'group-source.tar.gz'
+        proc = run_tool(BACKUP, str(archive))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.plane.close()
+        self._capture_live_baseline()
+        broken = self.outdir / 'group-broken.tar.gz'
+
+        def mutate(root):
+            path = root / 'payload/var/lib/drlink/runtime/client-inventory.json'
+            state = json.loads(path.read_text(encoding='utf-8'))
+            state['clients'][MID]['group_ids'] = ['grp_12345678']
+            path.write_text(json.dumps(state) + '\n', encoding='utf-8')
+
+        rewrite_archive(archive, broken, mutate)
+        proc = run_tool(RESTORE, str(broken))
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn('Managed Host Group metadata', proc.stderr)
+        self._assert_no_live_mutation()
         self.plane = ControlPlane(str(self.tree))
 
     def test_preflight_rejects_corrupt_identity_before_mutation(self):

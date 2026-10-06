@@ -19,6 +19,7 @@ Unsupported constructs fail the reconcile closed.
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import ipaddress
 import json
@@ -2250,8 +2251,8 @@ def merge_mgmt_identity_from_forensic(
 
     Authority split:
     - SQLite projection owns clients/services/reserved/policy continuity.
-    - Forensic backup inventory owns management-auth identity fields that are
-      not stored in SQLite.
+    - Forensic backup inventory owns management-auth identity and public
+      Managed Host Group metadata, which are not stored in SQLite.
     - Forensic services/runtime maps are never reinstated as authority.
 
     When ``require_when_clients`` is true (supported same-version DR), every
@@ -2279,6 +2280,22 @@ def merge_mgmt_identity_from_forensic(
         fclients = {}
     if not isinstance(fclients, dict):
         raise MgmtIdentityError("forensic client inventory clients map is invalid")
+
+    # Public group tooling still owns grp_* definitions/membership in the
+    # inventory. They are operator state, unlike its derived service maps.
+    # Validate before merging; never revive forensic clients or endpoints.
+    import frp_client_registry as creg
+
+    issues = creg.group_invariant_issues(forensic)
+    if issues:
+        raise MgmtIdentityError(
+            "Managed Host Group metadata in backup is invalid: %s" % '; '.join(issues)
+        )
+    projected['groups'] = copy.deepcopy(forensic.get('groups') or {})
+    for cid, entry in clients.items():
+        frec = fclients.get(cid)
+        if isinstance(entry, dict) and isinstance(frec, dict):
+            creg.set_client_group_ids(entry, creg.client_group_ids(frec))
 
     for cid, entry in clients.items():
         if not isinstance(entry, dict):
@@ -2513,8 +2530,8 @@ def project_client_inventory_from_control_plane(
     """Atomically write derived client-inventory.json from the restored control DB.
 
     When ``require_mgmt_identity`` is true (disaster-recovery restore/rollback),
-    management identity is merged from ``forensic_inventory`` and missing /
-    corrupt identity fails closed.
+    management identity and public Managed Host Groups are merged from
+    ``forensic_inventory``; corrupt identity/group metadata fails closed.
     """
     deploy = root if root is not None else getattr(plane, "root", None)
     path = Path(deploy) / "var/lib/drlink/runtime/client-inventory.json" if deploy else (

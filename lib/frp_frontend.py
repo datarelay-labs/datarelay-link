@@ -435,7 +435,7 @@ def allocator_proxy_locations(allocator_listen_port, ca_cert):
     # remote-services/<name> is one path segment. Exact routes are listed
     # separately so /v1/profiles and other allocator internals do not match.
     management = (
-        'location ~ ^/v1/(?:catalog|remote-services-status|remote-services|'
+        'location ~ ^/v1/(?:catalog|remote-services-status|remote-services|agent-lifecycle|'
         'ai-jobs/claim|ai-jobs/complete|remote-services/[^/]+)$'
     )
     return (
