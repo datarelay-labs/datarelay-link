@@ -39,7 +39,7 @@ pq_ssh "$SERVER" "sudo bash -s -- --purge --yes" <"$PRIOR_TREE/dist/uninstall-se
 remote=/var/tmp/drlink-upgrade-v240-bootstrap.sh
 pq_ssh "$SERVER" "cat > '$remote' && chmod 700 '$remote'" <"$PRIOR_TREE/dist/bootstrap-server.sh"
 pq_gate V240_BOOTSTRAP_STAGED PASS
-pq_ssh "$SERVER" "sudo env FRP_NONINTERACTIVE=1 FRP_PUBLIC_HOST='${FRP_E2E_PUBLIC_HOSTNAME}' FRP_RELEASE_CHANNEL=stable bash '$remote'" >"$OUT/v240-install.log" 2>&1
+pq_ssh "$SERVER" "sudo env FRP_NONINTERACTIVE=1 FRP_PUBLIC_IP='${FRP_E2E_SERVER_IP}' FRP_PUBLIC_HOST='${FRP_E2E_SERVER_IP}' FRP_PUBLIC_HOSTNAME='${FRP_E2E_PUBLIC_HOSTNAME}' FRP_RELEASE_CHANNEL=stable bash '$remote'" >"$OUT/v240-install.log" 2>&1
 pq_ssh "$SERVER" "sudo drlink system version" >"$OUT/v240-version.txt" 2>&1
 grep -q '2\.4\.0' "$OUT/v240-version.txt" || fail_out "installed prior runtime is not v2.4.0"
 pq_gate V240_VERSION_IDENTITY PASS
