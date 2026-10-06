@@ -34,7 +34,10 @@ fi
 grep -q '^PROJECT_VERSION=2.4.0$' "$PRIOR_TREE/VERSION" || fail_out "prior tree is not v2.4.0"
 # Purge only after all safety/precondition checks above.
 pq_ssh "$SERVER" "sudo bash -s -- --purge --yes" <"$ROOT/dist/uninstall-server.sh" >"$OUT/purge-current.log" 2>&1 || true
-pq_ssh "$SERVER" "sudo bash -s -- --purge --yes" <"$PRIOR_TREE/dist/uninstall-server.sh" >"$OUT/purge-prior.log" 2>&1 || true
+remote_prior_uninstall=/var/tmp/drlink-v240-uninstall-server.sh
+pq_ssh "$SERVER" "cat > '$remote_prior_uninstall' && chmod 700 '$remote_prior_uninstall'" <"$PRIOR_TREE/dist/uninstall-server.sh"
+pq_ssh "$SERVER" "sudo bash '$remote_prior_uninstall' --purge --yes" >"$OUT/purge-prior.log" 2>&1 || true
+pq_ssh "$SERVER" "rm -f '$remote_prior_uninstall'" >/dev/null 2>&1 || true
 # Install immutable v2.4.
 remote=/var/tmp/drlink-upgrade-v240-bootstrap.sh
 pq_ssh "$SERVER" "cat > '$remote' && chmod 700 '$remote'" <"$PRIOR_TREE/dist/bootstrap-server.sh"
