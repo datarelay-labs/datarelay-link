@@ -39,7 +39,7 @@ HTTPS edge that enables the stock short URL above.
 ## Trust boundary
 
 ```text
-Client
+DRLink Agent
    |
    | publicly trusted HTTPS (stock OS trust)
    v
@@ -56,7 +56,7 @@ Data Relay Link allocator
 
 after enrollment:
 
-Client
+DRLink Agent
    |
    | existing Data Relay Link Private CA
    v
@@ -212,7 +212,7 @@ bootstrap.example.com {
 ```
 
 `tls_insecure_skip_verify` applies only to the operator proxy's **loopback**
-upstream to the Private CA allocator. Clients still use stock OS trust to the
+upstream to the Private CA allocator. DRLink Agents still use stock OS trust to the
 public bootstrap hostname. Do not put `curl -k` in client bootstrap commands.
 
 
@@ -246,7 +246,7 @@ Each ticket is unique and bound to one intended enrollment context. A reusable s
 
 Raw ticket/install URL is shown once at issuance. Persistent server state stores the verifier/hash and non-secret lifecycle metadata, not a redisplayable raw ticket.
 
-Successful enrollment atomically consumes the credential so concurrent double-use cannot create two Clients. Expired/revoked tickets leave the active-unused count. Ticket expiry/revocation never disconnects a Client that has already completed enrollment.
+Successful enrollment atomically consumes the credential so concurrent double-use cannot create two Managed Hosts. Expired/revoked tickets leave the active-unused count. Ticket expiry/revocation never disconnects a DRLink Agent that has already completed enrollment.
 
 Reinstall/recovery never reuses a consumed ticket; use the supported recovery/re-enrollment flow.
 
@@ -300,7 +300,7 @@ Private CA identity.
 If the bootstrap public certificate is invalid/expired/untrusted:
 
 - short URL fetch fails closed under stock OS trust
-- no Client is created
+- no Managed Host is created
 - ticket is not completed
 - management plane is unaffected
 - `zt1` fallback still works
