@@ -1225,7 +1225,8 @@ frp_server_apply_project_upgrade() {
   fi
   [[ -f "$(frp_server_fs /etc/drlink/config.json)" ]] &&
   [[ -s "$(frp_server_fs /etc/frp/server_token)" ]] &&
-  [[ -f "$(frp_server_fs /var/lib/drlink/registry.json)" ]] &&
+  { [[ -f "$(frp_server_fs /var/lib/drlink/registry.json)" ]] ||
+    [[ -f "$(frp_server_fs /var/lib/drlink/runtime/client-inventory.json)" ]]; } &&
   [[ -f "$(frp_server_fs /etc/drlink/pki/ca.crt)" ]] || {
     echo "ERROR: no complete existing Data Relay Link server installation was found" >&2
     return 1
