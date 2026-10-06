@@ -206,6 +206,17 @@ Support bundles and logs must redact protected values.
 
 ## 10. Interoperability qualification
 
+Certificate activation must regenerate the project-owned single-443 frontend
+from the Server configuration and active certificate metadata before reload.
+Activation validates nginx configuration and the actual loopback TLS peer with
+the configured MCP SNI hostname. Certificate and frontend configuration are
+restored together on failure. Clearing MCP TLS intent removes its SNI route;
+purging secrets happens only after that route has been removed and reloaded.
+The distinct control hostname retains its private-CA certificate and WSS route.
+HTTP-01 is enabled only for AUTO_ACME; an imported certificate does not require
+a new listener on port 80. These checks qualify local certificate activation;
+real MCP host interoperability remains a separate user gate.
+
 Do not claim ChatGPT, Claude, Cursor, or another MCP host as supported solely from protocol conformance.
 
 Release qualification must retain real interoperability evidence for every host explicitly claimed as supported.

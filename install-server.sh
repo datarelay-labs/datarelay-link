@@ -1624,7 +1624,7 @@ EOF2
 write_frontend_config() {
   local dest="$1" pki run_dir log_dir temp_root
   local mcp_host="" mcp_cert="" mcp_key="" acme_root=""
-  local mcp_meta
+  local mcp_meta mcp_mode="" mcp_selector=""
   pki="$(frp_pki_dir)"
   run_dir="$(frp_server_fs /run/drlink)"
   log_dir="$(frp_server_fs /var/log/drlink)"
@@ -1636,10 +1636,24 @@ write_frontend_config() {
   mcp_key="$(frp_server_fs /var/lib/drlink/tls/mcp/active/privkey.pem)"
   mcp_meta="$(frp_server_fs /var/lib/drlink/tls/mcp/active/meta.json)"
   if [[ -f "$mcp_cert" && -f "$mcp_key" && -f "$mcp_meta" ]]; then
-    mcp_host="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1],encoding="utf-8")).get("hostname") or "")' "$mcp_meta" 2>/dev/null || true)"
-    acme_root="$(frp_server_fs /var/lib/drlink/tls/mcp/acme-www)"
-    mkdir -p "$acme_root/.well-known/acme-challenge"
-    chmod 755 "$acme_root" 2>/dev/null || true
+    mcp_selector="$(python3 - "$BASE_DIR/lib" "$(frp_server_fs /)" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+from drlink_mcp_tls import frontend_tls_material
+material = frontend_tls_material(sys.argv[2])
+print(material.get('hostname') or '', material.get('mode') or '')
+PY
+)" || return 1
+    read -r mcp_host mcp_mode <<<"$mcp_selector"
+    if [[ "$mcp_mode" == AUTO_ACME ]]; then
+      acme_root="$(frp_server_fs /var/lib/drlink/tls/mcp/acme-www)"
+      mkdir -p "$acme_root/.well-known/acme-challenge"
+      chmod 755 "$acme_root" 2>/dev/null || true
+    fi
+    if [[ -z "$mcp_host" ]]; then
+      mcp_cert=""
+      mcp_key=""
+    fi
   else
     mcp_cert=""
     mcp_key=""

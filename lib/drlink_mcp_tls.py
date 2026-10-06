@@ -76,7 +76,9 @@ STATUS_PENDING = "PENDING_ISSUANCE"
 STATUS_ABSENT = "ABSENT"
 
 META_KEY = "mcp_tls"
-LOCK_REL = "var/lib/drlink/tls/mcp/mcp-tls.lock"
+# The lock survives a purge of certificate/account material; unlinking a held
+# lock would let a concurrent renewal acquire a second inode.
+LOCK_REL = "var/lib/drlink/mcp-tls.lock"
 STATE_TREE_REL = "var/lib/drlink/tls/mcp"
 
 _HOSTNAME_RE = re.compile(
@@ -1240,13 +1242,15 @@ def reload_frontend(root: Optional[str | Path] = None) -> None:
             try:
                 subprocess.run(
                     ["systemctl", "reload", "drlink-frontend.service"],
-                    check=False,
+                    check=True,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     timeout=15,
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                raise McpTlsError('frontend reload failed', failure_class='PROXY_RELOAD_FAILED') from exc
+        elif (base / 'etc/drlink/frontend.conf').is_file():
+            raise McpTlsError('installed frontend PID is missing', failure_class='PROXY_RELOAD_FAILED')
         return
     try:
         pid = int(pid_path.read_text(encoding="utf-8").strip())
@@ -1258,6 +1262,100 @@ def reload_frontend(root: Optional[str | Path] = None) -> None:
         raise McpTlsError("frontend process is not running", failure_class="PROXY_RELOAD_FAILED") from exc
     except PermissionError as exc:
         raise McpTlsError("insufficient permission to reload frontend", failure_class="PROXY_RELOAD_FAILED") from exc
+
+
+def refresh_frontend_config(root, *, enabled: bool = True) -> Optional[dict]:
+    """Converge the installed derived frontend using the canonical renderer.
+
+    Isolated material-only fixtures have no installed frontend. Live activation
+    requires one. The returned snapshot restores configuration with certificates
+    if validation, reload or peer verification fails.
+    """
+    import frp_frontend as frontend
+    import frp_server_config as server_config
+
+    base = _root(root)
+    path = base / 'etc/drlink/frontend.conf'
+    if not path.is_file():
+        if base == Path('/'):
+            raise McpTlsError('installed single-443 frontend configuration is missing', failure_class='PROXY_CONFIG_INVALID')
+        return None
+    cfg = server_config.load_config(base / 'etc/drlink/config.json')
+    old = path.read_bytes()
+    def local_path(value):
+        value = Path(value)
+        return str(value if base == Path('/') or value == base or base in value.parents else base / str(value).lstrip('/'))
+    active = active_dir(base)
+    meta = json.loads((active / 'meta.json').read_text()) if enabled else {}
+    host = str(meta.get('hostname') or '')
+    port = int(cfg.get('frp_control_public_port') or frontend.DEFAULT_FRONTEND_PORT)
+    rendered = frontend.render_nginx_conf(
+        public_host=server_config.control_host(cfg), frontend_port=port,
+        allocator_listen_port=int(cfg.get('allocator_listen_port') or frontend.DEFAULT_ALLOCATOR_LISTEN_PORT),
+        control_listen_port=int(cfg.get('frp_control_listen_port') or frontend.DEFAULT_BACKEND_CONTROL_PORT),
+        ca_cert=local_path(cfg.get('tls_ca_cert') or '/etc/drlink/pki/ca.crt'),
+        server_cert=local_path(cfg.get('tls_server_cert') or '/etc/drlink/pki/server.crt'),
+        server_key=local_path(cfg.get('tls_server_key') or '/etc/drlink/pki/server.key'),
+        pid_path=str(base / 'run/drlink/frontend/nginx.pid'),
+        temp_root=str(base / 'var/lib/drlink/nginx'),
+        mcp_tls_hostname=host,
+        mcp_tls_cert=str(active / 'fullchain.pem') if enabled else '',
+        mcp_tls_key=str(active / 'privkey.pem') if enabled else '',
+        acme_webroot=str(acme_webroot(base)) if meta.get('mode') == MODE_AUTO_ACME else '',
+    )
+    nginx = shutil.which('nginx')
+    if not nginx:
+        raise McpTlsError('nginx is required to validate certificate routing', failure_class='PROXY_CONFIG_INVALID')
+    fd, candidate = tempfile.mkstemp(prefix='frontend-tls-', dir=str(path.parent))
+    os.close(fd)
+    try:
+        # Use isolated listen ports for nginx -t, never the active public port.
+        check = frontend.rewrite_listen_for_syntax_check(rendered, listen_port=49152 + secrets.randbelow(14000))
+        Path(candidate).write_text(check)
+        result = subprocess.run([nginx, '-t', '-c', candidate], capture_output=True, timeout=15)
+        if result.returncode:
+            raise McpTlsError('regenerated frontend configuration is invalid', failure_class='PROXY_CONFIG_INVALID')
+        _write_public_file(path, rendered, 0o600)
+    finally:
+        Path(candidate).unlink()
+    return {'path': path, 'previous': old, 'port': port}
+
+
+def frontend_tls_material(root) -> dict:
+    """Installer projection: retained certificate files alone are not intent."""
+    from drlink_control_plane import ControlPlane
+    base = _root(root)
+    active = active_dir(base)
+    if not all((active / name).is_file() for name in ('meta.json', 'fullchain.pem', 'privkey.pem')):
+        return {}
+    plane = ControlPlane(str(base), read_only=True)
+    try:
+        state = load_state(plane)
+    finally:
+        plane.close()
+    meta = json.loads((active / 'meta.json').read_text())
+    if not state.get('mode') or not state.get('hostname') or state['hostname'] != meta.get('hostname'):
+        return {}
+    return {'hostname': meta['hostname'], 'mode': meta.get('mode') or state['mode']}
+
+
+def verify_active_frontend_certificate(root, hostname: str, port: int, fingerprint: str) -> None:
+    """Verify configured SNI and exact leaf on loopback with TLS checks intact."""
+    context = ssl.create_default_context()
+    context.load_verify_locations(cafile=str(active_dir(root) / 'fullchain.pem'))
+    deadline = time.monotonic() + 5
+    while True:
+        try:
+            with socket.create_connection(('127.0.0.1', int(port)), timeout=1) as raw:
+                with context.wrap_socket(raw, server_hostname=hostname) as tls:
+                    actual = hashlib.sha256(tls.getpeercert(binary_form=True)).hexdigest()
+            if actual == fingerprint:
+                return
+        except (ssl.SSLError, OSError):
+            pass
+        if time.monotonic() >= deadline:
+            raise McpTlsError('frontend did not serve the activated certificate for the MCP hostname', failure_class='HTTPS_CERT_VERIFY_FAILED')
+        time.sleep(0.05)
 
 
 def verify_mcp_https(
@@ -1394,34 +1492,43 @@ def activate_material(plane, root, meta: dict, *, reload: bool = True, health_po
                 )
         # Snapshot whether we had a prior valid cert
         prior = read_active_material(root)
+        frontend_snapshot = None
+        frontend_path = _root(root) / 'etc/drlink/frontend.conf'
+        if frontend_path.is_file():
+            frontend_snapshot = {'path': frontend_path, 'previous': frontend_path.read_bytes()}
         try:
             _activate_staged(root)
+            frontend_snapshot = refresh_frontend_config(root)
             if reload:
                 reload_frontend(root)
+                if frontend_snapshot:
+                    verify_active_frontend_certificate(root, host, frontend_snapshot['port'], meta['fingerprint_sha256'])
             if health_port:
                 ca = health_ca
                 if mode == MODE_PRIVATE_CA and not ca:
                     ca = str(_root(root) / "etc" / "drlink" / "pki" / "ca.crt")
                 health = verify_mcp_https(host, health_port, ca_file=ca)
                 if not health.get("ok"):
-                    # Roll back to previous if available
-                    if prior and restore_previous_on_failure(root):
-                        try:
-                            reload_frontend(root)
-                        except Exception:
-                            pass
                     raise McpTlsError(
                         "post-activation MCP HTTPS health check failed",
                         failure_class=health.get("failure_class") or "HTTPS_HEALTH_FAILED",
                     )
-        except McpTlsError:
-            raise
         except Exception as exc:
-            if prior and restore_previous_on_failure(root):
+            if prior:
+                restore_previous_on_failure(root)
+            else:
+                for child in active_dir(root).iterdir():
+                    if child.is_file():
+                        child.unlink()
+            if frontend_snapshot:
+                _write_public_file(frontend_snapshot['path'], frontend_snapshot['previous'], 0o600)
+            if reload:
                 try:
                     reload_frontend(root)
                 except Exception:
                     pass
+            if isinstance(exc, McpTlsError):
+                raise
             raise McpTlsError(str(exc), failure_class="ACTIVATION_FAILED") from exc
 
         state = load_state(plane)
@@ -1559,10 +1666,6 @@ def import_user_certificate(
     host = state.get("hostname") or ""
     if not host:
         raise McpTlsError("configure MCP TLS hostname before import", failure_class="HOSTNAME_REQUIRED")
-    # Force mode
-    state["mode"] = MODE_USER_CERTIFICATE
-    save_state(plane, state)
-
     try:
         cert_pem = Path(cert_path).read_bytes()
         key_pem = Path(key_path).read_bytes()
@@ -1703,14 +1806,25 @@ def renew_if_due(
 
 def clear_tls(plane, root=None, *, purge_secrets: bool = False) -> dict:
     root = _root(root)
-    state = default_state()
-    save_state(plane, state)
-    if purge_secrets:
-        tree = tls_tree(root)
-        if tree.is_dir():
-            shutil.rmtree(tree)
-    _audit(plane, "certificate_removed", result="ok")
-    return state
+    def clear():
+        frontend_snapshot = refresh_frontend_config(root, enabled=False)
+        try:
+            if frontend_snapshot:
+                reload_frontend(root)
+            state = default_state()
+            save_state(plane, state)
+        except Exception:
+            if frontend_snapshot:
+                _write_public_file(frontend_snapshot['path'], frontend_snapshot['previous'], 0o600)
+                reload_frontend(root)
+            raise
+        if purge_secrets:
+            tree = tls_tree(root)
+            if tree.is_dir():
+                shutil.rmtree(tree)
+        _audit(plane, "certificate_removed", result="ok")
+        return state
+    return _with_tls_lock(root, clear)
 
 
 def status_view(plane, root=None) -> dict:
