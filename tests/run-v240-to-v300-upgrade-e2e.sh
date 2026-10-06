@@ -44,7 +44,7 @@ pq_ssh "$SERVER" "sudo drlink system version" >"$OUT/v240-version.txt" 2>&1
 grep -q '2\.4\.0' "$OUT/v240-version.txt" || fail_out "installed prior runtime is not v2.4.0"
 pq_gate V240_VERSION_IDENTITY PASS
 # Seed durable v2.4 state exclusively through public CLI.
-pq_ssh "$SERVER" "sudo drlink set network-object upgrade-src type ip value 198.51.100.10 && sudo drlink set network-object upgrade-dst type ip value 198.51.100.20 && sudo drlink set service-object upgrade-ssh type tcp port 22 && sudo drlink set remote-access upgrade-preserve mode whitelist source upgrade-src destination upgrade-dst service upgrade-ssh enabled true" >"$OUT/v240-seed.log" 2>&1
+pq_ssh "$SERVER" "sudo drlink set network-object upgrade-src type ip value 198.51.100.10 && sudo drlink set network-object upgrade-dst type ip value 198.51.100.20 && sudo drlink set service-object upgrade-ssh type tcp port 22 && sudo drlink set remote-access upgrade-preserve mode whitelist source upgrade-src destination upgrade-dst service upgrade-ssh enabled" >"$OUT/v240-seed.log" 2>&1
 # Backup + isolated validation before upgrade.
 pq_ssh "$SERVER" "sudo drlink system backup /var/tmp/drlink-v240-upgrade-backup.tar.gz" >"$OUT/v240-backup.log" 2>&1
 pq_gate V240_BACKUP PASS
