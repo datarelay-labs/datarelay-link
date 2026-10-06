@@ -12,6 +12,9 @@ import os
 import sys
 import tempfile
 import unittest
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -19,7 +22,7 @@ sys.path.insert(0, str(ROOT / "lib"))
 
 from drlink_control_plane import ConcurrencyError, ConfirmationRequired, ControlPlane
 import drlink_v24 as v24
-from drlink_v24_bundle import apply_v24_plan, export_configuration_v24, prepare_v24_plan
+from drlink_v24_bundle import BundleError, apply_v24_plan, export_configuration_v24, prepare_v24_plan
 
 
 def _server_root(tmp: str) -> None:
@@ -28,6 +31,95 @@ def _server_root(tmp: str) -> None:
 
 
 class BundleStalePlanSafety(unittest.TestCase):
+    def test_concurrent_same_name_create_returns_reviewable_conflict(self):
+        barrier = threading.Barrier(2)
+        mutate = ControlPlane._mutate
+        def synchronized(plane, command, *args, **kwargs):
+            if command == 'set network-object race':
+                barrier.wait(timeout=10)
+            return mutate(plane, command, *args, **kwargs)
+        def create(value):
+            plane = ControlPlane(self.tmp)
+            try:
+                return v24.set_network_object(plane, 'race', type='ip', value=value, oneshot=True)
+            except Exception as exc:
+                return exc
+            finally:
+                plane.close()
+        with mock.patch.object(ControlPlane, '_mutate', synchronized), ThreadPoolExecutor(2) as pool:
+            results = list(pool.map(create, ('192.0.2.51', '192.0.2.52')))
+        self.assertEqual(sum(isinstance(result, dict) for result in results), 1, results)
+        error = next(result for result in results if isinstance(result, Exception))
+        self.assertIsInstance(error, ConcurrencyError)
+        self.assertIn('Review current state and retry', str(error))
+        self.assertNotIn('UNIQUE constraint', str(error))
+        self.assertEqual(len(self.plane._object_values(self.plane.get_object('race')['id'])), 1)
+
+    def test_conflicting_duplicate_names_reject_before_any_change(self):
+        before = self.plane.current_revision()
+        with self.assertRaisesRegex(BundleError, 'Duplicate'):
+            prepare_v24_plan(self.plane, '''configurationBundle:
+  context: server
+  networkObjects:
+    - name: conflict
+      type: ip
+      value: 192.0.2.51
+    - name: conflict
+      type: ip
+      value: 192.0.2.52
+''')
+        self.assertIsNone(self.plane.get_object('conflict'))
+        self.assertEqual(self.plane.current_revision(), before)
+
+    def test_agent_test_rejects_missing_service_and_duplicate_binding_readonly(self):
+        before = self.plane.current_revision()
+        for services in (
+            [{'name': 'first', 'destination': 'this-host', 'service': 'ssh', 'enabled': True},
+             {'name': 'last', 'destination': 'this-host', 'service': 'missing-service', 'enabled': True}],
+            [{'name': 'first', 'destination': 'this-host', 'service': 'ssh', 'enabled': True},
+             {'name': 'last', 'destination': 'this-host', 'service': 'ssh', 'enabled': True}],
+        ):
+            import json
+            with self.subTest(services=services), self.assertRaises(BundleError):
+                prepare_v24_plan(self.plane, 'configurationBundle: ' + json.dumps({'context': 'agent', 'remoteServices': services}), role='agent')
+            self.assertEqual(self.plane.current_revision(), before)
+            self.assertEqual(self.plane.conn.execute('SELECT count(*) FROM agent_remote_services').fetchone()[0], 0)
+
+    def test_agent_preview_readonly_never_contacts_server_or_activates(self):
+        before = self.plane.current_revision()
+        before_audit = self.plane.conn.execute('SELECT count(*) FROM audit_events').fetchone()[0]
+        raw = '''configurationBundle:
+  context: agent
+  remoteServices:
+    - name: preview
+      destination: this-host
+      service: ssh
+      enabled: true
+'''
+        with mock.patch('drlink_v24.detect_server_reachable', side_effect=AssertionError('network probe')), \
+             mock.patch('drlink_mgmt_sync.fetch_server_catalog', side_effect=AssertionError('network read')), \
+             mock.patch('drlink_mgmt_sync.upsert_remote_service_on_server', side_effect=AssertionError('network write')), \
+             mock.patch('drlink_v24_runtime.apply_agent_runtime', side_effect=AssertionError('activation')):
+            for readonly in (False, True):
+                plane = ControlPlane(self.tmp, read_only=True) if readonly else self.plane
+                try:
+                    plan = prepare_v24_plan(plane, raw, role='agent')
+                    self.assertEqual(len(plan.mutating_changes), 1)
+                    self.assertEqual(plane.conn.execute('SELECT count(*) FROM agent_remote_services').fetchone()[0], 0)
+                    self.assertEqual(plane.current_revision(), before)
+                finally:
+                    if readonly:
+                        plane.close()
+        self.assertEqual(self.plane.conn.execute('SELECT count(*) FROM audit_events').fetchone()[0], before_audit)
+
+    def test_case_insensitive_duplicate_rule_and_resource_rejected(self):
+        for section in ('networkObjects', 'remoteServices'):
+            context = 'agent' if section == 'remoteServices' else 'server'
+            fields = 'destination: this-host\n      service: ssh' if context == 'agent' else 'type: ip\n      value: 192.0.2.51'
+            raw = 'configurationBundle:\n  context: %s\n  %s:\n    - name: repeated\n      %s\n    - name: REPEATED\n      %s\n' % (context, section, fields, fields)
+            with self.subTest(section=section), self.assertRaisesRegex(BundleError, 'Duplicate'):
+                prepare_v24_plan(self.plane, raw, role=context)
+
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="drlink-stale-plan-")
         _server_root(self.tmp)

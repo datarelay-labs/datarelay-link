@@ -675,6 +675,22 @@ def _show_policy(plane: ControlPlane, family: str, rest: list[str]) -> int:
                 % (pol["mode"].upper(), str(pol["enforcement"]).upper(), eff)
             )
         if family == "internet":
+            import json
+            from pathlib import Path
+            from frp_egress_control import listen_bind
+            try:
+                cfg = json.loads((Path(plane.root or '/') / 'etc/drlink/config.json').read_text())
+                bind_host, proxy_port = listen_bind(cfg)
+                proxy_host = (_scfg.resolve_public_endpoint_host(cfg, root=plane.root)
+                              if bind_host in ('0.0.0.0', '::', '*') and _scfg else bind_host)
+                if proxy_host:
+                    if ':' in proxy_host and not proxy_host.startswith('['):
+                        proxy_host = '[%s]' % proxy_host
+                    sys.stdout.write('Proxy endpoint: http://%s:%s\n' % (proxy_host, proxy_port))
+                else:
+                    sys.stdout.write('Proxy endpoint: public Server address unavailable\n')
+            except (OSError, ValueError):
+                sys.stdout.write('Proxy endpoint: unavailable (check Server configuration)\n')
             readiness, recovery = v24.restricted_policy_readiness(
                 family, pol["mode"], pol["enforcement"]
             )

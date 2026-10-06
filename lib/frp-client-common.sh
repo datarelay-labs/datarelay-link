@@ -877,8 +877,10 @@ frp_client_has_partial_install() {
   if frp_client_has_service_definition; then
     return 0
   fi
+  # Keys are generated before a ticket is redeemed. A rejected ticket leaves
+  # no committed Agent configuration; retaining those keys must permit a new
+  # valid ticket retry rather than create an unrecoverable partial install.
   if frp_client_file_nonempty "$(frp_client_toml_path)" \
-    || frp_client_file_nonempty "$(frp_client_identity_key_path)" \
     || frp_client_file_nonempty "$(frp_client_state_path)"; then
     return 0
   fi
@@ -1289,10 +1291,7 @@ Select the type of service you want to publish.
    Any other TCP service.
    Examples: Grafana :3000, API :8080, PostgreSQL :5432
 
-5) Use a Service Profile
-   Apply a Service Profile created on the server.
-
-6) Back
+5) Back
 
 For normal remote SSH access, choose 1.
 
@@ -1432,22 +1431,13 @@ frp_ux_prompt_new_service() {
         maybe_warn_connectivity "$host" "$port" "TCP"
         _frp_new_payload="$(service_payload custom "$sid" "$name" "$host" "$port")"
         ;;
-      5)
-        # Signal guided Service Profile selection to the caller (frp-client).
-        if [[ -n "$dest" ]]; then
-          printf -v "$dest" '%s' "__FRP_USE_SERVICE_PROFILE__"
-        else
-          printf '%s\n' "__FRP_USE_SERVICE_PROFILE__"
-        fi
-        return 0
-        ;;
-      6)
+      5|6)
         if [[ -n "$dest" ]]; then
           printf -v "$dest" '%s' ""
         fi
         return 0
         ;;
-      *) echo "ERROR: select 1-6" >&2; continue ;;
+      *) echo "ERROR: select 1-5" >&2; continue ;;
     esac
     if [[ -n "$dest" ]]; then
       printf -v "$dest" '%s' "$_frp_new_payload"

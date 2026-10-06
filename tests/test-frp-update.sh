@@ -244,6 +244,7 @@ run_update() {
     FRP_UPDATE_TEST_HARNESS=1 \
     FRP_UPDATE_TEST_MARKER="$MARKER" \
     FRP_DEPLOY_TEST_ROOT="$tree" \
+    FRP_CLIENT_TEST_ROOT="$tree" \
     FRP_UPDATE_ROOT="$tree" \
     FRP_UPDATE_HOOK_SKIP_SYSTEMD=1 \
     PATH="$PATH" \
@@ -498,6 +499,17 @@ EOF
 }
 
 K="$WORKDIR/case-k"
+CLIENT_NOOP="$WORKDIR/client-noop"
+setup_dual_tree "$CLIENT_NOOP" "0.71.0"
+rm "$CLIENT_NOOP/usr/local/bin/frps" "$CLIENT_NOOP/etc/frp/server_token" "$CLIENT_NOOP/etc/drlink/config.json"
+cp "$CLIENT_NOOP/etc/frp/frpc.toml" "$WORKDIR/client-noop.toml.before"
+run_update "$CLIENT_NOOP" --role client >"$WORKDIR/client-noop.out"
+grep -q 'TOKEN_PRESERVED=PASS' "$WORKDIR/client-noop.out" || fail "Agent no-op token falsely reports failure"
+! grep -q 'TOKEN_PRESERVED=FAIL' "$WORKDIR/client-noop.out" || fail "Agent no-op contradictory preservation output"
+bytes_equal "$WORKDIR/client-noop.toml.before" "$CLIENT_NOOP/etc/frp/frpc.toml" || fail "Agent no-op changed token/config"
+assert_no_leak "$WORKDIR/client-noop.out" "test-update-token-do-not-use"
+pass "AGENT_NOOP_TOKEN_PRESERVATION"
+
 setup_dual_tree "$K" "0.70.0"
 write_dummy_frps "$WORKDIR/frps-0.71.0-dual" "0.71.0"
 write_dummy_frpc "$WORKDIR/frpc-0.71.0-dual" "0.71.0"

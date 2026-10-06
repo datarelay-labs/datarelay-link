@@ -14,6 +14,8 @@ import os
 import re
 import sys
 import threading
+import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Optional
 
@@ -524,6 +526,80 @@ def authorize_fixed_tcp(
     result["db_revision"] = policy.get("db_revision")
     result["rule_name"] = policy.get("rule_name")
     return result
+
+
+@contextmanager
+def allocator_retirement(root, client_id: str, owned_ports: list):
+    """Retire allocator identity under its native lock with inverse evidence.
+
+    The caller holds this context across its SQLite mutation and activation.
+    Any failed mutation restores the original runtime bytes before the lock
+    is released. No other client, group definition or reservation is removed.
+    """
+    import frp_client_registry as registry
+    from frp_control_locks import ExclusiveFileLock, durable_replace
+    base = Path(root or '/')
+    cfg_path = base / 'etc/drlink/config.json'
+    try:
+        cfg = json.loads(cfg_path.read_text()) if cfg_path.is_file() else {}
+    except (OSError, ValueError) as exc:
+        raise ControlPlaneError('Server configuration is unreadable; Managed Host retirement was not applied.') from exc
+    if not isinstance(cfg, dict):
+        raise ControlPlaneError('Server configuration is invalid; Managed Host retirement was not applied.')
+    raw = str(cfg.get('registry_file') or '')
+    if raw:
+        path = Path(raw)
+        if base != Path('/') and path != base and base not in path.parents:
+            path = base / raw.lstrip('/')
+    else:
+        path = base / 'var/lib/drlink/runtime/client-inventory.json'
+        legacy = base / 'var/lib/drlink/registry.json'
+        if not path.is_file() and legacy.is_file():
+            path = legacy
+    if not path.is_file():
+        yield lambda: None
+        return
+    with ExclusiveFileLock(path.parent / 'registry.lock', timeout=15):
+        original = path.read_bytes()
+        try:
+            state = json.loads(original)
+        except ValueError as exc:
+            raise ControlPlaneError('Allocator inventory is unreadable; Managed Host retirement was not applied.') from exc
+        if not isinstance(state, dict) or state.get('schema_version') != 2 or not isinstance(state.get('clients'), dict) or not isinstance(state.get('reserved'), list):
+            raise ControlPlaneError('Allocator inventory is invalid; Managed Host retirement was not applied.')
+        changed = False
+        def retire():
+            nonlocal changed
+            removed = state['clients'].pop(client_id, None)
+            ports = set(int(port) for port in owned_ports)
+            if isinstance(removed, dict):
+                for service in (removed.get('services') or {}).values():
+                    if isinstance(service, dict) and service.get('remote_port') is not None:
+                        ports.add(int(service['remote_port']))
+            surviving = set()
+            for client in state['clients'].values():
+                for service in (client.get('services') or {}).values():
+                    if isinstance(service, dict) and service.get('remote_port') is not None:
+                        surviving.add(int(service['remote_port']))
+            state['reserved'] = [port for port in state['reserved'] if int(port) not in ports or int(port) in surviving]
+            changed = True
+            registry.atomic_write_json(path, state)
+        try:
+            yield retire
+        except BaseException:
+            if changed:
+                fd, temporary = tempfile.mkstemp(prefix=path.name + '.rollback-', dir=str(path.parent))
+                try:
+                    with os.fdopen(fd, 'wb') as stream:
+                        stream.write(original)
+                        stream.flush()
+                        os.fsync(stream.fileno())
+                    os.chmod(temporary, 0o600)
+                    durable_replace(temporary, path)
+                finally:
+                    if os.path.exists(temporary):
+                        os.unlink(temporary)
+            raise
 
 
 def sync_enrolled_client(

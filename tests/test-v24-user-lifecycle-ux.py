@@ -30,6 +30,14 @@ def _server_root(tmp: str) -> None:
 
 
 class UserLifecycleUxCoverage(unittest.TestCase):
+    def test_missing_credential_identity_uses_public_noun(self):
+        for action, suffix in (('rotate', []), ('revoke', []), ('configure', ['authentication', 'oauth']), ('configure', ['oauth-redirect', 'https://example.test/callback'])):
+            with self.subTest(action=action, suffix=suffix):
+                rc, out, err = self._dispatch(['system', 'credential', action, 'ai-identity', 'missing'] + suffix)
+                self.assertNotEqual(rc, 0)
+                self.assertIn('AI Identity', out + err)
+                self.assertNotIn('AI Principal', out + err)
+
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="drlink-p5-ux-")
         _server_root(self.tmp)

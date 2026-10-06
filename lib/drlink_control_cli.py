@@ -671,13 +671,13 @@ def _show(plane: ControlPlane, rest):
         _need(rest, 2, "show ai-principal <PRINCIPAL>")
         p = plane.get_principal(rest[1])
         if not p:
-            raise SystemExit("AI Principal not found")
+            raise SystemExit("AI Identity not found")
         if len(rest) >= 3 and rest[2] == "references":
             for r in plane.conn.execute("SELECT name FROM ai_access_rules WHERE principal_id = ?", (p["id"],)):
                 sys.stdout.write("ai-access %s\n" % r["name"])
             return 0
         sys.stdout.write(
-            "AI Principal: %s\n\n"
+            "AI Identity: %s\n\n"
             "Status              : %s\n"
             "Authentication      : %s\n"
             "Auth Model          : %s\n"

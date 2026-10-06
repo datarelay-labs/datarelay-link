@@ -1584,8 +1584,8 @@ def context_help(tokens, role, names=None, clients=None):
                     [
                         ("public-hostname", "Optional public DNS hostname for published services"),
                         ("bootstrap-hostname", "Optional Zero-Touch public TLS bootstrap hostname"),
-                        ("installer-url", "Linux client installer URL"),
-                        ("windows-installer-url", "Windows client installer URL"),
+                        ("installer-url", "Linux Agent installer URL"),
+                        ("windows-installer-url", "Windows Agent installer URL"),
                     ]
                 )
             if tokens[2] == "bootstrap-hostname":
@@ -4360,8 +4360,8 @@ def _tab_desc_map(line, role, names=None, clients=None):
             return {
                 "public-hostname": "Optional public DNS hostname for published services",
                 "bootstrap-hostname": "Optional Zero-Touch public TLS bootstrap hostname",
-                "installer-url": "Linux/macOS client installer URL",
-                "windows-installer-url": "Windows client installer URL",
+                "installer-url": "Linux/macOS Agent installer URL",
+                "windows-installer-url": "Windows Agent installer URL",
             }, "named"
     if verb == "set" and len(filled) >= 2 and filled[1] == "client":
         if len(filled) == 2:

@@ -303,16 +303,16 @@ Canonical use-case families for the current v2.4 product include at minimum:
 ~~~text
 UC-01  Fresh Server deployment, identity, public hostname/bootstrap identity, diagnostics
 UC-02  Managed Host onboarding: Zero-Touch, Manual Enrollment, Bulk Enrollment, multi-platform
-UC-03  Direct-host Remote Access: SSH plus SCP/SFTP and endpoint discovery
-UC-04  Application publishing: HTTP, HTTPS, Custom TCP, Fixed TCP
-UC-05  Relay Host to LAN target without Agent
+UC-03  Publish direct-host services: SSH/SCP/SFTP, HTTP, HTTPS, Custom TCP and endpoint discovery
+UC-04  Publish Relay/LAN services to targets without Agent
+UC-05  Fixed TCP publishing and endpoint lifecycle
 UC-06  Remote Access policy lifecycle: No Policy, BLACKLIST, WHITELIST, disable/re-enable
 UC-07  Internet Access policy and real applications: curl/wget/git/apt/vendor API
 UC-08  AI/MCP onboarding, authentication, TLS, authorization, ALLOW/DENY, file/exec capabilities
 UC-09  Objects/Groups/Managed Host Groups, references, duplicate/ambiguous selectors
-UC-10  Day-2 Remote Service lifecycle: create/show/edit/disable/enable/delete/synchronize
-UC-11  Configuration-as-Code: export/test/diff/apply/idempotence/cross-context split
-UC-12  Revisions/audit/history/rollback and concurrent administrator changes
+UC-10  Configuration-as-Code: export/test/diff/apply/idempotence/cross-context split
+UC-11  Server observation/audit/recovery: diagnostics, revisions/history/rollback, backup/restore
+UC-12  Agent operations/recovery: Remote Service lifecycle, pause/resume/update/reboot/reconnect
 UC-13  Backup/validate/restore and disaster recovery
 UC-14  Product update, Relay Engine check/update, prior-version upgrade, failed-update recovery
 UC-15  Agent pause/resume/restart/autostart/uninstall/reinstall/offline edits/reconnect

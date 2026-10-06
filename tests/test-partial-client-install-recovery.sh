@@ -85,6 +85,17 @@ mkdir -p "$FRESH/etc/frp"
 assert_class "$FRESH" none "fresh"
 pass "FRESH_INSTALL_CLASSIFICATION"
 
+# A rejected ticket leaves pre-enrollment keys but no committed Agent state.
+# A fresh operator-issued ticket may retry using exactly the same identity.
+KEY_ONLY="$WORKDIR/key-only"
+mkdir -p "$KEY_ONLY/etc/frp"
+python3 "$ROOT/lib/frp_mgmt_auth.py" gen-key "$KEY_ONLY/etc/frp/client-identity.key" "$KEY_ONLY/etc/frp/client-identity.pub"
+KEY_ONLY_BEFORE="$(sha256sum "$KEY_ONLY/etc/frp/client-identity.key" | awk '{print $1}')"
+assert_class "$KEY_ONLY" none "pre-enrollment identity"
+frp_identity_ensure || fail "pre-enrollment identity retry"
+[[ "$(sha256sum "$KEY_ONLY/etc/frp/client-identity.key" | awk '{print $1}')" == "$KEY_ONLY_BEFORE" ]] || fail "pre-enrollment identity changed"
+pass "REJECTED_TICKET_PRE_ENROLLMENT_IDENTITY_RETRY"
+
 # --- State file only --------------------------------------------------------
 STATE_ONLY="$WORKDIR/state-only"
 write_state "$STATE_ONLY"

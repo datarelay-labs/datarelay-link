@@ -801,10 +801,10 @@ def _ordered_v24_changes(changes: Iterable[dict]) -> list[dict]:
     return delete_first + others
 
 
-def _validate_server_plan_applyability(
-    plane: ControlPlane, changes: Iterable[dict]
+def _validate_plan_applyability(
+    plane: ControlPlane, changes: Iterable[dict], *, agent: bool = False
 ) -> None:
-    """Dry-run Server mutations using the same CRUD/order as real Apply.
+    """Dry-run local dependencies using the same CRUD/order as real Apply.
 
     Read-only callers validate on an in-memory snapshot. Writable Apply callers
     already holding a transaction retain its state and use a savepoint.
@@ -824,7 +824,7 @@ def _validate_server_plan_applyability(
             plane.conn.backup(scratch)
             scratch.execute("PRAGMA foreign_keys = ON")
             preview = ControlPlane(plane.root, conn=scratch)
-            _validate_server_plan_applyability(preview, ordered)
+            _validate_plan_applyability(preview, ordered, agent=agent)
         finally:
             scratch.close()
         return
@@ -837,9 +837,13 @@ def _validate_server_plan_applyability(
     plane._batch_results = []
     try:
         for change in ordered:
-            _apply_one(plane, change)
+            _apply_one(plane, change, server_reachable_override=False if agent else None)
+    except ControlPlaneError as exc:
+        if agent:
+            raise BundleError(str(exc)) from exc
+        raise
     finally:
-        # _apply_one() uses batch-aware control-plane mutations for Server
+        # _apply_one() uses batch-aware control-plane mutations for local
         # Bundle resources, so the savepoint remains valid on ordinary
         # validation failures. Be defensive if an unexpected path ended the
         # transaction.
@@ -985,6 +989,23 @@ def prepare_v24_plan(plane: ControlPlane, raw_text: str, *, role: Optional[str] 
                 )
         if bad:
             _bundle_error("Unknown Agent Bundle sections: %s" % ", ".join(sorted(bad)))
+
+    # Reject repeated public selectors before diffing. Otherwise two SETs for
+    # one name silently turn a conflicting declaration into last-write-wins.
+    named_sections = SERVER_SECTIONS if context == "server" else AGENT_SECTIONS
+    for key in named_sections:
+        section = body.get(key)
+        entries = section.get("rules") if isinstance(section, dict) else section
+        if not isinstance(entries, list):
+            continue
+        seen = set()
+        for entry in entries:
+            if not isinstance(entry, dict) or not entry.get("name"):
+                continue
+            name = str(entry["name"]).strip().lower()
+            if name in seen:
+                _bundle_error("Duplicate public selector '%s' in %s. Declare each name once." % (entry["name"], key))
+            seen.add(name)
 
     source_revision = body.get("sourceRevision")
     if source_revision is None or source_revision == "":
@@ -1377,8 +1398,8 @@ def prepare_v24_plan(plane: ControlPlane, raw_text: str, *, role: Optional[str] 
             changes.append({"op": "SET", "kind": "remote-service", "name": name, "item": item})
 
     mutating = [c for c in changes if c.get("op") != "NO_CHANGE"]
-    if context == "server" and mutating:
-        _validate_server_plan_applyability(plane, mutating)
+    if mutating:
+        _validate_plan_applyability(plane, mutating, agent=context == "agent")
     impact = _security_impact_for_plan(plane, context, validated_body, changes)
     return V24Plan(
         context=context,
@@ -1653,7 +1674,7 @@ def _finalize_agent_bundle_runtime(plane: ControlPlane, plan: V24Plan, checkpoin
     )
 
 
-def _apply_one(plane: ControlPlane, change: dict) -> None:
+def _apply_one(plane: ControlPlane, change: dict, *, server_reachable_override: Optional[bool] = None) -> None:
     kind = change["kind"]
     item = change.get("item") or {}
     name = change.get("name")
@@ -1762,7 +1783,8 @@ def _apply_one(plane: ControlPlane, change: dict) -> None:
                     confirm=True,
                 )
     elif kind == "remote-service":
-        reachable = v24.detect_server_reachable(plane, plane.root)
+        reachable = (v24.detect_server_reachable(plane, plane.root)
+                     if server_reachable_override is None else server_reachable_override)
         if op == "DELETE":
             v24.unset_remote_service_agent(
                 plane, name, root=plane.root, server_reachable=reachable

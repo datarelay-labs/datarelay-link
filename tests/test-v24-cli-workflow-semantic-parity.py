@@ -67,6 +67,13 @@ class _Base(unittest.TestCase):
 
 
 class RemoteAccessSemanticParity(_Base):
+    def test_internet_access_discovers_application_proxy_endpoint(self):
+        Path(self.tmp, 'etc/drlink/config.json').write_text('{"role":"server","public_hostname":"relay.example.test","egress_listen_port":6112}')
+        rc, out, err = self._run('show', 'internet-access')
+        self.assertEqual(rc, 0, err)
+        self.assertIn('http://relay.example.test:6112', out)
+        self.assertNotIn('http://0.0.0.0:', out)
+
     def test_user_intent_equivalent_ip_and_service_objects(self):
         # Intent: "Check whether this IP can reach this web service."
         # Rule references Object A / Service A; test uses Object B / Service B

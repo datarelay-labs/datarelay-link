@@ -563,7 +563,8 @@ class ManualConsentBrowserTests(unittest.TestCase):
         with redirect_stderr(err):
             rc = dispatch(one, root=self.tmp)
         self.assertEqual(rc, 1)
-        self.assertIn("AI Principal", err.getvalue())
+        self.assertIn("AI Identity", err.getvalue())
+        self.assertNotIn("AI Principal", err.getvalue())
         err = io.StringIO()
         with redirect_stderr(err):
             rc = dispatch(one + ["missing-principal"], root=self.tmp)

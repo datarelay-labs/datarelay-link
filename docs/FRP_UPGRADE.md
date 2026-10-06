@@ -120,6 +120,20 @@ client runtime artifacts does not lose origin or cause endpoint reallocation.
 An explicit Remote Service change supersedes that seed; subsequent reconnect
 processing uses the operator's desired state and Server Service Object catalog.
 
+Confirmed Managed Host retirement removes the host's allocator identity and
+owned reservations as well as canonical inventory and AI executor credentials.
+The allocator's native registry lock covers the database mutation and
+activation, with exact previous registry bytes restored on failure. Other
+hosts, their reservations, and Managed Host Group definitions remain intact.
+Fresh enrollment on the same physical Machine ID starts from its newly issued
+identity and label; ordinary reconnect does not retire or reset an identity.
+
+Pre-enrollment keys left by a rejected Bootstrap Ticket are retained for a
+retry with a fresh Server-issued command. Keys alone do not constitute a
+partial installed Agent. Committed configuration/state, installed CLI or
+service definitions still use the guarded partial-install recovery path;
+pending redeemed enrollment retains its existing crash-safe resume contract.
+
 ### Backup / restore version policy
 
 ```text

@@ -28,6 +28,12 @@ assert_contains() {
 }
 
 # User-facing docs and install flows must not expose legacy product/CLI terms.
+installer_menu="$(FRP_CLIENT_SOURCED=1 bash -c 'source "$1/lib/frp-client-common.sh"; frp_ux_add_service_menu' -- "$ROOT")"
+assert_contains "$installer_menu" '5\) Back'
+if grep -q 'Service Profile' <<<"$installer_menu"; then
+  fail "current Agent enrollment menu offers retired Service Profile"
+fi
+assert_not_contains "$ROOT/tools/frp-set-client-installer-url" '[Cc]lient installer URL'
 USER_DOCS=(
   "$ROOT/README.md"
   "$ROOT/docs/CLI_REFERENCE.md"
