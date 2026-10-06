@@ -45,8 +45,11 @@ pq_gate() {
   local gates="${PROD_QUAL_GATES:-}"
   # Replace prior value for the same key so retries cannot leave FAIL+PASS.
   if [[ -n "$gates" && -f "$gates" ]]; then
-    grep -Ev "^${name}=" "$gates" >"${gates}.tmp" 2>/dev/null || true
-    mv "${gates}.tmp" "$gates"
+    local tmp="${gates}.tmp.$$"
+    # Gate writers may run concurrently during qualification. Use a writer-unique
+    # temporary path so one lane cannot rename another lane's scratch file.
+    grep -Ev "^${name}=" "$gates" >"$tmp" 2>/dev/null || true
+    mv "$tmp" "$gates"
   fi
   printf '%s=%s\n' "$name" "$status" | tee -a "${gates:-/dev/null}"
   pq_note "GATE $name=$status"
