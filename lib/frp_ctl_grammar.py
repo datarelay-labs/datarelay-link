@@ -299,6 +299,23 @@ def reject_obsolete_surface(tokens):
             "message": "Retired AI Principal audit selector is not public grammar.\n"
                        "Use show ai-access-log identity <IDENTITY> or system audit.",
         }
+    if focus[:2] == ["system", "audit"] and len(focus) > 2 and focus[2] in (
+        "revision", "entity", "object",
+    ):
+        return {
+            "status": "error", "exit_code": 2,
+            "message": "Unsupported public audit selector '%s'.\n"
+                       "Use system audit [last <N>] [managed-host <HOST>] [event <EVENT>].\n"
+                       "For configuration history, use system revision <REVISION>." % focus[2],
+        }
+    if focus[:3] == ["system", "export", "configuration"] and any(
+        token.split("=", 1)[0] in ("--output", "-o") for token in focus[3:]
+    ):
+        return {
+            "status": "error", "exit_code": 2,
+            "message": "Configuration export uses a positional file, not an output option.\n"
+                       "Use system export configuration <FILE>.",
+        }
     if focus[:2] == ["system", "revoke"]:
         return {
             "status": "error", "exit_code": 2,
@@ -2622,13 +2639,6 @@ def _match_system(tokens, role, names=None):
     if op == "diff" and len(tokens) >= 3 and tokens[2] == "configuration":
         return _control_plane_ok(tokens)
     if op in CONTROL_PLANE_SYSTEM:
-        return _control_plane_ok(tokens)
-    if op == "audit" and len(tokens) > 2 and tokens[2] in (
-        "ai-principal",
-        "revision",
-        "entity",
-        "object",
-    ):
         return _control_plane_ok(tokens)
     if op == "revoke":
         return _match_revoke(["revoke"] + list(tokens[2:]), role, names)

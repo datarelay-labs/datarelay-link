@@ -32,6 +32,67 @@ import frp_cli_catalog as catalog
 
 
 class CliFeatureScenarioRemediation(unittest.TestCase):
+    def test_hidden_export_and_audit_variants_reject_every_public_surface(self):
+        variants = [
+            ["system", "export", "configuration", "--output", "out.yaml"],
+            ["system", "export", "configuration", "--output=out.yaml"],
+            ["system", "export", "configuration", "-o", "out.yaml"],
+            ["system", "audit", "revision", "999999"],
+            ["system", "audit", "entity", "network-object", "absent"],
+            ["system", "audit", "object", "absent"],
+        ]
+        for role in ("server", "client"):
+            for tokens in variants:
+                for form in (tokens, tokens + ["?"], ["help"] + tokens):
+                    with self.subTest(role=role, form=form):
+                        result = grammar.match(form, role)
+                        self.assertEqual(result.get("status"), "error", result)
+                        self.assertEqual(result.get("exit_code"), 2, result)
+                        self.assertIn("system", result.get("message", ""))
+                self.assertEqual(grammar.completion_candidates(
+                    " ".join(tokens) + " ", role, [], {}, []), [])
+
+    def test_native_hidden_variants_fail_without_export_or_silent_success(self):
+        root = Path(self.tmp)
+        out = root / "export.yaml"
+        env = dict(os.environ, FRP_CTL_TEST_ROOT=self.tmp,
+                   FRP_DEPLOY_TEST_ROOT=self.tmp)
+        before = list(self.plane.conn.iterdump())
+        variants = [
+            ["system", "export", "configuration", "--output", str(out)],
+            ["system", "export", "configuration", "-o", str(out), "?"],
+            ["system", "audit", "revision", "999999"],
+            ["system", "audit", "entity", "network-object", "absent"],
+            ["system", "audit", "object", "absent"],
+        ]
+        for tokens in variants:
+            with self.subTest(tokens=tokens):
+                proc = subprocess.run(["bash", str(ROOT / "tools/drlink")] + tokens,
+                                      cwd=self.tmp, env=env, capture_output=True,
+                                      text=True, timeout=30)
+                self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+                self.assertIn("system", proc.stdout + proc.stderr)
+                self.assertFalse(out.exists())
+        self.assertEqual(list(self.plane.conn.iterdump()), before)
+        proc = subprocess.run(
+            ["bash", str(ROOT / "tools/drlink"), "system", "export", "configuration", str(out)],
+            cwd=self.tmp, env=env, capture_output=True, text=True, timeout=30)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("configurationBundle:", out.read_text())
+        self.assertNotIn("apiVersion:", out.read_text())
+        proc = subprocess.run(
+            ["bash", str(ROOT / "tools/drlink"), "system", "audit", "last", "5"],
+            cwd=self.tmp, env=env, capture_output=True, text=True, timeout=30)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertTrue(proc.stdout.strip(), "Canonical empty audit must be explicit")
+
+    def test_export_error_recovery_only_recommends_positional_file(self):
+        for args in ([], ["a.yaml", "b.yaml"]):
+            with self.subTest(args=args), self.assertRaises(SystemExit) as error:
+                cli._configuration_export(self.plane, args)
+            self.assertIn("system export configuration <file>", str(error.exception))
+            self.assertNotIn("--output", str(error.exception))
+
     def test_retired_nested_system_variants_never_dispatch(self):
         retired = [
             ["system", "update", "project"],

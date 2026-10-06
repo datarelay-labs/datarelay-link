@@ -62,11 +62,11 @@ def _configuration_export(plane: ControlPlane, rest):
         remaining = []
     if remaining:
         raise SystemExit(
-            "Unexpected arguments.\n\nUsage:\n  system export configuration <file>\n  system export configuration --output <file>"
+            "Unexpected arguments.\n\nUsage:\n  system export configuration <file>"
         )
     if not out_path:
         raise SystemExit(
-            "Missing output path.\n\nUsage:\n  system export configuration <file>\n  system export configuration --output <file>"
+            "Missing output path.\n\nUsage:\n  system export configuration <file>"
         )
     from drlink_v24_bundle import export_configuration_v24
 

@@ -2214,16 +2214,7 @@
     "risk": "none",
     "confirmation": "none",
     "surface": "",
-    "flags": [
-      {
-        "name": "--output",
-        "arity": 1,
-        "hidden": true,
-        "required": false,
-        "description": "Hidden compatibility flag; prefer positional FILE",
-        "metavar": "<file>"
-      }
-    ]
+    "flags": []
   },
   {
     "path": [
