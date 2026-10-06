@@ -33,9 +33,53 @@ import frp_cli_catalog as catalog
 
 
 class CliFeatureScenarioRemediation(unittest.TestCase):
+    def test_undeclared_options_reject_question_help_like_direct_commands(self):
+        paths = (["system", "update"], ["system", "update", "product"],
+                 ["system", "update", "engine"], ["show", "status"],
+                 ["test", "configuration", "config.yaml"],
+                 ["set", "managed-host-group"], ["set", "network-object"],
+                 ["set", "enrollment"])
+        for role in ("server", "client"):
+            for path in paths:
+                for option in ("--check-engine", "--dry-run", "--unknown=value", "-z"):
+                    tokens = list(path) + [option]
+                    for form in (tokens, tokens + ["?"], ["help"] + tokens):
+                        with self.subTest(role=role, form=form):
+                            result = grammar.match(form, role)
+                            self.assertEqual(result.get("status"), "error", result)
+                            self.assertEqual(result.get("exit_code"), 2, result)
+                            self.assertIn("commands do not use --options", result["message"])
+                    self.assertEqual(grammar.completion_candidates(
+                        " ".join(tokens) + " ", role, [], {}, []), [])
+            for path in (["test", "configuration", "-"],
+                         ["system", "diff", "configuration", "-"],
+                         ["system", "apply", "configuration", "-"]):
+                self.assertEqual(grammar.match(list(path) + ["?"], role)["status"], "ok")
+            self.assertEqual(grammar.match(["system", "diagnostics", "--json", "?"], role)["status"], "ok")
+
+    def test_native_update_unknown_option_help_rejects_without_state_changes(self):
+        for role in ("server", "client"):
+            with tempfile.TemporaryDirectory(prefix="drlink-update-options-") as temp:
+                root = Path(temp)
+                config = root / ("etc/drlink/config.json" if role == "server" else "etc/frp/client-state.json")
+                config.parent.mkdir(parents=True)
+                config.write_text('{"role":"server"}\n' if role == "server" else '{"services":{}}\n')
+                before = {str(p.relative_to(root)): p.read_bytes() for p in root.rglob('*') if p.is_file()}
+                env = dict(os.environ, FRP_CTL_TEST_ROOT=temp, FRP_DEPLOY_TEST_ROOT=temp)
+                for path in (["system", "update", "--check-engine"],
+                             ["system", "update", "product", "--dry-run"],
+                             ["system", "update", "engine", "--unknown=value"]):
+                    for form in (path, path + ["?"], ["help"] + path):
+                        with self.subTest(role=role, form=form):
+                            proc = subprocess.run(["bash", str(ROOT / "tools/drlink")] + form,
+                                                  cwd=temp, env=env, capture_output=True, text=True, timeout=30)
+                            self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+                            self.assertIn("commands do not use --options", proc.stdout + proc.stderr)
+                self.assertEqual(before, {str(p.relative_to(root)): p.read_bytes() for p in root.rglob('*') if p.is_file()})
+
     def test_export_nonpublic_options_reject_all_positions_and_surfaces(self):
         for role in ("server", "client"):
-            for option in ("--scope", "--redacted", "--format=json", "--unknown", "--output", "-o"):
+            for option in ("--scope", "--redacted", "--format=json", "--unknown", "--output", "-o", "-"):
                 for arguments in ([option, "all"], ["config.yaml", option, "all"]):
                     tokens = ["system", "export", "configuration"] + arguments
                     for form in (tokens, tokens + ["?"], ["help"] + tokens):
@@ -47,7 +91,9 @@ class CliFeatureScenarioRemediation(unittest.TestCase):
                             self.assertNotIn("config.yaml all", result["message"])
                     self.assertEqual(grammar.completion_candidates(
                         " ".join(tokens) + " ", role, [], {}, []), [])
-            for filename in ("config.yaml", "./--scope", "-"):
+            # Export requires a file; stdin '-' belongs to test/diff/apply.
+            # An actual dash-named file can use an explicit relative path.
+            for filename in ("config.yaml", "./--scope", "./-"):
                 self.assertIn(grammar.match(
                     ["system", "export", "configuration", filename, "?"], role).get("status"), ("ok", "help"))
 
@@ -60,7 +106,7 @@ class CliFeatureScenarioRemediation(unittest.TestCase):
                 config.write_text('{"role":"server"}\n' if role == "server" else '{"services":{}}\n')
                 before = {str(p.relative_to(root)): p.read_bytes() for p in root.rglob('*') if p.is_file()}
                 env = dict(os.environ, FRP_CTL_TEST_ROOT=temp, FRP_DEPLOY_TEST_ROOT=temp)
-                for arguments in (["--scope", "all"], ["config.yaml", "--scope", "all"], ["--redacted"]):
+                for arguments in (["--scope", "all"], ["config.yaml", "--scope", "all"], ["--redacted"], ["-"]):
                     for prefix, suffix in (([], ["?"]), (["help"], [])):
                         tokens = prefix + ["system", "export", "configuration"] + arguments + suffix
                         with self.subTest(role=role, tokens=tokens):

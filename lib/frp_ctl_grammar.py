@@ -309,7 +309,7 @@ def reject_obsolete_surface(tokens):
                        "For configuration history, use system revision <REVISION>." % focus[2],
         }
     if focus[:3] == ["system", "export", "configuration"] and any(
-        token.startswith("-") and token != "-" for token in focus[3:]
+        token.startswith("-") for token in focus[3:]
     ):
         return {
             "status": "error", "exit_code": 2,
@@ -2035,6 +2035,25 @@ def _option_rejection_message(tok, focus):
     }
 
 
+def _public_input_option_error(tokens):
+    """Apply the same option boundary to direct commands and question help."""
+    opt_err = public_option_error(tokens)
+    if opt_err is not None:
+        return opt_err
+    allowed = _machine_allowed_flags(tokens)
+    for tok in tokens:
+        raw = str(tok)
+        if raw in ("-h", "--help") or raw.split("=", 1)[0] in allowed:
+            continue
+        if raw == "--" or raw.startswith("--") or (
+            len(raw) >= 2 and raw.startswith("-")
+            and not raw[1:].replace(".", "", 1).isdigit()
+        ):
+            focus = " ".join(str(t) for t in tokens if not str(t).startswith("-")) or "help"
+            return _option_rejection_message(raw, focus)
+    return None
+
+
 def _ownership_error_message(path, need):
     """Actionable wrong-role error using the canonical CLI helpers when available."""
     resource = path[1] if len(path) > 1 else (path[0] if path else "that command")
@@ -2193,6 +2212,9 @@ def match(tokens, role, names=None, clients=None):
         rejected = reject_obsolete_surface(raw_focus)
         if rejected is not None:
             return rejected
+        rejected = _public_input_option_error(raw_focus)
+        if rejected is not None:
+            return rejected
         # Command-specific help is a real public surface.  Do not let a
         # wrong-role path fall through to generic root/domain help with RC=0;
         # it must preserve the same ownership guidance as executing the
@@ -2253,27 +2275,9 @@ def match(tokens, role, names=None, clients=None):
     rejected = reject_obsolete_surface(tokens)
     if rejected is not None:
         return rejected
-    opt_err = public_option_error(tokens)
-    if opt_err is None:
-        # Reject undeclared dash tokens. Catalog-declared flags and a small
-        # set of machine interfaces remain callable but never Tab/help-advertised.
-        allowed = _machine_allowed_flags(tokens)
-        for tok in tokens:
-            raw = str(tok)
-            if raw in ("-h", "--help"):
-                continue
-            if raw in allowed:
-                continue
-            # Flag values are not options (e.g. --ttl 4h).
-            name = raw.split("=", 1)[0]
-            if name in allowed:
-                continue
-            if raw == "--" or raw.startswith("--") or (
-                len(raw) >= 2 and raw.startswith("-") and not raw[1:].replace(".", "", 1).isdigit()
-            ):
-                focus = " ".join(t for t in tokens if not str(t).startswith("-")) or "help"
-                opt_err = _option_rejection_message(raw, focus)
-                break
+    # Catalog-declared private machine flags remain callable; undeclared
+    # options fail before either help rendering or backend dispatch.
+    opt_err = _public_input_option_error(tokens)
     if opt_err is not None:
         return opt_err
     verb = tokens[0]
@@ -4238,6 +4242,8 @@ def completion_candidates(
     except ParseError:
         return []
     if reject_obsolete_surface(tokens) is not None:
+        return []
+    if _public_input_option_error(tokens) is not None:
         return []
     if trailing is None:
         trailing = bool(line) and line[-1] in " \t"
