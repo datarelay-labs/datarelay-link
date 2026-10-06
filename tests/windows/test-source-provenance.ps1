@@ -63,6 +63,13 @@ try {
     catch { $rejected = $_.Exception.Message -match 'source provenance does not match' }
     Assert-FrpTrue $rejected 'outer payload mismatch rejected'
     Assert-FrpEqual $before (Get-Content -LiteralPath (Join-Path (Get-FrpWindowsRoot) 'source-provenance.json') -Raw) 'failed qualification preserves previous receipt'
+    $script:FrpVerifiedBootstrapDigest = $null
+    $script:QualifiedManifest.artifacts[0].sha256 = Get-FrpSha256HexOfFile -Path $env:FRP_WINDOWS_BOOTSTRAP_PATH
+    $script:QualifiedManifest.channel = 'stable'
+    $rejected = $false
+    try { Confirm-FrpWindowsSourceProvenance -AllocatorUrl 'https://qualified.example/enroll' }
+    catch { $rejected = $_.Exception.Message -match 'source provenance does not match' }
+    Assert-FrpTrue $rejected 'qualified manifest cannot silently change embedded release channel'
     Write-FrpTestPass 'test-source-provenance'
 } finally {
     Remove-Item Env:FRP_WINDOWS_BOOTSTRAP_PATH -ErrorAction SilentlyContinue

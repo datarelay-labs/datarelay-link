@@ -59,6 +59,7 @@ function Confirm-FrpWindowsSourceProvenance {
         $installerEntries[0].source_head -cne $manifest.source_head -or
         $manifest.channel -notin @('development','preview','stable') -or
         $manifest.qualification_status -ne 'PASS' -or -not $packaged -or
+        $manifest.channel -cne $packaged.channel -or
         $manifest.project_version -cne $packaged.project_version) {
         throw 'ERROR: Windows installer source provenance does not match the qualified Server artifact. No enrollment was attempted.'
     }
