@@ -250,8 +250,8 @@ python3 - "$ROOT/tests/run-production-realistic-qualification.sh" <<'PY' || fail
 from pathlib import Path
 import sys
 text = Path(sys.argv[1]).read_text(encoding="utf-8")
-assert 'doc.get("provenance_head")' in text
-assert 'doc.get("source_head")' in text
+assert 'doc.get("provenance_head")' in text or 'doc.get("provenance_head") or' in text
+assert 'doc.get("source_head")' in text or 'doc.get("source_head") or' in text
 assert 'release-manifest.json' in text
 # v2.4 keeps A-019; v3.0 owns the v2.4 -> v3.0 transition. The
 # orchestrator must validate the safety/provenance triplet for both branches.
