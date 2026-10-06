@@ -514,6 +514,47 @@ class BootstrapCatalogConvergenceTests(unittest.TestCase):
         )
         self.assertEqual(verified[0]["view"]["status"], "HEALTHY")
         self.assertEqual(verified[0]["view"]["endpoint_port"], 6000)
+
+        # When activation is enabled, bootstrap verification must be followed
+        # by an apply of the authoritative v2.4 runtime generation.
+        agent.conn.execute("DELETE FROM agent_remote_services")
+        agent.conn.commit()
+        with mock.patch.object(V24R, "runtime_should_apply", return_value=True), \
+                mock.patch.object(V24R, "apply_agent_runtime", return_value={"ok": True}) as apply_runtime, \
+                mock.patch.object(v24, "detect_server_reachable", return_value=False):
+            applied = v24.activate_enrolled_services_as_remote_services(
+                root=self.agent_tmp, runtime_verified=True
+            )
+        apply_runtime.assert_called_once()
+        self.assertEqual(applied[0]["view"]["status"], "HEALTHY")
+        runtime_row = agent.conn.execute(
+            "SELECT status, runtime_verified FROM agent_remote_services WHERE name = 'ssh'"
+        ).fetchone()
+        self.assertEqual(runtime_row["status"], "HEALTHY")
+        self.assertEqual(int(runtime_row["runtime_verified"]), 1)
+
+        # A failed authoritative runtime generation must not inherit the
+        # earlier bootstrap verification as HEALTHY.
+        agent.conn.execute("DELETE FROM agent_remote_services")
+        agent.conn.commit()
+        with mock.patch.object(V24R, "runtime_should_apply", return_value=True), \
+                mock.patch.object(
+                    V24R,
+                    "apply_agent_runtime",
+                    return_value={"ok": False, "error": "runtime generation verification failed"},
+                ), \
+                mock.patch.object(v24, "detect_server_reachable", return_value=False):
+            failed = v24.activate_enrolled_services_as_remote_services(
+                root=self.agent_tmp, runtime_verified=True
+            )
+        self.assertEqual(failed[0]["view"]["status"], "DEGRADED")
+        self.assertIn("verification failed", failed[0]["view"]["reason"])
+        failed_row = agent.conn.execute(
+            "SELECT status, runtime_verified FROM agent_remote_services WHERE name = 'ssh'"
+        ).fetchone()
+        self.assertEqual(failed_row["status"], "DEGRADED")
+        self.assertEqual(int(failed_row["runtime_verified"]), 0)
+
         agent.conn.execute(
             "UPDATE agent_remote_services SET enabled = 1, status = 'DEGRADED', "
             "reason = 'operator edited', endpoint_port = 6000 WHERE name = 'ssh'"

@@ -7183,20 +7183,47 @@ def activate_enrolled_services_as_remote_services(
     plane = ControlPlane(root)
     results = project_enrolled_services_into_agent_catalog(plane, root=root, state=data)
     if runtime_verified and results:
+        runtime_ok = True
+        runtime_error = ""
+        try:
+            import drlink_v24_runtime as runtime
+
+            # A successful enrollment-time proxy check proves the bootstrap
+            # generation only. Once the service is projected into the v2.4
+            # catalog, render and verify that authoritative runtime generation
+            # before advertising HEALTHY. Unit tests may explicitly disable
+            # activation and keep the historical verified shortcut.
+            if runtime.runtime_should_apply():
+                applied = runtime.apply_agent_runtime(plane, root=root)
+                runtime_ok = bool(applied.get("ok"))
+                runtime_error = str(applied.get("error") or "")
+        except Exception as exc:
+            runtime_ok = False
+            runtime_error = str(exc)
+
         now = utc_now_iso()
         for item in results:
             view = item.get("view") or {}
             name = view.get("name")
             if not name or not view.get("enabled") or view.get("endpoint_port") is None:
                 continue
-            plane.conn.execute(
-                "UPDATE agent_remote_services SET status = 'HEALTHY', reason = '', "
-                "runtime_verified = 1, updated_at = ? "
-                "WHERE name = ? COLLATE NOCASE AND delete_pending = 0 AND enabled = 1 "
-                "AND endpoint_port IS NOT NULL AND pending_allocation = 0 "
-                "AND reason = 'Runtime activation pending.'",
-                (now, name),
-            )
+            if runtime_ok:
+                plane.conn.execute(
+                    "UPDATE agent_remote_services SET status = 'HEALTHY', reason = '', "
+                    "runtime_verified = 1, updated_at = ? "
+                    "WHERE name = ? COLLATE NOCASE AND delete_pending = 0 AND enabled = 1 "
+                    "AND endpoint_port IS NOT NULL AND pending_allocation = 0 "
+                    "AND (reason = 'Runtime activation pending.' OR reason = '')",
+                    (now, name),
+                )
+            else:
+                reason = runtime_error or "Runtime activation could not be verified."
+                plane.conn.execute(
+                    "UPDATE agent_remote_services SET status = 'DEGRADED', reason = ?, "
+                    "runtime_verified = 0, updated_at = ? "
+                    "WHERE name = ? COLLATE NOCASE AND delete_pending = 0 AND enabled = 1",
+                    (reason[:500], now, name),
+                )
             row = plane.conn.execute(
                 "SELECT status, reason FROM agent_remote_services WHERE name = ? COLLATE NOCASE",
                 (name,),
