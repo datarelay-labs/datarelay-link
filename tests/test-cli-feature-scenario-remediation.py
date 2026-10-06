@@ -902,6 +902,33 @@ frpctl_nav_workflow manage_host
         self.assertIn("Additional form", selected_text)
         self.assertIn("group", selected_text)
 
+    def test_membership_help_keeps_retirement_out_of_leaf_examples(self):
+        for tokens in (
+            ["unset", "managed-host", "host-a", "group", "?"],
+            ["unset", "managed-host", "host-a", "group", "edge", "?"],
+        ):
+            with self.subTest(tokens=tokens):
+                result = grammar.match(tokens, role="server")
+                self.assertEqual(result.get("status"), "ok", result)
+                text = result.get("message") or ""
+                self.assertIn("unset managed-host HOST group <GROUP>", text)
+                self.assertNotIn("[group]", text)
+                examples = text.split("Examples:\n", 1)[1].strip().splitlines()
+                self.assertEqual(examples, ["unset managed-host ubuntu-prod group edge"])
+                self.assertNotIn("Risk: irreversible", text)
+                self.assertNotIn("Confirmation: y_n", text)
+                self.assertIn("no additional confirmation", text)
+
+        parent = grammar.match(["unset", "managed-host", "host-a", "?"], role="server")
+        self.assertIn("Risk: irreversible", parent["message"])
+        self.assertIn("Confirmation: y_n", parent["message"])
+        # Help refinement must not change the existing execution routing.
+        leaf = grammar.match(["unset", "managed-host", "host-a", "group", "edge"], role="server")
+        self.assertEqual(leaf.get("action"), "remove_group_member")
+        self.assertEqual(leaf.get("group"), "edge")
+        incomplete = grammar.match(["unset", "managed-host", "host-a", "group"], role="server")
+        self.assertEqual(incomplete.get("action"), "control_plane")
+
     def test_mcp_tls_purge_metadata_explains_interactive_only_contract(self):
         rows = json.loads((LIB / "frp_cli_final_commands.json").read_text(encoding="utf-8"))
         by_path = {tuple(row["path"]): row for row in rows}

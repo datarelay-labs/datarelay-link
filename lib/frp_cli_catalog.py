@@ -812,6 +812,8 @@ def find(tokens, role=None, include_aliases=False):
             "Services and public ports are unchanged. The explicit command "
             "is sufficient approval; no additional confirmation is required."
         )
+        best["help_args"] = tuple(dict(arg, required=True) for arg in best["args"])
+        best["examples"] = ("unset managed-host ubuntu-prod group edge",)
     return best
 
 
@@ -839,7 +841,7 @@ def resolve_tokens(tokens, role=None):
 
 def usage_line(cmd):
     parts = list(cmd["path"])
-    for arg in cmd["args"]:
+    for arg in cmd.get("help_args", cmd["args"]):
         name = arg["name"]
         parts.append(name if arg["required"] else "[%s]" % name)
     # Public UX is positional / guided — never advertise [options].
@@ -1967,9 +1969,10 @@ def command_help(cmd):
     lines.append(cmd["summary"])
     if cmd["detail"]:
         lines.extend(["", cmd["detail"]])
-    if cmd["args"]:
+    help_args = cmd.get("help_args", cmd["args"])
+    if help_args:
         rows = []
-        for arg in cmd["args"]:
+        for arg in help_args:
             complete = arg["complete"]
             if isinstance(complete, (list, tuple)):
                 rows.append((arg["name"], "one of: %s" % ", ".join(complete)))

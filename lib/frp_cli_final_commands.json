@@ -2272,7 +2272,7 @@
     "roles": "any",
     "category": "System",
     "summary": "Validate a ConfigurationBundle without mutation",
-    "detail": "Parse, validate, run embedded policy tests, and show the Change Plan for a ConfigurationBundle. Supports file path or '-' for stdin.",
+    "detail": "Parse, validate role context and dependencies, and show the Change Plan for a ConfigurationBundle. Supports file path or '-' for stdin.",
     "examples": [
       "test configuration drlink.yaml",
       "test configuration -"
