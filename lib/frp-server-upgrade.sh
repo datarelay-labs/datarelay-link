@@ -126,7 +126,7 @@ frp_load_installed_server_runtime() {
   }
   while IFS= read -r line; do
     case "$line" in
-      FRP_DEPLOYMENT_MODE=*|FRP_PUBLIC_HOST=*|FRP_CONTROL_PUBLIC_PORT=*|FRP_CONTROL_LISTEN_PORT=*|FRP_ALLOCATOR_PUBLIC_URL=*|FRP_ALLOCATOR_LISTEN_PORT=*|FRP_INSTALLED_CA_CERT=*|CA_FINGERPRINT=*|FRP_INSTALLED_PROJECT_VERSION=*|FRP_INSTALLED_RELEASE_CHANNEL=*|FRP_INSTALLED_SOURCE_REF=*|FRP_INSTALLED_BUNDLE_SHA256=*)
+      FRP_DEPLOYMENT_MODE=*|FRP_PUBLIC_HOST=*|FRP_CONTROL_PUBLIC_PORT=*|FRP_CONTROL_LISTEN_PORT=*|FRP_ALLOCATOR_PUBLIC_URL=*|FRP_ALLOCATOR_LISTEN_PORT=*|FRP_INSTALLED_CA_CERT=*|CA_FINGERPRINT=*|FRP_INSTALLED_PROJECT_VERSION=*|FRP_INSTALLED_RELEASE_CHANNEL=*|FRP_INSTALLED_SOURCE_REF=*|FRP_INSTALLED_SOURCE_HEAD=*|FRP_INSTALLED_BUNDLE_SHA256=*)
         printf -v "${line%%=*}" '%s' "${line#*=}"
         ;;
     esac
@@ -172,6 +172,7 @@ emit("CA_FINGERPRINT", fp)
 emit("FRP_INSTALLED_PROJECT_VERSION", values.get("PROJECT_VERSION", ""))
 emit("FRP_INSTALLED_RELEASE_CHANNEL", values.get("RELEASE_CHANNEL", ""))
 emit("FRP_INSTALLED_SOURCE_REF", values.get("SOURCE_REF", ""))
+emit("FRP_INSTALLED_SOURCE_HEAD", values.get("SOURCE_HEAD", ""))
 emit("FRP_INSTALLED_BUNDLE_SHA256", values.get("BUNDLE_SHA256", ""))
 PY
   )
@@ -422,8 +423,28 @@ frp_server_display_or_unknown() {
   fi
 }
 
-frp_server_verified_bundle_sha256() {
-  # Production remote identity: SHA256SUMS digest passed as FRP_BUNDLE_SHA256.
+frp_server_provenance_token_equal() {
+  local left="$1" right="$2"
+  if [[ "$left" =~ ^[0-9a-fA-F]{40}$ && "$right" =~ ^[0-9a-fA-F]{40}$ ]]; then
+    [[ "$(printf '%s' "$left" | tr '[:upper:]' '[:lower:]')" == "$(printf '%s' "$right" | tr '[:upper:]' '[:lower:]')" ]]
+    return
+  fi
+  [[ "$left" == "$right" ]]
+}
+
+# 0 only when persisted source provenance matches the validated candidate.
+# Matching bundle bytes do not satisfy a different exact-source request.
+frp_server_provenance_identity_matches() {
+  local installed_ref="$1" candidate_ref="$2" candidate_head="$3"
+  local installed_head="${FRP_INSTALLED_SOURCE_HEAD:-}"
+  frp_server_provenance_token_equal "$installed_ref" "$candidate_ref" || return 1
+  if [[ "$candidate_head" =~ ^[0-9a-fA-F]{40}$ ]]; then
+    frp_server_provenance_token_equal "$installed_head" "$candidate_head" || return 1
+  fi
+  return 0
+}
+
+frp_server_verified_bundle_sha256() {  # Production remote identity: SHA256SUMS digest passed as FRP_BUNDLE_SHA256.
   # A self-hash of the running candidate is not external verification.
   local digest=""
   if [[ "${FRP_BUNDLE_SHA256:-}" =~ ^[0-9a-fA-F]{64}$ ]]; then
@@ -1391,6 +1412,13 @@ frp_server_apply_project_upgrade() {
         update_needed=1
       fi
     fi
+  fi
+
+  # Same bundle bytes are not sufficient for an exact-source request. Repair
+  # stale/missing SOURCE_REF or SOURCE_HEAD before reporting "not needed".
+  if [[ "$update_needed" == "0" ]] && ! frp_server_provenance_identity_matches \
+      "$installed_ref" "$target_ref" "${FRP_EXPECTED_SOURCE_HEAD:-}"; then
+    update_needed=1
   fi
 
   if [[ "$check_only" == "1" ]]; then

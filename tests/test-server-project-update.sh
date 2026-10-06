@@ -653,12 +653,15 @@ OCI_INSTALLED_SHA=d0a33da2a9d1cb9832fc0f2892eb52dce31e87fdd63803d3a01c8013b1355f
 OCI_CANDIDATE_SHA=1f67f3b0b96de60b78ff2434abbf2463f5bf222e47a4ca8f791a9933cc8f98cc
 
 write_identity() {
-  local tree="$1" project="$2" channel="$3" ref="$4" sha="${5:-}"
+  local tree="$1" project="$2" channel="$3" ref="$4" sha="${5:-}" head="${6:-}"
   {
     printf 'PROJECT_VERSION=%s\n' "$project"
     printf 'FRP_VERSION=0.71.0\n'
     printf 'RELEASE_CHANNEL=%s\n' "$channel"
     printf 'SOURCE_REF=%s\n' "$ref"
+    if [[ -n "$head" ]]; then
+      printf 'SOURCE_HEAD=%s\n' "$head"
+    fi
     if [[ -n "$sha" ]]; then
       printf 'BUNDLE_SHA256=%s\n' "$sha"
     fi
@@ -715,7 +718,7 @@ pass "SERVER_CHECK_READONLY"
 # Same version, same verified SHA → not needed.
 SAME="$WORKDIR/same-same"
 setup_tree "$SAME"
-write_identity "$SAME" "$PROJECT_VERSION" stable "v${PROJECT_VERSION}" "$OCI_CANDIDATE_SHA"
+write_identity "$SAME" "$PROJECT_VERSION" "$TREE_CHANNEL" "$TREE_HEAD" "$OCI_CANDIDATE_SHA" "$TREE_HEAD"
 SAME_BEFORE="$(state_digest "$SAME")"
 run_verified "$SAME" --check >"$WORKDIR/same-check.out" || fail "same-build --check"
 grep -q 'Update                    : not needed' "$WORKDIR/same-check.out" || fail "same build should be not needed"
@@ -723,6 +726,27 @@ grep -q 'State mutation             : NO' "$WORKDIR/same-check.out" || fail "sam
 [[ "$(state_digest "$SAME")" == "$SAME_BEFORE" ]] || fail "same-build --check mutated"
 pass "SERVER_SAME_VERSION_SAME_BUILD"
 pass "SERVER_CHECK_SAME_BUILD_NOT_NEEDED"
+
+# Same bundle bytes with stale exact source provenance must still converge.
+STALE_PROV="$WORKDIR/same-bundle-stale-provenance"
+setup_tree "$STALE_PROV"
+STALE_REF="1111111111111111111111111111111111111111"
+write_identity "$STALE_PROV" "$PROJECT_VERSION" "$TREE_CHANNEL" "$STALE_REF" "$OCI_CANDIDATE_SHA" "$STALE_REF"
+STALE_STATE="$(state_digest "$STALE_PROV")"
+STALE_FRP="$(sha "$STALE_PROV/usr/local/bin/frps")"
+run_verified "$STALE_PROV" --check >"$WORKDIR/stale-prov-check.out" || fail "stale provenance --check"
+grep -q 'Update                    : available' "$WORKDIR/stale-prov-check.out" || fail "stale provenance should be available"
+grep -q 'State mutation             : NO' "$WORKDIR/stale-prov-check.out" || fail "stale provenance check mutation"
+run_verified "$STALE_PROV" >"$WORKDIR/stale-prov-apply.out" || fail "stale provenance apply"
+grep -q "SOURCE_REF=${TREE_HEAD}" "$STALE_PROV/etc/drlink/version" || fail "stale source ref not repaired"
+grep -q "SOURCE_HEAD=${TREE_HEAD}" "$STALE_PROV/etc/drlink/version" || fail "stale source head not repaired"
+grep -q "BUNDLE_SHA256=${OCI_CANDIDATE_SHA}" "$STALE_PROV/etc/drlink/version" || fail "bundle identity changed during provenance repair"
+[[ "$(state_digest "$STALE_PROV")" == "$STALE_STATE" ]] || fail "provenance repair changed protected state"
+[[ "$(sha "$STALE_PROV/usr/local/bin/frps")" == "$STALE_FRP" ]] || fail "provenance repair changed frps"
+run_verified "$STALE_PROV" --check >"$WORKDIR/stale-prov-check2.out" || fail "repaired provenance second --check"
+grep -q 'Update                    : not needed' "$WORKDIR/stale-prov-check2.out" || fail "repaired provenance did not converge"
+pass "SERVER_SAME_BUNDLE_STALE_PROVENANCE_REPAIRED"
+pass "SERVER_EXACT_SOURCE_IDENTITY_CONVERGENCE"
 
 # Actual refresh for OCI identity, then idempotent second apply.
 REFRESH="$WORKDIR/oci-refresh"
