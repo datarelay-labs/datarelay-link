@@ -396,7 +396,7 @@ class Report(object):
         counts = self.counts()
         if counts[FAIL]:
             return 'FAIL'
-        if counts[WARN]:
+        if counts[WARN] or counts[NOT_TESTED]:
             return 'PASS_WITH_WARNINGS'
         return 'PASS'
 
@@ -1938,6 +1938,10 @@ def check_unit(report, facts, unit, check_id, label):
             recovery,
             'runtime',
         )
+        return active
+    if active in ('activating', 'deactivating', 'reloading'):
+        report.add(check_id, WARN, '%s is %s; runtime readiness is not established' % (label, active),
+                   'state=%s' % active, 'inspect runtime status and retry diagnostics after the transition', 'runtime')
         return active
     report.add(check_id, NOT_TESTED, '%s state is unknown' % label, 'state=%s' % active, '', 'runtime')
     return active
@@ -3775,6 +3779,7 @@ def render_human(report, quiet=False, verbose=False):
         'PASS : %s' % counts[PASS],
         'WARN : %s' % counts[WARN],
         'FAIL : %s' % counts[FAIL],
+        'NOT TESTED : %s' % counts[NOT_TESTED],
         '',
         'Overall: %s' % overall_label,
         '',

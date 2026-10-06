@@ -718,7 +718,17 @@ class ControlPlaneCache:
         self.plane: Optional[ControlPlane] = None
         self.load_error: Optional[str] = "not loaded"
         self.fingerprint: Optional[tuple] = None
+        self.db_identity: Optional[tuple] = None
         self.reload(force=True)
+
+    def _close_cached_plane(self) -> None:
+        if self.plane is not None:
+            try:
+                self.plane.close()
+            except Exception:
+                pass
+        self.plane = None
+        self.db_identity = None
 
     def _fingerprint(self, plane: ControlPlane) -> tuple:
         st = plane.status()
@@ -736,32 +746,27 @@ class ControlPlaneCache:
                 self.cfg = json.loads(self.config_path.read_text(encoding="utf-8"))
             except Exception as exc:
                 self.load_error = "config unreadable: %s" % exc
-                self.plane = None
+                self._close_cached_plane()
                 return
             try:
                 root = root_from_cfg(self.cfg)
                 db = db_path(root)
                 if not db.is_file():
-                    if self.plane is not None:
-                        try:
-                            self.plane.close()
-                        except Exception:
-                            pass
+                    self._close_cached_plane()
                     self.load_error = "control DB missing"
                     self.plane = None
                     self.fingerprint = None
                     return
-                if self.plane is None or force:
-                    if self.plane is not None:
-                        try:
-                            self.plane.close()
-                        except Exception:
-                            pass
+                stat = db.stat()
+                identity = (str(db), stat.st_dev, stat.st_ino)
+                if self.plane is None or force or identity != self.db_identity:
+                    self._close_cached_plane()
                     # Packet authorization only reads the already-migrated DB.
                     # Explicit RO avoids SQLite's RW -> RO fallback under a
                     # hardened service mount, whose unmatched deferred-close
                     # descriptors accumulate beside this long-lived plane.
                     self.plane = ControlPlane(root, read_only=True)
+                    self.db_identity = identity
                 fp = self._fingerprint(self.plane)
                 if not force and fp == self.fingerprint and self.load_error is None:
                     return
@@ -778,10 +783,10 @@ class ControlPlaneCache:
                 self.load_error = None
             except (ControlPlaneError, SchemaTooNewError, DatabaseCorruptError) as exc:
                 self.load_error = str(exc)
-                self.plane = None
+                self._close_cached_plane()
             except Exception as exc:
                 self.load_error = str(exc)
-                self.plane = None
+                self._close_cached_plane()
 
     def snapshot(self) -> tuple[Optional[ControlPlane], Optional[str], dict]:
         with self.lock:

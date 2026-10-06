@@ -21,13 +21,34 @@ def _presence_word(connectivity: str) -> str:
 
 def _public_endpoint_host(plane: ControlPlane, stored: str = "") -> str:
     stored = str(stored or "").strip()
-    if stored and stored not in ("drlink.local", "localhost"):
+    if stored and stored not in ("drlink.local", "localhost", "127.0.0.1", "::1"):
         return stored
     if _scfg is not None:
         resolved = _scfg.resolve_public_endpoint_host(root=getattr(plane, "root", None), fallback="")
         if resolved:
             return resolved
     return stored or "pending"
+
+
+def _agent_service_status(plane, row, runtime_level):
+    if not row['enabled']:
+        return 'DISABLED'
+    from drlink_agent_lifecycle import load_lifecycle_intent
+    if load_lifecycle_intent(plane.root) == 'paused':
+        return 'PAUSED'
+    stored = str(row['status'] or 'DEGRADED')
+    if stored == 'HEALTHY' and (not row['runtime_verified'] or runtime_level != 'Healthy'):
+        return 'DEGRADED'
+    return stored
+
+
+def _agent_runtime_level(plane):
+    level = v24.probe_agent_runtime_unit(root=plane.root).get('level')
+    if level == 'Healthy':
+        from drlink_v24_runtime import _current_runtime_ready
+        if not _current_runtime_ready(plane.root, '', {}):
+            return 'Warning'
+    return level
 
 
 SERVER_ONLY = frozenset(
@@ -585,6 +606,7 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
             sys.stdout.write("No Remote Services configured.\n")
             return 0
         sys.stdout.write("%-18s %-14s %-10s %-24s %s\n" % ("NAME", "DESTINATION", "SERVICE", "ENDPOINT", "STATUS"))
+        runtime_level = _agent_runtime_level(plane)
         for row in rows:
             endpoint = (
                 "Pending allocation"
@@ -593,7 +615,7 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
             )
             sys.stdout.write(
                 "%-18s %-14s %-10s %-24s %s\n"
-                % (row["name"], row["destination"], row["service_object"], endpoint, row["status"])
+                % (row["name"], row["destination"], row["service_object"], endpoint, _agent_service_status(plane, row, runtime_level))
             )
         return 0
     if res == "remote-service":
@@ -616,7 +638,7 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
                 row["name"],
                 row["destination"],
                 row["service_object"],
-                row["status"],
+                _agent_service_status(plane, row, _agent_runtime_level(plane)),
                 endpoint,
                 "YES" if row["enabled"] else "NO",
             )

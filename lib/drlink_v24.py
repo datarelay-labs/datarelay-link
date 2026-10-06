@@ -6272,13 +6272,14 @@ def set_remote_service_agent(
             "No changes were applied." % (dest_token, svc_name, dup["name"])
         )
 
-    endpoint_host = "127.0.0.1"
+    endpoint_host = str(existing['endpoint_host'] or '') if existing else ''
     try:
         import frp_server_config as scfg
 
         endpoint_host = scfg.resolve_public_endpoint_host(root=root, fallback="") or endpoint_host
     except Exception:
         endpoint_host = os.environ.get("DRLINK_HOST") or endpoint_host
+    endpoint_host = endpoint_host or '-'
     endpoint_port = existing["endpoint_port"] if existing else None
     pending = 0
     status = "DISABLED" if not en else "DEGRADED"

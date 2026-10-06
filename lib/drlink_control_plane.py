@@ -5817,7 +5817,11 @@ class ControlPlane:
 
                 identity = load_agent_identity(self.root) or {}
                 if detect_server_reachable(self, self.root):
-                    server_line = "Connected"
+                    from drlink_v24_runtime import _current_runtime_ready
+                    if level == 'Healthy' and _current_runtime_ready(self.root, '', {}):
+                        server_line = 'Connected'
+                    else:
+                        server_line = 'Management reachable; Agent transport unverified'
                 elif identity:
                     server_line = "Disconnected"
             except Exception:

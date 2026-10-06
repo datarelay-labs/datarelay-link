@@ -9,6 +9,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -26,6 +27,32 @@ def _write_json(path: Path, data: dict) -> None:
 
 
 class RuntimeRenderTests(unittest.TestCase):
+    def test_existing_runtime_requires_current_connection_epoch(self):
+        service = {'web': {'id': 'rs-web', 'enabled': True}}
+        props = 'ActiveState=active\nInvocationID=' + 'a' * 32 + '\n'
+        success = 'login to server success\n[host-rs-web] start proxy success\n'
+        for logs, expected in ((success, True), (success + 'control worker is closed\n', False),
+                               ('login server failed\n' + success, True), ('', False),
+                               (success + '[host-rs-web] start proxy error\n', False)):
+            with self.subTest(logs=logs), mock.patch.object(runtime.subprocess, 'check_output', side_effect=[props, logs]):
+                self.assertEqual(runtime._current_runtime_ready(None, 'host', service), expected)
+
+    def test_real_activation_requires_new_generation_success(self):
+        from drlink_control_plane import ControlPlaneError
+        service = {'rs-web': {'id': 'rs-web', 'enabled': True, 'v24_remote_service': True, 'remote_port': 6010}}
+        toml = 'name = "host-rs-web"\nremotePort = 6010\n'
+        with self.assertRaises(ControlPlaneError):
+            runtime.verify_runtime_proxies(root=None, host_id='host', expected=service, toml_text=toml)
+        with tempfile.TemporaryDirectory() as tmp:
+            journal = Path(tmp, 'journalctl')
+            journal.write_text('#!/bin/sh\ncase "$*" in *--after-cursor*fresh*) exit 0;; esac\nprintf "login to server success\\n[host-rs-web] start proxy success\\n"\n')
+            journal.chmod(0o755)
+            with mock.patch.dict(os.environ, {'PATH': tmp + os.pathsep + os.environ['PATH'], 'FRP_PROXY_WAIT_MAX_ATTEMPTS': '1', 'FRP_PROXY_WAIT_SLEEP_S': '0'}):
+                with self.assertRaisesRegex(ControlPlaneError, 'could not be verified'):
+                    runtime.verify_runtime_proxies(root=None, host_id='host', expected=service, toml_text=toml, since_cursor='fresh')
+                journal.write_text('#!/bin/sh\nprintf "login to server success\\n[host-rs-web] start proxy success\\n"\n')
+                runtime.verify_runtime_proxies(root=None, host_id='host', expected=service, toml_text=toml, since_cursor='fresh')
+
     def test_REMOTE_SERVICE_RUNTIME_RENDER(self):
         text = runtime.render_frpc_toml_text(
             server="203.0.113.9",
@@ -61,6 +88,35 @@ class RuntimeRenderTests(unittest.TestCase):
 
 
 class RuntimeApplyRemoveTests(unittest.TestCase):
+    def test_same_runtime_keeps_sessions_and_all_verified_rows(self):
+        with mock.patch.object(runtime, '_restart_frpc') as restart:
+            first = runtime.apply_agent_runtime(self.plane, root=self.tmp)
+            self.assertTrue(first['ok'], first)
+            runtime.mark_runtime_status(self.plane, ok=True)
+            second = runtime.apply_agent_runtime(self.plane, root=self.tmp)
+            self.assertTrue(second['ok'], second)
+            self.assertEqual(restart.call_count, 1)
+            self.assertTrue(second.get('no_change'))
+            row = self.plane.conn.execute("SELECT runtime_verified, status FROM agent_remote_services WHERE name='web'").fetchone()
+            self.assertEqual(row['runtime_verified'], 1)
+            self.assertEqual(row['status'], 'HEALTHY')
+
+    def test_successful_full_apply_refreshes_all_included_verification(self):
+        self.plane.conn.execute("UPDATE agent_remote_services SET runtime_verified=1, status='HEALTHY', reason=''")
+        self.plane.conn.commit()
+        result = runtime.apply_agent_runtime(self.plane, root=self.tmp)
+        self.assertTrue(result['ok'], result)
+        self.assertEqual(self.plane.conn.execute("SELECT runtime_verified FROM agent_remote_services WHERE name='web'").fetchone()[0], 1)
+
+    def test_same_artifacts_with_unhealthy_runtime_reapply_for_recovery(self):
+        with mock.patch.object(runtime, '_restart_frpc') as restart:
+            self.assertTrue(runtime.apply_agent_runtime(self.plane, root=self.tmp)['ok'])
+            with mock.patch.object(runtime, '_current_runtime_ready', return_value=False):
+                recovered = runtime.apply_agent_runtime(self.plane, root=self.tmp)
+            self.assertTrue(recovered['ok'], recovered)
+            self.assertEqual(restart.call_count, 2)
+            self.assertFalse(recovered.get('no_change'))
+
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="drlink-rt-")
         frp = Path(self.tmp, "etc/frp")

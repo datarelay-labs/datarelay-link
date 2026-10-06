@@ -134,6 +134,17 @@ partial installed Agent. Committed configuration/state, installed CLI or
 service definitions still use the guarded partial-install recovery path;
 pending redeemed enrollment retains its existing crash-safe resume contract.
 
+Runtime policy readers reopen the canonical database when restore replaces its
+file identity. Agent activation requires connection and proxy-success evidence
+after the native Linux journal/macOS log cursor captured before restart;
+missing logs cannot establish HEALTHY. A successful full apply refreshes all
+included service verification, while explicit unreachable dependencies remain
+degraded. On Linux, unchanged runtime artifacts with a verified current process
+and connection epoch preserve existing sessions instead of restarting FRPC.
+Paused inventory reports PAUSED and management reachability alone does not
+establish an Agent transport connection. Unknown/transitional Doctor checks
+remain visible and prevent a clean all-green diagnostic result.
+
 ### Backup / restore version policy
 
 ```text
