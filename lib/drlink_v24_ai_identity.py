@@ -349,7 +349,8 @@ def verify_client_credentials(
 
     secret = client_secret
     if secret is None and io is not None:
-        secret = io.ask("Client secret: ").strip()
+        ask_secret = getattr(io, "ask_secret", io.ask)
+        secret = ask_secret("Client secret: ").strip()
     if not secret:
         secret = os.environ.get("DRLINK_OAUTH_CLIENT_SECRET") or ""
 

@@ -254,6 +254,25 @@ class AIIdentityOAuth(unittest.TestCase):
         row = self.plane.get_principal("custom-ai")
         self.assertNotEqual(str(row["credential_status"]).lower(), "verified")
 
+    def test_client_credentials_prompt_uses_secret_input(self):
+        self.plane.set_ai_principal("custom-ai", enabled=True)
+        issued = self.plane.rotate_ai_credential("custom-ai")
+        secret = issued["token"]
+
+        class SecretIO:
+            def __init__(self):
+                self.secret_prompts = []
+            def ask(self, prompt=""):
+                raise AssertionError("secret must not use visible ask()")
+            def ask_secret(self, prompt=""):
+                self.secret_prompts.append(prompt)
+                return secret
+
+        io = SecretIO()
+        result = ai_id.verify_client_credentials(self.plane, "custom-ai", io=io)
+        self.assertEqual(result["auth"], "VERIFIED")
+        self.assertEqual(io.secret_prompts, ["Client secret: "])
+
     def test_client_credentials_success(self):
         self.plane.set_ai_principal("custom-ai", enabled=True)
         issued = self.plane.rotate_ai_credential("custom-ai")
