@@ -181,7 +181,7 @@ cat >"$WORKDIR/done-services.json" <<'EOF'
 EOF
 print_complete "203.0.113.10" "$WORKDIR/done-services.json" >"$WORKDIR/complete.out"
 need "$WORKDIR/complete.out" 'Data Relay Link Installation Complete' 'complete header'
-need "$WORKDIR/complete.out" 'Your Data Relay Link client is running successfully' 'success line'
+need "$WORKDIR/complete.out" 'Your Data Relay Link Agent is running successfully' 'success line'
 need "$WORKDIR/complete.out" 'Local target : 127.0.0.1:22' 'complete target'
 need "$WORKDIR/complete.out" 'Public port  : 6002' 'complete public'
 need "$WORKDIR/complete.out" 'ssh -p 6002 aella@203.0.113.10' 'complete ssh'
@@ -212,7 +212,7 @@ frp_ux_print_apply_summary "$WORKDIR/cur.json" "$WORKDIR/cand.json" >"$WORKDIR/a
 need "$WORKDIR/apply.out" 'Ready to apply' 'apply heading'
 need "$WORKDIR/apply.out" '+ grafana' 'pending add'
 need "$WORKDIR/apply.out" 'public port: assigned automatically' 'apply auto port'
-need "$WORKDIR/apply.out" 'will restart the Data Relay Link client' 'restart warning'
+need "$WORKDIR/apply.out" 'will restart the Data Relay Link Agent' 'restart warning'
 pass "apply confirmation summary"
 
 python3 - "$WORKDIR" <<'PY'

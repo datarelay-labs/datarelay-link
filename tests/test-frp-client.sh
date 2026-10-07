@@ -699,7 +699,7 @@ if "$ROOT/tools/frp-client" apply >"$WORKDIR/lock.out" 2>"$WORKDIR/lock.err"; th
   exec {LOCKFD}>&-
   fail "lock should block apply"
 fi
-grep -q 'another frp-client management operation is already running' "$WORKDIR/lock.err" || fail "lock error"
+grep -q 'another Data Relay Link Agent management operation is already running' "$WORKDIR/lock.err" || fail "lock error"
 flock -u "$LOCKFD"
 exec {LOCKFD}>&-
 # Stale mkdir lock from a dead PID must not block forever.
@@ -708,7 +708,7 @@ mkdir -p "$LOCKFILE"
 printf '999999\n' >"$LOCKFILE/pid"
 if ! "$ROOT/tools/frp-client" apply >"$WORKDIR/stale-lock.out" 2>"$WORKDIR/stale-lock.err"; then
   # candidate may be a no-op or a change; either must not fail on stale lock
-  if grep -q 'another frp-client management operation is already running' "$WORKDIR/stale-lock.err"; then
+  if grep -q 'another Data Relay Link Agent management operation is already running' "$WORKDIR/stale-lock.err"; then
     fail "stale directory lock blocked apply"
   fi
 fi
@@ -728,13 +728,13 @@ if "$ROOT/tools/frp-client" add-service --preset custom --id web --name Web --ta
   exec {LOCKFD}>&-
   fail "lock should block add-service"
 fi
-grep -q 'another frp-client management operation is already running' "$WORKDIR/add-lock.err" || fail "add-service lock error"
+grep -q 'another Data Relay Link Agent management operation is already running' "$WORKDIR/add-lock.err" || fail "add-service lock error"
 if "$ROOT/tools/frp-client" discard-pending >"$WORKDIR/disc-lock.out" 2>"$WORKDIR/disc-lock.err"; then
   flock -u "$LOCKFD"
   exec {LOCKFD}>&-
   fail "lock should block discard-pending"
 fi
-grep -q 'another frp-client management operation is already running' "$WORKDIR/disc-lock.err" || fail "discard lock error"
+grep -q 'another Data Relay Link Agent management operation is already running' "$WORKDIR/disc-lock.err" || fail "discard lock error"
 if ! "$ROOT/tools/frp-client" status >"$WORKDIR/status-lock.out" 2>"$WORKDIR/status-lock.err"; then
   flock -u "$LOCKFD"
   exec {LOCKFD}>&-

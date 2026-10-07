@@ -174,6 +174,7 @@ import re, sys
 from pathlib import Path
 text = Path(sys.argv[1]).read_text(encoding="utf-8")
 markers = (
+    'echo "Starting Data Relay Link Agent ..."',
     'echo "Starting Data Relay Link client ..."',
     'echo "Starting FRP client ..."',
 )
