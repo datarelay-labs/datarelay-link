@@ -29,6 +29,34 @@ def fail(message: str) -> None:
     raise SystemExit(1)
 
 
+def contract_contains(contract: str, expected: str) -> bool:
+    """Compare content after YAML's quoted-scalar whitespace folding.
+
+    Engineering metadata may wrap a long shell pipeline across source lines.
+    Keep the entire ordered pipeline (including &&) mandatory, but do not make
+    presentation-only wrapping a release-contract failure.
+    """
+    return expected in " ".join(contract.split())
+
+
+def test_contract_whitespace_folding() -> None:
+    pipeline = "python3 scripts/generate-sbom.py -o dist/sbom.spdx.json && bash scripts/verify-sbom.sh"
+    for name, candidate, expected in (
+        ("single_line", pipeline, True),
+        ("quoted_wrapped", "sbom_command: bash -lc '" + pipeline.replace(" && ", " &&\n  ") + "'", True),
+        ("extra_spacing", pipeline.replace(" && ", "  &&    "), True),
+        ("generator_only", pipeline.split(" && ")[0], False),
+        ("verifier_only", pipeline.split(" && ")[1], False),
+        ("non_fail_closed_separator", pipeline.replace(" && ", " ; "), False),
+        ("fallback_separator", pipeline.replace(" && ", " || "), False),
+        ("wrong_output", pipeline.replace("dist/sbom.spdx.json", "dist/unverified.json"), False),
+        ("reversed_order", " && ".join(reversed(pipeline.split(" && "))), False),
+    ):
+        if contract_contains(candidate, pipeline) is not expected:
+            fail("release contract whitespace regression: %s" % name)
+    print("PASS RELEASE_CONTRACT_YAML_WHITESPACE_AND_PIPELINE_NEGATIVES")
+
+
 def git(repo: Path, *args: str) -> str:
     proc = subprocess.run(
         ["git", "-C", str(repo), *args],
@@ -269,6 +297,7 @@ def main() -> int:
             fail("protected owner/UI review not retained in projected qualification")
         print("PASS V240_PROTECTED_OWNER_REVIEW_PROJECTION")
 
+    test_contract_whitespace_folding()
     contract = (ROOT / ".engineering" / "release.yaml").read_text(encoding="utf-8")
     for needle in (
         "full_e2e_passes: 2",
@@ -281,7 +310,7 @@ def main() -> int:
         "bash scripts/verify-sbom.sh",
         "python3 scripts/generate-sbom.py -o dist/sbom.spdx.json && bash scripts/verify-sbom.sh",
     ):
-        if needle not in contract:
+        if not contract_contains(contract, needle):
             fail("release.yaml missing %s" % needle)
     if "operational_e2e_command: bash tests/run-release-qualification-passes.sh" in contract:
         fail("contract would run the two-pass wrapper once per full_e2e_passes")
