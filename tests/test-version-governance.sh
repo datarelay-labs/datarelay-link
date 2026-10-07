@@ -175,24 +175,24 @@ ident = derive_display_identity(
     channel="development",
     source_head="$HEAD",
 )
-assert ident["display_identity"] == "2.4.0-dev+g$SHORT", ident
+assert ident["display_identity"] == "$PROJECT_VERSION-dev+g$SHORT", ident
 assert ident["channel"] == "development", ident
 rc = derive_display_identity(
     project_version="$PROJECT_VERSION",
     channel="preview",
-    source_ref="v2.4.0-rc.1",
+    source_ref="v$PROJECT_VERSION-rc.1",
     source_head="$HEAD",
 )
-assert rc["display_identity"] == "2.4.0-rc.1", rc
+assert rc["display_identity"] == "$PROJECT_VERSION-rc.1", rc
 assert rc["channel"] == "preview", rc
 stable = derive_display_identity(
     project_version="$PROJECT_VERSION",
     channel="stable",
-    source_ref="v2.4.0",
+    source_ref="v$PROJECT_VERSION",
     source_head="$HEAD",
     tag_exists=True,
 )
-assert stable["display_identity"] == "2.4.0", stable
+assert stable["display_identity"] == "$PROJECT_VERSION", stable
 guard = derive_display_identity(
     project_version="$PROJECT_VERSION",
     channel="stable",
@@ -207,7 +207,7 @@ text = format_show_version(
     frp_version="$FRP_VERSION",
     role="Server",
 )
-assert "Data Relay Link: 2.4.0-dev+g$SHORT" in text
+assert "Data Relay Link: $PROJECT_VERSION-dev+g$SHORT" in text
 assert "Channel: development" in text
 assert "Source HEAD: $HEAD" in text
 assert "Relay Engine (FRP): $FRP_VERSION" in text
@@ -257,7 +257,7 @@ EOF
       cat "$out" "$WORKDIR/version-$role.err" >&2
       fail "show version $role"
     }
-  grep -q "Data Relay Link: 2.4.0-dev+g${SHORT}" "$out" || fail "display $role: $(cat "$out")"
+  grep -q "Data Relay Link: ${PROJECT_VERSION}-dev+g${SHORT}" "$out" || fail "display $role: $(cat "$out")"
   grep -q "Channel: development" "$out" || fail "channel $role"
   grep -q "Source HEAD: ${HEAD}" "$out" || fail "head $role"
   grep -q "Relay Engine (FRP): ${FRP_VERSION}" "$out" || fail "engine $role"
@@ -312,7 +312,7 @@ pass "MCP_V2_4_INCLUDED"
 grep -q '^MCP_INCLUDED_IN_V2_4_0=YES$' docs/VERSION_POLICY.md || fail "MCP v2.4 inclusion policy marker"
 grep -q '^CHATGPT_PLUS_USER_AUTH_ACCEPTANCE=REQUIRED$' docs/VERSION_POLICY.md || fail "ChatGPT Plus auth requirement marker"
 grep -q '^CHATGPT_PLUS_USER_AUTH_STATUS=BLOCKED_PENDING_OWNER_UI_AUTH$' docs/VERSION_POLICY.md || fail "ChatGPT Plus auth blocker marker"
-grep -q 'Real ChatGPT Plus user authentication is a mandatory v2.4.0 release gate' docs/RELEASE_CHECKLIST.md || fail "ChatGPT Plus release checklist gate"
+grep -q "Real ChatGPT user authentication is a mandatory ${PROJECT_VERSION} release gate" docs/RELEASE_CHECKLIST.md || fail "ChatGPT release checklist gate"
 pass "MCP_V2_4_SCOPE_AND_CHATGPT_AUTH_GATE"
 
 echo "VERSION_GOVERNANCE=PASS"
