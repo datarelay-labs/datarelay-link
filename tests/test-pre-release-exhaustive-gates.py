@@ -4,6 +4,8 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import os
+import sys
 import subprocess
 import tempfile
 import unittest
@@ -611,6 +613,222 @@ class PreReleaseExhaustiveGateTests(unittest.TestCase):
             data["scenario_counts"]["pass"] = 0
             errors = MOD.validate_full_user(data, HEAD, "PASS1", repo)
             self.assertTrue(any("scenario_counts.pass" in item for item in errors))
+
+
+class EvidenceInputIntegrityTests(unittest.TestCase):
+    """Malformed reports must never become qualification success."""
+
+    def test_public_gate_command_rejects_bad_counts_without_mutating_evidence(self):
+        for value in (0.5, False, float("inf")):
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as td:
+                repo = Path(td)
+                fixtures = PreReleaseExhaustiveGateTests()
+                _content, candidate = fixtures._provenance_repo(repo)
+                _cli, data = fixtures._candidate_evidence(repo, candidate)
+                data["unexercised_public_commands"] = value
+                report = repo / "e2e-reports/release-qualification/full-user-e2e-pass1.json"
+                report.parent.mkdir(parents=True)
+                report.write_text(json.dumps(data) + "\n")
+                before = report.read_bytes()
+                env = {key: value for key, value in os.environ.items()
+                       if key not in {"DRLINK_CLI_FEATURE_SCENARIO_EVIDENCE",
+                                      "DRLINK_FULL_USER_E2E_PASS1_EVIDENCE",
+                                      "DRLINK_FULL_USER_E2E_PASS2_EVIDENCE"}}
+                result = subprocess.run(
+                    [sys.executable, str(SCRIPT), "--root", str(repo), "--gate", "full-user-e2e-pass1"],
+                    env=env, capture_output=True, text=True, check=False,
+                )
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("unexercised_public_commands", result.stderr)
+                self.assertIn("PRE_RELEASE_EXHAUSTIVE_GATES=FAIL", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertNotIn("PRE_RELEASE_EXHAUSTIVE_GATES=PASS", result.stdout)
+                self.assertEqual(report.read_bytes(), before)
+
+    def test_tsv_decimal_counts_remain_supported(self):
+        for text, expected in (("0", 0), ("0019", 19), (" 19 ", 19)):
+            with self.subTest(text=text):
+                self.assertEqual(MOD._count(text, from_tsv=True), expected)
+        for text in ("0.5", "NaN", "Infinity", "-1", "1e3", "", "9" * 4500):
+            with self.subTest(text=text[:20]):
+                self.assertEqual(MOD._count(text, from_tsv=True), -1)
+
+    def test_full_all_nonapplicable_is_not_an_executed_full_run(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            write_full_ledgers(repo / "run")
+            path = repo / "run/ledger/scenario-results.tsv"
+            path.write_text(path.read_text().splitlines()[0] + "\nX-001\tUC-01\tNO\tNO\tNOT_APPLICABLE\tNO\tNOT_APPLICABLE\tNOT_APPLICABLE\tOptional separate adapter not in scope\tevidence-x1\n")
+            data = full_evidence("PASS1")
+            data["evidence_root"] = "run"
+            data["scenario_counts"]["pass"] = 0
+            errors = MOD._validate_full_ledgers(data, repo, "TEST")
+            self.assertTrue(any("executed applicable" in x for x in errors), errors)
+
+    def test_cli_zero_counters_reject_non_integer_values(self):
+        for key in MOD.CLI_ZERO_COUNTERS:
+            for value in (False, 0.0, 0.5, -0.5, "0", float("nan"), float("inf")):
+                with self.subTest(key=key, value=value):
+                    data = cli_evidence()
+                    data["counters"][key] = value
+                    errors = MOD.validate_cli_feature(data, HEAD)
+                    self.assertTrue(any(key in error for error in errors), errors)
+
+    def test_full_zero_counters_reject_non_integer_values(self):
+        for key in MOD.FULL_ZERO_FIELDS:
+            for value in (False, 0.0, 0.5, -0.5, "0", float("nan"), float("inf")):
+                with self.subTest(key=key, value=value):
+                    data = full_evidence("PASS1")
+                    data[key] = value
+                    errors = MOD.validate_full_user(data, HEAD, "PASS1")
+                    self.assertTrue(any(key in error for error in errors), errors)
+
+    def test_cli_numeric_summary_fields_require_json_integers(self):
+        cases = {
+            "feature_inventory_total": (19.5, "19", float("inf")),
+            "direct_user_feature_coverage": (100.5, "100", float("inf")),
+            "ai_assisted_feature_coverage": (100.5, "100", float("inf")),
+            "direct_user_fcs_coverage": (100.5, "100", float("inf")),
+            "ai_assisted_fcs_coverage": (100.5, "100", float("inf")),
+            "parallel_lanes_started": (True, 4.5, "4", float("inf")),
+            "max_simultaneous_active_lanes": (True, 4.5, "4", float("inf")),
+        }
+        for key, values in cases.items():
+            for value in values:
+                with self.subTest(key=key, value=value):
+                    data = cli_evidence()
+                    data[key] = value
+                    errors = MOD.validate_cli_feature(data, HEAD)
+                    self.assertTrue(any(key in error for error in errors), errors)
+
+    def test_schema_version_is_not_a_boolean_or_float(self):
+        for value in (True, 1.0, "1"):
+            with self.subTest(value=value):
+                cli = cli_evidence()
+                cli["schema_version"] = value
+                full = full_evidence("PASS1")
+                full["schema_version"] = value
+                self.assertTrue(any("schema_version" in x for x in MOD.validate_cli_feature(cli, HEAD)))
+                self.assertTrue(any("schema_version" in x for x in MOD.validate_full_user(full, HEAD, "PASS1")))
+
+    def test_count_map_rejects_lossy_values(self):
+        for expected in (False, 0.5, -0.5, "0", float("inf"), float("nan")):
+            with self.subTest(expected=expected):
+                self.assertTrue(MOD._compare_count_map({"total": 0}, {"total": expected}, "TEST", "counts"))
+        self.assertEqual(MOD._compare_count_map({"total": 0}, {"total": 0}, "TEST", "counts"), [])
+
+    def test_malformed_tsv_does_not_hide_columns(self):
+        cases = (
+            "ID\tRESULT\tRESULT\nx\tFAIL\tPASS\n",
+            "ID\tRESULT\nx\tPASS\textra\n",
+            "ID\tRESULT\nx\n",
+            "ID\t\tRESULT\nx\tignored\tPASS\n",
+        )
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "malformed.tsv"
+            for text in cases:
+                with self.subTest(text=text):
+                    path.write_text(text)
+                    _rows, errors = MOD._read_tsv(path, ("ID", "RESULT"), "TEST")
+                    self.assertTrue(errors)
+
+    def test_full_scenario_flags_fail_closed(self):
+        for field in ("APPLICABLE", "MANDATORY", "AI_REQUIRED"):
+            for value in ("", "YSE", "UNKNOWN"):
+                with self.subTest(field=field, value=value), tempfile.TemporaryDirectory() as td:
+                    repo = Path(td)
+                    write_full_ledgers(repo / "run")
+                    path = repo / "run/ledger/scenario-results.tsv"
+                    lines = path.read_text().splitlines()
+                    fields = lines[0].split("\t")
+                    row = lines[1].split("\t")
+                    row[fields.index(field)] = value
+                    path.write_text(lines[0] + "\n" + "\t".join(row) + "\n")
+                    data = full_evidence("PASS1")
+                    data["evidence_root"] = "run"
+                    errors = MOD._validate_full_ledgers(data, repo, "TEST")
+                    self.assertTrue(any(field in x for x in errors), errors)
+
+    def test_full_nonapplicable_cannot_be_counted_as_pass(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            write_full_ledgers(repo / "run")
+            path = repo / "run/ledger/scenario-results.tsv"
+            path.write_text(path.read_text().replace("UC-01\tYES", "UC-01\tNO"))
+            data = full_evidence("PASS1")
+            data["evidence_root"] = "run"
+            errors = MOD._validate_full_ledgers(data, repo, "TEST")
+            self.assertTrue(any("NOT_APPLICABLE" in x for x in errors), errors)
+
+    def test_full_nonapplicable_requires_a_reason(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            write_full_ledgers(repo / "run")
+            path = repo / "run/ledger/scenario-results.tsv"
+            path.write_text(path.read_text() + "X-001\tUC-02\tNO\tNO\tNOT_APPLICABLE\tNO\tNOT_APPLICABLE\tNOT_APPLICABLE\t\tevidence-x1\n")
+            data = full_evidence("PASS1")
+            data["evidence_root"] = "run"
+            data["scenario_counts"]["total"] = 2
+            errors = MOD._validate_full_ledgers(data, repo, "TEST")
+            self.assertTrue(any("reason" in x for x in errors), errors)
+
+    def test_full_explicit_nonapplicable_disposition_remains_supported(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            write_full_ledgers(repo / "run")
+            path = repo / "run/ledger/scenario-results.tsv"
+            path.write_text(path.read_text() + "X-001\tUC-02\tNO\tNO\tNOT_APPLICABLE\tNO\tNOT_APPLICABLE\tNOT_APPLICABLE\tSeparate optional adapter outside declared product scope\tevidence-x1\n")
+            data = full_evidence("PASS1")
+            data["evidence_root"] = "run"
+            data["scenario_counts"]["total"] = 2
+            self.assertEqual(MOD._validate_full_ledgers(data, repo, "TEST"), [])
+
+    def test_full_empty_scenario_or_use_case_id_is_invalid(self):
+        for field in ("SCENARIO_ID", "USE_CASE_ID"):
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as td:
+                repo = Path(td)
+                write_full_ledgers(repo / "run")
+                path = repo / "run/ledger/scenario-results.tsv"
+                lines = path.read_text().splitlines()
+                row = lines[1].split("\t")
+                row[lines[0].split("\t").index(field)] = ""
+                path.write_text(lines[0] + "\n" + "\t".join(row) + "\n")
+                data = full_evidence("PASS1")
+                data["evidence_root"] = "run"
+                errors = MOD._validate_full_ledgers(data, repo, "TEST")
+                self.assertTrue(any(field in x for x in errors), errors)
+
+    def test_cli_timeline_rejects_missing_timezone_without_crashing(self):
+        for original in ("2026-10-02T00:00:00Z", "2026-10-02T00:00:10Z"):
+            with self.subTest(original=original), tempfile.TemporaryDirectory() as td:
+                repo = Path(td)
+                write_cli_ledgers(repo / "run")
+                path = repo / "run/ledger/execution-lanes.tsv"
+                path.write_text(path.read_text().replace(original, original[:-1], 1))
+                data = cli_evidence()
+                data["evidence_root"] = "run"
+                errors = MOD._validate_cli_ledgers(data, repo, "TEST")
+                self.assertTrue(any("timezone" in x for x in errors), errors)
+
+    def test_cli_zero_length_lane_cannot_prove_parallel_execution(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            write_cli_ledgers(repo / "run")
+            path = repo / "run/ledger/execution-lanes.tsv"
+            path.write_text(path.read_text().replace("2026-10-02T00:00:10Z", "2026-10-02T00:00:00Z", 1))
+            data = cli_evidence()
+            data["evidence_root"] = "run"
+            self.assertTrue(MOD._validate_cli_ledgers(data, repo, "TEST"))
+
+    def test_cli_explicit_offset_timeline_remains_valid(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            write_cli_ledgers(repo / "run")
+            path = repo / "run/ledger/execution-lanes.tsv"
+            path.write_text(path.read_text().replace("2026-10-02T00:00:00Z", "2026-10-02T09:00:00+09:00", 1).replace("2026-10-02T00:00:10Z", "2026-10-02T09:00:10+09:00", 1))
+            data = cli_evidence()
+            data["evidence_root"] = "run"
+            self.assertEqual(MOD._validate_cli_ledgers(data, repo, "TEST"), [])
 
 
 if __name__ == "__main__":

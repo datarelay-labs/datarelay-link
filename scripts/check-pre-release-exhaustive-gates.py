@@ -209,13 +209,26 @@ def _pass(value: object) -> bool:
     return str(value or "").strip().upper() == "PASS"
 
 
+def _count(value: object, *, from_tsv: bool = False) -> int:
+    """Read non-negative counts without truncating fractions or accepting bools.
+
+    JSON reports carry integers; TSV cells carry decimal text. Invalid inputs
+    return -1 so callers can report validation errors without numeric crashes.
+    """
+    if type(value) is int:
+        return value if value >= 0 else -1
+    if from_tsv and isinstance(value, str):
+        text = value.strip()
+        if re.fullmatch(r"[0-9]+", text):
+            try:
+                return int(text)
+            except ValueError:
+                pass
+    return -1
+
+
 def _zero(value: object) -> bool:
-    if isinstance(value, bool):
-        return not value
-    try:
-        return int(value) == 0
-    except (TypeError, ValueError):
-        return False
+    return _count(value) == 0
 
 
 def _resolve_evidence_root(repo_root: Path, data: dict) -> Path:
@@ -231,10 +244,16 @@ def _read_tsv(path: Path, required: tuple[str, ...], label: str) -> tuple[list[d
         with path.open("r", encoding="utf-8", newline="") as fh:
             reader = csv.DictReader(fh, delimiter="\t")
             fields = tuple(reader.fieldnames or ())
+            if any(not field.strip() for field in fields) or len(fields) != len(set(fields)):
+                return [], [f"{label}: {path} ledger columns must be non-empty and unique"]
             missing = [key for key in required if key not in fields]
             if missing:
                 return [], [f"{label}: {path} missing columns {','.join(missing)}"]
-            rows = [dict(row) for row in reader]
+            rows = []
+            for row_number, row in enumerate(reader, 2):
+                if None in row or any(value is None for value in row.values()):
+                    return [], [f"{label}: {path} row {row_number} has an invalid column count"]
+                rows.append(dict(row))
     except Exception as exc:
         return [], [f"{label}: unable to read ledger {path}: {exc}"]
     return rows, []
@@ -260,10 +279,7 @@ def _compare_count_map(actual: dict[str, int], expected: object, label: str, fie
         return [f"{label}: {field} must be an object"]
     errors: list[str] = []
     for key, value in actual.items():
-        try:
-            got = int(expected.get(key))
-        except (TypeError, ValueError):
-            got = -1
+        got = _count(expected.get(key))
         if got != value:
             errors.append(f"{label}: {field}.{key}={got} but ledger={value}")
     return errors
@@ -357,10 +373,7 @@ def _validate_cli_ledgers(data: dict, repo_root: Path, label: str) -> list[str]:
             f"{label}: feature-ledger.tsv missing required FEATURE_KEY values "
             + ",".join(missing_feature_keys)
         )
-    try:
-        declared_feature_total = int(data.get("feature_inventory_total"))
-    except (TypeError, ValueError):
-        declared_feature_total = -1
+    declared_feature_total = _count(data.get("feature_inventory_total"))
     if declared_feature_total != len(feature_rows):
         errors.append(
             f"{label}: feature_inventory_total={declared_feature_total} but feature ledger={len(feature_rows)}"
@@ -451,13 +464,9 @@ def _validate_cli_ledgers(data: dict, repo_root: Path, label: str) -> list[str]:
     metric_counts: dict[str, int] = {}
     for row in hidden_rows:
         metric = str(row.get("METRIC") or "").strip()
-        try:
-            count = int(row.get("COUNT"))
-        except (TypeError, ValueError):
-            errors.append(f"{label}: hidden metric {metric or '<missing>'} COUNT must be integer")
-            continue
+        count = _count(row.get("COUNT"), from_tsv=True)
         if count < 0:
-            errors.append(f"{label}: hidden metric {metric} COUNT must be non-negative")
+            errors.append(f"{label}: hidden metric {metric or '<missing>'} COUNT must be a non-negative integer")
             continue
         metric_counts[metric] = count
     missing_metrics = [m for m in CLI_REQUIRED_HIDDEN_METRICS if m not in metric_counts]
@@ -492,19 +501,13 @@ def _validate_cli_ledgers(data: dict, repo_root: Path, label: str) -> list[str]:
         "features_without_ai_support_count": features_without_ai_support,
     }
     for key, actual in derived_zero_counts.items():
-        try:
-            declared = int(counters.get(key))
-        except (TypeError, ValueError):
-            declared = -1
+        declared = _count(counters.get(key))
         if declared != actual:
             errors.append(f"{label}: counters.{key}={declared} but ledger={actual}")
     for metric, counter_key in CLI_HIDDEN_METRIC_TO_COUNTER.items():
         if metric not in metric_counts:
             continue
-        try:
-            declared = int(counters.get(counter_key))
-        except (TypeError, ValueError):
-            declared = -1
+        declared = _count(counters.get(counter_key))
         if declared != metric_counts[metric]:
             errors.append(
                 f"{label}: counters.{counter_key}={declared} but hidden ledger={metric_counts[metric]}"
@@ -578,8 +581,11 @@ def _validate_cli_ledgers(data: dict, repo_root: Path, label: str) -> list[str]:
         except ValueError:
             errors.append(f"{label}: execution lane {lane_id} timestamps must be ISO-8601")
             continue
-        if end < start:
-            errors.append(f"{label}: execution lane {lane_id} END_UTC precedes START_UTC")
+        if start.utcoffset() is None or end.utcoffset() is None:
+            errors.append(f"{label}: execution lane {lane_id} timestamps require an explicit timezone")
+            continue
+        if end <= start:
+            errors.append(f"{label}: execution lane {lane_id} END_UTC must follow START_UTC")
             continue
         valid_lane_count += 1
         events.append((start, 1))
@@ -590,18 +596,12 @@ def _validate_cli_ledgers(data: dict, repo_root: Path, label: str) -> list[str]:
         for _when, delta in sorted(events, key=lambda item: (item[0], item[1])):
             active += delta
             max_active = max(max_active, active)
-        try:
-            declared_lanes = int(data.get("parallel_lanes_started"))
-        except (TypeError, ValueError):
-            declared_lanes = -1
+        declared_lanes = _count(data.get("parallel_lanes_started"))
         if declared_lanes != len(lane_rows):
             errors.append(
                 f"{label}: parallel_lanes_started={declared_lanes} but execution ledger={len(lane_rows)}"
             )
-        try:
-            declared_max = int(data.get("max_simultaneous_active_lanes"))
-        except (TypeError, ValueError):
-            declared_max = -1
+        declared_max = _count(data.get("max_simultaneous_active_lanes"))
         if declared_max != max_active:
             errors.append(
                 f"{label}: max_simultaneous_active_lanes={declared_max} but execution ledger={max_active}"
@@ -659,10 +659,9 @@ def _validate_cli_catalog_binding(data: dict, repo_root: Path, label: str) -> li
     metric_counts: dict[str, int] = {}
     for row in hidden_rows:
         metric = str(row.get("METRIC") or "").strip()
-        try:
-            metric_counts[metric] = int(row.get("COUNT"))
-        except (TypeError, ValueError):
-            continue
+        count = _count(row.get("COUNT"), from_tsv=True)
+        if count >= 0:
+            metric_counts[metric] = count
 
     actual_aliases = sum(len(row.get("aliases") or []) for row in catalog)
     actual_hidden = sum(bool(row.get("hidden")) for row in catalog)
@@ -698,19 +697,36 @@ def _validate_full_ledgers(data: dict, repo_root: Path, label: str) -> list[str]
     ids = [str(row.get("SCENARIO_ID") or "").strip() for row in scenario_rows]
     if not ids:
         errors.append(f"{label}: scenario-results.tsv must not be empty")
+    if any(not sid for sid in ids):
+        errors.append(f"{label}: scenario-results.tsv SCENARIO_ID must be non-empty")
     if len(ids) != len(set(ids)):
         errors.append(f"{label}: scenario-results.tsv contains duplicate SCENARIO_ID")
+    applicable_count = 0
     for row in scenario_rows:
-        sid = str(row.get("SCENARIO_ID") or "").strip()
-        applicable = str(row.get("APPLICABLE") or "").strip().upper() == "YES"
-        if not applicable:
+        sid = str(row.get("SCENARIO_ID") or "").strip() or "<missing>"
+        if not str(row.get("USE_CASE_ID") or "").strip():
+            errors.append(f"{label}: {sid} USE_CASE_ID must be non-empty")
+        flags = {key: str(row.get(key) or "").strip().upper()
+                 for key in ("APPLICABLE", "MANDATORY", "AI_REQUIRED")}
+        for key, value in flags.items():
+            if value not in {"YES", "NO"}:
+                errors.append(f"{label}: {sid} {key} must be YES or NO")
+        if flags["APPLICABLE"] != "YES":
+            if flags["APPLICABLE"] == "NO":
+                if str(row.get("FINAL_RESULT") or "").strip().upper() != "NOT_APPLICABLE":
+                    errors.append(f"{label}: {sid} APPLICABLE=NO requires FINAL_RESULT=NOT_APPLICABLE, not PASS")
+                if not str(row.get("BLOCK_REASON") or "").strip():
+                    errors.append(f"{label}: {sid} NOT_APPLICABLE requires an explicit product/platform reason")
             continue
+        applicable_count += 1
         if not _pass(row.get("DIRECT_RESULT")):
             errors.append(f"{label}: {sid} DIRECT_RESULT must be PASS")
         if str(row.get("AI_REQUIRED") or "").strip().upper() == "YES" and not _pass(row.get("AI_RESULT")):
             errors.append(f"{label}: {sid} AI_RESULT must be PASS")
         if not _pass(row.get("FINAL_RESULT")):
             errors.append(f"{label}: {sid} FINAL_RESULT must be PASS")
+    if not applicable_count:
+        errors.append(f"{label}: scenario-results.tsv must include executed applicable scenarios")
     scenario_counts = {
         "total": len(scenario_rows),
         "pass": sum(_pass(row.get("FINAL_RESULT")) for row in scenario_rows),
@@ -792,7 +808,7 @@ def _validate_manifest_candidate_binding(repo_root: Path, candidate: str, label:
 def validate_cli_feature(data: dict, head: str, repo_root: Path | None = None) -> list[str]:
     label = "CLI_FEATURE_SCENARIO_RECONCILIATION"
     errors: list[str] = []
-    if data.get("schema_version") != 1:
+    if type(data.get("schema_version")) is not int or data["schema_version"] != 1:
         errors.append(f"{label}: schema_version must be 1")
     if data.get("gate") != label:
         errors.append(f"{label}: gate marker mismatch")
@@ -811,10 +827,7 @@ def validate_cli_feature(data: dict, head: str, repo_root: Path | None = None) -
         errors.append(f"{label}: head_unchanged must be true")
     if not _pass(data.get("cleanup_status")):
         errors.append(f"{label}: cleanup_status must be PASS")
-    try:
-        feature_inventory_total = int(data.get("feature_inventory_total") or 0)
-    except (TypeError, ValueError):
-        feature_inventory_total = 0
+    feature_inventory_total = _count(data.get("feature_inventory_total"))
     if feature_inventory_total < CLI_MIN_FEATURE_INVENTORY:
         errors.append(
             f"{label}: feature_inventory_total must be >= {CLI_MIN_FEATURE_INVENTORY}"
@@ -859,24 +872,15 @@ def validate_cli_feature(data: dict, head: str, repo_root: Path | None = None) -
         "direct_user_fcs_coverage",
         "ai_assisted_fcs_coverage",
     ):
-        try:
-            coverage = int(data.get(coverage_key))
-        except (TypeError, ValueError):
-            coverage = -1
+        coverage = _count(data.get(coverage_key))
         if coverage != 100:
             errors.append(f"{label}: {coverage_key} must be 100")
     if str(data.get("parallel_execution") or "").strip().upper() != "MAXIMUM_SAFE":
         errors.append(f"{label}: parallel_execution must be MAXIMUM_SAFE")
-    try:
-        parallel_lanes_started = int(data.get("parallel_lanes_started") or 0)
-    except (TypeError, ValueError):
-        parallel_lanes_started = 0
+    parallel_lanes_started = _count(data.get("parallel_lanes_started"))
     if parallel_lanes_started <= 0:
         errors.append(f"{label}: parallel_lanes_started must be > 0")
-    try:
-        max_active_lanes = int(data.get("max_simultaneous_active_lanes") or 0)
-    except (TypeError, ValueError):
-        max_active_lanes = 0
+    max_active_lanes = _count(data.get("max_simultaneous_active_lanes"))
     if max_active_lanes <= 0:
         errors.append(f"{label}: max_simultaneous_active_lanes must be > 0")
     if data.get("serial_idle_with_runnable_work") is not False:
@@ -915,7 +919,7 @@ def validate_cli_feature(data: dict, head: str, repo_root: Path | None = None) -
 def validate_full_user(data: dict, head: str, pass_name: str, repo_root: Path | None = None) -> list[str]:
     label = f"FULL_USER_E2E_{pass_name}"
     errors: list[str] = []
-    if data.get("schema_version") != 1:
+    if type(data.get("schema_version")) is not int or data["schema_version"] != 1:
         errors.append(f"{label}: schema_version must be 1")
     if data.get("gate") != "FULL_USER_E2E":
         errors.append(f"{label}: gate must be FULL_USER_E2E")
