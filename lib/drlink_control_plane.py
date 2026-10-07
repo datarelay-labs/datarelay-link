@@ -5872,15 +5872,16 @@ class ControlPlane:
         data = cfg if cfg is not None else self._read_server_config()
         raw_mode = str(data.get("deployment_mode") or "").strip()
         mode = raw_mode.lower().replace("-", "").replace("_", "")
-        # Public MCP is served only by the single-443 HTTPS frontend. A stale
-        # TLS intent from an earlier configuration must never make Direct mode
-        # advertise https://<host>/mcp, because TCP/443 is the FRP listener
-        # there rather than an HTTP MCP endpoint.
-        if raw_mode and mode not in ("single443", "enterprise", "enterprisesingle443"):
-            return "Not configured"
+        # An explicit public URL may point at a separately managed HTTPS frontend
+        # (for example a dedicated MCP gateway reached over a reverse tunnel).
+        # This operator-controlled override does not change FRP deployment mode.
         override = (os.environ.get("DRLINK_MCP_PUBLIC_URL") or "").strip().rstrip("/")
         if override:
             return override if override.endswith("/mcp") else override + "/mcp"
+        # Without that explicit external frontend, Direct mode must not advertise
+        # https://<host>/mcp because TCP/443 is the FRP listener there.
+        if raw_mode and mode not in ("single443", "enterprise", "enterprisesingle443"):
+            return "Not configured"
         # Prefer dedicated MCP TLS hostname when configured.
         try:
             import drlink_mcp_tls as mcp_tls

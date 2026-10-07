@@ -521,7 +521,7 @@ class McpTlsLifecycleTests(unittest.TestCase):
 
         os.environ["DRLINK_MCP_PUBLIC_URL"] = "https://override.example.test/mcp"
         try:
-            self.assertEqual(self.plane.mcp_public_url(), "Not configured")
+            self.assertEqual(self.plane.mcp_public_url(), "https://override.example.test/mcp")
         finally:
             os.environ.pop("DRLINK_MCP_PUBLIC_URL", None)
 
