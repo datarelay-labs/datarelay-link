@@ -278,10 +278,30 @@ def main() -> int:
     if managed_q.get("status") != "ok" or managed_q.get("action") != "context_help":
         failures.append("unset managed-host ? contextual help failed: %r" % managed_q)
 
+    for verb in ("set", "unset"):
+        agent_remote_q = grammar.context_help([verb, "remote-service"], "client") or ""
+        if "%s remote-service" % verb not in agent_remote_q:
+            failures.append("%s remote-service ? missing Agent usage: %r" % (verb, agent_remote_q))
+        wrong_role_q = grammar.context_help([verb, "remote-service"], "server") or ""
+        if "Agent Host" not in wrong_role_q or "Available settings:" in wrong_role_q:
+            failures.append("%s remote-service ? wrong-role guidance drift: %r" % (verb, wrong_role_q))
+        unknown_role_q = grammar.context_help([verb, "remote-service"], "unknown") or ""
+        if "Agent Host" not in unknown_role_q:
+            failures.append("%s remote-service ? unknown-role guidance drift: %r" % (verb, unknown_role_q))
+
     upd_q = grammar.context_help(["system", "update"], "server") or ""
     for needle in ("product", "engine", "check-engine"):
         if needle not in upd_q:
             failures.append("system update ? missing %r" % needle)
+
+    server_system_help = catalog.domain_help("system", "server") or ""
+    client_system_help = catalog.domain_help("system", "client") or ""
+    unknown_system_help = catalog.domain_help("system", "unknown") or ""
+    if "system update check-engine" not in server_system_help:
+        failures.append("server system help missing check-engine")
+    for label, text in (("client", client_system_help), ("unknown", unknown_system_help)):
+        if "system update check-engine" in text:
+            failures.append("%s system help advertises server-only check-engine" % label)
 
     roots = grammar.completion_candidates("", "server", [], {}, [], trailing=False)
     expected = ["show", "set", "unset", "test", "system", "menu", "help", "exit"]

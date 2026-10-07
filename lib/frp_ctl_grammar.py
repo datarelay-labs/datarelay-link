@@ -1165,7 +1165,9 @@ def _catalog_context_help(tokens, role, names=None, clients=None):
         ]
         return "\n".join(lines) + _context_client_list(names, clients)
     cmd = CATALOG.find(probe)
-    if cmd is None or not CATALOG.role_allows(cmd["roles"], role):
+    if cmd is not None and not CATALOG.role_allows(cmd["roles"], role):
+        return _ownership_error_message(tuple(cmd["path"]), cmd["roles"])
+    if cmd is None:
         nxt = _catalog_next_path_tokens(probe, role)
         if nxt:
             return _fmt_available([(tok, "") for tok in nxt])
