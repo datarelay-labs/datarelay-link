@@ -112,12 +112,13 @@ AI_CAPABILITIES = (
     "exec",
     "read_file",
     "write_file",
+    "delete_file",
     "upload_file",
     "download_file",
     "list_processes",
 )
-FILE_CAPABILITIES = frozenset({"read_file", "write_file", "upload_file", "download_file"})
-AI_MUTATING_CAPABILITIES = frozenset({"exec", "write_file", "upload_file"})
+FILE_CAPABILITIES = frozenset({"read_file", "write_file", "delete_file", "upload_file", "download_file"})
+AI_MUTATING_CAPABILITIES = frozenset({"exec", "write_file", "delete_file", "upload_file"})
 AI_TERMINAL_JOB_STATUSES = frozenset(
     {"done", "timeout", "cancelled", "expired", "recovery_required"}
 )

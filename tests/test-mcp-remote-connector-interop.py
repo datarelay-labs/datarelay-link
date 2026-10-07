@@ -368,6 +368,7 @@ class RemoteConnectorInteropTests(unittest.TestCase):
             "exec",
             "read_file",
             "write_file",
+            "delete_file",
             "upload_file",
             "download_file",
             "list_processes",

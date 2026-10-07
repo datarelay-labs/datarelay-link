@@ -138,6 +138,13 @@ TOOL_DEFS = (
         {"readOnlyHint": False, "destructiveHint": True, "openWorldHint": False},
     ),
     (
+        "delete_file",
+        "Delete file",
+        "Delete a regular file within allowed path scopes",
+        {"endpoint": "string", "path": "string"},
+        {"readOnlyHint": False, "destructiveHint": True, "openWorldHint": False},
+    ),
+    (
         "upload_file",
         "Upload file",
         "Upload bytes to an allowed path",
@@ -166,6 +173,7 @@ ENDPOINT_TOOLS = frozenset(
         "exec",
         "read_file",
         "write_file",
+        "delete_file",
         "upload_file",
         "download_file",
         "list_processes",
