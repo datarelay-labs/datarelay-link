@@ -2032,16 +2032,19 @@ EOF2
 }
 
 frp_server_begin_tmp() {
-  TMPDIR="$(frp_secure_mktemp_dir)"
+  # TMPDIR belongs to the caller and may be exported to later lifecycle tools.
+  # Keep our disposable staging path separate so cleanup cannot poison it.
+  FRP_SERVER_TMPDIR="$(frp_secure_mktemp_dir)" || return 1
   FRP_SERVER_SAVED_EXIT_TRAP="$(trap -p EXIT || true)"
   # shellcheck disable=SC2064
-  trap "rm -rf $(printf '%q' "$TMPDIR")" EXIT
+  trap "rm -rf -- $(printf '%q' "$FRP_SERVER_TMPDIR")" EXIT
 }
 
 frp_server_end_tmp() {
-  if [[ -n "${TMPDIR:-}" && -d "$TMPDIR" ]]; then
-    rm -rf "$TMPDIR"
+  if [[ -n "${FRP_SERVER_TMPDIR:-}" && -d "$FRP_SERVER_TMPDIR" ]]; then
+    rm -rf -- "$FRP_SERVER_TMPDIR"
   fi
+  unset FRP_SERVER_TMPDIR
   if [[ -n "${FRP_SERVER_SAVED_EXIT_TRAP:-}" ]]; then
     eval "$FRP_SERVER_SAVED_EXIT_TRAP"
   else
@@ -2434,7 +2437,7 @@ frp_server_install_frp_binary() {
     frp_emit_failure_class INTEGRITY_FAILED
     return 1
   }
-  extracted="$(frp_extract_frp_member "$archive" "$TMPDIR" frps)" || {
+  extracted="$(frp_extract_frp_member "$archive" "$FRP_SERVER_TMPDIR" frps)" || {
     frp_emit_failure_class STAGING_FAILED
     return 1
   }

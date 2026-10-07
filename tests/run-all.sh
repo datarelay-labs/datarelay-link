@@ -126,6 +126,7 @@ python3 tests/test-client-python-runtime.py
 ./tests/test-safe-repo-copy.sh
 bash ./tests/test-installed-client-update.sh
 ./tests/test-legacy-client-secure-bridge.sh
+./tests/test-server-tempdir-isolation.sh
 ./tests/test-install-lifecycle.sh
 ./tests/test-partial-client-install-recovery.sh
 ./tests/test-uninstall-owned-frpc.sh
