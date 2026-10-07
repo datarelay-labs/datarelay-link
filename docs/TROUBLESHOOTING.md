@@ -231,6 +231,16 @@ There is no `show permission-object ... references` or Permission Group referenc
 view to memorize: use the supported inspection/edit paths above and the named
 dependencies in the protected-delete error.
 
+### Invalid enrollment retention configuration
+
+Preserve diagnostics and inspect `show enrollments`. Enrollment retention is
+installer-owned; use the same immutable Server installer recovery procedure in
+[Installation](INSTALLATION.md#enrollment-retention-recovery). The diagnostic
+30-day fallback reports state without repairing or deleting it. Review retained
+terminal records and possible service interruption before recovery; there is no
+public retention setter. Verify `show enrollments` and `system diagnostics`
+afterward.
+
 ## 11. Policy mode change rejected
 
 A configured Remote Access BLACKLIST is not directly flipped to WHITELIST,

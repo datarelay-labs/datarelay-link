@@ -606,9 +606,10 @@ function Write-FrpProjectUpdateCheck {
     param([string]$InstalledProject)
     Write-Host 'Data Relay Link project:'
     Write-Host ("  installed : {0}" -f $InstalledProject)
-    Write-Host '  apply path : re-run the Windows client installer (supported)'
-    Write-Host '  note       : no in-place project artifact download in this release'
-    Write-Host '  developers : set FRP_WINDOWS_PROJECT_SRC to a windows/ tree (tools + lib)'
+    Write-Host '  apply path : set FRP_WINDOWS_PROJECT_SRC to the windows/ directory of a verified immutable repository package, then run drlink system update product'
+    Write-Host '  prerequisite: verify source identity, channel and checksums; keep the source package outside the installed product tree'
+    Write-Host '  guide      : docs/UPGRADE.md#windows-product-update-from-verified-source'
+    Write-Host '  note       : no automatic project artifact download in this release; do not uninstall or re-enroll for a software update'
 }
 
 function Write-FrpEngineUpdateCheck {
@@ -651,9 +652,11 @@ function Invoke-FrpClientUpdate {
         }
         $src = Resolve-FrpProjectSourceRoot
         if (-not $src) {
-            Write-Host 'ERROR: Windows project auto-update from an installed client is not supported in this release.'
-            Write-Host 'Supported path: re-run the canonical Windows client installer (identity and ports are preserved).'
-            Write-Host 'Developers/CI: set FRP_WINDOWS_PROJECT_SRC to a windows/ tree containing tools/ and lib/.'
+            Write-Host 'ERROR: no separate Windows product source package is available for this update.'
+            Write-Host 'No update changes were applied. Do not uninstall or re-enroll the Agent Host to repair this software update.'
+            Write-Host 'Verify an immutable repository package and its source identity, channel and checksums; keep it outside the installed product tree.'
+            Write-Host 'For this process, set FRP_WINDOWS_PROJECT_SRC to that package''s windows/ directory (tools/ and lib/), then run drlink system update product.'
+            Write-Host 'See docs/UPGRADE.md#windows-product-update-from-verified-source. The source-update path preserves Agent identity and configuration.'
             Write-Host 'FAILURE_CLASS=PROJECT_UPDATE_USE_INSTALLER'
             return 1
         }
@@ -772,15 +775,15 @@ function Invoke-FrpClientUninstallLocked {
     Write-Host 'WHAT WILL BE REMOVED'
     Write-Host ''
     Write-Host 'Local Data Relay Link software'
-    Write-Host 'Local client identity'
-    Write-Host 'Local client configuration'
+    Write-Host 'Local Agent Host identity'
+    Write-Host 'Local Agent Host configuration'
     Write-Host 'Local service state'
     Write-Host 'Local autostart configuration'
     Write-Host ''
     Write-Host 'WHAT WILL REMAIN ON THE SERVER'
     Write-Host ''
-    Write-Host 'Client record'
-    Write-Host 'Published service reservations'
+    Write-Host 'Managed Host record'
+    Write-Host 'Remote Service reservations'
     Write-Host 'Public port reservations'
     Write-Host 'Server-side policy state'
     Write-Host ''
@@ -831,7 +834,7 @@ function Invoke-FrpClientUninstallLocked {
 function Get-FrpClientDoctorReport {
     $lines = New-Object System.Collections.Generic.List[string]
     $issues = 0
-    [void]$lines.Add('Data Relay Link client diagnostics')
+    [void]$lines.Add('Data Relay Link Agent Host diagnostics')
     [void]$lines.Add(("Root: {0}" -f (Get-FrpWindowsRoot)))
     if (Test-FrpIsEnrolled) {
         [void]$lines.Add('Enrolled: yes')
@@ -866,7 +869,7 @@ function Get-FrpClientDoctorReport {
         [void]$lines.Add(("OK  drlink resolves from a new shell: {0}" -f $shim.Resolved))
     } elseif ($shim.ForeignCommand) {
         [void]$lines.Add(("WARN drlink on PATH belongs to another product: {0}" -f $shim.ForeignCommand))
-        [void]$lines.Add(("     run this client as {0}" -f $shim.ShimPath))
+        [void]$lines.Add(("     run the product CLI as {0}" -f $shim.ShimPath))
     } else {
         [void]$lines.Add(("MISS drlink is not on the system PATH; run it as {0}" -f $shim.ShimPath))
         if ($enrolledNow) { $issues++ }
@@ -1105,7 +1108,7 @@ function Invoke-FrpClientAutostart {
             Write-Host $_.Exception.Message
             return 1
         }
-        Write-Host ("Autostart enabled: {0} starts the Data Relay Link client at system startup." -f $taskName)
+        Write-Host ("Autostart enabled: {0} starts the Data Relay Link Agent Host at system startup." -f $taskName)
         Write-Host 'Runs as SYSTEM; no interactive login is required.'
         return 0
     }
@@ -1189,7 +1192,7 @@ switch ($Command) {
         $autoOn = Test-FrpAutostartTaskExists
         $lifecycleOn = Test-FrpAutostartTaskExists -TaskName (Get-FrpLifecycleTaskName)
         if ($st.Running -and $autoOn -and $lifecycleOn) {
-            Write-Host 'Client is already active.'
+            Write-Host 'Agent Host is already active.'
             Write-Host 'Runtime    : active'
             Write-Host 'Autostart  : enabled'
             Write-Host 'Identity   : preserved'
@@ -1203,7 +1206,7 @@ switch ($Command) {
             exit 1
         }
         Start-FrpClient -Force:$Force | Out-Null
-        Write-Host 'Client resumed.'
+        Write-Host 'Agent Host resumed.'
         Write-Host 'Runtime    : active'
         Write-Host 'Autostart  : enabled'
         Write-Host 'Identity   : preserved'
@@ -1214,7 +1217,7 @@ switch ($Command) {
         $autoOn = Test-FrpAutostartTaskExists
         $lifecycleOn = Test-FrpAutostartTaskExists -TaskName (Get-FrpLifecycleTaskName)
         if (-not $st.Running -and -not $autoOn -and -not $lifecycleOn) {
-            Write-Host 'Client is already paused.'
+            Write-Host 'Agent Host is already paused.'
             Write-Host 'Runtime is stopped and autostart is disabled.'
             exit 0
         }
@@ -1227,7 +1230,7 @@ switch ($Command) {
             Write-Host $_.Exception.Message
             exit 1
         }
-        Write-Host 'Client paused.'
+        Write-Host 'Agent Host paused.'
         Write-Host 'Runtime    : stopped'
         Write-Host 'Autostart  : disabled'
         Write-Host 'Identity   : preserved'
@@ -1242,7 +1245,7 @@ switch ($Command) {
         }
         Stop-FrpClient | Out-Null
         Start-FrpClient -Force:$true | Out-Null
-        Write-Host 'Client restarted.'
+        Write-Host 'Agent Host restarted.'
         Write-Host 'Identity and public port reservations were preserved.'
         exit 0
     }
@@ -1271,7 +1274,7 @@ switch ($Command) {
                 Write-Host ('{0}: {1}' -f $pair[0], $value)
             }
         } else {
-            Write-Host 'Data Relay Link Windows client'
+            Write-Host 'Data Relay Link Windows Agent Host'
         }
         exit 0
     }

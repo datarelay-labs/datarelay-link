@@ -3203,8 +3203,11 @@ def check_server(report, paths, facts, skip_network):
                 'enrollment_retention_config', WARN,
                 'enrollment_retention_days is invalid; using default 30',
                 str(exc),
-                'set enrollment_retention_days to an integer between 1 and 3650',
-                'config',
+                'Enrollment retention is installer-owned. Use the same immutable Server installer '
+                'to restore the supported 30-day default; preserve deployment mode and Server identity. '
+                'Follow docs/INSTALLATION.md#enrollment-retention-recovery, then run show enrollments '
+                'and system diagnostics. Do not invent a retention set command or edit config.json by hand.',
+                'state',
             )
             retention_days = 30
     if paths.is_dir(bootstrap_abs) or paths.is_dir(enrollments_abs):

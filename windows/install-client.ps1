@@ -30,7 +30,7 @@ $ErrorActionPreference = 'Stop'
 
 function Show-FrpInstallHelp {
     @'
-Data Relay Link Windows client installer
+Data Relay Link Windows Agent Host installer
 
 Zero-touch:
   .\install-client.ps1 -ZeroTouch -AllocatorUrl https://HOST/enroll `
@@ -95,7 +95,7 @@ if (-not $ZeroTouch) {
 if (-not $ZeroTouch) {
     Show-FrpInstallHelp
     Write-Host ''
-    Write-Host 'ERROR: specify -ZeroTouch for enrollment, or use tools\FrpClient.ps1 for lifecycle commands.'
+    Write-Host 'ERROR: specify -ZeroTouch for enrollment, or use tools\drlink.cmd for lifecycle commands.'
     exit 1
 }
 
@@ -105,7 +105,7 @@ if (-not $ZeroTouch) {
 # process; a second concurrent installer is refused here rather than racing
 # the first one into a split identity.
 if (-not (Enter-FrpClientLock)) {
-    Write-Host 'ERROR: another Data Relay Link client lifecycle operation is already running on this host.'
+    Write-Host 'ERROR: another Data Relay Link Agent Host lifecycle operation is already running on this host.'
     Write-Host 'FAILURE_CLASS=CLIENT_LOCK_BUSY'
     Write-Host 'Wait for it to finish, then check status with: drlink show status'
     exit 1
