@@ -4037,7 +4037,13 @@ def _resolve_test_source_ip(plane_db, source_name: str) -> str:
             # FQDN sources are unusual; still allow exact-string evaluation via host match path.
             return str(vals[0])
         return _representative_ip_from_value(vals[0])
-    raise ControlPlaneError(cli_error("Network Object '%s' was not found." % source_name))
+    raise ControlPlaneError(
+        cli_error(
+            "Network Object '%s' was not found." % source_name,
+            expected="  Network Object or Network Group",
+            next_step="Use:\n  show network-objects\n  show network-groups",
+        )
+    )
 
 
 def _resolve_test_destination(plane_db, destination_name: str, *, plane: str) -> str:
@@ -4066,7 +4072,13 @@ def _resolve_test_destination(plane_db, destination_name: str, *, plane: str) ->
         pass
     if plane == "internet" and "." in str(destination_name):
         return str(destination_name).rstrip(".").lower()
-    raise ControlPlaneError(cli_error("Network Object '%s' was not found." % destination_name))
+    raise ControlPlaneError(
+        cli_error(
+            "Network Object '%s' was not found." % destination_name,
+            expected="  Network Object or Network Group",
+            next_step="Use:\n  show network-objects\n  show network-groups",
+        )
+    )
 
 
 def _resolve_test_service(plane_db, service_name: str) -> tuple[str, int]:
@@ -4114,7 +4126,13 @@ def _network_test_leaves(plane_db, selector: str, *, role: str) -> tuple[bool, l
     if role == "destination":
         # Literal tokens are treated as a single concrete leaf.
         return False, [str(selector)]
-    raise ControlPlaneError(cli_error("Network Object '%s' was not found." % selector))
+    raise ControlPlaneError(
+        cli_error(
+            "Network Object '%s' was not found." % selector,
+            expected="  Network Object or Network Group",
+            next_step="Use:\n  show network-objects\n  show network-groups",
+        )
+    )
 
 
 def _service_test_leaves(plane_db, selector: str) -> tuple[bool, list[str]]:

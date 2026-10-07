@@ -235,6 +235,25 @@ class InternetAccessSemanticParity(_Base):
         self.assertIn("ALLOW", out)
 
 
+class MissingNetworkSelectorRecovery(_Base):
+    def test_access_tests_explain_missing_selectors_without_changes(self):
+        v24.set_network_object(self.plane, "office", type="ip", value="198.51.100.10", oneshot=True)
+        before = list(self.plane.conn.iterdump())
+        for plane in ("internet-access", "remote-access"):
+            for source, destination in (("office", "missing-destination"), ("missing-source", "198.51.100.20")):
+                with self.subTest(plane=plane, source=source):
+                    rc, out, err = self._run("test", plane, "source", source, "destination", destination, "service", "https")
+                    message = out + err
+                    self.assertNotEqual(rc, 0)
+                    self.assertIn("was not found", message)
+                    self.assertIn("Expected:", message)
+                    self.assertIn("Network Object", message)
+                    self.assertIn("show network-objects", message)
+                    self.assertIn("show network-groups", message)
+                    self.assertIn("No changes were applied.", message)
+                    self.assertEqual(list(self.plane.conn.iterdump()), before)
+
+
 class ObjectReferenceSubviews(_Base):
     def test_show_references_for_objects_and_groups(self):
         # Intent: "Show me what is using this Service Object before I delete it."

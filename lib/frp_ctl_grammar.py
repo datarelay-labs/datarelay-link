@@ -1351,6 +1351,7 @@ def _catalog_context_help(tokens, role, names=None, clients=None):
         ("unset", "remote-access"),
         ("unset", "internet-access"),
         ("unset", "ai-access"),
+        ("unset", "mcp-tls"),
         ("system", "diff"),
         ("system", "backup"),
         ("set", "remote-access"),

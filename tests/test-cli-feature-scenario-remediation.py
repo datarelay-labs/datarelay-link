@@ -1363,6 +1363,7 @@ frpctl_nav_workflow manage_host
             (["unset", "remote-access", "?"], "unset remote-access <RULE>", "policy"),
             (["unset", "internet-access", "?"], "unset internet-access <RULE>", "policy"),
             (["unset", "ai-access", "?"], "unset ai-access <RULE>", "policy"),
+            (["unset", "mcp-tls", "?"], "unset mcp-tls", "purge"),
             (["system", "diff", "?"], "system diff <REVISION_A> <REVISION_B>", "configuration"),
             (["system", "backup", "?"], "system backup [<path>]", "validate"),
         )
@@ -1372,6 +1373,14 @@ frpctl_nav_workflow manage_host
             text = result.get("message") or ""
             self.assertIn(usage, text, (tokens, text))
             self.assertIn(child, text, (tokens, text))
+
+        tls = grammar.match(["unset", "mcp-tls", "?"], role="server")
+        tls_text = tls.get("message") or ""
+        self.assertIn("Risk: outage", tls_text)
+        self.assertIn("retaining DRLink-owned certificate", tls_text)
+        self.assertIn("explicit command is sufficient approval", tls_text)
+        self.assertIn("system certificate status", tls_text)
+        self.assertIn("Additional forms:", tls_text)
 
         managed = grammar.match(
             ["unset", "managed-host", "?"], role="server", names=["host-a"]
