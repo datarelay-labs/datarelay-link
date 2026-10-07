@@ -3968,7 +3968,7 @@ class ControlPlane:
             raise ControlPlaneError("CIMD metadata client_id must exactly match the requested URL")
         return doc
 
-    def register_oauth_client(self, metadata: dict) -> dict:
+    def register_oauth_client(self, metadata: dict, *, supported_scopes=("drlink.ai", "offline_access")) -> dict:
         """RFC 7591 Dynamic Client Registration (public clients)."""
         if not isinstance(metadata, dict):
             raise ControlPlaneError("client metadata must be a JSON object")
@@ -3987,6 +3987,11 @@ class ControlPlane:
         auth_method = str(metadata.get("token_endpoint_auth_method") or "none").strip() or "none"
         if auth_method not in ("none", "client_secret_post", "client_secret_basic"):
             raise ControlPlaneError("unsupported token_endpoint_auth_method")
+        requested_scope = str(metadata.get("scope") or "drlink.ai").strip()
+        requested_scopes = tuple(x for x in requested_scope.split() if x)
+        allowed_scopes = tuple(str(x) for x in supported_scopes)
+        if "drlink.ai" not in requested_scopes or any(x not in allowed_scopes for x in requested_scopes):
+            raise ControlPlaneError("unsupported scope in registration")
         grant_types = metadata.get("grant_types") or ["authorization_code", "refresh_token"]
         if not isinstance(grant_types, list):
             raise ControlPlaneError("grant_types must be a list")
@@ -4019,6 +4024,7 @@ class ControlPlane:
             "token_endpoint_auth_method": auth_method,
             "grant_types": ["authorization_code", "refresh_token"],
             "response_types": ["code"],
+            "scope": " ".join(requested_scopes),
             "client_name": str(metadata.get("client_name") or "")[:128] or None,
         }
         if secret:

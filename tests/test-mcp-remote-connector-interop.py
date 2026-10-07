@@ -363,6 +363,7 @@ class RemoteConnectorInteropTests(unittest.TestCase):
                             "token_endpoint_auth_method": "none",
                             "grant_types": ["authorization_code", "refresh_token"],
                             "client_name": "interop-dcr",
+                            "scope": "drlink.ai offline_access",
                         }
                     ).encode("utf-8"),
                     headers={"Content-Type": "application/json"},
@@ -372,6 +373,7 @@ class RemoteConnectorInteropTests(unittest.TestCase):
             ).read().decode("utf-8")
         )
         self.assertTrue(reg["client_id"].startswith("drcid_"))
+        self.assertEqual(reg["scope"], "drlink.ai offline_access")
         verifier = "C" * 43
         challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest()).decode("ascii").rstrip("=")
         qs = urllib.parse.urlencode(
@@ -425,6 +427,31 @@ class RemoteConnectorInteropTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIn("Host-A", json.dumps(payload))
         self.assertNotIn("Host-B", json.dumps(payload))
+        # DCR and authorize must reject scopes outside the advertised contract.
+        bad = urllib.request.Request(
+            self.base + "/oauth/register",
+            data=json.dumps({
+                "redirect_uris": ["http://127.0.0.1/bad"],
+                "token_endpoint_auth_method": "none",
+                "scope": "drlink.ai drlink.write",
+            }).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with self.assertRaises(urllib.error.HTTPError) as cm:
+            urllib.request.urlopen(bad, timeout=10)
+        self.assertEqual(cm.exception.code, 400)
+        bad_qs = urllib.parse.urlencode({
+            "response_type": "code", "client_id": reg["client_id"],
+            "redirect_uri": "http://127.0.0.1/cb2", "code_challenge": challenge,
+            "code_challenge_method": "S256", "resource": resource,
+            "scope": "drlink.ai drlink.write",
+        })
+        with self.assertRaises(urllib.error.HTTPError) as cm:
+            urllib.request.urlopen(self.base + "/oauth/authorize?" + bad_qs, timeout=10)
+        self.assertEqual(cm.exception.code, 400)
+        self.assertEqual(json.loads(cm.exception.read())["error"], "invalid_scope")
+        print("MCP_DCR_SCOPE_CONTRACT=PASS")
         print("MCP_DCR_SUPPORTED=YES")
         print("OAUTH_TO_AI_PRINCIPAL_MAPPING=PASS")
         print("CROSS_HOST_AUTH_BYPASS=NO")

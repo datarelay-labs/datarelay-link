@@ -58,7 +58,10 @@ LOCAL_ORIGINS = ("http://127.0.0.1", "http://localhost", "https://127.0.0.1", "h
 PROTOCOL_VERSION_META = "io.modelcontextprotocol/protocolVersion"
 CLIENT_CAPS_META = "io.modelcontextprotocol/clientCapabilities"
 NAME_BEARING = {"tools/call": "name", "resources/read": "uri", "prompts/get": "name"}
-OAUTH_TOOL_SECURITY_SCHEMES = ({"type": "oauth2", "scopes": ["drlink.ai"]},)
+OAUTH_PRIMARY_SCOPE = "drlink.ai"
+OAUTH_OPTIONAL_SCOPES = ("offline_access",)
+OAUTH_SUPPORTED_SCOPES = (OAUTH_PRIMARY_SCOPE,) + OAUTH_OPTIONAL_SCOPES
+OAUTH_TOOL_SECURITY_SCHEMES = ({"type": "oauth2", "scopes": [OAUTH_PRIMARY_SCOPE]},)
 # Public MCP/OAuth rate limits and authorize admission key on a trusted source.
 # Peer address is the source unless the TCP peer is loopback, in which case the
 # local reverse proxy's X-Forwarded-For / X-Real-IP is accepted. Those headers
@@ -383,7 +386,7 @@ class MCPBridge:
             "resource": resource,
             "authorization_servers": [base],
             "bearer_methods_supported": ["header"],
-            "scopes_supported": ["drlink.ai", "offline_access"],
+            "scopes_supported": list(OAUTH_SUPPORTED_SCOPES),
             "resource_name": "Data Relay Link MCP Bridge",
             "resource_documentation": "https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization",
         }
@@ -400,7 +403,7 @@ class MCPBridge:
             "response_types_supported": ["code"],
             "code_challenge_methods_supported": ["S256"],
             "token_endpoint_auth_methods_supported": ["client_secret_post", "client_secret_basic", "none"],
-            "scopes_supported": ["drlink.ai", "offline_access"],
+            "scopes_supported": list(OAUTH_SUPPORTED_SCOPES),
             "resource_indicators_supported": True,
             "client_id_metadata_document_supported": True,
         }
@@ -433,7 +436,7 @@ class MCPBridge:
         return None
 
     def register_oauth_client(self, metadata: dict) -> dict:
-        return self.plane.register_oauth_client(metadata)
+        return self.plane.register_oauth_client(metadata, supported_scopes=OAUTH_SUPPORTED_SCOPES)
 
     def revoke_oauth_credential(self, token: str) -> bool:
         return self.plane.revoke_oauth_credential(token)
@@ -1072,6 +1075,10 @@ def make_handler(bridge: MCPBridge):
                     return
                 qs = parse_qs(parsed.query)
                 fields = {k: (v[0] if v else "") for k, v in qs.items()}
+                requested_scopes = tuple(x for x in str(fields.get("scope") or OAUTH_PRIMARY_SCOPE).split() if x)
+                if OAUTH_PRIMARY_SCOPE not in requested_scopes or any(x not in OAUTH_SUPPORTED_SCOPES for x in requested_scopes):
+                    self._send(400, {"error": "invalid_scope", "error_description": "supported scopes: %s" % " ".join(OAUTH_SUPPORTED_SCOPES)})
+                    return
                 if str(fields.get("code_challenge_method") or "S256") != "S256":
                     self._send(400, {"error": "invalid_request", "error_description": "code_challenge_method must be S256"})
                     return
