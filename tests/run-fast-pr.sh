@@ -6,7 +6,8 @@ cd "$ROOT"
 export PYTHONDONTWRITEBYTECODE=1
 
 echo "=== shell syntax ==="
-git ls-files '*.sh' | xargs -r bash -n
+git ls-files -z '*.sh' | xargs -0 -r -n 1 bash -n --
+./tests/test-shell-syntax-enumeration.sh
 
 echo "=== Python compile ==="
 git ls-files '*.py' -z | xargs -0 -r python3 -m py_compile
