@@ -15,6 +15,46 @@ import frp_ctl_grammar as grammar
 
 
 class RoleParserRegression(unittest.TestCase):
+    def test_retired_credential_noun_rejects_native_execution_and_help(self):
+        for role in ('server', 'client'):
+            with tempfile.TemporaryDirectory(prefix='drlink-credential-grammar-') as temp:
+                root = Path(temp)
+                config = root / ('etc/drlink/config.json' if role == 'server'
+                                 else 'etc/frp/client-state.json')
+                config.parent.mkdir(parents=True)
+                config.write_text('{"role":"server"}\n' if role == 'server'
+                                  else '{"services":{}}\n')
+                before = {str(p.relative_to(root)): p.read_bytes()
+                          for p in root.rglob('*') if p.is_file()}
+                env = dict(os.environ, FRP_CTL_TEST_ROOT=temp,
+                           FRP_DEPLOY_TEST_ROOT=temp)
+                for operation in ('rotate', 'revoke', 'configure'):
+                    for operands in ([], ['fixture'], ['fixture', 'extra']):
+                        command = ['system', 'credential', operation,
+                                   'ai-principal', *operands]
+                        for tokens in (command, command + ['?'], ['help'] + command):
+                            with self.subTest(role=role, tokens=tokens):
+                                result = subprocess.run(
+                                    ['bash', str(ROOT / 'tools/drlink'), *tokens],
+                                    cwd=temp, env=env, capture_output=True, text=True,
+                                    timeout=30)
+                                output = result.stdout + result.stderr
+                                self.assertEqual(result.returncode, 2, output)
+                                self.assertIn('ai-identity', output)
+                                self.assertIn('Server', output)
+                after = {str(p.relative_to(root)): p.read_bytes()
+                         for p in root.rglob('*') if p.is_file()}
+                self.assertEqual(after, before)
+
+    def test_retired_noun_guard_preserves_current_identity_selector(self):
+        for operation in ('rotate', 'revoke', 'configure'):
+            command = ['system', 'credential', operation, 'ai-identity',
+                       'ai-principal']
+            if operation == 'configure':
+                command += ['authentication', 'oauth']
+            self.assertIsNone(grammar.reject_obsolete_surface(command))
+            self.assertNotIn('Unknown help topic', grammar.help_text(command, 'server'))
+
     def test_native_obsolete_test_never_reaches_removed_backend(self):
         for role in ("server", "client"):
             with tempfile.TemporaryDirectory(prefix="drlink-test-access-") as temp:

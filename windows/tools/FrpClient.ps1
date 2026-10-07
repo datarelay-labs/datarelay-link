@@ -86,9 +86,11 @@ function Assert-FrpNoTrailingAfterProperty {
 }
 
 function Write-FrpLegacyCliError {
-    param([string]$Legacy, [string]$Next)
+    param([string]$Legacy, [string[]]$Next)
     Write-Host ("ERROR: obsolete Windows CLI path: {0}" -f $Legacy)
-    Write-Host ("Use: {0}" -f $Next)
+    foreach ($command in $Next) {
+        Write-Host ("Use: {0}" -f $command)
+    }
     exit 2
 }
 
@@ -162,7 +164,10 @@ switch -Regex ($cmdLower) {
             }
             default {
                 Write-Host ("ERROR: unknown show resource: {0}" -f $SubCommand)
-                Write-Host 'Use: show status | show agent | show remote-services | show remote-service <NAME>'
+                Write-Host 'Use: drlink show status'
+                Write-Host 'Use: drlink show agent'
+                Write-Host 'Use: drlink show remote-services'
+                Write-Host 'Use: drlink show remote-service <NAME>'
                 exit 2
             }
         }
@@ -273,9 +278,9 @@ switch -Regex ($cmdLower) {
             'restart' { $next = 'drlink system restart' }
             'autostart' { $next = 'drlink system autostart' }
             'doctor' { $next = 'drlink system diagnostics' }
-            'update' { $next = 'drlink system update product | system update engine' }
-            'service' { $next = 'drlink show/set/unset remote-service(s)' }
-            'client' { $next = 'drlink show agent | system info' }
+            'update' { $next = @('drlink system update product', 'drlink system update engine') }
+            'service' { $next = @('drlink show remote-services', 'drlink set remote-service <NAME>', 'drlink unset remote-service <NAME>') }
+            'client' { $next = @('drlink show agent', 'drlink system info') }
             'list' { $next = 'drlink show remote-services' }
             'sync' { $next = 'drlink system synchronize' }
         }

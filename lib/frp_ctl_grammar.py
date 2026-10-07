@@ -315,6 +315,22 @@ def reject_obsolete_surface(tokens):
     # Reject retired nested forms before help or legacy system fallthrough
     # can turn them into an executable operation or successful discovery.
     focus = raw[1:] if verb == "help" else raw
+    if (
+        focus[:2] == ["system", "credential"]
+        and len(focus) >= 4
+        and focus[2] in ("rotate", "revoke", "configure")
+        and focus[3] == "ai-principal"
+    ):
+        return {
+            "status": "error", "exit_code": 2,
+            "message": "Retired AI Principal credential noun is not public grammar.\n"
+                       "On the DRLink Server, use system credential %s ai-identity <NAME>%s.\n"
+                       "See: help system credential %s" % (
+                           focus[2],
+                           " authentication <static-bearer|oauth>" if focus[2] == "configure" else "",
+                           focus[2],
+                       ),
+        }
     if focus[:3] == ["system", "audit", "ai-principal"]:
         return {
             "status": "error", "exit_code": 2,

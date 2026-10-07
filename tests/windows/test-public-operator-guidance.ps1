@@ -22,6 +22,19 @@ function Run-PublicCli {
     return @{Rc=$LASTEXITCODE; Text=($lines | Out-String)}
 }
 try {
+    foreach ($legacy in @(
+        @{Path='update'; Args=@('update'); Commands=@('drlink system update product', 'drlink system update engine')},
+        @{Path='service'; Args=@('service'); Commands=@('drlink show remote-services', 'drlink set remote-service <NAME>', 'drlink unset remote-service <NAME>')},
+        @{Path='client'; Args=@('client'); Commands=@('drlink show agent', 'drlink system info')},
+        @{Path='show invalid resource'; Args=@('show','not-a-resource'); Commands=@('drlink show status','drlink show agent','drlink show remote-services','drlink show remote-service <NAME>')}
+    )) {
+        $rejected = Run-PublicCli -CliArgs $legacy.Args
+        Check-Guidance ($rejected.Rc -eq 2) ('obsolete ' + $legacy.Path + ' fails closed')
+        foreach ($command in $legacy.Commands) {
+            Check-Guidance ($rejected.Text -match ('(?m)^Use: ' + [regex]::Escape($command) + '\s*$')) ('complete recovery command: ' + $command)
+        }
+        Check-Guidance ($rejected.Text -notmatch 'show/set/unset|remote-service\(s\)|(?m)^Use:.*\|') ('obsolete ' + $legacy.Path + ' omits pseudo commands/pipelines')
+    }
     $help = & $hostExe -NoProfile -File $installer -Help 2>&1 | Out-String
     Check-Guidance ($LASTEXITCODE -eq 0) 'public installer help succeeds'
     Check-Guidance ($help -match 'Windows Agent Host installer') 'installer uses current public role'
