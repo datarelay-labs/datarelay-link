@@ -30,6 +30,7 @@ from drlink_control_plane import (
     ControlPlane,
     MCP_AUTH_MODEL,
     OAuthPendingCapacityError,
+    OAuthScopeError,
 )
 from frp_client_registry import request_source_ip
 import drlink_v24 as v24
@@ -1098,6 +1099,9 @@ def make_handler(bridge: MCPBridge):
                         503,
                         {"error": exc.oauth_error, "error_description": str(exc)},
                     )
+                    return
+                except OAuthScopeError as exc:
+                    self._send(400, {"error": exc.oauth_error, "error_description": str(exc)})
                     return
                 except ControlPlaneError as exc:
                     self._send(400, {"error": "invalid_request", "error_description": str(exc)})
