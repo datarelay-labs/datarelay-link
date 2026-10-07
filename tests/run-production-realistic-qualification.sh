@@ -76,6 +76,12 @@ for key in filter(None, required_csv.split(',')):
     if gates.get(key)!="PASS": raise SystemExit("upgrade required gate %s=%s"%(key,gates.get(key)))
 for key,value in gates.items():
     if value in {"FAIL","BLOCKED","NOT_RUN"}: raise SystemExit("upgrade blocking gate %s=%s"%(key,value))
+# v3.0 requires the raw observed runtime/state/reboot evidence as well as labels.
+# Historical empty-inventory success records are not release qualification.
+if manifest.get("project_version") == "3.0.0":
+    sys.path.insert(0, str(manifest_path.parent / "tests" / "lib"))
+    from v30_upgrade_observations import verify_evidence
+    verify_evidence(doc, require_prior_stable=True)
 print("PRIOR_STABLE_UPGRADE_EVIDENCE=PASS"); print("UPGRADE_HEAD=%s"%expected)
 PY
 then

@@ -12,13 +12,13 @@ CORE_CONTRACT_ONLY = "CONTRACT_ONLY"
 
 
 def _ready_tool_names() -> frozenset[str]:
-    """Derive implementation readiness from service-owned registries."""
-    from drlink_management_change import IMPLEMENTED_MANAGEMENT_CHANGE_TOOLS
-    from drlink_management_service import IMPLEMENTED_MANAGEMENT_TOOLS
+    """Use the same complete registry as Core dispatch, not a partial copy."""
+    # Import lazily: the Core imports query services which expose this ledger.
+    # Guided changes, Remote Services, and fleet Jobs must stay in lockstep with
+    # actual dispatch readiness; surface permissions remain the adapter's job.
+    from drlink_management_core import implemented_management_tool_names
 
-    return frozenset(IMPLEMENTED_MANAGEMENT_TOOLS) | frozenset(
-        IMPLEMENTED_MANAGEMENT_CHANGE_TOOLS
-    )
+    return implemented_management_tool_names()
 
 
 def capability_parity_ledger(

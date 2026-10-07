@@ -268,6 +268,7 @@ python3 tests/test-v24-real-managed-host-executor.py
 python3 tests/test-v24-remote-service-distributed-atomicity.py
 python3 tests/test-v24-restore-atomic-cutover.py
 python3 tests/test-v24-unified-disaster-recovery.py
+python3 tests/test-v30-upgrade-observations.py
 python3 tests/test-v30-management-foundation.py
 python3 tests/test-v30-management-query-service.py
 python3 tests/test-v30-management-change-plan.py
@@ -283,6 +284,7 @@ python3 tests/test-v30-management-mixed-load.py
 python3 tests/test-v30-additive-management-schema.py
 python3 tests/test-v30-management-adapters.py
 python3 tests/test-v30-management-system.py
+python3 tests/test-v30-product-update.py
 python3 tests/test-v30-managed-host-lifecycle.py
 python3 tests/test-v30-policy-safety.py
 python3 tests/test-v30-audit-foundation.py

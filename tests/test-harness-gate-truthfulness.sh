@@ -31,6 +31,40 @@ fail_lines="$(grep -E '=(FAIL|BLOCKED)$' "$PROD_QUAL_GATES" | wc -l | tr -d ' ')
 [[ "$fail_lines" == "1" ]] || fail "expected 1 fail line"
 pass "fail line count"
 
+# Concurrent writers must preserve every independent gate, including shell
+# subshells which share $$ (not independent writer-unique filenames).
+(
+  PROD_QUAL_GATES="$WORKDIR/concurrent.env"
+  PROD_QUAL_SUMMARY="$WORKDIR/concurrent-summary.txt"
+  : >"$PROD_QUAL_GATES"
+  pids=()
+  for n in $(seq 1 32); do
+    (pq_gate "PARALLEL_${n}" PASS >"$WORKDIR/writer-${n}.log" 2>&1) &
+    pids+=("$!")
+  done
+  writer_rc=0
+  for pid in "${pids[@]}"; do wait "$pid" || writer_rc=1; done
+  [[ "$writer_rc" == 0 ]] || fail "parallel gate writer failed"
+  python3 - "$PROD_QUAL_GATES" <<'PYTEST' || fail "parallel gate evidence lost"
+from pathlib import Path
+import sys
+lines = Path(sys.argv[1]).read_text().splitlines()
+expected = {"PARALLEL_%d=PASS" % n for n in range(1,33)}
+assert len(lines) == len(expected) and set(lines) == expected, lines
+PYTEST
+)
+pass "parallel gate writes retain every result"
+
+# Persistence errors must return a failure, never print a successful gate.
+if (PROD_QUAL_GATES="$WORKDIR/absent-parent/gates.env";
+    pq_gate PERSISTENCE PASS) >"$WORKDIR/write-failed.log" 2>&1; then
+  fail "gate persistence failure returned success"
+fi
+if grep -qx 'PERSISTENCE=PASS' "$WORKDIR/write-failed.log"; then
+  fail "gate persistence failure printed PASS"
+fi
+pass "gate persistence errors fail closed"
+
 # --- Missing gate must not be inferred as PASS ---
 if grep -q '^MISSING_GATE=PASS$' "$PROD_QUAL_GATES"; then
   fail "unexpected PASS for missing gate"
