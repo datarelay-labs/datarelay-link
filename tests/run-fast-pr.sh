@@ -20,6 +20,9 @@ echo "=== public CLI / contract regressions ==="
 ./tests/test-cli-catalog-parity.sh
 python3 tests/test-public-cli-grammar-parity.py
 python3 tests/test-cli-feature-scenario-remediation.py
+python3 tests/test-cli-reconciliation-role-parser-regression.py
+python3 tests/test-permission-dependency-recovery.py
+python3 tests/test-internet-access-recovery-guidance.py
 python3 tests/test-no-legacy-current-surface.py
 python3 tests/test-canonical-runtime-policy.py
 python3 tests/test-v24-final-closure.py

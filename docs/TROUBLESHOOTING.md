@@ -123,6 +123,13 @@ Check that:
 
 Unsafe, private/local/metadata, malformed, or ambiguous destinations fail closed according to `CONTROLLED_EGRESS.md` and `SECURITY.md`.
 
+When diagnostics reports an Internet Access listener bind/port warning or error,
+follow [Internet Access listener recovery](INSTALLATION.md#internet-access-listener-recovery).
+The address/port are installer-owned: use the same immutable Server installer
+with `FRP_EGRESS_LISTEN_ADDR` and, only when changing the port,
+`FRP_EGRESS_LISTEN_PORT`, preserving the current mode and identity. Do not repair
+the listener by editing internal JSON or weakening policy.
+
 ## 7. AI Access failure
 
 Check separately:
@@ -208,6 +215,21 @@ show service-group <GROUP> references
 ```
 
 Remove or change dependent references first. Data Relay Link does not cascade-delete policy dependencies.
+
+Permission Objects and Permission Groups are also protected from deletion.
+`unset permission-object <NAME>` or `unset permission-group <NAME>` reports the
+AI Access Rules and Permission Groups that still reference the resource and
+applies no change. Inspect each named dependency with `show ai-access <RULE>` or
+`show permission-group <GROUP>`. Review a replacement before using
+`set ai-access <RULE> permission <REPLACEMENT>` or
+`set permission-group <GROUP> members <RETAINED_MEMBERS>` to remove the reference.
+If the dependent Rule or Group is no longer needed, its existing
+`unset ai-access <RULE>` or `unset permission-group <GROUP>` lifecycle may be used
+after checking its own references and confirmation. Retry the original deletion
+only when all references are removed; it requires explicit y/N confirmation.
+There is no `show permission-object ... references` or Permission Group reference
+view to memorize: use the supported inspection/edit paths above and the named
+dependencies in the protected-delete error.
 
 ## 11. Policy mode change rejected
 

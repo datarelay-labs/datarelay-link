@@ -345,6 +345,13 @@ def reject_obsolete_surface(tokens):
                        "Use unset enrollment <ID> or reference-safe unset managed-host <HOST>.\n"
                        "See: help commands",
         }
+    if focus[:2] == ["test", "access"]:
+        return {
+            "status": "error", "exit_code": 2,
+            "message": "Retired test access is not a public command.\n"
+                       "Use test remote-access source <SOURCE> destination <DESTINATION> service <SERVICE>\n"
+                       "on the DRLink Server. See: help remote-access",
+        }
     if focus[:2] == ["system", "update"] and len(focus) >= 3:
         target = focus[2]
         if target in ("project", "frp"):
@@ -1379,7 +1386,7 @@ def _catalog_context_help(tokens, role, names=None, clients=None):
     if len(probe) == len(cmd["path"]):
         available = []
         if cmd["args"]:
-            complete = cmd["args"][0]["complete"]
+            complete = _role_argument_completion(cmd, cmd["args"][0], role)
             if isinstance(complete, (list, tuple)):
                 available.extend(str(item) for item in complete)
         available.extend(str(tok) for tok in nxt)
@@ -1392,12 +1399,21 @@ def _catalog_context_help(tokens, role, names=None, clients=None):
     index = len(probe) - len(cmd["path"])
     if index < len(cmd["args"]):
         arg = cmd["args"][index]
-        complete = arg["complete"]
+        complete = _role_argument_completion(cmd, arg, role)
         if complete == CATALOG.C_CLIENT:
             return _context_client_list(names, clients)
         if isinstance(complete, (list, tuple)):
             return _fmt_available([(item, "") for item in complete])
     return CATALOG.command_help(cmd)
+
+
+def _role_argument_completion(cmd, arg, role):
+    """Keep shared argument discovery within the installed role's scope."""
+    complete = arg["complete"]
+    client, server = _role_parts(role)
+    if cmd["path"] == ("system", "diagnostics") and client and not server:
+        return ["runtime"]
+    return complete
 
 
 def context_help(tokens, role, names=None, clients=None):
@@ -4710,7 +4726,7 @@ def _catalog_candidates(
         return []
     if index < len(cmd["args"]):
         arg = cmd["args"][index]
-        complete = arg["complete"]
+        complete = _role_argument_completion(cmd, arg, role)
         hits = []
         if isinstance(complete, (list, tuple)):
             hits = _filter(list(complete), prefix)

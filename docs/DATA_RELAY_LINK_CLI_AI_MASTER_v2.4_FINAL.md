@@ -717,6 +717,12 @@ set permission-group operations members read-only,operator
 
 AI Access Rules may use either a Permission Object or Permission Group.
 
+### Permission dependency inspection and protected deletion
+
+Inspect `show ai-access` and `show ai-access <RULE>` to identify Rule permission selectors; inspect `show permission-groups` and `show permission-group <GROUP>` to identify Object membership. Permission Object/Group deletion validates references before asking for y/N confirmation. A blocked deletion lists its references and applies no changes.
+
+Review each referencing Rule with `set ai-access <RULE>` to select a replacement Permission Object/Group, or explicitly remove it with `unset ai-access <RULE>`. Review containing group membership with `set permission-group <GROUP>` to remove an Object from the group. Disabling a Rule does not remove its reference. Explain the access impact and follow the required confirmations before changing dependencies; retry `unset permission-object <PERMISSION>` or `unset permission-group <GROUP>` only after every reference has been removed. Use these existing public inspection/edit commands; there is no Permission `references` subcommand.
+
 ---
 
 # 13. AI Identity

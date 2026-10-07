@@ -3475,6 +3475,29 @@ def ai_identity_references(plane_db, name: str) -> list[dict]:
     return refs
 
 
+def _permission_delete_recovery(refs: list[dict]) -> str:
+    """Guide protected deletion through existing public inspection/edit commands."""
+    lines = ["Next actions (review access impact before changing dependencies):"]
+    for ref in refs:
+        if ref["kind"] == "ai-access":
+            lines.extend([
+                "  Inspect: show ai-access %s" % ref["name"],
+                "  Review a replacement permission: set ai-access %s" % ref["name"],
+                "  Or explicitly remove the Rule: unset ai-access %s" % ref["name"],
+            ])
+        elif ref["kind"] == "permission-group":
+            lines.extend([
+                "  Inspect membership: show permission-group %s" % ref["name"],
+                "  Review membership without this Object: set permission-group %s" % ref["name"],
+            ])
+    lines.extend([
+        "Disabling a Rule does not remove its reference.",
+        "Follow the required confirmations for any dependency changes.",
+        "Retry deletion only after every reference is removed.",
+    ])
+    return "\n".join(lines)
+
+
 def unset_permission_object(plane_db, name: str, *, confirm: Optional[bool] = None) -> dict:
     name = validate_public_name(name, "Permission Object name")
     obj = get_permission_object(plane_db, name)
@@ -3484,8 +3507,8 @@ def unset_permission_object(plane_db, name: str, *, confirm: Optional[bool] = No
     if refs:
         raise ControlPlaneError(
             "ERROR:\nPermission Object '%s' is still referenced.\n\nReferences:\n%s\n\n"
-            "No changes were applied."
-            % (name, "\n".join("  %s" % r["display"] for r in refs))
+            "No changes were applied.\n\n%s"
+            % (name, "\n".join("  %s" % r["display"] for r in refs), _permission_delete_recovery(refs))
         )
 
     def write():
@@ -3519,8 +3542,8 @@ def unset_permission_group(plane_db, name: str, *, confirm: Optional[bool] = Non
     if refs:
         raise ControlPlaneError(
             "ERROR:\nPermission Group '%s' is still referenced.\n\nReferences:\n%s\n\n"
-            "No changes were applied."
-            % (name, "\n".join("  %s" % r["display"] for r in refs))
+            "No changes were applied.\n\n%s"
+            % (name, "\n".join("  %s" % r["display"] for r in refs), _permission_delete_recovery(refs))
         )
 
     def write():

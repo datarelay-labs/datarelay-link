@@ -3055,7 +3055,7 @@
     "roles": "server",
     "category": "AI Access",
     "summary": "Show a Permission Object",
-    "detail": "Show a Permission Object",
+    "detail": "Inspect permissions. To inspect dependencies, use show ai-access and show ai-access <RULE>, then show permission-groups and show permission-group <GROUP> for group membership. Referenced deletion is blocked before confirmation and lists the dependencies. Review each Rule with set ai-access <RULE> to select a replacement permission, or explicitly remove it with unset ai-access <RULE>. Edit containing groups with set permission-group <GROUP> to remove this Object from their membership. Disabling a Rule does not remove its reference. Review the access impact and required confirmations before making changes; retry deletion only after all references are removed.",
     "examples": [
       "show permission-object"
     ],
@@ -3106,7 +3106,7 @@
     "roles": "server",
     "category": "AI Access",
     "summary": "Show a Permission Group",
-    "detail": "Show a Permission Group",
+    "detail": "Inspect Permission Object membership. To inspect dependencies, use show ai-access and show ai-access <RULE>. Referenced deletion is blocked before confirmation and lists the dependencies. Review each Rule with set ai-access <RULE> to select a replacement permission, or explicitly remove it with unset ai-access <RULE>. Disabling a Rule does not remove its reference. Review the access impact and required confirmations before making changes; retry deletion only after all references are removed.",
     "examples": [
       "show permission-group"
     ],
@@ -3192,7 +3192,7 @@
     "roles": "server",
     "category": "AI Access",
     "summary": "Delete a Permission Object",
-    "detail": "Delete a Permission Object",
+    "detail": "Delete only an unreferenced Permission Object after explicit y/N confirmation. Reference validation happens before confirmation; a blocked delete lists AI Access Rules and Permission Groups and applies no changes. Inspect show ai-access <RULE>, show permission-groups and show permission-group <GROUP>. Review set ai-access <RULE> to select a replacement permission or unset ai-access <RULE> to remove a Rule; use set permission-group <GROUP> to remove the Object from group membership. Disabling a Rule does not remove its reference. Review access impact and required confirmations; retry deletion only after every reference is removed.",
     "examples": [
       "unset permission-object"
     ],
@@ -3220,7 +3220,7 @@
     "roles": "server",
     "category": "AI Access",
     "summary": "Delete a Permission Group",
-    "detail": "Delete a Permission Group",
+    "detail": "Delete only an unreferenced Permission Group after explicit y/N confirmation. Reference validation happens before confirmation; a blocked delete lists AI Access Rules and applies no changes. Inspect show ai-access <RULE>. Review set ai-access <RULE> to select a replacement permission or unset ai-access <RULE> to remove a Rule. Disabling a Rule does not remove its reference. Review access impact and required confirmations; retry deletion only after every reference is removed.",
     "examples": [
       "unset permission-group"
     ],

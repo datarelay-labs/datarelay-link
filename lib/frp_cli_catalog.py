@@ -1814,7 +1814,7 @@ def domain_help(topic, role):
             "",
             "Everyday commands:",
             "  show status",
-            "  system status",
+            *(["  system status"] if server else []),
             "  system version",
             "  system diagnostics",
             "  system support-bundle",

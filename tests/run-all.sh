@@ -221,6 +221,9 @@ python3 tests/test-single443-mgmt-origin.py
 ./tests/test-version-governance.sh
 python3 tests/test-pre-release-exhaustive-gates.py
 python3 tests/test-cli-feature-scenario-remediation.py
+python3 tests/test-cli-reconciliation-role-parser-regression.py
+python3 tests/test-permission-dependency-recovery.py
+python3 tests/test-internet-access-recovery-guidance.py
 python3 tests/test-release-attest-binding.py
 python3 tests/test-stable-publication-projection.py
 ./tests/test-release-gate-target.sh

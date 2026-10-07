@@ -87,6 +87,14 @@ class DoctorError(Exception):
 
 MARKER_NOTE = 'Do not delete the pending marker by hand unless recovering from a known-good backup. doctor does not delete the marker.'
 
+INTERNET_ACCESS_LISTENER_RECOVERY = (
+    'Internet Access listener settings are installer-owned. Re-run the same immutable '
+    'Server installer with FRP_EGRESS_LISTEN_ADDR=<trusted-server-address> and, only '
+    'if changing the port, FRP_EGRESS_LISTEN_PORT=<valid-port>. Preserve the current '
+    'deployment mode and Server identity. See docs/INSTALLATION.md#internet-access-listener-recovery. '
+    'Then check show internet-access and system diagnostics.'
+)
+
 
 def _recovery_for_role(role, kind):
     if kind == 'frp':
@@ -2263,7 +2271,7 @@ def check_egress_control(report, paths, facts, cfg):
         host, port = eg.listen_bind(cfg if isinstance(cfg, dict) else None)
         report.add(
             'EGRESS_LISTEN', INFO,
-            'Controlled Egress listen configured',
+            'Internet Access listener configured',
             '%s:%s' % (host, port),
             '',
             'runtime',
@@ -2271,15 +2279,15 @@ def check_egress_control(report, paths, facts, cfg):
         if host in ('0.0.0.0', '::', '*'):
             report.add(
                 'EGRESS_LISTEN_BIND', WARN,
-                'Controlled Egress listens on all interfaces',
+                'Internet Access listener is bound to all interfaces',
                 host,
-                'prefer an internal/trusted egress_listen_addr (e.g. management LAN)',
+                INTERNET_ACCESS_LISTENER_RECOVERY,
                 'runtime',
             )
         else:
             report.add(
                 'EGRESS_LISTEN_BIND', PASS,
-                'Controlled Egress listen address is scoped',
+                'Internet Access listener address is scoped',
                 host,
                 '',
                 'runtime',
@@ -2287,9 +2295,9 @@ def check_egress_control(report, paths, facts, cfg):
     except Exception as exc:
         report.add(
             'EGRESS_CONFIG_ERROR', FAIL,
-            'EGRESS_CONFIG_ERROR: invalid egress listen configuration',
+            'EGRESS_CONFIG_ERROR: invalid Internet Access listener configuration',
             str(exc),
-            'fix egress_listen_addr / egress_listen_port in config.json',
+            INTERNET_ACCESS_LISTENER_RECOVERY,
             'state',
         )
         return
@@ -2318,23 +2326,23 @@ def check_egress_control(report, paths, facts, cfg):
             if colliding:
                 report.add(
                     'EGRESS_PORT_COLLISION', FAIL,
-                    'infrastructure egress port collides with service range',
+                    'Internet Access listener port collides with service range',
                     ', '.join(str(p) for p in sorted(colliding)),
-                    'change egress_listen_port or service port range',
+                    INTERNET_ACCESS_LISTENER_RECOVERY,
                     'state',
                 )
             else:
                 report.add(
                     'EGRESS_PORT_COLLISION', PASS,
-                    'egress listen port does not collide with service range',
+                    'Internet Access listener port does not collide with service range',
                     '', '', 'state',
                 )
         except Exception as exc:
             report.add(
                 'EGRESS_PORT_COLLISION', FAIL,
-                'egress port collision check failed',
+                'Internet Access listener port collision check failed',
                 str(exc),
-                'inspect egress_listen_port and registry allocations',
+                INTERNET_ACCESS_LISTENER_RECOVERY,
                 'state',
             )
 
