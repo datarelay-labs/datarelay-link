@@ -4,6 +4,7 @@ import copy
 import hashlib
 import json
 import sqlite3
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -11,7 +12,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT / "lib")); sys.path.insert(0,str(ROOT / "tests/lib"))
 from drlink_control_db import open_control_db
-from v30_upgrade_observations import TABLE_COLUMNS, V30_TABLES, collect, compare, verify_runtime, verify_evidence
+from v30_upgrade_observations import TABLE_COLUMNS, V30_TABLES, collect, compare, verify_runtime, verify_evidence, build_observation_manifest
 
 
 class UpgradeObservationTests(unittest.TestCase):
@@ -92,6 +93,73 @@ class UpgradeObservationTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,"did not change"):verify_evidence(doc)
             p.unlink();p.symlink_to(Path(tmp)/"boot-before.txt")
             with self.assertRaisesRegex(ValueError,"unsafe"):verify_evidence(doc)
+
+    def test_manifest_packages_actual_files_without_certifying_stable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            original = self.retained(tmp)
+            files = {p.name: p.read_bytes() for p in Path(tmp).iterdir()}
+            result = build_observation_manifest(tmp, original["prior_source_head"], original["source_head"])
+            self.assertEqual(result["observations"], original["observations"])
+            self.assertEqual(result["observation_status"], "VERIFIED")
+            self.assertEqual(result["prior_channel"], "stable")
+            self.assertFalse(result["baseline_release_qualified"])
+            self.assertNotIn("final_status", result)
+            self.assertEqual(files, {p.name: p.read_bytes() for p in Path(tmp).iterdir()})
+            with self.assertRaisesRegex(ValueError, "prior-stable"):
+                verify_evidence(result)
+
+    def test_manifest_cli_is_readonly_and_emits_observations_not_release_pass(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            original = self.retained(tmp)
+            result = subprocess.run([
+                sys.executable, str(ROOT / "tests/lib/v30_upgrade_observations.py"),
+                "manifest", "--evidence-root", tmp,
+                "--prior-source-head", original["prior_source_head"],
+                "--source-head", original["source_head"],
+            ], text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            doc = json.loads(result.stdout)
+            self.assertEqual(doc["observation_status"], "VERIFIED")
+            self.assertFalse(doc["baseline_release_qualified"])
+            self.assertEqual(len(list(Path(tmp).iterdir())), len(original["observations"]))
+
+    def test_manifest_does_not_relabel_development_baseline(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            doc = self.retained(tmp)
+            path = Path(tmp) / "v240-version.txt"
+            path.write_text(path.read_text().replace("Channel: stable", "Channel: development"))
+            result = build_observation_manifest(tmp, doc["prior_source_head"], doc["source_head"])
+            self.assertEqual(result["prior_channel"], "development")
+            self.assertFalse(result["baseline_release_qualified"])
+
+    def test_manifest_rejects_unobserved_or_invalid_preservation(self):
+        for name in ("missing", "symlink", "empty", "changed", "wrong_runtime", "no_reboot", "duplicate_channel"):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
+                doc = self.retained(tmp)
+                path = Path(tmp) / "after-state.json"
+                if name == "missing":
+                    path.unlink()
+                elif name == "symlink":
+                    path.unlink(); path.symlink_to(Path(tmp) / "before-state.json")
+                elif name in ("empty", "changed"):
+                    data = json.loads(path.read_text())
+                    if name == "empty":
+                        before = Path(tmp) / "before-state.json"
+                        data["tables"]["clients"]["count"] = 0
+                        before.write_text(json.dumps(data))
+                    else:
+                        data["tables"]["policy_rules"]["sha256"] = "0" * 64
+                    path.write_text(json.dumps(data))
+                elif name == "wrong_runtime":
+                    path = Path(tmp) / "v300-health.txt"
+                    path.write_text(path.read_text().replace(doc["source_head"], "c" * 40))
+                elif name == "no_reboot":
+                    (Path(tmp) / "boot-after.txt").write_text((Path(tmp) / "boot-before.txt").read_text())
+                else:
+                    path = Path(tmp) / "v240-version.txt"
+                    path.write_text(path.read_text() + "Channel: stable\n")
+                with self.assertRaises((ValueError, FileNotFoundError)):
+                    build_observation_manifest(tmp, doc["prior_source_head"], doc["source_head"])
 
     def test_collect_readonly_hashes_no_raw_configuration(self):
         with tempfile.TemporaryDirectory() as tmp:

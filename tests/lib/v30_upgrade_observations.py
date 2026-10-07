@@ -128,6 +128,44 @@ def verify_evidence(document: dict, *, require_prior_stable: bool = True) -> Non
         raise ValueError("development baseline cannot prove a prior-stable upgrade")
 
 
+def build_observation_manifest(evidence_root: str, prior_source_head: str, source_head: str) -> dict:
+    """Package retained observations without executing lifecycle or certifying release.
+
+    A version string saying stable is not release-qualification evidence. This
+    read-only producer therefore never sets baseline_release_qualified to True;
+    the release consumer must still validate that separate authority boundary.
+    """
+    root = Path(evidence_root).resolve(strict=True)
+    observations = {}
+    prior_text = ""
+    for name in OBSERVATION_FILES:
+        path = root / name
+        if path.is_symlink() or not path.is_file() or path.resolve().parent != root:
+            raise ValueError("missing/unsafe upgrade observation: " + name)
+        raw = path.read_bytes()
+        observations[name] = hashlib.sha256(raw).hexdigest()
+        if name == "v240-version.txt":
+            prior_text = raw.decode("utf-8")
+    channels = re.findall(r"^Channel:\s*(\S+)\s*$", prior_text, re.M)
+    if len(channels) != 1:
+        raise ValueError("prior runtime must report exactly one channel")
+    document = {
+        "schema_version": 1,
+        "kind": "upgrade_observation_manifest",
+        "evidence_root": str(root),
+        "prior_source_head": prior_source_head,
+        "source_head": source_head,
+        "prior_channel": channels[0],
+        "baseline_release_qualified": False,
+        "observations": observations,
+    }
+    # Re-read and hash-match through the same consumer. A changed file, empty
+    # inventory, changed policy, wrong runtime, or unobserved reboot cannot pass.
+    verify_evidence(document, require_prior_stable=False)
+    document["observation_status"] = "VERIFIED"
+    return document
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     sub = ap.add_subparsers(dest="command", required=True)
@@ -135,7 +173,14 @@ def main() -> int:
     c = sub.add_parser("compare"); c.add_argument("before"); c.add_argument("after")
     c = sub.add_parser("runtime"); c.add_argument("path"); c.add_argument("head"); c.add_argument("version")
     c = sub.add_parser("verify"); c.add_argument("path")
+    c = sub.add_parser("manifest", help="package retained observations; does not qualify a release")
+    c.add_argument("--evidence-root", required=True)
+    c.add_argument("--prior-source-head", required=True)
+    c.add_argument("--source-head", required=True)
     args = ap.parse_args()
+    if args.command == "manifest":
+        print(json.dumps(build_observation_manifest(args.evidence_root, args.prior_source_head, args.source_head), sort_keys=True))
+        return 0
     if args.command == "verify":
         verify_evidence(json.loads(Path(args.path).read_text())); return 0
     if args.command == "collect":
