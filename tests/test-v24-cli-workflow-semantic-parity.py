@@ -236,6 +236,53 @@ class InternetAccessSemanticParity(_Base):
 
 
 class MissingNetworkSelectorRecovery(_Base):
+    def _policy_test_objects(self):
+        v24.set_network_object(self.plane, "office", type="ip", value="198.51.100.10", oneshot=True)
+        v24.set_network_object(self.plane, "target", type="ip", value="198.51.100.20", oneshot=True)
+        v24.set_network_group(self.plane, "empty-net", members=[], oneshot=True)
+        v24.set_service_object(self.plane, "dns-udp", type="udp", port=53, oneshot=True)
+        v24.set_service_group(self.plane, "empty-services", members=[], oneshot=True)
+        v24.set_service_group(self.plane, "udp-services", members=["dns-udp"], oneshot=True)
+        v24.set_service_group(self.plane, "mixed-services", members=["https", "dns-udp"], oneshot=True)
+        self.plane.upsert_client("a" * 32, label="managed-target", hostname="managed-target", addresses=[{"address": "198.51.100.21", "family": "ipv4"}])
+        v24.set_network_group(self.plane, "managed-targets", members=["managed-target"], oneshot=True)
+
+    def test_invalid_policy_selectors_supply_recovery_without_changes(self):
+        self._policy_test_objects()
+        before = list(self.plane.conn.iterdump())
+        cases = (
+            ("remote-access", "empty-net", "target", "https", "show network-group"),
+            ("internet-access", "office", "empty-net", "https", "show network-group"),
+            ("remote-access", "office", "target", "empty-services", "show service-group"),
+            ("internet-access", "office", "target", "dns-udp", "show service-objects"),
+            ("internet-access", "office", "managed-target", "https", "show network-objects"),
+            ("internet-access", "office", "managed-targets", "https", "show network-objects"),
+        )
+        for plane, source, destination, service, recovery in cases:
+            with self.subTest(plane=plane, source=source, destination=destination, service=service):
+                rc, out, err = self._run("test", plane, "source", source, "destination", destination, "service", service)
+                message = out + err
+                self.assertNotEqual(rc, 0)
+                self.assertIn("Expected:", message)
+                self.assertIn(recovery, message)
+                self.assertIn("No changes were applied.", message)
+                self.assertEqual(list(self.plane.conn.iterdump()), before)
+
+    def test_remote_udp_objects_and_groups_never_report_allow(self):
+        self._policy_test_objects()
+        before = list(self.plane.conn.iterdump())
+        for service in ("dns-udp", "udp-services", "mixed-services"):
+            with self.subTest(service=service):
+                rc, out, err = self._run("test", "remote-access", "source", "office", "destination", "target", "service", service)
+                message = out + err
+                self.assertNotEqual(rc, 0)
+                self.assertNotIn("Result: ALLOW", message)
+                self.assertIn("UDP", message)
+                self.assertIn("Expected:", message)
+                self.assertIn("show service-objects", message)
+                self.assertIn("No changes were applied.", message)
+                self.assertEqual(list(self.plane.conn.iterdump()), before)
+
     def test_access_tests_explain_missing_selectors_without_changes(self):
         v24.set_network_object(self.plane, "office", type="ip", value="198.51.100.10", oneshot=True)
         before = list(self.plane.conn.iterdump())

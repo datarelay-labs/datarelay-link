@@ -4055,7 +4055,11 @@ def _resolve_test_destination(plane_db, destination_name: str, *, plane: str) ->
             if plane == "remote":
                 return obj["name"]
             raise ControlPlaneError(
-                cli_error("Managed Host cannot be used as an Internet Access destination.")
+                cli_error(
+                    "Managed Host cannot be used as an Internet Access destination.",
+                    expected="  IP, CIDR, or FQDN Network Object, or a Network Group containing those Objects",
+                    next_step="Use an IP, CIDR, or FQDN Network Object as destination.\nUse:\n  show network-objects\n  show network-groups",
+                )
             )
         vals = plane_db._object_values(obj["id"])
         if not vals:
@@ -4111,7 +4115,11 @@ def _network_test_leaves(plane_db, selector: str, *, role: str) -> tuple[bool, l
         members = plane_db._expand_group_members(grp["id"], set())
         if not members:
             raise ControlPlaneError(
-                cli_error("Network Group '%s' has no members." % selector)
+                cli_error(
+                    "Network Group '%s' has no members." % selector,
+                    expected="  Network Group with at least one Network Object",
+                    next_step="Inspect the group and select a populated group or Network Object.\nUse:\n  show network-group %s\n  show network-objects" % selector,
+                )
             )
         names = []
         seen = set()
@@ -4151,7 +4159,13 @@ def _service_test_leaves(plane_db, selector: str) -> tuple[bool, list[str]]:
         )
     ]
     if not members:
-        raise ControlPlaneError(cli_error("Service Group '%s' has no members." % selector))
+        raise ControlPlaneError(
+            cli_error(
+                "Service Group '%s' has no members." % selector,
+                expected="  Service Group with at least one supported Service Object",
+                next_step="Inspect the group and select a populated group or Service Object.\nUse:\n  show service-group %s\n  show service-objects" % selector,
+            )
+        )
     names = []
     seen = set()
     for mem in members:
@@ -4184,11 +4198,18 @@ def _evaluate_resolved_access(
     resolve_fn: Optional[Callable[[str], list[str]]] = None,
 ) -> dict:
     """Run one concrete Remote/Internet evaluation through runtime-equivalent APIs."""
-    if plane == "internet" and str(proto).lower() == "udp":
+    if str(proto).lower() == "udp":
+        if plane == "internet":
+            message = "Internet Access v2.4 has a TCP/HTTP/HTTPS CONNECT datapath only; UDP Service Objects cannot be selected."
+            expected = "  TCP/HTTP/HTTPS Service Object, or a Service Group containing supported Objects"
+        else:
+            message = "Remote Access supports TCP and Fixed TCP only; UDP Service Objects cannot be selected."
+            expected = "  TCP or Fixed TCP Service Object, or a Service Group containing supported Objects"
         raise ControlPlaneError(
             cli_error(
-                "Internet Access v2.4 has a TCP/HTTP/HTTPS CONNECT datapath only; "
-                "UDP Service Objects cannot be selected."
+                message,
+                expected=expected,
+                next_step="Select a supported Service Object or Group.\nUse:\n  show service-objects\n  show service-groups",
             )
         )
     if plane == "remote":

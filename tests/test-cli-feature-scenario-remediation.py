@@ -33,6 +33,39 @@ import frp_cli_catalog as catalog
 
 
 class CliFeatureScenarioRemediation(unittest.TestCase):
+    def test_noncanonical_show_recovery_identifies_replacement_owner(self):
+        replacements = {
+            "backups": ("system backup", "DRLink Server"),
+            "audit": ("system audit", "DRLink Server"),
+            "info": ("system info", "Agent Host"),
+        }
+        for role in ("client", "server", "both"):
+            for resource, (command, owner) in replacements.items():
+                for tokens in (["show", resource], ["show", resource, "?"],
+                               ["help", "show", resource]):
+                    with self.subTest(role=role, tokens=tokens):
+                        result = grammar.match(tokens, role)
+                        self.assertEqual(result["status"], "error", result)
+                        self.assertEqual(result["exit_code"], 2)
+                        self.assertIn(command, result["message"])
+                        self.assertIn(owner, result["message"])
+        with tempfile.TemporaryDirectory(prefix="drlink-backup-role-recovery-") as temp:
+            config = Path(temp, "etc/frp/client-state.json")
+            config.parent.mkdir(parents=True)
+            config.write_text('{"services":{}}\n')
+            before = {str(p.relative_to(temp)): p.read_bytes()
+                      for p in Path(temp).rglob("*") if p.is_file()}
+            env = dict(os.environ, FRP_CTL_TEST_ROOT=temp, FRP_DEPLOY_TEST_ROOT=temp)
+            for tokens in (["show", "backups"], ["show", "backups", "?"],
+                           ["help", "show", "backups"]):
+                proc = subprocess.run(["bash", str(ROOT / "tools/drlink"), *tokens],
+                                      env=env, capture_output=True, text=True, timeout=30)
+                self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+                self.assertIn("DRLink Server", proc.stdout + proc.stderr)
+            after = {str(p.relative_to(temp)): p.read_bytes()
+                     for p in Path(temp).rglob("*") if p.is_file()}
+            self.assertEqual(after, before)
+
     def test_retired_nested_help_rejects_like_command_without_state_changes(self):
         paths = (["system", "services"], ["system", "services", "list"],
                  ["show", "service-profile"], ["set", "acl"], ["menu", "clients"])

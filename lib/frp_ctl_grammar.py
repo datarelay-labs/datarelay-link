@@ -209,10 +209,10 @@ _PUBLIC_ROOTS = frozenset({"show", "set", "unset", "test", "system", "menu", "he
 _RETIRED_HELP_TOPICS = frozenset({"access", "group"})
 _HIDDEN_SHOW_RESOURCES = {
     "version": "Use system version instead.",
-    "info": "Use system info instead.",
-    "audit": "Use system audit instead.",
+    "info": "Use system info on the DRLink Agent Host instead.",
+    "audit": "Use system audit on the DRLink Server instead.",
     "upstream": "Use system update check-engine instead.",
-    "backups": "Use system backup / system backup validate / system restore instead.",
+    "backups": "Use system backup / system backup validate / system restore on the DRLink Server instead.",
 }
 _OBSOLETE_RESOURCES = frozenset(
     {
