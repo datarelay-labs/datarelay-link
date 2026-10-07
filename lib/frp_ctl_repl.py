@@ -237,6 +237,12 @@ def _looks_secret(grammar, line):
 
 
 _MUTATING_PUBLIC_PREFIXES = (
+    ("set", "remote-service"),
+    ("unset", "remote-service"),
+    ("system", "apply", "configuration"),
+    ("system", "synchronize"),
+    # Guided menus may change inventory before returning to this session.
+    ("menu",),
     ("set", "client"),
     ("unset", "client"),
     ("set", "client-group"),
@@ -286,7 +292,7 @@ def _should_refresh_inventory(tokens):
         return False
     root = tokens[0]
     # Read-only / discovery — never refresh.
-    if root in ("show", "test", "help", "?", "menu", "exit", "quit", "q"):
+    if root in ("show", "test", "help", "?", "exit", "quit", "q"):
         return False
     for prefix in _MUTATING_PUBLIC_PREFIXES:
         if tuple(tokens[: len(prefix)]) == prefix:

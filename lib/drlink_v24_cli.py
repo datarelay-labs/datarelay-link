@@ -19,6 +19,11 @@ def _presence_word(connectivity: str) -> str:
     return {"connected": "Connected", "stale": "Stale"}.get(connectivity, "Disconnected")
 
 
+def _agent_operation_progress(message: str) -> None:
+    if sys.stderr.isatty():
+        print(message, file=sys.stderr, flush=True)
+
+
 def _public_endpoint_host(plane: ControlPlane, stored: str = "") -> str:
     stored = str(stored or "").strip()
     if stored and stored not in ("drlink.local", "localhost", "127.0.0.1", "::1"):
@@ -1206,6 +1211,7 @@ def handle_set(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         enabled = None
         if "enabled" in kv:
             enabled = str(kv["enabled"]).lower() in ("yes", "true", "1", "enabled")
+        _agent_operation_progress("Updating Remote Service; checking Server connectivity and local runtime...")
         reachable = v24.detect_server_reachable(plane, plane.root)
         result = v24.set_remote_service_agent(
             plane,
@@ -1387,6 +1393,7 @@ def handle_unset(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         if not _confirm_from_stdin("Continue? [y/N]:"):
             sys.stdout.write("Cancelled.\nNo changes were applied.\n")
             return 1
+        _agent_operation_progress("Removing Remote Service; checking Server connectivity and local runtime...")
         reachable = v24.detect_server_reachable(plane, plane.root)
         v24.unset_remote_service_agent(
             plane, name, root=plane.root, server_reachable=reachable

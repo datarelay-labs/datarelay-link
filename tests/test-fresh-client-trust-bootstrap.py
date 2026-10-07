@@ -8,6 +8,8 @@ same client without --insecure and without a preinstalled CA.
 from __future__ import annotations
 
 import hashlib
+import json
+import shlex
 import os
 import socket
 import ssl
@@ -88,8 +90,12 @@ def main():
         installer = (
             "#!/bin/bash\n"
             "set -euo pipefail\n"
+            "echo SENTINEL_ENTRY\n"
             'test -n "${FRP_ALLOCATOR_CA_FILE:-}"\n'
             'test -f "$FRP_ALLOCATOR_CA_FILE"\n'
+            'test -f "$FRP_BUNDLE_FILE"\n'
+            'test "$FRP_EXPECTED_SOURCE_REF" = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"\n'
+            f'test "$FRP_INSTALLER_URL" = "{installer_url}"\n'
             'openssl x509 -in "$FRP_ALLOCATOR_CA_FILE" -noout >/dev/null\n'
             "if [[ \"$*\" == *--insecure* || \"$*\" == *curl\\ -k* ]]; then\n"
             "  echo insecure >&2\n"
@@ -113,8 +119,10 @@ def main():
         bodies = {
             "/i/%s" % TICKET: script.encode("utf-8"),
             "/artifacts/SHA256SUMS": sums.encode("utf-8"),
+            "/artifacts/manifest.json": json.dumps({"qualification_status":"PASS", "channel":"development", "immutable_source_ref":"b"*40, "artifacts":[{"relative_path":"agent/bootstrap-client.sh", "source_head":"b"*40, "sha256":digest}]}).encode(),
             "/artifacts/agent/bootstrap-client.sh": installer.encode("utf-8"),
             "/healthz": b"ok\n",
+            "/ca.crt": ca_pem.encode(),
         }
 
         class Handler(BaseHTTPRequestHandler):
@@ -189,6 +197,29 @@ def main():
             )
         if "unable to get local issuer certificate" in output.lower():
             raise SystemExit("advertised command still failed private-CA trust")
+        # The served legacy installer has no provenance verifier of its own.
+        # Qualified metadata must reach it; tampered bytes must never execute.
+        for direct in (False, True):
+            probe = zt.pinned_ca_linux_command(installer_url, origin + "/enroll", hashlib.sha256(ssl.PEM_cert_to_DER_cert(ca_pem)).hexdigest(), zt.encode_zero_touch_package(origin + "/enroll", "ab"*32, TICKET)) if direct else command
+            bodies["/artifacts/agent/bootstrap-client.sh"] = installer.encode()
+            accepted = subprocess.run(["bash", "-lc", probe], capture_output=True, text=True)
+            if accepted.returncode != 0 or "FRESH_CLIENT_TRUST_OK" not in accepted.stdout:
+                raise SystemExit("qualified old-style installer rejected: " + accepted.stderr)
+            for key, value in (("FRP_EXPECTED_SOURCE_HEAD", "c"*40), ("FRP_EXPECTED_RELEASE_CHANNEL", "stable")):
+                rejected = subprocess.run(["sudo", "env", key + "=" + value, *shlex.split(probe)[1:]],
+                                          capture_output=True, text=True)
+                if rejected.returncode == 0 or "SENTINEL_ENTRY" in rejected.stdout:
+                    raise SystemExit("mismatched requested identity executed installer: " + key)
+            manual = zt.pinned_ca_manual_linux_command(installer_url, origin + '/enroll',
+                hashlib.sha256(ssl.PEM_cert_to_DER_cert(ca_pem)).hexdigest(),
+                ["FRP_EXPECTED_RELEASE_CHANNEL=stable"])
+            rejected = subprocess.run(["bash", "-lc", manual], capture_output=True, text=True)
+            if rejected.returncode == 0 or "SENTINEL_ENTRY" in rejected.stdout:
+                raise SystemExit("manual requested channel bypassed preexecution check")
+            bodies["/artifacts/agent/bootstrap-client.sh"] = b"#!/bin/bash\necho SENTINEL_EXECUTED\n"
+            denied = subprocess.run(["bash", "-lc", probe], capture_output=True, text=True)
+            if denied.returncode == 0 or "SENTINEL_EXECUTED" in denied.stdout:
+                raise SystemExit("unqualified installer executed before verification")
         print("FRESH_CLIENT_TRUST_BOOTSTRAP=PASS")
         return 0
     finally:

@@ -678,6 +678,7 @@ frp_client_main() {
     frp_zero_touch_require_inputs || return 1
   fi
   frp_bootstrap_allocator_ca "$ALLOCATOR_URL" || return 1
+  frp_client_verify_fresh_source_provenance || return 1
   frp_detect_os >/dev/null || exit 1
   frp_detect_architecture || exit 1
 

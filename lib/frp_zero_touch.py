@@ -221,6 +221,60 @@ def _private_ca_pin_shell(allocator_url, ca_sha256):
     ) % (shell_quote(ca_url), shell_quote(fp))
 
 
+def _qualified_linux_shell(installer_url, allocator_url, ca_file, bundle_file, workdir):
+    """Verify the pinned Server's outer candidate before any installer executes."""
+    origin = https_origin(allocator_url)
+    if str(installer_url) != origin + '/artifacts/agent/bootstrap-client.sh':
+        return ''
+    validator = '''import hashlib,json,re,sys
+from pathlib import Path
+def require(condition,message):
+ if not condition: raise SystemExit("ERROR: " + message)
+manifest,sums,bundle=sys.argv[1:]
+m=json.loads(Path(manifest).read_text())
+require(m.get("qualification_status")=="PASS", "qualified manifest is not PASS")
+c=str(m.get("channel", "")).lower()
+c="development" if c=="dev" else c
+require(c in ("development","preview","stable"), "invalid channel")
+r=str(m.get("immutable_source_ref") or m.get("git_ref") or m.get("source_head") or "")
+require(re.fullmatch(r"[0-9a-fA-F]{40}|v[0-9]+\\.[0-9]+\\.[0-9]+(?:-rc\\.[0-9]+)?",r), "invalid immutable ref")
+a=[x for x in m.get("artifacts",[]) if isinstance(x,dict) and x.get("relative_path")=="agent/bootstrap-client.sh"]
+require(len(a)==1, "missing or duplicate Agent artifact")
+h=str(a[0].get("sha256", "")).lower()
+require(re.fullmatch("[0-9a-f]{64}",h), "invalid digest")
+head=str(m.get("source_head") or a[0].get("source_head") or r)
+require(re.fullmatch("[0-9a-fA-F]{40}",head), "invalid candidate head")
+require(str(a[0].get("source_head") or head).lower()==head.lower(), "artifact head mismatch")
+if re.fullmatch("[0-9a-fA-F]{40}",r):
+ require(head.lower()==r.lower(), "candidate source mismatch")
+entries=[line.split() for line in Path(sums).read_text().splitlines()]
+matches=[x[0].lower() for x in entries if len(x)==2 and x[1]=="agent/bootstrap-client.sh"]
+require(matches==[h], "manifest and SHA256SUMS disagree")
+require(hashlib.sha256(Path(bundle).read_bytes()).hexdigest()==h, "installer SHA256 mismatch")
+print(c+"\\t"+r+"\\t"+h+"\\t"+head)
+'''
+    ca_setup = ('ca_args=(--cacert "%s"); ' % ca_file) if ca_file else ('ca_args=(); if [[ -n "${FRP_ALLOCATOR_CA_FILE:-}" ]]; then ca_args=(--cacert "$FRP_ALLOCATOR_CA_FILE"); fi; ')
+    return ca_setup + (
+        'curl -fsSL --proto =https "${ca_args[@]}" %s -o "%s/manifest.json"; '
+        'curl -fsSL --proto =https "${ca_args[@]}" %s -o "%s/qualified-sums"; '
+        'metadata=$(python3 -c %s "%s/manifest.json" "%s/qualified-sums" "%s"); '
+        'IFS=$(printf "\\t") read -r channel source_ref digest source_head <<< "$metadata"; '
+        'if [[ -n "${FRP_EXPECTED_SOURCE_REF:-}" && "$FRP_EXPECTED_SOURCE_REF" != "$source_ref" ]]; then '
+        'echo "ERROR: qualified bootstrap source does not match requested source" >&2; exit 1; fi; '
+        'if [[ -n "${FRP_EXPECTED_SOURCE_HEAD:-}" && "$FRP_EXPECTED_SOURCE_HEAD" != "$source_head" ]]; then '
+        'echo "ERROR: qualified bootstrap HEAD does not match requested HEAD" >&2; exit 1; fi; '
+        'requested_channel=${FRP_EXPECTED_RELEASE_CHANNEL:-${FRP_RELEASE_CHANNEL:-}}; '
+        'if [[ "$requested_channel" == dev ]]; then requested_channel=development; fi; '
+        'if [[ -n "$requested_channel" && "$requested_channel" != "$channel" ]]; then '
+        'echo "ERROR: qualified bootstrap channel does not match requested channel" >&2; exit 1; fi; '
+        'export FRP_EXPECTED_SOURCE_REF="$source_ref" FRP_BUNDLE_SHA256="$digest" '
+        'FRP_EXPECTED_SOURCE_HEAD="$source_head" '
+        'FRP_RELEASE_CHANNEL="$channel" FRP_EXPECTED_RELEASE_CHANNEL="$channel"; '
+    ) % (shell_quote(origin + '/artifacts/manifest.json'), workdir,
+         shell_quote(origin + '/artifacts/SHA256SUMS'), workdir,
+         shell_quote("exec(" + repr(validator) + ")"), workdir, workdir, bundle_file)
+
+
 def pinned_ca_linux_command(installer_url, allocator_url, ca_sha256, package):
     """Pasteable Linux/macOS Zero-Touch command for a Private CA allocator.
 
@@ -236,8 +290,10 @@ def pinned_ca_linux_command(installer_url, allocator_url, ca_sha256, package):
     if not pkg.startswith("zt1."):
         raise ValueError("invalid zero-touch package")
     inner = _private_ca_pin_shell(allocator_url, ca_sha256) + (
-        "curl -fsSL --proto =https --cacert $d/ca.crt %s | bash -s -- %s"
-        % (shell_quote(installer), shell_quote(pkg))
+        "curl -fsSL --proto =https --cacert $d/ca.crt %s -o \"$d/installer.sh\"; "
+        "%sFRP_ALLOCATOR_CA_FILE=\"$d/ca.crt\" FRP_INSTALLER_URL=%s FRP_BUNDLE_FILE=\"$d/installer.sh\" "
+        "bash \"$d/installer.sh\" %s"
+        % (shell_quote(installer), _qualified_linux_shell(installer, allocator_url, '$d/ca.crt', '$d/installer.sh', '$d'), shell_quote(installer), shell_quote(pkg))
     )
     return "sudo bash -c %s" % shell_quote(inner)
 
@@ -255,13 +311,49 @@ def pinned_ca_manual_linux_command(installer_url, allocator_url, ca_sha256, env_
     if not parts:
         raise ValueError("manual install environment is required")
     inner = _private_ca_pin_shell(allocator_url, ca_sha256) + (
-        "curl -fsSL --proto =https --cacert $d/ca.crt %s | "
-        "env %s FRP_ALLOCATOR_CA_FILE=\"$d/ca.crt\" bash"
-        % (shell_quote(installer), " ".join(parts))
+        "curl -fsSL --proto =https --cacert $d/ca.crt %s -o \"$d/installer.sh\"; "
+        "export %s; %senv %s FRP_ALLOCATOR_CA_FILE=\"$d/ca.crt\" FRP_INSTALLER_URL=%s "
+        "FRP_BUNDLE_FILE=\"$d/installer.sh\" bash \"$d/installer.sh\""
+        % (shell_quote(installer), " ".join(parts), _qualified_linux_shell(installer, allocator_url, '$d/ca.crt', '$d/installer.sh', '$d'), " ".join(parts), shell_quote(installer))
     )
     if inner.count("--insecure") != 1:
         raise ValueError("manual command must fetch only the CA insecurely")
     return "sudo bash -c %s" % shell_quote(inner)
+
+
+def _qualified_windows_shell(installer_url, allocator_url, digest_var, expected_var):
+    origin = https_origin(allocator_url)
+    if str(installer_url) != origin + '/artifacts/agent/bootstrap-client.ps1':
+        return ''
+    return (
+        '$qualified=$wc.DownloadString(%s)|ConvertFrom-Json;'
+        '$candidateRef=[string]$qualified.immutable_source_ref;'
+        'if(-not $candidateRef){$candidateRef=[string]$qualified.git_ref};'
+        'if(-not $candidateRef){$candidateRef=[string]$qualified.source_head};'
+        '$agent=@($qualified.artifacts|Where-Object {$_.relative_path -ceq "agent/bootstrap-client.ps1"});'
+        'if($qualified.qualification_status -cne "PASS" -or '
+        '$qualified.channel -cnotin @("development","preview","stable") -or '
+        '$qualified.source_head -cnotmatch "^[0-9a-f]{40}$" -or '
+        r'$candidateRef -cnotmatch "^([0-9a-f]{40}|v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?)$" -or '
+        '($candidateRef -cmatch "^[0-9a-f]{40}$" -and $candidateRef -cne $qualified.source_head) -or '
+        '$agent.Count -ne 1 -or $agent[0].source_head -cne $qualified.source_head -or '
+        '$agent[0].sha256 -cnotmatch "^[0-9a-f]{64}$" -or '
+        '$agent[0].sha256 -cne %s -or $agent[0].sha256 -cne %s)'
+        '{throw "qualified Windows bootstrap provenance mismatch"};'
+        'if($env:FRP_EXPECTED_SOURCE_HEAD -and $env:FRP_EXPECTED_SOURCE_HEAD -cne $qualified.source_head)'
+        '{throw "qualified Windows bootstrap HEAD does not match request"};'
+        'if($env:FRP_EXPECTED_SOURCE_REF -and $env:FRP_EXPECTED_SOURCE_REF -cne $candidateRef)'
+        '{throw "qualified Windows bootstrap source does not match request"};'
+        '$requestedChannel=$env:FRP_EXPECTED_RELEASE_CHANNEL;'
+        'if(-not $requestedChannel){$requestedChannel=$env:FRP_RELEASE_CHANNEL};'
+        'if($requestedChannel -eq "dev"){$requestedChannel="development"};'
+        'if($requestedChannel -and $requestedChannel -cne $qualified.channel)'
+        '{throw "qualified Windows bootstrap channel does not match request"};'
+        '$env:FRP_EXPECTED_SOURCE_REF=$candidateRef;'
+        '$env:FRP_EXPECTED_SOURCE_HEAD=[string]$qualified.source_head;'
+        '$env:FRP_RELEASE_CHANNEL=[string]$qualified.channel;'
+        '$env:FRP_BUNDLE_SHA256=[string]$agent[0].sha256;'
+    ) % (powershell_quote(origin + '/artifacts/manifest.json'), digest_var, expected_var)
 
 
 def pinned_ca_windows_inner(
@@ -333,6 +425,8 @@ def pinned_ca_windows_inner(
         "if(-not $w){throw 'bootstrap-client.ps1 hash missing from SHA256SUMS'};"
         "$g=(Get-FileHash -Algorithm SHA256 -LiteralPath $p).Hash.ToLowerInvariant();"
         "if($g -ne $w){throw 'bootstrap-client.ps1 SHA256 mismatch'};"
+        + _qualified_windows_shell(installer, allocator, '$g', '$w')
+        +
         "$env:FRP_ALLOCATOR_URL="
         + powershell_quote(allocator)
         + ";"
@@ -504,7 +598,8 @@ def render_short_url_bootstrap_script(allocator_url, ca_sha256, ticket, installe
         '# Same-origin artifacts use FRP_ALLOCATOR_CA_FILE when the fresh-client',
         '# command supplied it. A distinct public installer origin uses stock OS trust.',
         '# The installer then pins this CA by fingerprint before enrollment.',
-        'bash "$INSTALLER_FILE" "$PACKAGE"',
+        _qualified_linux_shell(installer, allocator_url, '', '$INSTALLER_FILE', '$WORKDIR'),
+        'FRP_INSTALLER_URL="$INSTALLER_URL" FRP_BUNDLE_FILE="$INSTALLER_FILE" bash "$INSTALLER_FILE" "$PACKAGE"',
         '',
     ]
     return '\n'.join(lines)
@@ -550,6 +645,8 @@ def render_short_url_windows_bootstrap_script(
         '  if (-not $want) { throw "bootstrap-client.ps1 hash missing from SHA256SUMS" }',
         '  $got = (Get-FileHash -Algorithm SHA256 -LiteralPath $installer).Hash.ToLowerInvariant()',
         '  if ($got -ne $want) { throw "bootstrap-client.ps1 SHA256 mismatch" }',
+        '  $wc=New-Object Net.WebClient',
+        _qualified_windows_shell(installer, allocator, '$got', '$want'),
         '  $env:FRP_ALLOCATOR_URL = %s' % powershell_quote(allocator),
         '  $env:FRP_ALLOCATOR_CA_SHA256 = %s' % powershell_quote(ca),
         '  $env:FRP_BOOTSTRAP_TICKET = %s' % powershell_quote(ticket),

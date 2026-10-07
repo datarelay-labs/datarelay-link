@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import re
+import json
+import shutil
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -14,6 +17,37 @@ import frp_zero_touch as zt
 
 
 class WindowsPinnedCaCommandTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which('pwsh'), 'isolated PowerShell interpreter unavailable')
+    def test_qualified_metadata_precedes_legacy_installer_execution(self):
+        origin = 'https://owned.test'
+        installer = origin + '/artifacts/agent/bootstrap-client.ps1'
+        snippet = zt._qualified_windows_shell(installer, origin + '/enroll', '$g', '$w')
+        manifest = dict(qualification_status='PASS', channel='development', source_head='b'*40,
+                        artifacts=[dict(relative_path='agent/bootstrap-client.ps1', source_head='b'*40, sha256='a'*64)])
+        setup = ('$ErrorActionPreference="Stop";$g="%s";$w="%s";'
+                 '$script:fixtureManifest=%s;$wc=[pscustomobject]@{};'
+                 '$wc|Add-Member -MemberType ScriptMethod -Name DownloadString '
+                 '-Value {param($url) return $script:fixtureManifest};') % (
+                     'a'*64, 'a'*64, zt.powershell_quote(json.dumps(manifest)))
+        good = subprocess.run(['pwsh', '-NoProfile', '-Command', setup + snippet +
+                               'if($env:FRP_EXPECTED_SOURCE_HEAD -cne "%s"){throw "wrong identity"};'
+                               'Write-Output SENTINEL_EXECUTED;' % ('b'*40)], capture_output=True, text=True)
+        self.assertEqual(good.returncode, 0, good.stderr)
+        self.assertIn('SENTINEL_EXECUTED', good.stdout)
+        bad = subprocess.run(['pwsh', '-NoProfile', '-Command', setup + '$g="%s";' % ('c'*64) +
+                              snippet + 'Write-Output SENTINEL_EXECUTED;'], capture_output=True, text=True)
+        self.assertNotEqual(bad.returncode, 0)
+        self.assertNotIn('SENTINEL_EXECUTED', bad.stdout)
+        for name, value in (('FRP_EXPECTED_SOURCE_HEAD', 'c'*40), ('FRP_EXPECTED_RELEASE_CHANNEL', 'stable')):
+            mismatched = subprocess.run(['pwsh', '-NoProfile', '-Command', setup +
+                '$env:%s=%s;' % (name, zt.powershell_quote(value)) + snippet +
+                'Write-Output SENTINEL_EXECUTED;'], capture_output=True, text=True)
+            self.assertNotEqual(mismatched.returncode, 0)
+            self.assertNotIn('SENTINEL_EXECUTED', mismatched.stdout)
+        for rendered in (zt.pinned_ca_windows_inner(installer, origin + '/enroll', 'a'*64, 'A'*22, origin + '/artifacts/SHA256SUMS'),
+                         zt.render_short_url_windows_bootstrap_script(origin + '/enroll', 'a'*64, 'A'*22, installer)):
+            self.assertLess(rendered.index('qualified Windows bootstrap provenance mismatch'), rendered.index('& powershell.exe'))
+
     def test_post_pin_curl_uses_cacert_and_skips_schannel_revocation(self):
         inner = zt.pinned_ca_windows_inner(
             installer_url="https://203.0.113.10:6099/artifacts/agent/bootstrap-client.ps1",

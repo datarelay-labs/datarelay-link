@@ -6381,6 +6381,51 @@ print(f"{channel}\t{source_ref}\t{sha}")
 PY
 }
 
+frp_client_verify_fresh_source_provenance() {
+  # The embedded manifest identifies the content parent. A generated-only
+  # candidate is identified by the pinned Server's qualified outer bundle.
+  local origin installer="${FRP_INSTALLER_URL:-}" work metadata channel source_ref digest ca expected_channel
+  [[ -n "$installer" ]] || return 0
+  origin="$(frp_allocator_origin_url "$ALLOCATOR_URL")" || return 1
+  [[ "$installer" == "$origin/artifacts/agent/bootstrap-client.sh" ]] || return 0
+  [[ -f "${FRP_BUNDLE_FILE:-}" ]] || {
+    echo "ERROR: fresh Server-local install requires the downloaded bundle file" >&2
+    return 1
+  }
+  ca="$(frp_allocator_ca_path)"
+  work="$(mktemp -d)" || return 1
+  if ! curl -fsSL --proto '=https' --cacert "$ca" "$origin/artifacts/manifest.json" -o "$work/manifest.json" \
+      || ! curl -fsSL --proto '=https' --cacert "$ca" "$origin/artifacts/SHA256SUMS" -o "$work/SHA256SUMS"; then
+    rm -rf "$work"
+    return 1
+  fi
+  metadata="$(frp_client_parse_qualified_update_manifest "$work/manifest.json")" || { rm -rf "$work"; return 1; }
+  IFS=$'\t' read -r channel source_ref digest <<<"$metadata"
+  expected_channel="$(frp_client_explicit_expected_channel || true)"
+  if [[ -n "$expected_channel" && "$expected_channel" != "$channel" ]]; then
+    rm -rf "$work"
+    echo "ERROR: fresh qualified artifact release channel does not match requested channel" >&2
+    return 1
+  fi
+  # Do not let update-only checksum overrides replace the pinned fresh metadata.
+  if ! FRP_CLIENT_UPDATE_SHA256='' FRP_RELEASE_SHA256SUMS_FILE='' \
+      frp_verify_client_update_artifact "$FRP_BUNDLE_FILE" "$work/SHA256SUMS" agent/bootstrap-client.sh "$digest"; then
+    rm -rf "$work"
+    return 1
+  fi
+  rm -rf "$work"
+  if [[ -n "${FRP_EXPECTED_SOURCE_REF:-}" && "$FRP_EXPECTED_SOURCE_REF" != "$source_ref" ]] \
+      || [[ -n "${FRP_EXPECTED_SOURCE_HEAD:-}" && "$source_ref" =~ ^[0-9a-fA-F]{40}$ && "$FRP_EXPECTED_SOURCE_HEAD" != "$source_ref" ]]; then
+    echo "ERROR: fresh qualified artifact source does not match requested source" >&2
+    return 1
+  fi
+  export FRP_RELEASE_CHANNEL="$channel" FRP_EXPECTED_RELEASE_CHANNEL="$channel"
+  export FRP_EXPECTED_SOURCE_REF="$source_ref" FRP_BUNDLE_SHA256="$digest"
+  if [[ "$source_ref" =~ ^[0-9a-fA-F]{40}$ ]]; then
+    export FRP_EXPECTED_SOURCE_HEAD="$source_ref"
+  fi
+}
+
 frp_client_fetch_and_upgrade() {
   local source="${1:-}"
   local check_only="${2:-0}"

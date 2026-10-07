@@ -3445,7 +3445,10 @@ def check_client(report, paths, facts, skip_network):
         else:
             toml_text = paths.read_text(toml_path) or ''
             proxies = parse_frpc_proxies(toml_text)
-            proxy_names = [str(p.get('name') or '') for p in proxies]
+            host_id = str(state.get('host_id') or '').strip()
+            if not host_id:
+                machine_id = str(state.get('machine_id') or '')
+                host_id = '%s-%s' % (state.get('hostname') or 'host', machine_id[:8] or 'local')
             missing_proxy = []
             port_mismatch = []
             extra_enabled = []
@@ -3453,7 +3456,11 @@ def check_client(report, paths, facts, skip_network):
                 if not isinstance(rec, dict):
                     continue
                 sid_s = str(rec.get('id') or sid)
-                present = any(sid_s and sid_s in name for name in proxy_names)
+                # Match the same complete identity emitted by the Agent renderer.
+                # Substrings conflate http/https and short/long service names.
+                expected_name = '%s-%s' % (host_id, sid_s)
+                matching = [p for p in proxies if p.get('name') == expected_name]
+                present = bool(matching)
                 if rec.get('enabled', True) is False:
                     if present:
                         extra_enabled.append(sid_s)
@@ -3462,10 +3469,9 @@ def check_client(report, paths, facts, skip_network):
                     missing_proxy.append(sid_s)
                     continue
                 want = coerce_port(rec.get('remote_port'))
-                for proxy in proxies:
-                    if sid_s in str(proxy.get('name') or ''):
-                        if want is not None and coerce_port(proxy.get('remotePort')) not in (None, want):
-                            port_mismatch.append(sid_s)
+                for proxy in matching:
+                    if want is not None and coerce_port(proxy.get('remotePort')) != want:
+                        port_mismatch.append(sid_s)
             if missing_proxy or port_mismatch:
                 report.add(
                     'frpc_config', FAIL,

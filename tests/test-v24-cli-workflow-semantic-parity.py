@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import io
 import os
+import socket
 import sys
 import tempfile
 import unittest
@@ -159,6 +160,20 @@ class RemoteAccessSemanticParity(_Base):
 
 
 class InternetAccessSemanticParity(_Base):
+    def test_fqdn_resolution_failure_is_reported_without_allow(self):
+        v24.set_network_object(self.plane, "agent-src", type="ip", value="10.10.10.20", oneshot=True)
+        v24.set_network_object(self.plane, "audit-fqdn", type="fqdn", value="example.com", oneshot=True)
+        with mock.patch("socket.getaddrinfo", side_effect=socket.gaierror("fixture DNS unavailable")):
+            rc, out, err = self._run(
+                "test", "internet-access", "source", "agent-src",
+                "destination", "audit-fqdn", "service", "https",
+            )
+        self.assertEqual(rc, 1)
+        self.assertNotIn("ALLOW", out)
+        self.assertIn("could not resolve destination 'example.com'", err)
+        self.assertIn("fixture DNS unavailable", err)
+        self.assertIn("No changes were applied.", err)
+
     def test_user_intent_equivalent_fqdn_objects(self):
         # Intent: "Would traffic to example.com be denied?"
         # WHITELIST references audit-fqdn; test with another-object (same FQDN).
@@ -176,31 +191,33 @@ class InternetAccessSemanticParity(_Base):
             enabled=True,
             oneshot=True,
         )
-        rc_named, out_named, _err = self._run(
-            "test",
-            "internet-access",
-            "source",
-            "agent-src",
-            "destination",
-            "audit-fqdn",
-            "service",
-            "https",
-        )
-        rc_alias, out_alias, _err = self._run(
-            "test",
-            "internet-access",
-            "source",
-            "agent-src",
-            "destination",
-            "another-object",
-            "service",
-            "https",
-        )
+        # Public tests resolve FQDN candidates just as the gateway does. Keep
+        # this semantic regression deterministic instead of depending on DNS.
+        def resolve(hostname, port, *, type):
+            self.assertEqual(hostname, "example.com")
+            self.assertIsNone(port)
+            self.assertEqual(type, socket.SOCK_STREAM)
+            return [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP,
+                     "", ("93.184.216.34", 0))]
+
+        with mock.patch("socket.getaddrinfo", side_effect=resolve) as resolver:
+            rc_named, out_named, _err = self._run(
+                "test", "internet-access", "source", "agent-src",
+                "destination", "audit-fqdn", "service", "https",
+            )
+            rc_alias, out_alias, _err = self._run(
+                "test", "internet-access", "source", "agent-src",
+                "destination", "another-object", "service", "https",
+            )
+        self.assertEqual(resolver.call_count, 2)
         self.assertEqual(rc_named, 0)
         self.assertEqual(rc_alias, 0)
         self.assertIn("ALLOW", out_named)
         self.assertIn("ALLOW", out_alias)
-        runtime = self.plane.evaluate_internet_access("10.10.10.20", "example.com", 443, "https")
+        runtime = self.plane.evaluate_internet_access(
+            "10.10.10.20", "example.com", 443, "https",
+            candidate_ips=["93.184.216.34"],
+        )
         self.assertEqual(runtime["action"], "ALLOW")
 
     def test_whitelist_and_equivalent_ip_service(self):

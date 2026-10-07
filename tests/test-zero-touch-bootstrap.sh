@@ -167,7 +167,7 @@ grep -q 'frp-create-client --one-line --ssh --ssh-user aella' "$WORKDIR/help.out
 pass "CREATE_CLIENT_HELP"
 
 "$CREATE" --one-line --client-name inventory-only >"$WORKDIR/nosvc.out" 2>"$WORKDIR/nosvc.err"
-grep -q 'bash -s --' "$WORKDIR/nosvc.out" || fail "short command shape"
+grep -q 'FRP_BUNDLE_FILE=' "$WORKDIR/nosvc.out" || fail "short command shape"
 grep -q 'sudo bash -c' "$WORKDIR/nosvc.out" || fail "pinned-CA wrapper missing"
 grep -q 'zt1.' "$WORKDIR/nosvc.out" || fail "opaque package token"
 grep -q 'no service or public port' "$WORKDIR/nosvc.out" || fail "management-only explanation"
@@ -368,7 +368,7 @@ fi
 CMD_LINE="$(grep -E '^sudo bash -c ' "$WORKDIR/oneline.out" | head -n1)"
 [[ -n "$CMD_LINE" ]] || fail "missing pinned-CA install command"
 [[ "$(grep -cE '^sudo bash -c ' "$WORKDIR/oneline.out")" == "1" ]] || fail "more than one install command"
-printf '%s' "$CMD_LINE" | grep -q "bash -s --" || fail "missing short package runner"
+printf '%s' "$CMD_LINE" | grep -q "FRP_BUNDLE_FILE=" || fail "missing short package runner"
 printf '%s' "$CMD_LINE" | grep -q "zt1\." || fail "missing opaque package"
 printf '%s' "$CMD_LINE" | grep -q "/ca.crt" || fail "missing CA bootstrap URL"
 printf '%s' "$CMD_LINE" | grep -q -- "--cacert" || fail "installer fetch missing --cacert"
@@ -475,7 +475,7 @@ from pathlib import Path
 text = Path(sys.argv[1]).read_text()
 if "https://example.test/bootstrap-client.sh;uname" not in text:
     raise SystemExit('installer URL missing')
-if "bash -s --" not in text:
+if "FRP_BUNDLE_FILE=" not in text:
     raise SystemExit('missing one-line command')
 pm = re.search(r"(zt1\.[A-Za-z0-9_-]+)", text)
 if not pm:

@@ -59,6 +59,7 @@ done
 ./tests/test-systemd-runtime-prep.sh
 ./tests/test-server-install-config.sh
 ./tests/test-qualified-artifacts.sh
+bash tests/test-fresh-client-source-provenance.sh
 python3 tests/test-qualified-artifacts.py
 ./tests/test-install-config-hardening.sh
 ./tests/test-install-server-help.sh

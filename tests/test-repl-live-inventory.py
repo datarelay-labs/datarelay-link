@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import importlib.util
+import json
+from types import SimpleNamespace
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -89,6 +92,82 @@ class ReplLiveInventoryTests(unittest.TestCase):
         self.assertFalse(REPL._should_refresh_inventory(["show", "internet-access"]))
         self.assertFalse(REPL._should_refresh_inventory(["test", "internet-access", "1.1.1.1", "a", "443"]))
         self.assertFalse(REPL._should_refresh_inventory(["help", "commands"]))
+
+    def test_current_agent_mutations_and_menu_refresh_inventory(self):
+        for tokens in (
+            ["set", "remote-service", "new-service"],
+            ["unset", "remote-service", "new-service"],
+            ["system", "apply", "configuration", "bundle.yaml"],
+            ["system", "synchronize"],
+            ["menu"],
+        ):
+            with self.subTest(tokens=tokens):
+                self.assertTrue(REPL._should_refresh_inventory(tokens))
+        self.assertFalse(REPL._should_refresh_inventory(["system", "diff", "configuration", "bundle.yaml"]))
+        self.assertFalse(REPL._should_refresh_inventory(["test", "configuration", "bundle.yaml"]))
+
+    def test_same_session_create_delete_and_menu_reload_completion_source(self):
+        for via_menu in (False, True):
+            with self.subTest(via_menu=via_menu):
+                source = {"role": "client", "local_services": ["ssh"]}
+                captured = []
+                reads = []
+                step = 0
+                buffer = ""
+                backend_calls = []
+
+                def backend(argv, env):
+                    backend_calls.append(argv)
+                    source["local_services"] = ["ssh", "new-service"] if len(backend_calls) == 1 else ["ssh"]
+                    return SimpleNamespace(returncode=0)
+
+                def read_inventory(argv, **kwargs):
+                    self.assertEqual(argv, ["drlink", "--print-grammar-payload"])
+                    self.assertNotIn("FRP_CTL_GRAMMAR_PAYLOAD", kwargs["env"])
+                    reads.append(list(source["local_services"]))
+                    return SimpleNamespace(returncode=0, stdout=json.dumps(source))
+
+                def input_line(_prompt):
+                    nonlocal step, buffer
+                    step += 1
+                    if step == 1:
+                        return "menu" if via_menu else "set remote-service new-service destination this-host service http enabled"
+                    editor = captured[0]
+                    if step == 2:
+                        buffer = "show remote-service new"
+                        self.assertEqual(editor.completer("new", 0), "new-service ")
+                        self.assertNotIn("managed-host", editor.grammar.completion_candidates(
+                            "show ", editor.role, editor.names, editor.services,
+                            editor.local_services, trailing=True))
+                        return "menu" if via_menu else "unset remote-service new-service"
+                    buffer = "show remote-service new"
+                    self.assertIsNone(editor.completer("new", 0))
+                    buffer = "show remote-service ss"
+                    self.assertEqual(editor.completer("ss", 0), "ssh ")
+                    return "exit"
+
+                fake_readline = SimpleNamespace(
+                    get_line_buffer=lambda: buffer,
+                    get_current_history_length=lambda: 0,
+                    add_history=lambda _line: None,
+                )
+                with patch.object(REPL.LineEditor, "bind", lambda editor: captured.append(editor)), \
+                     patch.object(REPL, "readline", fake_readline), \
+                     patch.object(REPL, "_run_backend", side_effect=backend), \
+                     patch.object(REPL.subprocess, "run", side_effect=read_inventory), \
+                     patch.dict("os.environ", {"FRP_CTL_GRAMMAR_PAYLOAD": "stale"}), \
+                     patch("builtins.input", side_effect=input_line):
+                    self.assertEqual(REPL.run_repl("drlink", dict(source)), 0)
+                self.assertEqual(reads, [["ssh", "new-service"], ["ssh"]])
+
+    def test_failed_remote_service_command_does_not_reload_inventory(self):
+        with patch.object(REPL.LineEditor, "bind", return_value=True), \
+             patch.object(REPL, "readline", None), \
+             patch.object(REPL, "_run_backend", return_value=SimpleNamespace(returncode=1)), \
+             patch.object(REPL.subprocess, "run") as inventory, \
+             patch("builtins.input", side_effect=["set remote-service invalid", "exit"]):
+            self.assertEqual(REPL.run_repl("drlink", {"role": "client"}), 0)
+        inventory.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -1037,9 +1037,27 @@ PY
 
 frpctl_nav_dispatch_command() {
   local cmd="$1"
+  local prompt="" path=""
   local -a toks=()
   # shellcheck disable=SC2206
   toks=($cmd)
+  case "$cmd" in
+    "test configuration"|"system diff configuration"|"system apply configuration")
+      prompt="Configuration file path or '-' for pasted YAML (empty cancels): "
+      ;;
+    "system export configuration")
+      prompt="Output file path (empty cancels): "
+      ;;
+  esac
+  if [[ -n "$prompt" ]]; then
+    path="$(frpctl_read "$prompt" "")" || return 1
+    if [[ -z "${path//[[:space:]]/}" ]]; then
+      echo "Cancelled."
+      echo "No changes were applied."
+      return 0
+    fi
+    toks+=("$path")
+  fi
   frpctl_dispatch "${toks[@]}" || true
 }
 

@@ -703,7 +703,21 @@ def fetch_server_catalog(root: Optional[str] = None) -> dict:
             "ERROR:\nNo Server management URL is configured for catalog synchronization.\n\n"
             "No changes were applied."
         )
-    return _request_json("GET", base + "/v1/catalog", root=root)
+    # Catalog reads can wait for a network timeout before an offline edit can
+    # decide whether cached state is sufficient. Keep terminal users informed,
+    # without adding output to machine consumers or changing error classes.
+    terminal = sys.stderr.isatty()
+    if terminal:
+        print("Checking Server catalog (request timeout: 8 seconds)...", file=sys.stderr, flush=True)
+    try:
+        catalog = _request_json("GET", base + "/v1/catalog", root=root, timeout=8.0)
+    except Exception:
+        if terminal:
+            print("Server catalog request failed.", file=sys.stderr, flush=True)
+        raise
+    if terminal:
+        print("Server catalog received.", file=sys.stderr, flush=True)
+    return catalog
 
 
 def upsert_remote_service_on_server(
