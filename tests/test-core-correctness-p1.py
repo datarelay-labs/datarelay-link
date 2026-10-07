@@ -233,6 +233,7 @@ class EnrollEnv:
         self.alt_pub = self.keys / 'alt.pub'
         MGMT.generate_keypair(self.alt_key, self.alt_pub)
         self.alt_pem = self.alt_pub.read_text(encoding='utf-8')
+        self.operation_id = '0123456789abcdef0123456789abcdef'
 
     def cleanup(self):
         self.tmp.cleanup()
@@ -252,6 +253,7 @@ class EnrollEnv:
             }],
             'mgmt_pubkey': pubkey if pubkey is not None else self.pub_pem,
             'mgmt_alg': MGMT.MGMT_ALG,
+            'operation_id': self.operation_id,
         }
         return json.dumps(payload, separators=(',', ':')).encode()
 
@@ -261,10 +263,24 @@ class EnrollEnv:
         sig = hmac_hex(self.secret, ts + '\n' + body.decode())
         return self.allocator.enroll(self.eid, ts, sig, body)
 
+    def preflight(self, machine_id='machine-one'):
+        body = json.dumps({
+            'machine_id': machine_id,
+            'purpose': 'fresh-manual-enrollment',
+        }, separators=(',', ':')).encode()
+        ts = str(int(time.time()))
+        sig = hmac_hex(self.secret, ts + '\n' + body.decode())
+        return self.allocator.preflight_enrollment(self.eid, ts, sig, body)
+
 
 def test_enrollment_one_time():
     env = EnrollEnv()
     try:
+        code, result = env.preflight()
+        if code != 200 or result.get('valid') is not True:
+            fail('fresh enrollment preflight', result)
+        pass_('FRESH_ENROLLMENT_PREFLIGHT')
+
         code, result = env.enroll()
         if code != 200:
             fail('fresh first enrollment', result)
@@ -301,7 +317,32 @@ def test_enrollment_one_time():
             fail('used code changed services', result)
         pass_('USED_CODE_CHANGED_SERVICES_REJECT')
 
-        # Exact lost-response retry
+        # Same machine/key/services under a new installer operation is not a
+        # lost-response replay and must not reuse the consumed credential.
+        new_operation = json.loads(env.body().decode())
+        new_operation['operation_id'] = 'fedcba9876543210fedcba9876543210'
+        new_operation_body = json.dumps(new_operation, separators=(',', ':')).encode()
+        code, result = env.enroll(new_operation_body)
+        if code != 403 or 'already used' not in result.get('error', ''):
+            fail('used code new operation id', result)
+        pass_('USED_CODE_NEW_OPERATION_REJECT')
+
+        enrollment_record = json.loads(
+            (env.enrollments / f'{env.eid}.json').read_text(encoding='utf-8')
+        )
+        if enrollment_record.get('operation_id') != env.operation_id:
+            fail('enrollment operation id not persisted', enrollment_record)
+        pass_('ENROLLMENT_OPERATION_BOUND')
+
+        # A fresh-install preflight must reject the consumed code before any
+        # new installer workflow/service selection begins.
+        code, result = env.preflight()
+        if code != 403 or result.get('error_class') != 'ENROLLMENT_CODE_USED':
+            fail('used code fresh-install preflight accepted', result)
+        pass_('USED_CODE_PREFLIGHT_REJECT')
+
+        # Exact lost-response retry remains valid on the committed /enroll
+        # request path; preflight is intentionally not part of crash recovery.
         code, result = env.enroll()
         if code != 200:
             fail('idempotent lost-response retry', result)

@@ -1,64 +1,36 @@
-# OCI acceptance plan (operator)
+# RETIRED — OCI Acceptance Plan
 
-Automated integration may PASS while this real-environment cycle is still
-`NOT_RUN_PENDING_OPERATOR_ACCEPTANCE`. Do not tag `v2.1.1` until this list
-PASSes. Do not destroy the production OCI instance merely to test restore.
+> **Status:** Retired historical document.
+> **Historical scope:** v2.1.1-era operator acceptance.
+> **Current qualification authority:** `FULL_USER_E2E_SCENARIOS.md`, `RELEASE_VALIDATION.md`, and `RELEASE_CHECKLIST.md`.
 
-## Existing server upgrade
+This file is intentionally retained only as a tombstone because older scripts, tests, and links still reference its path.
 
-1. Record registry, labels, notes, tags, ports, CA fingerprint, token digest, installer URL.
-2. `sudo frpctl project-update`
-3. Confirm registry/labels/notes/tags/ports/CA/token/mode retained.
-4. `sudo frpctl doctor`
+Its former command examples and workflow instructions were removed because they used obsolete public CLI forms and must not be used for current Data Relay Link behavior, testing, documentation, or release decisions.
 
-## Existing client update
+For current v2.4 CLI truth use, in order:
 
-1. Record identity files, public ports, SSH reachability.
-2. `sudo frpctl update` on the client
-3. Identity, ports, SSH still work. No re-enrollment.
+1. exact candidate runtime `drlink help commands`;
+2. `DATA_RELAY_LINK_CLI_AI_MASTER_v2.4_FINAL.md`;
+3. `CLI_REFERENCE.md`;
+4. `Data Relay Link CLI Information Architecture.md` for guided navigation only.
 
-## New client
+Current direct grammar is:
 
-1. `frpctl enroll` / one-line installer with label + SSH user
-2. List client, connect over published SSH
+```text
+drlink <ACTION> <RESOURCE> [TARGET] [VALUE]
 
-## Server metadata
+show
+set
+unset
+test
+system
 
-1. Change label, note, tags
-2. Client machine identity and public ports unchanged
+menu
+help
+exit
+```
 
-## Pending enrollment
+Do not recover or reconstruct retired pre-v2.4 direct-command examples from Git history for current use.
 
-1. Create ticket → list shows pending (no raw secret)
-2. Revoke pending/bound
-3. Confirm expired and completed states
-
-## Bulk enrollment
-
-1. Create at least 3 independent tickets (CSV or `--count`)
-2. Prove one ticket cannot enroll two machines
-
-## Zero-service client
-
-1. Enroll with no published service
-2. Visible in `frpctl clients` with 0 services
-3. Add SSH later → port allocated → SSH succeeds
-
-## Backup / Restore
-
-1. `sudo frpctl backup`
-2. Record state, change metadata
-3. Restore from that backup
-4. Exact expected state; `doctor` PASS
-5. Use a controlled restore; do not wipe the live host as the only copy
-
-## Updates
-
-1. Client project update
-2. Server project update
-3. `frpctl frp-update --check` / pinned FRP only
-4. `frpctl upstream` informational, no install
-
-## Reboot recovery
-
-Reboot the server. Verify frontend, allocator, frps, client proxies, SSH.
+Historical Git history remains available only when explicitly investigating an old release.

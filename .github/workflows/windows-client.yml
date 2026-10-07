@@ -1,7 +1,10 @@
 name: windows-client
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+    tags:
+      - 'v*'
   pull_request:
 
 permissions:
@@ -9,6 +12,7 @@ permissions:
 
 jobs:
   windows-powershell51:
+    if: github.event_name != 'pull_request'
     name: Windows PowerShell 5.1
     runs-on: windows-latest
     steps:
@@ -33,24 +37,14 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
-          . .\windows\lib\FrpPaths.ps1
-          . .\windows\lib\FrpCrypto.ps1
-          . .\windows\lib\FrpState.ps1
-          . .\windows\lib\FrpBootstrap.ps1
-          $root = Join-Path $env:TEMP ('frp-frpc-smoke-' + [guid]::NewGuid().ToString('N'))
-          $env:FRP_WINDOWS_ROOT = $root
-          try {
-            Initialize-FrpDirectories | Out-Null
-            Install-FrpWindowsBinary | Out-Null
-            $frpc = Get-FrpFrpcPath
-            if (-not (Test-Path -LiteralPath $frpc)) { throw 'frpc.exe missing' }
-            & $frpc -v
-          } finally {
-            Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
-            Remove-Item Env:FRP_WINDOWS_ROOT -ErrorAction SilentlyContinue
-          }
+          # cryptography builds a real CA→leaf chain for the product pin path
+          # (OpenSSL CLI is not present on windows-latest by default).
+          python -m pip install --upgrade pip
+          python -m pip install 'cryptography>=42,<47'
+          & .\tests\windows\frp-binary-smoke.ps1
 
   windows-pwsh7:
+    if: github.event_name != 'pull_request'
     name: Windows PowerShell 7
     runs-on: windows-latest
     steps:
@@ -91,3 +85,4 @@ jobs:
           pwsh -NoProfile -Command '$PSVersionTable.PSVersion'
       - name: Run Windows suite under Linux pwsh
         run: pwsh -NoProfile -File tests/windows/run-all.ps1
+

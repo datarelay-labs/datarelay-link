@@ -14,10 +14,14 @@ project:
   name: datarelay-link
   type: generic
   maturity: production
+  user_facing: true
+  primary_user_surface: cli
 domains:
 - server
 - client
 - shared
+- public-surface
+- artifact-integrity
 platforms:
 - linux
 operations:

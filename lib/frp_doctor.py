@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only FRP Auto Deploy diagnostics.
+"""Read-only Data Relay Link diagnostics.
 
 Python 3.7 + stdlib + OpenSSL CLI. Does not mutate files, services, or
 management state. JSON is generated here so Bash does not hand-escape it.
@@ -64,7 +64,7 @@ SECRET_RE = re.compile(
     r'(BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY|'
     r'auth\.token\s*=\s*\S+|'
     r'mgmt_mac_key|'
-    r'FRP_BOOTSTRAP_TICKET=|'
+    r'FRP_BOOTSTRAP_TICKET\s*=\s*\S+|'
     r'bt1\.[0-9a-f]{16}\.[0-9a-f]{32,}|'
     r'zt1\.[A-Za-z0-9_-]{16,}|'
     r'Enrollment Code:\s*\S+)',
@@ -75,7 +75,8 @@ HEX64_RE = re.compile(r'^[0-9a-f]{64}$')
 SUPPORTED_DISTRO_IDS = {
     'ubuntu', 'rocky', 'almalinux', 'amzn', 'centos', 'rhel', 'debian', 'fedora',
 }
-MACOS_LAUNCHD_LABEL_DEFAULT = 'com.datarelay.frp-auto-deploy.frpc'
+MACOS_LAUNCHD_LABEL_DEFAULT = 'com.datarelay.drlink.frpc'
+MACOS_LIFECYCLE_LABEL_DEFAULT = 'com.datarelay.drlink.lifecycle'
 MACOS_MIN_PRODUCT_MAJOR_DEFAULT = 11
 MACOS_OS_IDS = {'macos', 'darwin'}
 
@@ -89,13 +90,11 @@ MARKER_NOTE = 'Do not delete the pending marker by hand unless recovering from a
 
 def _recovery_for_role(role, kind):
     if kind == 'frp':
-        if role in ('client', 'partial_client'):
-            return 'sudo frpctl update frp'
-        return 'sudo frpctl frp-update'
+        return 'sudo drlink system update engine'
     if role in ('client', 'partial_client'):
-        return 'sudo frpctl update'
+        return 'sudo drlink system update product'
     if role in ('server', 'partial_server', 'dual'):
-        return 'sudo frpctl project-update'
+        return 'sudo drlink system update product'
     return ''
 
 
@@ -103,19 +102,23 @@ def _recovery_for_operation(operation, role):
     op = str(operation or '').strip()
     extra = '\n%s' % MARKER_NOTE
     if op == 'project-update':
-        return 'sudo frpctl project-update' + extra
+        return 'sudo drlink system update product' + extra
     if op in ('frp-update',):
-        return 'sudo frpctl frp-update' + extra
+        return 'sudo drlink system update engine' + extra
     if op in ('client-update',):
-        return 'sudo frpctl update' + extra
+        return 'sudo drlink system update product' + extra
     if op == 'install':
         return 're-run the server installer; do not delete the pending marker' + extra
     if op == 'restore':
-        return 'inspect the pending restore marker and retry sudo frpctl restore only after the failure is understood' + extra
+        return (
+            'inspect the pending restore marker and retry '
+            'sudo drlink system restore <PATH> only after the failure is understood'
+            + extra
+        )
     if op == 'update':
         if role in ('client', 'partial_client', 'dual'):
-            return 'sudo frpctl update' + extra
-        return 'sudo frpctl frp-update' + extra
+            return 'sudo drlink system update product' + extra
+        return 'sudo drlink system update engine' + extra
     return (
         'inspect the pending transaction marker (server-update-pending.json / '
         'client-update-pending.json / legacy update-pending.json) operation=%s '
@@ -193,6 +196,13 @@ def _doctor_launchd_label():
     return label or MACOS_LAUNCHD_LABEL_DEFAULT
 
 
+def _doctor_lifecycle_launchd_label():
+    label = str(
+        os.environ.get('FRP_MACOS_LIFECYCLE_LABEL') or MACOS_LIFECYCLE_LABEL_DEFAULT
+    ).strip()
+    return label or MACOS_LIFECYCLE_LABEL_DEFAULT
+
+
 def _macos_min_product_major():
     raw = str(os.environ.get('FRP_MACOS_MIN_PRODUCT_VERSION') or MACOS_MIN_PRODUCT_MAJOR_DEFAULT).strip()
     try:
@@ -215,7 +225,7 @@ def _facts_is_darwin(facts=None):
 def _frpc_runtime_label(facts=None):
     if _facts_is_darwin(facts):
         return 'launchd job %s' % _doctor_launchd_label()
-    return 'frpc.service'
+    return 'drlink-client.service'
 
 
 def _frpc_runtime_recovery(facts=None):
@@ -224,11 +234,11 @@ def _frpc_runtime_recovery(facts=None):
             'inspect the job with launchctl print system/%s; doctor does not restart services'
             % _doctor_launchd_label()
         )
-    return 'inspect the unit with systemctl status frpc; doctor does not restart services'
+    return 'inspect the unit with systemctl status drlink-client; doctor does not restart services'
 
 
 def _doctor_macos_state_root():
-    return str(os.environ.get('FRP_MACOS_STATE_ROOT') or '/Library/Application Support/frp-auto-deploy').rstrip('/')
+    return str(os.environ.get('FRP_MACOS_STATE_ROOT') or '/Library/Application Support/drlink').rstrip('/')
 
 
 def _doctor_macos_prefix():
@@ -252,22 +262,24 @@ def macos_map_path(abs_path):
         return p
     state = _doctor_macos_state_root()
     prefix = _doctor_macos_prefix()
-    if p in ('/etc/frp', '/etc/frp-auto-deploy'):
+    if p in ('/etc/frp', '/etc/drlink'):
         return state
     if p.startswith('/etc/frp/'):
         return state + '/' + p[len('/etc/frp/'):]
-    if p.startswith('/etc/frp-auto-deploy/'):
-        return state + '/' + p[len('/etc/frp-auto-deploy/'):]
-    if p == '/var/lib/frp-auto-deploy':
+    if p.startswith('/etc/drlink/'):
+        return state + '/' + p[len('/etc/drlink/'):]
+    if p == '/var/lib/drlink':
         return state + '/state'
-    if p.startswith('/var/lib/frp-auto-deploy/'):
-        return state + '/state/' + p[len('/var/lib/frp-auto-deploy/'):]
-    if p == '/etc/systemd/system/frpc.service':
-        return '/Library/LaunchDaemons/com.datarelay.frp-auto-deploy.frpc.plist'
-    if p == '/usr/local/lib/frp-auto-deploy':
+    if p.startswith('/var/lib/drlink/'):
+        return state + '/state/' + p[len('/var/lib/drlink/'):]
+    if p == '/etc/systemd/system/drlink-client.service':
+        return '/Library/LaunchDaemons/%s.plist' % _doctor_launchd_label()
+    if p == '/etc/systemd/system/drlink-lifecycle.service':
+        return '/Library/LaunchDaemons/%s.plist' % _doctor_lifecycle_launchd_label()
+    if p == '/usr/local/lib/drlink':
         return state + '/lib'
-    if p.startswith('/usr/local/lib/frp-auto-deploy/'):
-        return state + '/lib/' + p[len('/usr/local/lib/frp-auto-deploy/'):]
+    if p.startswith('/usr/local/lib/drlink/'):
+        return state + '/lib/' + p[len('/usr/local/lib/drlink/'):]
     if p == '/usr/local/bin/frpc':
         return state + '/bin/frpc'
     if p.startswith('/usr/local/bin/'):
@@ -384,7 +396,7 @@ class Report(object):
         counts = self.counts()
         if counts[FAIL]:
             return 'FAIL'
-        if counts[WARN]:
+        if counts[WARN] or counts[NOT_TESTED]:
             return 'PASS_WITH_WARNINGS'
         return 'PASS'
 
@@ -466,16 +478,17 @@ def kv_file(paths, abs_path, key):
 
 def detect_role(paths):
     server_files = [
-        '/etc/frp-auto-deploy/config.json',
+        '/etc/drlink/config.json',
         '/etc/frp/server_token',
-        '/var/lib/frp-auto-deploy/registry.json',
+        '/var/lib/drlink/registry.json',
         '/etc/frp/frps.toml',
         '/usr/local/bin/frps',
+        '/usr/local/lib/drlink/frp-create-client',
         '/usr/local/sbin/frp-create-client',
-        '/usr/local/lib/frp-auto-deploy/frp-port-allocator.py',
-        '/etc/systemd/system/frps.service',
-        '/etc/systemd/system/frp-port-allocator.service',
-        '/etc/frp-auto-deploy/pki/ca.crt',
+        '/usr/local/lib/drlink/frp-port-allocator.py',
+        '/etc/systemd/system/drlink-server.service',
+        '/etc/systemd/system/drlink-allocator.service',
+        '/etc/drlink/pki/ca.crt',
     ]
     client_files = [
         '/etc/frp/client-state.json',
@@ -483,15 +496,40 @@ def detect_role(paths):
         '/etc/frp/client-identity.key',
         '/usr/local/bin/frpc',
         '/usr/local/bin/frp-client',
-        '/etc/systemd/system/frpc.service',
-        '/etc/frp-auto-deploy/allocator-ca.crt',
+        '/etc/systemd/system/drlink-client.service',
+        '/etc/drlink/allocator-ca.crt',
     ]
     server_hits = [p for p in server_files if paths.exists(p)]
     client_hits = [p for p in client_files if paths.exists(p)]
-    has_server_config = paths.is_file('/etc/frp-auto-deploy/config.json')
+    has_server_config = paths.is_file('/etc/drlink/config.json')
+    has_server_token = paths.is_file('/etc/frp/server_token')
+    has_registry = paths.is_file('/var/lib/drlink/registry.json')
+    has_control_db = paths.is_file('/var/lib/drlink/drlink.db')
     has_client_state = paths.is_file('/etc/frp/client-state.json')
-    has_frpc_unit = paths.is_file('/etc/systemd/system/frpc.service')
-    has_frps_unit = paths.is_file('/etc/systemd/system/frps.service')
+    has_frpc_toml = paths.is_file('/etc/frp/frpc.toml')
+    has_client_identity = paths.is_file('/etc/frp/client-identity.key')
+    # Strong product evidence, not a file-count. Stale frps/unit files are
+    # not a Server. Leftover frpc binaries are not an Agent.
+    strong_server = has_server_config or (
+        has_server_token and (has_registry or has_control_db)
+    )
+    strong_agent = has_client_state or (has_frpc_toml and has_client_identity)
+    stale_server_markers = {
+        '/usr/local/bin/frps',
+        '/etc/systemd/system/drlink-server.service',
+        '/etc/systemd/system/drlink-allocator.service',
+    }
+    stale_client_markers = {
+        '/usr/local/bin/frpc',
+        '/usr/local/bin/frp-client',
+        '/etc/systemd/system/drlink-client.service',
+    }
+    if strong_agent and not strong_server:
+        server_hits = [p for p in server_hits if p not in stale_server_markers]
+    elif strong_server and not strong_agent:
+        client_hits = [p for p in client_hits if p not in stale_client_markers]
+    has_frpc_unit = paths.is_file('/etc/systemd/system/drlink-client.service')
+    has_frps_unit = paths.is_file('/etc/systemd/system/drlink-server.service')
     server_n = len(server_hits)
     client_n = len(client_hits)
 
@@ -500,35 +538,26 @@ def detect_role(paths):
         'label': 'Uninstalled',
         'confidence': 'none',
         'status': INFO,
-        'reason': 'no FRP Auto Deploy installation markers were found',
+        'reason': 'no Data Relay Link installation markers were found',
         'server_signals': server_n,
         'client_signals': client_n,
         'missing_client_unit': has_client_state and not has_frpc_unit,
         'missing_server_unit': has_server_config and not has_frps_unit,
     }
 
-    if server_n >= 2 and client_n >= 2:
+    if strong_server and strong_agent:
         result.update({
             'role': 'dual',
-            'label': 'Server + Client',
+            'label': 'DRLink Server + Agent Host',
             'confidence': 'complete',
             'status': PASS,
-            'reason': 'server and client markers are both present',
+            'reason': 'Server and Agent Host markers are both present',
         })
         if result['missing_client_unit'] or result['missing_server_unit']:
             result['confidence'] = 'partial'
         return result
 
-    if server_n >= 2 or has_server_config:
-        if server_n == 1 and not has_server_config:
-            result.update({
-                'role': 'partial_server',
-                'label': 'Partial server installation',
-                'confidence': 'partial',
-                'status': FAIL,
-                'reason': 'only one server marker is present',
-            })
-            return result
+    if strong_server:
         if result['missing_server_unit'] and server_n < 4:
             result.update({
                 'role': 'partial_server',
@@ -540,51 +569,42 @@ def detect_role(paths):
             return result
         result.update({
             'role': 'server',
-            'label': 'Server',
+            'label': 'DRLink Server',
             'confidence': 'complete' if server_n >= 4 else 'partial',
             'status': PASS if server_n >= 3 else WARN,
             'reason': 'server installation markers are present',
         })
         return result
 
-    if client_n >= 2 or has_client_state:
+    if strong_agent:
         if has_client_state and not has_frpc_unit:
             result.update({
                 'role': 'partial_client',
-                'label': 'Partial client installation',
+                'label': 'Partial Agent Host installation',
                 'confidence': 'partial',
                 'status': FAIL,
-                'reason': 'client-state exists but frpc unit is missing',
-            })
-            return result
-        if client_n == 1 and not has_client_state:
-            result.update({
-                'role': 'partial_client',
-                'label': 'Partial client installation',
-                'confidence': 'partial',
-                'status': FAIL,
-                'reason': 'only one client marker is present',
+                'reason': 'Agent state exists but frpc unit is missing',
             })
             return result
         result.update({
             'role': 'client',
-            'label': 'Client',
+            'label': 'Agent Host',
             'confidence': 'complete' if client_n >= 4 else 'partial',
             'status': PASS if client_n >= 3 else WARN,
-            'reason': 'client installation markers are present',
+            'reason': 'Agent Host installation markers are present',
         })
         return result
 
-    if server_n == 1 and client_n == 1:
+    if server_n >= 1 and client_n >= 1:
         result.update({
             'role': 'ambiguous',
             'label': 'Ambiguous',
             'confidence': 'none',
             'status': FAIL,
-            'reason': 'server and client markers are inconsistent',
+            'reason': 'Server and Agent Host markers are inconsistent',
         })
         return result
-    if server_n == 1:
+    if server_n >= 1:
         result.update({
             'role': 'partial_server',
             'label': 'Partial server installation',
@@ -593,13 +613,13 @@ def detect_role(paths):
             'reason': 'incomplete server markers',
         })
         return result
-    if client_n == 1:
+    if client_n >= 1:
         result.update({
             'role': 'partial_client',
-            'label': 'Partial client installation',
+            'label': 'Partial Agent Host installation',
             'confidence': 'partial',
             'status': FAIL,
-            'reason': 'incomplete client markers',
+            'reason': 'incomplete Agent Host markers',
         })
         return result
     return result
@@ -915,7 +935,14 @@ def https_loopback_get(public_host, port, path, ca_path, timeout=NETWORK_TIMEOUT
     path = str(path or '/')
     if not path.startswith('/'):
         path = '/' + path
-    url = 'https://%s:%s%s' % (host, port, path)
+    url_host = host
+    try:
+        import ipaddress
+        if isinstance(ipaddress.ip_address(host), ipaddress.IPv6Address):
+            url_host = '[%s]' % host
+    except ValueError:
+        pass
+    url = 'https://%s:%s%s' % (url_host, port, path)
     try:
         ctx = ssl.create_default_context(cafile=str(ca_path) if ca_path else None)
         if hasattr(ssl, 'TLSVersion'):
@@ -1096,6 +1123,29 @@ def server_config_ports(cfg):
     }
 
 
+_CLIENT_REGISTRY = None
+
+
+def _load_client_registry():
+    """Load the canonical registry helpers (group invariants live there)."""
+    global _CLIENT_REGISTRY
+    if _CLIENT_REGISTRY is not None:
+        return _CLIENT_REGISTRY
+    import importlib.util as _ilu
+    for path in (
+        Path(__file__).resolve().parent / 'frp_client_registry.py',
+        Path('/usr/local/lib/drlink/frp_client_registry.py'),
+    ):
+        if path.is_file():
+            spec = _ilu.spec_from_file_location('_drlink_creg_doctor', str(path))
+            mod = _ilu.module_from_spec(spec)
+            assert spec.loader is not None
+            spec.loader.exec_module(mod)
+            _CLIENT_REGISTRY = mod
+            return mod
+    return None
+
+
 def validate_registry(state, cfg=None):
     issues = []
     infos = []
@@ -1117,32 +1167,10 @@ def validate_registry(state, cfg=None):
         groups = {}
     if not isinstance(groups, dict):
         return FAIL, 'registry groups is not an object', issues
-    group_names = {}
-    valid_group_ids = set()
-    for gid, group in groups.items():
-        if not isinstance(gid, str) or not re.fullmatch(r'grp_[0-9a-f]{8}', gid):
-            issues.append('invalid group id %s' % gid)
-            continue
-        valid_group_ids.add(gid)
-        if not isinstance(group, dict):
-            issues.append('group %s record is not an object' % gid)
-            continue
-        name = group.get('name')
-        if not isinstance(name, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,63}', name):
-            issues.append('group %s has invalid name' % gid)
-            continue
-        if name.lower() in ('all', 'ungrouped'):
-            issues.append('group %s uses reserved name %s' % (gid, name))
-        if name in group_names:
-            issues.append('duplicate group name %s' % name)
-        group_names[name] = gid
-        description = group.get('description')
-        if description is not None and (
-            not isinstance(description, str)
-            or len(description) > 1024
-            or any(ord(ch) < 32 or 127 <= ord(ch) <= 159 for ch in description)
-        ):
-            issues.append('group %s has invalid description' % gid)
+    creg = _load_client_registry()
+    if creg is None:
+        return FAIL, 'frp_client_registry.py is unavailable', issues
+    issues.extend(creg.group_invariant_issues(state))
     port_start = port_end = None
     protected = set()
     if cfg:
@@ -1166,22 +1194,8 @@ def validate_registry(state, cfg=None):
             seen_ports[port] = ('reserved', None)
     for mid, client in clients.items():
         if not isinstance(client, dict):
-            issues.append('client record is not an object')
+            issues.append('Managed Host record is not an object')
             continue
-        group_ids = client.get('group_ids')
-        if group_ids is not None:
-            if not isinstance(group_ids, list):
-                issues.append('client %s group_ids must be a list' % str(mid)[:12])
-            else:
-                seen_group_ids = set()
-                for gid in group_ids:
-                    if not isinstance(gid, str) or not re.fullmatch(r'grp_[0-9a-f]{8}', gid):
-                        issues.append('client %s has invalid group id' % str(mid)[:12])
-                    elif gid in seen_group_ids:
-                        issues.append('client %s has duplicate group id %s' % (str(mid)[:12], gid))
-                    elif gid not in valid_group_ids:
-                        issues.append('client %s references nonexistent group %s' % (str(mid)[:12], gid))
-                    seen_group_ids.add(gid)
         if 'ssh_port' in client or 'https_port' in client:
             issues.append('legacy SSH/HTTPS fields are present')
             continue
@@ -1190,10 +1204,10 @@ def validate_registry(state, cfg=None):
             issues.append('invalid management identity status')
         if status == 'revoked':
             revoked += 1
-            infos.append('revoked client %s is a valid lifecycle state' % (client.get('hostname') or mid[:12]))
+            infos.append('revoked Managed Host %s is a valid lifecycle state' % (client.get('hostname') or mid[:12]))
         services = client.get('services') or {}
         if not isinstance(services, dict):
-            issues.append('client services must be a map')
+            issues.append('Managed Host Remote Services must be a map')
             continue
         seen_ids = set()
         for sid, svc in services.items():
@@ -1212,22 +1226,38 @@ def validate_registry(state, cfg=None):
             if port in seen_ports and seen_ports[port][0] != 'reserved':
                 issues.append('duplicate public port %s' % port)
             seen_ports[port] = (mid, key)
-            if port_start is not None and port_end is not None:
-                if port < port_start or port > port_end:
+            service_start, service_end = port_start, port_end
+            if cfg and str(svc.get('pool_class') or '').strip().lower() == 'fixed-tcp':
+                from frp_infrastructure_ports import tcp_relay_port_range
+                service_start, service_end = tcp_relay_port_range(cfg)
+            if service_start is not None and service_end is not None:
+                if port < service_start or port > service_end:
                     outside.append(port)
             if port in protected:
                 issues.append('allocated port %s collides with a control port' % port)
     if issues:
         return FAIL, '; '.join(issues[:6]), issues
+    # Canonical Access/FRP proxy-name uniqueness (same as allocator build_proxy_map).
+    try:
+        import importlib.util as _ilu
+        acl_path = Path(__file__).resolve().parent / 'frp_access_control.py'
+        if acl_path.is_file():
+            spec = _ilu.spec_from_file_location('_drlink_acl_doctor', str(acl_path))
+            acl_mod = _ilu.module_from_spec(spec)
+            assert spec.loader is not None
+            spec.loader.exec_module(acl_mod)
+            acl_mod.validate_proxy_name_uniqueness(state)
+    except Exception as exc:
+        return FAIL, 'proxy name collision: %s' % exc, [str(exc)]
     extra = []
     if outside:
         extra.append('reservations outside current range: %s' % ','.join(str(p) for p in outside[:8]))
         return WARN, extra[0], extra
-    msg = 'valid schema v2 (%s clients, %s reserved ports)' % (len(clients), len(seen_ports))
+    msg = 'valid schema v2 (%s Managed Hosts, %s reserved ports)' % (len(clients), len(seen_ports))
     if revoked:
         msg += ', %s revoked' % revoked
     if disabled:
-        msg += ', %s disabled services' % disabled
+        msg += ', %s disabled Remote Services' % disabled
     return PASS, msg, infos
 
 
@@ -1239,7 +1269,7 @@ def check_macos_support(report, facts):
     recs = []
     if arch and arch not in ('arm64', 'aarch64'):
         issues.append('architecture %s is not Apple Silicon' % arch)
-        recs.append('The macOS client requires Apple Silicon (arm64); Intel Macs are not supported.')
+        recs.append('The macOS Agent Host requires Apple Silicon (arm64); Intel Macs are not supported.')
     if macos_ver:
         major = macos_ver.split('.')[0]
         try:
@@ -1266,7 +1296,7 @@ def check_macos_support(report, facts):
         return
     report.add(
         'macos_support', PASS,
-        'Apple Silicon macOS is a supported client platform',
+        'Apple Silicon macOS is a supported Agent Host platform',
         detail,
         '',
         'host',
@@ -1345,17 +1375,45 @@ def check_host_facts(report, facts):
 
 
 def check_versions(report, paths, facts):
-    installed_proj = kv_file(paths, '/etc/frp-auto-deploy/version', 'PROJECT_VERSION')
-    installed_frp = kv_file(paths, '/etc/frp-auto-deploy/version', 'FRP_VERSION')
+    installed_proj = kv_file(paths, '/etc/drlink/version', 'PROJECT_VERSION')
+    installed_frp = kv_file(paths, '/etc/drlink/version', 'FRP_VERSION')
     embedded = str(facts.get('embedded_version') or '')
     pinned = str(facts.get('pinned_frp') or PINNED_FRP_DEFAULT)
-    report.project_version = installed_proj or 'legacy / unknown'
+    report.release_channel = kv_file(paths, '/etc/drlink/version', 'RELEASE_CHANNEL') or 'unknown'
+    report.source_ref = kv_file(paths, '/etc/drlink/version', 'SOURCE_REF') or 'unknown'
+    report.source_head = kv_file(paths, '/etc/drlink/version', 'SOURCE_HEAD') or ''
+    if not report.source_head and re.fullmatch(r'[0-9a-fA-F]{40}', str(report.source_ref or '')):
+        report.source_head = report.source_ref
+    bundle_raw = kv_file(paths, '/etc/drlink/version', 'BUNDLE_SHA256') or ''
+    if re.fullmatch(r'[0-9a-fA-F]{64}', bundle_raw):
+        report.bundle_sha256 = bundle_raw.lower()
+    elif report.role in ('uninstalled',):
+        report.bundle_sha256 = 'not applicable'
+    elif not installed_proj:
+        report.bundle_sha256 = 'not applicable'
+    else:
+        # Installed without a recorded artifact digest (source tree / unpackaged).
+        report.bundle_sha256 = 'not applicable'
     report.frp_version = installed_frp or pinned
-    report.release_channel = kv_file(paths, '/etc/frp-auto-deploy/version', 'RELEASE_CHANNEL') or 'unknown'
-    report.source_ref = kv_file(paths, '/etc/frp-auto-deploy/version', 'SOURCE_REF') or 'unknown'
-    report.bundle_sha256 = kv_file(paths, '/etc/frp-auto-deploy/version', 'BUNDLE_SHA256') or 'unknown'
     report.embedded_version = embedded
     report.pinned_frp = pinned
+    report.project_version = installed_proj or 'legacy / unknown'
+    try:
+        from frp_version_identity import derive_display_identity
+
+        ident = derive_display_identity(
+            project_version=installed_proj or '0.0.0',
+            channel=report.release_channel,
+            source_ref=report.source_ref,
+            source_head=report.source_head,
+        )
+        report.display_identity = ident.get('display_identity') or report.project_version
+        report.release_channel = ident.get('channel') or report.release_channel
+        if ident.get('source_head'):
+            report.source_head = ident['source_head']
+    except Exception:
+        report.display_identity = report.project_version
+
 
     if not installed_proj:
         if report.role in ('uninstalled',):
@@ -1385,13 +1443,13 @@ def check_versions(report, paths, facts):
         for label, bpath in (('frps', '/usr/local/bin/frps'), ('frpc', '/usr/local/bin/frpc')):
             ver = parse_binary_version(paths, bpath)
             if ver == 'unknown' and not paths.is_file(bpath):
-                report.add('frp_version_%s' % label, FAIL, '%s binary is missing' % label, bpath, 'sudo frpctl frp-update', 'installation')
+                report.add('frp_version_%s' % label, FAIL, '%s binary is missing' % label, bpath, 'sudo drlink system update engine', 'installation')
             elif ver != pinned:
                 report.add(
                     'frp_version_%s' % label, FAIL,
                     '%s version is not the pinned release' % label,
                     'installed=%s pinned=%s' % (ver, pinned),
-                    'sudo frpctl frp-update',
+                    'sudo drlink system update engine',
                     'installation',
                 )
             else:
@@ -1420,9 +1478,9 @@ def check_versions(report, paths, facts):
 
 def check_pending(report, paths):
     markers = (
-        ('/var/lib/frp-auto-deploy/server-update-pending.json', 'server', 'pending_server_transaction'),
-        ('/var/lib/frp-auto-deploy/client-update-pending.json', 'client', 'pending_client_transaction'),
-        ('/var/lib/frp-auto-deploy/update-pending.json', 'legacy', 'pending_transaction'),
+        ('/var/lib/drlink/server-update-pending.json', 'server', 'pending_server_transaction'),
+        ('/var/lib/drlink/client-update-pending.json', 'client', 'pending_client_transaction'),
+        ('/var/lib/drlink/update-pending.json', 'legacy', 'pending_transaction'),
     )
     apply_marker = '/etc/frp/apply-pending.json'
     found = False
@@ -1432,8 +1490,8 @@ def check_pending(report, paths):
         op = str(operation or '').strip()
         if kind == 'client':
             if op in ('client-update', 'update', ''):
-                return 'interrupted client update is pending'
-            return 'interrupted client-role transaction is pending'
+                return 'interrupted Agent software update is pending'
+            return 'interrupted Agent role transaction is pending'
         if kind == 'server':
             if op == 'project-update':
                 return 'interrupted project update is pending'
@@ -1451,7 +1509,7 @@ def check_pending(report, paths):
         if op in ('frp-update',):
             return 'interrupted FRP binary update is pending (legacy marker)'
         if op in ('client-update',):
-            return 'interrupted client update is pending (legacy marker)'
+            return 'interrupted Agent software update is pending (legacy marker)'
         if op == 'install':
             return 'interrupted install is pending (legacy marker)'
         if op == 'restore':
@@ -1513,9 +1571,9 @@ def check_pending(report, paths):
         if err:
             report.add(
                 'pending_apply', FAIL,
-                'client Apply pending marker is unreadable',
+                'Agent configuration apply pending marker is unreadable',
                 err,
-                'inspect /etc/frp/apply-pending.json; run sudo frp-client manage and Apply after recovery. doctor does not clear it',
+                'inspect /etc/frp/apply-pending.json; run sudo drlink system synchronize after recovery. doctor does not clear it',
                 'state',
             )
         else:
@@ -1527,9 +1585,9 @@ def check_pending(report, paths):
             status = FAIL if failure or phase not in ('complete',) else WARN
             report.add(
                 'pending_apply', status,
-                'pending client Apply transaction',
+                'pending Agent configuration apply transaction',
                 detail,
-                'sudo frp-client manage\n  Apply the current configuration\nDoctor does not clear the pending marker.',
+                'sudo drlink system synchronize\nDoctor does not clear the pending marker.',
                 'state',
             )
             report.display['pending_apply'] = {'phase': phase, 'failure_class': failure}
@@ -1541,16 +1599,16 @@ def check_backups_and_locks(report, paths, role):
     keep = BACKUP_KEEP_DEFAULT
     dirs = []
     if role in ('server', 'dual', 'partial_server'):
-        bdir = paths.p('/var/lib/frp-auto-deploy/backups')
+        bdir = paths.p('/var/lib/drlink/backups')
         if bdir.is_dir():
-            dirs.append(('/var/lib/frp-auto-deploy/backups', bdir))
+            dirs.append(('/var/lib/drlink/backups', bdir))
     if role in ('client', 'dual', 'partial_client'):
         bdir = paths.p('/etc/frp/backups')
         if bdir.is_dir():
             dirs.append(('/etc/frp/backups', bdir))
-        udir = paths.p('/var/lib/frp-auto-deploy/client-upgrade-backups')
+        udir = paths.p('/var/lib/drlink/client-upgrade-backups')
         if not udir.is_dir():
-            udir = paths.p('/var/lib/frp-auto-deploy/backups-client')
+            udir = paths.p('/var/lib/drlink/backups-client')
         if udir.is_dir():
             dirs.append((str(udir), udir))
     if not dirs:
@@ -1600,22 +1658,22 @@ def check_backups_and_locks(report, paths, role):
             except OSError:
                 alive = False
         if alive:
-            report.add('stale_lock', INFO, 'client management lock is held by a live process', 'pid=%s' % pid, '', 'state')
+            report.add('stale_lock', INFO, 'Agent management lock is held by a live process', 'pid=%s' % pid, '', 'state')
         else:
             report.add(
                 'stale_lock', WARN,
-                'client management lock looks stale',
+                'Agent management lock looks stale',
                 'path=/etc/frp/client-manage.lock pid=%s' % (pid or 'none'),
-                'do not remove the lock from doctor; retry sudo frp-client manage after confirming no other operator session is running',
+                'do not remove the lock from doctor; retry sudo drlink after confirming no other operator session is running',
                 'state',
             )
     elif role in ('client', 'dual', 'partial_client'):
-        report.add('stale_lock', PASS, 'no client management lock is present', '', '', 'state')
+        report.add('stale_lock', PASS, 'no Agent management lock is present', '', '', 'state')
 
     for dpath, label in (
-        ('/etc/frp', 'client config directory'),
-        ('/etc/frp-auto-deploy', 'project config directory'),
-        ('/var/lib/frp-auto-deploy', 'project state directory'),
+        ('/etc/frp', 'Agent configuration directory'),
+        ('/etc/drlink', 'project config directory'),
+        ('/var/lib/drlink', 'project state directory'),
     ):
         path = paths.p(dpath)
         if not path.exists():
@@ -1643,10 +1701,10 @@ def check_access_control(report, paths, facts, cfg, registry_state):
     candidates = []
     root = os.environ.get('FRP_DEPLOY_TEST_ROOT', '')
     if root:
-        candidates.append(Path(root) / 'usr/local/lib/frp-auto-deploy/frp_access_control.py')
+        candidates.append(Path(root) / 'usr/local/lib/drlink/frp_access_control.py')
     candidates.extend([
         Path(__file__).resolve().parent / 'frp_access_control.py',
-        Path('/usr/local/lib/frp-auto-deploy/frp_access_control.py'),
+        Path('/usr/local/lib/drlink/frp_access_control.py'),
     ])
     prev_bytecode = _sys.dont_write_bytecode
     _sys.dont_write_bytecode = True
@@ -1680,7 +1738,7 @@ def check_access_control(report, paths, facts, cfg, registry_state):
         )
         return
 
-    access_rel = '/var/lib/frp-auto-deploy/access-control.json'
+    access_rel = '/var/lib/drlink/access-control.json'
     if isinstance(cfg, dict):
         configured = str(cfg.get('access_control_file') or '').strip()
         if configured.startswith('/'):
@@ -1688,10 +1746,10 @@ def check_access_control(report, paths, facts, cfg, registry_state):
     access_path = paths.p(access_rel)
     if not paths.is_file(access_rel):
         report.add(
-            'ACCESS_CONFIG_ERROR', FAIL,
-            'ACCESS_CONFIG_ERROR: access-control.json is missing',
+            'ACCESS_CONFIG_ERROR', INFO,
+            'obsolete access-control.json absent (SQLite control plane is authoritative)',
             access_rel,
-            're-run the server installer to create an empty access-control.json',
+            '',
             'state',
         )
         access_state = None
@@ -1708,7 +1766,7 @@ def check_access_control(report, paths, facts, cfg, registry_state):
                 'ACCESS_CONFIG_ERROR', FAIL,
                 'ACCESS_CONFIG_ERROR: access-control.json is invalid',
                 str(exc),
-                'restore access-control.json from backup or recreate with frp-access',
+                'remove or ignore obsolete access-control.json; use show remote-access / SQLite control plane',
                 'state',
             )
             access_state = None
@@ -1724,7 +1782,7 @@ def check_access_control(report, paths, facts, cfg, registry_state):
                 status,
                 '%s: %s' % (cls, issue.get('message') or 'issue'),
                 '',
-                'inspect Access Control with frpctl access; doctor does not rewrite ACL state',
+                'inspect Remote Access with show remote-access; diagnostics does not rewrite policy state',
                 'state',
             )
 
@@ -1760,11 +1818,11 @@ def check_access_control(report, paths, facts, cfg, registry_state):
             'installation',
         )
 
-    check_unit(report, facts, 'frp-access-plugin', 'access_plugin_service', 'frp-access-plugin.service')
+    check_unit(report, facts, 'drlink-access', 'access_plugin_service', 'drlink-access.service')
 
     # Plugin readiness: when the unit is active, /healthz must be 200.
     units = facts.get('units') or {}
-    access_unit = units.get('frp-access-plugin') or {}
+    access_unit = units.get('drlink-access') or {}
     access_active = str(access_unit.get('active') or '') == 'active'
     skip_network = bool(os.environ.get('FRP_DOCTOR_SKIP_NETWORK')) or bool(
         os.environ.get('FRP_DEPLOY_TEST_ROOT')
@@ -1789,7 +1847,7 @@ def check_access_control(report, paths, facts, cfg, registry_state):
                     'access_plugin_health', FAIL,
                     'access plugin GET /healthz returned %s' % code,
                     health_url,
-                    'inspect frp-access-plugin and authoritative Access/Registry state',
+                    'inspect drlink-access and authoritative Access/Registry state',
                     'runtime',
                 )
         except Exception as exc:
@@ -1797,7 +1855,7 @@ def check_access_control(report, paths, facts, cfg, registry_state):
                 'access_plugin_health', FAIL,
                 'access plugin GET /healthz failed',
                 '%s (%s)' % (health_url, exc),
-                'inspect frp-access-plugin and authoritative Access/Registry state',
+                'inspect drlink-access and authoritative Access/Registry state',
                 'runtime',
             )
     elif access_active and skip_network:
@@ -1807,7 +1865,7 @@ def check_access_control(report, paths, facts, cfg, registry_state):
             '', '', 'runtime',
         )
 
-    log_rel = '/var/log/frp-auto-deploy/access-conn.jsonl'
+    log_rel = '/var/log/drlink/access/connections.jsonl'
     if isinstance(cfg, dict):
         configured_log = str(cfg.get('access_conn_log_file') or '').strip()
         if configured_log.startswith('/'):
@@ -1819,7 +1877,7 @@ def check_access_control(report, paths, facts, cfg, registry_state):
             'ACCESS_LOG_ERROR', FAIL,
             'ACCESS_LOG_ERROR: access connection log directory is missing',
             log_dir_rel,
-            're-run the server installer so /var/log/frp-auto-deploy is created',
+            're-run the server installer so /var/log/drlink/access is created',
             'state',
         )
     elif not os.access(str(log_dir), os.W_OK):
@@ -1827,7 +1885,7 @@ def check_access_control(report, paths, facts, cfg, registry_state):
             'ACCESS_LOG_ERROR', FAIL,
             'ACCESS_LOG_ERROR: access connection log directory is not writable',
             log_dir_rel,
-            'ensure /var/log/frp-auto-deploy is writable by the access plugin',
+            'ensure /var/log/drlink/access is writable by the access plugin',
             'state',
         )
     else:
@@ -1842,11 +1900,16 @@ def check_unit(report, facts, unit, check_id, label):
     systemd_usable = bool(facts.get('systemd_usable'))
     units = facts.get('units') or {}
     info = units.get(unit) or {}
-    darwin_frpc = unit == 'frpc' and _facts_is_darwin(facts)
-    if darwin_frpc:
-        label = _frpc_runtime_label(facts)
+    darwin_job = None
+    if _facts_is_darwin(facts):
+        if unit == 'frpc':
+            darwin_job = _doctor_launchd_label()
+            label = _frpc_runtime_label(facts)
+        elif unit == 'drlink-lifecycle':
+            darwin_job = _doctor_lifecycle_launchd_label()
+            label = 'launchd job %s' % darwin_job
     if not systemd_usable and not info:
-        unavailable = 'launchd state unavailable' if darwin_frpc else 'systemd unavailable'
+        unavailable = 'launchd state unavailable' if darwin_job else 'systemd unavailable'
         report.add(check_id, NOT_TESTED, '%s was not tested (%s)' % (label, unavailable), '', '', 'runtime')
         return 'not_tested'
     active = str(info.get('active') or 'unknown')
@@ -1858,9 +1921,16 @@ def check_unit(report, facts, unit, check_id, label):
         detail = 'state=%s' % active
         if journal:
             detail += '\n' + redact(journal)
-        recovery = _frpc_runtime_recovery(facts) if darwin_frpc else (
-            'inspect the unit with systemctl status %s; doctor does not restart services' % unit
-        )
+        if darwin_job:
+            recovery = (
+                'inspect the job with launchctl print system/%s; doctor does not restart services'
+                % darwin_job
+            )
+        else:
+            recovery = (
+                'inspect the unit with systemctl status %s; doctor does not restart services'
+                % (label[:-8] if label.endswith('.service') else label)
+            )
         report.add(
             check_id, FAIL,
             '%s is not active' % label,
@@ -1868,6 +1938,10 @@ def check_unit(report, facts, unit, check_id, label):
             recovery,
             'runtime',
         )
+        return active
+    if active in ('activating', 'deactivating', 'reloading'):
+        report.add(check_id, WARN, '%s is %s; runtime readiness is not established' % (label, active),
+                   'state=%s' % active, 'inspect runtime status and retry diagnostics after the transition', 'runtime')
         return active
     report.add(check_id, NOT_TESTED, '%s state is unknown' % label, 'state=%s' % active, '', 'runtime')
     return active
@@ -1917,10 +1991,10 @@ def check_service_profiles(report, paths, facts, cfg):
     candidates = []
     root = os.environ.get('FRP_DEPLOY_TEST_ROOT', '')
     if root:
-        candidates.append(Path(root) / 'usr/local/lib/frp-auto-deploy/frp_service_profiles.py')
+        candidates.append(Path(root) / 'usr/local/lib/drlink/frp_service_profiles.py')
     candidates.extend([
         Path(__file__).resolve().parent / 'frp_service_profiles.py',
-        Path('/usr/local/lib/frp-auto-deploy/frp_service_profiles.py'),
+        Path('/usr/local/lib/drlink/frp_service_profiles.py'),
     ])
     prev_bytecode = _sys.dont_write_bytecode
     _sys.dont_write_bytecode = True
@@ -1954,17 +2028,17 @@ def check_service_profiles(report, paths, facts, cfg):
         )
         return
 
-    profiles_rel = '/var/lib/frp-auto-deploy/service-profiles.json'
+    profiles_rel = '/var/lib/drlink/service-profiles.json'
     if isinstance(cfg, dict):
         configured = str(cfg.get('service_profiles_file') or '').strip()
         if configured.startswith('/'):
             profiles_rel = configured
     if not paths.is_file(profiles_rel):
         report.add(
-            'SERVICE_PROFILES_ERROR', FAIL,
-            'SERVICE_PROFILES_ERROR: service-profiles.json is missing',
+            'SERVICE_PROFILES_ERROR', INFO,
+            'obsolete service-profiles.json absent (Service Objects and Agent Remote Services are authoritative)',
             profiles_rel,
-            're-run the server installer to create an empty service-profiles.json',
+            '',
             'state',
         )
         return
@@ -1984,7 +2058,7 @@ def check_service_profiles(report, paths, facts, cfg):
             'SERVICE_PROFILES_ERROR', FAIL,
             'SERVICE_PROFILES_ERROR: service-profiles.json is invalid',
             str(exc),
-            'restore service-profiles.json from backup or recreate with frpctl create profile',
+            'ignore obsolete service-profiles.json; use Service Objects and Agent Remote Services',
             'state',
         )
         return
@@ -1997,21 +2071,669 @@ def check_service_profiles(report, paths, facts, cfg):
             status,
             '%s: %s' % (cls, issue.get('message') or 'issue'),
             '',
-            'inspect Service Profiles with frpctl show profiles',
+            'inspect current Service Objects and Agent Remote Services',
             'state',
         )
 
 
 
+
+def check_audit_log(report, paths, facts, cfg):
+    """Read-only audit subsystem health (fail-open writes must still be visible)."""
+    audit_rel = '/var/log/drlink/audit.jsonl'
+    audit_path = paths.p(audit_rel)
+    parent = audit_path.parent
+    if not parent.exists():
+        report.add(
+            'AUDIT_PATH', WARN,
+            'audit log directory is missing',
+            str(audit_rel),
+            'Audit writes are fail-open; create the log directory on the next install/update if needed',
+            'state',
+        )
+        return
+    if not audit_path.exists():
+        report.add(
+            'AUDIT_PATH', INFO,
+            'audit log file not present yet',
+            str(audit_rel),
+            'Appears after the first auditable server operation',
+            'state',
+        )
+        return
+    try:
+        st = audit_path.stat()
+        mode = stat.S_IMODE(st.st_mode)
+        if mode & 0o077:
+            report.add(
+                'AUDIT_PERMISSIONS', WARN,
+                'audit log permissions are too open',
+                oct(mode),
+                'Expected owner-only access (0600); inspect without mutating the log',
+                'state',
+            )
+        else:
+            report.add(
+                'AUDIT_PERMISSIONS', PASS,
+                'audit log permissions look safe',
+                oct(mode),
+                '',
+                'state',
+            )
+        # Rotation consistency: rotated siblings should be files, not hostile types.
+        rotated = sorted(parent.glob('audit.jsonl.*'))
+        bad = [p.name for p in rotated if p.is_symlink() or not p.is_file()]
+        if bad:
+            report.add(
+                'AUDIT_ROTATION', WARN,
+                'audit rotation siblings look inconsistent',
+                ','.join(bad[:5]),
+                'Inspect rotated audit files; doctor does not mutate the audit log',
+                'state',
+            )
+        else:
+            report.add(
+                'AUDIT_ROTATION', PASS if rotated else INFO,
+                'audit rotation state looks consistent' if rotated else 'no rotated audit files yet',
+                'rotated=%d' % len(rotated),
+                '',
+                'state',
+            )
+        report.add(
+            'AUDIT_PATH', PASS,
+            'audit log path exists',
+            str(audit_rel),
+            '',
+            'state',
+        )
+    except OSError as exc:
+        report.add(
+            'AUDIT_PATH', WARN,
+            'audit log path is not readable',
+            str(exc),
+            'Run: sudo drlink system diagnostics',
+            'state',
+        )
+
+
+def egress_snapshot_missing_diagnosis(parent):
+    """Explain a missing egress snapshot, including a non-traversable parent."""
+    detail = '/run/drlink/egress/effective.json'
+    remedy = (
+        'Run: sudo drlink system diagnostics\n'
+        'If Data Relay Link remains unhealthy: inspect journalctl -u drlink-egress'
+    )
+    try:
+        if parent.is_dir():
+            mode = stat.S_IMODE(parent.stat().st_mode)
+            if mode & 0o011 == 0:
+                detail = 'parent /run/drlink mode %04o blocks drlink-egress traversal' % mode
+                remedy = (
+                    'Restart drlink-egress so it restores traverse permission on /run/drlink. '
+                    'Sibling RuntimeDirectory=drlink/* units must not leave that parent at 0700.'
+                )
+    except OSError as exc:
+        detail = 'cannot inspect /run/drlink: %s' % exc
+    return detail, remedy
+
+
+def check_egress_control(report, paths, facts, cfg):
+    """Validate Controlled Egress policy, unit, and listen configuration (read-only)."""
+    import importlib.util
+    import sys as _sys
+
+    eg = None
+    candidates = []
+    root = os.environ.get('FRP_DEPLOY_TEST_ROOT', '')
+    if root:
+        candidates.append(Path(root) / 'usr/local/lib/drlink/frp_egress_control.py')
+    candidates.extend([
+        Path(__file__).resolve().parent / 'frp_egress_control.py',
+        Path('/usr/local/lib/drlink/frp_egress_control.py'),
+    ])
+    prev_bytecode = _sys.dont_write_bytecode
+    _sys.dont_write_bytecode = True
+    try:
+        for candidate in candidates:
+            if not candidate.is_file():
+                continue
+            try:
+                spec = importlib.util.spec_from_file_location('frp_egress_control', str(candidate))
+                eg = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(eg)
+                break
+            except Exception as exc:
+                report.add(
+                    'EGRESS_CONFIG_ERROR', FAIL,
+                    'EGRESS_CONFIG_ERROR: egress control module failed to load',
+                    str(exc),
+                    're-run the server installer',
+                    'state',
+                )
+                return
+    finally:
+        _sys.dont_write_bytecode = prev_bytecode
+    if eg is None:
+        report.add(
+            'EGRESS_CONFIG_ERROR', FAIL,
+            'EGRESS_CONFIG_ERROR: frp_egress_control.py is missing',
+            '',
+            're-run the server installer',
+            'installation',
+        )
+        return
+
+    egress_rel = '/var/lib/drlink/egress-control.json'
+    if isinstance(cfg, dict):
+        configured = str(cfg.get('egress_control_file') or '').strip()
+        if configured.startswith('/'):
+            egress_rel = configured
+    if not paths.is_file(egress_rel):
+        report.add(
+            'EGRESS_CONFIG_ERROR', INFO,
+            'obsolete egress-control.json absent (SQLite Internet Access is authoritative)',
+            egress_rel,
+            '',
+            'state',
+        )
+        return
+    try:
+        egress_path = paths.p(egress_rel)
+        state = eg.load_egress_state(
+            path=egress_path,
+            cfg=cfg if isinstance(cfg, dict) else None,
+            persist_migration=False,  # doctor is read-only
+        )
+        report.add(
+            'EGRESS_CONFIG_ERROR', PASS,
+            'egress-control.json is readable and valid',
+            egress_rel, '', 'state',
+        )
+    except Exception as exc:
+        report.add(
+            'EGRESS_CONFIG_ERROR', FAIL,
+            'EGRESS_CONFIG_ERROR: egress-control.json is invalid (fail-closed)',
+            str(exc),
+            'ignore obsolete egress-control.json; use show internet-access / Fixed TCP',
+            'state',
+        )
+        return
+
+    try:
+        host, port = eg.listen_bind(cfg if isinstance(cfg, dict) else None)
+        report.add(
+            'EGRESS_LISTEN', INFO,
+            'Controlled Egress listen configured',
+            '%s:%s' % (host, port),
+            '',
+            'runtime',
+        )
+        if host in ('0.0.0.0', '::', '*'):
+            report.add(
+                'EGRESS_LISTEN_BIND', WARN,
+                'Controlled Egress listens on all interfaces',
+                host,
+                'prefer an internal/trusted egress_listen_addr (e.g. management LAN)',
+                'runtime',
+            )
+        else:
+            report.add(
+                'EGRESS_LISTEN_BIND', PASS,
+                'Controlled Egress listen address is scoped',
+                host,
+                '',
+                'runtime',
+            )
+    except Exception as exc:
+        report.add(
+            'EGRESS_CONFIG_ERROR', FAIL,
+            'EGRESS_CONFIG_ERROR: invalid egress listen configuration',
+            str(exc),
+            'fix egress_listen_addr / egress_listen_port in config.json',
+            'state',
+        )
+        return
+
+    infra = None
+    for candidate in [
+        Path(__file__).resolve().parent / 'frp_infrastructure_ports.py',
+        Path('/usr/local/lib/drlink/frp_infrastructure_ports.py'),
+    ] + ([Path(root) / 'usr/local/lib/drlink/frp_infrastructure_ports.py'] if root else []):
+        if candidate.is_file():
+            try:
+                spec = importlib.util.spec_from_file_location('frp_infrastructure_ports', str(candidate))
+                infra = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(infra)
+                break
+            except Exception:
+                pass
+    if infra is not None:
+        try:
+            registry_path = paths.p('/var/lib/drlink/registry.json')
+            registry = {}
+            if registry_path.is_file():
+                registry = json.loads(registry_path.read_text(encoding='utf-8'))
+            infra.assert_egress_not_owned_by_service(cfg if isinstance(cfg, dict) else None, registry)
+            colliding = infra.infrastructure_ports_in_service_range(cfg if isinstance(cfg, dict) else None)
+            if colliding:
+                report.add(
+                    'EGRESS_PORT_COLLISION', FAIL,
+                    'infrastructure egress port collides with service range',
+                    ', '.join(str(p) for p in sorted(colliding)),
+                    'change egress_listen_port or service port range',
+                    'state',
+                )
+            else:
+                report.add(
+                    'EGRESS_PORT_COLLISION', PASS,
+                    'egress listen port does not collide with service range',
+                    '', '', 'state',
+                )
+        except Exception as exc:
+            report.add(
+                'EGRESS_PORT_COLLISION', FAIL,
+                'egress port collision check failed',
+                str(exc),
+                'inspect egress_listen_port and registry allocations',
+                'state',
+            )
+
+    conn_rel = '/var/log/drlink/egress/connections.jsonl'
+    if isinstance(cfg, dict):
+        configured = str(cfg.get('egress_conn_log_file') or '').strip()
+        if configured.startswith('/'):
+            conn_rel = configured
+    if paths.is_file(conn_rel):
+        report.add('EGRESS_CONN_LOG', PASS, 'egress connection log path exists', conn_rel, '', 'state')
+    else:
+        report.add(
+            'EGRESS_CONN_LOG', WARN,
+            'egress connection log path is missing',
+            conn_rel,
+            're-run the server installer or create the log directory',
+            'state',
+        )
+
+    unit_active = 'unknown'
+    unit_enabled = 'unknown'
+    # Respect the same systemd isolation rules as frp-doctor-common.sh so
+    # fixtures/test roots never observe the host's live egress units.
+    _systemd_ok = (
+        os.environ.get('FRP_SKIP_SYSTEMD') != '1'
+        and (
+            os.environ.get('FRP_DOCTOR_FORCE_SYSTEMD') == '1'
+            or not os.environ.get('FRP_DEPLOY_TEST_ROOT')
+        )
+    )
+    if _systemd_ok:
+        try:
+            import subprocess
+            proc = subprocess.run(
+                ['systemctl', 'is-active', 'drlink-egress'],
+                capture_output=True, text=True, timeout=5,
+            )
+            unit_active = (proc.stdout or '').strip() or 'unknown'
+            proc = subprocess.run(
+                ['systemctl', 'is-enabled', 'drlink-egress'],
+                capture_output=True, text=True, timeout=5,
+            )
+            unit_enabled = (proc.stdout or '').strip() or 'unknown'
+        except Exception:
+            pass
+    if unit_enabled in ('enabled', 'static', 'linked'):
+        report.add('EGRESS_UNIT_ENABLED', PASS, 'drlink-egress is enabled', unit_enabled, '', 'runtime')
+    elif unit_enabled == 'disabled':
+        report.add(
+            'EGRESS_UNIT_ENABLED', WARN,
+            'drlink-egress is disabled',
+            unit_enabled,
+            'Run: sudo drlink system diagnostics\nIf needed: enable unit drlink-egress (doctor will not change units)',
+            'runtime',
+        )
+    else:
+        report.add(
+            'EGRESS_UNIT_ENABLED', INFO,
+            'drlink-egress enable state is unknown',
+            unit_enabled,
+            '',
+            'runtime',
+        )
+    if unit_active == 'active':
+        report.add('EGRESS_UNIT', PASS, 'drlink-egress is active', unit_active, '', 'runtime')
+    elif unit_active == 'failed':
+        report.add('EGRESS_UNIT', FAIL, 'drlink-egress failed', unit_active, 'Run: sudo drlink system diagnostics\nIf needed: inspect systemctl status drlink-egress', 'runtime')
+    else:
+        report.add('EGRESS_UNIT', WARN, 'drlink-egress is not active', unit_active, 'Run: sudo drlink system diagnostics\nIf needed: inspect systemctl status drlink-egress', 'runtime')
+
+    # Fixed TCP Egress unit + listener collision surface (same policy file).
+    tcp_unit_active = 'unknown'
+    tcp_unit_enabled = 'unknown'
+    if _systemd_ok:
+        try:
+            import subprocess
+            proc = subprocess.run(
+                ['systemctl', 'is-active', 'drlink-tcp-egress'],
+                capture_output=True, text=True, timeout=5,
+            )
+            tcp_unit_active = (proc.stdout or '').strip() or 'unknown'
+            proc = subprocess.run(
+                ['systemctl', 'is-enabled', 'drlink-tcp-egress'],
+                capture_output=True, text=True, timeout=5,
+            )
+            tcp_unit_enabled = (proc.stdout or '').strip() or 'unknown'
+        except Exception:
+            pass
+    if tcp_unit_enabled in ('enabled', 'static', 'linked'):
+        report.add(
+            'EGRESS_TCP_UNIT_ENABLED', PASS,
+            'drlink-tcp-egress is enabled',
+            tcp_unit_enabled, '', 'runtime',
+        )
+    elif tcp_unit_enabled == 'disabled':
+        report.add(
+            'EGRESS_TCP_UNIT_ENABLED', WARN,
+            'drlink-tcp-egress is disabled',
+            tcp_unit_enabled,
+            'Run: sudo drlink system diagnostics\nIf needed: enable unit drlink-tcp-egress (doctor will not change units)',
+            'runtime',
+        )
+    else:
+        report.add(
+            'EGRESS_TCP_UNIT_ENABLED', INFO,
+            'drlink-tcp-egress enable state is unknown',
+            tcp_unit_enabled, '', 'runtime',
+        )
+    if tcp_unit_active == 'active':
+        report.add(
+            'EGRESS_TCP_UNIT', PASS,
+            'drlink-tcp-egress is active',
+            tcp_unit_active, '', 'runtime',
+        )
+    elif tcp_unit_active == 'failed':
+        report.add(
+            'EGRESS_TCP_UNIT', FAIL,
+            'drlink-tcp-egress failed',
+            tcp_unit_active,
+            'Run: sudo drlink system diagnostics\nIf needed: inspect systemctl status drlink-tcp-egress',
+            'runtime',
+        )
+    else:
+        report.add(
+            'EGRESS_TCP_UNIT', WARN,
+            'drlink-tcp-egress is not active',
+            tcp_unit_active,
+            'Run: sudo drlink system diagnostics\nIf needed: inspect systemctl status drlink-tcp-egress',
+            'runtime',
+        )
+
+    tcp_unit_file = Path('/etc/systemd/system/drlink-tcp-egress.service')
+    if root:
+        candidate_tcp = Path(root) / 'etc/systemd/system/drlink-tcp-egress.service'
+        if candidate_tcp.is_file():
+            tcp_unit_file = candidate_tcp
+        else:
+            src_tcp = Path(__file__).resolve().parent.parent / 'server' / 'drlink-tcp-egress.service'
+            if src_tcp.is_file():
+                tcp_unit_file = src_tcp
+    if tcp_unit_file.is_file():
+        try:
+            tcp_unit_text = tcp_unit_file.read_text(encoding='utf-8', errors='replace')
+        except OSError:
+            tcp_unit_text = ''
+        if re.search(r'(?m)^User=drlink-egress\s*$', tcp_unit_text):
+            report.add(
+                'EGRESS_TCP_SERVICE_USER', PASS,
+                'drlink-tcp-egress runs as unprivileged user',
+                'drlink-egress', '', 'runtime',
+            )
+        else:
+            report.add(
+                'EGRESS_TCP_SERVICE_USER', WARN,
+                'drlink-tcp-egress unit is not configured for User=drlink-egress',
+                '',
+                're-run the server installer to apply non-root Fixed TCP Egress',
+                'runtime',
+            )
+
+    try:
+        relays = eg.list_tcp_relays(state) if hasattr(eg, 'list_tcp_relays') else []
+    except Exception:
+        relays = []
+    report.add(
+        'EGRESS_TCP_RELAYS', INFO,
+        'Fixed TCP Egress relays',
+        'count=%d enabled=%d'
+        % (
+            len(relays),
+            sum(1 for _rid, relay in relays if isinstance(relay, dict) and relay.get('enabled')),
+        ),
+        '',
+        'state',
+    )
+    for rid, relay in relays:
+        if not isinstance(relay, dict):
+            continue
+        try:
+            port = int(relay.get('listen_port'))
+        except (TypeError, ValueError):
+            report.add(
+                'EGRESS_TCP_LISTEN', FAIL,
+                'tcp relay has invalid listen_port',
+                str(rid),
+                'Run: sudo drlink show service-objects; then inspect the owning Agent Host with sudo drlink show managed-host <HOST> remote-services',
+                'state',
+            )
+            continue
+        try:
+            registry_local = {}
+            registry_path = paths.p('/var/lib/drlink/registry.json')
+            if registry_path.is_file():
+                try:
+                    registry_local = json.loads(registry_path.read_text(encoding='utf-8'))
+                except Exception:
+                    registry_local = {}
+            eg.assert_tcp_relay_listen_port_allowed(
+                port,
+                state,
+                cfg=cfg if isinstance(cfg, dict) else None,
+                registry=registry_local if isinstance(registry_local, dict) else None,
+                exclude_relay_id=rid,
+            )
+            report.add(
+                'EGRESS_TCP_LISTEN', PASS,
+                'tcp relay listen port is free of protected collisions',
+                '%s:%s' % (relay.get('listen_addr'), port),
+                '',
+                'state',
+            )
+        except Exception as exc:
+            report.add(
+                'EGRESS_TCP_LISTEN', FAIL,
+                'tcp relay listen port collision',
+                '%s (%s)' % (port, exc),
+                'change listen port or migrate conflicting service',
+                'state',
+            )
+
+    tcp_effective = '/run/drlink/tcp-egress/effective.json'
+    if paths.is_file(tcp_effective):
+        try:
+            effective_tcp = json.loads(paths.p(tcp_effective).read_text(encoding='utf-8'))
+            healthy_tcp = bool(effective_tcp.get('healthy'))
+            if healthy_tcp:
+                report.add(
+                    'EGRESS_TCP_EFFECTIVE', PASS,
+                    'Fixed TCP Egress effective runtime is healthy',
+                    'generation=%s' % effective_tcp.get('policy_generation'),
+                    '',
+                    'runtime',
+                )
+            else:
+                report.add(
+                    'EGRESS_TCP_EFFECTIVE', FAIL,
+                    'Fixed TCP Egress effective runtime is unhealthy (fail-closed)',
+                    str(effective_tcp.get('load_error') or ''),
+                    'Run: sudo drlink show service-objects; then inspect the owning Agent Host with sudo drlink show managed-host <HOST> remote-services',
+                    'runtime',
+                )
+        except Exception as exc:
+            report.add(
+                'EGRESS_TCP_EFFECTIVE', WARN,
+                'Fixed TCP Egress effective runtime snapshot is unreadable',
+                str(exc),
+                'Run: sudo drlink system diagnostics\nIf Data Relay Link remains unhealthy: inspect journalctl -u drlink-tcp-egress',
+                'runtime',
+            )
+    elif tcp_unit_active == 'active':
+        report.add(
+            'EGRESS_TCP_EFFECTIVE', WARN,
+            'Fixed TCP Egress unit is active but effective snapshot is missing',
+            tcp_effective,
+            'Run: sudo drlink system diagnostics\nIf Data Relay Link remains unhealthy: inspect journalctl -u drlink-tcp-egress',
+            'runtime',
+        )
+
+    # Least-privilege service identity + runtime effective snapshot (read-only).
+    unit_file = Path('/etc/systemd/system/drlink-egress.service')
+    if root:
+        candidate_unit = Path(root) / 'etc/systemd/system/drlink-egress.service'
+        if candidate_unit.is_file():
+            unit_file = candidate_unit
+        else:
+            src_unit = Path(__file__).resolve().parent.parent / 'server' / 'drlink-egress.service'
+            if src_unit.is_file():
+                unit_file = src_unit
+    if unit_file.is_file():
+        try:
+            unit_text = unit_file.read_text(encoding='utf-8', errors='replace')
+        except OSError:
+            unit_text = ''
+        if re.search(r'(?m)^User=drlink-egress\s*$', unit_text):
+            report.add(
+                'EGRESS_SERVICE_USER', PASS,
+                'drlink-egress runs as unprivileged user',
+                'drlink-egress', '', 'runtime',
+            )
+        elif re.search(r'(?m)^User=root\s*$', unit_text) or not re.search(r'(?m)^User=', unit_text):
+            report.add(
+                'EGRESS_SERVICE_USER', WARN,
+                'drlink-egress unit is not configured for User=drlink-egress',
+                '',
+                're-run the server installer to apply non-root egress',
+                'runtime',
+            )
+        else:
+            m = re.search(r'(?m)^User=(\S+)', unit_text)
+            report.add(
+                'EGRESS_SERVICE_USER', INFO,
+                'drlink-egress unit User is set',
+                m.group(1) if m else '',
+                '',
+                'runtime',
+            )
+    # Prefer isolated runtime dir (RuntimeDirectory=drlink/egress); fall back
+    # to the legacy shared /run/drlink path for already-running daemons.
+    effective_candidates = (
+        '/run/drlink/egress/effective.json',
+        '/run/drlink/egress-effective.json',
+    )
+    effective_rel = next((p for p in effective_candidates if paths.is_file(p)), None)
+    if effective_rel:
+        try:
+            effective = json.loads(paths.p(effective_rel).read_text(encoding='utf-8'))
+            healthy = bool(effective.get('policy_healthy'))
+            generation = effective.get('policy_generation')
+            if healthy:
+                report.add(
+                    'EGRESS_EFFECTIVE_CONFIG', PASS,
+                    'egress effective policy is healthy',
+                    'generation=%s path=%s' % (generation, effective_rel),
+                    '',
+                    'runtime',
+                )
+            else:
+                report.add(
+                    'EGRESS_EFFECTIVE_CONFIG', FAIL,
+                    'egress effective policy is unhealthy (fail-closed)',
+                    'generation=%s path=%s' % (generation, effective_rel),
+                    'Run: sudo drlink show internet-access',
+                    'runtime',
+                )
+            report.add(
+                'EGRESS_POLICY_GENERATION', INFO,
+                'compiled policy generation',
+                str(generation),
+                '',
+                'runtime',
+            )
+            report.add(
+                'EGRESS_RESOURCE_LIMITS', INFO,
+                'egress concurrency limits',
+                'global=%s per_source=%s dns_pending=%s' % (
+                    effective.get('max_concurrent'),
+                    effective.get('per_source_limit'),
+                    effective.get('dns_pending_limit'),
+                ),
+                '',
+                'runtime',
+            )
+        except Exception as exc:
+            report.add(
+                'EGRESS_EFFECTIVE_CONFIG', FAIL,
+                'egress effective runtime snapshot is unreadable',
+                str(exc),
+                'Run: sudo drlink system diagnostics\nIf Data Relay Link remains unhealthy: inspect journalctl -u drlink-egress',
+                'runtime',
+            )
+    elif unit_active == 'active':
+        detail, remedy = egress_snapshot_missing_diagnosis(paths.p('/run/drlink'))
+        report.add(
+            'EGRESS_EFFECTIVE_CONFIG', FAIL,
+            'egress unit is active but effective policy snapshot is missing',
+            detail,
+            remedy,
+            'runtime',
+        )
+    else:
+        report.add(
+            'EGRESS_EFFECTIVE_CONFIG', INFO,
+            'egress effective runtime snapshot not present (unit inactive)',
+            '/run/drlink/egress/effective.json',
+            'appears after drlink-egress starts',
+            'runtime',
+        )
+
+    for issue in eg.doctor_issues(state):
+        cls = str(issue.get('class') or 'EGRESS_CONFIG_ERROR')
+        severity = str(issue.get('severity') or 'error').lower()
+        status = FAIL if severity == 'error' else (WARN if severity == 'warn' else INFO)
+        message = '%s: %s' % (cls, issue.get('message') or 'issue')
+        if paths.is_file('/var/lib/drlink/drlink.db'):
+            # Legacy profile metadata is not the current authorization policy.
+            # Preserve its validation severity and all runtime health probes,
+            # but never infer current allow/deny from obsolete profile counts.
+            message = 'obsolete egress-control.json: %s; SQLite Internet Access is authoritative' % (
+                'profile metadata only' if severity == 'info' else (issue.get('message') or 'issue')
+            )
+        report.add(
+            cls,
+            status,
+            message,
+            '',
+            'inspect Internet Access with sudo drlink show internet-access',
+            'state',
+        )
+
+
 def check_server(report, paths, facts, skip_network):
     expect_root = bool(facts.get('expect_root_owner'))
-    cfg, err = load_json_path(paths, '/etc/frp-auto-deploy/config.json')
+    cfg, err = load_json_path(paths, '/etc/drlink/config.json')
     if err:
         report.add(
             'server_config', FAIL,
             'server config.json is %s' % err,
             '',
-            'restore /etc/frp-auto-deploy/config.json from backup or re-run the server installer',
+            'restore /etc/drlink/config.json from backup or re-run the server installer',
             'installation',
         )
         cfg = {}
@@ -2063,11 +2785,11 @@ def check_server(report, paths, facts, skip_network):
                     here = Path(__file__).resolve().parent
                     candidates = [
                         here / 'frp_server_config.py',
-                        Path('/usr/local/lib/frp-auto-deploy/frp_server_config.py'),
+                        Path('/usr/local/lib/drlink/frp_server_config.py'),
                     ]
                     root = os.environ.get('FRP_DEPLOY_TEST_ROOT', '')
                     if root:
-                        candidates.insert(1, Path(root) / 'usr/local/lib/frp-auto-deploy/frp_server_config.py')
+                        candidates.insert(1, Path(root) / 'usr/local/lib/drlink/frp_server_config.py')
                     for path in candidates:
                         if path.is_file():
                             spec = importlib.util.spec_from_file_location('frp_server_config', str(path))
@@ -2145,29 +2867,53 @@ def check_server(report, paths, facts, skip_network):
             if last.get('id') == 'server_token' and last.get('status') == PASS:
                 last['message'] = 'FRP token is present and permission-safe'
 
-    registry_path = '/var/lib/frp-auto-deploy/registry.json'
+    registry_path = '/var/lib/drlink/runtime/client-inventory.json'
     if cfg:
         registry_path = str(cfg.get('registry_file') or registry_path)
         if not registry_path.startswith('/'):
-            registry_path = '/var/lib/frp-auto-deploy/registry.json'
+            registry_path = '/var/lib/drlink/runtime/client-inventory.json'
+    # Prefer derived inventory; fall back to legacy filename only for diagnostics.
     state, err = load_json_path(paths, registry_path)
+    if err and registry_path.endswith('/client-inventory.json'):
+        legacy = '/var/lib/drlink/registry.json'
+        state2, err2 = load_json_path(paths, legacy)
+        if not err2:
+            state, err = state2, None
+            registry_path = legacy
+    control_db = '/var/lib/drlink/drlink.db'
+    if cfg and str(cfg.get('control_db_file') or '').startswith('/'):
+        control_db = str(cfg.get('control_db_file'))
+    if paths.is_file(control_db):
+        report.add(
+            'control_plane_db', PASS,
+            'SQLite control plane database is present',
+            control_db, '', 'state',
+        )
+    else:
+        report.add(
+            'control_plane_db', FAIL,
+            'SQLite control plane database is missing',
+            control_db,
+            're-run the server installer; doctor does not create drlink.db',
+            'state',
+        )
     if err:
         report.add(
-            'server_registry', FAIL,
-            'registry.json is %s' % err,
-            '',
-            'restore the registry from backup; doctor does not rewrite it',
+            'server_registry', INFO if paths.is_file(control_db) else FAIL,
+            'derived Managed Host inventory is %s' % err,
+            registry_path,
+            'rebuild from SQLite or restore backup; inventory is not policy authority',
             'state',
         )
     else:
         status, message, extra = validate_registry(state, cfg if isinstance(cfg, dict) else None)
         rec = ''
         if status == FAIL:
-            rec = 'restore registry.json from a known-good backup; doctor does not repair it'
+            rec = 'rebuild derived Managed Host inventory from SQLite; doctor does not repair it'
         report.add('server_registry', status, message, '; '.join(extra[:4]) if extra and status != PASS else '', rec, 'state')
         check_permissions(report, paths, registry_path, 'server_registry_permissions', secret=True, expect_root=expect_root, section='security')
 
-    pki_dir = '/etc/frp-auto-deploy/pki'
+    pki_dir = '/etc/drlink/pki'
     if cfg:
         ca_cfg = str(cfg.get('tls_ca_cert') or '')
         if ca_cfg.endswith('/ca.crt'):
@@ -2254,21 +3000,21 @@ def check_server(report, paths, facts, skip_network):
         else:
             report.add('allocator_san', PASS, 'allocator certificate SAN covers the configured identities', '', '', 'security')
 
-    if not paths.is_file('/usr/local/lib/frp-auto-deploy/frp-port-allocator.py'):
+    if not paths.is_file('/usr/local/lib/drlink/frp-port-allocator.py'):
         report.add('allocator_python', FAIL, 'allocator Python is missing', '', 're-run the server installer', 'installation')
     else:
         report.add('allocator_python', PASS, 'allocator Python is present', '', '', 'installation')
 
-    frps_state = check_unit(report, facts, 'frps', 'frps_service', 'frps.service')
-    alloc_state = check_unit(report, facts, 'frp-port-allocator', 'allocator_service', 'frp-port-allocator.service')
+    frps_state = check_unit(report, facts, 'frps', 'frps_service', 'drlink-server.service')
+    alloc_state = check_unit(report, facts, 'drlink-allocator', 'allocator_service', 'drlink-allocator.service')
     if cfg:
         ports = server_config_ports(cfg)
         check_port_collision(report, facts, ports.get('frp_listen'), frps_state, 'frps_listen_port', 'frps')
         check_port_collision(report, facts, ports.get('alloc_listen'), alloc_state, 'allocator_listen_port', 'allocator')
         if ports.get('deployment_mode') == 'single443':
-            frontend_state = check_unit(report, facts, 'frp-frontend', 'frontend_service', 'frp-frontend.service')
+            frontend_state = check_unit(report, facts, 'drlink-frontend', 'frontend_service', 'drlink-frontend.service')
             check_port_collision(report, facts, ports.get('frp_public'), frontend_state, 'frontend_listen_port', 'frontend')
-            conf = paths.p('/etc/frp-auto-deploy/frontend.conf')
+            conf = paths.p('/etc/drlink/frontend.conf')
             if conf.is_file():
                 text = conf.read_text(encoding='utf-8', errors='replace')
                 missing = []
@@ -2318,7 +3064,7 @@ def check_server(report, paths, facts, skip_network):
     else:
         cls = net.get('error_class') or 'unreachable'
         status = FAIL if cls in ('UNKNOWN_CA', 'HOSTNAME_MISMATCH', 'EXPIRED_CERT', 'HTTP_500', 'HTTP_404') else WARN
-        rec = 'inspect frp-port-allocator.service; doctor does not restart it'
+        rec = 'inspect drlink-allocator.service; doctor does not restart it'
         if cls in ('UNKNOWN_CA', 'HOSTNAME_MISMATCH', 'EXPIRED_CERT'):
             rec = 're-run the server installer to reissue the allocator certificate under the existing CA'
             status = FAIL
@@ -2352,11 +3098,11 @@ def check_server(report, paths, facts, skip_network):
             )
         else:
             cls = fe_net.get('error_class') or 'unreachable'
-            rec = 'inspect frp-frontend.service and frontend.conf; doctor does not restart it'
+            rec = 'inspect drlink-frontend.service and frontend.conf; doctor does not restart it'
             if alloc_ok:
                 rec = (
                     'allocator backend /healthz succeeded but the public frontend proxy failed. '
-                    'Clients cannot use TCP/443. Re-run the server installer; do not disable proxy_ssl_verify.'
+                    'Agents cannot use TCP/443. Re-run the server installer; do not disable proxy_ssl_verify.'
                 )
             report.add(
                 'frontend_proxy_health', FAIL,
@@ -2370,7 +3116,7 @@ def check_server(report, paths, facts, skip_network):
         if fe_ca is None:
             report.add('frontend_ca_endpoint', NOT_TESTED, 'frontend GET /ca.crt was not tested', '', '', 'network')
         else:
-            rec = 'inspect frp-frontend.service; a 502 HTML body is not a CA'
+            rec = 'inspect drlink-frontend.service; a 502 HTML body is not a CA'
             if alloc_ok:
                 rec = (
                     'allocator backend is healthy but frontend GET /ca.crt failed. '
@@ -2410,9 +3156,11 @@ def check_server(report, paths, facts, skip_network):
 
     check_access_control(report, paths, facts, cfg if isinstance(cfg, dict) else {}, state if isinstance(state, dict) else {})
     check_service_profiles(report, paths, facts, cfg if isinstance(cfg, dict) else {})
+    check_egress_control(report, paths, facts, cfg if isinstance(cfg, dict) else {})
+    check_audit_log(report, paths, facts, cfg)
 
-    bootstrap_abs = '/var/lib/frp-auto-deploy/bootstrap'
-    enrollments_abs = '/var/lib/frp-auto-deploy/enrollments'
+    bootstrap_abs = '/var/lib/drlink/bootstrap'
+    enrollments_abs = '/var/lib/drlink/enrollments'
     retention_days = 30
     if cfg:
         configured = str(cfg.get('bootstrap_dir') or '').strip()
@@ -2428,7 +3176,7 @@ def check_server(report, paths, facts, skip_network):
     elc = None
     for candidate in (
         Path(__file__).resolve().parent / 'frp_enrollment_lifecycle.py',
-        Path('/usr/local/lib/frp-auto-deploy/frp_enrollment_lifecycle.py'),
+        Path('/usr/local/lib/drlink/frp_enrollment_lifecycle.py'),
     ):
         if candidate.is_file():
             import importlib.util
@@ -2553,7 +3301,7 @@ def check_client(report, paths, facts, skip_network):
                 'client_state', FAIL,
                 'client-state.json schema is unsupported',
                 'schema_version=%s' % state.get('schema_version'),
-                'Restore a schema v1 client-state.json from backup, then run sudo frp-client manage and Apply.',
+                'Restore a schema v1 client-state.json from backup, then run sudo drlink system synchronize.',
                 'state',
             )
         elif 'services' not in state:
@@ -2591,7 +3339,7 @@ def check_client(report, paths, facts, skip_network):
             if url and not url.lower().startswith('https://'):
                 issues.append('allocator URL is not HTTPS')
             if not state.get('machine_id') and not state.get('host_id'):
-                issues.append('machine/client identity fields are missing')
+                issues.append('machine/Agent identity fields are missing')
             if issues:
                 report.add('client_state', FAIL, 'client-state.json failed validation', '; '.join(issues[:8]), 'Restore /etc/frp/client-state.json from the latest valid backup.', 'state')
             else:
@@ -2610,7 +3358,7 @@ def check_client(report, paths, facts, skip_network):
             'client_identity', INFO,
             'management identity is not established',
             '',
-            'Create a short-lived Enrollment Code on the server with sudo frpctl enroll, then enroll this client.',
+            'Create a short-lived Enrollment Code on the server with sudo drlink set enrollment manual, then enroll this Agent Host.',
             'security',
         )
     elif missing_ident:
@@ -2618,13 +3366,13 @@ def check_client(report, paths, facts, skip_network):
             'client_identity', FAIL,
             'management identity files are incomplete',
             'missing %s' % ', '.join(missing_ident),
-            'Do not regenerate identity automatically. Create a new Enrollment Code with sudo frpctl enroll and re-enroll this client.',
+            'Do not regenerate identity automatically. Create a new Enrollment Code on the DRLink Server with sudo drlink set enrollment manual and re-enroll this Agent Host.',
             'security',
         )
     else:
         macval = (paths.read_text(mac_p) or '').strip()
         if not HEX64_RE.fullmatch(macval.lower()):
-            report.add('client_identity', FAIL, 'management MAC file is not a valid 64-hex secret reference', 'length=%s' % len(macval), 're-enroll this client with a new Enrollment Code', 'security')
+            report.add('client_identity', FAIL, 'management MAC file is not a valid 64-hex secret reference', 'length=%s' % len(macval), 're-enroll this Agent Host with a new Enrollment Code', 'security')
         else:
             derived, err = pubkey_from_private(paths.p(key_p))
             pub = paths.read_text(pub_p) or ''
@@ -2645,13 +3393,13 @@ def check_client(report, paths, facts, skip_network):
         check_permissions(report, paths, key_p, 'client_identity_permissions', secret=True, expect_root=expect_root, section='security')
         check_permissions(report, paths, mac_p, 'client_identity_mac_permissions', secret=True, expect_root=expect_root, section='security')
 
-    ca_path = '/etc/frp-auto-deploy/allocator-ca.crt'
+    ca_path = '/etc/drlink/allocator-ca.crt'
     if not paths.is_file(ca_path):
         report.add(
             'client_ca', FAIL,
             'allocator CA certificate is missing',
             '',
-            're-run client enrollment with FRP_ALLOCATOR_CA_SHA256 from the server Enrollment Code output',
+            're-run Agent enrollment with FRP_ALLOCATOR_CA_SHA256 from the server Enrollment Code output',
             'security',
         )
         ca_ok = False
@@ -2680,7 +3428,7 @@ def check_client(report, paths, facts, skip_network):
                 'frpc_config', FAIL,
                 'client-state is valid but frpc.toml is missing',
                 '',
-                'sudo frp-client manage\n  Apply the current configuration',
+                'sudo drlink system synchronize',
                 'state',
             )
         else:
@@ -2712,7 +3460,7 @@ def check_client(report, paths, facts, skip_network):
                     'frpc_config', FAIL,
                     'frpc.toml has drifted from client-state.json',
                     'missing proxies=%s port mismatches=%s' % (','.join(missing_proxy) or 'none', ','.join(port_mismatch) or 'none'),
-                    'sudo frp-client manage\n  Apply the current configuration',
+                    'sudo drlink system synchronize',
                     'state',
                 )
             elif extra_enabled:
@@ -2720,7 +3468,7 @@ def check_client(report, paths, facts, skip_network):
                     'frpc_config', WARN,
                     'disabled services still appear in frpc.toml',
                     ','.join(extra_enabled),
-                    'sudo frp-client manage\n  Apply the current configuration',
+                    'sudo drlink system synchronize',
                     'state',
                 )
             else:
@@ -2735,13 +3483,13 @@ def check_client(report, paths, facts, skip_network):
                 'access_info', WARN,
                 'access-info.txt is missing',
                 'display-only file; state/runtime can still be healthy',
-                'sudo frp-client info regenerates connection text from local client-state when the file is absent',
+                'sudo drlink system info regenerates connection text from local Agent state when the file is absent',
                 'state',
             )
         else:
             report.add('access_info', PASS, 'access-info.txt is present', '', '', 'state')
     elif not paths.is_file(toml_path) and report.role in ('client', 'dual', 'partial_client'):
-        report.add('frpc_config', FAIL, 'frpc.toml is missing', '', 'sudo frp-client manage and Apply, or restore from backup', 'state')
+        report.add('frpc_config', FAIL, 'frpc.toml is missing', '', 'sudo drlink system synchronize, or restore from backup', 'state')
 
     if state is not None and not client_has_enabled_services(state):
         info = (facts.get('units') or {}).get('frpc') or {}
@@ -2766,6 +3514,27 @@ def check_client(report, paths, facts, skip_network):
             check_unit(report, facts, 'frpc', 'frpc_service', _frpc_runtime_label(facts))
     else:
         check_unit(report, facts, 'frpc', 'frpc_service', _frpc_runtime_label(facts))
+
+    lifecycle_worker = paths.is_file('/usr/local/lib/drlink/drlink_agent_lifecycle.py')
+    lifecycle_unit = paths.is_file('/etc/systemd/system/drlink-lifecycle.service')
+    if lifecycle_worker or lifecycle_unit:
+        if not lifecycle_unit:
+            report.add(
+                'agent_lifecycle_service',
+                FAIL,
+                'Agent lifecycle worker service is missing',
+                'drlink_agent_lifecycle.py is installed but its service definition is absent',
+                're-run the Agent installer/update; doctor does not create services',
+                'runtime',
+            )
+        else:
+            check_unit(
+                report,
+                facts,
+                'drlink-lifecycle',
+                'agent_lifecycle_service',
+                'drlink-lifecycle.service',
+            )
 
     alloc_url = ''
     frp_host = ''
@@ -2836,6 +3605,64 @@ def check_client(report, paths, facts, skip_network):
         )
 
 
+def check_mcp_tls(report, paths):
+    """Read-only MCP public TLS checks for Server and Agent diagnostics."""
+    try:
+        import sqlite3
+
+        import drlink_mcp_tls as mcp_tls
+        from drlink_control_db import db_path
+        from drlink_control_plane import ControlPlane
+
+        db_file = db_path(paths.root or None)
+        plane = None
+        if db_file.is_file():
+            conn = sqlite3.connect("file:%s?mode=ro" % db_file.as_posix(), uri=True)
+            conn.row_factory = sqlite3.Row
+            plane = ControlPlane(paths.root or None, conn=conn)
+        status_map = {'PASS': PASS, 'FAIL': FAIL, 'WARN': WARN, 'INFO': INFO}
+        for check in mcp_tls.doctor_checks(plane, paths.root or None):
+            report.add(
+                check.get('id') or 'mcp_tls',
+                status_map.get(check.get('status'), INFO),
+                check.get('summary') or '',
+                check.get('detail') or '',
+                '',
+                'security',
+            )
+        if plane is not None:
+            plane.close()
+    except Exception as exc:
+        report.add(
+            'mcp_tls_doctor',
+            INFO,
+            'MCP TLS doctor checks unavailable',
+            redact(str(exc)),
+            '',
+            'security',
+        )
+
+
+PUBLIC_DIAGNOSTIC_SCOPES = ('control-plane', 'runtime', 'mcp')
+
+
+def public_scope_keeps(check, scope):
+    """True when a doctor check belongs to a public diagnostics scope."""
+    if not scope:
+        return True
+    cid = str(check.get('id') or '')
+    if cid == 'doctor_internal':
+        return True
+    section = str(check.get('section') or '')
+    if scope == 'mcp':
+        return cid.startswith('mcp')
+    if scope == 'runtime':
+        return section in ('runtime', 'network')
+    if scope == 'control-plane':
+        return section in ('state', 'security', 'installation', 'config') and not cid.startswith('mcp')
+    return True
+
+
 def render_human(report, quiet=False, verbose=False):
     counts = report.counts()
     overall = report.overall()
@@ -2848,18 +3675,30 @@ def render_human(report, quiet=False, verbose=False):
     lines = []
     if not quiet:
         lines.extend([
-            'FRP Auto Deploy Doctor',
+            'Data Relay Link Doctor',
             '======================',
             '',
+        ])
+        scope = getattr(report, 'scope', '') or ''
+        if scope:
+            lines.append('Scope           : %s' % scope)
+            lines.append('')
+        lines.extend([
             'Host',
             '----',
             'Role            : %s' % report.role_label,
             'Confidence      : %s' % report.confidence,
-            'Project version : %s' % (report.project_version or 'unknown'),
-            'Release channel : %s' % (getattr(report, 'release_channel', None) or 'unknown'),
-            'Source ref      : %s' % (getattr(report, 'source_ref', None) or 'unknown'),
-            'FRP version     : %s' % (report.frp_version or report.pinned_frp),
-            'Bundle SHA256   : %s' % (getattr(report, 'bundle_sha256', None) or 'unknown'),
+            'Data Relay Link : %s' % (
+                getattr(report, 'display_identity', None) or report.project_version or 'unknown'
+            ),
+            'Channel         : %s' % (getattr(report, 'release_channel', None) or 'unknown'),
+            'Source HEAD     : %s' % (
+                getattr(report, 'source_head', None)
+                or getattr(report, 'source_ref', None)
+                or 'unknown'
+            ),
+            'Relay Engine (FRP): %s' % (report.frp_version or report.pinned_frp),
+            'Bundle SHA256   : %s' % (getattr(report, 'bundle_sha256', None) or 'not applicable'),
             '',
         ])
         role_check = next((c for c in report.checks if c['id'] == 'host_role'), None)
@@ -2910,21 +3749,24 @@ def render_human(report, quiet=False, verbose=False):
                 continue
             lines.append(title)
             lines.append('-' * len(title))
+            # Readable labels: never truncate semantic check names to a fixed width.
+            label_width = max(len(str(c.get('id') or '')) for c in items)
+            label_width = max(label_width, 12)
             for item in items:
                 if not verbose and item['status'] in (PASS, INFO, NOT_APPLICABLE) and key == 'host':
                     if item['id'] in ('host_facts', 'distro_support', 'macos_support'):
-                        lines.append('%-18s %s — %s' % (item['id'][:18], item['status'], item['message']))
+                        lines.append('%-*s %s — %s' % (label_width, item['id'], item['status'], item['message']))
                         continue
                 if not verbose and item['status'] in (PASS, INFO) and key not in ('security', 'state', 'runtime', 'network', 'installation'):
                     continue
                 msg = item['message']
-                lines.append('%-18s %s — %s' % (item['id'][:18], item['status'], msg))
+                lines.append('%-*s %s — %s' % (label_width, item['id'], item['status'], msg))
                 if verbose and item.get('detail'):
                     for dline in str(item['detail']).splitlines():
-                        lines.append('                     %s' % dline)
+                        lines.append(' %s %s' % (' ' * label_width, dline))
                 if item['status'] in (FAIL, WARN) and item.get('recommendation') and not quiet:
                     rec = item['recommendation'].splitlines()[0]
-                    lines.append('                     next: %s' % rec)
+                    lines.append(' %s next: %s' % (' ' * label_width, rec))
             lines.append('')
 
         pending = report.display.get('pending_apply') or report.display.get('pending_update')
@@ -2945,6 +3787,7 @@ def render_human(report, quiet=False, verbose=False):
         'PASS : %s' % counts[PASS],
         'WARN : %s' % counts[WARN],
         'FAIL : %s' % counts[FAIL],
+        'NOT TESTED : %s' % counts[NOT_TESTED],
         '',
         'Overall: %s' % overall_label,
         '',
@@ -3014,7 +3857,7 @@ def render_json(report):
     return json.dumps(payload, indent=2, sort_keys=True) + '\n'
 
 
-def run_doctor(root, facts, fmt='human', quiet=False, verbose=False, skip_network=False):
+def run_doctor(root, facts, fmt='human', quiet=False, verbose=False, skip_network=False, scope=''):
     paths = Paths(root)
     report = Report()
     report.facts = facts or {}
@@ -3031,10 +3874,10 @@ def run_doctor(root, facts, fmt='human', quiet=False, verbose=False, skip_networ
         role_info['reason'],
         'server_signals=%s client_signals=%s' % (role_info['server_signals'], role_info['client_signals']),
         {
-            'partial_client': 'complete the client install or run sudo frpctl update; do not re-enroll over a damaged identity',
+            'partial_client': 'complete the Agent install or run sudo drlink system update product; do not re-enroll over a damaged identity',
             'partial_server': 're-run the server installer to complete missing components',
-            'ambiguous': 'inspect leftover server and client files before taking further action',
-            'uninstalled': 'install the server or client bootstrap first',
+            'ambiguous': 'inspect leftover Server and Agent files before taking further action',
+            'uninstalled': 'install the Server or Agent bootstrap first',
         }.get(report.role, ''),
         'host',
     )
@@ -3049,6 +3892,7 @@ def run_doctor(root, facts, fmt='human', quiet=False, verbose=False, skip_networ
             check_server(report, paths, facts, skip_network)
         if report.role in ('client', 'dual', 'partial_client'):
             check_client(report, paths, facts, skip_network)
+        check_mcp_tls(report, paths)
     except Exception as exc:
         report.fatal = str(exc)
         report.add(
@@ -3059,6 +3903,18 @@ def run_doctor(root, facts, fmt='human', quiet=False, verbose=False, skip_networ
             'host',
         )
 
+    scope = str(scope or '').strip()
+    if scope:
+        if scope not in PUBLIC_DIAGNOSTIC_SCOPES:
+            raise ValueError('unknown diagnostics scope: %s' % scope)
+        report.scope = scope
+        report.checks = [c for c in report.checks if public_scope_keeps(c, scope)]
+        if not report.checks:
+            report.add(
+                'scope_empty', INFO,
+                'No %s diagnostics applied to this host' % scope,
+                '', '', 'host',
+            )
     if fmt == 'json':
         text = render_json(report)
     else:
@@ -3074,7 +3930,7 @@ def run_doctor(root, facts, fmt='human', quiet=False, verbose=False, skip_networ
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description='Read-only FRP Auto Deploy doctor')
+    parser = argparse.ArgumentParser(description='Read-only Data Relay Link doctor')
     parser.add_argument('--root', default='', help='test-root prefix; empty for live paths')
     parser.add_argument('--facts', default='', help='JSON facts from the shell wrapper')
     parser.add_argument('--format', choices=('human', 'json'), default='human')
@@ -3083,6 +3939,7 @@ def main(argv=None):
     parser.add_argument('--skip-network', action='store_true')
     parser.add_argument('--embedded-version', default='')
     parser.add_argument('--pinned-frp', default=PINNED_FRP_DEFAULT)
+    parser.add_argument('--scope', choices=PUBLIC_DIAGNOSTIC_SCOPES, default='')
     args = parser.parse_args(argv)
 
     facts = {}
@@ -3114,6 +3971,7 @@ def main(argv=None):
             quiet=args.quiet,
             verbose=args.verbose,
             skip_network=args.skip_network or bool(facts.get('skip_network')),
+            scope=args.scope,
         )
     except Exception as exc:
         sys.stderr.write('ERROR: doctor internal error: %s\n' % redact(str(exc)))
