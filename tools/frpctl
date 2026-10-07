@@ -3333,7 +3333,13 @@ PY
 
 frpctl_confirm_restore() {
   local archive="$1"
-  local ans="" yes=0 pt
+  local ans=""
+  if [[ ! -t 0 ]]; then
+    echo "ERROR: restore requires interactive TTY confirmation." >&2
+    echo "Run interactively and answer y." >&2
+    echo "No changes were applied." >&2
+    return 1
+  fi
   frpctl_restore_preflight "$archive"
   local rc=$?
   if [[ "$rc" -eq 2 ]]; then
@@ -3342,22 +3348,9 @@ frpctl_confirm_restore() {
   if [[ "$rc" -ne 0 ]]; then
     return 1
   fi
-  for pt in "${_frpctl_pt[@]+"${_frpctl_pt[@]}"}"; do
-    [[ "$pt" == "--yes" ]] && yes=1
-  done
-  if [[ "$yes" == "1" ]]; then
-    return 0
-  fi
-  if [[ -n "${FRP_CTL_TEST_INPUT:-}" || -t 0 ]]; then
-    ans="$(frpctl_read "Continue with restore? [y/N]: " "N")" || return 1
-  elif IFS= read -r ans; then
-    :
-  else
-    echo "ERROR: restore requires confirmation." >&2
-    echo "Run interactively and answer y." >&2
-    echo "No changes were applied." >&2
-    return 1
-  fi
+  # Test-input spools and internal passthrough flags cannot supply operator
+  # consent for the public interactive-only restore workflow.
+  ans="$(FRP_CTL_TEST_INPUT= frpctl_read "Continue with restore? [y/N]: " "N")" || return 1
   case "$(printf '%s' "$ans" | tr '[:upper:]' '[:lower:]')" in
     y|yes) return 0 ;;
     *)
@@ -4555,7 +4548,7 @@ frpctl_dispatch_canonical() {
         _FRP_CTL_RC="$_restore_rc"
         return 0
       fi
-      # Product-owned confirmation already completed (or --yes). Pass --yes so
+      # Product-owned interactive confirmation already completed. Pass --yes so
       # frp-restore's authoritative security-impact gate does not double-prompt;
       # it still recalculates against live state immediately before cutover.
       frpctl_run frp-restore --yes "$_restore_path"

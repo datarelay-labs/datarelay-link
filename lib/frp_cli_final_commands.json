@@ -1441,7 +1441,7 @@
     "summary": "Create or edit a Remote Access rule",
     "detail": "Create or edit a Remote Access rule. The calculated security impact of an edit is checked before mutation. A y/N confirmation is required when that impact broadens or materially narrows access; safe creation and no-change paths need no additional confirmation.",
     "examples": [
-      "set remote-access",
+      "set remote-access <RULE>",
       "set remote-access block-partner mode blacklist source partner-office destination ubuntu-prod service ssh enabled",
       "set remote-access enabled",
       "set remote-access disabled"
@@ -1520,7 +1520,7 @@
     "summary": "Create or edit an Internet Access rule",
     "detail": "Create or edit an Internet Access rule. The calculated security impact of an edit is checked before mutation. A y/N confirmation is required when that impact broadens or materially narrows access; safe creation and no-change paths need no additional confirmation.",
     "examples": [
-      "set internet-access",
+      "set internet-access <RULE>",
       "set internet-access github-https mode whitelist source ubuntu-prod destination github service https enabled",
       "set internet-access enabled",
       "set internet-access disabled"
@@ -1599,7 +1599,7 @@
     "summary": "Create or edit an AI Access rule",
     "detail": "Create or edit an AI Access rule. The calculated security impact of an edit is checked before mutation. A y/N confirmation is required when that impact broadens or materially narrows access; safe creation and no-change paths need no additional confirmation.",
     "examples": [
-      "set ai-access",
+      "set ai-access <RULE>",
       "set ai-access allow-ops mode whitelist source automation-ai destination production-servers permission operations enabled",
       "set ai-access allow-read mode whitelist source automation-ai destination ubuntu-prod permission read-only paths /var/lib/vendor/** enabled",
       "set ai-access enabled",
@@ -2692,7 +2692,7 @@
     "summary": "Create or edit a Network Object",
     "detail": "Create or edit a Network Object. The calculated security impact of an edit is checked before mutation. A y/N confirmation is required when that impact broadens or materially narrows access; safe creation and no-change paths need no additional confirmation.",
     "examples": [
-      "set network-object",
+      "set network-object <NAME>",
       "set network-object office-admin type ip value 203.0.113.10"
     ],
     "args": [
@@ -2721,7 +2721,7 @@
     "summary": "Create or edit a Network Group",
     "detail": "Create or edit a Network Group. The calculated security impact of an edit is checked before mutation. A y/N confirmation is required when that impact broadens or materially narrows access; safe creation and no-change paths need no additional confirmation.",
     "examples": [
-      "set network-group",
+      "set network-group <NAME>",
       "set network-group approved-admins members office-admin,vpn-admin"
     ],
     "args": [
@@ -2750,7 +2750,7 @@
     "summary": "Delete a Network Object",
     "detail": "Delete a Network Object",
     "examples": [
-      "unset network-object"
+      "unset network-object <OBJECT>"
     ],
     "args": [
       {
@@ -2779,7 +2779,7 @@
     "summary": "Delete a Network Group",
     "detail": "Delete a Network Group",
     "examples": [
-      "unset network-group"
+      "unset network-group <GROUP>"
     ],
     "args": [
       {
@@ -2920,7 +2920,7 @@
     "summary": "Create or edit a Service Object",
     "detail": "Create or edit a Service Object. The calculated security impact of an edit is checked before mutation. A y/N confirmation is required when that impact broadens or materially narrows access; safe creation and no-change paths need no additional confirmation.",
     "examples": [
-      "set service-object",
+      "set service-object <NAME>",
       "set service-object postgres type tcp port 5432"
     ],
     "args": [
@@ -2949,7 +2949,7 @@
     "summary": "Create or edit a Service Group",
     "detail": "Create or edit a Service Group. The calculated security impact of an edit is checked before mutation. A y/N confirmation is required when that impact broadens or materially narrows access; safe creation and no-change paths need no additional confirmation.",
     "examples": [
-      "set service-group",
+      "set service-group <NAME>",
       "set service-group web-services members http,https"
     ],
     "args": [
@@ -2978,7 +2978,7 @@
     "summary": "Delete a Service Object",
     "detail": "Delete a Service Object",
     "examples": [
-      "unset service-object"
+      "unset service-object <SERVICE>"
     ],
     "args": [
       {
@@ -3006,7 +3006,7 @@
     "summary": "Delete a Service Group",
     "detail": "Delete a Service Group",
     "examples": [
-      "unset service-group"
+      "unset service-group <GROUP>"
     ],
     "args": [
       {
@@ -3057,7 +3057,7 @@
     "summary": "Show a Permission Object",
     "detail": "Inspect permissions. To inspect dependencies, use show ai-access and show ai-access <RULE>, then show permission-groups and show permission-group <GROUP> for group membership. Referenced deletion is blocked before confirmation and lists the dependencies. Review each Rule with set ai-access <RULE> to select a replacement permission, or explicitly remove it with unset ai-access <RULE>. Edit containing groups with set permission-group <GROUP> to remove this Object from their membership. Disabling a Rule does not remove its reference. Review the access impact and required confirmations before making changes; retry deletion only after all references are removed.",
     "examples": [
-      "show permission-object"
+      "show permission-object <PERMISSION>"
     ],
     "args": [
       {
@@ -3108,7 +3108,7 @@
     "summary": "Show a Permission Group",
     "detail": "Inspect Permission Object membership. To inspect dependencies, use show ai-access and show ai-access <RULE>. Referenced deletion is blocked before confirmation and lists the dependencies. Review each Rule with set ai-access <RULE> to select a replacement permission, or explicitly remove it with unset ai-access <RULE>. Disabling a Rule does not remove its reference. Review the access impact and required confirmations before making changes; retry deletion only after all references are removed.",
     "examples": [
-      "show permission-group"
+      "show permission-group <GROUP>"
     ],
     "args": [
       {
@@ -3136,7 +3136,7 @@
     "summary": "Create or edit a Permission Object",
     "detail": "Create or edit a Permission Object. The calculated security impact of an edit is checked before mutation. A y/N confirmation is required when that impact broadens or materially narrows access; safe creation and no-change paths need no additional confirmation.",
     "examples": [
-      "set permission-object",
+      "set permission-object <NAME>",
       "set permission-object read-only permissions host-info,process-read,file-read"
     ],
     "args": [
@@ -3165,7 +3165,7 @@
     "summary": "Create or edit a Permission Group",
     "detail": "Create or edit a Permission Group. The calculated security impact of an edit is checked before mutation. A y/N confirmation is required when that impact broadens or materially narrows access; safe creation and no-change paths need no additional confirmation.",
     "examples": [
-      "set permission-group",
+      "set permission-group <NAME>",
       "set permission-group operations members read-only,operator"
     ],
     "args": [
@@ -3194,7 +3194,7 @@
     "summary": "Delete a Permission Object",
     "detail": "Delete only an unreferenced Permission Object after explicit y/N confirmation. Reference validation happens before confirmation; a blocked delete lists AI Access Rules and Permission Groups and applies no changes. Inspect show ai-access <RULE>, show permission-groups and show permission-group <GROUP>. Review set ai-access <RULE> to select a replacement permission or unset ai-access <RULE> to remove a Rule; use set permission-group <GROUP> to remove the Object from group membership. Disabling a Rule does not remove its reference. Review access impact and required confirmations; retry deletion only after every reference is removed.",
     "examples": [
-      "unset permission-object"
+      "unset permission-object <PERMISSION>"
     ],
     "args": [
       {
@@ -3222,7 +3222,7 @@
     "summary": "Delete a Permission Group",
     "detail": "Delete only an unreferenced Permission Group after explicit y/N confirmation. Reference validation happens before confirmation; a blocked delete lists AI Access Rules and applies no changes. Inspect show ai-access <RULE>. Review set ai-access <RULE> to select a replacement permission or unset ai-access <RULE> to remove a Rule. Disabling a Rule does not remove its reference. Review access impact and required confirmations; retry deletion only after every reference is removed.",
     "examples": [
-      "unset permission-group"
+      "unset permission-group <GROUP>"
     ],
     "args": [
       {
@@ -3415,7 +3415,7 @@
     "summary": "Show an AI Identity",
     "detail": "Show an AI Identity",
     "examples": [
-      "show ai-identity"
+      "show ai-identity <IDENTITY>"
     ],
     "args": [
       {
@@ -3444,7 +3444,7 @@
     "summary": "Connect / bind an AI Identity",
     "detail": "Connect / bind an AI Identity",
     "examples": [
-      "set ai-identity"
+      "set ai-identity <IDENTITY>"
     ],
     "args": [
       {
@@ -3472,7 +3472,7 @@
     "summary": "Delete an AI Identity",
     "detail": "Delete an AI Identity",
     "examples": [
-      "unset ai-identity"
+      "unset ai-identity <IDENTITY>"
     ],
     "args": [
       {
@@ -3637,7 +3637,7 @@
     "summary": "Show a Remote Service",
     "detail": "Show a Remote Service",
     "examples": [
-      "show remote-service"
+      "show remote-service <NAME>"
     ],
     "args": [
       {
