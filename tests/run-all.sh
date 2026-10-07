@@ -25,7 +25,11 @@ echo "DRLINK_MCP_SDK_PYTHON=$DRLINK_MCP_SDK_PYTHON"
 echo "=== shell syntax ==="
 git ls-files -z '*.sh' | xargs -0 -r -n 1 bash -n --
 git ls-files -z -o --exclude-standard '*.sh' | xargs -0 -r -n 1 bash -n --
-bash -n tools/frp-server-status tools/frp-project-update tools/frp-update tools/frp-upstream tools/frp-client tools/frpctl
+# Extensionless entrypoints need the same one-script-per-parser guarantee.
+for script in tools/frp-server-status tools/frp-project-update tools/frp-update \
+  tools/frp-upstream tools/frp-client tools/frpctl; do
+  bash -n -- "$script"
+done
 ./tests/test-shell-syntax-enumeration.sh
 
 echo "=== Python compile ==="
