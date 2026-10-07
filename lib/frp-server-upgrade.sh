@@ -1720,5 +1720,5 @@ frp_server_apply_project_upgrade() {
   fi
   echo "FRP binary      : unchanged"
   echo "Server state    : preserved"
-  echo "Client re-enroll: NOT REQUIRED"
+  echo "Agent Host re-enrollment: NOT REQUIRED"
 }

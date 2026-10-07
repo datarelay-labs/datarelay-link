@@ -305,6 +305,13 @@ def reject_obsolete_surface(tokens):
             ),
         }
     verb = raw[0]
+    if verb == "help" and len(raw) > 1 and raw[1] in (
+        "show", "set", "unset", "test", "system", "menu",
+    ):
+        # Nested command help must reject the same retired paths as execution.
+        rejected = reject_obsolete_surface(raw[1:])
+        if rejected is not None:
+            return rejected
     # Reject retired nested forms before help or legacy system fallthrough
     # can turn them into an executable operation or successful discovery.
     focus = raw[1:] if verb == "help" else raw

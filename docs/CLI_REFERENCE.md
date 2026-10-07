@@ -275,7 +275,7 @@ unset mcp-tls
 unset mcp-tls purge
 ```
 
-`unset mcp-tls` clears TLS intent while retaining DRLink-owned certificate and ACME account material. `unset mcp-tls purge` removes that retained material only after interactive y/N confirmation; non-interactive use fails closed.
+`unset mcp-tls` clears TLS intent and removes the active public MCP route while retaining DRLink-owned certificate and ACME account material. Active MCP/OAuth connections may be interrupted; the explicit command approves this change without an additional confirmation prompt. Check `system certificate status` and `system diagnostics mcp` afterward. `unset mcp-tls purge` removes that retained material only after interactive y/N confirmation; non-interactive use fails closed.
 
 Referenced Objects/Groups/Identities/Managed Hosts are protected from deletion until references are removed.
 

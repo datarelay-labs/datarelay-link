@@ -1285,6 +1285,31 @@ def _parse_revision_id(value: str, usage: str) -> int:
     return revision
 
 
+def _public_revision_command(value: str) -> str:
+    """Render known historical command nouns without rewriting stored history."""
+    text = str(value)
+    for old, current in (
+        ("upsert client ", "upsert managed-host "),
+        ("set client-group ", "set managed-host-group "),
+        ("unset client-group ", "unset managed-host-group "),
+        ("set client ", "set managed-host "),
+        ("unset client ", "unset managed-host "),
+    ):
+        if text.startswith(old):
+            return current + text[len(old):]
+    return text
+
+
+def _public_revision_summary(value: str) -> str:
+    return {
+        "upsert client/endpoint": "upsert Managed Host",
+        "create client group": "create Managed Host Group",
+        "add client group member": "add Managed Host Group member",
+        "remove client group member": "remove Managed Host Group member",
+        "delete client group": "delete Managed Host Group",
+    }.get(str(value), str(value))
+
+
 def _system_revision_show(plane: ControlPlane, value: str) -> int:
     revision = _parse_revision_id(value, "system revision <REVISION>")
     row = plane.revision_record(revision)
@@ -1306,8 +1331,8 @@ def _system_revision_show(plane: ControlPlane, value: str) -> int:
             row["revision"],
             row["created_at"],
             row["actor"],
-            row["command"],
-            row["summary"],
+            _public_revision_command(row["command"]),
+            _public_revision_summary(row["summary"]),
             "YES" if rollback_available else "NO",
         )
     )
@@ -1430,7 +1455,7 @@ def _system(plane: ControlPlane, rest):
             sys.stdout.write("No Revisions found.\n")
             return 0
         for row in rows:
-            sys.stdout.write("%s %s %s\n" % (row["revision"], row["created_at"], row["command"]))
+            sys.stdout.write("%s %s %s\n" % (row["revision"], row["created_at"], _public_revision_command(row["command"])))
         return 0
     if rest[0] == "revision":
         if len(rest) != 2:

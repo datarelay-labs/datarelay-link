@@ -194,7 +194,7 @@ OK_BEFORE="$(state_digest "$OK")"
 run_local "$OK" >"$WORKDIR/ok.out"
 grep -q 'Server project update completed successfully' "$WORKDIR/ok.out" || fail "success report"
 grep -q 'FRP binary      : unchanged' "$WORKDIR/ok.out" || fail "FRP unchanged report"
-grep -q 'Client re-enroll: NOT REQUIRED' "$WORKDIR/ok.out" || fail "re-enrollment report"
+grep -q 'Agent Host re-enrollment: NOT REQUIRED' "$WORKDIR/ok.out" || fail "re-enrollment report"
 [[ "$(state_digest "$OK")" == "$OK_BEFORE" ]] || fail "server state changed"
 cmp "$ROOT/tools/frp-project-update" "$OK/usr/local/lib/drlink/frp-project-update" >/dev/null ||
   fail "project updater not installed"
@@ -932,7 +932,7 @@ cp "$OAUTH/etc/drlink/frontend.conf" "$WORKDIR/old-frontend.conf"
 rm -f "$OAUTH/var/lib/drlink/install-actions.log"
 run_local "$OAUTH" >"$WORKDIR/oauth-runtime.out" || fail "oauth runtime update"
 grep -q 'Server project update completed successfully' "$WORKDIR/oauth-runtime.out" || fail "oauth runtime success"
-grep -q 'Client re-enroll: NOT REQUIRED' "$WORKDIR/oauth-runtime.out" || fail "oauth runtime re-enroll"
+grep -q 'Agent Host re-enrollment: NOT REQUIRED' "$WORKDIR/oauth-runtime.out" || fail "oauth runtime re-enroll"
 [[ "$(state_digest "$OAUTH")" == "$OAUTH_STATE" ]] || fail "oauth runtime changed protected state"
 cmp "$ROOT/lib/drlink_mcp_bridge.py" "$OAUTH/usr/local/lib/drlink/drlink_mcp_bridge.py" >/dev/null ||
   fail "mcp bridge file was not updated"
@@ -973,7 +973,7 @@ assert_runtime_matches_disk "$RB_OAUTH" drlink-mcp-bridge \
   "$RB_OAUTH/usr/local/lib/drlink/drlink_mcp_bridge.py"
 assert_runtime_matches_disk "$RB_OAUTH" drlink-frontend \
   "$RB_OAUTH/etc/drlink/frontend.conf"
-grep -q 'Client re-enroll: NOT REQUIRED' "$WORKDIR/rb-oauth.out" &&
+grep -q 'Agent Host re-enrollment: NOT REQUIRED' "$WORKDIR/rb-oauth.out" &&
   fail "failed update reported re-enroll success"
 pass "PROJECT_UPDATE_MCP_FRONTEND_ROLLBACK_RUNTIME"
 
@@ -1047,7 +1047,7 @@ INSTALLED_BUNDLE="$(sed -n 's/^BUNDLE_SHA256=//p' "$IDENT/etc/drlink/version" | 
 [[ "$APPLY_BUNDLE" == "$CHECK_BUNDLE" ]] || fail "check/apply bundle identity mismatch"
 [[ "$INSTALLED_BUNDLE" == "$CHECK_BUNDLE" ]] || fail "installed bundle identity mismatch"
 [[ "$(state_digest "$IDENT")" == "$IDENT_STATE" ]] || fail "local-source identity apply changed protected state"
-grep -q 'Client re-enroll: NOT REQUIRED' "$WORKDIR/local-id-apply.out" || fail "local-source identity re-enroll"
+grep -q 'Agent Host re-enrollment: NOT REQUIRED' "$WORKDIR/local-id-apply.out" || fail "local-source identity re-enroll"
 pass "LOCAL_SOURCE_CHECK_APPLY_IDENTITY_PARITY"
 
 IDENT_VER="$(sha "$IDENT/etc/drlink/version")"

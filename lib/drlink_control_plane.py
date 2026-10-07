@@ -1739,7 +1739,7 @@ class ControlPlane:
                 self._replace_addresses(obj_id, addresses, now)
             return {"entity": {"type": "client", "id": client_id, "name": endpoint_name}, "operation": "upsert"}
 
-        return self._mutate("upsert client %s" % client_id[:8], "upsert client/endpoint", write)
+        return self._mutate("upsert managed-host %s" % client_id[:8], "upsert Managed Host", write)
 
     def _invalidate_client_remote_service_runtime_verification(
         self, client_id: str, *, now: Optional[str] = None

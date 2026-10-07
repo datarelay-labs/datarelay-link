@@ -33,6 +33,56 @@ import frp_cli_catalog as catalog
 
 
 class CliFeatureScenarioRemediation(unittest.TestCase):
+    def test_retired_nested_help_rejects_like_command_without_state_changes(self):
+        paths = (["system", "services"], ["system", "services", "list"],
+                 ["show", "service-profile"], ["set", "acl"], ["menu", "clients"])
+        for role in ("server", "client"):
+            for path in paths:
+                for tokens in (list(path), list(path) + ["?"], ["help"] + list(path)):
+                    with self.subTest(role=role, tokens=tokens):
+                        result = grammar.match(tokens, role)
+                        self.assertEqual(result["status"], "error", result)
+                        self.assertEqual(result["exit_code"], 2)
+                self.assertTrue(grammar.help_text(path, role).startswith("Unknown help topic:"))
+            with tempfile.TemporaryDirectory(prefix="drlink-retired-nested-help-") as temp:
+                root = Path(temp)
+                config = root / ("etc/drlink/config.json" if role == "server" else "etc/frp/client-state.json")
+                config.parent.mkdir(parents=True)
+                config.write_text('{"role":"server"}\n' if role == "server" else '{"services":{}}\n')
+                before = config.read_bytes()
+                env = dict(os.environ, FRP_CTL_TEST_ROOT=temp, FRP_DEPLOY_TEST_ROOT=temp)
+                proc = subprocess.run(["bash", str(ROOT / "tools/drlink"), "help", "system", "services"],
+                                      env=env, capture_output=True, text=True, timeout=30)
+                self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+                self.assertIn("system synchronize", proc.stdout + proc.stderr)
+                self.assertEqual(config.read_bytes(), before)
+        self.assertIn("TCP", grammar.help_text(["remote-services"], "client"))
+        self.assertIn("Enrollment", grammar.help_text(["set", "enrollment"], "server"))
+
+    def test_new_and_historical_revision_views_use_public_host_nouns_without_history_rewrite(self):
+        self.plane.upsert_client("a" * 32, label="client-labelled-host", hostname="client-hostname")
+        revision = self.plane.current_revision()
+        current = self.plane.revision_record(revision)
+        self.assertIn("managed-host", current["command"])
+        self.assertEqual(current["summary"], "upsert Managed Host")
+        self.plane.conn.execute(
+            "UPDATE config_revisions SET command = ?, summary = ? WHERE revision = ?",
+            ("upsert client aaaaaaaa", "upsert client/endpoint", revision),
+        )
+        self.plane.conn.commit()
+        historical = self.plane.revision_record(revision)
+        for tokens in (["system", "revisions"], ["system", "revision", str(revision)]):
+            rc, out, err = self._dispatch(tokens)
+            self.assertEqual(rc, 0, err)
+            self.assertIn("upsert managed-host aaaaaaaa", out)
+            self.assertNotIn("upsert client", out)
+        self.assertEqual(self.plane.revision_record(revision), historical)
+        self.assertEqual(self.plane.current_revision(), revision)
+        self.assertEqual(cli._public_revision_command("set client client-production label"),
+                         "set managed-host client-production label")
+        self.assertEqual(cli._public_revision_command("set network-object client-ip"),
+                         "set network-object client-ip")
+
     def test_undeclared_options_reject_question_help_like_direct_commands(self):
         paths = (["system", "update"], ["system", "update", "product"],
                  ["system", "update", "engine"], ["show", "status"],
