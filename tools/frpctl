@@ -799,7 +799,8 @@ frpctl_control_plane_dispatch() {
   libdir="$(dirname "$cli_py")"
   # Use python -c (not a stdin heredoc) so ConfigurationBundle '-' can read
   # the operator's stdin for copy/paste apply/test/diff workflows.
-  PYTHONPATH="${libdir}${PYTHONPATH:+:$PYTHONPATH}" python3 -c '
+  # Ambient backend approval is never operator consent at the public boundary.
+  DRLINK_CONFIRM= PYTHONPATH="${libdir}${PYTHONPATH:+:$PYTHONPATH}" python3 -c '
 import json
 import os
 import sys
@@ -3931,8 +3932,8 @@ frpctl_unset_enrollment() {
       ;;
   esac
 
-  if [[ -n "${FRP_CTL_TEST_INPUT:-}" || -t 0 ]]; then
-    ans="$(frpctl_read "Continue? [y/N]: " "N")" || return 1
+  if [[ -t 0 ]]; then
+    ans="$(FRP_CTL_TEST_INPUT= frpctl_read "Continue? [y/N]: " "N")" || return 1
   elif IFS= read -r ans; then
     :
   else
@@ -4382,12 +4383,12 @@ frpctl_dispatch_canonical() {
       # Product-owned confirmation. Public group deletion is interactive only;
       # backend --yes is internal and is used only after this public y/N gate.
       _del_ans=""
-      if [[ -n "${FRP_CTL_TEST_INPUT:-}" || -t 0 ]]; then
+      if [[ -t 0 ]]; then
         echo
         echo "Delete Managed Host Group \"${_del_group}\"?"
         echo "Group membership is removed. Managed Host identity, Remote Services, and public ports"
         echo "are not changed."
-        _del_ans="$(frpctl_read "Delete Managed Host Group? [y/N]: " "N")" || {
+        _del_ans="$(FRP_CTL_TEST_INPUT= frpctl_read "Delete Managed Host Group? [y/N]: " "N")" || {
           _FRP_CTL_RC=1
           return 0
         }
@@ -4706,7 +4707,7 @@ frpctl_client_uninstall_flow() {
   echo "This uninstall does not contact the server and does not release ports."
   echo
   if [[ "$yes" != "1" ]]; then
-    ans="$(frpctl_read "Remove local Data Relay Link Agent? [y/N]: " "N")" || return 1
+    ans="$(FRP_CTL_TEST_INPUT= frpctl_read "Remove local Data Relay Link Agent? [y/N]: " "N")" || return 1
     case "$(printf '%s' "$ans" | tr '[:upper:]' '[:lower:]')" in
       y|yes) ;;
       *) echo "Cancelled."; return 0 ;;
@@ -4757,7 +4758,7 @@ frpctl_server_uninstall_flow() {
   echo "This cannot be undone. Back up the server first if you need to restore later."
   echo
   if [[ "$yes" != "1" ]]; then
-    ans="$(frpctl_read "Remove the Data Relay Link server role from this host? [y/N]: " "N")" || return 1
+    ans="$(FRP_CTL_TEST_INPUT= frpctl_read "Remove the Data Relay Link server role from this host? [y/N]: " "N")" || return 1
     case "$(printf '%s' "$ans" | tr '[:upper:]' '[:lower:]')" in
       y|yes) ;;
       *) echo "Cancelled."; return 0 ;;

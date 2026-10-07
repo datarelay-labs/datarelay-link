@@ -275,13 +275,46 @@ assert added.get('action') == 'add_group_member', added
 assert removed.get('action') == 'remove_group_member', removed
 assert retire.get('action') == 'control_plane', retire
 PY
-# Product-owned confirmation (no public --yes).
-export FRP_CTL_TEST_INPUT=$'y\n'
-set +e
-"$CTL" unset managed-host-group safer-group >"$WORKDIR/del-cli.out" 2>&1
-del_rc=$?
-set -e
-unset FRP_CTL_TEST_INPUT
+# Product-owned confirmation uses a real TTY and the operator's answer.
+python3 - "$CTL" "$WORKDIR/del-cli.out" <<'PY'
+import os, pty, select, subprocess, sys, time
+master, slave = pty.openpty()
+env = os.environ.copy()
+env.pop('FRP_CTL_TEST_INPUT', None)
+proc = subprocess.Popen([sys.argv[1], 'unset', 'managed-host-group', 'safer-group'],
+                        stdin=slave, stdout=slave, stderr=slave, env=env)
+os.close(slave)
+output = bytearray()
+answered = False
+deadline = time.monotonic() + 30
+try:
+    while time.monotonic() < deadline:
+        if select.select([master], [], [], 0.2)[0]:
+            try:
+                data = os.read(master, 65536)
+            except OSError:
+                break
+            if not data:
+                break
+            output.extend(data)
+            if not answered and b'Delete Managed Host Group? [y/N]:' in output:
+                os.write(master, b'y\n')
+                answered = True
+        if proc.poll() is not None:
+            break
+    proc.wait(timeout=max(1, deadline - time.monotonic()))
+finally:
+    if proc.poll() is None:
+        proc.kill()
+        proc.wait()
+    os.close(master)
+with open(sys.argv[2], 'w') as out:
+    out.write(output.decode('utf-8', 'replace'))
+if not answered:
+    raise SystemExit('Group deletion confirmation prompt was not observed')
+raise SystemExit(proc.returncode)
+PY
+del_rc=0
 cat "$WORKDIR/del-cli.out"
 [[ "$del_rc" -eq 0 ]] || { echo "FAIL: unset managed-host-group rc=$del_rc" >&2; exit 1; }
 grep -qi 'Deleted Managed Host Group' "$WORKDIR/del-cli.out" || { echo "FAIL: Managed Host Group delete missing confirmation output" >&2; exit 1; }

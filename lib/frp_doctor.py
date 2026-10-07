@@ -2499,7 +2499,7 @@ def check_egress_control(report, paths, facts, cfg):
                 'EGRESS_TCP_SERVICE_USER', WARN,
                 'drlink-tcp-egress unit is not configured for User=drlink-egress',
                 '',
-                're-run the server installer to apply non-root Fixed TCP Egress',
+                're-run the server installer to apply the non-root Fixed TCP relay runtime',
                 'runtime',
             )
 
@@ -2509,7 +2509,7 @@ def check_egress_control(report, paths, facts, cfg):
         relays = []
     report.add(
         'EGRESS_TCP_RELAYS', INFO,
-        'Fixed TCP Egress relays',
+        'Fixed TCP relays',
         'count=%d enabled=%d'
         % (
             len(relays),
@@ -2571,7 +2571,7 @@ def check_egress_control(report, paths, facts, cfg):
             if healthy_tcp:
                 report.add(
                     'EGRESS_TCP_EFFECTIVE', PASS,
-                    'Fixed TCP Egress effective runtime is healthy',
+                    'Fixed TCP relay effective runtime is healthy',
                     'generation=%s' % effective_tcp.get('policy_generation'),
                     '',
                     'runtime',
@@ -2579,7 +2579,7 @@ def check_egress_control(report, paths, facts, cfg):
             else:
                 report.add(
                     'EGRESS_TCP_EFFECTIVE', FAIL,
-                    'Fixed TCP Egress effective runtime is unhealthy (fail-closed)',
+                    'Fixed TCP relay effective runtime is unhealthy (fail-closed)',
                     str(effective_tcp.get('load_error') or ''),
                     'Run: sudo drlink show service-objects; then inspect the owning Agent Host with sudo drlink show managed-host <HOST> remote-services',
                     'runtime',
@@ -2587,7 +2587,7 @@ def check_egress_control(report, paths, facts, cfg):
         except Exception as exc:
             report.add(
                 'EGRESS_TCP_EFFECTIVE', WARN,
-                'Fixed TCP Egress effective runtime snapshot is unreadable',
+                'Fixed TCP relay effective runtime snapshot is unreadable',
                 str(exc),
                 'Run: sudo drlink system diagnostics\nIf Data Relay Link remains unhealthy: inspect journalctl -u drlink-tcp-egress',
                 'runtime',
@@ -2595,7 +2595,7 @@ def check_egress_control(report, paths, facts, cfg):
     elif tcp_unit_active == 'active':
         report.add(
             'EGRESS_TCP_EFFECTIVE', WARN,
-            'Fixed TCP Egress unit is active but effective snapshot is missing',
+            'Fixed TCP relay unit is active but effective snapshot is missing',
             tcp_effective,
             'Run: sudo drlink system diagnostics\nIf Data Relay Link remains unhealthy: inspect journalctl -u drlink-tcp-egress',
             'runtime',
