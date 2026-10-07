@@ -2380,7 +2380,7 @@ if ! declare -F frp_emit_update_rollback_recovery_guidance >/dev/null 2>&1; then
     echo "  sudo drlink system diagnostics" >&2
     echo "  sudo drlink system support-bundle" >&2
     echo >&2
-    echo "Do not re-enroll clients or delete state manually." >&2
+    echo "Do not re-enroll Agent Hosts or delete state manually." >&2
   }
 fi
 

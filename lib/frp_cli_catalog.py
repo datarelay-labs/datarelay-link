@@ -1741,7 +1741,10 @@ def domain_help(topic, role):
             "Remote Services\n"
             "===============\n\n"
             "Agent-local connectivity objects with DRLink endpoints.\n"
-            "UDP Remote Service is not supported.\n\n"
+            "UDP Remote Service is not supported.\n"
+            "SERVICE selects a Server-defined TCP or Fixed TCP Service Object.\n"
+            "The Server allocates/reserves the public endpoint; do not choose a public port on the Agent.\n"
+            "Use destination this-host for the Agent itself or a supported destination object.\n\n"
             "Everyday commands:\n"
             "  show remote-services\n"
             "  show remote-service <NAME>\n"
@@ -1811,6 +1814,7 @@ def domain_help(topic, role):
             "",
             "Everyday commands:",
             "  show status",
+            "  system status",
             "  system version",
             "  system diagnostics",
             "  system support-bundle",
@@ -2421,6 +2425,7 @@ NAVIGATION_TREE = {
         ("back", "Back", "", "back", None),
     ),
     "server.system.settings": (
+        ("server_show_settings", "Show current Server settings", "", "command", "system status"),
         ("server_set_public", "Remote Service public hostname", "", "workflow", "set_public_hostname"),
         ("server_set_bootstrap", "Bootstrap hostname", "", "workflow", "set_bootstrap_hostname"),
         ("server_set_installer", "Linux/macOS Agent installer URL", "", "workflow", "set_installer_url"),

@@ -204,9 +204,16 @@ export FRP_DEPLOY_TEST_ROOT="$SERVER"
 
 "$CTL" show status >"$WORKDIR/server-status.out"
 "$CTL" system status >"$WORKDIR/server-system-status.out"
-cmp -s "$WORKDIR/server-status.out" "$WORKDIR/server-system-status.out"   || { diff -u "$WORKDIR/server-status.out" "$WORKDIR/server-system-status.out" >&2 || true; fail "status parity"; }
+status_lines="$(wc -l <"$WORKDIR/server-status.out")"
+head -n "$status_lines" "$WORKDIR/server-system-status.out" >"$WORKDIR/server-system-status-prefix.out"
+cmp -s "$WORKDIR/server-status.out" "$WORKDIR/server-system-status-prefix.out"   || { diff -u "$WORKDIR/server-status.out" "$WORKDIR/server-system-status-prefix.out" >&2 || true; fail "status summary preservation"; }
 grep -q 'DRLink Server' "$WORKDIR/server-status.out" || fail "server role"
 grep -q 'Control DB' "$WORKDIR/server-status.out" || fail "server control DB"
+grep -q '^Server Settings$' "$WORKDIR/server-system-status.out" || fail "server settings heading"
+grep -q '^Public hostname ' "$WORKDIR/server-system-status.out" || fail "server public hostname setting"
+grep -q '^Bootstrap hostname ' "$WORKDIR/server-system-status.out" || fail "server bootstrap hostname setting"
+grep -q '^Linux/macOS Agent installer ' "$WORKDIR/server-system-status.out" || fail "server installer setting"
+grep -q '^Windows Agent installer ' "$WORKDIR/server-system-status.out" || fail "server windows installer setting"
 
 "$CTL" system version >"$WORKDIR/server-version.out"
 grep -q 'Data Relay Link: 1.4.0-dev' "$WORKDIR/server-version.out" || fail "server display identity"

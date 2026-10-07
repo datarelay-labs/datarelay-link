@@ -1531,7 +1531,10 @@ AI one-shot in Agent context:
 
 ```text
 set remote-service ssh-access destination this-host service ssh enabled
+
 ```
+
+`SERVICE` is a Server-defined TCP or Fixed TCP Service Object. The Server owns endpoint allocation/reservation; the Agent does not choose the public endpoint port.
 
 ---
 
@@ -2557,6 +2560,9 @@ system update check-engine
 system support-bundle
 system uninstall
 ```
+
+`system status` is the detailed Server read-only status and settings view. It includes current public/bootstrap hostnames and Linux/macOS/Windows Agent installer sources, with explicit automatic/default fallback text. `show status` remains the role-aware summary.
+
 
 `system certificate status` is the single public MCP TLS/certificate status surface. Configure TLS intent with `set mcp-tls ...`; there is no separate MCP TLS status read command.
 

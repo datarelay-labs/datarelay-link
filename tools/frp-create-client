@@ -1152,7 +1152,7 @@ def print_one_line_windows(
     print()
     print('The ticket cannot be reused by another machine once bound.')
     print('After reboot, Data Relay Link starts automatically when a service is enabled.')
-    print('If a pending service change remains, apply with:\n  system synchronize')
+    print('If a pending service change remains, apply with:\n  drlink system synchronize')
     if tracking_id:
         print()
         for line in _enrollment_track_hints(tracking_id):

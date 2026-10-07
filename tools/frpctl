@@ -727,6 +727,10 @@ frpctl_header() {
 
 frpctl_print_version() {
   local version_py="" lib_dir="" ver_file role project channel source_ref source_head frp_ver bundle
+  if ! frpctl_is_client && ! frpctl_is_server && frpctl_install_state_unreadable; then
+    frpctl_require_install
+    return 1
+  fi
   ver_file="$(frpctl_path /etc/drlink/version)"
   role="$(frpctl_role_label)"
   project="$(frpctl_project_version)"
@@ -819,6 +823,41 @@ frpctl_control_plane_status() {
   cli_py="$(frpctl_lib_candidate drlink_control_cli.py)" || return 1
   libdir="$(dirname "$cli_py")"
   PYTHONPATH="${libdir}${PYTHONPATH:+:$PYTHONPATH}" python3 "$cli_py" show status
+}
+
+frpctl_print_server_settings() {
+  local cfg scfg_py
+  cfg="$(frpctl_path /etc/drlink/config.json)"
+  scfg_py="$(frpctl_lib_candidate frp_server_config.py)" || return 1
+  python3 - "$scfg_py" "$cfg" <<'PY_SERVER_SETTINGS'
+import importlib.util
+import sys
+
+spec = importlib.util.spec_from_file_location("_drlink_server_settings", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+cfg = mod.load_config(sys.argv[2])
+try:
+    control = mod.control_host(cfg)
+except Exception:
+    control = "unconfigured"
+public = mod.public_hostname(cfg)
+bootstrap = mod.bootstrap_hostname(cfg)
+linux_url = str(cfg.get("client_installer_url") or "").strip()
+windows_url = str(cfg.get("windows_client_installer_url") or "").strip()
+print("Server Settings")
+print("===============")
+print("Public hostname              : %s" % (public or ("Automatic (Public IP: %s)" % control)))
+print("Bootstrap hostname           : %s" % (bootstrap or "Automatic (pinned-CA zt1 bootstrap)"))
+print("Linux/macOS Agent installer : %s" % (linux_url or "Automatic/default qualified installer source"))
+print("Windows Agent installer     : %s" % (windows_url or "Automatic/default qualified installer source"))
+PY_SERVER_SETTINGS
+}
+
+frpctl_control_plane_server_status() {
+  frpctl_control_plane_status || return $?
+  echo
+  frpctl_print_server_settings
 }
 
 frpctl_print_catalog_overview() {
@@ -3999,9 +4038,18 @@ frpctl_dispatch_canonical() {
     show_server_status)
       frpctl_require_server || return 1
       frpctl_load_passthrough "$result"
-      frpctl_with_pt frpctl_control_plane_status
+      frpctl_with_pt frpctl_control_plane_server_status
       ;;
-    show_version) echo; frpctl_print_version; echo ;;
+    show_version)
+      echo
+      frpctl_print_version
+      _version_rc=$?
+      echo
+      if [[ "$_version_rc" -ne 0 ]]; then
+        _FRP_CTL_RC="$_version_rc"
+        return 0
+      fi
+      ;;
     control_plane)
       # Shared control-plane dispatcher for Server and Agent Host.
       # Role-specific resource enforcement lives in drlink_v24_cli /

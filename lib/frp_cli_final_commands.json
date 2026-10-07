@@ -693,7 +693,7 @@
     "roles": "server",
     "category": "System",
     "summary": "Show detailed server status",
-    "detail": "Canonical Server status. show status remains the role-aware summary.",
+    "detail": "Detailed Server status followed by the read-only Server settings view. show status remains the role-aware summary.",
     "examples": [
       "system status"
     ],
@@ -3664,11 +3664,12 @@
     "roles": "client",
     "category": "Remote Services",
     "summary": "Create or edit a Remote Service",
-    "detail": "Create or edit a Remote Service. The name-only form opens a reviewed edit wizard. Use enabled or disabled in the complete form to change activation. Editing or disabling can interrupt access to the service. The explicit complete command authorizes that change without an additional confirmation prompt; the wizard reviews the change before apply.",
+    "detail": "Create or edit a Remote Service. SERVICE selects a Server-defined TCP or Fixed TCP Service Object; the Server allocates/reserves the public endpoint, so the Agent does not choose a public port. Use destination this-host for the Agent itself or a supported destination object. The name-only form opens a reviewed edit wizard. Use enabled or disabled in the complete form to change activation. Editing or disabling can interrupt access to the service. The explicit complete command authorizes that change without an additional confirmation prompt; the wizard reviews the change before apply.",
     "examples": [
       "set remote-service <NAME>",
       "set remote-service ssh-access destination this-host service ssh enabled",
-      "set remote-service ssh-access destination this-host service ssh disabled"
+      "set remote-service vendor-api destination this-host service vendor-fixed-tcp enabled",
+      "show remote-service <NAME>"
     ],
     "args": [
       {

@@ -338,6 +338,9 @@ system support-bundle
 system uninstall
 ```
 
+`system status` is the detailed Server read-only view. In addition to runtime/control-plane health, it shows the current public hostname, bootstrap hostname, Linux/macOS Agent installer source, and Windows Agent installer source, including their automatic/default fallback semantics. `show status` remains the role-aware summary.
+
+
 `system certificate status` is the single public MCP TLS/certificate status surface. Configure TLS intent with `set mcp-tls ...`; there is no separate MCP TLS status read command.
 
 ## 9. Managed Host as Network Object
@@ -398,7 +401,10 @@ Agent one-shot example:
 
 ```text
 set remote-service ssh-access destination this-host service ssh enabled
+
 ```
+
+`SERVICE` selects a Server-defined TCP or Fixed TCP Service Object. The Server allocates and reserves the public endpoint; the Agent does not choose a public port.
 
 Relay example executed on `branch-gateway`:
 

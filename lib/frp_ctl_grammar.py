@@ -259,6 +259,12 @@ _OBSOLETE_RESOURCES = frozenset(
         "ai-activity",
         "fixed-tcp",
         "access-log",
+        "access-assign",
+        "access-public",
+        "access-lists",
+        "egress",
+        "egress-tcp",
+        "egress-tcp-entry",
     }
 )
 _OBSOLETE_POINTERS = {
@@ -289,6 +295,15 @@ def reject_obsolete_surface(tokens):
     if not tokens:
         return None
     raw = [str(t) for t in tokens]
+    if raw[0] == "menu" and len(raw) > 1:
+        return {
+            "status": "error",
+            "exit_code": 2,
+            "message": (
+                "Guided menu does not accept a legacy submenu name.\n"
+                "Use menu, then select the current Data Relay Link domain."
+            ),
+        }
     verb = raw[0]
     # Reject retired nested forms before help or legacy system fallthrough
     # can turn them into an executable operation or successful discovery.
@@ -789,6 +804,13 @@ def help_text(tokens, role):
         return CATALOG.workflow_help(role)
     if verb in ("command", "commands"):
         return CATALOG.commands_help(role)
+    # A multi-token help request is command help first; otherwise the broad
+    # domain page would hide exact lifecycle children such as certificate or
+    # credential operations.
+    if len(tokens) > 1:
+        catalog_topic = _catalog_help_topic(tokens, role)
+        if catalog_topic is not None:
+            return catalog_topic
     domain = CATALOG.domain_help(verb, role)
     if domain is not None:
         return domain
@@ -834,6 +856,25 @@ def _catalog_help_topic(tokens, role):
     cmd = CATALOG.find(probe)
     if cmd is not None and len(cmd["path"]) == len(probe):
         return CATALOG.command_help(cmd)
+    # Help may name a documented positional enum (for example
+    # `help set enrollment zero-touch`). Resolve the longest command prefix
+    # and accept only values advertised by that command's argument metadata.
+    for cut in range(len(probe) - 1, 0, -1):
+        parent = CATALOG.find(probe[:cut])
+        if parent is None or not CATALOG.role_allows(parent["roles"], role):
+            continue
+        trailing = probe[cut:]
+        args = list(parent.get("args") or ())
+        if len(trailing) > len(args):
+            continue
+        valid = True
+        for value, arg in zip(trailing, args):
+            choices = arg.get("complete")
+            if isinstance(choices, (list, tuple)) and value not in choices:
+                valid = False
+                break
+        if valid:
+            return CATALOG.command_help(parent)
     if len(probe) == 1 and CATALOG.canonical_actions(root):
         text = CATALOG.resource_help(root, role)
         if text is not None:
@@ -1127,7 +1168,7 @@ def _update_help(role):
         )
     lines.extend(
         [
-            "A software update does not re-enroll clients or rotate CA/token/ports.",
+            "A software update does not re-enroll Agent Hosts or rotate CA/token/ports.",
             "See: help system / help commands",
         ]
     )
@@ -1298,6 +1339,9 @@ def _catalog_context_help(tokens, role, names=None, clients=None):
         ("unset", "ai-access"),
         ("system", "diff"),
         ("system", "backup"),
+        ("set", "remote-access"),
+        ("set", "internet-access"),
+        ("set", "ai-access"),
     }
     if tuple(probe) in parent_help_paths:
         rendered = CATALOG.command_help(cmd).rstrip()
