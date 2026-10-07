@@ -1075,7 +1075,7 @@ def make_handler(bridge: MCPBridge):
                     return
                 qs = parse_qs(parsed.query)
                 fields = {k: (v[0] if v else "") for k, v in qs.items()}
-                requested_scopes = tuple(x for x in str(fields.get("scope") or OAUTH_PRIMARY_SCOPE).split() if x)
+                requested_scopes = tuple(x for x in str(fields.get("scope") or " ".join(OAUTH_SUPPORTED_SCOPES)).split() if x)
                 if OAUTH_PRIMARY_SCOPE not in requested_scopes or any(x not in OAUTH_SUPPORTED_SCOPES for x in requested_scopes):
                     self._send(400, {"error": "invalid_scope", "error_description": "supported scopes: %s" % " ".join(OAUTH_SUPPORTED_SCOPES)})
                     return
@@ -1091,6 +1091,7 @@ def make_handler(bridge: MCPBridge):
                         resource=resource,
                         state=str(fields.get("state") or ""),
                         source=source,
+                        scope=" ".join(requested_scopes),
                     )
                 except OAuthPendingCapacityError as exc:
                     self._send(

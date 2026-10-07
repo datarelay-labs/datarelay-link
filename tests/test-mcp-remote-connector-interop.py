@@ -197,7 +197,7 @@ class RemoteConnectorInteropTests(unittest.TestCase):
         self.bridge.close()
         self.plane.close()
 
-    def _auth_code(self, client_id="ro-agent"):
+    def _auth_code(self, client_id="ro-agent", scope="drlink.ai offline_access"):
         verifier = "B" * 43
         challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest()).decode("ascii").rstrip("=")
         resource = self.bridge.canonical_resource()
@@ -210,7 +210,7 @@ class RemoteConnectorInteropTests(unittest.TestCase):
                 "code_challenge_method": "S256",
                 "resource": resource,
                 "state": "s1",
-                "scope": "drlink.ai offline_access",
+                "scope": scope,
             }
         )
 
@@ -250,6 +250,12 @@ class RemoteConnectorInteropTests(unittest.TestCase):
             ).read().decode("utf-8")
         )
         return issued, resource
+
+    def test_oauth_grants_only_requested_optional_scope(self):
+        issued, _resource = self._auth_code("ro-agent", scope="drlink.ai")
+        self.assertEqual(issued["scope"], "drlink.ai")
+        self.assertNotIn("refresh_token", issued)
+        print("OAUTH_SCOPE_LEAST_PRIVILEGE=PASS")
 
     def test_discovery_pkce_refresh_dcr_cimd_and_binding(self):
         status, _, headers = rpc(self.url, {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}})

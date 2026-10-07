@@ -4174,9 +4174,14 @@ class ControlPlane:
         resource: str,
         state: str = "",
         source: str = "",
+        scope: str = "drlink.ai offline_access",
     ) -> dict:
         if not code_challenge:
             raise ControlPlaneError("code_challenge is required")
+        requested_scopes = tuple(dict.fromkeys(x for x in str(scope or "drlink.ai offline_access").split() if x))
+        if "drlink.ai" not in requested_scopes or any(x not in ("drlink.ai", "offline_access") for x in requested_scopes):
+            raise ControlPlaneError("unsupported OAuth scope")
+        requested_scope = " ".join(requested_scopes)
         # CIMD metadata is fetched before the DB lock so a slow peer cannot stall admission.
         cimd_doc = None
         with self._db_lock:
@@ -4228,9 +4233,9 @@ class ControlPlane:
                         scope = "global"
                     raise OAuthPendingCapacityError(scope)
                 self.conn.execute(
-                    "INSERT INTO ai_oauth_pending(id, principal_id, client_id, redirect_uri, code_challenge, resource, state, "
+                    "INSERT INTO ai_oauth_pending(id, principal_id, client_id, redirect_uri, code_challenge, resource, scope, state, "
                     "created_at, completion_token, status, expires_at, decision_at, consumed_at, code_plain, source_addr) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, '', '', '', ?)",
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, '', '', '', ?)",
                     (
                         pending_id,
                         resolved["principal_id"],
@@ -4238,6 +4243,7 @@ class ControlPlane:
                         resolved["redirect_uri"],
                         code_challenge,
                         resource or "",
+                        requested_scope,
                         state or "",
                         now,
                         completion_token,
@@ -4371,8 +4377,8 @@ class ControlPlane:
         digest = hashlib.sha256(code.encode("utf-8")).hexdigest()
         now = utc_now_iso()
         self.conn.execute(
-            "INSERT INTO ai_oauth_codes(code_hash, principal_id, client_id, redirect_uri, code_challenge, resource, expires_at, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO ai_oauth_codes(code_hash, principal_id, client_id, redirect_uri, code_challenge, resource, scope, expires_at, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 digest,
                 principal_id,
@@ -4380,6 +4386,7 @@ class ControlPlane:
                 row["redirect_uri"],
                 row["code_challenge"],
                 row["resource"],
+                str(row["scope"] or "drlink.ai"),
                 self._iso_plus_seconds(300),
                 now,
             ),
@@ -4511,6 +4518,7 @@ class ControlPlane:
         ttl: int = OAUTH_ACCESS_TTL,
         include_refresh: bool = False,
         rotated_from: Optional[str] = None,
+        scope: str = "drlink.ai",
     ) -> dict:
         token = "drauth_" + secrets.token_urlsafe(32)
         digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
@@ -4521,13 +4529,17 @@ class ControlPlane:
             "VALUES (?, ?, ?, ?, ?, ?, ?, 'access', ?)",
             (digest, principal_id, client_id, resource or "", self._iso_plus_seconds(ttl), fp, now, rotated_from),
         )
+        granted = tuple(dict.fromkeys(x for x in str(scope or "drlink.ai").split() if x))
+        if "drlink.ai" not in granted or any(x not in ("drlink.ai", "offline_access") for x in granted):
+            raise ControlPlaneError("unsupported OAuth scope")
+        granted_scope = " ".join(granted)
         issued = {
             "access_token": token,
             "token_type": "Bearer",
             "expires_in": int(ttl),
-            "scope": "drlink.ai offline_access",
+            "scope": granted_scope,
         }
-        if include_refresh:
+        if include_refresh and "offline_access" in granted:
             refresh = "drref_" + secrets.token_urlsafe(32)
             rdigest = hashlib.sha256(refresh.encode("utf-8")).hexdigest()
             self.conn.execute(
@@ -4556,7 +4568,7 @@ class ControlPlane:
         if not resource:
             raise ControlPlaneError("resource is required")
         return self.issue_oauth_access_token(
-            principal_id=principal["id"], client_id=client_id, resource=resource, include_refresh=False
+            principal_id=principal["id"], client_id=client_id, resource=resource, include_refresh=False, scope="drlink.ai"
         )
 
     def exchange_authorization_code(
@@ -4586,7 +4598,8 @@ class ControlPlane:
             principal_id=row["principal_id"],
             client_id=client_id,
             resource=row["resource"] or resource,
-            include_refresh=True,
+            include_refresh=("offline_access" in str(row["scope"] or "").split()),
+            scope=str(row["scope"] or "drlink.ai"),
         )
 
     def exchange_refresh_token(
@@ -4622,6 +4635,7 @@ class ControlPlane:
             resource=stored,
             include_refresh=True,
             rotated_from=digest,
+            scope="drlink.ai offline_access",
         )
 
     def revoke_oauth_credential(self, token: str) -> bool:

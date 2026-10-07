@@ -536,6 +536,7 @@ CREATE TABLE ai_oauth_codes (
   redirect_uri TEXT NOT NULL,
   code_challenge TEXT NOT NULL,
   resource TEXT NOT NULL DEFAULT '',
+  scope TEXT NOT NULL DEFAULT 'drlink.ai offline_access',
   expires_at TEXT NOT NULL,
   used_at TEXT,
   created_at TEXT NOT NULL,
@@ -561,6 +562,7 @@ CREATE TABLE ai_oauth_pending (
   redirect_uri TEXT NOT NULL,
   code_challenge TEXT NOT NULL,
   resource TEXT NOT NULL DEFAULT '',
+  scope TEXT NOT NULL DEFAULT 'drlink.ai offline_access',
   state TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL,
   completion_token TEXT NOT NULL DEFAULT '',
@@ -857,6 +859,9 @@ def ensure_ai_auth_schema(conn: sqlite3.Connection) -> None:
     if cols and "oauth_subject" not in cols:
         conn.execute("ALTER TABLE ai_principals ADD COLUMN oauth_subject TEXT NOT NULL DEFAULT ''")
     conn.executescript(AI_AUTH_SQL)
+    code_cols = {str(row[1]) for row in conn.execute("PRAGMA table_info(ai_oauth_codes)")}
+    if code_cols and "scope" not in code_cols:
+        conn.execute("ALTER TABLE ai_oauth_codes ADD COLUMN scope TEXT NOT NULL DEFAULT 'drlink.ai offline_access'")
     tok_cols = {str(row[1]) for row in conn.execute("PRAGMA table_info(ai_oauth_tokens)")}
     if tok_cols and "kind" not in tok_cols:
         conn.execute("ALTER TABLE ai_oauth_tokens ADD COLUMN kind TEXT NOT NULL DEFAULT 'access'")
@@ -880,6 +885,7 @@ def ensure_oauth_pending_completion_schema(conn: sqlite3.Connection) -> None:
         ("consumed_at", "ALTER TABLE ai_oauth_pending ADD COLUMN consumed_at TEXT NOT NULL DEFAULT ''"),
         ("code_plain", "ALTER TABLE ai_oauth_pending ADD COLUMN code_plain TEXT NOT NULL DEFAULT ''"),
         ("source_addr", "ALTER TABLE ai_oauth_pending ADD COLUMN source_addr TEXT NOT NULL DEFAULT ''"),
+        ("scope", "ALTER TABLE ai_oauth_pending ADD COLUMN scope TEXT NOT NULL DEFAULT 'drlink.ai offline_access'"),
     ):
         if name not in cols:
             conn.execute(ddl)
