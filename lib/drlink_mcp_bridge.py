@@ -1181,15 +1181,23 @@ def make_handler(bridge: MCPBridge):
                 status = result.get("status")
                 if status == "pending":
                     continue_path = "/oauth/continue?%s" % urlencode({"t": token})
+                    pending_id = str(result.get("id") or "").strip()
+                    approval_hint = (
+                        "system credential approve-oauth %s &lt;AI-IDENTITY&gt;" % pending_id
+                        if pending_id
+                        else "system credential approve-oauth &lt;PENDING-ID&gt; &lt;AI-IDENTITY&gt;"
+                    )
                     page = (
                         "<!doctype html><html><head><meta charset='utf-8'>"
                         "<meta http-equiv='refresh' content='2;url=%s'>"
                         "<title>Waiting for approval</title></head><body>"
                         "<p>Waiting for operator approval…</p>"
+                        "<p>Approve this MCP OAuth request as operator:</p>"
+                        "<pre>%s</pre>"
                         "<p><a href='%s'>Retry</a></p>"
                         "<script>setTimeout(function(){location.replace(%s);},2000);</script>"
                         "</body></html>"
-                    ) % (continue_path, continue_path, json.dumps(continue_path))
+                    ) % (continue_path, approval_hint, continue_path, json.dumps(continue_path))
                     raw = page.encode("utf-8")
                     self.send_response(200)
                     self.send_header("Content-Type", "text/html; charset=utf-8")

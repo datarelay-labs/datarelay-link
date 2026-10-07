@@ -244,7 +244,10 @@ class ManualConsentBrowserTests(unittest.TestCase):
         # Wait page while still pending.
         wait = urllib.request.urlopen(self.base + auth["continue_path"], timeout=10)
         self.assertEqual(wait.status, 200)
-        self.assertIn("Waiting for operator approval", wait.read().decode("utf-8"))
+        wait_body = wait.read().decode("utf-8")
+        self.assertIn("Waiting for operator approval", wait_body)
+        self.assertIn(auth["pending_id"], wait_body)
+        self.assertIn("system credential approve-oauth", wait_body)
         # Public CLI approval path only (no DB / plane helper).
         buf = io.StringIO()
         with redirect_stdout(buf):
