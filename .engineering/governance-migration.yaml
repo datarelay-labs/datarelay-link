@@ -1,11 +1,11 @@
 contract_version: 1
-base_sha: 9ca42ebef7cf4b445d503eef0e5695d77924c650
-from_policy_epoch: 14
-to_policy_epoch: 15
+from_policy_epoch: 12
+to_policy_epoch: 13
+base_sha: 222d031215441b463bacc409bc2a94a857cff6ec
 requires_exact_head_validate: true
 automation_eligible: false
-rationale: Synchronize already-merged v2.4 policy PRs 157 and 158 after CLI7 offboarding;
-  staged legacy-v1 root bridge precedes policy freshness 19. Preserve stricter product rules.
+rationale: Managed adoption upgrade bbab51923ec6a574108b28748e799225d63d04d0 -> 8ff2bcaa4628693a5fc86738e95f267efa5a58d6
+  changes canonical governance root surfaces.
 changed_surfaces:
 - path: tools/governance_floor.py
   head_blob_sha: e428a5db8579ce3acd2896e99d601b19df173796
