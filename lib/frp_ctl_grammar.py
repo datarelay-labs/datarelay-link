@@ -87,6 +87,17 @@ def read_only_completion_inventory(role, root=""):
                     result["services"][selector] = names
             result["groups"] = [str(row["name"]) for row in conn.execute(
                 "SELECT name FROM client_groups ORDER BY name")]
+            # Names only: completion never reads credentials or writes authority.
+            result["inventory"] = {
+                kind: [str(row["name"]) for row in conn.execute(
+                    "SELECT name FROM %s ORDER BY name" % table)]
+                for kind, table in (
+                    (CATALOG.C_OBJECT, "objects"),
+                    (CATALOG.C_OBJECT_GROUP, "object_groups"),
+                    (CATALOG.C_AI_PRINCIPAL, "ai_principals"),
+                    (CATALOG.C_AI_RULE, "ai_access_rules"),
+                )
+            }
         if client:
             result["local_services"] = [str(row["name"]) for row in conn.execute(
                 "SELECT name FROM agent_remote_services WHERE delete_pending = 0 ORDER BY name")]
@@ -445,6 +456,16 @@ def reject_obsolete_surface(tokens):
                 "Noncanonical resource '%s' is not part of the current Data Relay Link grammar.\n%s"
                 % (raw[1], _HIDDEN_SHOW_RESOURCES[raw[1]])
             ),
+        }
+    if verb == "test" and len(raw) >= 2 and raw[1] in (
+        "group", "groups", "service", "services",
+    ):
+        return {
+            "status": "error", "exit_code": 2,
+            "message": "Retired test resource '%s' is not part of the current grammar.\n"
+                       "On the DRLink Server, use test remote-access, test internet-access, "
+                       "or test ai-access for policy decisions.\n"
+                       "See: help test" % raw[1],
         }
     if len(raw) >= 2 and raw[1] in ("service", "services"):
         if verb in ("show", "set", "unset", "add", "remove", "enable", "disable"):
@@ -4328,6 +4349,7 @@ def completion_candidates(
     egress_profiles=None,
     access_lists=None,
     service_profiles=None,
+    inventory=None,
 ):
     try:
         tokens = tokenize(line)
@@ -4368,6 +4390,7 @@ def completion_candidates(
         egress_profiles=egress_profiles,
         access_lists=access_lists,
         service_profiles=service_profiles,
+        inventory=inventory,
         tokens=tokens,
         trailing=trailing,
     )
@@ -4386,6 +4409,7 @@ def completion_candidates(
         egress_profiles=egress_profiles,
         access_lists=access_lists,
         service_profiles=service_profiles,
+        inventory=inventory,
     )
 
 
@@ -4639,8 +4663,9 @@ def _inventory(
     egress_profiles=None,
     access_lists=None,
     service_profiles=None,
+    inventory=None,
 ):
-    return {
+    pools = {
         CATALOG.C_CLIENT: list(names or []),
         CATALOG.C_GROUP: list(groups or []),
         CATALOG.C_LOCAL_SERVICE: list(local_services or []),
@@ -4648,6 +4673,10 @@ def _inventory(
         CATALOG.C_ACCESS_LIST: list(access_lists or []),
         CATALOG.C_PROFILE: list(service_profiles or []),
     }
+    for kind in (CATALOG.C_OBJECT, CATALOG.C_OBJECT_GROUP,
+                 CATALOG.C_AI_PRINCIPAL, CATALOG.C_AI_RULE):
+        pools[kind] = list((inventory or {}).get(kind) or [])
+    return pools
 
 
 def _pending_flag_value(tokens, cmd, *, trailing):
@@ -4673,6 +4702,7 @@ def _catalog_candidates(
     egress_profiles=None,
     access_lists=None,
     service_profiles=None,
+    inventory=None,
     tokens=(),
     trailing=False,
 ):
@@ -4767,6 +4797,7 @@ def _catalog_candidates(
                 egress_profiles=egress_profiles,
                 access_lists=access_lists,
                 service_profiles=service_profiles,
+                inventory=inventory,
             ).get(complete)
             if pool is not None:
                 hits = _filter(pool, prefix)
@@ -4805,6 +4836,7 @@ def _canonical_completion(
     egress_profiles=None,
     access_lists=None,
     service_profiles=None,
+    inventory=None,
 ):
     client, server = _role_parts(role)
     prefix = _current_prefix(tokens, trailing)
@@ -4822,6 +4854,7 @@ def _canonical_completion(
         egress_profiles=egress_profiles,
         access_lists=access_lists,
         service_profiles=service_profiles,
+        inventory=inventory,
         tokens=tokens,
         trailing=trailing,
     )
@@ -4991,6 +5024,7 @@ def complete_line(
     egress_profiles=None,
     access_lists=None,
     service_profiles=None,
+    inventory=None,
 ):
     trailing = bool(line) and line[-1:] in " \t"
     cands = completion_candidates(
@@ -5004,6 +5038,7 @@ def complete_line(
         egress_profiles=egress_profiles,
         access_lists=access_lists,
         service_profiles=service_profiles,
+        inventory=inventory,
     )
     if not cands:
         return line
@@ -5135,6 +5170,7 @@ def main(argv=None):
     egress_profiles = payload.get("egress") or []
     access_lists = payload.get("access_lists") or []
     service_profiles = payload.get("service_profiles") or []
+    inventory = payload.get("inventory") or {}
     if cmd == "match":
         tokens = payload.get("tokens") or argv[1:]
         json.dump(match(tokens, role, names=names, clients=payload.get("clients") or []), sys.stdout)
@@ -5157,6 +5193,7 @@ def main(argv=None):
             egress_profiles=egress_profiles,
             access_lists=access_lists,
             service_profiles=service_profiles,
+            inventory=inventory,
         ):
             sys.stdout.write(item + "\n")
         return 0
@@ -5173,6 +5210,7 @@ def main(argv=None):
                 egress_profiles=egress_profiles,
                 access_lists=access_lists,
                 service_profiles=service_profiles,
+                inventory=inventory,
             )
         )
         return 0

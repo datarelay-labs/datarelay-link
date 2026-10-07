@@ -645,7 +645,7 @@ try:
         payload['inventory_warning'] = False
 except Exception:
     # Never advertise stale legacy selectors after an authoritative read fails.
-    payload.update(names=[], clients=[], services={}, local_services=[], groups=[])
+    payload.update(names=[], clients=[], services={}, local_services=[], groups=[], inventory={})
     payload['inventory_warning'] = True
 json.dump(payload, sys.stdout)
 PY

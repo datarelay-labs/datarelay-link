@@ -633,6 +633,7 @@ class CliFeatureScenarioRemediation(unittest.TestCase):
         payload = self._completion_payload()
         self.assertEqual(payload["names"], [])
         self.assertEqual(payload["local_services"], [])
+        self.assertEqual(payload["inventory"], {})
         self.assertTrue(payload["inventory_warning"])
         self.assertEqual(db.read_bytes(), b"not a SQLite database")
 

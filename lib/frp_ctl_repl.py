@@ -64,12 +64,14 @@ class LineEditor:
         self.egress_profiles = payload.get("egress") or []
         self.access_lists = payload.get("access_lists") or []
         self.service_profiles = payload.get("service_profiles") or []
+        self.inventory = payload.get("inventory") or {}
         self._matches = []
         self._last_display_key = None
         self.prompt = os.environ.get("FRP_CTL_PROMPT") or "drlink> "
 
     def _completion_kwargs(self):
         return {
+            "inventory": self.inventory,
             "groups": self.groups,
             "egress_profiles": self.egress_profiles,
             "access_lists": self.access_lists,
@@ -237,6 +239,18 @@ def _looks_secret(grammar, line):
 
 
 _MUTATING_PUBLIC_PREFIXES = (
+    ("set", "managed-host"),
+    ("unset", "managed-host"),
+    ("set", "managed-host-group"),
+    ("unset", "managed-host-group"),
+    ("set", "network-object"),
+    ("unset", "network-object"),
+    ("set", "network-group"),
+    ("unset", "network-group"),
+    ("set", "ai-identity"),
+    ("unset", "ai-identity"),
+    ("set", "ai-access"),
+    ("unset", "ai-access"),
     ("set", "remote-service"),
     ("unset", "remote-service"),
     ("system", "apply", "configuration"),
@@ -353,6 +367,7 @@ def _refresh_editor_inventory(editor, frpctl_bin):
     editor.egress_profiles = payload.get("egress") or []
     editor.access_lists = payload.get("access_lists") or []
     editor.service_profiles = payload.get("service_profiles") or []
+    editor.inventory = payload.get("inventory") or {}
 
 
 def _run_backend(argv, env):

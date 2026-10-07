@@ -15,6 +15,41 @@ import frp_ctl_grammar as grammar
 
 
 class RoleParserRegression(unittest.TestCase):
+    def test_retired_test_resources_reject_native_execution_and_help(self):
+        for role in ('server', 'client'):
+            with tempfile.TemporaryDirectory(prefix='drlink-retired-test-resource-') as temp:
+                root = Path(temp)
+                config = root / ('etc/drlink/config.json' if role == 'server'
+                                 else 'etc/frp/client-state.json')
+                config.parent.mkdir(parents=True)
+                config.write_text('{"role":"server"}\n' if role == 'server'
+                                  else '{"services":{}}\n')
+                before = {str(p.relative_to(root)): p.read_bytes()
+                          for p in root.rglob('*') if p.is_file()}
+                env = dict(os.environ, FRP_CTL_TEST_ROOT=temp,
+                           FRP_DEPLOY_TEST_ROOT=temp)
+                for resource in ('group', 'groups', 'service', 'services'):
+                    command = ['test', resource, 'fixture']
+                    for tokens in (command, command + ['?'], ['help'] + command):
+                        with self.subTest(role=role, tokens=tokens):
+                            result = subprocess.run(
+                                ['bash', str(ROOT / 'tools/drlink'), *tokens],
+                                cwd=temp, env=env, capture_output=True, text=True,
+                                timeout=30)
+                            output = result.stdout + result.stderr
+                            self.assertEqual(result.returncode, 2, output)
+                            self.assertIn('not part of', output)
+                            self.assertIn('test remote-access', output)
+                after = {str(p.relative_to(root)): p.read_bytes()
+                         for p in root.rglob('*') if p.is_file()}
+                self.assertEqual(after, before)
+
+    def test_retired_test_resource_guard_preserves_current_selector_values(self):
+        self.assertIsNone(grammar.reject_obsolete_surface([
+            'test', 'remote-access', 'source', 'groups',
+            'destination', 'services', 'service', 'group',
+        ]))
+
     def test_retired_credential_noun_rejects_native_execution_and_help(self):
         for role in ('server', 'client'):
             with tempfile.TemporaryDirectory(prefix='drlink-credential-grammar-') as temp:

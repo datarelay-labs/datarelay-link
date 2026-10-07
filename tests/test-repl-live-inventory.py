@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import subprocess
+import tempfile
 from types import SimpleNamespace
 import unittest
 from pathlib import Path
@@ -51,6 +54,76 @@ class ReplLiveInventoryTests(unittest.TestCase):
             **self.editor._completion_kwargs(),
         )
 
+    def test_finite_view_choices_after_selector(self):
+        for resource, choices in {
+            'managed-host': ['remote-services', 'agent', 'addresses'],
+            'network-object': ['references'],
+            'network-group': ['references'],
+            'service-object': ['references'],
+            'service-group': ['references'],
+        }.items():
+            with self.subTest(resource=resource):
+                line = 'show %s fixture ' % resource
+                self.assertEqual(self._cands(line), choices)
+                for choice in choices:
+                    self.assertIn(choice, self._cands(line + choice[:2]))
+
+    def test_declared_inventory_from_authoritative_db_and_same_session_refresh(self):
+        import drlink_control_db as db
+        with tempfile.TemporaryDirectory(prefix='drlink-completion-db-') as temp:
+            conn = db.connect(root=temp)
+            db.initialize(conn)
+            timestamp = '2026-10-07T00:00:00Z'
+            for table, extra_columns, extra_values in (
+                ('objects', ',type,origin', ", 'ip', 'static'"),
+                ('object_groups', '', ''),
+                ('ai_principals', '', ''),
+                ('ai_access_rules', ',position', ',1'),
+            ):
+                conn.execute('INSERT INTO %s (id,name,created_at,updated_at%s) '
+                             'VALUES (?,?,?,?%s)' % (table, extra_columns, extra_values),
+                             (table + '-id', table + '-name', timestamp, timestamp))
+            conn.close()
+            target = db.db_path(temp)
+            before = target.read_bytes()
+            inventory = self.editor.grammar.read_only_completion_inventory('server', temp)
+            self.assertEqual(target.read_bytes(), before)
+            config = Path(temp) / 'etc/drlink/config.json'
+            config.parent.mkdir(parents=True, exist_ok=True)
+            config.write_text('{"role":"server"}\n')
+            env = dict(os.environ, FRP_CTL_TEST_ROOT=temp, FRP_DEPLOY_TEST_ROOT=temp)
+            env.pop('FRP_CTL_GRAMMAR_PAYLOAD', None)
+            native = subprocess.run(
+                ['bash', str(ROOT / 'tools/frpctl'), '--print-grammar-payload'],
+                env=env, capture_output=True, text=True, timeout=30)
+            self.assertEqual(native.returncode, 0, native.stderr)
+            self.assertEqual(json.loads(native.stdout)['inventory'], inventory['inventory'])
+            self.assertEqual(target.read_bytes(), before)
+            editor = REPL.LineEditor(dict(inventory, role='server'))
+            for resource, name in (
+                ('network-object', 'objects-name'),
+                ('network-group', 'object_groups-name'),
+                ('ai-identity', 'ai_principals-name'),
+                ('ai-access', 'ai_access_rules-name'),
+            ):
+                with self.subTest(resource=resource):
+                    for action in (('show',) if resource == 'ai-access'
+                                   else ('show', 'unset')):
+                        line = '%s %s ' % (action, resource)
+                        self.assertIn(name, editor.grammar.completion_candidates(
+                            line, editor.role, editor.names, editor.services,
+                            editor.local_services, **editor._completion_kwargs()))
+                    self.assertTrue(REPL._should_refresh_inventory(['set', resource, name]))
+                    self.assertTrue(REPL._should_refresh_inventory(['unset', resource, name]))
+            refreshed = dict(inventory, role='server')
+            refreshed['inventory'] = {key: [] for key in inventory['inventory']}
+            with patch.object(REPL.subprocess, 'run', return_value=SimpleNamespace(
+                    returncode=0, stdout=json.dumps(refreshed))):
+                REPL._refresh_editor_inventory(editor, 'drlink')
+            self.assertEqual(editor.grammar.completion_candidates(
+                'show ai-identity ', editor.role, editor.names, editor.services,
+                editor.local_services, **editor._completion_kwargs()), [])
+
     def test_editor_retains_inventory_fields(self):
         self.assertEqual(self.editor.egress_profiles, ["vendor-api"])
         self.assertEqual(self.editor.access_lists, ["office"])
@@ -88,9 +161,9 @@ class ReplLiveInventoryTests(unittest.TestCase):
     def test_should_refresh_current_grammar(self):
         self.assertTrue(REPL._should_refresh_inventory(["set", "internet-access", "x"]))
         self.assertTrue(REPL._should_refresh_inventory(["unset", "remote-access", "office"]))
-        self.assertTrue(REPL._should_refresh_inventory(["system", "services", "apply"]))
+        self.assertTrue(REPL._should_refresh_inventory(["system", "apply", "configuration", "bundle.yaml"]))
         self.assertFalse(REPL._should_refresh_inventory(["show", "internet-access"]))
-        self.assertFalse(REPL._should_refresh_inventory(["test", "internet-access", "1.1.1.1", "a", "443"]))
+        self.assertFalse(REPL._should_refresh_inventory(["test", "internet-access", "source", "192.0.2.1", "destination", "example.test", "service", "https"]))
         self.assertFalse(REPL._should_refresh_inventory(["help", "commands"]))
 
     def test_current_agent_mutations_and_menu_refresh_inventory(self):

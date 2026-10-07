@@ -2612,7 +2612,10 @@
       },
       {
         "name": "[VIEW]",
-        "required": false
+        "required": false,
+        "complete": [
+          "references"
+        ]
       }
     ],
     "tail": "any",
@@ -2669,7 +2672,10 @@
       },
       {
         "name": "[VIEW]",
-        "required": false
+        "required": false,
+        "complete": [
+          "references"
+        ]
       }
     ],
     "tail": "any",
@@ -2841,7 +2847,10 @@
       },
       {
         "name": "[VIEW]",
-        "required": false
+        "required": false,
+        "complete": [
+          "references"
+        ]
       }
     ],
     "tail": "any",
@@ -2897,7 +2906,10 @@
       },
       {
         "name": "[VIEW]",
-        "required": false
+        "required": false,
+        "complete": [
+          "references"
+        ]
       }
     ],
     "tail": "any",
@@ -3327,7 +3339,12 @@
       },
       {
         "name": "[VIEW]",
-        "required": false
+        "required": false,
+        "complete": [
+          "remote-services",
+          "agent",
+          "addresses"
+        ]
       }
     ],
     "tail": "any",
