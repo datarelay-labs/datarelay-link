@@ -7,7 +7,7 @@
     "roles": "any",
     "category": "Status",
     "summary": "Show host status",
-    "detail": "Role-aware host status. On a dual-role host both the client and the server sections are printed.",
+    "detail": "Role-aware host status. On a dual-role host both the Agent Host and Server sections are printed.",
     "examples": [
       "show status"
     ],
@@ -524,7 +524,7 @@
     "roles": "server",
     "category": "Server",
     "summary": "Change server settings",
-    "detail": "Configure Server public/bootstrap hostnames and Linux/macOS or Windows client installer URLs.",
+    "detail": "Configure Server public/bootstrap hostnames and Linux/macOS or Windows Agent installer URLs.",
     "examples": [
       "set server public-hostname frp.example.com",
       "set server bootstrap-hostname bootstrap.example.com",
@@ -717,8 +717,8 @@
     ],
     "roles": "client",
     "category": "System",
-    "summary": "Show local client connection information",
-    "detail": "Connection information for this installed client host.",
+    "summary": "Show local Agent Host connection information",
+    "detail": "Connection information for this installed Agent Host.",
     "examples": [
       "system info"
     ],
@@ -837,7 +837,7 @@
     "roles": "any",
     "category": "System",
     "summary": "Update Data Relay Link management software",
-    "detail": "A software update does not re-enroll clients and does not rotate the CA, token, or ports.",
+    "detail": "A software update does not re-enroll Agent Hosts and does not rotate the CA, token, or ports. Invoking this command authorizes the update and any required service restart; active connections may be interrupted. Check show status and system diagnostics afterward.",
     "examples": [
       "system update product"
     ],
@@ -848,25 +848,12 @@
       "project"
     ],
     "aliases": [],
-    "destructive": false,
+    "destructive": true,
     "hidden": false,
-    "risk": "none",
+    "risk": "outage",
     "confirmation": "none",
     "surface": "",
-    "flags": [
-      {
-        "name": "--check",
-        "arity": 0,
-        "choices": [],
-        "hidden": true,
-        "required": false,
-        "description": "",
-        "metavar": "",
-        "examples": [],
-        "effect": "",
-        "risk": ""
-      }
-    ]
+    "flags": []
   },
   {
     "path": [
@@ -877,7 +864,7 @@
     "roles": "any",
     "category": "System",
     "summary": "Update Relay Engine (FRP)",
-    "detail": "Updates the official upstream FRP / Relay Engine binary.",
+    "detail": "Updates the official upstream FRP / Relay Engine binary. Invoking this command authorizes the update and any required service restart; active connections may be interrupted. Check show status and system diagnostics afterward.",
     "examples": [
       "system update engine"
     ],
@@ -888,25 +875,12 @@
       "frp"
     ],
     "aliases": [],
-    "destructive": false,
+    "destructive": true,
     "hidden": false,
-    "risk": "none",
+    "risk": "outage",
     "confirmation": "none",
     "surface": "",
-    "flags": [
-      {
-        "name": "--check",
-        "arity": 0,
-        "choices": [],
-        "hidden": true,
-        "required": false,
-        "description": "",
-        "metavar": "",
-        "examples": [],
-        "effect": "",
-        "risk": ""
-      }
-    ]
+    "flags": []
   },
   {
     "path": [
@@ -1090,8 +1064,8 @@
     ],
     "roles": "client",
     "category": "System",
-    "summary": "Pause the local Data Relay Link client",
-    "detail": "Stop the local relay runtime and disable automatic startup. Client identity, registration, service definitions, and server-side reservations are preserved.",
+    "summary": "Pause the local Data Relay Link Agent",
+    "detail": "Stop the local relay runtime and disable automatic startup, interrupting access through this Agent. Identity, registration, Remote Service definitions and Server reservations are preserved. The explicit command authorizes this outage; no additional confirmation prompt is used. Use system resume to restore connectivity and automatic startup.",
     "examples": [
       "system pause"
     ],
@@ -1101,9 +1075,9 @@
       "pause"
     ],
     "aliases": [],
-    "destructive": false,
+    "destructive": true,
     "hidden": false,
-    "risk": "none",
+    "risk": "outage",
     "confirmation": "none",
     "surface": "",
     "flags": []
@@ -1115,8 +1089,8 @@
     ],
     "roles": "client",
     "category": "System",
-    "summary": "Resume a paused Data Relay Link client",
-    "detail": "Enable automatic startup and start the local relay runtime. Identity, services, and public ports are unchanged.",
+    "summary": "Resume a paused Data Relay Link Agent",
+    "detail": "Enable automatic startup and start the local relay runtime. Agent identity, Remote Services, and public ports are unchanged.",
     "examples": [
       "system resume"
     ],
@@ -1140,8 +1114,8 @@
     ],
     "roles": "client",
     "category": "System",
-    "summary": "Restart the local Data Relay Link client runtime",
-    "detail": "Restart only the local client relay runtime. Identity, service definitions, public ports, and server registration are preserved.",
+    "summary": "Restart the local Data Relay Link Agent runtime",
+    "detail": "Restart only the local Agent relay runtime; active connections may be interrupted. Agent identity, Remote Service definitions, public ports and Server registration are preserved. The explicit command authorizes the restart; no additional confirmation prompt is used. Check show status afterward.",
     "examples": [
       "system restart"
     ],
@@ -1151,9 +1125,9 @@
       "restart"
     ],
     "aliases": [],
-    "destructive": false,
+    "destructive": true,
     "hidden": false,
-    "risk": "none",
+    "risk": "outage",
     "confirmation": "none",
     "surface": "",
     "flags": []
@@ -1165,8 +1139,8 @@
     ],
     "roles": "client",
     "category": "System",
-    "summary": "Show whether the client starts automatically",
-    "detail": "Read-only autostart status for the local Data Relay Link client.",
+    "summary": "Show whether the Agent starts automatically",
+    "detail": "Read-only autostart status for the local Data Relay Link Agent.",
     "examples": [
       "system autostart"
     ],
@@ -1191,8 +1165,8 @@
     ],
     "roles": "client",
     "category": "System",
-    "summary": "Enable automatic client startup",
-    "detail": "Enable product-owned automatic startup for the local client.",
+    "summary": "Enable automatic Agent startup",
+    "detail": "Enable product-owned automatic startup for the local Agent.",
     "examples": [
       "system autostart enable"
     ],
@@ -1218,8 +1192,8 @@
     ],
     "roles": "client",
     "category": "System",
-    "summary": "Disable automatic client startup",
-    "detail": "Disable product-owned automatic startup for the local client.",
+    "summary": "Disable automatic Agent startup",
+    "detail": "Disable product-owned automatic startup for the local Agent. The current runtime is not stopped, but the Agent will not start automatically after the next boot. The explicit command authorizes this future availability change; no additional confirmation prompt is used. Use system autostart enable to restore automatic startup.",
     "examples": [
       "system autostart disable"
     ],
@@ -1230,9 +1204,9 @@
       "disable"
     ],
     "aliases": [],
-    "destructive": false,
+    "destructive": true,
     "hidden": false,
-    "risk": "none",
+    "risk": "outage",
     "confirmation": "none",
     "surface": "",
     "flags": []
@@ -1260,20 +1234,7 @@
     "risk": "irreversible",
     "confirmation": "y_n",
     "surface": "",
-    "flags": [
-      {
-        "name": "--yes",
-        "arity": 0,
-        "choices": [],
-        "hidden": true,
-        "required": false,
-        "description": "Skip interactive confirmation",
-        "metavar": "",
-        "examples": [],
-        "effect": "Skips y/N confirmation for complete local uninstall",
-        "risk": "irreversible"
-      }
-    ]
+    "flags": []
   },
   {
     "path": [
@@ -1357,7 +1318,7 @@
     "detail": "",
     "examples": [
       "help",
-      "help client",
+      "help remote-services",
       "help workflows"
     ],
     "args": [],
@@ -1478,7 +1439,7 @@
     "roles": "server",
     "category": "Remote Access",
     "summary": "Create or edit a Remote Access rule",
-    "detail": "Create or edit a Remote Access rule",
+    "detail": "Create or edit a Remote Access rule. The calculated security impact of an edit is checked before mutation. A y/N confirmation is required when that impact broadens or materially narrows access; safe creation and no-change paths need no additional confirmation.",
     "examples": [
       "set remote-access",
       "set remote-access block-partner mode blacklist source partner-office destination ubuntu-prod service ssh enabled",
@@ -1494,10 +1455,10 @@
     "tail": "any",
     "internal": null,
     "aliases": [],
-    "destructive": false,
+    "destructive": true,
     "hidden": false,
-    "risk": "none",
-    "confirmation": "none",
+    "risk": "security_change",
+    "confirmation": "conditional_y_n",
     "surface": "",
     "flags": []
   },
@@ -1557,7 +1518,7 @@
     "roles": "server",
     "category": "Internet Access",
     "summary": "Create or edit an Internet Access rule",
-    "detail": "Create or edit an Internet Access rule",
+    "detail": "Create or edit an Internet Access rule. The calculated security impact of an edit is checked before mutation. A y/N confirmation is required when that impact broadens or materially narrows access; safe creation and no-change paths need no additional confirmation.",
     "examples": [
       "set internet-access",
       "set internet-access github-https mode whitelist source ubuntu-prod destination github service https enabled",
@@ -1573,10 +1534,10 @@
     "tail": "any",
     "internal": null,
     "aliases": [],
-    "destructive": false,
+    "destructive": true,
     "hidden": false,
-    "risk": "none",
-    "confirmation": "none",
+    "risk": "security_change",
+    "confirmation": "conditional_y_n",
     "surface": "",
     "flags": []
   },
@@ -1636,7 +1597,7 @@
     "roles": "server",
     "category": "AI Access",
     "summary": "Create or edit an AI Access rule",
-    "detail": "Create or edit an AI Access rule",
+    "detail": "Create or edit an AI Access rule. The calculated security impact of an edit is checked before mutation. A y/N confirmation is required when that impact broadens or materially narrows access; safe creation and no-change paths need no additional confirmation.",
     "examples": [
       "set ai-access",
       "set ai-access allow-ops mode whitelist source automation-ai destination production-servers permission operations enabled",
@@ -1653,10 +1614,10 @@
     "tail": "any",
     "internal": null,
     "aliases": [],
-    "destructive": false,
+    "destructive": true,
     "hidden": false,
-    "risk": "none",
-    "confirmation": "none",
+    "risk": "security_change",
+    "confirmation": "conditional_y_n",
     "surface": "",
     "flags": []
   },
@@ -2253,16 +2214,7 @@
     "risk": "none",
     "confirmation": "none",
     "surface": "",
-    "flags": [
-      {
-        "name": "--output",
-        "arity": 1,
-        "hidden": true,
-        "required": false,
-        "description": "Hidden compatibility flag; prefer positional FILE",
-        "metavar": "<file>"
-      }
-    ]
+    "flags": []
   },
   {
     "path": [
@@ -2272,7 +2224,7 @@
     "roles": "any",
     "category": "System",
     "summary": "Validate a ConfigurationBundle without mutation",
-    "detail": "Parse, validate, run embedded policy tests, and show the Change Plan for a ConfigurationBundle. Supports file path or '-' for stdin.",
+    "detail": "Parse, validate role context and dependencies, and show the Change Plan for a ConfigurationBundle. Supports file path or '-' for stdin.",
     "examples": [
       "test configuration drlink.yaml",
       "test configuration -"
@@ -2738,7 +2690,7 @@
     "roles": "server",
     "category": "Network Objects",
     "summary": "Create or edit a Network Object",
-    "detail": "Create or edit a Network Object",
+    "detail": "Create or edit a Network Object. The calculated security impact of an edit is checked before mutation. A y/N confirmation is required when that impact broadens or materially narrows access; safe creation and no-change paths need no additional confirmation.",
     "examples": [
       "set network-object",
       "set network-object office-admin type ip value 203.0.113.10"
@@ -2752,10 +2704,10 @@
     "tail": "any",
     "internal": null,
     "aliases": [],
-    "destructive": false,
+    "destructive": true,
     "hidden": false,
-    "risk": "none",
-    "confirmation": "none",
+    "risk": "security_change",
+    "confirmation": "conditional_y_n",
     "surface": "",
     "flags": []
   },
@@ -2767,7 +2719,7 @@
     "roles": "server",
     "category": "Network Objects",
     "summary": "Create or edit a Network Group",
-    "detail": "Create or edit a Network Group",
+    "detail": "Create or edit a Network Group. The calculated security impact of an edit is checked before mutation. A y/N confirmation is required when that impact broadens or materially narrows access; safe creation and no-change paths need no additional confirmation.",
     "examples": [
       "set network-group",
       "set network-group approved-admins members office-admin,vpn-admin"
@@ -2781,10 +2733,10 @@
     "tail": "any",
     "internal": null,
     "aliases": [],
-    "destructive": false,
+    "destructive": true,
     "hidden": false,
-    "risk": "none",
-    "confirmation": "none",
+    "risk": "security_change",
+    "confirmation": "conditional_y_n",
     "surface": "",
     "flags": []
   },
@@ -2966,7 +2918,7 @@
     "roles": "server",
     "category": "Service Objects",
     "summary": "Create or edit a Service Object",
-    "detail": "Create or edit a Service Object",
+    "detail": "Create or edit a Service Object. The calculated security impact of an edit is checked before mutation. A y/N confirmation is required when that impact broadens or materially narrows access; safe creation and no-change paths need no additional confirmation.",
     "examples": [
       "set service-object",
       "set service-object postgres type tcp port 5432"
@@ -2980,10 +2932,10 @@
     "tail": "any",
     "internal": null,
     "aliases": [],
-    "destructive": false,
+    "destructive": true,
     "hidden": false,
-    "risk": "none",
-    "confirmation": "none",
+    "risk": "security_change",
+    "confirmation": "conditional_y_n",
     "surface": "",
     "flags": []
   },
@@ -2995,7 +2947,7 @@
     "roles": "server",
     "category": "Service Objects",
     "summary": "Create or edit a Service Group",
-    "detail": "Create or edit a Service Group",
+    "detail": "Create or edit a Service Group. The calculated security impact of an edit is checked before mutation. A y/N confirmation is required when that impact broadens or materially narrows access; safe creation and no-change paths need no additional confirmation.",
     "examples": [
       "set service-group",
       "set service-group web-services members http,https"
@@ -3009,10 +2961,10 @@
     "tail": "any",
     "internal": null,
     "aliases": [],
-    "destructive": false,
+    "destructive": true,
     "hidden": false,
-    "risk": "none",
-    "confirmation": "none",
+    "risk": "security_change",
+    "confirmation": "conditional_y_n",
     "surface": "",
     "flags": []
   },
@@ -3182,7 +3134,7 @@
     "roles": "server",
     "category": "AI Access",
     "summary": "Create or edit a Permission Object",
-    "detail": "Create or edit a Permission Object",
+    "detail": "Create or edit a Permission Object. The calculated security impact of an edit is checked before mutation. A y/N confirmation is required when that impact broadens or materially narrows access; safe creation and no-change paths need no additional confirmation.",
     "examples": [
       "set permission-object",
       "set permission-object read-only permissions host-info,process-read,file-read"
@@ -3196,10 +3148,10 @@
     "tail": "any",
     "internal": null,
     "aliases": [],
-    "destructive": false,
+    "destructive": true,
     "hidden": false,
-    "risk": "none",
-    "confirmation": "none",
+    "risk": "security_change",
+    "confirmation": "conditional_y_n",
     "surface": "",
     "flags": []
   },
@@ -3211,7 +3163,7 @@
     "roles": "server",
     "category": "AI Access",
     "summary": "Create or edit a Permission Group",
-    "detail": "Create or edit a Permission Group",
+    "detail": "Create or edit a Permission Group. The calculated security impact of an edit is checked before mutation. A y/N confirmation is required when that impact broadens or materially narrows access; safe creation and no-change paths need no additional confirmation.",
     "examples": [
       "set permission-group",
       "set permission-group operations members read-only,operator"
@@ -3225,10 +3177,10 @@
     "tail": "any",
     "internal": null,
     "aliases": [],
-    "destructive": false,
+    "destructive": true,
     "hidden": false,
-    "risk": "none",
-    "confirmation": "none",
+    "risk": "security_change",
+    "confirmation": "conditional_y_n",
     "surface": "",
     "flags": []
   },
@@ -3690,6 +3642,7 @@
     "args": [
       {
         "name": "NAME",
+        "complete": "local-services",
         "required": true
       }
     ],
@@ -3711,23 +3664,25 @@
     "roles": "client",
     "category": "Remote Services",
     "summary": "Create or edit a Remote Service",
-    "detail": "Create or edit a Remote Service",
+    "detail": "Create or edit a Remote Service. The name-only form opens a reviewed edit wizard. Use enabled or disabled in the complete form to change activation. Editing or disabling can interrupt access to the service. The explicit complete command authorizes that change without an additional confirmation prompt; the wizard reviews the change before apply.",
     "examples": [
-      "set remote-service",
-      "set remote-service ssh-access destination this-host service ssh enabled"
+      "set remote-service <NAME>",
+      "set remote-service ssh-access destination this-host service ssh enabled",
+      "set remote-service ssh-access destination this-host service ssh disabled"
     ],
     "args": [
       {
         "name": "NAME",
+        "complete": "local-services",
         "required": true
       }
     ],
     "tail": "any",
     "internal": null,
     "aliases": [],
-    "destructive": false,
+    "destructive": true,
     "hidden": false,
-    "risk": "none",
+    "risk": "outage",
     "confirmation": "none",
     "surface": "",
     "flags": []
@@ -3747,6 +3702,7 @@
     "args": [
       {
         "name": "NAME",
+        "complete": "local-services",
         "required": true
       }
     ],
@@ -3768,16 +3724,16 @@
     "roles": "client",
     "category": "system",
     "summary": "Synchronize Agent Remote Services with the DRLink Server",
-    "detail": "Reconnect processing: allocate pending endpoints, apply deletes, and revalidate catalog dependencies.",
+    "detail": "Allocate pending endpoints, apply previously requested deletes, revalidate dependencies and activate Agent Remote Services. Runtime activation may interrupt active connections. The explicit command authorizes reconciliation and any required restart; no additional confirmation prompt is used. Check show status and show remote-services afterward.",
     "examples": [
       "system synchronize"
     ],
     "args": [],
     "flags": [],
     "tail": null,
-    "destructive": false,
+    "destructive": true,
     "hidden": false,
-    "risk": "none",
+    "risk": "outage",
     "confirmation": "none",
     "surface": ""
   }

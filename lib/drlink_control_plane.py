@@ -782,6 +782,12 @@ class ControlPlane:
         except Exception as exc:
             self._rollback_open_transaction()
             self._cleanup_activation_checkpoint(checkpoint)
+            if isinstance(exc, sqlite3.IntegrityError) and 'unique constraint' in str(exc).lower():
+                raise ConcurrencyError(
+                    'Change conflicts with current state.\n'
+                    'No changes were applied.\n'
+                    'Review current state and retry.'
+                ) from exc
             if isinstance(exc, sqlite3.IntegrityError) and "foreign key" in str(exc).lower():
                 raise ControlPlaneError(
                     "ERROR:\nCannot apply this change because a referenced dependency still exists.\n\n"
@@ -1998,6 +2004,8 @@ class ControlPlane:
                 self.conn.execute("DELETE FROM managed_endpoints WHERE object_id = ?", (ep["id"],))
                 self.conn.execute("DELETE FROM objects WHERE id = ?", (ep["id"],))
             self.conn.execute("DELETE FROM clients WHERE id = ?", (client["id"],))
+            self.conn.execute("DELETE FROM system_meta WHERE key = ?", (self._ai_agent_credential_key(client["id"]),))
+            retire_allocator()
             return {
                 "entity": {"type": "managed-host", "id": client["id"], "name": host_name},
                 "operation": "remove",
@@ -2023,13 +2031,15 @@ class ControlPlane:
             ),
             "after": "Managed Host removed; published services deleted; port reservations released",
         }
-        return self._mutate(
-            "unset managed-host %s" % host_name,
-            "retire managed host",
-            write,
-            impact=impact,
-            confirm=confirm,
-        )
+        from drlink_runtime_policy import allocator_retirement
+        with allocator_retirement(self.root, client["id"], ports) as retire_allocator:
+            return self._mutate(
+                "unset managed-host %s" % host_name,
+                "retire managed host",
+                write,
+                impact=impact,
+                confirm=confirm,
+            )
 
     def set_client_label(self, selector: str, label: str) -> dict:
         client = self.require_client(selector)
@@ -3520,9 +3530,9 @@ class ControlPlane:
         return row
 
     def set_ai_principal(self, name: str, *, description: Optional[str] = None, enabled: Optional[bool] = None) -> dict:
-        name = _validate_name(name, "AI Principal name")
+        name = _validate_name(name, "AI Identity name")
         if name == OAUTH_UNBOUND_PRINCIPAL:
-            raise ControlPlaneError("reserved AI Principal name")
+            raise ControlPlaneError("reserved AI Identity name")
 
         def write():
             existing = self.get_principal(name)
@@ -3553,7 +3563,7 @@ class ControlPlane:
     ) -> dict:
         existing = self.get_principal(name)
         if existing is None:
-            raise ControlPlaneError("AI Principal not found: %s" % name)
+            raise ControlPlaneError("AI Identity not found: %s" % name)
         # v2.4 AI Access stores sources on ai_policy_rules; legacy capability
         # rules remain on ai_access_rules. Both must block deletion.
         refs = []
@@ -3634,7 +3644,7 @@ class ControlPlane:
     def revoke_ai_credential(self, name: str) -> dict:
         principal = self.get_principal(name)
         if principal is None:
-            raise ControlPlaneError("AI Principal not found: %s" % name)
+            raise ControlPlaneError("AI Identity not found: %s" % name)
 
         def write():
             now = utc_now_iso()
@@ -4028,7 +4038,7 @@ class ControlPlane:
                 "SELECT * FROM ai_principals WHERE id = ? AND enabled = 1", (static["principal_id"],)
             ).fetchone()
             if principal is None:
-                raise ControlPlaneError("AI Principal disabled or missing")
+                raise ControlPlaneError("AI Identity disabled or missing")
             return {
                 "client_id": client_id,
                 "principal_id": principal["id"],
@@ -4084,7 +4094,7 @@ class ControlPlane:
     def configure_ai_auth(self, name: str, mode: str) -> dict:
         principal = self.get_principal(name)
         if principal is None:
-            raise ControlPlaneError("AI Principal not found: %s" % name)
+            raise ControlPlaneError("AI Identity not found: %s" % name)
         normalized = str(mode or "").strip().lower().replace("_", "-")
         if normalized in ("static", "static-bearer", "bearer"):
             normalized = "static-bearer"
@@ -4118,7 +4128,7 @@ class ControlPlane:
     def add_oauth_redirect(self, name: str, uri: str) -> dict:
         principal = self.get_principal(name)
         if principal is None:
-            raise ControlPlaneError("AI Principal not found: %s" % name)
+            raise ControlPlaneError("AI Identity not found: %s" % name)
         text = self._validate_oauth_redirect_uri(uri)
 
         def write():
@@ -4318,12 +4328,12 @@ class ControlPlane:
         if unbound:
             if not principal_name:
                 raise ControlPlaneError(
-                    "DCR/CIMD OAuth approval requires an AI Principal: "
+                    "DCR/CIMD OAuth approval requires an AI Identity: "
                     "system credential approve-oauth %s <PRINCIPAL>" % pending_id
                 )
             target = self.get_principal(principal_name)
             if target is None or not int(target["enabled"] or 0):
-                raise ControlPlaneError("AI Principal not found or disabled: %s" % principal_name)
+                raise ControlPlaneError("AI Identity not found or disabled: %s" % principal_name)
             if str(target["credential_status"] or "").lower() not in ("verified", "active"):
                 raise self._oauth_approval_lifecycle_error(target["name"])
             # Bind DCR/CIMD client to the approved principal for future static lookups.
@@ -4343,13 +4353,13 @@ class ControlPlane:
             principal_id = target["id"]
         else:
             if principal is None or not int(principal["enabled"] or 0):
-                raise ControlPlaneError("AI Principal disabled or missing")
+                raise ControlPlaneError("AI Identity disabled or missing")
             # pending: in-progress verification ceremony (stage_ai_identity_oauth).
             # verified/active: already trusted. none and other untrusted states are not.
             if str(principal["credential_status"] or "").lower() not in ("pending", "verified", "active"):
                 raise self._oauth_approval_lifecycle_error(principal["name"])
             if principal_name and str(principal["name"]).lower() != str(principal_name).lower():
-                raise ControlPlaneError("pending OAuth request is bound to a different AI Principal")
+                raise ControlPlaneError("pending OAuth request is bound to a different AI Identity")
             principal_id = principal["id"]
         code = "drc_" + secrets.token_urlsafe(24)
         digest = hashlib.sha256(code.encode("utf-8")).hexdigest()
@@ -5176,7 +5186,7 @@ class ControlPlane:
         self.set_ai_rule(rule)
         p = self.get_principal(principal)
         if p is None:
-            raise ControlPlaneError("AI Principal not found: %s" % principal)
+            raise ControlPlaneError("AI Identity not found: %s" % principal)
         r = self._require_ai_rule(rule)
 
         def write():
@@ -5807,7 +5817,11 @@ class ControlPlane:
 
                 identity = load_agent_identity(self.root) or {}
                 if detect_server_reachable(self, self.root):
-                    server_line = "Connected"
+                    from drlink_v24_runtime import _current_runtime_ready
+                    if level == 'Healthy' and _current_runtime_ready(self.root, '', {}):
+                        server_line = 'Connected'
+                    else:
+                        server_line = 'Management reachable; Agent transport unverified'
                 elif identity:
                     server_line = "Disconnected"
             except Exception:

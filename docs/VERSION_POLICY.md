@@ -195,6 +195,15 @@ Development `git_ref` is the content SHA. Stable and RC `git_ref` is the tag.
 The attest-time SBOM is generated, not committed: `gitCommit` is the provenance
 commit and `gitRef` is manifest `git_ref`.
 
+The CLI Feature/Scenario and Full User E2E records keep `product_source_head`
+at the exact installed candidate commit, including its follow-on provenance
+commit. Do not replace that runtime identity with the manifest's content
+parent. Their validators accept the differing manifest `source_head` only
+when it is the candidate's first parent and the candidate changes generated
+provenance files only, including `release-manifest.json`, under the same path
+and change-status rules as the attestation gate. An older ancestor or a
+commit that changes product files does not satisfy this binding.
+
 Stable publication does not add a Git commit. PASS1 and PASS2 run on the
 provenance commit. The immutable tag is that same commit. Each
 `run-production-realistic-qualification.sh` pass writes its machine-readable

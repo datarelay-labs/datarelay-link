@@ -1222,7 +1222,7 @@ frp_client_restart_runtime_cmd
                 check=False,
             )
             self.assertEqual(proc.returncode, 0, proc.stderr + proc.stdout)
-            self.assertIn("Client restarted.", proc.stdout)
+            self.assertIn("Agent restarted.", proc.stdout)
 
             plane = ControlPlane(str(root))
             v24.ensure_v2_schema(plane.conn)

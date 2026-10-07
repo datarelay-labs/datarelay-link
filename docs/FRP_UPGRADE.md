@@ -110,6 +110,57 @@ A normal project upgrade must preserve:
 
 Update is never re-enrollment.
 
+An immutable local-source upgrade preserves the installed release channel by
+default. A prior stable installation therefore rejects a development candidate;
+retrying does not change that selection. For an owner-approved development
+test transition, select `FRP_RELEASE_CHANNEL=development` together with the
+canonical installer's `--upgrade --source DIR` and immutable full-SHA source
+expectations. This is an engineering test path, not an implicit channel change
+in `drlink system update product`. Public updates require the verified artifact
+and checksum metadata to exist for their resolved channel and source ref.
+
+The generated Windows installer binds its actual outer file SHA256 to the
+Server's qualified Windows Agent manifest through the pinned allocator CA and
+hostname check before redeeming a ticket. Permanent version metadata separates
+the exact installed Source HEAD from the embedded content Source HEAD. Engine
+updates retain that provenance. A different, unverified local source tree reports
+UNKNOWN rather than inheriting the previous candidate's Source HEAD.
+
+Enrollment presets must preserve the actual target port during v2.4 migration.
+For a non-default target, migration creates a canonical TCP Service Object such
+as `enrolled-ssh-4022` on Server and Agent, preserving the existing public port.
+It never rewrites an existing operator definition or silently substitutes the
+SSH template's port 22. A conflicting generated name fails closed. The Agent
+records enrollment origin in its canonical Remote Service row, so rebuilding
+client runtime artifacts does not lose origin or cause endpoint reallocation.
+An explicit Remote Service change supersedes that seed; subsequent reconnect
+processing uses the operator's desired state and Server Service Object catalog.
+
+Confirmed Managed Host retirement removes the host's allocator identity and
+owned reservations as well as canonical inventory and AI executor credentials.
+The allocator's native registry lock covers the database mutation and
+activation, with exact previous registry bytes restored on failure. Other
+hosts, their reservations, and Managed Host Group definitions remain intact.
+Fresh enrollment on the same physical Machine ID starts from its newly issued
+identity and label; ordinary reconnect does not retire or reset an identity.
+
+Pre-enrollment keys left by a rejected Bootstrap Ticket are retained for a
+retry with a fresh Server-issued command. Keys alone do not constitute a
+partial installed Agent. Committed configuration/state, installed CLI or
+service definitions still use the guarded partial-install recovery path;
+pending redeemed enrollment retains its existing crash-safe resume contract.
+
+Runtime policy readers reopen the canonical database when restore replaces its
+file identity. Agent activation requires connection and proxy-success evidence
+after the native Linux journal/macOS log cursor captured before restart;
+missing logs cannot establish HEALTHY. A successful full apply refreshes all
+included service verification, while explicit unreachable dependencies remain
+degraded. On Linux, unchanged runtime artifacts with a verified current process
+and connection epoch preserve existing sessions instead of restarting FRPC.
+Paused Remote Services report DEGRADED with an explicit Agent-paused reason;
+management reachability alone does not establish an Agent transport connection. Unknown/transitional Doctor checks
+remain visible and prevent a clean all-green diagnostic result.
+
 ### Backup / restore version policy
 
 ```text
@@ -141,40 +192,45 @@ A later bundle that hashes itself only proves **artifact identity**,
 not **externally verified artifact integrity**. Do not pipe a mutable
 `main` URL into `sudo`.
 
-One-time verified bridge (development line: `channel=dev`,
-`source_ref=main`):
+One-time verified bridge for an owner-approved development candidate:
 
-1. Choose an **immutable commit SHA** (logical identity stays `dev` / `main`).
+1. Choose a qualified **immutable full 40-character commit SHA**.
 2. Download `SHA256SUMS` and `dist/bootstrap-client.sh` from **that same commit**.
 3. Extract the expected digest for `dist/bootstrap-client.sh`.
 4. Hash the downloaded bundle. Require `expected == actual`.
-5. Run the verified bundle with explicit channel and source-ref.
+5. Run the verified bundle with explicit channel and exact source-ref/head expectations.
 
 ```bash
-COMMIT=<immutable-commit-sha>
+COMMIT=<qualified-40-character-commit-sha>
 BASE="https://raw.githubusercontent.com/datarelay-labs/datarelay-link/${COMMIT}"
 curl -fsSL "${BASE}/SHA256SUMS" -o SHA256SUMS
 curl -fsSL "${BASE}/dist/bootstrap-client.sh" -o bootstrap-client.sh
 expected="$(awk '$2=="dist/bootstrap-client.sh" {print $1; exit}' SHA256SUMS)"
 actual="$(sha256sum bootstrap-client.sh | awk '{print $1}')"
 [[ "$expected" == "$actual" ]] || { echo "SHA256 mismatch"; exit 1; }
-sudo env FRP_RELEASE_CHANNEL=dev FRP_EXPECTED_SOURCE_REF=main \
+sudo env FRP_RELEASE_CHANNEL=development \
+  FRP_EXPECTED_SOURCE_REF="$COMMIT" FRP_EXPECTED_SOURCE_HEAD="$COMMIT" \
   FRP_BUNDLE_SHA256="$actual" bash bootstrap-client.sh --upgrade
 ```
 
-`sudo drlink system update engine --check` is read-only. If it reports
+On the Server, `sudo drlink system update check-engine` is the read-only
+upstream release check. Private engineering checks may use the installed
+`frp-client update --check` helper; that flag is not public `drlink` grammar. If a private check reports
 `LEGACY_CLIENT_SECURE_BRIDGE_REQUIRED` or `Legacy secure bridge required`,
 do not mutate the host until the procedure above succeeds.
 
 A client that was incorrectly labeled `stable` / `v2.1.0` with
 `BUNDLE_SHA256` unknown is not automatically `dev`. Recover it the same
-way: explicit `FRP_RELEASE_CHANNEL=dev`, expected `source_ref=main`, and
-a verified candidate whose manifest is `dev` / `main`.
+way: an explicitly selected development channel and a verified candidate bound
+to its exact source identity. Historical `dev` / `main` metadata is not a
+substitute for the new candidate's immutable source expectations.
 
 ## Server project-update build identity
 
-`sudo drlink system update product` is read-only. Availability is not decided
-from `PROJECT_VERSION` alone:
+`sudo drlink system update product` authorizes a management-software update and
+any required runtime restart. It is a state-changing operation, even when the
+project version number is unchanged. Availability is not decided from
+`PROJECT_VERSION` alone:
 
 - installed version **less than** candidate → update available
 - installed version **greater than** candidate → downgrade refused

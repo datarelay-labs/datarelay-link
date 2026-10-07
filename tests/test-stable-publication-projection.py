@@ -282,10 +282,13 @@ def main() -> int:
         "operational_e2e_command: bash tests/run-release-qualification-pass.sh",
         "bash scripts/verify-sha256sums.sh",
         "bash scripts/verify-sbom.sh",
-        "python3 scripts/generate-sbom.py -o dist/sbom.spdx.json && bash scripts/verify-sbom.sh",
     ):
         if needle not in contract:
             fail("release.yaml missing %s" % needle)
+    normalized_contract = " ".join(contract.split())
+    sbom_contract = "sbom_command: bash -lc 'python3 scripts/generate-sbom.py -o dist/sbom.spdx.json && bash scripts/verify-sbom.sh'"
+    if sbom_contract not in normalized_contract:
+        fail("release.yaml missing %s" % sbom_contract)
     if "operational_e2e_command: bash tests/run-release-qualification-passes.sh" in contract:
         fail("contract would run the two-pass wrapper once per full_e2e_passes")
     if "221.139.249.113" in contract or "129.225.184.60" in contract:

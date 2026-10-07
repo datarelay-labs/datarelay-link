@@ -232,7 +232,7 @@ class OperationalUxClosureTests(unittest.TestCase):
     def test_partial_install_installs_management_before_runtime(self):
         text = (ROOT / "install-client.sh").read_text(encoding="utf-8")
         mgmt = text.index("frp_client_install_management_files")
-        start = text.index("Starting Data Relay Link client")
+        start = text.index("Starting Data Relay Link Agent")
         self.assertLess(mgmt, start)
 
     def test_state_diff_helper_semantics_clear(self):
@@ -250,6 +250,16 @@ class OperationalUxClosureTests(unittest.TestCase):
         ):
             self.assertIsNone(CATALOG.find(tokens, role="client"))
         self.assertIsNotNone(CATALOG.find(["system", "synchronize"], role="client"))
+        generated = "\n".join(
+            [
+                (ROOT / "tools" / "frp-client").read_text(encoding="utf-8"),
+                (LIB / "frp-client-common.sh").read_text(encoding="utf-8"),
+                (ROOT / "tools" / "frpctl").read_text(encoding="utf-8"),
+            ]
+        )
+        self.assertNotIn("system services apply", generated)
+        self.assertNotIn("system services discard", generated)
+        self.assertIn("system synchronize", generated)
 
     def test_menu_command_targets_resolve(self):
         # Every guided command target must exist in final public grammar.

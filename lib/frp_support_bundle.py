@@ -21,6 +21,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 from pathlib import Path
 from typing import Any, Dict, List, NoReturn, Optional, Tuple
 
@@ -251,6 +252,8 @@ class BundleBuilder:
         self.role_label = "Uninstalled"
         self.stage: Optional[Path] = None
         self._doctor = _doctor()
+        self._policy_summary_read = False
+        self._policy_summary: Optional[dict] = None
 
     def note_redaction(self, reason: str) -> None:
         if reason not in self.redactions:
@@ -880,7 +883,106 @@ class BundleBuilder:
         self.stage_write("disk.txt", "\n".join(chunks) + "\n" if chunks else "disk info unavailable\n")
         self.add_section("disk")
 
+    def _read_canonical_policy_summary(self) -> Optional[dict]:
+        """Read one bounded, consistent policy snapshot; never initialize a DB.
+
+        Only aggregate policy metadata is selected. Rule payloads, identity
+        credentials and SQLite files must never become archive members. A
+        present but unreadable canonical DB must not fall back to stale JSON.
+        """
+        if self._policy_summary_read:
+            return self._policy_summary
+        self._policy_summary_read = True
+        conn = None
+        try:
+            from drlink_control_db import connect_read_only, select_live_control_db
+            from drlink_v24 import _policy_effective_label
+
+            db_file = select_live_control_db(self.root)
+            cursor = db_file
+            while cursor != self.root and cursor != cursor.parent:
+                if cursor.is_symlink():
+                    raise ValueError("symlink control DB path is omitted")
+                cursor = cursor.parent
+            if not db_file.exists():
+                return None
+            conn = connect_read_only(path=db_file)
+            deadline = time.monotonic() + 2.0
+            conn.set_progress_handler(lambda: int(time.monotonic() > deadline), 1000)
+            conn.execute("BEGIN")
+            revision = int(conn.execute(
+                "SELECT COALESCE(MAX(revision), 0) FROM config_revisions"
+            ).fetchone()[0])
+            policies = {}
+            for family in ("remote", "internet", "ai"):
+                row = conn.execute(
+                    "SELECT mode, enforcement FROM access_policies WHERE plane = ?",
+                    (family,),
+                ).fetchone()
+                mode = str(row["mode"] or "").strip().lower() if row else ""
+                # Invalid stored text is not exported (it may contain secrets).
+                mode = mode if mode in ("", "blacklist", "whitelist") else "invalid"
+                enforcement = str(row["enforcement"] or "enabled").lower() if row else "enabled"
+                if enforcement not in ("enabled", "disabled"):
+                    raise ValueError("invalid policy enforcement metadata")
+                if family == "ai":
+                    counts = conn.execute(
+                        "SELECT COUNT(*), COALESCE(SUM(CASE WHEN enabled = 1 THEN 1 ELSE 0 END), 0) "
+                        "FROM ai_policy_rules"
+                    ).fetchone()
+                else:
+                    counts = conn.execute(
+                        "SELECT COUNT(*), COALESCE(SUM(CASE WHEN enabled = 1 THEN 1 ELSE 0 END), 0) "
+                        "FROM policy_rules WHERE plane = ?", (family,)
+                    ).fetchone()
+                policies[family] = {
+                    "mode": mode.upper() if mode else None,
+                    "enforcement": enforcement.upper(),
+                    "rule_count": int(counts[0]),
+                    "enabled_rule_count": int(counts[1]),
+                    "effective_posture": _policy_effective_label(
+                        mode or None, enforcement, int(counts[1]), plane=family
+                    ),
+                }
+            self._policy_summary = {
+                "schema_version": 1,
+                "source": "canonical_sqlite",
+                "policy_status": "AVAILABLE",
+                "scope": "server_policy" if self.role == "server" else "local_policy_metadata",
+                "runtime_evaluation": "not_evaluated",
+                "revision": revision,
+                "planes": policies,
+            }
+        except Exception as exc:
+            # Error class only: SQLite messages can echo untrusted schema/data.
+            self._policy_summary = {
+                "schema_version": 1,
+                "source": "canonical_sqlite",
+                "policy_status": "ACCESS ERROR",
+                "error": type(exc).__name__,
+                "runtime_evaluation": "not_evaluated",
+            }
+        finally:
+            if conn is not None:
+                conn.close()
+        return self._policy_summary
+
+    def _write_canonical_policy_plane(self, member: str, family: str) -> bool:
+        summary = self._read_canonical_policy_summary()
+        if summary is None:
+            return False
+        self.stage_json("policy-summary.json", summary)
+        plane_summary = {key: value for key, value in summary.items() if key != "planes"}
+        plane_summary["plane"] = family
+        plane_summary.update(summary.get("planes", {}).get(family, {}))
+        self.stage_json(member, plane_summary)
+        self.add_section("canonical-policy")
+        return True
+
     def _write_access_control(self) -> None:
+        if self._write_canonical_policy_plane("access-control-summary.json", "remote"):
+            self.add_section("access-control")
+            return
         data, err = self.safe_read_json("/var/lib/drlink/access-control.json")
         if data is None:
             # Never invent PUBLIC when authoritative policy is missing/unreadable.
@@ -920,6 +1022,9 @@ class BundleBuilder:
         self.add_section("access-control")
 
     def _write_egress_control(self) -> None:
+        if self._write_canonical_policy_plane("egress-control-summary.json", "internet"):
+            self.add_section("egress-control")
+            return
         data, err = self.safe_read_json("/var/lib/drlink/egress-control.json")
         if data is None:
             self.skip("egress-control", err or "not present")

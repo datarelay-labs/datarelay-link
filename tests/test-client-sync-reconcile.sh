@@ -248,7 +248,7 @@ export FRP_CLIENT_HOOK_RECONCILE_UNREACHABLE=1
 run_sync
 unset FRP_CLIENT_HOOK_RECONCILE_UNREACHABLE
 [[ "$SYNC_RC" -ne 0 ]] || fail "explicit sync succeeded on failure"
-if grep -q 'Client sync complete.' "$WORKDIR/sync.out"; then
+if grep -q 'Agent synchronization complete.' "$WORKDIR/sync.out"; then
   fail "sync printed success after failure"
 fi
 grep -q 'allocator unreachable' "$WORKDIR/sync.err" || fail "sync missing error"
@@ -259,7 +259,7 @@ export FRP_CLIENT_RECONCILE_REGISTRY_IDS='["ssh","web"]'
 run_sync
 unset FRP_CLIENT_RECONCILE_REGISTRY_IDS
 [[ "$SYNC_RC" -eq 0 ]] || fail "explicit sync no-op failed"
-grep -q 'Client sync complete.' "$WORKDIR/sync.out" || fail "sync success line missing"
+grep -q 'Agent synchronization complete.' "$WORKDIR/sync.out" || fail "sync success line missing"
 pass "SYNC_NO_CHANGE_SUCCESS"
 
 # 13. apply does not continue after required reconcile failure
@@ -287,8 +287,8 @@ APPLY_RC=$?
 set -e
 unset FRP_CLIENT_HOOK_RECONCILE_UNREACHABLE FRP_CLIENT_CANDIDATE
 [[ "$APPLY_RC" -ne 0 ]] || fail "apply continued after reconcile failure"
-grep -q 'cannot apply because client synchronization failed' "$WORKDIR/apply.err" \
-  || grep -q 'cannot apply because client synchronization failed' "$WORKDIR/apply.out" \
+grep -q 'cannot apply because Agent synchronization failed' "$WORKDIR/apply.err" \
+  || grep -q 'cannot apply because Agent synchronization failed' "$WORKDIR/apply.out" \
   || fail "apply missing reconcile failure"
 AFTER="$(sha256sum "$TREE/etc/frp/client-state.json" | awk '{print $1}')"
 [[ "$BEFORE" == "$AFTER" ]] || fail "apply mutated state after reconcile failure"

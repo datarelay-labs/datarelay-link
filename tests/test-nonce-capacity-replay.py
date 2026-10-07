@@ -129,6 +129,20 @@ class NonceCapacityReplayTests(unittest.TestCase):
             "NONCE_STORE_FULL",
         )
 
+    def test_full_pools_and_compensation_fit_with_background_polling(self):
+        # Default normal + Fixed TCP pools each have 100 endpoints. Budget
+        # catalog reads, upsert/status and inverse-state requests per endpoint.
+        # Keep every request within the protected horizon, as in a fast bundle.
+        horizon = 2 * MOD.MAX_CLOCK_SKEW
+        background = int(horizon / MOD.AI_IDLE_POLL_SECONDS) + int(horizon / 5)
+        operation_requests = 2 * 100 * 8
+        for i in range(background + operation_requests):
+            nonce = '%064x' % i
+            self.assertIsNone(self.allocator.commit_nonce(self.mid, nonce, self.now),
+                              'legal full-pool workflow exhausted at request %s' % i)
+        self.assertEqual(self.allocator.check_nonce(self.mid, '%064x' % 0, self.now), 'replayed request')
+        self.assertGreaterEqual(MOD.MAX_NONCES_PER_CLIENT - background - operation_requests, 64)
+
 
 if __name__ == "__main__":
     unittest.main()

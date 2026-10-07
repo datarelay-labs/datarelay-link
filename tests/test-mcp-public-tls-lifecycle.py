@@ -6,6 +6,8 @@ import base64
 import hashlib
 import json
 import os
+import shutil
+import subprocess
 import socket
 import ssl
 import stat
@@ -14,6 +16,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -365,6 +368,87 @@ def _synth_leaf(hostname, *, days=90, san=None, key=None, ca_key=None, ca_cert=N
 
 
 class McpTlsLifecycleTests(unittest.TestCase):
+    def test_public_import_and_purge_converge_live_frontend_sni(self):
+        import frp_frontend as fe
+        nginx = shutil.which('nginx')
+        self.assertIsNotNone(nginx, 'nginx is required for real frontend activation evidence')
+        base = Path(self.tmp)
+        port = _free_port()
+        cfg = {'deployment_mode': 'single443', 'public_host': '203.0.113.10',
+               'frp_control_public_port': port, 'frp_control_listen_port': _free_port(),
+               'allocator_listen_port': _free_port()}
+        (base / 'etc/drlink/config.json').write_text(json.dumps(cfg))
+        for folder in ('run/drlink/frontend', 'var/lib/drlink/nginx/body',
+                       'var/lib/drlink/nginx/proxy', 'var/lib/drlink/nginx/fastcgi',
+                       'var/lib/drlink/nginx/uwsgi', 'var/lib/drlink/nginx/scgi'):
+            (base / folder).mkdir(parents=True, exist_ok=True)
+        conf = base / 'etc/drlink/frontend.conf'
+        fe.write_nginx_conf(str(conf), public_host=cfg['public_host'], frontend_port=port,
+                           allocator_listen_port=cfg['allocator_listen_port'],
+                           control_listen_port=cfg['frp_control_listen_port'],
+                           ca_cert=str(base / 'etc/drlink/pki/ca.crt'),
+                           server_cert=str(base / 'etc/drlink/pki/server.crt'),
+                           server_key=str(base / 'etc/drlink/pki/server.key'),
+                           pid_path=str(base / 'run/drlink/frontend/nginx.pid'),
+                           temp_root=str(base / 'var/lib/drlink/nginx'))
+        proc = subprocess.Popen([nginx, '-c', str(conf)], stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL)
+        try:
+            deadline = time.monotonic() + 5
+            pid = base / 'run/drlink/frontend/nginx.pid'
+            while not pid.exists() and time.monotonic() < deadline:
+                self.assertIsNone(proc.poll(), 'test nginx exited before readiness')
+                time.sleep(0.05)
+            self.assertTrue(pid.exists())
+            host = 'mcp.example.test'
+            dispatch(['set', 'mcp-tls', 'hostname', host], root=self.tmp)
+            cert, key = _synth_leaf(host)
+            cert_path, key_path = base / 'import.crt', base / 'import.key'
+            cert_path.write_bytes(cert)
+            key_path.write_bytes(key)
+            key_path.chmod(0o600)
+            dispatch(['system', 'certificate', 'import', str(cert_path), str(key_path)], root=self.tmp)
+            context = ssl.create_default_context(cafile=str(cert_path))
+            last = None
+            while time.monotonic() < deadline + 5:
+                try:
+                    with socket.create_connection(('127.0.0.1', port), timeout=1) as raw:
+                        with context.wrap_socket(raw, server_hostname=host) as tls:
+                            actual = hashlib.sha256(tls.getpeercert(binary_form=True)).hexdigest()
+                    break
+                except (ssl.SSLError, OSError) as exc:
+                    last = exc
+                    time.sleep(0.05)
+            else:
+                self.fail('imported certificate was not served on SNI: %s' % last)
+            self.assertEqual(actual, mcp_tls.status_view(self.plane, self.tmp)['fingerprint_sha256'])
+            self.assertIn('server_name mcp.example.test;', conf.read_text())
+            self.assertIn('ssl_certificate ' + str(base / 'etc/drlink/pki/server.crt'), conf.read_text())
+            before_conf = conf.read_bytes()
+            before_cert = (mcp_tls.active_dir(self.tmp) / 'fullchain.pem').read_bytes()
+            other_cert, other_key = _synth_leaf(host)
+            cert_path.write_bytes(other_cert)
+            key_path.write_bytes(other_key)
+            with mock.patch.object(mcp_tls, 'verify_active_frontend_certificate',
+                                   side_effect=mcp_tls.McpTlsError('injected peer mismatch', failure_class='HTTPS_CERT_VERIFY_FAILED')):
+                with self.assertRaises(SystemExit):
+                    dispatch(['system', 'certificate', 'import', str(cert_path), str(key_path)], root=self.tmp)
+            self.assertEqual(conf.read_bytes(), before_conf)
+            self.assertEqual((mcp_tls.active_dir(self.tmp) / 'fullchain.pem').read_bytes(), before_cert)
+            lock_inode = mcp_tls.lock_path(self.tmp).stat().st_ino
+            mcp_tls.clear_tls(self.plane, self.tmp)
+            self.assertEqual(mcp_tls.frontend_tls_material(self.tmp), {})
+            self.assertTrue(mcp_tls.active_dir(self.tmp).exists())
+            with mock.patch('drlink_control_cli._stdin_is_interactive', return_value=True), \
+                    mock.patch('drlink_control_cli._confirm_from_stdin', return_value=True):
+                dispatch(['unset', 'mcp-tls', 'purge'], root=self.tmp)
+            self.assertNotIn('server_name mcp.example.test;', conf.read_text())
+            self.assertFalse(mcp_tls.active_dir(self.tmp).exists())
+            self.assertEqual(mcp_tls.lock_path(self.tmp).stat().st_ino, lock_inode)
+        finally:
+            proc.terminate()
+            proc.wait(timeout=10)
+
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="drlink-mcp-tls-")
         os.environ["DRLINK_TEST_ROOT"] = self.tmp

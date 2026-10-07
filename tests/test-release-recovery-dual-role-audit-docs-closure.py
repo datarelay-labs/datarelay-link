@@ -263,14 +263,14 @@ frpctl_audit_tail
         ):
             cmd = CATALOG.find(path)
             self.assertEqual(cmd.get("roles"), "client")
-            self.assertIn("client", cmd.get("summary", "").lower())
+            self.assertIn("agent", cmd.get("summary", "").lower())
 
     def test_dual_role_product_update_fail_fast_in_source(self):
         src = (ROOT / "tools" / "frpctl").read_text(encoding="utf-8")
         self.assertIn("DUAL_ROLE_PRODUCT_UPDATE=FAIL_FAST", src)
         self.assertIn("frpctl_verify_dual_role_shared_runtime", src)
         # Must not continue server update after client failure.
-        self.assertIn("server role update was not started", src)
+        self.assertIn("Server role update was not started", src)
 
     def test_rollback_guidance_preserves_markers(self):
         common = (LIB / "frp-common.sh").read_text(encoding="utf-8")

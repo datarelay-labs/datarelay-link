@@ -24,23 +24,6 @@ trap cleanup EXIT
 git worktree add --detach "$WT" "$HEAD_COMMIT" >/dev/null
 cd "$WT"
 
-# Development bundles embed immutable provenance from the last committed
-# source snapshot. Rebuilding them at HEAD changes only self-referential
-# provenance when HEAD itself is the artifact-refresh commit. Verify payload
-# parity with provenance normalized to the committed manifest instead.
-COMMITTED_MANIFEST="$(mktemp)"
-cp release-manifest.json "$COMMITTED_MANIFEST"
-python3 scripts/build-bundles.py >/dev/null
-python3 - "$COMMITTED_MANIFEST" release-manifest.json <<'PY2'
-import json, sys
-from pathlib import Path
-committed = json.loads(Path(sys.argv[1]).read_text())
-current = json.loads(Path(sys.argv[2]).read_text())
-for key in ("git_ref", "source_head", "immutable_source_ref"):
-    if key in committed:
-        current[key] = committed[key]
-Path(sys.argv[2]).write_text(json.dumps(current, indent=2, sort_keys=False) + "\n")
-PY2
 python3 scripts/build-bundles.py >/dev/null
 if ! git diff --exit-code --   dist/bootstrap-server.sh   dist/bootstrap-client.sh   dist/bootstrap-client.ps1 >/dev/null; then
   fail "DERIVED_BUNDLE_STALE: regenerate bundles during implementation"

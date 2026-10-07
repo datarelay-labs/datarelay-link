@@ -14,6 +14,8 @@ import os
 import re
 import sys
 import threading
+import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Optional
 
@@ -25,7 +27,6 @@ from drlink_control_db import (
     ControlPlaneError,
     DatabaseCorruptError,
     SchemaTooNewError,
-    connect,
     db_path,
     resolve_root,
     runtime_dir,
@@ -527,6 +528,80 @@ def authorize_fixed_tcp(
     return result
 
 
+@contextmanager
+def allocator_retirement(root, client_id: str, owned_ports: list):
+    """Retire allocator identity under its native lock with inverse evidence.
+
+    The caller holds this context across its SQLite mutation and activation.
+    Any failed mutation restores the original runtime bytes before the lock
+    is released. No other client, group definition or reservation is removed.
+    """
+    import frp_client_registry as registry
+    from frp_control_locks import ExclusiveFileLock, durable_replace
+    base = Path(root or '/')
+    cfg_path = base / 'etc/drlink/config.json'
+    try:
+        cfg = json.loads(cfg_path.read_text()) if cfg_path.is_file() else {}
+    except (OSError, ValueError) as exc:
+        raise ControlPlaneError('Server configuration is unreadable; Managed Host retirement was not applied.') from exc
+    if not isinstance(cfg, dict):
+        raise ControlPlaneError('Server configuration is invalid; Managed Host retirement was not applied.')
+    raw = str(cfg.get('registry_file') or '')
+    if raw:
+        path = Path(raw)
+        if base != Path('/') and path != base and base not in path.parents:
+            path = base / raw.lstrip('/')
+    else:
+        path = base / 'var/lib/drlink/runtime/client-inventory.json'
+        legacy = base / 'var/lib/drlink/registry.json'
+        if not path.is_file() and legacy.is_file():
+            path = legacy
+    if not path.is_file():
+        yield lambda: None
+        return
+    with ExclusiveFileLock(path.parent / 'registry.lock', timeout=15):
+        original = path.read_bytes()
+        try:
+            state = json.loads(original)
+        except ValueError as exc:
+            raise ControlPlaneError('Allocator inventory is unreadable; Managed Host retirement was not applied.') from exc
+        if not isinstance(state, dict) or state.get('schema_version') != 2 or not isinstance(state.get('clients'), dict) or not isinstance(state.get('reserved'), list):
+            raise ControlPlaneError('Allocator inventory is invalid; Managed Host retirement was not applied.')
+        changed = False
+        def retire():
+            nonlocal changed
+            removed = state['clients'].pop(client_id, None)
+            ports = set(int(port) for port in owned_ports)
+            if isinstance(removed, dict):
+                for service in (removed.get('services') or {}).values():
+                    if isinstance(service, dict) and service.get('remote_port') is not None:
+                        ports.add(int(service['remote_port']))
+            surviving = set()
+            for client in state['clients'].values():
+                for service in (client.get('services') or {}).values():
+                    if isinstance(service, dict) and service.get('remote_port') is not None:
+                        surviving.add(int(service['remote_port']))
+            state['reserved'] = [port for port in state['reserved'] if int(port) not in ports or int(port) in surviving]
+            changed = True
+            registry.atomic_write_json(path, state)
+        try:
+            yield retire
+        except BaseException:
+            if changed:
+                fd, temporary = tempfile.mkstemp(prefix=path.name + '.rollback-', dir=str(path.parent))
+                try:
+                    with os.fdopen(fd, 'wb') as stream:
+                        stream.write(original)
+                        stream.flush()
+                        os.fsync(stream.fileno())
+                    os.chmod(temporary, 0o600)
+                    durable_replace(temporary, path)
+                finally:
+                    if os.path.exists(temporary):
+                        os.unlink(temporary)
+            raise
+
+
 def sync_enrolled_client(
     plane: ControlPlane,
     *,
@@ -587,6 +662,9 @@ def sync_enrolled_client(
             mode = "routed"
             target_host = str(svc.get("target_host") or local_ip)
         service_name = str(sid).strip().lower()
+        import drlink_v24 as v24
+        service_object = v24.ensure_enrolled_service_object(
+            plane, stype, local_port or (22 if stype == 'ssh' else 0))
         plane.set_published_service(
             client_id,
             service_name,
@@ -614,12 +692,13 @@ def sync_enrolled_client(
                 pub_enabled = bool(pub["enabled"])
                 plane.conn.execute(
                     "INSERT INTO remote_service_meta"
-                    "(service_id, status, pool_class, destination_name, destination_client_id, "
+                    "(service_id, status, pool_class, service_object_id, destination_name, destination_client_id, "
                     "pending_allocation, delete_pending, reason) "
-                    "VALUES (?, ?, 'normal', 'this-host', ?, ?, 0, ?)",
+                    "VALUES (?, ?, 'normal', ?, 'this-host', ?, ?, 0, ?)",
                     (
                         pub["id"],
                         "DISABLED" if not pub_enabled else "DEGRADED",
+                        service_object['id'],
                         client_id,
                         0 if pub["public_port"] is not None else 1,
                         "" if not pub_enabled else "Runtime activation pending.",
@@ -639,7 +718,17 @@ class ControlPlaneCache:
         self.plane: Optional[ControlPlane] = None
         self.load_error: Optional[str] = "not loaded"
         self.fingerprint: Optional[tuple] = None
+        self.db_identity: Optional[tuple] = None
         self.reload(force=True)
+
+    def _close_cached_plane(self) -> None:
+        if self.plane is not None:
+            try:
+                self.plane.close()
+            except Exception:
+                pass
+        self.plane = None
+        self.db_identity = None
 
     def _fingerprint(self, plane: ControlPlane) -> tuple:
         st = plane.status()
@@ -657,28 +746,27 @@ class ControlPlaneCache:
                 self.cfg = json.loads(self.config_path.read_text(encoding="utf-8"))
             except Exception as exc:
                 self.load_error = "config unreadable: %s" % exc
-                self.plane = None
+                self._close_cached_plane()
                 return
             try:
                 root = root_from_cfg(self.cfg)
                 db = db_path(root)
                 if not db.is_file():
-                    if self.plane is not None:
-                        try:
-                            self.plane.close()
-                        except Exception:
-                            pass
+                    self._close_cached_plane()
                     self.load_error = "control DB missing"
                     self.plane = None
                     self.fingerprint = None
                     return
-                if self.plane is None or force:
-                    if self.plane is not None:
-                        try:
-                            self.plane.close()
-                        except Exception:
-                            pass
-                    self.plane = open_plane(self.cfg, root=root)
+                stat = db.stat()
+                identity = (str(db), stat.st_dev, stat.st_ino)
+                if self.plane is None or force or identity != self.db_identity:
+                    self._close_cached_plane()
+                    # Packet authorization only reads the already-migrated DB.
+                    # Explicit RO avoids SQLite's RW -> RO fallback under a
+                    # hardened service mount, whose unmatched deferred-close
+                    # descriptors accumulate beside this long-lived plane.
+                    self.plane = ControlPlane(root, read_only=True)
+                    self.db_identity = identity
                 fp = self._fingerprint(self.plane)
                 if not force and fp == self.fingerprint and self.load_error is None:
                     return
@@ -695,10 +783,10 @@ class ControlPlaneCache:
                 self.load_error = None
             except (ControlPlaneError, SchemaTooNewError, DatabaseCorruptError) as exc:
                 self.load_error = str(exc)
-                self.plane = None
+                self._close_cached_plane()
             except Exception as exc:
                 self.load_error = str(exc)
-                self.plane = None
+                self._close_cached_plane()
 
     def snapshot(self) -> tuple[Optional[ControlPlane], Optional[str], dict]:
         with self.lock:
@@ -723,8 +811,8 @@ class ControlPlaneCache:
         _ISOLATED_CONN_LOCK.acquire()
         conn = None
         try:
-            conn = connect(root=root, create=False)
-            plane = ControlPlane(root, conn=conn)
+            plane = ControlPlane(root, read_only=True)
+            conn = plane.conn
         except Exception as exc:
             if conn is not None:
                 try:

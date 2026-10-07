@@ -18,6 +18,7 @@ registry = work / 'registry.json'
 mod.atomic_write_json(registry, mod.empty_registry())
 cfg = work / 'config.json'
 cfg.write_text(json.dumps({
+    'control_plane_root': str(work / 'control-root'),
     'public_host': 'example.test',
     'frp_control_public_port': 7000,
     'port_start': 19000,
@@ -29,6 +30,9 @@ cfg.write_text(json.dumps({
     'token_file': str(token),
 }) + '\n')
 a = mod.Allocator(str(cfg))
+# Fail before enrollment if the fixture would touch the installed host DB.
+assert mod.RP is not None, 'canonical runtime policy module missing'
+assert mod.RP.root_from_cfg(a.cfg) == str(work / 'control-root'), 'fixture escaped its temporary control-plane root'
 mod.port_is_available = lambda port: True
 ticket, enrollment, _ = a.issue_bootstrap_ticket([], 600, 'inventory', 'zero-node')
 code, redeemed = a.redeem_bootstrap(json.dumps({
@@ -112,6 +116,17 @@ assert status == 403 and result.get('error_class') == 'SERVICE_SCOPE_VIOLATION',
 # on under management identity, so it is no longer an exact lost-response replay.
 status, result = enroll_hmac([])
 assert status == 403 and 'already used' in result.get('error', ''), (status, result)
+# Transport success alone must not hide a failed canonical inventory sync.
+plane = mod.RP.open_plane(a.cfg)
+try:
+    assert plane.conn.execute("SELECT id FROM clients WHERE id = ?", ('machine-zero',)).fetchone()
+    rows = plane.conn.execute(
+        "SELECT name, public_port FROM published_services WHERE client_id = ? AND released = 0",
+        ('machine-zero',),
+    ).fetchall()
+    assert [(row['name'], row['public_port']) for row in rows] == [('ssh', 19000)], rows
+finally:
+    plane.close()
 PY
 cat >"$WORK/empty.json" <<'JSON'
 []
@@ -174,6 +189,7 @@ import re, sys
 from pathlib import Path
 text = Path(sys.argv[1]).read_text(encoding="utf-8")
 markers = (
+    'echo "Starting Data Relay Link Agent ..."',
     'echo "Starting Data Relay Link client ..."',
     'echo "Starting FRP client ..."',
 )

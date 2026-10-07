@@ -38,6 +38,17 @@ system support-bundle
 
 Support bundles must redact raw secrets and sensitive payloads.
 
+On a current Server, `policy-summary.json` reports the canonical SQLite policy
+revision, Remote/Internet/AI policy modes, enforcement state, and total/enabled
+Rule counts. `access-control-summary.json` and `egress-control-summary.json`
+use the same read-only snapshot instead of obsolete JSON policy files. These
+are configured-policy summaries, not proof of live traffic authorization;
+Agent-local metadata is explicitly marked as non-Server policy evidence.
+No database file, credential, or full Rule payload is copied into this summary.
+A present but unreadable, busy, unsupported, or corrupt control DB is reported
+as `ACCESS ERROR`; the collector does not substitute stale JSON policy intent.
+
+
 ## 3. Remote Service is DEGRADED
 
 On the owning Agent Host:
@@ -200,14 +211,17 @@ Remove or change dependent references first. Data Relay Link does not cascade-de
 
 ## 11. Policy mode change rejected
 
-A configured BLACKLIST is not directly flipped to WHITELIST, and vice versa.
+A configured Remote Access BLACKLIST is not directly flipped to WHITELIST,
+and vice versa. Internet Access and AI Access support WHITELIST only; an
+unsupported persisted mode fails closed and must be reset and recreated as
+WHITELIST.
 
 Use:
 
 ```text
 1. export/record existing policy if needed
 2. unset <access-policy> policy
-3. create the first rule in the new mode
+3. create the first rule in the supported mode
 4. recreate required rules
 ```
 

@@ -549,13 +549,11 @@ function Install-FrpProjectManagementFiles {
     # Keep the bare `drlink` command resolvable after a tools refresh.
     try { Install-FrpCommandShim -Quiet | Out-Null } catch { }
     # Preserve identity/ports: do not rewrite client-state or frpc.toml.
-    $verSrc = Join-Path $SrcRoot '..\VERSION'
-    if (-not (Test-Path -LiteralPath $verSrc)) {
-        $verSrc = Join-Path $SrcRoot 'VERSION'
+    $manifestSource = Join-Path (Split-Path -Parent $SrcRoot) 'release-manifest.json'
+    if (Test-Path -LiteralPath $manifestSource) {
+        Copy-Item -LiteralPath $manifestSource -Destination (Join-Path (Get-FrpWindowsRoot) 'release-manifest.json') -Force
     }
-    if (Test-Path -LiteralPath $verSrc) {
-        Copy-Item -LiteralPath $verSrc -Destination (Get-FrpVersionPath) -Force
-    }
+    Write-FrpInstalledVersion -SourceRoot $SrcRoot
 }
 
 function Test-FrpIsInstalledProductTree {
@@ -1262,6 +1260,16 @@ switch ($Command) {
         $verPath = Join-Path (Get-FrpWindowsRoot) 'version'
         if (Test-Path -LiteralPath $verPath) {
             Get-Content -LiteralPath $verPath -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
+            $values = @{}
+            foreach ($line in Get-Content -LiteralPath $verPath) {
+                if ($line -match '^([^=]+)=(.*)$') { $values[$Matches[1]] = $Matches[2] }
+            }
+            foreach ($pair in @(@('Role','ROLE'), @('Release Channel','RELEASE_CHANNEL'),
+                    @('Source HEAD','SOURCE_HEAD'), @('Content Source HEAD','CONTENT_SOURCE_HEAD'))) {
+                $value = [string]$values[$pair[1]]
+                if (-not $value) { $value = 'UNKNOWN' }
+                Write-Host ('{0}: {1}' -f $pair[0], $value)
+            }
         } else {
             Write-Host 'Data Relay Link Windows client'
         }

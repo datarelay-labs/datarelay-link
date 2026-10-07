@@ -13,6 +13,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -1104,28 +1105,35 @@ class MCPBridgeE2ETests(unittest.TestCase):
 
 
     def test_external_mcp_hosts_classified(self):
-        cursor = os.environ.get("DRLINK_CURSOR_MCP_E2E")
-        claude = os.environ.get("DRLINK_CLAUDE_MCP_E2E")
-        chatgpt = os.environ.get("DRLINK_CHATGPT_MCP_E2E")
-        print("CURSOR_MCP_REAL_E2E=%s" % ("PASS" if cursor == "pass" else "BLOCKED"))
-        print("CLAUDE_MCP_REAL_E2E=%s" % ("PASS" if claude == "pass" else "BLOCKED"))
-        print("CHATGPT_MCP_REAL_E2E=%s" % ("PASS" if chatgpt == "pass" else "BLOCKED"))
-        if not cursor:
+        # Isolated protocol tests cannot observe an external account/UI,
+        # implementation runtime or installed host. Environment hints are
+        # reports only; separately validated user evidence owns those gates.
+        for host in ("CLAUDE", "CHATGPT"):
+            print("%s_MCP_REAL_E2E=NOT_RUN" % host)
+            reported = os.environ.get("DRLINK_%s_MCP_E2E" % host)
+            if reported:
+                print("%s_MCP_REPORTED_RESULT=%s (unverified)" % (host, reported))
             print(
-                "CURSOR_BLOCKER=This Cursor agent session has no remote HTTP MCP namespace; "
-                "GetDynamicTools lists only first-party cursor tools. Live host is Direct mode "
-                "(no Data Relay Link 443 frontend), so https://<control-host>/mcp is not installed here."
+                "%s_BLOCKER=EXTERNAL_UI_NOT_EXERCISED: this isolated machine suite "
+                "does not perform external owner/UI authentication; separately "
+                "validated user evidence is required." % host
             )
-        if not claude:
-            print(
-                "CLAUDE_BLOCKER=ACCOUNT_OR_PRODUCT_PLAN: Claude remote custom connector UI/account "
-                "is not available in this Cursor agent environment."
-            )
-        if not chatgpt:
-            print(
-                "CHATGPT_BLOCKER=OWNER_UI_AUTH_PENDING: real supported ChatGPT owner/UI OAuth Authorization Code/consent "
-                "must be completed through the owner UI; machine-side MCP conformance does not clear this gate."
-            )
+
+    def test_external_mcp_reporting_does_not_invent_runtime_or_ui_evidence(self):
+        for reported in ("", "pass"):
+            with patch.dict(os.environ, {
+                "DRLINK_CLAUDE_MCP_E2E": reported,
+                "DRLINK_CHATGPT_MCP_E2E": reported,
+            }):
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    self.test_external_mcp_hosts_classified()
+            rendered = output.getvalue()
+            self.assertNotIn("Cursor", rendered)
+            self.assertNotIn("Live host is Direct mode", rendered)
+            self.assertNotIn("CHATGPT_MCP_REAL_E2E=PASS", rendered)
+            self.assertNotIn("CLAUDE_MCP_REAL_E2E=PASS", rendered)
+            self.assertIn("CHATGPT_MCP_REAL_E2E=NOT_RUN", rendered)
 
 
 if __name__ == "__main__":

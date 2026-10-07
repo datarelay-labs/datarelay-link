@@ -110,14 +110,30 @@ require_cmd() {
   done
 }
 
+token_preservation_fingerprint() {
+  local server_hash client_hash
+  # Agent authentication is embedded in frpc.toml. Preserving its complete
+  # bytes proves the embedded token is unchanged; Agents have no server_token.
+  case "$UPDATE_ROLE" in
+    client) frp_file_sha256 "$FRPC_CONFIG" ;;
+    both)
+      server_hash="$(frp_file_sha256 "$TOKEN_FILE")"
+      client_hash="$(frp_file_sha256 "$FRPC_CONFIG")"
+      [[ -n "$server_hash" && -n "$client_hash" ]] || return 0
+      printf '%s:%s' "$server_hash" "$client_hash"
+      ;;
+    *) frp_file_sha256 "$TOKEN_FILE" ;;
+  esac
+}
+
 snapshot_preservation() {
-  TOKEN_BEFORE="$(frp_file_sha256 "$TOKEN_FILE")"
+  TOKEN_BEFORE="$(token_preservation_fingerprint)"
   REGISTRY_BEFORE="$(frp_registry_identity "$REGISTRY_FILE")"
 }
 
 report_preservation() {
   local token_after registry_after
-  token_after="$(frp_file_sha256 "$TOKEN_FILE")"
+  token_after="$(token_preservation_fingerprint)"
   registry_after="$(frp_registry_identity "$REGISTRY_FILE")"
   if [[ -n "$TOKEN_BEFORE" && "$token_after" == "$TOKEN_BEFORE" ]]; then
     echo "TOKEN_PRESERVED=PASS"

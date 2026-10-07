@@ -23,9 +23,14 @@ DRLINK_MCP_SDK_PYTHON="$(./tests/ensure-mcp-sdk-venv.sh | tail -n 1)"
 echo "DRLINK_MCP_SDK_PYTHON=$DRLINK_MCP_SDK_PYTHON"
 
 echo "=== shell syntax ==="
-git ls-files '*.sh' | xargs -r bash -n
-git ls-files -o --exclude-standard '*.sh' | xargs -r bash -n
-bash -n tools/frp-server-status tools/frp-project-update tools/frp-update tools/frp-upstream tools/frp-client tools/frpctl
+git ls-files -z '*.sh' | xargs -0 -r -n 1 bash -n --
+git ls-files -z -o --exclude-standard '*.sh' | xargs -0 -r -n 1 bash -n --
+# Extensionless entrypoints need the same one-script-per-parser guarantee.
+for script in tools/frp-server-status tools/frp-project-update tools/frp-update \
+  tools/frp-upstream tools/frp-client tools/frpctl; do
+  bash -n -- "$script"
+done
+./tests/test-shell-syntax-enumeration.sh
 
 echo "=== Python compile ==="
 python3 -m py_compile server/frp-port-allocator.py server/frp-access-plugin.py server/frp-egress-gateway.py server/drlink-tcp-egress.py server/migrate_token.py server/drlink-mcp-bridge.py scripts/build-bundles.py scripts/generate-sbom.py scripts/check-chatgpt-owner-acceptance.py lib/frp_mgmt_auth.py lib/frp_pki.py lib/frp_frontend.py lib/frp_doctor.py lib/frp_install_txn.py lib/frp_client_registry.py lib/frp_audit.py lib/frp_project_files.py lib/frp_control_locks.py lib/frp_server_config.py lib/frp_zero_touch.py lib/drlink_qualified_artifacts.py lib/frp_ctl_grammar.py lib/frp_cli_catalog.py lib/frp_version_identity.py lib/frp_ctl_repl.py lib/frp_enrollment_lifecycle.py lib/frp_access_control.py lib/frp_egress_control.py lib/frp_egress_runtime.py lib/frp_infrastructure_ports.py lib/frp_health_check.py lib/frp_service_profiles.py lib/frp_machine_id.py lib/frp_bounded_server.py lib/frp_public_suffix.py lib/frp_policy_fingerprint.py lib/frp_state_paths.py lib/drlink_control_db.py lib/drlink_control_plane.py lib/drlink_control_cli.py lib/drlink_ai_agent.py lib/drlink_mcp_bridge.py lib/drlink_agent_payload.py
@@ -56,6 +61,7 @@ done
 ./tests/test-qualified-artifacts.sh
 python3 tests/test-qualified-artifacts.py
 ./tests/test-install-config-hardening.sh
+./tests/test-install-server-help.sh
 ./tests/test-qual-gate-truthfulness.sh
 ./tests/test-public-hostname.sh
 ./tests/test-allocator-ready.sh
@@ -114,11 +120,13 @@ python3 tests/test-release-recovery-dual-role-audit-docs-closure.py
 python3 tests/test-repl-live-inventory.py
 ./tests/test-real-e2e-canonical-cli.sh
 ./tests/test-client-upgrade.sh
+python3 tests/test-client-python-runtime.py
 ./tests/test-client-upgrade-provenance.sh
 ./tests/test-ai-agent-unit-lifecycle.sh
 ./tests/test-safe-repo-copy.sh
 bash ./tests/test-installed-client-update.sh
 ./tests/test-legacy-client-secure-bridge.sh
+./tests/test-server-tempdir-isolation.sh
 ./tests/test-install-lifecycle.sh
 ./tests/test-partial-client-install-recovery.sh
 ./tests/test-uninstall-owned-frpc.sh
@@ -186,6 +194,7 @@ python3 tests/test-machine-id-validation.py
 ./tests/test-authoritative-state-missing.sh
 ./tests/test-target-health.sh
 ./tests/test-support-bundle.sh
+python3 tests/test-support-canonical-policy.py
 python3 tests/test-service-profiles.py
 ./tests/test-service-profiles.sh
 ./tests/test-user-facing-branding.sh
@@ -205,6 +214,7 @@ python3 tests/test-single443-mgmt-origin.py
 ./tests/test-frp-server-status.sh
 ./tests/test-release-docs.sh
 ./tests/test-release-artifact-ordering.sh
+./tests/test-change-closure-artifacts.sh
 ./tests/test-probe-tcp-injection.sh
 ./tests/test-immutable-release-channel.sh
 ./tests/test-exact-sha-installer-provenance.sh

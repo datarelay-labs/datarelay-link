@@ -320,6 +320,25 @@ class UnifiedDisasterRecoveryTests(unittest.TestCase):
             "SELECT label FROM clients WHERE id='cccccccccccccccccccccccccccccccc'"
         ).fetchone()[0]
         self.assertEqual(label, before_label)
+        audit = self.tree / 'var/log/drlink/audit.jsonl'
+        records = [json.loads(line) for line in audit.read_text().splitlines()]
+        failed = [row for row in records if row.get('event') == 'restore.failed']
+        self.assertTrue(failed)
+        self.assertEqual(failed[-1].get('result'), 'failure')
+
+    def test_truncated_archive_public_validation_is_concise_and_readonly(self):
+        archive = self._backup()
+        truncated = self.outdir / 'truncated.tar.gz'
+        truncated.write_bytes(archive.read_bytes()[:128])
+        token_before = (self.tree / 'etc/frp/server_token').read_bytes()
+        proc = subprocess.run(['bash', str(ROOT / 'tools/drlink'), 'system', 'backup',
+                               'validate', str(truncated)],
+                              env=os.environ.copy(), capture_output=True, text=True, timeout=30)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertNotIn('Traceback', proc.stderr)
+        self.assertIn('backup', proc.stderr.lower())
+        self.assertEqual((self.tree / 'etc/frp/server_token').read_bytes(), token_before)
+        self.assertFalse((self.tree / 'var/lib/drlink/server-update-pending.json').exists())
 
     def test_06_rollback_failure_recovery_required(self):
         archive = self._backup()

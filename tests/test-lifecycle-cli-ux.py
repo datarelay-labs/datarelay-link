@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -17,6 +18,13 @@ import frp_ctl_grammar as grammar  # noqa: E402
 
 
 class LifecycleCliUx(unittest.TestCase):
+    def test_upgrade_guide_does_not_mislabel_mutation_or_paused_state(self):
+        guide = (ROOT / "docs/FRP_UPGRADE.md").read_text(encoding="utf-8")
+        self.assertIsNone(re.search(
+            r"`(?:sudo )?drlink system update product`\s+is read-only", guide))
+        self.assertNotIn("Paused inventory reports PAUSED", guide)
+        self.assertIn("system update check-engine", guide)
+
     def test_client_system_menu_lifecycle_entries(self):
         agent_labels = [row[1] for row in catalog.navigation_entries("client.agent")]
         for need in ("Pause", "Resume", "Restart", "Autostart"):
@@ -178,10 +186,10 @@ frp_client_autostart_cmd disable
             )
             self.assertEqual(proc.returncode, 0, proc.stderr)
             out = proc.stdout
-            self.assertIn("Client paused.", out)
-            self.assertIn("Client is already paused.", out)
-            self.assertIn("Client resumed.", out)
-            self.assertIn("Client restarted.", out)
+            self.assertIn("Agent paused.", out)
+            self.assertIn("Agent is already paused.", out)
+            self.assertIn("Agent resumed.", out)
+            self.assertIn("Agent restarted.", out)
             self.assertIn("Autostart :", out)
             self.assertNotIn("frp-client set-service", out)
             self.assertNotIn("systemctl", out)

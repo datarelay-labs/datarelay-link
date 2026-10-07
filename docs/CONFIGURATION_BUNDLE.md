@@ -302,6 +302,21 @@ A rule may reference an Object created elsewhere in the same bundle.
 
 A missing reference, duplicate public selector, invalid group member, unsupported transport, or wrong CLI context rejects the complete change set.
 
+Agent Test and Diff validate against the current local synchronized catalog and
+desired state using the same dependency checks as Apply. They never contact the
+Server or activate runtime state. Server availability, current allocations and
+concurrent changes are checked again during Apply; VALID does not promise that
+those external conditions will remain unchanged.
+
+Signed management replay storage is bounded per Agent. Its protected-window
+budget covers both default 100-endpoint pools, eight management requests per
+endpoint including inverse-state compensation, background AI polling every two
+seconds, lifecycle polling every five seconds, and 64 additional requests.
+Existing unexpired nonces remain replay-blocking; signature checks, clock skew
+and expiry do not change. Exhaustion beyond that finite budget still rejects
+new requests. This capacity correction changes no stored nonce format and
+requires no identity reset or migration.
+
 ## 10. Internet Access selector rules
 
 Internet Access source may use:

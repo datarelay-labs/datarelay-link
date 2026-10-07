@@ -86,7 +86,7 @@ export FRP_DEPLOY_TEST_ROOT="$TREE"
 OUT="$WORKDIR/one-line.out"
 python3 "$ROOT/tools/frp-create-client" --one-line --client-name short-zt --note 'pkg' \
   >"$OUT" || { cat "$OUT"; fail "create one-line"; }
-grep -q 'Zero-touch client command' "$OUT" || fail "header"
+grep -q 'Zero-touch Agent command' "$OUT" || fail "header"
 grep -q "curl -fsSL --proto =https --cacert" "$OUT" || { cat "$OUT"; fail "pinned installer curl missing"; }
 grep -q '/ca.crt' "$OUT" || { cat "$OUT"; fail "ca.crt bootstrap missing"; }
 grep -q 'zt1\.' "$OUT" || { cat "$OUT"; fail "zt1 package missing"; }

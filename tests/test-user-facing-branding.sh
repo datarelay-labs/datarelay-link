@@ -28,6 +28,12 @@ assert_contains() {
 }
 
 # User-facing docs and install flows must not expose legacy product/CLI terms.
+installer_menu="$(FRP_CLIENT_SOURCED=1 bash -c 'source "$1/lib/frp-client-common.sh"; frp_ux_add_service_menu' -- "$ROOT")"
+assert_contains "$installer_menu" '5\) Back'
+if grep -q 'Service Profile' <<<"$installer_menu"; then
+  fail "current Agent enrollment menu offers retired Service Profile"
+fi
+assert_not_contains "$ROOT/tools/frp-set-client-installer-url" '[Cc]lient installer URL'
 USER_DOCS=(
   "$ROOT/README.md"
   "$ROOT/docs/CLI_REFERENCE.md"
@@ -70,7 +76,7 @@ done
 [[ ! -e "$ROOT/client/com.datarelay.frp-auto-deploy.frpc.plist" ]] || fail "legacy macOS plist duplicate remains"
 [[ -f "$ROOT/server/drlink-egress.service" ]] || fail "missing drlink-egress.service"
 grep -q 'Description=Data Relay Link Server' "$ROOT/server/drlink-server.service" || fail "server unit description"
-grep -q 'Description=Data Relay Link Client' "$ROOT/client/drlink-client.service" || fail "client unit description"
+grep -q 'Description=Data Relay Link Agent' "$ROOT/client/drlink-client.service" || fail "Agent unit description"
 
 # Manifest installs drlink on PATH and keeps frpctl internal.
 grep -q 'usr/local/bin/drlink' "$ROOT/lib/server-project-files.manifest" || fail "manifest missing drlink"

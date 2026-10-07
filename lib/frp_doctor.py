@@ -396,7 +396,7 @@ class Report(object):
         counts = self.counts()
         if counts[FAIL]:
             return 'FAIL'
-        if counts[WARN]:
+        if counts[WARN] or counts[NOT_TESTED]:
             return 'PASS_WITH_WARNINGS'
         return 'PASS'
 
@@ -551,7 +551,7 @@ def detect_role(paths):
             'label': 'DRLink Server + Agent Host',
             'confidence': 'complete',
             'status': PASS,
-            'reason': 'server and client markers are both present',
+            'reason': 'Server and Agent Host markers are both present',
         })
         if result['missing_client_unit'] or result['missing_server_unit']:
             result['confidence'] = 'partial'
@@ -583,7 +583,7 @@ def detect_role(paths):
                 'label': 'Partial Agent Host installation',
                 'confidence': 'partial',
                 'status': FAIL,
-                'reason': 'client-state exists but frpc unit is missing',
+                'reason': 'Agent state exists but frpc unit is missing',
             })
             return result
         result.update({
@@ -601,7 +601,7 @@ def detect_role(paths):
             'label': 'Ambiguous',
             'confidence': 'none',
             'status': FAIL,
-            'reason': 'server and client markers are inconsistent',
+            'reason': 'Server and Agent Host markers are inconsistent',
         })
         return result
     if server_n >= 1:
@@ -616,10 +616,10 @@ def detect_role(paths):
     if client_n >= 1:
         result.update({
             'role': 'partial_client',
-            'label': 'Partial client installation',
+            'label': 'Partial Agent Host installation',
             'confidence': 'partial',
             'status': FAIL,
-            'reason': 'incomplete client markers',
+            'reason': 'incomplete Agent Host markers',
         })
         return result
     return result
@@ -1194,7 +1194,7 @@ def validate_registry(state, cfg=None):
             seen_ports[port] = ('reserved', None)
     for mid, client in clients.items():
         if not isinstance(client, dict):
-            issues.append('client record is not an object')
+            issues.append('Managed Host record is not an object')
             continue
         if 'ssh_port' in client or 'https_port' in client:
             issues.append('legacy SSH/HTTPS fields are present')
@@ -1204,10 +1204,10 @@ def validate_registry(state, cfg=None):
             issues.append('invalid management identity status')
         if status == 'revoked':
             revoked += 1
-            infos.append('revoked client %s is a valid lifecycle state' % (client.get('hostname') or mid[:12]))
+            infos.append('revoked Managed Host %s is a valid lifecycle state' % (client.get('hostname') or mid[:12]))
         services = client.get('services') or {}
         if not isinstance(services, dict):
-            issues.append('client services must be a map')
+            issues.append('Managed Host Remote Services must be a map')
             continue
         seen_ids = set()
         for sid, svc in services.items():
@@ -1226,8 +1226,12 @@ def validate_registry(state, cfg=None):
             if port in seen_ports and seen_ports[port][0] != 'reserved':
                 issues.append('duplicate public port %s' % port)
             seen_ports[port] = (mid, key)
-            if port_start is not None and port_end is not None:
-                if port < port_start or port > port_end:
+            service_start, service_end = port_start, port_end
+            if cfg and str(svc.get('pool_class') or '').strip().lower() == 'fixed-tcp':
+                from frp_infrastructure_ports import tcp_relay_port_range
+                service_start, service_end = tcp_relay_port_range(cfg)
+            if service_start is not None and service_end is not None:
+                if port < service_start or port > service_end:
                     outside.append(port)
             if port in protected:
                 issues.append('allocated port %s collides with a control port' % port)
@@ -1249,11 +1253,11 @@ def validate_registry(state, cfg=None):
     if outside:
         extra.append('reservations outside current range: %s' % ','.join(str(p) for p in outside[:8]))
         return WARN, extra[0], extra
-    msg = 'valid schema v2 (%s clients, %s reserved ports)' % (len(clients), len(seen_ports))
+    msg = 'valid schema v2 (%s Managed Hosts, %s reserved ports)' % (len(clients), len(seen_ports))
     if revoked:
         msg += ', %s revoked' % revoked
     if disabled:
-        msg += ', %s disabled services' % disabled
+        msg += ', %s disabled Remote Services' % disabled
     return PASS, msg, infos
 
 
@@ -1265,7 +1269,7 @@ def check_macos_support(report, facts):
     recs = []
     if arch and arch not in ('arm64', 'aarch64'):
         issues.append('architecture %s is not Apple Silicon' % arch)
-        recs.append('The macOS client requires Apple Silicon (arm64); Intel Macs are not supported.')
+        recs.append('The macOS Agent Host requires Apple Silicon (arm64); Intel Macs are not supported.')
     if macos_ver:
         major = macos_ver.split('.')[0]
         try:
@@ -1292,7 +1296,7 @@ def check_macos_support(report, facts):
         return
     report.add(
         'macos_support', PASS,
-        'Apple Silicon macOS is a supported client platform',
+        'Apple Silicon macOS is a supported Agent Host platform',
         detail,
         '',
         'host',
@@ -1486,8 +1490,8 @@ def check_pending(report, paths):
         op = str(operation or '').strip()
         if kind == 'client':
             if op in ('client-update', 'update', ''):
-                return 'interrupted client update is pending'
-            return 'interrupted client-role transaction is pending'
+                return 'interrupted Agent software update is pending'
+            return 'interrupted Agent role transaction is pending'
         if kind == 'server':
             if op == 'project-update':
                 return 'interrupted project update is pending'
@@ -1505,7 +1509,7 @@ def check_pending(report, paths):
         if op in ('frp-update',):
             return 'interrupted FRP binary update is pending (legacy marker)'
         if op in ('client-update',):
-            return 'interrupted client update is pending (legacy marker)'
+            return 'interrupted Agent software update is pending (legacy marker)'
         if op == 'install':
             return 'interrupted install is pending (legacy marker)'
         if op == 'restore':
@@ -1567,7 +1571,7 @@ def check_pending(report, paths):
         if err:
             report.add(
                 'pending_apply', FAIL,
-                'client Apply pending marker is unreadable',
+                'Agent configuration apply pending marker is unreadable',
                 err,
                 'inspect /etc/frp/apply-pending.json; run sudo drlink system synchronize after recovery. doctor does not clear it',
                 'state',
@@ -1581,7 +1585,7 @@ def check_pending(report, paths):
             status = FAIL if failure or phase not in ('complete',) else WARN
             report.add(
                 'pending_apply', status,
-                'pending client Apply transaction',
+                'pending Agent configuration apply transaction',
                 detail,
                 'sudo drlink system synchronize\nDoctor does not clear the pending marker.',
                 'state',
@@ -1654,20 +1658,20 @@ def check_backups_and_locks(report, paths, role):
             except OSError:
                 alive = False
         if alive:
-            report.add('stale_lock', INFO, 'client management lock is held by a live process', 'pid=%s' % pid, '', 'state')
+            report.add('stale_lock', INFO, 'Agent management lock is held by a live process', 'pid=%s' % pid, '', 'state')
         else:
             report.add(
                 'stale_lock', WARN,
-                'client management lock looks stale',
+                'Agent management lock looks stale',
                 'path=/etc/frp/client-manage.lock pid=%s' % (pid or 'none'),
                 'do not remove the lock from doctor; retry sudo drlink after confirming no other operator session is running',
                 'state',
             )
     elif role in ('client', 'dual', 'partial_client'):
-        report.add('stale_lock', PASS, 'no client management lock is present', '', '', 'state')
+        report.add('stale_lock', PASS, 'no Agent management lock is present', '', '', 'state')
 
     for dpath, label in (
-        ('/etc/frp', 'client config directory'),
+        ('/etc/frp', 'Agent configuration directory'),
         ('/etc/drlink', 'project config directory'),
         ('/var/lib/drlink', 'project state directory'),
     ):
@@ -1934,6 +1938,10 @@ def check_unit(report, facts, unit, check_id, label):
             recovery,
             'runtime',
         )
+        return active
+    if active in ('activating', 'deactivating', 'reloading'):
+        report.add(check_id, WARN, '%s is %s; runtime readiness is not established' % (label, active),
+                   'state=%s' % active, 'inspect runtime status and retry diagnostics after the transition', 'runtime')
         return active
     report.add(check_id, NOT_TESTED, '%s state is unknown' % label, 'state=%s' % active, '', 'runtime')
     return active
@@ -2699,12 +2707,20 @@ def check_egress_control(report, paths, facts, cfg):
         cls = str(issue.get('class') or 'EGRESS_CONFIG_ERROR')
         severity = str(issue.get('severity') or 'error').lower()
         status = FAIL if severity == 'error' else (WARN if severity == 'warn' else INFO)
+        message = '%s: %s' % (cls, issue.get('message') or 'issue')
+        if paths.is_file('/var/lib/drlink/drlink.db'):
+            # Legacy profile metadata is not the current authorization policy.
+            # Preserve its validation severity and all runtime health probes,
+            # but never infer current allow/deny from obsolete profile counts.
+            message = 'obsolete egress-control.json: %s; SQLite Internet Access is authoritative' % (
+                'profile metadata only' if severity == 'info' else (issue.get('message') or 'issue')
+            )
         report.add(
             cls,
             status,
-            '%s: %s' % (cls, issue.get('message') or 'issue'),
+            message,
             '',
-            'inspect Internet Access with show internet-profiles',
+            'inspect Internet Access with sudo drlink show internet-access',
             'state',
         )
 
@@ -2884,7 +2900,7 @@ def check_server(report, paths, facts, skip_network):
     if err:
         report.add(
             'server_registry', INFO if paths.is_file(control_db) else FAIL,
-            'derived client inventory is %s' % err,
+            'derived Managed Host inventory is %s' % err,
             registry_path,
             'rebuild from SQLite or restore backup; inventory is not policy authority',
             'state',
@@ -2893,7 +2909,7 @@ def check_server(report, paths, facts, skip_network):
         status, message, extra = validate_registry(state, cfg if isinstance(cfg, dict) else None)
         rec = ''
         if status == FAIL:
-            rec = 'rebuild derived client inventory from SQLite; doctor does not repair it'
+            rec = 'rebuild derived Managed Host inventory from SQLite; doctor does not repair it'
         report.add('server_registry', status, message, '; '.join(extra[:4]) if extra and status != PASS else '', rec, 'state')
         check_permissions(report, paths, registry_path, 'server_registry_permissions', secret=True, expect_root=expect_root, section='security')
 
@@ -3086,7 +3102,7 @@ def check_server(report, paths, facts, skip_network):
             if alloc_ok:
                 rec = (
                     'allocator backend /healthz succeeded but the public frontend proxy failed. '
-                    'Clients cannot use TCP/443. Re-run the server installer; do not disable proxy_ssl_verify.'
+                    'Agents cannot use TCP/443. Re-run the server installer; do not disable proxy_ssl_verify.'
                 )
             report.add(
                 'frontend_proxy_health', FAIL,
@@ -3323,7 +3339,7 @@ def check_client(report, paths, facts, skip_network):
             if url and not url.lower().startswith('https://'):
                 issues.append('allocator URL is not HTTPS')
             if not state.get('machine_id') and not state.get('host_id'):
-                issues.append('machine/client identity fields are missing')
+                issues.append('machine/Agent identity fields are missing')
             if issues:
                 report.add('client_state', FAIL, 'client-state.json failed validation', '; '.join(issues[:8]), 'Restore /etc/frp/client-state.json from the latest valid backup.', 'state')
             else:
@@ -3350,13 +3366,13 @@ def check_client(report, paths, facts, skip_network):
             'client_identity', FAIL,
             'management identity files are incomplete',
             'missing %s' % ', '.join(missing_ident),
-            'Do not regenerate identity automatically. Create a new Enrollment Code with sudo drlink set enrollment manual and re-enroll this Agent Host.',
+            'Do not regenerate identity automatically. Create a new Enrollment Code on the DRLink Server with sudo drlink set enrollment manual and re-enroll this Agent Host.',
             'security',
         )
     else:
         macval = (paths.read_text(mac_p) or '').strip()
         if not HEX64_RE.fullmatch(macval.lower()):
-            report.add('client_identity', FAIL, 'management MAC file is not a valid 64-hex secret reference', 'length=%s' % len(macval), 're-enroll this client with a new Enrollment Code', 'security')
+            report.add('client_identity', FAIL, 'management MAC file is not a valid 64-hex secret reference', 'length=%s' % len(macval), 're-enroll this Agent Host with a new Enrollment Code', 'security')
         else:
             derived, err = pubkey_from_private(paths.p(key_p))
             pub = paths.read_text(pub_p) or ''
@@ -3383,7 +3399,7 @@ def check_client(report, paths, facts, skip_network):
             'client_ca', FAIL,
             'allocator CA certificate is missing',
             '',
-            're-run client enrollment with FRP_ALLOCATOR_CA_SHA256 from the server Enrollment Code output',
+            're-run Agent enrollment with FRP_ALLOCATOR_CA_SHA256 from the server Enrollment Code output',
             'security',
         )
         ca_ok = False
@@ -3467,7 +3483,7 @@ def check_client(report, paths, facts, skip_network):
                 'access_info', WARN,
                 'access-info.txt is missing',
                 'display-only file; state/runtime can still be healthy',
-                'sudo drlink system info regenerates connection text from local client-state when the file is absent',
+                'sudo drlink system info regenerates connection text from local Agent state when the file is absent',
                 'state',
             )
         else:
@@ -3771,6 +3787,7 @@ def render_human(report, quiet=False, verbose=False):
         'PASS : %s' % counts[PASS],
         'WARN : %s' % counts[WARN],
         'FAIL : %s' % counts[FAIL],
+        'NOT TESTED : %s' % counts[NOT_TESTED],
         '',
         'Overall: %s' % overall_label,
         '',
@@ -3857,10 +3874,10 @@ def run_doctor(root, facts, fmt='human', quiet=False, verbose=False, skip_networ
         role_info['reason'],
         'server_signals=%s client_signals=%s' % (role_info['server_signals'], role_info['client_signals']),
         {
-            'partial_client': 'complete the client install or run sudo drlink system update product; do not re-enroll over a damaged identity',
+            'partial_client': 'complete the Agent install or run sudo drlink system update product; do not re-enroll over a damaged identity',
             'partial_server': 're-run the server installer to complete missing components',
-            'ambiguous': 'inspect leftover server and client files before taking further action',
-            'uninstalled': 'install the server or client bootstrap first',
+            'ambiguous': 'inspect leftover Server and Agent files before taking further action',
+            'uninstalled': 'install the Server or Agent bootstrap first',
         }.get(report.role, ''),
         'host',
     )

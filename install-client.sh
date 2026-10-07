@@ -174,12 +174,12 @@ def host_for_url(text):
         pass
     return text
 print()
-print('Data Relay Link client setup complete.')
+print('Data Relay Link Agent setup complete.')
 print()
 if not services:
     print('Management identity enrolled (management-only mode).')
-    print('No services are published and no public ports were allocated.')
-    print('Add a service later with: sudo drlink')
+    print('No Remote Services are configured and no public ports were allocated.')
+    print('Add a Remote Service later with: sudo drlink')
 else:
     print('Enrollment finished. Review Remote Service status with:')
     print('  sudo drlink show remote-services')
@@ -270,9 +270,9 @@ print('=========================================')
 print(' Data Relay Link Installation Complete')
 print('=========================================')
 print()
-print('Your Data Relay Link client is running successfully.')
+print('Your Data Relay Link Agent is running successfully.')
 print()
-print('Published services')
+print('Remote Services')
 print('------------------')
 print()
 for item in services:
@@ -343,7 +343,7 @@ print('  sudo drlink show status')
 print('  sudo drlink system diagnostics')
 print('  sudo drlink system update product')
 print()
-print('Local client details:')
+print('Local Agent details:')
 print('  sudo drlink system info')
 print()
 if sys.argv[3] == 'darwin':
@@ -375,7 +375,7 @@ frp_client_install_service_definition() {
   else
     cat >/etc/systemd/system/drlink-client.service <<'EOF2'
 [Unit]
-Description=Data Relay Link Client
+Description=Data Relay Link Agent
 After=network-online.target
 Wants=network-online.target
 
@@ -521,8 +521,8 @@ frp_client_reconcile_installed_permissions() {
 
 frp_client_repair_partial_install() {
   local source="${1:-${_FRP_INSTALL_CLIENT_DIR}}"
-  echo "A partial or broken Data Relay Link client installation was found." >&2
-  echo "Restoring missing client software without changing this client's identity." >&2
+  echo "A partial or broken Data Relay Link Agent installation was found." >&2
+  echo "Restoring missing Agent software without changing this Agent's identity." >&2
   frp_client_install_management_files "$source" || return 1
   if [[ -z "${FRP_CLIENT_TEST_ROOT:-}" && "${FRP_SKIP_SYSTEMD:-}" != "1" ]]; then
     frp_client_install_service_definition || return 1
@@ -533,27 +533,27 @@ frp_client_repair_partial_install() {
   fi
   frp_client_reconcile_installed_permissions
   if ! frp_client_has_existing_install; then
-    echo "ERROR: the partial installation could not be repaired into a complete client." >&2
+    echo "ERROR: the partial installation could not be repaired into a complete Agent." >&2
     echo "Identity and configuration were left unchanged." >&2
     frp_client_partial_recovery_guidance
     frp_emit_failure_class RECOVERY_REQUIRED
     return 1
   fi
-  echo "Repair complete. Existing client identity and configuration were preserved." >&2
-  echo "This client was not re-enrolled." >&2
+  echo "Repair complete. Existing Agent identity and configuration were preserved." >&2
+  echo "This Agent was not re-enrolled." >&2
   if frp_zero_touch_active; then
     echo "The Bootstrap Ticket was not used." >&2
   fi
-  echo "Use sudo drlink show status to inspect this client." >&2
+  echo "Use sudo drlink show status to inspect this Agent." >&2
   return 0
 }
 
 frp_client_partial_recovery_guidance() {
-  echo "ERROR: a partial or broken Data Relay Link client installation was found." >&2
+  echo "ERROR: a partial or broken Data Relay Link Agent installation was found." >&2
   if command -v drlink >/dev/null 2>&1 || [[ -x "$(frp_client_path /usr/local/bin/drlink)" ]]; then
     echo "Repair it with: sudo drlink system update product" >&2
   else
-    echo "This host is not a complete current Data Relay Link client." >&2
+    echo "This host is not a complete current Data Relay Link Agent." >&2
     echo "Re-run the exact same bootstrap-client.sh installer command to restore" >&2
     echo "missing software from local recovery state (the Bootstrap Ticket is not reused)." >&2
     if [[ -x "$(frp_client_path /usr/local/sbin/uninstall-client.sh)" ]] \
@@ -561,18 +561,18 @@ frp_client_partial_recovery_guidance() {
       echo "Or uninstall locally, then enroll again from the server." >&2
     fi
   fi
-  echo "Do not invent a new Enrollment Code for a reserved partial client." >&2
+  echo "Do not invent a new Enrollment Code for a reserved partial Agent install." >&2
 }
 
 frp_client_existing_install_message() {
   if frp_zero_touch_active; then
-    echo "This client is already installed." >&2
+    echo "This Agent is already installed." >&2
     echo "Use sudo drlink system update product." >&2
     return 0
   fi
-  echo "ERROR: this host already has a Data Relay Link client installed." >&2
+  echo "ERROR: this host already has a Data Relay Link Agent installed." >&2
   echo >&2
-  echo "A software update must not re-enroll the client and does not" >&2
+  echo "A software update must not re-enroll the Agent and does not" >&2
   echo "require an Enrollment Code." >&2
   echo >&2
   echo "Upgrade in place with:" >&2
@@ -594,7 +594,7 @@ frp_client_existing_install_message() {
     echo "or re-run the same bootstrap-client.sh --upgrade command used for this install." >&2
   fi
   echo >&2
-  echo "Use sudo drlink to change published services." >&2
+  echo "Use sudo drlink to change Remote Services." >&2
   echo "An Enrollment Code is only for first install or trust recovery." >&2
 }
 
@@ -717,10 +717,10 @@ frp_client_main() {
   SERVICES_FILE="$(mktemp)"
   ALLOCATED_FILE="$(mktemp)"
   ENROLL_META_FILE="$(mktemp)"
-  TMPDIR="$(frp_secure_mktemp_dir)"
+  _FRP_CLIENT_ENROLL_TMPDIR="$(frp_secure_mktemp_dir)"
   chmod 600 "$SERVICES_FILE" "$ALLOCATED_FILE" "$ENROLL_META_FILE"
   _frp_client_enroll_tmp_cleanup() {
-    rm -rf "$TMPDIR" "$SERVICES_FILE" "$ALLOCATED_FILE" "$ENROLL_META_FILE"
+    rm -rf "$_FRP_CLIENT_ENROLL_TMPDIR" "$SERVICES_FILE" "$ALLOCATED_FILE" "$ENROLL_META_FILE"
     unset FRP_TOKEN ENROLL_SECRET FRP_ENROLLMENT_CODE TOKEN_CIPHERTEXT FRP_BOOTSTRAP_TICKET FRP_CLIENT_OPERATION_ID
   }
   # Sourced callers (tests, frpctl wrappers) already own EXIT. Replacing or
@@ -737,7 +737,7 @@ frp_client_main() {
     if ! frp_pending_enroll_load "$MACHINE_ID" "$SERVICES_FILE" "$ALLOCATED_FILE" "$ENROLL_META_FILE" \
       RESUME_PHASE ENROLL_ID ENROLL_SECRET FRP_CLIENT_OPERATION_ID; then
       echo "ERROR: local recovery state is present but unusable." >&2
-      echo "Create a new Enrollment Code and re-enroll this client." >&2
+      echo "Create a new Enrollment Code and re-enroll this Agent." >&2
       frp_emit_failure_class RECOVERY_REQUIRED
       return 1
     fi
@@ -856,7 +856,7 @@ frp_client_main() {
   fi
 
   if [[ "${FRP_SKIP_DOWNLOAD:-}" != "1" ]]; then
-    ARCHIVE="$TMPDIR/frp.tar.gz"
+    ARCHIVE="$_FRP_CLIENT_ENROLL_TMPDIR/frp.tar.gz"
     if [[ -z "${ALLOCATOR_URL:-}" ]]; then
       frp_qualified_artifact_missing "$(frp_os)" "$FRP_ARCH"
       frp_emit_failure_class DOWNLOAD_FAILED
@@ -903,7 +903,7 @@ frp_client_main() {
         exit 1
       fi
     fi
-    extracted="$(frp_extract_frp_member "$ARCHIVE" "$TMPDIR" frpc)" || {
+    extracted="$(frp_extract_frp_member "$ARCHIVE" "$_FRP_CLIENT_ENROLL_TMPDIR" frpc)" || {
       frp_emit_failure_class STAGING_FAILED
       exit 1
     }
@@ -937,7 +937,7 @@ frp_client_main() {
       frp_emit_failure_class FILE_COMMIT_FAILED
       exit 1
     }
-    echo "Starting Data Relay Link client ..."
+    echo "Starting Data Relay Link Agent ..."
     FRP_PROXY_WAIT_CURSOR="$(frp_client_journal_cursor 2>/dev/null || true)"
     export FRP_PROXY_WAIT_CURSOR
     frp_client_service_reload || {
@@ -945,7 +945,7 @@ frp_client_main() {
       exit 1
     }
     if ! frp_client_service_start; then
-      echo "ERROR: Data Relay Link client failed to start; local files were written and the server reservation is preserved." >&2
+      echo "ERROR: Data Relay Link Agent failed to start; local files were written and the server reservation is preserved." >&2
       echo "Recovery: sudo drlink system update product" >&2
       echo "or re-run the same bootstrap installer (Bootstrap Ticket is not reused)." >&2
       frp_emit_failure_class SERVICE_START_FAILED
@@ -968,7 +968,7 @@ frp_client_main() {
   elif [[ "$(services_count)" == "0" ]]; then
     echo "Management-only mode: frpc is not started until a service is enabled."
     if [[ "${FRP_SKIP_SYSTEMD:-}" != "1" && -z "${FRP_CLIENT_TEST_ROOT:-}" ]]; then
-      echo "Installing inactive $(frp_service_manager) service for future services ..."
+      echo "Installing inactive $(frp_service_manager) service for future Remote Services ..."
       frp_client_install_service_definition || {
         frp_emit_failure_class FILE_COMMIT_FAILED
         exit 1
@@ -1046,12 +1046,12 @@ frp_client_installer_usage() {
   cat <<'EOF'
 Usage: install-client.sh [--upgrade] [--source DIR] [--check]
 
-  (default)   First-time client enrollment and FRP install
-  --upgrade   Upgrade management tools on an existing client
+  (default)   First-time Agent enrollment and Relay Engine (FRP) install
+  --upgrade   Upgrade management tools on an existing Agent Host
   --source    Source tree for --upgrade (default: this installer tree)
   --check     With --upgrade, report versions without changing files
 
-An already-installed client is not re-enrolled. Use --upgrade / drlink system update product
+An already-installed Agent is not re-enrolled. Use --upgrade / drlink system update product
 for software updates. An Enrollment Code is not required for a software update.
 EOF
 }

@@ -13,6 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 
+from drlink_configuration_bundle import BundleError
 from drlink_control_db import ControlPlaneError
 from drlink_control_plane import ControlPlane
 import drlink_v24 as v24
@@ -462,7 +463,7 @@ class LifecycleConformanceHardening(unittest.TestCase):
                     "INSERT OR REPLACE INTO agent_object_catalog(kind, name, payload, synced_at) VALUES (?, ?, ?, ?)",
                     ("service-object", name, '{"name":"%s","type":"%s","port":%d}' % (name, typ, port), now),
                 )
-            from drlink_v24_bundle import apply_v24_plan, prepare_v24_plan
+            from drlink_v24_bundle import prepare_v24_plan
 
             yaml_text = """configurationBundle:
   context: agent
@@ -476,9 +477,13 @@ class LifecycleConformanceHardening(unittest.TestCase):
       service: dns-udp
       enabled: true
 """
-            plan = prepare_v24_plan(plane, yaml_text)
-            with self.assertRaises(ControlPlaneError):
-                apply_v24_plan(plane, plan, confirm=True)
+            # Current planning validates both resources before any live apply.
+            # Keep the zero-partial invariant for all persisted state, not only
+            # the two new Remote Service rows.
+            before = list(plane.conn.iterdump())
+            with self.assertRaisesRegex(BundleError, "uses UDP"):
+                prepare_v24_plan(plane, yaml_text)
+            self.assertEqual(before, list(plane.conn.iterdump()))
             row = plane.conn.execute(
                 "SELECT * FROM agent_remote_services WHERE name='keep-me'"
             ).fetchone()

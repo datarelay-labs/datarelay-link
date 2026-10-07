@@ -19,7 +19,22 @@ reset_provenance_env() {
   unset FRP_EXPECTED_SOURCE_REF FRP_TXN_SOURCE_REF FRP_BOOTSTRAP_URL \
     FRP_CLIENT_INSTALLER_URL FRP_WINDOWS_CLIENT_INSTALLER_URL \
     FRP_RELEASE_CHANNEL FRP_DEPLOY_TEST_ROOT FRP_SERVER_TEST_ROOT \
-    FRP_CTL_TEST_ROOT || true
+    FRP_CTL_TEST_ROOT FRP_PUBLIC_HOST FRP_PUBLIC_IP FRP_PUBLIC_HOSTNAME \
+    FRP_INTERNAL_IP FRP_DEPLOYMENT_MODE FRP_CONTROL_PUBLIC_PORT \
+    FRP_CONTROL_LISTEN_PORT FRP_ALLOCATOR_PUBLIC_PORT \
+    FRP_ALLOCATOR_LISTEN_PORT FRP_PORT_START FRP_PORT_END || true
+}
+
+set_noninteractive_server_defaults() {
+  export FRP_PUBLIC_HOSTNAME=""
+  export FRP_INTERNAL_IP='10.0.0.10'
+  export FRP_DEPLOYMENT_MODE=direct
+  export FRP_CONTROL_PUBLIC_PORT=7000
+  export FRP_CONTROL_LISTEN_PORT=7000
+  export FRP_ALLOCATOR_PUBLIC_PORT=6099
+  export FRP_ALLOCATOR_LISTEN_PORT=6099
+  export FRP_PORT_START=6000
+  export FRP_PORT_END=6098
 }
 
 # --- tagged / channel default preserved ---
@@ -89,6 +104,7 @@ pass "INFER_FROM_FORMER_BOOTSTRAP_URL"
 
 # --- install-server resolve uses exact SHA defaults ---
 reset_provenance_env
+set_noninteractive_server_defaults
 export FRP_SERVER_SOURCED=1
 export FRP_SERVER_TEST_ROOT="$WORKDIR/install-root"
 mkdir -p "$FRP_SERVER_TEST_ROOT/etc/drlink"
@@ -177,6 +193,7 @@ pass "FINAL_TAG_PATH_PRESERVED"
 
 # --- explicit override preserved ---
 reset_provenance_env
+set_noninteractive_server_defaults
 export FRP_SERVER_SOURCED=1
 export FRP_SERVER_TEST_ROOT="$WORKDIR/override-root"
 mkdir -p "$FRP_SERVER_TEST_ROOT/etc/drlink"

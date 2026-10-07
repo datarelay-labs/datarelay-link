@@ -3,6 +3,10 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# A caller-provided standard temporary directory must survive sourced installer
+# success, rejection, and retry. Export it even when using the normal /tmp default.
+export TMPDIR="${TMPDIR:-/tmp}"
+CALLER_TMPDIR="$TMPDIR"
 WORKDIR="$(mktemp -d)"
 ALLOC_PID=""
 LISTEN_PID=""
@@ -482,7 +486,9 @@ padded = parts[1] + ('=' * (-len(parts[1]) % 4))
 payload = json.loads(base64.urlsafe_b64decode(padded.encode('ascii')).decode('utf-8'))
 if payload.get('u') != 'https://203.0.113.10/enroll;id':
     raise SystemExit('allocator URL not preserved in package')
-if 'rm -rf /' in text.split('Zero-touch client command', 1)[-1].split('Expires:', 1)[0].replace('trap "rm -rf $d"', ''):
+if 'Zero-touch Agent command' not in text:
+    raise SystemExit('missing Agent command header')
+if 'rm -rf /' in text.split('Zero-touch Agent command', 1)[1].split('Expires:', 1)[0].replace('trap "rm -rf $d"', ''):
     raise SystemExit('note leaked into command')
 print('ok')
 PY
@@ -895,6 +901,9 @@ run_zero_touch() {
   frp_client_main >"$out" 2>"${out%.out}.err" </dev/null
   rc=$?
   set -e
+  if [[ "$TMPDIR" != "$CALLER_TMPDIR" || ! -d "$CALLER_TMPDIR" ]]; then
+    fail "sourced installer changed or removed caller TMPDIR"
+  fi
   return "$rc"
 }
 
@@ -902,7 +911,7 @@ if ! run_zero_touch "$CLIENT" "$LIVE_TICKET" 'aabbccddeeff00112233445566778899' 
   cat "$WORKDIR/zt.out" "$WORKDIR/zt.err" >&2
   fail "zero-touch e2e"
 fi
-grep -q 'Data Relay Link client setup complete' "$WORKDIR/zt.out" || fail "success message"
+grep -q 'Data Relay Link Agent setup complete' "$WORKDIR/zt.out" || fail "success message"
 grep -q 'SSH tunnel ready' "$WORKDIR/zt.out" || fail "ssh ready"
 grep -q 'ssh -p 18300' "$WORKDIR/zt.out" || fail "public ssh port"
 grep -q "${SSH_USER}@203.0.113.10" "$WORKDIR/zt.out" || fail "public ssh user/host"
@@ -980,7 +989,7 @@ HOOK_BEFORE="$(wc -c <"$WORKDIR/zt.out.hook")"
 if run_zero_touch "$CLIENT2" "$LIVE_TICKET" 'aabbccddeeff00112233445566778899' "$WORKDIR/again.out"; then
   fail "existing install should refuse"
 fi
-grep -q 'This client is already installed' "$WORKDIR/again.err" || fail "already installed message"
+grep -q 'This Agent is already installed' "$WORKDIR/again.err" || fail "already installed message"
 grep -qE 'drlink (system )?update( product)?' "$WORKDIR/again.err" \
   || fail "already installed update hint"
 if grep -q bootstrap_redeem "$WORKDIR/again.out.hook"; then
@@ -1248,7 +1257,7 @@ set -e
   cat "$WORKDIR/dp1.out" "$WORKDIR/dp1.err" >&2
   fail "DP1 partial repair should succeed"
 }
-if grep -q 'This client is already installed' "$WORKDIR/dp1.out" "$WORKDIR/dp1.err"; then
+if grep -q 'This Agent is already installed' "$WORKDIR/dp1.out" "$WORKDIR/dp1.err"; then
   fail "DP1 false already-installed message"
 fi
 grep -qi 'partial or broken' "$WORKDIR/dp1.err" "$WORKDIR/dp1.out" || fail "DP1 repair wording"

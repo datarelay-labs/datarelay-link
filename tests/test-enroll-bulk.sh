@@ -91,6 +91,15 @@ AFTER_TICKETS="$(find "$TREE/var/lib/drlink/bootstrap" -name '*.json' | wc -l)"
 echo "PASS BULK_PREVALIDATE_ALL"
 echo "PASS BULK_BAD_ROW_ZERO_ISSUED"
 
+if python3 "$ROOT/tools/frp-enroll-bulk" --csv "$WORK/missing.csv" >"$WORK/missing.out" 2>"$WORK/missing.err"; then
+  echo "FAIL missing CSV accepted" >&2
+  exit 1
+fi
+! grep -q 'Traceback' "$WORK/missing.err" || { echo "FAIL missing CSV traceback" >&2; exit 1; }
+grep -q 'cannot read CSV' "$WORK/missing.err"
+[[ "$(find "$TREE/var/lib/drlink/bootstrap" -name '*.json' | wc -l)" -eq "$BEFORE_TICKETS" ]]
+echo "PASS BULK_MISSING_CSV_READONLY_RECOVERY"
+
 # Mid-batch failure rolls back only this batch.
 EXISTING="$(ls "$TREE/var/lib/drlink/bootstrap"/*.json | wc -l)"
 if FRP_ENROLL_BULK_HOOK_FAIL_AFTER=1 \

@@ -1182,8 +1182,8 @@ export FRP_CLIENT_TEST_ROOT="$EXIST"
 if frp_client_main >"$WORKDIR/rerun.out" 2>"$WORKDIR/rerun.err"; then
   fail "state-only partial client installer should refuse"
 fi
-if grep -q 'This client is already installed' "$WORKDIR/rerun.err" \
-  || grep -q 'already has a Data Relay Link client installed' "$WORKDIR/rerun.err"; then
+if grep -q 'This Agent is already installed' "$WORKDIR/rerun.err" \
+  || grep -q 'already has a Data Relay Link Agent installed' "$WORKDIR/rerun.err"; then
   fail "state-only remnant must not be classified complete"
 fi
 grep -qi 'partial or broken' "$WORKDIR/rerun.err" || fail "state-only should be partial"
@@ -1207,7 +1207,7 @@ export FRP_CLIENT_TEST_ROOT="$COMPLETE"
 if frp_client_main >"$WORKDIR/complete-rerun.out" 2>"$WORKDIR/complete-rerun.err"; then
   fail "complete client installer should refuse"
 fi
-grep -q 'already has a Data Relay Link client installed' "$WORKDIR/complete-rerun.err" \
+grep -q 'already has a Data Relay Link Agent installed' "$WORKDIR/complete-rerun.err" \
   || fail "refuse message"
 grep -q 'sudo drlink system update product' "$WORKDIR/complete-rerun.err" || fail "directs to update"
 # Portable byte compare: minimal RHEL/Amazon images may lack `cmp` (diffutils),

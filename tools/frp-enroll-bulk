@@ -115,12 +115,15 @@ def main(argv=None):
         for index in range(1, args.count + 1):
             rows.append((f'{args.label_prefix}-{index:0{width}d}', args.ssh_user, args.note))
     else:
-        with open(csv_path, newline='', encoding='utf-8-sig') as handle:
-            reader = csv.DictReader(handle)
-            required = {'label', 'ssh_user', 'note'}
-            if not reader.fieldnames or not required.issubset(set(reader.fieldnames)):
-                parser.error('CSV header must contain label,ssh_user,note')
-            rows = [(row.get('label'), row.get('ssh_user'), row.get('note')) for row in reader]
+        try:
+            with open(csv_path, newline='', encoding='utf-8-sig') as handle:
+                reader = csv.DictReader(handle)
+                required = {'label', 'ssh_user', 'note'}
+                if not reader.fieldnames or not required.issubset(set(reader.fieldnames)):
+                    parser.error('CSV header must contain label,ssh_user,note')
+                rows = [(row.get('label'), row.get('ssh_user'), row.get('note')) for row in reader]
+        except (OSError, UnicodeError, csv.Error):
+            raise SystemExit('ERROR: cannot read CSV. Check the file path, permissions and UTF-8 CSV format, then retry set enrollment bulk.')
         if not rows:
             parser.error('CSV contains no enrollment rows')
         if len(rows) > 10:

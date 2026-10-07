@@ -217,6 +217,9 @@ def resolve_public_endpoint_host(cfg=None, *, root=None, fallback=""):
     env = _strip(os.environ.get("DRLINK_HOST") or "")
     if env:
         return env
+    # None is the installed host, not an instruction to skip its configuration.
+    # Isolated callers continue to resolve only inside their explicit test root.
+    root = root if root is not None else "/"
     data = cfg if isinstance(cfg, dict) else None
     if data is None and root is not None:
         path = Path(root) / "etc/drlink/config.json"

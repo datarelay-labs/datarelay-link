@@ -159,6 +159,14 @@ end-to-end TLS between application and destination
 
 Base Internet Access does not terminate application TLS.
 
+HTTP CONNECT on this proxy is the HTTPS path: after connection establishment,
+the application must send TLS with the destination identity required by
+section 8. A `200 Connection Established` response is not authorization to send
+arbitrary non-TLS application bytes; an unbound stream is denied. The separate
+Fixed TCP listener described in section 17 uses TCP relay semantics, not HTTP
+CONNECT. A Fixed TCP Remote Service is also a distinct Remote Access endpoint;
+its successful traffic does not qualify the outbound Internet Access listener.
+
 ## 8. SNI / host binding
 
 Where the implementation can observe TLS SNI for CONNECT validation, the requested CONNECT host and observed SNI must not be allowed to diverge in a way that bypasses destination policy.

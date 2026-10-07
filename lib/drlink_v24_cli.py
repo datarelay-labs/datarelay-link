@@ -21,13 +21,34 @@ def _presence_word(connectivity: str) -> str:
 
 def _public_endpoint_host(plane: ControlPlane, stored: str = "") -> str:
     stored = str(stored or "").strip()
-    if stored and stored not in ("drlink.local", "localhost"):
+    if stored and stored not in ("drlink.local", "localhost", "127.0.0.1", "::1"):
         return stored
     if _scfg is not None:
         resolved = _scfg.resolve_public_endpoint_host(root=getattr(plane, "root", None), fallback="")
         if resolved:
             return resolved
     return stored or "pending"
+
+
+def _agent_service_status(plane, row, runtime_level):
+    if not row['enabled']:
+        return 'DISABLED'
+    from drlink_agent_lifecycle import load_lifecycle_intent
+    if load_lifecycle_intent(plane.root) == 'paused':
+        return 'DEGRADED'
+    stored = str(row['status'] or 'DEGRADED')
+    if stored == 'HEALTHY' and (not row['runtime_verified'] or runtime_level != 'Healthy'):
+        return 'DEGRADED'
+    return stored
+
+
+def _agent_runtime_level(plane):
+    level = v24.probe_agent_runtime_unit(root=plane.root).get('level')
+    if level == 'Healthy':
+        from drlink_v24_runtime import _current_runtime_ready
+        if not _current_runtime_ready(plane.root, '', {}):
+            return 'Warning'
+    return level
 
 
 SERVER_ONLY = frozenset(
@@ -378,14 +399,22 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         client = plane.require_client(rest[1])
         view = rest[2] if len(rest) > 2 else "overview"
         if view == "remote-services":
-            sys.stdout.write("%-18s %-14s %-10s %-24s %s\n" % ("NAME", "DESTINATION", "SERVICE", "ENDPOINT", "STATUS"))
-            for s in plane.conn.execute(
+            services = plane.conn.execute(
                 "SELECT s.name, s.public_port, s.enabled, m.destination_name, m.status, "
                 "m.service_object_id, m.pending_allocation, m.runtime_verified "
                 "FROM published_services s LEFT JOIN remote_service_meta m ON m.service_id = s.id "
                 "WHERE s.client_id = ? AND s.released = 0 ORDER BY s.name",
                 (client["id"],),
-            ):
+            ).fetchall()
+            if not services:
+                sys.stdout.write(
+                    "No Remote Services reported for this Managed Host.\n"
+                    "On the Agent Host, inspect: show remote-services\n"
+                    "To configure a service on the Agent Host: set remote-service <NAME>\n"
+                )
+                return 0
+            sys.stdout.write("%-18s %-14s %-10s %-24s %s\n" % ("NAME", "DESTINATION", "SERVICE", "ENDPOINT", "STATUS"))
+            for s in services:
                 sobj = None
                 if s["service_object_id"]:
                     sobj = plane.conn.execute(
@@ -577,6 +606,7 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
             sys.stdout.write("No Remote Services configured.\n")
             return 0
         sys.stdout.write("%-18s %-14s %-10s %-24s %s\n" % ("NAME", "DESTINATION", "SERVICE", "ENDPOINT", "STATUS"))
+        runtime_level = _agent_runtime_level(plane)
         for row in rows:
             endpoint = (
                 "Pending allocation"
@@ -585,7 +615,7 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
             )
             sys.stdout.write(
                 "%-18s %-14s %-10s %-24s %s\n"
-                % (row["name"], row["destination"], row["service_object"], endpoint, row["status"])
+                % (row["name"], row["destination"], row["service_object"], endpoint, _agent_service_status(plane, row, runtime_level))
             )
         return 0
     if res == "remote-service":
@@ -608,13 +638,28 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
                 row["name"],
                 row["destination"],
                 row["service_object"],
-                row["status"],
+                _agent_service_status(plane, row, _agent_runtime_level(plane)),
                 endpoint,
                 "YES" if row["enabled"] else "NO",
             )
         )
-        if row["reason"]:
+        from drlink_agent_lifecycle import load_lifecycle_intent
+        if row['enabled'] and load_lifecycle_intent(plane.root) == 'paused':
+            sys.stdout.write('Reason: Agent runtime is intentionally paused.\n')
+        elif row["reason"]:
             sys.stdout.write("Reason: %s\n" % row["reason"])
+            reason = str(row["reason"]).strip().lower()
+            if (
+                "synchron" in reason
+                or ("pending" in reason and ("runtime" in reason or "activation" in reason))
+            ):
+                sys.stdout.write(
+                    "Next action:\n"
+                    "  system synchronize\n"
+                    "Then verify:\n"
+                    "  show remote-service %s\n"
+                    "  show status\n" % row["name"]
+                )
         return 0
     return None
 
@@ -654,6 +699,29 @@ def _show_policy(plane: ControlPlane, family: str, rest: list[str]) -> int:
                 "Mode        : %s\nEnforcement : %s\nUnmatched   : %s\n"
                 % (pol["mode"].upper(), str(pol["enforcement"]).upper(), eff)
             )
+        if family == "internet":
+            import json
+            from pathlib import Path
+            from frp_egress_control import listen_bind
+            try:
+                cfg = json.loads((Path(plane.root or '/') / 'etc/drlink/config.json').read_text())
+                bind_host, proxy_port = listen_bind(cfg)
+                proxy_host = (_scfg.resolve_public_endpoint_host(cfg, root=plane.root)
+                              if bind_host in ('0.0.0.0', '::', '*') and _scfg else bind_host)
+                if proxy_host:
+                    if ':' in proxy_host and not proxy_host.startswith('['):
+                        proxy_host = '[%s]' % proxy_host
+                    sys.stdout.write('Proxy endpoint: http://%s:%s\n' % (proxy_host, proxy_port))
+                else:
+                    sys.stdout.write('Proxy endpoint: public Server address unavailable\n')
+            except (OSError, ValueError):
+                sys.stdout.write('Proxy endpoint: unavailable (check Server configuration)\n')
+            readiness, recovery = v24.restricted_policy_readiness(
+                family, pol["mode"], pol["enforcement"]
+            )
+            sys.stdout.write("Readiness   : %s\n" % readiness)
+            if recovery:
+                sys.stdout.write("Recovery    : %s\n" % recovery)
         sys.stdout.write("\nRules:\n")
         rows = list(
             plane.conn.execute(
@@ -706,6 +774,12 @@ def _show_ai_policy(plane: ControlPlane, rest: list[str]) -> int:
                 "Mode        : %s\nEnforcement : %s\nUnmatched   : %s\n"
                 % (pol["mode"].upper(), str(pol["enforcement"]).upper(), eff)
             )
+        readiness, recovery = v24.restricted_policy_readiness(
+            "ai", pol["mode"], pol["enforcement"]
+        )
+        sys.stdout.write("Readiness   : %s\n" % readiness)
+        if recovery:
+            sys.stdout.write("Recovery    : %s\n" % recovery)
         sys.stdout.write("\nRules:\n")
         rows = list(plane.conn.execute("SELECT name, enabled FROM ai_policy_rules ORDER BY name"))
         if not rows:

@@ -318,8 +318,9 @@ frp_confirm_mode_switch() {
   local from_mode="$1" to_mode="$2"
   echo
   echo "WARNING: switching deployment mode from ${from_mode} to ${to_mode} is a cutover." >&2
-  echo "WARNING: existing clients using the previous FRP control transport will disconnect" >&2
-  echo "WARNING: until they run a 2.1.0+ client apply against the new server." >&2
+  echo "WARNING: Agent Hosts using the previous Relay Engine control transport will disconnect." >&2
+  echo "WARNING: first export each Agent configuration: sudo drlink system export configuration agent.yaml" >&2
+  echo "WARNING: follow the explicit Agent uninstall/re-enrollment/reapply workflow in docs/DEPLOYMENT_MODES.md." >&2
   echo "WARNING: this is not a zero-downtime migration." >&2
   if frp_has_tty; then
     local answer=""
@@ -1623,7 +1624,7 @@ EOF2
 write_frontend_config() {
   local dest="$1" pki run_dir log_dir temp_root
   local mcp_host="" mcp_cert="" mcp_key="" acme_root=""
-  local mcp_meta
+  local mcp_meta mcp_mode="" mcp_selector=""
   pki="$(frp_pki_dir)"
   run_dir="$(frp_server_fs /run/drlink)"
   log_dir="$(frp_server_fs /var/log/drlink)"
@@ -1635,10 +1636,24 @@ write_frontend_config() {
   mcp_key="$(frp_server_fs /var/lib/drlink/tls/mcp/active/privkey.pem)"
   mcp_meta="$(frp_server_fs /var/lib/drlink/tls/mcp/active/meta.json)"
   if [[ -f "$mcp_cert" && -f "$mcp_key" && -f "$mcp_meta" ]]; then
-    mcp_host="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1],encoding="utf-8")).get("hostname") or "")' "$mcp_meta" 2>/dev/null || true)"
-    acme_root="$(frp_server_fs /var/lib/drlink/tls/mcp/acme-www)"
-    mkdir -p "$acme_root/.well-known/acme-challenge"
-    chmod 755 "$acme_root" 2>/dev/null || true
+    mcp_selector="$(python3 - "$BASE_DIR/lib" "$(frp_server_fs /)" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+from drlink_mcp_tls import frontend_tls_material
+material = frontend_tls_material(sys.argv[2])
+print(material.get('hostname') or '', material.get('mode') or '')
+PY
+)" || return 1
+    read -r mcp_host mcp_mode <<<"$mcp_selector"
+    if [[ "$mcp_mode" == AUTO_ACME ]]; then
+      acme_root="$(frp_server_fs /var/lib/drlink/tls/mcp/acme-www)"
+      mkdir -p "$acme_root/.well-known/acme-challenge"
+      chmod 755 "$acme_root" 2>/dev/null || true
+    fi
+    if [[ -z "$mcp_host" ]]; then
+      mcp_cert=""
+      mcp_key=""
+    fi
   else
     mcp_cert=""
     mcp_key=""
@@ -2017,16 +2032,19 @@ EOF2
 }
 
 frp_server_begin_tmp() {
-  TMPDIR="$(frp_secure_mktemp_dir)"
+  # TMPDIR belongs to the caller and may be exported to later lifecycle tools.
+  # Keep our disposable staging path separate so cleanup cannot poison it.
+  FRP_SERVER_TMPDIR="$(frp_secure_mktemp_dir)" || return 1
   FRP_SERVER_SAVED_EXIT_TRAP="$(trap -p EXIT || true)"
   # shellcheck disable=SC2064
-  trap "rm -rf $(printf '%q' "$TMPDIR")" EXIT
+  trap "rm -rf -- $(printf '%q' "$FRP_SERVER_TMPDIR")" EXIT
 }
 
 frp_server_end_tmp() {
-  if [[ -n "${TMPDIR:-}" && -d "$TMPDIR" ]]; then
-    rm -rf "$TMPDIR"
+  if [[ -n "${FRP_SERVER_TMPDIR:-}" && -d "$FRP_SERVER_TMPDIR" ]]; then
+    rm -rf -- "$FRP_SERVER_TMPDIR"
   fi
+  unset FRP_SERVER_TMPDIR
   if [[ -n "${FRP_SERVER_SAVED_EXIT_TRAP:-}" ]]; then
     eval "$FRP_SERVER_SAVED_EXIT_TRAP"
   else
@@ -2419,7 +2437,7 @@ frp_server_install_frp_binary() {
     frp_emit_failure_class INTEGRITY_FAILED
     return 1
   }
-  extracted="$(frp_extract_frp_member "$archive" "$TMPDIR" frps)" || {
+  extracted="$(frp_extract_frp_member "$archive" "$FRP_SERVER_TMPDIR" frps)" || {
     frp_emit_failure_class STAGING_FAILED
     return 1
   }
@@ -3033,9 +3051,24 @@ Backup:
 EOF2
 }
 
+frp_server_usage() {
+  cat <<'EOF'
+Usage:
+  sudo ./install-server.sh
+  sudo ./install-server.sh --upgrade [--check|--dry-run] [--source DIR]
+  ./install-server.sh --help
+
+Options:
+  -h, --help   Show this help and exit without changing the system.
+EOF
+}
+
 # Executed-as-program path must ignore leaked FRP_SERVER_SOURCED from sourced tests.
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
-  if [[ "${1:-}" == "--upgrade" || "${1:-}" == "upgrade" ]]; then
+  if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+    frp_server_usage
+    exit 0
+  elif [[ "${1:-}" == "--upgrade" || "${1:-}" == "upgrade" ]]; then
     shift
     FRP_SERVER_UPGRADE_CHECK=0
     FRP_SERVER_UPGRADE_SOURCE="$BASE_DIR"

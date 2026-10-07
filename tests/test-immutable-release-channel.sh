@@ -131,6 +131,15 @@ TREE_META="$(frp_validate_release_source_metadata "$ROOT" "$MANIFEST_REF" "$MANI
   || fail "tree metadata triple: $TREE_META"
 pass "TREE_ARTIFACT_IDENTITY"
 
+# An explicit channel mismatch must remain fail-closed and explain both sides.
+if [[ "$MANIFEST_CHANNEL" == 'stable' ]]; then other_channel=development; else other_channel=stable; fi
+if error="$(frp_validate_release_source_metadata "$ROOT" "$MANIFEST_REF" "$other_channel" 2>&1)"; then
+  fail "mismatched release channel accepted"
+fi
+[[ "$error" == *"installed/requested $other_channel, candidate $MANIFEST_CHANNEL"* ]] || fail "channel sides omitted"
+[[ "$error" == *'verified candidate in the installed release channel'* ]] || fail "channel recovery omitted"
+pass "CHANNEL_MISMATCH_ACTIONABLE_AND_FAIL_CLOSED"
+
 # STABLE_IMMUTABLE: tagged stable line still resolves to vPROJECT_VERSION (not main).
 unset FRP_RELEASE_CHANNEL || true
 export FRP_RELEASE_CHANNEL=stable
@@ -188,6 +197,23 @@ case "$(frp_default_client_installer_url)" in
 esac
 rm -rf "$stable_tree"
 pass "STABLE_IDENTITY"
+
+# Missing unpublished artifacts is recoverable and must not start an update.
+failure_root="$persist/unpublished"
+mkdir -p "$failure_root/bin" "$failure_root/etc/drlink"
+printf 'RELEASE_CHANNEL=development\nSOURCE_REF=%s\n' "$(git -C "$ROOT" rev-parse HEAD)" > "$failure_root/etc/drlink/version"
+before="$(cat "$failure_root/etc/drlink/version")"
+printf '#!/usr/bin/env bash\nexit 22\n' > "$failure_root/bin/curl"
+chmod 0755 "$failure_root/bin/curl"
+if error="$(env -u FRP_RELEASE_CHANNEL FRP_SERVER_TEST_ROOT="$failure_root" FRP_DEPLOY_TEST_ROOT="$failure_root" \
+    PATH="$failure_root/bin:$PATH" bash "$ROOT/tools/frp-project-update" 2>&1)"; then
+  fail "missing product artifact reported success"
+fi
+[[ "$error" == *'release checksum metadata is unavailable for channel development'* ]] || fail "artifact failure context omitted"
+[[ "$error" == *'No update changes were applied.'* && "$error" == *'Retry drlink system update product'* ]] || fail "artifact failure recovery omitted"
+[[ "$(cat "$failure_root/etc/drlink/version")" == "$before" ]] || fail "artifact failure changed installed identity"
+[[ ! -f "$failure_root/var/lib/drlink/install-txn.json" ]] || fail "artifact failure started mutation"
+pass "UNPUBLISHED_ARTIFACT_FAILS_WITH_RECOVERY_BEFORE_MUTATION"
 
 if command -v git >/dev/null 2>&1 && git -C "$ROOT" rev-parse v2.1.0 >/dev/null 2>&1; then
   git -C "$ROOT" rev-parse v2.1.0 >/dev/null

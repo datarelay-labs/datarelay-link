@@ -413,8 +413,9 @@ Network Group 'mixed-destinations' contains Managed Host 'ubuntu-prod'.
 
 Managed Hosts are valid Internet Access sources,
 but source identity is address-backed because the egress proxy is agentless.
-If the observed proxy source cannot be proven to be the selected Managed Host,
-BLACKLIST evaluation fails closed instead of falling through to unmatched ALLOW.
+Internet Access is WHITELIST-only. If the observed proxy source cannot be
+proven to be the selected Managed Host, the selector does not match and access
+is denied. Persisted unsupported BLACKLIST state is denied regardless of matches.
 Managed Hosts cannot be used as Internet Access destinations.
 
 No changes were applied.
@@ -503,7 +504,7 @@ SSH        → TCP/22
 HTTP       → TCP/80
 HTTPS      → TCP/443
 RDP        → TCP/3389
-Custom TCP → TCP/<user port>   (normal published-service port pool)
+Custom TCP → TCP/<user port>   (normal Remote Service port pool)
 Fixed TCP  → Fixed TCP/<destination port>  (public endpoint port is allocated separately from the Fixed TCP endpoint pool)
 ```
 
@@ -843,7 +844,7 @@ Example first screen:
 Data Relay Link
 
 Access policies:
-  Remote Access   — no policy; published services use compatibility ALLOW
+  Remote Access   — no policy; Remote Services use compatibility ALLOW
   Internet Access — no policy; DENY ALL
   AI Access       — no policy; DENY ALL after authentication
 
@@ -2239,9 +2240,22 @@ When removal is allowed, DRLink cleans up server-side trust/inventory state and 
 
 The operation must show impact before destructive cleanup.
 
+Policy Rule and referenced Network/Service/Permission Object or Group edits
+calculate their security impact before mutation. The calculated access
+widening or material narrowing requires y/N approval. Safe creation and
+no-change paths need no additional confirmation; cancellation preserves state.
+
 ---
 
 # 47. Agent local lifecycle
+
+Pause, restart, synchronization and complete Remote Service edits are approved
+by the explicit local command invocation, with no additional confirmation
+prompt. They may interrupt connections; name-only Remote Service edits retain
+their reviewed wizard. Autostart disable changes future startup only and does
+not stop the current runtime. Autostart enable reverses that setting; resume
+enables automatic startup and starts the Agent. Inspect `show status` after a
+runtime change.
 
 Agent Host local commands:
 
@@ -2485,7 +2499,7 @@ unset mcp-tls purge
 
 `unset enrollment <ENROLLMENT>`, `unset network-object`, `unset network-group`, `unset service-object`, `unset service-group`, `unset permission-object`, `unset permission-group`, and `unset ai-identity` are destructive lifecycle operations and require explicit `y/N` confirmation after existence/reference validation. Default is No and cancellation applies no change. These are normal `y_n` flows rather than TTY-only flows, so controlled automation may provide `y`/`yes` on stdin; there is no public hidden environment-variable or `--yes` bypass for these commands. Policy Rule deletion uses effect-aware `conditional_y_n`: confirmation is required when the calculated change broadens or materially narrows access, while full `unset <plane>-access policy` reset always requires explicit confirmation.
 
-Bare `unset managed-host <HOST>` remains the reference-safe Managed Host retirement operation. `unset managed-host <HOST> group <GROUP>` removes only inventory membership. `unset managed-host-group <GROUP>` requires interactive y/N confirmation and does not expose a public `--yes` bypass.
+Bare `unset managed-host <HOST>` remains the reference-safe Managed Host retirement operation with explicit y/N confirmation. `unset managed-host <HOST> group <GROUP>` removes only inventory membership; the explicit command approves this metadata edit without an additional prompt. `unset managed-host-group <GROUP>` requires interactive y/N confirmation and does not expose a public `--yes` bypass.
 
 ---
 
@@ -2551,7 +2565,7 @@ system uninstall
 # 50. Server main menu
 
 ```text
-Data Relay Link
+Data Relay Link — DRLink Server
 ├── 1. Managed Hosts
 │   ├── List Managed Hosts
 │   ├── Connect New Host
@@ -3817,7 +3831,7 @@ Expected:
 Role: DRLink Server
 
 No access policies are currently configured.
-Remote Access compatibility default is ALLOW for explicitly published services.
+Remote Access compatibility default is ALLOW for explicitly published Remote Services.
 Internet Access and AI Access are DENY by default.
 ```
 
@@ -3863,7 +3877,7 @@ show `<username>` rather than inventing an unverified account name.
 Enrollment Code semantics are strictly one-time. A consumed code is rejected
 before a fresh manual install enters service selection and cannot be reused
 after uninstall/reinstall. Crash/lost-response recovery is not a second
-enrollment: the client preserves the original pending transaction and its
+enrollment: the Agent preserves the original pending transaction and its
 `operation_id`, and the Server accepts an already-consumed code only for that
 same operation ID with the same management identity and service set. Starting
 a new install/apply operation requires a new Enrollment Code.
@@ -4448,7 +4462,7 @@ Expected:
 ```text
 Policy Mode      : WHITELIST
 Policy Enforcement: DISABLED
-Effective Policy : ALLOW ALL
+Effective Policy : DENY ALL
 ```
 
 But:
@@ -4997,7 +5011,8 @@ Wizard Cancel
 
 ```text
 No Policy
-→ ALLOW
+→ Remote Access: ALLOW
+→ Internet Access and AI Access: DENY ALL
 ```
 
 ```text
@@ -5014,7 +5029,8 @@ WHITELIST
 
 ```text
 Policy Enforcement DISABLED
-→ ALLOW ALL
+→ Remote Access: ALLOW ALL
+→ Internet Access and AI Access: DENY ALL
 → saved Mode/Rules preserved
 ```
 
@@ -5022,7 +5038,8 @@ Policy Enforcement DISABLED
 Policy Reset
 → Mode removed
 → Rules removed
-→ ALLOW
+→ Remote Access: ALLOW
+→ Internet Access and AI Access: DENY ALL
 ```
 
 ```text
@@ -5070,7 +5087,7 @@ A v2.4 CLI implementation is conformant only if the following can all be demonst
 ## First-use
 
 - `drlink` clearly identifies Server vs Agent Host role.
-- Initial access is understandable as ALLOW without requiring a Rule.
+- Initial Remote Access is understandable as ALLOW without requiring a Rule; Internet Access and AI Access start at DENY ALL until explicitly authorized by their WHITELIST Rules.
 - Help/menu leads to Objects, Policies, Managed Hosts, and Agent functions correctly.
 
 ## Objects

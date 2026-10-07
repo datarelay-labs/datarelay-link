@@ -41,6 +41,60 @@ def _load_catalog():
 
 CATALOG = _load_catalog()
 
+
+def read_only_completion_inventory(role, root=""):
+    """Prefer canonical SQLite names; return None only when no DB exists.
+
+    Completion must never create/migrate the database or use stale JSON when
+    an authoritative database exists but cannot be read. The caller exposes
+    the usual inventory warning on errors.
+    """
+    from collections import Counter
+    from drlink_control_db import connect_read_only, db_path
+
+    if not db_path(root).is_file():
+        return None
+    result = {"names": [], "clients": [], "services": {},
+              "local_services": [], "groups": []}
+    conn = connect_read_only(root=root)
+    try:
+        conn.execute("BEGIN")  # One read snapshot, never a writer transaction.
+        client, server = CATALOG.role_parts(role)
+        if server:
+            hosts = conn.execute("SELECT id, label, hostname FROM clients ORDER BY id").fetchall()
+            mids = [str(host["id"]) for host in hosts]
+            labels = Counter(str(host["label"] or "").casefold() for host in hosts)
+            hostnames = Counter(str(host["hostname"] or "").casefold() for host in hosts)
+            service_rows = conn.execute(
+                "SELECT client_id, name FROM published_services WHERE released = 0 ORDER BY name"
+            ).fetchall()
+            for host in hosts:
+                mid = str(host["id"])
+                length = min(8, len(mid))
+                while length < len(mid) and sum(other.startswith(mid[:length]) for other in mids) > 1:
+                    length += 1
+                short = mid[:length]
+                label, hostname = str(host["label"] or ""), str(host["hostname"] or "")
+                selectors = [short]
+                if label and labels[label.casefold()] == 1:
+                    selectors.append(label)
+                if hostname and hostnames[hostname.casefold()] == 1:
+                    selectors.append(hostname)
+                result["names"].extend(selectors)
+                result["clients"].append({"id": short, "label": label, "hostname": hostname})
+                names = [str(row["name"]) for row in service_rows if row["client_id"] == mid]
+                for selector in selectors + [mid]:
+                    result["services"][selector] = names
+            result["groups"] = [str(row["name"]) for row in conn.execute(
+                "SELECT name FROM client_groups ORDER BY name")]
+        if client:
+            result["local_services"] = [str(row["name"]) for row in conn.execute(
+                "SELECT name FROM agent_remote_services WHERE delete_pending = 0 ORDER BY name")]
+        result["names"] = sorted(set(result["names"]))
+        return result
+    finally:
+        conn.close()
+
 CONTROL_PLANE_SHOW = frozenset(
     {
         "status",
@@ -236,6 +290,62 @@ def reject_obsolete_surface(tokens):
         return None
     raw = [str(t) for t in tokens]
     verb = raw[0]
+    # Reject retired nested forms before help or legacy system fallthrough
+    # can turn them into an executable operation or successful discovery.
+    focus = raw[1:] if verb == "help" else raw
+    if focus[:3] == ["system", "audit", "ai-principal"]:
+        return {
+            "status": "error", "exit_code": 2,
+            "message": "Retired AI Principal audit selector is not public grammar.\n"
+                       "Use show ai-access-log identity <IDENTITY> or system audit.",
+        }
+    if focus[:2] == ["system", "audit"] and len(focus) > 2 and focus[2] in (
+        "revision", "entity", "object",
+    ):
+        return {
+            "status": "error", "exit_code": 2,
+            "message": "Unsupported public audit selector '%s'.\n"
+                       "Use system audit [last <N>] [managed-host <HOST>] [event <EVENT>].\n"
+                       "For configuration history, use system revision <REVISION>." % focus[2],
+        }
+    if focus[:3] == ["system", "export", "configuration"] and any(
+        token.startswith("-") for token in focus[3:]
+    ):
+        return {
+            "status": "error", "exit_code": 2,
+            "message": "Configuration export uses a positional file, not command options.\n"
+                       "Use system export configuration <FILE>.",
+        }
+    if focus[:2] == ["system", "revoke"]:
+        return {
+            "status": "error", "exit_code": 2,
+            "message": "Retired system revoke is not a public command.\n"
+                       "Use unset enrollment <ID> or reference-safe unset managed-host <HOST>.\n"
+                       "See: help commands",
+        }
+    if focus[:2] == ["system", "update"] and len(focus) >= 3:
+        target = focus[2]
+        if target in ("project", "frp"):
+            current = "product" if target == "project" else "engine"
+            return {
+                "status": "error", "exit_code": 2,
+                "message": "Retired update target '%s'.\nUse system update %s.\n"
+                           "For a read-only upstream check on the Server, use system update check-engine."
+                           % (target, current),
+            }
+        if any(t.split("=", 1)[0] == "--check" for t in focus[2:]):
+            return {
+                "status": "error", "exit_code": 2,
+                "message": "--check is not a public update option.\n"
+                           "system update product and system update engine authorize software updates.\n"
+                           "For a read-only upstream check on the Server, use system update check-engine.",
+            }
+    if focus[:2] == ["system", "uninstall"] and any(t.split("=", 1)[0] == "--yes" for t in focus[2:]):
+        return {
+            "status": "error", "exit_code": 2,
+            "message": "--yes is not a public uninstall option.\n"
+                       "Run system uninstall and review its explicit y/N confirmation (default No).",
+        }
     if verb == "help" and len(raw) >= 2 and raw[1] == "legacy":
         return {
             "status": "error",
@@ -266,14 +376,20 @@ def reject_obsolete_surface(tokens):
                 % (verb, tip)
             ),
         }
-    if verb == "show" and len(raw) >= 2 and raw[1] in ("clients", "client"):
+    if len(focus) >= 2 and focus[0] in ("show", "set", "unset", "test") and focus[1] in ("clients", "client"):
+        guidance = {
+            "show": "Use show managed-hosts / show managed-host <HOST> instead.",
+            "set": "Use set managed-host <HOST> … instead.",
+            "unset": "Use unset managed-host <HOST> instead.",
+            "test": "Inspect hosts with show managed-host <HOST>; use test remote-access, internet-access, or ai-access for authorization.",
+        }
         return {
             "status": "error",
             "exit_code": 2,
             "message": (
                 "Obsolete resource '%s' is not part of the current Data Relay Link grammar.\n"
-                "Use show managed-hosts / show managed-host <HOST> instead."
-                % raw[1]
+                "%s"
+                % (focus[1], guidance[focus[0]])
             ),
         }
     if verb == "show" and len(raw) >= 2 and raw[1] in _HIDDEN_SHOW_RESOURCES:
@@ -283,24 +399,6 @@ def reject_obsolete_surface(tokens):
             "message": (
                 "Noncanonical resource '%s' is not part of the current Data Relay Link grammar.\n%s"
                 % (raw[1], _HIDDEN_SHOW_RESOURCES[raw[1]])
-            ),
-        }
-    if verb == "set" and len(raw) >= 2 and raw[1] == "client":
-        return {
-            "status": "error",
-            "exit_code": 2,
-            "message": (
-                "Obsolete resource 'client' is not part of the current Data Relay Link grammar.\n"
-                "Use set managed-host <HOST> … instead."
-            ),
-        }
-    if verb == "unset" and len(raw) >= 2 and raw[1] == "client":
-        return {
-            "status": "error",
-            "exit_code": 2,
-            "message": (
-                "Obsolete resource 'client' is not part of the current Data Relay Link grammar.\n"
-                "Use unset managed-host <HOST> instead."
             ),
         }
     if len(raw) >= 2 and raw[1] in ("service", "services"):
@@ -648,7 +746,7 @@ def missing_client_help(usage_lines, names=None, tip="Press Tab after \"show cli
     parts = ["Missing client.", ""]
     available = _safe_names(names)
     if available:
-        parts.append("Available CLIENT IDs:")
+        parts.append("Available HOST IDs:")
         for name in available:
             parts.append("  %s" % name)
         parts.append("")
@@ -671,6 +769,9 @@ def missing_client_help(usage_lines, names=None, tip="Press Tab after \"show cli
 
 def help_text(tokens, role):
     tokens = [t for t in tokens if t and t != "help"]
+    rejected = reject_obsolete_surface(["help"] + tokens)
+    if rejected is not None:
+        return "Unknown help topic: %s\n\n%s\n" % (" ".join(tokens), rejected["message"])
     client, server = _role_parts(role)
     if not tokens:
         return _root_help(role)
@@ -882,7 +983,7 @@ def _show_help(rest, role):
             "  show client <ID>\n"
             "  show client <ID> services\n"
             "  show client <ID> tags\n\n"
-            "CLIENT ID is the immutable selector. A unique label or hostname\n"
+            "HOST ID is the immutable selector. A unique label or hostname\n"
             "is also accepted as a shortcut.\n\n"
             "Examples:\n"
             "  show client 24cd7856\n"
@@ -906,7 +1007,7 @@ def _show_help(rest, role):
             "  show profiles\n"
             "  show profile <PROFILE>\n\n"
             "Profiles are server-owned creation templates. They do not store\n"
-            "public ports, CLIENT IDs, Service IDs, or ACL assignments.\n"
+            "public ports, HOST IDs, Remote Service IDs, or ACL assignments.\n"
         )
     return "Usage:\n  show %s\n" % topic
 
@@ -1252,6 +1353,9 @@ def context_help(tokens, role, names=None, clients=None):
     """Enter-submitted '?' help. Tab must never call this."""
     client, server = _role_parts(role)
     tokens = [t for t in (tokens or []) if t != "?"]
+    rejected = reject_obsolete_surface(tokens)
+    if rejected is not None:
+        return rejected["message"]
     if not tokens:
         return _concise_root(role)
     hidden_roots = {
@@ -1352,7 +1456,7 @@ def context_help(tokens, role, names=None, clients=None):
         ),
         "client": (
             '"client" is not a current public root.\n\n'
-            "Use Managed Hosts and Enrollment:\n"
+            "Use Managed Hosts and Enrollment on the DRLink Server:\n"
             "  show managed-hosts\n"
             "  show managed-host <HOST>\n"
             "  set enrollment zero-touch|manual\n"
@@ -1530,8 +1634,8 @@ def context_help(tokens, role, names=None, clients=None):
                     [
                         ("public-hostname", "Optional public DNS hostname for published services"),
                         ("bootstrap-hostname", "Optional Zero-Touch public TLS bootstrap hostname"),
-                        ("installer-url", "Linux client installer URL"),
-                        ("windows-installer-url", "Windows client installer URL"),
+                        ("installer-url", "Linux Agent installer URL"),
+                        ("windows-installer-url", "Windows Agent installer URL"),
                     ]
                 )
             if tokens[2] == "bootstrap-hostname":
@@ -1698,8 +1802,8 @@ def _context_client_list(names, clients):
         for name in _safe_names(names):
             rows.append((name, "-", "-"))
     if not rows:
-        return "(no registered clients)\n"
-    parts = ["%-10s %-10s %s" % ("CLIENT ID", "LABEL", "HOSTNAME")]
+        return "(no Managed Hosts)\n"
+    parts = ["%-10s %-10s %s" % ("HOST ID", "LABEL", "HOSTNAME")]
     for cid, label, host in rows:
         parts.append("%-10s %-10s %s" % (cid, label, host))
     return "\n".join(parts) + "\n"
@@ -1901,18 +2005,6 @@ def _machine_allowed_flags(tokens):
     allowed = set()
     if toks and toks[0] == "doctor":
         allowed.update({"--json", "--verbose"})
-    if toks[:2] in (
-        ["update", "product"],
-        ["update", "engine"],
-        ["update", "project"],
-        ["update", "frp"],
-    ) or toks[:3] in (
-        ["system", "update", "product"],
-        ["system", "update", "engine"],
-        ["system", "update", "project"],
-        ["system", "update", "frp"],
-    ):
-        allowed.add("--check")
     if toks[:1] == ["release-client"] or toks[:2] == ["release", "client"]:
         allowed.add("--yes")
     # Flag allowlisting must use the canonical public path only. Alias lookup
@@ -1941,6 +2033,25 @@ def _option_rejection_message(tok, focus):
         )
         % (tok, focus),
     }
+
+
+def _public_input_option_error(tokens):
+    """Apply the same option boundary to direct commands and question help."""
+    opt_err = public_option_error(tokens)
+    if opt_err is not None:
+        return opt_err
+    allowed = _machine_allowed_flags(tokens)
+    for tok in tokens:
+        raw = str(tok)
+        if raw in ("-h", "--help") or raw.split("=", 1)[0] in allowed:
+            continue
+        if raw == "--" or raw.startswith("--") or (
+            len(raw) >= 2 and raw.startswith("-")
+            and not raw[1:].replace(".", "", 1).isdigit()
+        ):
+            focus = " ".join(str(t) for t in tokens if not str(t).startswith("-")) or "help"
+            return _option_rejection_message(raw, focus)
+    return None
 
 
 def _ownership_error_message(path, need):
@@ -2101,6 +2212,9 @@ def match(tokens, role, names=None, clients=None):
         rejected = reject_obsolete_surface(raw_focus)
         if rejected is not None:
             return rejected
+        rejected = _public_input_option_error(raw_focus)
+        if rejected is not None:
+            return rejected
         # Command-specific help is a real public surface.  Do not let a
         # wrong-role path fall through to generic root/domain help with RC=0;
         # it must preserve the same ownership guidance as executing the
@@ -2161,27 +2275,9 @@ def match(tokens, role, names=None, clients=None):
     rejected = reject_obsolete_surface(tokens)
     if rejected is not None:
         return rejected
-    opt_err = public_option_error(tokens)
-    if opt_err is None:
-        # Reject undeclared dash tokens. Catalog-declared flags and a small
-        # set of machine interfaces remain callable but never Tab/help-advertised.
-        allowed = _machine_allowed_flags(tokens)
-        for tok in tokens:
-            raw = str(tok)
-            if raw in ("-h", "--help"):
-                continue
-            if raw in allowed:
-                continue
-            # Flag values are not options (e.g. --ttl 4h).
-            name = raw.split("=", 1)[0]
-            if name in allowed:
-                continue
-            if raw == "--" or raw.startswith("--") or (
-                len(raw) >= 2 and raw.startswith("-") and not raw[1:].replace(".", "", 1).isdigit()
-            ):
-                focus = " ".join(t for t in tokens if not str(t).startswith("-")) or "help"
-                opt_err = _option_rejection_message(raw, focus)
-                break
+    # Catalog-declared private machine flags remain callable; undeclared
+    # options fail before either help rendering or backend dispatch.
+    opt_err = _public_input_option_error(tokens)
     if opt_err is not None:
         return opt_err
     verb = tokens[0]
@@ -2535,13 +2631,6 @@ def _match_system(tokens, role, names=None):
     if op == "diff" and len(tokens) >= 3 and tokens[2] == "configuration":
         return _control_plane_ok(tokens)
     if op in CONTROL_PLANE_SYSTEM:
-        return _control_plane_ok(tokens)
-    if op == "audit" and len(tokens) > 2 and tokens[2] in (
-        "ai-principal",
-        "revision",
-        "entity",
-        "object",
-    ):
         return _control_plane_ok(tokens)
     if op == "revoke":
         return _match_revoke(["revoke"] + list(tokens[2:]), role, names)
@@ -4152,6 +4241,10 @@ def completion_candidates(
         tokens = tokenize(line)
     except ParseError:
         return []
+    if reject_obsolete_surface(tokens) is not None:
+        return []
+    if _public_input_option_error(tokens) is not None:
+        return []
     if trailing is None:
         trailing = bool(line) and line[-1] in " \t"
     if not tokens:
@@ -4306,8 +4399,8 @@ def _tab_desc_map(line, role, names=None, clients=None):
             return {
                 "public-hostname": "Optional public DNS hostname for published services",
                 "bootstrap-hostname": "Optional Zero-Touch public TLS bootstrap hostname",
-                "installer-url": "Linux/macOS client installer URL",
-                "windows-installer-url": "Windows client installer URL",
+                "installer-url": "Linux/macOS Agent installer URL",
+                "windows-installer-url": "Windows Agent installer URL",
             }, "named"
     if verb == "set" and len(filled) >= 2 and filled[1] == "client":
         if len(filled) == 2:
@@ -4390,7 +4483,7 @@ def format_tab_candidates(line, matches, role, names=None, clients=None):
         for item in clients or []:
             if isinstance(item, dict) and item.get("id"):
                 by_id[str(item["id"])] = item
-        lines = ["%-10s %-10s %s" % ("CLIENT ID", "LABEL", "HOSTNAME")]
+        lines = ["%-10s %-10s %s" % ("HOST ID", "LABEL", "HOSTNAME")]
         for mid in matches:
             item = by_id.get(mid) or {}
             lines.append(
@@ -4995,4 +5088,13 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        status = main()
+        # Flush here so an ordinary early-closing reader is handled before
+        # interpreter shutdown, which otherwise prints an ignored exception.
+        sys.stdout.flush()
+    except BrokenPipeError:
+        with open(os.devnull, "w") as sink:
+            os.dup2(sink.fileno(), sys.stdout.fileno())
+        status = 0
+    raise SystemExit(status)

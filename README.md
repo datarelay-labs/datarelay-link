@@ -66,13 +66,17 @@ Remote Access
 Internet Access
 AI Access
 
-BLACKLIST / WHITELIST
+Remote Access: BLACKLIST / WHITELIST
+Internet Access: WHITELIST only, deny-by-default
+AI Access: WHITELIST only, deny-by-default
 
 ConfigurationBundle
 ```
 
-Initial policy state is No Policy / No Rules with effective access ALLOW.
-When a policy is created, BLACKLIST means matching enabled Rules deny and
+Initial policy state is plane-specific: Remote Access has effective access
+ALLOW with No Policy / No Rules; Internet Access and AI Access deny by default.
+Remote Access supports BLACKLIST and WHITELIST; Internet Access and AI Access
+support WHITELIST only. BLACKLIST means matching enabled Rules deny;
 WHITELIST means matching enabled Rules allow. Rules are not ordered and do not
 carry per-rule ALLOW/DENY actions. A policy Rule authorizes or denies access;
 it never creates connectivity.
@@ -117,7 +121,7 @@ Docker Server deployment is not part of the v2.4 target; it is roadmap work for 
 | **Stable endpoints** | Public-port reservations preserved across normal lifecycle operations |
 | **Remote Services** | Agent-owned TCP and Fixed TCP connectivity (UDP Remote Service is rejected) |
 | **LAN reachability** | Publish on the local Managed Host or another reachable internal-LAN host |
-| **Access Policy** | BLACKLIST / WHITELIST for Remote, Internet, and AI Access |
+| **Access Policy** | Remote Access BLACKLIST / WHITELIST; Internet / AI Access WHITELIST-only, deny-by-default |
 | **AI Access / MCP** | Verified AI Identity → approved target permissions via MCP Bridge |
 | **ConfigurationBundle** | Multi-resource AI/operator change sets with Server/Agent atomicity |
 | **Health & operations** | Doctor, support bundles, lifecycle commands, backup/restore |
@@ -214,7 +218,7 @@ Protected hosts can use standard HTTP/HTTPS proxy settings. The gateway allows o
 Security includes:
 
 ```text
-BLACKLIST / WHITELIST policy enforcement
+WHITELIST-only deny-by-default policy enforcement
 fail-closed unsafe-destination checks
 server-side DNS
 DNS rebinding resistance
@@ -299,7 +303,7 @@ Repository: [`datarelay-labs/datarelay-link`](https://github.com/datarelay-labs/
 
 Following mutable `main` is not a normal install or update path. Development and pre-release validation use an exact immutable source SHA or an explicitly qualified candidate artifact.
 
-Development-channel install/update is explicit operator opt-in only. Operators who intentionally need that path must set `FRP_RELEASE_CHANNEL=dev` (with the expected development provenance, typically `FRP_EXPECTED_SOURCE_REF=main`) against a verified immutable candidate — see `docs/FRP_UPGRADE.md`. That is not the normal stable install or update path.
+Development-channel install/update is explicit operator opt-in only. Select `FRP_RELEASE_CHANNEL=development` and bind both `FRP_EXPECTED_SOURCE_REF` and `FRP_EXPECTED_SOURCE_HEAD` to the verified candidate's full 40-character SHA. For a qualified local checkout, use the canonical installer's state-preserving `--upgrade --source DIR` path described in `docs/FRP_UPGRADE.md`. Public product updates use the installed channel and verified artifact metadata.
 
 A legacy client on an older updater may require a one-time verified bridge; that compatibility mechanism does not replace the current immutable-source update policy.
 

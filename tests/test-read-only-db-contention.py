@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import io
 import os
+import shutil
 import sqlite3
 import sys
 import tempfile
@@ -23,6 +24,7 @@ from drlink_control_plane import ControlPlane
 class ReadOnlyDbContentionTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="drlink-readonly-lock-")
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
         cfg = Path(self.tmp, "etc/drlink")
         cfg.mkdir(parents=True, exist_ok=True)
         (cfg / "config.json").write_text('{"role":"server"}\n', encoding="utf-8")
@@ -115,34 +117,22 @@ class ReadOnlyDbContentionTests(unittest.TestCase):
             writer.execute("ROLLBACK")
             writer.close()
 
-    def _legacy_bundle_path(self) -> Path:
+    def _bundle_path(self) -> Path:
         path = Path(self.tmp, "readonly-bundle.yaml")
         path.write_text(
-            """apiVersion: drlink.datarelay.run/v1alpha1
-kind: ConfigurationBundle
-metadata:
-  name: readonly-lock
-spec:
-  objects:
+            """configurationBundle:
+  context: server
+  networkObjects:
     - name: scratch-only
-      type: Network
-      values:
-        - 192.0.2.10/32
-  tests:
-    - name: existing-remote-deny
-      kind: remote-access
-      source: 198.51.100.10
-      destination: 198.51.100.20
-      protocol: tcp
-      port: 22
-      expect: DENY
+      type: ip
+      value: 192.0.2.10
 """,
             encoding="utf-8",
         )
         return path
 
-    def test_legacy_bundle_test_and_diff_use_snapshot_not_authoritative_writer(self):
-        bundle = self._legacy_bundle_path()
+    def test_bundle_test_and_diff_use_snapshot_not_authoritative_writer(self):
+        bundle = self._bundle_path()
         writer = self._writer_lock()
         try:
             for tokens in (
@@ -152,7 +142,9 @@ spec:
                 rc, out, err, elapsed = self._dispatch_timed(tokens)
                 self.assertEqual(rc, 0, err)
                 self.assertLess(elapsed, 2.0)
-                self.assertIn("Configuration validation: PASS", out)
+                self.assertIn("VALID", out)
+                self.assertIn("CREATE network-object scratch-only", out)
+                self.assertIn("No changes were applied.", out)
             self.assertEqual(self.seed.current_revision(), self.base_revision)
             self.assertIsNone(self.seed.get_object("scratch-only"))
         finally:

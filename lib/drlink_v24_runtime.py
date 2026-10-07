@@ -233,14 +233,11 @@ def build_desired_runtime_services(
         try:
             import drlink_v24 as v24
 
-            sobj = v24.get_service_object(plane_db, row["service_object"])
-            if sobj is None:
-                cat = plane_db.conn.execute(
-                    "SELECT payload FROM agent_object_catalog WHERE kind='service-object' AND name=? COLLATE NOCASE",
-                    (row["service_object"],),
-                ).fetchone()
-                if cat:
-                    sobj = json.loads(cat["payload"])
+            cat = plane_db.conn.execute(
+                "SELECT payload FROM agent_object_catalog WHERE kind='service-object' AND name=? COLLATE NOCASE",
+                (row["service_object"],),
+            ).fetchone()
+            sobj = json.loads(cat["payload"]) if cat else v24.get_service_object(plane_db, row["service_object"])
             if sobj is not None:
                 target_port = int(sobj["port"] if not isinstance(sobj, dict) else sobj.get("port"))
             dest = str(row["destination"] or "")
@@ -338,12 +335,71 @@ def _restart_frpc(root: Optional[str] = None) -> None:
         raise ControlPlaneError("failed to restart drlink-client: %s" % detail) from exc
 
 
+def _runtime_log_cursor() -> str:
+    common = Path(__file__).resolve().with_name('frp-client-common.sh')
+    try:
+        cursor = subprocess.check_output(
+            ['bash', '-c', 'source "$1"; frp_client_journal_cursor',
+             'drlink-runtime-cursor', str(common)], text=True, timeout=15).strip()
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ControlPlaneError('Agent runtime generation evidence is unavailable') from exc
+    if not cursor:
+        raise ControlPlaneError('Agent runtime generation evidence is unavailable')
+    return cursor
+
+
+def _current_runtime_ready(root, host_id, expected) -> bool:
+    if any(str(os.environ.get(key) or '').lower() in ('1', 'yes', 'true', 'y')
+           for key in ('DRLINK_FAULT_RUNTIME_VERIFY', 'DRLINK_FAULT_RUNTIME_RESTART', 'DRLINK_FAULT_RUNTIME_CONFIG')):
+        return False
+    if root and str(root).rstrip('/') not in ('', '/'):
+        return True  # Isolated deterministic runtime fixture; no host services.
+    try:
+        props = subprocess.check_output(
+            ['systemctl', 'show', 'drlink-client', '-p', 'ActiveState', '-p', 'InvocationID'],
+            text=True, timeout=5)
+        data = dict(line.split('=', 1) for line in props.splitlines() if '=' in line)
+        invocation = data.get('InvocationID', '')
+        if data.get('ActiveState') != 'active' or not re.fullmatch(r'[0-9a-f]{32}', invocation):
+            return False
+        logs = subprocess.check_output(
+            ['journalctl', '_SYSTEMD_INVOCATION_ID=' + invocation, '-n', '2000', '--no-pager'],
+            text=True, timeout=15).splitlines()
+        # Only this live process generation and its latest connection epoch can
+        # establish continuity. A success from a prior connection is insufficient.
+        connected = False
+        epoch = []
+        for line in logs:
+            lower = line.lower()
+            if 'login to server success' in lower:
+                connected = True
+                epoch = []
+            elif any(marker in lower for marker in ('login server failed', 'login to server failed', 'session closed', 'control worker is closed', 'try to reconnect', 'try to connect to server', 'connect to server error', 'read from control stream closed')):
+                connected = False
+                epoch = []
+            elif connected:
+                epoch.append(line)
+        if not connected:
+            return False
+        for sid, rec in expected.items():
+            if not isinstance(rec, dict) or rec.get('enabled', True) is False:
+                continue
+            name = '%s-%s' % (host_id, rec.get('id') or sid)
+            mentions = [line for line in epoch if '[%s]' % name in line and 'start proxy' in line.lower()]
+            if not mentions or 'start proxy success' not in mentions[-1].lower():
+                return False
+        return True
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
 def verify_runtime_proxies(
     *,
     root: Optional[str],
     host_id: str,
     expected: dict,
     toml_text: str,
+    since_cursor: Optional[str] = None,
 ) -> None:
     if str(os.environ.get("DRLINK_FAULT_RUNTIME_VERIFY") or "").strip().lower() in (
         "1",
@@ -366,38 +422,20 @@ def verify_runtime_proxies(
             raise ControlPlaneError(
                 "runtime activation could not be verified for proxy '%s'" % proxy_name
             )
-    # On a real Agent, confirm frpc did not report start errors for these proxies.
-    if (not root or str(root).rstrip("/") in ("", "/")) and v24_names:
-        import time
-
-        time.sleep(1.5)
+    if not root or str(root).rstrip('/') in ('', '/'):
+        if not since_cursor:
+            raise ControlPlaneError('Agent runtime activation lacks fresh generation evidence')
+        names = ['%s-%s' % (host_id, rec.get('id') or sid)
+                 for sid, rec in expected.items()
+                 if isinstance(rec, dict) and rec.get('enabled', True) is not False]
+        common = Path(__file__).resolve().with_name('frp-client-common.sh')
         try:
-            out = subprocess.check_output(
-                [
-                    "journalctl",
-                    "-u",
-                    "drlink-client",
-                    "--since",
-                    "90 seconds ago",
-                    "--no-pager",
-                ],
-                text=True,
-                timeout=15,
-            )
-        except Exception:
-            out = ""
-        for proxy_name, _port in v24_names:
-            mentions = [ln for ln in out.splitlines() if proxy_name in ln]
-            if not mentions:
-                continue
-            recent = mentions[-8:]
-            if any("start error" in m.lower() for m in recent) and not any(
-                "start proxy success" in m.lower() for m in recent
-            ):
-                raise ControlPlaneError(
-                    "runtime activation could not be verified for proxy '%s'"
-                    % proxy_name
-                )
+            subprocess.run(
+                ['bash', '-c', 'source "$1"; shift; wait_for_proxies "$@"',
+                 'drlink-runtime-verify', str(common), '--since-cursor=' + since_cursor, *names],
+                check=True, capture_output=True, text=True, timeout=90)
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise ControlPlaneError('Agent connection and proxy activation could not be verified for the new runtime generation') from exc
 
 
 def apply_agent_runtime(
@@ -412,23 +450,6 @@ def apply_agent_runtime(
     """
     if not runtime_should_apply():
         return {"ok": True, "skipped": True, "applied": [], "removed": [], "generation": 0}
-
-    # Restarting runtime invalidates prior verification until mark_runtime_status
-    # records a fresh successful verification event. Clear only the verification
-    # bit; do not rewrite status/reason here (apply may still succeed).
-    try:
-        plane_db.conn.execute(
-            "UPDATE agent_remote_services SET runtime_verified = 0, updated_at = ? "
-            "WHERE delete_pending = 0 AND runtime_verified != 0",
-            (utc_now_iso(),),
-        )
-        commit = getattr(plane_db, "commit_if_autonomous", None)
-        if callable(commit):
-            commit()
-        elif not getattr(plane_db, "_batch_mode", False):
-            plane_db.conn.commit()
-    except Exception:
-        pass
 
     state = load_client_state(root)
     if not state:
@@ -497,6 +518,8 @@ def apply_agent_runtime(
         isinstance(r, dict) and r.get("enabled", True) is not False for r in desired.values()
     )
 
+    restart_attempted = False
+    artifacts_written = False
     try:
         toml_text = render_frpc_toml_text(
             server=server,
@@ -515,17 +538,36 @@ def apply_agent_runtime(
         ):
             raise ControlPlaneError("invalid generated runtime config (injected fault)")
 
+        if (toml_text == backup_toml and state == new_state
+                and _current_runtime_ready(root, host_id, desired)):
+            if names is None:
+                mark_runtime_status(plane_db, ok=True)
+            return {'ok': True, 'no_change': True, 'applied': [], 'removed': [],
+                    'error': '', 'generation': 0, 'host_id': host_id, 'toml': str(prev_toml)}
+
+        real_runtime = not root or str(root).rstrip('/') in ('', '/')
+        cursor = _runtime_log_cursor() if real_runtime else None
+        # A restart invalidates verification for every proxy in this runtime.
+        # Refresh all included rows after the complete generation is verified.
+        plane_db.conn.execute(
+            'UPDATE agent_remote_services SET runtime_verified = 0 WHERE delete_pending = 0')
+        plane_db.commit_if_autonomous()
+        artifacts_written = True
         _atomic_write_json(prev_state_path, new_state)
         _atomic_write_text(prev_toml, toml_text)
+        restart_attempted = True
         _restart_frpc(root)
-        verify_runtime_proxies(root=root, host_id=host_id, expected=desired, toml_text=toml_text)
+        verify_runtime_proxies(root=root, host_id=host_id, expected=desired, toml_text=toml_text, since_cursor=cursor)
+        if names is None:
+            mark_runtime_status(plane_db, ok=True)
     except Exception as exc:
         # Rollback previous runtime artifacts when possible.
         try:
-            if backup_state is not None:
+            if artifacts_written and backup_state is not None:
                 _atomic_write_text(prev_state_path, backup_state)
-            if backup_toml is not None:
+            if artifacts_written and backup_toml is not None:
                 _atomic_write_text(prev_toml, backup_toml)
+            if restart_attempted and backup_toml is not None:
                 _restart_frpc(root)
         except Exception:
             pass

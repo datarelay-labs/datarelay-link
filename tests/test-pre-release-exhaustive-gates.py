@@ -228,6 +228,168 @@ def full_evidence(pass_name: str):
 
 
 class PreReleaseExhaustiveGateTests(unittest.TestCase):
+    def _git(self, repo, *args):
+        return subprocess.check_output(
+            ["git", "-C", str(repo), *args], text=True, stderr=subprocess.PIPE
+        ).strip()
+
+    def _provenance_repo(self, repo):
+        self._git(repo, "init", "--quiet")
+        self._git(repo, "config", "user.name", "Quality fixture")
+        self._git(repo, "config", "user.email", "quality@example.test")
+        (repo / "docs").mkdir()
+        (repo / "docs/CLI_FEATURE_SCENARIO_RECONCILIATION.md").write_bytes(CONTRACT.read_bytes())
+        write_cli_ledgers(repo / "cli-run")
+        write_cli_catalog(repo)
+        write_full_ledgers(repo / "full-run")
+        (repo / "dist").mkdir()
+        (repo / "dist/bootstrap-client.sh").write_text("content payload\n")
+        (repo / "release-manifest.json").write_text(json.dumps({"source_head": "0" * 40}))
+        self._git(repo, "add", ".")
+        self._git(repo, "commit", "--quiet", "-m", "content")
+        content = self._git(repo, "rev-parse", "HEAD")
+        (repo / "release-manifest.json").write_text(json.dumps({"source_head": content}))
+        (repo / "dist/bootstrap-client.sh").write_text("generated provenance payload\n")
+        self._git(repo, "add", ".")
+        self._git(repo, "commit", "--quiet", "-m", "generated provenance")
+        return content, self._git(repo, "rev-parse", "HEAD")
+
+    def _candidate_evidence(self, repo, candidate):
+        cli = cli_evidence()
+        for key in ("repo_head", "end_head", "product_source_head", "server_source_head", "agent_source_head"):
+            cli[key] = candidate
+        cli["evidence_root"] = str(repo / "cli-run")
+        full = full_evidence("PASS1")
+        for key in ("git_head", "end_head", "product_source_head"):
+            full[key] = candidate
+        full["evidence_root"] = str(repo / "full-run")
+        return cli, full
+
+    def test_provenance_candidate_passes_both_user_gate_validators(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            content, candidate = self._provenance_repo(repo)
+            self.assertNotEqual(content, candidate)
+            cli, full = self._candidate_evidence(repo, candidate)
+            self.assertEqual(MOD.validate_cli_feature(cli, candidate, repo), [])
+            self.assertEqual(MOD.validate_full_user(full, candidate, "PASS1", repo), [])
+
+    def test_content_parent_runtime_cannot_replace_exact_candidate(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            content, candidate = self._provenance_repo(repo)
+            cli, full = self._candidate_evidence(repo, candidate)
+            for key in ("product_source_head", "server_source_head", "agent_source_head"):
+                cli[key] = content
+            full["product_source_head"] = content
+            for errors in (MOD.validate_cli_feature(cli, candidate, repo), MOD.validate_full_user(full, candidate, "PASS1", repo)):
+                self.assertTrue(any("product_source_head must equal exact HEAD" in x for x in errors), errors)
+
+    def test_stale_runtime_still_blocks_valid_provenance_candidate(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            content, candidate = self._provenance_repo(repo)
+            cli, _ = self._candidate_evidence(repo, candidate)
+            cli["server_source_head"] = content
+            errors = MOD.validate_cli_feature(cli, candidate, repo)
+            self.assertTrue(any("server_source_head must equal product_source_head" in x for x in errors), errors)
+
+    def test_old_ancestor_manifest_rejected_by_both_user_gates(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            _, _ = self._provenance_repo(repo)
+            (repo / "SHA256SUMS").write_text("another metadata revision\n")
+            self._git(repo, "add", ".")
+            self._git(repo, "commit", "--quiet", "-m", "later metadata")
+            candidate = self._git(repo, "rev-parse", "HEAD")
+            cli, full = self._candidate_evidence(repo, candidate)
+            for errors in (MOD.validate_cli_feature(cli, candidate, repo), MOD.validate_full_user(full, candidate, "PASS1", repo)):
+                self.assertTrue(any("first content parent" in x for x in errors), errors)
+
+    def test_product_changes_cannot_be_claimed_as_provenance(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            _, parent = self._provenance_repo(repo)
+            (repo / "release-manifest.json").write_text(json.dumps({"source_head": parent}))
+            (repo / "lib/runtime.py").write_text("changed product\n")
+            self._git(repo, "add", ".")
+            self._git(repo, "commit", "--quiet", "-m", "product change disguised as provenance")
+            candidate = self._git(repo, "rev-parse", "HEAD")
+            cli, full = self._candidate_evidence(repo, candidate)
+            for errors in (MOD.validate_cli_feature(cli, candidate, repo), MOD.validate_full_user(full, candidate, "PASS1", repo)):
+                self.assertTrue(any("non-generated paths" in x for x in errors), errors)
+
+    def test_provenance_cannot_delete_generated_payload(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            _, parent = self._provenance_repo(repo)
+            (repo / "release-manifest.json").write_text(json.dumps({"source_head": parent}))
+            (repo / "dist/bootstrap-client.sh").unlink()
+            self._git(repo, "add", "--all")
+            self._git(repo, "commit", "--quiet", "-m", "deleted payload")
+            candidate = self._git(repo, "rev-parse", "HEAD")
+            errors = MOD._validate_manifest_candidate_binding(repo, candidate, "TEST")
+            self.assertTrue(any("must not rename or delete" in x for x in errors), errors)
+
+    def test_manifest_binding_uses_checked_out_candidate(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            _, candidate = self._provenance_repo(repo)
+            (repo / "SHA256SUMS").write_text("later metadata\n")
+            self._git(repo, "add", ".")
+            self._git(repo, "commit", "--quiet", "-m", "later candidate")
+            errors = MOD._validate_manifest_candidate_binding(repo, candidate, "TEST")
+            self.assertTrue(any("checked-out HEAD" in x for x in errors), errors)
+
+    def test_generated_change_without_manifest_update_is_not_provenance(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            self._git(repo, "init", "--quiet")
+            self._git(repo, "config", "user.name", "Quality fixture")
+            self._git(repo, "config", "user.email", "quality@example.test")
+            (repo / "SHA256SUMS").write_text("content\n")
+            self._git(repo, "add", ".")
+            self._git(repo, "commit", "--quiet", "-m", "content")
+            parent = self._git(repo, "rev-parse", "HEAD")
+            (repo / "SHA256SUMS").write_text("changed metadata only\n")
+            self._git(repo, "add", ".")
+            self._git(repo, "commit", "--quiet", "-m", "not a provenance commit")
+            candidate = self._git(repo, "rev-parse", "HEAD")
+            # The manifest is uncommitted: it cannot prove the committed binding.
+            (repo / "release-manifest.json").write_text(json.dumps({"source_head": parent}))
+            errors = MOD._validate_manifest_candidate_binding(repo, candidate, "TEST")
+            self.assertTrue(any("updating release-manifest.json" in x for x in errors), errors)
+
+    def test_missing_git_parent_cannot_satisfy_manifest_binding(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            (repo / "release-manifest.json").write_text(json.dumps({"source_head": "1" * 40}))
+            errors = MOD._validate_manifest_candidate_binding(repo, HEAD, "TEST")
+            self.assertTrue(any("cannot prove manifest content-parent" in x for x in errors), errors)
+
+    def test_missing_or_malformed_manifest_source_fails_closed(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            for source in (None, "not-a-sha"):
+                (repo / "release-manifest.json").write_text(json.dumps({"source_head": source}))
+                errors = MOD._validate_manifest_candidate_binding(repo, HEAD, "TEST")
+                self.assertTrue(any("40-character SHA" in x for x in errors), errors)
+            for value in ([], "manifest", None):
+                (repo / "release-manifest.json").write_text(json.dumps(value))
+                errors = MOD._validate_manifest_candidate_binding(repo, HEAD, "TEST")
+                self.assertTrue(any("must be an object" in x for x in errors), errors)
+
+    def test_dirty_manifest_cannot_prove_committed_parent_binding(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo = Path(td)
+            parent, candidate = self._provenance_repo(repo)
+            (repo / "release-manifest.json").write_text(json.dumps({"source_head": parent, "uncommitted": True}))
+            for staged in (False, True):
+                if staged:
+                    self._git(repo, "add", "release-manifest.json")
+                errors = MOD._validate_manifest_candidate_binding(repo, candidate, "TEST")
+                self.assertTrue(any("committed candidate manifest" in x for x in errors), errors)
+
     def test_cli_feature_valid(self):
         self.assertEqual(MOD.validate_cli_feature(cli_evidence(), HEAD), [])
 

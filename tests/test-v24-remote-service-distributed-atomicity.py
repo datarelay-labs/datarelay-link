@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import os
+import io
+import ssl
+import urllib.error
 import tempfile
 import unittest
 from pathlib import Path
@@ -26,6 +29,55 @@ HOST = "branch-gateway"
 
 
 class RemoteServiceDistributedAtomicity(unittest.TestCase):
+    def test_backend_unavailable_before_mutation_queues_create_and_delete(self):
+        def unavailable(req, **kwargs):
+            raise urllib.error.HTTPError(req.full_url, 502, 'Bad Gateway', {},
+                                         io.BytesIO(b'<html>Bad Gateway</html>'))
+        with mock.patch.object(mgmt.urllib.request, 'urlopen', side_effect=unavailable), \
+                mock.patch.object(mgmt, 'upsert_remote_service_on_server', wraps=mgmt.upsert_remote_service_on_server) as upsert, \
+                mock.patch.object(mgmt, 'delete_remote_service_on_server', wraps=mgmt.delete_remote_service_on_server) as delete:
+            v24.set_remote_service_agent(self.agent, 'queued-ssh', destination='this-host',
+                                         service='ssh', enabled=True, oneshot=True,
+                                         root=self.agent_tmp, server_reachable=True)
+            row = self.agent.conn.execute("SELECT * FROM agent_remote_services WHERE name='queued-ssh'").fetchone()
+            self.assertEqual(row['pending_allocation'], 1)
+            self.assertEqual(row['status'], 'DEGRADED')
+            upsert.assert_not_called()
+            v24.unset_remote_service_agent(self.agent, 'queued-ssh', root=self.agent_tmp,
+                                           server_reachable=True)
+            row = self.agent.conn.execute("SELECT * FROM agent_remote_services WHERE name='queued-ssh'").fetchone()
+            self.assertEqual(row['delete_pending'], 1)
+            delete.assert_not_called()
+
+    def test_authentication_and_tls_failures_do_not_become_offline_intent(self):
+        errors = [urllib.error.HTTPError(self.base_url, 401, 'Unauthorized', {}, io.BytesIO(b'{}')),
+                  urllib.error.URLError(ssl.SSLCertVerificationError('certificate verification failed'))]
+        for error in errors:
+            with self.subTest(error=type(error).__name__), \
+                    mock.patch.object(mgmt.urllib.request, 'urlopen', side_effect=error):
+                before = self.agent.current_revision()
+                with self.assertRaises(ControlPlaneError):
+                    v24.set_remote_service_agent(self.agent, 'unsafe-ssh', destination='this-host',
+                                                 service='ssh', enabled=True, oneshot=True,
+                                                 root=self.agent_tmp, server_reachable=True)
+                self.assertIsNone(self.agent.conn.execute("SELECT name FROM agent_remote_services WHERE name='unsafe-ssh'").fetchone())
+                self.assertEqual(self.agent.current_revision(), before)
+
+    def test_unavailable_mutating_response_is_not_reclassified_as_offline(self):
+        real_urlopen = mgmt.urllib.request.urlopen
+        def response_failure(req, **kwargs):
+            if req.get_method() == 'POST':
+                raise urllib.error.HTTPError(req.full_url, 503, 'Unavailable', {}, io.BytesIO(b'{}'))
+            return real_urlopen(req, **kwargs)
+        before = self.agent.current_revision()
+        with mock.patch.object(mgmt.urllib.request, 'urlopen', side_effect=response_failure):
+            with self.assertRaises(ControlPlaneError):
+                v24.set_remote_service_agent(self.agent, 'ambiguous-ssh', destination='this-host',
+                                             service='ssh', enabled=True, oneshot=True,
+                                             root=self.agent_tmp, server_reachable=True)
+        self.assertIsNone(self.agent.conn.execute("SELECT name FROM agent_remote_services WHERE name='ambiguous-ssh'").fetchone())
+        self.assertEqual(self.agent.current_revision(), before)
+
     def setUp(self):
         self.server_tmp = tempfile.mkdtemp(prefix="drlink-rs-atom-srv-")
         self.agent_tmp = tempfile.mkdtemp(prefix="drlink-rs-atom-agt-")

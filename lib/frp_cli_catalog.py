@@ -801,6 +801,19 @@ def find(tokens, role=None, include_aliases=False):
             if len(path) > best_len:
                 best = cmd
                 best_len = len(path)
+    if best is not None and best["path"] == ("unset", "managed-host") \
+            and len(tokens) >= 4 and tokens[3] == "group":
+        # This positional leaf removes inventory membership, not the Host.
+        # Return a copy so retirement metadata stays unchanged in the catalog.
+        best = dict(best, destructive=False, risk="none", confirmation="none")
+        best["summary"] = "Remove a Managed Host Group membership"
+        best["detail"] = (
+            "Remove only this Managed Host Group membership. Identity, Remote "
+            "Services and public ports are unchanged. The explicit command "
+            "is sufficient approval; no additional confirmation is required."
+        )
+        best["help_args"] = tuple(dict(arg, required=True) for arg in best["args"])
+        best["examples"] = ("unset managed-host ubuntu-prod group edge",)
     return best
 
 
@@ -828,7 +841,7 @@ def resolve_tokens(tokens, role=None):
 
 def usage_line(cmd):
     parts = list(cmd["path"])
-    for arg in cmd["args"]:
+    for arg in cmd.get("help_args", cmd["args"]):
         name = arg["name"]
         parts.append(name if arg["required"] else "[%s]" % name)
     # Public UX is positional / guided — never advertise [options].
@@ -1405,8 +1418,6 @@ def to_internal(tokens):
             return ["support-bundle", "--output", rest[0]] + list(rest[1:])
         return ["support-bundle"]
     if path == ("system", "audit"):
-        if rest and rest[0] in ("ai-principal", "revision", "entity", "object"):
-            return ["system", "audit"] + rest
         return ["show", "audit"] + rest
     if path == ("system", "export", "internet-profile"):
         if len(rest) >= 2:
@@ -1733,7 +1744,9 @@ def domain_help(topic, role):
             "UDP Remote Service is not supported.\n\n"
             "Everyday commands:\n"
             "  show remote-services\n"
-            "  set remote-service <NAME> destination <DEST|this-host> service <SERVICE> enabled\n"
+            "  show remote-service <NAME>\n"
+            "  set remote-service <NAME>   (reviewed create/edit wizard)\n"
+            "  set remote-service <NAME> destination <DEST|this-host> service <SERVICE> enabled|disabled\n"
             "  unset remote-service <NAME>   (interactive y/N confirmation required)\n"
         )
     if topic == "internet-access":
@@ -1955,9 +1968,10 @@ def command_help(cmd):
     lines.append(cmd["summary"])
     if cmd["detail"]:
         lines.extend(["", cmd["detail"]])
-    if cmd["args"]:
+    help_args = cmd.get("help_args", cmd["args"])
+    if help_args:
         rows = []
-        for arg in cmd["args"]:
+        for arg in help_args:
             complete = arg["complete"]
             if isinstance(complete, (list, tuple)):
                 rows.append((arg["name"], "one of: %s" % ", ".join(complete)))
@@ -2216,7 +2230,7 @@ NAVIGATION_TREE = {
     "client.remote_services": (
         ("client_rs_list", "List Remote Services", "", "command", "show remote-services"),
         ("client_rs_create", "Create Remote Service", "", "workflow", "create_remote_service"),
-        ("client_rs_manage", "Manage Remote Service", "", "command", "show remote-services"),
+        ("client_rs_manage", "Manage Remote Service", "", "workflow", "manage_remote_service"),
         ("back", "Back", "", "back", None),
     ),
     "client.agent": (
@@ -2316,7 +2330,7 @@ NAVIGATION_TREE = {
     "server.hosts": (
         ("server_hosts_list", "List Managed Hosts", "", "command", "show managed-hosts"),
         ("server_zt", "Connect New Host", "", "workflow", "create_zero_touch"),
-        ("server_hosts_manage", "Manage Host", "", "command", "show managed-hosts"),
+        ("server_hosts_manage", "Manage Host", "", "workflow", "manage_host"),
         ("server_enrollments", "Enrollments", "", "submenu", "server.clients.enrollments"),
         ("back", "Back", "", "back", None),
     ),
@@ -2592,7 +2606,9 @@ def guided_menu_entries(role):
 def render_guided_menu(role):
     """Text block for the numbered guided menu (root domains only)."""
     key = _guided_menu_key(role)
-    title = "Data Relay Link"
+    title = "Data Relay Link — " + (
+        "Agent Host" if key == "client" else "DRLink Server"
+    )
     return render_navigation_menu(key, title=title)
 
 

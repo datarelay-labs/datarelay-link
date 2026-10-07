@@ -16,6 +16,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from contextlib import redirect_stdout, redirect_stderr
 from pathlib import Path
 
@@ -67,6 +68,13 @@ class _Base(unittest.TestCase):
 
 
 class RemoteAccessSemanticParity(_Base):
+    def test_internet_access_discovers_application_proxy_endpoint(self):
+        Path(self.tmp, 'etc/drlink/config.json').write_text('{"role":"server","public_hostname":"relay.example.test","egress_listen_port":6112}')
+        rc, out, err = self._run('show', 'internet-access')
+        self.assertEqual(rc, 0, err)
+        self.assertIn('http://relay.example.test:6112', out)
+        self.assertNotIn('http://0.0.0.0:', out)
+
     def test_user_intent_equivalent_ip_and_service_objects(self):
         # Intent: "Check whether this IP can reach this web service."
         # Rule references Object A / Service A; test uses Object B / Service B
@@ -457,6 +465,42 @@ class BundleSecurityImpact(_Base):
 
 
 class AgentShowStatusRuntime(_Base):
+    def test_paused_inventory_and_offline_endpoint_remain_truthful(self):
+        self.plane.close()
+        Path(self.tmp, 'etc/drlink/config.json').unlink()
+        _agent_root(self.tmp)
+        import json
+        state_path = Path(self.tmp, 'etc/frp/client-state.json')
+        state = json.loads(state_path.read_text())
+        state['frp_server'] = '203.0.113.31'
+        state_path.write_text(json.dumps(state))
+        self.plane = ControlPlane(self.tmp)
+        v24.set_remote_service_agent(self.plane, 'paused-web', destination='this-host', service='http', enabled=True, oneshot=True, root=self.tmp, server_reachable=False)
+        self.plane.conn.execute("UPDATE agent_remote_services SET status='HEALTHY', runtime_verified=1, endpoint_host='127.0.0.1', endpoint_port=6001, pending_allocation=0")
+        self.plane.conn.commit()
+        from drlink_agent_lifecycle import set_lifecycle_intent
+        set_lifecycle_intent('paused', self.tmp)
+        for tokens in (('show', 'remote-services'), ('show', 'remote-service', 'paused-web')):
+            rc, out, err = self._run(*tokens)
+            self.assertEqual(rc, 0, err)
+            self.assertIn('DEGRADED', out)
+            self.assertNotIn('Status: PAUSED', out)
+            if len(tokens) == 3:
+                self.assertIn('Reason: Agent runtime is intentionally paused.', out)
+            self.assertNotIn('HEALTHY', out)
+            self.assertIn('203.0.113.31:6001', out)
+            self.assertNotIn('127.0.0.1:6001', out)
+
+    def test_doctor_transition_and_untested_runtime_do_not_report_clean_pass(self):
+        import frp_doctor as doctor
+        for active in ('activating', 'deactivating', 'unknown'):
+            report = doctor.Report()
+            doctor.check_unit(report, {'systemd_usable': True, 'units': {'frpc': {'active': active}}}, 'frpc', 'frpc_service', 'drlink-client.service')
+            self.assertNotEqual(report.overall(), 'PASS', active)
+        report = doctor.Report()
+        doctor.check_unit(report, {'systemd_usable': True, 'units': {'frpc': {'active': 'failed'}}}, 'frpc', 'frpc_service', 'drlink-client.service')
+        self.assertEqual(report.overall(), 'FAIL')
+
     def test_agent_status_distinguishes_runtime_failure(self):
         # Intent: "Is the Agent actually healthy?"
         self.plane.close()
@@ -472,6 +516,10 @@ class AgentShowStatusRuntime(_Base):
         self.assertIn("failed", out.lower())
         self.assertIn("Remote Services", out)
         self.assertIn("Server", out)
+        with mock.patch.object(v24, 'detect_server_reachable', return_value=True):
+            current = self.plane.format_status()
+        self.assertIn('Management reachable; Agent transport unverified', current)
+        self.assertNotIn('Server          : Connected', current)
 
 
 if __name__ == "__main__":

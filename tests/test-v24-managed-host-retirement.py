@@ -8,6 +8,7 @@ endpoint inventory / trust state, and impact confirmation. No raw FK failures.
 from __future__ import annotations
 
 import io
+import json
 import os
 import sys
 import tempfile
@@ -33,6 +34,48 @@ def _server_root(tmp: str) -> None:
 
 
 class ManagedHostRetirement(unittest.TestCase):
+    def test_retirement_removes_allocator_identity_and_owned_ports(self):
+        self._seed_host(MID, 'ubuntu-prod', with_service=True)
+        registry = Path(self.tmp) / 'var/lib/drlink/runtime/client-inventory.json'
+        registry.parent.mkdir(parents=True, exist_ok=True)
+        survivor = {'label': 'unrelated', 'services': {'ssh': {'remote_port': 6012}}}
+        state = {'schema_version': 2, 'reserved': [6011, 6012], 'groups': {},
+                 'clients': {MID: {'label': 'ubuntu-prod', 'mgmt_revoked': False,
+                                  'services': {'ssh': {'remote_port': 6011, 'enabled': False}}},
+                             MID2: survivor}}
+        registry.write_text(json.dumps(state))
+        credential_key = self.plane._ai_agent_credential_key(MID)
+        self.plane.conn.execute("INSERT OR REPLACE INTO system_meta(key,value) VALUES (?, 'fixture-credential')", (credential_key,))
+        self.plane.conn.commit()
+        rc, out, err = self._dispatch(['unset', 'managed-host', 'ubuntu-prod'])
+        self.assertEqual(rc, 0, err or out)
+        retired = json.loads(registry.read_text())
+        self.assertNotIn(MID, retired['clients'])
+        self.assertEqual(retired['clients'][MID2], survivor)
+        self.assertEqual(retired['reserved'], [6012])
+        self.assertIsNone(self.plane.conn.execute('SELECT value FROM system_meta WHERE key=?', (credential_key,)).fetchone())
+        self.plane.upsert_client(MID, label='fresh-enrollment', hostname='fresh-host')
+        self.assertEqual(self.plane.get_client(MID)['label'], 'fresh-enrollment')
+
+    def test_failed_retirement_restores_allocator_and_database_together(self):
+        self._seed_host(MID, 'ubuntu-prod', with_service=True)
+        registry = Path(self.tmp) / 'var/lib/drlink/runtime/client-inventory.json'
+        registry.parent.mkdir(parents=True, exist_ok=True)
+        registry.write_text(json.dumps({'schema_version': 2, 'reserved': [6011],
+                                        'clients': {MID: {'label': 'ubuntu-prod', 'services': {'ssh': {'remote_port': 6011}}}}}))
+        before = registry.read_bytes()
+        revision = self.plane.current_revision()
+        os.environ['DRLINK_FAULT_ACTIVATION'] = '1'
+        try:
+            rc, out, err = self._dispatch(['unset', 'managed-host', 'ubuntu-prod'])
+        finally:
+            os.environ.pop('DRLINK_FAULT_ACTIVATION', None)
+        self.assertNotEqual(rc, 0, out + err)
+        self.assertIn('Previous configuration was restored', out + err)
+        self.assertEqual(registry.read_bytes(), before)
+        self.assertIsNotNone(self.plane.get_client(MID))
+        self.assertEqual(self.plane.current_revision(), revision)
+
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="drlink-mh-retire-")
         _server_root(self.tmp)

@@ -1148,7 +1148,7 @@ def run_remote_service_wizard(plane: ControlPlane, name: str) -> int:
                 if row["name"] not in svc_options:
                     svc_options.append(row["name"])
             service = _ask_choice(io, "Service Object", svc_options or ["ssh"])
-            enabled = _ask_yes_no(io, "Enabled", default=True)
+            enabled = _ask_yes_no(io, "Enabled", default=session.before.get("Enabled", "YES") == "YES")
             session.draft = {"destination": dest, "service": service, "enabled": enabled}
             action = _review_menu(
                 io,

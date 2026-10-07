@@ -512,6 +512,34 @@ def _extract_ensure_control_plane_python() -> str:
 
 
 class UpgradeHookRootTests(unittest.TestCase):
+    def test_upgrade_hook_rejects_unpreservable_ttl_policy(self):
+        from datetime import datetime, timedelta, timezone
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            registry = realistic_registry()
+            mid = IDS['rocky9']
+            _write_json(root / 'etc/drlink/config.json', {'role': 'server'})
+            _write_json(root / 'var/lib/drlink/registry.json', registry)
+            _write_json(root / 'var/lib/drlink/access-control.json', {
+                'schema_version': 1,
+                'access_lists': {'acl_001122334455': {
+                    'id': 'acl_001122334455', 'name': 'temporary-office',
+                    'entries': [{'id': 'ace_001122334455', 'cidr': '198.51.100.10/32',
+                                 'expires_at': (datetime.now(timezone.utc) + timedelta(hours=4)).isoformat()}],
+                }},
+                'service_access': {mid: {'ssh': {'access_mode': 'ALLOWLIST', 'access_list_id': 'acl_001122334455'}}},
+            })
+            db = root / 'var/lib/drlink/drlink.db'
+            proc = subprocess.run(
+                [sys.executable, '-', str(db), str(ROOT / 'lib/drlink_control_db.py'),
+                 str(ROOT / 'lib/drlink_control_plane.py')],
+                input=_extract_ensure_control_plane_python(), capture_output=True, text=True,
+            )
+            self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            self.assertIn('TTL', proc.stderr)
+            self.assertNotIn('CONTROL_DB_OK', proc.stdout)
+
     def test_UPGRADE_HOOK_ROOT_REAL_FS(self):
         from drlink_control_db import deploy_root_from_db_path
 

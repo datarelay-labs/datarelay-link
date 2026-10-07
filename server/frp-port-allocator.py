@@ -33,7 +33,7 @@ MGMT_NONCE_TTL = 900
 # without crowding out operator management requests. Evicting a nonce that
 # is still inside that horizon would re-enable a valid signed replay.
 AI_IDLE_POLL_SECONDS = 2.0
-MGMT_NONCE_RESERVE = 64
+MGMT_NONCE_RESERVE = (2 * 100 * 8) + int((2 * MAX_CLOCK_SKEW) / 5) + 64
 MAX_NONCES_PER_CLIENT = int((2 * MAX_CLOCK_SKEW) / AI_IDLE_POLL_SECONDS) + MGMT_NONCE_RESERVE
 REGISTRY_SCHEMA_VERSION = 2
 SERVICE_ID_RE = re.compile(r'^[a-z0-9][a-z0-9._-]{0,31}$')
@@ -3738,6 +3738,7 @@ def make_handler(allocator):
                     if path in (
                         '/v1/remote-services',
                         '/v1/remote-services-status',
+                        '/v1/agent-lifecycle',
                         '/v1/ai-jobs/claim',
                         '/v1/ai-jobs/complete',
                     ) and MGMT_SYNC is not None:

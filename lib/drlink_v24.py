@@ -363,6 +363,8 @@ def ensure_v2_schema(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE agent_remote_services ADD COLUMN runtime_verified INTEGER NOT NULL DEFAULT 0"
         )
+    if "enrollment_seed" not in agent_cols:
+        conn.execute("ALTER TABLE agent_remote_services ADD COLUMN enrollment_seed INTEGER NOT NULL DEFAULT 0")
     now = utc_now_iso()
     for plane in POLICY_PLANES:
         row = conn.execute("SELECT plane FROM access_policies WHERE plane = ?", (plane,)).fetchone()
@@ -2505,6 +2507,28 @@ def effective_policy_result(
     return "DENY"
 
 
+def restricted_policy_readiness(
+    plane: str, mode: Optional[str], enforcement: str
+) -> tuple[str, Optional[str]]:
+    """Describe fail-closed Internet/AI policy readiness for public output."""
+    plane_n = _plane_key(plane)
+    if plane_n not in ("internet", "ai"):
+        return "READY", None
+    mode_n = str(mode or "").strip().lower() or None
+    enforcement_n = str(enforcement or "enabled").strip().lower()
+    if mode_n is None:
+        return "FAIL CLOSED (NO POLICY)", None
+    if mode_n != "whitelist":
+        resource = "internet-access" if plane_n == "internet" else "ai-access"
+        return (
+            "FAIL CLOSED (UNSUPPORTED MODE)",
+            "unset %s policy; then configure enabled WHITELIST rule(s)." % resource,
+        )
+    if enforcement_n != "enabled":
+        return "DISABLED (DENY ALL)", None
+    return "READY", None
+
+
 # ---------------------------------------------------------------------------
 # Network objects / groups
 # ---------------------------------------------------------------------------
@@ -3964,8 +3988,7 @@ def _representative_ip_from_value(value: str) -> str:
         net = ipaddress.ip_network(text, strict=False)
     except ValueError as exc:
         raise ControlPlaneError(cli_error("Value '%s' is not a usable IP or CIDR." % text)) from exc
-    hosts = list(net.hosts())
-    return str(hosts[0] if hosts else net.network_address)
+    return str(next(iter(net.hosts()), net.network_address))
 
 
 def _resolve_test_source_ip(plane_db, source_name: str) -> str:
@@ -4374,14 +4397,22 @@ def format_policy_test(family: str, evaluation: dict, selectors: dict, remote_se
         "ai": "AI Access Test",
     }
     plane = evaluation["plane"]
+    mode = evaluation.get("mode")
+    enforcement = evaluation.get("enforcement")
+    display_enforcement = "-" if mode is None else str(enforcement).upper()
     lines = [
         titles.get(plane, "Access Test"),
         "=" * len(titles.get(plane, "Access Test")),
         "",
-        "Mode        : %s" % (evaluation["mode"].upper() if evaluation["mode"] else "No Policy"),
-        "Enforcement : %s" % str(evaluation["enforcement"]).upper(),
+        "Mode        : %s" % (str(mode).upper() if mode else "No Policy"),
+        "Enforcement : %s" % display_enforcement,
         "",
     ]
+    if plane in ("internet", "ai"):
+        readiness, recovery = restricted_policy_readiness(plane, mode, enforcement)
+        lines.insert(5, "Readiness   : %s" % readiness)
+        if recovery:
+            lines.insert(6, "Recovery    : %s" % recovery)
     for key, label in (
         ("source", "Source"),
         ("destination", "Destination"),
@@ -5700,6 +5731,8 @@ def synchronize_agent_remote_services(plane_db, *, root: Optional[str] = None) -
     # Otherwise a later synchronize would reapply stale client-state through
     # v2.4 revalidation and undo an operator edit.
     enrolled_names = _bootstrap_seed_names(root)
+    enrolled_names.update(str(row[0]).lower() for row in plane_db.conn.execute(
+        "SELECT name FROM agent_remote_services WHERE enrollment_seed = 1"))
     if not detect_server_reachable(plane_db, root):
         return {
             "status": "OFFLINE",
@@ -5987,12 +6020,18 @@ def set_remote_service_agent(
 
     # Refresh synchronized Managed Host inventory before binding/resolving so
     # runtime targets follow current hostname/address for a stable client_id.
+    import drlink_mgmt_sync as mgmt
+
     if server_reachable:
         try:
-            import drlink_mgmt_sync as mgmt
-
             if mgmt.use_live_mgmt_path(root):
                 sync_agent_catalog_from_server(plane_db, root=root)
+        except mgmt.MgmtUnavailableError:
+            # No remote write has been attempted. Use the existing offline
+            # desired-state queue when the frontend is up but its backend is down.
+            server_reachable = False
+        except mgmt.MgmtAuthError:
+            raise
         except Exception:
             pass
 
@@ -6233,13 +6272,14 @@ def set_remote_service_agent(
             "No changes were applied." % (dest_token, svc_name, dup["name"])
         )
 
-    endpoint_host = "127.0.0.1"
+    endpoint_host = str(existing['endpoint_host'] or '') if existing else ''
     try:
         import frp_server_config as scfg
 
         endpoint_host = scfg.resolve_public_endpoint_host(root=root, fallback="") or endpoint_host
     except Exception:
         endpoint_host = os.environ.get("DRLINK_HOST") or endpoint_host
+    endpoint_host = endpoint_host or '-'
     endpoint_port = existing["endpoint_port"] if existing else None
     pending = 0
     status = "DISABLED" if not en else "DEGRADED"
@@ -6665,6 +6705,14 @@ def unset_remote_service_agent(plane_db, name: str, *, root: Optional[str] = Non
 
     live_mgmt = bool(server_reachable and mgmt.use_live_mgmt_path(root))
     if live_mgmt:
+        try:
+            # Establish backend availability before attempting a remote delete.
+            # A failed POST is never reclassified as safe offline intent.
+            mgmt.fetch_server_catalog(root)
+        except mgmt.MgmtUnavailableError:
+            server_reachable = False
+            live_mgmt = False
+    if live_mgmt:
         prev_mgmt = _agent_remote_service_mgmt_snapshot(
             plane_db, existing, root=root, host_name=host_name
         )
@@ -6969,6 +7017,34 @@ def _bootstrap_seed_names(root: Optional[str], state: Optional[dict] = None) -> 
     return names
 
 
+def ensure_enrolled_service_object(plane_db, preset: str, port: int) -> dict:
+    """Project a non-default enrolled target into canonical Service Objects.
+
+    A preset is a template, not permission to reset an enrolled target port.
+    Generated objects never overwrite an operator definition or bypass Server
+    Service Object validation during subsequent Remote Service changes.
+    """
+    port = int(port)
+    if port < 1 or port > 65535:
+        raise ControlPlaneError('Enrolled service target port must be between 1 and 65535')
+    existing = get_service_object(plane_db, preset)
+    if existing and existing['type'] == 'tcp' and int(existing['port']) == port:
+        return dict(existing)
+    name = validate_public_name('enrolled-%s-%s' % (preset, port), 'Service Object name')
+    existing = get_service_object(plane_db, name)
+    if existing:
+        if existing['type'] != 'tcp' or int(existing['port']) != port:
+            raise ControlPlaneError('Enrolled Service Object %s conflicts with an existing definition. No definition was overwritten.' % name)
+        return dict(existing)
+    assert_service_public_name_available(plane_db, name, creating='object')
+    now = utc_now_iso()
+    plane_db.conn.execute(
+        "INSERT INTO service_objects(id, name, type, port, description, row_version, created_at, updated_at) "
+        "VALUES (?, ?, 'tcp', ?, 'Enrolled target', 1, ?, ?)",
+        (_new_id('sobj'), name, port, now, now))
+    return dict(get_service_object(plane_db, name))
+
+
 def project_enrolled_services_into_agent_catalog(
     plane_db,
     *,
@@ -7023,6 +7099,9 @@ def project_enrolled_services_into_agent_catalog(
         ).fetchone()
         if existing is not None:
             continue
+        default_ports = {'ssh': 22, 'http': 80, 'https': 443}
+        enrolled_target_port = int(rec.get('local_port') or default_ports.get(service_obj) or 0)
+        service_obj = ensure_enrolled_service_object(plane_db, service_obj, enrolled_target_port)['name']
         if enrolled_port is not None:
             endpoint_port = enrolled_port
             pending = 0
@@ -7042,8 +7121,8 @@ def project_enrolled_services_into_agent_catalog(
             "INSERT INTO agent_remote_services"
             "(name, destination, destination_client_id, service_object, enabled, status, "
             "endpoint_host, endpoint_port, pending_allocation, delete_pending, pool_class, "
-            "reason, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'normal', ?, ?)",
+            "reason, updated_at, enrollment_seed) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'normal', ?, ?, 1)",
             (
                 name,
                 destination,
@@ -7104,20 +7183,47 @@ def activate_enrolled_services_as_remote_services(
     plane = ControlPlane(root)
     results = project_enrolled_services_into_agent_catalog(plane, root=root, state=data)
     if runtime_verified and results:
+        runtime_ok = True
+        runtime_error = ""
+        try:
+            import drlink_v24_runtime as runtime
+
+            # A successful enrollment-time proxy check proves the bootstrap
+            # generation only. Once the service is projected into the v2.4
+            # catalog, render and verify that authoritative runtime generation
+            # before advertising HEALTHY. Unit tests may explicitly disable
+            # activation and keep the historical verified shortcut.
+            if runtime.runtime_should_apply():
+                applied = runtime.apply_agent_runtime(plane, root=root)
+                runtime_ok = bool(applied.get("ok"))
+                runtime_error = str(applied.get("error") or "")
+        except Exception as exc:
+            runtime_ok = False
+            runtime_error = str(exc)
+
         now = utc_now_iso()
         for item in results:
             view = item.get("view") or {}
             name = view.get("name")
             if not name or not view.get("enabled") or view.get("endpoint_port") is None:
                 continue
-            plane.conn.execute(
-                "UPDATE agent_remote_services SET status = 'HEALTHY', reason = '', "
-                "runtime_verified = 1, updated_at = ? "
-                "WHERE name = ? COLLATE NOCASE AND delete_pending = 0 AND enabled = 1 "
-                "AND endpoint_port IS NOT NULL AND pending_allocation = 0 "
-                "AND reason = 'Runtime activation pending.'",
-                (now, name),
-            )
+            if runtime_ok:
+                plane.conn.execute(
+                    "UPDATE agent_remote_services SET status = 'HEALTHY', reason = '', "
+                    "runtime_verified = 1, updated_at = ? "
+                    "WHERE name = ? COLLATE NOCASE AND delete_pending = 0 AND enabled = 1 "
+                    "AND endpoint_port IS NOT NULL AND pending_allocation = 0 "
+                    "AND (reason = 'Runtime activation pending.' OR reason = '')",
+                    (now, name),
+                )
+            else:
+                reason = runtime_error or "Runtime activation could not be verified."
+                plane.conn.execute(
+                    "UPDATE agent_remote_services SET status = 'DEGRADED', reason = ?, "
+                    "runtime_verified = 0, updated_at = ? "
+                    "WHERE name = ? COLLATE NOCASE AND delete_pending = 0 AND enabled = 1",
+                    (reason[:500], now, name),
+                )
             row = plane.conn.execute(
                 "SELECT status, reason FROM agent_remote_services WHERE name = ? COLLATE NOCASE",
                 (name,),

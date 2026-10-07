@@ -30,13 +30,7 @@ A version file containing `2.4.0` does not by itself make a build stable.
 
 ## 3. Normal update commands
 
-Server:
-
-```text
-system update
-```
-
-Agent Host:
+Server and Agent Host:
 
 ```text
 system update product
@@ -44,6 +38,10 @@ system update engine
 ```
 
 The product update and Relay Engine update are separate lifecycle operations.
+Invoking either command authorizes its software changes and any required service
+restart. Active connections may be interrupted. After the update, check
+`show status` and `system diagnostics`; if it fails, preserve the diagnostic
+output and follow the backup/restore recovery procedure before retrying.
 
 On an enrolled Agent Host, the normal `system update product` path obtains the
 qualified Agent manifest, `SHA256SUMS`, and Agent bundle from that Agent's

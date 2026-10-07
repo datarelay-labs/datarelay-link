@@ -187,10 +187,10 @@ HC = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(HC)
 client_label = HC.client_status_label(active)
 allocator = 'configured' if data.get('allocator_url') else 'missing'
-print('Data Relay Link Client')
+print('Data Relay Link Agent Host')
 print('==========')
 print()
-print(f"Role            : Client")
+print(f"Role            : Agent Host")
 print(f"Project version : {project_version}")
 print(f"Release channel : {release_channel}")
 print(f"Source ref      : {source_ref}")
@@ -202,7 +202,7 @@ print(f"FRP version     : {tested}")
 print(f"Bundle SHA256   : {bundle_sha256}")
 print(f"frpc            : {active}")
 print()
-print(f"Services        : {enabled} enabled / {disabled} disabled")
+print(f"Remote Services : {enabled} enabled / {disabled} disabled")
 print()
 ordered = list(services.items())
 # One bounded, deadline-capped batch: N unreachable targets must not make
@@ -217,7 +217,7 @@ for (sid, item), target in zip(ordered, targets):
         print(f"  public port   : {item.get('remote_port')}")
     print(f"  state         : {state}")
     print(f"  health        : {HC.format_health_config(item.get('health_check'))}")
-    print(f"  CLIENT        : {client_label}")
+    print(f"  AGENT         : {client_label}")
     print(f"  TUNNEL        : {HC.tunnel_status_label(item)}")
     print(f"  TARGET        : {target}")
     print()
@@ -225,11 +225,11 @@ PY
   # Pending draft discoverability (read-only).
   if [[ -f "$(frp_client_draft_path)" ]]; then
     if ! frp_state_has_no_diff "$(frp_client_state_path)" "$(frp_client_draft_path)"; then
-      echo "Pending service changes : YES"
+      echo "Legacy local service draft : PRESENT"
       echo
-      echo "Next:"
-      echo "  system services apply"
-      echo "  system services discard"
+      echo "Current public workflow:"
+      echo "  show remote-services"
+      echo "  system synchronize"
       echo
     fi
   fi
@@ -259,8 +259,8 @@ frp_client_list() {
   frp_load_client_state "$path"
   if [[ -f "$(frp_client_draft_path)" ]] \
     && ! frp_state_has_no_diff "$path" "$(frp_client_draft_path)"; then
-    echo "Pending service changes : YES"
-    echo "Live inventory below. Apply with: system services apply"
+    echo "Legacy local service draft : PRESENT"
+    echo "Current Remote Service inventory follows. Reconcile with: system synchronize"
     echo
   fi
   frp_print_state_services "$path"
@@ -270,8 +270,8 @@ frp_client_info() {
   local path tmp server
   path="$(frp_client_state_path)"
   if [[ ! -f "$path" ]]; then
-    echo "ERROR: This client predates local management state." >&2
-    echo "Re-enroll once with the current bootstrap installer to initialize frp-client management." >&2
+    echo "ERROR: This Agent predates local management state." >&2
+    echo "Re-enroll once with the current bootstrap installer to initialize Agent management." >&2
     return 1
   fi
   frp_load_client_state "$path"
@@ -293,7 +293,7 @@ frp_client_sync() {
   if ! frp_client_reconcile_released_services 1; then
     return 1
   fi
-  echo "Client sync complete."
+  echo "Agent synchronization complete."
 }
 
 frp_select_service_id() {
@@ -345,7 +345,7 @@ menu_add_service() {
 menu_edit_service() {
   local choice sid name host port user
   echo
-  echo "Current services:"
+  echo "Current Remote Services:"
   echo
   frp_print_state_services "$CANDIDATE_FILE"
   choice="$(read_tty "Edit service number: " "")"
@@ -424,7 +424,7 @@ PY
 menu_enable_disable() {
   local choice sid
   echo
-  echo "Current services:"
+  echo "Current Remote Services:"
   echo
   frp_print_state_services "$CANDIDATE_FILE"
   choice="$(read_tty "Service number: " "")"
@@ -509,14 +509,14 @@ PY
   ident_status="$(frp_identity_status)"
   if [[ "$change_class" == runtime ]]; then
     if [[ "$ident_status" == enrolled ]]; then
-      echo "Authentication: existing client identity"
+      echo "Authentication: existing Agent identity"
     elif [[ "$ident_status" == corrupt ]]; then
-      echo "ERROR: this client's management identity is unusable." >&2
+      echo "ERROR: this Agent's management identity is unusable." >&2
       echo "Create a new Enrollment Code on the Data Relay Link server with sudo drlink set enrollment manual," >&2
-      echo "then re-enroll this client. Do not overwrite the damaged identity file automatically." >&2
+      echo "then re-enroll this Agent. Do not overwrite the damaged identity file automatically." >&2
       return 1
     else
-      echo "This is an existing client without a management identity."
+      echo "This is an existing Agent without a management identity."
       echo "A one-time Enrollment Code is required to establish trust."
       echo "Future configuration changes will not require an Enrollment Code."
       echo "Authentication: one-time Enrollment Code"
@@ -536,7 +536,7 @@ PY
   fi
 
   if ! frp_client_reconcile_released_services; then
-    echo "ERROR: cannot apply because client synchronization failed." >&2
+    echo "ERROR: cannot apply because Agent synchronization failed." >&2
     return 1
   fi
   if frp_state_has_no_diff "$current" "$candidate"; then
@@ -565,7 +565,7 @@ PY
   if [[ "$ident_status" == enrolled ]]; then
     auth_mode="identity"
     echo
-    echo "Authenticating client..."
+    echo "Authenticating Agent..."
   else
     echo
     frp_ux_enrollment_help
@@ -581,7 +581,7 @@ PY
     if ! frp_identity_ensure; then
       return 1
     fi
-    echo "Authenticating client..."
+    echo "Authenticating Agent..."
   fi
   echo "Applying configuration..."
 
@@ -622,9 +622,9 @@ PY
     "$machine_id" "$hostname_value" "$candidate" "$allocated" "$meta" "$auth_mode" \
     || enroll_rc=$?
   if [[ "$enroll_rc" -eq 2 && "$auth_mode" == identity ]]; then
-    echo "ERROR: this client's management identity has been revoked." >&2
+    echo "ERROR: this Agent's management identity has been revoked." >&2
     echo "Run the server enrollment command to create a new Enrollment Code," >&2
-    echo "then re-enroll this client." >&2
+    echo "then re-enroll this Agent." >&2
     if [[ -z "${FRP_ENROLLMENT_CODE:-}" && -n "${FRP_CLIENT_CANDIDATE:-}" ]]; then
       rm -rf "$work"
       unset enroll_secret FRP_CLIENT_OPERATION_ID || true
@@ -649,7 +649,7 @@ PY
     enroll_secret="${FRP_ENROLLMENT_CODE#*.}"
     unset FRP_ENROLLMENT_CODE
     auth_mode="enrollment"
-    echo "Authenticating client..."
+    echo "Authenticating Agent..."
     echo "Applying configuration..."
     enroll_rc=0
     frp_enroll_services "$allocator_url" "$enroll_id" "$enroll_secret" \
@@ -834,7 +834,7 @@ PY
   if ! frp_atomic_copy_file "$(frp_client_toml_path)" "$tmp_toml" 0600 \
     || ! frp_atomic_copy_file "$(frp_client_access_path)" "$tmp_access" 0644 \
     || ! frp_atomic_write_json_file "$(frp_client_state_path)" "$tmp_state" 0600; then
-    echo "ERROR: failed to write local client state; previous readable state was kept." >&2
+    echo "ERROR: failed to write local Agent state; previous readable state was kept." >&2
     frp_restore_client_files "$backup" || true
     rm -rf "$work"
     unset enroll_secret token FRP_CLIENT_OPERATION_ID
@@ -944,17 +944,17 @@ import json,sys
 from pathlib import Path
 data=json.loads(Path(sys.argv[1]).read_text())
 print()
-print('Data Relay Link Client Management')
+print('Data Relay Link Agent Management')
 print('=====================')
 print()
-print(f"Client: {data.get('hostname','')}")
+print(f"Agent Host: {data.get('hostname','')}")
 print(f"Server: {data.get('frp_server','')}")
 print()
 print('Values in [brackets] are defaults. Press Enter to accept.')
-print('After enrollment, ordinary changes use this client identity.')
+print('After enrollment, ordinary changes use this Agent identity.')
 print('An Enrollment Code is only needed to establish or recover that identity.')
 print()
-print('Current services:')
+print('Current Remote Services:')
 print()
 PY
     frp_print_state_services "$CANDIDATE_FILE"
@@ -1313,7 +1313,7 @@ frp_client_add_service_cli() {
     echo "ERROR: set service requires an interactive session." >&2
     echo "Run: sudo drlink" >&2
     echo "Then: set service" >&2
-    echo "Or use a Service Profile non-interactively via the guided client menu." >&2
+    echo "Use the current Remote Service workflow through sudo drlink." >&2
     return 2
   fi
   while [[ $# -gt 0 ]]; do

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import json
+import shutil
 import sys
 import tempfile
 import unittest
@@ -17,6 +19,46 @@ import drlink_v24 as v24
 
 
 class RuntimePolicyTests(unittest.TestCase):
+    def test_cache_reopens_replaced_database_after_restore(self):
+        cfg = Path(self.tmp, 'etc/drlink/config.json')
+        cfg.parent.mkdir(parents=True, exist_ok=True)
+        cfg.write_text(json.dumps({'control_plane_root': self.tmp}))
+        self.plane.compile_runtime()
+        cache = RP.ControlPlaneCache(cfg)
+        old_revision = cache.plane.current_revision()
+        with tempfile.TemporaryDirectory(prefix='drlink-rp-restored-') as other:
+            # Model restore's valid database + derived runtime replacement.
+            replacement = ControlPlane(other)
+            replacement.set_object_type('restored', 'host')
+            replacement.set_object_value('restored', '192.0.2.91')
+            replacement.compile_runtime()
+            new_revision = replacement.current_revision()
+            replacement.close()
+            self.plane.close()
+            staging = Path(self.tmp, 'restored.db')
+            shutil.copy2(RP.db_path(other), staging)
+            # Canonical restore purges transient WAL/shared-memory files too.
+            for suffix in ('-wal', '-shm'):
+                auxiliary = Path(str(RP.db_path(self.tmp)) + suffix)
+                if auxiliary.exists():
+                    auxiliary.unlink()
+            os.replace(staging, RP.db_path(self.tmp))
+            shutil.copytree(RP.runtime_dir(other), RP.runtime_dir(self.tmp), dirs_exist_ok=True)
+            try:
+                cache.reload()
+                self.assertIsNone(cache.load_error)
+                self.assertEqual(cache.plane.current_revision(), new_revision)
+                self.assertNotEqual(old_revision, new_revision)
+                self.assertIsNotNone(cache.plane.get_object('restored'))
+                isolated, error, _ = cache.open_isolated()
+                self.assertIsNone(error)
+                try:
+                    self.assertEqual(isolated.current_revision(), new_revision)
+                finally:
+                    isolated.close()
+            finally:
+                if cache.plane:
+                    cache.plane.close()
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="drlink-rp-test-")
         os.environ["FRP_DEPLOY_TEST_ROOT"] = self.tmp

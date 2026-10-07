@@ -50,6 +50,14 @@ class MgmtAuthError(MgmtSyncError):
     """Raised when management identity authentication fails."""
 
 
+class MgmtUnavailableError(MgmtSyncError):
+    """A read-only request found an unavailable management backend.
+
+    Mutating requests, authentication and TLS failures never use this class:
+    callers must not queue intent after an ambiguous remote mutation.
+    """
+
+
 AUTH_REJECTED = (
     "ERROR:\nThe DRLink Server rejected the Agent management identity.\n\n"
     "The Agent may need to be re-enrolled.\n\nNo changes were applied."
@@ -652,6 +660,11 @@ def _request_json(
             parsed_error = ""
         if code in (401, 403):
             _raise_http_auth_error(code, parsed_error or detail)
+        if method.upper() == "GET" and code in (502, 503, 504):
+            raise MgmtUnavailableError(
+                "ERROR:\nDRLink Server management is temporarily unavailable (%s).\n\n"
+                "Retry after the Server management service recovers.\n\nNo changes were applied." % code
+            ) from exc
         raise MgmtSyncError(
             "ERROR:\nServer management request failed (%s).\n\n%s\n\nNo changes were applied."
             % (code, (parsed_error or detail).strip() or exc.reason)
