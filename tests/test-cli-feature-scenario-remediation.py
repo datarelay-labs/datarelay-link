@@ -116,6 +116,31 @@ class CliFeatureScenarioRemediation(unittest.TestCase):
         self.assertEqual(cli._public_revision_command("set network-object client-ip"),
                          "set network-object client-ip")
 
+    def test_revision_remote_service_nouns_do_not_rewrite_stored_history(self):
+        self.plane.upsert_client("b" * 32, label="revision-agent")
+        revision = self.plane.current_revision()
+        for action in ("set", "unset"):
+            with self.subTest(action=action):
+                self.plane.conn.execute(
+                    "UPDATE config_revisions SET command = ?, summary = ? WHERE revision = ?",
+                    (action + " published-service published-service-target",
+                     action + " published service", revision),
+                )
+                self.plane.conn.commit()
+                stored = self.plane.revision_record(revision)
+                for tokens in (["system", "revisions"], ["system", "revision", str(revision)]):
+                    rc, out, err = self._dispatch(tokens)
+                    self.assertEqual(rc, 0, err)
+                    self.assertIn(action + " remote-service published-service-target", out)
+                    self.assertNotIn(action + " published-service ", out)
+                    if tokens[1] == "revision":
+                        self.assertIn(action + " Remote Service", out)
+                        self.assertNotIn(action + " published service", out)
+                self.assertEqual(self.plane.revision_record(revision), stored)
+                self.assertEqual(self.plane.current_revision(), revision)
+        self.assertEqual(cli._public_revision_command("set network-object published-service-target"),
+                         "set network-object published-service-target")
+
     def test_undeclared_options_reject_question_help_like_direct_commands(self):
         paths = (["system", "update"], ["system", "update", "product"],
                  ["system", "update", "engine"], ["show", "status"],

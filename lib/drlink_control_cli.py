@@ -1294,6 +1294,8 @@ def _public_revision_command(value: str) -> str:
         ("unset client-group ", "unset managed-host-group "),
         ("set client ", "set managed-host "),
         ("unset client ", "unset managed-host "),
+        ("set published-service ", "set remote-service "),
+        ("unset published-service ", "unset remote-service "),
     ):
         if text.startswith(old):
             return current + text[len(old):]
@@ -1307,6 +1309,8 @@ def _public_revision_summary(value: str) -> str:
         "add client group member": "add Managed Host Group member",
         "remove client group member": "remove Managed Host Group member",
         "delete client group": "delete Managed Host Group",
+        "set published service": "set Remote Service",
+        "unset published service": "unset Remote Service",
     }.get(str(value), str(value))
 
 
