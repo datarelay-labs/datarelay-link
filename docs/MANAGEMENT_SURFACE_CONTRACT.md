@@ -14,19 +14,20 @@ Data Relay Link 3.0 exposes one Core management model through several surfaces:
                                 │
                     Core Management Service
                                 │
-       ┌────────────────────────┼────────────────────────┐
-       │                        │                        │
-       ▼                        ▼                        ▼
- complete local CLI       Web API adapter        Management MCP adapter
-                                 │                        │
-                                 ▼                        ▼
-                           Web Management          direct MCP clients
-                                                        │
-                                                        ▼
-                                               optional Plugin relay
-                                                        │
-                                                        ▼
-                                                     ChatGPT
+       ┌──────────────────┬──────────────────┬──────────────────┐
+       │                  │                  │                  │
+       ▼                  ▼                  ▼                  ▼
+ complete local CLI  Web API adapter  Automation API     Management MCP
+                         │            adapter             adapter
+                         ▼               │                  │
+                   Web Management        ▼                  ▼
+                                   automation clients   direct MCP clients
+                                                            │
+                                                            ▼
+                                                   optional Plugin relay
+                                                            │
+                                                            ▼
+                                                         ChatGPT
 ```
 
 The surfaces may differ in presentation, but they must not differ in authorization,
@@ -37,7 +38,7 @@ Agent ownership, recovery truth, or failure behavior.
 
 This contract does **not**:
 
-- turn the Web `/api/v1` namespace into a public automation API;
+- turn the Web `/api/v1` namespace into a public automation API; public automation uses a separate `/automation/v1/` adapter;
 - make the optional Plugin/relay part of Core availability;
 - require ChatGPT, Web Management, or any external service for CLI/Core recovery;
 - make MCP a second policy or authorization engine;
@@ -79,8 +80,10 @@ Browser
   → Core Management Service
 ```
 
-The Web API is initially an internal first-party browser contract. A later public API
-decision may promote part of it, but Plugin/MCP must not depend on Web API stability.
+The Web API is an internal first-party browser contract and remains so in 3.0. Public
+automation is provided by a separate versioned Automation API adapter over the same Core
+Management Service. Plugin/MCP must not depend on either Web endpoint shapes or Automation
+API transport details.
 
 Web adds visualization, guided workflows, forms, rich diff/preview, graphs, Attention,
 and confirmation UX. It owns no alternate authoritative state.
@@ -130,6 +133,24 @@ The relay does **not**:
 - convert an upstream DENY into ALLOW;
 - synthesize product state from relay-local data.
 
+### 3.5 Automation API is a machine-management adapter
+
+```text
+automation client
+  → /automation/v1/
+  → Automation API adapter
+  → Core Management Service
+```
+
+The Automation API is a stable machine contract for bounded management automation. It
+authenticates local scoped Service Accounts, not browser sessions and not AI Identities.
+Security-relevant mutations use the same Change Plan/revision/audit semantics as CLI/Web.
+Service Account token possession grants only the explicit management permissions bound to
+that account; it never implies target-OS AI permissions, Plugin binding, or recovery authority.
+
+Restore, operator/MFA recovery, protected-secret export, and other RECOVERY_AUTHORITY remain
+local CLI/Web authority in 3.0.
+
 ## 4. Surface roles
 
 ### 4.1 CLI
@@ -164,11 +185,20 @@ Its highest-value 3.0 uses are:
 - Emergency New-Access Cutoff preview and tightly authorized apply;
 - Job inspection and safe diagnostic operations.
 
-Recovery authority, operator-security administration, and other high-risk system lifecycle
-operations remain outside the default Plugin surface. DRL3-3 Web system status, redacted
-certificate status, certificate preflight, and backup validation are Core-owned OBSERVE/TEST
-operations and are not new Plugin tools. Backup validation reuses the canonical restore
-validator with zero authoritative mutation; restore itself remains `RECOVERY_AUTHORITY`.
+Recovery authority, operator-security administration, Managed Host admission mutation,
+Agent rollout start/resume/rollback, Service Account administration, webhook secret/config
+mutation, and other high-risk system lifecycle operations remain outside the default Plugin
+surface. DRL3-3 Web system status, redacted certificate status, certificate preflight, and
+backup validation are Core-owned OBSERVE/TEST operations and are not new Plugin tools.
+Backup validation reuses the canonical restore validator with zero authoritative mutation;
+restore itself remains `RECOVERY_AUTHORITY`.
+
+### 4.4 Automation API
+
+Automation API is the supported machine-to-machine management surface. It provides a
+subset of Core operations selected by explicit Service Account permissions and the public
+Automation API contract. It is never authenticated by Web cookies, never exposes display-
+once secrets after issuance, and never creates a second authorization or policy engine.
 
 ## 5. Management permission boundary
 
@@ -203,6 +233,10 @@ management-job-observe
 management-job-run
 management-config
 management-recovery
+management-host-admission
+management-update-rollout
+management-automation-admin
+management-notification-config
 ```
 
 These names are public 3.0 capability values. They are separate from target-OS permissions
@@ -308,6 +342,15 @@ NO          intentionally not exposed in 3.0
 | Active connection termination | COND | COND | NO | P2/conditional; not 3.0 GA blocker |
 | Job status/result | FULL | FULL | READ | bounded |
 | Safe diagnostic Job start | FULL | FULL | CONTROLLED | only approved job families |
+| Managed Host admission state | FULL | FULL | READ | approval/quarantine mutation is local/API dedicated authority |
+| Managed Host approve/quarantine/restore | FULL | FULL | NO | requires management-host-admission + Change Plan |
+| Access Hygiene findings | FULL | FULL | READ | recommendation-only; MCP uses drlink_access_hygiene |
+| Staged Agent rollout status | FULL | FULL | READ through Job status | no Plugin lifecycle mutation |
+| Staged Agent rollout start/pause/resume | FULL | FULL | NO | Automation API allowed only with management-update-rollout |
+| Service Account status | FULL | FULL | NO | non-secret metadata only |
+| Service Account/token administration | FULL | FULL | NO | local Admin; management-automation-admin |
+| Webhook delivery status | FULL | FULL | READ through Attention/audit | no endpoint secret |
+| Webhook endpoint/config/test | FULL | FULL | NO | management-notification-config; secret display-once |
 | Broad/destructive fleet actions | NO | NO | NO | outside 3.0 |
 | ConfigurationBundle test/diff | FULL | FULL | READ | no secret distribution |
 | ConfigurationBundle apply | FULL | FULL | NO by default | may be separately designed later |
@@ -393,6 +436,26 @@ The Plugin must not:
 - receive protected payloads;
 - substitute relay-local logs for authoritative DRLink audit;
 - claim a root cause when Core reports UNKNOWN.
+
+### 9.5 Managed Host Admission and Quarantine
+
+Inventory may expose PENDING_APPROVAL / APPROVED / QUARANTINED. Plugin/MCP may explain
+that state but does not mutate it in 3.0. Local CLI/Web and the Automation API with
+`management-host-admission` use the same Core Change Plan. Admission state is not
+connectivity state, trust revoke, or retirement.
+
+### 9.6 Access Hygiene
+
+`drlink_access_hygiene` is a bounded read-only Management MCP query over the Core hygiene
+read model. Results carry evidence-window and evidence-quality metadata. UNKNOWN_EVIDENCE
+is never converted into an unused/stale claim, and MCP may not auto-apply remediation.
+
+### 9.7 Staged Agent Updates and Webhooks
+
+MCP may inspect rollout Job status and Attention/audit effects but does not start/resume/
+rollback Agent rollouts in 3.0. MCP may observe webhook-delivery degradation through
+Attention/audit but receives neither endpoint configuration nor signing secrets. Public
+machine mutation belongs to the separate Automation API with dedicated permissions.
 
 ## 10. Web / Plugin experience relationship
 
@@ -481,6 +544,7 @@ drlink_emergency_cutoff_clear
 drlink_job_list
 drlink_job_get
 drlink_diagnostic_job_start
+drlink_access_hygiene
 ```
 
 Their required permission, operation class, Plugin exposure, input schema, and MCP
@@ -634,6 +698,13 @@ HIGH_RISK_PLUGIN_DEFAULT_EXCLUSION=PASS
 STALE_CHANGE_PLAN_FAIL_CLOSED=PASS
 PER_CALL_AI_ACCESS_AUTHORIZATION=PASS
 CORE_WITHOUT_WEB_PLUGIN=PASS
+MANAGED_HOST_ADMISSION_CROSS_SURFACE=PASS
+STAGED_AGENT_UPDATE_AUTHORITY_BOUNDARY=PASS
+AUTOMATION_API_CORE_SEMANTIC_PARITY=PASS
+AUTOMATION_API_WEB_API_SEPARATION=PASS
+SERVICE_ACCOUNT_PERMISSION_ISOLATION=PASS
+SIGNED_WEBHOOK_SECRET_EXCLUSION_FROM_MCP=PASS
+ACCESS_HYGIENE_READ_ONLY_MCP_PARITY=PASS
 ```
 
 Exact Plugin acceptance remains separate from direct Core MCP acceptance. A passing direct

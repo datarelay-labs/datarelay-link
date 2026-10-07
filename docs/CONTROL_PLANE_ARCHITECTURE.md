@@ -1474,7 +1474,8 @@ Optional Full Web Management must not implement a second control plane.
 ```text
 CLI / Wizard ───────────────┐
 ConfigurationBundle ────────┤
-Optional Web Management ────┼→ Core Domain / Management Interface
+Optional Web Management ────┤
+Automation API ─────────────┼→ Core Domain / Management Interface
 MCP / integration adapters ─┘              │
                                            ▼
                                Change Plan / Policy Engine
@@ -1621,7 +1622,7 @@ authority.
 
 ```text
 Management Inputs
-CLI / Web / Bundle / MCP
+CLI / Web / Bundle / Automation API / MCP
           │
           ├───────────────┐
           ▼               ▼
@@ -1707,6 +1708,10 @@ AUTHORITATIVE
   local TOTP MFA enrollment + recovery metadata (secret material follows protected-credential handling)
   Temporary Access expiry on supported policy grants
   Emergency New-Access Cutoff security state
+  Managed Host admission / quarantine state
+  local Service Account identities / permissions / token verifiers
+  webhook endpoint/event configuration + protected signing-secret verifier/material
+  Access Hygiene review-threshold configuration
   saved policy-regression tests
   security-relevant management configuration
 
@@ -1717,6 +1722,8 @@ OPERATIONAL
   browser sessions
   bounded live-access observations
   Job / per-target execution state
+  staged Agent rollout progress
+  webhook delivery queue/backoff state
   transient Attention state
 
 DURABLE_EVENT_TRANSPORT
@@ -1725,6 +1732,7 @@ DURABLE_EVENT_TRANSPORT
 
 DERIVED
   dashboard / inventory / effective-access read models
+  Access Hygiene findings / evidence-quality summaries
 ```
 
 Authoritative state follows migration, revision/audit where applicable, backup, restore,
@@ -1743,7 +1751,7 @@ ingested. After ingestion/checkpoint, normal retention owns lifecycle.
 Derived state is never included as recovery authority and must be rebuildable.
 
 Detailed Data Relay Link 3.0 implementation and UX requirements are defined in
-`docs/WEB_MANAGEMENT.md`.
+`docs/WEB_MANAGEMENT.md` and `docs/COMPETITIVE_EXPANSION_3_0.md`.
 
 ## 47. Security-impact confirmation
 
