@@ -172,6 +172,21 @@ grep -q 'State mutation             : NO' "$WORKDIR/check.out" || fail "check-on
 [[ ! -d "$CHECK/var/lib/drlink/backups" ]] || fail "check-only created backup"
 pass "CHECK_ONLY_NO_MUTATION"
 
+# Current fresh installs have only the derived inventory, not registry.json.
+# Both check and update must accept it and preserve its bytes.
+CURRENT="$WORKDIR/current-inventory"
+setup_tree "$CURRENT"
+mkdir -p "$CURRENT/var/lib/drlink/runtime"
+mv "$CURRENT/var/lib/drlink/registry.json" "$CURRENT/var/lib/drlink/runtime/client-inventory.json"
+CURRENT_INVENTORY_BEFORE="$(sha "$CURRENT/var/lib/drlink/runtime/client-inventory.json")"
+run_local "$CURRENT" --check >"$WORKDIR/current-check.out"
+grep -q 'State mutation             : NO' "$WORKDIR/current-check.out" || fail "current inventory check"
+run_local "$CURRENT" >"$WORKDIR/current-update.out"
+grep -q 'Server project update completed successfully' "$WORKDIR/current-update.out" || fail "current inventory update"
+[[ "$(sha "$CURRENT/var/lib/drlink/runtime/client-inventory.json")" == "$CURRENT_INVENTORY_BEFORE" ]] || fail "current inventory changed"
+[[ ! -e "$CURRENT/var/lib/drlink/registry.json" ]] || fail "retired inventory recreated"
+pass "CURRENT_INVENTORY_UPDATE_AND_PRESERVATION"
+
 # Successful local update installs management files and preserves all server state.
 OK="$WORKDIR/ok"
 setup_tree "$OK"

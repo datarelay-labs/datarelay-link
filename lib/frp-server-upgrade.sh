@@ -1002,11 +1002,21 @@ frp_server_upgrade_rollback() {
   return 0
 }
 
+frp_server_upgrade_registry_path() {
+  local current
+  current="$(frp_server_fs /var/lib/drlink/runtime/client-inventory.json)"
+  if [[ -f "$current" ]]; then
+    printf '%s' "$current"
+  else
+    frp_server_fs /var/lib/drlink/registry.json
+  fi
+}
+
 frp_server_upgrade_precheck_egress_port() {
   # Fail closed before mutation if Egress listen is owned by a published service.
   local cfg_file registry_file
   cfg_file="$(frp_server_fs /etc/drlink/config.json)"
-  registry_file="$(frp_server_fs /var/lib/drlink/registry.json)"
+  registry_file="$(frp_server_upgrade_registry_path)"
   [[ -f "$cfg_file" && -f "$registry_file" ]] || return 0
   local infra_mod=""
   if [[ -n "${BASE_DIR:-}" && -f "$BASE_DIR/lib/frp_infrastructure_ports.py" ]]; then
@@ -1348,7 +1358,7 @@ frp_server_apply_project_upgrade() {
   fi
   [[ -f "$(frp_server_fs /etc/drlink/config.json)" ]] &&
   [[ -s "$(frp_server_fs /etc/frp/server_token)" ]] &&
-  [[ -f "$(frp_server_fs /var/lib/drlink/registry.json)" ]] &&
+  [[ -f "$(frp_server_upgrade_registry_path)" ]] &&
   [[ -f "$(frp_server_fs /etc/drlink/pki/ca.crt)" ]] || {
     echo "ERROR: no complete existing Data Relay Link server installation was found" >&2
     return 1
