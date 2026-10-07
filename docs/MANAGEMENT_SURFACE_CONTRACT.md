@@ -1,7 +1,7 @@
 # Data Relay Link 3.0 — Management Surface Contract
 
 > **Status:** Normative 3.0 design contract
-> **Applies to:** CLI, Optional Full Web Management, MCP/AI integration, and the optional `datarelay-link-plugin`
+> **Applies to:** CLI, Optional Full Web Management, Public Automation API, MCP/AI integration, and the optional `datarelay-link-plugin`
 > **Primary authority:** `PRODUCT_MASTER.md`, `DATA_RELAY_ROADMAP.md`
 > **Purpose:** Keep one management meaning across every surface without duplicating product logic.
 
@@ -14,13 +14,13 @@ Data Relay Link 3.0 exposes one Core management model through several surfaces:
                                 │
                     Core Management Service
                                 │
-       ┌────────────────────────┼────────────────────────┐
-       │                        │                        │
-       ▼                        ▼                        ▼
- complete local CLI       Web API adapter        Management MCP adapter
-                                 │                        │
-                                 ▼                        ▼
-                           Web Management          direct MCP clients
+       ┌──────────────────┬─────┴─────┬──────────────────┐
+       │                  │           │                  │
+       ▼                  ▼           ▼                  ▼
+ complete local CLI  Web API adapter  Public Automation  Management MCP
+                         │             API adapter         adapter
+                         ▼                 │                  │
+                   Web Management    Service Accounts     direct MCP clients
                                                         │
                                                         ▼
                                                optional Plugin relay
@@ -37,7 +37,7 @@ Agent ownership, recovery truth, or failure behavior.
 
 This contract does **not**:
 
-- turn the Web `/api/v1` namespace into a public automation API;
+- make the browser-internal Web `/api/v1` namespace itself the public automation contract; 3.0 uses a separate supported automation namespace/adapter;
 - make the optional Plugin/relay part of Core availability;
 - require ChatGPT, Web Management, or any external service for CLI/Core recovery;
 - make MCP a second policy or authorization engine;
@@ -66,7 +66,12 @@ The Core Management Service owns:
 - Agent RPC ownership and truthful offline results;
 - Temporary Access expiry evaluation;
 - Emergency New-Access Cutoff state;
-- bounded management Jobs.
+- bounded management Jobs, including staged Agent update rollout;
+- Managed Host approval/quarantine state;
+- Service Account authorization for the Public Automation API;
+- signed event-Webhook configuration/delivery health;
+- Access Hygiene derived recommendations;
+- optional lightweight JIT request state that only materializes Temporary Access.
 
 No adapter may reproduce these semantics independently.
 
@@ -79,8 +84,9 @@ Browser
   → Core Management Service
 ```
 
-The Web API is initially an internal first-party browser contract. A later public API
-decision may promote part of it, but Plugin/MCP must not depend on Web API stability.
+The Web API remains an internal first-party browser contract. The supported Public
+Automation API is a separate adapter/namespace over Core; neither Plugin/MCP nor automation
+clients depend on browser Web API stability.
 
 Web adds visualization, guided workflows, forms, rich diff/preview, graphs, Attention,
 and confirmation UX. It owns no alternate authoritative state.
@@ -123,12 +129,29 @@ The relay:
 
 The relay does **not**:
 
-- call the DRLink Web API as a management backend;
+- call the DRLink Web API or Public Automation API as a management backend;
 - invent management tools;
 - filter tools to create a second authorization policy;
 - cache DRLink authorization decisions;
 - convert an upstream DENY into ALLOW;
 - synthesize product state from relay-local data.
+
+### 3.5 Public Automation API is a separate supported adapter
+
+```text
+Service Account
+  → /api/automation/v1
+  → Public Automation API adapter
+  → Core Management Service
+```
+
+The Public Automation API exposes only a versioned allowlisted Core capability subset.
+It does not reuse browser cookies/CSRF/session state, does not depend on Web Management
+being installed, and does not expose internal Web endpoint shapes as a public contract.
+Service Account permissions are management permissions only; credentials are display-once,
+revocable/rotatable and optional-expiry, and every call retains service-account actor/audit
+attribution. Automation cannot bypass Change Plan, expected revision, confirmation/risk,
+Job, reference protection, or recovery exclusions.
 
 ## 4. Surface roles
 
@@ -141,7 +164,7 @@ The CLI remains:
 - available without Web or Plugin;
 - capable of expressing all authoritative 3.0 management state.
 
-A Web-only or Plugin-only authoritative operation is prohibited.
+A Web-only, Public-Automation-API-only, or Plugin-only authoritative operation is prohibited.
 
 ### 4.2 Web
 
@@ -149,7 +172,13 @@ Web is the complete graphical management surface for supported normal administra
 Where an operation is intentionally shell/recovery-only, Web records that classification
 in the capability parity ledger.
 
-### 4.3 Plugin/MCP
+### 4.3 Public Automation API
+
+The Public Automation API is the supported non-interactive management surface for scripts,
+CI/CD, and operator-owned integrations. It is narrower than full local recovery authority
+and uses scoped Service Accounts rather than human browser sessions or AI Identity.
+
+### 4.4 Plugin/MCP
 
 Plugin/MCP is a **bounded assisted-management surface**, not a second full admin console.
 
@@ -201,6 +230,11 @@ management-temporary-access
 management-emergency-cutoff
 management-job-observe
 management-job-run
+management-host-approve
+management-update
+management-webhook
+management-automation-admin
+management-access-request
 management-config
 management-recovery
 ```
@@ -225,7 +259,7 @@ Every Core management operation exposed through an adapter has one operation cla
 | RECOVERY_AUTHORITY | High-risk recovery/security authority | restore, uninstall, operator/MFA recovery administration | not exposed to Plugin in 3.0 |
 
 An operation's class is part of the Core capability catalog and must not differ between
-Web and MCP.
+CLI, Web, Public Automation API, and MCP.
 
 ## 7. Shared mutation protocol
 
@@ -246,7 +280,7 @@ intent
   → truthful result
 ```
 
-Web and MCP do not receive special bypasses.
+Web, Public Automation API, and MCP do not receive special bypasses.
 
 ### 7.1 Change Plan binding
 
@@ -308,6 +342,12 @@ NO          intentionally not exposed in 3.0
 | Active connection termination | COND | COND | NO | P2/conditional; not 3.0 GA blocker |
 | Job status/result | FULL | FULL | READ | bounded |
 | Safe diagnostic Job start | FULL | FULL | CONTROLLED | only approved job families |
+| Managed Host approval/quarantine | FULL | FULL | NO by default | dedicated management-host-approve; pre-approved enrollment supported |
+| Managed Update / staged rollout | FULL | FULL | NO | bounded Job; dedicated management-update; no arbitrary package execution |
+| Public Automation API / Service Accounts | FULL local administration | FULL administration/status | NO | separate adapter/credentials; management-automation-admin controls principal lifecycle |
+| Signed Event Webhook | FULL | FULL | READ status only | dedicated management-webhook for config; Plugin cannot receive signing secret |
+| Access Hygiene recommendations | FULL | FULL | READ | derived evidence; never auto-mutates |
+| Lightweight JIT request/approval | FULL if stretch ships | FULL if stretch ships | NO by default | P2 stretch; dedicated management-access-request; approval creates Temporary Access |
 | Broad/destructive fleet actions | NO | NO | NO | outside 3.0 |
 | ConfigurationBundle test/diff | FULL | FULL | READ | no secret distribution |
 | ConfigurationBundle apply | FULL | FULL | NO by default | may be separately designed later |
@@ -393,6 +433,42 @@ The Plugin must not:
 - receive protected payloads;
 - substitute relay-local logs for authoritative DRLink audit;
 - claim a root cause when Core reports UNKNOWN.
+
+### 9.5 Managed Host Approval / Quarantine
+
+CLI/Web own normal approval administration. A pending Host remains visible for review but
+is not a normal trusted target. Plugin may read bounded pending/approval status when
+`management-read` permits it, but approval mutation is not exposed by default. Pre-approved
+enrollment is created only through authorized local/admin automation and remains bound to
+the immutable enrollment/Host identity.
+
+### 9.6 Managed Update / Staged Rollout
+
+Rollout is a JOB-class operation with explicit target set, immutable artifact/provenance,
+canary/first wave, bounded concurrency, and failure-pause policy. CLI/Web can start and
+control the rollout with `management-update`; Plugin is limited to status/diagnosis in
+3.0. No adapter may turn rollout into arbitrary command/package execution.
+
+### 9.7 Public Automation API / Service Accounts
+
+Automation clients authenticate as Service Accounts and receive only their configured
+management permissions. The adapter exposes a versioned allowlist of Core capabilities,
+uses the same Change Plan/expected-revision/risk classes, and never inherits browser or
+MCP authorization. Service Account lifecycle is Admin-only and fully audited.
+
+### 9.8 Signed Event Webhook / Access Hygiene
+
+Webhook configuration is local Admin authority. Delivery contains only versioned,
+secret-safe events with stable IDs and signatures; the Plugin may inspect health but never
+receives signing secrets. Access Hygiene is OBSERVE-only derived output with evidence
+quality and cannot trigger automatic lock/delete/policy mutation.
+
+### 9.9 Lightweight JIT request / approval — P2 stretch
+
+If shipped, requester and reviewer are distinct principals. One Admin Approve/Deny action
+may create the same Temporary Access grant already defined by Core. Multi-stage approval,
+self-approval, recurring entitlements, external workflow engines, and automatic renewal are
+outside the stretch contract. Plugin approval is disabled by default.
 
 ## 10. Web / Plugin experience relationship
 
