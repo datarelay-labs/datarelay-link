@@ -27,6 +27,7 @@ python3 tests/test-enrollment-retention-recovery-guidance.py
 python3 tests/test-public-help-required-operands.py
 python3 tests/test-native-restore-confirmation.py
 python3 tests/test-native-public-consent.py
+python3 tests/test-enrollment-public-guidance.py
 python3 tests/test-no-legacy-current-surface.py
 python3 tests/test-canonical-runtime-policy.py
 python3 tests/test-v24-final-closure.py

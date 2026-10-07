@@ -228,6 +228,7 @@ python3 tests/test-enrollment-retention-recovery-guidance.py
 python3 tests/test-public-help-required-operands.py
 python3 tests/test-native-restore-confirmation.py
 python3 tests/test-native-public-consent.py
+python3 tests/test-enrollment-public-guidance.py
 python3 tests/test-release-attest-binding.py
 python3 tests/test-stable-publication-projection.py
 ./tests/test-release-gate-target.sh

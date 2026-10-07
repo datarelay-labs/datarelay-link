@@ -2027,6 +2027,7 @@ def public_option_rejection(tokens):
     # Enrollment / zero-touch / destination create flows are prompt-driven.
     # Other commands may still accept catalog-declared hidden machine flags.
     guided_prefixes = (
+        ("set", "enrollment"),
         ("create", "enrollment"),
         ("create", "enrollments"),
         ("create", "zero-touch"),
@@ -2040,9 +2041,10 @@ def public_option_rejection(tokens):
         ("zero-touch", "create"),
         ("egress", "add-destination"),
     )
+    guided_focus = focus[1:] if focus[:1] == ["help"] else focus
     is_guided = False
     for prefix in guided_prefixes:
-        if tuple(focus[: len(prefix)]) == prefix:
+        if tuple(guided_focus[: len(prefix)]) == prefix:
             is_guided = True
             break
     if bad not in ("-", "--") and not is_guided:
@@ -2108,9 +2110,15 @@ def _public_input_option_error(tokens):
     if opt_err is not None:
         return opt_err
     allowed = _machine_allowed_flags(tokens)
+    help_focus = list(tokens[1:]) if list(tokens[:1]) == ["help"] else list(tokens)
     for tok in tokens:
         raw = str(tok)
-        if raw in ("-h", "--help") or raw.split("=", 1)[0] in allowed:
+        # Binary meta-flags belong at the root, except documented uninstall help.
+        # Never forward an unsupported help request into a lifecycle effect.
+        if raw in ("-h", "--help"):
+            if help_focus[:2] == ["system", "uninstall"]:
+                continue
+        elif raw.split("=", 1)[0] in allowed:
             continue
         if raw == "--" or raw.startswith("--") or (
             len(raw) >= 2 and raw.startswith("-")
@@ -3548,8 +3556,8 @@ def _match_create(tokens, role, names=None):
         if len(tokens) > 2:
             return incomplete(
                 "Unexpected arguments.",
-                ["create zero-touch"],
-                tip="Prefer: set client   (or help clients)",
+                ["set enrollment zero-touch"],
+                tip="Type: set enrollment zero-touch ?",
             )
         return {"status": "ok", "action": "create_zero_touch"}
     if resource == "enrollment":
