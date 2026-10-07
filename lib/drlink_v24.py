@@ -49,7 +49,7 @@ PERMISSION_TO_CAPS = {
     "process-read": ("list_processes",),
     "file-read": ("read_file",),
     "command-exec": ("exec",),
-    "file-write": ("write_file",),
+    "file-write": ("write_file", "delete_file"),
     "file-upload": ("upload_file",),
     "file-download": ("download_file",),
 }

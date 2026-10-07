@@ -197,7 +197,7 @@ class RemoteConnectorInteropTests(unittest.TestCase):
         self.bridge.close()
         self.plane.close()
 
-    def _auth_code(self, client_id="ro-agent"):
+    def _auth_code(self, client_id="ro-agent", scope="drlink.ai offline_access"):
         verifier = "B" * 43
         challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest()).decode("ascii").rstrip("=")
         resource = self.bridge.canonical_resource()
@@ -210,7 +210,7 @@ class RemoteConnectorInteropTests(unittest.TestCase):
                 "code_challenge_method": "S256",
                 "resource": resource,
                 "state": "s1",
-                "scope": "drlink.ai offline_access",
+                "scope": scope,
             }
         )
 
@@ -250,6 +250,72 @@ class RemoteConnectorInteropTests(unittest.TestCase):
             ).read().decode("utf-8")
         )
         return issued, resource
+
+    def test_oauth_grants_only_requested_optional_scope(self):
+        issued, _resource = self._auth_code("ro-agent", scope="drlink.ai")
+        self.assertEqual(issued["scope"], "drlink.ai")
+        self.assertNotIn("refresh_token", issued)
+        print("OAUTH_SCOPE_LEAST_PRIVILEGE=PASS")
+
+    def test_dcr_registered_scope_bounds_authorize(self):
+        def register(scope_marker=True):
+            meta = {
+                "redirect_uris": ["http://127.0.0.1/scope-cb"],
+                "token_endpoint_auth_method": "none",
+                "grant_types": ["authorization_code", "refresh_token"],
+                "client_name": "scope-bound-dcr",
+            }
+            if scope_marker:
+                meta["scope"] = "drlink.ai"
+            return json.loads(urllib.request.urlopen(
+                urllib.request.Request(
+                    self.base + "/oauth/register",
+                    data=json.dumps(meta).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                ), timeout=10
+            ).read().decode("utf-8"))
+
+        limited = register(True)
+        self.assertEqual(limited["scope"], "drlink.ai")
+        verifier = "S" * 43
+        challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest()).decode("ascii").rstrip("=")
+
+        def authorize(scope):
+            qs = urllib.parse.urlencode({
+                "response_type": "code",
+                "client_id": limited["client_id"],
+                "redirect_uri": "http://127.0.0.1/scope-cb",
+                "code_challenge": challenge,
+                "code_challenge_method": "S256",
+                "resource": self.bridge.canonical_resource(),
+                "scope": scope,
+            })
+            return urllib.request.urlopen(self.base + "/oauth/authorize?" + qs, timeout=10)
+
+        with self.assertRaises(urllib.error.HTTPError) as cm:
+            authorize("drlink.ai offline_access")
+        self.assertEqual(cm.exception.code, 400)
+        self.assertEqual(json.loads(cm.exception.read())["error"], "invalid_scope")
+
+        page = authorize("drlink.ai").read().decode("utf-8")
+        self.assertIn("approve-oauth", page)
+        pending = self.plane.conn.execute(
+            "SELECT id FROM ai_oauth_pending WHERE client_id = ?", (limited["client_id"],)
+        ).fetchone()
+        self.plane.approve_oauth_pending(pending["id"], "ro-agent", retain_for_browser=False)
+        bound = self.plane.conn.execute(
+            "SELECT scope FROM ai_oauth_clients WHERE client_id = ?", (limited["client_id"],)
+        ).fetchone()
+        self.assertEqual(bound["scope"], "drlink.ai")
+        with self.assertRaises(urllib.error.HTTPError) as cm:
+            authorize("drlink.ai offline_access")
+        self.assertEqual(cm.exception.code, 400)
+        self.assertEqual(json.loads(cm.exception.read())["error"], "invalid_scope")
+
+        defaulted = register(False)
+        self.assertEqual(defaulted["scope"], "drlink.ai offline_access")
+        print("DCR_REGISTERED_SCOPE_BOUND=PASS")
 
     def test_discovery_pkce_refresh_dcr_cimd_and_binding(self):
         status, _, headers = rpc(self.url, {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}})
@@ -302,6 +368,7 @@ class RemoteConnectorInteropTests(unittest.TestCase):
             "exec",
             "read_file",
             "write_file",
+            "delete_file",
             "upload_file",
             "download_file",
             "list_processes",
@@ -363,6 +430,7 @@ class RemoteConnectorInteropTests(unittest.TestCase):
                             "token_endpoint_auth_method": "none",
                             "grant_types": ["authorization_code", "refresh_token"],
                             "client_name": "interop-dcr",
+                            "scope": "drlink.ai offline_access",
                         }
                     ).encode("utf-8"),
                     headers={"Content-Type": "application/json"},
@@ -372,6 +440,7 @@ class RemoteConnectorInteropTests(unittest.TestCase):
             ).read().decode("utf-8")
         )
         self.assertTrue(reg["client_id"].startswith("drcid_"))
+        self.assertEqual(reg["scope"], "drlink.ai offline_access")
         verifier = "C" * 43
         challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest()).decode("ascii").rstrip("=")
         qs = urllib.parse.urlencode(
@@ -425,6 +494,73 @@ class RemoteConnectorInteropTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIn("Host-A", json.dumps(payload))
         self.assertNotIn("Host-B", json.dumps(payload))
+        # DCR and authorize must reject scopes outside the advertised contract.
+        bad = urllib.request.Request(
+            self.base + "/oauth/register",
+            data=json.dumps({
+                "redirect_uris": ["http://127.0.0.1/bad"],
+                "token_endpoint_auth_method": "none",
+                "scope": "drlink.ai drlink.write",
+            }).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with self.assertRaises(urllib.error.HTTPError) as cm:
+            urllib.request.urlopen(bad, timeout=10)
+        self.assertEqual(cm.exception.code, 400)
+        bad_qs = urllib.parse.urlencode({
+            "response_type": "code", "client_id": reg["client_id"],
+            "redirect_uri": "http://127.0.0.1/cb2", "code_challenge": challenge,
+            "code_challenge_method": "S256", "resource": resource,
+            "scope": "drlink.ai drlink.write",
+        })
+        with self.assertRaises(urllib.error.HTTPError) as cm:
+            urllib.request.urlopen(self.base + "/oauth/authorize?" + bad_qs, timeout=10)
+        self.assertEqual(cm.exception.code, 400)
+        self.assertEqual(json.loads(cm.exception.read())["error"], "invalid_scope")
+        # A DCR client registered with only drlink.ai must stay narrow after approval.
+        narrow = json.loads(urllib.request.urlopen(
+            urllib.request.Request(
+                self.base + "/oauth/register",
+                data=json.dumps({
+                    "redirect_uris": ["http://127.0.0.1/cb3"],
+                    "token_endpoint_auth_method": "none",
+                    "grant_types": ["authorization_code", "refresh_token"],
+                    "client_name": "interop-dcr-narrow",
+                    "scope": "drlink.ai",
+                }).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            ), timeout=10
+        ).read().decode("utf-8"))
+        self.assertEqual(narrow["scope"], "drlink.ai")
+        narrow_qs = urllib.parse.urlencode({
+            "response_type": "code", "client_id": narrow["client_id"],
+            "redirect_uri": "http://127.0.0.1/cb3", "code_challenge": challenge,
+            "code_challenge_method": "S256", "resource": resource, "scope": "drlink.ai",
+        })
+        narrow_page = urllib.request.urlopen(self.base + "/oauth/authorize?" + narrow_qs, timeout=10).read().decode("utf-8")
+        self.assertIn("approve-oauth", narrow_page)
+        narrow_pending = self.plane.conn.execute(
+            "SELECT id FROM ai_oauth_pending WHERE client_id = ?", (narrow["client_id"],)
+        ).fetchone()
+        self.plane.approve_oauth_pending(narrow_pending["id"], "ro-agent", retain_for_browser=False)
+        bound = self.plane.conn.execute(
+            "SELECT scope FROM ai_oauth_clients WHERE client_id = ?", (narrow["client_id"],)
+        ).fetchone()
+        self.assertEqual(bound["scope"], "drlink.ai")
+        widened_qs = urllib.parse.urlencode({
+            "response_type": "code", "client_id": narrow["client_id"],
+            "redirect_uri": "http://127.0.0.1/cb3", "code_challenge": challenge,
+            "code_challenge_method": "S256", "resource": resource,
+            "scope": "drlink.ai offline_access",
+        })
+        with self.assertRaises(urllib.error.HTTPError) as cm:
+            urllib.request.urlopen(self.base + "/oauth/authorize?" + widened_qs, timeout=10)
+        self.assertEqual(cm.exception.code, 400)
+        self.assertIn("scope", cm.exception.read().decode("utf-8").lower())
+        print("MCP_DCR_CLIENT_SCOPE_PERSISTENCE=PASS")
+        print("MCP_DCR_SCOPE_CONTRACT=PASS")
         print("MCP_DCR_SUPPORTED=YES")
         print("OAUTH_TO_AI_PRINCIPAL_MAPPING=PASS")
         print("CROSS_HOST_AUTH_BYPASS=NO")
