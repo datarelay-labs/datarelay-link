@@ -3508,6 +3508,7 @@ class ControlPlane:
             )
 
         managed_host_refs: list[str] = []
+        admission_blocked_hosts: list[str] = []
         for name in src_matches:
             obj = self.get_object(name)
             if not obj or obj["type"] != "managed_endpoint":
@@ -3520,9 +3521,17 @@ class ControlPlane:
             if endpoint and endpoint["client_id"]:
                 managed_host_refs.append(str(endpoint["client_id"]))
                 client = self.conn.execute(
-                    "SELECT label, hostname FROM clients WHERE id = ?",
+                    "SELECT label,hostname,trust_status,admission_state,status "
+                    "FROM clients WHERE id = ?",
                     (endpoint["client_id"],),
                 ).fetchone()
+                # Only an unambiguously matched Managed Host is subject to
+                # its admission override; other source IPs keep existing policy.
+                if (client is None
+                    or str(client["trust_status"] or "") != "trusted"
+                    or str(client["admission_state"] or "") != "APPROVED"
+                    or str(client["status"] or "").lower() in ("retired", "removed", "deleted")):
+                    admission_blocked_hosts.append(str(endpoint["client_id"]))
                 if client:
                     if client["label"]:
                         managed_host_refs.append(str(client["label"]))
@@ -3542,6 +3551,17 @@ class ControlPlane:
                 dict(item, action="DENY", cutoff=True) for item in candidate_results
             ]
             reason = cutoff_reason(cutoff)
+
+        if admission_blocked_hosts:
+            # Quarantine overrides even disabled/no-policy Internet Access;
+            # never return previously-authorized DNS candidates to the proxy.
+            action = "DENY"
+            authorized_candidates = []
+            candidate_results = [
+                dict(item, action="DENY", admission_override=True)
+                for item in candidate_results
+            ]
+            reason = "Managed Host admission is not approved for Internet Access"
 
         return {
             "source_ip": source_ip,
@@ -3563,8 +3583,9 @@ class ControlPlane:
             "mode": pol["mode"],
             "enforcement": pol["enforcement"],
             "action": action,
-            "implicit": winner is None and cutoff is None,
+            "implicit": winner is None and cutoff is None and not admission_blocked_hosts,
             "cutoff": cutoff,
+            "admission_override": bool(admission_blocked_hosts),
             "reason": reason,
             "effective": action,
         }

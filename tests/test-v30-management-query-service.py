@@ -580,6 +580,7 @@ class V30ManagementQueryServiceTests(unittest.TestCase):
                 "drlink_live_access",
                 "drlink_job_list",
                 "drlink_job_get",
+                "drlink_access_hygiene",
             },
         )
 

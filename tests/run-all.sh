@@ -279,6 +279,9 @@ python3 tests/test-v30-remote-service-management.py
 python3 tests/test-v30-emergency-cutoff.py
 python3 tests/test-v30-management-jobs.py
 python3 tests/test-v30-management-job-transport.py
+python3 tests/test-v30-rollout-waves.py
+python3 tests/test-v30-host-admission-runtime.py
+python3 tests/test-v30-internet-admission-runtime.py
 python3 tests/test-v30-management-scalability.py
 python3 tests/test-v30-management-mixed-load.py
 python3 tests/test-v30-additive-management-schema.py

@@ -341,6 +341,80 @@ class ManagementJobEngine:
         ).fetchone()
         return bool(row and int(row[0] or 0))
 
+    def _rollout_claim_allowed_unlocked(self, row, *, now_text: str) -> bool:
+        """Enforce canary-first, pause and per-wave concurrency within the claim lock.
+
+        This is a management Job scheduling safety boundary, not an Agent updater.
+        Rollout claims must never fan out just because rows are queued.
+        """
+        job_id = str(row["job_id"])
+        target = str(row["target_id"])
+        try:
+            payload = json.loads(str(row["payload_json"] or "{}"))
+            if not isinstance(payload, dict):
+                return False
+            canary_list = payload.get("canary_targets") or []
+            if not isinstance(canary_list, list) or any(
+                not isinstance(host, str) or not host for host in canary_list
+            ):
+                return False
+            canaries = set(canary_list)
+            wave_size = int(payload["wave_size"])
+            threshold = int(payload["failure_threshold_percent"])
+            if wave_size < 1 or wave_size > MAX_ROLLOUT_WAVE_SIZE or not 0 <= threshold <= 100:
+                raise ValueError("invalid scheduling bounds")
+        except (TypeError, KeyError, ValueError, json.JSONDecodeError):
+            return False
+        if payload.get("operator_paused") or payload.get("rollout_state") in ("PAUSED", "HALTED"):
+            return False
+
+        states = {
+            str(r["target_id"]): str(r["status"])
+            for r in self.conn.execute(
+                "SELECT target_id,status FROM management_job_targets WHERE job_id=?",
+                (job_id,),
+            )
+        }
+        if not canaries.issubset(states):
+            return False
+
+        def halt(reason: str) -> bool:
+            payload["rollout_state"] = "HALTED"
+            payload["halt_reason"] = reason
+            self.conn.execute(
+                "UPDATE management_jobs SET payload_json=?,last_error=?,updated_at=? WHERE id=?",
+                (_json(payload, field="Managed Update rollout payload"), reason, now_text, job_id),
+            )
+            self.conn.execute(
+                "UPDATE management_job_targets SET status='CANCELLED',finished_at=?,"
+                "updated_at=?,error=? WHERE job_id=? AND status='QUEUED'",
+                (now_text, now_text, reason, job_id),
+            )
+            self._refresh_job_status(job_id, now_text=now_text)
+            return False
+
+        if any(states[host] in (FAILED, CANCELLED) for host in canaries):
+            return halt("CANARY_FAILED")
+        if canaries and not all(states[host] == SUCCEEDED for host in canaries):
+            if target not in canaries:
+                return False
+        elif payload.get("rollout_state") == "CANARY":
+            payload["rollout_state"] = "WAVE"
+            self.conn.execute(
+                "UPDATE management_jobs SET payload_json=?,updated_at=? WHERE id=?",
+                (_json(payload, field="Managed Update rollout payload"), now_text, job_id),
+            )
+
+        completed = sum(s in TERMINAL_STATUSES for s in states.values())
+        failures = sum(s == FAILED for s in states.values())
+        if failures and completed and 100 * failures >= threshold * completed:
+            return halt("FAILURE_THRESHOLD_REACHED")
+
+        running = sum(s == RUNNING for s in states.values())
+        if running >= wave_size:
+            return False
+        return True
+
     def _claim_targets_unlocked(
         self,
         *,
@@ -351,6 +425,12 @@ class ManagementJobEngine:
     ) -> list[dict[str, Any]]:
         worker = _bounded_text(worker_id, field="Management Job worker")
         count = max(1, min(int(limit), MAX_CLAIM_BATCH))
+        # A small requested claim batch must not hide eligible canaries behind
+        # alphabetically earlier non-canary targets or other paused jobs.
+        scan_limit = min(
+            MAX_ACTIVE_JOBS * MAX_JOB_TARGETS,
+            max(count, self.max_targets * min(self.max_active_jobs, MAX_ACTIVE_JOBS)),
+        )
         current_dt = now or _utc_now()
         current = _utc_text(current_dt)
         lease_until = _utc_text(current_dt + timedelta(seconds=self.lease_seconds))
@@ -367,7 +447,7 @@ class ManagementJobEngine:
                     "WHERE t.status='QUEUED' AND j.status IN ('QUEUED','RUNNING') "
                     "AND j.cancel_requested=0 AND j.deadline_at>? AND t.target_id=? "
                     "ORDER BY j.created_at,t.target_id LIMIT ?",
-                    (current, target_filter, count),
+                    (current, target_filter, scan_limit),
                 ).fetchall()
             else:
                 rows = self.conn.execute(
@@ -377,11 +457,15 @@ class ManagementJobEngine:
                     "WHERE t.status='QUEUED' AND j.status IN ('QUEUED','RUNNING') "
                     "AND j.cancel_requested=0 AND j.deadline_at>? "
                     "ORDER BY j.created_at,t.target_id LIMIT ?",
-                    (current, count),
+                    (current, scan_limit),
                 ).fetchall()
             claimed: list[dict[str, Any]] = []
             for row in rows:
+                if len(claimed) >= count:
+                    break
                 if str(row["job_type"]) == ROLLOUT_JOB_TYPE:
+                    if not self._rollout_claim_allowed_unlocked(row, now_text=current):
+                        continue
                     host = self.conn.execute(
                         "SELECT trust_status,admission_state,status FROM clients WHERE id=?",
                         (str(row["target_id"]),),
@@ -507,6 +591,19 @@ class ManagementJobEngine:
                     (str(error)[:1024], current, str(job_id)),
                 )
             self._refresh_job_status(str(job_id), now_text=current)
+            if terminal == FAILED:
+                # Record a failed canary or reached batch threshold immediately,
+                # before a subsequent worker polls the remaining queue.
+                rollout = self.conn.execute(
+                    "SELECT id AS job_id,job_type,payload_json FROM management_jobs WHERE id=?",
+                    (str(job_id),),
+                ).fetchone()
+                if rollout and str(rollout["job_type"]) == ROLLOUT_JOB_TYPE:
+                    self._rollout_claim_allowed_unlocked(
+                        {"job_id": str(job_id), "target_id": str(target_id),
+                         "payload_json": rollout["payload_json"]},
+                        now_text=current,
+                    )
             self.conn.execute("COMMIT")
         except Exception:
             self._rollback()
@@ -623,7 +720,13 @@ class ManagementJobEngine:
         Agent-owned and no SQLite transaction is held while an Agent updates.
         """
         target_ids = _normalize_targets(targets, max_targets=self.max_targets)
-        canaries = _normalize_targets(canary_targets, max_targets=self.max_targets) if tuple(canary_targets) else ()
+        # Materialize a caller-provided iterator once; consuming it to check
+        # emptiness must not silently discard the actual canary selection.
+        requested_canaries = tuple(canary_targets)
+        canaries = (
+            _normalize_targets(requested_canaries, max_targets=self.max_targets)
+            if requested_canaries else ()
+        )
         unknown = sorted(set(canaries) - set(target_ids))
         if unknown:
             raise ControlPlaneError("Rollout canary target is outside the explicit target set.")
@@ -634,6 +737,10 @@ class ManagementJobEngine:
             raise ControlPlaneError("Rollout wave size and failure threshold must be integers.") from exc
         if size < 1 or size > min(MAX_ROLLOUT_WAVE_SIZE, self.max_targets):
             raise ControlPlaneError("Rollout wave size is outside the bounded 3.0 range.")
+        # When no explicit canary is provided, treat the first bounded wave
+        # as the canary gate instead of fanning out to every Agent immediately.
+        if not canaries:
+            canaries = tuple(target_ids[:size])
         if threshold < 0 or threshold > MAX_ROLLOUT_FAILURE_THRESHOLD:
             raise ControlPlaneError("Rollout failure threshold must be between 0 and 100 percent.")
         if not isinstance(artifact, dict):
@@ -692,7 +799,21 @@ class ManagementJobEngine:
                     raise ControlPlaneError("Completed rollout cannot be paused or resumed.")
                 payload = json.loads(str(row["payload_json"] or "{}"))
                 payload["operator_paused"] = verb == "pause"
-                payload["rollout_state"] = "PAUSED" if verb == "pause" else "WAVE"
+                if verb == "pause":
+                    payload["rollout_state"] = "PAUSED"
+                else:
+                    canaries = payload.get("canary_targets") or []
+                    states = {
+                        str(target["target_id"]): str(target["status"])
+                        for target in self.conn.execute(
+                            "SELECT target_id,status FROM management_job_targets WHERE job_id=?",
+                            (str(job_id),),
+                        )
+                    }
+                    payload["rollout_state"] = (
+                        "WAVE" if canaries and all(states.get(host) == SUCCEEDED for host in canaries)
+                        else "CANARY"
+                    )
                 self.conn.execute(
                     "UPDATE management_jobs SET payload_json=?,updated_at=? WHERE id=?",
                     (_json(payload, field="Managed Update rollout payload"), utc_now_iso(), str(job_id)),
