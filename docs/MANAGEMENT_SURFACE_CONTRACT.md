@@ -548,6 +548,36 @@ assert health, or authorize the next rollout wave. The verified candidate
 must be re-bound at the authorized Agent-side Apply boundary, followed by
 actual runtime/health and rollback qualification.
 
+An optional **Agent-owned private signed-candidate stage** is implemented by
+`stage_enrolled_server_candidate` in
+`lib/drlink_v30_agent_artifact_transport.py`. It uses the same one-time
+CA-authenticated HTTPS fetch and pinned signer/source/artifact verification
+as the read-only preflight, and writes the *exact verified downloaded bytes*
+to a caller-selected, pre-existing private (0700) staging parent. Each
+new candidate directory and its `agent/` directory are private (0700);
+manifest, detached signature and Agent bundle files are mode 0600.
+The stage does not include an installer invocation, a shell command, a
+service restart, a rollback mutation, or a public API operation. The
+candidate path is returned only after both cryptographic checks pass.
+Failures discard the new candidate, while existing staged candidates are
+left unchanged. A private per-Agent staging parent accepts at most three
+pending signed candidate directories; a nonblocking local directory lock
+serializes slot reservation across Agent workers. When the limit is reached
+the new request fails before downloading files. Existing candidates are never
+automatically removed, because an interrupted update might still require
+operator recovery and immutable provenance inspection.
+
+An installer must never trust the path or its receipt alone: immediately
+before any separately authorized update, it must call
+`verify_staged_enrolled_candidate` with an independently configured release
+public key, pinned key fingerprint, expected immutable target SHA/version/
+channel, and the private candidate directory. The recheck rejects modified
+files, unexpected entries, permissive modes and symlinked directories/files.
+Staging, its receipt, or this recheck still cannot set
+`update_completed`, `post_update_health_verified` or
+`rollback_verified`; future real updater and health/rollback validation
+are separate release gates.
+
 ### 9.7 Public Automation API / Service Accounts
 
 Automation clients authenticate as Service Accounts and receive only their configured

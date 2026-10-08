@@ -869,6 +869,192 @@ class SignedAgentEnrolledHTTPSTests(unittest.TestCase):
         ])
         self.assertFalse((self.root / "usr/local/bin/drlink").exists())
 
+    def _stage(self, parent=None, **overrides):
+        from drlink_v30_agent_artifact_transport import (
+            stage_enrolled_server_candidate,
+        )
+
+        kwargs = {
+            "enrolled_https_origin": self.origin,
+            "enrollment_ca_file": self.ca,
+            "trusted_release_public_key_file": self.fixture.pub,
+            "pinned_release_key_fingerprint": self.fixture.fingerprint,
+            "target": self.fixture.target,
+            "expected_channel": "development",
+            "staging_parent": parent or self._private_stage_parent(),
+        }
+        kwargs.update(overrides)
+        return stage_enrolled_server_candidate(**kwargs)
+
+    def _private_stage_parent(self):
+        parent = self.root / "private-agent-stage"
+        parent.mkdir(mode=0o700, exist_ok=True)
+        return parent
+
+    def test_verified_download_is_retained_private_and_reverified_before_use(self):
+        import stat
+        from drlink_v30_agent_artifact_transport import verify_staged_enrolled_candidate
+
+        staged = self._stage()
+        directory = Path(staged["candidate_dir"])
+        self.assertTrue(staged["candidate_staged"])
+        self.assertEqual(staged["source_ref"], self.fixture.target["source_ref"])
+        self.assertFalse(staged["update_completed"])
+        self.assertFalse(staged["post_update_health_verified"])
+        self.assertFalse(staged["rollback_verified"])
+        self.assertEqual(
+            stat.S_IMODE(directory.stat().st_mode), 0o700,
+        )
+        for path, original in (
+            (directory / "manifest.json", self.payloads["/artifacts/manifest.json"]),
+            (directory / "agent/manifest.sig", self.payloads["/artifacts/agent/manifest.sig"]),
+            (directory / "agent/bootstrap-client.sh", self.payloads["/artifacts/agent/bootstrap-client.sh"]),
+        ):
+            self.assertEqual(path.read_bytes(), original)
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+        verified = verify_staged_enrolled_candidate(
+            candidate_dir=directory,
+            trusted_release_public_key_file=self.fixture.pub,
+            pinned_release_key_fingerprint=self.fixture.fingerprint,
+            target=self.fixture.target, expected_channel="development",
+        )
+        self.assertTrue(verified["signature_verified"])
+        self.assertFalse(verified["update_completed"])
+        self.assertFalse((self.root / "usr/local/bin/drlink").exists())
+        self.assertEqual(len(self.requests), 3)
+
+    def test_staged_bundle_signature_and_file_substitution_fail_closed(self):
+        from drlink_v30_agent_artifact import AgentArtifactError
+        from drlink_v30_agent_artifact_transport import verify_staged_enrolled_candidate
+
+        staged = self._stage()
+        directory = Path(staged["candidate_dir"])
+        def reverify():
+            return verify_staged_enrolled_candidate(
+                candidate_dir=directory,
+                trusted_release_public_key_file=self.fixture.pub,
+                pinned_release_key_fingerprint=self.fixture.fingerprint,
+                target=self.fixture.target, expected_channel="development",
+            )
+        bundle = directory / "agent/bootstrap-client.sh"
+        old = bundle.read_bytes()
+        bundle.write_bytes(old + b"altered")
+        with self.assertRaises(AgentArtifactError):
+            reverify()
+        bundle.write_bytes(old)
+        signature = directory / "agent/manifest.sig"
+        previous_signature = signature.read_bytes()
+        signature.write_bytes(b"invalid-signature\n")
+        with self.assertRaises(AgentArtifactError):
+            reverify()
+        signature.write_bytes(previous_signature)
+        outside = self.root / "not-an-agent.sh"
+        outside.write_bytes(old)
+        bundle.unlink()
+        bundle.symlink_to(outside)
+        with self.assertRaises(AgentArtifactError):
+            reverify()
+        bundle.unlink()
+        bundle.write_bytes(old)
+        (directory / "agent/extra-script.sh").write_bytes(b"unexpected")
+        with self.assertRaises(AgentArtifactError):
+            reverify()
+
+    def test_staged_agent_directory_symlink_is_never_accepted(self):
+        from drlink_v30_agent_artifact import AgentArtifactError
+        from drlink_v30_agent_artifact_transport import verify_staged_enrolled_candidate
+
+        candidate = Path(self._stage()["candidate_dir"])
+        agent = candidate / "agent"
+        moved = self.root / "relocated-agent-directory"
+        agent.rename(moved)
+        agent.symlink_to(moved, target_is_directory=True)
+        with self.assertRaises(AgentArtifactError):
+            verify_staged_enrolled_candidate(
+                candidate_dir=candidate,
+                trusted_release_public_key_file=self.fixture.pub,
+                pinned_release_key_fingerprint=self.fixture.fingerprint,
+                target=self.fixture.target, expected_channel="development",
+            )
+
+    def test_invalid_signed_download_leaves_no_persistent_candidate(self):
+        from drlink_v30_agent_artifact import AgentArtifactError
+
+        parent = self._private_stage_parent()
+        self.redirect = True
+        with self.assertRaises(AgentArtifactError):
+            self._stage(parent=parent)
+        self.assertEqual(list(parent.iterdir()), [])
+        self.redirect = False
+        self.requests.clear()
+        self.payloads["/artifacts/agent/bootstrap-client.sh"] += b"changed"
+        with self.assertRaises(AgentArtifactError):
+            self._stage(parent=parent)
+        self.assertEqual(list(parent.iterdir()), [])
+
+    def test_candidate_staging_refuses_unbounded_accumulation(self):
+        from drlink_v30_agent_artifact import AgentArtifactError
+
+        parent = self._private_stage_parent()
+        existing = [Path(self._stage(parent=parent)["candidate_dir"]) for _ in range(3)]
+        self.assertEqual(len(list(parent.iterdir())), 3)
+        requests_before = len(self.requests)
+        with self.assertRaises(AgentArtifactError):
+            self._stage(parent=parent)
+        # A rejected fourth update must not retry downloads, delete old
+        # candidates, or silently reuse a stale candidate.
+        self.assertEqual(len(self.requests), requests_before)
+        self.assertEqual({p.name for p in parent.iterdir()},
+                         {p.name for p in existing})
+        self.assertTrue(all(p.is_dir() for p in existing))
+
+    def test_parallel_staging_has_no_more_than_three_candidate_slots(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from drlink_v30_agent_artifact import AgentArtifactError
+        from drlink_v30_agent_artifact_transport import verify_staged_enrolled_candidate
+
+        parent = self._private_stage_parent()
+
+        def attempt(_):
+            try:
+                return self._stage(parent=parent)["candidate_dir"]
+            except AgentArtifactError:
+                return None
+
+        with ThreadPoolExecutor(max_workers=5) as workers:
+            outcomes = list(workers.map(attempt, range(5)))
+        created = [Path(item) for item in outcomes if item is not None]
+        self.assertGreaterEqual(len(created), 1)
+        self.assertLessEqual(len(created), 3)
+        self.assertEqual(
+            {item.name for item in created},
+            {item.name for item in parent.iterdir()},
+        )
+        for item in created:
+            report = verify_staged_enrolled_candidate(
+                candidate_dir=item,
+                trusted_release_public_key_file=self.fixture.pub,
+                pinned_release_key_fingerprint=self.fixture.fingerprint,
+                target=self.fixture.target, expected_channel="development",
+            )
+            self.assertTrue(report["signature_verified"])
+            self.assertFalse(report["update_completed"])
+
+    def test_candidate_staging_requires_independent_private_directory(self):
+        from drlink_v30_agent_artifact import AgentArtifactError
+
+        parent = self.root / "public-stage"
+        parent.mkdir(mode=0o755)
+        with self.assertRaises(AgentArtifactError):
+            self._stage(parent=parent)
+        self.assertEqual(list(parent.iterdir()), [])
+        alias = self.root / "stage-symlink"
+        private = self._private_stage_parent()
+        alias.symlink_to(private, target_is_directory=True)
+        with self.assertRaises(AgentArtifactError):
+            self._stage(parent=alias)
+        self.assertEqual(list(private.iterdir()), [])
+
     def test_redirect_and_signed_bundle_tamper_fail_closed(self):
         from drlink_v30_agent_artifact import AgentArtifactError
 
