@@ -53,6 +53,10 @@ project usr/local/lib/drlink/drlink_v30_cutoff.py 0644 lib/drlink_v30_cutoff.py 
 project usr/local/lib/drlink/drlink_v30_audit.py 0644 lib/drlink_v30_audit.py python
 project usr/local/lib/drlink/drlink_v30_live.py 0644 lib/drlink_v30_live.py python
 project usr/local/lib/drlink/drlink_v30_jobs.py 0644 lib/drlink_v30_jobs.py python
+# Signed Agent distribution staging; no signing key, publisher, or automatic Apply.
+project usr/local/lib/drlink/drlink_agent_payload.py 0644 lib/drlink_agent_payload.py python
+project usr/local/lib/drlink/drlink_v30_agent_artifact.py 0644 lib/drlink_v30_agent_artifact.py python
+project usr/local/lib/drlink/drlink_v30_signed_distribution.py 0644 lib/drlink_v30_signed_distribution.py python
 project usr/local/lib/drlink/drlink_v30_capability.py 0644 lib/drlink_v30_capability.py python
 project usr/local/lib/drlink/drlink_v30_readmodels.py 0644 lib/drlink_v30_readmodels.py python
 project usr/local/lib/drlink/drlink_management_catalog.py 0644 lib/drlink_management_catalog.py python

@@ -504,6 +504,31 @@ manifest, detached signature, pinned release public key, Agent bundle, exact
 source HEAD, version, digest and channel; it never installs or rolls back files
 and is not a public `drlink` command.
 
+The Server-side **offline signed candidate stage** builds on the existing
+qualified artifact manifest and `SHA256SUMS`, without changing the ordinary
+v2.4 update behavior. The release owner signs the **exact manifest bytes**
+outside the Server; the offline stage only accepts this pre-existing detached
+signature, the independently installed ECDSA P-256 release verification public
+key, and its operator-pinned SHA-256 public-key fingerprint. The stage verifies
+all existing Server-local artifact hashes plus exact Agent SHA/version/channel
+and writes a fresh **unpublished** candidate tree containing
+`agent/manifest.sig`. This sidecar is addressable at
+`/artifacts/agent/manifest.sig` only **after** a separately approved publish
+copies the reviewed distribution to the Server. No private release-signing key
+may appear in the repository, Agent payload, Server distribution or stage;
+the enrollment/machine identity key never serves as a signing root. Never
+infer the trusted release key from bytes downloaded with the candidate.
+
+The internal `lib/drlink_v30_signed_distribution.py` APIs
+`stage_signed_candidate` and `verify_signed_server_tree` are offline
+tools and have no effect on installed Server artifact directories, HTTP
+publication, update authority or Agent lifecycle. Staged file contents,
+release-key fingerprint, signing provenance, protected key rotation, the
+release-controlled publish step, Agent-owned updater execution, and real
+health/rollback must all pass separate qualification before staged rollout
+Apply becomes available. This feature does not grant permission to publish
+artifacts or provision keys.
+
 ### 9.7 Public Automation API / Service Accounts
 
 Automation clients authenticate as Service Accounts and receive only their configured

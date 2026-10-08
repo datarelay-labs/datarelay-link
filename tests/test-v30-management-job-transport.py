@@ -553,5 +553,184 @@ class SignedRolloutArtifactOfflineTests(unittest.TestCase):
             verify_installed_agent_lineage(target_root, verified_bundle=verified)
 
 
+
+class SignedDistributionStagingTests(unittest.TestCase):
+    """Offline Server-side detached-signature staging with test-only keys."""
+
+    def setUp(self):
+        import hashlib
+
+        import drlink_qualified_artifacts as qa
+
+        self.tmp = tempfile.TemporaryDirectory(prefix="drlink-v30-dist-stage-")
+        self.root = Path(self.tmp.name)
+        self.unsigned = self.root / "unsigned"
+        agent_dir = self.unsigned / "agent"
+        agent_dir.mkdir(parents=True)
+        self.staging = self.root / "staging"
+        self.staging.mkdir()
+        self.key = self.root / "release-test-only.key"
+        self.pub = self.root / "release-test-only.pub"
+        MGMT.generate_keypair(self.key, self.pub)
+        self.fingerprint = MGMT.pubkey_fingerprint(self.pub.read_text())
+        self.agent = agent_dir / "bootstrap-client.sh"
+        self.agent.write_bytes(b"#!/bin/sh\nexit 0\n")
+        self.target = {
+            "source_ref": "a" * 40,
+            "version": "3.0.0",
+            "sha256": hashlib.sha256(self.agent.read_bytes()).hexdigest(),
+        }
+        manifest = {
+            "schema_version": 1,
+            "drlink_version": qa.DRLINK_VERSION,
+            "frp_version": qa.FRP_VERSION,
+            "qualification_status": "PASS",
+            "channel": "development",
+            "source_head": self.target["source_ref"],
+            "git_ref": self.target["source_ref"],
+            "immutable_source_ref": self.target["source_ref"],
+            "project_version": self.target["version"],
+            "artifacts": [{
+                "artifact_type": "agent-installer",
+                "platform": "linux",
+                "architecture": "any",
+                "relative_path": "agent/bootstrap-client.sh",
+                "source_head": self.target["source_ref"],
+                "sha256": self.target["sha256"],
+                "size": self.agent.stat().st_size,
+            }],
+        }
+        self.manifest = self.unsigned / "manifest.json"
+        self.manifest.write_text(json.dumps(manifest, sort_keys=True) + "\n")
+        (self.unsigned / "SHA256SUMS").write_text(
+            self.target["sha256"] + "  agent/bootstrap-client.sh\n"
+        )
+        self.signature = self.root / "manifest.sig"
+        self.signature.write_text(
+            MGMT.sign_message(self.key, self.manifest.read_bytes()) + "\n"
+        )
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _stage(self, **overrides):
+        from drlink_v30_signed_distribution import stage_signed_candidate
+
+        args = {
+            "unsigned_artifact_root": self.unsigned,
+            "detached_signature_file": self.signature,
+            "trusted_release_public_key_file": self.pub,
+            "pinned_release_key_fingerprint": self.fingerprint,
+            "target": self.target,
+            "expected_channel": "development",
+            "staging_parent": self.staging,
+        }
+        args.update(overrides)
+        return stage_signed_candidate(**args)
+
+    def test_external_signature_stages_separate_unpublished_tree(self):
+        import drlink_qualified_artifacts as qa
+        from drlink_v30_signed_distribution import (
+            SIGNATURE_REL, verify_signed_server_tree,
+        )
+
+        before = self.manifest.read_bytes()
+        staged = self._stage()
+        new_root = Path(staged["candidate_path"])
+        self.assertNotEqual(new_root, self.unsigned)
+        self.assertTrue(new_root.is_dir())
+        self.assertTrue(staged["staged_signature_verified"])
+        self.assertFalse(staged["published"])
+        self.assertFalse(staged["update_completed"])
+        self.assertFalse(staged["rollback_verified"])
+        self.assertEqual(staged["signed_manifest_endpoint"],
+                         "/artifacts/agent/manifest.sig")
+        self.assertEqual(
+            qa.resolve_http_path(new_root, "/artifacts/agent/manifest.sig"),
+            new_root / SIGNATURE_REL,
+        )
+        self.assertEqual((new_root / "manifest.json").read_bytes(), before)
+        self.assertFalse((self.unsigned / SIGNATURE_REL).exists())
+        report = verify_signed_server_tree(
+            new_root,
+            trusted_release_public_key_file=self.pub,
+            pinned_release_key_fingerprint=self.fingerprint,
+            target=self.target, expected_channel="development",
+        )
+        self.assertTrue(report["staged_signature_verified"])
+        self.assertEqual(report["target"]["source_ref"], self.target["source_ref"])
+        self.assertFalse(report["target"]["post_update_health_verified"])
+
+    def test_pinned_key_and_signature_are_not_trusted_from_distribution(self):
+        from drlink_v30_agent_artifact import AgentArtifactError
+
+        for bad_pin in ("0" * 64, "bad-fingerprint", ""):
+            with self.subTest(bad_pin=bad_pin), self.assertRaises(AgentArtifactError):
+                self._stage(pinned_release_key_fingerprint=bad_pin)
+        other_key = self.root / "untrusted-release.key"
+        other_pub = self.root / "untrusted-release.pub"
+        MGMT.generate_keypair(other_key, other_pub)
+        self.signature.write_text(
+            MGMT.sign_message(other_key, self.manifest.read_bytes()) + "\n"
+        )
+        with self.assertRaises(AgentArtifactError):
+            self._stage()
+        self.assertEqual(list(self.staging.iterdir()), [])
+        # The candidate cannot carry its own replacement release trust anchor.
+        self.signature.write_text(
+            MGMT.sign_message(self.key, self.manifest.read_bytes()) + "\n"
+        )
+        imported_pub = self.unsigned / "release-public.pem"
+        imported_pub.write_text(self.pub.read_text())
+        with self.assertRaises(AgentArtifactError):
+            self._stage(trusted_release_public_key_file=imported_pub)
+        self.assertEqual(list(self.staging.iterdir()), [])
+
+    def test_tamper_missing_sidecar_symlink_and_extra_sidecar_fail_closed(self):
+        from drlink_v30_agent_artifact import AgentArtifactError
+        from drlink_v30_signed_distribution import verify_signed_server_tree
+
+        staged = self._stage()
+        new_root = Path(staged["candidate_path"])
+        bundle = new_root / "agent/bootstrap-client.sh"
+        bundle.write_bytes(bundle.read_bytes() + b"tampered")
+        with self.assertRaises(AgentArtifactError):
+            verify_signed_server_tree(
+                new_root,
+                trusted_release_public_key_file=self.pub,
+                pinned_release_key_fingerprint=self.fingerprint,
+                target=self.target, expected_channel="development",
+            )
+        signature = self.unsigned / "agent/manifest.sig"
+        signature.write_text(self.signature.read_text())
+        with self.assertRaises(AgentArtifactError):
+            self._stage()
+        signature.unlink()
+        link = self.unsigned / "agent/untrusted-symlink"
+        link.symlink_to(self.key)
+        with self.assertRaises(AgentArtifactError):
+            self._stage()
+
+    def test_unsigned_extra_agent_payload_file_cannot_enter_signed_stage(self):
+        from drlink_v30_agent_artifact import AgentArtifactError
+
+        (self.unsigned / "agent/unlisted-installer.sh").write_bytes(
+            b"#!/bin/sh\\necho unsigned-extra\\n"
+        )
+        with self.assertRaises(AgentArtifactError):
+            self._stage()
+        self.assertEqual(list(self.staging.iterdir()), [])
+
+    def test_server_install_manifest_includes_offline_verifier_only(self):
+        from frp_project_files import load_entries
+
+        entries = load_entries(ROOT / "lib/server-project-files.manifest")
+        included = {item.source for item in entries}
+        self.assertIn("lib/drlink_v30_agent_artifact.py", included)
+        self.assertIn("lib/drlink_v30_signed_distribution.py", included)
+        self.assertIn("lib/drlink_agent_payload.py", included)
+        self.assertNotIn("lib/drlink-v30-signing-private-key.pem", included)
+
+
 if __name__ == "__main__":
     unittest.main()
