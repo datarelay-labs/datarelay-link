@@ -131,6 +131,77 @@ class StagedRolloutSchedulingTests(unittest.TestCase):
                               "sha256": "b" * 64}, wave_size=1, now=self.now,
                 )
 
+    def test_preview_never_enqueues_and_matches_canary_scheduler(self):
+        before = self.engine.conn.execute("SELECT COUNT(*) FROM management_jobs").fetchone()[0]
+        preview = self.engine.preview_rollout(
+            targets=("a-first", "b-second", "z-canary"),
+            canary_targets=("z-canary",),
+            requested_by="ops-admin", artifact=self.artifact,
+            wave_size=1,
+        )
+        self.assertTrue(preview["read_only"])
+        self.assertTrue(preview["eligible"])
+        self.assertEqual(preview["targets"], ["a-first", "b-second", "z-canary"])
+        self.assertEqual(preview["canary_targets"], ["z-canary"])
+        self.assertEqual(preview["target_count"], 3)
+        self.assertEqual(preview["wave_size"], 1)
+        self.assertEqual(preview["artifact"]["source_ref"], "a" * 40)
+        self.assertEqual(
+            self.engine.conn.execute("SELECT COUNT(*) FROM management_jobs").fetchone()[0],
+            before,
+        )
+        actual = self._start()
+        self.assertEqual(preview["canary_targets"], actual["payload"]["canary_targets"])
+
+    def test_preview_rejects_mutable_artifact_and_invalid_canary_without_jobs(self):
+        invalid = {"version": "3.0.0", "source_ref": "main", "sha256": "b" * 64}
+        with self.assertRaises(ControlPlaneError):
+            self.engine.preview_rollout(
+                targets=("a-first",), artifact=invalid,
+                requested_by="ops-admin", wave_size=1,
+            )
+        with self.assertRaises(ControlPlaneError):
+            self.engine.preview_rollout(
+                targets=("a-first",), artifact=self.artifact,
+                canary_targets=("unknown-host",), requested_by="ops-admin",
+                wave_size=1,
+            )
+        self.assertEqual(
+            self.engine.conn.execute("SELECT COUNT(*) FROM management_jobs").fetchone()[0],
+            0,
+        )
+
+    def test_preview_surfaces_ineligible_hosts_without_mutation(self):
+        plane = ControlPlane(self.tmp.name)
+        try:
+            plane.conn.execute(
+                "UPDATE clients SET admission_state='QUARANTINED' WHERE id='b-second'"
+            )
+            plane.conn.commit()
+            revision = plane.current_revision()
+        finally:
+            plane.close()
+        preview = self.engine.preview_rollout(
+            targets=("a-first", "b-second", "z-canary"),
+            artifact=self.artifact, wave_size=1,
+            requested_by="ops-admin",
+        )
+        self.assertFalse(preview["eligible"])
+        self.assertEqual(preview["blocked_targets"], ["b-second"])
+        self.assertEqual(
+            self.engine.conn.execute("SELECT COUNT(*) FROM management_jobs").fetchone()[0], 0
+        )
+        with self.assertRaises(ControlPlaneError):
+            self.engine.enqueue_rollout(
+                targets=("a-first", "b-second", "z-canary"),
+                artifact=self.artifact, wave_size=1, requested_by="ops-admin",
+            )
+        check = ControlPlane(self.tmp.name, read_only=True)
+        try:
+            self.assertEqual(check.current_revision(), revision)
+        finally:
+            check.close()
+
     def test_generator_canaries_are_materialized_once(self):
         job = self.engine.enqueue_rollout(
             targets=("a-first", "b-second", "z-canary"),

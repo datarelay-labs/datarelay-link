@@ -709,6 +709,88 @@ class ManagementJobEngine:
             self._rollback()
             raise
 
+    def _rollout_arguments(
+        self, *, targets: Iterable[str], artifact: Mapping[str, Any],
+        canary_targets: Iterable[str] = (), wave_size: int = 10,
+        failure_threshold_percent: int = 20,
+    ) -> tuple[tuple[str, ...], dict[str, Any]]:
+        """Validate one immutable request shape for both preview and apply."""
+        target_ids = _normalize_targets(targets, max_targets=self.max_targets)
+        requested_canaries = tuple(canary_targets)
+        canaries = (
+            _normalize_targets(requested_canaries, max_targets=self.max_targets)
+            if requested_canaries else ()
+        )
+        if set(canaries) - set(target_ids):
+            raise ControlPlaneError("Rollout canary target is outside the explicit target set.")
+        try:
+            size = int(wave_size)
+            threshold = int(failure_threshold_percent)
+        except (TypeError, ValueError) as exc:
+            raise ControlPlaneError("Rollout wave size and failure threshold must be integers.") from exc
+        if size < 1 or size > min(MAX_ROLLOUT_WAVE_SIZE, self.max_targets):
+            raise ControlPlaneError("Rollout wave size is outside the bounded 3.0 range.")
+        if not canaries:
+            canaries = tuple(target_ids[:size])
+        if threshold < 0 or threshold > MAX_ROLLOUT_FAILURE_THRESHOLD:
+            raise ControlPlaneError("Rollout failure threshold must be between 0 and 100 percent.")
+        if not isinstance(artifact, dict):
+            raise ControlPlaneError("Rollout artifact identity must be an object.")
+        required = ("version", "source_ref", "sha256")
+        normalized_artifact = {key: str(artifact.get(key) or "").strip() for key in required}
+        if any(not normalized_artifact[key] for key in required):
+            raise ControlPlaneError("Rollout artifact requires immutable version, source_ref, and sha256.")
+        ref = normalized_artifact["source_ref"]
+        if len(ref) != 40 or any(c not in "0123456789abcdefABCDEF" for c in ref):
+            raise ControlPlaneError("Rollout source_ref must be an immutable 40-character Git SHA.")
+        normalized_artifact["source_ref"] = ref.lower()
+        if len(normalized_artifact["sha256"]) != 64 or any(c not in "0123456789abcdefABCDEF" for c in normalized_artifact["sha256"]):
+            raise ControlPlaneError("Rollout artifact sha256 must be a 64-character hexadecimal digest.")
+        return target_ids, {
+            "artifact": normalized_artifact,
+            "canary_targets": list(canaries),
+            "wave_size": size,
+            "failure_threshold_percent": threshold,
+            "rollout_state": "CANARY" if canaries else "WAVE",
+        }
+
+    def _rollout_target_approved(self, host_id: str) -> bool:
+        row = self.conn.execute(
+            "SELECT trust_status,admission_state,status FROM clients WHERE id=?",
+            (host_id,),
+        ).fetchone()
+        return bool(
+            row and str(row["trust_status"] or "") == "trusted"
+            and str(row["admission_state"] or "") == "APPROVED"
+            and str(row["status"] or "").lower() not in ("retired", "removed", "deleted")
+        )
+
+    def preview_rollout(
+        self, *, targets: Iterable[str], requested_by: str,
+        artifact: Mapping[str, Any], canary_targets: Iterable[str] = (),
+        wave_size: int = 10, failure_threshold_percent: int = 20,
+    ) -> dict[str, Any]:
+        """Read-only assessment, not an Apply plan or approval to update Agents."""
+        _bounded_text(requested_by, field="Management Job actor")
+        target_ids, payload = self._rollout_arguments(
+            targets=targets, artifact=artifact, canary_targets=canary_targets,
+            wave_size=wave_size,
+            failure_threshold_percent=failure_threshold_percent,
+        )
+        with self._lock:
+            blocked = [host for host in target_ids if not self._rollout_target_approved(host)]
+        return {
+            "read_only": True, "eligible": not blocked,
+            "targets": list(target_ids), "target_count": len(target_ids),
+            "blocked_targets": blocked,
+            "canary_targets": list(payload["canary_targets"]),
+            "wave_size": payload["wave_size"],
+            "failure_threshold_percent": payload["failure_threshold_percent"],
+            "artifact": dict(payload["artifact"]),
+            "requires_fresh_validation_on_apply": True,
+            "creates_job": False,
+        }
+
     def enqueue_rollout(
         self,
         *,
