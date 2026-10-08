@@ -709,9 +709,12 @@ function LinkFoundationAdministration({
   const unavailable={availability:"unavailable",access:"view"} as const;
   const tasks=createStandardAdministrationTasks({
     "core.https":{
-      // The product supports certificate management; only Admin may change it.
-      availability:"supported",
-      access:admin?"manage":"view",
+      // The shared task covers Web HTTPS listener and redirect configuration.
+      // Link only exposes MCP TLS certificate status here; existing privileged
+      // MCP certificate actions remain in SystemPanel, not this shared task.
+      availability:"read_only",
+      access:"view",
+      notes:"MCP TLS certificate status only. Shared Web HTTPS listener and redirect configuration is not available in Link.",
       target:{kind:"action",actionId:"link.certificate"}
     },
     "core.users":{

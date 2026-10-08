@@ -87,8 +87,10 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn('"core.users":{', component)
         https = component.split('"core.https":{', 1)[1].split('    },', 1)[0]
         users = component.split('"core.users":{', 1)[1].split('    },', 1)[0]
-        self.assertIn('availability:"supported"', https)
-        self.assertIn('access:admin?"manage":"view"', https)
+        self.assertIn('availability:"read_only"', https)
+        self.assertIn('access:"view"', https)
+        self.assertIn('MCP TLS certificate status only', https)
+        self.assertIn('Shared Web HTTPS listener and redirect configuration', https)
         self.assertIn('actionId:"link.certificate"', https)
         self.assertIn('availability:"supported"', users)
         self.assertIn('access:admin?"manage":"none"', users)
@@ -233,6 +235,14 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn('tabIndex={-1} autoFocus', SOURCE)
 
     def test_normative_ux_doc_binds_control_reference_and_competitive_sources(self):
+        for required in (
+            "Product Foundation PF-5B Administration projection",
+            "**Access & security**", "**Platform & network**",
+            "**Lifecycle & recovery**", "**Operations & audit**",
+            "MCP TLS", "Web HTTPS listener/redirect configuration",
+            "actual browser/mobile accessibility"
+        ):
+            self.assertIn(required.lower(), UX.lower())
         self.assertIn("DRL3-7A", UX)
         self.assertIn("41a561b769fb589f081e84ec5014de6f48881985", UX)
         self.assertIn("frontend/src/foundation-semantic-tokens.css", UX)

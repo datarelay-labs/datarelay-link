@@ -190,11 +190,40 @@ Observability
   Saved Views is contextual through search/list workflows
 
 Administration
-  Users
+  Users (Admin-only)
+  Integrations (Admin-only)
   System
 ```
 
 Role filtering remains server-authoritative. Hiding an item is never authorization.
+
+### 4.1 Product Foundation PF-5B Administration projection
+
+The Link **System** page embeds the pinned Foundation Administration Hub ahead of
+Link's existing, Core-authoritative System panel. The common Foundation groups
+are **Access & security**, **Platform & network**, **Lifecycle & recovery**,
+and **Operations & audit**. The Link-owned sidebar, Web session/MFA rules,
+Core routes, and System operations are not replaced by this presentation layer.
+
+- **User Management** is a supported Web Admin function (user creation,
+  role assignment at creation, and per-user MFA). It is visible and actionable
+  only for `Admin` actors; `Operator` and `Read Only` actors have
+  `access=none`, not a falsely reported unsupported product capability.
+- **HTTPS** is a read-only common-task projection. The Link System panel
+  reports the canonical **MCP TLS** certificate and exposes separate
+  Admin-only certificate operations. It does **not** implement the
+  Control-reference common task's Web HTTPS listener/redirect configuration.
+- **Audit** and **System Health** are read-only tasks routed to Link's
+  observability pages. Password Management, Display timezone, Network,
+  Retention, and portable **Backup & Import** are shown as unavailable
+  rather than given non-existent common-task routes. Link's protected
+  disaster-recovery backup/restore actions remain a separate System-panel
+  workflow and must not be described as portable workspace import/export.
+
+Task `availability` describes an actually implemented product capability.
+Task `access` describes the current actor's permission. Visual filtering
+does not authorize API calls; Web/Core enforce mutations independently.
+Actual browser/mobile accessibility and role acceptance remain separate E2E gates.
 
 ## 5. Application shell
 
