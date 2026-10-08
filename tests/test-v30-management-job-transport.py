@@ -1344,5 +1344,222 @@ class SignedAgentEnrolledHTTPSTests(unittest.TestCase):
             with self.subTest(origin=origin), self.assertRaises(AgentArtifactError):
                 self._preflight(enrolled_https_origin=origin)
 
+
+class SignedAgentIsolatedUpdaterTests(unittest.TestCase):
+    """Real canonical bundle check/apply/rollback on a disposable Agent root.
+
+    An ephemeral test signer and loopback HTTPS fixture are never release trust.
+    The public rollout dispatcher remains deliberately unconnected.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        import hashlib
+        import shutil
+        import subprocess
+
+        cls.build = tempfile.TemporaryDirectory(prefix="drlink-v30-updater-build-")
+        cls.build_root = Path(cls.build.name) / "source"
+        shutil.copytree(
+            ROOT, cls.build_root,
+            ignore=shutil.ignore_patterns(
+                ".git", "dist", "node_modules", "__pycache__", ".venv", ".pytest_cache"
+            ),
+        )
+        # The source identity inside BOTH self-contained bundles is exact.
+        manifest_path = cls.build_root / "release-manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        head = subprocess.check_output(
+            ["git", "-C", str(ROOT), "rev-parse", "HEAD"], text=True,
+        ).strip()
+        cls.source_head = head
+        manifest.update(
+            source_head=head, git_ref=head, immutable_source_ref=head,
+            project_version="3.0.0", channel="development",
+        )
+        manifest_path.write_text(json.dumps(manifest, sort_keys=True) + "\n")
+        build_cmd = [sys.executable, str(cls.build_root / "scripts/build-bundles.py")]
+        subprocess.run(build_cmd, check=True, capture_output=True, timeout=120)
+        cls.before_bundle = Path(cls.build.name) / "before-bootstrap.sh"
+        shutil.copyfile(cls.build_root / "dist/bootstrap-client.sh", cls.before_bundle)
+        with (cls.build_root / "tools/frpctl").open("a") as script:
+            script.write("\n# isolated signed candidate regression marker\n")
+        subprocess.run(build_cmd, check=True, capture_output=True, timeout=120)
+        cls.after_bundle = cls.build_root / "dist/bootstrap-client.sh"
+        cls.before_sha = hashlib.sha256(cls.before_bundle.read_bytes()).hexdigest()
+        cls.after_sha = hashlib.sha256(cls.after_bundle.read_bytes()).hexdigest()
+        assert cls.before_sha != cls.after_sha
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.build.cleanup()
+
+    def setUp(self):
+        import hashlib
+        from drlink_v30_agent_signed_updater import SANDBOX_MARKER
+
+        self.fixture = SignedAgentEnrolledHTTPSTests(
+            "test_real_tls_verified_download_has_no_apply_side_effects"
+        )
+        self.fixture.setUp()
+        self.fixture._provision_disposable_local_trust()
+        self.root = self.fixture.root
+        (self.root / SANDBOX_MARKER).write_bytes(
+            b"DRLINK_SIGNED_AGENT_UPDATER_ISOLATED_TEST_ONLY\n"
+        )
+        (self.root / SANDBOX_MARKER).chmod(0o600)
+        # A self-contained bootstrap built from source, not a mock installer.
+        data = self.after_bundle.read_bytes()
+        signed = self.fixture.fixture
+        signed.agent.write_bytes(data)
+        signed.target.update(
+            source_ref=self.source_head,
+            version="3.0.0",
+            sha256=self.after_sha,
+        )
+        manifest = json.loads(signed.manifest.read_text())
+        manifest.update(
+            source_head=self.source_head, git_ref=self.source_head,
+            immutable_source_ref=self.source_head, project_version="3.0.0",
+        )
+        manifest["artifacts"][0].update(
+            source_head=self.source_head, sha256=self.after_sha, size=len(data),
+        )
+        signed.manifest.write_text(json.dumps(manifest, sort_keys=True) + "\n")
+        signed.signature.write_text(
+            MGMT.sign_message(signed.key, signed.manifest.read_bytes()) + "\n"
+        )
+        self.fixture.payloads.update({
+            "/artifacts/manifest.json": signed.manifest.read_bytes(),
+            "/artifacts/agent/manifest.sig": signed.signature.read_bytes(),
+            "/artifacts/agent/bootstrap-client.sh": data,
+        })
+        (self.root / "usr/local/bin").mkdir(parents=True, exist_ok=True)
+        frpc = self.root / "usr/local/bin/frpc"
+        frpc.write_text(
+            "#!/bin/sh\n"
+            "if [ \"$1\" = --version ]; then echo 'frpc version 0.71.0'; fi\n"
+            "exit 0\n"
+        )
+        frpc.chmod(0o755)
+        (self.root / "etc/frp/frpc.toml").write_text(
+            'serverAddr = "203.0.113.10"\n'
+            'serverPort = 443\n'
+            'auth.method = "token"\n'
+            'auth.token = "disposable-isolated-only"\n'
+            'transport.protocol = "websocket"\n'
+            'transport.tls.enable = true\n'
+        )
+        (self.root / "etc/frp/frpc.toml").chmod(0o600)
+        (self.root / "etc/frp/access-info.txt").write_text(
+            "Public SSH: 203.0.113.10:6003\n"
+        )
+        state = json.loads((self.root / "etc/frp/client-state.json").read_text())
+        state.update({
+            "schema_version": 1,
+            "frp_server": "203.0.113.10", "frp_server_port": 443,
+            "transport": "wss", "hostname": "isolated-agent",
+            "host_id": "signed-isolated-agent",
+            "services": {"ssh": {
+                "id": "ssh", "name": "SSH", "preset": "ssh",
+                "enabled": True, "protocol": "tcp",
+                "local_ip": "127.0.0.1", "local_port": 22, "remote_port": 6003,
+            }},
+        })
+        (self.root / "etc/frp/client-state.json").write_text(
+            json.dumps(state) + "\n"
+        )
+        self.env = {
+            "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+            "FRP_CLIENT_TEST_ROOT": str(self.root),
+            "FRP_SKIP_SYSTEMD": "1",
+            "FRP_SKIP_DOWNLOAD": "1",
+            "FRP_CLIENT_SKIP_SERVER_VERSION_GATE": "1",
+            "FRP_RELEASE_CHANNEL": "development",
+            "FRP_EXPECTED_RELEASE_CHANNEL": "development",
+            "FRP_EXPECTED_SOURCE_REF": self.source_head,
+            "FRP_EXPECTED_SOURCE_HEAD": self.source_head,
+            "FRP_BUNDLE_SHA256": self.before_sha,
+            "FRP_BUNDLE_FILE": str(self.before_bundle),
+            "_FRP_CLIENT_UPDATE_KIND": "bundle",
+        }
+        import subprocess
+        self.initial = subprocess.run(
+            ["bash", str(self.before_bundle), "--upgrade"],
+            env=self.env, capture_output=True, text=True, timeout=120,
+        )
+        if self.initial.returncode:
+            self.fail(
+                "initial isolated canonical install failed:\n"
+                + self.initial.stdout[-1400:] + self.initial.stderr[-1400:]
+            )
+        from drlink_v30_agent_local_trust import stage_local_enrolled_agent_update
+        self.staged = stage_local_enrolled_agent_update(
+            root=self.root, target=signed.target, expected_channel="development",
+        )
+
+    def tearDown(self):
+        self.fixture.tearDown()
+
+    def _run(self, **kwargs):
+        from drlink_v30_agent_signed_updater import run_isolated_signed_agent_update
+        return run_isolated_signed_agent_update(
+            root=self.root, candidate_dir=self.staged["candidate_dir"],
+            target=self.fixture.fixture.target, expected_channel="development",
+            **kwargs,
+        )
+
+    def test_signed_candidate_check_then_canonical_apply_and_lineage(self):
+        from drlink_v30_agent_artifact import verify_installed_agent_lineage
+        import hashlib
+
+        before = (self.root / "etc/drlink/version").read_bytes()
+        checked = self._run(check_only=True)
+        self.assertTrue(checked["sandbox_check_passed"])
+        self.assertEqual((self.root / "etc/drlink/version").read_bytes(), before)
+        self.assertFalse(checked["public_rollout_apply_allowed"])
+        applied = self._run()
+        self.assertTrue(applied["sandbox_update_completed"])
+        self.assertTrue(applied["sandbox_lineage_verified"])
+        self.assertTrue(applied["sandbox_readonly_status_verified"])
+        self.assertFalse(applied["post_update_health_verified"])
+        self.assertFalse(applied["public_rollout_apply_allowed"])
+        version = (self.root / "etc/drlink/version").read_text()
+        self.assertIn("SOURCE_HEAD=" + self.source_head, version)
+        self.assertIn("BUNDLE_SHA256=" + self.after_sha, version)
+        self.assertTrue(
+            verify_installed_agent_lineage(self.root, verified_bundle=applied)[
+                "installed_identity_verified"
+            ]
+        )
+
+    def test_canonical_verify_failure_restores_prior_runtime_and_identity(self):
+        from drlink_v30_agent_signed_updater import _snapshot, _RESTORE, _PRESERVE
+
+        before = _snapshot(self.root, _RESTORE + _PRESERVE)
+        result = self._run(failure_hook="verify")
+        self.assertFalse(result["sandbox_update_completed"])
+        self.assertTrue(result["sandbox_rollback_verified"])
+        self.assertEqual(_snapshot(self.root, _RESTORE + _PRESERVE), before)
+        self.assertFalse(result["public_rollout_apply_allowed"])
+
+    def test_tamper_or_unmarked_root_denied_before_execution(self):
+        from drlink_v30_agent_artifact import AgentArtifactError
+        from drlink_v30_agent_signed_updater import SANDBOX_MARKER
+
+        marker = self.root / SANDBOX_MARKER
+        marker.unlink()
+        with self.assertRaises(AgentArtifactError):
+            self._run()
+        marker.write_bytes(b"DRLINK_SIGNED_AGENT_UPDATER_ISOLATED_TEST_ONLY\n")
+        marker.chmod(0o600)
+        bundle = Path(self.staged["candidate_dir"]) / "agent/bootstrap-client.sh"
+        bundle.write_bytes(bundle.read_bytes() + b"\n# tampered\n")
+        with self.assertRaises(AgentArtifactError):
+            self._run()
+        self.assertIn("BUNDLE_SHA256=" + self.before_sha,
+                      (self.root / "etc/drlink/version").read_text())
+
+
 if __name__ == "__main__":
     unittest.main()
