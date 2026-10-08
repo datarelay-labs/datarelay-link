@@ -95,6 +95,54 @@ class WebhookDeliveryTests(unittest.TestCase):
         client_context = ssl.create_default_context(cafile=str(cert_path))
         return server, thread, client_context
 
+    def test_untrusted_or_wrong_hostname_tls_cert_never_delivers_payload(self):
+        """Real TLS handshake must authenticate the destination hostname."""
+        server, thread, trusted_context = self._tls_server()
+        public = [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP,
+                   "", ("8.8.8.8", 443))]
+        port = server.server_address[1]
+        def dial_disposable_server(conn):
+            self.assertEqual(conn.selected[4], ("8.8.8.8", 443))
+            raw = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            raw.settimeout(5)
+            raw.connect(("127.0.0.1", port))
+            conn.sock = conn._context.wrap_socket(raw, server_hostname=conn.host)
+
+        try:
+            for label, host, context in (
+                ("untrusted-ca", "hooks.example.com", ssl.create_default_context()),
+                ("wrong-hostname", "wrong.example.com", trusted_context),
+            ):
+                with self.subTest(tls_failure=label):
+                    with WebhookStore(self.root) as store:
+                        hook = store.create(label, "https://" + host + "/drlink",
+                                            ["attention"])
+                        event = store.enqueue(hook["id"], "attention",
+                                              {"kind": "tls-rejection"})
+                    with patch("drlink_webhook_delivery.socket.getaddrinfo",
+                               return_value=public), \
+                         patch("drlink_webhook_delivery.ssl.create_default_context",
+                               return_value=context), \
+                         patch.object(PinnedHTTPSConnection, "connect",
+                                      dial_disposable_server):
+                        result = delivery_tick(self.root)
+                    self.assertEqual(result, {"claimed": 1, "delivered": 0, "failed": 1})
+                    # A failed TLS handshake must not send the HTTP payload,
+                    # expose the signing secret, or silently follow a redirect.
+                    self.assertEqual(Receiver.requests, [])
+                    with WebhookStore(self.root) as store:
+                        row = store.conn.execute(
+                            "SELECT status,attempts FROM management_webhook_outbox "
+                            "WHERE event_id=?", (event["event_id"],)
+                        ).fetchone()
+                        self.assertEqual((row["status"], row["attempts"]),
+                                         ("PENDING", 1))
+                        self.assertEqual(store.claim_due(), [])
+        finally:
+            server.shutdown()
+            thread.join(timeout=3)
+            server.server_close()
+
     def test_real_https_delivery_has_valid_hmac_stable_event_id_and_no_secrets(self):
         hook, event = self._event()
         server, thread, client_context = self._tls_server()
