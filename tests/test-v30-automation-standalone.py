@@ -14,7 +14,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 from drlink_automation_server import create_server
 from drlink_control_db import ControlPlaneError
+from drlink_control_plane import ControlPlane
 from drlink_service_accounts import ServiceAccountStore
+import drlink_v24 as v24
 
 
 class IndependentAutomationTests(unittest.TestCase):
@@ -78,6 +80,55 @@ class IndependentAutomationTests(unittest.TestCase):
             self.assertEqual(status, 200)
         finally:
             self.server.concurrent.release()
+
+    def test_scoped_temporary_access_preview_over_standalone_http_only(self):
+        # The standalone API must never become an alternate mutation path.
+        config = Path(self.tmp.name, "etc/drlink")
+        config.mkdir(parents=True, exist_ok=True)
+        (config / "config.json").write_text('{"role":"server"}\n')
+        plane = ControlPlane(self.tmp.name)
+        try:
+            v24.set_network_object(plane, "src", type="ip",
+                                   value="198.51.100.10", oneshot=True)
+            v24.set_network_object(plane, "dst", type="ip",
+                                   value="198.51.100.20", oneshot=True)
+            v24.set_service_object(plane, "ssh", type="tcp",
+                                   port=22, oneshot=True)
+            v24.set_access_rule(
+                plane, "remote", "allow-ssh", mode="whitelist",
+                source="src", destination="dst", service="ssh",
+                enabled=True, oneshot=True,
+            )
+            revision = plane.current_revision()
+        finally:
+            plane.close()
+        with ServiceAccountStore(self.tmp.name) as store:
+            credential = store.create(
+                "change-preview", ["management-temporary-access"]
+            )["credential"]
+
+        route = "/api/automation/v1/drlink_temporary_access_preview"
+        status, plan = self.request(
+            "POST", route,
+            {"plane": "remote", "rule": "allow-ssh", "operation": "clear"},
+            credential=credential,
+        )
+        self.assertEqual(status, 200, plan)
+        self.assertTrue(plan["change_plan_id"].startswith("cp_"))
+        self.assertEqual(plan["expected_revision"], revision)
+        status, denied = self.request(
+            "POST", "/api/automation/v1/drlink_temporary_access_apply",
+            {"change_plan_id": plan["change_plan_id"], "confirmation": "APPLY"},
+            credential=credential,
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(denied["code"], "OPERATION_DENIED")
+        self.assertNotIn(plan["change_plan_id"], json.dumps(denied))
+        plane = ControlPlane(self.tmp.name)
+        try:
+            self.assertEqual(plane.current_revision(), revision)
+        finally:
+            plane.close()
 
     def test_error_codes_remain_secret_safe_for_invalid_payload_and_route(self):
         status, bad_route = self.request(

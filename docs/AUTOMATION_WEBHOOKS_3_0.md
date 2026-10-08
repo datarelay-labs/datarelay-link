@@ -13,11 +13,17 @@ Service. It does not reuse Web operator sessions, cookies, CSRF, or MCP actors.
 The standalone Automation service can operate without the optional Web process;
 the same endpoint may be hosted by the optional Web listener.
 
-Current development implementation permits **read-only allowlisted** Core calls:
-inventory list/get, health, connection diagnosis, policy test, audit query,
-live access, Job list/get. No arbitrary operation, shell execution, policy
-mutation, recovery, or staged update is reachable via this adapter. Adding
-Change Plan mutations remains a separate future implementation/qualification step.
+Current development implementation permits **allowlisted OBSERVE/TEST**
+Core calls: inventory list/get, health, connection diagnosis, policy test, audit
+query, live access, Job list/get, and **Temporary Access Change Plan preview**
+(`drlink_temporary_access_preview`). A Service Account with explicit
+`management-temporary-access` permission can request a short-lived
+actor/Server/revision-bound plan; plan creation does **not** change policy
+authorization and cannot be applied through the Automation API. Plans remain
+bound to the creating principal across Core surfaces. No arbitrary operation,
+shell execution, policy mutation, recovery, or staged update is reachable via
+this adapter. Change Plan mutations with durable idempotency remain a separate
+future implementation/qualification step.
 
 ## Local administration / lifecycle
 

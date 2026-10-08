@@ -16,8 +16,10 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 
+from drlink_control_plane import ControlPlane
 from drlink_service_accounts import ServiceAccountStore
 from drlink_web_auth import WebAuthService, totp_code
+import drlink_v24 as v24
 from drlink_web_service import create_server
 
 
@@ -85,6 +87,51 @@ class AutomationHttpTests(unittest.TestCase):
         self.assertEqual(status, 200, payload)
         self.cookie = hdr["Set-Cookie"].split(";", 1)[0]
         self.csrf = payload["csrf_token"]
+
+    def test_embedded_automation_preview_is_scoped_and_cannot_apply(self):
+        plane = ControlPlane(self.root)
+        try:
+            v24.set_network_object(plane, "src", type="ip",
+                                   value="198.51.100.10", oneshot=True)
+            v24.set_network_object(plane, "dst", type="ip",
+                                   value="198.51.100.20", oneshot=True)
+            v24.set_service_object(plane, "ssh", type="tcp",
+                                   port=22, oneshot=True)
+            v24.set_access_rule(
+                plane, "remote", "allow-ssh", mode="whitelist",
+                source="src", destination="dst", service="ssh",
+                enabled=True, oneshot=True,
+            )
+            revision = plane.current_revision()
+        finally:
+            plane.close()
+        self.login()
+        status, account, _ = self.request(
+            "POST", "/api/v1/service-accounts",
+            {"name": "ci-temporary", "permissions": ["management-temporary-access"]},
+            browser=True,
+        )
+        self.assertEqual(status, 200, account)
+        status, preview, _ = self.request(
+            "POST", "/api/automation/v1/drlink_temporary_access_preview",
+            {"plane": "remote", "rule": "allow-ssh", "operation": "clear"},
+            token=account["credential"],
+        )
+        self.assertEqual(status, 200, preview)
+        self.assertEqual(preview["expected_revision"], revision)
+        self.assertTrue(preview["change_plan_id"].startswith("cp_"))
+        status, denied, _ = self.request(
+            "POST", "/api/automation/v1/drlink_temporary_access_apply",
+            {"change_plan_id": preview["change_plan_id"], "confirmation": "APPLY"},
+            token=account["credential"],
+        )
+        self.assertEqual(status, 403, denied)
+        self.assertNotIn(preview["change_plan_id"], json.dumps(denied))
+        plane = ControlPlane(self.root)
+        try:
+            self.assertEqual(plane.current_revision(), revision)
+        finally:
+            plane.close()
 
     def test_end_to_end_admin_lifecycle_read_only_scope_and_rate(self):
         self.login()

@@ -12,6 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 
+from drlink_automation_api import AutomationApi
 from drlink_control_db import ControlPlaneError
 from drlink_control_plane import ControlPlane
 from drlink_management_catalog import MANAGEMENT_PERMISSION_NAMES, PLUGIN_NO, management_tool
@@ -267,6 +268,66 @@ class V30ManagementAdapterTests(unittest.TestCase):
         self.assertEqual(diagnosis_mcp, diagnosis_web)
         self.assertTrue(diagnosis_mcp["side_effect_free"])
         self.assertFalse(diagnosis_mcp["network_probe_performed"])
+
+    def test_service_account_can_preview_but_cannot_apply_temporary_access(self):
+        # Real Core rule state: the Automation projection may issue only an
+        # actor-scoped Change Plan. It cannot reuse Web/MCP apply authority.
+        plane = ControlPlane(self.tmp)
+        try:
+            revision_before = plane.current_revision()
+            rule_before = plane.conn.execute(
+                "SELECT expires_at FROM policy_rules WHERE plane='remote' "
+                "AND name='allow-ssh'"
+            ).fetchone()["expires_at"]
+        finally:
+            plane.close()
+        with AutomationApi(self.tmp) as automation:
+            limited = automation.accounts.create(
+                "ci-reader", ["management-read"]
+            )["credential"]
+            owner = automation.accounts.create(
+                "ci-temporary-owner", ["management-temporary-access"]
+            )
+            other = automation.accounts.create(
+                "ci-temporary-other", ["management-temporary-access"]
+            )
+            route = "/api/automation/v1/drlink_temporary_access_preview"
+            args = {
+                "plane": "remote", "rule": "allow-ssh",
+                "operation": "set", "expires_at": _future(),
+            }
+            with self.assertRaises(ControlPlaneError):
+                automation.invoke(route, limited, args)
+            preview = automation.invoke(route, owner["credential"], args)
+            self.assertTrue(preview["change_plan_id"].startswith("cp_"))
+            self.assertEqual(preview["expected_revision"], revision_before)
+            self.assertEqual(preview["resource_ref"], "allow-ssh")
+            with self.assertRaises(ControlPlaneError):
+                automation.invoke(
+                    "/api/automation/v1/drlink_temporary_access_apply",
+                    owner["credential"],
+                    {"change_plan_id": preview["change_plan_id"],
+                     "confirmation": "APPLY"},
+                )
+            with self.assertRaises(ControlPlaneError):
+                self.web.invoke(
+                    operation="drlink_temporary_access_apply",
+                    payload={"change_plan_id": preview["change_plan_id"],
+                             "confirmation": "APPLY"},
+                    actor=ManagementActor.authenticated(
+                        other["id"], {"management-temporary-access"}
+                    ),
+                )
+        plane = ControlPlane(self.tmp)
+        try:
+            self.assertEqual(plane.current_revision(), revision_before)
+            rule_after = plane.conn.execute(
+                "SELECT expires_at FROM policy_rules WHERE plane='remote' "
+                "AND name='allow-ssh'"
+            ).fetchone()["expires_at"]
+            self.assertEqual(rule_after, rule_before)
+        finally:
+            plane.close()
 
     def test_change_plan_can_cross_adapters_without_semantic_fork(self):
         expiry = _future()

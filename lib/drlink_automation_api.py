@@ -10,12 +10,17 @@ from drlink_management_core import ManagementCoreService, SURFACE_WEB
 from drlink_service_accounts import ServiceAccountStore
 
 PREFIX = "/api/automation/v1/"
-# Scope remains read-only until the versioned Change Plan mutation contract is qualified.
+# Only Core operations classified as read-only TEST/OBSERVE are published.
+# Temporary Access preview issues an actor-bound short-lived Change Plan but
+# does not grant authority to apply it through this automation adapter.
+# All mutating Core operations remain excluded until durable idempotency and
+# public mutation qualification are complete.
 ALLOW = frozenset({
     "drlink_inventory_list", "drlink_inventory_get", "drlink_health",
     "drlink_access_hygiene",
     "drlink_diagnose_connection", "drlink_policy_test", "drlink_audit_query",
     "drlink_live_access", "drlink_job_list", "drlink_job_get",
+    "drlink_temporary_access_preview",
 })
 
 
