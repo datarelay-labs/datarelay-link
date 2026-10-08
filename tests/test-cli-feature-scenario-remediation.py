@@ -1104,8 +1104,9 @@ frpctl_nav_workflow manage_host
             state.chmod(0)
             try:
                 env = dict(os.environ, FRP_CTL_TEST_ROOT=temp, FRP_DEPLOY_TEST_ROOT=temp)
+                # A user launches the canonical public CLI, not its private dispatcher.
                 proc = subprocess.run(
-                    ["bash", str(ROOT / "tools/frpctl"), "system", "version"],
+                    ["bash", str(ROOT / "tools/drlink"), "system", "version"],
                     env=env, text=True, capture_output=True, timeout=30,
                 )
             finally:
