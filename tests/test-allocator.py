@@ -66,6 +66,11 @@ class Env:
             'enrollments_dir': str(self.enrollments),
             'token_file': str(self.token),
         }
+        # Never let a test fixture silently fall through to the host's
+        # /var/lib/drlink authority. This can otherwise make non-root CI fail
+        # (or mutate a developer's live state when run as root).
+        if MOD.RP is None or MOD.RP.root_from_cfg(cfg) != str(self.root):
+            raise AssertionError('allocator Core fixture is not isolated')
         self.cfg.write_text(json.dumps(cfg, indent=2) + '\n')
         MOD.atomic_write_json(self.registry, MOD.empty_registry())
         self.allocator = MOD.Allocator(str(self.cfg))
@@ -135,6 +140,8 @@ def case_a_single_ssh():
         code, result = env.enroll([svc('ssh', local_port=22, preset='ssh')])
         if code != 200:
             fail('CASE A', result)
+        if not (env.root / 'var/lib/drlink/drlink.db').is_file():
+            fail('CASE A isolated Core DB was not created in the fixture')
         ports = ports_from_response(result)
         if set(ports) != {'ssh'} or not (18000 <= ports['ssh'] <= 18020):
             fail('CASE A', ports)
