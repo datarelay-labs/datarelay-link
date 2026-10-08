@@ -52,6 +52,25 @@ class RoleParserRegression(unittest.TestCase):
             self.assertIn("  " + command + "\n", rejected["message"])
         self.assertNotIn("show/set/unset", rejected["message"])
 
+        for retired, current in (("access", "remote-access"),
+                                 ("egress", "internet-access")):
+            for tokens in ([retired], [retired, "?"]):
+                with self.subTest(tokens=tokens):
+                    rejected = grammar.reject_obsolete_surface(tokens)
+                    self.assertEqual(rejected["exit_code"], 2)
+                    message = rejected["message"]
+                    self.assertIn("On the DRLink Server", message)
+                    for command in (
+                        "show " + current,
+                        "set " + current + " <RULE>",
+                        "unset " + current + " <RULE>",
+                        "test " + current + " source <SOURCE> destination <DESTINATION> service <SERVICE>",
+                        "show network-objects", "show service-objects",
+                    ):
+                        self.assertIn("  " + command + "\n", message)
+                    self.assertIn("See: help " + current, message)
+                    self.assertNotIn("show/set/unset/test", message)
+
     def test_retired_test_resources_reject_native_execution_and_help(self):
         for role in ('server', 'client'):
             with tempfile.TemporaryDirectory(prefix='drlink-retired-test-resource-') as temp:

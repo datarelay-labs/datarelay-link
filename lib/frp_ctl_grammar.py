@@ -279,8 +279,28 @@ _OBSOLETE_RESOURCES = frozenset(
     }
 )
 _OBSOLETE_POINTERS = {
-    "access": "Use show/set/unset/test remote-access and Network/Service Objects instead.",
-    "egress": "Use show/set/unset/test internet-access and Service Objects (type fixed-tcp when needed).",
+    "access": (
+        "On the DRLink Server, use:\n"
+        "  show remote-access\n"
+        "  set remote-access <RULE>\n"
+        "  unset remote-access <RULE>\n"
+        "  test remote-access source <SOURCE> destination <DESTINATION> service <SERVICE>\n"
+        "Inspect dependencies with:\n"
+        "  show network-objects\n"
+        "  show service-objects\n"
+        "See: help remote-access"
+    ),
+    "egress": (
+        "On the DRLink Server, use:\n"
+        "  show internet-access\n"
+        "  set internet-access <RULE>\n"
+        "  unset internet-access <RULE>\n"
+        "  test internet-access source <SOURCE> destination <DESTINATION> service <SERVICE>\n"
+        "Inspect dependencies with:\n"
+        "  show network-objects\n"
+        "  show service-objects\n"
+        "See: help internet-access"
+    ),
     "acl": "Use remote-access rules with Network/Service Objects instead.",
     "service-profile": "Use Service Objects and Agent Remote Services instead.",
     "internet-profile": "Use internet-access rules with Network/Service Objects instead.",
