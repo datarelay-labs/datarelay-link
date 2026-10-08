@@ -79,6 +79,44 @@ class HostAdmissionStateTests(unittest.TestCase):
             finally:
                 plane.close()
 
+    def test_admission_read_models_show_pending_and_quarantined_without_mutation(self):
+        with tempfile.TemporaryDirectory(prefix="drlink-admission-attention-") as root:
+            plane = ControlPlane(root)
+            try:
+                for host, state in (
+                    ("pending-a", "PENDING_APPROVAL"),
+                    ("quarantined-b", "QUARANTINED"),
+                    ("approved-c", "APPROVED"),
+                ):
+                    plane.upsert_client(host, hostname=host)
+                    plane.conn.execute(
+                        "UPDATE clients SET admission_state=? WHERE id=?",
+                        (state, host),
+                    )
+                plane.conn.commit()
+                before = plane.current_revision()
+            finally:
+                plane.close()
+
+            with ManagementQueryService.open_read_only(root) as query:
+                counts = query.overview_summary()["managed_hosts"]
+                attention = query.attention_summary()
+            self.assertEqual(counts["pending_approval"], 1)
+            self.assertEqual(counts["quarantined"], 1)
+            self.assertEqual(counts["approved"], 1)
+            first_kinds = [item["kind"] for item in attention["items"][:2]]
+            self.assertEqual(
+                first_kinds, ["pending-host-approval", "quarantined-hosts"]
+            )
+            self.assertEqual(attention["signals"]["host_admission"], {
+                "pending_approval": 1, "quarantined": 1, "approved": 1,
+            })
+            plane = ControlPlane(root)
+            try:
+                self.assertEqual(plane.current_revision(), before)
+            finally:
+                plane.close()
+
     def test_unapproved_host_cannot_issue_or_use_ai_credentials_or_enqueue_jobs(self):
         from drlink_control_db import ControlPlaneError
         with tempfile.TemporaryDirectory(prefix="drlink-host-ai-admission-") as root:

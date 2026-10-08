@@ -1473,6 +1473,10 @@ class ManagementQueryService:
         """Return bounded derived operator attention without becoming authority."""
         overview = self.overview_summary()
         hosts = overview.get("managed_hosts") or {}
+        admission_counts = {
+            key: int(hosts.get(key) or 0)
+            for key in ("pending_approval", "quarantined", "approved")
+        }
         jobs = overview.get("management_jobs") or {}
         version = self.version_drift()
         now = datetime.now(timezone.utc)
@@ -1488,6 +1492,16 @@ class ManagementQueryService:
         hygiene_counts = hygiene["summary"]
 
         items: list[dict[str, Any]] = []
+        for state, kind, label in (
+            ("pending_approval", "pending-host-approval", "Managed Hosts Pending Approval"),
+            ("quarantined", "quarantined-hosts", "Quarantined Managed Hosts"),
+        ):
+            count = admission_counts[state]
+            if count:
+                items.append({
+                    "kind": kind, "label": label, "count": count,
+                    "severity": "warning",
+                })
         for key, label, severity in (
             ("disconnected", "Disconnected Managed Hosts", "warning"),
             ("stale", "Stale Managed Hosts", "warning"),
@@ -1630,6 +1644,7 @@ class ManagementQueryService:
                 "system_readiness": system,
                 "cutoffs": cutoffs,
                 "jobs": dict(jobs),
+                "host_admission": admission_counts,
                 "access_hygiene": dict(hygiene_counts),
                 "version": {
                     "drift_count": int(version.get("drift_count") or 0),

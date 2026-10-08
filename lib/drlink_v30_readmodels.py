@@ -38,7 +38,10 @@ def overview_summary(conn, *, now: datetime | None = None) -> dict[str, Any]:
         "AS disconnected,"
         "SUM(CASE WHEN agent_lifecycle_state='legacy' THEN 1 ELSE 0 END) AS legacy,"
         "SUM(CASE WHEN agent_version IS NULL OR agent_version='' THEN 1 ELSE 0 END) "
-        "AS version_unknown "
+        "AS version_unknown,"
+        "SUM(CASE WHEN admission_state='PENDING_APPROVAL' THEN 1 ELSE 0 END) AS pending_approval,"
+        "SUM(CASE WHEN admission_state='QUARANTINED' THEN 1 ELSE 0 END) AS quarantined,"
+        "SUM(CASE WHEN admission_state='APPROVED' THEN 1 ELSE 0 END) AS approved "
         "FROM clients",
         (stale_before, stale_before),
     ).fetchone()
@@ -95,6 +98,9 @@ def overview_summary(conn, *, now: datetime | None = None) -> dict[str, Any]:
             "disconnected": int(host["disconnected"] or 0),
             "legacy": int(host["legacy"] or 0),
             "version_unknown": int(host["version_unknown"] or 0),
+            "pending_approval": int(host["pending_approval"] or 0),
+            "quarantined": int(host["quarantined"] or 0),
+            "approved": int(host["approved"] or 0),
         },
         "remote_services": {
             "total": int(service["total"] or 0),
