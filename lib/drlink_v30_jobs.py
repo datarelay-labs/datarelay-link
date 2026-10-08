@@ -134,6 +134,62 @@ def job_operational_summary(conn, *, max_active_jobs: int = MAX_ACTIVE_JOBS) -> 
     }
 
 
+def rollout_progress_summary(
+    job_type: str, payload: Mapping[str, Any],
+    targets: list[Mapping[str, Any]], target_count: int,
+) -> Optional[dict[str, Any]]:
+    """Bounded read model of persisted scheduler facts, not update verification.
+
+    Web and Core consumers share one interpretation of Canary/Wave progress.
+    An unqualified Agent updater cannot turn a synthetic SUCCEEDED job row
+    into a proven installed build or a proven successful rollback.
+    """
+    if str(job_type) != ROLLOUT_JOB_TYPE:
+        return None
+    body = payload if isinstance(payload, Mapping) else {}
+    count = max(0, min(int(target_count), MAX_JOB_TARGETS))
+    actual = list(targets[:MAX_JOB_TARGETS])
+    totals = {name: 0 for name in JOB_STATUSES}
+    for item in actual:
+        status = str(item.get("status") or "").upper()
+        if status in totals:
+            totals[status] += 1
+    canaries = body.get("canary_targets")
+    if not isinstance(canaries, list):
+        canaries = []
+    canaries = [
+        value for value in canaries[:MAX_JOB_TARGETS]
+        if isinstance(value, str) and value
+    ]
+    by_host = {
+        str(item.get("target_id") or ""): str(item.get("status") or "").upper()
+        for item in actual
+    }
+    phase = str(body.get("rollout_state") or "UNKNOWN")
+    if phase not in ("CANARY", "WAVE", "PAUSED", "HALTED"):
+        phase = "UNKNOWN"
+    return {
+        "phase": phase,
+        "halt_reason": str(body.get("halt_reason") or "")[:128],
+        "target_count": count,
+        "observed_count": len(actual),
+        "completed_count": sum(totals[s] for s in TERMINAL_STATUSES),
+        "queued_count": totals[QUEUED],
+        "running_count": totals[RUNNING],
+        "reported_success_count": totals[SUCCEEDED],
+        "failed_count": totals[FAILED],
+        "cancelled_count": totals[CANCELLED],
+        "canary_count": len(canaries),
+        "canary_reported_success_count": sum(
+            by_host.get(host) == SUCCEEDED for host in canaries
+        ),
+        "operator_paused": bool(body.get("operator_paused", False)),
+        "update_outcome_qualification": "NOT_VERIFIED",
+        "signed_agent_update_verified": False,
+        "rollback_verified": False,
+    }
+
+
 class ManagementJobEngine:
     """Short-transaction operational Job store and claim/complete boundary."""
 
@@ -314,6 +370,12 @@ class ManagementJobEngine:
             except ValueError:
                 item["result"] = {}
             out["targets"].append(item)
+        progress = rollout_progress_summary(
+            str(job["job_type"]), out["payload"], out["targets"],
+            int(job["target_count"]),
+        )
+        if progress is not None:
+            out["rollout_progress"] = progress
         return out
 
     def _cancel_unlocked(self, job_id: str, *, now: Optional[datetime] = None) -> dict[str, Any]:

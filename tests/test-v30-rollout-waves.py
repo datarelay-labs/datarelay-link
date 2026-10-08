@@ -260,6 +260,41 @@ class StagedRolloutSchedulingTests(unittest.TestCase):
                 ), [],
             )
 
+    def test_internal_progress_counts_remain_unverified(self):
+        job = self._start()
+        progress = self.engine.get(job["id"])["rollout_progress"]
+        self.assertEqual(progress["phase"], "CANARY")
+        self.assertEqual(progress["target_count"], 3)
+        self.assertEqual(progress["queued_count"], 3)
+        self.assertEqual(progress["completed_count"], 0)
+        self.assertEqual(progress["canary_count"], 1)
+
+        claim = self._claim()[0]
+        progress = self.engine.get(job["id"])["rollout_progress"]
+        self.assertEqual(progress["running_count"], 1)
+        self.assertEqual(progress["queued_count"], 2)
+        self._complete(job, claim, SUCCEEDED)
+        progress = self.engine.get(job["id"])["rollout_progress"]
+        self.assertEqual(progress["canary_reported_success_count"], 1)
+        self.assertEqual(progress["reported_success_count"], 1)
+        self.assertEqual(progress["completed_count"], 1)
+        self.assertEqual(progress["update_outcome_qualification"], "NOT_VERIFIED")
+        self.assertFalse(progress["signed_agent_update_verified"])
+        self.assertFalse(progress["rollback_verified"])
+
+    def test_internal_halted_progress_reports_failed_and_cancelled(self):
+        job = self._start()
+        claim = self._claim()[0]
+        self._complete(job, claim, FAILED)
+        progress = self.engine.get(job["id"])["rollout_progress"]
+        self.assertEqual(progress["phase"], "HALTED")
+        self.assertEqual(progress["halt_reason"], "CANARY_FAILED")
+        self.assertEqual(progress["failed_count"], 1)
+        self.assertEqual(progress["cancelled_count"], 2)
+        self.assertEqual(progress["completed_count"], 3)
+        self.assertEqual(progress["reported_success_count"], 0)
+        self.assertEqual(progress["update_outcome_qualification"], "NOT_VERIFIED")
+
     def test_mutable_source_ref_rejected_even_with_valid_digest(self):
         for ref in ("main", "feature/v3.0-drl3-0", "v3.0.0", "a" * 39, "f" * 41):
             with self.subTest(ref=ref), self.assertRaises(ControlPlaneError):
