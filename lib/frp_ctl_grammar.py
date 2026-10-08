@@ -3305,11 +3305,15 @@ def _match_create(tokens, role, names=None):
         return incomplete("Missing resource.", ["create <resource>"], avail)
     resource = tokens[1]
     if resource == "zero-touch":
+        if len(tokens) == 3 and tokens[2] == "pre-approved":
+            # The only positional opt-in. The backend still requires root,
+            # a real TTY and a second typed acknowledgement before issuance.
+            return {"status": "ok", "action": "create_zero_touch", "pre_approved": True}
         if len(tokens) > 2:
             return incomplete(
                 "Unexpected arguments.",
-                ["create zero-touch"],
-                tip="Prefer: set client   (or help clients)",
+                ["set enrollment zero-touch", "set enrollment zero-touch pre-approved"],
+                tip="Prefer: set enrollment zero-touch",
             )
         return {"status": "ok", "action": "create_zero_touch"}
     if resource == "enrollment":

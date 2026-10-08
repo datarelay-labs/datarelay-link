@@ -56,6 +56,7 @@ class Env:
             'listen_host': '127.0.0.1',
             'listen_port': 6099,
             'registry_file': str(self.registry),
+            'control_plane_root': str(self.root),
             'enrollments_dir': str(self.enrollments),
             'token_file': str(self.token),
         }, indent=2) + '\n')

@@ -124,6 +124,7 @@ any subsequent policy action.
 
 ```text
 set enrollment zero-touch
+set enrollment zero-touch pre-approved
 set enrollment manual
 set enrollment bulk
 

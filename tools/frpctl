@@ -1668,6 +1668,9 @@ frpctl_zt_invoke_create_client() {
     args+=(--platform "$_FRP_ZT_PLATFORM")
   fi
   args+=("$@")
+  if [[ "${_FRP_ZT_PREAPPROVED:-0}" == "1" ]]; then
+    args+=(--pre-approved)
+  fi
   if [[ -n "${_FRP_ZT_CLIENT_NAME:-}" ]]; then
     args+=(--client-name "$_FRP_ZT_CLIENT_NAME")
   fi
@@ -4049,7 +4052,17 @@ frpctl_dispatch_canonical() {
       frpctl_load_passthrough "$result"
       frpctl_system_uninstall
       ;;
-    create_zero_touch) frpctl_require_server || return 1; frpctl_guided_zero_touch ;;
+    create_zero_touch)
+      frpctl_require_server || return 1
+      _FRP_ZT_PREAPPROVED=0
+      if [[ "$(frpctl_json_get "$result" pre_approved)" == "True" ]]; then
+        _FRP_ZT_PREAPPROVED=1
+      fi
+      local zt_rc=0
+      frpctl_guided_zero_touch || zt_rc=$?
+      _FRP_ZT_PREAPPROVED=0
+      return "$zt_rc"
+      ;;
     create_enrollment)
       frpctl_require_server || return 1
       frpctl_load_passthrough "$result"

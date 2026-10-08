@@ -630,6 +630,11 @@ def parse_args(argv=None):
         help='Print a one-line zero-touch client install command',
     )
     p.add_argument(
+        '--pre-approved',
+        action='store_true',
+        help=argparse.SUPPRESS,  # Internal: canonical CLI uses the positional opt-in.
+    )
+    p.add_argument(
         '--ssh',
         action='store_true',
         help='SSH convenience service template (127.0.0.1:22)',
@@ -1266,6 +1271,13 @@ def print_one_line(ticket, ttl, note, public_host, control_public, allocator, ca
 def main(argv=None):
     a = parse_args(argv)
     zero_touch = bool(a.one_line)
+    if a.pre_approved:
+        if not zero_touch:
+            fail('pre-approval requires a Zero-Touch enrollment')
+        # The optional test-input adapter is not a real operator TTY and
+        # cannot authorize a Host access grant.
+        if os.geteuid() != 0 or not sys.stdin.isatty():
+            fail('pre-approval requires local root and an interactive terminal')
     ttl_raw = a.ttl
     if ttl_raw is None or str(ttl_raw).strip() == '':
         ttl_raw = ZERO_TOUCH_DEFAULT_TTL if zero_touch else '600'
@@ -1422,6 +1434,18 @@ def main(argv=None):
     if not confirm_client_setup():
         return 0
 
+    approved_actor = ''
+    if a.pre_approved:
+        print(
+            'Pre-approval grants normal Host access as soon as a matching '
+            'single-use ticket is consumed. Default Pending Approval is safer.'
+        )
+        entered = read_prompt('Type PRE-APPROVE to authorize this one enrollment: ')
+        if str(entered or '').strip() != 'PRE-APPROVE':
+            print('Cancelled. No enrollment was issued.')
+            return 1
+        approved_actor = 'local-root:uid0'
+
     installer_label = 'Windows client installer' if platform == 'windows' else 'Client installer'
     preflight_installer_url(installer, label=installer_label)
 
@@ -1440,6 +1464,8 @@ def main(argv=None):
             note,
             label=client_name,
             cfg=remapped_server_cfg(cfg),
+            pre_approved=a.pre_approved,
+            pre_approval_actor=approved_actor,
         )
     except Exception as exc:
         if type(exc).__name__ == 'ZeroTouchCapacityError' or 'MAX_ISSUABLE' in str(exc):

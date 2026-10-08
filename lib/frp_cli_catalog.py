@@ -1666,6 +1666,7 @@ def domain_help(topic, role):
             "  set managed-host <HOST> admission approved|quarantined   (interactive typed confirmation)\n"
             "  set enrollment\n"
             "  set enrollment zero-touch\n"
+            "  set enrollment zero-touch pre-approved  (root + typed confirmation)\n"
             "  unset managed-host <HOST>\n\n"
         )
     if topic in ("network-object", "network-objects"):
