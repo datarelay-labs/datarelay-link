@@ -111,15 +111,18 @@ def delivery_tick(root: Optional[str] = None, *, limit: int = MAX_TICK) -> dict[
                 )
                 if status < 200 or status >= 300:
                     raise ControlPlaneError("Webhook HTTP delivery was not accepted.")
-                store.record_attempt(job["event_id"], delivered=True)
-                result["delivered"] += 1
+                if store.record_attempt(
+                    job["event_id"], lease_token=job["lease_token"], delivered=True
+                ):
+                    result["delivered"] += 1
             except Exception as exc:
-                # Only error categories leave this boundary; neither URL nor
-                # credentials nor raw response content are stored in diagnostics.
-                store.record_attempt(
-                    job["event_id"], delivered=False, error=type(exc).__name__,
-                )
-                result["failed"] += 1
+                # Late workers must not overwrite a reclaimed or disabled lease.
+                # Only error categories are recorded, never URLs or raw data.
+                if store.record_attempt(
+                    job["event_id"], lease_token=job["lease_token"],
+                    delivered=False, error=type(exc).__name__,
+                ):
+                    result["failed"] += 1
     return result
 
 

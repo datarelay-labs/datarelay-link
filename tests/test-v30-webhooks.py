@@ -21,7 +21,17 @@ class WebhookTests(unittest.TestCase):
             self.assertTrue(store.verify(wh["secret"],event,sig))
             self.assertEqual(len(store.pending()),1)
             for attempt in range(5):
-                store.record_attempt(event["event_id"],delivered=False,error="temporary failure")
+                claim = store.claim_due()[0]
+                self.assertEqual(claim["event_id"], event["event_id"])
+                self.assertTrue(store.record_attempt(
+                    event["event_id"], lease_token=claim["lease_token"],
+                    delivered=False, error="temporary failure",
+                ))
+                if attempt != 4:
+                    store.conn.execute(
+                        "UPDATE management_webhook_outbox SET next_attempt_at=? WHERE event_id=?",
+                        ("2000-01-01T00:00:00Z", event["event_id"]),
+                    )
             self.assertEqual(store.pending(),[])
             row=store.conn.execute("SELECT status,attempts FROM management_webhook_outbox WHERE event_id=?",(event["event_id"],)).fetchone()
             self.assertEqual((row["status"],row["attempts"]),("FAILED",5))
@@ -32,7 +42,10 @@ class WebhookTests(unittest.TestCase):
             hook = store.create("retention","https://hooks.example.org/hook",["attention"])
             for i in range(12):
                 event = store.enqueue(hook["id"],"attention",{"sequence":i})
-                store.record_attempt(event["event_id"],delivered=True)
+                claim = store.claim_due()[0]
+                self.assertTrue(store.record_attempt(
+                    event["event_id"], lease_token=claim["lease_token"], delivered=True,
+                ))
             keep = store.enqueue(hook["id"],"attention",{"sequence":"pending"})
             self.assertEqual(store.prune_history(max_completed=10), 2)
             self.assertEqual(len(store.pending()), 1)
@@ -51,12 +64,116 @@ class WebhookTests(unittest.TestCase):
         with WebhookStore(root) as store:
             hook = store.create("health", "https://hooks.example.org/health", ["attention"])
             event = store.enqueue(hook["id"], "attention", {"kind": "warning"})
-            for _ in range(5):
-                store.record_attempt(event["event_id"], delivered=False, error="timeout")
+            for attempt in range(5):
+                claim = store.claim_due()[0]
+                self.assertTrue(store.record_attempt(
+                    event["event_id"], lease_token=claim["lease_token"],
+                    delivered=False, error="timeout",
+                ))
+                if attempt != 4:
+                    store.conn.execute(
+                        "UPDATE management_webhook_outbox SET next_attempt_at=? WHERE event_id=?",
+                        ("2000-01-01T00:00:00Z", event["event_id"]),
+                    )
         with ManagementQueryService(root) as service:
             self.assertEqual(service._webhook_delivery_attention()["failed"], 1)
             result = service.attention_summary()
             self.assertIn("webhook-delivery", {x["kind"] for x in result["items"]})
             self.assertEqual(result["signals"]["webhook_delivery"]["failed"], 1)
+
+    def test_existing_webhook_outbox_adds_lease_token_without_losing_events(self):
+        from drlink_control_db import open_control_db
+
+        root = tempfile.mkdtemp(prefix="drlink-wh-migrate-")
+        conn = open_control_db(root)
+        try:
+            conn.execute("""
+                CREATE TABLE management_webhook_outbox (
+                    event_id TEXT PRIMARY KEY, webhook_id TEXT NOT NULL,
+                    event_type TEXT NOT NULL, payload_json TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'PENDING', attempts INTEGER NOT NULL DEFAULT 0,
+                    next_attempt_at TEXT, last_attempt_at TEXT,
+                    last_error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL
+                )
+            """)
+            conn.execute(
+                "INSERT INTO management_webhook_outbox "
+                "(event_id,webhook_id,event_type,payload_json,status,created_at) "
+                "VALUES (?,?,?,?,?,?)",
+                ("legacy-event", "legacy-hook", "attention", "{}", "PENDING",
+                 "2026-10-08T00:00:00Z"),
+            )
+        finally:
+            conn.close()
+        with WebhookStore(root) as migrated:
+            columns = {str(r[1]) for r in migrated.conn.execute(
+                "PRAGMA table_info(management_webhook_outbox)"
+            )}
+            self.assertIn("lease_token", columns)
+            row = migrated.conn.execute(
+                "SELECT event_id,status,lease_token FROM management_webhook_outbox "
+                "WHERE event_id='legacy-event'"
+            ).fetchone()
+            self.assertEqual((row["event_id"], row["status"], row["lease_token"]),
+                             ("legacy-event", "PENDING", ""))
+
+    def test_reclaimed_delivery_rejects_old_lease_and_preserves_event_id(self):
+        root = tempfile.mkdtemp(prefix="drlink-wh-reclaim-")
+        with WebhookStore(root) as first_worker:
+            hook = first_worker.create(
+                "recovery", "https://hooks.example.org/events", ["attention"]
+            )
+            event = first_worker.enqueue(hook["id"], "attention", {"kind": "recovery"})
+            original = first_worker.claim_due()
+            self.assertEqual(len(original), 1)
+            old_lease = original[0]["lease_token"]
+            with self.assertRaises(ControlPlaneError):
+                first_worker.record_attempt(
+                    event["event_id"], lease_token="not-a-lease", delivered=True,
+                )
+            first_worker.conn.execute(
+                "UPDATE management_webhook_outbox SET last_attempt_at=? WHERE event_id=?",
+                ("2000-01-01T00:00:00Z", event["event_id"]),
+            )
+            with WebhookStore(root) as second_worker:
+                recovered = second_worker.claim_due()
+                self.assertEqual(len(recovered), 1)
+                self.assertEqual(recovered[0]["event_id"], event["event_id"])
+                new_lease = recovered[0]["lease_token"]
+                self.assertNotEqual(old_lease, new_lease)
+                self.assertFalse(first_worker.record_attempt(
+                    event["event_id"], lease_token=old_lease, delivered=True,
+                ))
+                self.assertTrue(second_worker.record_attempt(
+                    event["event_id"], lease_token=new_lease,
+                    delivered=False, error="temporary outage",
+                ))
+                self.assertFalse(second_worker.record_attempt(
+                    event["event_id"], lease_token=new_lease, delivered=True,
+                ))
+                row = second_worker.conn.execute(
+                    "SELECT status,attempts,lease_token FROM management_webhook_outbox "
+                    "WHERE event_id=?", (event["event_id"],),
+                ).fetchone()
+                self.assertEqual((row["status"], row["attempts"], row["lease_token"]),
+                                 ("PENDING", 1, ""))
+                self.assertEqual(second_worker.claim_due(), [])  # honor retry backoff
+                second_worker.conn.execute(
+                    "UPDATE management_webhook_outbox SET next_attempt_at=? WHERE event_id=?",
+                    ("2000-01-01T00:00:00Z", event["event_id"]),
+                )
+                final_claim = second_worker.claim_due()[0]
+                self.assertTrue(second_worker.record_attempt(
+                    event["event_id"], lease_token=final_claim["lease_token"],
+                    delivered=True,
+                ))
+                self.assertFalse(first_worker.record_attempt(
+                    event["event_id"], lease_token=old_lease, delivered=False,
+                ))
+                row = second_worker.conn.execute(
+                    "SELECT status,attempts FROM management_webhook_outbox WHERE event_id=?",
+                    (event["event_id"],),
+                ).fetchone()
+                self.assertEqual((row["status"], row["attempts"]), ("DELIVERED", 2))
 
 if __name__=="__main__": unittest.main()

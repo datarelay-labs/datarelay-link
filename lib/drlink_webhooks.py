@@ -104,7 +104,8 @@ class WebhookStore:
         CREATE TABLE IF NOT EXISTS management_webhook_outbox(
           event_id TEXT PRIMARY KEY,webhook_id TEXT NOT NULL,event_type TEXT NOT NULL,payload_json TEXT NOT NULL,
           status TEXT NOT NULL DEFAULT 'PENDING',attempts INTEGER NOT NULL DEFAULT 0,
-          next_attempt_at TEXT,last_attempt_at TEXT,last_error TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL);
+          next_attempt_at TEXT,last_attempt_at TEXT,lease_token TEXT NOT NULL DEFAULT '',
+          last_error TEXT NOT NULL DEFAULT '',created_at TEXT NOT NULL);
         CREATE INDEX IF NOT EXISTS idx_webhook_outbox_status
           ON management_webhook_outbox(status,created_at,event_id);
         CREATE TABLE IF NOT EXISTS management_webhook_audit_cursors(
@@ -116,6 +117,11 @@ class WebhookStore:
         outbox = {str(r[1]) for r in self.conn.execute("PRAGMA table_info(management_webhook_outbox)")}
         if "next_attempt_at" not in outbox:
             self.conn.execute("ALTER TABLE management_webhook_outbox ADD COLUMN next_attempt_at TEXT")
+        if "lease_token" not in outbox:
+            self.conn.execute(
+                "ALTER TABLE management_webhook_outbox "
+                "ADD COLUMN lease_token TEXT NOT NULL DEFAULT ''"
+            )
 
     def close(self) -> None:
         self.conn.close()
@@ -349,8 +355,9 @@ class WebhookStore:
         try:
             # Reclaim an interrupted worker, preserving the same stable event id.
             self.conn.execute(
-                "UPDATE management_webhook_outbox SET status='PENDING' "
-                "WHERE status='SENDING' AND last_attempt_at<?", (stale,),
+                "UPDATE management_webhook_outbox SET status='PENDING',lease_token='' "
+                "WHERE status='SENDING' "
+                "AND (last_attempt_at IS NULL OR last_attempt_at<?)", (stale,),
             )
             rows = self.conn.execute(
                 "SELECT o.event_id,o.webhook_id,o.payload_json,o.attempts,w.url "
@@ -359,36 +366,69 @@ class WebhookStore:
                 "AND (o.next_attempt_at IS NULL OR o.next_attempt_at<=?) "
                 "ORDER BY o.created_at,o.event_id LIMIT ?", (now, size),
             ).fetchall()
+            tokens: dict[str, str] = {}
             for row in rows:
-                self.conn.execute(
-                    "UPDATE management_webhook_outbox SET status='SENDING',last_attempt_at=? "
-                    "WHERE event_id=? AND status='PENDING'", (now, row["event_id"]),
-                )
+                token = secrets.token_hex(16)
+                updated = self.conn.execute(
+                    "UPDATE management_webhook_outbox "
+                    "SET status='SENDING',last_attempt_at=?,lease_token=? "
+                    "WHERE event_id=? AND status='PENDING'",
+                    (now, token, row["event_id"]),
+                ).rowcount
+                if updated != 1:
+                    raise ControlPlaneError("Webhook delivery claim became stale.")
+                tokens[str(row["event_id"])] = token
             self.conn.execute("COMMIT")
         except Exception:
             self.conn.execute("ROLLBACK")
             raise
         return [{"event_id": str(r["event_id"]), "webhook_id": str(r["webhook_id"]),
                  "payload_json": str(r["payload_json"]), "url": str(r["url"]),
-                 "attempts": int(r["attempts"])} for r in rows]
+                 "attempts": int(r["attempts"]),
+                 "lease_token": tokens[str(r["event_id"])]} for r in rows]
 
-    def record_attempt(self, event_id: str, *, delivered: bool, error: str = "") -> None:
-        row = self.conn.execute(
-            "SELECT attempts,status FROM management_webhook_outbox WHERE event_id=?", (event_id,)
-        ).fetchone()
-        if not row or row["status"] not in ("PENDING", "SENDING"):
-            return
-        attempts = int(row["attempts"]) + 1
-        status = "DELIVERED" if delivered else "FAILED" if attempts >= MAX_ATTEMPTS else "PENDING"
-        delay = min(1800, 30 * (4 ** max(0, attempts - 1)))
-        next_at = (datetime.now(timezone.utc) + timedelta(seconds=delay)).replace(
-            microsecond=0).isoformat().replace("+00:00", "Z")
-        self.conn.execute(
-            "UPDATE management_webhook_outbox SET attempts=?,last_attempt_at=?,"
-            "next_attempt_at=?,status=?,last_error=? WHERE event_id=? AND status IN ('PENDING','SENDING')",
-            (attempts, _now(), next_at, status, "" if delivered else str(error or "")[:120],
-             event_id),
-        )
+    def record_attempt(
+        self, event_id: str, *, lease_token: str, delivered: bool, error: str = ""
+    ) -> bool:
+        """Acknowledge only the exact live delivery lease, never an older worker.
+
+        After a crash/reclaim, a late attempt must not overwrite the new
+        worker's state. A successful HTTP response can still be delivered
+        twice across crashes; consumers deduplicate with the stable event id.
+        """
+        if not isinstance(lease_token, str) or not re.fullmatch(r"[0-9a-f]{32}", lease_token):
+            raise ControlPlaneError("A valid webhook delivery lease is required.")
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            row = self.conn.execute(
+                "SELECT attempts FROM management_webhook_outbox "
+                "WHERE event_id=? AND status='SENDING' AND lease_token=?",
+                (event_id, lease_token),
+            ).fetchone()
+            if not row:
+                self.conn.execute("COMMIT")
+                return False
+            attempts = int(row["attempts"]) + 1
+            status = "DELIVERED" if delivered else "FAILED" if attempts >= MAX_ATTEMPTS else "PENDING"
+            delay = min(1800, 30 * (4 ** max(0, attempts - 1)))
+            next_at = (datetime.now(timezone.utc) + timedelta(seconds=delay)).replace(
+                microsecond=0).isoformat().replace("+00:00", "Z")
+            updated = self.conn.execute(
+                "UPDATE management_webhook_outbox "
+                "SET attempts=?,last_attempt_at=?,next_attempt_at=?,status=?,"
+                "last_error=?,lease_token='' "
+                "WHERE event_id=? AND status='SENDING' AND lease_token=?",
+                (attempts, _now(), next_at, status,
+                 "" if delivered else str(error or "")[:120], event_id, lease_token),
+            ).rowcount
+            if updated != 1:
+                raise ControlPlaneError("Webhook delivery lease was lost.")
+            self.conn.execute("COMMIT")
+        except Exception:
+            if self.conn.in_transaction:
+                self.conn.execute("ROLLBACK")
+            raise
+        return True
 
     @staticmethod
     def signature(secret: str, payload: dict[str, Any]) -> str:
