@@ -221,8 +221,13 @@ class ManagementJobEngine:
         payload: Optional[dict[str, Any]] = None,
         timeout_seconds: int = DEFAULT_JOB_TIMEOUT_SECONDS,
         now: Optional[datetime] = None,
+        _validated_rollout: bool = False,
     ) -> dict[str, Any]:
         kind = str(job_type or "").strip().lower()
+        if kind == ROLLOUT_JOB_TYPE and not _validated_rollout:
+            raise ControlPlaneError(
+                "Rollout Jobs require explicit canary, artifact and Host validation."
+            )
         if kind not in ADMITTED_JOB_TYPES:
             raise ControlPlaneError(
                 "Management Job type '%s' is not an admitted 3.0 safe job family." % kind
@@ -879,6 +884,7 @@ class ManagementJobEngine:
                 payload=payload,
                 timeout_seconds=timeout_seconds,
                 now=now,
+                _validated_rollout=True,
             )
 
     def rollout_control(self, job_id: str, *, action: str) -> dict[str, Any]:
@@ -924,6 +930,8 @@ class ManagementJobEngine:
             return self._get_unlocked(str(job_id))
 
     def enqueue(self, **kwargs) -> dict[str, Any]:
+        if "_validated_rollout" in kwargs:
+            raise ControlPlaneError("Rollout validation cannot be supplied by a generic Job caller.")
         with self._lock:
             return self._enqueue_unlocked(**kwargs)
 

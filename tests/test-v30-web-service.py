@@ -223,6 +223,19 @@ class V30WebServiceTests(unittest.TestCase):
                 "SELECT COUNT(*) FROM management_jobs"
             ).fetchone()[0]
         self.assertEqual(after, before)
+        # Preview is advisory. Until the canonical signed-Agent updater and
+        # rollback have been qualified, a direct POST must not enqueue work.
+        status, _, refused = self.request(
+            "POST", "/api/v1/jobs/agent-update-rollout", request,
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertNotEqual(status, 200, refused)
+        self.assertIn("error", refused)
+        with ManagementJobEngine(self.tmp) as engine:
+            self.assertEqual(
+                engine.conn.execute("SELECT COUNT(*) FROM management_jobs").fetchone()[0],
+                before,
+            )
 
     def test_auth_required_on_loopback_and_read_views(self):
         status, _, _ = self.request("GET", "/api/v1/overview")

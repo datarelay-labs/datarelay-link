@@ -132,6 +132,19 @@ class V30ManagementJobTests(unittest.TestCase):
         resumed = self.engine.rollout_control(job["id"], action="resume")
         self.assertFalse(resumed["payload"]["operator_paused"])
 
+    def test_generic_job_api_cannot_bypass_rollout_artifact_and_canary_validation(self):
+        with self.assertRaisesRegex(ControlPlaneError, "Rollout"):
+            self.engine.enqueue(
+                job_type="agent-update-rollout", targets=("host-a",),
+                requested_by="admin-a",
+                payload={"artifact": {"source_ref": "main", "sha256": "not-verified"}},
+                now=self.now,
+            )
+        self.assertEqual(
+            self.engine.conn.execute("SELECT COUNT(*) FROM management_jobs").fetchone()[0],
+            0,
+        )
+
     def test_managed_update_rollout_rejects_unsafe_scope(self):
         artifact = {"version": "3.0.0", "source_ref": "b" * 40, "sha256": "c" * 64}
         with self.assertRaises(ControlPlaneError):

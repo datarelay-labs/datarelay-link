@@ -394,18 +394,20 @@ class ManagementCoreService:
     def _invoke_drlink_agent_update_rollout_start(
         self, actor: ManagementActor, data: dict
     ) -> dict:
-        from drlink_v30_jobs import ManagementJobEngine
-
+        # The 3.0 preview is intentionally NOT_VERIFIED. No public Apply is
+        # authorized until immutable artifact qualification and the canonical
+        # Agent updater/rollback have passed exact-HEAD real Agent acceptance.
+        # Do not allow a direct API invocation to bypass that safety gate.
         self._require_web_role(actor, "Admin")
-        with ManagementJobEngine(self.root) as engine:
-            return engine.enqueue_rollout(
-                targets=data["targets"],
-                canary_targets=data.get("canary_targets") or (),
-                requested_by=actor.actor_id,
-                artifact=data["artifact"],
-                wave_size=data.get("wave_size", 10),
-                failure_threshold_percent=data.get("failure_threshold_percent", 20),
+        if "management-update" not in actor.permissions:
+            raise ManagementAuthorizationError(
+                "management-update is required for Managed Agent rollouts."
             )
+        raise ControlPlaneError(
+            "Managed Agent rollout Apply is unavailable: artifact provenance, "
+            "Agent update and rollback are not qualified."
+        )
+        # No rollout Job may be created by this public API while unqualified.
 
     def job_cancel(
         self, job_id: str, *, actor: ManagementActor
