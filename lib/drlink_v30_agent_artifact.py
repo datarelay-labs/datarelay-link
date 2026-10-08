@@ -26,7 +26,7 @@ MAX_MANIFEST_BYTES = 128 * 1024
 MAX_BUNDLE_BYTES = 32 * 1024 * 1024
 SHA40 = re.compile(r"^[0-9a-f]{40}$")
 SHA64 = re.compile(r"^[0-9a-f]{64}$")
-VERSION = re.compile(r"^\d+\.\d+\.\d+(?:-rc\.\d+)?$")
+VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:-rc\.[0-9]+)?$")
 CHANNELS = frozenset({"development", "preview", "stable"})
 AGENT_REL = "agent/bootstrap-client.sh"
 
@@ -236,3 +236,69 @@ def verify_installed_agent_lineage(
         "post_update_health_verified": False,
         "rollback_verified": False,
     }
+
+
+def _read_bounded_regular(path: str, limit: int) -> bytes:
+    if not hasattr(os, "O_NOFOLLOW"):
+        _fail("safe release-metadata file-open is unavailable")
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError as exc:
+        raise AgentArtifactError("AGENT_ARTIFACT_UNQUALIFIED: release metadata is unavailable") from exc
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or not 0 < info.st_size <= limit:
+            _fail("release metadata size or type is invalid")
+        with os.fdopen(fd, "rb", closefd=False) as stream:
+            data = stream.read(limit + 1)
+        if len(data) != info.st_size:
+            _fail("release metadata changed during verification")
+        return data
+    finally:
+        os.close(fd)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Internal read-only artifact preflight; never executes an updater."""
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(
+        description="Verify a detached release-signed DRLink Linux Agent build (read-only)"
+    )
+    parser.add_argument("--manifest", required=True)
+    parser.add_argument("--signature", required=True)
+    parser.add_argument("--release-public-key", required=True)
+    parser.add_argument("--bundle", required=True)
+    parser.add_argument("--source-head", required=True)
+    parser.add_argument("--version", required=True)
+    parser.add_argument("--sha256", required=True)
+    parser.add_argument("--channel", required=True, choices=sorted(CHANNELS))
+    args = parser.parse_args(argv)
+    try:
+        manifest = _read_bounded_regular(args.manifest, MAX_MANIFEST_BYTES)
+        signature = _read_bounded_regular(args.signature, 1024).decode("ascii")
+        release_key = _read_bounded_regular(args.release_public_key, 8192).decode("ascii")
+        result = verify_signed_agent_bundle(
+            manifest_bytes=manifest, signature_b64=signature.strip(),
+            trusted_release_public_key=release_key,
+            bundle_path=args.bundle,
+            target={
+                "source_ref": args.source_head, "version": args.version,
+                "sha256": args.sha256,
+            },
+            expected_channel=args.channel,
+        )
+    except (AgentArtifactError, UnicodeError, ValueError) as exc:
+        message = (
+            str(exc) if isinstance(exc, AgentArtifactError)
+            else "AGENT_ARTIFACT_UNQUALIFIED: invalid release metadata"
+        )
+        print(message, file=sys.stderr)
+        return 1
+    print(json.dumps(result, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

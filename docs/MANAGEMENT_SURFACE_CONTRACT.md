@@ -498,7 +498,11 @@ of the trusted release verification key, signed artifact publication, an
 Agent-owned updater execution/health/rollback path, and real Host qualification
 are still required before changing the public fail-closed Apply gate. No
 production signing key is generated or stored by this preliminary component;
-Windows/macOS platform-specific qualification remains separate.
+Windows/macOS platform-specific qualification remains separate. The internal
+read-only verifier `python3 lib/drlink_v30_agent_artifact.py --help` accepts
+manifest, detached signature, pinned release public key, Agent bundle, exact
+source HEAD, version, digest and channel; it never installs or rolls back files
+and is not a public `drlink` command.
 
 ### 9.7 Public Automation API / Service Accounts
 

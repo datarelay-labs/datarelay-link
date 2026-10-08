@@ -421,6 +421,11 @@ class SignedRolloutArtifactOfflineTests(unittest.TestCase):
             self._verify(target={**self.target, "source_ref": "main"})
         with self.assertRaises(AgentArtifactError):
             self._verify(channel="stable")
+        with self.assertRaises(AgentArtifactError):
+            self._verify(
+                manifest={**self.manifest, "project_version": "٣.٠.٠"},
+                target={**self.target, "version": "٣.٠.٠"},
+            )
 
     def test_signed_duplicate_json_key_must_fail_even_with_valid_signature(self):
         from drlink_v30_agent_artifact import (
@@ -445,6 +450,43 @@ class SignedRolloutArtifactOfflineTests(unittest.TestCase):
                 bundle_path=self.bundle, target=self.target,
                 expected_channel="development",
             )
+
+    def test_read_only_preflight_cli_checks_real_files_and_rejects_bad_signature(self):
+        import subprocess
+
+        raw = json.dumps(
+            self.manifest, sort_keys=True, separators=(",", ":")
+        ).encode()
+        manifest = self.root / "manifest.json"
+        signature = self.root / "manifest.sig"
+        manifest.write_bytes(raw)
+        signature.write_text(MGMT.sign_message(self.key, raw) + "\n")
+        args = [
+            sys.executable, str(ROOT / "lib/drlink_v30_agent_artifact.py"),
+            "--manifest", str(manifest),
+            "--signature", str(signature),
+            "--release-public-key", str(self.pub),
+            "--bundle", str(self.bundle),
+            "--source-head", self.target["source_ref"],
+            "--version", self.target["version"],
+            "--sha256", self.target["sha256"],
+            "--channel", "development",
+        ]
+        before = self.bundle.read_bytes()
+        accepted = subprocess.run(args, capture_output=True, text=True, timeout=12)
+        self.assertEqual(accepted.returncode, 0, accepted.stderr)
+        result = json.loads(accepted.stdout)
+        self.assertTrue(result["signature_verified"])
+        self.assertFalse(result["update_completed"])
+        self.assertFalse(result["post_update_health_verified"])
+        self.assertEqual(self.bundle.read_bytes(), before)
+
+        signature.write_text("invalid-signature\n")
+        rejected = subprocess.run(args, capture_output=True, text=True, timeout=12)
+        self.assertEqual(rejected.returncode, 1)
+        self.assertIn("AGENT_ARTIFACT_UNQUALIFIED", rejected.stderr)
+        self.assertNotIn("BEGIN PRIVATE KEY", rejected.stderr)
+        self.assertEqual(self.bundle.read_bytes(), before)
 
     def test_bundle_mutation_and_symlink_are_denied(self):
         from drlink_v30_agent_artifact import AgentArtifactError
