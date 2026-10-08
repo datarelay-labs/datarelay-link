@@ -732,5 +732,165 @@ class SignedDistributionStagingTests(unittest.TestCase):
         self.assertNotIn("lib/drlink-v30-signing-private-key.pem", included)
 
 
+
+class SignedAgentEnrolledHTTPSTests(unittest.TestCase):
+    """A disposable TLS Server proves the Agent's read-only signed preflight."""
+
+    def setUp(self):
+        import ipaddress
+        import ssl
+        import threading
+        from datetime import datetime, timedelta, timezone
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        from cryptography import x509
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import ec
+        from cryptography.x509.oid import NameOID
+
+        self.fixture = SignedDistributionStagingTests(
+            "test_external_signature_stages_separate_unpublished_tree"
+        )
+        self.fixture.setUp()
+        self.root = self.fixture.root
+        published = Path(self.fixture._stage()["candidate_path"])
+        self.payloads = {
+            "/artifacts/manifest.json": (published / "manifest.json").read_bytes(),
+            "/artifacts/agent/manifest.sig": (
+                published / "agent/manifest.sig"
+            ).read_bytes(),
+            "/artifacts/agent/bootstrap-client.sh": (
+                published / "agent/bootstrap-client.sh"
+            ).read_bytes(),
+        }
+        self.requests = []
+        self.redirect = False
+
+        key = ec.generate_private_key(ec.SECP256R1())
+        name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "drlink-local-test")])
+        now = datetime.now(timezone.utc)
+        certificate = (
+            x509.CertificateBuilder()
+            .subject_name(name).issuer_name(name).public_key(key.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(now - timedelta(hours=1))
+            .not_valid_after(now + timedelta(days=1))
+            .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+            .add_extension(
+                x509.SubjectAlternativeName(
+                    [x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]
+                ), critical=False,
+            )
+            .sign(key, hashes.SHA256())
+        )
+        self.ca = self.root / "enrollment-ca.pem"
+        private = self.root / "local-tls.key"
+        self.ca.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
+        private.write_bytes(key.private_bytes(
+            serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        ))
+        private.chmod(0o600)
+        parent = self
+
+        class Receiver(BaseHTTPRequestHandler):
+            def do_GET(self):
+                parent.requests.append(self.path)
+                if parent.redirect and self.path == "/artifacts/manifest.json":
+                    self.send_response(302)
+                    self.send_header("Location", "http://untrusted.example.test/manifest.json")
+                    self.end_headers()
+                    return
+                data = parent.payloads.get(self.path)
+                if data is None:
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def log_message(self, *_args):
+                pass
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Receiver)
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(str(self.ca), str(private))
+        self.server.socket = context.wrap_socket(
+            self.server.socket, server_side=True
+        )
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.origin = "https://127.0.0.1:%d" % self.server.server_address[1]
+
+    def tearDown(self):
+        self.server.shutdown()
+        self.thread.join(timeout=3)
+        self.server.server_close()
+        self.fixture.tearDown()
+
+    def _preflight(self, **overrides):
+        from drlink_v30_agent_artifact_transport import (
+            verify_enrolled_server_candidate,
+        )
+
+        kwargs = {
+            "enrolled_https_origin": self.origin,
+            "enrollment_ca_file": self.ca,
+            "trusted_release_public_key_file": self.fixture.pub,
+            "pinned_release_key_fingerprint": self.fixture.fingerprint,
+            "target": self.fixture.target,
+            "expected_channel": "development",
+        }
+        kwargs.update(overrides)
+        return verify_enrolled_server_candidate(**kwargs)
+
+    def test_real_tls_verified_download_has_no_apply_side_effects(self):
+        candidate = self._preflight()
+        self.assertTrue(candidate["signature_verified"])
+        self.assertEqual(candidate["source_ref"], self.fixture.target["source_ref"])
+        self.assertEqual(candidate["transport"], "ENROLLED_SERVER_HTTPS")
+        self.assertFalse(candidate["update_completed"])
+        self.assertFalse(candidate["rollback_verified"])
+        self.assertFalse(candidate["post_update_health_verified"])
+        self.assertEqual(self.requests, [
+            "/artifacts/manifest.json", "/artifacts/agent/manifest.sig",
+            "/artifacts/agent/bootstrap-client.sh",
+        ])
+        self.assertFalse((self.root / "usr/local/bin/drlink").exists())
+
+    def test_redirect_and_signed_bundle_tamper_fail_closed(self):
+        from drlink_v30_agent_artifact import AgentArtifactError
+
+        self.redirect = True
+        with self.assertRaises(AgentArtifactError):
+            self._preflight()
+        self.assertEqual(self.requests, ["/artifacts/manifest.json"])
+        self.redirect = False
+        self.requests.clear()
+        self.payloads["/artifacts/agent/bootstrap-client.sh"] += b"tamper"
+        with self.assertRaises(AgentArtifactError):
+            self._preflight()
+        self.assertEqual(len(self.requests), 3)
+
+    def test_wrong_tls_ca_release_fingerprint_or_http_origin_denied(self):
+        from drlink_v30_agent_artifact import AgentArtifactError
+
+        self.ca.write_text("not a CA")
+        with self.assertRaises(AgentArtifactError):
+            self._preflight()
+        self.assertEqual(self.requests, [])
+        with self.assertRaises(AgentArtifactError):
+            self._preflight(pinned_release_key_fingerprint="0" * 64)
+        self.assertEqual(self.requests, [])
+        for origin in (
+            "http://127.0.0.1", "https://user:pass@127.0.0.1",
+            "https://127.0.0.1/artifacts/manifest.json",
+            "https://127.0.0.1/?redirect=true",
+            "https://127.0.0.1:0",
+        ):
+            with self.subTest(origin=origin), self.assertRaises(AgentArtifactError):
+                self._preflight(enrolled_https_origin=origin)
+
 if __name__ == "__main__":
     unittest.main()

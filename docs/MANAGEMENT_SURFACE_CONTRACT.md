@@ -529,6 +529,23 @@ health/rollback must all pass separate qualification before staged rollout
 Apply becomes available. This feature does not grant permission to publish
 artifacts or provision keys.
 
+The Agent-side read-only network preflight is
+`lib/drlink_v30_agent_artifact_transport.py`. Only the canonical enrolled
+Server HTTPS origin and persisted enrollment CA may be supplied by its
+future Agent lifecycle caller; the Server/Job payload cannot select a new
+download origin or signing key. The module fetches exactly
+`/artifacts/manifest.json`, `/artifacts/agent/manifest.sig`, and
+`/artifacts/agent/bootstrap-client.sh` with bounded TLS-verified GETs.
+Redirects, missing signatures, untrusted TLS certificates, key-fingerprint
+mismatches, wrong immutable target identities and altered bundle bytes fail
+closed. The independent pinned release public key and its expected
+fingerprint are installed outside the downloaded artifacts; neither can be
+selected from Server-supplied metadata. Successful read-only verification
+does **not** persist/download an executable Agent updater, install software,
+assert health, or authorize the next rollout wave. The verified candidate
+must be re-bound at the authorized Agent-side Apply boundary, followed by
+actual runtime/health and rollback qualification.
+
 ### 9.7 Public Automation API / Service Accounts
 
 Automation clients authenticate as Service Accounts and receive only their configured
