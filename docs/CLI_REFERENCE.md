@@ -101,6 +101,24 @@ show ai-access-log destination <DESTINATION>
 show ai-access-log permission <PERMISSION>
 ```
 
+### DRLink 3.0 development — Access Hygiene
+
+The following read-only commands are available on the 3.0 development branch.
+They report advisory evidence and never remove rules, revoke grants, or
+automatically change access policy:
+
+```text
+show access-hygiene
+show access-hygiene <KIND:RESOURCE-ID>
+test access-hygiene
+```
+
+The listing uses a deterministic finding selector of `kind:resource_id`.
+Details include observation window, evidence quality and a suggested manual
+review. `UNKNOWN_EVIDENCE` means **insufficient proof**: it does not mean an
+access grant is unused. Operators must use the normal Change Plan process for
+any subsequent policy action.
+
 ## 3. Server set commands
 
 ```text

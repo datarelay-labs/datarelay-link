@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 import sys, tempfile, unittest
+import io
+from contextlib import redirect_stdout
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
@@ -79,5 +81,52 @@ class AccessHygieneTests(unittest.TestCase):
             self.assertEqual(cp.current_revision(),before)
         finally:
             cp.close()
+
+    def test_cli_list_detail_test_and_grammar_preserve_read_only_revision(self):
+        from drlink_control_cli import dispatch
+        from frp_ctl_grammar import match, context_help
+        from frp_cli_catalog import to_internal
+
+        root = tempfile.mkdtemp(prefix="drlink-hygiene-cli-")
+        plane = ControlPlane(root)
+        try:
+            plane.upsert_client("host-a", hostname="alpha")
+            plane.set_rule("remote", "standing")
+            plane.set_rule_action("remote", "standing", "ALLOW")
+            plane.set_rule_enabled("remote", "standing", True)
+            rev = plane.current_revision()
+        finally:
+            plane.close()
+
+        with ManagementQueryService.open_read_only(root) as query:
+            finding = next(
+                item for item in query.access_hygiene()["items"]
+                if item["kind"] == "access-usage-review"
+            )
+        finding_id = "%s:%s" % (finding["kind"], finding["resource_id"])
+        commands = (
+            (["show", "access-hygiene"], "UNKNOWN_EVIDENCE"),
+            (["show", "access-hygiene", finding_id], "UNKNOWN_EVIDENCE"),
+            (["test", "access-hygiene"], "Automatic policy changes: NO"),
+        )
+        for tokens, expected in commands:
+            parsed = match(tokens, role="server")
+            self.assertEqual(parsed["status"], "ok", tokens)
+            self.assertEqual(parsed["action"], "control_plane", tokens)
+            self.assertEqual(to_internal(tokens), tokens)
+            stream = io.StringIO()
+            with redirect_stdout(stream):
+                self.assertEqual(dispatch(tokens, root=root), 0)
+            self.assertIn(expected, stream.getvalue())
+        self.assertIn("access-hygiene", context_help(["show"], "server"))
+        self.assertIn("access-hygiene", context_help(["test"], "server"))
+        with self.assertRaises(SystemExit):
+            dispatch(["show", "access-hygiene", "missing:host"], root=root)
+
+        plane = ControlPlane(root)
+        try:
+            self.assertEqual(plane.current_revision(), rev)
+        finally:
+            plane.close()
 
 if __name__=="__main__": unittest.main()

@@ -44,6 +44,7 @@ CATALOG = _load_catalog()
 CONTROL_PLANE_SHOW = frozenset(
     {
         "status",
+        "access-hygiene",
         "network-objects",
         "network-object",
         "network-groups",
@@ -115,7 +116,7 @@ CONTROL_PLANE_MUTATE = frozenset(
     }
 )
 CONTROL_PLANE_TEST = frozenset(
-    {"remote-access", "internet-access", "internet", "ai-access", "configuration"}
+    {"remote-access", "internet-access", "internet", "ai-access", "configuration", "access-hygiene"}
 )
 CONTROL_PLANE_SYSTEM = frozenset(
     {

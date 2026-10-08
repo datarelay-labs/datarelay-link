@@ -554,6 +554,84 @@ def _test_internet(plane: ControlPlane, args) -> int:
     return 0
 
 
+def _access_hygiene_cli(plane: ControlPlane, rest, *, check: bool = False) -> int:
+    """Inspect evidence-backed hygiene findings without modifying security state."""
+    if check and rest:
+        raise SystemExit("Usage: test access-hygiene")
+    if not check and len(rest) > 1:
+        raise SystemExit("Usage: show access-hygiene [KIND:RESOURCE-ID]")
+
+    from drlink_management_service import ManagementQueryService
+
+    with ManagementQueryService.open_read_only(plane.root) as service:
+        data = service.access_hygiene()
+    if not data.get("read_only") or data.get("auto_mutation"):
+        raise ControlPlaneError("Access Hygiene query did not prove read-only behavior.")
+
+    items = list(data.get("items") or [])
+    if check:
+        unknown = sum(item.get("evidence_quality") == "UNKNOWN_EVIDENCE" for item in items)
+        sys.stdout.write(
+            "Access Hygiene inspection (READ ONLY)\n"
+            "Findings: %s\nUnknown evidence: %s\n"
+            "Automatic policy changes: NO\n"
+            "Unknown usage evidence is not proof of unused access.\n"
+            % (len(items), unknown)
+        )
+        return 0
+
+    selector = rest[0] if rest else ""
+    if selector:
+        matching = [
+            item for item in items
+            if "%s:%s" % (item.get("kind"), item.get("resource_id")) == selector
+        ]
+        if not matching:
+            raise SystemExit("Access Hygiene finding not found; run show access-hygiene.")
+        if len(matching) != 1:
+            raise SystemExit("Ambiguous Access Hygiene finding selector.")
+        item = matching[0]
+        sys.stdout.write(
+            "Access Hygiene Finding: %s\n"
+            "Status: %s\nSeverity: %s\n"
+            "Resource: %s (%s)\n"
+            "Evidence quality: %s\nObservation window: %s days\n"
+            "Evidence: %s\nRecommendation: %s\n"
+            "No automatic policy mutation is performed.\n"
+            % (
+                selector, item.get("finding_status") or "-",
+                item.get("severity") or "-",
+                item.get("label") or "-",
+                item.get("resource_type") or "-",
+                item.get("evidence_quality") or "-",
+                item.get("observation_window_days") or "-",
+                json.dumps(item.get("evidence") or {}, sort_keys=True),
+                item.get("recommendation") or "-",
+            )
+        )
+        return 0
+
+    sys.stdout.write(
+        "Access Hygiene (READ ONLY, recommendations only)\n"
+        "Generated: %s\nFindings: %s (displayed: %s)\n"
+        "No automatic access changes are performed.\n\n"
+        % (data.get("generated_at") or "-", data.get("count", len(items)), len(items))
+    )
+    sys.stdout.write("%-56s %-9s %-18s %s\n" % (
+        "FINDING", "SEVERITY", "EVIDENCE", "STATUS"
+    ))
+    for item in items:
+        finding_id = "%s:%s" % (item.get("kind"), item.get("resource_id"))
+        sys.stdout.write("%-56.56s %-9.9s %-18.18s %s\n" % (
+            finding_id, item.get("severity") or "-",
+            item.get("evidence_quality") or "-", item.get("finding_status") or "-",
+        ))
+    if not items:
+        sys.stdout.write("(no findings)\n")
+    sys.stdout.write("Detail: show access-hygiene <KIND:RESOURCE-ID>\n")
+    return 0
+
+
 def _show(plane: ControlPlane, rest):
     if not rest:
         raise SystemExit("Missing resource.")
@@ -563,6 +641,8 @@ def _show(plane: ControlPlane, rest):
     if handled is not None:
         return handled
     res = rest[0]
+    if res == "access-hygiene":
+        return _access_hygiene_cli(plane, rest[1:])
     if res == "status":
         sys.stdout.write(plane.format_status())
         return 0
@@ -1319,6 +1399,8 @@ def _test(plane: ControlPlane, rest):
 
     if rest[0] == "configuration":
         return _configuration_test(plane, rest[1:])
+    if rest[0] == "access-hygiene":
+        return _access_hygiene_cli(plane, rest[1:], check=True)
     handled = v24cli.handle_test(plane, rest)
     if handled is not None:
         return handled

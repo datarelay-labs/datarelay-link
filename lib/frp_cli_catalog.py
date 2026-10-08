@@ -1078,6 +1078,7 @@ def to_internal(tokens):
     rest = list(work[len(path) :])
 
     CONTROL_PLANE_RES = {
+        "access-hygiene",
         "objects",
         "object",
         "object-groups",
