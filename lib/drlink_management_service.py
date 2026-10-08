@@ -26,6 +26,9 @@ ATTENTION_DENY_WINDOW = timedelta(minutes=15)
 ATTENTION_DENY_THRESHOLD = 3
 ATTENTION_EXPIRY_WINDOW = timedelta(hours=24)
 ATTENTION_AUDIT_BACKLOG_SECONDS = 300
+HYGIENE_STALE_HOST_WINDOW = timedelta(days=7)
+HYGIENE_ACCESS_REVIEW_WINDOW = timedelta(days=30)
+HYGIENE_LONG_GRANT_WINDOW = timedelta(days=7)
 
 # A catalog entry is not advertised merely because its name/schema is frozen.
 # Only handlers implemented by this service may be projected by a future MCP
@@ -1328,6 +1331,88 @@ class ManagementQueryService:
             "error": "",
         }
 
+    def access_hygiene(self, *, now: Optional[datetime] = None) -> dict[str, Any]:
+        """Return read-only evidence-backed hygiene recommendations."""
+        current = now or datetime.now(timezone.utc)
+        stale_before = self._attention_utc_text(current - HYGIENE_STALE_HOST_WINDOW)
+        access_since = self._attention_utc_text(current - HYGIENE_ACCESS_REVIEW_WINDOW)
+        findings: list[dict[str, Any]] = []
+        for row in self.conn.execute(
+            "SELECT id,COALESCE(NULLIF(label,''),NULLIF(hostname,''),id) AS name,last_seen "
+            "FROM clients WHERE last_seen IS NULL OR last_seen<? ORDER BY id LIMIT 100",
+            (stale_before,),
+        ):
+            findings.append({
+                "kind": "stale-host", "resource_type": "managed-host",
+                "resource_id": str(row["id"]), "label": str(row["name"]),
+                "evidence_quality": "OBSERVED" if row["last_seen"] else "INSUFFICIENT_DATA",
+                "observation_window_days": int(HYGIENE_STALE_HOST_WINDOW.days),
+                "evidence": {"last_seen": row["last_seen"]},
+                "recommendation": "Review host lifecycle and connectivity; no automatic mutation is performed.",
+            })
+        audit_row = self.conn.execute(
+            "SELECT MIN(occurred_at) AS oldest,COUNT(*) AS n FROM audit_events "
+            "WHERE category='ACCESS_DECISION' AND occurred_at>=?", (access_since,)
+        ).fetchone()
+        coverage = bool(audit_row and int(audit_row["n"] or 0) > 0)
+        for table, plane in (("policy_rules", "remote/internet"), ("ai_policy_rules", "ai")):
+            rows = self.conn.execute(
+                "SELECT id,name,expires_at,created_at FROM %s WHERE enabled=1 ORDER BY id LIMIT 100" % table
+            ).fetchall()
+            for row in rows:
+                expiry = self._parse_attention_timestamp(str(row["expires_at"] or ""))
+                created = self._parse_attention_timestamp(str(row["created_at"] or ""))
+                if expiry and created and expiry - created >= HYGIENE_LONG_GRANT_WINDOW:
+                    findings.append({
+                        "kind": "long-lived-grant", "resource_type": "access-rule",
+                        "resource_id": str(row["id"]), "label": str(row["name"]),
+                        "plane": plane, "evidence_quality": "OBSERVED",
+                        "observation_window_days": int(HYGIENE_ACCESS_REVIEW_WINDOW.days),
+                        "evidence": {"created_at": row["created_at"], "expires_at": row["expires_at"]},
+                        "recommendation": "Review whether this grant still needs its current duration.",
+                    })
+                elif not coverage:
+                    findings.append({
+                        "kind": "access-usage-review", "resource_type": "access-rule",
+                        "resource_id": str(row["id"]), "label": str(row["name"]),
+                        "plane": plane, "evidence_quality": "INSUFFICIENT_DATA",
+                        "observation_window_days": int(HYGIENE_ACCESS_REVIEW_WINDOW.days),
+                        "evidence": {"access_decision_events": int(audit_row["n"] or 0) if audit_row else 0},
+                        "recommendation": "Retain the rule until sufficient usage evidence exists; do not infer unused access.",
+                    })
+        return {
+            "items": findings[:200], "count": len(findings), "authoritative": False,
+            "read_only": True, "auto_mutation": False,
+            "generated_at": self._attention_utc_text(current),
+        }
+
+    def _webhook_delivery_attention(self) -> dict[str, int]:
+        """Read-only delivery degradation; absent optional tables are normal."""
+        table = self.conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='management_webhook_outbox'"
+        ).fetchone()
+        if not table:
+            return {"pending": 0, "failed": 0, "stale_lease": 0}
+        stale_before = self._attention_utc_text(
+            datetime.now(timezone.utc) - timedelta(seconds=90)
+        )
+        row = self.conn.execute(
+            "SELECT "
+            "COALESCE(SUM(CASE WHEN o.status='PENDING' THEN 1 ELSE 0 END),0) AS pending,"
+            "COALESCE(SUM(CASE WHEN o.status='FAILED' THEN 1 ELSE 0 END),0) AS failed,"
+            "COALESCE(SUM(CASE WHEN o.status='SENDING' "
+            "AND o.last_attempt_at<? THEN 1 ELSE 0 END),0) AS stale_lease "
+            "FROM management_webhook_outbox o JOIN management_webhooks w "
+            "ON w.id=o.webhook_id WHERE w.enabled=1",
+            (stale_before,),
+        ).fetchone()
+        return {
+            "pending": int(row["pending"] or 0),
+            "failed": int(row["failed"] or 0),
+            "stale_lease": int(row["stale_lease"] or 0),
+        }
+
     def attention_summary(self) -> dict[str, Any]:
         """Return bounded derived operator attention without becoming authority."""
         overview = self.overview_summary()
@@ -1340,6 +1425,7 @@ class ManagementQueryService:
         denies = self._deny_attention(now=now)
         temporary = self._temporary_access_attention(now=now)
         audit_spool = self._audit_spool_attention()
+        webhook_delivery = self._webhook_delivery_attention()
         system = self._system_readiness_attention()
         cutoffs = self.active_cutoff_summary()
 
@@ -1392,6 +1478,20 @@ class ManagementQueryService:
                 "kind": "temporary-access-expiring",
                 "label": "Temporary Access Nearing Expiry",
                 "count": int(temporary["expiring_count"]),
+                "severity": "warning",
+            })
+        if webhook_delivery["failed"] or webhook_delivery["stale_lease"]:
+            items.append({
+                "kind": "webhook-delivery",
+                "label": "Signed Webhook Delivery Degraded",
+                "count": webhook_delivery["failed"] + webhook_delivery["stale_lease"],
+                "severity": "warning",
+            })
+        if webhook_delivery["pending"] >= 800:
+            items.append({
+                "kind": "webhook-backlog",
+                "label": "Signed Webhook Outbox Near Capacity",
+                "count": webhook_delivery["pending"],
                 "severity": "warning",
             })
         if int(audit_spool.get("degraded_count") or 0):
@@ -1461,6 +1561,7 @@ class ManagementQueryService:
                 "denies": denies,
                 "temporary_access": temporary,
                 "audit_spool": audit_spool,
+                "webhook_delivery": webhook_delivery,
                 "system_readiness": system,
                 "cutoffs": cutoffs,
                 "jobs": dict(jobs),

@@ -8,7 +8,7 @@ const navGroups=[
   {id:"access",label:"Access Control",items:[["access","Access Operations"],["policies","Policies"]]},
   {id:"operations",label:"Operations",items:[["jobs","Jobs"],["versions","Version Drift"],["revisions","Revisions"]]},
   {id:"observability",label:"Observability",items:[["audit","Audit"],["health","Health"]]},
-  {id:"administration",label:"Administration",items:[["users","Users"],["system","System"]]},
+  {id:"administration",label:"Administration",items:[["users","Users"],["integrations","Integrations"],["system","System"]]},
 ] as const;
 
 let csrf="";
@@ -1123,6 +1123,7 @@ function ResourceWorkspace({kind,items,operator,onNavigate}:{kind:"host"|"servic
 
 function UsersPanel({operator}:{operator:any}){
   const [data,setData]=useState<any>({items:[]}),[error,setError]=useState(""),[busy,setBusy]=useState("");
+  const [newUsername,setNewUsername]=useState(""),[newPassword,setNewPassword]=useState(""),[newRole,setNewRole]=useState("Read Only");
   async function refresh(){try{setData(await api("/api/v1/operators"));setError("")}catch(e:any){setError(e.message||String(e))}}
   useEffect(()=>{refresh()},[]);
   async function setMfa(id:string,required:boolean){
@@ -1133,13 +1134,70 @@ function UsersPanel({operator}:{operator:any}){
       await refresh();
     }catch(e:any){setError(e.message||String(e))}finally{setBusy("")}
   }
+  async function createUser(e:any){
+    e.preventDefault();setBusy("create");setError("");
+    try{await api("/api/v1/operators",{method:"POST",body:JSON.stringify({username:newUsername,password:newPassword,role:newRole})});setNewUsername("");setNewPassword("");setNewRole("Read Only");await refresh()}
+    catch(e:any){setError(e.message||String(e))}finally{setBusy("")}
+  }
   return <>{error&&<div className="error">{error}</div>}<div className="card">
     <h3>Web Users</h3>
+    <form className="toolbar" onSubmit={createUser}><input value={newUsername} onChange={e=>setNewUsername(e.target.value)} placeholder="Username" autoComplete="off"/><input type="password" value={newPassword} onChange={e=>setNewPassword(e.target.value)} placeholder="Initial password" autoComplete="new-password"/><select value={newRole} onChange={e=>setNewRole(e.target.value)}><option>Read Only</option><option>Operator</option><option>Admin</option></select><button className="primary" type="submit" disabled={busy==="create"||!newUsername||!newPassword}>{busy==="create"?"Creating…":"Create user"}</button></form>
     <div className="muted">MFA is disabled by default. Enable it per user. Enabling MFA revokes that user's active sessions; on the next password sign-in the user completes TOTP setup and receives recovery codes directly.</div>
     <table><thead><tr><th>User</th><th>Role</th><th>Status</th><th>MFA</th><th>Last login</th><th>Action</th></tr></thead><tbody>
       {(data.items||[]).map((x:any)=>{const mfa=x.mfa_required?(x.mfa_enrolled?"Enabled":"Setup pending"):"Disabled";return <tr key={x.id}><td>{x.username}{x.recovery_admin?" · recovery admin":""}</td><td>{x.role}</td><td>{x.enabled?"Enabled":"Disabled"}</td><td>{mfa}</td><td>{x.last_login_at||"-"}</td><td><button className={x.mfa_required?"secondary":"primary"} disabled={busy===x.id} onClick={()=>setMfa(x.id,!x.mfa_required)}>{x.mfa_required?"Disable MFA":"Enable MFA"}</button></td></tr>})}
     </tbody></table>
   </div></>;
+}
+
+function IntegrationsPanel(){
+  const [accounts,setAccounts]=useState<any[]>([]),[hooks,setHooks]=useState<any[]>([]);
+  const [error,setError]=useState(""),[busy,setBusy]=useState(false),[once,setOnce]=useState<any>(null);
+  const [accountName,setAccountName]=useState(""),[accountExpiry,setAccountExpiry]=useState("");
+  const [permissions,setPermissions]=useState<string[]>(["management-read"]);
+  const [hookName,setHookName]=useState(""),[hookUrl,setHookUrl]=useState("");
+  const [hookEvent,setHookEvent]=useState("attention");
+  const allowedPermissions=["management-read","management-diagnose","management-policy-test","management-job-observe"];
+  async function refresh(){
+    try{const [a,w]=await Promise.all([api("/api/v1/service-accounts"),api("/api/v1/webhooks")]);
+      setAccounts(a.items||[]);setHooks(w.items||[]);setError("");
+    }catch(e:any){setError(e.message||String(e))}
+  }
+  useEffect(()=>{refresh()},[]);
+  async function mutate(path:string,body:any,secretKind?:string){
+    setBusy(true);setError("");setOnce(null);
+    try{
+      const result=await api(path,{method:"POST",body:JSON.stringify(body)});
+      if(secretKind)setOnce({kind:secretKind,secret:result.credential||result.secret,id:result.id||result.credential_id});
+      await refresh();
+    }catch(e:any){setError(e.message||String(e))}finally{setBusy(false)}
+  }
+  async function createAccount(e:React.FormEvent){
+    e.preventDefault();if(!accountName||!permissions.length)return;
+    await mutate("/api/v1/service-accounts",{name:accountName,permissions,expires_at:accountExpiry?new Date(accountExpiry).toISOString():undefined},"Service Account token");
+    setAccountName("");setAccountExpiry("");
+  }
+  async function createWebhook(e:React.FormEvent){
+    e.preventDefault();if(!hookName||!hookUrl)return;
+    await mutate("/api/v1/webhooks",{name:hookName,url:hookUrl,event_classes:[hookEvent]},"Webhook signing secret");
+    setHookName("");setHookUrl("");
+  }
+  return <div>
+    <section className="dr-page-intro"><div><p className="dr-eyebrow">Administration</p><h2>Integrations</h2><p className="muted">Manage scoped non-human API access and optional signed HTTPS events. Web login credentials and these integration secrets are never shared.</p></div></section>
+    {error&&<div className="error">{error}</div>}
+    {once&&<div className="card" role="status"><h3>Copy once: {once.kind}</h3><p className="muted">This value will not appear in inventory or after a refresh. Store it in an approved secret manager.</p>
+      <div className="toolbar"><input aria-label="One-time integration secret" readOnly value={once.secret} style={{minWidth:320,flex:1}}/><button className="secondary" onClick={()=>navigator.clipboard?.writeText(once.secret)}>Copy</button><button className="primary" onClick={()=>setOnce(null)}>Done</button></div></div>}
+    <section className="card"><h3>Service Accounts</h3><p className="muted">The public Automation API uses Bearer tokens, per-account rate limits and explicit read-only Core operations in this phase.</p>
+      <form onSubmit={createAccount}><div className="toolbar"><input value={accountName} onChange={e=>setAccountName(e.target.value)} placeholder="Account name" required/><input type="datetime-local" value={accountExpiry} onChange={e=>setAccountExpiry(e.target.value)} title="Optional token expiry"/></div>
+        <div className="toolbar">{allowedPermissions.map(p=><label key={p}><input type="checkbox" checked={permissions.includes(p)} onChange={e=>setPermissions(a=>e.target.checked?[...a,p]:a.filter(x=>x!==p))}/>{p}</label>)}</div>
+        <button className="primary" disabled={busy||!accountName||!permissions.length} type="submit">Create Service Account</button>
+      </form>
+      <table><thead><tr><th>Account</th><th>Permissions</th><th>Expires</th><th>Status</th><th>Actions</th></tr></thead><tbody>{accounts.map(a=><tr key={a.id}><td>{a.name}</td><td>{(a.permissions||[]).join(", ")}</td><td>{a.expires_at||"No expiry"}</td><td>{a.enabled?"Active":"Revoked"}</td><td>{a.enabled&&<><button className="secondary" disabled={busy} onClick={()=>mutate("/api/v1/service-accounts/rotate",{account_id:a.id},"Rotated Service Account token")}>Rotate</button><button className="danger" disabled={busy} onClick={()=>{if(window.confirm("Revoke this Service Account now?"))mutate("/api/v1/service-accounts/revoke",{account_id:a.id})}}>Revoke</button></>}</td></tr>)}</tbody></table>
+    </section>
+    <section className="card"><h3>Signed Event Webhooks</h3><p className="muted">HTTPS only, certificate-verified and DNS-pinned. Failed deliveries use bounded retries; event delivery never controls access enforcement.</p>
+      <form className="toolbar" onSubmit={createWebhook}><input value={hookName} onChange={e=>setHookName(e.target.value)} placeholder="Endpoint name" required/><input value={hookUrl} onChange={e=>setHookUrl(e.target.value)} placeholder="https://hooks.example.com/events" required type="url"/><select value={hookEvent} onChange={e=>setHookEvent(e.target.value)}><option value="attention">Attention</option><option value="security.lifecycle">Security lifecycle</option><option value="policy.change">Policy change</option><option value="managed_host.lifecycle">Managed Host lifecycle</option></select><button className="primary" disabled={busy||!hookName||!hookUrl} type="submit">Add webhook</button></form>
+      <table><thead><tr><th>Endpoint</th><th>URL</th><th>Events</th><th>Status</th><th>Delivery</th><th>Actions</th></tr></thead><tbody>{hooks.map(h=><tr key={h.id}><td>{h.name}</td><td>{h.url}</td><td>{(h.event_classes||[]).join(", ")}</td><td>{h.enabled?"Enabled":"Disabled"}</td><td>{Object.entries(h.delivery_counts||{}).map(([k,v])=>k+":"+v).join(" · ")||"—"}</td><td>{h.enabled&&<><button className="secondary" disabled={busy} onClick={()=>mutate("/api/v1/webhooks/rotate",{webhook_id:h.id},"Rotated Webhook secret")}>Rotate</button><button className="danger" disabled={busy} onClick={()=>{if(window.confirm("Disable this webhook and fail queued deliveries?"))mutate("/api/v1/webhooks/disable",{webhook_id:h.id})}}>Disable</button></>}</td></tr>)}</tbody></table>
+    </section>
+  </div>;
 }
 
 function CommandCenter({data,operator,onNavigate}:{data:any,operator:any,onNavigate?:(id:string,groupId?:string)=>void}){
@@ -1211,6 +1269,7 @@ function View({active,operator,onNavigate}:{active:string,operator:any,onNavigat
   },[active]);
   if(error)return <div className="error">{error}</div>;
   if(active==="users")return <UsersPanel operator={operator}/>;
+  if(active==="integrations")return operator.role==="Admin"?<IntegrationsPanel/>:<div className="error">Admin role required</div>;
   if(active==="drafts")return <DraftWorkspace/>;
   if(active==="access")return <AccessOperations operator={operator} onNavigate={onNavigate}/>;
   if(active==="jobs")return <JobOperations operator={operator}/>;
@@ -1321,6 +1380,7 @@ function Shell({operator,onLogout}:{operator:any,onLogout:()=>void}){
   async function logout(){try{await api("/api/v1/auth/logout",{method:"POST",body:"{}"})}finally{csrf="";onLogout()}}
   function visible(id:string){
     if(id==="users")return operator.role==="Admin";
+    if(id==="integrations")return operator.role==="Admin";
     if(id==="enrollments")return operator.role==="Admin";
     if(id==="drafts")return operator.role!=="Read Only";
     return true;

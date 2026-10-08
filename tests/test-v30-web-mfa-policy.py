@@ -167,6 +167,33 @@ class V30WebMfaPolicyTests(unittest.TestCase):
             WebSessionIssue,
         )
 
+    def test_admin_api_creates_local_operator_with_mfa_off_and_role_boundary(self):
+        admin_session = self.auth.authenticate(
+            username="admin", password="ValidPass1", now=self.now
+        )
+        self.auth.close()
+        app = WebApplication(self.tmp, static_root=str(ROOT / "web/dist"))
+        try:
+            created = app.write_api(
+                "/api/v1/operators",
+                {"username": "reader", "password": "ReaderPass1", "role": "Read Only"},
+                admin_session.principal,
+            )
+            self.assertEqual(created["role"], "Read Only")
+            self.assertFalse(created["mfa_required"])
+            reader = app.auth.authenticate(
+                username="reader", password="ReaderPass1", now=self.now + timedelta(seconds=1)
+            )
+            with self.assertRaisesRegex(ControlPlaneError, "Admin role"):
+                app.write_api(
+                    "/api/v1/operators",
+                    {"username": "blocked", "password": "BlockedPass1", "role": "Operator"},
+                    reader.principal,
+                )
+        finally:
+            app.close()
+        self.auth = WebAuthService(self.tmp)
+
     def test_additional_operator_defaults_mfa_off_and_admin_api_controls_it(self):
         operator = self.auth.create_operator_local(
             username="operator",

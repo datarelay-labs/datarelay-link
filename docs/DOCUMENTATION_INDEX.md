@@ -38,6 +38,7 @@ External copies, Project/chat attachments, exported snapshots, and same-named do
 | Optional Full Web Management design | `WEB_MANAGEMENT.md` |
 | Modern SaaS Web UX / DR Control visual parity | `WEB_SAAS_UX_SYSTEM.md` |
 | 3.0 CLI/Web/Public Automation API/MCP/Plugin management-surface contract | `MANAGEMENT_SURFACE_CONTRACT.md` |
+| 3.0 Service Accounts, Public Automation API and signed Webhooks — current implementation/operations | `AUTOMATION_WEBHOOKS_3_0.md` |
 
 ## Operator lifecycle documents
 

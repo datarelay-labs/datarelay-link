@@ -1,0 +1,25 @@
+[Unit]
+Description=Data Relay Link 3.0 optional signed Webhook delivery tick
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/var/lib/drlink/drlink.db
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/local/lib/drlink/drlink-webhook-delivery.py
+User=root
+Group=root
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/drlink
+ProtectControlGroups=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+LockPersonality=yes
+MemoryMax=256M
+TasksMax=64
+LimitNOFILE=2048
+TimeoutStartSec=120
+# A failed delivery is visible to systemd; the durable outbox retries next tick.

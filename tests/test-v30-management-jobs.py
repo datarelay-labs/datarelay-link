@@ -92,6 +92,45 @@ class V30ManagementJobTests(unittest.TestCase):
         with self.assertRaises(ControlPlaneError):
             self._enqueue(job_type="restart-everything")
 
+    def test_managed_update_rollout_is_bounded_and_artifact_pinned(self):
+        digest = "a" * 64
+        job = self.engine.enqueue_rollout(
+            targets=("host-a", "host-b", "host-c"),
+            canary_targets=("host-a",),
+            requested_by="admin-a",
+            artifact={"version": "3.0.0-rc.1", "source_ref": "a" * 40, "sha256": digest},
+            wave_size=2,
+            failure_threshold_percent=25,
+            now=self.now,
+        )
+        self.assertEqual(job["job_type"], "agent-update-rollout")
+        self.assertEqual(job["payload"]["rollout_state"], "CANARY")
+        self.assertEqual(job["payload"]["canary_targets"], ["host-a"])
+        self.assertEqual(job["payload"]["artifact"]["sha256"], digest)
+        paused = self.engine.rollout_control(job["id"], action="pause")
+        self.assertTrue(paused["payload"]["operator_paused"])
+        self.assertEqual(paused["payload"]["rollout_state"], "PAUSED")
+        resumed = self.engine.rollout_control(job["id"], action="resume")
+        self.assertFalse(resumed["payload"]["operator_paused"])
+
+    def test_managed_update_rollout_rejects_unsafe_scope(self):
+        artifact = {"version": "3.0.0", "source_ref": "b" * 40, "sha256": "c" * 64}
+        with self.assertRaises(ControlPlaneError):
+            self.engine.enqueue_rollout(
+                targets=("host-a",),
+                canary_targets=("host-b",),
+                requested_by="admin-a",
+                artifact=artifact,
+                now=self.now,
+            )
+        with self.assertRaises(ControlPlaneError):
+            self.engine.enqueue_rollout(
+                targets=("host-a",),
+                requested_by="admin-a",
+                artifact={"version": "3.0.0", "source_ref": "mutable-main", "sha256": "bad"},
+                now=self.now,
+            )
+
     def test_queue_and_target_bounds_fail_closed(self):
         bounded = ManagementJobEngine(
             self.tmp, max_active_jobs=1, max_targets=2, lease_seconds=5

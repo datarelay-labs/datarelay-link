@@ -53,6 +53,7 @@ IMPLEMENTED_GUIDED_CHANGE_TOOLS = frozenset(
 IMPLEMENTED_MANAGEMENT_JOB_TOOLS = frozenset(
     {
         "drlink_diagnostic_job_start",
+        "drlink_agent_update_rollout_start",
     }
 )
 
@@ -361,6 +362,22 @@ class ManagementCoreService:
                 )
             },
         }
+
+    def _invoke_drlink_agent_update_rollout_start(
+        self, actor: ManagementActor, data: dict
+    ) -> dict:
+        from drlink_v30_jobs import ManagementJobEngine
+
+        self._require_web_role(actor, "Admin")
+        with ManagementJobEngine(self.root) as engine:
+            return engine.enqueue_rollout(
+                targets=data["targets"],
+                canary_targets=data.get("canary_targets") or (),
+                requested_by=actor.actor_id,
+                artifact=data["artifact"],
+                wave_size=data.get("wave_size", 10),
+                failure_threshold_percent=data.get("failure_threshold_percent", 20),
+            )
 
     def job_cancel(
         self, job_id: str, *, actor: ManagementActor
