@@ -3,6 +3,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
+# Test-owned audit and Core state must never resolve to live host paths.
+export FRP_AUDIT_LOG="$WORK/audit.jsonl"
 python3 - "$ROOT" "$WORK" <<'PY'
 import hashlib, hmac, importlib.util, json, sys, time
 from pathlib import Path
@@ -24,6 +26,7 @@ cfg.write_text(json.dumps({
     'port_end': 19010,
     'listen_port': 6999,
     'registry_file': str(registry),
+    'control_plane_root': str(work),  # Isolated Core; never /var/lib/drlink.
     'enrollments_dir': str(enroll),
     'bootstrap_dir': str(work / 'bootstrap'),
     'token_file': str(token),
@@ -71,6 +74,8 @@ assert a.used_ports(state) == set(), state
 
 status, result = enroll_hmac([])
 assert status == 200 and result['services'] == [], (status, result)
+# An enrollment success must prove a local authoritative Core DB was used.
+assert len(list(work.rglob('drlink.db'))) == 1, 'Core DB is not test-local'
 state = a.load_registry()
 client = state['clients']['machine-zero']
 assert client['mgmt_status'] == 'enrolled', client
