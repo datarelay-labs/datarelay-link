@@ -734,6 +734,8 @@ notification adapters beyond the required generic signed webhook, SSO/IdP integr
 SAML/LDAP/SCIM provisioning, GitOps locking, and continuous external audit/SIEM streaming
 remain later/demand-driven.
 
+A bounded one-step local JIT request/approval that reuses Temporary Access is P2 stretch only; multi-stage identity governance remains excluded.
+
 **Reason:** Improve day-to-day operation and troubleshooting without changing Data Relay
 Link into a different product category or forcing repeated Core redesign.
 
@@ -764,6 +766,46 @@ must be distinguished rather than normalized into false precision.
 security override that immediately denies new authorization at supported scopes without
 rewriting the operator's normal policy intent. Existing active work is terminated only
 where Data Relay Link or the pinned official upstream exposes a proven supported lifecycle.
+
+**P0 trust baseline — Managed Host Approval / Quarantine:** Add an optional
+Server policy that can place newly enrolled Managed Hosts into `PENDING_APPROVAL`. Pending
+Hosts may authenticate enough to report bounded identity/status but cannot receive normal
+Remote / Internet / AI Access or management Jobs until an Admin approves them. A
+pre-approved enrollment may activate immediately so Zero-Touch automation remains
+possible. Rejection/revocation is audited and never silently rebinds identity.
+
+**P0 operations baseline — Managed Update / Staged Rollout:** Extend the bounded Job Engine
+to perform manual staged Agent updates against qualified immutable artifacts. A rollout
+supports an explicit canary set or first wave, bounded wave size/concurrency, per-target
+progress, automatic pause on failure threshold, and canonical per-Agent rollback where the
+existing updater supports it. No recurring scheduler or unattended maintenance-window
+engine is required for 3.0.
+
+**P1 integration value — Public Automation API + Service Accounts:** Add a separately
+versioned supported automation API over the same Core Management Service. It is not the
+browser-internal Web API and is not the MCP adapter. Local Service Accounts are distinct
+non-human management principals with least-privilege management permissions, display-once
+credentials, revocation/rotation, optional expiry, rate/resource bounds, and complete audit
+attribution. No external IdP is required.
+
+**P1 operations value — Signed Event Webhook:** Add one generic optional HTTPS event
+Webhook channel backed by the local Attention/Audit event boundary. Delivery is bounded,
+retryable, idempotency-friendly, secret-safe, HMAC/signature protected, observable, and
+must never block Core enforcement or mutation commit. Slack/Teams/Email-specific connectors
+remain later adapters over this generic contract.
+
+**P1 hygiene value — Access Hygiene Recommendations:** Use existing audit, policy graph,
+credential/session metadata, and inventory state to surface read-only recommendations such
+as stale Hosts, unused standing access, orphaned references, expiring credentials, and
+long-lived grants. Every recommendation must state evidence quality and must not auto-lock,
+auto-delete, or rewrite policy in 3.0.
+
+**P2 stretch — Lightweight JIT Access Request / Approval:** If implementation capacity
+remains after P0/P1 completion, add one local requester -> Admin approve/deny flow that
+materializes a normal time-bounded Temporary Access grant with reason, TTL, actor, and
+audit. No multi-stage approval graph, delegation engine, recurring entitlement review,
+external ChatOps/Jira/ServiceNow dependency, or automatic renewal is part of this stretch
+scope. This capability is not a 3.0 GA blocker.
 
 **P2/conditional — Active connection termination:** Per-connection kill is not a 3.0 GA
 requirement for Remote Access and must not require an FRP fork. It may ship per plane where
@@ -839,9 +881,11 @@ history to 365 days for CONTROL/SECURITY_LIFECYCLE and 90 days for ACCESS_DECISI
 Core-owned mode-0600 NDJSON artifact under `/var/lib/drlink/audit-exports/`, bounded to
 50000 events / 64 MiB, and is not exposed through a Web download endpoint.
 
-**Scope:** Continuous SIEM/S3/syslog/webhook streaming is later-additive. Session recording,
-payload capture, and a SIEM/reporting platform remain out of scope. Append-only product
-semantics do not justify a tamper-proof claim against a privileged host administrator.
+**Scope:** 3.0 includes a bounded generic signed event Webhook for selected
+Attention/security lifecycle events. Continuous bulk audit/SIEM/S3/syslog streaming,
+destination-specific Email/Slack integrations, session recording, payload capture, and a
+SIEM/reporting platform remain later/out of scope. Append-only product semantics do not
+justify a tamper-proof claim against a privileged host administrator.
 
 ## 29. Master rule
 

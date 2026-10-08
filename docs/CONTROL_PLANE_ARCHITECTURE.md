@@ -1571,8 +1571,10 @@ Rules:
   clock cannot silently revive an expired temporary grant; this must not require Internet
   NTP to operate.
 
-This adds bounded temporal authorization without adding requester/approver queues,
+This adds bounded temporal authorization without requiring requester/approver queues,
 access reviews, recurring schedules, automatic renewal, or a JIT governance subsystem.
+A P2 lightweight local one-step request/approval adapter may later materialize this same
+Temporary Access primitive; it is not part of the primitive itself and is not a GA blocker.
 
 ### 46.1.3 Live Access Visibility and Emergency New-Access Cutoff
 
@@ -1615,6 +1617,57 @@ Official FRP remains unmodified. If pinned FRP exposes aggregate proxy connectio
 no supported individual connection kill primitive, Remote Access must not advertise
 per-connection termination or require a fork.
 
+### 46.1.4 Managed Host Approval / Quarantine
+
+Host enrollment identity and Host activation are separate decisions when approval policy is
+enabled. Successful cryptographic enrollment creates/binds the immutable Managed Host
+identity and may enter `PENDING_APPROVAL`; this state may report bounded review metadata but
+is denied normal Remote / Internet / AI Access and management Jobs. Admin approval promotes
+the same identity to trusted/active state. A pre-approved enrollment carries a one-time
+approval binding so automation can activate immediately. Approval/rejection/revocation is
+CONTROL/SECURITY_LIFECYCLE audited and never reassigns one Host identity to another Agent.
+
+### 46.1.5 Public Automation API and Service Accounts
+
+The supported Public Automation API is a separate adapter over the Core Management Service,
+not a stability promise for the browser Web API and not an MCP alias. Local Service Accounts
+are first-class non-human **management** principals with explicit management permissions,
+credential lifecycle, optional expiry, revocation/rotation, bounded rate/resource use, and
+audit attribution. A Service Account is neither a Web operator nor an AI Identity and cannot
+inherit target-OS AI permissions. All mutating automation calls use normal Change Plan,
+expected-revision, confirmation/risk, Job, and audit semantics.
+
+### 46.1.6 Signed Event Webhook and Access Hygiene
+
+The signed event Webhook is a non-authoritative delivery adapter fed only from committed
+Core/Attention/security-lifecycle events. Delivery uses a bounded local outbox, stable event
+IDs, versioned secret-safe payloads, per-endpoint signing secret, retry/backoff, and delivery
+health. Failure is isolated from enforcement, mutation commit, Core startup, and CLI recovery.
+
+Access Hygiene is a derived read model over bounded inventory/audit/credential/policy state.
+It emits recommendations with observation window and evidence quality; insufficient history
+must be explicit. Hygiene output is never authorization authority and cannot auto-lock,
+auto-delete, or auto-edit policy in 3.0.
+
+### 46.1.7 Managed Update / Staged Rollout
+
+Fleet update is a bounded Management Job, not arbitrary remote execution. The Server selects
+only trusted/active Managed Hosts, binds the Job to a qualified immutable Agent artifact and
+expected provenance, executes an explicit canary/first wave followed by bounded waves, and
+pauses on configured failure threshold. Each Agent invokes the canonical updater and retains
+its own state-preservation/health/rollback behavior. Rollout state is operational/Job state;
+no writer transaction waits on Agent execution. Recurring scheduling and general-purpose
+software deployment remain outside 3.0.
+
+### 46.1.8 Lightweight JIT Access Request / Approval — P2 stretch
+
+If implemented, a request contains requester identity, one supported resource/grant target,
+requested TTL, and reason. One authorized local Admin reviews Approve/Deny. Approval creates
+the existing authoritative Temporary Access representation and therefore inherits the same
+evaluator, expiry, preview, audit, backup/restore, and cutoff semantics. Self-approval,
+multi-stage chains, delegation, recurring access review, external workflow engines, and
+automatic renewal are excluded. The stretch flow is not a 3.0 GA dependency.
+
 ### 46.2 Data Relay Link 3.0 management scalability boundary
 
 The 100-Managed-Host target changes management workload shape, not the control-plane
@@ -1641,8 +1694,14 @@ CLI / Web / Bundle / Automation API / MCP
                           ▼
                     bounded Job Engine
                           │
+                          ├─ staged Agent update rollout
                           ▼
                     Agent RPC Worker Pool
+
+Committed event/attention boundary
+          │
+          ├─ bounded signed Webhook outbox
+          └─ Access Hygiene derived queries
 
 Privilege-separated enforcement
           │
@@ -1670,6 +1729,10 @@ Required boundaries:
   backpressure, and per-target truthful results;
 - frequent heartbeat/status/activity refresh is operational state and is coalesced where
   semantics allow; it does not create configuration revisions merely because time changed;
+- pending/quarantined Host state cannot be treated as normal trusted connectivity merely
+  because heartbeat/authentication metadata is present;
+- Service Account/public-API load and signed-Webhook delivery are bounded and backpressured
+  independently from interactive Web/CLI and relay enforcement;
 - browser refresh/event delivery is aggregated and bounded rather than N-per-Host polling;
 - common Web query plans receive explicit index review through ordered schema migration;
   routine dashboard/list/filter views must not rely on avoidable unbounded scans;

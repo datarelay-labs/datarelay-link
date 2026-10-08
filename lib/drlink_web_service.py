@@ -275,6 +275,9 @@ class WebApplication:
                 payload=payload,
                 actor=actor,
             )
+        if path == "/api/v1/access-hygiene":
+            with ManagementQueryService(self.root) as service:
+                return service.access_hygiene()
         if path == "/api/v1/policies":
             with ManagementQueryService(self.root) as service:
                 return service.policy_list(
@@ -413,6 +416,18 @@ class WebApplication:
                 payload={"job_id": job_id},
                 actor=actor,
             )
+        if path == "/api/v1/service-accounts":
+            if principal.role != ROLE_ADMIN:
+                raise ControlPlaneError("Admin role is required for Service Account inventory.")
+            from drlink_service_accounts import ServiceAccountStore
+            with ServiceAccountStore(self.root) as store:
+                return store.list_accounts()
+        if path == "/api/v1/webhooks":
+            if principal.role != ROLE_ADMIN:
+                raise ControlPlaneError("Admin role is required for Webhook inventory.")
+            from drlink_webhooks import WebhookStore
+            with WebhookStore(self.root) as store:
+                return store.list_webhooks()
         if path == "/api/v1/operators":
             if principal.role != ROLE_ADMIN:
                 raise ControlPlaneError("Admin role is required for Web operator management.")
@@ -429,6 +444,55 @@ class WebApplication:
         body: dict[str, Any],
         principal: WebPrincipal,
     ) -> dict[str, Any]:
+        if path.startswith("/api/v1/webhooks"):
+            if principal.role != ROLE_ADMIN:
+                raise ControlPlaneError("Admin role is required for Webhook management.")
+            from drlink_webhooks import WebhookStore
+            with WebhookStore(self.root) as store:
+                if path == "/api/v1/webhooks":
+                    if not isinstance(body.get("event_classes"), list):
+                        raise ControlPlaneError("Webhook event classes must be a list.")
+                    return store.create(
+                        name=body.get("name"), url=body.get("url"),
+                        event_classes=body["event_classes"], actor_id="web:" + principal.operator_id,
+                    )
+                webhook_id = body.get("webhook_id")
+                if not isinstance(webhook_id, str) or not webhook_id.startswith("wh_"):
+                    raise ControlPlaneError("Webhook ID is required.")
+                if path == "/api/v1/webhooks/rotate":
+                    return store.rotate_secret(webhook_id, actor_id="web:" + principal.operator_id)
+                if path == "/api/v1/webhooks/disable":
+                    store.disable(webhook_id, actor_id="web:" + principal.operator_id)
+                    return {"id": webhook_id, "enabled": False}
+            raise ControlPlaneError("Webhook operation was not found.")
+        if path.startswith("/api/v1/service-accounts"):
+            if principal.role != ROLE_ADMIN:
+                raise ControlPlaneError("Admin role is required for Service Account management.")
+            from drlink_service_accounts import ServiceAccountStore
+            with ServiceAccountStore(self.root) as store:
+                if path == "/api/v1/service-accounts":
+                    return store.create(
+                        name=body.get("name"), permissions=body.get("permissions"),
+                        expires_at=body.get("expires_at") or "",
+                        actor_id="web:" + principal.operator_id,
+                    )
+                account_id = body.get("account_id")
+                if not isinstance(account_id, str) or not account_id.startswith("msa_"):
+                    raise ControlPlaneError("Service Account ID is required.")
+                if path == "/api/v1/service-accounts/rotate":
+                    return store.rotate(account_id, actor_id="web:" + principal.operator_id)
+                if path == "/api/v1/service-accounts/revoke":
+                    store.revoke(account_id, actor_id="web:" + principal.operator_id)
+                    return {"id": account_id, "enabled": False}
+            raise ControlPlaneError("Service Account operation was not found.")
+        if path == "/api/v1/operators":
+            if principal.role != ROLE_ADMIN:
+                raise ControlPlaneError("Admin role is required for Web operator management.")
+            return self.auth.create_operator_local(
+                username=str(body.get("username") or ""),
+                role=str(body.get("role") or ""),
+                password=str(body.get("password") or ""),
+            )
         if path.startswith("/api/v1/operators/") and path.endswith("/mfa"):
             if principal.role != ROLE_ADMIN:
                 raise ControlPlaneError("Admin role is required for Web operator management.")
@@ -457,6 +521,32 @@ class WebApplication:
                 payload=payload,
                 actor=self._actor(principal),
             )
+        if path == "/api/v1/jobs/agent-update-rollout":
+            if principal.role != ROLE_ADMIN:
+                raise ControlPlaneError("Admin role is required for Managed Update rollout.")
+            payload = {
+                "targets": body.get("targets") or [],
+                "canary_targets": body.get("canary_targets") or [],
+                "artifact": body.get("artifact") or {},
+            }
+            for key in ("wave_size", "failure_threshold_percent"):
+                if body.get(key) is not None:
+                    payload[key] = body[key]
+            return self.adapter.invoke(
+                operation="drlink_agent_update_rollout_start",
+                payload=payload,
+                actor=self._actor(principal),
+            )
+        if path == "/api/v1/jobs/agent-update-rollout/control":
+            if principal.role != ROLE_ADMIN:
+                raise ControlPlaneError("Admin role is required for Managed Update rollout.")
+            job_id = str(body.get("job_id") or "").strip()
+            action = str(body.get("action") or "").strip().lower()
+            if not job_id or action not in ("pause", "resume"):
+                raise ControlPlaneError("job_id and pause/resume action are required.")
+            from drlink_v30_jobs import ManagementJobEngine
+            with ManagementJobEngine(self.root) as engine:
+                return engine.rollout_control(job_id, action=action)
         if path == "/api/v1/jobs/cancel":
             job_id = str(body.get("job_id") or "").strip()
             if not job_id:
@@ -905,6 +995,9 @@ class DrlinkWebHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
+        if parsed.path.startswith("/api/automation/v1/"):
+            self._error(405, "Automation API uses POST.")
+            return
         if parsed.path == "/healthz":
             self._json(
                 200,
@@ -934,6 +1027,32 @@ class DrlinkWebHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
+        if parsed.path.startswith("/api/automation/v1/"):
+            from drlink_automation_api import AutomationApi
+            from drlink_service_accounts import (
+                ServiceAccountRateLimited, ServiceAccountUnauthenticated,
+            )
+            header = str(self.headers.get("Authorization") or "")
+            if not header.startswith("Bearer ") or len(header) > 512:
+                self._error(401, "Service Account bearer credential required")
+                return
+            try:
+                body = self._body_json()
+                api = AutomationApi(self.app.root)
+                try:
+                    result = api.invoke(parsed.path, header[7:].strip(), body)
+                finally:
+                    api.close()
+                self._json(200, result)
+            except ServiceAccountRateLimited:
+                self._error(429, "Automation API rate limit exceeded")
+            except ServiceAccountUnauthenticated:
+                self._error(401, "invalid Service Account credential")
+            except ControlPlaneError:
+                self._error(403, "Automation API request denied")
+            except Exception:
+                self._error(500, "internal error")
+            return
         if parsed.path == "/api/v1/auth/login":
             try:
                 body = self._body_json()

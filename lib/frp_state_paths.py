@@ -76,6 +76,17 @@ CONTROL_DB = StatePathSpec(
     restore_policy="required",
     sensitivity="critical",
 )
+# The Webhook encryption key and ciphertext database are one recovery unit.
+# Legacy/unused installations lack this key; include it when present without
+# making old backups invalid. Runtime fails closed if protected key is absent.
+WEBHOOK_SIGNING_KEY = StatePathSpec(
+    path="var/lib/drlink/webhook-signing.key",
+    type="state",
+    backup_policy="optional",
+    restore_policy="optional",
+    support_bundle_policy="exclude",
+    sensitivity="secret",
+)
 # Runtime projections are regenerated from restored drlink.db after cutover.
 RUNTIME_TREE = StatePathSpec(
     path="var/lib/drlink/runtime",
@@ -192,6 +203,7 @@ STATE_PATHS: tuple[StatePathSpec, ...] = (
     EGRESS_CONTROL,
     SERVICE_PROFILES,
     CONTROL_DB,
+    WEBHOOK_SIGNING_KEY,
     RUNTIME_TREE,
     ACCESS_AUDIT_SPOOL_TREE,
     EGRESS_AUDIT_SPOOL_TREE,
@@ -220,7 +232,9 @@ def backup_optional_files() -> tuple[str, ...]:
     seen: set[str] = set()
     out: list[str] = []
     for spec in STATE_PATHS:
-        if spec.backup_policy != "optional" or spec.type != "log":
+        if spec.backup_policy != "optional" or (
+            spec.type != "log" and spec.restore_policy != "optional"
+        ):
             continue
         for rel in (spec.path, *spec.legacy_paths):
             if rel not in seen:
@@ -321,7 +335,7 @@ def restore_optional_exact() -> frozenset[str]:
     return frozenset(
         rel
         for spec in STATE_PATHS
-        if spec.restore_policy == "optional" and spec.type == "log"
+        if spec.restore_policy == "optional" and spec.type in {"log", "state"}
         for rel in (spec.path, *spec.legacy_paths)
     )
 

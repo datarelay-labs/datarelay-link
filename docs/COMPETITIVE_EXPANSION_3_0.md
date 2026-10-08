@@ -143,7 +143,7 @@ impact confirmation. Existing revoke/retire commands remain separate.
 ### 4.5 Automation API / MCP acceptance
 
 - Automation API may read admission state with `management-read`.
-- Admission mutation requires dedicated `management-host-admission`; it is never implied
+- Admission mutation requires dedicated `management-host-approve`; it is never implied
   by general configuration write access.
 - Management MCP/Plugin may observe admission state through normal inventory tools.
 - 3.0 Plugin/MCP does **not** expose approval/quarantine mutation by default.
@@ -222,7 +222,7 @@ target build and target set is mandatory.
 ### 5.5 Automation API / MCP acceptance
 
 - Automation API may preview/start/status/cancel a rollout only with
-  `management-update-rollout`.
+  `management-update`.
 - API requires idempotency protection for rollout creation/start.
 - Plugin/MCP can observe rollout Job status through existing Job tools.
 - Plugin/MCP does not start, resume, or rollback Agent rollouts in 3.0.
@@ -247,7 +247,7 @@ Public automation is a separate adapter:
 
 ```text
 automation client
-  → /automation/v1/
+  → /api/automation/v1/
   → Automation API adapter
   → Core Management Service
 ```
@@ -396,7 +396,7 @@ Email/Slack/Teams remain later adapters that may consume the same event boundary
 ### 7.5 Automation API / MCP acceptance
 
 - Automation API may read/configure/test webhooks only with
-  `management-notification-config`.
+  `management-webhook`.
 - Plugin/MCP may read Attention state that reflects webhook delivery degradation.
 - Plugin/MCP does not receive webhook secrets or configure webhook endpoints in 3.0.
 

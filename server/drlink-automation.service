@@ -1,0 +1,28 @@
+[Unit]
+Description=Data Relay Link 3.0 optional standalone Automation API
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/var/lib/drlink/drlink.db
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/lib/drlink/drlink-automation.py --listen 127.0.0.1 --port 8742
+User=root
+Group=root
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/drlink
+ProtectControlGroups=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+LockPersonality=yes
+MemoryMax=256M
+TasksMax=64
+LimitNOFILE=2048
+
+[Install]
+WantedBy=multi-user.target

@@ -69,6 +69,14 @@ project usr/local/lib/drlink/drlink_product_update.py 0644 lib/drlink_product_up
 project usr/local/lib/drlink/drlink_management_core.py 0644 lib/drlink_management_core.py python
 project usr/local/lib/drlink/drlink_management_mcp_adapter.py 0644 lib/drlink_management_mcp_adapter.py python
 project usr/local/lib/drlink/drlink_management_web_adapter.py 0644 lib/drlink_management_web_adapter.py python
+project usr/local/lib/drlink/drlink_service_accounts.py 0644 lib/drlink_service_accounts.py python
+project usr/local/lib/drlink/drlink_automation_api.py 0644 lib/drlink_automation_api.py python
+project usr/local/lib/drlink/drlink_automation_server.py 0644 lib/drlink_automation_server.py python
+project usr/local/lib/drlink/drlink_webhooks.py 0644 lib/drlink_webhooks.py python
+project usr/local/lib/drlink/drlink_webhook_events.py 0644 lib/drlink_webhook_events.py python
+project usr/local/lib/drlink/drlink_webhook_delivery.py 0644 lib/drlink_webhook_delivery.py python
+project usr/local/lib/drlink/drlink-automation.py 0755 server/drlink-automation.py python
+project usr/local/lib/drlink/drlink-webhook-delivery.py 0755 server/drlink-webhook-delivery.py python
 project usr/local/lib/drlink/drlink_mgmt_sync.py 0644 lib/drlink_mgmt_sync.py python
 project usr/local/lib/drlink/drlink_configuration_bundle.py 0644 lib/drlink_configuration_bundle.py python
 project usr/local/lib/drlink/drlink_runtime_policy.py 0644 lib/drlink_runtime_policy.py python
@@ -114,6 +122,9 @@ unit etc/systemd/system/drlink-mcp-tls-renew.service 0644 server/drlink-mcp-tls-
 unit etc/systemd/system/drlink-mcp-tls-renew.timer 0644 server/drlink-mcp-tls-renew.timer none
 unit etc/systemd/system/drlink-audit-ingest.service 0644 server/drlink-audit-ingest.service none
 unit etc/systemd/system/drlink-audit-ingest.timer 0644 server/drlink-audit-ingest.timer none
+unit etc/systemd/system/drlink-automation.service 0644 server/drlink-automation.service none
+unit etc/systemd/system/drlink-webhook-delivery.service 0644 server/drlink-webhook-delivery.service none
+unit etc/systemd/system/drlink-webhook-delivery.timer 0644 server/drlink-webhook-delivery.timer none
 unit etc/systemd/system/drlink-product-update@.service 0644 server/drlink-product-update@.service none
 unit-single443 etc/systemd/system/drlink-frontend.service 0644 server/drlink-frontend.service none
 project usr/local/lib/drlink/frp-create-client 0755 tools/frp-create-client python
@@ -154,6 +165,7 @@ protected var/lib/drlink/access-control.json - - none
 protected var/lib/drlink/egress-control.json - - none
 protected var/lib/drlink/service-profiles.json - - none
 protected var/lib/drlink/drlink.db - - none
+protected var/lib/drlink/webhook-signing.key - - none
 protected-prefix var/lib/drlink/runtime/ - - none
 protected-prefix etc/drlink/pki/ - - none
 protected-prefix var/lib/drlink/enrollments/ - - none

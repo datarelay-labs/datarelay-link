@@ -16,7 +16,7 @@ import secrets
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Iterable, Optional
+from typing import Any, Callable, Iterable, Mapping, Optional
 
 from drlink_control_db import ControlPlaneError, open_control_db, utc_now_iso
 
@@ -28,7 +28,10 @@ CANCELLED = "CANCELLED"
 JOB_STATUSES = frozenset({QUEUED, RUNNING, SUCCEEDED, FAILED, CANCELLED})
 TERMINAL_STATUSES = frozenset({SUCCEEDED, FAILED, CANCELLED})
 
-ADMITTED_JOB_TYPES = frozenset({"doctor", "refresh", "version-check", "support-bundle", "remote-service-set", "remote-service-delete"})
+ADMITTED_JOB_TYPES = frozenset({"doctor", "refresh", "version-check", "support-bundle", "remote-service-set", "remote-service-delete", "agent-update-rollout"})
+ROLLOUT_JOB_TYPE = "agent-update-rollout"
+MAX_ROLLOUT_WAVE_SIZE = 25
+MAX_ROLLOUT_FAILURE_THRESHOLD = 100
 DEFAULT_JOB_TIMEOUT_SECONDS = 300
 MAX_JOB_TIMEOUT_SECONDS = 3600
 DEFAULT_LEASE_SECONDS = 60
@@ -590,6 +593,92 @@ class ManagementJobEngine:
         except Exception:
             self._rollback()
             raise
+
+    def enqueue_rollout(
+        self,
+        *,
+        targets: Iterable[str],
+        requested_by: str,
+        artifact: Mapping[str, Any],
+        canary_targets: Iterable[str] = (),
+        wave_size: int = 10,
+        failure_threshold_percent: int = 20,
+        timeout_seconds: int = DEFAULT_JOB_TIMEOUT_SECONDS,
+        now: Optional[datetime] = None,
+    ) -> dict[str, Any]:
+        """Queue a bounded manual Agent update rollout.
+
+        The immutable artifact identity is carried as Job payload. Execution remains
+        Agent-owned and no SQLite transaction is held while an Agent updates.
+        """
+        target_ids = _normalize_targets(targets, max_targets=self.max_targets)
+        canaries = _normalize_targets(canary_targets, max_targets=self.max_targets) if tuple(canary_targets) else ()
+        unknown = sorted(set(canaries) - set(target_ids))
+        if unknown:
+            raise ControlPlaneError("Rollout canary target is outside the explicit target set.")
+        try:
+            size = int(wave_size)
+            threshold = int(failure_threshold_percent)
+        except (TypeError, ValueError) as exc:
+            raise ControlPlaneError("Rollout wave size and failure threshold must be integers.") from exc
+        if size < 1 or size > min(MAX_ROLLOUT_WAVE_SIZE, self.max_targets):
+            raise ControlPlaneError("Rollout wave size is outside the bounded 3.0 range.")
+        if threshold < 0 or threshold > MAX_ROLLOUT_FAILURE_THRESHOLD:
+            raise ControlPlaneError("Rollout failure threshold must be between 0 and 100 percent.")
+        if not isinstance(artifact, dict):
+            raise ControlPlaneError("Rollout artifact identity must be an object.")
+        required = ("version", "source_ref", "sha256")
+        normalized_artifact = {key: str(artifact.get(key) or "").strip() for key in required}
+        if any(not normalized_artifact[key] for key in required):
+            raise ControlPlaneError("Rollout artifact requires immutable version, source_ref, and sha256.")
+        if len(normalized_artifact["sha256"]) != 64 or any(c not in "0123456789abcdefABCDEF" for c in normalized_artifact["sha256"]):
+            raise ControlPlaneError("Rollout artifact sha256 must be a 64-character hexadecimal digest.")
+        payload = {
+            "artifact": normalized_artifact,
+            "canary_targets": list(canaries),
+            "wave_size": size,
+            "failure_threshold_percent": threshold,
+            "rollout_state": "CANARY" if canaries else "WAVE",
+        }
+        with self._lock:
+            return self._enqueue_unlocked(
+                job_type=ROLLOUT_JOB_TYPE,
+                targets=target_ids,
+                requested_by=requested_by,
+                resource_type="managed-host",
+                resource_ref="explicit-rollout-targets",
+                payload=payload,
+                timeout_seconds=timeout_seconds,
+                now=now,
+            )
+
+    def rollout_control(self, job_id: str, *, action: str) -> dict[str, Any]:
+        """Pause/resume a rollout without changing artifact or target identity."""
+        verb = str(action or "").strip().lower()
+        if verb not in ("pause", "resume"):
+            raise ControlPlaneError("Rollout control action must be pause or resume.")
+        with self._lock:
+            self._begin()
+            try:
+                row = self.conn.execute(
+                    "SELECT job_type,status,payload_json FROM management_jobs WHERE id=?", (str(job_id),)
+                ).fetchone()
+                if not row or str(row["job_type"]) != ROLLOUT_JOB_TYPE:
+                    raise ControlPlaneError("Managed Update rollout was not found.")
+                if str(row["status"]) in TERMINAL_STATUSES:
+                    raise ControlPlaneError("Completed rollout cannot be paused or resumed.")
+                payload = json.loads(str(row["payload_json"] or "{}"))
+                payload["operator_paused"] = verb == "pause"
+                payload["rollout_state"] = "PAUSED" if verb == "pause" else "WAVE"
+                self.conn.execute(
+                    "UPDATE management_jobs SET payload_json=?,updated_at=? WHERE id=?",
+                    (_json(payload, field="Managed Update rollout payload"), utc_now_iso(), str(job_id)),
+                )
+                self.conn.execute("COMMIT")
+            except Exception:
+                self._rollback()
+                raise
+            return self._get_unlocked(str(job_id))
 
     def enqueue(self, **kwargs) -> dict[str, Any]:
         with self._lock:

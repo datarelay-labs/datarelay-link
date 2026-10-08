@@ -211,7 +211,9 @@ must follow `MANAGEMENT_SURFACE_CONTRACT.md`.
 Key rules:
 
 - management tools are defined by DRLink Server/Core, not by the optional Plugin relay;
-- the Web `/api/v1` adapter is not the Plugin backend;
+- the Web `/api/v1` adapter and `/api/automation/v1` Public Automation API are not the Plugin backend;
+- Public Automation Service Accounts are management principals, not AI Identities, and
+  never inherit target-OS AI permissions;
 - target-OS permissions such as `command-exec` or `file-write` never imply DRLink
   management permission;
 - 3.0 management permissions are a separate capability family frozen during DRL3-0;

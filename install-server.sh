@@ -62,6 +62,17 @@ for f in \
   "$BASE_DIR/lib/drlink_management_core.py" \
   "$BASE_DIR/lib/drlink_management_mcp_adapter.py" \
   "$BASE_DIR/lib/drlink_management_web_adapter.py" \
+  "$BASE_DIR/lib/drlink_service_accounts.py" \
+  "$BASE_DIR/lib/drlink_automation_api.py" \
+  "$BASE_DIR/lib/drlink_automation_server.py" \
+  "$BASE_DIR/lib/drlink_webhooks.py" \
+  "$BASE_DIR/lib/drlink_webhook_events.py" \
+  "$BASE_DIR/lib/drlink_webhook_delivery.py" \
+  "$BASE_DIR/server/drlink-automation.py" \
+  "$BASE_DIR/server/drlink-automation.service" \
+  "$BASE_DIR/server/drlink-webhook-delivery.py" \
+  "$BASE_DIR/server/drlink-webhook-delivery.service" \
+  "$BASE_DIR/server/drlink-webhook-delivery.timer" \
   "$BASE_DIR/lib/drlink_mgmt_sync.py" \
   "$BASE_DIR/lib/drlink_runtime_policy.py" \
   "$BASE_DIR/lib/drlink_ai_agent.py" \
