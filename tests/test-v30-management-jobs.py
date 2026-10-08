@@ -18,6 +18,9 @@ import drlink_control_cli as control_cli
 from drlink_management_service import ManagementQueryService
 from drlink_v30_jobs import (
     BoundedAgentRpcWorkerPool,
+    ADMITTED_JOB_TYPES,
+    MUTATING_AGENT_JOB_TYPES,
+    READ_ONLY_AGENT_JOB_TYPES,
     CANCELLED,
     FAILED,
     ManagementJobEngine,
@@ -85,6 +88,15 @@ class V30ManagementJobTests(unittest.TestCase):
             self.assertIn("management_job_targets", tables)
         finally:
             upgraded.close()
+
+    def test_new_job_families_do_not_inherit_observational_admission(self):
+        self.assertEqual(READ_ONLY_AGENT_JOB_TYPES, {"doctor", "version-check"})
+        self.assertEqual(
+            MUTATING_AGENT_JOB_TYPES, ADMITTED_JOB_TYPES - READ_ONLY_AGENT_JOB_TYPES
+        )
+        self.assertIn("support-bundle", MUTATING_AGENT_JOB_TYPES)
+        self.assertIn("refresh", MUTATING_AGENT_JOB_TYPES)
+        self.assertNotIn("doctor", MUTATING_AGENT_JOB_TYPES)
 
     def test_only_admitted_safe_job_families_can_start(self):
         with self.assertRaises(ControlPlaneError):

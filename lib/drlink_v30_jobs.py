@@ -30,12 +30,11 @@ TERMINAL_STATUSES = frozenset({SUCCEEDED, FAILED, CANCELLED})
 
 ADMITTED_JOB_TYPES = frozenset({"doctor", "refresh", "version-check", "support-bundle", "remote-service-set", "remote-service-delete", "agent-update-rollout"})
 ROLLOUT_JOB_TYPE = "agent-update-rollout"
-# Pending and quarantined Hosts may report bounded health, but they must not
-# acquire claims that change Agent services or installed product state.
-MUTATING_AGENT_JOB_TYPES = frozenset({
-    "refresh", "support-bundle", "remote-service-set", "remote-service-delete",
-    ROLLOUT_JOB_TYPE,
-})
+# Only these two Job families have verified side-effect-free Agent handlers.
+# Every new admitted Job family must fail closed under Host quarantine until
+# it is explicitly proven observational and added to this small allowlist.
+READ_ONLY_AGENT_JOB_TYPES = frozenset({"doctor", "version-check"})
+MUTATING_AGENT_JOB_TYPES = ADMITTED_JOB_TYPES - READ_ONLY_AGENT_JOB_TYPES
 MAX_ROLLOUT_WAVE_SIZE = 25
 MAX_ROLLOUT_FAILURE_THRESHOLD = 100
 DEFAULT_JOB_TIMEOUT_SECONDS = 300
