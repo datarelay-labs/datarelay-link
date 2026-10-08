@@ -143,6 +143,57 @@ class WebhookDeliveryTests(unittest.TestCase):
             thread.join(timeout=3)
             server.server_close()
 
+    def test_https_redirect_never_retransmits_a_signed_event(self):
+        """A valid TLS peer cannot redirect our signed payload to a new URL."""
+        hook, event = self._event()
+        server, thread, trusted_context = self._tls_server()
+        port = server.server_address[1]
+        public = [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP,
+                   "", ("8.8.8.8", 443))]
+        dial_count = []
+
+        def dial_disposable_server(conn):
+            self.assertEqual(conn.selected[4], ("8.8.8.8", 443))
+            dial_count.append(conn.host)
+            raw = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            raw.settimeout(5)
+            raw.connect(("127.0.0.1", port))
+            conn.sock = conn._context.wrap_socket(raw, server_hostname=conn.host)
+
+        def respond_with_redirect(handler):
+            body = handler.rfile.read(int(handler.headers["Content-Length"]))
+            Receiver.requests.append((handler.path, dict(handler.headers), body))
+            handler.send_response(302)
+            handler.send_header("Location", "http://127.0.0.1:1/exfiltrate")
+            handler.send_header("Content-Length", "0")
+            handler.end_headers()
+
+        try:
+            with patch("drlink_webhook_delivery.socket.getaddrinfo",
+                       return_value=public), \
+                 patch("drlink_webhook_delivery.ssl.create_default_context",
+                       return_value=trusted_context), \
+                 patch.object(PinnedHTTPSConnection, "connect",
+                              dial_disposable_server), \
+                 patch.object(Receiver, "do_POST", respond_with_redirect):
+                result = delivery_tick(self.root)
+
+            self.assertEqual(result, {"claimed": 1, "delivered": 0, "failed": 1})
+            self.assertEqual(dial_count, ["hooks.example.com"])
+            self.assertEqual(len(Receiver.requests), 1)
+            self.assertEqual(Receiver.requests[0][0], "/drlink")
+            with WebhookStore(self.root) as store:
+                row = store.conn.execute(
+                    "SELECT status,attempts FROM management_webhook_outbox "
+                    "WHERE event_id=?", (event["event_id"],)
+                ).fetchone()
+                self.assertEqual((row["status"], row["attempts"]), ("PENDING", 1))
+                self.assertEqual(store.claim_due(), [])
+        finally:
+            server.shutdown()
+            thread.join(timeout=3)
+            server.server_close()
+
     def test_real_https_delivery_has_valid_hmac_stable_event_id_and_no_secrets(self):
         hook, event = self._event()
         server, thread, client_context = self._tls_server()
