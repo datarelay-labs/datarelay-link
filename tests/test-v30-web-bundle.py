@@ -8,6 +8,7 @@ import shutil
 import tarfile
 import tempfile
 import unittest
+from xml.etree import ElementTree
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -148,6 +149,31 @@ class V30WebBundleTests(unittest.TestCase):
                         SystemExit, "foundation-archive-unsafe:tokens"
                     ):
                         MOD.foundation_pack_sources(root)
+
+    def test_brand_favicon_is_local_valid_svg_and_shipped_offline(self):
+        # Browser tabs need an exact brand asset, not an external CDN or emoji.
+        index = (ROOT / "web/dist/index.html").read_text(encoding="utf-8")
+        self.assertIn('<link rel="icon" type="image/svg+xml" href="/favicon.svg">', index)
+        self.assertEqual(index.count('rel="icon"'), 1)
+        icon_path = ROOT / "web/dist/favicon.svg"
+        icon = ElementTree.parse(icon_path).getroot()
+        self.assertEqual(icon.tag, "{http://www.w3.org/2000/svg}svg")
+        self.assertEqual(icon.attrib["viewBox"], "0 0 64 64")
+        paths = icon.findall(".//{http://www.w3.org/2000/svg}path")
+        self.assertGreaterEqual(len(paths), 3)
+        source = icon_path.read_text(encoding="utf-8")
+        self.assertNotIn("<image", source)
+        self.assertNotIn("href=", source)
+        self.assertNotIn("<script", source)
+        manifest = (ROOT / "lib/web-project-files.manifest").read_text(encoding="utf-8")
+        self.assertIn(
+            "web/dist/favicon.svg usr/local/share/drlink-web/favicon.svg 0644 static",
+            manifest,
+        )
+        with tempfile.TemporaryDirectory(prefix="drlink-favicon-archive-") as folder:
+            archive = MOD.build(Path(folder) / "web.tar.gz")
+            with tarfile.open(archive, "r:gz") as bundle:
+                self.assertIn("data-relay-link-web/web/dist/favicon.svg", bundle.getnames())
 
     def test_bundle_contains_compiled_static_assets_only_for_runtime_ui(self):
         tmp = Path(tempfile.mkdtemp(prefix="drlink-web-static-"))

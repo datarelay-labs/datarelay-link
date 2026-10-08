@@ -8,6 +8,7 @@ tools/drlink-web-bootstrap usr/local/bin/drlink-web-bootstrap 0755 python
 tools/drlink-web-recovery usr/local/bin/drlink-web-recovery 0755 python
 tools/drlink-web-operator usr/local/bin/drlink-web-operator 0755 python
 web/dist/index.html usr/local/share/drlink-web/index.html 0644 static
+web/dist/favicon.svg usr/local/share/drlink-web/favicon.svg 0644 static
 web/dist/app.js usr/local/share/drlink-web/app.js 0644 static
 web/dist/styles.css usr/local/share/drlink-web/styles.css 0644 static
 web/dist/foundation.css usr/local/share/drlink-web/foundation.css 0644 static
