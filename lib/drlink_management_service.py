@@ -1348,12 +1348,19 @@ class ManagementQueryService:
             "FROM clients WHERE last_seen IS NULL OR last_seen<? ORDER BY id LIMIT 100",
             (stale_before,),
         ):
+            observed = self._parse_attention_timestamp(str(row["last_seen"] or ""))
+            age_days = (
+                max(0, int((current - observed).total_seconds() // 86400))
+                if observed and observed <= current else None
+            )
             findings.append({
                 "kind": "stale-host", "resource_type": "managed-host",
                 "resource_id": str(row["id"]), "label": str(row["name"]),
-                "evidence_quality": "OBSERVED" if row["last_seen"] else "UNKNOWN_EVIDENCE",
-                "finding_status": "STALE_OR_UNUSED" if row["last_seen"] else "UNKNOWN_EVIDENCE",
-                "severity": "warning" if row["last_seen"] else "info",
+                "age_days": age_days,
+                "age_reference": "last_seen" if age_days is not None else None,
+                "evidence_quality": "OBSERVED" if age_days is not None else "UNKNOWN_EVIDENCE",
+                "finding_status": "STALE_OR_UNUSED" if age_days is not None else "UNKNOWN_EVIDENCE",
+                "severity": "warning" if age_days is not None else "info",
                 "observation_window_days": int(HYGIENE_STALE_HOST_WINDOW.days),
                 "evidence": {"last_seen": row["last_seen"]},
                 "recommendation": "Review host lifecycle and connectivity; no automatic mutation is performed.",

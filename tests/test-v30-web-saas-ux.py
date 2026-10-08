@@ -123,6 +123,11 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn('severityFilter!=="all"&&x.severity!==severityFilter', SOURCE)
         self.assertIn('aria-label="Filter finding type"', SOURCE)
         self.assertIn('kindFilter!=="all"&&x.kind!==kindFilter', SOURCE)
+        self.assertIn('aria-label="Filter observed age"', SOURCE)
+        self.assertIn('ageFilter==="unknown"&&observedAge!==null', SOURCE)
+        self.assertIn('observedAge===null||observedAge<Number(ageFilter)', SOURCE)
+        self.assertIn('x.age_days==="number"?x.age_days+" days":"Unknown"', SOURCE)
+        self.assertIn('<th>Observed age</th><th>Window</th>', SOURCE)
 
     def test_shell_command_center_and_resource_workspaces_exist(self):
         for marker in (

@@ -43,6 +43,52 @@ class AccessHygieneTests(unittest.TestCase):
         try:self.assertEqual(before,cp.current_revision())
         finally:cp.close()
 
+    def test_evidence_age_uses_recorded_timestamp_never_infers_unused_access(self):
+        root = tempfile.mkdtemp(prefix="drlink-hygiene-age-")
+        now = datetime(2026, 10, 8, tzinfo=timezone.utc)
+        last_seen = now - timedelta(days=45, hours=3)
+        plane = ControlPlane(root)
+        try:
+            plane.upsert_client("known-age", hostname="known-age")
+            plane.upsert_client("unknown-age", hostname="unknown-age")
+            plane.upsert_client("invalid-age", hostname="invalid-age")
+            plane.conn.execute(
+                "UPDATE clients SET last_seen=? WHERE id=?",
+                (last_seen.isoformat().replace("+00:00", "Z"), "known-age"),
+            )
+            # Newly upserted hosts receive a live timestamp by default; erase
+            # only this isolated fixture's observation to model unknown age.
+            plane.conn.execute(
+                "UPDATE clients SET last_seen=NULL WHERE id='unknown-age'"
+            )
+            plane.conn.execute(
+                "UPDATE clients SET last_seen='0000-invalid' WHERE id='invalid-age'"
+            )
+            plane.conn.commit()
+            revision = plane.current_revision()
+        finally:
+            plane.close()
+        with ManagementQueryService.open_read_only(root) as service:
+            result = service.access_hygiene(now=now)
+        by_id = {
+            item["resource_id"]: item
+            for item in result["items"] if item["kind"] == "stale-host"
+        }
+        self.assertEqual(by_id["known-age"]["age_days"], 45)
+        self.assertEqual(by_id["known-age"]["age_reference"], "last_seen")
+        self.assertEqual(by_id["unknown-age"]["age_days"], None)
+        self.assertEqual(by_id["unknown-age"]["evidence_quality"], "UNKNOWN_EVIDENCE")
+        self.assertEqual(by_id["invalid-age"]["age_days"], None)
+        self.assertEqual(by_id["invalid-age"]["evidence_quality"], "UNKNOWN_EVIDENCE")
+        self.assertEqual(by_id["invalid-age"]["finding_status"], "UNKNOWN_EVIDENCE")
+        self.assertTrue(result["read_only"])
+        self.assertFalse(result["auto_mutation"])
+        reader = ControlPlane(root, read_only=True)
+        try:
+            self.assertEqual(reader.current_revision(), revision)
+        finally:
+            reader.close()
+
     def test_web_mcp_and_automation_use_same_read_only_core(self):
         from drlink_management_core import ManagementActor, ManagementAuthorizationError
         from drlink_management_mcp_adapter import ManagementMcpAdapter

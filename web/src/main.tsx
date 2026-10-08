@@ -1348,7 +1348,7 @@ function HealthWorkspace({data,onNavigate}:{data:any,onNavigate?:(id:string,grou
 
 function AccessHygienePanel({data,onRefresh,onNavigate,operator}:{data:any,onRefresh:()=>void,onNavigate?:(id:string,groupId?:string)=>void,operator:any}){
   const [quality,setQuality]=useState("all"),[filter,setFilter]=useState("");
-  const [severityFilter,setSeverityFilter]=useState("all"),[kindFilter,setKindFilter]=useState("all");
+  const [severityFilter,setSeverityFilter]=useState("all"),[kindFilter,setKindFilter]=useState("all"),[ageFilter,setAgeFilter]=useState("all");
   const destination:Record<string,[string,string]>={
     "managed-host":["hosts","infrastructure"],"object":["objects","infrastructure"],
     "access-rule":["policies","access"],"service-account":["integrations","administration"],
@@ -1358,6 +1358,9 @@ function AccessHygienePanel({data,onRefresh,onNavigate,operator}:{data:any,onRef
   const items=source.filter((x:any)=>{
     if(severityFilter!=="all"&&x.severity!==severityFilter)return false;
     if(kindFilter!=="all"&&x.kind!==kindFilter)return false;
+    const observedAge=typeof x.age_days==="number"&&Number.isFinite(x.age_days)?x.age_days:null;
+    if(ageFilter==="unknown"&&observedAge!==null)return false;
+    if(ageFilter!=="all"&&ageFilter!=="unknown"&&(observedAge===null||observedAge<Number(ageFilter)))return false;
     if(quality==="ORPHANED"&&x.kind!=="orphan-object")return false;
     if(quality!=="all"&&quality!=="ORPHANED"&&x.finding_status!==quality)return false;
     const q=filter.trim().toLowerCase();
@@ -1384,14 +1387,17 @@ function AccessHygienePanel({data,onRefresh,onNavigate,operator}:{data:any,onRef
           <select aria-label="Filter finding type" value={kindFilter} onChange={e=>setKindFilter(e.target.value)}>
             <option value="all">All types</option>{kinds.map(kind=><option key={kind} value={kind}>{kind.replaceAll("-"," ")}</option>)}
           </select>
+          <select aria-label="Filter observed age" value={ageFilter} onChange={e=>setAgeFilter(e.target.value)}>
+            <option value="all">All ages</option><option value="7">7+ days</option><option value="30">30+ days</option><option value="90">90+ days</option><option value="unknown">Age unknown</option>
+          </select>
         </div>
       </div>
       <p className="muted">Incomplete or unverified audit coverage is UNKNOWN_EVIDENCE, not proof of unused access. Recommendations are always advisory.</p>
       {!items.length?<div className="dr-empty-state"><strong>No matching findings</strong><p>There is no evidence-qualified action matching the current filters.</p></div>:
-      <div className="dr-table-scroll"><table className="dr-resource-table"><thead><tr><th>Resource</th><th>Review</th><th>Evidence</th><th>Window</th><th>Recommendation</th><th>Inspect</th></tr></thead>
+      <div className="dr-table-scroll"><table className="dr-resource-table"><thead><tr><th>Resource</th><th>Review</th><th>Evidence</th><th>Observed age</th><th>Window</th><th>Recommendation</th><th>Inspect</th></tr></thead>
       <tbody>{items.map((x:any,i:number)=><tr key={x.kind+":"+x.resource_id+":"+i}><td><strong>{x.label||x.resource_id}</strong><small>{x.resource_type||""} · {x.kind||""}</small></td>
         <td><span className={x.finding_status==="UNKNOWN_EVIDENCE"?"dr-state":"dr-state active"}><i/>{x.finding_status||"UNKNOWN_EVIDENCE"}</span></td>
-        <td>{x.evidence_quality||"UNKNOWN_EVIDENCE"}</td><td>{x.observation_window_days===0?"Current":(x.observation_window_days??"—")+" days"}</td>
+        <td>{x.evidence_quality||"UNKNOWN_EVIDENCE"}</td><td title={x.age_reference||"No verified age timestamp"}>{typeof x.age_days==="number"?x.age_days+" days":"Unknown"}</td><td>{x.observation_window_days===0?"Current":(x.observation_window_days??"—")+" days"}</td>
         <td>{x.recommendation||"Review the authoritative resource."}</td>
         <td><button className="secondary" disabled={x.resource_type==="service-account"&&operator.role!=="Admin"} onClick={()=>{const route=destination[x.resource_type];if(route)onNavigate?.(route[0],route[1])}}>Inspect</button></td>
       </tr>)}</tbody></table></div>}
