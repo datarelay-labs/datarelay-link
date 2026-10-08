@@ -42,6 +42,10 @@ class AutomationApi:
         if not isinstance(path, str) or not path.startswith(PREFIX):
             raise ControlPlaneError("Automation API route was not found.")
         operation = path[len(PREFIX):]
+        # Core callers bypassing HTTP must obey the same canonical route
+        # boundary: no query, fragment, nested path or encoded alias.
+        if not operation or any(ch not in "abcdefghijklmnopqrstuvwxyz0123456789_" for ch in operation):
+            raise ControlPlaneError("Automation API route was not found.")
         tool = management_tool(operation)
         if operation not in ALLOW or tool is None or not tool.read_only:
             raise ControlPlaneError("Automation operation is not allowlisted.")
