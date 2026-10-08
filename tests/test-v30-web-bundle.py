@@ -45,15 +45,45 @@ class V30WebBundleTests(unittest.TestCase):
                 shutil.copyfile(ROOT / "web/.foundation/packs" / path, bundles / path)
             paths = MOD.foundation_pack_sources(root)
             self.assertEqual(len(paths), 10)
-            tampered = bundles / ("datarelay-labs-tokens-%s.tgz" % lock["version"])
-            with tampered.open("ab") as f:
-                f.write(b"tamper")
-            with self.assertRaisesRegex(SystemExit, "foundation-archive-sha-mismatch:tokens"):
-                MOD.foundation_pack_sources(root)
-            lock["packages"][0].pop("archive_sha256")
-            (root / "web/foundation.lock.json").write_text(json.dumps(lock))
-            with self.assertRaisesRegex(SystemExit, "invalid Foundation package entry"):
-                MOD.foundation_pack_sources(root)
+            self.assertEqual(
+                len({entry["path"] for entry in lock["packages"]}), 10,
+                "the lock must identify ten distinct Foundation packages",
+            )
+            # Every independently pinned package must fail closed if even one
+            # archive byte changes. Do not test tokens alone and extrapolate.
+            for entry in lock["packages"]:
+                name = entry["path"]
+                archive = bundles / (
+                    "datarelay-labs-%s-%s.tgz" % (name, lock["version"])
+                )
+                original = archive.read_bytes()
+                with self.subTest(tampered_package=name):
+                    try:
+                        archive.write_bytes(original + b"tamper")
+                        with self.assertRaisesRegex(
+                            SystemExit, "foundation-archive-sha-mismatch:" + name
+                        ):
+                            MOD.foundation_pack_sources(root)
+                    finally:
+                        archive.write_bytes(original)
+                with self.subTest(missing_digest=name):
+                    package = next(
+                        row for row in lock["packages"] if row["path"] == name
+                    )
+                    sha256 = package.pop("archive_sha256")
+                    try:
+                        (root / "web/foundation.lock.json").write_text(
+                            json.dumps(lock), encoding="utf-8"
+                        )
+                        with self.assertRaisesRegex(
+                            SystemExit, "invalid Foundation package entry"
+                        ):
+                            MOD.foundation_pack_sources(root)
+                    finally:
+                        package["archive_sha256"] = sha256
+                        (root / "web/foundation.lock.json").write_text(
+                            json.dumps(lock), encoding="utf-8"
+                        )
 
     def test_bundle_contains_compiled_static_assets_only_for_runtime_ui(self):
         tmp = Path(tempfile.mkdtemp(prefix="drlink-web-static-"))
