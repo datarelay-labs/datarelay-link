@@ -1,6 +1,7 @@
 import React, {useEffect, useState} from "react";
 import {createRoot} from "react-dom/client";
 import {QRCodeSVG} from "qrcode.react";
+import {AdministrationHub,createStandardAdministrationTasks,type AdministrationHubTask} from "@datarelay-labs/foundation";
 
 type Json = Record<string, any>;
 const navGroups=[
@@ -697,6 +698,58 @@ function PolicySafetyPanel({operator}:{operator:any}){
   </>;
 }
 
+
+function LinkFoundationAdministration({
+  operator, onNavigate
+}:{
+  operator:any,
+  onNavigate?:(id:string,groupId?:string)=>void
+}){
+  const admin=operator.role==="Admin";
+  const unavailable={availability:"unavailable",access:"view"} as const;
+  const tasks=createStandardAdministrationTasks({
+    "core.https":{
+      availability:"supported",
+      access:admin?"manage":"view",
+      target:{kind:"action",actionId:"link.certificate"}
+    },
+    "core.users":{
+      availability:admin?"supported":"unavailable",
+      access:admin?"manage":"view",
+      ...(admin?{target:{kind:"action" as const,actionId:"link.users"}}:{})
+    },
+    "core.password":unavailable,
+    "core.timezone":unavailable,
+    "core.network":unavailable,
+    "core.retention":unavailable,
+    "core.backup-import":unavailable,
+    "core.audit":{
+      availability:"read_only",access:"view",
+      target:{kind:"action",actionId:"link.audit"}
+    },
+    "core.health":{
+      availability:"read_only",access:"view",
+      target:{kind:"action",actionId:"link.health"}
+    }
+  });
+  function openTask(task:AdministrationHubTask){
+    // Link Core retains routing, session security and privileged settings authority.
+    switch(task.target?.kind==="action"?task.target.actionId:""){
+      case "link.users":
+        if(admin)onNavigate?.("users","administration");
+        break;
+      case "link.audit":onNavigate?.("audit","observability");break;
+      case "link.health":onNavigate?.("health","observability");break;
+      case "link.certificate":
+        document.getElementById("drlink-certificate-status")?.scrollIntoView({block:"start"});
+        break;
+    }
+  }
+  return <section data-testid="drlink-foundation-administration">
+    <AdministrationHub productId="link" tasks={tasks} showUnavailable onOpen={openTask}/>
+  </section>;
+}
+
 function SystemPanel({data,operator}:{data:any,operator:any}){
   const [backupPath,setBackupPath]=useState("/var/lib/drlink/backups/");
   const [renewConfirmation,setRenewConfirmation]=useState(""),[restoreConfirmation,setRestoreConfirmation]=useState("");
@@ -745,7 +798,7 @@ function SystemPanel({data,operator}:{data:any,operator:any}){
       {updateResult?.job_id&&<button className="secondary" onClick={refreshProductUpdate}>Refresh Product Update Status</button>}
       {updateResult&&<pre className="plan">{JSON.stringify(updateResult,null,2)}</pre>}
     </div>
-    <div className="card">
+    <div className="card" id="drlink-certificate-status">
       <h3>Certificate Status</h3>
       <Table items={[{mode:certificate.mode,hostname:certificate.hostname,certificate:certificate.certificate,issuer:certificate.issuer,expires:certificate.expires,days_remaining:certificate.days_remaining,auto_renewal:certificate.auto_renewal}]}/>
       <button className="secondary" onClick={runPreflight}>Run Certificate Preflight</button>
@@ -1444,7 +1497,7 @@ function View({active,operator,onNavigate}:{active:string,operator:any,onNavigat
   if(active==="search")return <div><div className="toolbar"><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search resources and policy"/><button className="primary" onClick={()=>api("/api/v1/search?q="+encodeURIComponent(query)+"&limit=50").then(setData).catch((e:any)=>setError(e.message))}>Search</button></div>{data&&<Table items={(data.items||[]).map((x:any)=>({type:x.resource_type,id:x.id,name:x.name}))}/>}</div>;
   if(active==="overview"&&data)return <CommandCenter data={data} operator={operator} onNavigate={onNavigate}/>;
   if(active==="versions"&&data)return <><div className="grid"><Metric label="Server version" value={data.server_version}/><Metric label="Drift" value={data.drift_count}/><Metric label="Unknown" value={data.unknown_count}/></div><Table items={data.hosts||[]}/></>;
-  if(active==="system"&&data)return <SystemPanel data={data} operator={operator}/>;
+  if(active==="system"&&data)return <><LinkFoundationAdministration operator={operator} onNavigate={onNavigate}/><SystemPanel data={data} operator={operator}/></>;
   if(active==="objects"&&data)return <><ObjectsWorkspace data={data} onNavigate={onNavigate}/>{operator.role!=="Read Only"&&<GuidedObjectPanel/>}</>;
   if(active==="hosts"&&data)return <><ResourceWorkspace kind="host" items={data.items||[]} operator={operator} onNavigate={onNavigate}/>{operator.role!=="Read Only"&&<ManagedHostMetadataPanel/>}{operator.role==="Admin"&&<ManagedHostAdmissionPanel/>}{operator.role==="Admin"&&<ManagedHostLifecyclePanel/>}</>;
   if(active==="services"&&data)return <><ResourceWorkspace kind="service" items={data.items||[]} operator={operator} onNavigate={onNavigate}/>{operator.role!=="Read Only"&&<RemoteServicePanel/>}</>;

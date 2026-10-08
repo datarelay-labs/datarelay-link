@@ -3,12 +3,22 @@
   "private": true,
   "version": "3.0.0",
   "scripts": {
-    "build": "esbuild src/main.tsx --bundle --minify --target=es2020 --outfile=dist/app.js --define:process.env.NODE_ENV='\"production\"'"
+    "build": "esbuild src/main.tsx --bundle --minify --target=es2020 --outfile=dist/app.js --define:process.env.NODE_ENV='\"production\"' && esbuild node_modules/@datarelay-labs/foundation/styles.css --bundle --minify --outfile=dist/foundation.css"
   },
   "dependencies": {
     "qrcode.react": "4.2.0",
     "react": "19.3.0",
-    "react-dom": "19.3.0"
+    "react-dom": "19.3.0",
+    "@datarelay-labs/tokens": "file:.foundation/packs/datarelay-labs-tokens-0.1.0-pf5b.1.tgz",
+    "@datarelay-labs/icons": "file:.foundation/packs/datarelay-labs-icons-0.1.0-pf5b.1.tgz",
+    "@datarelay-labs/ui": "file:.foundation/packs/datarelay-labs-ui-0.1.0-pf5b.1.tgz",
+    "@datarelay-labs/product-shell": "file:.foundation/packs/datarelay-labs-product-shell-0.1.0-pf5b.1.tgz",
+    "@datarelay-labs/auth-ui": "file:.foundation/packs/datarelay-labs-auth-ui-0.1.0-pf5b.1.tgz",
+    "@datarelay-labs/system-contracts": "file:.foundation/packs/datarelay-labs-system-contracts-0.1.0-pf5b.1.tgz",
+    "@datarelay-labs/system-admin-ui": "file:.foundation/packs/datarelay-labs-system-admin-ui-0.1.0-pf5b.1.tgz",
+    "@datarelay-labs/testkit": "file:.foundation/packs/datarelay-labs-testkit-0.1.0-pf5b.1.tgz",
+    "@datarelay-labs/foundation": "file:.foundation/packs/datarelay-labs-foundation-0.1.0-pf5b.1.tgz",
+    "@datarelay-labs/foundation-cli": "file:.foundation/packs/datarelay-labs-foundation-cli-0.1.0-pf5b.1.tgz"
   },
   "devDependencies": {
     "esbuild": "0.28.2",

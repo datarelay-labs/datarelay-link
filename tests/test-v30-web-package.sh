@@ -39,6 +39,7 @@ for f in \
   /usr/local/share/drlink-web/index.html \
   /usr/local/share/drlink-web/app.js \
   /usr/local/share/drlink-web/styles.css \
+  /usr/local/share/drlink-web/foundation.css \
   /usr/local/share/drlink-web/logo/datarelay-logo.svg \
   /usr/local/bin/drlink-web-bootstrap \
   /usr/local/bin/drlink-web-recovery \
@@ -49,6 +50,12 @@ done
 
 grep -q 'Welcome to Data Relay Link' "$TMP/usr/local/share/drlink-web/app.js" || {
   echo "FAIL DR Control-aligned login UI missing from built Web app" >&2; exit 1;
+}
+grep -q 'dr-admin-hub__group' "$TMP/usr/local/share/drlink-web/foundation.css" || {
+  echo "FAIL Foundation Admin Hub styles absent from Web package" >&2; exit 1;
+}
+grep -q 'foundation.css' "$TMP/usr/local/share/drlink-web/index.html" || {
+  echo "FAIL Foundation stylesheet link absent from Web page" >&2; exit 1;
 }
 grep -q 'DR Control-aligned authentication surface' "$TMP/usr/local/share/drlink-web/styles.css" || {
   echo "FAIL DR Control-aligned login styles missing from Web package" >&2; exit 1;

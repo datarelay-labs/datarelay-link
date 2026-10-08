@@ -38,6 +38,9 @@ class V30WebBundleTests(unittest.TestCase):
         self.assertIn("data-relay-link-web/web/dist/index.html", names)
         self.assertIn("data-relay-link-web/web/dist/app.js", names)
         self.assertIn("data-relay-link-web/web/dist/styles.css", names)
+        self.assertIn("data-relay-link-web/web/dist/foundation.css", names)
+        self.assertIn("data-relay-link-web/web/foundation.lock.json", names)
+        self.assertIn("data-relay-link-web/web/.foundation/packs/datarelay-labs-foundation-0.1.0-pf5b.1.tgz", names)
         self.assertNotIn("data-relay-link-web/var/lib/drlink/drlink.db", names)
 
 if __name__ == "__main__":

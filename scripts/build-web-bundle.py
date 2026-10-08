@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import gzip
+import json
 import io
 import tarfile
 from pathlib import Path
@@ -17,6 +18,7 @@ BUILD_FILES = (
     "lib/web-project-files.manifest",
     "web/package.json",
     "web/package-lock.json",
+    "web/foundation.lock.json",
     "web/src/main.tsx",
 )
 
@@ -41,8 +43,24 @@ def manifest_sources() -> tuple[str, ...]:
     return tuple(sources)
 
 
+def foundation_pack_sources() -> tuple[str, ...]:
+    lock = ROOT / "web/foundation.lock.json"
+    data = json.loads(lock.read_text(encoding="utf-8"))
+    version = data.get("version")
+    packages = data.get("packages")
+    if not isinstance(version, str) or not version or not isinstance(packages, list) or len(packages) != 10:
+        raise SystemExit("invalid pinned Foundation package manifest")
+    paths = []
+    for entry in packages:
+        name = entry.get("path") if isinstance(entry, dict) else None
+        if not isinstance(name, str) or not name or not all(c.isalnum() or c == "-" for c in name):
+            raise SystemExit("invalid Foundation package name")
+        paths.append("web/.foundation/packs/datarelay-labs-%s-%s.tgz" % (name, version))
+    return tuple(paths)
+
+
 def package_files() -> tuple[str, ...]:
-    return tuple(dict.fromkeys((*BUILD_FILES, *manifest_sources())))
+    return tuple(dict.fromkeys((*BUILD_FILES, *foundation_pack_sources(), *manifest_sources())))
 
 
 FILES = package_files()
