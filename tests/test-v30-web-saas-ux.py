@@ -90,6 +90,14 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn('value="PENDING_APPROVAL"', SOURCE)
         self.assertIn('value="QUARANTINED"', SOURCE)
 
+    def test_admission_changes_are_admin_only_and_confirmation_bound(self):
+        self.assertIn("function ManagedHostAdmissionPanel()", SOURCE)
+        self.assertIn("/api/v1/managed-hosts/admission/preview", SOURCE)
+        self.assertIn("/api/v1/managed-hosts/admission/apply", SOURCE)
+        self.assertIn('operator.role==="Admin"&&<ManagedHostAdmissionPanel/>', SOURCE)
+        self.assertIn('confirmation!==required', SOURCE)
+        self.assertIn("active connections are not terminated", SOURCE)
+
     def test_shell_command_center_and_resource_workspaces_exist(self):
         for marker in (
             "drlink_web_sidebar_collapsed",

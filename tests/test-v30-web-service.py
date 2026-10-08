@@ -789,6 +789,78 @@ class V30WebServiceTests(unittest.TestCase):
         self.assertEqual(listed["count"], 1)
         self.assertEqual(listed["items"][0]["name"], "web-critical-ssh")
 
+    def test_host_admission_change_plan_web_csrf_and_typed_confirmation(self):
+        self.login()
+        plane = ControlPlane(self.tmp)
+        try:
+            before = plane.current_revision()
+            self.assertEqual(plane.require_client("host-a")["admission_state"], "APPROVED")
+        finally:
+            plane.close()
+        preview_path = "/api/v1/managed-hosts/admission/preview"
+        apply_path = "/api/v1/managed-hosts/admission/apply"
+
+        status, _, _ = self.request(
+            "POST", preview_path, {"host": "host-a", "operation": "quarantine"},
+        )
+        self.assertEqual(status, 403)  # CSRF is mandatory.
+        status, _, preview = self.request(
+            "POST", preview_path, {"host": "host-a", "operation": "quarantine"},
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, preview)
+        self.assertEqual(preview["confirmation_class"], "QUARANTINE")
+        self.assertFalse(preview["impact"]["access_broadened"])
+        self.assertIn("port reservations", preview["impact"]["kept"])
+        plane = ControlPlane(self.tmp)
+        try:
+            self.assertEqual(plane.current_revision(), before)
+        finally:
+            plane.close()
+
+        status, _, denied = self.request(
+            "POST", apply_path,
+            {"change_plan_id": preview["change_plan_id"], "confirmation": "APPROVE"},
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 400, denied)
+        status, _, applied = self.request(
+            "POST", apply_path,
+            {"change_plan_id": preview["change_plan_id"], "confirmation": "QUARANTINE"},
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, applied)
+        self.assertEqual(applied["revision"], before + 1)
+        plane = ControlPlane(self.tmp)
+        try:
+            row = plane.require_client("host-a")
+            self.assertEqual(row["admission_state"], "QUARANTINED")
+            self.assertEqual(row["trust_status"], "trusted")
+            self.assertEqual(int(row["connected"]), 1)
+        finally:
+            plane.close()
+
+        status, _, restore = self.request(
+            "POST", preview_path, {"host": "host-a", "operation": "approve"},
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, restore)
+        self.assertTrue(restore["impact"]["access_broadened"])
+        status, _, restored = self.request(
+            "POST", apply_path,
+            {"change_plan_id": restore["change_plan_id"], "confirmation": "APPROVE"},
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, restored)
+        self.assertEqual(restored["revision"], before + 2)
+        plane = ControlPlane(self.tmp)
+        try:
+            self.assertEqual(
+                plane.require_client("host-a")["admission_state"], "APPROVED"
+            )
+        finally:
+            plane.close()
+
     def test_managed_host_lifecycle_requires_admin_csrf_and_typed_confirmation(self):
         login = self.login()
         operator_id = login["operator"]["id"]

@@ -635,6 +635,21 @@ and delegates to canonical `unset_managed_host`, including reference refusal and
 owned service/port cleanup impact. Both operations record the actual Web actor/interface;
 neither is added to Plugin/MCP.
 
+**DRL3-0 Managed Host admission** is separate from trust revoke and retirement.
+The first-party Web API routes /api/v1/managed-hosts/admission/preview and
+/api/v1/managed-hosts/admission/apply require local Web Admin **and** the
+dedicated management-host-approve permission; management-config alone is not
+sufficient. Core issues a 300-second actor/Server/revision-bound Change Plan.
+Approve/restore requires typed APPROVE; quarantine requires typed QUARANTINE.
+Approval restores normal Remote/Internet/AI policy evaluation rather than
+unconditional access. Quarantine denies new Host-bound authorization without
+revoking management identity, changing connectivity, deleting references,
+releasing services/ports or claiming to terminate established connections.
+Core activates revision-bound policy generations and rolls back failed
+activation; all applied admission transitions preserve audit attribution.
+The Web adapter delegates to Core; no admission mutation is exported as a
+Management MCP/Plugin tool or a public Automation API tool in 3.0.
+
 The DRL3-3 Draft Workspace follows the same authority boundary even though Draft CRUD is
 Web-only operational state rather than an MCP tool. Browser routes call the Web adapter,
 which calls `ManagementCoreService`; the HTTP layer never calls the Draft service or

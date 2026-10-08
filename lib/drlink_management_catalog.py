@@ -87,6 +87,11 @@ MANAGEMENT_PERMISSIONS = (
         frozenset({TEST, CHANGE}),
     ),
     ManagementPermission(
+        "management-host-approve",
+        "Preview and explicitly approve/quarantine Managed Hosts through revision-bound Change Plans.",
+        frozenset({TEST, CHANGE}),
+    ),
+    ManagementPermission(
         "management-emergency-cutoff",
         "Preview, apply, and clear Emergency New-Access Cutoff state.",
         frozenset({TEST, INCIDENT_CHANGE}),

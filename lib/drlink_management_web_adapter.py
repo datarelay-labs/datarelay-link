@@ -185,6 +185,22 @@ class ManagementWebApiAdapter:
             confirmation=confirmation,
         )
 
+    def managed_host_admission_preview(
+        self, *, host: str, operation: str, actor: ManagementActor,
+    ) -> dict[str, Any]:
+        return self.core.managed_host_admission_preview(
+            host=host, operation=operation, actor=actor,
+        )
+
+    def managed_host_admission_apply(
+        self, *, change_plan_id: str, confirmation: str, actor: ManagementActor,
+    ) -> dict[str, Any]:
+        return self.core.managed_host_admission_apply(
+            change_plan_id=change_plan_id,
+            confirmation=confirmation,
+            actor=actor,
+        )
+
     def managed_host_lifecycle_preview(
         self,
         *,

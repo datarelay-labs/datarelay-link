@@ -30,7 +30,9 @@ from drlink_management_service import (
 from drlink_management_guided import GuidedChangeService
 from drlink_management_enrollment import ManagementEnrollmentService
 from drlink_management_remote_service import ManagementRemoteServiceService
-from drlink_management_host_lifecycle import ManagedHostLifecycleService
+from drlink_management_host_lifecycle import (
+    ManagedHostLifecycleService, ManagedHostAdmissionService,
+)
 from drlink_policy_safety import PolicySafetyService
 import drlink_policy_safety as policy_safety
 from drlink_management_system import ManagementSystemService
@@ -544,6 +546,34 @@ class ManagementCoreService:
             )
         with GuidedChangeService(self.root) as service:
             return service.apply_fleet_metadata(
+                actor_id=actor.actor_id,
+                change_plan_id=change_plan_id,
+                confirmation=confirmation,
+            )
+
+    def managed_host_admission_preview(
+        self, *, host: str, operation: str, actor: ManagementActor,
+    ) -> dict[str, Any]:
+        self._require_web_role(actor, "Admin")
+        if "management-host-approve" not in actor.permissions:
+            raise ManagementAuthorizationError(
+                "management-host-approve is required to change Managed Host admission."
+            )
+        with ManagedHostAdmissionService(self.root) as service:
+            return service.preview(
+                actor_id=actor.actor_id, host=host, operation=operation,
+            )
+
+    def managed_host_admission_apply(
+        self, *, change_plan_id: str, confirmation: str, actor: ManagementActor,
+    ) -> dict[str, Any]:
+        self._require_web_role(actor, "Admin")
+        if "management-host-approve" not in actor.permissions:
+            raise ManagementAuthorizationError(
+                "management-host-approve is required to change Managed Host admission."
+            )
+        with ManagedHostAdmissionService(self.root) as service:
+            return service.apply(
                 actor_id=actor.actor_id,
                 change_plan_id=change_plan_id,
                 confirmation=confirmation,

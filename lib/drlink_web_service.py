@@ -734,6 +734,18 @@ class WebApplication:
                 change_plan_id=str(body.get("change_plan_id") or ""),
                 confirmation=str(body.get("confirmation") or ""),
             )
+        if path == "/api/v1/managed-hosts/admission/preview":
+            return self.adapter.managed_host_admission_preview(
+                host=str(body.get("host") or ""),
+                operation=str(body.get("operation") or ""),
+                actor=actor,
+            )
+        if path == "/api/v1/managed-hosts/admission/apply":
+            return self.adapter.managed_host_admission_apply(
+                change_plan_id=str(body.get("change_plan_id") or ""),
+                confirmation=str(body.get("confirmation") or ""),
+                actor=actor,
+            )
         if path == "/api/v1/managed-hosts/lifecycle/preview":
             return self.adapter.managed_host_lifecycle_preview(
                 host=str(body.get("host") or ""),

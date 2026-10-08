@@ -289,6 +289,50 @@ function ManagedHostMetadataPanel(){
   return <div><div className="card"><h3>Guided Managed Host Metadata</h3><div className="toolbar"><input value={host} onChange={e=>setHost(e.target.value)} placeholder="Managed Host ID/name"/><input value={label} onChange={e=>setLabel(e.target.value)} placeholder="Optional label"/><input value={description} onChange={e=>setDescription(e.target.value)} placeholder="Description (blank clears)"/><input value={tags} onChange={e=>setTags(e.target.value)} placeholder="tags: env=prod,owner=netops"/></div></div><GuidedApplyPanel title="Managed Host Change Plan" build={request}/></div>;
 }
 
+function ManagedHostAdmissionPanel(){
+  const [host,setHost]=useState(""),[operation,setOperation]=useState("quarantine");
+  const [preview,setPreview]=useState<any>(null),[confirmation,setConfirmation]=useState("");
+  const [message,setMessage]=useState(""),[error,setError]=useState("");
+  async function doPreview(){
+    setError("");setMessage("");
+    try{
+      const result=await api("/api/v1/managed-hosts/admission/preview",{
+        method:"POST",body:JSON.stringify({host,operation}),
+      });
+      setPreview(result);setConfirmation("");
+    }catch(e:any){setPreview(null);setError(e.message||String(e))}
+  }
+  async function doApply(){
+    setError("");setMessage("");
+    try{
+      const result=await api("/api/v1/managed-hosts/admission/apply",{
+        method:"POST",body:JSON.stringify({change_plan_id:preview?.change_plan_id||"",confirmation}),
+      });
+      setMessage("Host admission "+(operation==="approve"?"approved":"quarantined")+" at revision "+result.revision+". Reload Managed Hosts to view the new state.");
+      setPreview(null);setConfirmation("");
+    }catch(e:any){setError(e.message||String(e))}
+  }
+  const required=preview?.confirmation_class||"";
+  return <div className="card">
+    <h3>Managed Host Approval / Quarantine</h3>
+    <p className="muted">Admission is separate from connection and management trust. Quarantine denies new Host access; active connections are not terminated. Identity, policy references, services and public ports are preserved. Approval restores normal policy evaluation, not unconditional access.</p>
+    {error&&<div className="error">{error}</div>}{message&&<div className="notice">{message}</div>}
+    <div className="toolbar">
+      <input value={host} onChange={e=>{setHost(e.target.value);setPreview(null)}} placeholder="Managed Host ID/name"/>
+      <select aria-label="Admission action" value={operation} onChange={e=>{setOperation(e.target.value);setPreview(null);setConfirmation("")}}>
+        <option value="quarantine">Quarantine new access</option>
+        <option value="approve">Approve / restore access</option>
+      </select>
+      <button className="secondary" disabled={!host.trim()} onClick={doPreview}>Preview Admission Impact</button>
+    </div>
+    {preview&&<div className="warning-box">
+      <pre className="plan">{JSON.stringify({preview:preview.preview,impact:preview.impact,valid_until:preview.valid_until},null,2)}</pre>
+      <label className="apply-label">Type {required} to continue<input value={confirmation} onChange={e=>setConfirmation(e.target.value)} placeholder={required}/></label>
+      <button className={operation==="quarantine"?"danger":"primary"} disabled={confirmation!==required} onClick={doApply}>{operation==="quarantine"?"Quarantine Managed Host":"Approve Managed Host"}</button>
+    </div>}
+  </div>;
+}
+
 function ManagedHostLifecyclePanel(){
   const [host,setHost]=useState(""),[operation,setOperation]=useState("revoke-trust");
   const [preview,setPreview]=useState<any>(null),[confirmation,setConfirmation]=useState(""),[message,setMessage]=useState(""),[error,setError]=useState("");
@@ -1332,7 +1376,7 @@ function View({active,operator,onNavigate}:{active:string,operator:any,onNavigat
   if(active==="versions"&&data)return <><div className="grid"><Metric label="Server version" value={data.server_version}/><Metric label="Drift" value={data.drift_count}/><Metric label="Unknown" value={data.unknown_count}/></div><Table items={data.hosts||[]}/></>;
   if(active==="system"&&data)return <SystemPanel data={data} operator={operator}/>;
   if(active==="objects"&&data)return <><ObjectsWorkspace data={data} onNavigate={onNavigate}/>{operator.role!=="Read Only"&&<GuidedObjectPanel/>}</>;
-  if(active==="hosts"&&data)return <><ResourceWorkspace kind="host" items={data.items||[]} operator={operator} onNavigate={onNavigate}/>{operator.role!=="Read Only"&&<ManagedHostMetadataPanel/>}{operator.role==="Admin"&&<ManagedHostLifecyclePanel/>}</>;
+  if(active==="hosts"&&data)return <><ResourceWorkspace kind="host" items={data.items||[]} operator={operator} onNavigate={onNavigate}/>{operator.role!=="Read Only"&&<ManagedHostMetadataPanel/>}{operator.role==="Admin"&&<ManagedHostAdmissionPanel/>}{operator.role==="Admin"&&<ManagedHostLifecyclePanel/>}</>;
   if(active==="services"&&data)return <><ResourceWorkspace kind="service" items={data.items||[]} operator={operator} onNavigate={onNavigate}/>{operator.role!=="Read Only"&&<RemoteServicePanel/>}</>;
   if(active==="policies"&&data)return <><PolicyWorkspace data={data} operator={operator} onNavigate={onNavigate}/><PolicySafetyPanel operator={operator}/>{operator.role!=="Read Only"&&<><GuidedPolicySettingsPanel/><GuidedPolicyRulePanel/><TemporaryAccessPanel/></>}</>;
   if(active==="doctor"&&data)return <><div className="grid"><Metric label="Attention" value={data.attention?.count}/><Metric label="Checks" value={(data.checks||[]).length}/></div><Table items={data.checks||[]}/></>;

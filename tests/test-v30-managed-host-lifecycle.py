@@ -258,6 +258,46 @@ class V30ManagedHostLifecycleTests(unittest.TestCase):
         )
         self.assertEqual(preview["confirmation_class"], "REVOKE")
 
+    def test_core_admission_requires_admin_and_dedicated_permission(self):
+        self._seed_host(with_service=False)
+        core = ManagementCoreService(self.tmp)
+        config_only = ManagementActor.authenticated(
+            "web:admin", {"management-config"}, role="Admin",
+        )
+        operator = ManagementActor.authenticated(
+            "web:operator", {"management-host-approve"}, role="Operator",
+        )
+        approved_admin = ManagementActor.authenticated(
+            "web:admin", {"management-host-approve"}, role="Admin",
+        )
+        for unauthorized in (config_only, operator):
+            with self.assertRaises(ManagementAuthorizationError):
+                core.managed_host_admission_preview(
+                    host="host-a", operation="quarantine", actor=unauthorized,
+                )
+        preview = core.managed_host_admission_preview(
+            host="host-a", operation="quarantine", actor=approved_admin,
+        )
+        self.assertEqual(preview["confirmation_class"], "QUARANTINE")
+        with self.assertRaises(ManagementAuthorizationError):
+            core.managed_host_admission_apply(
+                change_plan_id=preview["change_plan_id"],
+                confirmation="QUARANTINE", actor=config_only,
+            )
+        self.assertEqual(
+            core.managed_host_admission_apply(
+                change_plan_id=preview["change_plan_id"],
+                confirmation="QUARANTINE", actor=approved_admin,
+            )["status"], "APPLIED",
+        )
+        plane = ControlPlane(self.tmp)
+        try:
+            self.assertEqual(
+                plane.require_client("host-a")["admission_state"], "QUARANTINED"
+            )
+        finally:
+            plane.close()
+
     def test_admission_change_plan_is_host_bound_audited_and_non_destructive(self):
         from drlink_management_host_lifecycle import ManagedHostAdmissionService
 
