@@ -15,7 +15,7 @@ from drlink_agent_lifecycle import process_management_jobs_once
 from drlink_control_plane import ControlPlane
 import drlink_mgmt_sync as mgmt
 import drlink_v24 as v24
-from drlink_v30_jobs import ManagementJobEngine, SUCCEEDED
+from drlink_v30_jobs import ManagementJobEngine, QUEUED, SUCCEEDED
 import frp_mgmt_auth as MGMT
 
 MACHINE_A = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -88,6 +88,56 @@ class V30ManagementJobTransportTests(unittest.TestCase):
         self.server.close()
         for key in ("DRLINK_SKIP_ACTIVATION", "DRLINK_CONFIRM", "DRLINK_MGMT_URL"):
             os.environ.pop(key, None)
+
+    def test_signed_agent_claim_skips_unqualified_rollout_but_keeps_doctor_available(self):
+        engine = ManagementJobEngine(self.server_tmp)
+        try:
+            rollout = engine.enqueue_rollout(
+                targets=(MACHINE_A,), requested_by="web:admin", wave_size=1,
+                artifact={"version": "3.0.0-rc.1", "source_ref": "a" * 40,
+                          "sha256": "b" * 64},
+            )
+            doctor = engine.enqueue(
+                job_type="doctor", targets=(MACHINE_A,), requested_by="web:admin"
+            )
+            response = mgmt.claim_management_jobs_on_server(
+                root=self.agent_tmp, limit=4
+            )
+            self.assertEqual(
+                [claim["job_id"] for claim in response["jobs"]], [doctor["id"]]
+            )
+            self.assertEqual(engine.get(rollout["id"])["status"], QUEUED)
+            self.assertEqual(
+                engine.get(rollout["id"])["targets"][0]["status"], QUEUED
+            )
+            self.assertEqual(engine.get(doctor["id"])["status"], "RUNNING")
+        finally:
+            engine.close()
+
+    def test_agent_cannot_report_success_for_a_legacy_rollout_claim(self):
+        engine = ManagementJobEngine(self.server_tmp)
+        try:
+            rollout = engine.enqueue_rollout(
+                targets=(MACHINE_A,), requested_by="web:admin", wave_size=1,
+                artifact={"version": "3.0.0-rc.1", "source_ref": "a" * 40,
+                          "sha256": "b" * 64},
+            )
+            # Simulate an in-flight claim issued by an older server before
+            # the unqualified Agent transport was excluded.
+            claim = engine.claim_targets(worker_id="legacy-worker", limit=1)[0]
+            self.assertEqual(claim["job_id"], rollout["id"])
+            with self.assertRaises(mgmt.MgmtSyncError):
+                mgmt.complete_management_job_on_server(
+                    root=self.agent_tmp, job_id=rollout["id"],
+                    claim_token=claim["claim_token"], status="SUCCEEDED",
+                    result={"claimed_success": True},
+                )
+            self.assertEqual(engine.get(rollout["id"])["status"], "RUNNING")
+            self.assertEqual(
+                engine.get(rollout["id"])["targets"][0]["status"], "RUNNING"
+            )
+        finally:
+            engine.close()
 
     def test_signed_agent_claim_is_target_bound_and_cross_target_completion_fails(self):
         engine = ManagementJobEngine(self.server_tmp)

@@ -1614,6 +1614,24 @@ def server_complete_management_job(plane, auth: MgmtAuthContext, body: dict) -> 
         raise MgmtSyncError("Management Job result must be an object")
     engine = ManagementJobEngine(getattr(plane, "root", None))
     try:
+        if status == SUCCEEDED:
+            # Older workers may still hold a rollout claim after a server
+            # upgrade. Their generic SUCCESS is not evidence of a verified
+            # signed Agent update, health check, or rollback capability.
+            # Bind the deny check to this authenticated Host's live claim.
+            from drlink_v30_jobs import ROLLOUT_JOB_TYPE
+
+            claimed = engine.conn.execute(
+                "SELECT j.job_type FROM management_jobs j "
+                "JOIN management_job_targets t ON t.job_id=j.id "
+                "WHERE j.id=? AND t.target_id=? AND t.claim_token=? "
+                "AND t.status='RUNNING'",
+                (job_id, machine_id, claim_token),
+            ).fetchone()
+            if claimed and str(claimed["job_type"]) == ROLLOUT_JOB_TYPE:
+                raise MgmtSyncError(
+                    "AGENT_UPDATER_NOT_QUALIFIED: signed Agent update completion is unavailable"
+                )
         job = engine.complete_target(
             job_id=job_id,
             target_id=machine_id,

@@ -14,7 +14,8 @@ sys.path.insert(0, str(ROOT / "lib"))
 from drlink_control_plane import ControlPlane
 from drlink_control_db import ControlPlaneError
 from drlink_v30_jobs import (
-    CANCELLED, FAILED, QUEUED, SUCCEEDED, ManagementJobEngine,
+    CANCELLED, FAILED, QUEUED, SUCCEEDED, BoundedAgentRpcWorkerPool,
+    ManagementJobEngine,
 )
 
 
@@ -80,6 +81,37 @@ class StagedRolloutSchedulingTests(unittest.TestCase):
         self.assertEqual(final["status"], SUCCEEDED)
         self.assertEqual(final["payload"]["rollout_state"], "WAVE")
         self.assertEqual({x["status"] for x in final["targets"]}, {SUCCEEDED})
+
+    def test_generic_rpc_worker_cannot_falsely_complete_unqualified_rollout(self):
+        job = self._start()
+        executed = []
+
+        def unqualified_handler(claim):
+            executed.append(claim)
+            return {"claimed_success": True}
+
+        with BoundedAgentRpcWorkerPool(max_workers=1, max_pending=0) as pool:
+            futures = pool.dispatch_once(
+                self.engine, unqualified_handler, worker_id="generic-rpc", limit=1
+            )
+            self.assertEqual(len(futures), 1)
+            finished = futures[0].result(timeout=3)
+            self.assertEqual(finished["status"], FAILED)
+            self.assertEqual(
+                pool.dispatch_once(
+                    self.engine, unqualified_handler, worker_id="generic-rpc", limit=2
+                ),
+                [],
+            )
+
+        self.assertEqual(executed, [])
+        result = self.engine.get(job["id"])
+        self.assertEqual(result["payload"]["rollout_state"], "HALTED")
+        self.assertEqual(result["payload"]["halt_reason"], "CANARY_FAILED")
+        by_id = {row["target_id"]: row for row in result["targets"]}
+        self.assertIn("AGENT_UPDATER_NOT_QUALIFIED", by_id["z-canary"]["error"])
+        self.assertEqual(by_id["a-first"]["status"], CANCELLED)
+        self.assertEqual(by_id["b-second"]["status"], CANCELLED)
 
     def test_canary_failure_halts_without_claiming_remaining_hosts(self):
         job = self._start()

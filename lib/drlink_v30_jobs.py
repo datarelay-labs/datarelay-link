@@ -450,14 +450,19 @@ class ManagementJobEngine:
         try:
             target_filter = str(target_id or "").strip()
             if target_filter:
+                # Agent RPC cannot accept staged rollout Jobs until the
+                # signed updater, health checks and rollback are qualified.
+                # Leave these Jobs queued, rather than handing an unsupported
+                # operation to an Agent and falsely advancing canary waves.
                 rows = self.conn.execute(
                     "SELECT t.job_id,t.target_id,j.job_type,j.payload_json,j.deadline_at "
                     "FROM management_job_targets t "
                     "JOIN management_jobs j ON j.id=t.job_id "
                     "WHERE t.status='QUEUED' AND j.status IN ('QUEUED','RUNNING') "
                     "AND j.cancel_requested=0 AND j.deadline_at>? AND t.target_id=? "
+                    "AND j.job_type!=? "
                     "ORDER BY j.created_at,t.target_id LIMIT ?",
-                    (current, target_filter, scan_limit),
+                    (current, target_filter, ROLLOUT_JOB_TYPE, scan_limit),
                 ).fetchall()
             else:
                 rows = self.conn.execute(
@@ -1053,6 +1058,13 @@ class BoundedAgentRpcWorkerPool:
                     claim_token=claim["claim_token"],
                     status=CANCELLED,
                     error="CANCELLED_BEFORE_RPC",
+                )
+            if claim.get("job_type") == ROLLOUT_JOB_TYPE:
+                # A generic callable does not prove signed artifact identity,
+                # post-update health or rollback. Never report rollout success
+                # from an unqualified handler, even if it returns a result.
+                raise ControlPlaneError(
+                    "AGENT_UPDATER_NOT_QUALIFIED: signed Agent updater and rollback are required."
                 )
             result = handler(dict(claim))
             return engine.complete_target(
