@@ -111,6 +111,15 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn("preview.artifact_qualification", SOURCE)
         self.assertIn("preview.blocked_targets", SOURCE)
 
+    def test_access_hygiene_orphan_filter_and_resource_navigation(self):
+        self.assertIn('quality==="ORPHANED"&&x.kind!=="orphan-object"', SOURCE)
+        self.assertIn('"object":["objects","infrastructure"]', SOURCE)
+        self.assertIn('"service-account":["integrations","administration"]', SOURCE)
+        self.assertIn('"managed-host":["hosts","infrastructure"]', SOURCE)
+        self.assertIn('disabled={x.resource_type==="service-account"&&operator.role!=="Admin"}', SOURCE)
+        self.assertIn('data?.summary?.unknown_evidence', SOURCE)
+        self.assertIn('x.observation_window_days===0?"Current"', SOURCE)
+
     def test_shell_command_center_and_resource_workspaces_exist(self):
         for marker in (
             "drlink_web_sidebar_collapsed",
