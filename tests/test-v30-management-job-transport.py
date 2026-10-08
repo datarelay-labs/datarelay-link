@@ -307,5 +307,209 @@ class V30ManagementJobTransportTests(unittest.TestCase):
             engine.close()
 
 
+class SignedRolloutArtifactOfflineTests(unittest.TestCase):
+    """Release-signed immutable Agent bundle validation, with disposable keys."""
+
+    def setUp(self):
+        import hashlib
+
+        from drlink_v30_agent_artifact import AGENT_REL
+
+        self.tmp = tempfile.TemporaryDirectory(prefix="drlink-v30-signed-artifact-")
+        self.root = Path(self.tmp.name)
+        self.key = self.root / "release-private-test-only.pem"
+        self.pub = self.root / "release-public-test-only.pem"
+        MGMT.generate_keypair(self.key, self.pub)
+        self.bundle = self.root / "bootstrap-client.sh"
+        self.bundle.write_bytes(b"#!/bin/sh\necho verified-fixture\n")
+        self.target = {
+            "version": "3.0.0",
+            "source_ref": "a" * 40,
+            "sha256": hashlib.sha256(self.bundle.read_bytes()).hexdigest(),
+        }
+        self.manifest = {
+            "schema_version": 1,
+            "qualification_status": "PASS",
+            "channel": "development",
+            "project_version": "3.0.0",
+            "source_head": self.target["source_ref"],
+            "git_ref": self.target["source_ref"],
+            "immutable_source_ref": self.target["source_ref"],
+            "artifacts": [{
+                "relative_path": AGENT_REL,
+                "artifact_type": "agent-installer",
+                "platform": "linux",
+                "source_head": self.target["source_ref"],
+                "sha256": self.target["sha256"],
+                "size": self.bundle.stat().st_size,
+            }],
+        }
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _verify(self, *, manifest=None, signature=None, target=None,
+                pubkey=None, bundle=None, channel="development"):
+        from drlink_v30_agent_artifact import verify_signed_agent_bundle
+
+        data = json.dumps(
+            self.manifest if manifest is None else manifest,
+            sort_keys=True, separators=(",", ":"),
+        ).encode("utf-8")
+        signed = MGMT.sign_message(self.key, data) if signature is None else signature
+        return verify_signed_agent_bundle(
+            manifest_bytes=data, signature_b64=signed,
+            trusted_release_public_key=(
+                self.pub.read_text() if pubkey is None else pubkey
+            ),
+            bundle_path=self.bundle if bundle is None else bundle,
+            target=self.target if target is None else target,
+            expected_channel=channel,
+        )
+
+    def test_signed_manifest_and_exact_bundle_verify_without_apply(self):
+        result = self._verify()
+        self.assertTrue(result["signature_verified"])
+        self.assertEqual(result["source_ref"], self.target["source_ref"])
+        self.assertEqual(result["sha256"], self.target["sha256"])
+        self.assertFalse(result["update_completed"])
+        self.assertFalse(result["post_update_health_verified"])
+        self.assertFalse(result["rollback_verified"])
+        self.assertEqual(self.bundle.read_bytes(), b"#!/bin/sh\necho verified-fixture\n")
+
+    def test_wrong_release_key_or_changed_signed_bytes_fail_closed(self):
+        from drlink_v30_agent_artifact import AgentArtifactError, verify_signed_agent_bundle
+
+        different = self.root / "other.key"
+        other_pub = self.root / "other.pub"
+        MGMT.generate_keypair(different, other_pub)
+        with self.assertRaises(AgentArtifactError):
+            self._verify(pubkey=other_pub.read_text())
+        with self.assertRaises(AgentArtifactError):
+            self._verify(pubkey=self.key.read_text())
+        raw = json.dumps(self.manifest, sort_keys=True, separators=(",", ":")).encode()
+        sig = MGMT.sign_message(self.key, raw)
+        changed = raw.replace(b'"development"', b'"stable"')
+        with self.assertRaises(AgentArtifactError):
+            verify_signed_agent_bundle(
+                manifest_bytes=changed, signature_b64=sig,
+                trusted_release_public_key=self.pub.read_text(),
+                bundle_path=self.bundle, target=self.target,
+                expected_channel="development",
+            )
+        with self.assertRaises(AgentArtifactError):
+            self._verify(signature="unsigned")
+
+    def test_signed_but_unqualified_or_wrong_target_refused(self):
+        from drlink_v30_agent_artifact import AgentArtifactError
+
+        for change in (
+            {"qualification_status": "PENDING"},
+            {"channel": "stable"},
+            {"source_head": "b" * 40},
+            {"immutable_source_ref": "main"},
+            {"project_version": "3.0.1"},
+            {"schema_version": 2},
+            {"schema_version": True},
+            {"artifacts": self.manifest["artifacts"] * 2},
+            {"artifacts": [{**self.manifest["artifacts"][0], "sha256": "f" * 64}]},
+            {"artifacts": [{**self.manifest["artifacts"][0], "platform": "windows"}]},
+        ):
+            with self.subTest(change=change), self.assertRaises(AgentArtifactError):
+                self._verify(manifest={**self.manifest, **change})
+        with self.assertRaises(AgentArtifactError):
+            self._verify(target={**self.target, "source_ref": "main"})
+        with self.assertRaises(AgentArtifactError):
+            self._verify(channel="stable")
+
+    def test_signed_duplicate_json_key_must_fail_even_with_valid_signature(self):
+        from drlink_v30_agent_artifact import (
+            AgentArtifactError, verify_signed_agent_bundle,
+        )
+
+        original = json.dumps(
+            self.manifest, sort_keys=True, separators=(",", ":"),
+        ).encode("utf-8")
+        ambiguous = original.replace(
+            b'{"artifacts":', b'{"source_head":"' + (b"f" * 40) + b'","artifacts":',
+            1,
+        )
+        self.assertNotEqual(original, ambiguous)
+        # A genuine signature alone is not enough: duplicate identity fields
+        # can be interpreted differently by two consumers of the manifest.
+        signature = MGMT.sign_message(self.key, ambiguous)
+        with self.assertRaises(AgentArtifactError):
+            verify_signed_agent_bundle(
+                manifest_bytes=ambiguous, signature_b64=signature,
+                trusted_release_public_key=self.pub.read_text(),
+                bundle_path=self.bundle, target=self.target,
+                expected_channel="development",
+            )
+
+    def test_bundle_mutation_and_symlink_are_denied(self):
+        from drlink_v30_agent_artifact import AgentArtifactError
+
+        link = self.root / "bundle-link.sh"
+        link.symlink_to(self.bundle)
+        with self.assertRaises(AgentArtifactError):
+            self._verify(bundle=link)
+        self.bundle.write_bytes(b"#!/bin/sh\necho tampered\n")
+        with self.assertRaises(AgentArtifactError):
+            self._verify()
+
+    def test_installed_exact_identity_and_hashes_are_required(self):
+        import shutil
+
+        from drlink_agent_payload import AGENT_LIB_FILES, write_installed_manifest
+        from drlink_v30_agent_artifact import (
+            AgentArtifactError, verify_installed_agent_lineage,
+        )
+
+        verified = self._verify()
+        target_root = self.root / "agent-root"
+        libdir = target_root / "usr/local/lib/drlink"
+        libdir.mkdir(parents=True)
+        for filename in AGENT_LIB_FILES:
+            shutil.copy2(ROOT / "lib" / filename, libdir / filename)
+        write_installed_manifest(libdir)
+        version = target_root / "etc/drlink/version"
+        version.parent.mkdir(parents=True)
+        exact = (
+            "PROJECT_VERSION=3.0.0\nRELEASE_CHANNEL=development\n"
+            "SOURCE_REF={head}\nSOURCE_HEAD={head}\nBUNDLE_SHA256={digest}\n"
+        ).format(head=self.target["source_ref"], digest=self.target["sha256"])
+        version.write_text(exact)
+        state = verify_installed_agent_lineage(target_root, verified_bundle=verified)
+        self.assertTrue(state["installed_identity_verified"])
+        self.assertTrue(state["runtime_lineage_verified"])
+        self.assertFalse(state["post_update_health_verified"])
+        self.assertFalse(state["rollback_verified"])
+        version.write_text(exact.replace("SOURCE_HEAD=" + self.target["source_ref"],
+                                         "SOURCE_HEAD=" + "b" * 40))
+        with self.assertRaises(AgentArtifactError):
+            verify_installed_agent_lineage(target_root, verified_bundle=verified)
+        version.write_text(exact)
+        (libdir / "drlink_v30_agent_artifact.py").write_text("# corrupted\n")
+        with self.assertRaises(AgentArtifactError):
+            verify_installed_agent_lineage(target_root, verified_bundle=verified)
+        shutil.copy2(ROOT / "lib/drlink_v30_agent_artifact.py",
+                     libdir / "drlink_v30_agent_artifact.py")
+        (libdir / "runtime-sha256.json").unlink()
+        with self.assertRaises(AgentArtifactError):
+            verify_installed_agent_lineage(target_root, verified_bundle=verified)
+        with self.assertRaises(AgentArtifactError):
+            verify_installed_agent_lineage(
+                target_root, verified_bundle={**verified, "signature_verified": False}
+            )
+        write_installed_manifest(libdir)
+        current = libdir / "drlink_v30_agent_artifact.py"
+        redirect = libdir / "redirect-copy.py"
+        shutil.copy2(current, redirect)
+        current.unlink()
+        current.symlink_to(redirect)
+        with self.assertRaises(AgentArtifactError):
+            verify_installed_agent_lineage(target_root, verified_bundle=verified)
+
+
 if __name__ == "__main__":
     unittest.main()

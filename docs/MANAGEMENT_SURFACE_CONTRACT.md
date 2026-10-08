@@ -481,6 +481,25 @@ changing its pause flag: the operator must inspect the uncertain Agent outcome
 and use a new, independently qualified Change Plan. This rule does not certify
 that canonical signed Agent update or rollback execution is implemented.
 
+The internal Linux Agent release preflight accepts only a detached ECDSA P-256
+signature over the exact Server-local qualified manifest bytes, verified with
+a separate caller-pinned release public key (never the Agent enrollment key or
+a key embedded in the manifest). Before any update is eligible for execution,
+the signed manifest must bind one unique Linux Agent installer entry, a full
+immutable Git SHA, release version/channel, SHA-256 and actual downloaded file
+size and digest to the requested rollout target. A PASS label or HTTPS
+transport without the independent release signature is insufficient. An
+installed-runtime preflight also checks the persisted source/version/bundle
+identity and critical Agent module hashes; it must not be reported as a live
+health check, update completion, or rollback verification.
+
+This cryptographic validation is an internal prerequisite only. Distribution
+of the trusted release verification key, signed artifact publication, an
+Agent-owned updater execution/health/rollback path, and real Host qualification
+are still required before changing the public fail-closed Apply gate. No
+production signing key is generated or stored by this preliminary component;
+Windows/macOS platform-specific qualification remains separate.
+
 ### 9.7 Public Automation API / Service Accounts
 
 Automation clients authenticate as Service Accounts and receive only their configured
