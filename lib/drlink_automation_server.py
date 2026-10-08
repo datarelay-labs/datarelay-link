@@ -51,6 +51,17 @@ class AutomationHandler(BaseHTTPRequestHandler):
             print("DRLink automation request")
 
     def _json(self, status: int, data: dict) -> None:
+        # Keep error categories stable and machine readable without exposing
+        # internal exception text, bearer credentials, or private routes.
+        error_codes = {
+            400: "INVALID_REQUEST", 401: "UNAUTHENTICATED",
+            403: "OPERATION_DENIED", 404: "NOT_FOUND",
+            405: "METHOD_NOT_ALLOWED", 413: "PAYLOAD_TOO_LARGE",
+            429: "RATE_LIMITED", 500: "INTERNAL_ERROR",
+            503: "CAPACITY_EXCEEDED",
+        }
+        if status >= 400 and "error" in data:
+            data = {**data, "code": error_codes.get(status, "REQUEST_FAILED")}
         raw = (json.dumps(data, sort_keys=True, separators=(",", ":")) + "\n").encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")

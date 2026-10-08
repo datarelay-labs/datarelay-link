@@ -49,20 +49,23 @@ class IndependentAutomationTests(unittest.TestCase):
     def test_independent_listener_authorization_and_resource_bounds(self):
         status, payload = self.request("GET", "/healthz")
         self.assertEqual((status, payload["service"]), (200, "drlink-automation"))
-        status, _ = self.request("GET", "/api/v1/service-accounts")
+        status, problem = self.request("GET", "/api/v1/service-accounts")
         self.assertEqual(status, 405)
+        self.assertEqual(problem["code"], "METHOD_NOT_ALLOWED")
         status, payload = self.request("POST",
              "/api/automation/v1/drlink_inventory_list",
              {"resource_type": "managed-host"}, credential=self.credential)
         self.assertEqual(status, 200, payload)
         self.assertEqual(payload["resource_type"], "managed-host")
-        status, _ = self.request("POST", "/api/automation/v1/drlink_inventory_list",
+        status, problem = self.request("POST", "/api/automation/v1/drlink_inventory_list",
                                  {"resource_type": "managed-host"})
         self.assertEqual(status, 401)
-        status, _ = self.request("POST", "/api/automation/v1/drlink_policy_test",
+        self.assertEqual(problem["code"], "UNAUTHENTICATED")
+        status, problem = self.request("POST", "/api/automation/v1/drlink_policy_test",
                                  {"plane": "remote", "source": "a", "destination": "b"},
                                  credential=self.credential)
         self.assertEqual(status, 403)
+        self.assertEqual(problem["code"], "OPERATION_DENIED")
         status, _ = self.request("POST",
                                  "/api/automation/v1/drlink_agent_update_rollout_start",
                                  {}, credential=self.credential)
@@ -75,6 +78,33 @@ class IndependentAutomationTests(unittest.TestCase):
             self.assertEqual(status, 200)
         finally:
             self.server.concurrent.release()
+
+    def test_error_codes_remain_secret_safe_for_invalid_payload_and_route(self):
+        status, bad_route = self.request(
+            "POST", "/api/automation/v1/not-published?secret=do-not-echo",
+            {"resource_type": "managed-host"}, credential=self.credential,
+        )
+        self.assertEqual(status, 404)
+        self.assertEqual(bad_route["code"], "NOT_FOUND")
+        self.assertNotIn("do-not-echo", json.dumps(bad_route))
+
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        try:
+            connection.request(
+                "POST", "/api/automation/v1/drlink_inventory_list",
+                body=b"{not-valid-json}",
+                headers={
+                    "Authorization": "Bearer " + self.credential,
+                    "Content-Type": "application/json",
+                },
+            )
+            response = connection.getresponse()
+            problem = json.loads(response.read())
+            self.assertEqual(response.status, 400)
+            self.assertEqual(problem["code"], "INVALID_REQUEST")
+            self.assertNotIn(self.credential, json.dumps(problem))
+        finally:
+            connection.close()
 
     def test_remote_bind_requires_tls(self):
         with self.assertRaises(ControlPlaneError):

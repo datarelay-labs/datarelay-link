@@ -59,6 +59,16 @@ returns HTTP 429. Invalid/revoked credentials return 401; refused operations
 return 403. Read-only Core permission checks still apply after authentication.
 The embedded Web listener has a separate existing 64-KiB request limit.
 
+Standalone Automation errors return both a human-readable `error` and a
+stable machine-readable `code`. Supported categories include
+`INVALID_REQUEST` (400), `UNAUTHENTICATED` (401),
+`OPERATION_DENIED` (403), `NOT_FOUND` (404),
+`METHOD_NOT_ALLOWED` (405), `PAYLOAD_TOO_LARGE` (413),
+`RATE_LIMITED` (429), `CAPACITY_EXCEEDED` (503), and
+`INTERNAL_ERROR` (500). The codes deliberately do not expose bearer
+material, internal exception text, or protected Core operation details.
+The standalone API still admits only the documented read-only allowlist.
+
 ## Signed event Webhooks
 
 Web Admin **Integrations** manages named HTTPS subscriptions with selected event
