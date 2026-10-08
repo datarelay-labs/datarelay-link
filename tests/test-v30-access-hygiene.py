@@ -24,6 +24,15 @@ class AccessHygieneTests(unittest.TestCase):
             cp.close()
         with ManagementQueryService(tmp) as svc:
             result=svc.access_hygiene(now=datetime(2026,10,8,tzinfo=timezone.utc))
+            attention=svc.attention_summary()
+        self.assertFalse(any(
+            item["kind"] == "access-hygiene-review"
+            for item in attention["items"]
+        ))
+        self.assertGreater(
+            attention["signals"]["access_hygiene"]["unknown_evidence"], 0
+        )
+        self.assertEqual(attention["signals"]["access_hygiene"]["action_required"], 0)
         self.assertTrue(result["read_only"])
         self.assertFalse(result["auto_mutation"])
         reviews=[x for x in result["items"] if x["kind"]=="access-usage-review"]
@@ -103,7 +112,17 @@ class AccessHygieneTests(unittest.TestCase):
 
         with ManagementQueryService.open_read_only(root) as service:
             result = service.access_hygiene()
+            attention = service.attention_summary()
         items = [i for i in result["items"] if i["kind"] == "orphan-object"]
+        hygiene_attention = [
+            item for item in attention["items"]
+            if item["kind"] == "access-hygiene-review"
+        ]
+        self.assertEqual(len(hygiene_attention), 1)
+        self.assertEqual(hygiene_attention[0]["count"], 1)
+        self.assertEqual(hygiene_attention[0]["severity"], "warning")
+        self.assertEqual(attention["signals"]["access_hygiene"]["action_required"], 1)
+        self.assertEqual(result["items"][0]["kind"], "orphan-object")
         self.assertEqual(len(items), 1)
         finding = items[0]
         self.assertEqual(finding["label"], "legacy-source")

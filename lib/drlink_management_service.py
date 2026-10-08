@@ -1420,9 +1420,25 @@ class ManagementQueryService:
                     "manual cleanup; no automatic policy mutation is performed."
                 ),
             })
+        # Prioritize actionable evidence over UNKNOWN_EVIDENCE when the
+        # bounded response is full. Compute counts before truncation.
+        action_required = [
+            item for item in findings if item["finding_status"] == "ACTION_REQUIRED"
+        ]
+        advisory = [
+            item for item in findings if item["finding_status"] != "ACTION_REQUIRED"
+        ]
         return {
-            "items": findings[:200], "count": len(findings), "authoritative": False,
-            "read_only": True, "auto_mutation": False,
+            "items": (action_required + advisory)[:200],
+            "count": len(findings),
+            "summary": {
+                "action_required": len(action_required),
+                "unknown_evidence": sum(
+                    item["evidence_quality"] == "UNKNOWN_EVIDENCE"
+                    for item in findings
+                ),
+            },
+            "authoritative": False, "read_only": True, "auto_mutation": False,
             "generated_at": self._attention_utc_text(current),
         }
 
@@ -1468,6 +1484,8 @@ class ManagementQueryService:
         webhook_delivery = self._webhook_delivery_attention()
         system = self._system_readiness_attention()
         cutoffs = self.active_cutoff_summary()
+        hygiene = self.access_hygiene(now=now)
+        hygiene_counts = hygiene["summary"]
 
         items: list[dict[str, Any]] = []
         for key, label, severity in (
@@ -1576,6 +1594,13 @@ class ManagementQueryService:
                 "count": int(jobs["failed_jobs"]),
                 "severity": "warning",
             })
+        if int(hygiene_counts["action_required"]):
+            items.append({
+                "kind": "access-hygiene-review",
+                "label": "Access Hygiene Review Needed",
+                "count": int(hygiene_counts["action_required"]),
+                "severity": "warning",
+            })
         if bool(jobs.get("saturated")):
             items.append({
                 "kind": "job-saturation",
@@ -1605,6 +1630,7 @@ class ManagementQueryService:
                 "system_readiness": system,
                 "cutoffs": cutoffs,
                 "jobs": dict(jobs),
+                "access_hygiene": dict(hygiene_counts),
                 "version": {
                     "drift_count": int(version.get("drift_count") or 0),
                     "unknown_count": int(version.get("unknown_count") or 0),

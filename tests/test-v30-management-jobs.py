@@ -138,6 +138,64 @@ class V30ManagementJobTests(unittest.TestCase):
                 now=self.now,
             )
 
+    def test_admission_blocks_mutating_agent_jobs_without_blocking_diagnostics(self):
+        from drlink_control_plane import ControlPlane
+
+        plane = ControlPlane(self.tmp)
+        try:
+            for host, admission in (
+                ("pending-host", "PENDING_APPROVAL"),
+                ("quarantined-host", "QUARANTINED"),
+                ("approved-host", "APPROVED"),
+            ):
+                plane.upsert_client(host, hostname=host)
+                plane.conn.execute(
+                    "UPDATE clients SET admission_state=? WHERE id=?",
+                    (admission, host),
+                )
+            plane.conn.commit()
+        finally:
+            plane.close()
+
+        self.engine.max_active_jobs = 16  # This test deliberately covers 14 targets.
+        mutating_kinds = (
+            "refresh", "support-bundle", "remote-service-set", "remote-service-delete",
+        )
+        for target in ("pending-host", "quarantined-host", "approved-host"):
+            for kind in mutating_kinds:
+                self._enqueue(
+                    targets=(target,), job_type=kind, now=self.now,
+                    payload={"name": "ssh-access"},
+                )
+            if target != "approved-host":
+                self._enqueue(targets=(target,), job_type="doctor", now=self.now)
+
+        for target in ("pending-host", "quarantined-host"):
+            claims = self.engine.claim_targets_for_target(
+                target_id=target, worker_id="agent:" + target, limit=4,
+                now=self.now + timedelta(seconds=1),
+            )
+            self.assertEqual([item["job_type"] for item in claims], ["doctor"])
+            queued = self.engine.conn.execute(
+                "SELECT j.job_type,t.status FROM management_job_targets t "
+                "JOIN management_jobs j ON j.id=t.job_id WHERE t.target_id=?",
+                (target,),
+            ).fetchall()
+            self.assertEqual(
+                {row["job_type"]: row["status"] for row in queued
+                 if row["job_type"] in mutating_kinds},
+                {kind: QUEUED for kind in mutating_kinds},
+            )
+
+        approved_claims = self.engine.claim_targets_for_target(
+            target_id="approved-host", worker_id="agent:approved-host",
+            limit=4, now=self.now + timedelta(seconds=1),
+        )
+        self.assertEqual(
+            {item["job_type"] for item in approved_claims},
+            set(mutating_kinds),
+        )
+
     def test_queue_and_target_bounds_fail_closed(self):
         bounded = ManagementJobEngine(
             self.tmp, max_active_jobs=1, max_targets=2, lease_seconds=5

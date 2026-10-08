@@ -30,6 +30,12 @@ TERMINAL_STATUSES = frozenset({SUCCEEDED, FAILED, CANCELLED})
 
 ADMITTED_JOB_TYPES = frozenset({"doctor", "refresh", "version-check", "support-bundle", "remote-service-set", "remote-service-delete", "agent-update-rollout"})
 ROLLOUT_JOB_TYPE = "agent-update-rollout"
+# Pending and quarantined Hosts may report bounded health, but they must not
+# acquire claims that change Agent services or installed product state.
+MUTATING_AGENT_JOB_TYPES = frozenset({
+    "refresh", "support-bundle", "remote-service-set", "remote-service-delete",
+    ROLLOUT_JOB_TYPE,
+})
 MAX_ROLLOUT_WAVE_SIZE = 25
 MAX_ROLLOUT_FAILURE_THRESHOLD = 100
 DEFAULT_JOB_TIMEOUT_SECONDS = 300
@@ -463,9 +469,8 @@ class ManagementJobEngine:
             for row in rows:
                 if len(claimed) >= count:
                     break
-                if str(row["job_type"]) == ROLLOUT_JOB_TYPE:
-                    if not self._rollout_claim_allowed_unlocked(row, now_text=current):
-                        continue
+                kind = str(row["job_type"])
+                if kind in MUTATING_AGENT_JOB_TYPES:
                     host = self.conn.execute(
                         "SELECT trust_status,admission_state,status FROM clients WHERE id=?",
                         (str(row["target_id"]),),
@@ -473,8 +478,11 @@ class ManagementJobEngine:
                     if (not host or str(host["trust_status"] or "") != "trusted"
                         or str(host["admission_state"] or "") != "APPROVED"
                         or str(host["status"] or "").lower() in ("retired","removed","deleted")):
-                        # Leave the queued work unclaimed. Deadline expiry
-                        # terminalizes it; never execute a quarantined target.
+                        # Keep queued work unclaimed; let its bounded deadline
+                        # expire rather than execute after a quarantine/revoke.
+                        continue
+                if kind == ROLLOUT_JOB_TYPE:
+                    if not self._rollout_claim_allowed_unlocked(row, now_text=current):
                         continue
                 token = secrets.token_hex(16)
                 updated = self.conn.execute(
