@@ -83,6 +83,10 @@ def _https_get(
             _deny("signed Server-local artifact endpoint is unavailable")
         advertised = response.getheader("Content-Length")
         if advertised is not None:
+            # HTTP Content-Length is 1*DIGIT. Python int() also accepts
+            # signed, whitespace-padded, and non-ASCII numerals.
+            if not advertised.isascii() or not advertised.isdecimal():
+                _deny("Server-local artifact Content-Length is invalid")
             try:
                 length = int(advertised)
             except ValueError:

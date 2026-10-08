@@ -81,6 +81,16 @@ class SignedArtifactHTTPSFramingTests(unittest.TestCase):
                 with self.assertRaises(signed.AgentArtifactError):
                     self._download(length)
 
+    def test_content_length_must_use_ascii_decimal_digits_only(self):
+        # RFC Content-Length = 1*DIGIT, not Python int() syntax.
+        for invalid in ("+3", " 3", "3 ", "3,3", "٣"):
+            with self.subTest(content_length=invalid):
+                with self.assertRaisesRegex(
+                    signed.AgentArtifactError, "Content-Length is invalid"
+                ):
+                    self._download(invalid)
+        self.assertEqual(self._download("003"), b"abc")
+
 
 if __name__ == "__main__":
     unittest.main()
