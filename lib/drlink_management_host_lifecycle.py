@@ -248,3 +248,156 @@ class ManagedHostLifecycleService(ManagementChangeService):
             "lifecycle_operation": operation,
             "result": result,
         }
+
+
+class ManagedHostAdmissionService(ManagementChangeService):
+    """Internal 3.0 approval/quarantine Change Plan foundation.
+
+    This class is deliberately NOT exposed by Web/Automation/MCP until the
+    dedicated management-host-approve permission and owner acceptance exist.
+    Trust revoke, retirement and connectivity are separate state machines.
+    """
+
+    _TARGET = {"approve": "APPROVED", "quarantine": "QUARANTINED"}
+
+    def preview(self, *, actor_id: str, host: str, operation: str) -> dict[str, Any]:
+        action = str(operation or "").strip().lower()
+        if action not in self._TARGET:
+            raise ControlPlaneError("Host admission operation must be approve or quarantine.")
+        row = self.plane.require_client(str(host or "").strip())
+        if (str(row["trust_status"] or "") != "trusted"
+            or str(row["status"] or "").lower() in ("retired", "removed", "deleted")):
+            raise ControlPlaneError("Revoked or retired Host cannot change admission state.")
+        current = str(row["admission_state"] or "")
+        if current not in ("PENDING_APPROVAL", "APPROVED", "QUARANTINED"):
+            raise ControlPlaneError("Host admission state is invalid.")
+        target = self._TARGET[action]
+        no_change = current == target
+        services = int(self.plane.conn.execute(
+            "SELECT COUNT(*) FROM published_services WHERE client_id=? AND released=0",
+            (row["id"],),
+        ).fetchone()[0] or 0)
+        ports = int(self.plane.conn.execute(
+            "SELECT COUNT(*) FROM port_reservations WHERE client_id=? AND released=0",
+            (row["id"],),
+        ).fetchone()[0] or 0)
+        impact = {
+            "kind": "managed-host-admission", "destructive": False,
+            "requires_confirmation": True,
+            "access_broadened": action == "approve" and not no_change,
+            "access_narrowed": action == "quarantine" and not no_change,
+            "before": current, "after": target,
+            "warning": (
+                "Approval enables normal policies; it does not override them."
+                if action == "approve" else
+                "Quarantine denies new Host access; active connections are not terminated."
+            ),
+            "kept": [
+                "management trust", "Host identity", "connectivity state",
+                "published services", "port reservations", "policy references",
+            ],
+            "services_retained": services,
+            "port_reservations_retained": ports,
+        }
+        issued = self._issue_plan(
+            actor_id=actor_id, operation_class="CHANGE",
+            operation="managed-host-admission." + action,
+            resource_type="managed-host", resource_ref=str(row["id"]),
+            expected_revision=self.plane.current_revision(),
+            payload={
+                "kind": "managed-host-admission", "host_id": str(row["id"]),
+                "target": target, "before": current, "no_change": no_change,
+            },
+            impact=impact,
+            confirmation_class=action.upper(),
+        )
+        issued.update({
+            "admission_operation": action, "no_change": no_change,
+            "preview": {"id": str(row["id"]), "before": current, "after": target},
+        })
+        return issued
+
+    def apply(
+        self, *, actor_id: str, change_plan_id: str, confirmation: str,
+    ) -> dict[str, Any]:
+        row = self._load_plan(actor_id, change_plan_id)
+        operation = str(row["operation"])
+        if (str(row["operation_class"]) != "CHANGE"
+            or operation not in (
+                "managed-host-admission.approve", "managed-host-admission.quarantine"
+            )):
+            raise ControlPlaneError("Change Plan is not a Host admission change.")
+        required = str(row["confirmation_class"] or "").strip()
+        if str(confirmation or "").strip().upper() != required:
+            raise ControlPlaneError(
+                "Host admission apply requires explicit confirmation '%s'." % required
+            )
+        try:
+            payload = json.loads(str(row["payload_json"]))
+            action = operation.split(".")[-1]
+            target = self._TARGET[action]
+            if (payload.get("kind") != "managed-host-admission"
+                or str(payload["target"]) != target
+                or not str(payload["host_id"])
+                or str(row["resource_ref"]) != str(payload["host_id"])):
+                raise ValueError("invalid admission plan")
+        except (KeyError, TypeError, ValueError) as exc:
+            self._mark_plan(change_plan_id, "invalid")
+            raise ControlPlaneError("Host admission Change Plan payload is invalid.") from exc
+
+        expected_revision = int(row["expected_revision"])
+        host_id = str(payload["host_id"])
+        previous = str(payload.get("before") or "")
+        if bool(payload.get("no_change")):
+            if self.plane.current_revision() != expected_revision:
+                self._mark_plan(change_plan_id, "stale")
+                raise ConcurrencyError("REVISION_CONFLICT; no changes were applied.")
+            self._mark_plan(change_plan_id, "applied")
+            return {
+                "status": "NO_CHANGE", "admission_operation": action,
+                "revision": expected_revision,
+            }
+
+        from drlink_control_db import utc_now_iso
+
+        def writer() -> dict[str, Any]:
+            host = self.plane.require_client(host_id)
+            if (str(host["admission_state"]) != previous
+                or str(host["trust_status"]) != "trusted"
+                or str(host["status"] or "").lower() in ("retired", "removed", "deleted")):
+                raise ControlPlaneError("Host admission/trust state changed; no changes applied.")
+            now = utc_now_iso()
+            self.plane.conn.execute(
+                "UPDATE clients SET admission_state=?,admission_actor=?,"
+                "admission_changed_at=?,row_version=row_version+1,updated_at=? "
+                "WHERE id=?",
+                (target, actor_id, now, now, host_id),
+            )
+            return {
+                "entity": {"type": "managed-host", "id": host_id},
+                "operation": "admission-" + action,
+                "after": "admission state " + target,
+            }
+
+        try:
+            result = self.plane._mutate(
+                "managed-host admission %s" % action,
+                "change Host admission to %s" % target,
+                writer,
+                expected_revision=expected_revision, confirm=True,
+                # Core revision must converge with all policy generations.
+                # Without activation even a benign admission update could
+                # globally fail closed on generation mismatch.
+                compile_runtime=True, actor=actor_id, interface="WEB",
+            )
+        except ConcurrencyError:
+            self._mark_plan(change_plan_id, "stale")
+            raise
+        except Exception:
+            self._mark_plan(change_plan_id, "failed")
+            raise
+        self._mark_plan(change_plan_id, "applied")
+        return {
+            "status": "APPLIED", "admission_operation": action,
+            "revision": int(result["revision"]), "result": result,
+        }

@@ -258,6 +258,167 @@ class V30ManagedHostLifecycleTests(unittest.TestCase):
         )
         self.assertEqual(preview["confirmation_class"], "REVOKE")
 
+    def test_admission_change_plan_is_host_bound_audited_and_non_destructive(self):
+        from drlink_management_host_lifecycle import ManagedHostAdmissionService
+
+        self._seed_host()
+        with ManagedHostAdmissionService(self.tmp) as service:
+            before = service.plane.current_revision()
+            preview = service.preview(
+                actor_id="web:admin", host="host-a", operation="quarantine",
+            )
+            self.assertEqual(preview["confirmation_class"], "QUARANTINE")
+            self.assertEqual(preview["expected_revision"], before)
+            self.assertIn("port reservations", preview["impact"]["kept"])
+            self.assertFalse(preview["impact"]["destructive"])
+            self.assertEqual(service.plane.current_revision(), before)
+            with self.assertRaisesRegex(ControlPlaneError, "confirmation"):
+                service.apply(
+                    actor_id="web:admin", change_plan_id=preview["change_plan_id"],
+                    confirmation="APPROVE",
+                )
+            with self.assertRaises(ControlPlaneError):
+                service.apply(
+                    actor_id="web:another-admin", change_plan_id=preview["change_plan_id"],
+                    confirmation="QUARANTINE",
+                )
+            applied = service.apply(
+                actor_id="web:admin", change_plan_id=preview["change_plan_id"],
+                confirmation="QUARANTINE",
+            )
+            self.assertEqual(applied["revision"], before + 1)
+            row = service.plane.require_client("host-a")
+            self.assertEqual(row["admission_state"], "QUARANTINED")
+            self.assertEqual(row["admission_actor"], "web:admin")
+            self.assertEqual(row["trust_status"], "trusted")
+            self.assertEqual(int(row["connected"]), 1)
+            self.assertIsNotNone(service.plane.conn.execute(
+                "SELECT id FROM published_services WHERE client_id=?", (MID,)
+            ).fetchone())
+            self.assertIsNotNone(service.plane.conn.execute(
+                "SELECT public_port FROM port_reservations WHERE client_id=? AND released=0",
+                (MID,),
+            ).fetchone())
+            audit = service.plane.conn.execute(
+                "SELECT actor_id,interface FROM audit_events WHERE revision=? "
+                "ORDER BY id DESC LIMIT 1", (before + 1,),
+            ).fetchone()
+            self.assertEqual((audit["actor_id"], audit["interface"]), ("web:admin", "WEB"))
+            with self.assertRaises(ControlPlaneError):
+                service.apply(
+                    actor_id="web:admin", change_plan_id=preview["change_plan_id"],
+                    confirmation="QUARANTINE",
+                )
+            restore = service.preview(
+                actor_id="web:admin", host="host-a", operation="approve",
+            )
+            self.assertEqual(restore["confirmation_class"], "APPROVE")
+            self.assertTrue(restore["impact"]["access_broadened"])
+            service.apply(
+                actor_id="web:admin", change_plan_id=restore["change_plan_id"],
+                confirmation="APPROVE",
+            )
+            self.assertEqual(
+                service.plane.require_client("host-a")["admission_state"], "APPROVED"
+            )
+
+    def test_admission_change_keeps_runtime_generation_consistent(self):
+        from drlink_management_host_lifecycle import ManagedHostAdmissionService
+        from drlink_runtime_policy import generation_status
+
+        self._seed_host(with_service=False)
+        plane = ControlPlane(self.tmp)
+        try:
+            plane.compile_runtime()
+            self.assertTrue(generation_status(plane, "remote")["healthy"])
+            self.assertTrue(generation_status(plane, "internet")["healthy"])
+        finally:
+            plane.close()
+
+        # Activate policy compilers only in this disposable fixture. Never
+        # deploy, restart a managed Host, or change production policy.
+        os.environ["DRLINK_SKIP_ACTIVATION"] = "0"
+        try:
+            with ManagedHostAdmissionService(self.tmp) as service:
+                plan = service.preview(
+                    actor_id="web:admin", host="host-a", operation="quarantine"
+                )
+                outcome = service.apply(
+                    actor_id="web:admin", change_plan_id=plan["change_plan_id"],
+                    confirmation="QUARANTINE",
+                )
+                for security_plane in ("remote", "internet"):
+                    current = generation_status(service.plane, security_plane)
+                    self.assertTrue(current["healthy"], current)
+                    self.assertEqual(current["generation"], outcome["revision"])
+        finally:
+            os.environ["DRLINK_SKIP_ACTIVATION"] = "1"
+
+    def test_admission_runtime_activation_failure_rolls_back_state(self):
+        from drlink_management_host_lifecycle import ManagedHostAdmissionService
+        from drlink_runtime_policy import generation_status
+
+        self._seed_host(with_service=False)
+        plane = ControlPlane(self.tmp)
+        try:
+            plane.compile_runtime()
+            revision = plane.current_revision()
+        finally:
+            plane.close()
+
+        os.environ["DRLINK_SKIP_ACTIVATION"] = "0"
+        os.environ["DRLINK_FAULT_ACTIVATION"] = "1"
+        try:
+            with ManagedHostAdmissionService(self.tmp) as service:
+                plan = service.preview(
+                    actor_id="web:admin", host="host-a", operation="quarantine"
+                )
+                with self.assertRaisesRegex(ControlPlaneError, "Runtime activation failed"):
+                    service.apply(
+                        actor_id="web:admin", change_plan_id=plan["change_plan_id"],
+                        confirmation="QUARANTINE",
+                    )
+            plane = ControlPlane(self.tmp)
+            try:
+                self.assertEqual(plane.current_revision(), revision)
+                self.assertEqual(plane.require_client("host-a")["admission_state"], "APPROVED")
+                for security_plane in ("remote", "internet"):
+                    self.assertTrue(generation_status(plane, security_plane)["healthy"])
+            finally:
+                plane.close()
+        finally:
+            os.environ.pop("DRLINK_FAULT_ACTIVATION", None)
+            os.environ["DRLINK_SKIP_ACTIVATION"] = "1"
+
+    def test_admission_change_plan_rejects_revision_drift_and_noop(self):
+        from drlink_management_host_lifecycle import ManagedHostAdmissionService
+
+        self._seed_host(with_service=False)
+        with ManagedHostAdmissionService(self.tmp) as service:
+            noop = service.preview(actor_id="admin", host="host-a", operation="approve")
+            self.assertTrue(noop["no_change"])
+            rev = service.plane.current_revision()
+            self.assertEqual(service.apply(
+                actor_id="admin", change_plan_id=noop["change_plan_id"],
+                confirmation="APPROVE",
+            )["status"], "NO_CHANGE")
+            self.assertEqual(service.plane.current_revision(), rev)
+            pending = service.preview(actor_id="admin", host="host-a",
+                                      operation="quarantine")
+        plane = ControlPlane(self.tmp)
+        try:
+            plane.set_client_description("host-a", "concurrent revision")
+        finally:
+            plane.close()
+        with ManagedHostAdmissionService(self.tmp) as service:
+            with self.assertRaises(ConcurrencyError):
+                service.apply(
+                    actor_id="admin", change_plan_id=pending["change_plan_id"],
+                    confirmation="QUARANTINE",
+                )
+            self.assertEqual(
+                service.plane.require_client("host-a")["admission_state"], "APPROVED"
+            )
 
 if __name__ == "__main__":
     unittest.main()
