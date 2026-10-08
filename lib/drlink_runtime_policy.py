@@ -336,7 +336,7 @@ def authorize_remote(
     evaluation = plane.evaluate_remote_access(result["source_ip"], dest, proto, port)
     action = str(evaluation.get("action") or DECISION_DENY).upper()
     result["decision"] = DECISION_ALLOW if action == DECISION_ALLOW else DECISION_DENY
-    if evaluation.get("implicit"):
+    if evaluation.get("implicit") and action != DECISION_ALLOW:
         result["reason"] = REASON_IMPLICIT_DENY
     elif action == DECISION_ALLOW:
         result["reason"] = evaluation.get("reason") or "REMOTE_ACCESS_ALLOW"

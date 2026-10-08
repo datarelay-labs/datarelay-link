@@ -614,7 +614,7 @@ def run_service_object_wizard(plane: ControlPlane, name: str) -> int:
             _emit(
                 io,
                 "Custom TCP uses the normal published-service port pool.\n"
-                "Fixed TCP reserves a stable public port equal to the service port.",
+                "Fixed TCP fixes the destination service port; DRLink allocates a stable public port from the Fixed TCP pool.",
             )
             raw = io.ask("Select: ").strip()
             if _is_cancel(raw):

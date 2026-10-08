@@ -710,6 +710,12 @@ def post_restore_reconcile(root: Path, payload_source: Path | None = None) -> No
             raise RestoreError(str(exc)) from exc
     plane = ControlPlane(str(root))
     try:
+        # Backup-time presence/proxy verification cannot prove continuity after
+        # the server stack is replaced. Require a fresh signed Agent report and
+        # runtime reconciliation before advertising restored services as healthy.
+        plane.conn.execute("UPDATE clients SET connected = 0, agent_heartbeat_at = NULL, agent_lifecycle_state = 'disconnected'")
+        plane.conn.execute("UPDATE remote_service_meta SET runtime_verified = 0, status = 'DEGRADED', reason = 'Awaiting Agent runtime verification after restore' WHERE status != 'DISABLED'")
+        plane.conn.commit()
         plane.reconcile_ai_jobs_after_disaster_recovery()
         plane.compile_runtime()
         try:

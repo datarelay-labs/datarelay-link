@@ -711,6 +711,9 @@ class RestoreClientInventoryTests(unittest.TestCase):
 
     def test_restore_rebuilds_purged_inventory(self):
         self._seed_clients_and_services()
+        self.plane.refresh_agent_lifecycle(MID, 'connected')
+        self.plane.conn.execute("UPDATE remote_service_meta SET runtime_verified=1, status='HEALTHY'")
+        self.plane.conn.commit()
         # Membership/forensic consistency requires inventory present in archive.
         archive = self.outdir / "good.tar.gz"
         proc = run_tool(BACKUP, str(archive))
@@ -733,6 +736,13 @@ class RestoreClientInventoryTests(unittest.TestCase):
             "SELECT label FROM clients WHERE id=?", (MID,)
         ).fetchone()[0]
         self.assertEqual(label, "host-a")
+        presence = self.plane.conn.execute("SELECT connected, agent_heartbeat_at, agent_lifecycle_state FROM clients WHERE id=?", (MID,)).fetchone()
+        self.assertEqual(presence['connected'], 0)
+        self.assertIsNone(presence['agent_heartbeat_at'])
+        self.assertEqual(presence['agent_lifecycle_state'], 'disconnected')
+        restored_meta = self.plane.conn.execute("SELECT runtime_verified, status FROM remote_service_meta").fetchone()
+        self.assertEqual(restored_meta['runtime_verified'], 0)
+        self.assertEqual(restored_meta['status'], 'DEGRADED')
         inv = json.loads(
             (self.tree / "var/lib/drlink/runtime/client-inventory.json").read_text(encoding="utf-8")
         )

@@ -100,6 +100,15 @@ class RuntimePolicyTests(unittest.TestCase):
         self.assertEqual(allow["decision"], RP.DECISION_ALLOW)
         self.assertEqual(deny["decision"], RP.DECISION_DENY)
 
+    def test_implicit_allow_reason_matches_accepted_decision(self):
+        self.plane.conn.execute("UPDATE access_policies SET mode='blacklist', enforcement='enabled' WHERE plane='remote'")
+        self.plane.conn.commit()
+        proxy = RP.expected_proxy_name("labhost", self.mid, "ssh")
+        verdict = RP.authorize_remote(self.plane, proxy_name=proxy, source_ip="203.0.113.9:1")
+        self.assertEqual(verdict['decision'], RP.DECISION_ALLOW)
+        self.assertNotEqual(verdict['reason'], RP.REASON_IMPLICIT_DENY)
+
+
     def test_unmapped_proxy_denies(self):
         verdict = RP.authorize_remote(
             self.plane, proxy_name="unknown-proxy", source_ip="198.51.100.9"

@@ -426,6 +426,11 @@ EOF
 
 frp_doctor_main() {
   local fmt="human" verbose=0 quiet=0 scope=""
+  local scopes="control-plane, runtime, mcp"
+  frp_detect_host_role
+  if [[ "$FRP_HOST_ROLE" == "client" || "$FRP_HOST_ROLE" == "partial-client" ]]; then
+    scopes="runtime"
+  fi
   local arg py facts_file rc=0
   FRP_DOCTOR_VERBOSE=0
   for arg in "$@"; do
@@ -441,14 +446,14 @@ frp_doctor_main() {
       control-plane|runtime|mcp)
         if [[ -n "$scope" ]]; then
           echo "ERROR: only one diagnostics scope is allowed." >&2
-          echo "Scopes: control-plane, runtime, mcp" >&2
+          echo "Scopes: ${scopes}" >&2
           return 2
         fi
         scope="$arg"
         ;;
       *)
         echo "ERROR: unknown diagnostics scope: ${arg}" >&2
-        echo "Scopes: control-plane, runtime, mcp" >&2
+        echo "Scopes: ${scopes}" >&2
         echo "Run: system diagnostics" >&2
         return 2
         ;;

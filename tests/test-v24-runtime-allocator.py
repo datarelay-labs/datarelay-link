@@ -88,6 +88,14 @@ class RuntimeRenderTests(unittest.TestCase):
 
 
 class RuntimeApplyRemoveTests(unittest.TestCase):
+    def test_reconnect_forces_fresh_generation_even_with_identical_artifacts(self):
+        with mock.patch.object(runtime, '_restart_frpc') as restart:
+            self.assertTrue(runtime.apply_agent_runtime(self.plane, root=self.tmp)['ok'])
+            result = runtime.apply_agent_runtime(self.plane, root=self.tmp, force_reapply=True)
+            self.assertTrue(result['ok'], result)
+            self.assertFalse(result.get('no_change'))
+            self.assertEqual(restart.call_count, 2)
+
     def test_same_runtime_keeps_sessions_and_all_verified_rows(self):
         with mock.patch.object(runtime, '_restart_frpc') as restart:
             first = runtime.apply_agent_runtime(self.plane, root=self.tmp)

@@ -5785,7 +5785,7 @@ def invalidate_runtime_verification_for_restart(*, root: Optional[str] = None) -
             close()
 
 
-def synchronize_agent_remote_services(plane_db, *, root: Optional[str] = None) -> dict:
+def synchronize_agent_remote_services(plane_db, *, root: Optional[str] = None, force_runtime: bool = False) -> dict:
     """Reconnect synchronization: allocate pending endpoints, apply deletes, revalidate deps."""
     # Enrollment projection is a lifecycle write. show/status must not do it.
     projected = project_enrolled_services_into_agent_catalog(plane_db, root=root)
@@ -5908,7 +5908,7 @@ def synchronize_agent_remote_services(plane_db, *, root: Optional[str] = None) -
     try:
         import drlink_v24_runtime as runtime
 
-        applied = runtime.apply_agent_runtime(plane_db, root=root)
+        applied = runtime.apply_agent_runtime(plane_db, root=root, force_reapply=force_runtime)
         if not applied.get("ok") and not applied.get("skipped"):
             runtime.mark_runtime_status(
                 plane_db, ok=False, reason=applied.get("error") or "Runtime activation failed"

@@ -2318,6 +2318,8 @@ system diagnostics
 
 Validate the newly created backup before restore. Exercise at least one invalid/corrupt backup through `system backup validate` and require a clear failure before any restore mutation.
 
+A known-invalid restore archive must fail before offering live replacement confirmation. Restored backup-time host presence and proxy verification are stale: require fresh Agent runtime verification and actual SSH/HTTP/TCP traffic recovery on the preserved identities/endpoints before accepting restored health.
+
 Restore into the supported clean/recovery topology.
 
 Verify preservation of:

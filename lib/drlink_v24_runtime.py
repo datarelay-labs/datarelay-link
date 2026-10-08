@@ -443,6 +443,7 @@ def apply_agent_runtime(
     *,
     root: Optional[str] = None,
     names: Optional[list] = None,
+    force_reapply: bool = False,
 ) -> dict:
     """Render + apply frpc runtime for desired Remote Services.
 
@@ -538,7 +539,7 @@ def apply_agent_runtime(
         ):
             raise ControlPlaneError("invalid generated runtime config (injected fault)")
 
-        if (toml_text == backup_toml and state == new_state
+        if (not force_reapply and toml_text == backup_toml and state == new_state
                 and _current_runtime_ready(root, host_id, desired)):
             if names is None:
                 mark_runtime_status(plane_db, ok=True)

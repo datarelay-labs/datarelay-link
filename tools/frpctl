@@ -1042,6 +1042,9 @@ frpctl_nav_dispatch_command() {
   # shellcheck disable=SC2206
   toks=($cmd)
   case "$cmd" in
+    "set network-object"|"set network-group"|"set service-object"|"set service-group"|"set permission-object"|"set permission-group"|"set remote-access"|"set internet-access"|"set ai-access"|"set ai-identity")
+      prompt="Name (empty cancels): "
+      ;;
     "test configuration"|"system diff configuration"|"system apply configuration")
       prompt="Configuration file path or '-' for pasted YAML (empty cancels): "
       ;;
@@ -3220,9 +3223,11 @@ def _load_restore_mod():
 try:
     restore_mod = _load_restore_mod()
 except Exception as exc:
-    print("Access security impact: unavailable (%s)" % exc)
-    print()
-    restore_mod = None
+    print("ERROR: restore preflight unavailable: %s" % exc, file=sys.stderr)
+    raise SystemExit(1)
+if restore_mod is None:
+    print("ERROR: restore preflight unavailable; no changes were applied.", file=sys.stderr)
+    raise SystemExit(1)
 if restore_mod is not None:
     tmp = None
     try:
@@ -3246,9 +3251,9 @@ if restore_mod is not None:
             print("Access security impact: no broadening or DENY ALL outage detected.")
             print()
     except Exception as exc:
-        # Preflight impact is advisory here; frp-restore re-checks authoritatively.
-        print("Access security impact: unavailable (%s)" % exc)
-        print()
+        print("ERROR: restore preflight failed: %s" % exc, file=sys.stderr)
+        print("No changes were applied.", file=sys.stderr)
+        raise SystemExit(1)
     finally:
         if tmp is not None:
             tmp.cleanup()
