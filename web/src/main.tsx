@@ -1348,12 +1348,16 @@ function HealthWorkspace({data,onNavigate}:{data:any,onNavigate?:(id:string,grou
 
 function AccessHygienePanel({data,onRefresh,onNavigate,operator}:{data:any,onRefresh:()=>void,onNavigate?:(id:string,groupId?:string)=>void,operator:any}){
   const [quality,setQuality]=useState("all"),[filter,setFilter]=useState("");
+  const [severityFilter,setSeverityFilter]=useState("all"),[kindFilter,setKindFilter]=useState("all");
   const destination:Record<string,[string,string]>={
     "managed-host":["hosts","infrastructure"],"object":["objects","infrastructure"],
     "access-rule":["policies","access"],"service-account":["integrations","administration"],
   };
   const source=Array.isArray(data?.items)?data.items:[];
+  const kinds=Array.from(new Set(source.map((x:any)=>String(x.kind||"")).filter(Boolean))).sort();
   const items=source.filter((x:any)=>{
+    if(severityFilter!=="all"&&x.severity!==severityFilter)return false;
+    if(kindFilter!=="all"&&x.kind!==kindFilter)return false;
     if(quality==="ORPHANED"&&x.kind!=="orphan-object")return false;
     if(quality!=="all"&&quality!=="ORPHANED"&&x.finding_status!==quality)return false;
     const q=filter.trim().toLowerCase();
@@ -1369,10 +1373,16 @@ function AccessHygienePanel({data,onRefresh,onNavigate,operator}:{data:any,onRef
     <section className="card">
       <div className="dr-list-toolbar"><div><strong>{items.length}</strong><span>visible recommendations</span></div>
         <div className="toolbar"><input aria-label="Filter access hygiene" value={filter} onChange={e=>setFilter(e.target.value)} placeholder="Filter resource or finding"/>
-          <select aria-label="Evidence classification" value={quality} onChange={e=>setQuality(e.target.value)}>
+          <select aria-label="Finding status" value={quality} onChange={e=>setQuality(e.target.value)}>
             <option value="all">All findings</option><option value="STALE_OR_UNUSED">Stale</option>
             <option value="ACTION_REQUIRED">Action required</option><option value="ORPHANED">Orphaned</option>
             <option value="UNKNOWN_EVIDENCE">Unknown evidence</option>
+          </select>
+          <select aria-label="Filter finding severity" value={severityFilter} onChange={e=>setSeverityFilter(e.target.value)}>
+            <option value="all">All severities</option><option value="warning">Warning</option><option value="info">Informational</option><option value="critical">Critical</option>
+          </select>
+          <select aria-label="Filter finding type" value={kindFilter} onChange={e=>setKindFilter(e.target.value)}>
+            <option value="all">All types</option>{kinds.map(kind=><option key={kind} value={kind}>{kind.replaceAll("-"," ")}</option>)}
           </select>
         </div>
       </div>

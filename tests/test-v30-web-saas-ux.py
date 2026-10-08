@@ -119,6 +119,10 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn('disabled={x.resource_type==="service-account"&&operator.role!=="Admin"}', SOURCE)
         self.assertIn('data?.summary?.unknown_evidence', SOURCE)
         self.assertIn('x.observation_window_days===0?"Current"', SOURCE)
+        self.assertIn('aria-label="Filter finding severity"', SOURCE)
+        self.assertIn('severityFilter!=="all"&&x.severity!==severityFilter', SOURCE)
+        self.assertIn('aria-label="Filter finding type"', SOURCE)
+        self.assertIn('kindFilter!=="all"&&x.kind!==kindFilter', SOURCE)
 
     def test_shell_command_center_and_resource_workspaces_exist(self):
         for marker in (
