@@ -154,6 +154,112 @@ class StagedRolloutSchedulingTests(unittest.TestCase):
         remaining = {x["target_id"]: x["status"] for x in result["targets"]}
         self.assertEqual(remaining["b-second"], CANCELLED)
 
+    def test_expired_canary_lease_halts_and_cancels_queued_targets(self):
+        job = self._start()
+        self.assertEqual(self._claim()[0]["target_id"], "z-canary")
+        recovered = self.engine.recover_expired_claims(
+            now=self.now + timedelta(seconds=32)
+        )
+        self.assertEqual(recovered, 1)
+        state = self.engine.get(job["id"])
+        self.assertEqual(state["status"], FAILED)
+        self.assertEqual(state["payload"]["rollout_state"], "HALTED")
+        self.assertEqual(state["payload"]["halt_reason"], "WORKER_LEASE_EXPIRED")
+        targets = {item["target_id"]: item for item in state["targets"]}
+        self.assertEqual(targets["z-canary"]["status"], FAILED)
+        self.assertEqual(targets["z-canary"]["error"], "WORKER_LEASE_EXPIRED")
+        self.assertEqual(targets["a-first"]["status"], CANCELLED)
+        self.assertEqual(targets["b-second"]["status"], CANCELLED)
+        self.assertEqual(self._claim(33), [])
+
+    def test_restart_and_deadline_mark_rollout_halted(self):
+        for reason in ("SERVER_RESTART_INTERRUPTED", "DEADLINE_EXCEEDED"):
+            with self.subTest(reason=reason):
+                job = self._start()
+                if reason == "SERVER_RESTART_INTERRUPTED":
+                    self._claim()
+                    count = self.engine.recover_interrupted(
+                        now=self.now + timedelta(seconds=2)
+                    )
+                else:
+                    count = self.engine.expire_deadlines(
+                        now=self.now + timedelta(seconds=301)
+                    )
+                self.assertEqual(count, 1)
+                state = self.engine.get(job["id"])
+                self.assertEqual(state["status"], FAILED)
+                self.assertEqual(state["payload"]["rollout_state"], "HALTED")
+                self.assertEqual(state["payload"]["halt_reason"], reason)
+                self.assertEqual(
+                    {item["status"] for item in state["targets"]}, {FAILED}
+                )
+
+    def test_halted_partial_wave_rejects_resume_and_pause(self):
+        job = self.engine.enqueue_rollout(
+            targets=("a-first", "b-second", "z-canary"),
+            canary_targets=("z-canary",),
+            requested_by="ops-admin", artifact=self.artifact,
+            wave_size=2, failure_threshold_percent=20, now=self.now,
+        )
+        canary = self._claim()[0]
+        self._complete(job, canary, SUCCEEDED)
+        first, second = self.engine.claim_targets(
+            worker_id="worker-a", limit=2,
+            now=self.now + timedelta(seconds=3),
+        )
+        self._complete(job, first, FAILED, tick=4)
+        state = self.engine.get(job["id"])
+        self.assertEqual(state["status"], "RUNNING")
+        self.assertEqual(state["payload"]["rollout_state"], "HALTED")
+        self.assertEqual(state["payload"]["halt_reason"], "FAILURE_THRESHOLD_REACHED")
+        self.assertEqual(
+            next(item["status"] for item in state["targets"]
+                 if item["target_id"] == second["target_id"]),
+            "RUNNING",
+        )
+        for action in ("resume", "pause"):
+            with self.subTest(action=action), self.assertRaises(ControlPlaneError):
+                self.engine.rollout_control(job["id"], action=action)
+            self.assertEqual(
+                self.engine.get(job["id"])["payload"]["rollout_state"], "HALTED"
+            )
+
+    def test_cancelled_inflight_rollout_cannot_be_restarted(self):
+        job = self._start()
+        self._claim()
+        requested = self.engine.cancel(
+            job["id"], now=self.now + timedelta(seconds=2)
+        )
+        self.assertEqual(requested["status"], "RUNNING")
+        self.assertEqual(requested["cancel_requested"], 1)
+        for action in ("pause", "resume"):
+            with self.subTest(action=action), self.assertRaises(ControlPlaneError):
+                self.engine.rollout_control(job["id"], action=action)
+        current = self.engine.get(job["id"])
+        self.assertEqual(current["cancel_requested"], 1)
+        self.assertFalse(current["payload"].get("operator_paused"))
+
+    def test_expired_rollout_halt_persists_across_new_engine_connection(self):
+        job = self._start()
+        self._claim()
+        self.engine.recover_expired_claims(now=self.now + timedelta(seconds=33))
+        with ManagementJobEngine(self.tmp.name, max_targets=8) as restarted:
+            current = restarted.get(job["id"])
+            self.assertEqual(current["status"], FAILED)
+            self.assertEqual(current["payload"]["rollout_state"], "HALTED")
+            self.assertEqual(current["payload"]["halt_reason"], "WORKER_LEASE_EXPIRED")
+            self.assertEqual(
+                restarted.recover_expired_claims(
+                    now=self.now + timedelta(seconds=34)
+                ), 0,
+            )
+            self.assertEqual(
+                restarted.claim_targets(
+                    worker_id="restarted", limit=8,
+                    now=self.now + timedelta(seconds=35),
+                ), [],
+            )
+
     def test_mutable_source_ref_rejected_even_with_valid_digest(self):
         for ref in ("main", "feature/v3.0-drl3-0", "v3.0.0", "a" * 39, "f" * 41):
             with self.subTest(ref=ref), self.assertRaises(ControlPlaneError):

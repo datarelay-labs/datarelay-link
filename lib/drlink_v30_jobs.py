@@ -351,6 +351,48 @@ class ManagementJobEngine:
         ).fetchone()
         return bool(row and int(row[0] or 0))
 
+    def _halt_rollout_unlocked(
+        self, job_id: str, reason: str, *, now_text: str
+    ) -> bool:
+        """Fence unfinished waves when a rollout loses trusted completion evidence.
+
+        Caller holds the current SQLite write transaction. A failed/unknown
+        Agent operation is never promoted to success or silently rescheduled.
+        Previously running targets may still report a terminal outcome, but
+        no queued target is dispatched after the rollout is halted.
+        """
+        row = self.conn.execute(
+            "SELECT job_type,payload_json FROM management_jobs WHERE id=?",
+            (str(job_id),),
+        ).fetchone()
+        if not row or str(row["job_type"]) != ROLLOUT_JOB_TYPE:
+            return False
+        try:
+            payload = json.loads(str(row["payload_json"] or "{}"))
+        except (TypeError, ValueError):
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+        # The first reason is authoritative. A later lease timeout cannot
+        # conceal the original failed canary or threshold breach.
+        if payload.get("rollout_state") == "HALTED":
+            return True
+        payload["rollout_state"] = "HALTED"
+        payload["halt_reason"] = str(reason)[:128]
+        self.conn.execute(
+            "UPDATE management_jobs SET payload_json=?,last_error=?,updated_at=? WHERE id=?",
+            (_json(payload, field="Managed Update rollout payload"),
+             str(reason)[:128], now_text, str(job_id)),
+        )
+        self.conn.execute(
+            "UPDATE management_job_targets SET status='CANCELLED',finished_at=?,"
+            "lease_expires_at=NULL,updated_at=?,error=? "
+            "WHERE job_id=? AND status='QUEUED'",
+            (now_text, now_text, str(reason)[:128], str(job_id)),
+        )
+        self._refresh_job_status(str(job_id), now_text=now_text)
+        return True
+
     def _rollout_claim_allowed_unlocked(self, row, *, now_text: str) -> bool:
         """Enforce canary-first, pause and per-wave concurrency within the claim lock.
 
@@ -389,18 +431,7 @@ class ManagementJobEngine:
             return False
 
         def halt(reason: str) -> bool:
-            payload["rollout_state"] = "HALTED"
-            payload["halt_reason"] = reason
-            self.conn.execute(
-                "UPDATE management_jobs SET payload_json=?,last_error=?,updated_at=? WHERE id=?",
-                (_json(payload, field="Managed Update rollout payload"), reason, now_text, job_id),
-            )
-            self.conn.execute(
-                "UPDATE management_job_targets SET status='CANCELLED',finished_at=?,"
-                "updated_at=?,error=? WHERE job_id=? AND status='QUEUED'",
-                (now_text, now_text, reason, job_id),
-            )
-            self._refresh_job_status(job_id, now_text=now_text)
+            self._halt_rollout_unlocked(job_id, reason, now_text=now_text)
             return False
 
         if any(states[host] in (FAILED, CANCELLED) for host in canaries):
@@ -651,6 +682,9 @@ class ManagementJobEngine:
                     "last_error='DEADLINE_EXCEEDED' WHERE id=?",
                     (current, current, job_id),
                 )
+                self._halt_rollout_unlocked(
+                    job_id, "DEADLINE_EXCEEDED", now_text=current
+                )
             self.conn.execute("COMMIT")
             return len(ids)
         except Exception:
@@ -682,6 +716,11 @@ class ManagementJobEngine:
                     (current, job_id),
                 )
                 self._refresh_job_status(job_id, now_text=current)
+                # An expired claim may have already changed its Agent runtime;
+                # never continue another wave without reconciling that Host.
+                self._halt_rollout_unlocked(
+                    job_id, "WORKER_LEASE_EXPIRED", now_text=current
+                )
             self.conn.execute("COMMIT")
             return len(job_ids)
         except Exception:
@@ -712,6 +751,9 @@ class ManagementJobEngine:
                     "UPDATE management_jobs SET status='FAILED',finished_at=?,updated_at=?,"
                     "last_error='SERVER_RESTART_INTERRUPTED' WHERE id=?",
                     (current, current, job_id),
+                )
+                self._halt_rollout_unlocked(
+                    job_id, "SERVER_RESTART_INTERRUPTED", now_text=current
                 )
             self.conn.execute("COMMIT")
             return len(job_ids)
@@ -940,13 +982,27 @@ class ManagementJobEngine:
             self._begin()
             try:
                 row = self.conn.execute(
-                    "SELECT job_type,status,payload_json FROM management_jobs WHERE id=?", (str(job_id),)
+                    "SELECT job_type,status,payload_json,cancel_requested "
+                    "FROM management_jobs WHERE id=?", (str(job_id),)
                 ).fetchone()
                 if not row or str(row["job_type"]) != ROLLOUT_JOB_TYPE:
                     raise ControlPlaneError("Managed Update rollout was not found.")
                 if str(row["status"]) in TERMINAL_STATUSES:
                     raise ControlPlaneError("Completed rollout cannot be paused or resumed.")
+                if int(row["cancel_requested"] or 0):
+                    raise ControlPlaneError(
+                        "Cancelled Agent rollout cannot be paused or resumed."
+                    )
                 payload = json.loads(str(row["payload_json"] or "{}"))
+                if (
+                    not isinstance(payload, dict)
+                    or payload.get("rollout_state") == "HALTED"
+                    or payload.get("halt_reason")
+                ):
+                    raise ControlPlaneError(
+                        "Halted Agent rollout cannot be paused or resumed. "
+                        "Inspect failed targets and start a new qualified plan."
+                    )
                 payload["operator_paused"] = verb == "pause"
                 if verb == "pause":
                     payload["rollout_state"] = "PAUSED"

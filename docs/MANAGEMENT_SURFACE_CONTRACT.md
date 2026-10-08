@@ -473,6 +473,14 @@ may enable Apply; staged rollout remains unavailable until the signed Agent
 updater, post-update health checks, and rollback are qualified on the exact
 candidate.
 
+Rollout recovery must not interpret an expired Worker lease, server restart,
+or missed Job deadline as an Agent update success. Those failures halt further
+waves and preserve the failure reason in durable Job state. An already HALTED
+rollout or a cancelled rollout with an in-flight target cannot be resumed by
+changing its pause flag: the operator must inspect the uncertain Agent outcome
+and use a new, independently qualified Change Plan. This rule does not certify
+that canonical signed Agent update or rollback execution is implemented.
+
 ### 9.7 Public Automation API / Service Accounts
 
 Automation clients authenticate as Service Accounts and receive only their configured
