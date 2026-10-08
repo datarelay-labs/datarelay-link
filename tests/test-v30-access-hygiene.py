@@ -82,6 +82,45 @@ class AccessHygieneTests(unittest.TestCase):
         finally:
             cp.close()
 
+    def test_orphan_marker_surfaces_advisory_without_deleting_object(self):
+        import drlink_v24 as v24
+
+        root = tempfile.mkdtemp(prefix="drlink-hygiene-orphan-")
+        plane = ControlPlane(root)
+        try:
+            v24.set_network_object(
+                plane, "legacy-source", type="ip",
+                value="198.51.100.24", oneshot=True,
+            )
+            plane.conn.execute(
+                "UPDATE objects SET orphan_reason=? WHERE name=?",
+                ("unresolved-reference", "legacy-source"),
+            )
+            plane.conn.commit()
+            rev = plane.current_revision()
+        finally:
+            plane.close()
+
+        with ManagementQueryService.open_read_only(root) as service:
+            result = service.access_hygiene()
+        items = [i for i in result["items"] if i["kind"] == "orphan-object"]
+        self.assertEqual(len(items), 1)
+        finding = items[0]
+        self.assertEqual(finding["label"], "legacy-source")
+        self.assertEqual(finding["resource_type"], "object")
+        self.assertEqual(finding["finding_status"], "ACTION_REQUIRED")
+        self.assertEqual(finding["evidence_quality"], "OBSERVED")
+        self.assertTrue(finding["evidence"]["orphan_reason_recorded"])
+        self.assertTrue(result["read_only"])
+        self.assertFalse(result["auto_mutation"])
+
+        plane = ControlPlane(root)
+        try:
+            self.assertEqual(plane.current_revision(), rev)
+            self.assertIsNotNone(plane.get_object("legacy-source"))
+        finally:
+            plane.close()
+
     def test_cli_list_detail_test_and_grammar_preserve_read_only_revision(self):
         from drlink_control_cli import dispatch
         from frp_ctl_grammar import match, context_help

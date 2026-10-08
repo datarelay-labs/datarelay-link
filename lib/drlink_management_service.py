@@ -1396,6 +1396,30 @@ class ManagementQueryService:
                         },
                         "recommendation": "Retain the rule until sufficient usage evidence exists; do not infer unused access.",
                     })
+        # A recorded Core orphan marker is evidence for operator review,
+        # never authority to delete an object or to infer unused access.
+        for row in self.conn.execute(
+            "SELECT id,name,type,origin,status,orphan_reason FROM objects "
+            "WHERE COALESCE(orphan_reason,'')<>'' OR status='orphaned' "
+            "ORDER BY id LIMIT 100"
+        ):
+            findings.append({
+                "kind": "orphan-object", "resource_type": "object",
+                "resource_id": str(row["id"]), "label": str(row["name"]),
+                "evidence_quality": "OBSERVED",
+                "finding_status": "ACTION_REQUIRED", "severity": "warning",
+                "observation_window_days": 0,
+                "evidence": {
+                    "orphan_reason_recorded": bool(row["orphan_reason"]),
+                    "object_type": str(row["type"]),
+                    "object_origin": str(row["origin"]),
+                    "object_status": str(row["status"]),
+                },
+                "recommendation": (
+                    "Review recorded orphan status and references before any "
+                    "manual cleanup; no automatic policy mutation is performed."
+                ),
+            })
         return {
             "items": findings[:200], "count": len(findings), "authoritative": False,
             "read_only": True, "auto_mutation": False,
