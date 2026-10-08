@@ -560,9 +560,9 @@ class WebApplication:
             action = str(body.get("action") or "").strip().lower()
             if not job_id or action not in ("pause", "resume"):
                 raise ControlPlaneError("job_id and pause/resume action are required.")
-            from drlink_v30_jobs import ManagementJobEngine
-            with ManagementJobEngine(self.root) as engine:
-                return engine.rollout_control(job_id, action=action)
+            return self.adapter.rollout_control(
+                job_id, actor=self._actor(principal), action=action,
+            )
         if path == "/api/v1/jobs/cancel":
             job_id = str(body.get("job_id") or "").strip()
             if not job_id:

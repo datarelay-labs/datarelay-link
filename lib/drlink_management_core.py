@@ -409,6 +409,20 @@ class ManagementCoreService:
         )
         # No rollout Job may be created by this public API while unqualified.
 
+    def rollout_control(
+        self, job_id: str, *, actor: ManagementActor, action: str
+    ) -> dict[str, Any]:
+        """Require dedicated Admin authority for staged rollout control."""
+        self._require_web_role(actor, "Admin")
+        if "management-update" not in actor.permissions:
+            raise ManagementAuthorizationError(
+                "management-update is required to control Agent rollouts."
+            )
+        from drlink_v30_jobs import ManagementJobEngine
+
+        with ManagementJobEngine(self.root) as engine:
+            return engine.rollout_control(job_id, action=action)
+
     def job_cancel(
         self, job_id: str, *, actor: ManagementActor
     ) -> dict[str, Any]:
@@ -417,9 +431,16 @@ class ManagementCoreService:
             raise ManagementAuthorizationError(
                 "management-job-run is required to cancel Management Jobs."
             )
-        from drlink_v30_jobs import ManagementJobEngine
+        from drlink_v30_jobs import ManagementJobEngine, ROLLOUT_JOB_TYPE
 
         with ManagementJobEngine(self.root) as engine:
+            job = engine.get(job_id)
+            if job["job_type"] == ROLLOUT_JOB_TYPE:
+                self._require_web_role(actor, "Admin")
+                if "management-update" not in actor.permissions:
+                    raise ManagementAuthorizationError(
+                        "management-update is required to cancel Agent rollouts."
+                    )
             return engine.cancel(job_id)
 
     @staticmethod

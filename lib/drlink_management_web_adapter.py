@@ -373,6 +373,11 @@ class ManagementWebApiAdapter:
             failure_threshold_percent=failure_threshold_percent,
         )
 
+    def rollout_control(
+        self, job_id: str, *, actor: ManagementActor, action: str
+    ) -> dict[str, Any]:
+        return self.core.rollout_control(job_id, actor=actor, action=action)
+
     def job_cancel(self, job_id: str, *, actor: ManagementActor) -> dict[str, Any]:
         return self.core.job_cancel(job_id, actor=actor)
 

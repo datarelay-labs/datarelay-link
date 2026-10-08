@@ -173,6 +173,52 @@ class V30ManagementAdapterTests(unittest.TestCase):
                 actor=self.actor,
             )
 
+    def test_rollout_pause_resume_cancel_need_update_permission_not_only_job_run(self):
+        from drlink_v30_jobs import ManagementJobEngine
+
+        with ManagementJobEngine(self.tmp) as engine:
+            rollout = engine.enqueue_rollout(
+                targets=("host-a",), requested_by="admin",
+                artifact={"version":"3.0.0-rc.1","source_ref":"a"*40,"sha256":"b"*64},
+                wave_size=1,
+            )
+            ordinary = engine.enqueue(
+                targets=("host-a",), job_type="doctor", requested_by="operator",
+            )
+
+        limited = ManagementActor.authenticated(
+            "web:limited", {"management-job-run"}, role="Admin",
+        )
+        unauthorized_role = ManagementActor.authenticated(
+            "web:operator", {"management-job-run", "management-update"}, role="Operator",
+        )
+        authorized = ManagementActor.authenticated(
+            "web:admin", {"management-job-run", "management-update"}, role="Admin",
+        )
+        for actor in (limited, unauthorized_role):
+            with self.subTest(actor=actor.actor_id):
+                with self.assertRaises(ManagementAuthorizationError):
+                    self.web.rollout_control(
+                        rollout["id"], actor=actor, action="pause",
+                    )
+                with self.assertRaises(ManagementAuthorizationError):
+                    self.web.job_cancel(rollout["id"], actor=actor)
+
+        # Ordinary diagnostics remain cancellable by the original Operator.
+        self.assertEqual(
+            self.web.job_cancel(ordinary["id"], actor=limited)["status"], "CANCELLED"
+        )
+        paused = self.web.rollout_control(
+            rollout["id"], actor=authorized, action="pause",
+        )
+        self.assertTrue(paused["payload"]["operator_paused"])
+        resumed = self.web.rollout_control(
+            rollout["id"], actor=authorized, action="resume",
+        )
+        self.assertFalse(resumed["payload"]["operator_paused"])
+        cancelled = self.web.job_cancel(rollout["id"], actor=authorized)
+        self.assertEqual(cancelled["status"], "CANCELLED")
+
     def test_web_and_mcp_read_projection_return_same_core_semantics(self):
         args = {"resource_type": "managed-host", "query": "alpha", "limit": 10}
         via_mcp = self.mcp.call_tool(
