@@ -784,8 +784,35 @@ class ManagementJobEngine:
         )
         with self._lock:
             blocked = [host for host in target_ids if not self._rollout_target_approved(host)]
+            observations = []
+            target_version = str(payload["artifact"]["version"])
+            for host_id in target_ids:
+                row = self.conn.execute(
+                    "SELECT agent_version,agent_platform,agent_heartbeat_at "
+                    "FROM clients WHERE id=?", (host_id,),
+                ).fetchone()
+                installed = str(row["agent_version"] or "").strip() if row else ""
+                platform = str(row["agent_platform"] or "").strip() if row else ""
+                relation = (
+                    "UNKNOWN" if not installed
+                    else "SAME_VERSION" if installed == target_version
+                    else "DIFFERENT"
+                )
+                observations.append({
+                    "target_id": host_id,
+                    "current_version": installed or "unknown",
+                    "target_version": target_version,
+                    "platform": platform or "unknown",
+                    "version_relation": relation,
+                    "last_heartbeat": row["agent_heartbeat_at"] if row else None,
+                    # Version alone is not signed artifact identity and can be
+                    # stale or represent different commits with equal labels.
+                    "provenance": "NOT_VERIFIED",
+                    "update_available": "UNKNOWN",
+                })
         return {
             "read_only": True, "eligible": not blocked,
+            "target_observations": observations,
             "targets": list(target_ids), "target_count": len(target_ids),
             "blocked_targets": blocked,
             "canary_targets": list(payload["canary_targets"]),

@@ -118,6 +118,9 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn("Ready to apply: NO", SOURCE)
         self.assertIn("preview.artifact_qualification", SOURCE)
         self.assertIn("preview.blocked_targets", SOURCE)
+        self.assertIn("preview.target_observations", SOURCE)
+        self.assertIn("Observed version", SOURCE)
+        self.assertIn("Update availability remains UNKNOWN", SOURCE)
 
     def test_access_hygiene_orphan_filter_and_resource_navigation(self):
         self.assertIn('quality==="ORPHANED"&&x.kind!=="orphan-object"', SOURCE)

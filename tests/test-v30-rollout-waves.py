@@ -155,6 +155,35 @@ class StagedRolloutSchedulingTests(unittest.TestCase):
         actual = self._start()
         self.assertEqual(preview["canary_targets"], actual["payload"]["canary_targets"])
 
+    def test_preview_shows_observed_versions_without_claiming_artifact_provenance(self):
+        self.engine.conn.execute(
+            "UPDATE clients SET agent_version='2.4.0', agent_platform='linux',"
+            " agent_heartbeat_at='2026-10-08T05:00:00Z' WHERE id='a-first'"
+        )
+        self.engine.conn.execute(
+            "UPDATE clients SET agent_version='3.0.0-rc.1', agent_platform='darwin'"
+            " WHERE id='b-second'"
+        )
+        before = self.engine.conn.execute("SELECT COUNT(*) FROM management_jobs").fetchone()[0]
+        preview = self.engine.preview_rollout(
+            targets=("a-first", "b-second", "z-canary"),
+            requested_by="ops-admin", artifact=self.artifact, wave_size=1,
+        )
+        versions = {x["target_id"]: x for x in preview["target_observations"]}
+        self.assertEqual(versions["a-first"]["current_version"], "2.4.0")
+        self.assertEqual(versions["a-first"]["platform"], "linux")
+        self.assertEqual(versions["a-first"]["version_relation"], "DIFFERENT")
+        self.assertEqual(versions["b-second"]["version_relation"], "SAME_VERSION")
+        self.assertEqual(versions["z-canary"]["version_relation"], "UNKNOWN")
+        self.assertEqual(versions["z-canary"]["current_version"], "unknown")
+        for row in versions.values():
+            self.assertEqual(row["provenance"], "NOT_VERIFIED")
+            self.assertEqual(row["update_available"], "UNKNOWN")
+        self.assertEqual(
+            self.engine.conn.execute("SELECT COUNT(*) FROM management_jobs").fetchone()[0],
+            before,
+        )
+
     def test_preview_rejects_mutable_artifact_and_invalid_canary_without_jobs(self):
         invalid = {"version": "3.0.0", "source_ref": "main", "sha256": "b" * 64}
         with self.assertRaises(ControlPlaneError):

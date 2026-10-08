@@ -1028,6 +1028,14 @@ function AgentRolloutPreviewPanel(){
     {error&&<div className="error">{error}</div>}
     {preview&&<div className="dr-preview-panel">
       <p className="muted"><strong>Qualification: {preview.artifact_qualification}</strong> · Ready to apply: NO. Preview is advisory and must be revalidated before any future Apply.</p>
+      <div className="dr-table-scroll"><table className="dr-resource-table">
+        <thead><tr><th>Host</th><th>Platform</th><th>Observed version</th><th>Target version</th><th>Version comparison</th><th>Provenance</th><th>Update available</th></tr></thead>
+        <tbody>{(preview.target_observations||[]).map((host:any)=><tr key={host.target_id}>
+          <td>{host.target_id}</td><td>{host.platform}</td><td>{host.current_version}</td><td>{host.target_version}</td>
+          <td>{host.version_relation}</td><td>{host.provenance}</td><td>{host.update_available}</td>
+        </tr>)}</tbody>
+      </table></div>
+      <p className="muted">Version comparison comes only from previously recorded inventory, not current Agent health or signed package provenance. Update availability remains UNKNOWN.</p>
       <pre className="plan">{JSON.stringify({targets:preview.targets,canaries:preview.canary_targets,blocked:preview.blocked_targets,wave_size:preview.wave_size,artifact:preview.artifact,qualification_note:preview.qualification_note},null,2)}</pre>
     </div>}
   </section>;
