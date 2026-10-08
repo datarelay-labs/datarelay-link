@@ -144,6 +144,16 @@ class AutomationHttpTests(unittest.TestCase):
         status, payload, _ = self.request(
             "POST", route, {"resource_type": "managed-host"}, token=rotated["credential"])
         self.assertEqual(status, 200, payload)
+        status, hygiene_web, _ = self.request(
+            "GET", "/api/v1/access-hygiene", browser=True)
+        self.assertEqual(status, 200, hygiene_web)
+        status, hygiene_api, _ = self.request(
+            "POST", "/api/automation/v1/drlink_access_hygiene", {},
+            token=rotated["credential"])
+        self.assertEqual(status, 200, hygiene_api)
+        self.assertTrue(hygiene_api["read_only"])
+        self.assertFalse(hygiene_api["auto_mutation"])
+        self.assertEqual(hygiene_api["items"], hygiene_web["items"])
         status, revoked, _ = self.request(
             "POST", "/api/v1/service-accounts/revoke", {"account_id": created["id"]},
             browser=True,

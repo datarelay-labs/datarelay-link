@@ -557,6 +557,7 @@ drlink_emergency_cutoff_clear
 drlink_job_list
 drlink_job_get
 drlink_diagnostic_job_start
+drlink_access_hygiene
 drlink_agent_update_rollout_start
 ```
 

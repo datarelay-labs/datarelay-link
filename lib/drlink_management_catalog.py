@@ -163,6 +163,18 @@ MANAGEMENT_TOOLS = (
         True,
     ),
     ManagementTool(
+        "drlink_access_hygiene",
+        "Review access hygiene",
+        "Read bounded evidence-qualified stale/expiring access recommendations without mutation.",
+        "management-read",
+        OBSERVE,
+        PLUGIN_READ,
+        _schema(),
+        True,
+        False,
+        True,
+    ),
+    ManagementTool(
         "drlink_diagnose_connection",
         "Diagnose connectivity",
         "Correlate policy, runtime, health, and recent decision evidence without mutation.",

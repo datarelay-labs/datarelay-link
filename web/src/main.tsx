@@ -6,7 +6,7 @@ type Json = Record<string, any>;
 const navGroups=[
   {id:"infrastructure",label:"Infrastructure",items:[["hosts","Managed Hosts"],["services","Remote Services"],["objects","Objects & Groups"]]},
   {id:"access",label:"Access Control",items:[["access","Access Operations"],["policies","Policies"]]},
-  {id:"operations",label:"Operations",items:[["jobs","Jobs"],["versions","Version Drift"],["revisions","Revisions"]]},
+  {id:"operations",label:"Operations",items:[["jobs","Jobs"],["hygiene","Access Hygiene"],["versions","Version Drift"],["revisions","Revisions"]]},
   {id:"observability",label:"Observability",items:[["audit","Audit"],["health","Health"]]},
   {id:"administration",label:"Administration",items:[["users","Users"],["integrations","Integrations"],["system","System"]]},
 ] as const;
@@ -1254,6 +1254,44 @@ function HealthWorkspace({data,onNavigate}:{data:any,onNavigate?:(id:string,grou
   </div>;
 }
 
+function AccessHygienePanel({data,onRefresh,onNavigate}:{data:any,onRefresh:()=>void,onNavigate?:(id:string,groupId?:string)=>void}){
+  const [quality,setQuality]=useState("all"),[filter,setFilter]=useState("");
+  const source=Array.isArray(data?.items)?data.items:[];
+  const items=source.filter((x:any)=>{
+    if(quality!=="all"&&x.finding_status!==quality)return false;
+    const q=filter.trim().toLowerCase();
+    return !q||[x.kind,x.resource_type,x.resource_id,x.label,x.plane].some(v=>String(v||"").toLowerCase().includes(q));
+  });
+  const unknown=source.filter((x:any)=>x.finding_status==="UNKNOWN_EVIDENCE").length;
+  return <div className="dr-resource-workspace">
+    <section className="dr-page-intro"><div><p className="dr-eyebrow">Operations · Access Hygiene</p>
+      <h2>Access Hygiene</h2><p className="muted">Evidence-qualified review only. No access rule, Host, account, or permission is changed automatically.</p></div>
+      <div className="dr-page-actions"><button className="secondary" onClick={onRefresh}>Refresh evidence</button></div>
+    </section>
+    <div className="grid"><Metric label="Review findings" value={data?.count||0}/><Metric label="Unknown evidence" value={unknown}/></div>
+    <section className="card">
+      <div className="dr-list-toolbar"><div><strong>{items.length}</strong><span>visible recommendations</span></div>
+        <div className="toolbar"><input aria-label="Filter access hygiene" value={filter} onChange={e=>setFilter(e.target.value)} placeholder="Filter resource or finding"/>
+          <select aria-label="Evidence classification" value={quality} onChange={e=>setQuality(e.target.value)}>
+            <option value="all">All findings</option><option value="STALE_OR_UNUSED">Stale</option>
+            <option value="ACTION_REQUIRED">Action required</option><option value="ORPHANED">Orphaned</option>
+            <option value="UNKNOWN_EVIDENCE">Unknown evidence</option>
+          </select>
+        </div>
+      </div>
+      <p className="muted">Incomplete or unverified audit coverage is UNKNOWN_EVIDENCE, not proof of unused access. Recommendations are always advisory.</p>
+      {!items.length?<div className="dr-empty-state"><strong>No matching findings</strong><p>There is no evidence-qualified action matching the current filters.</p></div>:
+      <div className="dr-table-scroll"><table className="dr-resource-table"><thead><tr><th>Resource</th><th>Review</th><th>Evidence</th><th>Window</th><th>Recommendation</th><th>Inspect</th></tr></thead>
+      <tbody>{items.map((x:any,i:number)=><tr key={x.kind+":"+x.resource_id+":"+i}><td><strong>{x.label||x.resource_id}</strong><small>{x.resource_type||""} · {x.kind||""}</small></td>
+        <td><span className={x.finding_status==="UNKNOWN_EVIDENCE"?"dr-state":"dr-state active"}><i/>{x.finding_status||"UNKNOWN_EVIDENCE"}</span></td>
+        <td>{x.evidence_quality||"UNKNOWN_EVIDENCE"}</td><td>{x.observation_window_days||"—"} days</td>
+        <td>{x.recommendation||"Review the authoritative resource."}</td>
+        <td><button className="secondary" onClick={()=>onNavigate?.(x.resource_type==="managed-host"?"hosts":"policies",x.resource_type==="managed-host"?"infrastructure":"access")}>Inspect</button></td>
+      </tr>)}</tbody></table></div>}
+    </section>
+  </div>;
+}
+
 function View({active,operator,onNavigate}:{active:string,operator:any,onNavigate?:(id:string,groupId?:string)=>void}){
   const [data,setData]=useState<any>(null),[error,setError]=useState(""),[query,setQuery]=useState("");
   useEffect(()=>{
@@ -1262,7 +1300,7 @@ function View({active,operator,onNavigate}:{active:string,operator:any,onNavigat
       overview:"/api/v1/overview",hosts:"/api/v1/inventory?resource_type=managed-host&limit=100",
       services:"/api/v1/inventory?resource_type=remote-service&limit=100",
       objects:"/api/v1/objects-groups?limit=50",policies:"/api/v1/policies?limit=100",
-      versions:"/api/v1/versions",system:"/api/v1/system",revisions:"/api/v1/revisions?limit=100",
+      versions:"/api/v1/versions",hygiene:"/api/v1/access-hygiene",system:"/api/v1/system",revisions:"/api/v1/revisions?limit=100",
       doctor:"/api/v1/doctor",health:"/api/v1/health",views:"/api/v1/saved-views",enrollments:"/api/v1/enrollments?limit=50",
     };
     if(paths[active])api(paths[active]).then(setData).catch((e:any)=>setError(e.message||String(e)));
@@ -1273,6 +1311,7 @@ function View({active,operator,onNavigate}:{active:string,operator:any,onNavigat
   if(active==="drafts")return <DraftWorkspace/>;
   if(active==="access")return <AccessOperations operator={operator} onNavigate={onNavigate}/>;
   if(active==="jobs")return <JobOperations operator={operator}/>;
+  if(active==="hygiene"&&data)return <AccessHygienePanel data={data} onRefresh={()=>api("/api/v1/access-hygiene").then(setData).catch((e:any)=>setError(e.message||String(e)))} onNavigate={onNavigate}/>;
   if(active==="audit")return <AuditExplorer operator={operator}/>;
   if(active==="enrollments"&&data)return <EnrollmentPanel data={data} refresh={()=>api("/api/v1/enrollments?limit=50").then(setData)}/>;
   if(active==="search")return <div><div className="toolbar"><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search resources and policy"/><button className="primary" onClick={()=>api("/api/v1/search?q="+encodeURIComponent(query)+"&limit=50").then(setData).catch((e:any)=>setError(e.message))}>Search</button></div>{data&&<Table items={(data.items||[]).map((x:any)=>({type:x.resource_type,id:x.id,name:x.name}))}/>}</div>;

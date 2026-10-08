@@ -13,6 +13,7 @@ PREFIX = "/api/automation/v1/"
 # Scope remains read-only until the versioned Change Plan mutation contract is qualified.
 ALLOW = frozenset({
     "drlink_inventory_list", "drlink_inventory_get", "drlink_health",
+    "drlink_access_hygiene",
     "drlink_diagnose_connection", "drlink_policy_test", "drlink_audit_query",
     "drlink_live_access", "drlink_job_list", "drlink_job_get",
 })
@@ -25,6 +26,12 @@ class AutomationApi:
 
     def close(self) -> None:
         self.accounts.close()
+
+    def __enter__(self) -> "AutomationApi":
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        self.close()
 
     def invoke(self, path: str, credential: str, payload: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(path, str) or not path.startswith(PREFIX):

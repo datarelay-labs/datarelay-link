@@ -38,6 +38,7 @@ IMPLEMENTED_MANAGEMENT_TOOLS = frozenset(
         "drlink_inventory_list",
         "drlink_inventory_get",
         "drlink_health",
+        "drlink_access_hygiene",
         "drlink_diagnose_connection",
         "drlink_policy_test",
         "drlink_audit_query",
@@ -1345,7 +1346,9 @@ class ManagementQueryService:
             findings.append({
                 "kind": "stale-host", "resource_type": "managed-host",
                 "resource_id": str(row["id"]), "label": str(row["name"]),
-                "evidence_quality": "OBSERVED" if row["last_seen"] else "INSUFFICIENT_DATA",
+                "evidence_quality": "OBSERVED" if row["last_seen"] else "UNKNOWN_EVIDENCE",
+                "finding_status": "STALE_OR_UNUSED" if row["last_seen"] else "UNKNOWN_EVIDENCE",
+                "severity": "warning" if row["last_seen"] else "info",
                 "observation_window_days": int(HYGIENE_STALE_HOST_WINDOW.days),
                 "evidence": {"last_seen": row["last_seen"]},
                 "recommendation": "Review host lifecycle and connectivity; no automatic mutation is performed.",
@@ -1354,7 +1357,7 @@ class ManagementQueryService:
             "SELECT MIN(occurred_at) AS oldest,COUNT(*) AS n FROM audit_events "
             "WHERE category='ACCESS_DECISION' AND occurred_at>=?", (access_since,)
         ).fetchone()
-        coverage = bool(audit_row and int(audit_row["n"] or 0) > 0)
+        # Event count alone never proves an absence of successful access.
         for table, plane in (("policy_rules", "remote/internet"), ("ai_policy_rules", "ai")):
             rows = self.conn.execute(
                 "SELECT id,name,expires_at,created_at FROM %s WHERE enabled=1 ORDER BY id LIMIT 100" % table
@@ -1367,17 +1370,26 @@ class ManagementQueryService:
                         "kind": "long-lived-grant", "resource_type": "access-rule",
                         "resource_id": str(row["id"]), "label": str(row["name"]),
                         "plane": plane, "evidence_quality": "OBSERVED",
+                        "finding_status": "ACTION_REQUIRED", "severity": "warning",
                         "observation_window_days": int(HYGIENE_ACCESS_REVIEW_WINDOW.days),
                         "evidence": {"created_at": row["created_at"], "expires_at": row["expires_at"]},
                         "recommendation": "Review whether this grant still needs its current duration.",
                     })
-                elif not coverage:
+                else:
+                    # Even some ACCESS_DECISION rows cannot prove complete per-rule
+                    # success/failure visibility for the entire review window.
+                    # Therefore never assert an unused rule without stronger evidence.
                     findings.append({
                         "kind": "access-usage-review", "resource_type": "access-rule",
                         "resource_id": str(row["id"]), "label": str(row["name"]),
-                        "plane": plane, "evidence_quality": "INSUFFICIENT_DATA",
+                        "plane": plane, "evidence_quality": "UNKNOWN_EVIDENCE",
+                        "finding_status": "UNKNOWN_EVIDENCE", "severity": "info",
                         "observation_window_days": int(HYGIENE_ACCESS_REVIEW_WINDOW.days),
-                        "evidence": {"access_decision_events": int(audit_row["n"] or 0) if audit_row else 0},
+                        "evidence": {
+                            "access_decision_events": int(audit_row["n"] or 0) if audit_row else 0,
+                            "oldest_observed_at": audit_row["oldest"] if audit_row else None,
+                            "complete_per_rule_coverage": False,
+                        },
                         "recommendation": "Retain the rule until sufficient usage evidence exists; do not infer unused access.",
                     })
         return {

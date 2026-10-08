@@ -240,6 +240,11 @@ class ManagementCoreService:
         with ManagementQueryService(self.root) as service:
             return service.health()
 
+    def _invoke_drlink_access_hygiene(self, actor: ManagementActor, data: dict) -> dict:
+        del actor, data
+        with ManagementQueryService(self.root) as service:
+            return service.access_hygiene()
+
     def _invoke_drlink_diagnose_connection(
         self, actor: ManagementActor, data: dict
     ) -> dict:
