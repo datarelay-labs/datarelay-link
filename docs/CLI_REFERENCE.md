@@ -134,6 +134,8 @@ set server windows-installer-url <URL>
 
 set managed-host-group <GROUP>
 set managed-host <HOST> group <GROUP>
+set managed-host <HOST> admission approved
+set managed-host <HOST> admission quarantined
 
 set network-object <OBJECT>
 set network-group <GROUP>

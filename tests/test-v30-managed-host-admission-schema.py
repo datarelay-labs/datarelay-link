@@ -150,6 +150,58 @@ class HostAdmissionStateTests(unittest.TestCase):
             finally:
                 plane.close()
 
+    def test_direct_cli_admission_requires_tty_typed_confirmation_and_change_plan(self):
+        from unittest.mock import patch
+        from drlink_control_cli import dispatch
+        from frp_ctl_grammar import match
+
+        with tempfile.TemporaryDirectory(prefix="drlink-admission-cli-") as root:
+            plane = ControlPlane(root)
+            try:
+                plane.upsert_client("host-cli", hostname="host-cli",
+                                    initial_admission_state="PENDING_APPROVAL")
+                initial_revision = plane.current_revision()
+            finally:
+                plane.close()
+
+            def state():
+                check = ControlPlane(root, read_only=True)
+                try:
+                    return check.require_client("host-cli")["admission_state"], check.current_revision()
+                finally:
+                    check.close()
+
+            cmd = ["set", "managed-host", "host-cli", "admission", "approved"]
+            self.assertEqual(match(cmd, role="server")["status"], "ok")
+            self.assertEqual(match(cmd, role="agent")["status"], "role")
+            stdout = io.StringIO()
+            with patch("drlink_control_cli._stdin_is_interactive", return_value=False), redirect_stdout(stdout):
+                self.assertEqual(dispatch(cmd, root=root), 1)
+            self.assertIn("interactive", stdout.getvalue().lower())
+            self.assertEqual(state(), ("PENDING_APPROVAL", initial_revision))
+
+            with patch("drlink_control_cli._stdin_is_interactive", return_value=True), patch(
+                "builtins.input", return_value="REJECT"
+            ), redirect_stdout(io.StringIO()):
+                self.assertEqual(dispatch(cmd, root=root), 1)
+            self.assertEqual(state(), ("PENDING_APPROVAL", initial_revision))
+
+            with patch("drlink_control_cli._stdin_is_interactive", return_value=True), patch(
+                "builtins.input", return_value="APPROVE"
+            ), redirect_stdout(io.StringIO()):
+                self.assertEqual(dispatch(cmd, root=root), 0)
+            approved, rev = state()
+            self.assertEqual(approved, "APPROVED")
+            self.assertGreater(rev, initial_revision)
+
+            quarantine = ["set", "managed-host", "host-cli", "admission", "quarantined"]
+            self.assertEqual(match(quarantine, role="server")["status"], "ok")
+            with patch("drlink_control_cli._stdin_is_interactive", return_value=True), patch(
+                "builtins.input", return_value="QUARANTINE"
+            ), redirect_stdout(io.StringIO()):
+                self.assertEqual(dispatch(quarantine, root=root), 0)
+            self.assertEqual(state()[0], "QUARANTINED")
+
     def test_unapproved_host_cannot_issue_or_use_ai_credentials_or_enqueue_jobs(self):
         from drlink_control_db import ControlPlaneError
         with tempfile.TemporaryDirectory(prefix="drlink-host-ai-admission-") as root:

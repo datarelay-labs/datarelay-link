@@ -1663,6 +1663,7 @@ def domain_help(topic, role):
             "  show managed-host <HOST> agent\n"
             "  show managed-host <HOST> addresses\n"
             "  show managed-host <HOST> admission\n"
+            "  set managed-host <HOST> admission approved|quarantined   (interactive typed confirmation)\n"
             "  set enrollment\n"
             "  set enrollment zero-touch\n"
             "  unset managed-host <HOST>\n\n"

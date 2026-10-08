@@ -3305,10 +3305,12 @@
     ],
     "roles": "server",
     "category": "Managed Hosts",
-    "summary": "Add a Managed Host to a Managed Host Group",
-    "detail": "Add one existing Managed Host to a Managed Host Group. This changes inventory membership only; it does not create a Network Group, alter policy selectors, remove identity, change Remote Services, or reallocate public ports.",
+    "summary": "Set a Managed Host Group membership or explicitly approve/quarantine a Host",
+    "detail": "Group membership changes inventory only and requires no confirmation. Admission approved/quarantined changes new-access authorization, preserves existing identity, policy references, services and ports, and requires an interactive local Admin typed APPROVE/QUARANTINE after a Core Change Plan impact preview. No noninteractive shortcut exists.",
     "examples": [
-      "set managed-host ubuntu-prod group edge"
+      "set managed-host ubuntu-prod group edge",
+      "set managed-host ubuntu-prod admission approved",
+      "set managed-host ubuntu-prod admission quarantined"
     ],
     "args": [
       {
@@ -3317,14 +3319,15 @@
         "required": true
       },
       {
-        "name": "group",
+        "name": "group|admission",
         "complete": [
-          "group"
+          "group",
+          "admission"
         ],
         "required": true
       },
       {
-        "name": "<GROUP>",
+        "name": "<GROUP|approved|quarantined>",
         "complete": "groups",
         "required": true
       }
@@ -3334,8 +3337,8 @@
     "aliases": [],
     "destructive": false,
     "hidden": false,
-    "risk": "metadata",
-    "confirmation": "none",
+    "risk": "security_change",
+    "confirmation": "typed_token",
     "surface": "",
     "flags": []
   },
