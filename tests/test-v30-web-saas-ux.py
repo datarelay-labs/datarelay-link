@@ -77,6 +77,19 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         ):
             self.assertIn(contextual, SOURCE)
 
+    def test_managed_host_admission_is_visible_separately_from_connection(self):
+        # An admission filter alone is not enough; the selected state must be
+        # visible in the inventory row and independent of connectivity.
+        self.assertIn(
+            "<th>Admission</th><th>Connection</th><th>Trust</th>", SOURCE
+        )
+        self.assertIn(
+            'item.admission_state==="APPROVED"?"Approved"', SOURCE
+        )
+        self.assertIn("selected.admission_state", SOURCE)
+        self.assertIn('value="PENDING_APPROVAL"', SOURCE)
+        self.assertIn('value="QUARANTINED"', SOURCE)
+
     def test_shell_command_center_and_resource_workspaces_exist(self):
         for marker in (
             "drlink_web_sidebar_collapsed",
