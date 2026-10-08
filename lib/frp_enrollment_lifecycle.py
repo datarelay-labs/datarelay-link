@@ -197,6 +197,24 @@ def _validate_zero_touch_pair(ticket_rec, enroll_rec, ticket_path, enroll_path, 
     enroll_id = str(enroll_rec.get('id') or '').strip().lower()
     if ticket_eid != enroll_id:
         return 'bootstrap ticket enrollment_id does not match paired enrollment id'
+    ticket_id = str(ticket_rec.get('id') or '').strip().lower()
+    linked_id = str(enroll_rec.get('bootstrap_ticket_id') or '').strip().lower()
+    if linked_id and linked_id != ticket_id:
+        return 'enrollment ticket reference does not match paired bootstrap ticket'
+    # Legacy pairs without 3.0 admission fields remain valid for history and
+    # cleanup, but mismatched or forged preapproval is never a valid pair.
+    ticket_approved = ticket_rec.get('pre_approved', False)
+    enroll_approved = enroll_rec.get('pre_approved', False)
+    if (
+        type(ticket_approved) is not bool
+        or type(enroll_approved) is not bool
+        or ticket_approved != enroll_approved
+    ):
+        return 'paired enrollment preapproval state is inconsistent'
+    ticket_actor = str(ticket_rec.get('pre_approval_actor') or '').strip()
+    enroll_actor = str(enroll_rec.get('pre_approval_actor') or '').strip()
+    if ticket_actor != enroll_actor or (ticket_approved and not ticket_actor):
+        return 'paired enrollment preapproval actor is inconsistent'
     now = int(time.time())
     ticket_state = normalize_state(ticket_rec, now)
     enroll_state = normalize_state(enroll_rec, now)

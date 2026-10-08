@@ -423,14 +423,17 @@ function RemoteServicePanel(){
   </div>;
 }
 
-function EnrollmentPanel({data,refresh}:{data:any,refresh:()=>void}){
+function EnrollmentPanel({data,refresh,operator}:{data:any,refresh:()=>void,operator:any}){
   const [mode,setMode]=useState("zero-touch"),[platform,setPlatform]=useState("linux"),[ttl,setTtl]=useState("3600"),[label,setLabel]=useState(""),[note,setNote]=useState("");
+  const [preApproved,setPreApproved]=useState(false);
   const [issued,setIssued]=useState<any>(null),[error,setError]=useState("");
   async function issue(){
     setError("");setIssued(null);
     try{
       const path=mode==="manual"?"/api/v1/enrollments/manual":"/api/v1/enrollments/zero-touch";
-      const result=await api(path,{method:"POST",body:JSON.stringify({platform,ttl_seconds:ttl,label,note})});
+      const result=await api(path,{method:"POST",body:JSON.stringify({
+        platform,ttl_seconds:ttl,label,note,...(mode==="zero-touch"?{pre_approved:preApproved}:{})
+      })});
       setIssued(result);refresh();
     }catch(e:any){setError(e.message||String(e))}
   }
@@ -440,15 +443,18 @@ function EnrollmentPanel({data,refresh}:{data:any,refresh:()=>void}){
       <div className="muted">Zero-Touch is recommended. Manual Enrollment keeps the credential out of the install command and prompts for it interactively. Secret-bearing material is display-once.</div>
       {error&&<div className="error">{error}</div>}
       <div className="toolbar">
-        <select value={mode} onChange={e=>{setMode(e.target.value);setIssued(null);setTtl(e.target.value==="manual"?"600":"3600")}}><option value="zero-touch">Zero-Touch</option><option value="manual">Manual Enrollment</option></select>
+        <select value={mode} onChange={e=>{setMode(e.target.value);setPreApproved(false);setIssued(null);setTtl(e.target.value==="manual"?"600":"3600")}}><option value="zero-touch">Zero-Touch</option><option value="manual">Manual Enrollment</option></select>
         <select value={platform} onChange={e=>setPlatform(e.target.value)}><option value="linux">Linux</option><option value="macos">macOS</option>{mode!=="manual"&&<option value="windows">Windows</option>}</select>
         <input value={ttl} onChange={e=>setTtl(e.target.value)} placeholder={"TTL seconds (60-"+maxTtl+")"}/>
         <input value={label} onChange={e=>setLabel(e.target.value)} placeholder="Managed Host label"/>
         <input value={note} onChange={e=>setNote(e.target.value)} placeholder="Optional note"/>
-        <button className="primary" onClick={issue}>Issue Enrollment</button>
+        {operator.role==="Admin"&&mode==="zero-touch"&&<label><input type="checkbox" checked={preApproved} onChange={e=>setPreApproved(e.target.checked)}/> Pre-approve this enrollment (explicit Admin access grant)</label>}
+        {operator.role==="Admin"&&<button className="primary" onClick={issue}>Issue Enrollment</button>}
       </div>
+      <p className="muted">Newly enrolled Hosts begin Pending Approval. Pre-approval is OFF by default and binds only the first Host using the issued ticket; it never changes an existing quarantined Host.</p>
       {issued&&<div className="warning-box">
         <strong>Display once · expires {issued.expires_at}</strong>
+        <div>Admission: {issued.pre_approved?"Pre-approved by Admin":"Pending Approval on first connection"}</div>
         {issued.enrollment_code&&<><div>Enrollment Code</div><pre className="plan">{issued.enrollment_code}</pre></>}
         <div>Install command</div><pre className="plan">{issued.command}</pre>
         <div>{issued.next_step}</div>
@@ -1426,7 +1432,7 @@ function View({active,operator,onNavigate}:{active:string,operator:any,onNavigat
   if(active==="jobs")return <JobOperations operator={operator}/>;
   if(active==="hygiene"&&data)return <AccessHygienePanel data={data} operator={operator} onRefresh={()=>api("/api/v1/access-hygiene").then(setData).catch((e:any)=>setError(e.message||String(e)))} onNavigate={onNavigate}/>;
   if(active==="audit")return <AuditExplorer operator={operator}/>;
-  if(active==="enrollments"&&data)return <EnrollmentPanel data={data} refresh={()=>api("/api/v1/enrollments?limit=50").then(setData)}/>;
+  if(active==="enrollments"&&data)return <EnrollmentPanel data={data} operator={operator} refresh={()=>api("/api/v1/enrollments?limit=50").then(setData)}/>;
   if(active==="search")return <div><div className="toolbar"><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search resources and policy"/><button className="primary" onClick={()=>api("/api/v1/search?q="+encodeURIComponent(query)+"&limit=50").then(setData).catch((e:any)=>setError(e.message))}>Search</button></div>{data&&<Table items={(data.items||[]).map((x:any)=>({type:x.resource_type,id:x.id,name:x.name}))}/>}</div>;
   if(active==="overview"&&data)return <CommandCenter data={data} operator={operator} onNavigate={onNavigate}/>;
   if(active==="versions"&&data)return <><div className="grid"><Metric label="Server version" value={data.server_version}/><Metric label="Drift" value={data.drift_count}/><Metric label="Unknown" value={data.unknown_count}/></div><Table items={data.hosts||[]}/></>;

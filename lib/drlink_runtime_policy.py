@@ -563,6 +563,7 @@ def sync_enrolled_client(
     services: Optional[dict] = None,
     addresses: Optional[list] = None,
     connected: bool = True,
+    initial_admission_state: str = "APPROVED",
 ) -> dict:
     """Upsert Client + Managed Endpoint + Published Services after real enrollment.
 
@@ -586,6 +587,7 @@ def sync_enrolled_client(
         hostname=hostname or None,
         connected=connected,
         addresses=addresses or None,
+        initial_admission_state=initial_admission_state,
     )
 
     services = services or {}

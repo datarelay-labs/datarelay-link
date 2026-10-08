@@ -98,6 +98,14 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn('confirmation!==required', SOURCE)
         self.assertIn("active connections are not terminated", SOURCE)
 
+    def test_zero_touch_preapproval_is_explicit_admin_only_and_defaults_off(self):
+        self.assertIn('const [preApproved,setPreApproved]=useState(false)', SOURCE)
+        self.assertIn('mode==="zero-touch"?{pre_approved:preApproved}:{}', SOURCE)
+        self.assertIn('operator.role==="Admin"&&mode==="zero-touch"', SOURCE)
+        self.assertIn('setPreApproved(false);setIssued(null)', SOURCE)
+        self.assertIn('Pre-approve this enrollment', SOURCE)
+        self.assertIn('operator={operator} refresh=', SOURCE)
+
     def test_agent_update_preview_is_admin_only_and_not_an_apply_surface(self):
         self.assertIn("function AgentRolloutPreviewPanel()", SOURCE)
         self.assertIn(

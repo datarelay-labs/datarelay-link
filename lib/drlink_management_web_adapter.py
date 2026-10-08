@@ -401,6 +401,7 @@ class ManagementWebApiAdapter:
         ttl_seconds: int | None = None,
         label: str = "",
         note: str = "",
+        pre_approved: bool = False,
     ) -> dict[str, Any]:
         return self.core.enrollment_issue_zero_touch(
             actor=actor,
@@ -408,4 +409,5 @@ class ManagementWebApiAdapter:
             ttl_seconds=ttl_seconds,
             label=label,
             note=note,
+            pre_approved=pre_approved,
         )

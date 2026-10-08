@@ -1741,7 +1741,13 @@ class ControlPlane:
         hostname: Optional[str] = None,
         connected: bool = True,
         addresses: Optional[list[dict]] = None,
+        initial_admission_state: str = "APPROVED",
     ) -> dict:
+        # An explicit first-enrollment state is allowed only at INSERT.
+        # Registry resync must never convert an existing pending/quarantined
+        # Host into an approved one or override a local Admin Change Plan.
+        if initial_admission_state not in ("APPROVED", "PENDING_APPROVAL"):
+            raise ControlPlaneError("Initial Host admission state must be approved or pending.")
         now = utc_now_iso()
         existing = self.conn.execute("SELECT * FROM clients WHERE id = ?", (client_id,)).fetchone()
         endpoint_name = (label or (existing["label"] if existing else None) or client_id[:8]).strip()
@@ -1761,14 +1767,15 @@ class ControlPlane:
                 )
             else:
                 self.conn.execute(
-                    "INSERT INTO clients(id, label, description, hostname, status, trust_status, connected, "
-                    "last_seen, row_version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'trusted', ?, ?, 1, ?, ?)",
+                    "INSERT INTO clients(id, label, description, hostname, status, trust_status, admission_state, connected, "
+                    "last_seen, row_version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'trusted', ?, ?, ?, 1, ?, ?)",
                     (
                         client_id,
                         label or "",
                         description or "",
                         hostname or "",
                         presence,
+                        initial_admission_state,
                         1 if connected else 0,
                         now,
                         now,

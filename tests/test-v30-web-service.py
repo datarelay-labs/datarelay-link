@@ -1110,10 +1110,25 @@ class V30WebServiceTests(unittest.TestCase):
         self.assertEqual(status, 200, issued)
         self.assertTrue(issued["display_once"])
         self.assertTrue(issued["command"])
+        self.assertIs(issued["pre_approved"], False)
+        status, _, approved = self.request(
+            "POST", "/api/v1/enrollments/zero-touch",
+            {**body, "label": "preapproved-web-agent", "pre_approved": True},
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, approved)
+        self.assertIs(approved["pre_approved"], True)
+        status, _, bad_type = self.request(
+            "POST", "/api/v1/enrollments/zero-touch",
+            {**body, "pre_approved": "true"},
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 400, bad_type)
         status, _, listing = self.request("GET", "/api/v1/enrollments?limit=10")
         self.assertEqual(status, 200, listing)
-        self.assertEqual(listing["total"], 1)
+        self.assertEqual(listing["total"], 2)
         serialized = json.dumps(listing)
+        self.assertNotIn(approved["command"], serialized)
         self.assertNotIn(issued["command"], serialized)
         self.assertNotIn("command", serialized.lower())
         self.assertNotIn("secret", serialized.lower())
@@ -1129,7 +1144,7 @@ class V30WebServiceTests(unittest.TestCase):
         self.assertNotIn(manual["enrollment_code"], manual["command"])
         status, _, listing = self.request("GET", "/api/v1/enrollments?limit=10")
         self.assertEqual(status, 200, listing)
-        self.assertEqual(listing["total"], 2)
+        self.assertEqual(listing["total"], 3)
         serialized = json.dumps(listing)
         self.assertNotIn(manual["enrollment_code"], serialized)
 

@@ -856,6 +856,7 @@ class WebApplication:
                 ttl_seconds=ttl_value,
                 label=str(body.get("label") or ""),
                 note=str(body.get("note") or ""),
+                pre_approved=body.get("pre_approved", False),
             )
         if path == "/api/v1/drafts":
             return self.adapter.draft_create(

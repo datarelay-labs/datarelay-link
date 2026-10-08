@@ -68,6 +68,7 @@ class Env:
             'listen_host': '127.0.0.1',
             'listen_port': 6099,
             'registry_file': str(self.registry),
+            'control_plane_root': str(self.root),
             'enrollments_dir': str(self.enrollments),
             'token_file': str(self.token),
         }
@@ -233,6 +234,328 @@ def test_redeem_bind_and_retry():
         pass_('BOOTSTRAP_TICKET_FIRST_MACHINE_BINDING')
         pass_('BOOTSTRAP_TICKET_SAME_MACHINE_RETRY')
         pass_('BOOTSTRAP_TICKET_SECOND_MACHINE_REJECTED')
+    finally:
+        env.cleanup()
+
+
+def test_first_host_admission_proof_and_preapproval_binding():
+    """Use isolated issued-ticket -> redeem -> enroll -> Core for both states."""
+    env = Env()
+    old_root = os.environ.get('FRP_DEPLOY_TEST_ROOT')
+    os.environ['FRP_DEPLOY_TEST_ROOT'] = str(env.root)
+    try:
+        for machine_id, approved in (('pending-new', False), ('approved-new', True)):
+            actor = 'web:admin-fixture' if approved else ''
+            ticket, enrollment, _ticket = env.allocator.issue_bootstrap_ticket(
+                [], 600, 'admission-test', 'host-' + machine_id,
+                pre_approved=approved, pre_approval_actor=actor,
+            )
+            result_code, redeemed = env.redeem(ticket, machine_id=machine_id)
+            if result_code != 200:
+                fail('admission ticket redeem', redeemed)
+                return
+            enrollment_record = json.loads(
+                env.allocator.enrollment_path(enrollment['id']).read_text()
+            )
+            expected = 'APPROVED' if approved else 'PENDING_APPROVAL'
+            if env.allocator.initial_admission_from_enrollment(
+                enrollment_record, machine_id
+            ) != expected:
+                fail('admission initial state mismatch', machine_id)
+                return
+            if approved:
+                try:
+                    env.allocator.initial_admission_from_enrollment(
+                        enrollment_record, 'other-machine'
+                    )
+                except ValueError:
+                    pass
+                else:
+                    fail('preapproved admission was not machine-bound')
+                    return
+                tampered = dict(enrollment_record)
+                tampered['pre_approval_actor'] = 'web:forged-admin'
+                try:
+                    env.allocator.initial_admission_from_enrollment(
+                        tampered, machine_id
+                    )
+                except ValueError:
+                    pass
+                else:
+                    fail('preapproved enrollment actor tampering accepted')
+                    return
+
+            key = env.root / (machine_id + '.key')
+            pub = env.root / (machine_id + '.pub')
+            MOD.MGMT.generate_keypair(key, pub)
+            payload = {
+                'machine_id': machine_id, 'hostname': 'host-' + machine_id,
+                'services': [], 'mgmt_pubkey': pub.read_text(),
+                'mgmt_alg': MOD.MGMT.MGMT_ALG, 'operation_id': 'f' * 32,
+            }
+            body = json.dumps(payload, separators=(',', ':')).encode()
+            ts = str(int(time.time()))
+            sig = hmac.new(
+                enrollment['secret'].encode(),
+                (ts + '\n' + body.decode()).encode(), hashlib.sha256,
+            ).hexdigest()
+            code, result = env.allocator.enroll(enrollment['id'], ts, sig, body)
+            if code != 200:
+                fail('preapproval enroll failed', (machine_id, result))
+                return
+            stored = env.allocator.load_registry()['clients'][machine_id]
+            if stored.get('initial_admission_state') != expected:
+                fail('registry initial admission not stamped', machine_id)
+                return
+            plane = MOD.RP.open_plane(env.allocator.cfg)
+            try:
+                actual = plane.require_client(machine_id)['admission_state']
+                if actual != expected:
+                    fail('Core admission did not match ticket proof', (actual, expected))
+                    return
+            finally:
+                plane.close()
+        pass_('HOST_ENROLLMENT_DEFAULT_PENDING')
+        pass_('HOST_PREAPPROVAL_TICKET_MACHINE_BOUND')
+        pass_('HOST_ADMISSION_CORE_PROJECTED')
+    finally:
+        if old_root is None:
+            os.environ.pop('FRP_DEPLOY_TEST_ROOT', None)
+        else:
+            os.environ['FRP_DEPLOY_TEST_ROOT'] = old_root
+        env.cleanup()
+
+
+def test_new_host_core_failure_and_forged_preapproval_fail_closed():
+    """Fresh Host never becomes usable if Core admission or ticket proof fails."""
+    from unittest.mock import patch
+    env = Env()
+    try:
+        machine = 'admission-fail-closed'
+        ticket, enrollment, _ = env.allocator.issue_bootstrap_ticket(
+            [], 600, 'admission-fail-test', label='new-host'
+        )
+        status, redeemed = env.redeem(ticket, machine_id=machine)
+        if status != 200:
+            fail('admission failure-test redeem', redeemed)
+            return
+        path = env.allocator.enrollment_path(enrollment['id'])
+        original = json.loads(path.read_text())
+        forged = dict(original)
+        forged['pre_approved'] = True
+        forged['pre_approval_actor'] = 'web:fake-admin'
+        env.allocator.save_enrollment(path, forged)
+
+        key = env.root / 'admission-fail.key'
+        pub = env.root / 'admission-fail.pub'
+        MOD.MGMT.generate_keypair(key, pub)
+        payload = {
+            'machine_id': machine, 'hostname': 'host-fail-test',
+            'services': [], 'mgmt_pubkey': pub.read_text(),
+            'mgmt_alg': MOD.MGMT.MGMT_ALG, 'operation_id': 'a' * 32,
+        }
+        body = json.dumps(payload, separators=(',', ':')).encode()
+        ts = str(int(time.time()))
+        sig = hmac.new(
+            enrollment['secret'].encode(), (ts + '\n' + body.decode()).encode(),
+            hashlib.sha256,
+        ).hexdigest()
+        code, result = env.allocator.enroll(enrollment['id'], ts, sig, body)
+        if code != 403 or result.get('error_class') != 'ENROLLMENT_ADMISSION_INVALID':
+            fail('forged preapproval was accepted', result)
+            return
+        if env.allocator.load_registry()['clients']:
+            fail('forged preapproval created a registry client')
+            return
+
+        env.allocator.save_enrollment(path, original)
+        with patch.object(
+            MOD.RP, 'open_plane', side_effect=OSError('simulated Core unavailable')
+        ):
+            code, result = env.allocator.enroll(enrollment['id'], ts, sig, body)
+        if code != 500 or result.get('error_class') != 'ENROLLMENT_CORE_UNAVAILABLE':
+            fail('Core outage was accepted', result)
+            return
+        if env.allocator.load_registry()['clients']:
+            fail('Core outage left an enrolled registry client')
+            return
+        rec = json.loads(path.read_text())
+        if rec.get('used_at') or rec.get('bound_machine_id'):
+            fail('Core outage consumed an enrollment code')
+            return
+
+        # The same authentic issued code may retry when the Core is healthy.
+        code, result = env.allocator.enroll(enrollment['id'], ts, sig, body)
+        if code != 200:
+            fail('Core recovery could not enroll', result)
+            return
+        plane = MOD.RP.open_plane(env.allocator.cfg)
+        try:
+            if plane.require_client(machine)['admission_state'] != 'PENDING_APPROVAL':
+                fail('Core recovery did not default new Host to pending')
+                return
+        finally:
+            plane.close()
+        pass_('HOST_FORGED_PREAPPROVAL_DENIED')
+        pass_('HOST_CORE_SYNC_OUTAGE_FAIL_CLOSED')
+        pass_('HOST_CORE_RECOVERY_PENDING')
+    finally:
+        env.cleanup()
+
+
+def test_preapproval_stays_pending_until_ticket_is_committed():
+    """A preapproved Host is never approved during a failed commit."""
+    from unittest.mock import patch
+
+    env = Env()
+    try:
+        machine = 'two-phase-host'
+        ticket, enroll, _ = env.allocator.issue_bootstrap_ticket(
+            [], 600, 'two-phase', label='two-phase-host',
+            pre_approved=True, pre_approval_actor='web:admin-fixture',
+        )
+        status, result = env.redeem(ticket, machine_id=machine)
+        if status != 200:
+            fail('preapproval two-phase redeem', result)
+            return
+        key = env.root / 'two-phase.key'
+        pub = env.root / 'two-phase.pub'
+        MOD.MGMT.generate_keypair(key, pub)
+        operation = '9' * 32
+        payload = {
+            'machine_id': machine, 'hostname': 'host-two-phase',
+            'services': [], 'mgmt_pubkey': pub.read_text(),
+            'mgmt_alg': MOD.MGMT.MGMT_ALG, 'operation_id': operation,
+        }
+        body = json.dumps(payload, separators=(',', ':')).encode()
+        ts = str(int(time.time()))
+        signature = hmac.new(
+            enroll['secret'].encode(),
+            (ts + '\n' + body.decode()).encode(),
+            hashlib.sha256,
+        ).hexdigest()
+
+        # Force ticket-consumption persistence failure after Core projection.
+        with patch.object(env.allocator, 'save_bootstrap',
+                          side_effect=OSError('injected completion failure')):
+            code, response = env.allocator.enroll(enroll['id'], ts, signature, body)
+        if code == 200:
+            fail('preapproval bypassed ticket completion failure', response)
+            return
+        plane = MOD.RP.open_plane(env.allocator.cfg)
+        try:
+            core = plane.require_client(machine)
+            if core['admission_state'] != 'PENDING_APPROVAL':
+                fail('failed preapproval leaked approved Core Host', core['admission_state'])
+                return
+        finally:
+            plane.close()
+        if env.allocator.load_registry()['clients']:
+            fail('failed preapproval left a live registry identity')
+            return
+
+        # The original enrollment may recover, but not create a second Host.
+        code, response = env.allocator.enroll(enroll['id'], ts, signature, body)
+        if code != 200:
+            fail('preapproval retry after ticket failure', response)
+            return
+        plane = MOD.RP.open_plane(env.allocator.cfg)
+        try:
+            core = plane.require_client(machine)
+            if core['admission_state'] != 'APPROVED':
+                fail('committed preapproval did not activate', core['admission_state'])
+                return
+            if core['admission_actor'] != 'web:admin-fixture':
+                fail('preapproval actor attribution missing', core['admission_actor'])
+                return
+            revision = plane.current_revision()
+        finally:
+            plane.close()
+        code, response = env.allocator.enroll(enroll['id'], ts, signature, body)
+        if code != 200:
+            fail('preapproval consumed-code idempotent replay failed', response)
+            return
+        plane = MOD.RP.open_plane(env.allocator.cfg)
+        try:
+            if plane.current_revision() != revision:
+                fail('preapproval replay generated another Core revision')
+                return
+        finally:
+            plane.close()
+        pass_('HOST_PREAPPROVAL_TWO_PHASE_FAIL_CLOSED')
+        pass_('HOST_PREAPPROVAL_ACTIVATES_AFTER_COMMIT')
+        pass_('HOST_PREAPPROVAL_EXACT_REPLAY_IDEMPOTENT')
+    finally:
+        env.cleanup()
+
+
+def test_preapproval_activation_recovery_after_consumed_ticket():
+    """A consumed ticket cannot silently bypass a failed Core activation."""
+    from unittest.mock import patch
+
+    env = Env()
+    try:
+        machine = 'activation-retry-host'
+        ticket, enroll, _ = env.allocator.issue_bootstrap_ticket(
+            [], 600, 'activation-retry', pre_approved=True,
+            pre_approval_actor='web:authorized-admin',
+        )
+        status, result = env.redeem(ticket, machine_id=machine)
+        if status != 200:
+            fail('activation-retry redeem', result)
+            return
+        key = env.root / 'activation.key'
+        pub = env.root / 'activation.pub'
+        MOD.MGMT.generate_keypair(key, pub)
+        payload = {
+            'machine_id': machine, 'hostname': machine,
+            'services': [], 'mgmt_pubkey': pub.read_text(),
+            'mgmt_alg': MOD.MGMT.MGMT_ALG, 'operation_id': '8' * 32,
+        }
+        body = json.dumps(payload, separators=(',', ':')).encode()
+        ts = str(int(time.time()))
+        sig = hmac.new(
+            enroll['secret'].encode(), (ts + '\n' + body.decode()).encode(),
+            hashlib.sha256,
+        ).hexdigest()
+        with patch.object(
+            MOD, 'activate_preapproved_host_after_commit',
+            side_effect=RuntimeError('simulated activation failure'),
+        ):
+            code, result = env.allocator.enroll(enroll['id'], ts, sig, body)
+        if code != 503 or result.get('error_class') != 'PREAPPROVAL_ACTIVATION_PENDING':
+            fail('activation failure was not fail-closed', (code, result))
+            return
+        plane = MOD.RP.open_plane(env.allocator.cfg)
+        try:
+            if plane.require_client(machine)['admission_state'] != 'PENDING_APPROVAL':
+                fail('activation failure widened Core access')
+                return
+        finally:
+            plane.close()
+        ticket_record = json.loads(
+            env.allocator.bootstrap_path(record_id(ticket)).read_text()
+        )
+        if not ticket_record.get('completed_at'):
+            fail('activation failure resurrected a consumed ticket')
+            return
+        code, result = env.allocator.enroll(enroll['id'], ts, sig, body)
+        if code != 200:
+            fail('activation exact replay could not recover', (code, result))
+            return
+        plane = MOD.RP.open_plane(env.allocator.cfg)
+        try:
+            record = plane.require_client(machine)
+            if record['admission_state'] != 'APPROVED':
+                fail('activation retry did not activate committed Host')
+                return
+            if record['admission_actor'] != 'web:authorized-admin':
+                fail('activation retry actor attribution not retained')
+                return
+        finally:
+            plane.close()
+        pass_('HOST_PREAPPROVAL_ACTIVATION_FAILURE_STAYS_PENDING')
+        pass_('HOST_PREAPPROVAL_ACTIVATION_REPLAY_RECOVERS')
     finally:
         env.cleanup()
 
@@ -1354,6 +1677,10 @@ def main():
     test_windows_renderer_frozen_and_launcher()
     test_handle_index_removed_with_retention()
     test_redeem_bind_and_retry()
+    test_first_host_admission_proof_and_preapproval_binding()
+    test_new_host_core_failure_and_forged_preapproval_fail_closed()
+    test_preapproval_stays_pending_until_ticket_is_committed()
+    test_preapproval_activation_recovery_after_consumed_ticket()
     test_expired_and_invalid()
     test_malformed_json_no_bind()
     test_machine_id_rejected()

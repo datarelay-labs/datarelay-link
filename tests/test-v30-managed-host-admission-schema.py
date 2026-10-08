@@ -13,11 +13,44 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 from drlink_control_plane import ControlPlane
-from drlink_control_db import ensure_v30_schema
+from drlink_control_db import ensure_v30_schema, ControlPlaneError
 from drlink_management_service import ManagementQueryService
 
 
 class HostAdmissionStateTests(unittest.TestCase):
+    def test_first_enrollment_initial_state_is_explicit_and_never_overwrites_existing(self):
+        with tempfile.TemporaryDirectory(prefix="drlink-admission-create-") as root:
+            plane = ControlPlane(root)
+            try:
+                plane.upsert_client(
+                    "new-pending", hostname="new-pending",
+                    initial_admission_state="PENDING_APPROVAL",
+                )
+                row = plane.require_client("new-pending")
+                self.assertEqual(row["admission_state"], "PENDING_APPROVAL")
+                # Reconnects and registry reconciliation are not permission changes.
+                plane.upsert_client(
+                    "new-pending", hostname="renamed",
+                    initial_admission_state="APPROVED",
+                )
+                self.assertEqual(
+                    plane.require_client("new-pending")["admission_state"],
+                    "PENDING_APPROVAL",
+                )
+                plane.upsert_client("legacy-compat", hostname="legacy-compat")
+                self.assertEqual(
+                    plane.require_client("legacy-compat")["admission_state"],
+                    "APPROVED",
+                )
+                with self.assertRaises(ControlPlaneError):
+                    plane.upsert_client(
+                        "invalid-state", hostname="invalid-state",
+                        initial_admission_state="QUARANTINED",
+                    )
+                self.assertIsNone(plane.get_client("invalid-state"))
+            finally:
+                plane.close()
+
     def test_existing_hosts_remain_approved_after_repeat_migration(self):
         with tempfile.TemporaryDirectory(prefix="drlink-host-admission-") as root:
             plane = ControlPlane(root)

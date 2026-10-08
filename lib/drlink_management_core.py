@@ -951,16 +951,24 @@ class ManagementCoreService:
         ttl_seconds: Optional[int] = None,
         label: str = "",
         note: str = "",
+        pre_approved: bool = False,
     ) -> dict[str, Any]:
         self._require_web_role(actor, "Admin")
         if "management-config" not in actor.permissions:
             raise ManagementAuthorizationError("management-config is required for enrollment issuance.")
+        if type(pre_approved) is not bool:
+            raise ControlPlaneError("Pre-approve this enrollment must be boolean.")
+        if pre_approved and "management-host-approve" not in actor.permissions:
+            raise ManagementAuthorizationError(
+                "management-host-approve is required for pre-approved enrollment."
+            )
         return ManagementEnrollmentService(self.root).issue_zero_touch(
             platform=platform,
             ttl_seconds=ttl_seconds,
             label=label,
             note=note,
             actor_id=actor.actor_id,
+            pre_approved=pre_approved,
         )
 
     @staticmethod
