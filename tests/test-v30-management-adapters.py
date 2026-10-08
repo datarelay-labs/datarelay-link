@@ -106,6 +106,10 @@ class V30ManagementAdapterTests(unittest.TestCase):
         web_names = set(self.web.capability_names(actor=self.actor))
         self.assertEqual(mcp_names, mcp_expected)
         self.assertEqual(web_names, ready)
+        self.assertNotIn(
+            "drlink_agent_update_rollout_start", web_names,
+            "Unqualified Agent Rollout Apply must not be advertised as ready",
+        )
         self.assertNotIn("drlink_guided_change_preview", mcp_names)
         self.assertIn("drlink_guided_change_preview", web_names)
         self.assertIn("drlink_diagnose_connection", ready)

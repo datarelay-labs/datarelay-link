@@ -55,7 +55,9 @@ IMPLEMENTED_GUIDED_CHANGE_TOOLS = frozenset(
 IMPLEMENTED_MANAGEMENT_JOB_TOOLS = frozenset(
     {
         "drlink_diagnostic_job_start",
-        "drlink_agent_update_rollout_start",
+        # Rollout Apply remains a catalog contract until exact-HEAD Agent
+        # updater, signed artifact and rollback qualification are verified.
+        # Do not advertise a permanently fail-closed handler as implemented.
     }
 )
 
