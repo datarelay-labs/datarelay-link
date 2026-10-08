@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import gzip
+import hashlib
+import re
 import json
 import io
 import tarfile
@@ -43,19 +45,59 @@ def manifest_sources() -> tuple[str, ...]:
     return tuple(sources)
 
 
-def foundation_pack_sources() -> tuple[str, ...]:
-    lock = ROOT / "web/foundation.lock.json"
-    data = json.loads(lock.read_text(encoding="utf-8"))
+def foundation_pack_sources(root: Path = ROOT) -> tuple[str, ...]:
+    """Validate the exact vendored tgz bytes using explicit archive checksums.
+
+    sha256 identifies the staged package DIRECTORY. archive_sha256 identifies
+    the separately produced tgz; these two digests are not interchangeable.
+    """
+    data = json.loads((root / "web/foundation.lock.json").read_text(encoding="utf-8"))
     version = data.get("version")
     packages = data.get("packages")
-    if not isinstance(version, str) or not version or not isinstance(packages, list) or len(packages) != 10:
+    head = data.get("source_head")
+    if (
+        not isinstance(version, str)
+        or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+-[A-Za-z0-9.-]+", version)
+        or not isinstance(head, str)
+        or not re.fullmatch("[0-9a-f]{40}", head)
+        or data.get("commit") != head
+        or not isinstance(packages, list)
+        or len(packages) != 10
+    ):
         raise SystemExit("invalid pinned Foundation package manifest")
     paths = []
+    known = {
+        "tokens", "icons", "ui", "product-shell", "auth-ui",
+        "system-contracts", "system-admin-ui", "testkit", "foundation", "foundation-cli",
+    }
+    seen = set()
     for entry in packages:
         name = entry.get("path") if isinstance(entry, dict) else None
-        if not isinstance(name, str) or not name or not all(c.isalnum() or c == "-" for c in name):
-            raise SystemExit("invalid Foundation package name")
-        paths.append("web/.foundation/packs/datarelay-labs-%s-%s.tgz" % (name, version))
+        archive_sha = entry.get("archive_sha256") if isinstance(entry, dict) else None
+        staged_sha = entry.get("sha256") if isinstance(entry, dict) else None
+        if (
+            not isinstance(name, str)
+            or name not in known
+            or name in seen
+            or entry.get("name") != "@datarelay-labs/" + name
+            or not isinstance(archive_sha, str)
+            or not re.fullmatch("[0-9a-f]{64}", archive_sha)
+            or not isinstance(staged_sha, str)
+            or not re.fullmatch("[0-9a-f]{64}", staged_sha)
+        ):
+            raise SystemExit("invalid Foundation package entry:" + str(name))
+        seen.add(name)
+        relative = "web/.foundation/packs/datarelay-labs-%s-%s.tgz" % (name, version)
+        archive = root / relative
+        if not archive.is_file():
+            raise SystemExit("foundation-archive-missing:" + name)
+        with archive.open("rb") as file:
+            actual = hashlib.file_digest(file, "sha256").hexdigest()
+        if actual != archive_sha:
+            raise SystemExit("foundation-archive-sha-mismatch:" + name)
+        paths.append(relative)
+    if seen != known:
+        raise SystemExit("invalid Foundation package set")
     return tuple(paths)
 
 
@@ -90,6 +132,8 @@ def normalized(info: tarfile.TarInfo) -> tarfile.TarInfo:
 
 
 def build(output: Path = OUTPUT) -> Path:
+    # Recheck vendored bytes immediately before emitting the distributable.
+    foundation_pack_sources()
     missing = [name for name in FILES if not (ROOT / name).is_file()]
     if missing:
         raise SystemExit("missing Web package files: %s" % ", ".join(missing))

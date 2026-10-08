@@ -2,6 +2,8 @@
 from __future__ import annotations
 import hashlib
 import importlib.util
+import json
+import shutil
 import tarfile
 import tempfile
 import unittest
@@ -29,6 +31,29 @@ class V30WebBundleTests(unittest.TestCase):
         with tarfile.open(first, "r:gz") as tf:
             names = set(tf.getnames())
         self.assertEqual(names, {"data-relay-link-web/" + name for name in MOD.FILES})
+
+    def test_vendored_foundation_archive_digest_and_reject_tampering(self):
+        with tempfile.TemporaryDirectory(prefix="drlink-foundation-verify-") as folder:
+            root = Path(folder)
+            bundles = root / "web/.foundation/packs"
+            bundles.mkdir(parents=True)
+            lock_src = ROOT / "web/foundation.lock.json"
+            (root / "web/foundation.lock.json").write_bytes(lock_src.read_bytes())
+            lock = json.loads(lock_src.read_text())
+            for entry in lock["packages"]:
+                path = "datarelay-labs-%s-%s.tgz" % (entry["path"], lock["version"])
+                shutil.copyfile(ROOT / "web/.foundation/packs" / path, bundles / path)
+            paths = MOD.foundation_pack_sources(root)
+            self.assertEqual(len(paths), 10)
+            tampered = bundles / ("datarelay-labs-tokens-%s.tgz" % lock["version"])
+            with tampered.open("ab") as f:
+                f.write(b"tamper")
+            with self.assertRaisesRegex(SystemExit, "foundation-archive-sha-mismatch:tokens"):
+                MOD.foundation_pack_sources(root)
+            lock["packages"][0].pop("archive_sha256")
+            (root / "web/foundation.lock.json").write_text(json.dumps(lock))
+            with self.assertRaisesRegex(SystemExit, "invalid Foundation package entry"):
+                MOD.foundation_pack_sources(root)
 
     def test_bundle_contains_compiled_static_assets_only_for_runtime_ui(self):
         tmp = Path(tempfile.mkdtemp(prefix="drlink-web-static-"))

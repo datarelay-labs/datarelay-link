@@ -709,8 +709,8 @@ function LinkFoundationAdministration({
   const unavailable={availability:"unavailable",access:"view"} as const;
   const tasks=createStandardAdministrationTasks({
     "core.https":{
-      availability:"supported",
-      access:admin?"manage":"view",
+      availability:"read_only",
+      access:"view",
       target:{kind:"action",actionId:"link.certificate"}
     },
     "core.users":{
