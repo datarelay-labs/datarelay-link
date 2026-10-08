@@ -225,6 +225,23 @@ Task `access` describes the current actor's permission. Visual filtering
 does not authorize API calls; Web/Core enforce mutations independently.
 Actual browser/mobile accessibility and role acceptance remain separate E2E gates.
 
+The offline, non-browser Administration qualification runs after the pinned
+Web dependencies are locally available:
+
+```sh
+cd web
+npm run test:administration
+```
+
+This compiles Link's real `src/foundation-administration.ts` projection in
+a disposable directory and server-renders the pinned Foundation
+`AdministrationHub` for `Admin`, `Operator`, and `Read Only`. It checks
+four-group composition, effective task availability, privileged button
+visibility, and honest HTTPS/MCP TLS status. It does **not** interact with the
+deployed site or qualify keyboard, responsive, mobile, or browser E2E behavior.
+The offline Web release archive must contain the projection source as well
+as the precompiled UI and exact pinned Foundation packages.
+
 ## 5. Application shell
 
 ### 5.1 Sidebar

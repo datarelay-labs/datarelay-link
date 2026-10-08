@@ -7,6 +7,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = (ROOT / "web/src/main.tsx").read_text(encoding="utf-8")
+ADMIN_SOURCE = (ROOT / "web/src/foundation-administration.ts").read_text(encoding="utf-8")
 CSS = (ROOT / "web/dist/styles.css").read_text(encoding="utf-8")
 PACKAGE = (ROOT / "web/package.json").read_text(encoding="utf-8")
 PACKAGE_LOCK = (ROOT / "web/package-lock.json").read_text(encoding="utf-8")
@@ -83,10 +84,12 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         # privileged open action or a false claim that users are unsupported.
         component = SOURCE.split("function LinkFoundationAdministration(", 1)[1]
         component = component.split("function SystemPanel(", 1)[0]
-        self.assertIn('"core.https":{', component)
-        self.assertIn('"core.users":{', component)
-        https = component.split('"core.https":{', 1)[1].split('    },', 1)[0]
-        users = component.split('"core.users":{', 1)[1].split('    },', 1)[0]
+        self.assertIn('createLinkFoundationAdministrationTasks(operator.role)', component)
+        self.assertIn('import {createLinkFoundationAdministrationTasks}', SOURCE)
+        self.assertIn('"core.https":{', ADMIN_SOURCE)
+        self.assertIn('"core.users":{', ADMIN_SOURCE)
+        https = ADMIN_SOURCE.split('"core.https":{', 1)[1].split('    },', 1)[0]
+        users = ADMIN_SOURCE.split('"core.users":{', 1)[1].split('    },', 1)[0]
         self.assertIn('availability:"read_only"', https)
         self.assertIn('access:"view"', https)
         self.assertIn('MCP TLS certificate status only', https)
@@ -102,9 +105,9 @@ class V30WebSaasUxContractTests(unittest.TestCase):
             "core.password", "core.timezone", "core.network",
             "core.retention", "core.backup-import"
         ):
-            self.assertIn(f'"{name}":unavailable', component)
+            self.assertIn(f'"{name}":unavailable', ADMIN_SOURCE)
         for name in ("core.audit", "core.health"):
-            self.assertIn(f'"{name}":{{', component)
+            self.assertIn(f'"{name}":{{', ADMIN_SOURCE)
 
     def test_managed_host_admission_is_visible_separately_from_connection(self):
         # An admission filter alone is not enough; the selected state must be

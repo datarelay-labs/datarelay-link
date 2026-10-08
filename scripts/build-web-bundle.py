@@ -23,6 +23,7 @@ BUILD_FILES = (
     "web/package-lock.json",
     "web/foundation.lock.json",
     "web/src/main.tsx",
+    "web/src/foundation-administration.ts",
 )
 
 

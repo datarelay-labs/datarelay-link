@@ -1,7 +1,8 @@
 import React, {useEffect, useState} from "react";
 import {createRoot} from "react-dom/client";
 import {QRCodeSVG} from "qrcode.react";
-import {AdministrationHub,createStandardAdministrationTasks,type AdministrationHubTask} from "@datarelay-labs/foundation";
+import {AdministrationHub,type AdministrationHubTask} from "@datarelay-labs/foundation";
+import {createLinkFoundationAdministrationTasks} from "./foundation-administration";
 
 type Json = Record<string, any>;
 const navGroups=[
@@ -706,38 +707,7 @@ function LinkFoundationAdministration({
   onNavigate?:(id:string,groupId?:string)=>void
 }){
   const admin=operator.role==="Admin";
-  const unavailable={availability:"unavailable",access:"view"} as const;
-  const tasks=createStandardAdministrationTasks({
-    "core.https":{
-      // The shared task covers Web HTTPS listener and redirect configuration.
-      // Link only exposes MCP TLS certificate status here; existing privileged
-      // MCP certificate actions remain in SystemPanel, not this shared task.
-      availability:"read_only",
-      access:"view",
-      notes:"MCP TLS certificate status only. Shared Web HTTPS listener and redirect configuration is not available in Link.",
-      target:{kind:"action",actionId:"link.certificate"}
-    },
-    "core.users":{
-      // Access and product capability are independent: do not mislabel an
-      // Admin-only feature as unsupported for non-admin operators.
-      availability:"supported",
-      access:admin?"manage":"none",
-      ...(admin?{target:{kind:"action" as const,actionId:"link.users"}}:{})
-    },
-    "core.password":unavailable,
-    "core.timezone":unavailable,
-    "core.network":unavailable,
-    "core.retention":unavailable,
-    "core.backup-import":unavailable,
-    "core.audit":{
-      availability:"read_only",access:"view",
-      target:{kind:"action",actionId:"link.audit"}
-    },
-    "core.health":{
-      availability:"read_only",access:"view",
-      target:{kind:"action",actionId:"link.health"}
-    }
-  });
+  const tasks=createLinkFoundationAdministrationTasks(operator.role);
   function openTask(task:AdministrationHubTask){
     // Link Core retains routing, session security and privileged settings authority.
     switch(task.target?.kind==="action"?task.target.actionId:""){

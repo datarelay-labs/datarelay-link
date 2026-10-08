@@ -1,0 +1,43 @@
+import {createStandardAdministrationTasks} from "@datarelay-labs/foundation";
+
+/**
+ * Product-owned PF-5B Administration capability projection.
+ *
+ * These labels/groups come from the pinned Foundation vocabulary; only Link
+ * supplies availability, actor access and destinations. Web/Core authorization
+ * remains the final enforcement point.
+ */
+export function createLinkFoundationAdministrationTasks(role:string){
+  const admin=role==="Admin";
+  const unavailable={availability:"unavailable",access:"view"} as const;
+  return createStandardAdministrationTasks({
+    "core.https":{
+      // The standard task includes Web listener/redirect configuration, which
+      // Link does not implement. This only links to MCP TLS certificate status.
+      availability:"read_only",
+      access:"view",
+      notes:"MCP TLS certificate status only. Shared Web HTTPS listener and redirect configuration is not available in Link.",
+      target:{kind:"action",actionId:"link.certificate"}
+    },
+    "core.users":{
+      // Supported on this product, but only Admin can see/manage Web users.
+      // The actor filter must never claim the underlying feature is missing.
+      availability:"supported",
+      access:admin?"manage":"none",
+      ...(admin?{target:{kind:"action" as const,actionId:"link.users"}}:{})
+    },
+    "core.password":unavailable,
+    "core.timezone":unavailable,
+    "core.network":unavailable,
+    "core.retention":unavailable,
+    "core.backup-import":unavailable,
+    "core.audit":{
+      availability:"read_only",access:"view",
+      target:{kind:"action",actionId:"link.audit"}
+    },
+    "core.health":{
+      availability:"read_only",access:"view",
+      target:{kind:"action",actionId:"link.health"}
+    }
+  });
+}
