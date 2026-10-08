@@ -352,6 +352,25 @@ class ManagedHostAdmissionService(ManagementChangeService):
             if self.plane.current_revision() != expected_revision:
                 self._mark_plan(change_plan_id, "stale")
                 raise ConcurrencyError("REVISION_CONFLICT; no changes were applied.")
+            # Operational state can change without advancing the global
+            # configuration revision. A prior NO_CHANGE preview must never
+            # certify a Host whose approval or management trust has drifted.
+            try:
+                current_host = self.plane.require_client(host_id)
+            except ControlPlaneError as exc:
+                self._mark_plan(change_plan_id, "stale")
+                raise ControlPlaneError(
+                    "Host admission/trust state changed; no changes applied."
+                ) from exc
+            if (previous != target
+                or str(current_host["admission_state"]) != target
+                or str(current_host["trust_status"]) != "trusted"
+                or str(current_host["status"] or "").lower()
+                    in ("retired", "removed", "deleted")):
+                self._mark_plan(change_plan_id, "stale")
+                raise ControlPlaneError(
+                    "Host admission/trust state changed; no changes applied."
+                )
             self._mark_plan(change_plan_id, "applied")
             return {
                 "status": "NO_CHANGE", "admission_operation": action,

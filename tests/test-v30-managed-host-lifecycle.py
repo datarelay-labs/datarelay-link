@@ -430,6 +430,52 @@ class V30ManagedHostLifecycleTests(unittest.TestCase):
             os.environ.pop("DRLINK_FAULT_ACTIVATION", None)
             os.environ["DRLINK_SKIP_ACTIVATION"] = "1"
 
+    def test_admission_noop_plan_rechecks_trust_and_state_without_revision_change(self):
+        from drlink_management_host_lifecycle import ManagedHostAdmissionService
+
+        self._seed_host(with_service=False)
+        for column, changed in (
+            ("admission_state", "QUARANTINED"),
+            ("trust_status", "revoked"),
+        ):
+            with self.subTest(column=column):
+                with ManagedHostAdmissionService(self.tmp) as service:
+                    service.plane.conn.execute(
+                        "UPDATE clients SET admission_state='APPROVED',trust_status='trusted' WHERE id=?",
+                        (MID,),
+                    )
+                    service.plane.conn.commit()
+                    noop = service.preview(
+                        actor_id="web:admin", host=MID, operation="approve",
+                    )
+                    self.assertTrue(noop["no_change"])
+                    expected_revision = service.plane.current_revision()
+                    service.plane.conn.execute(
+                        "UPDATE clients SET " + column + "=? WHERE id=?",
+                        (changed, MID),
+                    )
+                    service.plane.conn.commit()
+                    self.assertEqual(
+                        service.plane.current_revision(), expected_revision,
+                    )
+                    with self.assertRaisesRegex(
+                        ControlPlaneError, "admission/trust state changed"
+                    ):
+                        service.apply(
+                            actor_id="web:admin",
+                            change_plan_id=noop["change_plan_id"],
+                            confirmation="APPROVE",
+                        )
+                    self.assertEqual(
+                        service.plane.current_revision(), expected_revision,
+                    )
+                    self.assertEqual(
+                        service.plane.conn.execute(
+                            "SELECT " + column + " FROM clients WHERE id=?",
+                            (MID,),
+                        ).fetchone()[0], changed,
+                    )
+
     def test_admission_change_plan_rejects_revision_drift_and_noop(self):
         from drlink_management_host_lifecycle import ManagedHostAdmissionService
 
