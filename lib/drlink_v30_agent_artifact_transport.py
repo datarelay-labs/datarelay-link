@@ -82,7 +82,7 @@ def _https_get(
         if response.status != 200:
             _deny("signed Server-local artifact endpoint is unavailable")
         advertised = response.getheader("Content-Length")
-        if advertised:
+        if advertised is not None:
             try:
                 length = int(advertised)
             except ValueError:
