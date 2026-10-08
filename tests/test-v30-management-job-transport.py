@@ -1055,6 +1055,262 @@ class SignedAgentEnrolledHTTPSTests(unittest.TestCase):
             self._stage(parent=alias)
         self.assertEqual(list(private.iterdir()), [])
 
+    def _provision_disposable_local_trust(self):
+        """Test-only provision of Agent enrollment and release PUBLIC trust."""
+        import shutil
+
+        from drlink_v30_agent_local_trust import (
+            AGENT_IDENTITY_KEY, AGENT_IDENTITY_PUB, AGENT_IDENTITY_MAC,
+            STATE_FILE, ENROLLMENT_CA, RELEASE_PUB, RELEASE_PIN, PRIVATE_STAGE,
+        )
+
+        for rel in (STATE_FILE, ENROLLMENT_CA, RELEASE_PUB, PRIVATE_STAGE):
+            (self.root / rel).parent.mkdir(parents=True, exist_ok=True)
+        pub = self.root / AGENT_IDENTITY_PUB
+        key = self.root / AGENT_IDENTITY_KEY
+        pub.parent.mkdir(parents=True, exist_ok=True)
+        if not key.exists():
+            MGMT.generate_keypair(key, pub)
+        key.chmod(0o600)
+        mac = self.root / AGENT_IDENTITY_MAC
+        mac.write_text(MGMT.new_mac_key() + "\n")
+        mac.chmod(0o600)
+        state = {
+            "machine_id": MACHINE_A,
+            "allocator_url": self.origin + "/enroll",
+            "frp_transport": "tcp",
+            "frp_server_port": 7000,
+        }
+        (self.root / STATE_FILE).write_text(json.dumps(state) + "\n")
+        (self.root / STATE_FILE).chmod(0o600)
+        shutil.copyfile(self.ca, self.root / ENROLLMENT_CA)
+        (self.root / ENROLLMENT_CA).chmod(0o644)
+        (self.root / RELEASE_PUB).write_text(self.fixture.pub.read_text())
+        (self.root / RELEASE_PUB).chmod(0o644)
+        (self.root / RELEASE_PIN).write_text(self.fixture.fingerprint + "\n")
+        (self.root / RELEASE_PIN).chmod(0o600)
+        pub.chmod(0o644)
+        (self.root / PRIVATE_STAGE).mkdir(mode=0o700, exist_ok=True)
+        for rel in ("etc", "etc/frp", "etc/drlink",
+                    "var", "var/lib", "var/lib/drlink"):
+            (self.root / rel).chmod(0o755)
+        (self.root / PRIVATE_STAGE).chmod(0o700)
+        return state
+
+    def test_agent_local_trust_binds_real_https_and_private_stage(self):
+        from drlink_v30_agent_local_trust import (
+            resolve_local_agent_update_trust, preflight_local_enrolled_agent_update,
+            stage_local_enrolled_agent_update, reverify_local_staged_agent_update,
+        )
+
+        self._provision_disposable_local_trust()
+        trust = resolve_local_agent_update_trust(self.root)
+        self.assertEqual(trust["enrolled_https_origin"], self.origin)
+        self.assertEqual(trust["pinned_release_key_fingerprint"], self.fixture.fingerprint)
+        self.assertNotIn("private_key", trust)
+        self.assertEqual(
+            preflight_local_enrolled_agent_update(
+                root=self.root, target=self.fixture.target, expected_channel="development",
+            )["signature_verified"], True,
+        )
+        staged = stage_local_enrolled_agent_update(
+            root=self.root, target=self.fixture.target, expected_channel="development",
+        )
+        self.assertTrue(staged["candidate_staged"])
+        self.assertFalse(staged["update_completed"])
+        self.assertEqual(
+            reverify_local_staged_agent_update(
+                root=self.root, candidate_dir=staged["candidate_dir"],
+                target=self.fixture.target, expected_channel="development",
+            )["signature_verified"], True,
+        )
+        self.assertEqual(len(self.requests), 6)
+
+    def test_local_trust_ignores_environment_override_and_converts_single443(self):
+        from drlink_v30_agent_local_trust import (
+            resolve_local_agent_update_trust, preflight_local_enrolled_agent_update,
+            STATE_FILE,
+        )
+
+        state = self._provision_disposable_local_trust()
+        state.update({
+            "allocator_url": "https://127.0.0.1:6099/enroll",
+            "frp_transport": "wss",
+            "frp_server_port": self.server.server_address[1],
+        })
+        (self.root / STATE_FILE).write_text(json.dumps(state) + "\n")
+        previous = {
+            key: os.environ.get(key)
+            for key in ("DRLINK_MGMT_URL", "DRLINK_MGMT_INSECURE")
+        }
+        os.environ["DRLINK_MGMT_URL"] = "http://untrusted.invalid:8080"
+        os.environ["DRLINK_MGMT_INSECURE"] = "1"
+        try:
+            self.assertEqual(
+                resolve_local_agent_update_trust(self.root)["enrolled_https_origin"],
+                self.origin,
+            )
+            result = preflight_local_enrolled_agent_update(
+                root=self.root, target=self.fixture.target, expected_channel="development",
+            )
+            self.assertTrue(result["signature_verified"])
+            self.assertFalse(result["update_completed"])
+            self.assertEqual(len(self.requests), 3)
+        finally:
+            for key, value in previous.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+    def test_missing_local_signer_or_enrollment_state_fails_without_network(self):
+        from drlink_v30_agent_artifact import AgentArtifactError
+        from drlink_v30_agent_local_trust import (
+            preflight_local_enrolled_agent_update, RELEASE_PIN, RELEASE_PUB,
+            AGENT_IDENTITY_KEY, STATE_FILE,
+        )
+
+        self._provision_disposable_local_trust()
+
+        def run():
+            return preflight_local_enrolled_agent_update(
+                root=self.root, target=self.fixture.target, expected_channel="development",
+            )
+
+        pin = self.root / RELEASE_PIN
+        pin.unlink()
+        with self.assertRaises(AgentArtifactError):
+            run()
+        pin.write_text(self.fixture.fingerprint + "\n")
+        pin.write_text("0" * 64 + "\n")
+        with self.assertRaises(AgentArtifactError):
+            run()
+        pin.write_text(self.fixture.fingerprint + "\n")
+        pub = self.root / RELEASE_PUB
+        pub.chmod(0o666)
+        with self.assertRaises(AgentArtifactError):
+            run()
+        pub.chmod(0o644)
+        pub.unlink()
+        pub.symlink_to(self.fixture.pub)
+        with self.assertRaises(AgentArtifactError):
+            run()
+        pub.unlink()
+        pub.write_text(self.fixture.pub.read_text())
+        (self.root / AGENT_IDENTITY_KEY).unlink()
+        with self.assertRaises(AgentArtifactError):
+            run()
+        self._provision_disposable_local_trust()
+        state_file = self.root / STATE_FILE
+        state = json.loads(state_file.read_text())
+        state["allocator_url"] = "http://untrusted.invalid"
+        state_file.write_text(json.dumps(state) + "\n")
+        with self.assertRaises(AgentArtifactError):
+            run()
+        self.assertEqual(self.requests, [])
+
+    def test_untrusted_enrollment_json_or_invalid_port_is_denied_before_fetch(self):
+        from drlink_v30_agent_artifact import AgentArtifactError
+        from drlink_v30_agent_local_trust import (
+            preflight_local_enrolled_agent_update, STATE_FILE,
+        )
+
+        self._provision_disposable_local_trust()
+        path = self.root / STATE_FILE
+        before = path.read_bytes()
+
+        def preflight():
+            return preflight_local_enrolled_agent_update(
+                root=self.root, target=self.fixture.target, expected_channel="development",
+            )
+
+        try:
+            path.write_bytes(before.replace(b'"machine_id":', b'"machine_id":"evil-duplicate", "machine_id":'))
+            with self.assertRaises(AgentArtifactError):
+                preflight()
+            path.write_text(json.dumps({
+                "machine_id": MACHINE_A,
+                "allocator_url": "https://127.0.0.1:0/enroll",
+            }) + "\n")
+            with self.assertRaises(AgentArtifactError):
+                preflight()
+            path.write_text(json.dumps({
+                "machine_id": MACHINE_A,
+                "allocator_url": "https://127.0.0.1:6099/enroll",
+                "frp_transport": "wss",
+                "frp_server_port": 0,
+            }) + "\n")
+            # A private allocator URL without a usable WSS public-port
+            # mapping must never contact the legacy private backend.
+            with self.assertRaises(AgentArtifactError):
+                preflight()
+        finally:
+            path.write_bytes(before)
+        self.assertEqual(self.requests, [])
+
+    def test_invalid_binary_release_pin_is_fail_closed_with_bounded_error(self):
+        from drlink_v30_agent_artifact import AgentArtifactError
+        from drlink_v30_agent_local_trust import (
+            resolve_local_agent_update_trust, RELEASE_PIN,
+        )
+
+        self._provision_disposable_local_trust()
+        (self.root / RELEASE_PIN).write_bytes(b"\xff\xfe\n")
+        with self.assertRaisesRegex(AgentArtifactError, "AGENT_ARTIFACT_UNQUALIFIED"):
+            resolve_local_agent_update_trust(self.root)
+        self.assertEqual(self.requests, [])
+
+    def test_local_trust_rejects_symlinked_or_writable_parent_directory(self):
+        from drlink_v30_agent_artifact import AgentArtifactError
+        from drlink_v30_agent_local_trust import resolve_local_agent_update_trust
+
+        self._provision_disposable_local_trust()
+        etc_drlink = self.root / "etc/drlink"
+        moved = self.root / "untrusted-release-config"
+        etc_drlink.rename(moved)
+        etc_drlink.symlink_to(moved, target_is_directory=True)
+        with self.assertRaises(AgentArtifactError):
+            resolve_local_agent_update_trust(self.root)
+        self.assertEqual(self.requests, [])
+        etc_drlink.unlink()
+        moved.rename(etc_drlink)
+        etc_drlink.chmod(0o777)
+        with self.assertRaises(AgentArtifactError):
+            resolve_local_agent_update_trust(self.root)
+        etc_drlink.chmod(0o755)
+        self.assertEqual(
+            resolve_local_agent_update_trust(self.root)["pinned_release_key_fingerprint"],
+            self.fixture.fingerprint,
+        )
+
+    def test_local_staged_candidate_cannot_be_reverified_outside_trusted_parent(self):
+        from drlink_v30_agent_artifact import AgentArtifactError
+        from drlink_v30_agent_local_trust import (
+            stage_local_enrolled_agent_update, reverify_local_staged_agent_update,
+            PRIVATE_STAGE,
+        )
+
+        self._provision_disposable_local_trust()
+        target = self.fixture.target
+        staged = stage_local_enrolled_agent_update(
+            root=self.root, target=target, expected_channel="development",
+        )
+        candidate = Path(staged["candidate_dir"])
+        sibling = self.root / candidate.name
+        candidate.rename(sibling)
+        with self.assertRaises(AgentArtifactError):
+            reverify_local_staged_agent_update(
+                root=self.root, candidate_dir=sibling,
+                target=target, expected_channel="development",
+            )
+        alias = self.root / PRIVATE_STAGE / candidate.name
+        alias.symlink_to(sibling, target_is_directory=True)
+        with self.assertRaises(AgentArtifactError):
+            reverify_local_staged_agent_update(
+                root=self.root, candidate_dir=alias,
+                target=target, expected_channel="development",
+            )
+
     def test_redirect_and_signed_bundle_tamper_fail_closed(self):
         from drlink_v30_agent_artifact import AgentArtifactError
 

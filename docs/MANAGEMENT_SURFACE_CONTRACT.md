@@ -578,6 +578,46 @@ Staging, its receipt, or this recheck still cannot set
 `rollback_verified`; future real updater and health/rollback validation
 are separate release gates.
 
+### 9.6.1 Linux Agent persisted signed-update trust
+
+The internal Linux-only module `drlink_v30_agent_local_trust.py` resolves
+update trust from the **existing local Agent enrollment**, not from a remote
+Management Job, Web request, environment override or downloaded manifest:
+
+- enrolled Agent identity: `/etc/frp/client-state.json`, identity key,
+  public key and MAC under `/etc/frp/`;
+- persisted management CA: `/etc/drlink/allocator-ca.crt`;
+- independently provisioned release verification public key:
+  `/etc/drlink/agent-release-verification.pub`;
+- independently pinned release-key DER SHA-256:
+  `/etc/drlink/agent-release-verification.sha256`;
+- private candidate parent:
+  `/var/lib/drlink/signed-agent-candidates/`, pre-existing and mode 0700.
+
+The resolver never provisions or rotates a release signer, trusts a remote
+key/fingerprint or writes enrollment state. File existence alone is
+insufficient: reject missing/malformed enrollment identity, invalid local
+key/fingerprint pairing, unsafe ownership/modes or untrusted HTTPS origins.
+A pre-migration WSS Agent holding the historical allocator :6099 endpoint
+may use the previously enrolled `frp_server_port` as the HTTPS public
+frontend port, matching the canonical Client update rule; absent/ambiguous
+public port fails closed rather than contacting a private legacy backend.
+`DRLINK_MGMT_URL` and `DRLINK_MGMT_INSECURE` must not influence this
+signed-update path. Production release-key installation/rotation remains
+subject to separate owner and trusted-boundary authorization; absence
+means the signed-update check is unavailable, not that the Agent should
+fall back to public GitHub, unsigned installers or another signer.
+
+The local-only `preflight_local_enrolled_agent_update`,
+`stage_local_enrolled_agent_update` and
+`reverify_local_staged_agent_update` functions bind the pre-existing
+cryptographic and HTTPS checks to those exact local paths. Staged
+candidate rechecks only accept children of this Agent's private
+candidate parent. None of these operations perform a software update,
+claim post-install health, or report rollback success. Public rollout
+Apply remains disabled until real Agent updater/health/rollback
+qualification, exact-source artifact/CI integrity and owner authority.
+
 ### 9.7 Public Automation API / Service Accounts
 
 Automation clients authenticate as Service Accounts and receive only their configured
