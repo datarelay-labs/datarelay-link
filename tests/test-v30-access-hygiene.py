@@ -91,6 +91,44 @@ class AccessHygieneTests(unittest.TestCase):
         finally:
             cp.close()
 
+    def test_expiring_service_accounts_are_advisory_without_exposing_tokens(self):
+        import json
+        from drlink_service_accounts import ServiceAccountStore
+
+        root = tempfile.mkdtemp(prefix="drlink-hygiene-expiring-account-")
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        expires = (now + timedelta(days=3)).isoformat().replace("+00:00", "Z")
+        later = (now + timedelta(days=40)).isoformat().replace("+00:00", "Z")
+        with ServiceAccountStore(root) as store:
+            near = store.create("review-soon", ["management-read"], expires_at=expires)
+            store.create("future-account", ["management-read"], expires_at=later)
+        plane = ControlPlane(root)
+        try:
+            before_revision = plane.current_revision()
+        finally:
+            plane.close()
+        with ManagementQueryService.open_read_only(root) as service:
+            hygiene = service.access_hygiene(now=now)
+            attention = service.attention_summary()
+        matches = [
+            item for item in hygiene["items"]
+            if item["kind"] == "service-account-expiry"
+        ]
+        self.assertEqual(len(matches), 1)
+        item = matches[0]
+        self.assertEqual(item["resource_id"], near["id"])
+        self.assertEqual(item["finding_status"], "ACTION_REQUIRED")
+        self.assertEqual(item["evidence_quality"], "OBSERVED")
+        self.assertEqual(item["evidence"]["expires_at"], expires)
+        self.assertNotIn(near["credential"], json.dumps(hygiene))
+        self.assertNotIn(near["credential"], json.dumps(attention))
+        self.assertGreaterEqual(attention["signals"]["access_hygiene"]["action_required"], 1)
+        plane = ControlPlane(root)
+        try:
+            self.assertEqual(plane.current_revision(), before_revision)
+        finally:
+            plane.close()
+
     def test_orphan_marker_surfaces_advisory_without_deleting_object(self):
         import drlink_v24 as v24
 

@@ -29,6 +29,7 @@ ATTENTION_AUDIT_BACKLOG_SECONDS = 300
 HYGIENE_STALE_HOST_WINDOW = timedelta(days=7)
 HYGIENE_ACCESS_REVIEW_WINDOW = timedelta(days=30)
 HYGIENE_LONG_GRANT_WINDOW = timedelta(days=7)
+HYGIENE_CREDENTIAL_EXPIRY_WINDOW = timedelta(days=14)
 
 # A catalog entry is not advertised merely because its name/schema is frozen.
 # Only handlers implemented by this service may be projected by a future MCP
@@ -1420,6 +1421,41 @@ class ManagementQueryService:
                     "manual cleanup; no automatic policy mutation is performed."
                 ),
             })
+        # Service Account expiry is a credential lifecycle fact, not an
+        # entitlement review. Use only the existing optional account table;
+        # never materialize token hashes or expose display-once credentials.
+        account_table = self.conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='management_service_accounts'"
+        ).fetchone()
+        if account_table:
+            for row in self.conn.execute(
+                "SELECT id,name,expires_at FROM management_service_accounts "
+                "WHERE enabled=1 AND expires_at IS NOT NULL AND expires_at<>'' "
+                "ORDER BY expires_at ASC LIMIT 100"
+            ):
+                expiry = self._parse_attention_timestamp(str(row["expires_at"]))
+                if expiry is not None and expiry > current + HYGIENE_CREDENTIAL_EXPIRY_WINDOW:
+                    continue
+                invalid = expiry is None
+                findings.append({
+                    "kind": "service-account-expiry",
+                    "resource_type": "service-account",
+                    "resource_id": str(row["id"]),
+                    "label": str(row["name"]),
+                    "evidence_quality": "UNKNOWN_EVIDENCE" if invalid else "OBSERVED",
+                    "finding_status": "ACTION_REQUIRED",
+                    "severity": "warning",
+                    "observation_window_days": int(HYGIENE_CREDENTIAL_EXPIRY_WINDOW.days),
+                    "evidence": {
+                        "expires_at": row["expires_at"],
+                        "expiry_parse_valid": not invalid,
+                    },
+                    "recommendation": (
+                        "Review this Service Account expiry and rotate credentials "
+                        "if still needed; no automatic credential change is performed."
+                    ),
+                })
         # Prioritize actionable evidence over UNKNOWN_EVIDENCE when the
         # bounded response is full. Compute counts before truncation.
         action_required = [
