@@ -371,9 +371,10 @@ Path(sys.argv[2]).write_text(json.dumps(d, indent=2, sort_keys=True) + '\n')
 PY
 unset FRP_ENROLLMENT_CODE || true
 export FRP_CLIENT_CANDIDATE="$WORKDIR/legacy-cand.json"
-# A missing Enrollment Code must fail non-interactively. Never wait for a
-# code on the runner TTY, and never supply a credential to satisfy this test.
-if "$ROOT/tools/frp-client" apply </dev/null >"$WORKDIR/legacy-apply.out" 2>"$WORKDIR/legacy-apply.err"; then
+# A missing Enrollment Code must fail non-interactively. The CLI can
+# explicitly open /dev/tty, so redirecting stdin alone is not sufficient.
+# Run this negative test without a controlling terminal or credentials.
+if setsid "$ROOT/tools/frp-client" apply </dev/null >"$WORKDIR/legacy-apply.out" 2>"$WORKDIR/legacy-apply.err"; then
   fail "legacy apply after upgrade should still need enrollment"
 fi
 grep -qi 'Enrollment Code' "$WORKDIR/legacy-apply.out" "$WORKDIR/legacy-apply.err" || fail "legacy apply did not ask for enrollment"
