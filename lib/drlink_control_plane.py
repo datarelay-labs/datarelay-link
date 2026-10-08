@@ -4859,9 +4859,13 @@ class ControlPlane:
         test seam.
         """
         client = self.conn.execute(
-            "SELECT id, trust_status FROM clients WHERE id = ?", (client_id,)
+            "SELECT id, trust_status, admission_state FROM clients WHERE id = ?", (client_id,)
         ).fetchone()
-        if client is None or str(client["trust_status"] or "") != "trusted":
+        if (
+            client is None
+            or str(client["trust_status"] or "") != "trusted"
+            or str(client["admission_state"] or "") != "APPROVED"
+        ):
             return None
         key = self._ai_agent_credential_key(client_id)
         existing = self.conn.execute("SELECT value FROM system_meta WHERE key = ?", (key,)).fetchone()
@@ -4893,21 +4897,27 @@ class ControlPlane:
             return None
         client_id = str(row["key"]).split(":", 1)[1]
         client = self.conn.execute(
-            "SELECT trust_status FROM clients WHERE id = ?", (client_id,)
+            "SELECT trust_status, admission_state FROM clients WHERE id = ?", (client_id,)
         ).fetchone()
-        if client is None or str(client["trust_status"] or "") != "trusted":
+        if (
+            client is None
+            or str(client["trust_status"] or "") != "trusted"
+            or str(client["admission_state"] or "") != "APPROVED"
+        ):
             return None
         return client_id
 
     def assert_ai_job_claimant(self, client_id: str) -> None:
         """Fail closed when a Managed Host is missing, revoked, or retired."""
         row = self.conn.execute(
-            "SELECT id, trust_status, status FROM clients WHERE id = ?", (client_id,)
+            "SELECT id, trust_status, admission_state, status FROM clients WHERE id = ?", (client_id,)
         ).fetchone()
         if row is None:
             raise ControlPlaneError("unknown Managed Host")
         if str(row["trust_status"] or "") != "trusted":
             raise ControlPlaneError("Managed Host is not trusted")
+        if str(row["admission_state"] or "") != "APPROVED":
+            raise ControlPlaneError("Managed Host admission is not approved")
         if str(row["status"] or "").lower() in ("retired", "removed", "deleted"):
             raise ControlPlaneError("Managed Host is retired")
 
@@ -4923,6 +4933,7 @@ class ControlPlane:
         timeout: Optional[int],
     ) -> str:
         ensure_ai_jobs_safety_schema(self.conn)
+        self.assert_ai_job_claimant(client_id)
         job_id = _new_id("job")
         now = utc_now_iso()
         timeout_seconds = int(timeout or 30)
@@ -5012,6 +5023,8 @@ class ControlPlane:
         Requires admission plus last_seen inside MANAGED_HOST_LIVENESS_SECONDS.
         """
         if not self._managed_host_admitted(client):
+            return False
+        if str(client["admission_state"] or "") != "APPROVED":
             return False
         last_seen = client["last_seen"] if "last_seen" in client.keys() else None
         return managed_host_liveness_fresh(last_seen)

@@ -1104,16 +1104,29 @@ function PolicyWorkspace({data,operator,onNavigate}:{data:any,operator:any,onNav
 
 function ResourceWorkspace({kind,items,operator,onNavigate}:{kind:"host"|"service",items:any[],operator:any,onNavigate?:(id:string,groupId?:string)=>void}){
   const [filter,setFilter]=useState(""),[selected,setSelected]=useState<any>(null);
+  const [admissionFilter,setAdmissionFilter]=useState("all");
   useEscapeClose(!!selected,()=>setSelected(null));
   const q=filter.trim().toLowerCase();
-  const rows=(items||[]).filter((item:any)=>!q||Object.values(item).some(value=>String(value??"").toLowerCase().includes(q)));
   const isHost=kind==="host";
+  const rows=(items||[])
+    .filter((item:any)=>(!q||Object.values(item).some(value=>String(value??"").toLowerCase().includes(q)))
+      &&(!isHost||admissionFilter==="all"||item.admission_state===admissionFilter))
+    .sort((a:any,b:any)=>isHost?
+      (a.admission_state==="PENDING_APPROVAL"?-1:a.admission_state==="QUARANTINED"?0:1)
+      -(b.admission_state==="PENDING_APPROVAL"?-1:b.admission_state==="QUARANTINED"?0:1):0);
   const heading=isHost?"Managed Hosts":"Remote Services";
   const description=isHost?"Agent inventory, trust, connectivity, platform and version in one resource workspace.":"Published services, owning hosts, ports and release state with contextual access actions.";
   return <div className="dr-resource-workspace">
     <section className="dr-page-intro"><div><p className="dr-eyebrow">Infrastructure</p><h2>{heading}</h2><p className="muted">{description}</p></div><div className="dr-page-actions">{isHost&&operator.role==="Admin"&&<button className="primary" onClick={()=>onNavigate?.("enrollments","infrastructure")}>Connect Agent</button>}<button className="secondary" onClick={()=>onNavigate?.("access","access")}>Access workspace</button></div></section>
     <section className="card dr-list-card">
-      <div className="dr-list-toolbar"><div><strong>{rows.length}</strong><span>{heading.toLowerCase()}</span></div><label className="dr-filter-field"><WorkspaceIcon kind="search"/><input value={filter} onChange={e=>setFilter(e.target.value)} placeholder={isHost?"Filter hosts…":"Filter services…"}/>{filter&&<button onClick={()=>setFilter("")} aria-label="Clear filter">×</button>}</label></div>
+      <div className="dr-list-toolbar"><div><strong>{rows.length}</strong><span>{heading.toLowerCase()}</span></div>
+        {isHost&&<select aria-label="Filter Managed Host admission" value={admissionFilter} onChange={e=>setAdmissionFilter(e.target.value)}>
+          <option value="all">All admission states</option>
+          <option value="PENDING_APPROVAL">Pending approval</option>
+          <option value="APPROVED">Approved</option>
+          <option value="QUARANTINED">Quarantined</option>
+        </select>}
+        <label className="dr-filter-field"><WorkspaceIcon kind="search"/><input value={filter} onChange={e=>setFilter(e.target.value)} placeholder={isHost?"Filter hosts…":"Filter services…"}/>{filter&&<button onClick={()=>setFilter("")} aria-label="Clear filter">×</button>}</label></div>
       {!rows.length?<div className="dr-empty-state"><span className="dr-empty-icon"><WorkspaceIcon kind="infrastructure"/></span><strong>{filter?"No matching resources":"No resources yet"}</strong><p>{filter?"Try a different filter.":isHost?"Connect an Agent to populate managed inventory.":"Publish a Remote Service from a managed host."}</p>{!filter&&isHost&&operator.role==="Admin"&&<button className="primary" onClick={()=>onNavigate?.("enrollments","infrastructure")}>Connect Agent</button>}</div>:
       <div className="dr-table-scroll"><table className="dr-resource-table"><thead><tr>{isHost?<><th>Host</th><th>State</th><th>Trust</th><th>Platform</th><th>Version</th><th>Last activity</th></>:<><th>Service</th><th>Managed host</th><th>Type</th><th>Public port</th><th>Target</th><th>State</th></>}</tr></thead><tbody>{rows.map((item:any)=><tr key={item.id} tabIndex={0} onClick={()=>setSelected(item)} onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();setSelected(item)}}}>{isHost?<><td><strong>{item.name||item.id}</strong><small>{item.hostname||item.id}</small></td><td><span className={item.connected?"dr-state active":"dr-state"}><i/>{item.connected?"Connected":item.agent_lifecycle_state||item.status||"Unknown"}</span></td><td>{item.trust_status||"—"}</td><td>{item.agent_platform||"—"}</td><td>{item.agent_version||"—"}</td><td>{item.agent_heartbeat_at||item.last_seen||"—"}</td></>:<><td><strong>{item.name||item.id}</strong><small>{item.id}</small></td><td>{item.managed_host||item.managed_host_id||"—"}</td><td>{item.service_type||"—"}</td><td>{item.public_port??"—"}</td><td>{[item.target_host,item.target_port].filter(Boolean).join(":")||item.target_mode||"—"}</td><td><span className={item.enabled&&!item.released?"dr-state active":"dr-state"}><i/>{item.released?"Released":item.enabled?"Enabled":"Disabled"}</span></td></>}</tr>)}</tbody></table></div>}
     </section>

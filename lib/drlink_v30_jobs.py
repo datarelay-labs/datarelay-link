@@ -381,6 +381,17 @@ class ManagementJobEngine:
                 ).fetchall()
             claimed: list[dict[str, Any]] = []
             for row in rows:
+                if str(row["job_type"]) == ROLLOUT_JOB_TYPE:
+                    host = self.conn.execute(
+                        "SELECT trust_status,admission_state,status FROM clients WHERE id=?",
+                        (str(row["target_id"]),),
+                    ).fetchone()
+                    if (not host or str(host["trust_status"] or "") != "trusted"
+                        or str(host["admission_state"] or "") != "APPROVED"
+                        or str(host["status"] or "").lower() in ("retired","removed","deleted")):
+                        # Leave the queued work unclaimed. Deadline expiry
+                        # terminalizes it; never execute a quarantined target.
+                        continue
                 token = secrets.token_hex(16)
                 updated = self.conn.execute(
                     "UPDATE management_job_targets SET status='RUNNING',worker_id=?,"
@@ -641,6 +652,18 @@ class ManagementJobEngine:
             "rollout_state": "CANARY" if canaries else "WAVE",
         }
         with self._lock:
+            # A mutable target list is never authority for a staged update.
+            # Verify current trust and admission at submission, then again
+            # during claim to close quarantine races.
+            for host_id in target_ids:
+                row = self.conn.execute(
+                    "SELECT trust_status,admission_state,status FROM clients WHERE id=?",
+                    (host_id,),
+                ).fetchone()
+                if (not row or str(row["trust_status"] or "") != "trusted"
+                    or str(row["admission_state"] or "") != "APPROVED"
+                    or str(row["status"] or "").lower() in ("retired","removed","deleted")):
+                    raise ControlPlaneError("Managed Agent rollout target is not approved and trusted.")
             return self._enqueue_unlocked(
                 job_type=ROLLOUT_JOB_TYPE,
                 targets=target_ids,

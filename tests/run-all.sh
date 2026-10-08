@@ -286,6 +286,7 @@ python3 tests/test-v30-management-adapters.py
 python3 tests/test-v30-management-system.py
 python3 tests/test-v30-product-update.py
 python3 tests/test-v30-managed-host-lifecycle.py
+python3 tests/test-v30-managed-host-admission-schema.py
 python3 tests/test-v30-policy-safety.py
 python3 tests/test-v30-audit-foundation.py
 python3 tests/test-v30-audit-runtime-failclosed.py

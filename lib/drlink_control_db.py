@@ -279,6 +279,11 @@ CREATE TABLE clients (
   hostname TEXT,
   status TEXT NOT NULL DEFAULT 'connected',
   trust_status TEXT NOT NULL DEFAULT 'trusted',
+  admission_state TEXT NOT NULL DEFAULT 'APPROVED'
+    CHECK(admission_state IN ('PENDING_APPROVAL','APPROVED','QUARANTINED')),
+  admission_changed_at TEXT,
+  admission_actor TEXT,
+  admission_reason TEXT,
   connected INTEGER NOT NULL DEFAULT 0,
   last_seen TEXT,
   agent_heartbeat_at TEXT,
@@ -1125,6 +1130,17 @@ CREATE INDEX IF NOT EXISTS idx_management_drafts_actor_status
 def ensure_v30_schema(conn: sqlite3.Connection) -> None:
     """Install additive 3.0 management primitives on the authoritative DB."""
     client_cols = {str(row[1]) for row in conn.execute("PRAGMA table_info(clients)")}
+    if client_cols and "admission_state" not in client_cols:
+        # Preserve prior trusted production/preview Hosts. New enrollment
+        # pending-by-default is enabled only with complete cross-plane gates.
+        conn.execute(
+            "ALTER TABLE clients ADD COLUMN admission_state TEXT NOT NULL "
+            "DEFAULT 'APPROVED' CHECK(admission_state IN "
+            "('PENDING_APPROVAL','APPROVED','QUARANTINED'))"
+        )
+    for column in ("admission_changed_at", "admission_actor", "admission_reason"):
+        if client_cols and column not in client_cols:
+            conn.execute("ALTER TABLE clients ADD COLUMN %s TEXT" % column)
     if client_cols and "agent_platform" not in client_cols:
         conn.execute("ALTER TABLE clients ADD COLUMN agent_platform TEXT")
     if client_cols and "agent_version" not in client_cols:

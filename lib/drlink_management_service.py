@@ -76,6 +76,9 @@ _RESOURCE_SPECS: dict[str, dict[str, str]] = {
             "c.id AS id, "
             "COALESCE(NULLIF(c.label, ''), NULLIF(c.hostname, ''), c.id) AS name, "
             "c.hostname AS hostname, c.status AS status, c.trust_status AS trust_status, "
+            "c.admission_state AS admission_state, "
+            "c.admission_changed_at AS admission_changed_at, "
+            "c.admission_actor AS admission_actor, "
             "c.connected AS connected, c.last_seen AS last_seen, "
             "c.agent_heartbeat_at AS agent_heartbeat_at, "
             "c.agent_lifecycle_state AS agent_lifecycle_state, "
@@ -690,7 +693,8 @@ class ManagementQueryService:
                 if not client_id or client_id in seen:
                     continue
                 client = core.conn.execute(
-                    "SELECT id,label,hostname,status,trust_status,connected,last_seen,"
+                    "SELECT id,label,hostname,status,trust_status,admission_state,"
+                    "admission_changed_at,admission_actor,connected,last_seen,"
                     "agent_heartbeat_at,agent_lifecycle_state,agent_platform,agent_version "
                     "FROM clients WHERE id=?",
                     (client_id,),

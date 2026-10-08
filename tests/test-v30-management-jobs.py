@@ -93,6 +93,13 @@ class V30ManagementJobTests(unittest.TestCase):
             self._enqueue(job_type="restart-everything")
 
     def test_managed_update_rollout_is_bounded_and_artifact_pinned(self):
+        from drlink_control_plane import ControlPlane
+        plane = ControlPlane(self.tmp)
+        try:
+            for host in ("host-a","host-b","host-c"):
+                plane.upsert_client(host, hostname=host)
+        finally:
+            plane.close()
         digest = "a" * 64
         job = self.engine.enqueue_rollout(
             targets=("host-a", "host-b", "host-c"),
