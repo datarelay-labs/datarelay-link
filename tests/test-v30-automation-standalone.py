@@ -157,6 +157,44 @@ class IndependentAutomationTests(unittest.TestCase):
         finally:
             connection.close()
 
+    def test_http_framing_is_unambiguous_and_closes_rejected_bodies(self):
+        body = b'{"resource_type":"managed-host"}'
+        route = "/api/automation/v1/drlink_inventory_list"
+        scenarios = (
+            ("duplicate-length", route,
+             [("Content-Length", str(len(body))),
+              ("Content-Length", str(len(body)))], 400),
+            ("conflicting-transfer-encoding", route,
+             [("Content-Length", str(len(body))),
+              ("Transfer-Encoding", "chunked")], 400),
+            ("missing-length", route, [], 400),
+            ("nondecimal-length", route, [("Content-Length", "-1")], 400),
+            ("integer-overflow-length", route, [("Content-Length", "9" * 1024)], 400),
+            ("oversized-length", route, [("Content-Length", "16385")], 413),
+            ("duplicate-auth", route,
+             [("Authorization", "Bearer " + self.credential),
+              ("Content-Length", str(len(body)))], 401),
+            ("absolute-url", "http://localhost" + route,
+             [("Content-Length", str(len(body)))], 404),
+        )
+        for name, target, extra_headers, expected in scenarios:
+            with self.subTest(name=name):
+                conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+                try:
+                    conn.putrequest("POST", target)
+                    conn.putheader("Content-Type", "application/json")
+                    conn.putheader("Authorization", "Bearer " + self.credential)
+                    for key, value in extra_headers:
+                        conn.putheader(key, value)
+                    conn.endheaders(body)
+                    response = conn.getresponse()
+                    result = json.loads(response.read())
+                    self.assertEqual(response.status, expected, result)
+                    self.assertEqual(response.getheader("Connection"), "close")
+                    self.assertNotIn(self.credential, json.dumps(result))
+                finally:
+                    conn.close()
+
     def test_remote_bind_requires_tls(self):
         with self.assertRaises(ControlPlaneError):
             create_server(root=self.tmp.name, listen="0.0.0.0", port=0)

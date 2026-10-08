@@ -69,6 +69,8 @@ class AutomationHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
+        if self.close_connection:
+            self.send_header("Connection", "close")
         self.end_headers()
         self.wfile.write(raw)
 
@@ -80,22 +82,47 @@ class AutomationHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = urlsplit(self.path)
-        if not path.path.startswith(PREFIX) or path.query or path.fragment:
+        if (
+            path.scheme or path.netloc or not path.path.startswith(PREFIX)
+            or path.query or path.fragment
+        ):
+            # Unread rejected bodies must not become a following HTTP request.
+            self.close_connection = True
             self._json(404, {"error": "Automation operation was not found."})
             return
-        header = str(self.headers.get("Authorization") or "")
+        auth_values = self.headers.get_all("Authorization") or []
+        if len(auth_values) != 1:
+            self.close_connection = True
+            self._json(401, {"error": "One Service Account credential is required."})
+            return
+        header = str(auth_values[0])
         if not header.startswith("Bearer ") or len(header) > 512:
+            self.close_connection = True
             self._json(401, {"error": "Service Account credential required."})
             return
-        try:
-            length = int(self.headers.get("Content-Length") or "")
-        except ValueError:
-            self._json(400, {"error": "Content-Length is required."})
+        lengths = self.headers.get_all("Content-Length") or []
+        # Neither chunked nor ambiguous duplicate framing is supported. In
+        # particular, do not let an intermediary interpret a different body
+        # boundary from the Automation listener.
+        if self.headers.get_all("Transfer-Encoding") or len(lengths) != 1:
+            self.close_connection = True
+            self._json(400, {"error": "Exactly one Content-Length is required."})
             return
+        length_text = str(lengths[0])
+        if (
+            len(length_text) > 8 or not length_text.isascii()
+            or not length_text.isdecimal()
+        ):
+            self.close_connection = True
+            self._json(400, {"error": "Content-Length must be bounded decimal."})
+            return
+        length = int(length_text)
         if length < 2 or length > MAX_BODY_BYTES:
+            self.close_connection = True
             self._json(413, {"error": "Automation request size is outside allowed bounds."})
             return
         if not self.server.concurrent.acquire(blocking=False):
+            self.close_connection = True
             self._json(503, {"error": "Automation server concurrency limit reached."})
             return
         try:

@@ -64,6 +64,10 @@ and requests at **120/minute per Service Account** across workers; an excess
 returns HTTP 429. Invalid/revoked credentials return 401; refused operations
 return 403. Read-only Core permission checks still apply after authentication.
 The embedded Web listener has a separate existing 64-KiB request limit.
+The standalone listener requires a single bounded decimal `Content-Length`,
+rejects duplicate Authorization/Content-Length, all `Transfer-Encoding`,
+and absolute-form API targets, and closes unconsumed rejected request bodies
+to avoid ambiguous persistent-connection framing.
 
 Standalone Automation errors return both a human-readable `error` and a
 stable machine-readable `code`. Supported categories include
@@ -73,7 +77,8 @@ stable machine-readable `code`. Supported categories include
 `RATE_LIMITED` (429), `CAPACITY_EXCEEDED` (503), and
 `INTERNAL_ERROR` (500). The codes deliberately do not expose bearer
 material, internal exception text, or protected Core operation details.
-The standalone API still admits only the documented read-only allowlist.
+The standalone API still admits only the documented OBSERVE/TEST allowlist;
+Temporary Access preview may persist a Change Plan, never apply a policy change.
 
 ## Signed event Webhooks
 
