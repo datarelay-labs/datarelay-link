@@ -83,8 +83,9 @@ def _enrolled_https_origin(state: Mapping[str, Any]) -> str:
         raise SIGNED.AgentArtifactError(
             "AGENT_ARTIFACT_UNQUALIFIED: Agent enrollment origin is invalid"
         ) from exc
-    if (parts.scheme != "https" or not hostname or parts.username
-        or parts.password or parts.query or parts.fragment
+    if (parts.scheme != "https" or not hostname
+        or parts.username is not None or parts.password is not None
+        or parts.query or parts.fragment
         or port < 1 or port > 65535
         or any(ord(ch) <= 32 or ord(ch) == 127 for ch in raw)):
         _deny("persisted Agent allocator URL is not trusted HTTPS")
