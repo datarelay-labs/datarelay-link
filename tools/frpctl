@@ -243,14 +243,14 @@ frpctl_install_state_unreadable() {
 }
 
 frpctl_require_install() {
-  if frpctl_is_client || frpctl_is_server; then
-    return 0
-  fi
   # Distinguish missing install from permission-denied on root-owned state dirs.
   if frpctl_install_state_unreadable; then
     echo "ERROR: Data Relay Link appears installed, but this user cannot read the install state." >&2
     echo "Retry with: sudo ${FRP_CTL_CMD_NAME}" >&2
     return 1
+  fi
+  if frpctl_is_client || frpctl_is_server; then
+    return 0
   fi
   echo "ERROR: no ${FRP_CTL_PRODUCT_NAME} installation was found on this host." >&2
   echo "Install the Server or Agent bootstrap first." >&2
@@ -727,7 +727,7 @@ frpctl_header() {
 
 frpctl_print_version() {
   local version_py="" lib_dir="" ver_file role project channel source_ref source_head frp_ver bundle
-  if ! frpctl_is_client && ! frpctl_is_server && frpctl_install_state_unreadable; then
+  if frpctl_install_state_unreadable; then
     frpctl_require_install
     return 1
   fi
@@ -827,10 +827,11 @@ frpctl_control_plane_status() {
 }
 
 frpctl_print_server_settings() {
-  local cfg scfg_py
+  local cfg scfg_py artifacts_py
   cfg="$(frpctl_path /etc/drlink/config.json)"
   scfg_py="$(frpctl_lib_candidate frp_server_config.py)" || return 1
-  python3 - "$scfg_py" "$cfg" <<'PY_SERVER_SETTINGS'
+  artifacts_py="$(frpctl_lib_candidate drlink_qualified_artifacts.py)" || return 1
+  python3 - "$scfg_py" "$cfg" "$artifacts_py" <<'PY_SERVER_SETTINGS'
 import importlib.util
 import sys
 
@@ -846,12 +847,28 @@ public = mod.public_hostname(cfg)
 bootstrap = mod.bootstrap_hostname(cfg)
 linux_url = str(cfg.get("client_installer_url") or "").strip()
 windows_url = str(cfg.get("windows_client_installer_url") or "").strip()
+spec = importlib.util.spec_from_file_location("_drlink_qualified_sources", sys.argv[3])
+artifacts = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = artifacts
+spec.loader.exec_module(artifacts)
+def effective_installer_source(configured, platform):
+    # Same source rejection and Server-local derivation as enrollment output.
+    if configured and not artifacts.is_forbidden_public_installer_url(configured):
+        return configured
+    try:
+        effective = artifacts.agent_installer_url(cfg.get("allocator_public_url"), platform)
+    except artifacts.ArtifactError:
+        return "Unavailable (qualified Server-local installer source is unconfigured)"
+    if artifacts.is_forbidden_public_installer_url(effective):
+        return "Unavailable (qualified Server-local installer source is unconfigured)"
+    label = "configured former public source ignored" if configured else "automatic qualified source"
+    return "%s (%s)" % (effective, label)
 print("Server Settings")
 print("===============")
 print("Public hostname              : %s" % (public or ("Automatic (Public IP: %s)" % control)))
 print("Bootstrap hostname           : %s" % (bootstrap or "Automatic (pinned-CA zt1 bootstrap)"))
-print("Linux/macOS Agent installer : %s" % (linux_url or "Automatic/default qualified installer source"))
-print("Windows Agent installer     : %s" % (windows_url or "Automatic/default qualified installer source"))
+print("Linux/macOS Agent installer : %s" % effective_installer_source(linux_url, "linux"))
+print("Windows Agent installer     : %s" % effective_installer_source(windows_url, "windows"))
 PY_SERVER_SETTINGS
 }
 

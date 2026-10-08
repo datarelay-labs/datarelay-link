@@ -19,6 +19,33 @@ def shell_function(name):
     return name + '() {' + source.split(name + '() {', 1)[1].split('\n}\n', 1)[0] + '\n}\n'
 
 class PublicRecoveryTests(unittest.TestCase):
+    def test_readable_role_does_not_mask_unreadable_other_install_state(self):
+        script='''frpctl_install_state_unreadable() { return 0; }
+frpctl_is_client() { return 1; }
+frpctl_is_server() { return 0; }
+FRP_CTL_CMD_NAME=drlink
+'''+shell_function('frpctl_require_install')+shell_function('frpctl_print_version')+'\nfrpctl_print_version'
+        result=subprocess.run(['bash','-c',script],capture_output=True,text=True)
+        self.assertEqual(result.returncode,1)
+        self.assertIn('cannot read the install state',result.stderr)
+        self.assertIn('sudo drlink',result.stderr)
+        self.assertNotIn('Source HEAD',result.stdout)
+
+    def test_status_shows_effective_qualified_source_not_forbidden_configured_url(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg=Path(tmp)/'config.json'
+            cfg.write_text(json.dumps({'public_ip':'203.0.113.10','allocator_public_url':'https://203.0.113.10/enroll','client_installer_url':'https://raw.githubusercontent.com/datarelay-labs/retired.sh','windows_client_installer_url':'https://github.com/fatedier/retired.ps1'}))
+            script='''frpctl_path() { printf '%s' "$CFG"; }
+frpctl_lib_candidate() { printf '%s/%s' "$LIB" "$1"; }
+'''+shell_function('frpctl_print_server_settings')+'\nfrpctl_print_server_settings'
+            result=subprocess.run(['bash','-c',script],env=dict(os.environ,CFG=str(cfg),LIB=str(ROOT/'lib')),capture_output=True,text=True)
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertIn('https://203.0.113.10/artifacts/agent/bootstrap-client.sh',result.stdout)
+            self.assertIn('https://203.0.113.10/artifacts/agent/bootstrap-client.ps1',result.stdout)
+            self.assertIn('configured former public source ignored',result.stdout)
+            self.assertNotIn('raw.githubusercontent.com',result.stdout)
+            self.assertNotIn('github.com/fatedier',result.stdout)
+
     def test_fixed_tcp_wizard_describes_separate_destination_and_public_ports(self):
         import drlink_v24_wizard as wizard
         output=[]
