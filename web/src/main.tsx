@@ -993,6 +993,40 @@ function AuditExplorer({operator}:{operator:any}){
   </>;
 }
 
+function AgentRolloutPreviewPanel(){
+  const [hosts,setHosts]=useState(""),[canaries,setCanaries]=useState(""),[version,setVersion]=useState(""),[sourceRef,setSourceRef]=useState(""),[digest,setDigest]=useState("");
+  const [wave,setWave]=useState("1"),[threshold,setThreshold]=useState("20"),[preview,setPreview]=useState<any>(null),[error,setError]=useState("");
+  function edit(setter:(value:string)=>void,value:string){setter(value);setPreview(null);setError("")}
+  async function inspect(){
+    setPreview(null);setError("");
+    try{
+      const body={targets:hosts.split(",").map(x=>x.trim()).filter(Boolean),canary_targets:canaries.split(",").map(x=>x.trim()).filter(Boolean),
+        artifact:{version:version.trim(),source_ref:sourceRef.trim(),sha256:digest.trim()},
+        wave_size:Number(wave),failure_threshold_percent:Number(threshold)};
+      setPreview(await api("/api/v1/jobs/agent-update-rollout/preview",{method:"POST",body:JSON.stringify(body)}));
+    }catch(e:any){setError(e.message||String(e))}
+  }
+  return <section className="card" aria-label="Agent update preview">
+    <h3>Managed Agent Updates · Read-only Preview</h3>
+    <p className="muted">Inspect an explicit bounded target set and canary wave. This does not enqueue updates or authorize an Apply. Artifact signatures, provenance, live Agent health and rollback remain unverified.</p>
+    <div className="dr-form-grid three">
+      <label className="dr-field"><span>Managed Host IDs (comma-separated)</span><input value={hosts} onChange={e=>edit(setHosts,e.target.value)} placeholder="host-a, host-b"/></label>
+      <label className="dr-field"><span>Canary Host IDs (optional)</span><input value={canaries} onChange={e=>edit(setCanaries,e.target.value)} placeholder="host-a"/></label>
+      <label className="dr-field"><span>Target version</span><input value={version} onChange={e=>edit(setVersion,e.target.value)} placeholder="3.0.0-rc.1"/></label>
+      <label className="dr-field"><span>Source commit (40-character SHA)</span><input value={sourceRef} onChange={e=>edit(setSourceRef,e.target.value)} placeholder="Immutable Git commit"/></label>
+      <label className="dr-field"><span>Artifact SHA256 (64 hex characters)</span><input value={digest} onChange={e=>edit(setDigest,e.target.value)} placeholder="SHA256 digest"/></label>
+      <label className="dr-field"><span>Wave size</span><input type="number" min="1" max="25" value={wave} onChange={e=>edit(setWave,e.target.value)}/></label>
+      <label className="dr-field"><span>Failure threshold (%)</span><input type="number" min="0" max="100" value={threshold} onChange={e=>edit(setThreshold,e.target.value)}/></label>
+    </div>
+    <div className="dr-form-actions"><button className="secondary" disabled={!hosts.trim()||!version.trim()||!sourceRef.trim()||!digest.trim()} onClick={inspect}>Preview only · No updates</button></div>
+    {error&&<div className="error">{error}</div>}
+    {preview&&<div className="dr-preview-panel">
+      <p className="muted"><strong>Qualification: {preview.artifact_qualification}</strong> · Ready to apply: NO. Preview is advisory and must be revalidated before any future Apply.</p>
+      <pre className="plan">{JSON.stringify({targets:preview.targets,canaries:preview.canary_targets,blocked:preview.blocked_targets,wave_size:preview.wave_size,artifact:preview.artifact,qualification_note:preview.qualification_note},null,2)}</pre>
+    </div>}
+  </section>;
+}
+
 function JobOperations({operator}:{operator:any}){
   const [jobs,setJobs]=useState<any>(null),[detail,setDetail]=useState<any>(null),[error,setError]=useState(""),[message,setMessage]=useState(""),[inventoryExport,setInventoryExport]=useState<any>(null);
   const [jobType,setJobType]=useState("doctor"),[resourceType,setResourceType]=useState("managed-host"),[resource,setResource]=useState(""),[detailId,setDetailId]=useState("");
@@ -1067,6 +1101,7 @@ function JobOperations({operator}:{operator:any}){
   const rows=(jobs?.items||[]).map((x:any)=>({id:x.id,job_type:x.job_type,status:x.status,resource_type:x.resource_type,resource_ref:x.resource_ref,target_count:x.target_count,created_at:x.created_at,finished_at:x.finished_at||""}));
   return <>
     {error&&<div className="error">{error}</div>}{message&&<div className="notice">{message}</div>}
+    {operator.role==="Admin"&&<AgentRolloutPreviewPanel/>}
     <div className="card">
       <h3>Bounded Management Jobs</h3>
       <div className="muted">Safe fleet operations only. Jobs are bounded to at most 100 trusted Managed Hosts and use the signed Agent claim/complete transport.</div>

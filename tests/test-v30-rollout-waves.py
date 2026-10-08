@@ -141,6 +141,8 @@ class StagedRolloutSchedulingTests(unittest.TestCase):
         )
         self.assertTrue(preview["read_only"])
         self.assertTrue(preview["eligible"])
+        self.assertFalse(preview["ready_to_apply"])
+        self.assertEqual(preview["artifact_qualification"], "NOT_VERIFIED")
         self.assertEqual(preview["targets"], ["a-first", "b-second", "z-canary"])
         self.assertEqual(preview["canary_targets"], ["z-canary"])
         self.assertEqual(preview["target_count"], 3)

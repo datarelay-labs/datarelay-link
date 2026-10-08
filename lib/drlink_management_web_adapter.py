@@ -361,6 +361,18 @@ class ManagementWebApiAdapter:
     def support_bundle_create(self, *, actor: ManagementActor) -> dict[str, Any]:
         return self.core.support_bundle_create(actor=actor)
 
+    def rollout_preview(
+        self, *, actor: ManagementActor, targets: list[str],
+        artifact: dict[str, Any], canary_targets: list[str] | None = None,
+        wave_size: int = 10, failure_threshold_percent: int = 20,
+    ) -> dict[str, Any]:
+        return self.core.rollout_preview(
+            actor=actor, targets=targets, artifact=artifact,
+            canary_targets=canary_targets,
+            wave_size=wave_size,
+            failure_threshold_percent=failure_threshold_percent,
+        )
+
     def job_cancel(self, job_id: str, *, actor: ManagementActor) -> dict[str, Any]:
         return self.core.job_cancel(job_id, actor=actor)
 

@@ -189,6 +189,41 @@ class V30WebServiceTests(unittest.TestCase):
         validate_web_bind("127.0.0.1")
         validate_web_bind("::1")
 
+    def test_agent_rollout_preview_is_admin_csrf_guarded_and_does_not_enqueue(self):
+        self.login()
+        from drlink_v30_jobs import ManagementJobEngine
+        artifact = {
+            "version": "3.0.0-rc.1",
+            "source_ref": "a" * 40,
+            "sha256": "b" * 64,
+        }
+        request = {
+            "targets": ["host-a"], "artifact": artifact, "wave_size": 1,
+        }
+        with ManagementJobEngine(self.tmp) as engine:
+            before = engine.conn.execute(
+                "SELECT COUNT(*) FROM management_jobs"
+            ).fetchone()[0]
+        path = "/api/v1/jobs/agent-update-rollout/preview"
+        status, _, _ = self.request("POST", path, request)
+        self.assertEqual(status, 403)
+        status, _, preview = self.request(
+            "POST", path, request, headers={"X-CSRF-Token": self.csrf}
+        )
+        self.assertEqual(status, 200, preview)
+        self.assertTrue(preview["read_only"])
+        self.assertTrue(preview["eligible"])
+        self.assertFalse(preview["ready_to_apply"])
+        self.assertEqual(preview["artifact_qualification"], "NOT_VERIFIED")
+        self.assertFalse(preview["creates_job"])
+        self.assertEqual(preview["canary_targets"], ["host-a"])
+        self.assertTrue(preview["requires_fresh_validation_on_apply"])
+        with ManagementJobEngine(self.tmp) as engine:
+            after = engine.conn.execute(
+                "SELECT COUNT(*) FROM management_jobs"
+            ).fetchone()[0]
+        self.assertEqual(after, before)
+
     def test_auth_required_on_loopback_and_read_views(self):
         status, _, _ = self.request("GET", "/api/v1/overview")
         self.assertEqual(status, 401)

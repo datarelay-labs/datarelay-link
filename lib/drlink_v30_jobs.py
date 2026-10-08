@@ -787,6 +787,12 @@ class ManagementJobEngine:
             "wave_size": payload["wave_size"],
             "failure_threshold_percent": payload["failure_threshold_percent"],
             "artifact": dict(payload["artifact"]),
+            "artifact_qualification": "NOT_VERIFIED",
+            "ready_to_apply": False,
+            "qualification_note": (
+                "Host admission and artifact identity shape only; actual build "
+                "provenance, signatures, Agent updater and rollback are not qualified."
+            ),
             "requires_fresh_validation_on_apply": True,
             "creates_job": False,
         }

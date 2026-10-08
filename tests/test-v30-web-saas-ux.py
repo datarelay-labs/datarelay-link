@@ -98,6 +98,19 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn('confirmation!==required', SOURCE)
         self.assertIn("active connections are not terminated", SOURCE)
 
+    def test_agent_update_preview_is_admin_only_and_not_an_apply_surface(self):
+        self.assertIn("function AgentRolloutPreviewPanel()", SOURCE)
+        self.assertIn(
+            'operator.role==="Admin"&&<AgentRolloutPreviewPanel/>', SOURCE
+        )
+        self.assertIn(
+            '/api/v1/jobs/agent-update-rollout/preview', SOURCE
+        )
+        self.assertIn("Preview only · No updates", SOURCE)
+        self.assertIn("Ready to apply: NO", SOURCE)
+        self.assertIn("preview.artifact_qualification", SOURCE)
+        self.assertIn("preview.blocked_targets", SOURCE)
+
     def test_shell_command_center_and_resource_workspaces_exist(self):
         for marker in (
             "drlink_web_sidebar_collapsed",

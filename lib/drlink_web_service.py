@@ -521,6 +521,22 @@ class WebApplication:
                 payload=payload,
                 actor=self._actor(principal),
             )
+        if path == "/api/v1/jobs/agent-update-rollout/preview":
+            if principal.role != ROLE_ADMIN:
+                raise ControlPlaneError("Admin role is required for Managed Update rollout.")
+            targets = body.get("targets")
+            canaries = body.get("canary_targets") or []
+            artifact = body.get("artifact")
+            if not isinstance(targets, list) or not isinstance(canaries, list):
+                raise ControlPlaneError("Rollout target and canary lists are required.")
+            if not isinstance(artifact, dict):
+                raise ControlPlaneError("Rollout artifact identity must be an object.")
+            return self.adapter.rollout_preview(
+                actor=self._actor(principal),
+                targets=targets, canary_targets=canaries, artifact=artifact,
+                wave_size=body.get("wave_size", 10),
+                failure_threshold_percent=body.get("failure_threshold_percent", 20),
+            )
         if path == "/api/v1/jobs/agent-update-rollout":
             if principal.role != ROLE_ADMIN:
                 raise ControlPlaneError("Admin role is required for Managed Update rollout.")

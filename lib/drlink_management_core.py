@@ -370,6 +370,27 @@ class ManagementCoreService:
             },
         }
 
+    def rollout_preview(
+        self, *, actor: ManagementActor, targets: list[str],
+        artifact: dict[str, Any], canary_targets: list[str] | None = None,
+        wave_size: int = 10, failure_threshold_percent: int = 20,
+    ) -> dict[str, Any]:
+        """Read-only bounded preview; never grants update authority or starts work."""
+        from drlink_v30_jobs import ManagementJobEngine
+
+        self._require_web_role(actor, "Admin")
+        if "management-update" not in actor.permissions:
+            raise ManagementAuthorizationError(
+                "management-update is required to preview Agent rollouts."
+            )
+        with ManagementJobEngine(self.root) as engine:
+            return engine.preview_rollout(
+                targets=targets, requested_by=actor.actor_id,
+                artifact=artifact, canary_targets=canary_targets or (),
+                wave_size=wave_size,
+                failure_threshold_percent=failure_threshold_percent,
+            )
+
     def _invoke_drlink_agent_update_rollout_start(
         self, actor: ManagementActor, data: dict
     ) -> dict:
