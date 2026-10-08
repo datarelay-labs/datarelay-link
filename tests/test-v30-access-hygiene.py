@@ -52,6 +52,7 @@ class AccessHygieneTests(unittest.TestCase):
             plane.upsert_client("known-age", hostname="known-age")
             plane.upsert_client("unknown-age", hostname="unknown-age")
             plane.upsert_client("invalid-age", hostname="invalid-age")
+            plane.upsert_client("invalid-late", hostname="invalid-late")
             plane.conn.execute(
                 "UPDATE clients SET last_seen=? WHERE id=?",
                 (last_seen.isoformat().replace("+00:00", "Z"), "known-age"),
@@ -63,6 +64,11 @@ class AccessHygieneTests(unittest.TestCase):
             )
             plane.conn.execute(
                 "UPDATE clients SET last_seen='0000-invalid' WHERE id='invalid-age'"
+            )
+            # Lexically late but invalid evidence must not be silently omitted
+            # from the review just because it sorts after the UTC cutoff.
+            plane.conn.execute(
+                "UPDATE clients SET last_seen='zz-not-a-timestamp' WHERE id='invalid-late'"
             )
             plane.conn.commit()
             revision = plane.current_revision()
@@ -81,6 +87,9 @@ class AccessHygieneTests(unittest.TestCase):
         self.assertEqual(by_id["invalid-age"]["age_days"], None)
         self.assertEqual(by_id["invalid-age"]["evidence_quality"], "UNKNOWN_EVIDENCE")
         self.assertEqual(by_id["invalid-age"]["finding_status"], "UNKNOWN_EVIDENCE")
+        self.assertEqual(by_id["invalid-late"]["age_days"], None)
+        self.assertEqual(by_id["invalid-late"]["evidence_quality"], "UNKNOWN_EVIDENCE")
+        self.assertEqual(by_id["invalid-late"]["finding_status"], "UNKNOWN_EVIDENCE")
         self.assertTrue(result["read_only"])
         self.assertFalse(result["auto_mutation"])
         reader = ControlPlane(root, read_only=True)

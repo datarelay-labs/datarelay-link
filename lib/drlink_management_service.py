@@ -1345,7 +1345,12 @@ class ManagementQueryService:
         findings: list[dict[str, Any]] = []
         for row in self.conn.execute(
             "SELECT id,COALESCE(NULLIF(label,''),NULLIF(hostname,''),id) AS name,last_seen "
-            "FROM clients WHERE last_seen IS NULL OR last_seen<? ORDER BY id LIMIT 100",
+            # Compare actual UTC instants, not lexical text. Invalid timestamps
+            # also need operator review as UNKNOWN_EVIDENCE even when their
+            # unparseable prefix sorts after a normal ISO-8601 cutoff.
+            "FROM clients WHERE last_seen IS NULL "
+            "OR julianday(last_seen) IS NULL "
+            "OR julianday(last_seen)<julianday(?) ORDER BY id LIMIT 100",
             (stale_before,),
         ):
             observed = self._parse_attention_timestamp(str(row["last_seen"] or ""))
