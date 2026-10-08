@@ -1460,7 +1460,18 @@
     "risk": "security_change",
     "confirmation": "conditional_y_n",
     "surface": "",
-    "flags": []
+    "flags": [],
+    "tail_fields": {
+      "mode": [
+        "blacklist",
+        "whitelist"
+      ],
+      "source": null,
+      "destination": null,
+      "service": null,
+      "enabled": false,
+      "disabled": false
+    }
   },
   {
     "path": [
@@ -2715,7 +2726,15 @@
     "risk": "security_change",
     "confirmation": "conditional_y_n",
     "surface": "",
-    "flags": []
+    "flags": [],
+    "tail_fields": {
+      "type": [
+        "ip",
+        "cidr",
+        "fqdn"
+      ],
+      "value": null
+    }
   },
   {
     "path": [
@@ -2949,7 +2968,15 @@
     "risk": "security_change",
     "confirmation": "conditional_y_n",
     "surface": "",
-    "flags": []
+    "flags": [],
+    "tail_fields": {
+      "type": [
+        "tcp",
+        "udp",
+        "fixed-tcp"
+      ],
+      "port": null
+    }
   },
   {
     "path": [

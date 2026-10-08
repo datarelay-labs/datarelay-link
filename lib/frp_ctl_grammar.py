@@ -4812,6 +4812,32 @@ def _catalog_candidates(
     longer = _longer_path_children()
     if longer:
         return longer
+    fields = cmd.get("tail_fields")
+    if fields:
+        # Consume complete field/value pairs; free-form values are never
+        # interpreted as new field names. Switches consume only themselves.
+        tail = probe[len(cmd["path"]) + len(cmd["args"]):]
+        used = set()
+        pos = 0
+        while pos < len(tail):
+            field = tail[pos]
+            if field not in fields or field in used:
+                return []
+            used.add(field)
+            choices = fields[field]
+            if choices is False:
+                pos += 1
+                continue
+            if pos + 1 == len(tail):
+                if isinstance(choices, list):
+                    return _filter(choices, prefix)
+                return []
+            pos += 2
+        if probe[2] in ("enabled", "disabled") and cmd["path"] == ("set", "remote-access"):
+            return []
+        if "enabled" in used or "disabled" in used:
+            used.update(("enabled", "disabled"))
+        return _filter([field for field in fields if field not in used], prefix)
     # No further catalog tokens — allow verb-specific overlays (set service
     # properties, set client metadata, …) instead of hard-stopping with [].
     return None

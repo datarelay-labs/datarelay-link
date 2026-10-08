@@ -541,6 +541,7 @@ def _cmd(
     risk="none",
     confirmation="none",
     surface="",
+    tail_fields=None,
 ):
     """Describe one canonical command.
 
@@ -587,6 +588,7 @@ def _cmd(
         "risk": risk_text,
         "confirmation": confirm_text,
         "surface": surface_text,
+        "tail_fields": tail_fields or {},
     }
 
 
@@ -658,6 +660,7 @@ def _load_final_commands():
                 args=args,
                 flags=flags,
                 tail=row.get("tail"),
+                tail_fields=row.get("tail_fields"),
                 internal=tuple(row["internal"]) if row.get("internal") else None,
                 aliases=tuple(tuple(a) for a in (row.get("aliases") or ())),
                 destructive=bool(row.get("destructive")),
@@ -1982,6 +1985,13 @@ def command_help(cmd):
             else:
                 rows.append((arg["name"], "required" if arg["required"] else "optional"))
         lines.extend(["", "Arguments:"])
+        lines.extend(_fmt_rows(rows))
+    if cmd.get("tail_fields"):
+        rows = []
+        for field, choices in cmd["tail_fields"].items():
+            description = "one of: %s" % ", ".join(choices) if isinstance(choices, list) else ("switch" if choices is False else "value")
+            rows.append((field, description))
+        lines.extend(["", "Fields after the name:"])
         lines.extend(_fmt_rows(rows))
     shown_flags = []
     # Public command help never advertises GNU-style --options.

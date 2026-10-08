@@ -165,6 +165,25 @@ if "Unknown command: s\n" in text or "Unknown command: s\r" in text:
     raise SystemExit("ambiguous Tab executed partial token")
 print("PTY_AMBIGUOUS_SAFE=PASS")
 
+# Named one-shot configuration fields must reach Readline without dispatch.
+for resource, partial, completed in (
+    ("network-object", "t", "type"),
+    ("service-object", "p", "port"),
+    ("remote-access", "m", "mode"),
+):
+    os.write(master, b"\x15")
+    read_some(0.1)
+    start = len(buf)
+    line = "set %s fixture %s" % (resource, partial)
+    os.write(master, line.encode() + b"\t")
+    read_some(0.6)
+    observed = buf[start:].decode("utf-8", "replace")
+    if "set %s fixture %s" % (resource, completed) not in observed:
+        raise SystemExit("named field Tab failed: " + observed)
+    if "STUB_FRPCTL" in observed:
+        raise SystemExit("named field Tab dispatched a mutation")
+print("PTY_NAMED_CONFIGURATION_FIELDS=PASS")
+
 try:
     os.write(master, b"\x04")
 except OSError:
