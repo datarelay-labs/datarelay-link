@@ -1069,7 +1069,13 @@ class DrlinkWebHandler(BaseHTTPRequestHandler):
                 body = self._body_json()
                 api = AutomationApi(self.app.root)
                 try:
-                    result = api.invoke(parsed.path, header[7:].strip(), body)
+                    keys = self.headers.get_all("Idempotency-Key") or []
+                    if len(keys) > 1:
+                        raise ControlPlaneError("Only one Idempotency-Key is allowed.")
+                    result = api.invoke(
+                        parsed.path, header[7:].strip(), body,
+                        idempotency_key=keys[0] if keys else None,
+                    )
                 finally:
                     api.close()
                 self._json(200, result)

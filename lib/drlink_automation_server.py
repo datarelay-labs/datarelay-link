@@ -134,7 +134,13 @@ class AutomationHandler(BaseHTTPRequestHandler):
                 return
             api = AutomationApi(self.server.root)
             try:
-                payload = api.invoke(path.path, header[7:].strip(), data)
+                keys = self.headers.get_all("Idempotency-Key") or []
+                if len(keys) > 1:
+                    raise ControlPlaneError("Only one Idempotency-Key is allowed.")
+                payload = api.invoke(
+                    path.path, header[7:].strip(), data,
+                    idempotency_key=keys[0] if keys else None,
+                )
             finally:
                 api.close()
             self._json(200, payload)
