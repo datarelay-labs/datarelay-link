@@ -1393,9 +1393,9 @@ def _catalog_context_help(tokens, role, names=None, clients=None):
     if tokens[1] not in actions:
         if root in FALLTHROUGH_ROOTS:
             return None
-        if not rows:
-            return None
-        return _fmt_available(rows)
+        # Unknown resources must not look accepted through ancestor help.
+        # Use the same rejection and canonical pointer as nested help.
+        return help_text(tokens, role)
     probe = [root] + list(tokens[1:])
     cmd = CATALOG.find(probe)
     if cmd is None or not CATALOG.role_allows(cmd["roles"], role):

@@ -31,6 +31,7 @@ python3 tests/test-public-help-required-operands.py
 python3 tests/test-native-restore-confirmation.py
 python3 tests/test-full-e2e-public-recovery-regressions.py
 python3 tests/test-native-public-consent.py
+bash tests/test-status-surface-parity.sh
 python3 tests/test-enrollment-public-guidance.py
 python3 tests/test-no-legacy-current-surface.py
 python3 tests/test-canonical-runtime-policy.py

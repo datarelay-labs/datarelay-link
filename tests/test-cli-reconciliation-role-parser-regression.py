@@ -15,6 +15,56 @@ import frp_ctl_grammar as grammar
 
 
 class RoleParserRegression(unittest.TestCase):
+    def test_unknown_resource_context_help_rejects_without_mutation(self):
+        resources = ('remote-access-rules', 'internet-access-rules',
+                     'ai-access-rules', 'not-a-resource')
+        for role in ('server', 'client'):
+            with tempfile.TemporaryDirectory(prefix='drlink-resource-help-') as temp:
+                root = Path(temp)
+                config = root / ('etc/drlink/config.json' if role == 'server'
+                                 else 'etc/frp/client-state.json')
+                config.parent.mkdir(parents=True)
+                config.write_text('{"role":"server"}\n' if role == 'server'
+                                  else '{"services":{}}\n')
+                before = {str(p.relative_to(root)): p.read_bytes()
+                          for p in root.rglob('*') if p.is_file()}
+                env = dict(os.environ, FRP_CTL_TEST_ROOT=temp,
+                           FRP_DEPLOY_TEST_ROOT=temp)
+                for action in ('set', 'unset', 'show', 'test'):
+                    for resource in resources:
+                        command = [action, resource]
+                        with self.subTest(role=role, command=command):
+                            parsed = grammar.match(command + ['?'], role)
+                            self.assertEqual(parsed['status'], 'error')
+                            self.assertEqual(parsed['exit_code'], 2)
+                            self.assertTrue(grammar.help_text(command, role)
+                                            .startswith('Unknown help topic:'))
+                        self.assertEqual(grammar.completion_candidates(
+                            ' '.join(command) + ' ', role, [], {}, [],
+                            trailing=True), [])
+                # Exercise the public native boundary for all six observed paths.
+                for action in ('set', 'unset'):
+                    for resource in resources[:3]:
+                        command = [action, resource]
+                        forms = (command + ['?'], ['help'] + command)
+                        for tokens in forms:
+                            result = subprocess.run(
+                                ['bash', str(ROOT / 'tools/drlink'), *tokens],
+                                cwd=temp, env=env, capture_output=True,
+                                text=True, timeout=30)
+                            output = result.stdout + result.stderr
+                            self.assertEqual(result.returncode, 2, output)
+                            self.assertIn('help commands', output)
+                after = {str(p.relative_to(root)): p.read_bytes()
+                         for p in root.rglob('*') if p.is_file()}
+                self.assertEqual(after, before)
+        for resource in ('remote-access', 'internet-access', 'ai-access',
+                         'network-object'):
+            # A retired-looking target name remains a legal current operand.
+            result = grammar.match(['set', resource, 'remote-access-rules', '?'],
+                                   'server')
+            self.assertEqual(result['status'], 'ok')
+
     def test_unknown_system_help_never_falls_back_to_domain_success(self):
         for role in ("server", "client"):
             with tempfile.TemporaryDirectory(prefix="drlink-nested-help-") as temp:
