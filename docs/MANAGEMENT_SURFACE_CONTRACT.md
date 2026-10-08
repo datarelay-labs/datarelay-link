@@ -465,6 +465,14 @@ canary/first wave, bounded concurrency, and failure-pause policy. CLI/Web can st
 control the rollout with `management-update`; Plugin is limited to status/diagnosis in
 3.0. No adapter may turn rollout into arbitrary command/package execution.
 
+The read-only rollout preview may show a recent authenticated Agent lifecycle
+heartbeat from stored inventory. A recent report does not prove current network
+reachability, installed binary provenance, a qualified signed update artifact, or
+rollback readiness. Neither matching version strings nor heartbeat freshness
+may enable Apply; staged rollout remains unavailable until the signed Agent
+updater, post-update health checks, and rollback are qualified on the exact
+candidate.
+
 ### 9.7 Public Automation API / Service Accounts
 
 Automation clients authenticate as Service Accounts and receive only their configured

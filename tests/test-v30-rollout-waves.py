@@ -190,11 +190,13 @@ class StagedRolloutSchedulingTests(unittest.TestCase):
     def test_preview_shows_observed_versions_without_claiming_artifact_provenance(self):
         self.engine.conn.execute(
             "UPDATE clients SET agent_version='2.4.0', agent_platform='linux',"
-            " agent_heartbeat_at='2026-10-08T05:00:00Z' WHERE id='a-first'"
+            " agent_heartbeat_at=?,agent_lifecycle_state='connected' "
+            "WHERE id='a-first'", (self.now.isoformat(),),
         )
         self.engine.conn.execute(
-            "UPDATE clients SET agent_version='3.0.0-rc.1', agent_platform='darwin'"
-            " WHERE id='b-second'"
+            "UPDATE clients SET agent_version='3.0.0-rc.1', agent_platform='darwin',"
+            " agent_heartbeat_at=?,agent_lifecycle_state='disconnected' "
+            "WHERE id='b-second'", (self.now.isoformat(),),
         )
         before = self.engine.conn.execute("SELECT COUNT(*) FROM management_jobs").fetchone()[0]
         preview = self.engine.preview_rollout(
@@ -208,6 +210,11 @@ class StagedRolloutSchedulingTests(unittest.TestCase):
         self.assertEqual(versions["b-second"]["version_relation"], "SAME_VERSION")
         self.assertEqual(versions["z-canary"]["version_relation"], "UNKNOWN")
         self.assertEqual(versions["z-canary"]["current_version"], "unknown")
+        self.assertTrue(versions["a-first"]["agent_heartbeat_fresh"])
+        self.assertEqual(versions["a-first"]["agent_lifecycle_state"], "connected")
+        # A disconnected Host is never considered recent even with a fresh timestamp.
+        self.assertFalse(versions["b-second"]["agent_heartbeat_fresh"])
+        self.assertFalse(versions["z-canary"]["agent_heartbeat_fresh"])
         for row in versions.values():
             self.assertEqual(row["provenance"], "NOT_VERIFIED")
             self.assertEqual(row["update_available"], "UNKNOWN")

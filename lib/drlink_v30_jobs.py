@@ -787,17 +787,27 @@ class ManagementJobEngine:
             wave_size=wave_size,
             failure_threshold_percent=failure_threshold_percent,
         )
+        from drlink_control_plane import agent_heartbeat_fresh
+
         with self._lock:
             blocked = [host for host in target_ids if not self._rollout_target_approved(host)]
             observations = []
             target_version = str(payload["artifact"]["version"])
             for host_id in target_ids:
                 row = self.conn.execute(
-                    "SELECT agent_version,agent_platform,agent_heartbeat_at "
+                    "SELECT agent_version,agent_platform,agent_heartbeat_at,agent_lifecycle_state "
                     "FROM clients WHERE id=?", (host_id,),
                 ).fetchone()
                 installed = str(row["agent_version"] or "").strip() if row else ""
                 platform = str(row["agent_platform"] or "").strip() if row else ""
+                lifecycle = (
+                    str(row["agent_lifecycle_state"] or "legacy").strip().lower()
+                    if row else "unknown"
+                )
+                heartbeat = row["agent_heartbeat_at"] if row else None
+                recent = bool(
+                    lifecycle == "connected" and agent_heartbeat_fresh(heartbeat)
+                )
                 relation = (
                     "UNKNOWN" if not installed
                     else "SAME_VERSION" if installed == target_version
@@ -809,9 +819,11 @@ class ManagementJobEngine:
                     "target_version": target_version,
                     "platform": platform or "unknown",
                     "version_relation": relation,
-                    "last_heartbeat": row["agent_heartbeat_at"] if row else None,
-                    # Version alone is not signed artifact identity and can be
-                    # stale or represent different commits with equal labels.
+                    "last_heartbeat": heartbeat,
+                    "agent_lifecycle_state": lifecycle,
+                    "agent_heartbeat_fresh": recent,
+                    # A recent authenticated heartbeat is not current reachability,
+                    # signed release provenance or a verified update capability.
                     "provenance": "NOT_VERIFIED",
                     "update_available": "UNKNOWN",
                 })
