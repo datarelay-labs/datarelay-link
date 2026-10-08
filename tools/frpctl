@@ -1037,7 +1037,7 @@ PY
 
 frpctl_nav_dispatch_command() {
   local cmd="$1"
-  local prompt="" path=""
+  local prompt="" path="" rule_name=""
   local -a toks=()
   # shellcheck disable=SC2206
   toks=($cmd)
@@ -1059,6 +1059,16 @@ frpctl_nav_dispatch_command() {
       echo "No changes were applied."
       return 0
     fi
+    rule_name="${path#"${path%%[![:space:]]*}"}"
+    rule_name="${rule_name%"${rule_name##*[![:space:]]}"}"
+    rule_name="$(printf '%s' "$rule_name" | tr '[:upper:]' '[:lower:]')"
+    case "$cmd:$rule_name" in
+      "set remote-access:enabled"|"set remote-access:disabled"|"set internet-access:enabled"|"set internet-access:disabled"|"set ai-access:enabled"|"set ai-access:disabled")
+        echo "ERROR: this name is reserved for policy enforcement. Choose another rule name." >&2
+        echo "No changes were applied." >&2
+        return 1
+        ;;
+    esac
     toks+=("$path")
   fi
   frpctl_dispatch "${toks[@]}" || true

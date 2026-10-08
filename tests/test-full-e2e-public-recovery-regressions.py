@@ -55,6 +55,15 @@ class PublicRecoveryTests(unittest.TestCase):
             self.assertIn('restore preflight failed', result.stderr)
             self.assertNotIn('Continue with restore?', result.stdout+result.stderr)
 
+    def test_rule_create_menu_never_dispatches_enforcement_names(self):
+        for resource in ('remote-access','internet-access','ai-access'):
+            for name in ('enabled','disabled','ENABLED',' disabled '):
+                script='frpctl_read() { printf "%s" "$ANSWER"; }; frpctl_dispatch() { printf "DISPATCHED"; };\n'+shell_function('frpctl_nav_dispatch_command')+'\nfrpctl_nav_dispatch_command "$COMMAND"'
+                result=subprocess.run(['bash','-c',script],env=dict(os.environ,ANSWER=name,COMMAND='set '+resource),capture_output=True,text=True)
+                self.assertEqual(result.returncode,1)
+                self.assertNotIn('DISPATCHED',result.stdout)
+                self.assertIn('No changes were applied',result.stderr)
+
     def test_agent_bad_scope_advertises_only_runtime(self):
         with tempfile.TemporaryDirectory() as tmp:
             p=Path(tmp)/'etc/frp';p.mkdir(parents=True);(p/'client-state.json').write_text('{}');(p/'frpc.toml').write_text('')
