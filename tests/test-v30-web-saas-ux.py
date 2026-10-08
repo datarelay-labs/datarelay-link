@@ -77,6 +77,33 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         ):
             self.assertIn(contextual, SOURCE)
 
+    def test_foundation_administration_keeps_support_separate_from_actor_access(self):
+        # Foundation's availability is the product capability; access is the
+        # authenticated actor's permission. A non-admin must not see a
+        # privileged open action or a false claim that users are unsupported.
+        component = SOURCE.split("function LinkFoundationAdministration(", 1)[1]
+        component = component.split("function SystemPanel(", 1)[0]
+        self.assertIn('"core.https":{', component)
+        self.assertIn('"core.users":{', component)
+        https = component.split('"core.https":{', 1)[1].split('    },', 1)[0]
+        users = component.split('"core.users":{', 1)[1].split('    },', 1)[0]
+        self.assertIn('availability:"supported"', https)
+        self.assertIn('access:admin?"manage":"view"', https)
+        self.assertIn('actionId:"link.certificate"', https)
+        self.assertIn('availability:"supported"', users)
+        self.assertIn('access:admin?"manage":"none"', users)
+        self.assertIn('...(admin?{target:', users)
+        self.assertIn('actionId:"link.users"', users)
+        self.assertIn('if(admin)onNavigate?.("users","administration")', component)
+        self.assertIn('showUnavailable onOpen={openTask}', component)
+        for name in (
+            "core.password", "core.timezone", "core.network",
+            "core.retention", "core.backup-import"
+        ):
+            self.assertIn(f'"{name}":unavailable', component)
+        for name in ("core.audit", "core.health"):
+            self.assertIn(f'"{name}":{{', component)
+
     def test_managed_host_admission_is_visible_separately_from_connection(self):
         # An admission filter alone is not enough; the selected state must be
         # visible in the inventory row and independent of connectivity.

@@ -709,13 +709,16 @@ function LinkFoundationAdministration({
   const unavailable={availability:"unavailable",access:"view"} as const;
   const tasks=createStandardAdministrationTasks({
     "core.https":{
-      availability:"read_only",
-      access:"view",
+      // The product supports certificate management; only Admin may change it.
+      availability:"supported",
+      access:admin?"manage":"view",
       target:{kind:"action",actionId:"link.certificate"}
     },
     "core.users":{
-      availability:admin?"supported":"unavailable",
-      access:admin?"manage":"view",
+      // Access and product capability are independent: do not mislabel an
+      // Admin-only feature as unsupported for non-admin operators.
+      availability:"supported",
+      access:admin?"manage":"none",
       ...(admin?{target:{kind:"action" as const,actionId:"link.users"}}:{})
     },
     "core.password":unavailable,
