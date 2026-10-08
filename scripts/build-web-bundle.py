@@ -7,6 +7,7 @@ import hashlib
 import re
 import json
 import io
+import stat
 import tarfile
 from pathlib import Path
 
@@ -89,8 +90,19 @@ def foundation_pack_sources(root: Path = ROOT) -> tuple[str, ...]:
         seen.add(name)
         relative = "web/.foundation/packs/datarelay-labs-%s-%s.tgz" % (name, version)
         archive = root / relative
-        if not archive.is_file():
-            raise SystemExit("foundation-archive-missing:" + name)
+        if root.is_symlink() or any(
+            (root / Path(*Path(relative).parts[:index])).is_symlink()
+            for index in range(1, len(Path(relative).parts))
+        ):
+            raise SystemExit("foundation-archive-unsafe:" + name)
+        try:
+            info = archive.lstat()
+        except FileNotFoundError:
+            raise SystemExit("foundation-archive-missing:" + name) from None
+        # Never package a symlink or hard-linked external file even if its
+        # current bytes match the pinned digest.
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            raise SystemExit("foundation-archive-unsafe:" + name)
         with archive.open("rb") as file:
             actual = hashlib.file_digest(file, "sha256").hexdigest()
         if actual != archive_sha:

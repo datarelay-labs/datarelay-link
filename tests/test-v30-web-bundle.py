@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import os
 import shutil
 import tarfile
 import tempfile
@@ -84,6 +85,69 @@ class V30WebBundleTests(unittest.TestCase):
                         (root / "web/foundation.lock.json").write_text(
                             json.dumps(lock), encoding="utf-8"
                         )
+
+    def test_vendored_foundation_symlink_cannot_pass_digest_validation(self):
+        # Matching hashes must not make an out-of-tree symlink an approved
+        # vendored release archive. Packaging would otherwise copy a link.
+        with tempfile.TemporaryDirectory(prefix="drlink-foundation-link-") as folder:
+            root = Path(folder)
+            packs = root / "web/.foundation/packs"
+            packs.mkdir(parents=True)
+            lock_src = ROOT / "web/foundation.lock.json"
+            (root / "web/foundation.lock.json").write_bytes(lock_src.read_bytes())
+            lock = json.loads(lock_src.read_text())
+            for entry in lock["packages"]:
+                name = "datarelay-labs-%s-%s.tgz" % (
+                    entry["path"], lock["version"]
+                )
+                original = ROOT / "web/.foundation/packs" / name
+                current = packs / name
+                if entry["path"] == "tokens":
+                    current.symlink_to(original)
+                else:
+                    shutil.copyfile(original, current)
+            with self.assertRaisesRegex(
+                SystemExit, "foundation-archive-unsafe:tokens"
+            ):
+                MOD.foundation_pack_sources(root)
+
+    def test_foundation_external_hardlink_and_symlinked_parent_fail_closed(self):
+        lock_src = ROOT / "web/foundation.lock.json"
+        for variant in ("external-hardlink", "symlinked-parent"):
+            with self.subTest(variant=variant):
+                with tempfile.TemporaryDirectory(
+                    prefix="drlink-foundation-indirection-"
+                ) as folder:
+                    root = Path(folder)
+                    foundation = root / "web/.foundation"
+                    foundation.mkdir(parents=True)
+                    (root / "web/foundation.lock.json").write_bytes(
+                        lock_src.read_bytes()
+                    )
+                    lock = json.loads(lock_src.read_text())
+                    packs = foundation / "packs"
+                    if variant == "symlinked-parent":
+                        real_packs = root / "external-packs"
+                        real_packs.mkdir()
+                        packs.symlink_to(real_packs, target_is_directory=True)
+                    else:
+                        packs.mkdir()
+                    for entry in lock["packages"]:
+                        name = "datarelay-labs-%s-%s.tgz" % (
+                            entry["path"], lock["version"]
+                        )
+                        original = ROOT / "web/.foundation/packs" / name
+                        current = packs / name
+                        if variant == "external-hardlink" and entry["path"] == "tokens":
+                            outside = root / "outside-package.tgz"
+                            shutil.copyfile(original, outside)
+                            os.link(outside, current)
+                        else:
+                            shutil.copyfile(original, current)
+                    with self.assertRaisesRegex(
+                        SystemExit, "foundation-archive-unsafe:tokens"
+                    ):
+                        MOD.foundation_pack_sources(root)
 
     def test_bundle_contains_compiled_static_assets_only_for_runtime_ui(self):
         tmp = Path(tempfile.mkdtemp(prefix="drlink-web-static-"))
