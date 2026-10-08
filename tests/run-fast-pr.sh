@@ -44,6 +44,10 @@ python3 tests/test-v24-doc-consistency.py
 python3 tests/test-v24-cli-ai-master-closure.py
 python3 tests/test-v24-cli-workflow-semantic-parity.py
 
+echo "=== human E2E finding → fast regression links (supporting only) ==="
+python3 tests/test_persona_findings.py
+python3 tools/persona_findings.py
+
 echo "=== derived artifact closure ==="
 bash tests/test-change-closure-artifacts.sh
 
