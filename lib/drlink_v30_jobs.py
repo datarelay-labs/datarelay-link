@@ -749,6 +749,10 @@ class ManagementJobEngine:
         normalized_artifact = {key: str(artifact.get(key) or "").strip() for key in required}
         if any(not normalized_artifact[key] for key in required):
             raise ControlPlaneError("Rollout artifact requires immutable version, source_ref, and sha256.")
+        ref = normalized_artifact["source_ref"]
+        if len(ref) != 40 or any(c not in "0123456789abcdefABCDEF" for c in ref):
+            raise ControlPlaneError("Rollout source_ref must be an immutable 40-character Git SHA.")
+        normalized_artifact["source_ref"] = ref.lower()
         if len(normalized_artifact["sha256"]) != 64 or any(c not in "0123456789abcdefABCDEF" for c in normalized_artifact["sha256"]):
             raise ControlPlaneError("Rollout artifact sha256 must be a 64-character hexadecimal digest.")
         payload = {

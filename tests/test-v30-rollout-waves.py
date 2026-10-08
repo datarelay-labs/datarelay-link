@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 
 from drlink_control_plane import ControlPlane
+from drlink_control_db import ControlPlaneError
 from drlink_v30_jobs import (
     CANCELLED, FAILED, QUEUED, SUCCEEDED, ManagementJobEngine,
 )
@@ -120,6 +121,15 @@ class StagedRolloutSchedulingTests(unittest.TestCase):
         self.assertEqual(result["status"], FAILED)
         remaining = {x["target_id"]: x["status"] for x in result["targets"]}
         self.assertEqual(remaining["b-second"], CANCELLED)
+
+    def test_mutable_source_ref_rejected_even_with_valid_digest(self):
+        for ref in ("main", "feature/v3.0-drl3-0", "v3.0.0", "a" * 39, "f" * 41):
+            with self.subTest(ref=ref), self.assertRaises(ControlPlaneError):
+                self.engine.enqueue_rollout(
+                    targets=("a-first",), requested_by="ops-admin",
+                    artifact={"version": "3.0.0-rc.1", "source_ref": ref,
+                              "sha256": "b" * 64}, wave_size=1, now=self.now,
+                )
 
     def test_generator_canaries_are_materialized_once(self):
         job = self.engine.enqueue_rollout(
