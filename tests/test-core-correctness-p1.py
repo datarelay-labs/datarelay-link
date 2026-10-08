@@ -192,6 +192,8 @@ class EnrollEnv:
     def __init__(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
+        self._previous_audit_log = os.environ.get('FRP_AUDIT_LOG')
+        os.environ['FRP_AUDIT_LOG'] = str(self.root / 'audit.jsonl')
         self.registry = self.root / 'registry.json'
         self.token = self.root / 'server_token'
         self.enrollments = self.root / 'enrollments'
@@ -209,6 +211,7 @@ class EnrollEnv:
             'listen_host': '127.0.0.1',
             'listen_port': 6099,
             'registry_file': str(self.registry),
+            'control_plane_root': str(self.root),  # Fixture-local authoritative SQLite Core.
             'enrollments_dir': str(self.enrollments),
             'token_file': str(self.token),
         }, indent=2) + '\n')
@@ -236,6 +239,10 @@ class EnrollEnv:
         self.operation_id = '0123456789abcdef0123456789abcdef'
 
     def cleanup(self):
+        if self._previous_audit_log is None:
+            os.environ.pop('FRP_AUDIT_LOG', None)
+        else:
+            os.environ['FRP_AUDIT_LOG'] = self._previous_audit_log
         self.tmp.cleanup()
 
     def body(self, machine_id='machine-one', services=None, pubkey=None):
@@ -378,6 +385,7 @@ def test_redeem_nested_lock_bounded():
         'listen_host': '127.0.0.1',
         'listen_port': 6099,
         'registry_file': str(registry),
+        'control_plane_root': str(root),  # Never open host /var/lib/drlink in tests.
         'enrollments_dir': str(enrollments),
         'bootstrap_dir': str(bootstrap),
         'token_file': str(token),
