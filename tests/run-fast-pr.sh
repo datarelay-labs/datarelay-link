@@ -12,6 +12,10 @@ git ls-files -z '*.sh' | xargs -0 -r -n 1 bash -n --
 echo "=== Python compile ==="
 git ls-files '*.py' -z | xargs -0 -r python3 -m py_compile
 
+echo "=== human E2E finding → fast regression links (supporting only) ==="
+python3 tests/test_persona_findings.py
+python3 tools/persona_findings.py
+
 echo "=== version and release governance ==="
 ./scripts/check-version-consistency.sh
 ./tests/test-version-governance.sh
@@ -43,10 +47,6 @@ python3 tests/test-v24-final-closure.py
 python3 tests/test-v24-doc-consistency.py
 python3 tests/test-v24-cli-ai-master-closure.py
 python3 tests/test-v24-cli-workflow-semantic-parity.py
-
-echo "=== human E2E finding → fast regression links (supporting only) ==="
-python3 tests/test_persona_findings.py
-python3 tools/persona_findings.py
 
 echo "=== derived artifact closure ==="
 bash tests/test-change-closure-artifacts.sh

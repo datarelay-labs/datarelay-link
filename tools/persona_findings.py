@@ -142,8 +142,9 @@ def audit(root: Path, registry_name: str, ledger: Path | None,
     output["source_head"] = source_head
     output["contract_sha256"] = contract_sha
     for item in read_ledger(ledger):
-        # Disposed findings are historical; check currently OPEN findings only.
-        if item["STATUS"].strip().upper() not in {"OPEN", "FAIL", "UNRESOLVED"}:
+        # Only explicitly disposed findings are skipped. Unexpected/new status
+        # values fail open for review instead of silently hiding user defects.
+        if item["STATUS"].strip().upper() in {"CLOSED", "RESOLVED", "DISPOSITIONED", "NON_ACTIONABLE"}:
             continue
         finding_id = item["FINDING_ID"].strip()
         output["open_findings"] += 1

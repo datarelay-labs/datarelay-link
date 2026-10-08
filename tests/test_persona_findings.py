@@ -134,10 +134,26 @@ class PersonaFeedbackTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "missing fields"):
             feedback.load_registry(self.root, "tests/persona-regression-links.json")
 
+    def test_unusual_finding_status_is_never_silently_ignored(self):
+        self.ledger(HEADER + "P9-404\tP1\tYES\tPARTIAL\tUSER_BLOCKED\tCLI\tproof.txt\n")
+        output = feedback.audit(self.root, "tests/persona-regression-links.json",
+                                self.ledger_path, "audit-123")
+        self.assertEqual(output["open_findings"], 1)
+        self.assertEqual(output["unlinked_findings"][0]["finding_id"], "P9-404")
+
+    def test_run_head_mismatch_is_not_counted_as_a_valid_link(self):
+        wrong = dict(self.row, source_head="c" * 40)
+        self.registry([wrong])
+        with self.assertRaisesRegex(ValueError, "wrong run identity"):
+            feedback.audit(self.root, "tests/persona-regression-links.json",
+                           self.ledger_path, "audit-123")
+
     def test_repository_sample_links_all_point_to_existing_tests(self):
         linked = feedback.load_registry(ROOT, "tests/persona-regression-links.json")
-        self.assertEqual(len(linked), 9)
-        self.assertEqual(len({k[1] for k in linked}), 9)
+        self.assertGreaterEqual(len(linked), 9)
+        expected = {"P1-001", "P2-001", "P2-002", "P2-003", "P2-004",
+                    "P2-005", "P2-006", "P2-007", "P3-001"}
+        self.assertTrue(expected.issubset({k[1] for k in linked}))
         self.assertTrue(all(row["user_goal"] for row in linked.values()))
 
 
