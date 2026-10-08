@@ -474,7 +474,12 @@ def reject_obsolete_surface(tokens):
                 "exit_code": 2,
                 "message": (
                     "Legacy local-service commands are not part of the v2.4 Agent grammar.\n"
-                    "Use show/set/unset remote-service on the Agent and system synchronize when reconciliation is needed."
+                    "On the Agent Host, use:\n"
+                    "  show remote-services\n"
+                    "  show remote-service <NAME>\n"
+                    "  set remote-service <NAME>\n"
+                    "  unset remote-service <NAME>\n"
+                    "  system synchronize    (when reconciliation is needed)"
                 ),
             }
         if verb == "system" and raw[1] == "services":
@@ -483,7 +488,10 @@ def reject_obsolete_surface(tokens):
                 "exit_code": 2,
                 "message": (
                     "Legacy 'system services ...' commands are not part of the v2.4 Agent grammar.\n"
-                    "Use set/unset remote-service and system synchronize."
+                    "On the Agent Host, use:\n"
+                    "  set remote-service <NAME>\n"
+                    "  unset remote-service <NAME>\n"
+                    "  system synchronize"
                 ),
             }
     if len(raw) >= 2 and raw[1] == "internet" and verb in ("show", "test"):
@@ -862,7 +870,10 @@ def help_text(tokens, role):
         catalog_topic = _catalog_help_topic(tokens, role)
         if catalog_topic is not None:
             return catalog_topic
-    domain = CATALOG.domain_help(verb, role)
+        children = _catalog_next_path_tokens(tokens, role)
+        if children:
+            return _fmt_available([(child, "") for child in children])
+    domain = CATALOG.domain_help(verb, role) if len(tokens) == 1 else None
     if domain is not None:
         return domain
     catalog_topic = _catalog_help_topic(tokens, role)
@@ -893,8 +904,8 @@ def help_text(tokens, role):
         "reference.",
         "Canonical roots: show, set, unset, test, system, menu, help, exit",
     ]
-    if client or server:
-        pass
+    if CATALOG.domain_help(verb, role) is not None:
+        lines.extend(["", "See: help %s" % verb])
     return "\n".join(lines) + "\n"
 
 
@@ -1564,7 +1575,8 @@ def context_help(tokens, role, names=None, clients=None):
             "Use Managed Hosts and Enrollment on the DRLink Server:\n"
             "  show managed-hosts\n"
             "  show managed-host <HOST>\n"
-            "  set enrollment zero-touch|manual\n"
+            "  set enrollment zero-touch\n"
+            "  set enrollment manual\n"
             "  set managed-host <HOST> group <GROUP>\n"
             "  unset managed-host <HOST>\n\n"
             "See: help managed-hosts\n"
@@ -1591,7 +1603,8 @@ def context_help(tokens, role, names=None, clients=None):
         "enrollment": (
             '"enrollment" is not a current public root.\n\n'
             "Use:\n"
-            "  set enrollment zero-touch|manual\n"
+            "  set enrollment zero-touch\n"
+            "  set enrollment manual\n"
             "  set enrollment bulk\n"
             "  show enrollments\n"
             "  unset enrollment <ENROLLMENT>\n"
@@ -2365,14 +2378,22 @@ def match(tokens, role, names=None, clients=None):
                 "message": message,
             }
         focus = CATALOG.resolve_tokens(raw_focus, role=role)
+        if (len(focus) > 1 and focus[0] == "system"
+                and CATALOG.find(focus) is None
+                and not _catalog_next_path_tokens(focus, role)):
+            return {"status": "error", "exit_code": 2,
+                    "message": "Unknown system operation.\nUse: system ?\nSee: help system"}
         rejected = reject_obsolete_surface(focus)
         if rejected is not None:
             return rejected
+        message = context_help(focus, role, names=names, clients=clients)
+        if message.startswith("Unknown help topic:"):
+            return {"status": "error", "exit_code": 2, "message": message}
         return {
             "status": "ok",
             "action": "context_help",
             "focus": focus,
-            "message": context_help(focus, role, names=names, clients=clients),
+            "message": message,
         }
     # Bang-prefix is always shell — check before option scanning.
     if str(tokens[0]).startswith("!"):
@@ -4438,6 +4459,8 @@ def _catalog_desc_map(filled, role):
             return {}, "clients"
         if isinstance(complete, (list, tuple)):
             return {item: "" for item in complete}, "named"
+    if cmd.get("tail_fields") and index >= len(cmd["args"]):
+        return {}, "fields"
     return {}, "plain"
 
 
@@ -4609,7 +4632,7 @@ def format_tab_candidates(line, matches, role, names=None, clients=None):
         return "\n".join(lines)
     # Progressive disclosure: group large resource lists by product domain.
     groups = CATALOG.group_completion_candidates(matches)
-    if groups and style != "clients" and len(matches) >= 6:
+    if groups and style not in ("clients", "fields") and len(matches) >= 6:
         out = []
         for title, members in groups:
             out.append(title)

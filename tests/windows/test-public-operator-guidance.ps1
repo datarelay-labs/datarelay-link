@@ -35,6 +35,9 @@ try {
         }
         Check-Guidance ($rejected.Text -notmatch 'show/set/unset|remote-service\(s\)|(?m)^Use:.*\|') ('obsolete ' + $legacy.Path + ' omits pseudo commands/pipelines')
     }
+    $cliSynopsis = (Get-Help $client).Synopsis
+    Check-Guidance ($cliSynopsis -match 'Agent Host lifecycle') 'CLI synopsis uses current Agent Host role'
+    Check-Guidance ($cliSynopsis -notmatch 'drlink client lifecycle') 'CLI synopsis omits retired client role'
     $help = & $hostExe -NoProfile -File $installer -Help 2>&1 | Out-String
     Check-Guidance ($LASTEXITCODE -eq 0) 'public installer help succeeds'
     Check-Guidance ($help -match 'Windows Agent Host installer') 'installer uses current public role'

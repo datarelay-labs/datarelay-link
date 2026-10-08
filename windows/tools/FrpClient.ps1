@@ -1,7 +1,8 @@
 #Requires -Version 5.1
+
 <#
 .SYNOPSIS
-  drlink client lifecycle tool for Windows.
+  Data Relay Link Agent Host lifecycle tool for Windows.
 #>
 [CmdletBinding()]
 param(

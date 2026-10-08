@@ -15,6 +15,43 @@ import frp_ctl_grammar as grammar
 
 
 class RoleParserRegression(unittest.TestCase):
+    def test_unknown_system_help_never_falls_back_to_domain_success(self):
+        for role in ("server", "client"):
+            with tempfile.TemporaryDirectory(prefix="drlink-nested-help-") as temp:
+                root = Path(temp)
+                config = root / ("etc/drlink/config.json" if role == "server"
+                                 else "etc/frp/client-state.json")
+                config.parent.mkdir(parents=True)
+                config.write_text('{"role":"server"}\n' if role == "server" else '{"services":{}}\n')
+                before = config.read_bytes()
+                env = dict(os.environ, FRP_CTL_TEST_ROOT=temp, FRP_DEPLOY_TEST_ROOT=temp)
+                for leaf in ("doctor", "not-an-operation"):
+                    for tokens in (["help", "system", leaf], ["system", leaf, "?"]):
+                        with self.subTest(role=role, tokens=tokens):
+                            result = subprocess.run(["bash", str(ROOT / "tools/drlink"), *tokens],
+                                cwd=temp, env=env, capture_output=True, text=True, timeout=30)
+                            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                            self.assertIn("help system", result.stdout + result.stderr)
+                for tokens in (["help", "system"], ["help", "system", "update"],
+                               ["help", "system", "update", "product"]):
+                    result = subprocess.run(["bash", str(ROOT / "tools/drlink"), *tokens],
+                        cwd=temp, env=env, capture_output=True, text=True, timeout=30)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn("product", result.stdout)
+                self.assertEqual(config.read_bytes(), before)
+
+    def test_obsolete_recovery_lists_complete_commands(self):
+        for tokens in (["client"], ["enrollment"]):
+            rendered = grammar.context_help(tokens, "server")
+            self.assertIn("  set enrollment zero-touch\n", rendered)
+            self.assertIn("  set enrollment manual\n", rendered)
+            self.assertNotIn("zero-touch|manual", rendered)
+        rejected = grammar.reject_obsolete_surface(["show", "services"])
+        for command in ("show remote-services", "show remote-service <NAME>",
+                        "set remote-service <NAME>", "unset remote-service <NAME>"):
+            self.assertIn("  " + command + "\n", rejected["message"])
+        self.assertNotIn("show/set/unset", rejected["message"])
+
     def test_retired_test_resources_reject_native_execution_and_help(self):
         for role in ('server', 'client'):
             with tempfile.TemporaryDirectory(prefix='drlink-retired-test-resource-') as temp:

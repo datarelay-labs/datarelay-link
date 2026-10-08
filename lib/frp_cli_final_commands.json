@@ -1550,7 +1550,17 @@
     "risk": "security_change",
     "confirmation": "conditional_y_n",
     "surface": "",
-    "flags": []
+    "flags": [],
+    "tail_fields": {
+      "mode": [
+        "whitelist"
+      ],
+      "source": null,
+      "destination": null,
+      "service": null,
+      "enabled": false,
+      "disabled": false
+    }
   },
   {
     "path": [
@@ -1630,7 +1640,18 @@
     "risk": "security_change",
     "confirmation": "conditional_y_n",
     "surface": "",
-    "flags": []
+    "flags": [],
+    "tail_fields": {
+      "mode": [
+        "whitelist"
+      ],
+      "source": null,
+      "destination": null,
+      "permission": null,
+      "paths": null,
+      "enabled": false,
+      "disabled": false
+    }
   },
   {
     "path": [
@@ -2763,7 +2784,10 @@
     "risk": "security_change",
     "confirmation": "conditional_y_n",
     "surface": "",
-    "flags": []
+    "flags": [],
+    "tail_fields": {
+      "members": null
+    }
   },
   {
     "path": [
@@ -3005,7 +3029,10 @@
     "risk": "security_change",
     "confirmation": "conditional_y_n",
     "surface": "",
-    "flags": []
+    "flags": [],
+    "tail_fields": {
+      "members": null
+    }
   },
   {
     "path": [
@@ -3192,7 +3219,10 @@
     "risk": "security_change",
     "confirmation": "conditional_y_n",
     "surface": "",
-    "flags": []
+    "flags": [],
+    "tail_fields": {
+      "permissions": null
+    }
   },
   {
     "path": [
@@ -3221,7 +3251,10 @@
     "risk": "security_change",
     "confirmation": "conditional_y_n",
     "surface": "",
-    "flags": []
+    "flags": [],
+    "tail_fields": {
+      "members": null
+    }
   },
   {
     "path": [
@@ -3730,7 +3763,13 @@
     "risk": "outage",
     "confirmation": "none",
     "surface": "",
-    "flags": []
+    "flags": [],
+    "tail_fields": {
+      "destination": null,
+      "service": null,
+      "enabled": false,
+      "disabled": false
+    }
   },
   {
     "path": [

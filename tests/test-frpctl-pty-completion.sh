@@ -170,6 +170,12 @@ for resource, partial, completed in (
     ("network-object", "t", "type"),
     ("service-object", "p", "port"),
     ("remote-access", "m", "mode"),
+    ("network-group", "m", "members"),
+    ("service-group", "m", "members"),
+    ("permission-object", "p", "permissions"),
+    ("permission-group", "m", "members"),
+    ("internet-access", "m", "mode"),
+    ("ai-access", "pa", "paths"),
 ):
     os.write(master, b"\x15")
     read_some(0.1)
