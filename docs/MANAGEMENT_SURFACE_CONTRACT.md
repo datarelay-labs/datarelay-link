@@ -512,7 +512,9 @@ signature, the independently installed ECDSA P-256 release verification public
 key, and its operator-pinned SHA-256 public-key fingerprint. The stage verifies
 all existing Server-local artifact hashes plus exact Agent SHA/version/channel
 and writes a fresh **unpublished** candidate tree containing
-`agent/manifest.sig`. This sidecar is addressable at
+`agent/manifest.sig`. The stage rejects extra unlisted Agent and FRP
+distribution files that could otherwise be reachable through
+`/artifacts/agent/` or `/artifacts/frp/`. This sidecar is addressable at
 `/artifacts/agent/manifest.sig` only **after** a separately approved publish
 copies the reviewed distribution to the Server. No private release-signing key
 may appear in the repository, Agent payload, Server distribution or stage;

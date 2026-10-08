@@ -88,6 +88,30 @@ def _require_agent_payload_allowlist(root: Path, *, signed: bool) -> None:
         _deny("signed Agent distribution is missing its detached signature")
 
 
+def _require_frp_artifact_allowlist(root: Path) -> None:
+    """Reject unlisted files reachable through the Server's /artifacts/frp/ path."""
+    frp = root / "frp"
+    if not frp.exists():
+        return
+    try:
+        manifest = QA.load_manifest(root)
+    except QA.ArtifactError as exc:
+        raise SIGNED.AgentArtifactError(
+            "AGENT_ARTIFACT_UNQUALIFIED: artifact manifest is unavailable"
+        ) from exc
+    allowed = {
+        str(item.get("relative_path") or "")
+        for item in manifest.get("artifacts") or ()
+        if isinstance(item, dict)
+        and str(item.get("relative_path") or "").startswith("frp/")
+    }
+    for path in frp.rglob("*"):
+        if path.is_file():
+            name = "frp/" + path.relative_to(frp).as_posix()
+            if name not in allowed:
+                _deny("FRP artifact tree contains unlisted distribution file")
+
+
 def verify_signed_server_tree(
     root: str | Path,
     *,
@@ -106,6 +130,7 @@ def verify_signed_server_tree(
         _deny("artifact root is not a directory")
     _distribution_files_are_safe(artifact_root)
     _require_agent_payload_allowlist(artifact_root, signed=True)
+    _require_frp_artifact_allowlist(artifact_root)
     pem = _trusted_pubkey(
         trusted_release_public_key_file,
         pinned_release_key_fingerprint,
@@ -169,6 +194,7 @@ def stage_signed_candidate(
         _deny("cannot stage inside installed Server artifacts")
     _distribution_files_are_safe(src)
     _require_agent_payload_allowlist(src, signed=False)
+    _require_frp_artifact_allowlist(src)
     try:
         QA.verify_tree(src)
     except (QA.ArtifactError, ValueError, OSError) as exc:

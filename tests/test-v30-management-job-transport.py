@@ -721,6 +721,16 @@ class SignedDistributionStagingTests(unittest.TestCase):
             self._stage()
         self.assertEqual(list(self.staging.iterdir()), [])
 
+    def test_unlisted_frp_http_artifact_cannot_enter_signed_candidate(self):
+        from drlink_v30_agent_artifact import AgentArtifactError
+
+        extra = self.unsigned / "frp/0.71.0/unlisted.bin"
+        extra.parent.mkdir(parents=True)
+        extra.write_bytes(b"unsigned binary")
+        with self.assertRaises(AgentArtifactError):
+            self._stage()
+        self.assertEqual(list(self.staging.iterdir()), [])
+
     def test_server_install_manifest_includes_offline_verifier_only(self):
         from frp_project_files import load_entries
 
