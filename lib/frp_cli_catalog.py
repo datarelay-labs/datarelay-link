@@ -1662,6 +1662,7 @@ def domain_help(topic, role):
             "  show managed-host <HOST> remote-services\n"
             "  show managed-host <HOST> agent\n"
             "  show managed-host <HOST> addresses\n"
+            "  show managed-host <HOST> admission\n"
             "  set enrollment\n"
             "  set enrollment zero-touch\n"
             "  unset managed-host <HOST>\n\n"

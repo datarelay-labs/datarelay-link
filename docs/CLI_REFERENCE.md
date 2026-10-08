@@ -54,6 +54,7 @@ show status
 
 show managed-hosts
 show managed-host <HOST>
+show managed-host <HOST> admission
 show managed-host <HOST> agent
 show managed-host <HOST> addresses
 show managed-host <HOST> remote-services

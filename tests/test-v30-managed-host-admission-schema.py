@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import sqlite3
+import io
+from contextlib import redirect_stdout
 import sys
 import tempfile
 import unittest
@@ -46,6 +48,36 @@ class HostAdmissionStateTests(unittest.TestCase):
                 self.assertIsNone(row["admission_changed_at"])
                 paged = reader.list_inventory("managed-host")
                 self.assertEqual(paged.items[0]["admission_state"], "APPROVED")
+
+    def test_cli_admission_view_separates_approval_trust_and_connectivity(self):
+        from drlink_control_cli import dispatch
+        from frp_ctl_grammar import match
+
+        with tempfile.TemporaryDirectory(prefix="drlink-host-admission-cli-") as root:
+            plane = ControlPlane(root)
+            try:
+                plane.upsert_client("host-a", hostname="agent-a", connected=True)
+                revision = plane.current_revision()
+                for admission_state in ("PENDING_APPROVAL", "QUARANTINED", "APPROVED"):
+                    plane.conn.execute(
+                        "UPDATE clients SET admission_state=?,admission_actor=?,"
+                        "admission_changed_at=? WHERE id='host-a'",
+                        (admission_state, "ops-admin", "2026-10-08T00:00:00Z"),
+                    )
+                    plane.conn.commit()
+                    cmd = ["show", "managed-host", "host-a", "admission"]
+                    self.assertEqual(match(cmd, role="server")["status"], "ok")
+                    stream = io.StringIO()
+                    with redirect_stdout(stream):
+                        self.assertEqual(dispatch(cmd, root=root), 0)
+                    output = stream.getvalue()
+                    self.assertIn("Admission state: %s" % admission_state, output)
+                    self.assertIn("Management trust: trusted", output)
+                    self.assertIn("Connectivity: connected", output)
+                    self.assertIn("Changed by: ops-admin", output)
+                    self.assertEqual(plane.current_revision(), revision)
+            finally:
+                plane.close()
 
     def test_unapproved_host_cannot_issue_or_use_ai_credentials_or_enqueue_jobs(self):
         from drlink_control_db import ControlPlaneError
