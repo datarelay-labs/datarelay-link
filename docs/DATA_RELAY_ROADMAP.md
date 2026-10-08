@@ -376,7 +376,11 @@ No frontend-first implementation before this gate.
 Implement logical boundaries for:
 
 - typed Core Application/Management Service;
-- Web API adapter and Management MCP adapter as separate projections over that same Core service; the Plugin/relay must not depend on the Web API;
+- Web API adapter, public Automation API adapter, and Management MCP adapter as separate projections over that same Core service; the Plugin/relay must not depend on the Web API and automation clients must not depend on the browser API;
+- Managed Host admission state plus fail-closed admission evaluator shared by Remote/Internet/AI access and mutating Agent Jobs;
+- local Service Account principals, hashed display-once token verifiers, expiry/rotation/revocation, and permission binding for Automation API;
+- bounded webhook delivery queue/event sink with signed versioned events, dedupe IDs, retry/backoff, and delivery-health state;
+- bounded Access Hygiene read model that can prove STALE_OR_UNUSED / ORPHANED / ACTION_REQUIRED or report UNKNOWN_EVIDENCE;
 - command/query separation;
 - bounded read-only connections and server-side filtering/pagination;
 - query-plan/index review for common Host/Service/status/version/policy/audit/job views;
@@ -442,6 +446,10 @@ Required:
 - Managed Host / Remote Service inventory;
 - Object/Group and policy read views;
 - Agent/platform/version inventory and version-drift visibility;
+- read-only Managed Host admission state and Pending Approval / Quarantined attention;
+- read-only Service Account inventory and token health metadata without secret reveal;
+- webhook delivery health/backlog visibility without endpoint-secret exposure;
+- read-only Access Hygiene findings with evidence-quality labels;
 - global search, server-side filters, and Saved Views;
 - audit/revision read views;
 - Doctor/health read views;
@@ -460,6 +468,7 @@ acceptance must also prove MFA defaults OFF, Admin per-user enable/disable, user
 Required workflows:
 
 - guided Agent Zero-Touch/Manual enrollment and installation guidance;
+- Admin-only Managed Host Approve / Quarantine / Restore-to-Approved lifecycle plus explicit pre-approved enrollment;
 - browser-guided Server management settings after the Core/Web package is installed;
 - Managed Host metadata/lifecycle where supported;
 - Network / Service / Permission Object and Group lifecycle;
@@ -468,7 +477,10 @@ Required workflows:
 - ConfigurationBundle test/diff/apply/export;
 - Temporary Access set/change/clear expiry parity across Core/CLI/Bundle/Web for supported
   Remote / Internet / AI grants;
-- system/update/certificate/backup/restore operations where browser-appropriate.
+- system/update/certificate/backup/restore operations where browser-appropriate;
+- local Service Account lifecycle and display-once Automation API token issue/rotate/revoke;
+- signed generic webhook endpoint/event-family lifecycle and test delivery;
+- public `/api/automation/v1/` adapter over the same Core Management Service, separate from bundled Web `/api/v1/`.
 
 For the DRL3-3 update slice, browser-appropriate scope is product + Relay Engine
 availability checks and local Relay Engine apply through the canonical rollback-capable
@@ -624,7 +636,13 @@ Attention Center must prioritize:
 - failed/incomplete jobs;
 - temporary access nearing expiry when operator action is useful;
 - audit-spool/high-water degradation;
-- Emergency New-Access Cutoff activation.
+- Emergency New-Access Cutoff activation;
+- Managed Host Pending Approval / Quarantined state;
+- high-confidence Access Hygiene findings;
+- staged Agent update halt/failure;
+- webhook delivery degradation/backlog.
+
+A signed generic HTTPS webhook sink **is required for 3.0 GA**. Native Email/Slack/Teams adapters remain later-additive and must reuse the same event envelope. Webhook delivery failure is never an enforcement dependency.
 
 ### Access Hygiene Recommendations — P1 Must Ship
 
@@ -661,14 +679,14 @@ failed/cancelled state.
   optional canary/first wave, bounded wave size/concurrency, per-target progress, automatic
   pause on configured failure threshold, and canonical per-Agent rollback where supported.
 
-Explicitly exclude broad destructive fleet actions from 3.0:
+Explicitly exclude broad destructive or unbounded fleet actions from 3.0:
 
 ```text
 bulk delete
 bulk revoke
 bulk release
 bulk policy disable/reset
-unbounded all-at-once update/restart outside the staged-rollout contract
+unbounded all-at-once update/restart or arbitrary software deployment outside the staged-rollout contract
 ```
 
 Any future high-impact bulk operation requires its own risk, rollback, and qualification
@@ -709,7 +727,12 @@ Required:
 - Job Engine saturation/backpressure tests;
 - DB lock/contention tests;
 - Web crash/restart isolation;
-- dashboard/search/policy-test load at 100-host inventory size.
+- dashboard/search/policy-test load at 100-host inventory size;
+- Automation API rate/idempotency/concurrency/resource-limit and Service Account token lifecycle tests;
+- webhook queue crash/restart/backoff/secret-rotation/dead-letter Attention tests;
+- Managed Host admission state recovery/backup/restore and cross-plane fail-closed tests;
+- Access Hygiene evidence-window/pruning/UNKNOWN_EVIDENCE correctness tests;
+- staged Agent update canary/halt/resume/rollback and mixed-job saturation tests.
 
 No new external datastore may be introduced merely to pass the 100-host target. If
 measured evidence proves SQLite insufficient, that is a new architecture decision, not
@@ -803,6 +826,16 @@ FRP_NO_FALSE_PER_CONNECTION_TERMINATION_CLAIM=PASS
 ATTENTION_DEDUPLICATION=PASS
 SAVED_VIEWS=PASS
 VERSION_DRIFT_ATTENTION=PASS
+MANAGED_HOST_ADMISSION=PASS
+MANAGED_HOST_QUARANTINE_FAIL_CLOSED=PASS
+STAGED_AGENT_UPDATE_CANARY=PASS
+STAGED_AGENT_UPDATE_HALT_ROLLBACK=PASS
+AUTOMATION_API_CORE_PARITY=PASS
+SERVICE_ACCOUNT_TOKEN_LIFECYCLE=PASS
+SIGNED_WEBHOOK_DELIVERY=PASS
+WEBHOOK_FAILURE_ISOLATION=PASS
+ACCESS_HYGIENE_READ_ONLY=PASS
+ACCESS_HYGIENE_EVIDENCE_QUALITY=PASS
 AGENT_RPC_OWNERSHIP=PASS
 BOUNDED_JOB_ENGINE=PASS
 HEALTH_COLLECTION_BOUNDS=PASS
@@ -863,13 +896,18 @@ Access Hygiene Recommendations
 Audit / Revision Explorer
 manual filtered NDJSON audit export
 bounded safe fleet jobs
+Managed Host Approval / Quarantine
+bounded staged Managed Agent updates
+public Automation API + scoped Service Accounts
+signed generic webhook notifications
+Access Hygiene / stale-access review (recommendation-only)
 100-host qualification
 P2 stretch: lightweight one-step JIT Access Request / Approval
 ```
 ### Design now, implement after 3.0 unless required by evidence
 
 ```text
-direct Email/Slack/Teams notification connectors beyond the generic signed Webhook
+native Email/Slack/Teams notification adapters beyond the generic signed webhook
 GitOps/locked-editor workflow
 continuous external audit/SIEM streaming
 scheduled recurring operations
@@ -884,7 +922,7 @@ Do not add merely because competitors provide them:
 
 ```text
 SSO/IdP integration (OIDC/SAML/LDAP/SCIM)
-full multi-stage JIT/access-request/identity-governance system beyond the bounded one-step stretch flow
+multi-stage/full JIT access-governance system beyond the optional one-step Temporary-Access-backed stretch flow
 device-posture/MDM platform
 session recording
 browser SSH/RDP terminal
@@ -936,6 +974,12 @@ Adopt the **operator pattern**, not the competitor architecture:
 | Teleport access review / usage evidence | Adopt read-only Access Hygiene recommendations with explicit evidence quality; no automatic access mutation |
 | OpenZiti external identity + fine-grained management permissions | Reinforces RBAC value; SSO/IdP and distributed-controller/overlay complexity are not adopted for 3.0 |
 | NordLayer SSO/MFA + posture controls | Adopt the MFA pattern only; SSO and device-posture platform remain outside DRLink 3.0 |
+| Tailscale Device Approval + pre-approved keys | Adopt explicit Managed Host Pending Approval / Approved / Quarantined admission state and explicit pre-approved enrollment; keep revoke/retire separate |
+| Tailscale OAuth clients / NetBird service users + public API | Adopt a separate versioned Automation API adapter with scoped local Service Accounts; do not promote the private Web API |
+| Tailscale signed webhooks + NetBird/Twingate notifications | Promote one generic signed HTTPS webhook sink to 3.0 GA; keep native Email/Slack/Teams adapters later |
+| Tailscale update visibility + Teleport Managed Updates/canaries | Adopt manual bounded staged Agent rollout with canary + halt-on-failure over the existing rollback-capable updater; no generic RMM or recurring scheduler |
+| Twingate usage-based auto-lock/access review | Adopt read-only Access Hygiene recommendations with evidence-quality labels; no automatic revoke/delete |
+| Teleport/Twingate JIT access requests | Keep only a one-step Temporary-Access-backed P2 stretch flow; full workflow/governance remains outside 3.0 |
 
 Competitor functionality that does not strengthen Data Relay Link's core operator mission
 stays out of the GA scope.

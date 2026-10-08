@@ -84,9 +84,10 @@ Browser
   → Core Management Service
 ```
 
-The Web API remains an internal first-party browser contract. The supported Public
-Automation API is a separate adapter/namespace over Core; neither Plugin/MCP nor automation
-clients depend on browser Web API stability.
+The Web API is an internal first-party browser contract and remains so in 3.0. Public
+automation is provided by a separate versioned Automation API adapter over the same Core
+Management Service. Plugin/MCP must not depend on either Web endpoint shapes or Automation
+API transport details.
 
 Web adds visualization, guided workflows, forms, rich diff/preview, graphs, Attention,
 and confirmation UX. It owns no alternate authoritative state.
@@ -153,6 +154,8 @@ revocable/rotatable and optional-expiry, and every call retains service-account 
 attribution. Automation cannot bypass Change Plan, expected revision, confirmation/risk,
 Job, reference protection, or recovery exclusions.
 
+Service Account token possession does not imply target-OS AI permissions, MCP/Plugin identity binding, or recovery authority. Restore, operator/MFA recovery, and protected-secret export remain local CLI/Web authority.
+
 ## 4. Surface roles
 
 ### 4.1 CLI
@@ -193,11 +196,20 @@ Its highest-value 3.0 uses are:
 - Emergency New-Access Cutoff preview and tightly authorized apply;
 - Job inspection and safe diagnostic operations.
 
-Recovery authority, operator-security administration, and other high-risk system lifecycle
-operations remain outside the default Plugin surface. DRL3-3 Web system status, redacted
-certificate status, certificate preflight, and backup validation are Core-owned OBSERVE/TEST
-operations and are not new Plugin tools. Backup validation reuses the canonical restore
-validator with zero authoritative mutation; restore itself remains `RECOVERY_AUTHORITY`.
+Recovery authority, operator-security administration, Managed Host admission mutation,
+Agent rollout start/resume/rollback, Service Account administration, webhook secret/config
+mutation, and other high-risk system lifecycle operations remain outside the default Plugin
+surface. DRL3-3 Web system status, redacted certificate status, certificate preflight, and
+backup validation are Core-owned OBSERVE/TEST operations and are not new Plugin tools.
+Backup validation reuses the canonical restore validator with zero authoritative mutation;
+restore itself remains `RECOVERY_AUTHORITY`.
+
+### 4.4 Automation API
+
+Automation API is the supported machine-to-machine management surface. It provides a
+subset of Core operations selected by explicit Service Account permissions and the public
+Automation API contract. It is never authenticated by Web cookies, never exposes display-
+once secrets after issuance, and never creates a second authorization or policy engine.
 
 ## 5. Management permission boundary
 
@@ -237,6 +249,10 @@ management-automation-admin
 management-access-request
 management-config
 management-recovery
+management-host-approve
+management-update
+management-automation-admin
+management-webhook
 ```
 
 These names are public 3.0 capability values. They are separate from target-OS permissions
@@ -712,6 +728,13 @@ HIGH_RISK_PLUGIN_DEFAULT_EXCLUSION=PASS
 STALE_CHANGE_PLAN_FAIL_CLOSED=PASS
 PER_CALL_AI_ACCESS_AUTHORIZATION=PASS
 CORE_WITHOUT_WEB_PLUGIN=PASS
+MANAGED_HOST_ADMISSION_CROSS_SURFACE=PASS
+STAGED_AGENT_UPDATE_AUTHORITY_BOUNDARY=PASS
+AUTOMATION_API_CORE_SEMANTIC_PARITY=PASS
+AUTOMATION_API_WEB_API_SEPARATION=PASS
+SERVICE_ACCOUNT_PERMISSION_ISOLATION=PASS
+SIGNED_WEBHOOK_SECRET_EXCLUSION_FROM_MCP=PASS
+ACCESS_HYGIENE_READ_ONLY_MCP_PARITY=PASS
 ```
 
 Exact Plugin acceptance remains separate from direct Core MCP acceptance. A passing direct

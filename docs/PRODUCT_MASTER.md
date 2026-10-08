@@ -723,18 +723,18 @@ Pool as logical management modules. These modules may remain in one local proces
 tests, Blast Radius Preview, Effective Access Graph, Connection Diagnosis, Attention
 Center, version drift, searchable audit/revisions, Saved Views, bounded safe multi-Host
 jobs, offline-capable local Web-admin MFA, time-bounded Temporary Access, bounded
-live-access visibility with an emergency new-access cutoff workflow, optional Managed Host
-approval/quarantine, bounded staged Agent update rollout, a scoped Public Automation API
-with Service Accounts, signed generic event Webhooks, and read-only Access Hygiene
-recommendations.
+live-access visibility with an emergency new-access cutoff workflow, Managed Host
+admission/quarantine, bounded staged Agent updates, a separate public Automation API with
+scoped Service Accounts, signed generic webhook notifications, and read-only Access Hygiene.
 
-**Scope discipline:** Session recording, browser terminals, device-posture/MDM, broad
-discovery, SIEM/reporting, external HA/multi-region control, and large-fleet orchestration
-are not 3.0 goals. SSO/IdP integration, SAML/LDAP/SCIM provisioning, GitOps locking,
-direct Email/Slack channel implementations, and continuous external audit/SIEM streaming
-remain later additions. A lightweight local one-step JIT request/approval workflow is a
-P2 stretch capability only; full multi-stage identity-governance/access-request workflow
-remains outside 3.0.
+**Scope discipline:** Full JIT/access-request approval, session recording, browser
+terminals, device-posture/MDM, broad discovery, SIEM/reporting, external HA/multi-region
+control, and large-fleet orchestration are not 3.0 goals. Native Email/Slack/Teams
+notification adapters beyond the required generic signed webhook, SSO/IdP integration,
+SAML/LDAP/SCIM provisioning, GitOps locking, and continuous external audit/SIEM streaming
+remain later/demand-driven.
+
+A bounded one-step local JIT request/approval that reuses Temporary Access is P2 stretch only; multi-stage identity governance remains excluded.
 
 **Reason:** Improve day-to-day operation and troubleshooting without changing Data Relay
 Link into a different product category or forcing repeated Core redesign.
@@ -811,14 +811,42 @@ scope. This capability is not a 3.0 GA blocker.
 requirement for Remote Access and must not require an FRP fork. It may ship per plane where
 lifecycle ownership and deterministic termination are already proven.
 
-**Not promoted:** SSO/IdP, direct Email/Slack notification connectors, full multi-stage JIT
-or identity-governance workflow, device posture/MDM, session recording, credential
-vaulting, payload replay, SCIM, and general identity governance remain outside 3.0.
+**P0 admission baseline — Managed Host Approval / Quarantine:** Newly enrolled Hosts may
+remain Pending Approval, explicit pre-approved enrollment is supported for controlled
+automation, and Quarantine denies new access without rewriting normal policy or collapsing
+trust revoke/retire semantics.
 
-**Reason:** These bounded additions close common operational gaps while reusing the current
-Core, Job, Temporary Access, Attention, Audit, and management-permission foundations. They
-increase product completeness without turning Data Relay Link into PAM, SASE, an identity
-platform, SIEM, or RMM product.
+**P0 lifecycle baseline — Bounded Staged Managed Agent Updates:** Add manual rollout over
+the canonical rollback-capable Agent updater with immutable target, bounded target set,
+canary gate, bounded concurrency, halt-on-failure, and truthful per-target rollback. This
+is not generic RMM or recurring patch scheduling.
+
+**P1 automation value — Public Automation API + scoped Service Accounts:** Keep the bundled
+Web API private and expose a separate versioned Automation API adapter over the same Core
+Management Service. Local non-interactive Service Accounts receive explicit management
+permissions and display-once, hashed, revocable/rotatable tokens.
+
+**P1 notification value — Signed Generic Webhook:** Promote one optional generic HTTPS
+webhook sink using the Core event boundary, versioned JSON, stable event IDs, per-endpoint
+signing secret, bounded retry/backoff, and local Attention on delivery degradation. Delivery
+is never an enforcement dependency; native Email/Slack/Teams adapters remain later.
+
+**P1 hygiene value — Access Hygiene:** Reuse audit + Effective Access Graph evidence to
+identify stale/unused/orphaned/action-required access with explicit UNKNOWN_EVIDENCE when
+coverage is incomplete. 3.0 recommendations never auto-revoke or auto-delete access.
+
+**P2 stretch — Lightweight JIT:** A one-step request/reviewer flow may materialize the
+existing Temporary Access grant if it requires no new identity/workflow platform. It is not
+a 3.0 GA blocker.
+
+**Not promoted:** SSO/IdP, multi-stage JIT governance, device posture/MDM, session recording,
+credential vaulting, payload replay, SCIM, generic RMM, and general identity governance
+remain outside 3.0.
+
+**Reason:** These additions close repeated day-2 operator expectations while reusing the
+existing Core, policy, audit, Attention, Job, and update foundations instead of changing
+Data Relay Link into PAM, SASE, an identity platform, or an RMM product. Exact surface and
+acceptance contracts are frozen in `docs/COMPETITIVE_EXPANSION_3_0.md`.
 
 ### 2026-10 — First-class audit logging contract
 
