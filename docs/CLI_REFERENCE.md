@@ -178,6 +178,10 @@ Remote Access:
 set remote-access block-partner mode blacklist source partner-office destination ubuntu-prod service ssh enabled
 ```
 
+Rule detail uses `Service` for the selected Service Object or Service Group name,
+which can be reused in `test` or an edit. `Service details` shows its expanded
+protocol/port values; those values do not replace the named selector.
+
 Internet Access:
 
 ```text
@@ -344,6 +348,8 @@ Restore validates the archive before offering live replacement confirmation.
 After replacement, backup-time host presence and proxy health require fresh
 Agent verification; reconnect reconciliation reapplies the Agent runtime while
 preserving its identity and allocated endpoints.
+Connected Agents also reconcile when the Server lacks current Remote Service
+verification. A heartbeat alone never establishes service health.
 
 `system status` is the detailed Server read-only view. In addition to runtime/control-plane health, it shows the current public hostname, bootstrap hostname, Linux/macOS Agent installer source, and Windows Agent installer source, including their automatic/default fallback semantics. `show status` remains the role-aware summary.
 

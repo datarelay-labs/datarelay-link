@@ -30,6 +30,7 @@ python3 tests/test-enrollment-retention-recovery-guidance.py
 python3 tests/test-public-help-required-operands.py
 python3 tests/test-native-restore-confirmation.py
 python3 tests/test-full-e2e-public-recovery-regressions.py
+python3 tests/test-cli-rule-selector-and-runtime-recovery.py
 python3 tests/test-native-public-consent.py
 bash tests/test-status-surface-parity.sh
 python3 tests/test-enrollment-public-guidance.py

@@ -746,13 +746,15 @@ def _show_policy(plane: ControlPlane, family: str, rest: list[str]) -> int:
     if not rule:
         raise ControlPlaneError(v24.cli_error("Rule '%s' was not found." % rest[1]))
     view = plane._rule_view(rule)
+    service_selector = v24._rule_service_public_name(plane, rule["id"])
     sys.stdout.write(
-        "%s Rule: %s\nSource: %s\nDestination: %s\nService: %s\nEnabled: %s\n"
+        "%s Rule: %s\nSource: %s\nDestination: %s\nService: %s\nService details: %s\nEnabled: %s\n"
         % (
             title,
             view["name"],
             ", ".join(view.get("sources") or []) or "-",
             ", ".join(view.get("destinations") or []) or "-",
+            service_selector or "No named selector",
             ", ".join(view.get("services") or []) or "-",
             "YES" if view["enabled"] else "NO",
         )

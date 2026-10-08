@@ -1453,11 +1453,24 @@ def server_report_agent_lifecycle(plane, auth: MgmtAuthContext, body: dict) -> d
         "SELECT agent_heartbeat_at, agent_lifecycle_state FROM clients WHERE id = ?",
         (machine_id,),
     ).fetchone()
+    # Presence can remain fresh while Server verification is lost during
+    # reconciliation. A locally HEALTHY Agent otherwise skips synchronization
+    # forever. Request a new runtime report without treating heartbeat as proof.
+    verification_missing = plane.conn.execute(
+        "SELECT 1 FROM published_services p "
+        "LEFT JOIN remote_service_meta m ON m.service_id = p.id "
+        "WHERE p.client_id = ? AND p.released = 0 AND p.enabled = 1 "
+        "AND COALESCE(m.delete_pending, 0) = 0 "
+        "AND COALESCE(m.runtime_verified, 0) = 0 LIMIT 1",
+        (machine_id,),
+    ).fetchone() is not None
     return {
         "ok": True,
         "state": client["agent_lifecycle_state"] if client else state,
         "heartbeat_at": client["agent_heartbeat_at"] if client else None,
-        "reconcile_required": bool(state == "connected" and not was_fresh),
+        "reconcile_required": bool(
+            state == "connected" and (not was_fresh or verification_missing)
+        ),
     }
 
 
