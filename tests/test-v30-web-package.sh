@@ -60,7 +60,7 @@ grep -q 'foundation.css' "$TMP/usr/local/share/drlink-web/index.html" || {
 grep -q 'DR Control-aligned authentication surface' "$TMP/usr/local/share/drlink-web/styles.css" || {
   echo "FAIL DR Control-aligned login styles missing from Web package" >&2; exit 1;
 }
-for label in 'Infrastructure' 'Access Control' 'Operations' 'Observability' 'Administration'; do
+for label in 'Home' 'Connections' 'Access' 'Activity & Health' 'Administration'; do
   grep -q "$label" "$TMP/usr/local/share/drlink-web/app.js" || {
     echo "FAIL grouped Web navigation missing: $label" >&2; exit 1;
   }
