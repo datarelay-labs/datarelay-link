@@ -668,7 +668,7 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         helper = (ROOT / "web/src/uxb-menu-evidence.ts").read_text(encoding="utf-8")
         self.assertIn("function requireObservedMenuPayload(", helper)
         for page in ("hosts", "services", "policies", "enrollments",
-                     "hygiene", "jobs", "revisions", "views", "users",
+                     "hygiene", "jobs", "audit", "revisions", "views", "users",
                      '"service-accounts"', "webhooks"):
             self.assertIn(page + ':', helper)
         self.assertIn('!Array.isArray(value.items)', helper)
@@ -685,9 +685,16 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn('return()=>{current=false}', SOURCE)
         self.assertIn('Core data unavailable · UNKNOWN', SOURCE)
         self.assertIn('Retry Core read →', SOURCE)
-        self.assertIn('requireObservedMenuPayload("jobs",await api("/api/v1/jobs?limit=50"))', SOURCE)
+        self.assertIn('requireObservedMenuPayload("jobs",await api("/api/v1/jobs?limit=50"+', SOURCE)
         self.assertIn('if(epoch!==jobsReadEpoch.current)return;', SOURCE)
-        self.assertIn('useEffect(()=>{refresh();return()=>{jobsReadEpoch.current+=1}},[]);', SOURCE)
+        self.assertIn('useEffect(()=>{refresh();return()=>{jobsReadEpoch.current+=1}},[jobsCursor]);', SOURCE)
+        self.assertIn('setJobsHistory([...jobsHistory,jobsCursor])', SOURCE)
+        self.assertIn('setJobsCursor(jobs.next_cursor)', SOURCE)
+        self.assertIn('setJobsCursor(jobsHistory[jobsHistory.length-1])', SOURCE)
+        self.assertIn('aria-label="Jobs pagination"', SOURCE)
+        self.assertIn('Older Jobs →', SOURCE)
+        self.assertIn('← Newer Jobs', SOURCE)
+        self.assertIn('Access · Advanced', SOURCE)
         self.assertIn('jobsState!=="ready"', SOURCE)
         self.assertIn('UNKNOWN · Core Jobs inventory is unavailable.', SOURCE)
         for name in ("hygiene", "enrollments", "views"):
@@ -719,6 +726,24 @@ class V30WebSaasUxContractTests(unittest.TestCase):
             'readOnly value={once.secret}',
         ):
             self.assertIn(expected, integrations, expected)
+
+    def test_uxb_audit_api_failure_is_not_a_fabricated_empty_history(self):
+        audit = SOURCE.split("function AuditExplorer(", 1)[1].split("function AgentRolloutPreviewPanel(", 1)[0]
+        for expected in (
+            'const auditReadEpoch=useRef(0);',
+            'const epoch=++auditReadEpoch.current;',
+            'setData(null);setAuditState("loading");',
+            'requireObservedMenuPayload("audit",await api("/api/v1/audit?"+q.toString()))',
+            'if(epoch!==auditReadEpoch.current)return;',
+            'setData(page);setAuditState("ready");',
+            'setData(null);setAuditState("unknown");',
+            'auditState==="ready"?<Table items={rows}/>',
+            'UNKNOWN · Core Audit inventory unavailable.',
+            'auditState==="ready"&&data?.next_cursor',
+            'auditReadEpoch.current+=1;setData(null);setAuditState("idle");setError("");',
+            'Filters cleared. Select Search audit to load current Core records.',
+        ):
+            self.assertIn(expected, audit, expected)
 
     def test_normative_ux_doc_binds_control_reference_and_competitive_sources(self):
         for required in (

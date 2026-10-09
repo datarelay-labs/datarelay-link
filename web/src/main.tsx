@@ -897,6 +897,8 @@ function AccessOperations({operator,onNavigate,context}:{operator:any,onNavigate
 
 function AuditExplorer({operator,context}:{operator:any,context?:any}){
   const [data,setData]=useState<any>(null),[retention,setRetention]=useState<any>(null),[error,setError]=useState(""),[message,setMessage]=useState(""),[exportResult,setExportResult]=useState<any>(null);
+  const [auditState,setAuditState]=useState<"loading"|"ready"|"unknown"|"idle">("loading");
+  const auditReadEpoch=useRef(0);
   const [start,setStart]=useState(""),[end,setEnd]=useState(""),[category,setCategory]=useState(""),[eventType,setEventType]=useState(""),[actor,setActor]=useState(""),[resource,setResource]=useState(String(context?.originId||"")),[result,setResult]=useState(""),[correlation,setCorrelation]=useState("");
   const [controlDays,setControlDays]=useState("365"),[accessDays,setAccessDays]=useState("90"),[maxEvents,setMaxEvents]=useState("500000");
 
@@ -911,8 +913,17 @@ function AuditExplorer({operator,context}:{operator:any,context?:any}){
     return out;
   }
   async function load(cursor?:string){
-    setError("");
-    try{const q=filterParams();if(cursor)q.set("cursor",cursor);setData(await api("/api/v1/audit?"+q.toString()))}catch(e:any){setError(e.message||String(e))}
+    const epoch=++auditReadEpoch.current;
+    setError("");setData(null);setAuditState("loading");
+    try{
+      const q=filterParams();if(cursor)q.set("cursor",cursor);
+      const page=requireObservedMenuPayload("audit",await api("/api/v1/audit?"+q.toString()));
+      if(epoch!==auditReadEpoch.current)return;
+      setData(page);setAuditState("ready");
+    }catch(e:any){
+      if(epoch!==auditReadEpoch.current)return;
+      setData(null);setAuditState("unknown");setError(e.message||String(e));
+    }
   }
   async function loadRetention(){
     try{
@@ -921,7 +932,7 @@ function AuditExplorer({operator,context}:{operator:any,context?:any}){
       if(value?.config){setControlDays(String(value.config.control_days));setAccessDays(String(value.config.access_days));setMaxEvents(String(value.config.max_events))}
     }catch(e:any){setError(e.message||String(e))}
   }
-  useEffect(()=>{load();loadRetention()},[]);
+  useEffect(()=>{load();loadRetention();return()=>{auditReadEpoch.current+=1}},[]);
   async function exportAudit(){
     setError("");setMessage("");
     try{const value=await api("/api/v1/audit/export",{method:"POST",body:JSON.stringify({filters:exportFilters()})});setExportResult(value);setMessage("Audit export created: "+String(value.path||""))}catch(e:any){setError(e.message||String(e))}
@@ -951,7 +962,7 @@ function AuditExplorer({operator,context}:{operator:any,context?:any}){
     reason:x.reason_code||"",
   }));
   return <>
-    {error&&<div className="error">{error}</div>}{message&&<div className="notice">{message}</div>}
+    {error&&<div className="error" role="alert">{error}</div>}{message&&<div className="notice">{message}</div>}
     <section className="card dr-audit-card">
       <div className="dr-section-head"><div><p className="dr-eyebrow">Activity & Health</p><h3>Audit Explorer</h3><p className="muted">Unified control, access-decision and security-lifecycle history with bounded keyset pagination.</p></div><button className="secondary" onClick={exportAudit}>Export NDJSON</button></div>
       <div className="dr-audit-filter-grid">
@@ -964,9 +975,11 @@ function AuditExplorer({operator,context}:{operator:any,context?:any}){
         <label className="dr-field"><span>Result</span><input value={result} onChange={e=>setResult(e.target.value)} placeholder="success / deny"/></label>
         <label className="dr-field"><span>Correlation ID</span><input value={correlation} onChange={e=>setCorrelation(e.target.value)} placeholder="Correlation ID"/></label>
       </div>
-      <div className="dr-form-actions"><button className="primary" onClick={()=>load()}>Search audit</button><button className="secondary" onClick={()=>{setStart("");setEnd("");setCategory("");setEventType("");setActor("");setResource("");setResult("");setCorrelation("")}}>Clear filters</button></div>
-      <div className="dr-audit-table"><Table items={rows}/></div>
-      {data?.next_cursor&&<div className="dr-form-actions"><button className="secondary" onClick={()=>load(data.next_cursor)}>Next page</button></div>}
+      <div className="dr-form-actions"><button className="primary" onClick={()=>load()}>Search audit</button><button className="secondary" onClick={()=>{auditReadEpoch.current+=1;setData(null);setAuditState("idle");setError("");setStart("");setEnd("");setCategory("");setEventType("");setActor("");setResource("");setResult("");setCorrelation("")}}>Clear filters</button></div>
+      <div className="dr-audit-table">{auditState==="ready"?<Table items={rows}/>:
+        <p role="status" className="warning-box">{auditState==="loading"?"Loading Activity log from Core…":auditState==="idle"?"Filters cleared. Select Search audit to load current Core records.":"UNKNOWN · Core Audit inventory unavailable. No empty history was confirmed. Retry with Search audit."}</p>}
+      </div>
+      {auditState==="ready"&&data?.next_cursor&&<div className="dr-form-actions"><button className="secondary" onClick={()=>load(data.next_cursor)}>Next page</button></div>}
       {exportResult&&<pre className="plan">{JSON.stringify({path:exportResult.path,event_count:exportResult.event_count,schema_version:exportResult.schema_version,sha256:exportResult.sha256,download_exposed:exportResult.download_exposed},null,2)}</pre>}
     </section>
     <section className="card dr-retention-card">
@@ -1026,6 +1039,8 @@ function AgentRolloutPreviewPanel(){
 function JobOperations({operator}:{operator:any}){
   const [jobs,setJobs]=useState<any>(null),[detail,setDetail]=useState<any>(null),[error,setError]=useState(""),[message,setMessage]=useState(""),[inventoryExport,setInventoryExport]=useState<any>(null);
   const [jobsState,setJobsState]=useState<"loading"|"ready"|"error">("loading");
+  const [jobsCursor,setJobsCursor]=useState("");
+  const [jobsHistory,setJobsHistory]=useState<string[]>([]);
   const jobsReadEpoch=useRef(0);
   const [jobType,setJobType]=useState("doctor"),[resourceType,setResourceType]=useState("managed-host"),[resource,setResource]=useState(""),[detailId,setDetailId]=useState("");
   const [fleetResourceType,setFleetResourceType]=useState("managed-host"),[fleetResource,setFleetResource]=useState(""),[fleetDescription,setFleetDescription]=useState(""),[fleetTags,setFleetTags]=useState(""),[fleetRemoveTags,setFleetRemoveTags]=useState(""),[fleetAddGroups,setFleetAddGroups]=useState(""),[fleetRemoveGroups,setFleetRemoveGroups]=useState(""),[fleetPreview,setFleetPreview]=useState<any>(null),[fleetConfirm,setFleetConfirm]=useState("");
@@ -1033,7 +1048,7 @@ function JobOperations({operator}:{operator:any}){
     const epoch=++jobsReadEpoch.current;
     setError("");setJobsState("loading");
     try{
-      const result=requireObservedMenuPayload("jobs",await api("/api/v1/jobs?limit=50"));
+      const result=requireObservedMenuPayload("jobs",await api("/api/v1/jobs?limit=50"+(jobsCursor?"&cursor="+encodeURIComponent(jobsCursor):"")));
       if(epoch!==jobsReadEpoch.current)return;
       setJobs(result);setJobsState("ready");
     }catch(e:any){
@@ -1041,7 +1056,17 @@ function JobOperations({operator}:{operator:any}){
       setJobs(null);setJobsState("error");setError(e.message||String(e));
     }
   }
-  useEffect(()=>{refresh();return()=>{jobsReadEpoch.current+=1}},[]);
+  useEffect(()=>{refresh();return()=>{jobsReadEpoch.current+=1}},[jobsCursor]);
+  function olderJobsPage(){
+    if(!isPartialCorePage(jobs))return;
+    setJobsHistory([...jobsHistory,jobsCursor]);
+    setJobsCursor(jobs.next_cursor);
+  }
+  function newerJobsPage(){
+    if(!jobsHistory.length)return;
+    setJobsCursor(jobsHistory[jobsHistory.length-1]);
+    setJobsHistory(jobsHistory.slice(0,-1));
+  }
   async function start(){
     setError("");setMessage("");
     try{
@@ -1051,7 +1076,8 @@ function JobOperations({operator}:{operator:any}){
       setDetail(result.job);
       setDetailId(result.job?.id||"");
       setMessage("Queued "+jobType+" for "+String(result.selection?.target_count||0)+" Managed Host(s)");
-      await refresh();
+      if(jobsCursor){setJobsCursor("");setJobsHistory([])}
+      else await refresh();
     }catch(e:any){setError(e.message||String(e))}
   }
   async function loadDetail(id?:string){
@@ -1122,8 +1148,13 @@ function JobOperations({operator}:{operator:any}){
       {jobsState!=="ready"?<p role="status" className="warning-box">
         {jobsState==="loading"?"Loading Management Jobs from Core…":"UNKNOWN · Core Jobs inventory is unavailable. Retry using Refresh Jobs; an empty list has not been confirmed."}
       </p>:<>
-        {isPartialCorePage(jobs)&&<p className="dr-uxb-catalog-page-notice" role="status">Partial Core Jobs list · more jobs exist beyond the loaded page. Filters and visible results are not exhaustive.</p>}
+        {isPartialCorePage(jobs)&&<p className="dr-uxb-catalog-page-notice" role="status">Partial Core Jobs list · older jobs exist beyond this page. Browse the actual Core pages below.</p>}
         <Table items={rows}/>
+        {(jobsHistory.length>0||isPartialCorePage(jobs))&&<div className="toolbar" aria-label="Jobs pagination">
+          <button type="button" className="secondary" onClick={newerJobsPage} disabled={!jobsHistory.length}>← Newer Jobs</button>
+          <span role="status">Core Jobs page {jobsHistory.length+1}</span>
+          <button type="button" className="secondary" onClick={olderJobsPage} disabled={!isPartialCorePage(jobs)}>Older Jobs →</button>
+        </div>}
       </>}
     </div>
     {operator.role!=="Read Only"&&<section className="card dr-fleet-card">
@@ -1177,7 +1208,7 @@ function ObjectsWorkspace({data,onNavigate,context}:{data:any,onNavigate?:(id:st
   const rows=all.filter((item:any)=>(family==="all"||familyFor(item.resource_type)===family)&&(!q||Object.values(item).some(v=>String(v??"").toLowerCase().includes(q))));
   const families=[["all","All"],["network","Network"],["service","Service"],["permission","Permission"],["ai","AI Identity"]];
   return <div className="dr-resource-workspace">
-    <section className="dr-page-intro"><div><p className="dr-eyebrow">Connections</p><h2>Objects & Groups</h2><p className="muted">Reusable network, service, permission and AI identity selectors for policy work.</p></div><div className="dr-page-actions"><button className="secondary" onClick={()=>onNavigate?.("policies","access")}>Use in policy</button></div></section>
+    <section className="dr-page-intro"><div><p className="dr-eyebrow">Access · Advanced</p><h2>Objects & Groups</h2><p className="muted">Reusable network, service, permission and AI identity selectors for policy work.</p></div><div className="dr-page-actions"><button className="secondary" onClick={()=>onNavigate?.("policies","access")}>Use in policy</button></div></section>
     <div className="dr-access-tabs" role="tablist" aria-label="Object family">{families.map(([id,label])=><button key={id} role="tab" aria-selected={family===id} className={family===id?"active":""} onClick={()=>setFamily(id)}>{label}</button>)}</div>
     <section className="card dr-list-card"><div className="dr-list-toolbar"><div><strong>{rows.length}</strong><span>visible Core resources</span></div><label className="dr-filter-field"><WorkspaceIcon kind="search"/><input value={filter} onChange={e=>setFilter(e.target.value)} placeholder="Filter loaded objects and groups…"/>{filter&&<button onClick={()=>setFilter("")} aria-label="Clear filter">×</button>}</label></div>
       {incomplete&&<p className="warning-box" role="alert">UNKNOWN · Core Objects & Groups inventory is incomplete. Some names may not be visible; check System Health before interpreting missing records.</p>}

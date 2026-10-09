@@ -8,6 +8,7 @@ const collectionPages:Record<string,string>={
   enrollments:"Agent enrollments",
   hygiene:"Access hygiene",
   jobs:"Management Jobs",
+  audit:"Activity log",
   users:"Web Users",
   "service-accounts":"Service Accounts",
   webhooks:"Signed Event Webhooks",

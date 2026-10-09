@@ -17,7 +17,7 @@ before(async()=>{
 after(()=>{if(scratch)rmSync(scratch,{recursive:true,force:true})});
 
 test('each Core collection menu recognizes real observed emptiness, not a broken response',()=>{
-  for(const route of ['hosts','services','policies','enrollments','hygiene','jobs','revisions','views','users','service-accounts','webhooks']){
+  for(const route of ['hosts','services','policies','enrollments','hygiene','jobs','audit','revisions','views','users','service-accounts','webhooks']){
     const empty={items:[]};
     assert.equal(menu.requireObservedMenuPayload(route,empty),empty,route);
     const populated={items:[{id:'observed'}]};
