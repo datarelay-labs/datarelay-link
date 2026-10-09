@@ -662,6 +662,64 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn('id="drlink-main-content"', SOURCE)
         self.assertIn('tabIndex={-1}', SOURCE)
 
+    def test_uxb_menu_observation_does_not_hide_missing_core_collections(self):
+        # Static UI integration check; the new independent Node tests exercise
+        # valid/invalid response values. Neither substitutes for human E2E.
+        helper = (ROOT / "web/src/uxb-menu-evidence.ts").read_text(encoding="utf-8")
+        self.assertIn("function requireObservedMenuPayload(", helper)
+        for page in ("hosts", "services", "policies", "enrollments",
+                     "hygiene", "jobs", "revisions", "views", "users",
+                     '"service-accounts"', "webhooks"):
+            self.assertIn(page + ':', helper)
+        self.assertIn('!Array.isArray(value.items)', helper)
+        self.assertIn('State is UNKNOWN, not an empty list', helper)
+        self.assertIn('function isPartialCorePage(', helper)
+        self.assertIn('from "./uxb-menu-evidence"', SOURCE)
+        self.assertIn('partial={isPartialCorePage(data)}', SOURCE)
+        self.assertIn('Partial Core policy list', SOURCE)
+        self.assertIn('Partial Core inventory', SOURCE)
+        self.assertIn('No match in loaded policy rules', SOURCE)
+        self.assertIn('No match in loaded resources', SOURCE)
+        self.assertIn('setData(requireObservedMenuPayload(active,payload))', SOURCE)
+        self.assertIn('if(!current)return;', SOURCE)
+        self.assertIn('return()=>{current=false}', SOURCE)
+        self.assertIn('Core data unavailable · UNKNOWN', SOURCE)
+        self.assertIn('Retry Core read →', SOURCE)
+        self.assertIn('requireObservedMenuPayload("jobs",await api("/api/v1/jobs?limit=50"))', SOURCE)
+        self.assertIn('if(epoch!==jobsReadEpoch.current)return;', SOURCE)
+        self.assertIn('useEffect(()=>{refresh();return()=>{jobsReadEpoch.current+=1}},[]);', SOURCE)
+        self.assertIn('jobsState!=="ready"', SOURCE)
+        self.assertIn('UNKNOWN · Core Jobs inventory is unavailable.', SOURCE)
+        for name in ("hygiene", "enrollments", "views"):
+            self.assertIn('requireObservedMenuPayload("'+name+'",payload)', SOURCE)
+
+    def test_administration_inventory_failures_never_show_fake_empty_users_or_integrations(self):
+        # Integration source contract: do not conceal auth/API errors as empty data.
+        users = SOURCE.split("function UsersPanel(", 1)[1].split("function IntegrationsPanel(", 1)[0]
+        integrations = SOURCE.split("function IntegrationsPanel(", 1)[1].split("function CommandCenter(", 1)[0]
+        for expected in (
+            'const [data,setData]=useState<any>(null)',
+            'setData(requireObservedMenuPayload("users",await api("/api/v1/operators")))',
+            'catch(e:any){setData(null);setError(e.message||String(e))}',
+            'if(!data)return <section className="card"',
+            'Users inventory unavailable. No empty result was confirmed.',
+            'Retry Users read →',
+        ):
+            self.assertIn(expected, users, expected)
+        for expected in (
+            'const [inventoryState,setInventoryState]=useState<"loading"|"ready"|"unknown">',
+            'requireObservedMenuPayload("service-accounts",a)',
+            'requireObservedMenuPayload("webhooks",w)',
+            'setInventoryState("ready");',
+            'setInventoryState("unknown");',
+            'inventoryState!=="ready"?',
+            'No empty list has been confirmed.',
+            'Retry integrations read →',
+            'Copy once: {once.kind}',
+            'readOnly value={once.secret}',
+        ):
+            self.assertIn(expected, integrations, expected)
+
     def test_normative_ux_doc_binds_control_reference_and_competitive_sources(self):
         for required in (
             "Product Foundation PF-5B Administration projection",

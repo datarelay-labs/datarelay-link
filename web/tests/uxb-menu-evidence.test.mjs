@@ -1,0 +1,57 @@
+// UXB-06F: supplementary contract evidence only; not a logged-in browser/User E2E.
+import assert from 'node:assert/strict';
+import {before,after,test} from 'node:test';
+import {mkdtempSync,rmSync} from 'node:fs';
+import {dirname,join} from 'node:path';
+import {fileURLToPath,pathToFileURL} from 'node:url';
+import {build} from 'esbuild';
+const root=dirname(dirname(fileURLToPath(import.meta.url)));
+let scratch,menu;
+before(async()=>{
+  scratch=mkdtempSync(join(root,'node_modules','.uxb-menu-evidence-'));
+  const outfile=join(scratch,'evidence.mjs');
+  await build({entryPoints:[join(root,'src','uxb-menu-evidence.ts')],outfile,
+    bundle:true,platform:'node',format:'esm',logLevel:'silent'});
+  menu=await import(pathToFileURL(outfile).href);
+});
+after(()=>{if(scratch)rmSync(scratch,{recursive:true,force:true})});
+
+test('each Core collection menu recognizes real observed emptiness, not a broken response',()=>{
+  for(const route of ['hosts','services','policies','enrollments','hygiene','jobs','revisions','views','users','service-accounts','webhooks']){
+    const empty={items:[]};
+    assert.equal(menu.requireObservedMenuPayload(route,empty),empty,route);
+    const populated={items:[{id:'observed'}]};
+    assert.equal(menu.requireObservedMenuPayload(route,populated),populated,route);
+    for(const bad of [null,undefined,{}, {items:null},{items:{}},{items:''},{items:false},
+      {items:0},{items:[null]},{items:['invalid']},{items:[[]]},{items:[],next_cursor:42},
+      {error:'Core unavailable'},[]]){
+      assert.throws(()=>menu.requireObservedMenuPayload(route,bad),/Core|UNKNOWN/,route);
+    }
+  }
+});
+test('structurally required non-item Core pages remain UNKNOWN without evidence',()=>{
+  for(const [route,valid,broken] of [
+    ['doctor',{checks:[]},{checks:null}],
+    ['versions',{hosts:[]},{hosts:'unknown'}],
+    ['overview',{overview:{managed_hosts:{total:0}}},{overview:null}],
+  ]){
+    assert.equal(menu.requireObservedMenuPayload(route,valid),valid);
+    assert.throws(()=>menu.requireObservedMenuPayload(route,broken),/Core|UNKNOWN/);
+  }
+});
+test('Core pagination is visible and local filters never imply a complete list',()=>{
+  for(const response of [null,undefined,{items:[]},{items:[],next_cursor:null},
+    {items:[],next_cursor:''},{items:[],next_cursor:7}]){
+    assert.equal(menu.isPartialCorePage(response),false);
+  }
+  const paged={items:[{id:'loaded'}],next_cursor:'opaque-core-cursor'};
+  assert.equal(menu.isPartialCorePage(paged),true);
+  assert.equal(menu.requireObservedMenuPayload('hosts',paged),paged);
+  assert.equal(menu.requireObservedMenuPayload('policies',paged),paged);
+});
+test('partial Objects inventory remains available for its existing explicit UNKNOWN warning',()=>{
+  // ObjectsWorkspace itself distinguishes incomplete resources from a valid empty list.
+  for(const response of [{resources:{}},{resources:{'network-object':{items:[]}}}]){
+    assert.equal(menu.requireObservedMenuPayload('objects',response),response);
+  }
+});
