@@ -255,6 +255,9 @@ class WebApplication:
                     "role": principal.role,
                 },
                 "session_id": principal.session_id,
+                # Same-origin authenticated session bootstrap. HTTP no-store
+                # and HttpOnly/SameSite cookies remain enforced by the handler.
+                "csrf_token": self.auth.session_csrf(principal.session_id),
             }
         if path == "/api/v1/overview":
             with ManagementQueryService(self.root) as service:
@@ -283,6 +286,7 @@ class WebApplication:
                 return service.policy_list(
                     plane=_first(query, "plane") or None,
                     limit=_int_arg(_first(query, "limit"), 50),
+                    cursor=_first(query, "cursor") or None,
                 )
         if path == "/api/v1/policy/graph":
             return self.adapter.policy_effective_access_graph(
@@ -1194,7 +1198,7 @@ class DrlinkWebHandler(BaseHTTPRequestHandler):
         # app.js/styles.css use stable names, so browsers must revalidate them
         # after Web package upgrades. Long-lived caching is safe only for
         # ancillary assets whose stale copy cannot keep an old application UI.
-        revalidate = target.name in {"index.html", "app.js", "styles.css"}
+        revalidate = target.name in {"index.html", "app.js", "styles.css", "foundation.css"}
         self.send_header(
             "Cache-Control",
             "no-cache" if revalidate else "public, max-age=3600",

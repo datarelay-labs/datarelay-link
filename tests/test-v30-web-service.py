@@ -148,10 +148,18 @@ class V30WebServiceTests(unittest.TestCase):
         status, css_headers, _ = self.request("GET", "/styles.css")
         self.assertEqual(status, 200)
         self.assertEqual(css_headers.get("cache-control"), "no-cache")
+        status, favicon_headers, icon = self.request("GET", "/favicon.svg")
+        self.assertEqual(status, 200)
+        self.assertEqual(favicon_headers.get("content-type"), "image/svg+xml")
+        self.assertIn('viewBox="0 0 64 64"', icon)
+        self.assertIn("<path ", icon)
         # DR Control parity persists only non-security UX preferences locally.
         # Session/authentication material remains cookie/Core-owned.
         source = (ROOT / "web/src/main.tsx").read_text(encoding="utf-8")
-        storage_lines = [line.strip() for line in source.splitlines() if "localStorage." in line]
+        storage_lines = [
+            line.strip() for line in source.splitlines()
+            if "localStorage." in line and not line.lstrip().startswith("//")
+        ]
         self.assertEqual(len(storage_lines), 4, storage_lines)
         self.assertTrue(all(
             "drlink_web_theme" in line or "drlink_web_sidebar_collapsed" in line
@@ -260,6 +268,19 @@ class V30WebServiceTests(unittest.TestCase):
             status, _, payload = self.request("GET", path)
             self.assertEqual(status, 200, (path, payload))
 
+        # Per-plane bounded reads support real opaque Core pagination while
+        # preserving the old unscoped, combined Policy API for existing clients.
+        for plane in ("remote", "internet", "ai"):
+            path = "/api/v1/policies?plane=%s&limit=1" % plane
+            status, _, scoped = self.request("GET", path)
+            self.assertEqual(status, 200, (plane, scoped))
+            self.assertEqual(scoped["plane"], plane)
+            self.assertEqual(scoped["limit"], 1)
+            self.assertIn("next_cursor", scoped)
+            self.assertLessEqual(len(scoped["items"]), 1)
+            status, _, invalid = self.request("GET", path + "&cursor=invalid")
+            self.assertEqual(status, 400, (plane, invalid))
+
         status, _, versions = self.request("GET", "/api/v1/versions")
         self.assertEqual(status, 200)
         self.assertEqual(versions["server_version"], "3.0.0")
@@ -271,6 +292,63 @@ class V30WebServiceTests(unittest.TestCase):
         self.assertTrue(system["side_effect_free"])
         self.assertEqual(system["identity"]["project_version"], "3.0.0")
         self.assertEqual(system["backup"]["directory"], "/var/lib/drlink/backups")
+
+    def test_core_selector_search_uses_authenticated_read_only_inventory(self):
+        """UXB-07: bounded exact Core names, never a fabricated/authoritative UI cache."""
+        status, _, unauthenticated = self.request(
+            "GET", "/api/v1/inventory?resource_type=network-object&q=office&limit=50"
+        )
+        self.assertEqual(status, 401, unauthenticated)
+
+        plane = ControlPlane(self.tmp)
+        try:
+            v24.set_network_object(
+                plane, "office-edge-07", type="ip",
+                value="198.51.100.47", oneshot=True,
+            )
+            v24.set_service_object(
+                plane, "ssh-admin-07", type="tcp", port=22, oneshot=True,
+            )
+            revision = plane.current_revision()
+        finally:
+            plane.close()
+
+        self.login()
+        status, _, snapshot = self.request("GET", "/api/v1/objects-groups?limit=50")
+        self.assertEqual(status, 200, snapshot)
+        self.assertIn("network-object", snapshot.get("resources", {}))
+        self.assertIn("network-group", snapshot["resources"])
+        self.assertIn("service-object", snapshot["resources"])
+        self.assertIn("permission-group", snapshot["resources"])
+        self.assertIn("ai-identity", snapshot["resources"])
+        self.assertTrue(any(
+            item["name"] == "office-edge-07"
+            for item in snapshot["resources"]["network-object"]["items"]
+        ), snapshot)
+
+        for resource, needle, expected in (
+            ("network-object", "office", "office-edge-07"),
+            ("service-object", "ssh-admin", "ssh-admin-07"),
+        ):
+            status, _, result = self.request(
+                "GET", "/api/v1/inventory?resource_type=%s&q=%s&limit=50"
+                % (resource, needle)
+            )
+            self.assertEqual(status, 200, result)
+            self.assertIn(expected, [item["name"] for item in result["items"]])
+            self.assertIn("next_cursor", result)
+
+        status, _, absent = self.request(
+            "GET", "/api/v1/inventory?resource_type=network-object&q=no-such-07&limit=50"
+        )
+        self.assertEqual(status, 200, absent)
+        self.assertEqual(absent["items"], [])
+
+        readonly = ControlPlane(self.tmp, read_only=True)
+        try:
+            self.assertEqual(readonly.current_revision(), revision)
+        finally:
+            readonly.close()
 
     def test_system_validation_routes_are_csrf_protected_and_non_mutating(self):
         self.login()
@@ -644,6 +722,76 @@ class V30WebServiceTests(unittest.TestCase):
             )
         finally:
             plane.close()
+
+    def test_session_reload_recovers_csrf_without_weaker_post_authorization(self):
+        # A real browser refresh restores the HttpOnly session cookie but
+        # clears the JS-held CSRF token. The same authenticated Web session
+        # must recover a usable, stable CSRF value without relogin, cookie
+        # disclosure, extra grants or persistent browser secret storage.
+        original = self.login()
+        status, _, denied = self.request(
+            "POST", "/api/v1/policy-tests/run", {"required_only": True}
+        )
+        self.assertEqual(status, 403, denied)
+
+        status, headers, session = self.request("GET", "/api/v1/session")
+        self.assertEqual(status, 200, session)
+        self.assertEqual(headers.get("cache-control"), "no-store")
+        self.assertEqual(session["csrf_token"], original["csrf_token"])
+        self.assertNotIn("session_token", session)
+        self.assertNotIn("_session_token", session)
+        status, _, second = self.request("GET", "/api/v1/session")
+        self.assertEqual(status, 200, second)
+        self.assertEqual(second["csrf_token"], session["csrf_token"])
+
+        status, _, blocked = self.request(
+            "POST", "/api/v1/policy-tests/run", {"required_only": True},
+            headers={"X-CSRF-Token": "invalid"},
+        )
+        self.assertEqual(status, 403, blocked)
+        status, _, result = self.request(
+            "POST", "/api/v1/policy-tests/run", {"required_only": True},
+            headers={"X-CSRF-Token": session["csrf_token"]},
+        )
+        self.assertEqual(status, 200, result)
+        self.assertTrue(result["ok"])
+        status, _, _ = self.request(
+            "POST", "/api/v1/auth/logout", {},
+            headers={"X-CSRF-Token": session["csrf_token"]},
+        )
+        self.assertEqual(status, 200)
+        status, _, _ = self.request("GET", "/api/v1/session")
+        self.assertEqual(status, 401)
+
+    def test_session_reload_keeps_pre_upgrade_tabs_and_csrf_fail_closed(self):
+        # Upgrade-compatible: an existing Web session stored a random CSRF
+        # digest. Its already-open tab and the reloaded/new tab must BOTH work
+        # without exposing the HttpOnly bearer session token.
+        import hashlib
+
+        issued = self.login()
+        legacy = "legacy-session-csrf-issued-before-upgrade"
+        with WebAuthService(self.tmp) as auth:
+            auth.conn.execute(
+                "UPDATE web_sessions SET csrf_hash=? WHERE id=?",
+                (hashlib.sha256(legacy.encode("utf-8")).hexdigest(),
+                 issued["session_id"]),
+            )
+        status, _, session = self.request("GET", "/api/v1/session")
+        self.assertEqual(status, 200, session)
+        self.assertEqual(session["csrf_token"], issued["csrf_token"])
+        for token in (legacy, session["csrf_token"]):
+            status, _, result = self.request(
+                "POST", "/api/v1/policy-tests/run", {"required_only": True},
+                headers={"X-CSRF-Token": token},
+            )
+            self.assertEqual(status, 200, (token == legacy, result))
+            self.assertTrue(result["ok"])
+        status, _, _ = self.request(
+            "POST", "/api/v1/policy-tests/run", {"required_only": True},
+            headers={"X-CSRF-Token": "forged"},
+        )
+        self.assertEqual(status, 403)
 
     def test_csrf_protects_web_preferences_and_logout(self):
         self.login()

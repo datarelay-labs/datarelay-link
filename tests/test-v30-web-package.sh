@@ -39,6 +39,7 @@ for f in \
   /usr/local/share/drlink-web/index.html \
   /usr/local/share/drlink-web/app.js \
   /usr/local/share/drlink-web/styles.css \
+  /usr/local/share/drlink-web/foundation.css \
   /usr/local/share/drlink-web/logo/datarelay-logo.svg \
   /usr/local/bin/drlink-web-bootstrap \
   /usr/local/bin/drlink-web-recovery \
@@ -50,10 +51,16 @@ done
 grep -q 'Welcome to Data Relay Link' "$TMP/usr/local/share/drlink-web/app.js" || {
   echo "FAIL DR Control-aligned login UI missing from built Web app" >&2; exit 1;
 }
+grep -q 'dr-admin-hub__group' "$TMP/usr/local/share/drlink-web/foundation.css" || {
+  echo "FAIL Foundation Admin Hub styles absent from Web package" >&2; exit 1;
+}
+grep -q 'foundation.css' "$TMP/usr/local/share/drlink-web/index.html" || {
+  echo "FAIL Foundation stylesheet link absent from Web page" >&2; exit 1;
+}
 grep -q 'DR Control-aligned authentication surface' "$TMP/usr/local/share/drlink-web/styles.css" || {
   echo "FAIL DR Control-aligned login styles missing from Web package" >&2; exit 1;
 }
-for label in 'Infrastructure' 'Access Control' 'Operations' 'Observability' 'Administration'; do
+for label in 'Home' 'Connections' 'Access' 'Activity & Health' 'Administration'; do
   grep -q "$label" "$TMP/usr/local/share/drlink-web/app.js" || {
     echo "FAIL grouped Web navigation missing: $label" >&2; exit 1;
   }
@@ -82,7 +89,7 @@ for token in '--dr-layout-sidebar-expanded:260px' '--dr-layout-sidebar-collapsed
     echo "FAIL DR Control visual token parity missing: $token" >&2; exit 1;
   }
 done
-for marker in 'drlink_web_sidebar_collapsed' 'drlink_web_theme' 'Command Center' 'Core management' 'Search hosts, services, policies, identities' 'Quick actions' 'Access Workspace' 'Policy Simulator' 'Filter hosts' 'Access context' 'Objects & Groups' 'Filter objects and groups' 'Filter policies' 'Test / explain' 'Skip to content' 'drlink-main-content' 'Recent Activity' 'Recent Changes'; do
+for marker in 'drlink_web_sidebar_collapsed' 'drlink_web_theme' 'Home' 'Connections' 'Activity & Health' 'Set up a connection' 'Core-authoritative connection setup' 'Search hosts, services, policies, identities' 'Quick actions' 'Access Workspace' 'Policy Simulator' 'Filter hosts' 'Why can / cannot connect?' 'Objects & Groups' 'Filter loaded objects and groups' 'Filter policies' 'Test & explain access' 'Skip to content' 'drlink-main-content' 'Recent Activity' 'Recent Changes'; do
   grep -q -- "$marker" "$TMP/usr/local/share/drlink-web/app.js" || {
     echo "FAIL modern SaaS shell marker missing: $marker" >&2; exit 1;
   }

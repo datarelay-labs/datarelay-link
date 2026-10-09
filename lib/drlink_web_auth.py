@@ -275,6 +275,24 @@ class WebAuthService:
     def close(self) -> None:
         self.conn.close()
 
+    def session_csrf(self, session_id: str) -> str:
+        """Stable, server-keyed CSRF for an authenticated Web session.
+
+        The protected key is independent of the HttpOnly cookie. This lets a
+        refreshed same-origin browser recover a CSRF token via GET /session
+        without persisting it in JS storage, weakening POST checks or revoking
+        concurrently open tabs. Legacy random tokens remain valid until the
+        existing session expires.
+        """
+        value = str(session_id or "")
+        if not re.fullmatch(r"ws_[0-9a-f]{24}", value):
+            raise ControlPlaneError("Invalid Web session identifier.")
+        return hmac.new(
+            _master_key(self.root),
+            b"drlink:web:csrf:v1:" + value.encode("ascii"),
+            hashlib.sha256,
+        ).hexdigest()
+
     def __enter__(self) -> "WebAuthService":
         return self
 
@@ -690,7 +708,7 @@ class WebAuthService:
         operator_id = str(row["id"])
         session_id = "ws_" + secrets.token_hex(12)
         token = secrets.token_urlsafe(32)
-        csrf = secrets.token_urlsafe(24)
+        csrf = self.session_csrf(session_id)
         created = _utc_text(current)
         expires_dt = current + timedelta(seconds=SESSION_LIFETIME_SECONDS)
         idle_dt = min(expires_dt, current + timedelta(seconds=SESSION_IDLE_SECONDS))
@@ -963,7 +981,16 @@ class WebAuthService:
                 return None
             if require_csrf:
                 supplied = _sha256_text(str(csrf_token or ""))
-                if not hmac.compare_digest(supplied, str(row["csrf_hash"])):
+                original_match = hmac.compare_digest(
+                    supplied, str(row["csrf_hash"])
+                )
+                # Sessions issued by older builds used a random CSRF hash.
+                # Their existing open tabs still work, while reloaded tabs
+                # can retrieve the server-derived value from GET /session.
+                derived_match = hmac.compare_digest(
+                    supplied, _sha256_text(self.session_csrf(str(row["id"])))
+                )
+                if not (original_match or derived_match):
                     return None
             try:
                 last_seen = _parse_utc(str(row["last_seen_at"]))

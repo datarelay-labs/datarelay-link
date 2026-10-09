@@ -64,6 +64,9 @@ class Env:
             'registry_file': str(self.registry),
             'enrollments_dir': str(self.enrollments),
             'token_file': str(self.token),
+            # Enrollments must commit to a test-local authoritative Core database,
+            # never the real /var/lib/drlink control plane on CI or developer hosts.
+            'control_plane_root': str(self.root),
         }
         self.cfg.write_text(json.dumps(cfg, indent=2) + '\n')
         MOD.atomic_write_json(self.registry, MOD.empty_registry())

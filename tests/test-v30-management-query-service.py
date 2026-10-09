@@ -73,6 +73,78 @@ class V30ManagementQueryServiceTests(unittest.TestCase):
         os.environ.pop("FRP_DEPLOY_TEST_ROOT", None)
         os.environ.pop("DRLINK_CONFIRM", None)
 
+    def test_policy_keyset_reads_all_scoped_families_and_rejects_foreign_cursor(self):
+        # Isolated disposable DB. Pagination is a read-only Core query, not
+        # policy authorization or evidence of actual permitted network traffic.
+        plane = ControlPlane(self.tmp)
+        try:
+            for family in ("remote", "internet"):
+                for i in range(4):
+                    plane.conn.execute(
+                        "INSERT INTO policy_rules("
+                        "id,plane,name,position,action,enabled,created_at,updated_at"
+                        ") VALUES (?,?,?,?,?,?,?,?)",
+                        (f"{family}-{i}", family, f"{family}-rule-{i}",
+                         100 + i, "allow", 1, "2026-10-09T00:00:00Z",
+                         "2026-10-09T00:00:00Z"),
+                    )
+            for name in ("alpha", "BETA", "Charlie"):
+                plane.conn.execute(
+                    "INSERT INTO ai_policy_rules("
+                    "id,name,enabled,created_at,updated_at"
+                    ") VALUES (?,?,1,?,?)",
+                    (f"ai-{name}", name, "2026-10-09T00:00:00Z",
+                     "2026-10-09T00:00:00Z"),
+                )
+        finally:
+            plane.close()
+
+        def collect(family: str, limit: int = 2) -> tuple[list[dict], str]:
+            cursor = None
+            rows: list[dict] = []
+            first_cursor = ""
+            seen: set[str] = set()
+            for _ in range(20):
+                result = self.service.policy_list(
+                    plane=family, limit=limit, cursor=cursor
+                )
+                self.assertEqual(result["plane"], family)
+                self.assertEqual(result["limit"], limit)
+                self.assertLessEqual(len(result["items"]), limit)
+                self.assertTrue(all(r["plane"] == family for r in result["items"]))
+                rows.extend(result["items"])
+                cursor = result["next_cursor"]
+                if not first_cursor and cursor:
+                    first_cursor = cursor
+                if not cursor:
+                    return rows, first_cursor
+                self.assertNotIn(cursor, seen, "Policy cursor must advance")
+                seen.add(cursor)
+            self.fail("Policy pagination failed to terminate")
+
+        remote, remote_cursor = collect("remote")
+        internet, internet_cursor = collect("internet")
+        ai, ai_cursor = collect("ai")
+        self.assertEqual(len(remote), 5)  # Includes existing allow-ssh fixture.
+        self.assertEqual(len(internet), 4)
+        self.assertEqual([row["name"] for row in ai],
+                         ["alpha", "BETA", "Charlie"])
+        self.assertTrue(all((remote_cursor, internet_cursor, ai_cursor)))
+        self.assertEqual(len({row["id"] for row in remote}), len(remote))
+        self.assertEqual(len({row["id"] for row in internet}), len(internet))
+        with self.assertRaises(ControlPlaneError):
+            self.service.policy_list(plane="ai", limit=2, cursor=remote_cursor)
+        with self.assertRaises(ControlPlaneError):
+            self.service.policy_list(limit=2, cursor=remote_cursor)
+        for invalid in ("garbage", "++bad++", "", "A" * 4097):
+            if invalid:
+                with self.assertRaises(ControlPlaneError):
+                    self.service.policy_list(plane="internet", cursor=invalid)
+        # An explicit plane still preserves the old unscoped read contract.
+        legacy = self.service.policy_list(limit=2)
+        self.assertEqual(legacy["plane"], "all")
+        self.assertEqual(len(legacy["items"]), 2)
+
     def test_supported_inventory_types_use_product_nouns(self):
         kinds = supported_inventory_types()
         self.assertIn("managed-host", kinds)

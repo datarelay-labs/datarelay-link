@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import gzip
+import hashlib
+import re
+import json
 import io
+import stat
 import tarfile
 from pathlib import Path
 
@@ -17,7 +21,16 @@ BUILD_FILES = (
     "lib/web-project-files.manifest",
     "web/package.json",
     "web/package-lock.json",
+    "web/foundation.lock.json",
     "web/src/main.tsx",
+    "web/src/foundation-administration.ts",
+    "web/src/p0-access-policy.tsx",
+    "web/src/p0-enrollment.tsx",
+    "web/src/uxb-navigation.ts",
+    "web/src/uxb-home.tsx",
+    "web/src/uxb-remote-service.tsx",
+    "web/src/uxb-core-choices.tsx",
+    "web/src/uxb-setup.tsx",
 )
 
 
@@ -41,8 +54,75 @@ def manifest_sources() -> tuple[str, ...]:
     return tuple(sources)
 
 
+def foundation_pack_sources(root: Path = ROOT) -> tuple[str, ...]:
+    """Validate the exact vendored tgz bytes using explicit archive checksums.
+
+    sha256 identifies the staged package DIRECTORY. archive_sha256 identifies
+    the separately produced tgz; these two digests are not interchangeable.
+    """
+    data = json.loads((root / "web/foundation.lock.json").read_text(encoding="utf-8"))
+    version = data.get("version")
+    packages = data.get("packages")
+    head = data.get("source_head")
+    if (
+        not isinstance(version, str)
+        or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+-[A-Za-z0-9.-]+", version)
+        or not isinstance(head, str)
+        or not re.fullmatch("[0-9a-f]{40}", head)
+        or data.get("commit") != head
+        or not isinstance(packages, list)
+        or len(packages) != 10
+    ):
+        raise SystemExit("invalid pinned Foundation package manifest")
+    paths = []
+    known = {
+        "tokens", "icons", "ui", "product-shell", "auth-ui",
+        "system-contracts", "system-admin-ui", "testkit", "foundation", "foundation-cli",
+    }
+    seen = set()
+    for entry in packages:
+        name = entry.get("path") if isinstance(entry, dict) else None
+        archive_sha = entry.get("archive_sha256") if isinstance(entry, dict) else None
+        staged_sha = entry.get("sha256") if isinstance(entry, dict) else None
+        if (
+            not isinstance(name, str)
+            or name not in known
+            or name in seen
+            or entry.get("name") != "@datarelay-labs/" + name
+            or not isinstance(archive_sha, str)
+            or not re.fullmatch("[0-9a-f]{64}", archive_sha)
+            or not isinstance(staged_sha, str)
+            or not re.fullmatch("[0-9a-f]{64}", staged_sha)
+        ):
+            raise SystemExit("invalid Foundation package entry:" + str(name))
+        seen.add(name)
+        relative = "web/.foundation/packs/datarelay-labs-%s-%s.tgz" % (name, version)
+        archive = root / relative
+        if root.is_symlink() or any(
+            (root / Path(*Path(relative).parts[:index])).is_symlink()
+            for index in range(1, len(Path(relative).parts))
+        ):
+            raise SystemExit("foundation-archive-unsafe:" + name)
+        try:
+            info = archive.lstat()
+        except FileNotFoundError:
+            raise SystemExit("foundation-archive-missing:" + name) from None
+        # Never package a symlink or hard-linked external file even if its
+        # current bytes match the pinned digest.
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            raise SystemExit("foundation-archive-unsafe:" + name)
+        with archive.open("rb") as file:
+            actual = hashlib.file_digest(file, "sha256").hexdigest()
+        if actual != archive_sha:
+            raise SystemExit("foundation-archive-sha-mismatch:" + name)
+        paths.append(relative)
+    if seen != known:
+        raise SystemExit("invalid Foundation package set")
+    return tuple(paths)
+
+
 def package_files() -> tuple[str, ...]:
-    return tuple(dict.fromkeys((*BUILD_FILES, *manifest_sources())))
+    return tuple(dict.fromkeys((*BUILD_FILES, *foundation_pack_sources(), *manifest_sources())))
 
 
 FILES = package_files()
@@ -72,6 +152,8 @@ def normalized(info: tarfile.TarInfo) -> tarfile.TarInfo:
 
 
 def build(output: Path = OUTPUT) -> Path:
+    # Recheck vendored bytes immediately before emitting the distributable.
+    foundation_pack_sources()
     missing = [name for name in FILES if not (ROOT / name).is_file()]
     if missing:
         raise SystemExit("missing Web package files: %s" % ", ".join(missing))

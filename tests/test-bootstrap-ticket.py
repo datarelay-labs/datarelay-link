@@ -330,6 +330,8 @@ def test_new_host_core_failure_and_forged_preapproval_fail_closed():
     """Fresh Host never becomes usable if Core admission or ticket proof fails."""
     from unittest.mock import patch
     env = Env()
+    old_root = os.environ.get('FRP_DEPLOY_TEST_ROOT')
+    os.environ['FRP_DEPLOY_TEST_ROOT'] = str(env.root)
     try:
         machine = 'admission-fail-closed'
         ticket, enrollment, _ = env.allocator.issue_bootstrap_ticket(
@@ -400,6 +402,10 @@ def test_new_host_core_failure_and_forged_preapproval_fail_closed():
         pass_('HOST_CORE_SYNC_OUTAGE_FAIL_CLOSED')
         pass_('HOST_CORE_RECOVERY_PENDING')
     finally:
+        if old_root is None:
+            os.environ.pop('FRP_DEPLOY_TEST_ROOT', None)
+        else:
+            os.environ['FRP_DEPLOY_TEST_ROOT'] = old_root
         env.cleanup()
 
 

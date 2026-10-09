@@ -791,6 +791,64 @@ BROWSER_REAL_USER_UX=PASS
 This slice is release-bearing UX work. Any product/UI change after DRL3-7A invalidates
 DRL3-8 exact-candidate browser evidence and must be re-qualified on the new HEAD.
 
+## 17B. DRL3-7B — First-Time Operator Usability and Workflow-First UI
+
+**Owner review (2026-10-09):** The PF-5B/P0 development Web is substantially
+better visually, but menu names and where to begin remain confusing.
+**The current UI is an intermediate baseline, not the final target UI.**
+
+**Canonical new UX roadmap:** `docs/WEB_USER_JOURNEY_UX_ROADMAP.md`.
+**Survey basis:** 19 vendor official documentation sources (on-prem/open-source
+and commercial ZTNA, PAM, private-resource access); no authenticated-tenant
+exhaustive visual audit or completed new-user study is claimed.
+
+DRL3-7B is an explicit follow-up to the DRL3-7A shell and the P0 Access
+Explanation / Guided Policy / Agent Enrollment source implementations.
+Its priority is **how a novice completes a real workflow**, not more widgets:
+
+- **UXB-01 / P0:** five understandable root destinations (Home, Connections,
+  Access, Activity & Health, Administration); contextual plain-language task
+  labels, old-to-new global search aliases, breadcrumbs and actor-aware help.
+  Keep canonical Core resource identities, CLI/API names and the Foundation
+  four-group shared Administration metadata intact.
+- **UXB-02 / P0:** first-login and already-configured Home journeys from
+  server readiness through Agent admission, a narrowly published Remote
+  Service, policy preview/test/apply and a verified access check. Resume
+  context; no fake success, silent pre-approval or persisted secrets.
+- **UXB-03 / P0:** one continuous “publish and allow connection” task,
+  keeping Remote / Internet / AI access semantics independent, with typed
+  confirmation, Core-authoritative preview and required policy regression.
+- **UXB-04 / P1:** resource detail → why denied → Core decision trace →
+  relevant rules/audit and evidence freshness without a speculative graph.
+- **UXB-05 / P1:** routine versus advanced/dangerous Administration,
+  consistent empty/loading/UNKNOWN/permission states and in-place glossary.
+- **UXB-06 / release gate:** real Admin/Operator/Read Only browser flows,
+  320px/375px/desktop usability, first-time-user observations, source/role
+  security regression and offline Web compatibility on one frozen candidate.
+- **UXB-01/02/03/05 usability refinement / P0:** preserve the five bounded
+  top-level menus but implement intent-based Home cards, beginner-friendly
+  access-type choices, an inline glossary, and read-only Core Inventory
+  selectors for Network/Service/Permission Objects and AI Identities; retain
+  raw exact-name input and mandatory Core change validation. For a verified
+  empty installation show first-use tasks instead of a NOC-style KPI wall.
+  Implementation/tests and the 19-vendor research mapping are recorded in
+  `docs/WEB_USER_JOURNEY_UX_ROADMAP.md` §§14–15; real browser/user acceptance is pending.
+
+**Status (2026-10-09):** UXB-00 research/roadmap documented; UXB-01..05
+**CODE IMPLEMENTED ON ISOLATED DEV WEB SOURCE**, with offline SSR/static/package
+qualification only. UXB-06 **ACTUAL USER BROWSER / HUMAN STUDY / RELEASE PENDING**. Earlier P0 technical
+components, unit/SSR/Web bundle tests and HTTP preview are not proof of a
+novice-friendly UI or browser PASS. Work is scoped to the optional Web
+projection; no second Core policy authority, network exposure change, or
+unapproved runtime dependency. Any material usability implementation after
+DRL3-7A/7B must re-qualify the exact-head DRL3-8 user/browser gates.
+
+**Acceptance target:** A new on-prem Admin can locate Add Agent, configure
+only one useful service, grant narrow access, test it, and troubleshoot a
+denial *without learning internal menu terminology*; two-user same-HEAD Full
+User E2E and owner acceptance remain mandatory. See the new UX roadmap for
+mapped routes, human test scenarios, proposed metrics and safety boundaries.
+
 ## 18. DRL3-8 — 3.0 Qualification and Stable Release
 
 Required exact-candidate evidence includes:

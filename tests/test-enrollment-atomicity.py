@@ -49,6 +49,8 @@ class Env:
             "listen_port": 6099,
             "egress_listen_port": 6102,
             "registry_file": str(self.registry),
+            # Failure-injection must use disposable Core state, never /var/lib/drlink.
+            "control_plane_root": str(self.root),
             "enrollments_dir": str(self.enrollments),
             "token_file": str(self.token),
         }

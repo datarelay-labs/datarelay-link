@@ -1,7 +1,8 @@
 # Data Relay Link 3.0 — SaaS Workspace UX System
 
 > **Status:** normative 3.0 Web UX contract
-> **Roadmap:** DRL3-7A
+> **Roadmap:** DRL3-7A (visual shell) + DRL3-7B (workflow-first usability)
+> **Usability roadmap:** `docs/WEB_USER_JOURNEY_UX_ROADMAP.md` (19-product vendor evidence; UXB-01..05 code implemented, UXB-06 actual-user E2E pending)
 > **Visual reference authority:** Data Relay Control `main-v2` semantic foundation and App Shell
 > **Product authority:** `PRODUCT_MASTER.md`, `WEB_MANAGEMENT.md`, `MANAGEMENT_SURFACE_CONTRACT.md`
 
@@ -190,11 +191,57 @@ Observability
   Saved Views is contextual through search/list workflows
 
 Administration
-  Users
+  Users (Admin-only)
+  Integrations (Admin-only)
   System
 ```
 
 Role filtering remains server-authoritative. Hiding an item is never authorization.
+
+### 4.1 Product Foundation PF-5B Administration projection
+
+The Link **System** page embeds the pinned Foundation Administration Hub ahead of
+Link's existing, Core-authoritative System panel. The common Foundation groups
+are **Access & security**, **Platform & network**, **Lifecycle & recovery**,
+and **Operations & audit**. The Link-owned sidebar, Web session/MFA rules,
+Core routes, and System operations are not replaced by this presentation layer.
+
+- **User Management** is a supported Web Admin function (user creation,
+  role assignment at creation, and per-user MFA). It is visible and actionable
+  only for `Admin` actors; `Operator` and `Read Only` actors have
+  `access=none`, not a falsely reported unsupported product capability.
+- **HTTPS** is a read-only common-task projection. The Link System panel
+  reports the canonical **MCP TLS** certificate and exposes separate
+  Admin-only certificate operations. It does **not** implement the
+  Control-reference common task's Web HTTPS listener/redirect configuration.
+- **Audit** and **System Health** are read-only tasks routed to Link's
+  observability pages. Password Management, Display timezone, Network,
+  Retention, and portable **Backup & Import** are shown as unavailable
+  rather than given non-existent common-task routes. Link's protected
+  disaster-recovery backup/restore actions remain a separate System-panel
+  workflow and must not be described as portable workspace import/export.
+
+Task `availability` describes an actually implemented product capability.
+Task `access` describes the current actor's permission. Visual filtering
+does not authorize API calls; Web/Core enforce mutations independently.
+Actual browser/mobile accessibility and role acceptance remain separate E2E gates.
+
+The offline, non-browser Administration qualification runs after the pinned
+Web dependencies are locally available:
+
+```sh
+cd web
+npm run test:administration
+```
+
+This compiles Link's real `src/foundation-administration.ts` projection in
+a disposable directory and server-renders the pinned Foundation
+`AdministrationHub` for `Admin`, `Operator`, and `Read Only`. It checks
+four-group composition, effective task availability, privileged button
+visibility, and honest HTTPS/MCP TLS status. It does **not** interact with the
+deployed site or qualify keyboard, responsive, mobile, or browser E2E behavior.
+The offline Web release archive must contain the projection source as well
+as the precompiled UI and exact pinned Foundation packages.
 
 ## 5. Application shell
 
@@ -338,3 +385,46 @@ CONTEXTUAL_WORKSPACE_NAV=PASS
 WEB_PACKAGE_VISUAL_PARITY=PASS
 BROWSER_REAL_USER_UX=PASS
 ```
+
+## 12. DRL3-7B — First-time, non-developer usability target (PENDING)
+
+This specification's DRL3-7A shell, visual token and layout criteria are **necessary
+but not sufficient** for the target Data Relay Link Web interface. The 2026-10-09
+owner review found that while the implemented UI is better visually, the menus
+are not yet self-explanatory. The existing P0 access, policy and Agent screens
+are **technical foundations**, not a completed beginner user journey.
+
+The accepted roadmap destination for the next UX design/implementation slice
+is [the workflow-first Web UX roadmap](WEB_USER_JOURNEY_UX_ROADMAP.md),
+recorded as **DRL3-7B in `DATA_RELAY_ROADMAP.md` section 17B**.
+It contains:
+
+- 19-product official-doc evidence and its explicit limitations;
+- target Home / Connections / Access / Activity & Health / Administration
+  labels with current route, actor and canonical product-term mappings;
+- step-by-step first Host → Remote Service → narrow policy → access verification,
+  plus independent Internet and AI Access journeys;
+- inline explanation/advanced disclosure, context-preserving navigation,
+  truthful evidence and no-guess next actions;
+- UXB-01..06 implementation slices and actual first-time-user/real-browser
+  E2E acceptance before claiming a final product UI.
+
+**DRL3-7B status (2026-10-09): UXB-01..05 CODE IMPLEMENTED IN ISOLATED WEB PREVIEW / USER E2E NOT VERIFIED.** The current
+`DRL3-7A` visual acceptance and source-level Web P0 test evidence must not
+be interpreted as DRL3-7B first-time usability PASS. All proposed navigation
+renames are **presentation aliases only** until owner review and a scoped
+implementation preserve stable Core/CLI contracts, Product Foundation's
+four-group Administration, RBAC/MFA/session protections and Link's
+Remote/Internet/AI access semantics.
+
+Previously safety-denied browser/preview login tests remain prohibited from
+rerouting. Only a genuinely permitted real User E2E and final owner
+acceptance may qualify the target UI at a frozen candidate HEAD.
+
+## 13. DRL3-7B beginner-first presentation refinement — isolated dev code
+
+The originally implemented five-sidebar-group SaaS shell remains the stable container. For a **Core-observed empty installation**, Home now prioritizes five concrete actions and three clickable purpose cards rather than treating it as an empty NOC dashboard. An already-configured or **UNKNOWN** deployment keeps its operator overview instead. Actual Core resource and policy counts govern this branch; no browser-saved setup completion flag is used.
+
+Within Setup, users choose a purpose (internal server/Remote, outbound Internet, or AI permission) and see plain-language examples, a four-stage checklist, short definitions, and read-only selectors backed by actual bounded Core inventory. The same named selector assistance is available from the existing guided policy editor and Remote Service editor. Selecting a name never creates an object, grants access, approves an Agent or proves a connection. Existing explicit Core Preview → Regression/Test → Typed Apply, Agent admission/security boundaries and advanced exact-name forms are retained.
+
+This is the practical implementation of the existing 19-vendor research summary in `docs/WEB_USER_JOURNEY_UX_ROADMAP.md` §§14–15. No new Foundation package, independent visual system, cloud integration, or CLI grammar change is introduced. Source/SSR/offline tests **do not qualify** real browser persona usability at 320/375px, novice observation, live Agent reachability or release acceptance.

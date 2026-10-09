@@ -106,6 +106,8 @@ pki = root / 'pki'
     'tls_server_cert': str(pki / 'server.crt'),
     'tls_server_key': str(pki / 'server.key'),
     'registry_file': str(root / 'registry.json'),
+    # Lost-response recovery must commit to a fixture-local authoritative Core.
+    'control_plane_root': str(root),
     'enrollments_dir': str(root / 'enrollments'),
     'bootstrap_dir': str(root / 'bootstrap'),
     'token_file': str(root / 'server_token'),

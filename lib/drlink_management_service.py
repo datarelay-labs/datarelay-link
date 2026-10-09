@@ -413,26 +413,100 @@ class ManagementQueryService:
         return {"query": needle, "items": results, "limit": total_limit}
 
     def policy_list(
-        self, *, plane: Optional[str] = None, limit: Optional[int] = None
+        self, *, plane: Optional[str] = None, limit: Optional[int] = None,
+        cursor: Optional[str] = None,
     ) -> dict[str, Any]:
-        """Return a bounded read view of Remote/Internet/AI policy rules."""
+        """Bounded Core policy reads; optional per-plane keyset pagination.
+
+        Existing unscoped lists retain their original response and order.
+        A cursor cannot move between security planes or alter policy state.
+        """
         page_limit = _bounded_limit(limit)
         family = str(plane or "").strip().lower()
         if family and family not in ("remote", "internet", "ai"):
             raise ControlPlaneError("Unsupported access plane: %s" % plane)
+        if cursor and not family:
+            raise ControlPlaneError("Policy pagination requires an explicit access plane.")
+        start: dict[str, Any] | None = None
+        if cursor:
+            try:
+                if not isinstance(cursor, str) or len(cursor) > 4096:
+                    raise ValueError("cursor length")
+                padded = cursor + "=" * (-len(cursor) % 4)
+                value = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")))
+                if (not isinstance(value, dict) or value.get("v") != _CURSOR_VERSION
+                        or value.get("resource") != "policy" or value.get("plane") != family
+                        or not isinstance(value.get("id"), str) or not value["id"]):
+                    raise ValueError("cursor identity")
+                if family == "ai":
+                    if not isinstance(value.get("name"), str) or not value["name"]:
+                        raise ValueError("cursor name")
+                elif (type(value.get("position")) is not int or value["position"] < 0):
+                    raise ValueError("cursor position")
+                start = value
+            except (ValueError, TypeError, KeyError, UnicodeError, base64.binascii.Error) as exc:
+                raise ControlPlaneError("Invalid policy cursor.") from exc
+
+        # Per-plane queries keep an exact, stable Core keyset. Fetch one extra
+        # row to prove that another page exists rather than guessing at limit.
+        if family:
+            if family == "ai":
+                where = ""
+                args: list[Any] = []
+                if start:
+                    where = (" WHERE (name COLLATE NOCASE > ? COLLATE NOCASE "
+                             "OR (name = ? COLLATE NOCASE AND id > ?))")
+                    args.extend((start["name"], start["name"], start["id"]))
+                rows = self.conn.execute(
+                    "SELECT id,name,enabled,source_identity_id,destination_ref_kind,"
+                    "destination_ref_id,permission_ref_kind,permission_ref_id,"
+                    "description,expires_at,row_version FROM ai_policy_rules"
+                    + where + " ORDER BY name COLLATE NOCASE,id LIMIT ?",
+                    (*args, page_limit + 1),
+                ).fetchall()
+            else:
+                where = " WHERE plane=?"
+                args = [family]
+                if start:
+                    where += " AND (position > ? OR (position = ? AND id > ?))"
+                    args.extend((start["position"], start["position"], start["id"]))
+                rows = self.conn.execute(
+                    "SELECT id,plane,name,position,action,enabled,description,"
+                    "expires_at,row_version FROM policy_rules" + where
+                    + " ORDER BY position,id LIMIT ?",
+                    (*args, page_limit + 1),
+                ).fetchall()
+            has_more = len(rows) > page_limit
+            page_rows = rows[:page_limit]
+            items = [{key: row[key] for key in row.keys()} for row in page_rows]
+            if family == "ai":
+                for item in items:
+                    item["plane"] = "ai"
+            next_cursor = None
+            if has_more and items:
+                last = items[-1]
+                state = {"v": _CURSOR_VERSION, "resource": "policy",
+                         "plane": family, "id": last["id"]}
+                if family == "ai":
+                    state["name"] = last["name"]
+                else:
+                    state["position"] = last["position"]
+                next_cursor = base64.urlsafe_b64encode(
+                    json.dumps(state, separators=(",", ":"), sort_keys=True).encode("utf-8")
+                ).decode("ascii").rstrip("=")
+            return {"items": items, "limit": page_limit,
+                    "plane": family, "next_cursor": next_cursor}
+
+        # Preserve legacy unscoped semantics for existing CLI/MCP/Web callers.
         items: list[dict[str, Any]] = []
-        if family in ("", "remote", "internet"):
-            where = " WHERE plane=?" if family in ("remote", "internet") else ""
-            args: list[Any] = [family] if where else []
-            args.append(page_limit)
-            rows = self.conn.execute(
-                "SELECT id,plane,name,position,action,enabled,description,"
-                "expires_at,row_version FROM policy_rules" + where
-                + " ORDER BY plane,position,id LIMIT ?",
-                tuple(args),
-            ).fetchall()
-            items.extend({key: row[key] for key in row.keys()} for row in rows)
-        if family in ("", "ai") and len(items) < page_limit:
+        rows = self.conn.execute(
+            "SELECT id,plane,name,position,action,enabled,description,"
+            "expires_at,row_version FROM policy_rules"
+            " ORDER BY plane,position,id LIMIT ?",
+            (page_limit,),
+        ).fetchall()
+        items.extend({key: row[key] for key in row.keys()} for row in rows)
+        if len(items) < page_limit:
             rows = self.conn.execute(
                 "SELECT id,name,enabled,source_identity_id,destination_ref_kind,"
                 "destination_ref_id,permission_ref_kind,permission_ref_id,"
@@ -444,7 +518,7 @@ class ManagementQueryService:
                 item = {key: row[key] for key in row.keys()}
                 item["plane"] = "ai"
                 items.append(item)
-        return {"items": items[:page_limit], "limit": page_limit, "plane": family or "all"}
+        return {"items": items[:page_limit], "limit": page_limit, "plane": "all"}
 
     def list_inventory(
         self,
