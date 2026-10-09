@@ -90,6 +90,33 @@ class WebhookTests(unittest.TestCase):
             self.assertEqual((row["status"],row["attempts"]),("FAILED",5))
             with self.assertRaises(ControlPlaneError):
                 store.enqueue(wh["id"],"control",{"kind":"other"})
+    def test_delivery_health_exposes_last_result_and_next_retry(self):
+        with tempfile.TemporaryDirectory(prefix="drlink-wh-health-list-") as root:
+            with WebhookStore(root) as store:
+                hook = store.create("health-list", "https://hooks.example.org/events",
+                                    ["attention"])
+                first = store.enqueue(hook["id"], "attention", {"kind": "success"})
+                claimed = store.claim_due()[0]
+                self.assertTrue(store.record_attempt(
+                    first["event_id"], lease_token=claimed["lease_token"],
+                    delivered=True,
+                ))
+                listed = store.list_webhooks()["items"][0]
+                self.assertTrue(listed["last_success_at"])
+                self.assertIsNone(listed["last_failure_at"])
+                self.assertIsNone(listed["next_retry_at"])
+                second = store.enqueue(hook["id"], "attention", {"kind": "retry"})
+                claimed = store.claim_due()[0]
+                self.assertTrue(store.record_attempt(
+                    second["event_id"], lease_token=claimed["lease_token"],
+                    delivered=False, error="TimeoutError",
+                ))
+                listed = store.list_webhooks()["items"][0]
+                self.assertTrue(listed["last_failure_at"])
+                self.assertGreater(listed["next_retry_at"], listed["last_failure_at"])
+                self.assertEqual(listed["delivery_counts"]["PENDING"], 1)
+                self.assertNotIn(hook["secret"], __import__("json").dumps(listed))
+
     def test_terminal_history_retention_never_erases_pending(self):
         with WebhookStore(tempfile.mkdtemp(prefix="drlink-wh-retention-")) as store:
             hook = store.create("retention","https://hooks.example.org/hook",["attention"])

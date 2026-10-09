@@ -113,6 +113,8 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn("Signed test event queued:", SOURCE)
         self.assertIn("Check delivery status after the worker runs.", SOURCE)
         self.assertIn('notice&&<div className="card" role="status">', SOURCE)
+        for label in ("Last delivered:", "Last failed:", "Next retry:"):
+            self.assertIn(label, SOURCE)
 
     def test_agent_update_preview_is_admin_only_and_not_an_apply_surface(self):
         self.assertIn("function AgentRolloutPreviewPanel()", SOURCE)

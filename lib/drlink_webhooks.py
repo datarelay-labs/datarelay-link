@@ -223,12 +223,24 @@ class WebhookStore:
                 "SELECT status,COUNT(*) AS n FROM management_webhook_outbox "
                 "WHERE webhook_id=? GROUP BY status", (row["id"],),
             ).fetchall()
+            health = self.conn.execute(
+                "SELECT "
+                "MAX(CASE WHEN status='DELIVERED' THEN last_attempt_at END) AS last_success_at, "
+                "MAX(CASE WHEN attempts>0 AND last_error<>'' THEN last_attempt_at END) "
+                "AS last_failure_at, "
+                "MIN(CASE WHEN status='PENDING' AND attempts>0 THEN next_attempt_at END) "
+                "AS next_retry_at "
+                "FROM management_webhook_outbox WHERE webhook_id=?", (row["id"],),
+            ).fetchone()
             items.append({
                 "id": row["id"], "name": row["name"], "url": row["url"],
                 "event_classes": str(row["event_classes"]).splitlines(),
                 "enabled": bool(row["enabled"]), "created_at": row["created_at"],
                 "updated_at": row["updated_at"],
                 "delivery_counts": {str(r["status"]): int(r["n"]) for r in summary},
+                "last_success_at": health["last_success_at"],
+                "last_failure_at": health["last_failure_at"],
+                "next_retry_at": health["next_retry_at"],
             })
         return {"items": items}
 
