@@ -844,6 +844,26 @@ class V30WebSaasUxContractTests(unittest.TestCase):
             self.assertIn(marker, versions, marker)
         self.assertIn("tests/uxb-versions.test.mjs", PACKAGE)
 
+    def test_core_doctor_distinguishes_absent_checks_from_pass(self):
+        doctor=(ROOT / "web/src/uxb-doctor.tsx").read_text(encoding="utf-8")
+        self.assertIn('import {CoreDoctorWorkspace} from "./uxb-doctor";', SOURCE)
+        self.assertIn('if(active==="doctor"&&data)return <CoreDoctorWorkspace data={data} onNavigate={onNavigate}/>', SOURCE)
+        for marker in (
+            'function validatedDoctorEvidence(payload:unknown)',
+            'report.read_only!==true||report.side_effect_free!==true',
+            '||!Array.isArray(report.checks)',
+            'row.status==="PASS"?"PASS":',
+            'row.status==="ATTENTION"?"ATTENTION":"UNKNOWN"',
+            'No runtime generation checks were observed',
+            'not proof of healthy access or policy deployment',
+            'UNKNOWN · Some Core check states could not be classified',
+            'System Health →',
+            'Management Jobs →',
+            'Other Core attention',
+        ):
+            self.assertIn(marker, doctor, marker)
+        self.assertIn("tests/uxb-doctor.test.mjs", PACKAGE)
+
     def test_normative_ux_doc_binds_control_reference_and_competitive_sources(self):
         for required in (
             "Product Foundation PF-5B Administration projection",
