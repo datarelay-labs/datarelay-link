@@ -46,10 +46,16 @@ verifies the product's password hash and current operator status:
 - A password-successful but **MFA-incomplete** attempt does not reset
   prior OTP failure counters. Repeated invalid codes across newly
   requested challenges still trigger the normal login rate limit.
-- The pending-challenge pool is bounded globally **and by account**.
+- The pending-login challenge pool is bounded globally **and by account**.
   If full, the server denies additional challenge creation without
   deleting an unexpired proof that another sign-in may still need.
   Expired challenges are pruned before enforcing either limit.
+- MFA **enrollment/setup** challenges likewise cannot evict another
+  account's unexpired setup when the enrollment pool is full. A new
+  applicant is rejected while existing challenges remain valid; an
+  authenticated password retry may replace that *same* account's own
+  pending setup without consuming an extra slot. This is separate
+  from completed-login TOTP/recovery verification.
 - The final Core transaction re-reads the effective role, enabled state,
   policy revision and MFA enrollment, and atomically consumes recovery
   codes or advances the `mfa_last_counter` **only when larger**.

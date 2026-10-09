@@ -216,6 +216,64 @@ class PasswordThenOtpTests(unittest.TestCase):
                 self.start()
             self.assertIsInstance(self.finish(original), WebSessionIssue)
 
+    def test_enrollment_pool_cannot_evict_another_users_valid_setup(self):
+        # A user knowing their own password must not cancel somebody else's
+        # outstanding MFA setup when the global enrollment pool reaches capacity.
+        users = []
+        for name in ("reader_a", "reader_b", "reader_c"):
+            created = self.auth.create_operator_local(
+                username=name, role="Read Only", password="ReaderPass1",
+                now=self.base,
+            )
+            self.auth.set_operator_mfa_required(
+                created["operator_id"], required=True,
+                actor_id="local-root",
+            )
+            users.append(name)
+        with patch("drlink_web_auth.MFA_ENROLLMENT_LIMIT", 2):
+            first = self.start(username=users[0], password="ReaderPass1")
+            second = self.start(username=users[1], password="ReaderPass1")
+            with self.assertRaisesRegex(ControlPlaneError, "Invalid credentials or MFA"):
+                self.start(username=users[2], password="ReaderPass1")
+            self.assertEqual(len(self.auth._mfa_enrollments), 2)
+            first_code, _ = totp_code(first.totp_secret, at=self.step)
+            enrolled_session, _ = self.auth.confirm_mfa_enrollment(
+                enrollment_token=first.enrollment_token, totp_value=first_code,
+                source_addr="127.0.0.1", user_agent="fixture-client",
+                now=self.step,
+            )
+            self.assertIsInstance(enrolled_session, WebSessionIssue)
+            self.assertEqual(
+                self.auth.conn.execute("SELECT count(*) FROM web_sessions").fetchone()[0], 1
+            )
+            self.assertTrue(second.enrollment_token)
+
+    def test_enrollment_refresh_reuses_own_slot_at_capacity(self):
+        user = self.auth.create_operator_local(
+            username="reader", role="Read Only", password="ReaderPass1",
+            now=self.base,
+        )
+        self.auth.set_operator_mfa_required(
+            user["operator_id"], required=True, actor_id="local-root",
+        )
+        with patch("drlink_web_auth.MFA_ENROLLMENT_LIMIT", 1):
+            first = self.start(username="reader", password="ReaderPass1")
+            refreshed = self.start(username="reader", password="ReaderPass1")
+            self.assertNotEqual(first.enrollment_token, refreshed.enrollment_token)
+            self.assertEqual(len(self.auth._mfa_enrollments), 1)
+            first_code, _ = totp_code(first.totp_secret, at=self.step)
+            with self.assertRaises(ControlPlaneError):
+                self.auth.confirm_mfa_enrollment(
+                    enrollment_token=first.enrollment_token,
+                    totp_value=first_code, now=self.step,
+                )
+            code, _ = totp_code(refreshed.totp_secret, at=self.step)
+            session, _ = self.auth.confirm_mfa_enrollment(
+                enrollment_token=refreshed.enrollment_token,
+                totp_value=code, now=self.step,
+            )
+            self.assertIsInstance(session, WebSessionIssue)
+
     def test_wrong_password_never_returns_challenge_or_session(self):
         with self.assertRaisesRegex(ControlPlaneError, "Invalid credentials or MFA"):
             self.start(password="not-valid")

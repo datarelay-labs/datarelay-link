@@ -640,13 +640,16 @@ class WebAuthService:
         for key, item in list(self._mfa_enrollments.items()):
             if float(item.get("expires_mono") or 0) <= now_mono:
                 self._mfa_enrollments.pop(key, None)
-        if len(self._mfa_enrollments) >= MFA_ENROLLMENT_LIMIT:
-            oldest = min(
-                self._mfa_enrollments,
-                key=lambda key: float(self._mfa_enrollments[key].get("created_mono") or 0),
-            )
-            self._mfa_enrollments.pop(oldest, None)
+        # Refreshing one's own setup may replace that account's challenge,
+        # but a new actor must never evict another user's unexpired proof.
         self._drop_mfa_challenges(str(row["id"]))
+        if len(self._mfa_enrollments) >= MFA_ENROLLMENT_LIMIT:
+            self._audit(
+                "web.operator.mfa.enrollment.denied",
+                actor_id=str(row["id"]), resource_id=str(row["id"]),
+                result="deny", reason_code="MFA_ENROLLMENT_LIMIT",
+            )
+            raise ControlPlaneError("Invalid credentials or MFA.")
         token = secrets.token_urlsafe(32)
         token_hash = _sha256_text(token)
         secret = generate_totp_secret()
