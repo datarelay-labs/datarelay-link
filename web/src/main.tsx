@@ -100,15 +100,40 @@ function LoginCardHeader({title="Welcome to Data Relay Link",subtitle="Please si
 }
 
 function Login({onLogin}:{onLogin:(op:any)=>void}){
-  const [username,setUsername]=useState("admin"),[password,setPassword]=useState(""),[totp,setTotp]=useState(""),[recovery,setRecovery]=useState(""),[showMfa,setShowMfa]=useState(false),[showPassword,setShowPassword]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState("");
+  const [username,setUsername]=useState("admin"),[password,setPassword]=useState(""),[totp,setTotp]=useState(""),[recovery,setRecovery]=useState(""),[useRecovery,setUseRecovery]=useState(false),[showPassword,setShowPassword]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState("");
+  const [mfaChallenge,setMfaChallenge]=useState<any>(null);
   const [setup,setSetup]=useState<any>(null),[setupCode,setSetupCode]=useState(""),[showSetupSecret,setShowSetupSecret]=useState(false),[copiedSecret,setCopiedSecret]=useState(false),[recoveryCodes,setRecoveryCodes]=useState<string[]>([]),[pendingOperator,setPendingOperator]=useState<any>(null);
   async function submit(e:React.FormEvent){
     e.preventDefault();setError("");setBusy(true);
     try{
-      const d=await api("/api/v1/auth/login",{method:"POST",body:JSON.stringify({username,password,totp,recovery_code:recovery})});
-      if(d.mfa_setup_required){setSetup(d);setSetupCode("");return}
-      csrf=d.csrf_token;onLogin(d.operator);
+      const d=await api("/api/v1/auth/login/start",{method:"POST",body:JSON.stringify({username,password})});
+      if(d.mfa_challenge_required){setPassword("");setTotp("");setRecovery("");setMfaChallenge(d);return}
+      if(d.mfa_setup_required){setPassword("");setSetup(d);setSetupCode("");return}
+      setPassword("");csrf=d.csrf_token;onLogin(d.operator);
     }catch(err:any){setError(err.message||String(err))}finally{setBusy(false)}
+  }
+  async function finishLoginMfa(e:React.FormEvent){
+    e.preventDefault();setError("");setBusy(true);
+    try{
+      const d=await api("/api/v1/auth/login/complete",{method:"POST",body:JSON.stringify({
+        challenge_token:mfaChallenge.challenge_token,
+        totp:useRecovery?"":totp,
+        recovery_code:useRecovery?recovery:"",
+      })});
+      setMfaChallenge(null);setTotp("");setRecovery("");csrf=d.csrf_token;onLogin(d.operator);
+    }catch{
+      // The server consumes each challenge on the first verification
+      // attempt, including invalid OTP. Return to password rather than
+      // presenting an expired OTP form that cannot succeed.
+      setMfaChallenge(null);setTotp("");setRecovery("");setPassword("");
+      setError("Verification failed or expired. Sign in again with your password.");
+    }finally{setBusy(false)}
+  }
+  async function cancelLoginMfa(){
+    setBusy(true);setError("");
+    try{await api("/api/v1/auth/login/cancel",{method:"POST",body:JSON.stringify({challenge_token:mfaChallenge.challenge_token})})}catch{}finally{
+      setMfaChallenge(null);setTotp("");setRecovery("");setUseRecovery(false);setPassword("");setBusy(false);
+    }
   }
   async function finishMfa(e:React.FormEvent){
     e.preventDefault();setError("");setBusy(true);
@@ -126,6 +151,21 @@ function Login({onLogin}:{onLogin:(op:any)=>void}){
     try{await navigator.clipboard.writeText(String(setup?.totp_secret||""));setCopiedSecret(true);window.setTimeout(()=>setCopiedSecret(false),1400)}catch{setError("Copy is unavailable in this browser. Use Show key and copy it manually.")}
   }
   if(recoveryCodes.length&&pendingOperator)return <AuthScaffold><LoginCardHeader title="MFA enabled" subtitle="Store these recovery codes offline. They are displayed only now."/><pre className="dr-login-recovery">{recoveryCodes.join("\n")}</pre><button className="dr-login-submit" onClick={()=>onLogin(pendingOperator)}>I saved the recovery codes</button></AuthScaffold>;
+  if(mfaChallenge)return <AuthScaffold>
+    <LoginCardHeader title="Verify your sign-in" subtitle="Password verified. Complete your authenticator check to sign in. No session has been granted yet."/>
+    <form className="dr-login-form" onSubmit={finishLoginMfa}>
+      {error&&<div className="dr-login-error" role="alert">{error}</div>}
+      <div className="dr-mfa-setup-note"><strong>Second step: MFA verification</strong><span>This temporary challenge expires at {mfaChallenge.expires_at||"the displayed time"}. Never share your one-time code.</span></div>
+      <div className="dr-login-mfa-fields">
+        {useRecovery
+          ? <label>Recovery code<input autoComplete="off" value={recovery} onChange={e=>setRecovery(e.target.value)} placeholder="One-time recovery code"/></label>
+          : <label>6-digit authentication code<input inputMode="numeric" autoComplete="one-time-code" autoFocus value={totp} onChange={e=>setTotp(e.target.value)} placeholder="6-digit TOTP"/></label>}
+      </div>
+      <button className="dr-login-mfa-toggle" type="button" disabled={busy} onClick={()=>setUseRecovery(!useRecovery)}>{useRecovery?"Use authenticator code":"Use recovery code"}</button>
+      <button className="dr-login-submit" type="submit" disabled={busy||(!useRecovery&&!/^\d{6}$/.test(totp))||(useRecovery&&!recovery.trim())}>{busy?"Verifying…":"Verify and sign in"}</button>
+      <button className="dr-login-secondary" type="button" disabled={busy} onClick={cancelLoginMfa}>Cancel and start over</button>
+    </form>
+  </AuthScaffold>;
   if(setup)return <AuthScaffold><LoginCardHeader title="Set up MFA" subtitle="MFA is required for this account. The temporary setup key is not active until you verify a current code."/><form className="dr-login-form" onSubmit={finishMfa}>{error&&<div className="dr-login-error">{error}</div>}<div className="dr-mfa-setup-note"><strong>1. Scan the QR code</strong><span>This setup challenge expires at {setup.expires_at||"the displayed expiry"}. Cancelling discards the temporary key.</span></div><div className="dr-mfa-qr-panel"><div className="dr-mfa-qr" role="img" aria-label="Authenticator setup QR code"><QRCodeSVG value={String(setup.otpauth_uri||"")} size={168} level="M"/></div><div className="dr-mfa-qr-copy"><strong>Scan with your authenticator app</strong><span>The QR code is rendered locally from this temporary setup challenge. Nothing is sent to an external QR service.</span></div></div><div className="dr-mfa-secret-row"><div><span className="dr-field-label">Can’t scan? Authenticator key</span><code>{showSetupSecret?String(setup.totp_secret||""):"•••• •••• •••• •••• •••• ••••"}</code></div><div className="dr-inline-actions"><button className="dr-login-secondary compact" type="button" onClick={()=>setShowSetupSecret(!showSetupSecret)}>{showSetupSecret?"Hide key":"Show key"}</button><button className="dr-login-secondary compact" type="button" onClick={copySetupSecret}>{copiedSecret?"Copied":"Copy"}</button></div></div><details className="dr-login-details"><summary>Advanced: authenticator URI</summary><pre>{setup.otpauth_uri}</pre></details><div className="dr-mfa-setup-note"><strong>2. Verify setup</strong><span>Enter the current 6-digit code. Recovery codes are issued only after verification succeeds.</span></div><label>MFA code<input inputMode="numeric" autoComplete="one-time-code" value={setupCode} onChange={e=>setSetupCode(e.target.value)} placeholder="6-digit TOTP"/></label><button className="dr-login-submit" type="submit" disabled={busy||!/^\d{6}$/.test(setupCode)}>{busy?"Verifying…":"Verify MFA and sign in"}</button><button className="dr-login-secondary" type="button" onClick={cancelMfaSetup} disabled={busy}>Cancel setup</button></form></AuthScaffold>;
   return <AuthScaffold>
     <LoginCardHeader/>
@@ -133,8 +173,6 @@ function Login({onLogin}:{onLogin:(op:any)=>void}){
       {error&&<div className="dr-login-error" role="alert">{error}</div>}
       <div><label htmlFor="drlink-login-user">Username</label><div className="dr-login-field"><span className="dr-login-field-icon"><LoginIcon kind="user"/></span><input id="drlink-login-user" name="username" autoComplete="username" value={username} onChange={e=>setUsername(e.target.value)} placeholder="Enter your username"/></div></div>
       <div><label htmlFor="drlink-login-password">Password</label><div className="dr-login-field"><span className="dr-login-field-icon"><LoginIcon kind="lock"/></span><input id="drlink-login-password" name="password" type={showPassword?"text":"password"} autoComplete="current-password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="Enter your password"/><button className="dr-login-eye" type="button" onClick={()=>setShowPassword(!showPassword)} aria-label={showPassword?"Hide password":"Show password"}><LoginIcon kind={showPassword?"eyeoff":"eye"}/></button></div></div>
-      <button className="dr-login-mfa-toggle" type="button" onClick={()=>setShowMfa(!showMfa)}>{showMfa?"Hide MFA / recovery":"Use MFA / recovery"}</button>
-      {showMfa&&<div className="dr-login-mfa-fields"><label>MFA code<input inputMode="numeric" autoComplete="one-time-code" value={totp} onChange={e=>setTotp(e.target.value)} placeholder="6-digit TOTP"/></label><label>Recovery code<input value={recovery} onChange={e=>setRecovery(e.target.value)} placeholder="or recovery code"/></label></div>}
       <button className="dr-login-submit" type="submit" disabled={busy}>{busy?"Signing in…":"Sign In"}</button>
       <p className="dr-login-admin-note">Accounts are created by an administrator. Self-service registration is not available.</p>
     </form>

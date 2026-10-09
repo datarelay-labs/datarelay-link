@@ -19,7 +19,7 @@ from drlink_control_db import ControlPlaneError
 from drlink_management_core import ManagementActor
 from drlink_management_service import ManagementQueryService
 from drlink_management_web_adapter import ManagementWebApiAdapter
-from drlink_web_auth import ROLE_ADMIN, WebAuthService, WebMfaEnrollmentChallenge, WebPrincipal
+from drlink_web_auth import ROLE_ADMIN, WebAuthService, WebMfaEnrollmentChallenge, WebMfaLoginChallenge, WebPrincipal
 
 DEFAULT_WEB_LISTEN = "127.0.0.1"
 DEFAULT_WEB_PORT = 8741
@@ -140,6 +140,54 @@ class WebApplication:
                 },
             }
         return self._session_payload(issued)
+
+    def begin_password_login(
+        self, body: dict[str, Any], *, source_addr: str, user_agent: str,
+    ) -> dict[str, Any]:
+        """Password-first route, no authenticated cookie before enrolled MFA."""
+        issued = self.auth.begin_password_login(
+            username=str(body.get("username") or ""),
+            password=str(body.get("password") or ""),
+            source_addr=source_addr, user_agent=user_agent,
+        )
+        if isinstance(issued, WebMfaLoginChallenge):
+            return {
+                "mfa_challenge_required": True,
+                "challenge_token": issued.challenge_token,
+                "expires_at": issued.expires_at,
+            }
+        if isinstance(issued, WebMfaEnrollmentChallenge):
+            return {
+                "mfa_setup_required": True,
+                "enrollment_token": issued.enrollment_token,
+                "totp_secret": issued.totp_secret,
+                "otpauth_uri": issued.otpauth_uri,
+                "expires_at": issued.expires_at,
+                "operator": {
+                    "id": issued.operator_id,
+                    "username": issued.username,
+                    "role": issued.role,
+                },
+            }
+        return self._session_payload(issued)
+
+    def complete_password_login(
+        self, body: dict[str, Any], *, source_addr: str, user_agent: str,
+    ) -> dict[str, Any]:
+        issued = self.auth.complete_password_login(
+            challenge_token=str(body.get("challenge_token") or ""),
+            totp_value=str(body.get("totp") or ""),
+            recovery_code=str(body.get("recovery_code") or ""),
+            source_addr=source_addr, user_agent=user_agent,
+        )
+        return self._session_payload(issued)
+
+    def cancel_password_login(self, body: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "cancelled": self.auth.cancel_password_login(
+                str(body.get("challenge_token") or ""),
+            )
+        }
 
     @staticmethod
     def _session_payload(issued, *, recovery_codes: Optional[list[str]] = None) -> dict[str, Any]:
@@ -1085,6 +1133,40 @@ class DrlinkWebHandler(BaseHTTPRequestHandler):
                 self._error(401, "invalid Service Account credential")
             except ControlPlaneError:
                 self._error(403, "Automation API request denied")
+            except Exception:
+                self._error(500, "internal error")
+            return
+        if parsed.path in ("/api/v1/auth/login/start", "/api/v1/auth/login/complete"):
+            try:
+                body = self._body_json()
+                if parsed.path.endswith("/start"):
+                    payload = self.app.begin_password_login(
+                        body,
+                        source_addr=str(self.client_address[0]),
+                        user_agent=self.headers.get("User-Agent") or "",
+                    )
+                else:
+                    payload = self.app.complete_password_login(
+                        body,
+                        source_addr=str(self.client_address[0]),
+                        user_agent=self.headers.get("User-Agent") or "",
+                    )
+                token = payload.pop("_session_token", None)
+                self._json(
+                    200, payload,
+                    cookie=_session_cookie(str(token), secure=self.app.secure_cookie)
+                    if token else None,
+                )
+            except ControlPlaneError:
+                self._error(401, "invalid credentials or MFA")
+            except Exception:
+                self._error(500, "internal error")
+            return
+        if parsed.path == "/api/v1/auth/login/cancel":
+            try:
+                self._json(200, self.app.cancel_password_login(self._body_json()))
+            except ControlPlaneError:
+                self._error(400, "invalid login challenge")
             except Exception:
                 self._error(500, "internal error")
             return

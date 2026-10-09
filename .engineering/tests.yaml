@@ -12,6 +12,13 @@ paths:
   "lib/**":
     domains:
       - "shared"
+  "web/**":
+    domains:
+      - "shared"
+      - "server"
+  "docs/PF9_STAGED_WEB_LOGIN.md":
+    domains:
+      - "shared"
   "install-web.sh":
     domains:
       - "server"
@@ -68,6 +75,32 @@ scenarios:
       - "exact reviewed Foundation wheel SHA256 and source identity, no duplicate TOTP algorithm"
       - "optional Web package and uninstall own the wheel and verifier, Core 2.4 remains independent"
       - "existing TOTP sign-in, replay, recovery and enrollment backend remain product-owned"
+    release_gate: true
+
+  - id: DRLINK-PF9-STAGED-WEB-LOGIN
+    name: DRLink Web 2-step password then OTP with no pre-MFA session
+    level: integration
+    cost: medium
+    estimated_seconds: 115
+    timeout_seconds: 300
+    agent_default: true
+    domains:
+      - "shared"
+      - "server"
+    triggers:
+      - affected
+      - pr
+      - preflight
+    platforms:
+      - "linux"
+    command: "python3 tests/test-v30-web-password-otp.py -q && python3 tests/test-v30-web-staged-login-ui.py -q && python3 tests/test-v30-web-service.py V30WebServiceTests.test_staged_login_http_requires_otp_before_cookie V30WebServiceTests.test_staged_login_cancel_and_bad_password_are_unprivileged V30WebServiceTests.test_staged_login_source_agent_binding_and_default_off_session -q"
+    invariants:
+      - "password proof for enrolled MFA issues only a short-lived non-session challenge"
+      - "current operator state, source agent, factor and replay must pass before session/cookie"
+      - "invalid OTP does not reset per-account MFA throttle"
+      - "global and per-account pre-auth quotas never evict unrelated unexpired challenges"
+      - "MFA enrollment capacity rejects newcomers without evicting other users and allows a same-user refresh"
+      - "Web login screen moves OTP to a separate second stage with no persisted credential"
     release_gate: true
 
   - id: DRLINK-CLI-FEATURE-SCENARIO-RELEASE
