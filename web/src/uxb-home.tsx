@@ -1,5 +1,27 @@
 import React,{useEffect,useState} from "react";
 
+/** UXE-09: only an acknowledged Core list is empty; loading/failure is unknown. */
+export type RecentFeed={status:"loading"|"ready"|"unknown",items:any[]};
+export function observedRecentFeed(result:PromiseSettledResult<any>):RecentFeed{
+  if(result.status==="fulfilled"&&Array.isArray(result.value?.items))
+    return {status:"ready",items:result.value.items};
+  return {status:"unknown",items:[]};
+}
+export function observedNumber(value:unknown):number|"UNKNOWN"{
+  return typeof value==="number"&&Number.isFinite(value)?value:"UNKNOWN";
+}
+export function coreHealthState(data:any):"Healthy"|"Attention"|"UNKNOWN"{
+  if(typeof data?.db_healthy!=="boolean"||typeof data?.mismatch!=="boolean")return "UNKNOWN";
+  return data.db_healthy&&!data.mismatch?"Healthy":"Attention";
+}
+export function accessPlaneCount(data:any):number|null{
+  const generations=data?.generations;
+  if(!generations||typeof generations!=="object"||!["remote","internet","ai"].every(
+    plane=>generations[plane]&&typeof generations[plane].status==="string"&&generations[plane].status
+  ))return null;
+  return ["remote","internet","ai"].filter(plane=>generations[plane].status==="active").length;
+}
+
 /** UXB-02: Core-observed evidence only. A saved policy is not a verified connection. */
 export type TaskState="Not started"|"Needs approval"|"Configured · verify"|"Needs verification"|"Unknown"|"Attention";
 export function firstConnectionStates(data:any,inventory:any[]|null):TaskState[]{

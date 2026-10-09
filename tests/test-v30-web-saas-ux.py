@@ -170,6 +170,32 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn('function invalidateCutoff(){', operations)
         self.assertIn('function changeDiagnosisFlow(', operations)
 
+    def test_uxb_home_and_health_do_not_misreport_missing_evidence_as_empty(self):
+        self.assertIn('setActivity(observedRecentFeed(auditResult))', SOURCE)
+        self.assertIn('setChanges(observedRecentFeed(revisionResult))', SOURCE)
+        self.assertIn('activity.status!=="ready"', SOURCE)
+        self.assertIn('changes.status!=="ready"', SOURCE)
+        self.assertIn('UNKNOWN · Recent Activity unavailable', SOURCE)
+        self.assertIn('UNKNOWN · Change History unavailable', SOURCE)
+        self.assertIn('const coreStatus=coreHealthState(data)', SOURCE)
+        self.assertIn('const configuredPlanes=accessPlaneCount(data)', SOURCE)
+        self.assertIn('configuredPlanes===null?"UNKNOWN"', SOURCE)
+        self.assertIn('observedNumber(jobs.active_jobs)', SOURCE)
+        self.assertNotIn('Remote, Internet and AI configured', SOURCE)
+        self.assertIn('String(value??"UNKNOWN")', SOURCE)
+
+    def test_global_search_cannot_show_stale_core_resources(self):
+        search = SOURCE.split("function GlobalSearch(", 1)[1].split(
+            "function Shell(", 1
+        )[0]
+        self.assertIn("const requestGeneration=useRef(0);", search)
+        self.assertIn("function changeQuery(value:string){", search)
+        self.assertIn("requestGeneration.current+=1;", search)
+        self.assertIn('onChange={e=>changeQuery(e.target.value)}', search)
+        self.assertIn("const generation=++requestGeneration.current;", search)
+        self.assertIn("if(requestGeneration.current!==generation)return;", search)
+        self.assertIn('if(!Array.isArray(data?.items))throw new Error(', search)
+
     def test_uxb_first_use_keeps_three_planes_and_core_authority_separate(self):
         self.assertIn('FirstUseHome data={data}', SOURCE)
         self.assertIn('if(active==="setup")return <FirstConnectionSetup', SOURCE)
@@ -214,7 +240,8 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         # Incomplete Core status must never be presented as an observed zero
         # or a healthy system.
         self.assertIn('Core attention evidence unavailable', SOURCE)
-        self.assertIn('typeof result?.db_healthy!=="boolean"?"unknown"', SOURCE)
+        self.assertIn('const status=coreHealthState(result);', SOURCE)
+        self.assertIn('status==="Healthy"?"healthy":status==="Attention"?"attention":"unknown"', SOURCE)
         self.assertIn('UNKNOWN', SOURCE)
 
     def test_foundation_administration_keeps_support_separate_from_actor_access(self):

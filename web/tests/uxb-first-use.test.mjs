@@ -76,6 +76,32 @@ test("first-use states are fail-closed without trustworthy evidence",()=>{
  const noRemoteRules={overview:{managed_hosts:{total:0},remote_services:{total:0,enabled:0},policies:{ai:{enabled:0,total:0}}}};
  assert.equal(home.firstConnectionStates(noRemoteRules,[])[3],"Not started");
 });
+test("Audit and revision responses distinguish empty records from failed or malformed Core reads",()=>{
+ const observed=home.observedRecentFeed({status:"fulfilled",value:{items:[]}});
+ assert.deepEqual(observed,{status:"ready",items:[]});
+ assert.deepEqual(home.observedRecentFeed({status:"fulfilled",value:{items:[{id:"audit-1"}]}}),
+  {status:"ready",items:[{id:"audit-1"}]});
+ for(const result of [
+  {status:"rejected",reason:new Error("Core unreachable")},
+  {status:"fulfilled",value:{error:"Internal failure"}},
+  {status:"fulfilled",value:{items:null}},
+ ]){
+  assert.deepEqual(home.observedRecentFeed(result),{status:"unknown",items:[]});
+ }
+});
+test("Health summary shows UNKNOWN, not an invented zero or all-plane status",()=>{
+ assert.equal(home.observedNumber(undefined),"UNKNOWN");
+ assert.equal(home.observedNumber(0),0);
+ assert.equal(home.observedNumber(7),7);
+ assert.equal(home.accessPlaneCount({generations:{}}),null);
+ assert.equal(home.accessPlaneCount({generations:{ai:{status:"active"}}}),null);
+ assert.equal(home.accessPlaneCount({generations:{
+  remote:{status:"active"},internet:{status:"not_configured"},ai:{status:"failed"}}}),1);
+ assert.equal(home.coreHealthState({db_healthy:true}),"UNKNOWN");
+ assert.equal(home.coreHealthState({db_healthy:true,mismatch:false}),"Healthy");
+ assert.equal(home.coreHealthState({db_healthy:false,mismatch:false}),"Attention");
+ assert.equal(home.coreHealthState({db_healthy:true,mismatch:true}),"Attention");
+});
 test("Home SSR has useful actions, no fake connection claims or credential URLs",()=>{
  const empty={overview:{managed_hosts:{total:0},remote_services:{total:0,enabled:0},policies:{remote:{enabled:0}}}};
  for(const role of ["Admin","Read Only"]){

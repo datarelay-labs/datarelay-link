@@ -6,7 +6,7 @@ import {createLinkFoundationAdministrationTasks} from "./foundation-administrati
 import {AccessEvidenceExplorer,GuidedPolicyJourney,type AccessPlane} from "./p0-access-policy";
 import {EnrollmentOnboarding} from "./p0-enrollment";
 import {navGroups,groupFor,labelFor,pageDescriptions,visibleRoute,navMatches} from "./uxb-navigation";
-import {FirstUseHome} from "./uxb-home";
+import {FirstUseHome,observedRecentFeed,observedNumber,accessPlaneCount,coreHealthState,type RecentFeed} from "./uxb-home";
 import {RemoteServiceEditor} from "./uxb-remote-service";
 import {FirstConnectionSetup,type SetupDraft} from "./uxb-setup";
 
@@ -42,7 +42,7 @@ function Table({items}:{items:any[]}){
     {items.map((item,i)=><tr key={item.id||i}>{keys.map(k=><td key={k}>{item[k]===null?"":String(item[k]??"")}</td>)}</tr>)}
   </tbody></table>;
 }
-function Metric({label,value}:{label:string,value:any}){return <div className="card"><div className="muted">{label}</div><div className="metric">{String(value??0)}</div></div>}
+function Metric({label,value}:{label:string,value:any}){return <div className="card"><div className="muted">{label}</div><div className="metric">{String(value??"UNKNOWN")}</div></div>}
 
 function PageSkeleton(){
   return <div className="dr-page-skeleton" aria-label="Loading page" aria-busy="true">
@@ -1232,20 +1232,21 @@ function IntegrationsPanel(){
 }
 
 function CommandCenter({data,operator,onNavigate}:{data:any,operator:any,onNavigate?:(id:string,groupId?:string)=>void}){
-  const [activity,setActivity]=useState<any[]>([]),[changes,setChanges]=useState<any[]>([]);
+  const [activity,setActivity]=useState<RecentFeed>({status:"loading",items:[]});
+  const [changes,setChanges]=useState<RecentFeed>({status:"loading",items:[]});
   useEffect(()=>{
     let cancelled=false;
     Promise.allSettled([api("/api/v1/audit?limit=6"),api("/api/v1/revisions?limit=6")]).then(results=>{
       if(cancelled)return;
       const [auditResult,revisionResult]=results;
-      if(auditResult.status==="fulfilled")setActivity(auditResult.value.items||[]);
-      if(revisionResult.status==="fulfilled")setChanges(revisionResult.value.items||[]);
+      setActivity(observedRecentFeed(auditResult));
+      setChanges(observedRecentFeed(revisionResult));
     });
     return()=>{cancelled=true};
   },[]);
   const h=data.overview?.managed_hosts||{},svc=data.overview?.remote_services||{},j=data.overview?.management_jobs||{},pol=data.overview?.policies||{};
   const attention=Array.isArray(data.attention?.items)?data.attention.items:null;
-  const observed=(value:any)=>typeof value==="number"&&Number.isFinite(value)?value:"UNKNOWN";
+  const observed=observedNumber;
   const policyRows=[
     {label:"Remote Access",key:"remote",value:pol.remote||{}},
     {label:"Internet Access",key:"internet",value:pol.internet||{}},
@@ -1260,8 +1261,8 @@ function CommandCenter({data,operator,onNavigate}:{data:any,operator:any,onNavig
       <section className="card dr-access-card"><div className="dr-section-head"><div><p className="dr-eyebrow">Access</p><h3>Policy Coverage</h3></div><button className="dr-text-action" onClick={()=>onNavigate?.("access","access")}>Open workspace →</button></div><div className="dr-access-posture">{policyRows.map(row=><button key={row.key} onClick={()=>onNavigate?.("policies","access")}><span className="dr-access-icon"><WorkspaceIcon kind="access"/></span><span><strong>{row.label}</strong><small>{observed(row.value.enabled)} enabled of {observed(row.value.total)}</small></span><b>{observed(row.value.enabled)}</b></button>)}</div></section>
     </div>
     <div className="dr-overview-columns">
-      <section className="card"><div className="dr-section-head"><div><p className="dr-eyebrow">Activity</p><h3>Recent Activity</h3></div><button className="dr-text-action" onClick={()=>onNavigate?.("audit","observability")}>Open audit →</button></div>{activity.length?<div className="dr-activity-list">{activity.map((item:any,i:number)=><button key={item.event_id||item.id||i} onClick={()=>onNavigate?.("audit","observability")}><span className={item.result==="deny"||item.result==="failed"?"dr-activity-mark warning":"dr-activity-mark"}/><span><strong>{item.event_type||item.action||item.operation||"Activity"}</strong><small>{item.actor_id||item.actor||"system"} · {item.occurred_at||item.timestamp||""}</small></span><span>{item.result||item.category||""}</span></button>)}</div>:<div className="dr-compact-empty">No retained recent activity.</div>}</section>
-      <section className="card"><div className="dr-section-head"><div><p className="dr-eyebrow">Configuration</p><h3>Recent Changes</h3></div><button className="dr-text-action" onClick={()=>onNavigate?.("revisions","operations")}>Change history →</button></div>{changes.length?<div className="dr-activity-list">{changes.map((item:any,i:number)=><button key={item.revision||item.id||i} onClick={()=>onNavigate?.("revisions","operations")}><span className="dr-change-index">{item.revision??"#"}</span><span><strong>{item.summary||item.message||item.operation||"Configuration revision"}</strong><small>{item.actor||item.actor_id||"system"} · {item.timestamp||item.created_at||""}</small></span><span>→</span></button>)}</div>:<div className="dr-compact-empty">No retained configuration changes.</div>}</section>
+      <section className="card"><div className="dr-section-head"><div><p className="dr-eyebrow">Activity</p><h3>Recent Activity</h3></div><button className="dr-text-action" onClick={()=>onNavigate?.("audit","observability")}>Open audit →</button></div>{activity.status!=="ready"?<div className="dr-compact-empty" role="status">{activity.status==="loading"?"Loading recent activity…":"UNKNOWN · Recent Activity unavailable. Open Audit to retry."}</div>:activity.items.length?<div className="dr-activity-list">{activity.items.map((item:any,i:number)=><button key={item.event_id||item.id||i} onClick={()=>onNavigate?.("audit","observability")}><span className={item.result==="deny"||item.result==="failed"?"dr-activity-mark warning":"dr-activity-mark"}/><span><strong>{item.event_type||item.action||item.operation||"Activity"}</strong><small>{item.actor_id||item.actor||"system"} · {item.occurred_at||item.timestamp||""}</small></span><span>{item.result||item.category||""}</span></button>)}</div>:<div className="dr-compact-empty">No retained recent activity.</div>}</section>
+      <section className="card"><div className="dr-section-head"><div><p className="dr-eyebrow">Configuration</p><h3>Recent Changes</h3></div><button className="dr-text-action" onClick={()=>onNavigate?.("revisions","operations")}>Change history →</button></div>{changes.status!=="ready"?<div className="dr-compact-empty" role="status">{changes.status==="loading"?"Loading recent changes…":"UNKNOWN · Change History unavailable. Open Change history to retry."}</div>:changes.items.length?<div className="dr-activity-list">{changes.items.map((item:any,i:number)=><button key={item.revision||item.id||i} onClick={()=>onNavigate?.("revisions","operations")}><span className="dr-change-index">{item.revision??"#"}</span><span><strong>{item.summary||item.message||item.operation||"Configuration revision"}</strong><small>{item.actor||item.actor_id||"system"} · {item.timestamp||item.created_at||""}</small></span><span>→</span></button>)}</div>:<div className="dr-compact-empty">No retained configuration changes.</div>}</section>
     </div>
     <section className="card dr-quick-actions"><div className="dr-section-head"><div><p className="dr-eyebrow">Workspace</p><h3>Common Tasks</h3></div></div><div className="dr-action-grid"><button onClick={()=>onNavigate?.("hosts","infrastructure")}><WorkspaceIcon kind="infrastructure"/><span><strong>Inspect a host</strong><small>Connectivity, services, version, lifecycle</small></span></button><button onClick={()=>onNavigate?.("access","access")}><WorkspaceIcon kind="access"/><span><strong>Explain access</strong><small>Current use, policy test, cutoff state</small></span></button><button onClick={()=>onNavigate?.("audit","observability")}><WorkspaceIcon kind="observability"/><span><strong>Review activity</strong><small>Audit events and access decisions</small></span></button><button onClick={()=>onNavigate?.("system","administration")}><WorkspaceIcon kind="administration"/><span><strong>System readiness</strong><small>Backup, certificate, update, support</small></span></button></div></section>
   </div>;
@@ -1271,19 +1272,19 @@ function HealthWorkspace({data,onNavigate}:{data:any,onNavigate?:(id:string,grou
   const generations=data.generations||{};
   const jobs=data.management_jobs||{};
   const planes=["remote","internet","ai"].map(name=>({name,value:generations[name]||{}}));
-  const coreHealthy=data.db_healthy===true&&!data.mismatch;
-  const coreStatus=typeof data.db_healthy!=="boolean"?"UNKNOWN":coreHealthy?"Healthy":"Attention";
-  const configuredPlanes=planes.filter(row=>row.value.status==="active").length;
+  const coreStatus=coreHealthState(data);
+  const coreHealthy=coreStatus==="Healthy";
+  const configuredPlanes=accessPlaneCount(data);
   return <div className="dr-resource-workspace">
     <section className="dr-page-intro"><div><p className="dr-eyebrow">Activity & Health</p><h2>Health</h2><p className="muted">Core readiness, runtime generations and bounded management capacity without raw-debug-first presentation.</p></div><div className="dr-page-actions"><button className="secondary" onClick={()=>onNavigate?.("doctor","observability")}>Troubleshoot</button><button className="secondary" onClick={()=>onNavigate?.("system","administration")}>System readiness</button></div></section>
     <section className="dr-health-summary">
-      <article className="card dr-health-card"><span>Core</span><strong className={coreHealthy?"healthy":"attention"}>{coreStatus}</strong><small>{typeof data.db_healthy!=="boolean"?"Core health evidence unavailable":data.mismatch?"Runtime generation mismatch":data.db_healthy?"Control database healthy":"Control database issue"}</small></article>
-      <article className="card dr-health-card"><span>Control DB</span><strong className={data.db_healthy?"healthy":"critical-text"}>{typeof data.db_healthy!=="boolean"?"UNKNOWN":data.db_healthy?"Healthy":"Critical"}</strong><small>Schema {data.schema??"—"} · Revision {data.revision??"—"}</small></article>
-      <article className="card dr-health-card"><span>Access planes</span><strong>{configuredPlanes} / 3</strong><small>{data.ai_configured?"Remote, Internet and AI configured":"AI may be intentionally unconfigured"}</small></article>
-      <article className="card dr-health-card"><span>Management jobs</span><strong className={jobs.saturated?"attention":"healthy"}>{typeof jobs.saturated!=="boolean"?"UNKNOWN":jobs.saturated?"Saturated":"Healthy"}</strong><small>{jobs.active_jobs??"UNKNOWN"} active · {jobs.queued_jobs??"UNKNOWN"} queued</small></article>
+      <article className="card dr-health-card"><span>Core</span><strong className={coreHealthy?"healthy":"attention"}>{coreStatus}</strong><small>{coreStatus==="UNKNOWN"?"Core health evidence incomplete":data.mismatch?"Runtime generation mismatch":data.db_healthy?"Control database healthy":"Control database issue"}</small></article>
+      <article className="card dr-health-card"><span>Control DB</span><strong className={data.db_healthy===true?"healthy":"critical-text"}>{typeof data.db_healthy!=="boolean"?"UNKNOWN":data.db_healthy?"Healthy":"Critical"}</strong><small>Schema {data.schema??"—"} · Revision {data.revision??"—"}</small></article>
+      <article className="card dr-health-card"><span>Access planes</span><strong>{configuredPlanes===null?"UNKNOWN":configuredPlanes+" / 3"}</strong><small>{configuredPlanes===null?"Core generation evidence unavailable":"Active Core runtime generations; not proof of application reachability"}</small></article>
+      <article className="card dr-health-card"><span>Management jobs</span><strong className={jobs.saturated===false?"healthy":"attention"}>{typeof jobs.saturated!=="boolean"?"UNKNOWN":jobs.saturated?"Saturated":"Healthy"}</strong><small>{jobs.active_jobs??"UNKNOWN"} active · {jobs.queued_jobs??"UNKNOWN"} queued</small></article>
     </section>
     <section className="card dr-health-section"><div className="dr-section-head"><div><p className="dr-eyebrow">Runtime</p><h3>Policy planes</h3><p className="muted">Compiled generation state stays separate from configured policy state.</p></div></div><div className="dr-health-plane-list">{planes.map(row=>{const state=String(row.value.status||"unknown");const good=state==="active"||state==="not_configured";return <div className="dr-health-plane" key={row.name}><span className={good?"dr-severity-dot":"dr-severity-dot warning"}/><div><strong>{row.name[0].toUpperCase()+row.name.slice(1)}</strong><small>DB rev {row.value.db_revision??"—"} · generation {row.value.generation??"—"}</small></div><span className={state==="active"?"dr-state active":"dr-state"}><i/>{state.replaceAll("_"," ")}</span>{row.value.error&&<small className="dr-health-error">{row.value.error}</small>}</div>})}</div></section>
-    <section className="card dr-health-section"><div className="dr-section-head"><div><p className="dr-eyebrow">Capacity</p><h3>Management workload</h3><p className="muted">Bounded job engine status for asynchronous fleet operations.</p></div><button className="dr-text-action" onClick={()=>onNavigate?.("jobs","operations")}>Open jobs →</button></div><div className="dr-kpi-strip"><div><span>Active</span><strong>{jobs.active_jobs||0}</strong><small>Currently active jobs</small></div><div><span>Queued</span><strong>{jobs.queued_jobs||0}</strong><small>{jobs.queued_targets||0} queued targets</small></div><div><span>Running</span><strong>{jobs.running_jobs||0}</strong><small>{jobs.running_targets||0} running targets</small></div><div><span>Failed</span><strong>{jobs.failed_jobs||0}</strong><small>Completed with failure</small></div></div></section>
+    <section className="card dr-health-section"><div className="dr-section-head"><div><p className="dr-eyebrow">Capacity</p><h3>Management workload</h3><p className="muted">Bounded job engine status for asynchronous fleet operations.</p></div><button className="dr-text-action" onClick={()=>onNavigate?.("jobs","operations")}>Open jobs →</button></div><div className="dr-kpi-strip"><div><span>Active</span><strong>{observedNumber(jobs.active_jobs)}</strong><small>Currently active jobs</small></div><div><span>Queued</span><strong>{observedNumber(jobs.queued_jobs)}</strong><small>{observedNumber(jobs.queued_targets)} queued targets</small></div><div><span>Running</span><strong>{observedNumber(jobs.running_jobs)}</strong><small>{observedNumber(jobs.running_targets)} running targets</small></div><div><span>Failed</span><strong>{observedNumber(jobs.failed_jobs)}</strong><small>Completed with failure</small></div></div></section>
     <details className="card dr-advanced-details"><summary>Advanced · raw health payload</summary><p className="muted">For diagnostics and support. Normal operation should use the structured health views above.</p><pre className="plan">{JSON.stringify(data,null,2)}</pre></details>
   </div>;
 }
@@ -1433,7 +1434,16 @@ function WorkspaceIcon({kind}:{kind:string}){
 
 function GlobalSearch({open,onClose,onNavigate,operator}:{open:boolean,onClose:()=>void,onNavigate:(id:string,groupId?:string)=>void,operator:any}){
   const [query,setQuery]=useState(""),[results,setResults]=useState<any[]>([]),[busy,setBusy]=useState(false),[error,setError]=useState("");
-  useEffect(()=>{if(!open){setQuery("");setResults([]);setError("")}},[open]);
+  const requestGeneration=useRef(0);
+  function changeQuery(value:string){
+    // Old Core resource results must never follow a newer query.
+    requestGeneration.current+=1;
+    setQuery(value);setResults([]);setError("");setBusy(false);
+  }
+  useEffect(()=>{if(!open){
+    requestGeneration.current+=1;
+    setQuery("");setResults([]);setError("");setBusy(false);
+  }},[open]);
   useEffect(()=>{
     if(!open)return;
     function onKey(e:KeyboardEvent){if(e.key==="Escape")onClose()}
@@ -1451,14 +1461,23 @@ function GlobalSearch({open,onClose,onNavigate,operator}:{open:boolean,onClose:(
     return ["objects","infrastructure"];
   }
   async function search(e?:React.FormEvent){
-    e?.preventDefault();const q=query.trim();if(!q){setResults([]);return}
-    setBusy(true);setError("");
-    try{const data=await api("/api/v1/search?q="+encodeURIComponent(q)+"&limit=20");setResults(data.items||[])}catch(err:any){setError(err.message||String(err))}finally{setBusy(false)}
+    e?.preventDefault();
+    const q=query.trim();
+    const generation=++requestGeneration.current;
+    if(!q){setResults([]);return}
+    setBusy(true);setError("");setResults([]);
+    try{
+      const data=await api("/api/v1/search?q="+encodeURIComponent(q)+"&limit=20");
+      if(requestGeneration.current!==generation)return;
+      if(!Array.isArray(data?.items))throw new Error("Core search response missing resource items");
+      setResults(data.items);
+    }catch(err:any){if(requestGeneration.current===generation)setError(err.message||String(err))}
+    finally{if(requestGeneration.current===generation)setBusy(false)}
   }
   function go(id:string,group?:string){onNavigate(id,group);onClose()}
   return <div className="dr-command-overlay" role="presentation" onMouseDown={e=>{if(e.currentTarget===e.target)onClose()}}>
     <section className="dr-command-palette" role="dialog" aria-modal="true" aria-label="Global search">
-      <form className="dr-command-search" onSubmit={search}><WorkspaceIcon kind="search"/><input autoFocus value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search hosts, services, policies, identities…"/><kbd>Esc</kbd></form>
+      <form className="dr-command-search" onSubmit={search}><WorkspaceIcon kind="search"/><input autoFocus value={query} onChange={e=>changeQuery(e.target.value)} placeholder="Search hosts, services, policies, identities…"/><kbd>Esc</kbd></form>
       {error&&<div className="dr-command-error">{error}</div>}
       <div className="dr-command-body">
         {!query.trim()&&<><p className="dr-command-label">Quick actions</p><div className="dr-command-actions">
@@ -1500,8 +1519,8 @@ function Shell({operator,onLogout}:{operator:any,onLogout:()=>void}){
     setCoreHealthy("loading");
     api("/api/v1/health").then(result=>{
       if(!active)return;
-      setCoreHealthy(typeof result?.db_healthy!=="boolean"?"unknown"
-        :result.db_healthy&&!result.mismatch?"healthy":"attention");
+      const status=coreHealthState(result);
+      setCoreHealthy(status==="Healthy"?"healthy":status==="Attention"?"attention":"unknown");
     }).catch(()=>{if(active)setCoreHealthy("unknown")});
     return()=>{active=false};
   },[refreshNonce]);
