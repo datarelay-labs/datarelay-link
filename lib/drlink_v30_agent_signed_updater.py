@@ -112,14 +112,26 @@ def _sandbox_client_status(root: Path, verified: Mapping[str, Any], env: dict[st
         raise SIGNED.AgentArtifactError(
             "AGENT_ARTIFACT_UNQUALIFIED: isolated installed status timed out"
         ) from exc
-    required = (
-        "Role            : Client",
-        "Project version : " + verified["version"],
-        "Release channel : " + verified["channel"],
-        "Source ref      : " + verified["source_ref"],
-        "Bundle SHA256   : " + verified["sha256"],
-    )
-    if observed.returncode or not all(line in observed.stdout for line in required):
+    expected = {
+        "Role": "Client",
+        "Project version": verified["version"],
+        "Release channel": verified["channel"],
+        "Source ref": verified["source_ref"],
+        "Bundle SHA256": verified["sha256"],
+    }
+    actual: dict[str, str] = {}
+    for line in observed.stdout.splitlines():
+        label, separator, value = line.partition(":")
+        field = label.strip()
+        if separator and field in expected:
+            # Do not accept stale lines copied into diagnostic prefixes, or
+            # conflicting repeated keys masquerading as a successful status.
+            if field in actual:
+                _deny("installed Agent CLI status contains duplicate identity fields")
+            actual[field] = value.strip()
+    if observed.returncode or any(
+        actual.get(field) != value for field, value in expected.items()
+    ):
         _deny("installed Agent CLI status does not match signed target")
     return True
 

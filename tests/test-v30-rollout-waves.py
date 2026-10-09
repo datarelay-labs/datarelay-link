@@ -438,5 +438,54 @@ class StagedRolloutSchedulingTests(unittest.TestCase):
         self.assertEqual([c["target_id"] for c in self._claim(3)], ["b-second"])
 
 
+class AgentSandboxStatusEvidenceTests(unittest.TestCase):
+    """Read-only updater qualification must not accept copied or ambiguous output."""
+
+    def test_installed_status_requires_actual_unique_field_lines(self):
+        import subprocess
+        from unittest.mock import patch
+
+        import drlink_v30_agent_signed_updater as updater
+        from drlink_v30_agent_artifact import AgentArtifactError
+
+        verified = {
+            "version": "3.0.0-rc.1",
+            "channel": "preview",
+            "source_ref": "a" * 40,
+            "sha256": "b" * 64,
+        }
+        required = [
+            "Role            : Client",
+            "Project version : " + verified["version"],
+            "Release channel : " + verified["channel"],
+            "Source ref      : " + verified["source_ref"],
+            "Bundle SHA256   : " + verified["sha256"],
+        ]
+        with tempfile.TemporaryDirectory(prefix="drlink-sandbox-status-") as tmp:
+            root = Path(tmp)
+            for rel in (
+                "usr/local/bin/frp-client",
+                "usr/local/lib/drlink/frp-client-common.sh",
+            ):
+                path = root / rel
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("# test-only fixture\n", encoding="utf-8")
+
+            def probe(output: str) -> bool:
+                observed = subprocess.CompletedProcess(
+                    args=["status"], returncode=0, stdout=output, stderr=""
+                )
+                with patch.object(updater.subprocess, "run", return_value=observed):
+                    return updater._sandbox_client_status(root, verified, {})
+
+            self.assertTrue(probe("\n".join(required) + "\n"))
+            # Required labels embedded in warnings must not count as status.
+            with self.assertRaises(AgentArtifactError):
+                probe("\n".join("WARNING stale " + line for line in required) + "\n")
+            # A conflicting second field must not be hidden by the valid line.
+            with self.assertRaises(AgentArtifactError):
+                probe("\n".join(required + ["Project version : 0.0.0"]) + "\n")
+
+
 if __name__ == "__main__":
     unittest.main()
