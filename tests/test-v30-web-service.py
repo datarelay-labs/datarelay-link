@@ -156,7 +156,10 @@ class V30WebServiceTests(unittest.TestCase):
         # DR Control parity persists only non-security UX preferences locally.
         # Session/authentication material remains cookie/Core-owned.
         source = (ROOT / "web/src/main.tsx").read_text(encoding="utf-8")
-        storage_lines = [line.strip() for line in source.splitlines() if "localStorage." in line]
+        storage_lines = [
+            line.strip() for line in source.splitlines()
+            if "localStorage." in line and not line.lstrip().startswith("//")
+        ]
         self.assertEqual(len(storage_lines), 4, storage_lines)
         self.assertTrue(all(
             "drlink_web_theme" in line or "drlink_web_sidebar_collapsed" in line

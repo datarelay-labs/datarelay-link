@@ -84,6 +84,30 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn('pageDescriptions[active]', SOURCE)
         self.assertIn('aria-label="Breadcrumb"', SOURCE)
 
+    def test_every_web_ui_api_path_has_a_server_route(self):
+        # Catch source-level UI/backend drift before packaging: every
+        # literal Web fetch prefix must be dispatched by the same repo's
+        # Web server, including its pre-session auth routes.
+        ui = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in sorted((ROOT / "web/src").glob("*"))
+            if path.suffix in (".tsx", ".ts")
+        )
+        server = (ROOT / "lib/drlink_web_service.py").read_text(encoding="utf-8")
+        requested = set(re.findall(r'"(/api/v1/[a-z0-9/_-]+)', ui))
+        exact = set(
+            re.findall(r'if (?:path|parsed\.path) == "(/api/v1/[a-z0-9/_-]+)"', server)
+        )
+        prefix = set(
+            re.findall(r'if (?:path|parsed\.path)\.startswith\("(/api/v1/[a-z0-9/_-]+)"\)', server)
+        )
+        missing = sorted(
+            route for route in requested
+            if route not in exact and not any(route.startswith(p) for p in prefix)
+        )
+        self.assertGreaterEqual(len(requested), 60)
+        self.assertFalse(missing, missing)
+
     def test_web_api_refresh_bootstraps_csrf_before_core_mutations(self):
         # An HttpOnly session cookie survives a tab refresh, but JS state
         # does not. A GET session bootstrap must restore CSRF in memory.
