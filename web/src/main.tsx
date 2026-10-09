@@ -7,7 +7,7 @@ import {AccessEvidenceExplorer,GuidedPolicyJourney,coreFlowKey,coreCutoffKey,vis
 import {EnrollmentOnboarding} from "./p0-enrollment";
 import {navGroups,groupFor,labelFor,pageDescriptions,visibleRoute,navMatches,setupContextForObjectFamily} from "./uxb-navigation";
 import {FirstUseHome,isFreshInstallation,observedRecentFeed,observedNumber,accessPlaneCount,coreHealthState,type RecentFeed} from "./uxb-home";
-import {requireObservedMenuPayload,requireObservedInventoryContinuation,requireObservedObjectContinuation,requireObservedAuditRetention,auditRetentionRunPermitted,requireObservedAccessHygiene,hygieneInspectTarget,requireObservedJobStart,requireObservedFleetApply,requireObservedAuditExport,requireObservedRolloutPreview,requireObservedInventoryExport,isPartialCorePage,selectMenuPage,combineObservedPolicyPlanes,type MenuPagePosition} from "./uxb-menu-evidence";
+import {requireObservedMenuPayload,requireObservedInventoryContinuation,requireObservedObjectContinuation,requireObservedAuditRetention,auditRetentionRunPermitted,requireObservedAccessHygiene,hygieneInspectTarget,requireObservedJobStart,requireObservedFleetApply,requireObservedAuditExport,requireObservedRolloutPreview,requireObservedInventoryExport,requireObservedJobDetail,requireObservedJobCancellation,isPartialCorePage,selectMenuPage,combineObservedPolicyPlanes,type MenuPagePosition} from "./uxb-menu-evidence";
 import {RemoteServiceEditor} from "./uxb-remote-service";
 import {RevisionHistory} from "./uxb-revisions";
 import {AgentVersionDrift} from "./uxb-versions";
@@ -1156,6 +1156,10 @@ function JobOperations({operator}:{operator:any}){
   const [fleetResourceType,setFleetResourceType]=useState("managed-host"),[fleetResource,setFleetResource]=useState(""),[fleetDescription,setFleetDescription]=useState(""),[fleetTags,setFleetTags]=useState(""),[fleetRemoveTags,setFleetRemoveTags]=useState(""),[fleetAddGroups,setFleetAddGroups]=useState(""),[fleetRemoveGroups,setFleetRemoveGroups]=useState(""),[fleetPreview,setFleetPreview]=useState<any>(null),[fleetConfirm,setFleetConfirm]=useState("");
   const [fleetApplyBusy,setFleetApplyBusy]=useState(false);
   const [jobStartBusy,setJobStartBusy]=useState(false);
+  const detailReadEpoch=useRef(0);
+  const [detailBusy,setDetailBusy]=useState(false);
+  const cancelInFlight=useRef(false);
+  const [cancelBusy,setCancelBusy]=useState(false);
   const inventoryExportInFlight=useRef(false);
   const [inventoryExportBusy,setInventoryExportBusy]=useState(false);
   async function refresh(){
@@ -1171,6 +1175,7 @@ function JobOperations({operator}:{operator:any}){
     }
   }
   useEffect(()=>{refresh();return()=>{jobsReadEpoch.current+=1}},[jobsCursor]);
+  useEffect(()=>()=>{detailReadEpoch.current+=1},[]);
   function olderJobsPage(){
     if(!isPartialCorePage(jobs))return;
     setJobsHistory([...jobsHistory,jobsCursor]);
@@ -1188,6 +1193,7 @@ function JobOperations({operator}:{operator:any}){
       const body:any={job_type:jobType,resource_type:resourceType};
       if(resource)body.resource=resource;
       const result=requireObservedJobStart(await api("/api/v1/jobs/diagnostic",{method:"POST",body:JSON.stringify(body)}),jobType);
+      detailReadEpoch.current+=1;setDetailBusy(false);
       setDetail(result.job);
       setDetailId(result.job.id);
       setMessage("Core job request accepted: "+result.job.id+" · status "+result.job.status+" · "+result.selection.target_count+" Managed Host(s). Completion NOT VERIFIED.");
@@ -1197,9 +1203,19 @@ function JobOperations({operator}:{operator:any}){
     finally{setJobStartBusy(false)}
   }
   async function loadDetail(id?:string){
-    const target=(id||detailId).trim();if(!target)return;
-    setError("");
-    try{const result=await api("/api/v1/jobs/"+encodeURIComponent(target));setDetail(result);setDetailId(target)}catch(e:any){setError(e.message||String(e))}
+    const target=(id||detailId).trim();
+    if(!target||cancelBusy)return;
+    const epoch=++detailReadEpoch.current;
+    setDetail(null);setDetailBusy(true);setError("");
+    try{
+      const result=requireObservedJobDetail(await api("/api/v1/jobs/"+encodeURIComponent(target)),target);
+      if(epoch!==detailReadEpoch.current)return;
+      setDetail(result);setDetailId(target);
+    }catch(e:any){
+      if(epoch===detailReadEpoch.current)setError("UNKNOWN · Core Job Detail does not match the requested Job ID: "+(e.message||String(e)));
+    }finally{
+      if(epoch===detailReadEpoch.current)setDetailBusy(false);
+    }
   }
   function csvList(value:string){return value.split(",").map(x=>x.trim()).filter(Boolean)}
   async function previewFleetMetadata(){
@@ -1248,14 +1264,27 @@ function JobOperations({operator}:{operator:any}){
     }
   }
   async function cancelJob(){
-    if(!detail?.id)return;
-    setError("");setMessage("");
+    if(cancelInFlight.current||!detail?.id||detailBusy)return;
+    cancelInFlight.current=true;setCancelBusy(true);
+    const jobId=String(detail.id);
+    detailReadEpoch.current+=1;setError("");setMessage("");
     try{
-      const result=await api("/api/v1/jobs/cancel",{method:"POST",body:JSON.stringify({job_id:detail.id})});
-      setDetail(result);
-      setMessage("Cancellation requested. Queued targets are cancelled; running targets are not claimed terminated.");
+      const confirmed=requireObservedJobCancellation(await api("/api/v1/jobs/cancel",{
+        method:"POST",body:JSON.stringify({job_id:jobId})
+      }),jobId);
+      setDetail(confirmed.job);
+      setMessage(confirmed.outcome==="REQUESTED"
+        ?"Cancellation request recorded; running targets may still finish."
+        :"Already terminal; no new cancellation was applied.");
       await refresh();
-    }catch(e:any){setError(e.message||String(e))}
+    }catch(e:any){
+      // An ambiguous response could represent a real Core cancellation.
+      // Do not claim success or blindly send another cancel.
+      setDetail(null);
+      setError("UNKNOWN · Core Job cancellation response did not confirm the exact Job. Load Detail before retrying: "+(e.message||String(e)));
+    }finally{
+      cancelInFlight.current=false;setCancelBusy(false);
+    }
   }
   const rows=(jobs?.items||[]).map((x:any)=>({id:x.id,job_type:x.job_type,status:x.status,resource_type:x.resource_type,resource_ref:x.resource_ref,target_count:x.target_count,created_at:x.created_at,finished_at:x.finished_at||""}));
   return <>
@@ -1270,7 +1299,7 @@ function JobOperations({operator}:{operator:any}){
         <input value={resource} onChange={e=>setResource(e.target.value)} placeholder={resourceType==="managed-host"?"Host selector; blank = all trusted":"Managed Host Group name / ID"}/>
         <button className="primary" onClick={start} disabled={jobStartBusy||(resourceType==="managed-host-group"&&!resource.trim())}>{jobStartBusy?"Submitting Core Job…":"Start Job"}</button>
       </div>}
-      <div className="toolbar"><button className="secondary" onClick={refresh}>Refresh Jobs</button><input value={detailId} onChange={e=>setDetailId(e.target.value)} placeholder="Job ID"/><button className="secondary" onClick={()=>loadDetail()}>Load Detail</button><button className="secondary" onClick={exportInventory} disabled={inventoryExportBusy}>{inventoryExportBusy?"Exporting inventory…":"Export Inventory"}</button></div>
+      <div className="toolbar"><button className="secondary" onClick={refresh}>Refresh Jobs</button><input value={detailId} onChange={e=>{detailReadEpoch.current+=1;setDetail(null);setDetailBusy(false);setDetailId(e.target.value)}} placeholder="Job ID" disabled={cancelBusy}/><button className="secondary" onClick={()=>loadDetail()} disabled={detailBusy||cancelBusy}>{detailBusy?"Loading Core Job…":"Load Detail"}</button><button className="secondary" onClick={exportInventory} disabled={inventoryExportBusy}>{inventoryExportBusy?"Exporting inventory…":"Export Inventory"}</button></div>
       {inventoryExport&&<section role="status" className="dr-export-evidence">
         <strong>Core Inventory Export CREATED · No Web download</strong>
         <p className="muted">This bounded sanitized inventory artifact is stored on the Server. It is not a downloadable browser file or a complete history of every resource type.</p>
@@ -1313,7 +1342,7 @@ function JobOperations({operator}:{operator:any}){
     {detail&&<div className="card">
       <h3>Job Detail</h3>
       <div className="grid"><Metric label="Status" value={detail.status}/><Metric label="Targets" value={detail.target_count}/><Metric label="Type" value={detail.job_type}/></div>
-      {operator.role!=="Read Only"&&["QUEUED","RUNNING"].includes(String(detail.status||""))&&<button className="danger" onClick={cancelJob}>Cancel Job</button>}
+      {operator.role!=="Read Only"&&["QUEUED","RUNNING"].includes(String(detail.status||""))&&<button className="danger" onClick={cancelJob} disabled={cancelBusy||detailBusy}>{cancelBusy?"Requesting Core cancellation…":"Cancel Job"}</button>}
       <Table items={(detail.targets||[]).map((x:any)=>({target_id:x.target_id,status:x.status,attempt:x.attempt,error:x.error||"",updated_at:x.updated_at}))}/>
       <pre className="plan">{JSON.stringify({id:detail.id,resource_type:detail.resource_type,resource_ref:detail.resource_ref,deadline_at:detail.deadline_at,last_error:detail.last_error,targets:(detail.targets||[]).map((x:any)=>({target_id:x.target_id,status:x.status,result:x.result,error:x.error}))},null,2)}</pre>
     </div>}

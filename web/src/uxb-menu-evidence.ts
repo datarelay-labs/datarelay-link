@@ -291,6 +291,45 @@ export function requireObservedInventoryExport(payload:unknown):any{
   return payload;
 }
 
+/** A Job detail belongs to one explicitly requested ID. Incomplete or
+ * superseded reads must not imply a matching current Job or cancellable state. */
+export function requireObservedJobDetail(payload:unknown,requestedId:unknown):any{
+  const fail=()=>{throw new Error("UNKNOWN · Core Job Detail is missing, mismatched or incomplete. Retry the exact Job ID.");};
+  if(!payload||typeof payload!=="object"||Array.isArray(payload)
+    ||typeof requestedId!=="string"||!requestedId.trim())return fail();
+  const job=payload as Record<string,any>;
+  const validStates=new Set(["QUEUED","RUNNING","SUCCEEDED","FAILED","CANCELLED"]);
+  if(job.id!==requestedId||typeof job.id!=="string"||!job.id.trim()
+    ||typeof job.job_type!=="string"||!job.job_type.trim()
+    ||!validStates.has(job.status)
+    ||typeof job.target_count!=="number"||!Number.isSafeInteger(job.target_count)
+    ||job.target_count<1||job.target_count>100
+    ||![true,false,0,1].includes(job.cancel_requested)
+    ||!Array.isArray(job.targets)||job.targets.length!==job.target_count)return fail();
+  const seen=new Set<string>();
+  for(const t of job.targets){
+    if(!t||typeof t!=="object"||Array.isArray(t)
+      ||typeof t.target_id!=="string"||!t.target_id.trim()
+      ||seen.has(t.target_id)||!validStates.has(t.status))return fail();
+    seen.add(t.target_id);
+  }
+  return payload;
+}
+
+/** Job cancellation may finish with running targets still active, or an already
+ * terminal Job. Neither condition is proof all target operations stopped. */
+export function requireObservedJobCancellation(payload:unknown,requestedId:string):
+  {job:any,outcome:"REQUESTED"|"ALREADY_TERMINAL"}{
+  const job=requireObservedJobDetail(payload,requestedId);
+  const recorded=job.cancel_requested===1||job.cancel_requested===true;
+  if(["SUCCEEDED","FAILED"].includes(job.status)
+    ||job.status==="CANCELLED"&&!recorded)
+    return {job,outcome:"ALREADY_TERMINAL"};
+  if(recorded&&["RUNNING","CANCELLED"].includes(job.status))
+    return {job,outcome:"REQUESTED"};
+  throw new Error("UNKNOWN · Core Job cancellation response did not confirm the current Job or cancellation state.");
+}
+
 /** A 200 response does not prove a Job was enqueued. Check the actual
  * Core queue identity, status and bounded target counts before reporting it. */
 export function requireObservedJobStart(payload:unknown,expectedJobType:string):any{

@@ -9,14 +9,14 @@ import React from "react";
 import {renderToStaticMarkup} from "react-dom/server";
 
 const root=dirname(dirname(fileURLToPath(import.meta.url)));
-let scratch,RevisionHistory;
+let scratch,RevisionHistory,validateObservedRevisionPage;
 before(async()=>{
   scratch=mkdtempSync(join(root,"node_modules",".uxb-revisions-"));
   const outfile=join(scratch,"revisions.mjs");
   await build({entryPoints:[join(root,"src","uxb-revisions.tsx")],outfile,
     bundle:true,platform:"node",format:"esm",jsx:"automatic",
     external:["react","react/jsx-runtime"],logLevel:"silent"});
-  ({RevisionHistory}=await import(pathToFileURL(outfile).href));
+  ({RevisionHistory,validateObservedRevisionPage}=await import(pathToFileURL(outfile).href));
 });
 after(()=>{if(scratch)rmSync(scratch,{recursive:true,force:true})});
 
@@ -46,9 +46,31 @@ test("confirmed empty Core revisions is not an error or inferred from a failed A
   assert.doesNotMatch(html,/Older revisions →/);
   assert.doesNotMatch(html,/UNKNOWN · Core Change History unavailable/);
 });
+test("Core revision pages must be revision-scoped, bounded and strictly newest first",()=>{
+  const valid={resource_type:"revision",limit:100,next_cursor:null,items:[
+    {revision:8,actor:"admin",command:"set rule",created_at:"2026-10-09T01:00:00Z",summary:"narrow"},
+    {revision:5,actor:"op",command:"group",created_at:"2026-10-09T00:00:00Z",summary:"host"}
+  ]};
+  assert.equal(validateObservedRevisionPage(valid),valid);
+  assert.equal(validateObservedRevisionPage({...valid,items:[]}).items.length,0);
+  for(const broken of [null,{},[],{items:[]},{...valid,resource_type:"managed-host"},
+    {...valid,limit:50},{...valid,limit:"100"},{...valid,next_cursor:42},
+    {...valid,items:[{revision:"8"}]},{...valid,items:[{revision:-1}]},
+    {...valid,items:[{revision:8},{revision:8}]},
+    {...valid,items:[{revision:5},{revision:8}]},
+    {...valid,items:[] ,next_cursor:"next"},
+    {...valid,items:Array.from({length:101},(_,i)=>({revision:101-i}))},
+    {...valid,items:[{revision:8,actor:{secret:true}}]},
+  ]){
+    assert.throws(()=>validateObservedRevisionPage(broken),/UNKNOWN/);
+    assert.match(markup(broken),/UNKNOWN · Core Change History unavailable/);
+  }
+});
 test("malformed Core collection never renders a fake empty Revision History",()=>{
   for(const invalid of [null,{},[],{items:null},{items:[null]},
     {items:[],next_cursor:123}]) {
-    assert.throws(()=>markup(invalid),/Core|UNKNOWN/);
+    const html=markup(invalid);
+    assert.match(html,/UNKNOWN · Core Change History unavailable/);
+    assert.doesNotMatch(html,/No configuration revisions on this observed Core page/);
   }
 });

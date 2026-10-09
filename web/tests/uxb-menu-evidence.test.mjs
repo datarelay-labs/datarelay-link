@@ -315,6 +315,39 @@ test('Inventory Export cannot claim CREATED without a real bounded Core artifact
     assert.throws(()=>menu.requireObservedInventoryExport(bad),/UNKNOWN/);
   }
 });
+test('Management Job Detail belongs to requested Core Job and never borrows stale status',()=>{
+  const item=(id,status='QUEUED')=>({target_id:id,status,attempt:0});
+  const base={id:'mjob_001',job_type:'doctor',status:'QUEUED',target_count:2,
+    cancel_requested:0,targets:[item('host-a'),item('host-b')]};
+  assert.equal(menu.requireObservedJobDetail(base,'mjob_001'),base);
+  for(const bad of [null,{}, {error:'unavailable'},
+    {...base,id:'mjob_002'}, {...base,id:''},{...base,status:'unknown'},
+    {...base,job_type:null},{...base,target_count:0},
+    {...base,target_count:3},{...base,cancel_requested:null},
+    {...base,targets:[]},{...base,targets:[item('host-a'),item('host-a')]},
+    {...base,targets:[item('host-a'),item('host-b','UNKNOWN')]},
+    {...base,targets:[null,item('host-b')]}]){
+    assert.throws(()=>menu.requireObservedJobDetail(bad,'mjob_001'),/UNKNOWN/);
+  }
+});
+test('Job Cancel accepts Core acknowledgement or honest already-terminal result, never an invented cancellation',()=>{
+  const job={id:'mjob_123',job_type:'doctor',status:'RUNNING',target_count:2,
+    cancel_requested:1,targets:[
+      {target_id:'host-a',status:'RUNNING'},
+      {target_id:'host-b',status:'CANCELLED'}]};
+  assert.deepEqual(menu.requireObservedJobCancellation(job,'mjob_123'),{job,outcome:'REQUESTED'});
+  const finished={...job,status:'SUCCEEDED',cancel_requested:0,
+    targets:job.targets.map(x=>({...x,status:'SUCCEEDED'}))};
+  assert.deepEqual(menu.requireObservedJobCancellation(finished,'mjob_123'),{job:finished,outcome:'ALREADY_TERMINAL'});
+  const failedAfterPriorCancel={...job,status:'FAILED'};
+  assert.deepEqual(menu.requireObservedJobCancellation(failedAfterPriorCancel,'mjob_123'),
+    {job:failedAfterPriorCancel,outcome:'ALREADY_TERMINAL'});
+  for(const invalid of [null,{}, {...job,id:'mjob_wrong'}, {...job,cancel_requested:0},
+    {...job,status:'QUEUED'}, {...job,status:'CANCELLED',cancel_requested:2},
+    {...job,targets:[]}]){
+    assert.throws(()=>menu.requireObservedJobCancellation(invalid,'mjob_123'),/UNKNOWN/);
+  }
+});
 test('partial Objects inventory remains available for its existing explicit UNKNOWN warning',()=>{
   // ObjectsWorkspace itself distinguishes incomplete resources from a valid empty list.
   for(const response of [{resources:{}},{resources:{'network-object':{items:[]}}}]){

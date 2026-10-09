@@ -856,6 +856,30 @@ class V30WebSaasUxContractTests(unittest.TestCase):
             self.assertIn(marker, job)
         self.assertNotIn('setMessage("Inventory export created at "+String(result.path||""))',job)
 
+    def test_jobs_detail_and_cancel_never_reuse_stale_core_evidence(self):
+        jobs=SOURCE.split("function JobOperations(",1)[1].split("function ObjectsWorkspace(",1)[0]
+        helper=(ROOT / "web/src/uxb-menu-evidence.ts").read_text(encoding="utf-8")
+        self.assertIn("export function requireObservedJobDetail(",helper)
+        self.assertIn("export function requireObservedJobCancellation(",helper)
+        for marker in (
+            'const detailReadEpoch=useRef(0);',
+            'const cancelInFlight=useRef(false);',
+            'const [detailBusy,setDetailBusy]=useState(false);',
+            'const [cancelBusy,setCancelBusy]=useState(false);',
+            'requireObservedJobDetail(await api("/api/v1/jobs/"+encodeURIComponent(target)),target)',
+            'if(epoch!==detailReadEpoch.current)return;',
+            'detailReadEpoch.current+=1;',
+            'requireObservedJobCancellation(await api("/api/v1/jobs/cancel",',
+            'Cancellation request recorded; running targets may still finish.',
+            'Already terminal; no new cancellation was applied.',
+            'UNKNOWN · Core Job cancellation response',
+            'disabled={detailBusy||cancelBusy}',
+        ):
+            self.assertIn(marker,jobs,marker)
+        self.assertIn('const result=requireObservedJobDetail(await api(',jobs)
+        self.assertIn('if(epoch!==detailReadEpoch.current)return;',jobs)
+        self.assertNotIn('setMessage("Cancellation requested. Queued targets are cancelled;',jobs)
+
     def test_irreversible_retention_requires_typed_confirmation_and_fresh_policy(self):
         audit=SOURCE.split("function AuditExplorer(",1)[1].split("function AgentRolloutPreviewPanel(",1)[0]
         helper=(ROOT / "web/src/uxb-menu-evidence.ts").read_text(encoding="utf-8")
