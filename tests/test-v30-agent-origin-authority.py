@@ -14,9 +14,23 @@ sys.path.insert(0, str(ROOT / "lib"))
 
 from drlink_v30_agent_artifact import AgentArtifactError
 from drlink_v30_agent_local_trust import _enrolled_https_origin
+from drlink_v30_agent_artifact_transport import _parse_https_origin
 
 
 class EnrolledAgentArtifactOriginTests(unittest.TestCase):
+    def test_direct_transport_origin_rejects_empty_userinfo_and_whitespace(self):
+        for origin in (
+            "https://@enrolled.example.invalid",
+            "https://:@enrolled.example.invalid",
+            "https://user@enrolled.example.invalid",
+            " https://enrolled.example.invalid",
+            "https://enrolled.example.invalid ",
+        ):
+            with self.subTest(origin=origin), self.assertRaises(AgentArtifactError):
+                _parse_https_origin(origin)
+        self.assertEqual(_parse_https_origin("https://enrolled.example.invalid:8443"),
+                         ("enrolled.example.invalid", 8443))
+
     def test_empty_or_nonempty_url_credentials_fail_closed(self):
         # Even empty @ credentials must be rejected rather than silently
         # normalized away: only an absolute authority with no userinfo qualifies.

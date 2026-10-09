@@ -35,7 +35,7 @@ def _deny(reason: str) -> None:
 
 
 def _parse_https_origin(origin: str) -> tuple[str, int]:
-    value = str(origin or "").strip()
+    value = str(origin or "")
     if any(ord(ch) < 33 or ord(ch) == 127 for ch in value):
         _deny("invalid enrolled HTTPS Server origin")
     try:
@@ -46,7 +46,8 @@ def _parse_https_origin(origin: str) -> tuple[str, int]:
         raise SIGNED.AgentArtifactError(
             "AGENT_ARTIFACT_UNQUALIFIED: invalid HTTPS Server origin"
         ) from exc
-    if (parsed.scheme != "https" or not host or parsed.username or parsed.password
+    if (parsed.scheme != "https" or not host
+        or parsed.username is not None or parsed.password is not None
         or parsed.path not in ("", "/") or parsed.query or parsed.fragment
         or port < 1 or port > 65535):
         _deny("Server-local artifact origin must be an enrolled HTTPS authority")
