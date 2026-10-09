@@ -103,6 +103,30 @@ scenarios:
       - "Web login screen moves OTP to a separate second stage with no persisted credential"
     release_gate: true
 
+  - id: DRLINK-PF9-WEB-MANAGEMENT-INGRESS
+    name: DRLink Web/API management source ACL through verified Foundation policy
+    level: integration
+    cost: medium
+    estimated_seconds: 50
+    timeout_seconds: 180
+    agent_default: true
+    domains:
+      - "server"
+      - "shared"
+    triggers:
+      - affected
+      - pr
+      - preflight
+    platforms:
+      - "linux"
+    command: "python3 tests/test-v30-web-management-ingress.py -q"
+    invariants:
+      - "default-OFF policy preserves pre-existing login, health and static UI"
+      - "explicit unavailable or enabled-denied source blocks static, login and management API before auth"
+      - "untrusted/ambiguous forwarded chains cannot bypass pinned source ACL"
+      - "no SSH host ACL or policy application without separate authorization"
+    release_gate: true
+
   - id: DRLINK-CLI-FEATURE-SCENARIO-RELEASE
     name: CLI feature/operator workflow reconciliation evidence validation
     level: static

@@ -16,6 +16,10 @@ from typing import Any, Optional
 from urllib.parse import parse_qs, unquote, urlparse
 
 from drlink_control_db import ControlPlaneError
+from drlink_foundation_security import (
+    FoundationIngressDecision, FoundationManagementPolicy,
+    foundation_authorize_management, foundation_canonical_network,
+)
 from drlink_management_core import ManagementActor
 from drlink_management_service import ManagementQueryService
 from drlink_management_web_adapter import ManagementWebApiAdapter
@@ -84,6 +88,8 @@ class WebApplication:
         *,
         static_root: Optional[str] = None,
         secure_cookie: bool = False,
+        management_acl: FoundationManagementPolicy | None = FoundationManagementPolicy(),
+        trusted_proxy_cidrs: tuple[str, ...] = (),
     ):
         self.root = root
         self.static_root = Path(
@@ -95,10 +101,49 @@ class WebApplication:
             )
         )
         self.secure_cookie = bool(secure_cookie)
+        if management_acl is not None and not isinstance(
+            management_acl, FoundationManagementPolicy
+        ):
+            raise ValueError("invalid management ingress policy")
+        if type(trusted_proxy_cidrs) is not tuple or any(
+            type(item) is not str for item in trusted_proxy_cidrs
+        ):
+            raise ValueError("invalid trusted proxy CIDRs")
+        # Only the product installer/backend may inject this immutable policy.
+        # None fails closed; the fresh-install default is explicitly OFF.
+        self._management_acl = management_acl
+        self._trusted_proxy_cidrs = tuple(
+            foundation_canonical_network(cidr) for cidr in trusted_proxy_cidrs
+        )
         self.auth = WebAuthService(root)
         self.adapter = ManagementWebApiAdapter(root)
         self._restore_lock = threading.RLock()
         self._restore_in_progress = False
+
+    @property
+    def web_ingress_active(self) -> bool:
+        """Strict header validation applies only to enforced Web policy."""
+        return self._management_acl is None or self._management_acl.web.enabled
+
+    def authorize_web_ingress(
+        self,
+        direct_peer: str | None,
+        x_forwarded_for: str | None = None,
+        *,
+        now: int | None = None,
+    ) -> FoundationIngressDecision:
+        """Check an actual Web peer through pinned Foundation, not FRP ACL.
+
+        Direct socket peer is authoritative unless a trusted product-owned
+        reverse proxy is explicitly configured. No request may set policy.
+        """
+        return foundation_authorize_management(
+            self._management_acl, "web",
+            direct_peer=direct_peer,
+            x_forwarded_for=x_forwarded_for,
+            trusted_proxy_cidrs=self._trusted_proxy_cidrs,
+            now=now,
+        )
 
     def close(self) -> None:
         self.auth.close()
@@ -1070,7 +1115,24 @@ class DrlinkWebHandler(BaseHTTPRequestHandler):
             require_csrf=csrf,
         )
 
+    def _check_web_ingress(self) -> bool:
+        forwarded_headers = self.headers.get_all("X-Forwarded-For") or []
+        # Ambiguous duplicate proxy chains are not an identity assertion.
+        if len(forwarded_headers) > 1 and self.app.web_ingress_active:
+            self._error(403, "management ingress denied")
+            return False
+        decision = self.app.authorize_web_ingress(
+            str(self.client_address[0]) if self.client_address else None,
+            forwarded_headers[0] if forwarded_headers else None,
+        )
+        if decision.allowed:
+            return True
+        self._error(403, "management ingress denied")
+        return False
+
     def do_GET(self) -> None:
+        if not self._check_web_ingress():
+            return
         parsed = urlparse(self.path)
         if parsed.path.startswith("/api/automation/v1/"):
             self._error(405, "Automation API uses POST.")
@@ -1103,6 +1165,8 @@ class DrlinkWebHandler(BaseHTTPRequestHandler):
         self._static(parsed.path)
 
     def do_POST(self) -> None:
+        if not self._check_web_ingress():
+            return
         parsed = urlparse(self.path)
         if parsed.path.startswith("/api/automation/v1/"):
             from drlink_automation_api import AutomationApi
@@ -1309,10 +1373,15 @@ def create_server(
     static_root: Optional[str] = None,
     tls_cert: Optional[str] = None,
     tls_key: Optional[str] = None,
+    management_acl: FoundationManagementPolicy | None = FoundationManagementPolicy(),
+    trusted_proxy_cidrs: tuple[str, ...] = (),
 ) -> DrlinkWebServer:
     validate_web_bind(listen, tls_cert=tls_cert, tls_key=tls_key)
     use_tls = bool(tls_cert and tls_key)
-    app = WebApplication(root, static_root=static_root, secure_cookie=use_tls)
+    app = WebApplication(
+        root, static_root=static_root, secure_cookie=use_tls,
+        management_acl=management_acl, trusted_proxy_cidrs=trusted_proxy_cidrs,
+    )
     server = DrlinkWebServer((listen, int(port)), app)
     if use_tls:
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
