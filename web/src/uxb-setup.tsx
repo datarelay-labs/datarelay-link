@@ -30,6 +30,18 @@ export function retargetRemoteHost(draft:SetupDraft,hostId:string):SetupDraft{
     service:{owner:next,name:"",service:"",destination:"this-host"}};
 }
 
+/** A resumed, non-secret draft may predate explicit Host-selection semantics.
+ * Never make the displayed Agent own a service draft originally prepared for another Host. */
+export function reconcileHostBoundDraft(draft?:SetupDraft|null):SetupDraft{
+  if(!draft)return {};
+  if((draft.plane||"remote")!=="remote")return draft;
+  const selectedHost=String(draft.selectedHost||"").trim();
+  const storedOwner=String(draft.service?.owner||"").trim();
+  if(storedOwner&&storedOwner!==selectedHost)
+    return retargetRemoteHost(draft,selectedHost);
+  return draft;
+}
+
 export function firstConnectionGuidance(
   plane:AccessPlane,step:number,state:{
     hosts:any[]|null,selectedHost:string,source:string,destination:string,
@@ -76,8 +88,9 @@ export function FirstConnectionSetup({api,operator,onNavigate,initialDraft,onDra
   api:LinkApi,operator:any,onNavigate?:Navigate,initialDraft?:SetupDraft|null,
   onDraftChange?:(draft:SetupDraft)=>void,
 }){
-  const [plane,setPlane]=useState<AccessPlane>(initialDraft?.plane||"remote");
-  const [step,setStep]=useState(Math.min(4,Math.max(1,initialDraft?.step||1)));
+  const restoredDraft=reconcileHostBoundDraft(initialDraft);
+  const [plane,setPlane]=useState<AccessPlane>(restoredDraft.plane||"remote");
+  const [step,setStep]=useState(Math.min(4,Math.max(1,restoredDraft.step||1)));
   const [hosts,setHosts]=useState<any[]|null>(null),[services,setServices]=useState<any[]|null>(null);
   const [catalog,setCatalog]=useState<CoreCatalog|null>(null);
   // Null means not observed / API unavailable; an authoritative empty list is different.
@@ -86,15 +99,15 @@ export function FirstConnectionSetup({api,operator,onNavigate,initialDraft,onDra
   const [serviceBusy,setServiceBusy]=useState(false);
   const [enrollmentBusy,setEnrollmentBusy]=useState(false);
   const wizardBusy=serviceBusy||enrollmentBusy;
-  const [selectedHost,setSelectedHost]=useState(initialDraft?.selectedHost||"");
-  const selectedHostRef=useRef(initialDraft?.selectedHost||"");
+  const [selectedHost,setSelectedHost]=useState(restoredDraft.selectedHost||"");
+  const selectedHostRef=useRef(restoredDraft.selectedHost||"");
   const refreshGeneration=useRef(0);
   const planeRef=useRef(plane);
-  const [serviceName,setServiceName]=useState(initialDraft?.serviceName||"");
-  const [serviceDraft,setServiceDraft]=useState(initialDraft?.service||{owner:"",name:"",service:"",destination:"this-host"});
-  const [source,setSource]=useState(initialDraft?.source||"");
-  const [destination,setDestination]=useState(initialDraft?.destination||"");
-  const [selector,setSelector]=useState(initialDraft?.selector||"");
+  const [serviceName,setServiceName]=useState(restoredDraft.serviceName||"");
+  const [serviceDraft,setServiceDraft]=useState(restoredDraft.service||{owner:"",name:"",service:"",destination:"this-host"});
+  const [source,setSource]=useState(restoredDraft.source||"");
+  const [destination,setDestination]=useState(restoredDraft.destination||"");
+  const [selector,setSelector]=useState(restoredDraft.selector||"");
   const canEdit=operator?.role==="Admin"||operator?.role==="Operator";
   const selected=hosts?.find(h=>String(h.id)===selectedHost)||null;
   const service=services?.find(s=>String(s.name||s.id)===serviceName)||null;

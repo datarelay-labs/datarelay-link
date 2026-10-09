@@ -256,6 +256,9 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn('if(planeRef.current==="remote")chooseRemoteHost("");', SETUP_SOURCE)
         self.assertIn("selectedHostRef.current=\"\";", SETUP_SOURCE)
         self.assertIn("planeRef.current=value;", SETUP_SOURCE)
+        self.assertIn("const restoredDraft=reconcileHostBoundDraft(initialDraft);", SETUP_SOURCE)
+        self.assertIn("const [serviceDraft,setServiceDraft]=useState(restoredDraft.service||", SETUP_SOURCE)
+        self.assertIn("const [selectedHost,setSelectedHost]=useState(restoredDraft.selectedHost||", SETUP_SOURCE)
 
     def test_uxb_first_use_keeps_three_planes_and_core_authority_separate(self):
         self.assertIn('FirstUseHome data={data}', SOURCE)

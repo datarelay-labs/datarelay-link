@@ -54,6 +54,31 @@ test("Explicitly switching owning Agent invalidates prior service and policy cho
  assert.equal(gone.selector,"");
  assert.equal(gone.serviceName,"");
 });
+test("Restored first-use draft never retains another Agent's service or access choices",()=>{
+ const mismatched={plane:"remote",step:2,selectedHost:"host-a",serviceName:"ssh-on-b",
+  source:"source-for-b",destination:"target-for-b",selector:"ssh-b",
+  service:{owner:"host-b",name:"ssh-on-b",service:"ssh-b",destination:"this-host"}};
+ const safe=setup.reconcileHostBoundDraft(mismatched);
+ assert.equal(safe.selectedHost,"host-a");
+ assert.equal(safe.service.owner,"host-a");
+ assert.equal(safe.service.name,"");
+ assert.equal(safe.serviceName,"");
+ assert.equal(safe.source,"");
+ assert.equal(safe.destination,"");
+ assert.equal(safe.selector,"");
+ assert.deepEqual(mismatched.service,{owner:"host-b",name:"ssh-on-b",service:"ssh-b",destination:"this-host"});
+ const matching={...mismatched,service:{...mismatched.service,owner:"host-a"}};
+ assert.deepEqual(setup.reconcileHostBoundDraft(matching),matching);
+ const ai={...mismatched,plane:"ai"};
+ assert.deepEqual(setup.reconcileHostBoundDraft(ai),ai);
+ const html=renderToStaticMarkup(React.createElement(setup.FirstConnectionSetup,{
+   api:async()=>{throw new Error("SSR must not call Core")},
+   operator:{role:"Admin"},initialDraft:{...mismatched,step:3}
+ }));
+ for(const oldName of ["source-for-b","target-for-b","ssh-b"]){
+   assert.doesNotMatch(html,new RegExp('value="'+oldName+'"'));
+ }
+});
 test("Next action is specific and never claims a verified connection",()=>{
  const basis={hosts:[],selectedHost:"",source:"",destination:"",selector:"",serviceName:""};
  assert.match(setup.firstConnectionGuidance("remote",1,basis),/Add an Agent|Select an observed Agent/);
