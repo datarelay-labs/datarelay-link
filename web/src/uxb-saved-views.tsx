@@ -1,6 +1,13 @@
 import React,{useState} from "react";
 
 export type StoredViewTarget="managed-host"|"remote-service";
+// A saved view is a personal display preference, never an access rule.
+export function saveDraftForResource(kind:unknown,filter:unknown):{resource_type:StoredViewTarget,filter:string}|null{
+  if((kind!=="host"&&kind!=="service")||typeof filter!=="string")return null;
+  const text=filter.trim();
+  if(!text||text.length>120)return null;
+  return {resource_type:kind==="host"?"managed-host":"remote-service",filter:text};
+}
 export function readSavedView(value:unknown):{route:"hosts"|"services",filter:string}|null{
   if(!value||typeof value!=="object"||Array.isArray(value))return null;
   const payload=(value as any).payload;
@@ -11,21 +18,23 @@ export function readSavedView(value:unknown):{route:"hosts"|"services",filter:st
   return null;
 }
 
-export function SavedViewsWorkspace({data,api,onNavigate,refresh}:{
-  data:any,api:(path:string,init?:RequestInit)=>Promise<any>,
+export function SavedViewsWorkspace({data,api,onNavigate,refresh,initialDraft}:{
+  data:any,api:(path:string,init?:RequestInit)=>Promise<any>,initialDraft?:unknown,
   onNavigate?:(id:string,group?:string,context?:any)=>void,refresh:()=>void
 }){
-  const [name,setName]=useState(""),[filter,setFilter]=useState("");
-  const [target,setTarget]=useState<StoredViewTarget>("managed-host");
-  const [busy,setBusy]=useState(false),[error,setError]=useState("");
+  const prepared=readSavedView({payload:initialDraft});
+  const safeDraft=prepared?saveDraftForResource(prepared.route==="hosts"?"host":"service",prepared.filter):null;
+  const [name,setName]=useState(""),[filter,setFilter]=useState(safeDraft?.filter||"");
+  const [target,setTarget]=useState<StoredViewTarget>(safeDraft?.resource_type||"managed-host");
+  const [busy,setBusy]=useState(false),[error,setError]=useState(""),[notice,setNotice]=useState("");
   async function save(e:React.FormEvent){
     e.preventDefault();
     if(busy||!name.trim()||!filter.trim())return;
-    setError("");setBusy(true);
+    setError("");setNotice("");setBusy(true);
     try{
       await api("/api/v1/saved-views",{method:"POST",
         body:JSON.stringify({name:name.trim(),payload:{resource_type:target,filter:filter.trim()}})});
-      setName("");setFilter("");refresh();
+      setName("");setNotice("Private filter saved. Check My saved filters for the latest list.");refresh();
     }catch(e:any){setError(e.message||String(e))}
     finally{setBusy(false)}
   }
@@ -34,7 +43,9 @@ export function SavedViewsWorkspace({data,api,onNavigate,refresh}:{
     <header className="dr-page-intro"><div><p className="dr-eyebrow">Activity &amp; Health · Preferences</p>
       <h2>Saved Views</h2><p className="muted">Reuse a named filter for observed Hosts or Remote Services. These are private display preferences, never access policies.</p></div></header>
     {error&&<p role="alert" className="warning-box">{error}</p>}
+    {notice&&<p role="status" className="muted">{notice}</p>}
     <section className="card dr-list-card"><h3>Save a resource filter</h3>
+      {safeDraft&&<p role="status" className="muted">Pre-filled from {safeDraft.resource_type==="managed-host"?"Servers & Agents":"Published Services"}. Give this text filter a name, then explicitly save it. Other list controls and unpublished Core pages are not included.</p>}
       <form onSubmit={save}>
         <div className="toolbar">
           <label>View name <input value={name} maxLength={80} onChange={e=>setName(e.target.value)} placeholder="Offline hosts" required/></label>

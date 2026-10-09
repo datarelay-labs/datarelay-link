@@ -866,7 +866,7 @@ class V30WebSaasUxContractTests(unittest.TestCase):
 
     def test_saved_views_can_open_explicit_non_security_resource_filters(self):
         saved=(ROOT / "web/src/uxb-saved-views.tsx").read_text(encoding="utf-8")
-        self.assertIn('import {SavedViewsWorkspace} from "./uxb-saved-views"', SOURCE)
+        self.assertIn('import {SavedViewsWorkspace,saveDraftForResource} from "./uxb-saved-views"', SOURCE)
         self.assertIn('if(active==="views"&&data)return <SavedViewsWorkspace data={data} api={api} onNavigate={onNavigate}', SOURCE)
         self.assertIn('initialFilter={String(context?.savedFilter||"").slice(0,120)}', SOURCE)
         self.assertIn('useEffect(()=>{setFilter(initialFilter)},[kind,initialFilter]);', SOURCE)
@@ -882,6 +882,17 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         ):
             self.assertIn(marker, saved, marker)
         self.assertIn("tests/uxb-saved-views.test.mjs", PACKAGE)
+
+    def test_saved_views_can_capture_live_resource_filter_without_policy_mutation(self):
+        saved=(ROOT / "web/src/uxb-saved-views.tsx").read_text(encoding="utf-8")
+        self.assertIn("export function saveDraftForResource(kind:", saved)
+        self.assertIn("initialDraft?:unknown", saved)
+        self.assertIn('const prepared=readSavedView({payload:initialDraft});', saved)
+        self.assertIn('onNavigate?.("views","activity",{savedViewDraft:savedDraft})', SOURCE)
+        self.assertIn('initialDraft={context?.savedViewDraft}', SOURCE)
+        self.assertIn('Save this filter →', SOURCE)
+        self.assertIn('maxLength={120}', SOURCE)
+        self.assertIn('Pre-filled from', saved)
 
     def test_normative_ux_doc_binds_control_reference_and_competitive_sources(self):
         for required in (
