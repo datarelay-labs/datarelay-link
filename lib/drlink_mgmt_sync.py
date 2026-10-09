@@ -1242,27 +1242,42 @@ def server_upsert_remote_service(plane, auth: MgmtAuthContext, body: dict) -> di
 
     endpoint_port = None
     proxy_id = None
-    if preserve is not None:
-        endpoint_port = int(preserve)
-    elif existing and existing["public_port"]:
+    # The Server reservation is authoritative. An Agent's cached port hint
+    # may be stale after reconnect; it must never move an existing endpoint.
+    if existing is not None and existing["public_port"] is not None:
         endpoint_port = int(existing["public_port"])
+    elif preserve is not None:
+        endpoint_port = int(preserve)
 
     allocator = getattr(auth, "allocator", None)
     if endpoint_port is None and not enabled:
         pass
     elif allocator is not None and enabled:
         # Authoritative FRP registry allocation (single allocator authority).
+        # Exclude only this existing publication's *own* Server reservation.
+        # Its FRP registry proxy may be missing during reconnect/re-render:
+        # treating its held port as a different owner's collision silently
+        # reallocates the public endpoint on enable/reconcile (F002).
+        # Every other reservation/publication remains protected, including
+        # ambiguous/legacy reservations without matching owner IDs.
+        own_id = existing["id"] if existing is not None else None
         extra_used = {
-            r[0]
+            r["public_port"]
             for r in plane.conn.execute(
-                "SELECT public_port FROM port_reservations WHERE released = 0 AND public_port IS NOT NULL"
+                "SELECT public_port, client_id, service_id FROM port_reservations "
+                "WHERE released = 0 AND public_port IS NOT NULL"
+            )
+            if own_id is None or not (
+                r["client_id"] == client["id"] and r["service_id"] == own_id
             )
         }
         extra_used |= {
-            r[0]
+            r["public_port"]
             for r in plane.conn.execute(
-                "SELECT public_port FROM published_services WHERE public_port IS NOT NULL AND released = 0"
+                "SELECT id, public_port FROM published_services "
+                "WHERE public_port IS NOT NULL AND released = 0"
             )
+            if own_id is None or r["id"] != own_id
         }
         try:
             reserved = allocator.reserve_remote_service_endpoint(
