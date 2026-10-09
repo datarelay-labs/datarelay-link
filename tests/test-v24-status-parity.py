@@ -120,6 +120,96 @@ class StatusParityTests(unittest.TestCase):
         ).fetchone()
         self.assertEqual((state['status'], state['runtime_verified']), ('HEALTHY', 0))
 
+    def test_F019_transient_missing_service_object_rechecks_authoritative_catalog(self):
+        # A previous Agent cache refresh can miss a concurrently committed
+        # Server Fixed TCP Service Object. If it is still present in the
+        # authoritative Server, synchronize must not demote a live publication
+        # for a transient incomplete local snapshot.
+        from unittest import mock
+
+        service_object = "f019-capacity-fixed"
+        name = "f019-live"
+        v24.set_service_object(
+            self.server, service_object,
+            type="fixed-tcp", port=20087, oneshot=True,
+        )
+        self.agent.conn.execute(
+            "INSERT INTO agent_remote_services "
+            "(name, destination, destination_client_id, service_object, enabled, status, "
+            "endpoint_host, endpoint_port, pending_allocation, delete_pending, pool_class, "
+            "reason, updated_at) "
+            "VALUES (?, 'this-host', ?, ?, 1, 'HEALTHY', '203.0.113.10', 6287, "
+            "0, 0, 'fixed-tcp', '', '2026-10-09T00:00:00Z')",
+            (name, MACHINE, service_object),
+        )
+        self.agent.conn.commit()
+
+        real_sync = v24.sync_agent_catalog_from_server
+        fetches = []
+
+        def first_snapshot_incomplete(plane, server_plane=None, *, root=None):
+            count = real_sync(plane, server_plane, root=root)
+            fetches.append(1)
+            if len(fetches) == 1:
+                plane.conn.execute(
+                    "DELETE FROM agent_object_catalog "
+                    "WHERE kind='service-object' AND name=?", (service_object,),
+                )
+                plane.conn.commit()
+            return count
+
+        os.environ["DRLINK_SERVER_REACHABLE"] = "1"
+        try:
+            with mock.patch.object(v24, "sync_agent_catalog_from_server",
+                                   side_effect=first_snapshot_incomplete):
+                result = v24.synchronize_agent_remote_services(
+                    self.agent, root=self.agent_tmp,
+                )
+        finally:
+            os.environ.pop("DRLINK_SERVER_REACHABLE", None)
+        self.assertGreaterEqual(len(fetches), 2, fetches)
+        row = self.agent.conn.execute(
+            "SELECT status, endpoint_port, reason FROM agent_remote_services "
+            "WHERE name=?", (name,),
+        ).fetchone()
+        self.assertNotIn("missing or invalid", str(row["reason"]).lower(), result)
+        self.assertEqual(int(row["endpoint_port"] or 0), 6287)
+        self.assertIn(result.get("status"), ("SYNCHRONIZED", "DEGRADED"))
+
+    def test_F019_permanently_missing_fixed_tcp_dependency_stays_degraded(self):
+        # The authoritative retry must never invent a removed Service Object
+        # or make a missing dependency HEALTHY.
+        from unittest import mock
+        name = "f019-gone"
+        self.agent.conn.execute(
+            "INSERT INTO agent_remote_services "
+            "(name, destination, destination_client_id, service_object, enabled, status, "
+            "endpoint_host, endpoint_port, pending_allocation, delete_pending, pool_class, "
+            "reason, updated_at) "
+            "VALUES (?, 'this-host', ?, 'f019-no-such-service', 1, 'HEALTHY', "
+            "'203.0.113.10', 6288, 0, 0, 'fixed-tcp', '', '2026-10-09T00:00:00Z')",
+            (name, MACHINE),
+        )
+        self.agent.conn.commit()
+        os.environ["DRLINK_SERVER_REACHABLE"] = "1"
+        try:
+            with mock.patch.object(
+                v24, "set_remote_service_agent", side_effect=AssertionError(
+                    "missing dependency must never activate a Remote Service"
+                )
+            ):
+                result = v24.synchronize_agent_remote_services(
+                    self.agent, root=self.agent_tmp
+                )
+        finally:
+            os.environ.pop("DRLINK_SERVER_REACHABLE", None)
+        row = self.agent.conn.execute(
+            "SELECT status, reason FROM agent_remote_services WHERE name=?", (name,)
+        ).fetchone()
+        self.assertEqual(row["status"], "DEGRADED", result)
+        self.assertIn("missing or invalid", row["reason"])
+        self.assertEqual(result["status"], "DEGRADED")
+
     def test_AGENT_DEGRADED_PROPAGATES_TO_SERVER(self):
         created = mgmt.upsert_remote_service_on_server(
             root=self.agent_tmp,

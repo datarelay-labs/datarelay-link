@@ -5860,6 +5860,23 @@ def synchronize_agent_remote_services(plane_db, *, root: Optional[str] = None, f
                 destination_client_id=_row_get(row, "destination_client_id"),
             )
             svc_reason = _service_dependency_status(plane_db, svc_name)
+            if (
+                svc_reason
+                and "missing or invalid" in svc_reason
+                and not catalog_error
+            ):
+                # F019: a single Agent catalog read can race an authoritative
+                # Server Service Object update. Before demoting a previously
+                # published Fixed TCP endpoint, fetch the signed Server
+                # catalog once more. A genuinely deleted object remains
+                # missing and still fails closed; never use stale Agent
+                # cache as proof of permission or dependency validity.
+                try:
+                    if mgmt.use_live_mgmt_path(root or getattr(plane_db, "root", None)):
+                        sync_agent_catalog_from_server(plane_db, root=root)
+                        svc_reason = _service_dependency_status(plane_db, svc_name)
+                except Exception as exc:
+                    catalog_error = str(exc).strip() or "Authoritative catalog recheck failed"
             reason = dest_reason or svc_reason
             if reason:
                 plane_db.conn.execute(
