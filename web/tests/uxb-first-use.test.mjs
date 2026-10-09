@@ -77,10 +77,26 @@ test("Fresh installations see first-use guide, populated or UNKNOWN Core stays i
  assert.equal(home.isFreshInstallation({overview:{managed_hosts:{total:1},remote_services:{total:0},policies:{ai:{total:0}}}}),false);
  assert.equal(home.isFreshInstallation({overview:{managed_hosts:{total:0},remote_services:{total:0},policies:{ai:{total:1}}}}),false);
 });
+test("Home welcome requires confirmed empty Core across Hosts, Services and every policy plane",()=>{
+ const empty={overview:{managed_hosts:{total:0},remote_services:{total:0,enabled:0},
+  policies:{ai:{total:0,enabled:0}}}};
+ assert.equal(home.showFreshHomeWelcome(empty,"loading"),false);
+ assert.equal(home.showFreshHomeWelcome(empty,"error"),false);
+ assert.equal(home.showFreshHomeWelcome(empty,"ready"),true);
+ assert.equal(home.showFreshHomeWelcome({...empty,overview:{...empty.overview,managed_hosts:{total:1}}},"ready"),false);
+ assert.equal(home.showFreshHomeWelcome({...empty,overview:{...empty.overview,remote_services:{total:1}}},"ready"),false);
+ assert.equal(home.showFreshHomeWelcome({...empty,overview:{...empty.overview,
+  policies:{ai:{total:0},remote:{total:1}}}},"ready"),false);
+ assert.equal(home.showFreshHomeWelcome({...empty,overview:{...empty.overview,
+  policies:{ai:{total:0},internet:{total:1}}}},"ready"),false);
+ assert.equal(home.showFreshHomeWelcome({...empty,overview:{...empty.overview,
+  policies:{ai:{total:0},remote:{enabled:0}}}},"ready"),false);
+ assert.equal(home.showFreshHomeWelcome(null,"ready"),false);
+});
 test("first-use states are fail-closed without trustworthy evidence",()=>{
  assert.deepEqual(home.firstConnectionStates(null,null),[
   "Unknown","Unknown","Unknown","Unknown","Needs verification"]);
- const blank={overview:{managed_hosts:{total:0},remote_services:{total:0,enabled:0},policies:{remote:{enabled:0}}}};
+ const blank={overview:{managed_hosts:{total:0},remote_services:{total:0,enabled:0},policies:{remote:{total:0,enabled:0}}}};
  assert.deepEqual(home.firstConnectionStates(blank,[]),[
   "Configured · verify","Not started","Not started","Not started","Needs verification"]);
  const partial={overview:{managed_hosts:{total:1},remote_services:{total:1,enabled:1},policies:{remote:{enabled:2}}}};
@@ -92,6 +108,21 @@ test("first-use states are fail-closed without trustworthy evidence",()=>{
  assert.equal(home.firstConnectionStates(partial,[{admission_state:"APPROVED",connected:true,trust_status:"trusted"}])[1],"Configured · verify");
  const noRemoteRules={overview:{managed_hosts:{total:0},remote_services:{total:0,enabled:0},policies:{ai:{enabled:0,total:0}}}};
  assert.equal(home.firstConnectionStates(noRemoteRules,[])[3],"Not started");
+});
+test("Partial Core overview remains UNKNOWN and must not be announced as system readiness",()=>{
+ for(const partial of [
+  {overview:{}},
+  {overview:{managed_hosts:{total:0},remote_services:{total:0},policies:{ai:{enabled:0}}}},
+ ]){
+  assert.equal(home.firstConnectionStates(partial,[])[0],"Unknown");
+  const html=renderToStaticMarkup(React.createElement(home.FirstUseHome,{
+   data:partial,operator:{role:"Read Only"},api:async()=>{throw new Error("SSR must not fetch")},
+  }));
+  assert.doesNotMatch(html,/Core overview received/);
+  assert.match(html,/Unknown/);
+ }
+ const complete={overview:{managed_hosts:{total:0},remote_services:{total:0},policies:{ai:{total:0}}}};
+ assert.equal(home.firstConnectionStates(complete,[])[0],"Configured · verify");
 });
 test("Audit and revision responses distinguish empty records from failed or malformed Core reads",()=>{
  const observed=home.observedRecentFeed({status:"fulfilled",value:{items:[]}});

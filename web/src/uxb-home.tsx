@@ -22,15 +22,30 @@ export function accessPlaneCount(data:any):number|null{
   return ["remote","internet","ai"].filter(plane=>generations[plane].status==="active").length;
 }
 
+/** A partial or malformed Core summary must not masquerade as an observed one.
+ * The actual overview always contains a policy map with the AI family. */
+export function hasObservedCoreOverview(data:any):boolean{
+  const overview=data?.overview;
+  const hosts=overview?.managed_hosts,services=overview?.remote_services,policies=overview?.policies;
+  return typeof hosts?.total==="number"&&typeof services?.total==="number"
+    &&!!policies&&typeof policies==="object"&&!Array.isArray(policies)
+    &&Object.keys(policies).length>0
+    &&Object.values(policies).every((row:any)=>typeof row?.total==="number");
+}
+
 /** Task-first Home is shown only when actual Core counts establish an empty
  * installation. Missing/partial evidence must never be guessed as zero. */
 export function isFreshInstallation(data:any):boolean{
-  const overview=data?.overview;
-  const hosts=overview?.managed_hosts,services=overview?.remote_services,policies=overview?.policies;
-  if(typeof hosts?.total!=="number"||typeof services?.total!=="number"
-    ||!policies||typeof policies!=="object"||!Object.keys(policies).length)return false;
-  if(hosts.total!==0||services.total!==0)return false;
-  return Object.values(policies).every((row:any)=>typeof row?.total==="number"&&row.total===0);
+  if(!hasObservedCoreOverview(data))return false;
+  const overview=data.overview;
+  return overview.managed_hosts.total===0&&overview.remote_services.total===0
+    &&Object.values(overview.policies).every((row:any)=>row.total===0);
+}
+
+/** UXE-09: a missing or partial Core observation must never announce a new install.
+ * Checking only Managed Host count is wrong when policies or services remain. */
+export function showFreshHomeWelcome(data:any,inventoryState:"loading"|"ready"|"error"):boolean{
+  return inventoryState==="ready"&&isFreshInstallation(data);
 }
 
 /** UXB-02: Core-observed evidence only. A saved policy is not a verified connection. */
@@ -56,7 +71,7 @@ export function firstConnectionStates(data:any,inventory:any[]|null):TaskState[]
   const service:TaskState=serviceCount===null||serviceEnabled===null?"Unknown"
     :serviceCount===0?"Not started":serviceEnabled>0?"Configured · verify":"Needs verification";
   const rule:TaskState=ruleEnabled===null?"Unknown":ruleEnabled>0?"Configured · verify":"Not started";
-  return [data?.overview?"Configured · verify":"Unknown",agent,service,rule,"Needs verification"];
+  return [hasObservedCoreOverview(data)?"Configured · verify":"Unknown",agent,service,rule,"Needs verification"];
 }
 const steps=[
   {title:"Check system readiness",description:"Core is responding, but that alone does not prove a remote connection.",route:"health",group:"activity",action:"View system health"},
@@ -84,8 +99,7 @@ export function FirstUseHome({data,operator,api,onNavigate}:{
     return()=>{active=false};
   },[api]);
   const stage=firstConnectionStates(data,inventory);
-  const total=data?.overview?.managed_hosts?.total;
-  const newInstall=loadState==="ready"&&total===0;
+  const newInstall=showFreshHomeWelcome(data,loadState);
   const pending=inventory?.filter(host=>host.admission_state==="PENDING_APPROVAL").length||0;
   const cards=steps.map((item,i)=>({...item,status:stage[i]}));
   const next=operator?.role==="Admin"?
@@ -103,7 +117,7 @@ export function FirstUseHome({data,operator,api,onNavigate}:{
         return <li key={item.title} className={i===4?"dr-uxb-last-step":""}>
           <span className="dr-uxb-step-count">{i+1}</span>
           <div><strong>{item.title}</strong><p>{item.description}</p>
-            <small className={item.status==="Unknown"?"dr-uxb-status unknown":"dr-uxb-status"}>{i===0?"Core overview received · check Health for details":loadState==="loading"&&i===1?"Checking Core inventory…":item.status}</small></div>
+            <small className={item.status==="Unknown"?"dr-uxb-status unknown":"dr-uxb-status"}>{i===0&&item.status!=="Unknown"?"Core overview received · check Health for details":loadState==="loading"&&i===1?"Checking Core inventory…":item.status}</small></div>
           {limited?<span className="dr-uxb-role-hint">Admin required to issue an Agent ticket</span>:
           <button className="secondary" onClick={()=>onNavigate?.(item.route,item.group)}>{item.action} →</button>}
         </li>;
