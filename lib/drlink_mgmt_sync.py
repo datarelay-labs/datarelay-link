@@ -847,6 +847,7 @@ def complete_ai_job_on_server(
         base + "/v1/ai-jobs/complete",
         body,
         root=root,
+        timeout=15.0,  # bounded signed completion payload (up to 64 KiB stdout)
     )
 
 
