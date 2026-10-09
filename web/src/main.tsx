@@ -1260,6 +1260,7 @@ function UsersPanel({operator}:{operator:any}){
 function IntegrationsPanel(){
   const [accounts,setAccounts]=useState<any[]>([]),[hooks,setHooks]=useState<any[]>([]);
   const [error,setError]=useState(""),[busy,setBusy]=useState(false),[once,setOnce]=useState<any>(null);
+  const [notice,setNotice]=useState("");
   const [accountName,setAccountName]=useState(""),[accountExpiry,setAccountExpiry]=useState("");
   const [permissions,setPermissions]=useState<string[]>(["management-read"]);
   const [hookName,setHookName]=useState(""),[hookUrl,setHookUrl]=useState("");
@@ -1289,9 +1290,18 @@ function IntegrationsPanel(){
     await mutate("/api/v1/webhooks",{name:hookName,url:hookUrl,event_classes:[hookEvent]},"Webhook signing secret");
     setHookName("");setHookUrl("");
   }
+  async function testWebhook(webhookId:string){
+    setBusy(true);setError("");setNotice("");
+    try{
+      const result=await api("/api/v1/webhooks/test",{method:"POST",body:JSON.stringify({webhook_id:webhookId})});
+      setNotice("Signed test event queued: "+result.event_id+". Check delivery status after the worker runs.");
+      await refresh();
+    }catch(e:any){setError(e.message||String(e))}finally{setBusy(false)}
+  }
   return <div>
     <section className="dr-page-intro"><div><p className="dr-eyebrow">Administration</p><h2>Integrations</h2><p className="muted">Manage scoped non-human API access and optional signed HTTPS events. Web login credentials and these integration secrets are never shared.</p></div></section>
     {error&&<div className="error">{error}</div>}
+    {notice&&<div className="card" role="status">{notice}</div>}
     {once&&<div className="card" role="status"><h3>Copy once: {once.kind}</h3><p className="muted">This value will not appear in inventory or after a refresh. Store it in an approved secret manager.</p>
       <div className="toolbar"><input aria-label="One-time integration secret" readOnly value={once.secret} style={{minWidth:320,flex:1}}/><button className="secondary" onClick={()=>navigator.clipboard?.writeText(once.secret)}>Copy</button><button className="primary" onClick={()=>setOnce(null)}>Done</button></div></div>}
     <section className="card"><h3>Service Accounts</h3><p className="muted">The public Automation API uses Bearer tokens, per-account rate limits and explicit read-only Core operations in this phase.</p>
@@ -1303,7 +1313,7 @@ function IntegrationsPanel(){
     </section>
     <section className="card"><h3>Signed Event Webhooks</h3><p className="muted">HTTPS only, certificate-verified and DNS-pinned. Failed deliveries use bounded retries; event delivery never controls access enforcement.</p>
       <form className="toolbar" onSubmit={createWebhook}><input value={hookName} onChange={e=>setHookName(e.target.value)} placeholder="Endpoint name" required/><input value={hookUrl} onChange={e=>setHookUrl(e.target.value)} placeholder="https://hooks.example.com/events" required type="url"/><select value={hookEvent} onChange={e=>setHookEvent(e.target.value)}><option value="attention">Attention</option><option value="security.lifecycle">Security lifecycle</option><option value="policy.change">Policy change</option><option value="managed_host.lifecycle">Managed Host lifecycle</option></select><button className="primary" disabled={busy||!hookName||!hookUrl} type="submit">Add webhook</button></form>
-      <table><thead><tr><th>Endpoint</th><th>URL</th><th>Events</th><th>Status</th><th>Delivery</th><th>Actions</th></tr></thead><tbody>{hooks.map(h=><tr key={h.id}><td>{h.name}</td><td>{h.url}</td><td>{(h.event_classes||[]).join(", ")}</td><td>{h.enabled?"Enabled":"Disabled"}</td><td>{Object.entries(h.delivery_counts||{}).map(([k,v])=>k+":"+v).join(" · ")||"—"}</td><td>{h.enabled&&<><button className="secondary" disabled={busy} onClick={()=>mutate("/api/v1/webhooks/rotate",{webhook_id:h.id},"Rotated Webhook secret")}>Rotate</button><button className="danger" disabled={busy} onClick={()=>{if(window.confirm("Disable this webhook and fail queued deliveries?"))mutate("/api/v1/webhooks/disable",{webhook_id:h.id})}}>Disable</button></>}</td></tr>)}</tbody></table>
+      <table><thead><tr><th>Endpoint</th><th>URL</th><th>Events</th><th>Status</th><th>Delivery</th><th>Actions</th></tr></thead><tbody>{hooks.map(h=><tr key={h.id}><td>{h.name}</td><td>{h.url}</td><td>{(h.event_classes||[]).join(", ")}</td><td>{h.enabled?"Enabled":"Disabled"}</td><td>{Object.entries(h.delivery_counts||{}).map(([k,v])=>k+":"+v).join(" · ")||"—"}</td><td>{h.enabled&&<><button className="secondary" disabled={busy} onClick={()=>testWebhook(h.id)}>Send test</button><button className="secondary" disabled={busy} onClick={()=>mutate("/api/v1/webhooks/rotate",{webhook_id:h.id},"Rotated Webhook secret")}>Rotate</button><button className="danger" disabled={busy} onClick={()=>{if(window.confirm("Disable this webhook and fail queued deliveries?"))mutate("/api/v1/webhooks/disable",{webhook_id:h.id})}}>Disable</button></>}</td></tr>)}</tbody></table>
     </section>
   </div>;
 }

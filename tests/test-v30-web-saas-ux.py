@@ -106,6 +106,14 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn('Pre-approve this enrollment', SOURCE)
         self.assertIn('operator={operator} refresh=', SOURCE)
 
+    def test_signed_webhook_ui_offers_explicit_test_with_queued_feedback(self):
+        self.assertIn('async function testWebhook(webhookId:string)', SOURCE)
+        self.assertIn('api("/api/v1/webhooks/test"', SOURCE)
+        self.assertIn('onClick={()=>testWebhook(h.id)}>Send test</button>', SOURCE)
+        self.assertIn("Signed test event queued:", SOURCE)
+        self.assertIn("Check delivery status after the worker runs.", SOURCE)
+        self.assertIn('notice&&<div className="card" role="status">', SOURCE)
+
     def test_agent_update_preview_is_admin_only_and_not_an_apply_surface(self):
         self.assertIn("function AgentRolloutPreviewPanel()", SOURCE)
         self.assertIn(
