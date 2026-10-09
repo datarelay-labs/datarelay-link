@@ -249,3 +249,10 @@
 .dr-uxb-catalog-page-notice{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:11px 13px;border:1px solid var(--dr-border-default);border-radius:var(--dr-radius-card);background:var(--dr-surface-section);color:var(--dr-text-secondary);font-size:12px}
 .dr-uxb-catalog-page-notice button{white-space:normal}
 @media(max-width:560px){.dr-uxb-catalog-page-notice button{width:100%}}
+
+/* Workflow-first guidance: the visible next action is never a completion badge. */
+.dr-uxb-next-guidance{display:grid;gap:7px;padding:12px 14px;background:var(--dr-surface-section);border:1px solid var(--dr-border-default);border-left:3px solid var(--dr-action-primary);border-radius:var(--dr-radius-card);min-width:0}
+.dr-uxb-next-guidance strong{font-size:13px;font-weight:650}
+.dr-uxb-next-guidance p{margin:0;font-size:13px;line-height:1.5;color:var(--dr-text-primary)}
+.dr-uxb-next-guidance small{font-size:11px;line-height:1.4;color:var(--dr-text-secondary)}
+@media(max-width:560px){.dr-uxb-next-guidance{padding:11px}}

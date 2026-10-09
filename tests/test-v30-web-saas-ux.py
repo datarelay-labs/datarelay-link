@@ -213,6 +213,18 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn("disabled={busy||fetchBusy}", enrollment)
         self.assertIn("disabled={busy||fetchBusy}", enrollment)
 
+    def test_remote_service_operation_blocks_parent_context_switch(self):
+        remote=(ROOT / "web/src/uxb-remote-service.tsx").read_text(encoding="utf-8")
+        self.assertIn("onBusyChange?:(busy:boolean)=>void", remote)
+        self.assertIn("onBusyChange?.(busy)", remote)
+        self.assertIn("onBusyChange?.(false)", remote)
+        self.assertIn("onBusyChange={setServiceBusy}", SETUP_SOURCE)
+        self.assertIn("disabled={serviceBusy} onClick={()=>changePlane(item.id)}", SETUP_SOURCE)
+        self.assertIn("disabled={step===1||serviceBusy}", SETUP_SOURCE)
+        self.assertIn("disabled={step===4||serviceBusy}", SETUP_SOURCE)
+        self.assertIn("onChange={e=>chooseRemoteHost(e.target.value)}", SETUP_SOURCE)
+        self.assertIn("disabled={serviceBusy} onChange={e=>chooseRemoteHost(e.target.value)}", SETUP_SOURCE)
+
     def test_uxb_first_use_keeps_three_planes_and_core_authority_separate(self):
         self.assertIn('FirstUseHome data={data}', SOURCE)
         self.assertIn('if(active==="setup"){', SOURCE)
@@ -233,7 +245,12 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn('GuidedPolicyJourney key={plane}', SETUP_SOURCE)
         self.assertIn('lockedPlane', SETUP_SOURCE)
         self.assertIn('AccessEvidenceExplorer api={api}', SETUP_SOURCE)
-        self.assertIn('RemoteServiceEditor api={api}', SETUP_SOURCE)
+        self.assertIn('RemoteServiceEditor key={selectedHost||"no-observed-host"} api={api}', SETUP_SOURCE)
+        self.assertIn('function chooseRemoteHost(nextHost:string)', SETUP_SOURCE)
+        self.assertIn('retargetRemoteHost(', SETUP_SOURCE)
+        self.assertIn('className="dr-uxb-next-guidance"', SETUP_SOURCE)
+        self.assertIn('const nextAction=firstConnectionGuidance(', SETUP_SOURCE)
+        self.assertIn('.dr-uxb-next-guidance', CSS)
         self.assertNotIn("localStorage", SETUP_SOURCE + HOME_SOURCE)
 
     def test_competitor_inspired_first_use_selection_keeps_canonical_core(self):

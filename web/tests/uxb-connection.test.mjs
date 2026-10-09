@@ -37,6 +37,37 @@ test("separate Remote, Internet and AI first-use journeys preserve security sema
  assert.equal(setup.firstUseStages.ai.some(x=>x.includes("Remote Service")),false);
 });
 
+test("Explicitly switching owning Agent invalidates prior service and policy choices",()=>{
+ const saved={
+  plane:"remote",step:2,selectedHost:"host-a",serviceName:"ssh-on-a",
+  source:"source-on-a",destination:"destination-on-a",selector:"ssh-a",
+  service:{owner:"host-a",name:"ssh-on-a",service:"ssh-a",destination:"this-host"}
+ };
+ const changed=setup.retargetRemoteHost(saved,"host-b");
+ assert.deepEqual(changed,{
+  ...saved,selectedHost:"host-b",serviceName:"",source:"",destination:"",selector:"",
+  service:{owner:"host-b",name:"",service:"",destination:"this-host"}
+ });
+ assert.deepEqual(saved.service,{owner:"host-a",name:"ssh-on-a",service:"ssh-a",destination:"this-host"});
+ const gone=setup.retargetRemoteHost(changed,"");
+ assert.equal(gone.service.owner,"");
+ assert.equal(gone.selector,"");
+ assert.equal(gone.serviceName,"");
+});
+test("Next action is specific and never claims a verified connection",()=>{
+ const basis={hosts:[],selectedHost:"",source:"",destination:"",selector:"",serviceName:""};
+ assert.match(setup.firstConnectionGuidance("remote",1,basis),/Add an Agent|Select an observed Agent/);
+ assert.match(setup.firstConnectionGuidance("remote",1,{...basis,hosts:null}),/UNKNOWN/);
+ assert.match(setup.firstConnectionGuidance("remote",1,{...basis,hosts:[{id:"host-a",admission_state:"PENDING_APPROVAL"}],selectedHost:"host-a"}),/approval/);
+ assert.match(setup.firstConnectionGuidance("remote",2,basis),/Agent/);
+ assert.match(setup.firstConnectionGuidance("remote",2,{...basis,selectedHost:"host-a",serviceName:"ssh"}),/job|verified/i);
+ assert.match(setup.firstConnectionGuidance("internet",1,basis),/managed source/i);
+ assert.match(setup.firstConnectionGuidance("internet",2,basis),/destination.*service/i);
+ assert.match(setup.firstConnectionGuidance("ai",1,basis),/AI Identity/);
+ assert.match(setup.firstConnectionGuidance("ai",2,basis),/permission.*destination/i);
+ assert.match(setup.firstConnectionGuidance("remote",3,basis),/source|destination|service/);
+ assert.match(setup.firstConnectionGuidance("ai",4,basis),/NOT VERIFIED/);
+});
 test("first-use setup serves one continuous four-stage workflow and shows no fabricated success",()=>{
  const html=renderToStaticMarkup(React.createElement(setup.FirstConnectionSetup,{
   api:async()=>{throw new Error("SSR must not call Core API")},
@@ -153,7 +184,7 @@ test("setup fixes selected plane for the Core-backed guided policy editor",()=>{
  const src=readFileSync(join(root,"src","uxb-setup.tsx"),"utf8");
  assert.match(src,/initialPlane=\{plane\} lockedPlane/);
  assert.match(src,/onFlowChange=\{f=>/);
- assert.match(src,/RemoteServiceEditor api=\{api\}/);
+ assert.match(src,/RemoteServiceEditor key=\{selectedHost\|\|"no-observed-host"\} api=\{api\}/);
  assert.match(src,/AccessEvidenceExplorer api=\{api\}/);
 });
 
@@ -186,7 +217,9 @@ test("Host approval needs explicit selection and missing enrollment evidence is 
  assert.doesNotMatch(html,/No enrollment history reported\./);
  const setupSource=readFileSync(join(root,"src","uxb-setup.tsx"),"utf8");
  const enrollSource=readFileSync(join(root,"src","p0-enrollment.tsx"),"utf8");
- assert.match(setupSource,/setSelectedHost\(prev=>prev&&list\.some/);
+ assert.match(setupSource,/const currentHost=selectedHostRef\.current/);
+ assert.match(setupSource,/if\(currentHost&&\!list\.some/);
+ assert.match(setupSource,/chooseRemoteHost\(e\.target\.value\)/);
  assert.match(setupSource,/setServiceDraft\(prev=>\(\{\.\.\.prev,owner:""\}\)\)/);
  assert.match(enrollSource,/setSelectedHost\(value=>value&&items\.some/);
  assert.match(enrollSource,/Select an observed Managed Host/);

@@ -12,8 +12,9 @@ export function mergeRemoteServiceJob(queued:any,detail:any){
 }
 
 /** UXB-03: one canonical Remote Service editor used from both Services and Setup. */
-export function RemoteServiceEditor({api,ownerHint="",onSelection,initialSelection,resourceCatalog}:{
+export function RemoteServiceEditor({api,ownerHint="",onSelection,initialSelection,resourceCatalog,onBusyChange}:{
   api:LinkApi,ownerHint?:string,resourceCatalog?:CoreCatalog|null,
+  onBusyChange?:(busy:boolean)=>void,
   onSelection?:(selection:{owner:string,name:string,service:string,destination:string})=>void,
   initialSelection?:{owner?:string,name?:string,service?:string,destination?:string},
 }){
@@ -25,6 +26,8 @@ export function RemoteServiceEditor({api,ownerHint="",onSelection,initialSelecti
   const lastOwnerHint=useRef(ownerHint);
   const requestGeneration=useRef(0);
   const catalog=useCoreCatalog(api,resourceCatalog);
+  useEffect(()=>{onBusyChange?.(busy)},[busy]);
+  useEffect(()=>()=>{onBusyChange?.(false)},[]);
   useEffect(()=>{
     // Do not overwrite a resumed, intentionally selected owner on mount.
     // A genuinely different host selected in Setup resets the owner and plan.

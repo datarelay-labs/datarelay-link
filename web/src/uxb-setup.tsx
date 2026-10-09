@@ -1,4 +1,4 @@
-import React,{useEffect,useState} from "react";
+import React,{useEffect,useRef,useState} from "react";
 import {EnrollmentOnboarding,hostReadinessLabel} from "./p0-enrollment";
 import {AccessEvidenceExplorer,GuidedPolicyJourney,type AccessPlane,type LinkApi} from "./p0-access-policy";
 import {RemoteServiceEditor} from "./uxb-remote-service";
@@ -22,6 +22,56 @@ export const firstUseStages = {
   ai:["Select AI Identity","Choose a Permission Object","Define an AI Access rule","Verify the permission"],
 } as const;
 
+/** Only a deliberate owner change resets a resumed, non-secret first-use draft.
+ * It does not touch the Core: old preview/confirmation belongs to the editor. */
+export function retargetRemoteHost(draft:SetupDraft,hostId:string):SetupDraft{
+  const next=hostId.trim();
+  return {...draft,selectedHost:next,serviceName:"",source:"",destination:"",selector:"",
+    service:{owner:next,name:"",service:"",destination:"this-host"}};
+}
+
+export function firstConnectionGuidance(
+  plane:AccessPlane,step:number,state:{
+    hosts:any[]|null,selectedHost:string,source:string,destination:string,
+    selector:string,serviceName:string,
+  }
+):string{
+  if(step===4)return "NOT VERIFIED · Run an actual Core decision trace, then verify client and Agent reachability separately.";
+  if(plane==="remote"){
+    if(step===1){
+      if(state.hosts===null)return "Agent inventory UNKNOWN · Refresh Core inventory before deciding which Agent to use.";
+      if(!state.selectedHost)return "Add an Agent or Select an observed Agent below. Admission, trust and connection are separate checks.";
+      const host=state.hosts.find(item=>String(item.id)===state.selectedHost);
+      if(!host)return "Selected Agent not observed in current Core inventory. Refresh and choose the intended Host.";
+      if(host.admission_state!=="APPROVED")return "The selected Agent still needs Admin approval. Publishing does not bypass admission.";
+      if(String(host.trust_status||"").toLowerCase()!=="trusted")return "The selected Agent's trust is not verified. Review Host trust before continuing.";
+      if(host.connected!==true&&host.connected!==1)return "The selected Agent is not observed connected. Check Agent connectivity.";
+      return "Agent selected · approval, trust and connection observed. Now publish one service; access remains NOT VERIFIED.";
+    }
+    if(step===2){
+      if(!state.selectedHost)return "Select the intended Agent before previewing a Remote Service.";
+      if(!state.serviceName.trim())return "Name and preview one service for this Agent. Confirm only the reviewed Core job.";
+      return "Service name entered · inspect the actual Agent job and published inventory; target connectivity is NOT VERIFIED.";
+    }
+  }else if(step===1){
+    if(!state.source.trim())return plane==="ai"
+      ?"Choose an existing AI Identity. An identity must be configured and verified before granting permission."
+      :"Choose the managed source Network Object or Group before defining Internet Access.";
+    return "Source name selected · check its Core identity and proceed. No access has been granted.";
+  }else if(step===2){
+    if(!state.destination.trim()||!state.selector.trim())return plane==="ai"
+      ?"Choose a permission and destination for this AI Identity. Neither is an SSH port."
+      :"Choose an outside destination and service for this managed source.";
+    return "Destination and selector chosen · they are only form values until Core Preview and required tests pass.";
+  }
+  if(step===3){
+    if(!state.source.trim()||!state.destination.trim()||!state.selector.trim())
+      return "Choose the source, destination and "+(plane==="ai"?"permission":"service")+" before requesting a Core policy Preview.";
+    return "Review the exact rule in Core Preview, run required regression tests and type the final confirmation; nothing is applied yet.";
+  }
+  return "Choose your intended task; Core observations determine readiness, not this progress indicator.";
+}
+
 export function FirstConnectionSetup({api,operator,onNavigate,initialDraft,onDraftChange}:{
   api:LinkApi,operator:any,onNavigate?:Navigate,initialDraft?:SetupDraft|null,
   onDraftChange?:(draft:SetupDraft)=>void,
@@ -33,7 +83,9 @@ export function FirstConnectionSetup({api,operator,onNavigate,initialDraft,onDra
   // Null means not observed / API unavailable; an authoritative empty list is different.
   const [enrollments,setEnrollments]=useState<any>(null);
   const [error,setError]=useState(""),[checking,setChecking]=useState(false);
+  const [serviceBusy,setServiceBusy]=useState(false);
   const [selectedHost,setSelectedHost]=useState(initialDraft?.selectedHost||"");
+  const selectedHostRef=useRef(initialDraft?.selectedHost||"");
   const [serviceName,setServiceName]=useState(initialDraft?.serviceName||"");
   const [serviceDraft,setServiceDraft]=useState(initialDraft?.service||{owner:"",name:"",service:"",destination:"this-host"});
   const [source,setSource]=useState(initialDraft?.source||"");
@@ -42,6 +94,16 @@ export function FirstConnectionSetup({api,operator,onNavigate,initialDraft,onDra
   const canEdit=operator?.role==="Admin"||operator?.role==="Operator";
   const selected=hosts?.find(h=>String(h.id)===selectedHost)||null;
   const service=services?.find(s=>String(s.name||s.id)===serviceName)||null;
+  function chooseRemoteHost(nextHost:string){
+    if(nextHost===selectedHostRef.current)return;
+    selectedHostRef.current=nextHost;
+    const cleared=retargetRemoteHost({
+      plane,step,selectedHost,serviceName,source,destination,selector,service:serviceDraft,
+    },nextHost);
+    setSelectedHost(cleared.selectedHost||"");
+    setServiceDraft(cleared.service!);
+    setServiceName("");setSource("");setDestination("");setSelector("");setError("");
+  }
   useEffect(()=>{void refreshCore()},[]);
   // Only non-secret form choices stay in Shell's current authenticated React
   // session. A Core change plan, OTP, token or invitation is never persisted.
@@ -61,11 +123,17 @@ export function FirstConnectionSetup({api,operator,onNavigate,initialDraft,onDra
       // Do not silently switch the owning Agent to the first list entry.
       // Also discard the retained editor owner when its formerly selected
       // Agent vanishes; a remounted editor must not revive that old target.
-      if(selectedHost&&!list.some((x:any)=>String(x.id)===selectedHost)){
-        setServiceDraft(prev=>({...prev,owner:""}));
+      const currentHost=selectedHostRef.current;
+      if(currentHost&&!list.some((x:any)=>String(x.id)===currentHost)){
+        // A previously selected Agent is not evidence of another live owner.
+        if(plane==="remote")chooseRemoteHost("");
+        else{
+          selectedHostRef.current="";
+          setSelectedHost("");setServiceDraft(prev=>({...prev,owner:""}));
+        }
       }
-      setSelectedHost(prev=>prev&&list.some((x:any)=>String(x.id)===prev)?prev:"");
-    }else{setHosts(null);setError("Managed Host inventory unavailable; prerequisite state is UNKNOWN.")}
+    }else{setHosts(null);setError("Managed Host inventory unavailable; prerequisite state is UNKNOWN.");
+      if(plane==="remote"&&selectedHostRef.current)chooseRemoteHost("");}
     if(r[1].status==="fulfilled"&&Array.isArray(r[1].value?.items))setServices(r[1].value.items);
     else setServices(null);
     if(r[2].status==="fulfilled"&&Array.isArray(r[2].value?.items))setEnrollments(r[2].value);
@@ -76,6 +144,7 @@ export function FirstConnectionSetup({api,operator,onNavigate,initialDraft,onDra
     setChecking(false);
   }
   const stages=firstUseStages[plane];
+  const nextAction=firstConnectionGuidance(plane,step,{hosts,selectedHost,source,destination,selector,serviceName});
   function changePlane(value:AccessPlane){setPlane(value);setStep(1);setSource("");setDestination("");setSelector("");
     setServiceName("");setServiceDraft({owner:"",name:"",service:"",destination:"this-host"});setError("")}
   return <div className="dr-uxb-setup" data-testid="uxb-connection-setup">
@@ -87,21 +156,24 @@ export function FirstConnectionSetup({api,operator,onNavigate,initialDraft,onDra
         <strong>1. What would you like to connect?</strong>
         <div className="dr-uxb-mode-grid">{connectionTypes.map(item=><button key={item.id} type="button"
           className={plane===item.id?"dr-uxb-mode-card active":"dr-uxb-mode-card"}
-          aria-pressed={plane===item.id} onClick={()=>changePlane(item.id)}>
+          aria-pressed={plane===item.id} disabled={serviceBusy} onClick={()=>changePlane(item.id)}>
           <strong>{item.title}</strong><span>{item.detail}</span><small>{item.example}</small>
         </button>)}</div>
       </div>
       <div className="dr-uxb-setup-summary" role="status">Current stage {step} of 4 · {firstUseStages[plane][step-1]}. Changing stages does not modify access.</div>
       <ol className="dr-uxb-stage-menu" aria-label="First-connection stages">
         {stages.map((title,i)=><li key={title} className={step===i+1?"active":""}>
-          <button type="button" aria-current={step===i+1?"step":undefined} onClick={()=>setStep(i+1)}>
+          <button type="button" aria-current={step===i+1?"step":undefined} disabled={serviceBusy} onClick={()=>setStep(i+1)}>
             <span>{i+1}</span><strong>{title}</strong></button>
         </li>)}
       </ol>
       <div className="dr-uxb-flow-buttons">
-        <button className="secondary" disabled={step===1} onClick={()=>setStep(i=>Math.max(1,i-1))}>← Previous</button>
-        <button className="primary" disabled={step===4} onClick={()=>setStep(i=>Math.min(4,i+1))}>{step===4?"Review Core decision below":"Next: "+stages[step]+" →"}</button>
-        <button className="secondary" onClick={refreshCore} disabled={checking}>{checking?"Checking Core…":"Refresh observed state"}</button>
+        <button className="secondary" disabled={step===1||serviceBusy} onClick={()=>setStep(i=>Math.max(1,i-1))}>← Previous</button>
+        <button className="primary" disabled={step===4||serviceBusy} onClick={()=>setStep(i=>Math.min(4,i+1))}>{step===4?"Review Core decision below":"Next: "+stages[step]+" →"}</button>
+        <button className="secondary" onClick={refreshCore} disabled={checking||serviceBusy}>{checking?"Checking Core…":"Refresh observed state"}</button>
+      </div>
+      <div className="dr-uxb-next-guidance" role="status" aria-live="polite"><strong>What to do next</strong><p>{nextAction}</p>
+        <small>Stage navigation is for reviewing tasks, not evidence of completion. Core confirmation remains required.</small>
       </div>
       <details className="dr-uxb-glossary"><summary>What do Agent, Remote Service and Access Rule mean?</summary>
         <dl><dt>Agent / Managed Host</dt><dd>A protected server running Data Relay Link Agent. Connected alone is not approved or trusted.</dd>
@@ -123,7 +195,7 @@ export function FirstConnectionSetup({api,operator,onNavigate,initialDraft,onDra
       </div>
       <EnrollmentOnboarding api={api} data={enrollments} refresh={refreshCore} operator={operator} onNavigate={onNavigate}/>
       <section className="card dr-uxb-choice"><h3>Continue with an enrolled server</h3>
-        <label className="dr-field"><span>Managed Host</span><select value={selectedHost} onChange={e=>setSelectedHost(e.target.value)}>
+        <label className="dr-field"><span>Managed Host</span><select value={selectedHost} disabled={serviceBusy} onChange={e=>chooseRemoteHost(e.target.value)}>
           {!selectedHost&&<option value="">{hosts===null?"Managed Host inventory: UNKNOWN":hosts.length?"Select an observed Managed Host":"No observed Managed Host"}</option>}
           {(hosts||[]).map(h=><option key={h.id} value={String(h.id)}>{h.name||h.label||h.id} · {h.id}</option>)}
         </select></label>
@@ -142,12 +214,13 @@ export function FirstConnectionSetup({api,operator,onNavigate,initialDraft,onDra
     </section>}
     {step===2&&plane==="remote"&&<div className="dr-uxb-setup-section">
       <div className="dr-uxb-context"><strong>Why publish a Remote Service?</strong><p>Choose exactly one service/port from an approved Agent. This queues an authenticated Agent job — it does not instantly prove success or user authorization.</p></div>
-      <label className="dr-field"><span>Use observed Managed Host as owner</span><select value={selectedHost} onChange={e=>setSelectedHost(e.target.value)}>
+      <label className="dr-field"><span>Use observed Managed Host as owner</span><select value={selectedHost} disabled={serviceBusy} onChange={e=>chooseRemoteHost(e.target.value)}>
         {!selectedHost&&<option value="">{hosts===null?"Managed Host inventory: UNKNOWN":hosts.length?"Select an observed Managed Host":"No observed Managed Host"}</option>}
         {(hosts||[]).map(h=><option key={h.id} value={String(h.id)}>{h.name||h.label||h.id}</option>)}
       </select></label>
       {!selectedHost&&<p className="warning-box" role="status">Select the actual owning Agent above. No Host is selected; a name typed manually will still require Core validation.</p>}
-      {canEdit?<RemoteServiceEditor api={api} ownerHint={selectedHost} initialSelection={serviceDraft} resourceCatalog={catalog}
+      {canEdit?<RemoteServiceEditor key={selectedHost||"no-observed-host"} api={api} ownerHint={selectedHost} initialSelection={serviceDraft} resourceCatalog={catalog}
+        onBusyChange={setServiceBusy}
         onSelection={s=>{setServiceDraft(s);setServiceName(s.name);if(s.service)setSelector(s.service)}}/>:
       <p className="warning-box">Your role can inspect services but cannot publish them.</p>}
       <button className="secondary" onClick={()=>onNavigate?.("services","connections")}>View actual Published Services →</button>
