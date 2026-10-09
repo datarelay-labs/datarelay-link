@@ -234,6 +234,29 @@ class RuntimeApplyRemoveTests(unittest.TestCase):
         ).fetchone()
         self.assertEqual((row["status"],row["runtime_verified"]), ("DEGRADED",0))
 
+    def test_isolated_skip_fixture_can_simulate_activation_only_with_matching_root(self):
+        # The synthetic historical lifecycle suite uses explicit disposable
+        # FRP_DEPLOY_TEST_ROOT + DRLINK_SKIP_ACTIVATION; it must not punch a
+        # verification hole in a normal real Client process.
+        for deployment_root, expected in ((self.tmp, ("HEALTHY", 1)),
+                                          (self.tmp + "-wrong", ("DEGRADED", 0))):
+            with self.subTest(root_matches=deployment_root == self.tmp):
+                self.plane.conn.execute(
+                    "UPDATE agent_remote_services SET status='DEGRADED', "
+                    "reason='Runtime activation pending.', runtime_verified=0 "
+                    "WHERE name='web'"
+                )
+                self.plane.conn.commit()
+                with mock.patch.dict(os.environ, {
+                    "FRP_DEPLOY_TEST_ROOT": deployment_root,
+                    "DRLINK_SKIP_ACTIVATION": "1",
+                }):
+                    runtime.mark_runtime_status(self.plane, ok=True)
+                row = self.plane.conn.execute(
+                    "SELECT status,runtime_verified FROM agent_remote_services WHERE name='web'"
+                ).fetchone()
+                self.assertEqual((row["status"], row["runtime_verified"]), expected)
+
     def test_REMOTE_SERVICE_RUNTIME_APPLY(self):
         result = runtime.apply_agent_runtime(self.plane, root=self.tmp)
         self.assertTrue(result["ok"], result)

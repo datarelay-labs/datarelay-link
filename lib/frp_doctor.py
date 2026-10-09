@@ -3282,6 +3282,78 @@ def check_server(report, paths, facts, skip_network):
         }
 
 
+def check_agent_runtime_projection(report, paths, state):
+    """F004/F017: detect a falsely HEALTHY Agent catalog omitted by frpc.
+
+    Public Doctor stays read-only: it only compares the existing Agent DB
+    projection against the already-rendered client-state. Diagnostic PASS
+    must not imply that this source can verify actual external TCP reachability.
+    """
+    services = state.get('services') if isinstance(state, dict) else None
+    if not isinstance(services, dict):
+        return
+    db_file = paths.p('/var/lib/drlink/drlink.db')
+    if not db_file.is_file():
+        return
+    try:
+        import sqlite3
+        from urllib.parse import quote
+        uri = 'file:%s?mode=ro' % quote(db_file.as_posix(), safe='/')
+        conn = sqlite3.connect(uri, uri=True, timeout=0.25)
+        try:
+            conn.row_factory = sqlite3.Row
+            rows = list(conn.execute(
+                'SELECT name, enabled, status, endpoint_port, pending_allocation, '
+                'delete_pending, runtime_verified, enrollment_seed '
+                'FROM agent_remote_services'
+            ))
+        finally:
+            conn.close()
+    except sqlite3.Error as exc:
+        # Older installed schema is not an Agent v2.4 runtime catalog.
+        # Its absence is not a health failure or a migration trigger.
+        if 'no such table: agent_remote_services' in str(exc).lower():
+            return
+        report.add('agent_runtime_projection', WARN,
+                   'Agent runtime catalog could not be inspected read-only',
+                   'verification unavailable', 'Run sudo drlink system diagnostics',
+                   'state')
+        return
+
+    mismatch = []
+    for row in rows:
+        if str(row['status'] or '').upper() != 'HEALTHY' and not int(row['runtime_verified'] or 0):
+            continue
+        # A current healthy report demands one matching enabled proxy with
+        # the same public port. Pending, deleted and disabled rows never pass.
+        name = str(row['name'] or '').lower()
+        port = coerce_port(row['endpoint_port'])
+        matched = False
+        if int(row['enabled'] or 0) and not int(row['delete_pending'] or 0) and not int(row['pending_allocation'] or 0):
+            for sid, rec in services.items():
+                if not isinstance(rec, dict) or rec.get('enabled', True) is False:
+                    continue
+                candidate = str(rec.get('name') or '').strip().lower()
+                v24 = rec.get('v24_remote_service') is True
+                legacy_seed = bool(row['enrollment_seed']) and (
+                    str(sid).lower() == name or str(rec.get('id') or '').lower() == name
+                )
+                if (v24 and candidate == name or legacy_seed) and coerce_port(rec.get('remote_port')) == port:
+                    matched = True
+                    break
+        if not matched:
+            mismatch.append(str(row['name'] or '?'))
+    if mismatch:
+        report.add(
+            'agent_runtime_projection', FAIL,
+            'Agent catalog reports HEALTHY without a matching generated runtime proxy',
+            'missing or mismatched proxy: %s' % ', '.join(mismatch[:10]),
+            'Inspect the Agent runtime and use sudo drlink system synchronize for recovery. '
+            'Validate public TCP/SSH traffic separately.',
+            'runtime',
+        )
+
+
 def check_client(report, paths, facts, skip_network):
     expect_root = bool(facts.get('expect_root_owner'))
     state, err = load_json_path(paths, '/etc/frp/client-state.json')
@@ -3508,6 +3580,7 @@ def check_client(report, paths, facts, skip_network):
     elif not paths.is_file(toml_path) and report.role in ('client', 'dual', 'partial_client'):
         report.add('frpc_config', FAIL, 'frpc.toml is missing', '', 'sudo drlink system synchronize, or restore from backup', 'state')
 
+    check_agent_runtime_projection(report, paths, state)
     if state is not None and not client_has_enabled_services(state):
         info = (facts.get('units') or {}).get('frpc') or {}
         active = str(info.get('active') or 'unknown')

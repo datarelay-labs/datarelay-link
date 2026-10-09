@@ -644,6 +644,20 @@ def mark_runtime_status(plane_db, *, ok: bool, reason: str = "", generation: int
             "SELECT name, status, reason, runtime_verified, endpoint_port, pending_allocation "
             "FROM agent_remote_services WHERE delete_pending = 0 AND enabled = 1"
         ))
+        # Strictly disposable test roots may simulate successful activation
+        # without launching an FRP process. Preserve this historical
+        # deterministic fixture contract, but NEVER allow a real Agent or an
+        # arbitrary DRLINK_SKIP_ACTIVATION setting to bypass actual rendered
+        # proxy/port verification. These results are not release E2E evidence.
+        root = str(getattr(plane_db, "root", None) or "").rstrip("/")
+        fixture_root = str(os.environ.get("FRP_DEPLOY_TEST_ROOT") or "").rstrip("/")
+        isolated_skip_fixture = bool(
+            root and root != "/" and fixture_root == root and not runtime_should_apply()
+        )
+        if isolated_skip_fixture:
+            for row in rows:
+                if row["endpoint_port"] is not None and not int(row["pending_allocation"] or 0):
+                    installed[str(row["name"]).lower()] = int(row["endpoint_port"])
         for row in rows:
             name = str(row["name"] or "")
             local_port = row["endpoint_port"]
