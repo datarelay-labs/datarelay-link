@@ -60,6 +60,16 @@ test("search never offers unauthorized admin tasks to non-admin roles",()=>{
  assert.equal(nav.visibleRoute("drafts","Operator"),true);
  assert.equal(nav.visibleRoute("enrollments","Admin"),true);
 });
+test("Fresh installations see first-use guide, populated or UNKNOWN Core stays in operator dashboard",()=>{
+ const empty={overview:{managed_hosts:{total:0},remote_services:{total:0,enabled:0},
+   policies:{ai:{total:0,enabled:0}}}};
+ assert.equal(home.isFreshInstallation(empty),true);
+ assert.equal(home.isFreshInstallation(null),false);
+ assert.equal(home.isFreshInstallation({overview:{managed_hosts:{total:0},remote_services:{total:0},policies:{}}}),false);
+ assert.equal(home.isFreshInstallation({overview:{managed_hosts:{total:0},remote_services:{total:0},policies:{ai:{enabled:0}}}}),false);
+ assert.equal(home.isFreshInstallation({overview:{managed_hosts:{total:1},remote_services:{total:0},policies:{ai:{total:0}}}}),false);
+ assert.equal(home.isFreshInstallation({overview:{managed_hosts:{total:0},remote_services:{total:0},policies:{ai:{total:1}}}}),false);
+});
 test("first-use states are fail-closed without trustworthy evidence",()=>{
  assert.deepEqual(home.firstConnectionStates(null,null),[
   "Unknown","Unknown","Unknown","Unknown","Needs verification"]);
@@ -113,6 +123,12 @@ test("Home SSR has useful actions, no fake connection claims or credential URLs"
    assert.ok(html.includes(phrase),phrase);
   }
   assert.ok(html.includes("Needs verification"));
+  for(const purpose of ["Connect to a server","Allow approved outbound access","Grant an AI integration permission"]){
+    assert.ok(html.includes(purpose),purpose);
+  }
+  for(const action of ["Set up Remote Access","Set up Internet Access","Set up AI Access"]){
+    assert.ok(html.includes(action),action);
+  }
   assert.ok(!html.includes("Secret="));
   // Read Only can view the setup guide, but role-bound changes stay disabled.
   assert.match(html,/>Open guided setup →<\/button>/);

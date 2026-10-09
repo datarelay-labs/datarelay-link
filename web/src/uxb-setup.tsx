@@ -2,12 +2,19 @@ import React,{useEffect,useState} from "react";
 import {EnrollmentOnboarding,hostReadinessLabel} from "./p0-enrollment";
 import {AccessEvidenceExplorer,GuidedPolicyJourney,type AccessPlane,type LinkApi} from "./p0-access-policy";
 import {RemoteServiceEditor} from "./uxb-remote-service";
+import {CoreChoiceField,type CoreCatalog} from "./uxb-core-choices";
 type Navigate=(id:string,groupId?:string)=>void;
 export type SetupDraft={
   plane?:AccessPlane,step?:number,selectedHost?:string,serviceName?:string,
   source?:string,destination?:string,selector?:string,
   service?:{owner:string,name:string,service:string,destination:string}
 };
+
+export const connectionTypes=[
+  {id:"remote",title:"Connect to an internal server",detail:"Remote Access · Open only the selected service, such as SSH, to authorized users outside.",example:"Example: administrator → SSH on one server"},
+  {id:"internet",title:"Let a server reach the Internet",detail:"Internet Access · Allow an internal source to reach only approved outside destinations.",example:"Example: update server → approved update site"},
+  {id:"ai",title:"Allow an AI integration",detail:"AI Access · Grant a verified AI Identity only an explicitly named permission.",example:"Example: automation bot → read-only status"},
+] as const;
 
 export const firstUseStages = {
   remote:["Add & approve Agent","Publish one Remote Service","Define a narrow access rule","Verify the decision"],
@@ -22,6 +29,7 @@ export function FirstConnectionSetup({api,operator,onNavigate,initialDraft,onDra
   const [plane,setPlane]=useState<AccessPlane>(initialDraft?.plane||"remote");
   const [step,setStep]=useState(Math.min(4,Math.max(1,initialDraft?.step||1)));
   const [hosts,setHosts]=useState<any[]|null>(null),[services,setServices]=useState<any[]|null>(null);
+  const [catalog,setCatalog]=useState<CoreCatalog|null>(null);
   // Null means not observed / API unavailable; an authoritative empty list is different.
   const [enrollments,setEnrollments]=useState<any>(null);
   const [error,setError]=useState(""),[checking,setChecking]=useState(false);
@@ -46,6 +54,7 @@ export function FirstConnectionSetup({api,operator,onNavigate,initialDraft,onDra
       api("/api/v1/inventory?resource_type=managed-host&limit=100"),
       api("/api/v1/inventory?resource_type=remote-service&limit=100"),
       api("/api/v1/enrollments?limit=50"),
+      api("/api/v1/objects-groups?limit=50"),
     ]);
     if(r[0].status==="fulfilled"&&Array.isArray(r[0].value?.items)){
       const list=r[0].value.items;setHosts(list);
@@ -61,6 +70,9 @@ export function FirstConnectionSetup({api,operator,onNavigate,initialDraft,onDra
     else setServices(null);
     if(r[2].status==="fulfilled"&&Array.isArray(r[2].value?.items))setEnrollments(r[2].value);
     else setEnrollments(null); // UNKNOWN, never a fabricated empty enrollment list.
+    if(r[3].status==="fulfilled"&&r[3].value?.resources&&typeof r[3].value.resources==="object")
+      setCatalog(r[3].value as CoreCatalog);
+    else setCatalog(null); // A failed snapshot cannot be treated as zero objects.
     setChecking(false);
   }
   const stages=firstUseStages[plane];
@@ -71,11 +83,15 @@ export function FirstConnectionSetup({api,operator,onNavigate,initialDraft,onDra
       <p className="dr-eyebrow">One safe path · Core-authoritative connection setup</p>
       <h2>Set up and verify a connection</h2>
       <p className="muted">One workspace, four stages. Progress indicates where you are, not that Core has completed a step. Every change still requires its own preview, tests and confirmation.</p>
-      <label className="dr-field"><span>What are you connecting?</span><select value={plane} onChange={e=>changePlane(e.target.value as AccessPlane)}>
-        <option value="remote">Remote Access · outside → approved internal service</option>
-        <option value="internet">Internet Access · managed source → approved outside destination</option>
-        <option value="ai">AI Access · authenticated AI Identity → named permission</option>
-      </select></label>
+      <div className="dr-uxb-mode-select" role="group" aria-label="What are you connecting?">
+        <strong>1. What would you like to connect?</strong>
+        <div className="dr-uxb-mode-grid">{connectionTypes.map(item=><button key={item.id} type="button"
+          className={plane===item.id?"dr-uxb-mode-card active":"dr-uxb-mode-card"}
+          aria-pressed={plane===item.id} onClick={()=>changePlane(item.id)}>
+          <strong>{item.title}</strong><span>{item.detail}</span><small>{item.example}</small>
+        </button>)}</div>
+      </div>
+      <div className="dr-uxb-setup-summary" role="status">Current stage {step} of 4 · {firstUseStages[plane][step-1]}. Changing stages does not modify access.</div>
       <ol className="dr-uxb-stage-menu" aria-label="First-connection stages">
         {stages.map((title,i)=><li key={title} className={step===i+1?"active":""}>
           <button type="button" aria-current={step===i+1?"step":undefined} onClick={()=>setStep(i+1)}>
@@ -84,9 +100,15 @@ export function FirstConnectionSetup({api,operator,onNavigate,initialDraft,onDra
       </ol>
       <div className="dr-uxb-flow-buttons">
         <button className="secondary" disabled={step===1} onClick={()=>setStep(i=>Math.max(1,i-1))}>← Previous</button>
-        <button className="secondary" disabled={step===4} onClick={()=>setStep(i=>Math.min(4,i+1))}>Next stage →</button>
+        <button className="primary" disabled={step===4} onClick={()=>setStep(i=>Math.min(4,i+1))}>{step===4?"Review Core decision below":"Next: "+stages[step]+" →"}</button>
         <button className="secondary" onClick={refreshCore} disabled={checking}>{checking?"Checking Core…":"Refresh observed state"}</button>
       </div>
+      <details className="dr-uxb-glossary"><summary>What do Agent, Remote Service and Access Rule mean?</summary>
+        <dl><dt>Agent / Managed Host</dt><dd>A protected server running Data Relay Link Agent. Connected alone is not approved or trusted.</dd>
+          <dt>Remote Service</dt><dd>One explicitly published internal application or port, such as SSH, not a whole network.</dd>
+          <dt>Access Rule</dt><dd>Who may reach a named destination through a Service Object or named AI permission. Core enforces it.</dd>
+          <dt>Verified</dt><dd>A saved rule or queued job is not a working connection. Check the Core decision and actual client/Agent evidence separately.</dd></dl>
+      </details>
       {error&&<p className="warning-box" role="alert">{error}</p>}
       {plane==="remote"&&<div className="dr-uxb-evidence-strip">
         <span>Agent: {selected?hostReadinessLabel(selected):hosts===null?"UNKNOWN":"NO HOST SELECTED"}</span>
@@ -114,7 +136,9 @@ export function FirstConnectionSetup({api,operator,onNavigate,initialDraft,onDra
       <p>{plane==="internet"
         ?"Internet Access controls permitted outbound requests from a managed/protected source, not published inbound Remote Services."
         :"AI Access grants named permissions to an authenticated AI Identity. It does not expose an SSH port."}</p>
-      <button className="secondary" onClick={()=>onNavigate?.(plane==="internet"?"hosts":"objects","connections")}>Inspect canonical resources →</button>
+      <CoreChoiceField catalog={catalog} plane={plane} field="source" value={source} onChoose={setSource}/>
+      {source&&<p className="dr-uxb-selection-note">Selected source: <strong>{source}</strong>. Core checks its meaning during policy preview.</p>}
+      <button className="secondary" onClick={()=>onNavigate?.("objects","access")}>{plane==="internet"?"Browse Network Objects & Groups →":"Inspect configured AI Identities →"}</button>
     </section>}
     {step===2&&plane==="remote"&&<div className="dr-uxb-setup-section">
       <div className="dr-uxb-context"><strong>Why publish a Remote Service?</strong><p>Choose exactly one service/port from an approved Agent. This queues an authenticated Agent job — it does not instantly prove success or user authorization.</p></div>
@@ -122,7 +146,8 @@ export function FirstConnectionSetup({api,operator,onNavigate,initialDraft,onDra
         {!selectedHost&&<option value="">{hosts===null?"Managed Host inventory: UNKNOWN":hosts.length?"Select an observed Managed Host":"No observed Managed Host"}</option>}
         {(hosts||[]).map(h=><option key={h.id} value={String(h.id)}>{h.name||h.label||h.id}</option>)}
       </select></label>
-      {canEdit?<RemoteServiceEditor api={api} ownerHint={selectedHost} initialSelection={serviceDraft}
+      {!selectedHost&&<p className="warning-box" role="status">Select the actual owning Agent above. No Host is selected; a name typed manually will still require Core validation.</p>}
+      {canEdit?<RemoteServiceEditor api={api} ownerHint={selectedHost} initialSelection={serviceDraft} resourceCatalog={catalog}
         onSelection={s=>{setServiceDraft(s);setServiceName(s.name);if(s.service)setSelector(s.service)}}/>:
       <p className="warning-box">Your role can inspect services but cannot publish them.</p>}
       <button className="secondary" onClick={()=>onNavigate?.("services","connections")}>View actual Published Services →</button>
@@ -131,7 +156,15 @@ export function FirstConnectionSetup({api,operator,onNavigate,initialDraft,onDra
       <h3>{plane==="internet"?"Select the intended outside destination":"Select a named Permission Object"}</h3>
       <p>{plane==="internet"?"Use an approved Network Object/Group for the external destination and a Service Object/Group for its protocol/port."
         :"Choose Permission Object/Group and an AI destination. A permission is not a network port."}</p>
-      <button className="secondary" onClick={()=>onNavigate?.("objects","access")}>Browse Objects & Groups (advanced) →</button>
+      <div className="dr-uxb-catalog-grid">{plane==="internet"?<>
+        <CoreChoiceField catalog={catalog} plane={plane} field="destination" value={destination} onChoose={setDestination}/>
+        <CoreChoiceField catalog={catalog} plane={plane} field="selector" value={selector} onChoose={setSelector}/>
+      </>:<>
+        <CoreChoiceField catalog={catalog} plane={plane} field="selector" value={selector} onChoose={setSelector}/>
+        <CoreChoiceField catalog={catalog} plane={plane} field="destination" value={destination} onChoose={setDestination}/>
+      </>}</div>
+      <p className="muted">These are suggestions from existing Core resources, not a new grant. You can edit exact names in the next stage; Core preview validates them.</p>
+      <button className="secondary" onClick={()=>onNavigate?.("objects","access")}>Manage Objects & Groups (advanced) →</button>
     </section>}
     {step===3&&<div className="dr-uxb-setup-section">
       <div className="dr-uxb-context"><strong>{plane==="remote"?"Grant only the intended source":"Define the exact intended access"}</strong>
@@ -139,7 +172,7 @@ export function FirstConnectionSetup({api,operator,onNavigate,initialDraft,onDra
           :plane==="internet"?"Outbound access requires an explicitly selected network source, destination and service. No Remote Service is required."
           :"AI Access uses a verified AI Identity, destination and Permission Object; it is separate from Remote Access."}</p>
       </div>
-      {canEdit?<GuidedPolicyJourney key={plane} api={api} initialPlane={plane} lockedPlane
+      {canEdit?<GuidedPolicyJourney key={plane} api={api} initialPlane={plane} lockedPlane resourceCatalog={catalog}
         initialFlow={{source,destination,selector}}
         onFlowChange={f=>{setSource(f.source);setDestination(f.destination);setSelector(f.selector)}} onNavigate={onNavigate}/>:
         <p className="warning-box">Your role is read-only. You can test access but cannot create or apply a rule.</p>}
@@ -147,6 +180,13 @@ export function FirstConnectionSetup({api,operator,onNavigate,initialDraft,onDra
     {step===4&&<div className="dr-uxb-setup-section">
       <div className="dr-uxb-context"><strong>Verify the actual Core decision</strong>
         <p>Enter Network/Service or AI Identity/Permission object names and run a real Core trace. ALLOW is a policy result, not proof a target is reachable. Unknown remains UNKNOWN.</p></div>
+      <section className="dr-uxb-catalog-guide"><h3>Choose existing Core resources (or enter exact names below)</h3>
+        <div className="dr-uxb-catalog-grid">
+          <CoreChoiceField catalog={catalog} plane={plane} field="source" value={source} onChoose={setSource}/>
+          <CoreChoiceField catalog={catalog} plane={plane} field="destination" value={destination} onChoose={setDestination}/>
+          <CoreChoiceField catalog={catalog} plane={plane} field="selector" value={selector} onChoose={setSelector}/>
+        </div>
+      </section>
       <div className="dr-uxb-form">
         <label className="dr-field"><span>Source object / identity</span><input value={source} onChange={e=>setSource(e.target.value)} placeholder="Actual Core name"/></label>
         <label className="dr-field"><span>Destination object</span><input value={destination} onChange={e=>setDestination(e.target.value)} placeholder="Actual Core name"/></label>

@@ -420,3 +420,11 @@ Remote/Internet/AI access semantics.
 Previously safety-denied browser/preview login tests remain prohibited from
 rerouting. Only a genuinely permitted real User E2E and final owner
 acceptance may qualify the target UI at a frozen candidate HEAD.
+
+## 13. DRL3-7B beginner-first presentation refinement — isolated dev code
+
+The originally implemented five-sidebar-group SaaS shell remains the stable container. For a **Core-observed empty installation**, Home now prioritizes five concrete actions and three clickable purpose cards rather than treating it as an empty NOC dashboard. An already-configured or **UNKNOWN** deployment keeps its operator overview instead. Actual Core resource and policy counts govern this branch; no browser-saved setup completion flag is used.
+
+Within Setup, users choose a purpose (internal server/Remote, outbound Internet, or AI permission) and see plain-language examples, a four-stage checklist, short definitions, and read-only selectors backed by actual bounded Core inventory. The same named selector assistance is available from the existing guided policy editor and Remote Service editor. Selecting a name never creates an object, grants access, approves an Agent or proves a connection. Existing explicit Core Preview → Regression/Test → Typed Apply, Agent admission/security boundaries and advanced exact-name forms are retained.
+
+This is the practical implementation of the existing 19-vendor research summary in `docs/WEB_USER_JOURNEY_UX_ROADMAP.md` §14. No new Foundation package, independent visual system, cloud integration, or CLI grammar change is introduced. Source/SSR/offline tests **do not qualify** real browser persona usability at 320/375px, novice observation, live Agent reachability or release acceptance.

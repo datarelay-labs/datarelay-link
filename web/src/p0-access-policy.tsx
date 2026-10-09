@@ -1,4 +1,5 @@
 import React, {useEffect, useRef, useState} from "react";
+import {CoreChoiceField,useCoreCatalog,type CoreCatalog} from "./uxb-core-choices";
 
 export type LinkApi = (path:string, init?:RequestInit)=>Promise<Record<string,any>>;
 type Navigate = (id:string,groupId?:string)=>void;
@@ -109,8 +110,9 @@ export function AccessEvidenceExplorer({api,plane,source,destination,selector,on
   </section>;
 }
 
-export function GuidedPolicyJourney({api,onNavigate,initialPlane="remote",lockedPlane=false,initialFlow,onFlowChange}: {
+export function GuidedPolicyJourney({api,onNavigate,initialPlane="remote",lockedPlane=false,initialFlow,onFlowChange,resourceCatalog}: {
   api:LinkApi,onNavigate?:Navigate,initialPlane?:AccessPlane,lockedPlane?:boolean,
+  resourceCatalog?:CoreCatalog|null,
   initialFlow?:{source?:string,destination?:string,selector?:string},
   onFlowChange?:(flow:{source:string,destination:string,selector:string})=>void,
 }) {
@@ -123,6 +125,7 @@ export function GuidedPolicyJourney({api,onNavigate,initialPlane="remote",locked
   const [confirmation,setConfirmation]=useState(""),[acknowledge,setAcknowledge]=useState(false);
   const [busy,setBusy]=useState(false),[error,setError]=useState(""),[message,setMessage]=useState("");
   const seq=useRef(0);
+  const catalog=useCoreCatalog(api,resourceCatalog);
   function invalidate(){
     seq.current+=1;setPreview(null);setTests(null);setConfirmation("");setAcknowledge(false);
     setPhase(1);setMessage("");setError("");
@@ -196,6 +199,16 @@ export function GuidedPolicyJourney({api,onNavigate,initialPlane="remote",locked
     </ol>
     {error&&<div className="error" role="alert">{error}</div>}
     {message&&<div className="notice" role="status">{message}</div>}
+    {operation==="set"&&<section className="dr-uxb-catalog-guide" aria-label="Choose observed Core resources">
+      <h4>Choose who, where and what (from Core)</h4>
+      <p>Start by selecting names that already exist. You may also type another exact name below. A selection is not approval; Core validates the change.</p>
+      <div className="dr-uxb-catalog-grid">
+        <CoreChoiceField catalog={catalog} plane={plane} field="source" value={source} disabled={busy} onChoose={v=>changeFlow("source",v)}/>
+        <CoreChoiceField catalog={catalog} plane={plane} field="destination" value={destination} disabled={busy} onChoose={v=>changeFlow("destination",v)}/>
+        <CoreChoiceField catalog={catalog} plane={plane} field="selector" value={selector} disabled={busy} onChoose={v=>changeFlow("selector",v)}/>
+      </div>
+      <button type="button" className="secondary" onClick={()=>onNavigate?.("objects","access")}>Manage missing Objects & Groups →</button>
+    </section>}
     <fieldset className="dr-p0-form" disabled={busy}>
       <label className="dr-field"><span>Access plane</span><select value={plane} disabled={lockedPlane} onChange={e=>{change(setPlane,e.target.value as AccessPlane);setSelector("");setPaths("")}}>
         <option value="remote">Remote Access</option><option value="internet">Internet Access</option><option value="ai">AI Access</option></select></label>
@@ -205,9 +218,19 @@ export function GuidedPolicyJourney({api,onNavigate,initialPlane="remote",locked
       {operation==="set"&&<>
         <label className="dr-field"><span>Policy mode</span><select value={mode} onChange={e=>change(setMode,e.target.value)}>
           <option value="whitelist">Whitelist · grant matching access</option><option value="blacklist">Blacklist · deny matching access</option></select></label>
-        <label className="dr-field"><span>Who · source</span><input value={source} onChange={e=>changeFlow("source",e.target.value)} placeholder={plane==="ai"?"AI identity":"Source object or group"}/></label>
-        <label className="dr-field"><span>What · destination</span><input value={destination} onChange={e=>changeFlow("destination",e.target.value)} placeholder="Destination object or group"/></label>
-        <label className="dr-field"><span>{plane==="ai"?"Permission":"Service"} selector</span><input value={selector} onChange={e=>changeFlow("selector",e.target.value)} placeholder={plane==="ai"?"Permission object/group":"Service object/group"}/></label>
+        <div className="dr-uxb-rule-summary" role="status">
+          <strong>Rule you are preparing · {mode==="whitelist"?"Allow matching access":"Deny matching access"}</strong>
+          <p>{source||"Choose a source"} <span aria-hidden="true">→</span> {destination||"Choose a destination"} · {selector||("Choose a "+(plane==="ai"?"permission":"service"))}</p>
+          <small>This is an unverified draft. No access is granted or denied until Core preview, tests and confirmed Apply.</small>
+        </div>
+        <details className="dr-uxb-manual-fields">
+          <summary>Advanced · review or enter exact Core names manually</summary>
+          <div className="dr-uxb-form">
+            <label className="dr-field"><span>Who · source</span><input value={source} onChange={e=>changeFlow("source",e.target.value)} placeholder={plane==="ai"?"AI identity":"Source object or group"}/></label>
+            <label className="dr-field"><span>What · destination</span><input value={destination} onChange={e=>changeFlow("destination",e.target.value)} placeholder="Destination object or group"/></label>
+            <label className="dr-field"><span>{plane==="ai"?"Permission":"Service"} selector</span><input value={selector} onChange={e=>changeFlow("selector",e.target.value)} placeholder={plane==="ai"?"Permission object/group":"Service object/group"}/></label>
+          </div>
+        </details>
         {plane==="ai"&&<label className="dr-field"><span>Optional AI paths (comma-separated)</span><input value={paths} onChange={e=>change(setPaths,e.target.value)} placeholder="/path/a, /path/b"/></label>}
         <label className="dr-field"><span>Optional expiry · ISO 8601</span><input value={expiresAt} onChange={e=>change(setExpiresAt,e.target.value)} placeholder="2030-01-01T00:00:00Z"/></label>
         <label className="dr-field dr-p0-check"><input type="checkbox" checked={enabled} onChange={e=>change(setEnabled,e.target.checked)}/><span>Rule enabled</span></label>

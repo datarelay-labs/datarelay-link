@@ -22,6 +22,17 @@ export function accessPlaneCount(data:any):number|null{
   return ["remote","internet","ai"].filter(plane=>generations[plane].status==="active").length;
 }
 
+/** Task-first Home is shown only when actual Core counts establish an empty
+ * installation. Missing/partial evidence must never be guessed as zero. */
+export function isFreshInstallation(data:any):boolean{
+  const overview=data?.overview;
+  const hosts=overview?.managed_hosts,services=overview?.remote_services,policies=overview?.policies;
+  if(typeof hosts?.total!=="number"||typeof services?.total!=="number"
+    ||!policies||typeof policies!=="object"||!Object.keys(policies).length)return false;
+  if(hosts.total!==0||services.total!==0)return false;
+  return Object.values(policies).every((row:any)=>typeof row?.total==="number"&&row.total===0);
+}
+
 /** UXB-02: Core-observed evidence only. A saved policy is not a verified connection. */
 export type TaskState="Not started"|"Needs approval"|"Configured · verify"|"Needs verification"|"Unknown"|"Attention";
 export function firstConnectionStates(data:any,inventory:any[]|null):TaskState[]{
@@ -57,7 +68,7 @@ const steps=[
 
 export function FirstUseHome({data,operator,api,onNavigate}:{
   data:any,operator:any,api:(path:string)=>Promise<any>,
-  onNavigate?:(id:string,groupId?:string)=>void
+  onNavigate?:(id:string,groupId?:string,context?:any)=>void
 }){
   const [inventory,setInventory]=useState<any[]|null>(null);
   const [loadState,setLoadState]=useState<"loading"|"ready"|"error">("loading");
@@ -101,10 +112,14 @@ export function FirstUseHome({data,operator,api,onNavigate}:{
     {pending>0&&<p className="notice">{pending} Host(s) await Admin approval. Connected does not mean approved.</p>}
     <div className="dr-uxb-home-next"><div><strong>Suggested next action</strong><small>{next.title}</small></div>
       <button className="primary" disabled={operator?.role!=="Admin"&&next.route==="enrollments"} onClick={()=>onNavigate?.(next.route,next.group)}>{next.action} →</button></div>
-    <div className="dr-uxb-access-choices" aria-label="Choose access direction">
-      <div><strong>Remote Access</strong><small>External user → one approved internal service</small></div>
-      <div><strong>Internet Access</strong><small>Managed internal source → permitted outside destination</small></div>
-      <div><strong>AI Access</strong><small>Authenticated AI Identity → named permission</small></div>
+    <div className="dr-uxb-access-choices" role="group" aria-label="Start by choosing an access direction">
+      {[
+        {plane:"remote",title:"Connect to a server",detail:"Remote Access · outside user → protected SSH or other internal service",action:"Set up Remote Access"},
+        {plane:"internet",title:"Allow approved outbound access",detail:"Internet Access · managed server → approved external destination",action:"Set up Internet Access"},
+        {plane:"ai",title:"Grant an AI integration permission",detail:"AI Access · verified identity → named permission",action:"Set up AI Access"},
+      ].map(item=><button key={item.plane} type="button" onClick={()=>onNavigate?.("setup","connections",{plane:item.plane})}>
+        <strong>{item.title}</strong><small>{item.detail}</small><span>{item.action} →</span>
+      </button>)}
     </div>
     <p className="muted">A “Configured” item is not a successful connection. Always perform the last verification step with the actual Core evidence.</p>
   </section>;

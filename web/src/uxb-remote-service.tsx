@@ -1,5 +1,6 @@
 import React,{useEffect,useRef,useState} from "react";
 import type {LinkApi} from "./p0-access-policy";
+import {CoreChoiceField,useCoreCatalog,type CoreCatalog} from "./uxb-core-choices";
 
 /** Queue results use job_id; canonical Core job details use id. Never lose the
  * queued identity or present a different job as evidence for this service. */
@@ -11,8 +12,8 @@ export function mergeRemoteServiceJob(queued:any,detail:any){
 }
 
 /** UXB-03: one canonical Remote Service editor used from both Services and Setup. */
-export function RemoteServiceEditor({api,ownerHint="",onSelection,initialSelection}:{
-  api:LinkApi,ownerHint?:string,
+export function RemoteServiceEditor({api,ownerHint="",onSelection,initialSelection,resourceCatalog}:{
+  api:LinkApi,ownerHint?:string,resourceCatalog?:CoreCatalog|null,
   onSelection?:(selection:{owner:string,name:string,service:string,destination:string})=>void,
   initialSelection?:{owner?:string,name?:string,service?:string,destination?:string},
 }){
@@ -23,6 +24,7 @@ export function RemoteServiceEditor({api,ownerHint="",onSelection,initialSelecti
   const [job,setJob]=useState<any>(null),[error,setError]=useState(""),[busy,setBusy]=useState(false);
   const lastOwnerHint=useRef(ownerHint);
   const requestGeneration=useRef(0);
+  const catalog=useCoreCatalog(api,resourceCatalog);
   useEffect(()=>{
     // Do not overwrite a resumed, intentionally selected owner on mount.
     // A genuinely different host selected in Setup resets the owner and plan.
@@ -83,6 +85,10 @@ export function RemoteServiceEditor({api,ownerHint="",onSelection,initialSelecti
     <p className="dr-eyebrow">Publish one internal service</p>
     <h3>Choose what an approved Agent makes available</h3>
     <p className="muted">A Managed Host is not automatically accessible. Each Remote Service needs a real host, a configured Service Object and an explicit Core access rule.</p>
+    {operation==="set"&&<div className="dr-uxb-catalog-guide"><strong>Which protocol / port should be published?</strong>
+      <CoreChoiceField catalog={catalog} plane="remote" field="selector" value={service} disabled={busy} onChoose={value=>edit(setService,value)}/>
+      <p className="muted">Example: choose your existing TCP/22 Service Object. The Remote Service name is a separate label you choose below.</p>
+    </div>}
     {error&&<p className="error" role="alert">{error}</p>}
     <fieldset className="dr-uxb-form" disabled={busy}>
       <label className="dr-field"><span>Owning Agent / Managed Host</span><input value={owner} onChange={e=>edit(setOwner,e.target.value)} placeholder="Host name or ID"/></label>

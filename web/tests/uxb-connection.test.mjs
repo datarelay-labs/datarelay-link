@@ -59,6 +59,56 @@ test("non-admin never sees enabled enrollment issue during setup",()=>{
  assert.match(html,/<button[^>]*disabled=""[^>]*>Issue enrollment →<\/button>/);
 });
 
+test("First-time Admin picks an understandable purpose, sees glossary, and does not skip Core evidence",()=>{
+ const html=renderToStaticMarkup(React.createElement(setup.FirstConnectionSetup,{
+   api:async()=>{throw new Error("SSR cannot contact Core")},operator:{role:"Admin"}
+ }));
+ for(const purpose of ["Connect to an internal server","Let a server reach the Internet","Allow an AI integration"]){
+   assert.ok(html.includes(purpose),purpose);
+ }
+ assert.match(html,/aria-pressed="true"/);
+ assert.match(html,/What do Agent, Remote Service and Access Rule mean/);
+ assert.match(html,/Current stage 1 of 4/);
+ assert.match(html,/changing stages does not modify access/i);
+ assert.match(html,/NOT VERIFIED/);
+});
+test("Internet and AI setup explain separate prerequisites and offer Core selectors without approval",()=>{
+ for(const [plane,stageLabel,field] of [
+   ["internet","Select the intended outside destination","Service Object / Group"],
+   ["ai","Select a named Permission Object","Permission Object / Group"],
+ ]){
+   const html=renderToStaticMarkup(React.createElement(setup.FirstConnectionSetup,{
+     api:async()=>{throw new Error("SSR cannot contact Core")},
+     operator:{role:"Operator"},initialDraft:{plane,step:2}
+   }));
+   assert.match(html,/Core inventory UNKNOWN/);
+   assert.match(html,new RegExp(field.replace("/","\\/")));
+   assert.match(html,/Manage Objects &amp; Groups/);
+   assert.doesNotMatch(html,/Queue authenticated Agent job/);
+   assert.doesNotMatch(html,/Applied at revision/);
+ }
+});
+test("Core-backed policy suggestions are optional; no implicit change is queued",()=>{
+ const catalog={resources:{
+   "network-object":{items:[{name:"source-office"},{name:"destination-app"}]},
+   "network-group":{items:[]},
+   "service-object":{items:[{name:"ssh-tcp22"}]},
+   "service-group":{items:[]},
+ }};
+ const html=renderToStaticMarkup(React.createElement(policy.GuidedPolicyJourney,{
+   api:async()=>{throw new Error("SSR cannot contact Core")},
+   resourceCatalog:catalog,initialPlane:"remote",
+   initialFlow:{source:"source-office",destination:"destination-app",selector:"ssh-tcp22"}
+ }));
+ assert.match(html,/Choose who, where and what/);
+ assert.match(html,/Rule you are preparing/);
+ assert.match(html,/Advanced · review or enter exact Core names manually/);
+ assert.match(html,/This is an unverified draft/);
+ assert.match(html,/source-office/);
+ assert.match(html,/ssh-tcp22/);
+ assert.match(html,/Core validates the change/);
+ assert.doesNotMatch(html,/Apply through Core/);
+});
 test("service publication is preview/typed/queued and cannot imply deployed",()=>{
  const html=renderToStaticMarkup(React.createElement(service.RemoteServiceEditor,{
   api:async()=>{throw new Error("SSR must not call Core API")},

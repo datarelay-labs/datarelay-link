@@ -6,7 +6,7 @@ import {createLinkFoundationAdministrationTasks} from "./foundation-administrati
 import {AccessEvidenceExplorer,GuidedPolicyJourney,type AccessPlane} from "./p0-access-policy";
 import {EnrollmentOnboarding} from "./p0-enrollment";
 import {navGroups,groupFor,labelFor,pageDescriptions,visibleRoute,navMatches} from "./uxb-navigation";
-import {FirstUseHome,observedRecentFeed,observedNumber,accessPlaneCount,coreHealthState,type RecentFeed} from "./uxb-home";
+import {FirstUseHome,isFreshInstallation,observedRecentFeed,observedNumber,accessPlaneCount,coreHealthState,type RecentFeed} from "./uxb-home";
 import {RemoteServiceEditor} from "./uxb-remote-service";
 import {FirstConnectionSetup,type SetupDraft} from "./uxb-setup";
 
@@ -1231,7 +1231,7 @@ function IntegrationsPanel(){
   </div>;
 }
 
-function CommandCenter({data,operator,onNavigate}:{data:any,operator:any,onNavigate?:(id:string,groupId?:string)=>void}){
+function CommandCenter({data,operator,onNavigate}:{data:any,operator:any,onNavigate?:(id:string,groupId?:string,context?:any)=>void}){
   const [activity,setActivity]=useState<RecentFeed>({status:"loading",items:[]});
   const [changes,setChanges]=useState<RecentFeed>({status:"loading",items:[]});
   useEffect(()=>{
@@ -1252,6 +1252,18 @@ function CommandCenter({data,operator,onNavigate}:{data:any,operator:any,onNavig
     {label:"Internet Access",key:"internet",value:pol.internet||{}},
     {label:"AI Access",key:"ai",value:pol.ai||{}},
   ];
+  if(isFreshInstallation(data))return <div className="dr-command-center dr-uxb-first-install" data-testid="uxb-fresh-home">
+    <section className="dr-hero-row"><div><p className="dr-eyebrow">Welcome · First connection</p>
+      <h2>Start with one protected connection</h2>
+      <p className="muted">Core reports no Managed Hosts, Remote Services or policy rules. Pick what you want to connect; the guide explains each step.</p></div>
+      <button className="secondary" onClick={()=>onNavigate?.("health","activity")}>Check system readiness →</button>
+    </section>
+    <FirstUseHome data={data} operator={operator} api={api} onNavigate={onNavigate}/>
+    <section className="card dr-uxb-first-install-note"><h3>No network access has been verified yet</h3>
+      <p className="muted">Adding an Agent, publishing a service and allowing a source are separate actions. The final Core decision and actual connection must be verified independently.</p>
+      <button type="button" className="secondary" onClick={()=>onNavigate?.("setup","connections")}>Open first-connection guide →</button>
+    </section>
+  </div>;
   return <div className="dr-command-center">
     <section className="dr-hero-row"><div><p className="dr-eyebrow">Welcome · Data Relay Link</p><h2>Connect one service. Control who can use it.</h2><p className="muted">Start with the steps below, or inspect the existing Core status and activity.</p></div><div className="dr-hero-actions">{operator.role==="Admin"&&<button className="primary" onClick={()=>onNavigate?.("setup","connections")}>Set up a connection →</button>}<button className="secondary" onClick={()=>onNavigate?.("access","access")}>Test access</button></div></section>
     <FirstUseHome data={data} operator={operator} api={api} onNavigate={onNavigate}/>
@@ -1392,7 +1404,11 @@ function View({active,operator,onNavigate,context,setupDraft,onSetupDraftChange}
   if(active==="hygiene"&&data)return <AccessHygienePanel data={data} operator={operator} onRefresh={()=>api("/api/v1/access-hygiene").then(setData).catch((e:any)=>setError(e.message||String(e)))} onNavigate={onNavigate}/>;
   if(active==="audit")return <AuditExplorer operator={operator} context={context}/>;
   if(active==="enrollments"&&data)return <EnrollmentOnboarding api={api} data={data} operator={operator} onNavigate={onNavigate} refresh={()=>api("/api/v1/enrollments?limit=50").then(setData)}/>;
-  if(active==="setup")return <FirstConnectionSetup api={api} operator={operator} onNavigate={onNavigate} initialDraft={setupDraft} onDraftChange={onSetupDraftChange}/>;
+  if(active==="setup"){
+    const requestedPlane=["remote","internet","ai"].includes(String(context?.plane||""))?context.plane:null;
+    const draft=requestedPlane?(setupDraft?.plane===requestedPlane?{...setupDraft,step:1}:{plane:requestedPlane,step:1}):setupDraft;
+    return <FirstConnectionSetup api={api} operator={operator} onNavigate={onNavigate} initialDraft={draft} onDraftChange={onSetupDraftChange}/>;
+  }
   if(active==="search")return <div><div className="toolbar"><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search resources and policy"/><button className="primary" onClick={()=>api("/api/v1/search?q="+encodeURIComponent(query)+"&limit=50").then(setData).catch((e:any)=>setError(e.message))}>Search</button></div>{data&&<Table items={(data.items||[]).map((x:any)=>({type:x.resource_type,id:x.id,name:x.name}))}/>}</div>;
   if(active==="overview"&&data)return <CommandCenter data={data} operator={operator} onNavigate={onNavigate}/>;
   if(active==="versions"&&data)return <><div className="grid"><Metric label="Server version" value={data.server_version}/><Metric label="Drift" value={data.drift_count}/><Metric label="Unknown" value={data.unknown_count}/></div><Table items={data.hosts||[]}/></>;

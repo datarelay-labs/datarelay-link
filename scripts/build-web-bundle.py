@@ -29,6 +29,7 @@ BUILD_FILES = (
     "web/src/uxb-navigation.ts",
     "web/src/uxb-home.tsx",
     "web/src/uxb-remote-service.tsx",
+    "web/src/uxb-core-choices.tsx",
     "web/src/uxb-setup.tsx",
 )
 

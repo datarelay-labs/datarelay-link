@@ -825,6 +825,14 @@ Its priority is **how a novice completes a real workflow**, not more widgets:
 - **UXB-06 / release gate:** real Admin/Operator/Read Only browser flows,
   320px/375px/desktop usability, first-time-user observations, source/role
   security regression and offline Web compatibility on one frozen candidate.
+- **UXB-01/02/03/05 usability refinement / P0:** preserve the five bounded
+  top-level menus but implement intent-based Home cards, beginner-friendly
+  access-type choices, an inline glossary, and read-only Core Inventory
+  selectors for Network/Service/Permission Objects and AI Identities; retain
+  raw exact-name input and mandatory Core change validation. For a verified
+  empty installation show first-use tasks instead of a NOC-style KPI wall.
+  Implementation/tests and the 19-vendor research mapping are recorded in
+  `docs/WEB_USER_JOURNEY_UX_ROADMAP.md` §14; real browser/user acceptance is pending.
 
 **Status (2026-10-09):** UXB-00 research/roadmap documented; UXB-01..05
 **CODE IMPLEMENTED ON ISOLATED DEV WEB SOURCE**, with offline SSR/static/package
