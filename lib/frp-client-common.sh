@@ -5800,12 +5800,33 @@ frp_client_upgrade_stage() {
 }
 
 frp_client_upgrade_install_staged() {
-  local staged="$1" live rel mode src
+  local staged="$1" live rel mode src rendered
   local replaced=0
   while IFS=: read -r rel mode src; do
     [[ -n "$rel" ]] || continue
     live="$(frp_client_path "/${rel}")"
-    frp_client_atomic_install "${staged}/${rel}" "$live" "$mode" || return 1
+    case "$rel" in
+      etc/systemd/system/drlink-*.service)
+        # Staged packages carry portable unit *templates*. EL8's distro
+        # /usr/bin/python3 is 3.6 and cannot import current management code.
+        # Render the previously selected compatible Python binary at the
+        # atomic install boundary; otherwise an upgrade overwrites the
+        # correct units with /usr/bin/python3 and reports false convergence.
+        rendered="$(mktemp)" || return 1
+        if ! frp_write_compatible_systemd_unit "${staged}/${rel}" "$rendered"; then
+          rm -f "$rendered"
+          return 1
+        fi
+        if ! frp_client_atomic_install "$rendered" "$live" "$mode"; then
+          rm -f "$rendered"
+          return 1
+        fi
+        rm -f "$rendered"
+        ;;
+      *)
+        frp_client_atomic_install "${staged}/${rel}" "$live" "$mode" || return 1
+        ;;
+    esac
     replaced=$((replaced + 1))
     if [[ "$replaced" -eq 1 && "${FRP_CLIENT_UPGRADE_HOOK_FAIL:-}" == "install" ]]; then
       echo "ERROR: simulated tool install failure" >&2

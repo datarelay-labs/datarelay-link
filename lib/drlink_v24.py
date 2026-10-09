@@ -5655,18 +5655,18 @@ def _reconcile_agent_from_server_status(plane_db, result: dict) -> int:
                 values.append(int(new_pending))
         if "status" in item:
             status = str(item.get("status") or "").strip().upper()
-            if status in ("HEALTHY", "DEGRADED", "DISABLED") and str(row["status"] or "") != status:
-                assignments.append("status = ?")
-                values.append(status)
-                # Server authority: HEALTHY only remains verified when Server says HEALTHY.
-                # Status push never invents verification; Server DEGRADED clears the flag.
+            if status in ("HEALTHY", "DEGRADED", "DISABLED"):
+                if str(row["status"] or "") != status:
+                    assignments.append("status = ?")
+                    values.append(status)
+                # Verification is independent of a status *text* change.
+                # A validated Server ACK can confirm the generation of an
+                # already-HEALTHY row; Server refusal/revoke clears stale
+                # verification even if the status string did not change.
                 want_verified = 1 if status == "HEALTHY" and bool(item.get("runtime_verified")) else 0
                 if int(_row_get(row, "runtime_verified") or 0) != want_verified:
                     assignments.append("runtime_verified = ?")
                     values.append(want_verified)
-            elif status == "DEGRADED" and int(_row_get(row, "runtime_verified") or 0):
-                assignments.append("runtime_verified = ?")
-                values.append(0)
         if "reason" in item:
             reason = str(item.get("reason") or "")
             if str(row["reason"] or "") != reason:

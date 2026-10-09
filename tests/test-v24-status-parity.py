@@ -87,6 +87,39 @@ class StatusParityTests(unittest.TestCase):
             (name,),
         ).fetchone()
 
+    def test_SERVER_ACK_REFRESHES_VERIFIED_FLAG_WITHOUT_STATUS_TEXT_CHANGE(self):
+        # F018: a real runtime generation can be acknowledged while the
+        # already-HEALTHY status text is unchanged. Never leave the old
+        # verification bit stale; conversely an unverified Server ACK must
+        # not preserve an earlier verified bit.
+        self.agent.conn.execute(
+            "INSERT INTO agent_remote_services"
+            "(name, destination, service_object, enabled, status, endpoint_host, endpoint_port, "
+            "pending_allocation, delete_pending, pool_class, reason, updated_at, runtime_verified) "
+            "VALUES ('keepalive-ssh', 'this-host', 'ssh', 1, 'HEALTHY', 'example.test', 6020, "
+            "0, 0, 'normal', '', '2026-10-09T00:00:00Z', 0)"
+        )
+        self.agent.conn.commit()
+        response = {
+            "services": [{
+                "name": "keepalive-ssh", "status": "HEALTHY",
+                "runtime_verified": True, "endpoint_port": 6020,
+                "reason": "",
+            }]
+        }
+        self.assertEqual(v24._reconcile_agent_from_server_status(self.agent, response), 1)
+        state = self.agent.conn.execute(
+            "SELECT status, runtime_verified FROM agent_remote_services WHERE name='keepalive-ssh'"
+        ).fetchone()
+        self.assertEqual((state['status'], state['runtime_verified']), ('HEALTHY', 1))
+        # Same status, but no verified generation -- must clear the bit.
+        response['services'][0]['runtime_verified'] = False
+        self.assertEqual(v24._reconcile_agent_from_server_status(self.agent, response), 1)
+        state = self.agent.conn.execute(
+            "SELECT status, runtime_verified FROM agent_remote_services WHERE name='keepalive-ssh'"
+        ).fetchone()
+        self.assertEqual((state['status'], state['runtime_verified']), ('HEALTHY', 0))
+
     def test_AGENT_DEGRADED_PROPAGATES_TO_SERVER(self):
         created = mgmt.upsert_remote_service_on_server(
             root=self.agent_tmp,

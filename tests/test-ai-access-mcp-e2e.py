@@ -798,6 +798,28 @@ class MCPBridgeE2ETests(unittest.TestCase):
         )
         self.assertIn("DENY", self.text_of(payload))
 
+    def test_large_exec_bounded_result_completes_via_real_agent_queue(self):
+        # PASS1 F014: a quick 64 KiB/1 MiB command must return a bounded
+        # result, never an Agent-job delivery TIMEOUT. Exercise the complete
+        # MCP HTTP -> queue -> independent AgentLoop -> MCP HTTP path.
+        for bytes_to_emit in (65536, 1048576):
+            with self.subTest(bytes=bytes_to_emit):
+                status, payload = self.call(
+                    self.cursor,
+                    "exec",
+                    {"endpoint": "lab1",
+                     "command": "python3 -c 'import sys; "
+                                "sys.stdout.write(chr(88)*%d)'" % bytes_to_emit},
+                )
+                self.assertEqual(status, 200)
+                text = self.text_of(payload)
+                body = json.loads(text)
+                self.assertEqual(body.get("result"), "ALLOW", text[:500])
+                self.assertFalse(payload.get("result", {}).get("isError", False))
+                self.assertEqual(body["stdout_truncated"], bytes_to_emit > MAX_STDOUT_BYTES)
+                self.assertEqual(len(body["stdout"].encode("utf-8")),
+                                 min(bytes_to_emit, MAX_STDOUT_BYTES))
+
     def test_timeout_bounding_policy_timing_revocation_rotation(self):
         # Exec timeout/cancel/fairness is Priority 6. Canonical MCP auth no longer
         # inherits legacy ai_access_rules.exec_timeout; assert authorization still
