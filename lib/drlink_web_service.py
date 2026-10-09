@@ -466,6 +466,9 @@ class WebApplication:
                 if path == "/api/v1/webhooks/disable":
                     store.disable(webhook_id, actor_id="web:" + principal.operator_id)
                     return {"id": webhook_id, "enabled": False}
+                if path == "/api/v1/webhooks/enable":
+                    store.enable(webhook_id, actor_id="web:" + principal.operator_id)
+                    return {"id": webhook_id, "enabled": True}
             raise ControlPlaneError("Webhook operation was not found.")
         if path.startswith("/api/v1/service-accounts"):
             if principal.role != ROLE_ADMIN:

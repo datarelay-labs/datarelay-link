@@ -110,6 +110,8 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn('async function testWebhook(webhookId:string)', SOURCE)
         self.assertIn('api("/api/v1/webhooks/test"', SOURCE)
         self.assertIn('onClick={()=>testWebhook(h.id)}>Send test</button>', SOURCE)
+        self.assertIn('mutate("/api/v1/webhooks/enable",{webhook_id:h.id})', SOURCE)
+        self.assertIn('>Enable</button>', SOURCE)
         self.assertIn("Signed test event queued:", SOURCE)
         self.assertIn("Check delivery status after the worker runs.", SOURCE)
         self.assertIn('notice&&<div className="card" role="status">', SOURCE)

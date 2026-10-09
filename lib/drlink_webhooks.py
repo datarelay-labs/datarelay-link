@@ -342,6 +342,46 @@ class WebhookStore:
             self.conn.execute("ROLLBACK")
             raise
 
+    def enable(self, webhook_id: str, *, actor_id: str = "local-admin") -> None:
+        """Re-enable a previously disabled sink, without replaying old events."""
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            row = self.conn.execute(
+                "SELECT url,secret_ciphertext FROM management_webhooks "
+                "WHERE id=? AND enabled=0", (webhook_id,),
+            ).fetchone()
+            if not row:
+                raise ControlPlaneError("Disabled webhook was not found.")
+            # Check stored authority and signing material BEFORE admitting
+            # future events. Missing or corrupted private state fails closed.
+            validate_webhook_url(row["url"])
+            if not row["secret_ciphertext"]:
+                raise ControlPlaneError("Webhook signing material unavailable.")
+            try:
+                self._cipher().decrypt(str(row["secret_ciphertext"]).encode())
+            except (InvalidToken, UnicodeError, ValueError) as exc:
+                raise ControlPlaneError("Webhook signing material cannot be decrypted.") from exc
+            changed = self.conn.execute(
+                "UPDATE management_webhooks SET enabled=1,updated_at=? "
+                "WHERE id=? AND enabled=0", (_now(), webhook_id),
+            ).rowcount
+            if changed != 1:
+                raise ControlPlaneError("Webhook enable became stale.")
+            self._audit("management_webhook.enabled", webhook_id, actor_id)
+            # Deliberate fresh-start semantics: disabled-time events and our
+            # own enable audit must not be replayed as new deliveries.
+            self.conn.execute(
+                "INSERT INTO management_webhook_audit_cursors(webhook_id,last_audit_id) "
+                "VALUES (?,(SELECT COALESCE(MAX(id),0) FROM audit_events)) "
+                "ON CONFLICT(webhook_id) DO UPDATE SET "
+                "last_audit_id=excluded.last_audit_id", (webhook_id,),
+            )
+            self.conn.execute("COMMIT")
+        except Exception:
+            if self.conn.in_transaction:
+                self.conn.execute("ROLLBACK")
+            raise
+
     def prune_history(self, max_completed: int = 5000, retention_days: int = 30) -> int:
         """Bound delivered/failed history without touching pending or leased events."""
         ceiling = max(10, min(int(max_completed), 5000))

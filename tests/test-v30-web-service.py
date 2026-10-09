@@ -225,6 +225,29 @@ class V30WebServiceTests(unittest.TestCase):
             ).fetchone()
             self.assertTrue(audit["actor_id"].startswith("web:wop_"))
             self.assertNotIn(created["secret"], audit["actor_id"])
+        status, _, result = self.request(
+            "POST", "/api/v1/webhooks/disable", {"webhook_id": identifier},
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, result)
+        self.assertFalse(result["enabled"])
+        status, _, _ = self.request(
+            "POST", "/api/v1/webhooks/enable", {"webhook_id": identifier},
+        )
+        self.assertEqual(status, 403)
+        status, _, result = self.request(
+            "POST", "/api/v1/webhooks/enable", {"webhook_id": identifier},
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, result)
+        self.assertTrue(result["enabled"])
+        with WebhookStore(self.tmp) as store:
+            audit = store.conn.execute(
+                "SELECT actor_id FROM audit_events WHERE "
+                "event_type='management_webhook.enabled' AND entity_id=?",
+                (identifier,),
+            ).fetchone()
+            self.assertTrue(audit["actor_id"].startswith("web:wop_"))
 
     def test_agent_rollout_preview_is_admin_csrf_guarded_and_does_not_enqueue(self):
         self.login()

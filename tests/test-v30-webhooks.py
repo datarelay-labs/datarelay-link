@@ -90,6 +90,41 @@ class WebhookTests(unittest.TestCase):
             self.assertEqual((row["status"],row["attempts"]),("FAILED",5))
             with self.assertRaises(ControlPlaneError):
                 store.enqueue(wh["id"],"control",{"kind":"other"})
+    def test_enable_webhook_resumes_future_only_with_valid_signing_key(self):
+        from drlink_webhook_events import stage_audit_events
+        with tempfile.TemporaryDirectory(prefix="drlink-hook-enable-") as root:
+            with WebhookStore(root) as store:
+                hook = store.create(
+                    "re-enable", "https://hooks.example.org/events",
+                    ["security.lifecycle"], actor_id="web:admin",
+                )
+                old = store.enqueue(hook["id"], "security.lifecycle", {"kind": "old"})
+                store.disable(hook["id"], actor_id="web:admin")
+                self.assertEqual(store.conn.execute(
+                    "SELECT status FROM management_webhook_outbox WHERE event_id=?",
+                    (old["event_id"],),
+                ).fetchone()["status"], "FAILED")
+                with self.assertRaises(ControlPlaneError):
+                    store.enqueue(hook["id"], "security.lifecycle", {"kind": "disabled"})
+                store._audit("management_webhook.rotated", hook["id"], "web:admin")
+                store.enable(hook["id"], actor_id="web:admin")
+                self.assertEqual(store.list_webhooks()["items"][0]["enabled"], True)
+                self.assertEqual(store.signing_secret(hook["id"]), hook["secret"])
+                self.assertEqual(stage_audit_events(store)["staged"], 0)
+                self.assertEqual(store.conn.execute(
+                    "SELECT status FROM management_webhook_outbox WHERE event_id=?",
+                    (old["event_id"],),
+                ).fetchone()["status"], "FAILED")
+                with self.assertRaises(ControlPlaneError):
+                    store.enable(hook["id"], actor_id="web:admin")
+                new = store.enqueue(hook["id"], "security.lifecycle", {"kind": "new"})
+                self.assertIn(new["event_id"], [event["event_id"] for event in store.pending()])
+                store.disable(hook["id"], actor_id="web:admin")
+                store.key_file.unlink()
+                with self.assertRaises(ControlPlaneError):
+                    store.enable(hook["id"], actor_id="web:admin")
+                self.assertEqual(store.list_webhooks()["items"][0]["enabled"], False)
+
     def test_delivery_health_exposes_last_result_and_next_retry(self):
         with tempfile.TemporaryDirectory(prefix="drlink-wh-health-list-") as root:
             with WebhookStore(root) as store:
