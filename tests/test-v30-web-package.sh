@@ -34,6 +34,8 @@ DRLINK_WEB_INSTALL_ROOT="$TMP" "$ROOT/install-web.sh" >/tmp/drlink-web-install-t
 
 for f in \
   /usr/local/lib/drlink/drlink_web_auth.py \
+  /usr/local/lib/drlink/drlink_foundation_security.py \
+  /usr/local/lib/drlink/datarelay_onprem_security-0.10.0.dev0-py3-none-any.whl \
   /usr/local/lib/drlink/drlink_web_service.py \
   /usr/local/lib/drlink/drlink-web.py \
   /usr/local/share/drlink-web/index.html \
@@ -117,6 +119,8 @@ fi
 DRLINK_WEB_INSTALL_ROOT="$TMP" "$ROOT/uninstall-web.sh" >/tmp/drlink-web-uninstall-test.log
 
 [[ ! -e "$TMP/etc/systemd/system/drlink-web.service" ]] || { echo "FAIL Web service survived uninstall" >&2; exit 1; }
+[[ ! -e "$TMP/usr/local/lib/drlink/drlink_foundation_security.py" ]] || { echo "FAIL Foundation bootstrap survived uninstall" >&2; exit 1; }
+[[ ! -e "$TMP/usr/local/lib/drlink/datarelay_onprem_security-0.10.0.dev0-py3-none-any.whl" ]] || { echo "FAIL pinned Foundation wheel survived uninstall" >&2; exit 1; }
 [[ ! -e "$TMP/usr/local/share/drlink-web" ]] || { echo "FAIL Web static assets survived uninstall" >&2; exit 1; }
 [[ -f "$TMP/var/lib/drlink/drlink.db" ]] || { echo "FAIL Web uninstall removed Core DB" >&2; exit 1; }
 [[ -f "$TMP/var/lib/drlink/web-auth.key" ]] || { echo "FAIL Web uninstall removed protected recovery key" >&2; exit 1; }

@@ -20,6 +20,11 @@ from urllib.parse import quote
 from drlink_control_db import ControlPlaneError, open_control_db, utc_now_iso
 from drlink_management_catalog import MANAGEMENT_PERMISSION_NAMES
 from frp_mgmt_auth import decrypt_token_pbkdf2, encrypt_token_pbkdf2
+from drlink_foundation_security import (
+    foundation_new_totp_secret,
+    foundation_totp_code_at,
+    foundation_verify_totp,
+)
 
 ROLE_ADMIN = "Admin"
 ROLE_OPERATOR = "Operator"
@@ -203,27 +208,15 @@ def _master_key(root: Optional[str] = None, *, create: bool = True) -> bytes:
 
 
 def generate_totp_secret() -> str:
-    return base64.b32encode(os.urandom(20)).decode("ascii").rstrip("=")
+    """The same 160-bit RFC6238 seed generator as other DataRelay products."""
+    return foundation_new_totp_secret()
 
 
 def totp_code(secret: str, *, at: Optional[datetime] = None) -> tuple[str, int]:
+    """Keep the native (code, counter) contract using Foundation TOTP."""
     current = at or _utc_now()
     counter = int(current.timestamp()) // TOTP_STEP_SECONDS
-    padded = str(secret or "").strip().upper()
-    padded += "=" * (-len(padded) % 8)
-    key = base64.b32decode(padded, casefold=True)
-    digest = hmac.new(
-        key, counter.to_bytes(8, "big"), hashlib.sha1
-    ).digest()
-    offset = digest[-1] & 0x0F
-    binary = (
-        ((digest[offset] & 0x7F) << 24)
-        | (digest[offset + 1] << 16)
-        | (digest[offset + 2] << 8)
-        | digest[offset + 3]
-    )
-    value = str(binary % (10**TOTP_DIGITS)).zfill(TOTP_DIGITS)
-    return value, counter
+    return foundation_totp_code_at(secret, current.timestamp()), counter
 
 
 def verify_totp(
@@ -233,18 +226,14 @@ def verify_totp(
     at: Optional[datetime] = None,
     last_counter: Optional[int] = None,
 ) -> Optional[int]:
+    """Reuse Foundation OTP replay-window semantics; Core owns SQLite CAS."""
     code = str(supplied or "").strip()
-    if len(code) != TOTP_DIGITS or not code.isdigit():
+    if len(code) != TOTP_DIGITS or not code.isascii() or not code.isdigit():
         return None
     current = at or _utc_now()
-    for delta in (-1, 0, 1):
-        candidate_at = current + timedelta(seconds=delta * TOTP_STEP_SECONDS)
-        expected, counter = totp_code(secret, at=candidate_at)
-        if hmac.compare_digest(expected, code):
-            if last_counter is not None and counter <= int(last_counter):
-                return None
-            return counter
-    return None
+    return foundation_verify_totp(
+        secret, code, now=current.timestamp(), last_counter=last_counter,
+    )
 
 
 def generate_recovery_codes() -> list[str]:
