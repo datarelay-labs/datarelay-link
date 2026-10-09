@@ -9,6 +9,25 @@
 - Link `web/foundation.lock.json` is independently checked against the 10 archive SHA256 hashes **and** reconstructed release-staging content-tree SHA256 digests. All 10/10 matched before installation; all 10 packages and exact source revision remain pinned. Old `pf5b.1` packs are retained but not included in the newly built offline runtime bundle.
 - New branch `feat/v3-pf5b-foundation-b1-conformance` was derived from `datarelay-link@b9156253973ba48b5cb11b76e9698c6952312300` with a separate Git worktree. The existing Link v3 worktree retains its original platform-denied `tests/test-frp-client.sh` uncommitted content and any independent ongoing changes.
 
+## Current Link v3 parent reconciliation
+
+After the original isolated B2 source commit, the existing Link v3 parent
+advanced to `5637c2851f1768d01efba58ad940077b66a273da`. This candidate
+takes that exact committed parent by a **non-destructive regular merge**,
+retaining its Audit Export receipt validation and Agent rollout preview
+evidence checks. The only merge conflict concerned generated
+`web/dist/app.js`, which was resolved by building from the combined Web
+source rather than by discarding either change. The original Link branch and
+its protected uncommitted Client fixture remain unchanged.
+
+Combined-source native regression: Administration **13/13**, P0 **11/11**,
+Web Journey **70/70**, UX contract **49/49**, bundle **6/6**, and management
+source **12/12** PASS, with a fresh production esbuild/Web CSS build PASS.
+The separate Web auth **12/12** and isolated Web service **30/30** runs
+were also successful on the B2 source prior to the parent merge; those
+backend units were not modified by this source merge. All tests remain
+supplemental, not direct-user Browser or Full User E2E evidence.
+
 ## Link-native integration and negative regression
 
 - The original product-owned `createLinkFoundationAdministrationTasks` is validated against the pinned `@datarelay-labs/testkit.verifyAdministrationConsumer`, not a fake Foundation mock.

@@ -167,6 +167,100 @@ export function auditRetentionRunPermitted(
     &&form.max_events===String(value.config.max_events);
 }
 
+/** Audit Export is a bounded, server-side operation, NOT a Web download.
+ * A successful HTTP code alone cannot prove an artifact was actually created.
+ * Match the acknowledged artifact and filter facts from authoritative Core. */
+export function requireObservedAuditExport(payload:unknown,requestedFilters:unknown):any{
+  const fail=()=>{throw new Error("UNKNOWN · Core Audit Export response did not confirm the submitted filters and server-side artifact. Inspect Activity log before retrying.");};
+  if(!payload||typeof payload!=="object"||Array.isArray(payload)
+    ||!requestedFilters||typeof requestedFilters!=="object"||Array.isArray(requestedFilters))return fail();
+  const data=payload as Record<string,any>;
+  const clean=requestedFilters as Record<string,unknown>;
+  const received=data.filters;
+  const allowed=new Set(["start","end","category","event_type","actor","resource","result","correlation"]);
+  if(data.status!=="CREATED"||data.schema_version!==1
+    ||typeof data.path!=="string"
+    ||!/^\/var\/lib\/drlink\/audit-exports\/drlink-audit-\d{8}T\d{6}Z-[a-f0-9]{8}\.ndjson$/.test(data.path)
+    ||typeof data.sha256!=="string"||!/^[a-f0-9]{64}$/.test(data.sha256)
+    ||typeof data.event_count!=="number"||!Number.isSafeInteger(data.event_count)
+    ||data.event_count<0||data.event_count>50000
+    ||typeof data.size_bytes!=="number"||!Number.isSafeInteger(data.size_bytes)
+    ||data.size_bytes<1||data.size_bytes>64*1024*1024
+    ||data.sanitized!==true||data.download_exposed!==false
+    ||data.authoritative_mutation!==false
+    ||!received||typeof received!=="object"||Array.isArray(received))return fail();
+  const got=received as Record<string,unknown>;
+  const expectedKeys=Object.keys(clean),receivedKeys=Object.keys(got);
+  if(expectedKeys.length!==receivedKeys.length
+    ||expectedKeys.some(key=>!allowed.has(key)||typeof clean[key]!=="string"
+      ||!(clean[key] as string).trim()||(clean[key] as string)!==(clean[key] as string).trim()
+      ||got[key]!==clean[key])
+    ||receivedKeys.some(key=>!allowed.has(key)||!Object.prototype.hasOwnProperty.call(clean,key)))return fail();
+  return payload;
+}
+
+/** Read-only rollout Preview must describe exactly the requested target/immutable
+ * artifact without granting Agent update authority. Stale or invalid receipts are UNKNOWN. */
+export function requireObservedRolloutPreview(payload:unknown,request:unknown):any{
+  const fail=()=>{throw new Error("UNKNOWN · Core Agent Update Preview did not match the current request. Inspect real Agent state and retry preview.");};
+  const object=(v:unknown):v is Record<string,any>=>!!v&&typeof v==="object"&&!Array.isArray(v);
+  const list=(v:unknown,allowEmpty=false):string[]|null=>{
+    if(!Array.isArray(v)||v.length>100)return null;
+    const out:string[]=[],seen=new Set<string>();
+    for(const element of v){
+      if(typeof element!=="string"||!element.trim())return null;
+      const value=element.trim();
+      if(!seen.has(value)){out.push(value);seen.add(value)}
+    }
+    return (allowEmpty||out.length>0)?out:null;
+  };
+  if(!object(payload)||!object(request)||!object(request.artifact))return fail();
+  const data=payload as Record<string,any>,req=request as Record<string,any>;
+  const expected=list(req.targets);
+  const canaries=list(req.canary_targets,true);
+  const wave=req.wave_size,threshold=req.failure_threshold_percent;
+  const art=req.artifact;
+  const version=typeof art.version==="string"?art.version.trim():"";
+  const ref=typeof art.source_ref==="string"?art.source_ref.trim().toLowerCase():"";
+  const digest=typeof art.sha256==="string"?art.sha256.trim().toLowerCase():"";
+  if(!expected||!canaries||!version||!/^[0-9a-f]{40}$/.test(ref)
+    ||!/^[0-9a-f]{64}$/.test(digest)
+    ||!Number.isSafeInteger(wave)||wave<1||wave>25
+    ||!Number.isSafeInteger(threshold)||threshold<0||threshold>100)return fail();
+  const expectedCanaries=canaries.length?canaries:expected.slice(0,wave);
+  if(expectedCanaries.some(id=>!expected.includes(id)))return fail();
+  if(data.read_only!==true||data.ready_to_apply!==false||data.creates_job!==false
+    ||data.requires_fresh_validation_on_apply!==true
+    ||data.artifact_qualification!=="NOT_VERIFIED"
+    ||typeof data.qualification_note!=="string"||!data.qualification_note.trim()
+    ||data.wave_size!==wave||data.failure_threshold_percent!==threshold
+    ||data.target_count!==expected.length
+    ||!Array.isArray(data.targets)||data.targets.length!==expected.length
+    ||data.targets.some((id:any,i:number)=>id!==expected[i])
+    ||!Array.isArray(data.canary_targets)||data.canary_targets.length!==expectedCanaries.length
+    ||data.canary_targets.some((id:any,i:number)=>id!==expectedCanaries[i])
+    ||!object(data.artifact)||data.artifact.version!==version
+    ||data.artifact.source_ref!==ref
+    ||typeof data.artifact.sha256!=="string"||data.artifact.sha256.toLowerCase()!==digest
+    ||!Array.isArray(data.blocked_targets)
+    ||data.blocked_targets.some((id:any)=>typeof id!=="string"||!expected.includes(id))
+    ||new Set(data.blocked_targets).size!==data.blocked_targets.length
+    ||typeof data.eligible!=="boolean"||data.eligible!==(data.blocked_targets.length===0)
+    ||!Array.isArray(data.target_observations)||data.target_observations.length!==expected.length)return fail();
+  for(let i=0;i<expected.length;i++){
+    const row=data.target_observations[i];
+    if(!object(row)||row.target_id!==expected[i]
+      ||row.target_version!==version||typeof row.current_version!=="string"
+      ||!row.current_version||typeof row.platform!=="string"||!row.platform
+      ||row.provenance!=="NOT_VERIFIED"||row.update_available!=="UNKNOWN"
+      ||row.version_relation!==(
+        row.current_version==="unknown"?"UNKNOWN"
+          :row.current_version===version?"SAME_VERSION":"DIFFERENT"
+      ))return fail();
+  }
+  return payload;
+}
+
 /** A 200 response does not prove a Job was enqueued. Check the actual
  * Core queue identity, status and bounded target counts before reporting it. */
 export function requireObservedJobStart(payload:unknown,expectedJobType:string):any{

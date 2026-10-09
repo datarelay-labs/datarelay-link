@@ -539,6 +539,27 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn("Observed version", SOURCE)
         self.assertIn("Update availability remains UNKNOWN", SOURCE)
 
+    def test_agent_rollout_preview_disregards_stale_and_malformed_core_results(self):
+        preview=SOURCE.split('function AgentRolloutPreviewPanel(){',1)[1].split('function JobOperations(',1)[0]
+        helper=(ROOT / 'web/src/uxb-menu-evidence.ts').read_text(encoding='utf-8')
+        self.assertIn('export function requireObservedRolloutPreview(',helper)
+        for expected in (
+            'const previewGeneration=useRef(0);',
+            'const previewInFlight=useRef(false);',
+            'previewGeneration.current+=1;',
+            'if(previewInFlight.current)return;',
+            'const epoch=++previewGeneration.current;',
+            'requireObservedRolloutPreview(await api("/api/v1/jobs/agent-update-rollout/preview",',
+            'if(epoch!==previewGeneration.current)return;',
+            'UNKNOWN · Core Agent Update Preview',
+            'disabled={busy||!hosts.trim()',
+            'setPreview(null);setError("");',
+            'return()=>{previewGeneration.current+=1};',
+        ):
+            self.assertIn(expected,preview,expected)
+        self.assertNotIn('setPreview(await api(',preview)
+        self.assertIn('if(epoch===previewGeneration.current){previewInFlight.current=false;setBusy(false)}',preview)
+
     def test_access_hygiene_orphan_filter_and_resource_navigation(self):
         helper=(ROOT / "web/src/uxb-menu-evidence.ts").read_text(encoding="utf-8")
         self.assertIn('quality==="ORPHANED"&&x.kind!=="orphan-object"', SOURCE)
@@ -805,6 +826,26 @@ class V30WebSaasUxContractTests(unittest.TestCase):
             self.assertNotIn(false_status,audit)
         self.assertIn('retentionState==="ready"&&retention&&<div className="dr-kpi-strip',audit)
         self.assertIn('retention.capacity_exceeded?"Exceeded":"Normal"',audit)
+
+    def test_audit_export_requires_matching_core_ack_and_no_false_download(self):
+        audit=SOURCE.split("function AuditExplorer(",1)[1].split("function AgentRolloutPreviewPanel(",1)[0]
+        evidence=(ROOT / "web/src/uxb-menu-evidence.ts").read_text(encoding="utf-8")
+        self.assertIn("export function requireObservedAuditExport(",evidence)
+        for marker in (
+            'const exportInFlight=useRef(false);',
+            'const [exportBusy,setExportBusy]=useState(false)',
+            'if(exportInFlight.current)return;',
+            'const selectedFilters=exportFilters();',
+            'requireObservedAuditExport(await api("/api/v1/audit/export",',
+            'selectedFilters)',
+            'setExportResult(null);',
+            'Core Audit Export status UNKNOWN',
+            'No Web download',
+            'disabled={exportBusy}',
+            'filters:exportResult.filters',
+        ):
+            self.assertIn(marker,audit,marker)
+        self.assertNotIn('setMessage("Audit export created: "+String(value.path||""))',audit)
 
     def test_irreversible_retention_requires_typed_confirmation_and_fresh_policy(self):
         audit=SOURCE.split("function AuditExplorer(",1)[1].split("function AgentRolloutPreviewPanel(",1)[0]
