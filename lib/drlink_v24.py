@@ -7434,19 +7434,46 @@ def format_show_agent(root: Optional[str] = None) -> str:
     runtime = probe_agent_runtime_unit(root=root)
     autostart = "unknown"
     try:
+        import platform
         import subprocess
 
-        proc = subprocess.run(
-            ["systemctl", "is-enabled", "drlink-client.service"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            universal_newlines=True,
-            check=False,
-        )
-        if proc.returncode == 0:
-            autostart = (proc.stdout or "").strip() or "enabled"
-        elif (proc.stdout or "").strip():
-            autostart = (proc.stdout or "").strip()
+        if platform.system().lower() == "darwin":
+            # launchctl persists its enabled bit separately from process
+            # liveness. "print-disabled system" is the same authority used by
+            # the macOS lifecycle CLI; true means autostart is disabled.
+            proc = subprocess.run(
+                ["launchctl", "print-disabled", "system"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                universal_newlines=True,
+                check=False,
+            )
+            if proc.returncode == 0:
+                label = re.escape(
+                    os.environ.get("FRP_MACOS_LAUNCHD_LABEL")
+                    or "com.datarelay.drlink.frpc"
+                )
+                match = re.search(
+                    r'"' + label + r'"\s*=>\s*(true|false)\b',
+                    proc.stdout or "",
+                    flags=re.IGNORECASE,
+                )
+                if match:
+                    autostart = (
+                        "disabled" if match.group(1).lower() == "true" else "enabled"
+                    )
+        else:
+            proc = subprocess.run(
+                ["systemctl", "is-enabled", "drlink-client.service"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                universal_newlines=True,
+                check=False,
+            )
+            if proc.returncode == 0:
+                autostart = (proc.stdout or "").strip() or "enabled"
+            elif (proc.stdout or "").strip():
+                autostart = (proc.stdout or "").strip()
     except Exception:
         pass
     server = ""
