@@ -92,6 +92,26 @@ class OutputRegressions(unittest.TestCase):
             self.assertIn("\nssh\n", data)
             self.assertNotIn("rs-ssh", data)
 
+    def test_internal_runtime_id_is_not_preferred_to_public_service_name(self):
+        # The rs- runtime ID can outlive a user-facing Remote Service rename.
+        # system info must show the selector accepted by show remote-service.
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / "services.json"
+            dest = Path(tmp) / "access-info.txt"
+            state.write_text(json.dumps({"services": {
+                "rs-original-ssh": {
+                    "id": "rs-original-ssh", "name": "renamed-ssh", "preset": "ssh",
+                    "local_ip": "127.0.0.1", "local_port": 22,
+                    "remote_port": 6000, "enabled": True,
+                }
+            }}))
+            proc = self._bash('render_access_info "$2" 203.0.113.10 "$3"', dest, state)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            data = dest.read_text()
+            self.assertIn("\nrenamed-ssh\n", data)
+            self.assertNotIn("\noriginal-ssh\n", data)
+            self.assertNotIn("rs-original-ssh", data)
+
     def test_macos_autostart_uses_launchctl_true_false_not_unknown(self):
         with tempfile.TemporaryDirectory() as tmp:
             script_file = Path(tmp) / "launchctl"

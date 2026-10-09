@@ -2219,9 +2219,10 @@ for item in services:
     local_port = item.get('local_port')
     remote_port = item.get('remote_port')
     # v2.4 rs-IDs are internal runtime identifiers, not public CLI selectors.
-    # Display only the user-selectable Remote Service name for these records.
+    # Prefer the stored public Remote Service name even if an internal ID
+    # predates a rename; stripping rs- can yield an unusable selector (F005).
     if sid.startswith('rs-'):
-        lines.append(sid[3:])
+        lines.append(name)
     else:
         lines.append(sid if name == sid else f'{sid} ({name})')
     lines.append(f'  Target : {local_ip}:{local_port}')
