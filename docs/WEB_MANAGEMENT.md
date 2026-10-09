@@ -370,6 +370,15 @@ Required baseline:
 - SameSite=Strict unless a documented integration requires otherwise;
 - Secure cookies whenever TLS is used;
 - CSRF protection for state-changing requests;
+- after browser refresh, the authenticated `GET /api/v1/session` returns the
+  current operator **and** a server-keyed, session-bound CSRF value. The
+  browser stores that value in JavaScript memory only, not in cookies readable
+  by JavaScript, URL parameters, local/session storage or persisted drafts.
+  The session GET is cookie-authenticated and `Cache-Control: no-store`;
+  it never returns the bearer session token. Logged-in Web API writes still
+  require the `X-CSRF-Token` header and preserve Core RBAC/concurrency rules.
+  The derived value remains stable across tabs; pre-upgrade random CSRF
+  values stay valid for the existing session lifetime and are not logged.
 - bounded session lifetime and idle timeout;
 - login throttling without account-enumeration leakage;
 - restrictive Content Security Policy;

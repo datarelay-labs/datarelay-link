@@ -650,6 +650,76 @@ class V30WebServiceTests(unittest.TestCase):
         finally:
             plane.close()
 
+    def test_session_reload_recovers_csrf_without_weaker_post_authorization(self):
+        # A real browser refresh restores the HttpOnly session cookie but
+        # clears the JS-held CSRF token. The same authenticated Web session
+        # must recover a usable, stable CSRF value without relogin, cookie
+        # disclosure, extra grants or persistent browser secret storage.
+        original = self.login()
+        status, _, denied = self.request(
+            "POST", "/api/v1/policy-tests/run", {"required_only": True}
+        )
+        self.assertEqual(status, 403, denied)
+
+        status, headers, session = self.request("GET", "/api/v1/session")
+        self.assertEqual(status, 200, session)
+        self.assertEqual(headers.get("cache-control"), "no-store")
+        self.assertEqual(session["csrf_token"], original["csrf_token"])
+        self.assertNotIn("session_token", session)
+        self.assertNotIn("_session_token", session)
+        status, _, second = self.request("GET", "/api/v1/session")
+        self.assertEqual(status, 200, second)
+        self.assertEqual(second["csrf_token"], session["csrf_token"])
+
+        status, _, blocked = self.request(
+            "POST", "/api/v1/policy-tests/run", {"required_only": True},
+            headers={"X-CSRF-Token": "invalid"},
+        )
+        self.assertEqual(status, 403, blocked)
+        status, _, result = self.request(
+            "POST", "/api/v1/policy-tests/run", {"required_only": True},
+            headers={"X-CSRF-Token": session["csrf_token"]},
+        )
+        self.assertEqual(status, 200, result)
+        self.assertTrue(result["ok"])
+        status, _, _ = self.request(
+            "POST", "/api/v1/auth/logout", {},
+            headers={"X-CSRF-Token": session["csrf_token"]},
+        )
+        self.assertEqual(status, 200)
+        status, _, _ = self.request("GET", "/api/v1/session")
+        self.assertEqual(status, 401)
+
+    def test_session_reload_keeps_pre_upgrade_tabs_and_csrf_fail_closed(self):
+        # Upgrade-compatible: an existing Web session stored a random CSRF
+        # digest. Its already-open tab and the reloaded/new tab must BOTH work
+        # without exposing the HttpOnly bearer session token.
+        import hashlib
+
+        issued = self.login()
+        legacy = "legacy-session-csrf-issued-before-upgrade"
+        with WebAuthService(self.tmp) as auth:
+            auth.conn.execute(
+                "UPDATE web_sessions SET csrf_hash=? WHERE id=?",
+                (hashlib.sha256(legacy.encode("utf-8")).hexdigest(),
+                 issued["session_id"]),
+            )
+        status, _, session = self.request("GET", "/api/v1/session")
+        self.assertEqual(status, 200, session)
+        self.assertEqual(session["csrf_token"], issued["csrf_token"])
+        for token in (legacy, session["csrf_token"]):
+            status, _, result = self.request(
+                "POST", "/api/v1/policy-tests/run", {"required_only": True},
+                headers={"X-CSRF-Token": token},
+            )
+            self.assertEqual(status, 200, (token == legacy, result))
+            self.assertTrue(result["ok"])
+        status, _, _ = self.request(
+            "POST", "/api/v1/policy-tests/run", {"required_only": True},
+            headers={"X-CSRF-Token": "forged"},
+        )
+        self.assertEqual(status, 403)
+
     def test_csrf_protects_web_preferences_and_logout(self):
         self.login()
         status, _, _ = self.request(

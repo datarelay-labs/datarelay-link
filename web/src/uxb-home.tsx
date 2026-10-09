@@ -9,7 +9,10 @@ export function firstConnectionStates(data:any,inventory:any[]|null):TaskState[]
   const hostCount=typeof hosts.total==="number"?hosts.total:null;
   const serviceCount=typeof services.total==="number"?services.total:null;
   const serviceEnabled=typeof services.enabled==="number"?services.enabled:null;
-  const ruleEnabled=typeof remote.enabled==="number"?remote.enabled:null;
+  // The canonical overview omits Remote/Internet families with zero rules.
+  // An observed empty policy map means no rules, not an unavailable Core.
+  const ruleEnabled=typeof remote.enabled==="number"?remote.enabled
+    :data?.overview?.policies&&typeof data.overview.policies==="object"?0:null;
   const pending=inventory?.filter(host=>host.admission_state==="PENDING_APPROVAL").length||0;
   const verifiedHost=inventory?.some(host=>host.admission_state==="APPROVED"
     &&String(host.trust_status||"").toLowerCase()==="trusted"

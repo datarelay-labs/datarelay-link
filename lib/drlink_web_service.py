@@ -255,6 +255,9 @@ class WebApplication:
                     "role": principal.role,
                 },
                 "session_id": principal.session_id,
+                # Same-origin authenticated session bootstrap. HTTP no-store
+                # and HttpOnly/SameSite cookies remain enforced by the handler.
+                "csrf_token": self.auth.session_csrf(principal.session_id),
             }
         if path == "/api/v1/overview":
             with ManagementQueryService(self.root) as service:

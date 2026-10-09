@@ -84,6 +84,15 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn('pageDescriptions[active]', SOURCE)
         self.assertIn('aria-label="Breadcrumb"', SOURCE)
 
+    def test_web_api_refresh_bootstraps_csrf_before_core_mutations(self):
+        # An HttpOnly session cookie survives a tab refresh, but JS state
+        # does not. A GET session bootstrap must restore CSRF in memory.
+        self.assertIn('api("/api/v1/session").then(d=>{', SOURCE)
+        self.assertIn('csrf=d.csrf_token;', SOURCE)
+        self.assertIn('if(csrf)headers["X-CSRF-Token"]=csrf;', SOURCE)
+        self.assertNotIn('localStorage.setItem("csrf', SOURCE)
+        self.assertNotIn('sessionStorage', SOURCE)
+
     def test_uxb_first_use_keeps_three_planes_and_core_authority_separate(self):
         self.assertIn('FirstUseHome data={data}', SOURCE)
         self.assertIn('if(active==="setup")return <FirstConnectionSetup', SOURCE)

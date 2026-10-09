@@ -73,6 +73,8 @@ test("first-use states are fail-closed without trustworthy evidence",()=>{
  assert.equal(waiting[3],"Configured · verify");
  assert.equal(waiting[4],"Needs verification");
  assert.equal(home.firstConnectionStates(partial,[{admission_state:"APPROVED",connected:true,trust_status:"trusted"}])[1],"Configured · verify");
+ const noRemoteRules={overview:{managed_hosts:{total:0},remote_services:{total:0,enabled:0},policies:{ai:{enabled:0,total:0}}}};
+ assert.equal(home.firstConnectionStates(noRemoteRules,[])[3],"Not started");
 });
 test("Home SSR has useful actions, no fake connection claims or credential URLs",()=>{
  const empty={overview:{managed_hosts:{total:0},remote_services:{total:0,enabled:0},policies:{remote:{enabled:0}}}};

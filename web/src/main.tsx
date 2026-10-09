@@ -1560,7 +1560,21 @@ function Shell({operator,onLogout}:{operator:any,onLogout:()=>void}){
 
 function App(){
   const [operator,setOperator]=useState<any>(undefined);
-  useEffect(()=>{api("/api/v1/session").then(d=>setOperator(d.operator)).catch(()=>setOperator(null))},[]);
+  useEffect(()=>{
+    // The HttpOnly cookie survives a reload; the in-memory CSRF token does
+    // not. Rehydrate it from the authenticated, no-store same-origin session
+    // API before allowing any Web/Core POST action.
+    let active=true;
+    api("/api/v1/session").then(d=>{
+      if(!active)return;
+      if(!d?.operator||typeof d.csrf_token!=="string"||!d.csrf_token){
+        throw new Error("Incomplete authenticated Web session");
+      }
+      csrf=d.csrf_token;
+      setOperator(d.operator);
+    }).catch(()=>{if(active){csrf="";setOperator(null)}});
+    return()=>{active=false};
+  },[]);
   if(operator===undefined)return <div className="login-wrap"><div className="muted">Loading…</div></div>;
   if(!operator)return <Login onLogin={setOperator}/>;
   return <Shell operator={operator} onLogout={()=>setOperator(null)}/>;
