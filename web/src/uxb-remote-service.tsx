@@ -1,6 +1,15 @@
 import React,{useEffect,useRef,useState} from "react";
 import type {LinkApi} from "./p0-access-policy";
 
+/** Queue results use job_id; canonical Core job details use id. Never lose the
+ * queued identity or present a different job as evidence for this service. */
+export function mergeRemoteServiceJob(queued:any,detail:any){
+  const requested=String(queued?.job_id||queued?.id||"");
+  const observed=String(detail?.job_id||detail?.id||"");
+  if(!requested||observed!==requested)throw new Error("Core returned a different Agent job identity.");
+  return {...detail,job_id:requested};
+}
+
 /** UXB-03: one canonical Remote Service editor used from both Services and Setup. */
 export function RemoteServiceEditor({api,ownerHint="",onSelection,initialSelection}:{
   api:LinkApi,ownerHint?:string,
@@ -51,7 +60,10 @@ export function RemoteServiceEditor({api,ownerHint="",onSelection,initialSelecti
   async function refreshJob(){
     if(!job?.job_id||busy)return;
     setBusy(true);
-    try{setJob(await api("/api/v1/jobs/"+encodeURIComponent(String(job.job_id))))}
+    try{
+      const detail=await api("/api/v1/jobs/"+encodeURIComponent(String(job.job_id)));
+      setJob(mergeRemoteServiceJob(job,detail));
+    }
     catch(e:any){setError(String(e?.message||e))}
     finally{setBusy(false)}
   }

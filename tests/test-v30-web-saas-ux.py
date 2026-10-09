@@ -117,6 +117,59 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertNotIn('localStorage.setItem("csrf', SOURCE)
         self.assertNotIn('sessionStorage', SOURCE)
 
+    def test_draft_edit_and_failed_validation_invalidate_stale_apply(self):
+        # UXE-11 supplemental source guard: UI must retire an old Core plan
+        # as soon as the edited bundle or exported editor content changes.
+        draft = SOURCE.split("function DraftWorkspace(){", 1)[1].split(
+            "function BlastRadiusView(", 1
+        )[0]
+        self.assertIn("function changeBundle(value:string){", draft)
+        self.assertIn("setBundle(value);setPreview(null);setTestResult(null);setConfirmation(\"\");", draft)
+        self.assertIn("onChange={e=>changeBundle(e.target.value)}", draft)
+        self.assertIn('setPreview(null);setConfirmation("");', draft)
+        self.assertIn('const planEpoch=useRef(0);', draft)
+        self.assertIn('planEpoch.current+=1;', draft)
+        self.assertIn('const epoch=++planEpoch.current;', draft)
+        self.assertIn('if(epoch!==planEpoch.current)return;', draft)
+        self.assertIn('if(!draftId||!preview?.change_plan_id||confirmation!=="APPLY")return;', draft)
+        self.assertNotIn("const id=await ensureDraft();\n      const result=await api(\"/api/v1/drafts/\"+id+\"/apply\"", draft)
+
+    def test_guided_forms_invalidate_preview_on_changed_inputs(self):
+        # UXE-11: a previously reviewed change plan must not remain
+        # actionable after editing its host/object/policy input fields.
+        for form in (
+            'key={JSON.stringify([host,label,description,tags])}',
+            'key={JSON.stringify([kind,operation,name,value,subtype,port,items])}',
+            'key={JSON.stringify([plane,operation,enabled])}',
+        ):
+            self.assertIn(form, SOURCE)
+        lifecycle = SOURCE.split('function ManagedHostLifecyclePanel(){', 1)[1].split(
+            'function GuidedObjectPanel(){', 1
+        )[0]
+        self.assertIn('onChange={e=>{setHost(e.target.value);setPreview(null);setConfirmation("")}}', lifecycle)
+
+    def test_remaining_security_workflows_retire_stale_previews(self):
+        # UXE-11 supplementary checks for rarely used Core-backed changes.
+        temporary = SOURCE.split('function TemporaryAccessPanel(){', 1)[1].split(
+            'function PolicySafetyPanel(', 1
+        )[0]
+        self.assertIn('function resetChangePlan(){', temporary)
+        for field in ('plane', 'rule', 'operation', 'expiresAt'):
+            self.assertIn('resetChangePlan();set' + field[0].upper() + field[1:] + '(e.target.value)', temporary)
+        safety = SOURCE.split('function PolicySafetyPanel(', 1)[1].split(
+            'function LinkFoundationAdministration(', 1
+        )[0]
+        self.assertIn('function invalidateTestPreview(){', safety)
+        for field in ('testName', 'expected'):
+            self.assertIn('invalidateTestPreview();set' + field[0].upper() + field[1:] + '(e.target.value)', safety)
+        for field in ('required', 'enabled'):
+            self.assertIn('invalidateTestPreview();set' + field[0].upper() + field[1:] + '(e.target.checked)', safety)
+        operations = SOURCE.split('function AccessOperations(', 1)[1].split(
+            'function AuditExplorer(', 1
+        )[0]
+        self.assertIn('function invalidateCutoff(){', operations)
+        self.assertIn('function changeDiagnosisFlow(', operations)
+
     def test_uxb_first_use_keeps_three_planes_and_core_authority_separate(self):
         self.assertIn('FirstUseHome data={data}', SOURCE)
         self.assertIn('if(active==="setup")return <FirstConnectionSetup', SOURCE)

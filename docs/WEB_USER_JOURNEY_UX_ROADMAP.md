@@ -343,3 +343,38 @@ User E2E; source freeze, CI/artifact/hash/provenance and owner acceptance.
 Prior explicit platform safety refusals for Playwright installation,
 preview-login automation and the Client test remain in force and must
 not be rerouted. Partial static evidence cannot close these gates.
+
+
+## 10. UXB-06 UI/API stabilization and permitted manual verification handoff — 2026-10-09
+
+**Gate:** UXB-06/UXE-01..12 remain **NOT VERIFIED** by actual users. This entry is a reproducible *prequalification* record and does not supersede the canonical E2E contract or grant release acceptance.
+
+### Corrected Web/Core integration and misleading-state cases
+
+- **Remote Service → Management Job detail:** Core Apply queues with `job_id`, while subsequent canonical `GET /jobs/{id}` identifies the job using `id`. The editor now retains the original queue ID across refreshes and rejects mismatched job details, without calling QUEUED a published service or connection. Offline regression covers QUEUED → RUNNING → SUCCEEDED plus ID mismatch.
+- **Configuration Draft → Change Plan:** changing editor contents, exporting a different bundle, starting another validation/diff, or receiving an obsolete async response invalidates or ignores the old preview. Apply now submits the already-previewed exact draft ID and plan, without another implicit update immediately before Apply; Core hash/revision/role/confirmation remain authoritative.
+- **Other Change Plans:** Host metadata, object/group, policy settings, Host lifecycle, temporary access, saved policy regression tests and emergency cutoff changes invalidate the prior reviewed plan on input changes. The Access Diagnosis panel hides the previously observed decision when its flow inputs change, pending another actual Core query.
+
+### Reproducible supporting checks on the isolated worktree
+
+| Evidence | Observed result | What it does **not** prove |
+| --- | --- | --- |
+| `python3 tests/test-v30-web-service.py -q` | **29/29 PASS** (temporary test root, Web/Core HTTP handlers) | Real lab/browser authentication or remote connection success |
+| `python3 tests/test-v30-web-auth.py -q` | **12/12 PASS** | Cross-role manual UI clicks |
+| `python3 tests/test-v30-web-mfa-policy.py -q` | **5/5 PASS** | Manual authenticator/recovery usability |
+| `python3 tests/test-v30-web-saas-ux.py -q` | **20/20 PASS** (includes newly added stale-plan invariants) | Browser click/focus/layout behavior |
+| `npm run test:journey` | **13/13 PASS** (includes queue/detail identity regression) | Actual Agent job completion |
+| `npm run test:p0`; `npm run test:administration` | **8/8; 6/6 PASS** | Human onboarding and subjective clarity |
+| `python3 tests/test-v30-web-bundle.py -q` | **6/6 PASS**, deterministic bundle checks | Signed stable release |
+| `bash tests/test-v30-web-package.sh` | **WEB_PACKAGE_LIFECYCLE=PASS**, optional Web install/uninstall/reinstall preserves Core policy | Full production upgrade |
+| `npm run build`; `python3 scripts/build-web-bundle.py` | **PASS**, isolated package updated | Real-browser acceptance |
+| HTTPS preview GET using local pinned preview certificate | **HTTP 200**, current `web/dist` served by existing isolated processes | Authenticated UX or production-grade certificate |
+
+### Allowed UXE manual verification sequence
+
+1. In the existing isolated preview, use explicitly authorized Admin, Operator, and Read Only sessions; check UXE-01..08 and the real Agent → service → job → rule → decision stages. Never record credentials, enrollment links, OTP, or session cookies in evidence.
+2. For UXE-09/11, verify separate empty/error/UNKNOWN states; deliberately edit **each** reviewed Change Plan field and confirm the old Apply control disappears. Test wrong confirmation, failed required tests, expired plan, queued-to-detail refresh and deliberately denied Core policy decision. Never interpret a policy ALLOW or QUEUED job as target reachability.
+3. For UXE-10, verify desktop, 375px and 320px, keyboard Tab/Enter/Escape, modal focus, screen-reader labels, tables, Help and logout. Record tester/role, exact candidate HEAD, scenario ID, actual action/evidence and PASS/FAIL in the approved test location.
+4. UXE-12 remains gated by independently confirmed Web/Core/CLI and offline lifecycle results at the qualified exact HEAD, plus the documented two-user Full User E2E sequence and owner acceptance.
+
+**Explicit boundary:** The platform-denied automated browser install/login and denied Client fixture remain **NOT RUN / NOT BYPASSED**. Only the isolated preview static GET is included here. Preserve the unrelated local `tests/test-frp-client.sh` modification without staging. Do not claim UXB-06 PASS until permitted real-user browser evidence and exact-HEAD qualifications exist.

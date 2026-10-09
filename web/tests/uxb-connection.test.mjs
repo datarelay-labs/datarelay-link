@@ -79,6 +79,18 @@ test("service publication is preview/typed/queued and cannot imply deployed",()=
  assert.match(source,/does not instantly prove success|queued Agent job is NOT|queued Agent job is not/i);
 });
 
+test("Remote Service queued job stays refreshable after Core job-detail response",()=>{
+ const queued={job_id:"job-42",status:"QUEUED"};
+ const running=service.mergeRemoteServiceJob(queued,{id:"job-42",status:"RUNNING",targets:[]});
+ assert.equal(running.job_id,"job-42");
+ assert.equal(running.status,"RUNNING");
+ assert.equal(running.id,"job-42");
+ const done=service.mergeRemoteServiceJob(running,{id:"job-42",status:"SUCCEEDED"});
+ assert.equal(done.job_id,"job-42");
+ assert.equal(done.status,"SUCCEEDED");
+ assert.throws(()=>service.mergeRemoteServiceJob(queued,{id:"different",status:"RUNNING"}),/different Agent job identity/);
+});
+
 test("setup fixes selected plane for the Core-backed guided policy editor",()=>{
  const html=renderToStaticMarkup(React.createElement(policy.GuidedPolicyJourney,{
   api:async()=>{throw new Error("SSR must not call Core API")},

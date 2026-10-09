@@ -1,4 +1,4 @@
-import React, {useEffect, useState} from "react";
+import React, {useEffect, useRef, useState} from "react";
 import {createRoot} from "react-dom/client";
 import {QRCodeSVG} from "qrcode.react";
 import {AdministrationHub,type AdministrationHubTask} from "@datarelay-labs/foundation";
@@ -149,6 +149,13 @@ function DraftWorkspace(){
   const [confirmation,setConfirmation]=useState("");
   const [message,setMessage]=useState("");
   const [error,setError]=useState("");
+  const planEpoch=useRef(0);
+
+  function changeBundle(value:string){
+    planEpoch.current+=1;
+    setBundle(value);setPreview(null);setTestResult(null);setConfirmation("");
+    setError("");setMessage("");
+  }
 
   async function ensureDraft(){
     if(draftId){
@@ -160,27 +167,33 @@ function DraftWorkspace(){
     return created.id as string;
   }
   async function doTest(){
-    setError("");setMessage("");
+    const epoch=++planEpoch.current;
+    setError("");setMessage("");setPreview(null);setConfirmation("");
     try{
       const id=await ensureDraft();
       const result=await api("/api/v1/drafts/"+id+"/test",{method:"POST",body:"{}"});
+      if(epoch!==planEpoch.current)return;
       setTestResult(result);setPreview(null);setConfirmation("");
       setMessage("ConfigurationBundle test PASS");
-    }catch(e:any){setTestResult(null);setError(e.message||String(e))}
+    }catch(e:any){if(epoch===planEpoch.current){setTestResult(null);setError(e.message||String(e))}}
   }
   async function doDiff(){
-    setError("");setMessage("");
+    const epoch=++planEpoch.current;
+    setError("");setMessage("");setPreview(null);setConfirmation("");
     try{
       const id=await ensureDraft();
       const result=await api("/api/v1/drafts/"+id+"/diff",{method:"POST",body:"{}"});
+      if(epoch!==planEpoch.current)return;
       setPreview(result);setTestResult(null);setConfirmation("");
-    }catch(e:any){setPreview(null);setError(e.message||String(e))}
+    }catch(e:any){if(epoch===planEpoch.current){setPreview(null);setError(e.message||String(e))}}
   }
   async function doApply(){
+    if(!draftId||!preview?.change_plan_id||confirmation!=="APPLY")return;
     setError("");setMessage("");
     try{
-      const id=await ensureDraft();
-      const result=await api("/api/v1/drafts/"+id+"/apply",{method:"POST",body:JSON.stringify({change_plan_id:preview?.change_plan_id||"",confirmation})});
+      // Apply the exact Core plan already previewed; never re-upload a modified
+      // bundle while committing it. Core still validates hash and revision.
+      const result=await api("/api/v1/drafts/"+draftId+"/apply",{method:"POST",body:JSON.stringify({change_plan_id:preview.change_plan_id,confirmation})});
       setMessage("Applied at revision "+result.revision);setPreview(null);setTestResult(null);setDraftId("");setConfirmation("");
     }catch(e:any){setError(e.message||String(e))}
   }
@@ -194,26 +207,30 @@ function DraftWorkspace(){
   }
   async function doExportDraft(){
     if(!draftId)return;
+    const epoch=++planEpoch.current;
     setError("");
     try{
       const result=await api("/api/v1/drafts/"+draftId+"/export");
-      setBundle(result.bundle_text);setMessage("Draft ConfigurationBundle exported to the editor");
-    }catch(e:any){setError(e.message||String(e))}
+      if(epoch!==planEpoch.current)return;
+      changeBundle(result.bundle_text);setMessage("Draft ConfigurationBundle exported to the editor");
+    }catch(e:any){if(epoch===planEpoch.current)setError(e.message||String(e))}
   }
   async function doExportCurrent(){
+    const epoch=++planEpoch.current;
     setError("");setMessage("");
     try{
       const result=await api("/api/v1/configuration/export");
-      setBundle(result.bundle_text);setPreview(null);setTestResult(null);setConfirmation("");
+      if(epoch!==planEpoch.current)return;
+      changeBundle(result.bundle_text);
       setMessage("Current redacted configuration exported to the editor");
-    }catch(e:any){setError(e.message||String(e))}
+    }catch(e:any){if(epoch===planEpoch.current)setError(e.message||String(e))}
   }
   return <div className="draft-layout">
     <div className="card">
       <h3>Configuration Draft</h3>
       <div className="muted">Non-authoritative until Apply. Test and Diff use the canonical ConfigurationBundle engine; Apply is revision-bound.</div>
       {error&&<div className="error">{error}</div>}{message&&<div className="notice">{message}</div>}
-      <textarea className="draft-editor" value={bundle} onChange={e=>setBundle(e.target.value)} spellCheck={false}/>
+      <textarea className="draft-editor" value={bundle} onChange={e=>changeBundle(e.target.value)} spellCheck={false}/>
       <div className="toolbar">
         <button className="primary" onClick={doTest}>Test</button>
         <button className="primary" onClick={doDiff}>Diff & Preview</button>
@@ -287,7 +304,7 @@ function ManagedHostMetadataPanel(){
     if(Object.keys(tagMap).length)payload.tags=tagMap;
     return {change_type:"managed-host-metadata",payload};
   }
-  return <div><div className="card"><h3>Guided Managed Host Metadata</h3><div className="toolbar"><input value={host} onChange={e=>setHost(e.target.value)} placeholder="Managed Host ID/name"/><input value={label} onChange={e=>setLabel(e.target.value)} placeholder="Optional label"/><input value={description} onChange={e=>setDescription(e.target.value)} placeholder="Description (blank clears)"/><input value={tags} onChange={e=>setTags(e.target.value)} placeholder="tags: env=prod,owner=netops"/></div></div><GuidedApplyPanel title="Managed Host Change Plan" build={request}/></div>;
+  return <div><div className="card"><h3>Guided Managed Host Metadata</h3><div className="toolbar"><input value={host} onChange={e=>setHost(e.target.value)} placeholder="Managed Host ID/name"/><input value={label} onChange={e=>setLabel(e.target.value)} placeholder="Optional label"/><input value={description} onChange={e=>setDescription(e.target.value)} placeholder="Description (blank clears)"/><input value={tags} onChange={e=>setTags(e.target.value)} placeholder="tags: env=prod,owner=netops"/></div></div><GuidedApplyPanel key={JSON.stringify([host,label,description,tags])} title="Managed Host Change Plan" build={request}/></div>;
 }
 
 function ManagedHostAdmissionPanel(){
@@ -358,7 +375,7 @@ function ManagedHostLifecyclePanel(){
     <div className="muted">Trust revoke keeps the Managed Host record, Remote Services, and public port reservations but requires re-enrollment. Retire permanently removes reference-safe server-owned Host state and owned Remote Services/port reservations.</div>
     {error&&<div className="error">{error}</div>}{message&&<div className="notice">{message}</div>}
     <div className="toolbar">
-      <input value={host} onChange={e=>setHost(e.target.value)} placeholder="Managed Host ID/name"/>
+      <input value={host} onChange={e=>{setHost(e.target.value);setPreview(null);setConfirmation("")}} placeholder="Managed Host ID/name"/>
       <select value={operation} onChange={e=>{setOperation(e.target.value);setPreview(null);setConfirmation("")}}><option value="revoke-trust">Revoke trust</option><option value="retire">Retire Managed Host</option></select>
       <button className="primary" onClick={doPreview} disabled={!host}>Preview Impact</button>
     </div>
@@ -382,20 +399,21 @@ function GuidedObjectPanel(){
     }
     return {change_type:kind,payload};
   }
-  return <div><div className="card"><h3>Guided Object / Group</h3><div className="toolbar"><select value={kind} onChange={e=>{setKind(e.target.value);setSubtype(e.target.value==="service-object"?"tcp":"ip")}}><option value="network-object">Network Object</option><option value="network-group">Network Group</option><option value="service-object">Service Object</option><option value="service-group">Service Group</option><option value="permission-object">Permission Object</option><option value="permission-group">Permission Group</option></select><select value={operation} onChange={e=>setOperation(e.target.value)}><option value="set">Create / edit</option><option value="delete">Delete</option></select><input value={name} onChange={e=>setName(e.target.value)} placeholder="Name"/>{operation==="set"&&kind==="network-object"&&<><input value={subtype} onChange={e=>setSubtype(e.target.value)} placeholder="ip/fqdn/network/host"/><input value={value} onChange={e=>setValue(e.target.value)} placeholder="Value"/></>}{operation==="set"&&kind==="service-object"&&<><input value={subtype} onChange={e=>setSubtype(e.target.value)} placeholder="tcp/udp/fixed-tcp"/><input value={port} onChange={e=>setPort(e.target.value)} placeholder="Port"/></>}{operation==="set"&&!(["network-object","service-object"] as string[]).includes(kind)&&<input value={items} onChange={e=>setItems(e.target.value)} placeholder={kind==="permission-object"?"Permissions, comma-separated":"Members, comma-separated"}/>}</div></div><GuidedApplyPanel title="Object / Group Change Plan" build={request}/></div>;
+  return <div><div className="card"><h3>Guided Object / Group</h3><div className="toolbar"><select value={kind} onChange={e=>{setKind(e.target.value);setSubtype(e.target.value==="service-object"?"tcp":"ip")}}><option value="network-object">Network Object</option><option value="network-group">Network Group</option><option value="service-object">Service Object</option><option value="service-group">Service Group</option><option value="permission-object">Permission Object</option><option value="permission-group">Permission Group</option></select><select value={operation} onChange={e=>setOperation(e.target.value)}><option value="set">Create / edit</option><option value="delete">Delete</option></select><input value={name} onChange={e=>setName(e.target.value)} placeholder="Name"/>{operation==="set"&&kind==="network-object"&&<><input value={subtype} onChange={e=>setSubtype(e.target.value)} placeholder="ip/fqdn/network/host"/><input value={value} onChange={e=>setValue(e.target.value)} placeholder="Value"/></>}{operation==="set"&&kind==="service-object"&&<><input value={subtype} onChange={e=>setSubtype(e.target.value)} placeholder="tcp/udp/fixed-tcp"/><input value={port} onChange={e=>setPort(e.target.value)} placeholder="Port"/></>}{operation==="set"&&!(["network-object","service-object"] as string[]).includes(kind)&&<input value={items} onChange={e=>setItems(e.target.value)} placeholder={kind==="permission-object"?"Permissions, comma-separated":"Members, comma-separated"}/>}</div></div><GuidedApplyPanel key={JSON.stringify([kind,operation,name,value,subtype,port,items])} title="Object / Group Change Plan" build={request}/></div>;
 }
 
 function GuidedPolicySettingsPanel(){
   const [plane,setPlane]=useState("remote"),[operation,setOperation]=useState("set-enforcement"),[enabled,setEnabled]=useState(true);
   function request(){const payload:any={operation};if(operation==="set-enforcement")payload.enabled=enabled;return {change_type:plane+"-access-policy",payload};}
-  return <div><div className="card"><h3>Access Policy Settings</h3><div className="muted">Enable/disable enforcement or reset policy mode and all rules through the same Core policy functions as CLI.</div><div className="toolbar"><select value={plane} onChange={e=>setPlane(e.target.value)}><option value="remote">Remote</option><option value="internet">Internet</option><option value="ai">AI</option></select><select value={operation} onChange={e=>setOperation(e.target.value)}><option value="set-enforcement">Set enforcement</option><option value="reset">Reset policy + rules</option></select>{operation==="set-enforcement"&&<label><input type="checkbox" checked={enabled} onChange={e=>setEnabled(e.target.checked)}/> Enforcement enabled</label>}</div></div><GuidedApplyPanel title="Access Policy Change Plan" build={request}/></div>;
+  return <div><div className="card"><h3>Access Policy Settings</h3><div className="muted">Enable/disable enforcement or reset policy mode and all rules through the same Core policy functions as CLI.</div><div className="toolbar"><select value={plane} onChange={e=>setPlane(e.target.value)}><option value="remote">Remote</option><option value="internet">Internet</option><option value="ai">AI</option></select><select value={operation} onChange={e=>setOperation(e.target.value)}><option value="set-enforcement">Set enforcement</option><option value="reset">Reset policy + rules</option></select>{operation==="set-enforcement"&&<label><input type="checkbox" checked={enabled} onChange={e=>setEnabled(e.target.checked)}/> Enforcement enabled</label>}</div></div><GuidedApplyPanel key={JSON.stringify([plane,operation,enabled])} title="Access Policy Change Plan" build={request}/></div>;
 }
 
 function TemporaryAccessPanel(){
   const [plane,setPlane]=useState("remote"),[rule,setRule]=useState(""),[operation,setOperation]=useState("set"),[expiresAt,setExpiresAt]=useState("");
   const [preview,setPreview]=useState<any>(null),[confirmation,setConfirmation]=useState(""),[message,setMessage]=useState(""),[error,setError]=useState("");
+  function resetChangePlan(){setPreview(null);setConfirmation("");setMessage("")}
   async function doPreview(){
-    setError("");setMessage("");
+    setError("");setMessage("");resetChangePlan();
     try{
       const body:any={plane,rule,operation};
       if(operation==="set")body.expires_at=expiresAt;
@@ -415,10 +433,10 @@ function TemporaryAccessPanel(){
     <div className="muted">Set, change, or clear server-authoritative expiry on an existing WHITELIST grant.</div>
     {error&&<div className="error">{error}</div>}{message&&<div className="notice">{message}</div>}
     <div className="toolbar">
-      <select value={plane} onChange={e=>setPlane(e.target.value)}><option value="remote">Remote</option><option value="internet">Internet</option><option value="ai">AI</option></select>
-      <input value={rule} onChange={e=>setRule(e.target.value)} placeholder="Rule name"/>
-      <select value={operation} onChange={e=>setOperation(e.target.value)}><option value="set">Set / change expiry</option><option value="clear">Clear expiry</option></select>
-      {operation==="set"&&<input value={expiresAt} onChange={e=>setExpiresAt(e.target.value)} placeholder="2030-01-01T00:00:00Z"/>}
+      <select value={plane} onChange={e=>{resetChangePlan();setPlane(e.target.value)}}><option value="remote">Remote</option><option value="internet">Internet</option><option value="ai">AI</option></select>
+      <input value={rule} onChange={e=>{resetChangePlan();setRule(e.target.value)}} placeholder="Rule name"/>
+      <select value={operation} onChange={e=>{resetChangePlan();setOperation(e.target.value)}}><option value="set">Set / change expiry</option><option value="clear">Clear expiry</option></select>
+      {operation==="set"&&<input value={expiresAt} onChange={e=>{resetChangePlan();setExpiresAt(e.target.value)}} placeholder="2030-01-01T00:00:00Z"/>}
       <button className="primary" onClick={doPreview} disabled={!rule||operation==="set"&&!expiresAt}>Preview</button>
     </div>
     {preview&&<div className="card">
@@ -437,6 +455,8 @@ function PolicySafetyPanel({operator}:{operator:any}){
   const [trace,setTrace]=useState<any>(null),[graph,setGraph]=useState<any>(null),[tests,setTests]=useState<any[]>([]),[runResult,setRunResult]=useState<any>(null);
   const [selected,setSelected]=useState(""),[testName,setTestName]=useState(""),[expected,setExpected]=useState("ALLOW"),[required,setRequired]=useState(true),[enabled,setEnabled]=useState(true);
   const [preview,setPreview]=useState<any>(null),[confirmation,setConfirmation]=useState(""),[message,setMessage]=useState(""),[error,setError]=useState("");
+  function invalidateTestPreview(){setPreview(null);setConfirmation("");setMessage("")}
+  useEffect(()=>{invalidateTestPreview()},[plane,source,destination,selector,path,testName,expected,required,enabled]);
 
   async function loadTests(){
     try{const result=await api("/api/v1/policy-tests");setTests(result.items||[])}
@@ -542,10 +562,10 @@ function PolicySafetyPanel({operator}:{operator:any}){
       <Table items={tests.map((x:any)=>({name:x.name,plane:x.plane,expected:x.expected,required:x.required,enabled:x.enabled}))}/>
       {operator.role!=="Read Only"&&<>
         <div className="toolbar">
-          <input value={testName} onChange={e=>setTestName(e.target.value)} placeholder="Test name"/>
-          <select value={expected} onChange={e=>setExpected(e.target.value)}><option value="ALLOW">Expect ALLOW</option><option value="DENY">Expect DENY</option></select>
-          <label><input type="checkbox" checked={required} onChange={e=>setRequired(e.target.checked)}/> Required</label>
-          <label><input type="checkbox" checked={enabled} onChange={e=>setEnabled(e.target.checked)}/> Enabled</label>
+          <input value={testName} onChange={e=>{invalidateTestPreview();setTestName(e.target.value)}} placeholder="Test name"/>
+          <select value={expected} onChange={e=>{invalidateTestPreview();setExpected(e.target.value)}}><option value="ALLOW">Expect ALLOW</option><option value="DENY">Expect DENY</option></select>
+          <label><input type="checkbox" checked={required} onChange={e=>{invalidateTestPreview();setRequired(e.target.checked)}}/> Required</label>
+          <label><input type="checkbox" checked={enabled} onChange={e=>{invalidateTestPreview();setEnabled(e.target.checked)}}/> Enabled</label>
           <button className="primary" onClick={previewSave} disabled={!testName||!ready}>Preview Save</button>
           <button className="danger" onClick={previewDelete} disabled={!selected}>Preview Delete</button>
         </div>
@@ -693,12 +713,19 @@ function AccessOperations({operator,onNavigate,context}:{operator:any,onNavigate
   const [scopeKind,setScopeKind]=useState("plane"),[scopeRef,setScopeRef]=useState(""),[cutoffOperation,setCutoffOperation]=useState("apply"),[reason,setReason]=useState("");
   const [cutoffPreview,setCutoffPreview]=useState<any>(null),[cutoffConfirm,setCutoffConfirm]=useState(""),[cutoffMessage,setCutoffMessage]=useState("");
   const scopeOptions:Record<string,string[]>={remote:["plane","remote-service"],internet:["plane","managed-host"],ai:["plane","ai-identity"]};
+  function invalidateCutoff(){setCutoffPreview(null);setCutoffConfirm("");setCutoffMessage("")}
+  function changeDiagnosisFlow(field:"source"|"destination"|"selector",value:string){
+    if(field==="source")setSource(value);
+    else if(field==="destination")setDestination(value);
+    else setSelector(value);
+    setDiagnosis(null);setError("");
+  }
 
   async function loadCutoffs(){
     try{setCutoffState(await api("/api/v1/emergency-cutoffs?plane="+encodeURIComponent(plane)))}catch(e:any){setError(e.message||String(e))}
   }
   useEffect(()=>{loadCutoffs()},[plane]);
-  function changePlane(value:string){setPlane(value);setSelector("");setDiagnosis(null);setLive(null);setScopeKind("plane");setScopeRef("");setCutoffPreview(null);setCutoffConfirm("")}
+  function changePlane(value:string){setPlane(value);setSelector("");setDiagnosis(null);setLive(null);setScopeKind("plane");setScopeRef("");invalidateCutoff()}
   async function runDiagnosis(){
     setError("");setDiagnosis(null);
     try{
@@ -761,9 +788,9 @@ function AccessOperations({operator,onNavigate,context}:{operator:any,onNavigate
       <div className="dr-section-head"><div><p className="dr-eyebrow">Policy Simulator</p><h3>Connection Diagnosis</h3></div></div>
       <div className="muted">Side-effect-free Core correlation. No browser-triggered DNS or target probe is launched; missing evidence stays UNKNOWN.</div>
       <div className="toolbar">
-        <input value={source} onChange={e=>setSource(e.target.value)} placeholder={plane==="ai"?"AI Identity / source":"Source Object / Group"}/>
-        <input value={destination} onChange={e=>setDestination(e.target.value)} placeholder="Destination Object / Group"/>
-        <input value={selector} onChange={e=>setSelector(e.target.value)} placeholder={plane==="ai"?"Permission Object / Group":"Service Object / Group"}/>
+        <input value={source} onChange={e=>changeDiagnosisFlow("source",e.target.value)} placeholder={plane==="ai"?"AI Identity / source":"Source Object / Group"}/>
+        <input value={destination} onChange={e=>changeDiagnosisFlow("destination",e.target.value)} placeholder="Destination Object / Group"/>
+        <input value={selector} onChange={e=>changeDiagnosisFlow("selector",e.target.value)} placeholder={plane==="ai"?"Permission Object / Group":"Service Object / Group"}/>
         <button className="primary" onClick={runDiagnosis}>Diagnose</button>
       </div>
       {diagnosis&&<>
@@ -796,10 +823,10 @@ function AccessOperations({operator,onNavigate,context}:{operator:any,onNavigate
       <div className="warning-box">This reversible override affects new authorization only. Existing sessions are not claimed to be terminated.</div>
       {cutoffMessage&&<div className="notice">{cutoffMessage}</div>}
       <div className="toolbar">
-        <select value={cutoffOperation} onChange={e=>{setCutoffOperation(e.target.value);setCutoffPreview(null)}}><option value="apply">Apply cutoff</option><option value="clear">Clear cutoff</option></select>
-        <select value={scopeKind} onChange={e=>{setScopeKind(e.target.value);setScopeRef("");setCutoffPreview(null)}}>{scopeOptions[plane].map(x=><option key={x} value={x}>{x}</option>)}</select>
-        {scopeKind!=="plane"&&<input value={scopeRef} onChange={e=>setScopeRef(e.target.value)} placeholder={scopeKind+" selector"}/>}
-        {cutoffOperation==="apply"&&<input value={reason} onChange={e=>setReason(e.target.value)} placeholder="Incident reason (optional)"/>}
+        <select value={cutoffOperation} onChange={e=>{invalidateCutoff();setCutoffOperation(e.target.value)}}><option value="apply">Apply cutoff</option><option value="clear">Clear cutoff</option></select>
+        <select value={scopeKind} onChange={e=>{invalidateCutoff();setScopeKind(e.target.value);setScopeRef("")}}>{scopeOptions[plane].map(x=><option key={x} value={x}>{x}</option>)}</select>
+        {scopeKind!=="plane"&&<input value={scopeRef} onChange={e=>{invalidateCutoff();setScopeRef(e.target.value)}} placeholder={scopeKind+" selector"}/>}
+        {cutoffOperation==="apply"&&<input value={reason} onChange={e=>{invalidateCutoff();setReason(e.target.value)}} placeholder="Incident reason (optional)"/>}
         <button className="danger" onClick={previewCutoff}>Preview cutoff</button>
       </div>
       {cutoffPreview&&<>
