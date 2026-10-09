@@ -84,6 +84,8 @@ export function FirstConnectionSetup({api,operator,onNavigate,initialDraft,onDra
   const [enrollments,setEnrollments]=useState<any>(null);
   const [error,setError]=useState(""),[checking,setChecking]=useState(false);
   const [serviceBusy,setServiceBusy]=useState(false);
+  const [enrollmentBusy,setEnrollmentBusy]=useState(false);
+  const wizardBusy=serviceBusy||enrollmentBusy;
   const [selectedHost,setSelectedHost]=useState(initialDraft?.selectedHost||"");
   const selectedHostRef=useRef(initialDraft?.selectedHost||"");
   const [serviceName,setServiceName]=useState(initialDraft?.serviceName||"");
@@ -156,25 +158,26 @@ export function FirstConnectionSetup({api,operator,onNavigate,initialDraft,onDra
         <strong>1. What would you like to connect?</strong>
         <div className="dr-uxb-mode-grid">{connectionTypes.map(item=><button key={item.id} type="button"
           className={plane===item.id?"dr-uxb-mode-card active":"dr-uxb-mode-card"}
-          aria-pressed={plane===item.id} disabled={serviceBusy} onClick={()=>changePlane(item.id)}>
+          aria-pressed={plane===item.id} disabled={wizardBusy} onClick={()=>changePlane(item.id)}>
           <strong>{item.title}</strong><span>{item.detail}</span><small>{item.example}</small>
         </button>)}</div>
       </div>
       <div className="dr-uxb-setup-summary" role="status">Current stage {step} of 4 · {firstUseStages[plane][step-1]}. Changing stages does not modify access.</div>
       <ol className="dr-uxb-stage-menu" aria-label="First-connection stages">
         {stages.map((title,i)=><li key={title} className={step===i+1?"active":""}>
-          <button type="button" aria-current={step===i+1?"step":undefined} disabled={serviceBusy} onClick={()=>setStep(i+1)}>
+          <button type="button" aria-current={step===i+1?"step":undefined} disabled={wizardBusy} onClick={()=>setStep(i+1)}>
             <span>{i+1}</span><strong>{title}</strong></button>
         </li>)}
       </ol>
       <div className="dr-uxb-flow-buttons">
-        <button className="secondary" disabled={step===1||serviceBusy} onClick={()=>setStep(i=>Math.max(1,i-1))}>← Previous</button>
-        <button className="primary" disabled={step===4||serviceBusy} onClick={()=>setStep(i=>Math.min(4,i+1))}>{step===4?"Review Core decision below":"Next: "+stages[step]+" →"}</button>
-        <button className="secondary" onClick={refreshCore} disabled={checking||serviceBusy}>{checking?"Checking Core…":"Refresh observed state"}</button>
+        <button className="secondary" disabled={step===1||wizardBusy} onClick={()=>setStep(i=>Math.max(1,i-1))}>← Previous</button>
+        <button className="primary" disabled={step===4||wizardBusy} onClick={()=>setStep(i=>Math.min(4,i+1))}>{step===4?"Review Core decision below":"Next: "+stages[step]+" →"}</button>
+        <button className="secondary" onClick={refreshCore} disabled={checking||wizardBusy}>{checking?"Checking Core…":"Refresh observed state"}</button>
       </div>
       <div className="dr-uxb-next-guidance" role="status" aria-live="polite"><strong>What to do next</strong><p>{nextAction}</p>
         <small>Stage navigation is for reviewing tasks, not evidence of completion. Core confirmation remains required.</small>
       </div>
+      {wizardBusy&&<p className="dr-uxb-busy-note" role="status">Core operation in progress · Finish and review its result before switching Agent or setup stages.</p>}
       <details className="dr-uxb-glossary"><summary>What do Agent, Remote Service and Access Rule mean?</summary>
         <dl><dt>Agent / Managed Host</dt><dd>A protected server running Data Relay Link Agent. Connected alone is not approved or trusted.</dd>
           <dt>Remote Service</dt><dd>One explicitly published internal application or port, such as SSH, not a whole network.</dd>
@@ -193,9 +196,10 @@ export function FirstConnectionSetup({api,operator,onNavigate,initialDraft,onDra
         <strong>Why add an Agent?</strong>
         <p>A Managed Host is the internal server running a DRLink Agent. Installing one does not publish its ports or grant all users access.</p>
       </div>
-      <EnrollmentOnboarding api={api} data={enrollments} refresh={refreshCore} operator={operator} onNavigate={onNavigate}/>
+      <EnrollmentOnboarding api={api} data={enrollments} refresh={refreshCore} operator={operator} onNavigate={onNavigate}
+        onBusyChange={setEnrollmentBusy}/>
       <section className="card dr-uxb-choice"><h3>Continue with an enrolled server</h3>
-        <label className="dr-field"><span>Managed Host</span><select value={selectedHost} disabled={serviceBusy} onChange={e=>chooseRemoteHost(e.target.value)}>
+        <label className="dr-field"><span>Managed Host</span><select value={selectedHost} disabled={wizardBusy} onChange={e=>chooseRemoteHost(e.target.value)}>
           {!selectedHost&&<option value="">{hosts===null?"Managed Host inventory: UNKNOWN":hosts.length?"Select an observed Managed Host":"No observed Managed Host"}</option>}
           {(hosts||[]).map(h=><option key={h.id} value={String(h.id)}>{h.name||h.label||h.id} · {h.id}</option>)}
         </select></label>
@@ -214,7 +218,7 @@ export function FirstConnectionSetup({api,operator,onNavigate,initialDraft,onDra
     </section>}
     {step===2&&plane==="remote"&&<div className="dr-uxb-setup-section">
       <div className="dr-uxb-context"><strong>Why publish a Remote Service?</strong><p>Choose exactly one service/port from an approved Agent. This queues an authenticated Agent job — it does not instantly prove success or user authorization.</p></div>
-      <label className="dr-field"><span>Use observed Managed Host as owner</span><select value={selectedHost} disabled={serviceBusy} onChange={e=>chooseRemoteHost(e.target.value)}>
+      <label className="dr-field"><span>Use observed Managed Host as owner</span><select value={selectedHost} disabled={wizardBusy} onChange={e=>chooseRemoteHost(e.target.value)}>
         {!selectedHost&&<option value="">{hosts===null?"Managed Host inventory: UNKNOWN":hosts.length?"Select an observed Managed Host":"No observed Managed Host"}</option>}
         {(hosts||[]).map(h=><option key={h.id} value={String(h.id)}>{h.name||h.label||h.id}</option>)}
       </select></label>

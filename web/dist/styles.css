@@ -256,3 +256,6 @@
 .dr-uxb-next-guidance p{margin:0;font-size:13px;line-height:1.5;color:var(--dr-text-primary)}
 .dr-uxb-next-guidance small{font-size:11px;line-height:1.4;color:var(--dr-text-secondary)}
 @media(max-width:560px){.dr-uxb-next-guidance{padding:11px}}
+
+/* One-time Agent invitation / approval requests must be observed before leaving. */
+.dr-uxb-busy-note{margin:0;padding:11px 13px;border:1px solid var(--dr-border-default);border-left:3px solid var(--dr-action-primary);border-radius:var(--dr-radius-card);background:var(--dr-surface-section);color:var(--dr-text-primary);font-size:12px;line-height:1.5}

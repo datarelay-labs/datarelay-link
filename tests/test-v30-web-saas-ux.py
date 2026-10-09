@@ -219,11 +219,22 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn("onBusyChange?.(busy)", remote)
         self.assertIn("onBusyChange?.(false)", remote)
         self.assertIn("onBusyChange={setServiceBusy}", SETUP_SOURCE)
-        self.assertIn("disabled={serviceBusy} onClick={()=>changePlane(item.id)}", SETUP_SOURCE)
-        self.assertIn("disabled={step===1||serviceBusy}", SETUP_SOURCE)
-        self.assertIn("disabled={step===4||serviceBusy}", SETUP_SOURCE)
+        self.assertIn("disabled={wizardBusy} onClick={()=>changePlane(item.id)}", SETUP_SOURCE)
+        self.assertIn("disabled={step===1||wizardBusy}", SETUP_SOURCE)
+        self.assertIn("disabled={step===4||wizardBusy}", SETUP_SOURCE)
         self.assertIn("onChange={e=>chooseRemoteHost(e.target.value)}", SETUP_SOURCE)
-        self.assertIn("disabled={serviceBusy} onChange={e=>chooseRemoteHost(e.target.value)}", SETUP_SOURCE)
+        self.assertIn("disabled={wizardBusy} onChange={e=>chooseRemoteHost(e.target.value)}", SETUP_SOURCE)
+
+    def test_enrollment_issue_blocks_parent_wizard_navigation(self):
+        self.assertIn("onBusyChange?:(busy:boolean)=>void", P0_ENROLL_SOURCE)
+        self.assertIn("onBusyChange?.(busy)", P0_ENROLL_SOURCE)
+        self.assertIn("onBusyChange?.(false)", P0_ENROLL_SOURCE)
+        self.assertIn("onBusyChange={setEnrollmentBusy}", SETUP_SOURCE)
+        self.assertIn("const wizardBusy=serviceBusy||enrollmentBusy;", SETUP_SOURCE)
+        self.assertIn("disabled={wizardBusy} onClick={()=>changePlane(item.id)}", SETUP_SOURCE)
+        self.assertIn("disabled={step===1||wizardBusy}", SETUP_SOURCE)
+        self.assertIn("disabled={step===4||wizardBusy}", SETUP_SOURCE)
+        self.assertIn("onClick={refreshCore} disabled={checking||wizardBusy}", SETUP_SOURCE)
 
     def test_uxb_first_use_keeps_three_planes_and_core_authority_separate(self):
         self.assertIn('FirstUseHome data={data}', SOURCE)

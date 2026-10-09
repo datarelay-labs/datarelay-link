@@ -25,14 +25,17 @@ export function hostReadinessLabel(host:any):string {
   return "UNKNOWN · REVIEW CORE STATE";
 }
 
-export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate}:{
-  api:LinkApi,data:any,refresh:()=>void,operator:any,onNavigate?:Navigate
+export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate,onBusyChange}:{
+  api:LinkApi,data:any,refresh:()=>void,operator:any,onNavigate?:Navigate,
+  onBusyChange?:(busy:boolean)=>void
 }){
   const [step,setStep]=useState(1),[mode,setMode]=useState("zero-touch"),[platform,setPlatform]=useState("linux");
   const [ttl,setTtl]=useState("3600"),[label,setLabel]=useState(""),[note,setNote]=useState("");
   const [preApproved,setPreApproved]=useState(false),[issued,setIssued]=useState<any>(null);
   const [hosts,setHosts]=useState<any[]|null>(null),[selectedHost,setSelectedHost]=useState("");
   const [fetchBusy,setFetchBusy]=useState(false),[busy,setBusy]=useState(false);
+  useEffect(()=>{onBusyChange?.(busy)},[busy]);
+  useEffect(()=>()=>{onBusyChange?.(false)},[]);
   const [error,setError]=useState(""),[inventoryError,setInventoryError]=useState("");
   const [preview,setPreview]=useState<any>(null),[confirm,setConfirm]=useState(""),[message,setMessage]=useState("");
   const approvalGeneration=useRef(0);
