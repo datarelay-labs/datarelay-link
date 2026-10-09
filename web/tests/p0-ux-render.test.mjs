@@ -39,6 +39,35 @@ test("Policy decisions are fail-closed for missing and unrecognized Core values"
   assert.equal(access.explainTrace(null).decision,"UNKNOWN");
 });
 
+test("Core decision evidence can only be shown for the exact current flow and AI path",()=>{
+ const old=access.coreFlowKey("remote","source-a","app-b","ssh-tcp22");
+ assert.equal(old,access.coreFlowKey("remote"," source-a "," app-b "," ssh-tcp22 "));
+ const record={key:old,value:{final:{result:"ALLOW",reason:"Matched old rule"}}};
+ assert.deepEqual(access.visibleCoreEvidence(record,old),record.value);
+ assert.equal(access.visibleCoreEvidence(record,access.coreFlowKey("remote","source-b","app-b","ssh-tcp22")),null);
+ assert.equal(access.visibleCoreEvidence(record,access.coreFlowKey("remote","source-a","app-b","https-tcp443")),null);
+ assert.equal(access.visibleCoreEvidence(record,access.coreFlowKey("internet","source-a","app-b","ssh-tcp22")),null);
+ assert.equal(access.visibleCoreEvidence(null,old),null);
+ const aiA=access.coreFlowKey("ai","bot-a","app-b","permission-read","/api/a");
+ const aiB=access.coreFlowKey("ai","bot-a","app-b","permission-read","/api/b");
+ assert.notEqual(aiA,aiB);
+ assert.equal(access.coreFlowKey("remote","s","d","svc","/ignored"),access.coreFlowKey("remote","s","d","svc"));
+});
+test("Emergency cutoff review scope cannot be reused for another plane, selector or action",()=>{
+ const current=access.coreCutoffKey("remote","remote-service","ssh-prod","apply","incident-a");
+ assert.equal(current,access.coreCutoffKey("remote","remote-service"," ssh-prod ","apply"," incident-a "));
+ for(const altered of [
+   ["ai","remote-service","ssh-prod","apply","incident-a"],
+   ["remote","plane","ssh-prod","apply","incident-a"],
+   ["remote","remote-service","other-host","apply","incident-a"],
+   ["remote","remote-service","ssh-prod","clear","incident-a"],
+   ["remote","remote-service","ssh-prod","apply","incident-b"],
+ ]){
+   assert.notEqual(current,access.coreCutoffKey(...altered));
+ }
+ assert.equal(access.visibleCoreEvidence({key:current,value:{change_plan_id:"cp-old"}},
+    access.coreCutoffKey("ai","plane","","apply","")),null);
+});
 test("Guided Apply remains locked without exact plan and independent required-test PASS",()=>{
   const preview={change_plan_id:"cp_123",no_change:false,blast_radius:{limits:{truncated:false},unknowns:[]}};
   const ok={ok:true,required_failed:0,count:1,passed:1};

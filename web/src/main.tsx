@@ -3,7 +3,7 @@ import {createRoot} from "react-dom/client";
 import {QRCodeSVG} from "qrcode.react";
 import {AdministrationHub,type AdministrationHubTask} from "@datarelay-labs/foundation";
 import {createLinkFoundationAdministrationTasks} from "./foundation-administration";
-import {AccessEvidenceExplorer,GuidedPolicyJourney,type AccessPlane} from "./p0-access-policy";
+import {AccessEvidenceExplorer,GuidedPolicyJourney,coreFlowKey,coreCutoffKey,visibleCoreEvidence,type AccessPlane} from "./p0-access-policy";
 import {EnrollmentOnboarding} from "./p0-enrollment";
 import {navGroups,groupFor,labelFor,pageDescriptions,visibleRoute,navMatches,setupContextForObjectFamily} from "./uxb-navigation";
 import {FirstUseHome,isFreshInstallation,observedRecentFeed,observedNumber,accessPlaneCount,coreHealthState,type RecentFeed} from "./uxb-home";
@@ -708,81 +708,134 @@ function SystemPanel({data,operator}:{data:any,operator:any}){
 function AccessOperations({operator,onNavigate,context}:{operator:any,onNavigate?:(id:string,groupId?:string,context?:any)=>void,context?:any}){
   const initialPlane=["remote","internet","ai"].includes(String(context?.plane))?String(context.plane):"remote";
   const [plane,setPlane]=useState(initialPlane),[source,setSource]=useState(context?.source||""),[destination,setDestination]=useState(context?.destination||""),[selector,setSelector]=useState(context?.selector||"");
-  const [diagnosis,setDiagnosis]=useState<any>(null),[live,setLive]=useState<any>(null),[error,setError]=useState("");
-  const [liveResource,setLiveResource]=useState(""),[cutoffState,setCutoffState]=useState<any>(null);
+  const [diagnosisEvidence,setDiagnosisEvidence]=useState<{key:string,value:any}|null>(null);
+  const [liveEvidence,setLiveEvidence]=useState<{key:string,value:any}|null>(null);
+  const [diagnosisBusy,setDiagnosisBusy]=useState(false),[liveBusy,setLiveBusy]=useState(false),[error,setError]=useState("");
+  const [liveResource,setLiveResource]=useState("");
+  const [cutoffEvidence,setCutoffEvidence]=useState<{key:string,value:any}|null>(null);
+  const cutoffGeneration=useRef(0);
+  const diagnosisGeneration=useRef(0),liveGeneration=useRef(0);
+  const currentDiagnosisKey=coreFlowKey(plane,source,destination,selector);
+  const currentLiveKey=JSON.stringify([plane,liveResource.trim()]);
+  const matchingDiagnosis=visibleCoreEvidence(diagnosisEvidence,currentDiagnosisKey);
+  const matchingLive=visibleCoreEvidence(liveEvidence,currentLiveKey);
+  const activeCutoffs=visibleCoreEvidence(cutoffEvidence,plane);
+  const diagnosisReady=!!(source.trim()&&destination.trim()&&selector.trim());
+  useEffect(()=>()=>{diagnosisGeneration.current+=1;liveGeneration.current+=1},[]);
   const [scopeKind,setScopeKind]=useState("plane"),[scopeRef,setScopeRef]=useState(""),[cutoffOperation,setCutoffOperation]=useState("apply"),[reason,setReason]=useState("");
-  const [cutoffPreview,setCutoffPreview]=useState<any>(null),[cutoffConfirm,setCutoffConfirm]=useState(""),[cutoffMessage,setCutoffMessage]=useState("");
+  const [cutoffPreview,setCutoffPreview]=useState<{key:string,value:any}|null>(null),[cutoffConfirm,setCutoffConfirm]=useState(""),[cutoffMessage,setCutoffMessage]=useState("");
+  const [cutoffBusy,setCutoffBusy]=useState(false);
+  const cutoffPlanGeneration=useRef(0);
+  const currentCutoffKey=coreCutoffKey(plane,scopeKind,scopeRef,cutoffOperation,reason);
+  const currentCutoffPreview=visibleCoreEvidence(cutoffPreview,currentCutoffKey);
+  useEffect(()=>()=>{cutoffPlanGeneration.current+=1},[]);
   const scopeOptions:Record<string,string[]>={remote:["plane","remote-service"],internet:["plane","managed-host"],ai:["plane","ai-identity"]};
-  function invalidateCutoff(){setCutoffPreview(null);setCutoffConfirm("");setCutoffMessage("")}
+  function invalidateCutoff(){cutoffPlanGeneration.current+=1;setCutoffPreview(null);setCutoffConfirm("");setCutoffMessage("")}
   function changeDiagnosisFlow(field:"source"|"destination"|"selector",value:string){
     if(field==="source")setSource(value);
     else if(field==="destination")setDestination(value);
     else setSelector(value);
-    setDiagnosis(null);setError("");
+    diagnosisGeneration.current+=1;setDiagnosisEvidence(null);setDiagnosisBusy(false);setError("");
   }
 
   async function loadCutoffs(){
-    try{setCutoffState(await api("/api/v1/emergency-cutoffs?plane="+encodeURIComponent(plane)))}catch(e:any){setError(e.message||String(e))}
-  }
-  useEffect(()=>{loadCutoffs()},[plane]);
-  function changePlane(value:string){setPlane(value);setSelector("");setDiagnosis(null);setLive(null);setScopeKind("plane");setScopeRef("");invalidateCutoff()}
-  async function runDiagnosis(){
-    setError("");setDiagnosis(null);
+    const token=++cutoffGeneration.current;
+    setCutoffEvidence(null);
     try{
-      const body:any={plane,source,destination};
-      if(plane==="ai")body.permission=selector;else body.service=selector;
-      setDiagnosis(await api("/api/v1/diagnose",{method:"POST",body:JSON.stringify(body)}));
-    }catch(e:any){setError(e.message||String(e))}
+      const result=await api("/api/v1/emergency-cutoffs?plane="+encodeURIComponent(plane));
+      if(cutoffGeneration.current!==token)return;
+      if(!Array.isArray(result?.items))throw new Error("Core cutoff inventory response incomplete");
+      setCutoffEvidence({key:plane,value:result});
+    }catch(e:any){if(cutoffGeneration.current===token)setError("Core cutoff state unavailable: "+String(e.message||e))}
+  }
+  useEffect(()=>{void loadCutoffs();return()=>{cutoffGeneration.current+=1}},[plane]);
+  function changePlane(value:string){
+    if(plane===value||cutoffBusy)return;
+    diagnosisGeneration.current+=1;liveGeneration.current+=1;
+    setPlane(value);setSelector("");setDiagnosisEvidence(null);setLiveEvidence(null);
+    setDiagnosisBusy(false);setLiveBusy(false);setLiveResource("");
+    setScopeKind("plane");setScopeRef("");invalidateCutoff();
+  }
+  async function runDiagnosis(){
+    if(!diagnosisReady||diagnosisBusy)return;
+    const token=++diagnosisGeneration.current;
+    const requestKey=currentDiagnosisKey;
+    setError("");setDiagnosisEvidence(null);setDiagnosisBusy(true);
+    try{
+      const body:any={plane,source:source.trim(),destination:destination.trim()};
+      if(plane==="ai")body.permission=selector.trim();else body.service=selector.trim();
+      const result=await api("/api/v1/diagnose",{method:"POST",body:JSON.stringify(body)});
+      if(diagnosisGeneration.current!==token)return;
+      setDiagnosisEvidence({key:requestKey,value:result});
+    }catch(e:any){if(diagnosisGeneration.current===token)setError(e.message||String(e))}
+    finally{if(diagnosisGeneration.current===token)setDiagnosisBusy(false)}
   }
   async function loadLive(){
-    setError("");
+    if(liveBusy)return;
+    const token=++liveGeneration.current;
+    const requestKey=currentLiveKey;
+    setError("");setLiveEvidence(null);setLiveBusy(true);
     try{
       const q=new URLSearchParams({plane,limit:"50"});
-      if(liveResource)q.set("resource",liveResource);
-      setLive(await api("/api/v1/live-access?"+q.toString()));
-    }catch(e:any){setError(e.message||String(e))}
+      if(liveResource.trim())q.set("resource",liveResource.trim());
+      const result=await api("/api/v1/live-access?"+q.toString());
+      if(liveGeneration.current!==token)return;
+      setLiveEvidence({key:requestKey,value:result});
+    }catch(e:any){if(liveGeneration.current===token)setError(e.message||String(e))}
+    finally{if(liveGeneration.current===token)setLiveBusy(false)}
   }
   async function previewCutoff(){
-    setError("");setCutoffMessage("");setCutoffConfirm("");
+    if(cutoffBusy)return;
+    const token=++cutoffPlanGeneration.current;
+    const requestKey=currentCutoffKey;
+    setError("");setCutoffMessage("");setCutoffConfirm("");setCutoffPreview(null);setCutoffBusy(true);
     try{
-      const body:any={plane,scope_kind:scopeKind,operation:cutoffOperation,reason};
-      if(scopeKind!=="plane")body.scope_ref=scopeRef;
-      setCutoffPreview(await api("/api/v1/emergency-cutoff/preview",{method:"POST",body:JSON.stringify(body)}));
-    }catch(e:any){setCutoffPreview(null);setError(e.message||String(e))}
+      const body:any={plane,scope_kind:scopeKind,operation:cutoffOperation,reason:reason.trim()};
+      if(scopeKind!=="plane")body.scope_ref=scopeRef.trim();
+      const result=await api("/api/v1/emergency-cutoff/preview",{method:"POST",body:JSON.stringify(body)});
+      if(cutoffPlanGeneration.current!==token)return;
+      if(!result?.change_plan_id)throw new Error("Core cutoff preview returned no Change Plan ID");
+      setCutoffPreview({key:requestKey,value:result});
+    }catch(e:any){if(cutoffPlanGeneration.current===token){setCutoffPreview(null);setError(e.message||String(e))}}
+    finally{if(cutoffPlanGeneration.current===token)setCutoffBusy(false)}
   }
   async function applyCutoff(){
-    setError("");
+    if(cutoffBusy||cutoffConfirm!=="CONFIRM CUTOFF"||!currentCutoffPreview?.change_plan_id)return;
+    const token=++cutoffPlanGeneration.current;
+    setError("");setCutoffBusy(true);
     try{
       const result=await api("/api/v1/emergency-cutoff/apply",{method:"POST",body:JSON.stringify({
         operation:cutoffOperation,
-        change_plan_id:cutoffPreview?.change_plan_id||"",
+        change_plan_id:currentCutoffPreview.change_plan_id,
         confirmation:cutoffConfirm,
       })});
-      setCutoffMessage((cutoffOperation==="clear"?"Cutoff cleared":"Cutoff applied")+" at revision "+result.revision+"; existing sessions terminated: "+String(result.active_sessions_terminated));
+      if(cutoffPlanGeneration.current!==token)return;
+      setCutoffMessage((cutoffOperation==="clear"?"Cutoff cleared":"Cutoff applied")+" at revision "+String(result.revision??"UNKNOWN")+"; existing sessions terminated: "+String(result.active_sessions_terminated??"UNKNOWN"));
       setCutoffPreview(null);setCutoffConfirm("");
       await loadLive();
       await loadCutoffs();
-    }catch(e:any){setError(e.message||String(e))}
+    }catch(e:any){if(cutoffPlanGeneration.current===token)setError(e.message||String(e))}
+    finally{if(cutoffPlanGeneration.current===token)setCutoffBusy(false)}
   }
-  const layers=(diagnosis?.layers||[]).map((x:any)=>({layer:x.layer,status:x.status,summary:x.summary}));
+  const layers=(matchingDiagnosis?.layers||[]).map((x:any)=>({layer:x.layer,status:x.status,summary:x.summary}));
   const planeLabel=plane==="remote"?"Remote Access":plane==="internet"?"Internet Access":"AI Access";
   return <div className="dr-access-workspace">
     {error&&<div className="error">{error}</div>}
     {context?.originId&&<section className="dr-uxb-context card" role="note"><strong>Investigating {context.originType||"resource"}: {context.originId}</strong><p>Core resource names are not automatically Network/Service Objects. Select the exact source, destination and selector before interpreting any Core access decision.</p><button className="secondary" onClick={()=>onNavigate?.("audit","activity",context)}>Review matching Activity log →</button></section>}
     <section className="dr-page-intro"><div><p className="dr-eyebrow">Access</p><h2>Access Workspace</h2><p className="muted">Understand who can reach what, why the decision is made, and what is active now.</p></div><div className="dr-page-actions"><button className="secondary" onClick={()=>onNavigate?.("policies","access")}>Policies</button>{operator.role!=="Read Only"&&<button className="primary" onClick={()=>onNavigate?.("drafts","access")}>Draft change</button>}</div></section>
-    <div className="dr-access-tabs" role="tablist" aria-label="Access plane">{[["remote","Remote Access"],["internet","Internet Access"],["ai","AI Access"]].map(([value,label])=><button key={value} role="tab" aria-selected={plane===value} className={plane===value?"active":""} onClick={()=>changePlane(value)}>{label}</button>)}</div>
+    <div className="dr-access-tabs" role="tablist" aria-label="Access plane">{[["remote","Remote Access"],["internet","Internet Access"],["ai","AI Access"]].map(([value,label])=><button key={value} role="tab" aria-selected={plane===value} className={plane===value?"active":""} disabled={cutoffBusy} onClick={()=>changePlane(value)}>{label}</button>)}</div>
     <section className="card dr-access-map-card">
       <div className="dr-section-head"><div><p className="dr-eyebrow">Relationship</p><h3>{planeLabel}</h3></div><button className="dr-text-action" onClick={()=>onNavigate?.("policies","access")}>View policies →</button></div>
       <div className="dr-access-map" aria-label={planeLabel+" relationship preview"}>
         <div className="dr-access-node"><span>Source</span><strong>{source||((plane==="ai")?"AI identity":"Source object / group")}</strong><small>{source?"Selected input":"Enter a source below"}</small></div>
         <div className="dr-access-edge"><span>→</span><small>{selector||(plane==="ai"?"permission":"service")}</small></div>
-        <div className="dr-access-node policy"><span>Decision</span><strong>{diagnosis?.overall||"Policy evaluation"}</strong><small>{diagnosis?.next_action||"Test against Core policy"}</small></div>
+        <div className="dr-access-node policy"><span>Decision</span><strong>{matchingDiagnosis?.overall||"Policy evaluation"}</strong><small>{matchingDiagnosis?.next_action||"Test against Core policy"}</small></div>
         <div className="dr-access-edge"><span>→</span><small>{planeLabel}</small></div>
-        <div className="dr-access-node"><span>Destination</span><strong>{destination||"Destination object / group"}</strong><small>{live?.fidelity?"Live fidelity: "+live.fidelity:"Bounded current-use evidence"}</small></div>
+        <div className="dr-access-node"><span>Destination</span><strong>{destination||"Destination object / group"}</strong><small>{matchingLive?.fidelity?"Live fidelity: "+matchingLive.fidelity:"Live evidence: UNKNOWN until refreshed"}</small></div>
       </div>
     </section>
     <AccessEvidenceExplorer api={api} plane={plane as AccessPlane} source={source} destination={destination} selector={selector}
-      onSelect={flow=>{setSource(flow.source);setDestination(flow.destination);setSelector(flow.selector);setDiagnosis(null)}}
+      onSelect={flow=>{diagnosisGeneration.current+=1;setSource(flow.source);setDestination(flow.destination);setSelector(flow.selector);setDiagnosisEvidence(null);setDiagnosisBusy(false)}}
       onNavigate={(id,group)=>onNavigate?.(id,group,context)}/>
     <div className="card">
       <div className="dr-section-head"><div><p className="dr-eyebrow">Policy Simulator</p><h3>Connection Diagnosis</h3></div></div>
@@ -791,48 +844,51 @@ function AccessOperations({operator,onNavigate,context}:{operator:any,onNavigate
         <input value={source} onChange={e=>changeDiagnosisFlow("source",e.target.value)} placeholder={plane==="ai"?"AI Identity / source":"Source Object / Group"}/>
         <input value={destination} onChange={e=>changeDiagnosisFlow("destination",e.target.value)} placeholder="Destination Object / Group"/>
         <input value={selector} onChange={e=>changeDiagnosisFlow("selector",e.target.value)} placeholder={plane==="ai"?"Permission Object / Group":"Service Object / Group"}/>
-        <button className="primary" onClick={runDiagnosis}>Diagnose</button>
+        <button className="primary" disabled={!diagnosisReady||diagnosisBusy} onClick={runDiagnosis}>{diagnosisBusy?"Checking Core…":"Diagnose"}</button>
       </div>
-      {diagnosis&&<>
-        <div className="grid"><Metric label="Overall" value={diagnosis.overall}/><Metric label="Network probe" value={diagnosis.network_probe_performed?"YES":"NO"}/></div>
+      {matchingDiagnosis&&<>
+        <div className="grid"><Metric label="Overall" value={matchingDiagnosis.overall}/><Metric label="Network probe" value={matchingDiagnosis.network_probe_performed?"YES":"NO"}/></div>
         <Table items={layers}/>
-        <div className="muted">Next action: {diagnosis.next_action}</div>
+        <div className="muted">Next action: {matchingDiagnosis.next_action}</div>
       </>}
+      {!matchingDiagnosis&&!diagnosisBusy&&<p className="muted" role="status">Diagnosis: UNKNOWN until the current source, destination and selector have a fresh Core result.</p>}
     </div>
     <div className="card">
       <h3>Live Access Visibility</h3>
       <div className="muted">Bounded current-use evidence only. Remote Access remains UNKNOWN unless official FRP can prove exact lifecycle state.</div>
       <div className="toolbar">
-        <input value={liveResource} onChange={e=>setLiveResource(e.target.value)} placeholder="Optional resource/session/identity filter"/>
-        <button className="secondary" onClick={loadLive}>Refresh {plane} live access</button>
+        <input value={liveResource} onChange={e=>{liveGeneration.current+=1;setLiveResource(e.target.value);setLiveEvidence(null);setLiveBusy(false)}} placeholder="Optional resource/session/identity filter"/>
+        <button className="secondary" disabled={liveBusy} onClick={loadLive}>{liveBusy?"Refreshing Core…":"Refresh "+plane+" live access"}</button>
       </div>
-      {live&&<>
-        <div className="grid"><Metric label="Fidelity" value={live.fidelity}/><Metric label="Active count" value={live.active_count??"UNKNOWN"}/><Metric label="Returned" value={(live.observations||[]).length}/></div>
-        {live.reason&&<div className="warning-box">{live.reason}</div>}
-        <Table items={live.observations||[]}/>
+      {matchingLive&&<>
+        <div className="grid"><Metric label="Fidelity" value={matchingLive.fidelity}/><Metric label="Active count" value={matchingLive.active_count??"UNKNOWN"}/><Metric label="Returned" value={(matchingLive.observations||[]).length}/></div>
+        {matchingLive.reason&&<div className="warning-box">{matchingLive.reason}</div>}
+        <Table items={matchingLive.observations||[]}/>
       </>}
+      {!matchingLive&&!liveBusy&&<p className="muted" role="status">Live access: UNKNOWN until Core returns current evidence for this plane and optional filter.</p>}
     </div>
     <div className="card">
       <h3>Active Emergency Cutoffs</h3>
       <div className="muted">Authoritative active override state for the selected plane. Clearing a cutoff reveals the unchanged normal policy.</div>
-      {cutoffState&&<div className="grid"><Metric label="Active" value={cutoffState.count||0}/><Metric label="Returned" value={cutoffState.returned||0}/><Metric label="Truncated" value={cutoffState.truncated?"YES":"NO"}/></div>}
-      <Table items={cutoffState?.items||[]}/>
+      {activeCutoffs?<div className="grid"><Metric label="Active" value={activeCutoffs.count??"UNKNOWN"}/><Metric label="Returned" value={activeCutoffs.returned??"UNKNOWN"}/><Metric label="Truncated" value={typeof activeCutoffs.truncated==="boolean"?(activeCutoffs.truncated?"YES":"NO"):"UNKNOWN"}/></div>:
+        <p className="muted" role="status">Cutoff evidence: UNKNOWN until Core returns current-plane override state.</p>}
+      <Table items={activeCutoffs?.items||[]}/>
     </div>
     {operator.role==="Admin"&&<div className="card">
       <h3>Emergency New-Access Cutoff</h3>
       <div className="warning-box">This reversible override affects new authorization only. Existing sessions are not claimed to be terminated.</div>
       {cutoffMessage&&<div className="notice">{cutoffMessage}</div>}
       <div className="toolbar">
-        <select value={cutoffOperation} onChange={e=>{invalidateCutoff();setCutoffOperation(e.target.value)}}><option value="apply">Apply cutoff</option><option value="clear">Clear cutoff</option></select>
-        <select value={scopeKind} onChange={e=>{invalidateCutoff();setScopeKind(e.target.value);setScopeRef("")}}>{scopeOptions[plane].map(x=><option key={x} value={x}>{x}</option>)}</select>
-        {scopeKind!=="plane"&&<input value={scopeRef} onChange={e=>{invalidateCutoff();setScopeRef(e.target.value)}} placeholder={scopeKind+" selector"}/>}
-        {cutoffOperation==="apply"&&<input value={reason} onChange={e=>{invalidateCutoff();setReason(e.target.value)}} placeholder="Incident reason (optional)"/>}
-        <button className="danger" onClick={previewCutoff}>Preview cutoff</button>
+        <select value={cutoffOperation} disabled={cutoffBusy} onChange={e=>{invalidateCutoff();setCutoffOperation(e.target.value)}}><option value="apply">Apply cutoff</option><option value="clear">Clear cutoff</option></select>
+        <select value={scopeKind} disabled={cutoffBusy} onChange={e=>{invalidateCutoff();setScopeKind(e.target.value);setScopeRef("")}}>{scopeOptions[plane].map(x=><option key={x} value={x}>{x}</option>)}</select>
+        {scopeKind!=="plane"&&<input value={scopeRef} disabled={cutoffBusy} onChange={e=>{invalidateCutoff();setScopeRef(e.target.value)}} placeholder={scopeKind+" selector"}/>}
+        {cutoffOperation==="apply"&&<input value={reason} disabled={cutoffBusy} onChange={e=>{invalidateCutoff();setReason(e.target.value)}} placeholder="Incident reason (optional)"/>}
+        <button className="danger" disabled={cutoffBusy} onClick={previewCutoff}>{cutoffBusy?"Checking Core…":"Preview cutoff"}</button>
       </div>
-      {cutoffPreview&&<>
-        <pre className="plan">{JSON.stringify({scope_kind:cutoffPreview.scope_kind,scope_ref:cutoffPreview.scope_ref,scope_display:cutoffPreview.scope_display,currently_active:cutoffPreview.currently_active,desired_active:cutoffPreview.desired_active,impact:cutoffPreview.impact,active_sessions_terminated:cutoffPreview.active_sessions_terminated},null,2)}</pre>
-        <label className="apply-label">Type CONFIRM CUTOFF<input value={cutoffConfirm} onChange={e=>setCutoffConfirm(e.target.value)} placeholder="CONFIRM CUTOFF"/></label>
-        <button className="danger" onClick={applyCutoff} disabled={cutoffConfirm!=="CONFIRM CUTOFF"}>{cutoffOperation==="clear"?"Clear Cutoff":"Apply Cutoff"}</button>
+      {currentCutoffPreview&&<>
+        <pre className="plan">{JSON.stringify({scope_kind:currentCutoffPreview.scope_kind,scope_ref:currentCutoffPreview.scope_ref,scope_display:currentCutoffPreview.scope_display,currently_active:currentCutoffPreview.currently_active,desired_active:currentCutoffPreview.desired_active,impact:currentCutoffPreview.impact,active_sessions_terminated:currentCutoffPreview.active_sessions_terminated},null,2)}</pre>
+        <label className="apply-label">Type CONFIRM CUTOFF<input value={cutoffConfirm} disabled={cutoffBusy} onChange={e=>setCutoffConfirm(e.target.value)} placeholder="CONFIRM CUTOFF"/></label>
+        <button className="danger" onClick={applyCutoff} disabled={cutoffBusy||cutoffConfirm!=="CONFIRM CUTOFF"||!currentCutoffPreview?.change_plan_id}>{cutoffOperation==="clear"?"Clear Cutoff":"Apply Cutoff"}</button>
       </>}
     </div>}
   </div>;

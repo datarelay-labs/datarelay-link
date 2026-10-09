@@ -196,6 +196,40 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn("if(requestGeneration.current!==generation)return;", search)
         self.assertIn('if(!Array.isArray(data?.items))throw new Error(', search)
 
+    def test_core_access_evidence_matches_current_flow_and_blocks_stale_response(self):
+        access=P0_ACCESS_SOURCE
+        operations=SOURCE.split('function AccessOperations(', 1)[1].split('function AuditExplorer(', 1)[0]
+        self.assertIn("export function coreFlowKey(", access)
+        self.assertIn("export function visibleCoreEvidence(", access)
+        self.assertIn("const currentTraceKey=coreFlowKey(", access)
+        self.assertIn("const visibleTrace=visibleCoreEvidence(", access)
+        self.assertIn("setTraceEvidence({key:requestKey,value:next})", access)
+        self.assertIn("const visibleGraph=visibleCoreEvidence(", access)
+        self.assertIn("const diagnosisGeneration=useRef(0),liveGeneration=useRef(0);", operations)
+        self.assertIn("const matchingDiagnosis=visibleCoreEvidence(", operations)
+        self.assertIn("const matchingLive=visibleCoreEvidence(", operations)
+        self.assertIn("if(diagnosisGeneration.current!==token)return;", operations)
+        self.assertIn("diagnosisGeneration.current+=1;", operations)
+        self.assertIn('setDiagnosisEvidence({key:requestKey,value:result})', operations)
+        self.assertIn("if(liveGeneration.current!==token)return;", operations)
+        self.assertIn("Live access: UNKNOWN", operations)
+        self.assertIn("const cutoffGeneration=useRef(0);", operations)
+        self.assertIn("const activeCutoffs=visibleCoreEvidence(", operations)
+        self.assertIn("const token=++cutoffGeneration.current;", operations)
+        self.assertIn("if(cutoffGeneration.current!==token)return;", operations)
+        self.assertIn("setCutoffEvidence({key:plane,value:result})", operations)
+        self.assertIn("Cutoff evidence: UNKNOWN", operations)
+        self.assertIn("export function coreCutoffKey(", access)
+        self.assertIn("const cutoffPlanGeneration=useRef(0);", operations)
+        self.assertIn("const currentCutoffPreview=visibleCoreEvidence(", operations)
+        self.assertIn("cutoffPlanGeneration.current+=1;", operations)
+        self.assertIn("const token=++cutoffPlanGeneration.current;", operations)
+        self.assertIn("if(cutoffPlanGeneration.current!==token)return;", operations)
+        self.assertIn("setCutoffPreview({key:requestKey,value:result})", operations)
+        self.assertIn("change_plan_id:currentCutoffPreview.change_plan_id", operations)
+        self.assertIn("disabled={cutoffBusy} onClick={()=>changePlane(value)}", operations)
+        self.assertIn("disabled={cutoffBusy||cutoffConfirm!==", operations)
+
     def test_agent_and_service_preview_rejects_responses_for_changed_host(self):
         remote = (ROOT / "web/src/uxb-remote-service.tsx").read_text(encoding="utf-8")
         enrollment = P0_ENROLL_SOURCE

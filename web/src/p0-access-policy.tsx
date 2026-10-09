@@ -20,6 +20,22 @@ export function explainTrace(trace:any):{decision:"ALLOW"|"DENY"|"UNKNOWN",reaso
   return {decision,reason,rules};
 }
 
+/** Label displayed evidence by the exact user-supplied flow, not the currently
+ * rendered form alone. Whitespace is normalized like the Core request payload. */
+export function coreFlowKey(plane:string,source:string,destination:string,selector:string,path=""):string{
+  return JSON.stringify([plane,source.trim(),destination.trim(),selector.trim(),
+    plane==="ai"?path.trim():""]);
+}
+export function visibleCoreEvidence(record:{key:string,value:any}|null,currentKey:string):any|null{
+  return record?.key===currentKey?record.value:null;
+}
+
+/** Emergency cutoff Change Plans are bound to the complete operator intent.
+ * Never display an old plane/scope/operation preview as an active plan. */
+export function coreCutoffKey(plane:string,scopeKind:string,scopeRef:string,operation:string,reason:string):string{
+  return JSON.stringify([plane,scopeKind,scopeRef.trim(),operation,reason.trim()]);
+}
+
 export function canApplyGuidedRule(preview:any,tests:any,acknowledgedUnknowns:boolean):boolean {
   if(!preview?.change_plan_id||preview.no_change||tests?.ok!==true||Number(tests.required_failed??1)!==0)return false;
   if(preview.policy_regression && (preview.policy_regression.ok!==true || Number(preview.policy_regression.required_failed??1)!==0))return false;
@@ -32,47 +48,53 @@ export function AccessEvidenceExplorer({api,plane,source,destination,selector,on
   api:LinkApi,plane:AccessPlane,source:string,destination:string,selector:string,
   onSelect:(flow:SelectedFlow)=>void,onNavigate?:Navigate
 }){
-  const [graph,setGraph]=useState<any>(null),[trace,setTrace]=useState<any>(null);
+  const [graphEvidence,setGraphEvidence]=useState<{key:string,value:any}|null>(null);
+  const [traceEvidence,setTraceEvidence]=useState<{key:string,value:any}|null>(null);
   const [graphBusy,setGraphBusy]=useState(false),[traceBusy,setTraceBusy]=useState(false);
   const [error,setError]=useState(""),[path,setPath]=useState("");
   const graphRequest=useRef(0),traceRequest=useRef(0);
-  useEffect(()=>{graphRequest.current+=1;setGraph(null);setError("");setGraphBusy(false)},[plane]);
-  useEffect(()=>{traceRequest.current+=1;setTrace(null);setTraceBusy(false)},[plane,source,destination,selector,path]);
+  const currentTraceKey=coreFlowKey(plane,source,destination,selector,path);
+  const visibleTrace=visibleCoreEvidence(traceEvidence,currentTraceKey);
+  const visibleGraph=visibleCoreEvidence(graphEvidence,plane);
+  useEffect(()=>{graphRequest.current+=1;setGraphEvidence(null);setError("");setGraphBusy(false)},[plane]);
+  useEffect(()=>{traceRequest.current+=1;setTraceEvidence(null);setTraceBusy(false);setError("")},[plane,source,destination,selector,path]);
+  useEffect(()=>()=>{graphRequest.current+=1;traceRequest.current+=1},[]);
   const ready=!!(source.trim()&&destination.trim()&&selector.trim());
   async function loadGraph(){
     const token=++graphRequest.current;
-    setGraph(null);setGraphBusy(true);setError("");
+    setGraphEvidence(null);setGraphBusy(true);setError("");
     try{
       const next=await api("/api/v1/policy/graph?plane="+encodeURIComponent(plane));
-      if(graphRequest.current===token)setGraph(next);
+      if(graphRequest.current===token)setGraphEvidence({key:plane,value:next});
     }catch(e:any){if(graphRequest.current===token)setError("Core graph unavailable: "+String(e.message||e))}
     finally{if(graphRequest.current===token)setGraphBusy(false)}
   }
   async function explain(){
     if(!ready)return;
     const token=++traceRequest.current;
-    setTrace(null);setTraceBusy(true);setError("");
+    setTraceEvidence(null);setTraceBusy(true);setError("");
+    const requestKey=currentTraceKey;
     const body:any={plane,source:source.trim(),destination:destination.trim()};
     if(plane==="ai"){body.permission=selector.trim();if(path.trim())body.path=path.trim()}
     else body.service=selector.trim();
     try{
       const next=await api("/api/v1/policy/trace",{method:"POST",body:JSON.stringify(body)});
-      if(traceRequest.current===token)setTrace(next);
+      if(traceRequest.current===token)setTraceEvidence({key:requestKey,value:next});
     }catch(e:any){if(traceRequest.current===token)setError("Core decision unavailable: "+String(e.message||e))}
     finally{if(traceRequest.current===token)setTraceBusy(false)}
   }
-  const observed=explainTrace(trace),paths=Array.isArray(graph?.paths)?graph.paths.slice(0,16):[];
-  const limits=graph?.limits||{};
+  const observed=explainTrace(visibleTrace),paths=Array.isArray(visibleGraph?.paths)?visibleGraph.paths.slice(0,16):[];
+  const limits=visibleGraph?.limits||{};
   return <section className="card dr-p0-section" aria-label="Effective access explanation" data-testid="p0-access-explain">
     <div className="dr-section-head"><div><p className="dr-eyebrow">Effective Access · Core evidence</p>
       <h3>Who can reach what — and why?</h3>
       <p className="muted">Select a Core-modeled flow or enter source, destination and service above. Policy result does not prove network reachability.</p>
     </div><button className="secondary" onClick={loadGraph} disabled={graphBusy}>{graphBusy?"Loading…":"Load modeled paths"}</button></div>
     {error&&<div className="error" role="alert">{error}</div>}
-    {graph&&<>
-      <div className="dr-p0-facts"><span>Modeled flows: {limits.path_count??graph.paths?.length??"UNKNOWN"}</span>
+    {visibleGraph&&<>
+      <div className="dr-p0-facts"><span>Modeled flows: {limits.path_count??visibleGraph.paths?.length??"UNKNOWN"}</span>
         <span>Core graph: {limits.truncated?"TRUNCATED":"bounded snapshot"}</span>
-        <span>Topology discovery: {graph.network_topology?"present":"not performed"}</span></div>
+        <span>Topology discovery: {visibleGraph.network_topology?"present":"not performed"}</span></div>
       {limits.truncated&&<p className="warning-box">Only bounded graph paths are shown. Absent paths are not proof of DENY.</p>}
       {paths.length? <div className="dr-p0-paths" aria-label="Core modeled paths">
         {paths.map((row:any,i:number)=>{
@@ -92,21 +114,21 @@ export function AccessEvidenceExplorer({api,plane,source,destination,selector,on
     <div className="dr-p0-actions"><button className="primary" onClick={explain} disabled={!ready||traceBusy}>{traceBusy?"Checking…":"Explain selected access"}</button>
       <button className="secondary" onClick={()=>onNavigate?.("policies","access")}>View policies</button>
       <button className="secondary" onClick={()=>onNavigate?.("audit","observability")}>Review audit evidence</button></div>
-    {trace&&<div className="dr-p0-evidence">
+    {visibleTrace&&<div className="dr-p0-evidence">
       <div className="dr-p0-decision"><span>Effective policy decision</span><strong className={"dr-p0-result "+observed.decision.toLowerCase()}>{observed.decision}</strong></div>
       <div className="dr-p0-route" aria-label="Core decision route">
-        <div><small>Source</small><strong>{trace.normalized_input?.source||source}</strong></div>
+        <div><small>Source</small><strong>{visibleTrace.normalized_input?.source||source}</strong></div>
         <span aria-hidden="true">→</span>
         <div><small>Policy decision</small><strong>{observed.decision}</strong></div>
         <span aria-hidden="true">→</span>
-        <div><small>Destination</small><strong>{trace.normalized_input?.destination||destination}</strong></div>
+        <div><small>Destination</small><strong>{visibleTrace.normalized_input?.destination||destination}</strong></div>
       </div>
       <p>{observed.reason}</p>
-      <p className="muted">Matched rules: {observed.rules.length?observed.rules.join(", "):"none reported"} · Mode: {trace.policy?.mode||"UNKNOWN"} · Enforcement: {trace.policy?.enforcement||"UNKNOWN"}</p>
-      {trace.mixed&&<p className="warning-box">Mixed group membership outcomes; inspect individual member results before acting.</p>}
-      <details><summary>Advanced · exact Core trace</summary><pre className="plan">{JSON.stringify(trace,null,2)}</pre></details>
+      <p className="muted">Matched rules: {observed.rules.length?observed.rules.join(", "):"none reported"} · Mode: {visibleTrace.policy?.mode||"UNKNOWN"} · Enforcement: {visibleTrace.policy?.enforcement||"UNKNOWN"}</p>
+      {visibleTrace.mixed&&<p className="warning-box">Mixed group membership outcomes; inspect individual member results before acting.</p>}
+      <details><summary>Advanced · exact Core trace</summary><pre className="plan">{JSON.stringify(visibleTrace,null,2)}</pre></details>
     </div>}
-    {!trace&&!traceBusy&&<p className="muted">Decision: UNKNOWN until a fresh Core decision trace succeeds.</p>}
+    {!visibleTrace&&!traceBusy&&<p className="muted">Decision: UNKNOWN until a fresh Core decision trace succeeds.</p>}
   </section>;
 }
 
