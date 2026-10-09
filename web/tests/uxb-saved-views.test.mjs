@@ -8,14 +8,14 @@ import {build} from "esbuild";
 import React from "react";
 import {renderToStaticMarkup} from "react-dom/server";
 const root=dirname(dirname(fileURLToPath(import.meta.url)));
-let scratch,SavedViewsWorkspace,readSavedView,saveDraftForResource;
+let scratch,SavedViewsWorkspace,readSavedView,saveDraftForResource,conflictingSavedViewName;
 before(async()=>{
  scratch=mkdtempSync(join(root,"node_modules",".uxb-saved-views-"));
  const outfile=join(scratch,"views.mjs");
  await build({entryPoints:[join(root,"src","uxb-saved-views.tsx")],outfile,
   bundle:true,platform:"node",format:"esm",jsx:"automatic",
   external:["react","react/jsx-runtime"],logLevel:"silent"});
- ({SavedViewsWorkspace,readSavedView,saveDraftForResource}=await import(pathToFileURL(outfile).href));
+ ({SavedViewsWorkspace,readSavedView,saveDraftForResource,conflictingSavedViewName}=await import(pathToFileURL(outfile).href));
 });
 after(()=>{if(scratch)rmSync(scratch,{recursive:true,force:true})});
 const render=(items,initialDraft=null)=>renderToStaticMarkup(React.createElement(SavedViewsWorkspace,{
@@ -57,6 +57,24 @@ test("Current Hosts/Services filter produces a bounded, explicit private prefere
  for(const invalid of ["", "  ", "x".repeat(121)])assert.equal(saveDraftForResource("host",invalid),null);
  assert.equal(saveDraftForResource("policy","allow"),null);
  assert.equal(saveDraftForResource("host",null),null);
+});
+test("Case-insensitive observed Saved View names require explicit replacement intent",()=>{
+ const rows=[
+  {id:"one",name:"Offline hosts",payload:{resource_type:"managed-host",filter:"offline"}},
+  {id:"two",name:"SSH",payload:{resource_type:"remote-service",filter:"ssh"}}
+ ];
+ assert.equal(conflictingSavedViewName(rows," offline HOSTS "),"Offline hosts");
+ assert.equal(conflictingSavedViewName(rows,"ssh"),"SSH");
+ assert.equal(conflictingSavedViewName(rows,"new view"),null);
+ assert.equal(conflictingSavedViewName(rows,""),null);
+ assert.equal(conflictingSavedViewName(null,"SSH"),null);
+ assert.equal(conflictingSavedViewName(rows,{name:"SSH"}),null);
+ assert.equal(conflictingSavedViewName([{name:3},...rows],"ssh"),"SSH");
+ assert.equal(conflictingSavedViewName(rows,"ＳＳＨ"),null);
+});
+test("Blank or whitespace-only saved filters cannot masquerade as an explicit filter",()=>{
+ assert.equal(readSavedView({payload:{resource_type:"managed-host",filter:"  "}}),null);
+ assert.equal(readSavedView({payload:{resource_type:"remote-service",filter:""}}),null);
 });
 test("Saved Views prefill only an explicit canonical resource-filter draft; name requires intent",()=>{
  const html=render([],{resource_type:"remote-service",filter:" ssh "});

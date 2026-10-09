@@ -894,6 +894,25 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn('maxLength={120}', SOURCE)
         self.assertIn('Pre-filled from', saved)
 
+    def test_saved_view_name_replacement_requires_explicit_review(self):
+        saved=(ROOT / "web/src/uxb-saved-views.tsx").read_text(encoding="utf-8")
+        for marker in (
+            "export function conflictingSavedViewName(",
+            "const duplicate=conflictingSavedViewName(rows,name);",
+            "const [confirmReplace,setConfirmReplace]=useState(false);",
+            "if(duplicate&&!confirmReplace)return;",
+            'setConfirmReplace(false);',
+            "Replace existing saved filter",
+            "checked={confirmReplace}",
+            "disabled={busy||!name.trim()||!filter.trim()||!!(duplicate&&!confirmReplace)||incompleteNames&&!confirmReplace}",
+            "if(incompleteNames&&!confirmReplace)return;",
+            'setName(e.target.value);setConfirmReplace(false);',
+            'setFilter(e.target.value);setConfirmReplace(false)',
+            "existing name in your observed private list",
+        ):
+            self.assertIn(marker,saved,marker)
+        self.assertNotIn('method:"PUT"',saved)
+
     def test_normative_ux_doc_binds_control_reference_and_competitive_sources(self):
         for required in (
             "Product Foundation PF-5B Administration projection",

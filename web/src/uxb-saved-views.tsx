@@ -1,6 +1,15 @@
 import React,{useState} from "react";
 
 export type StoredViewTarget="managed-host"|"remote-service";
+// Match SQLite's ASCII NOCASE behavior for per-operator saved view names.
+export function conflictingSavedViewName(items:unknown,name:unknown):string|null{
+  if(!Array.isArray(items)||typeof name!=="string"||!name.trim())return null;
+  const asciiFold=(text:string)=>text.replace(/[A-Z]/g,ch=>ch.toLowerCase());
+  const requested=asciiFold(name.trim());
+  const existing=items.find((item:any)=>typeof item?.name==="string"
+    &&asciiFold(item.name)===requested);
+  return existing?.name||null;
+}
 // A saved view is a personal display preference, never an access rule.
 export function saveDraftForResource(kind:unknown,filter:unknown):{resource_type:StoredViewTarget,filter:string}|null{
   if((kind!=="host"&&kind!=="service")||typeof filter!=="string")return null;
@@ -12,7 +21,7 @@ export function readSavedView(value:unknown):{route:"hosts"|"services",filter:st
   if(!value||typeof value!=="object"||Array.isArray(value))return null;
   const payload=(value as any).payload;
   if(!payload||typeof payload!=="object"||Array.isArray(payload))return null;
-  if(typeof payload.filter!=="string"||payload.filter.length>120)return null;
+  if(typeof payload.filter!=="string"||!payload.filter.trim()||payload.filter.length>120)return null;
   if(payload.resource_type==="managed-host")return {route:"hosts",filter:payload.filter};
   if(payload.resource_type==="remote-service")return {route:"services",filter:payload.filter};
   return null;
@@ -27,18 +36,25 @@ export function SavedViewsWorkspace({data,api,onNavigate,refresh,initialDraft}:{
   const [name,setName]=useState(""),[filter,setFilter]=useState(safeDraft?.filter||"");
   const [target,setTarget]=useState<StoredViewTarget>(safeDraft?.resource_type||"managed-host");
   const [busy,setBusy]=useState(false),[error,setError]=useState(""),[notice,setNotice]=useState("");
+  const [confirmReplace,setConfirmReplace]=useState(false);
+  const rows=Array.isArray(data?.items)?data.items:[];
+  const duplicate=conflictingSavedViewName(rows,name);
+  // Core currently returns at most 100 views, so an unobserved collision is possible.
+  const incompleteNames=rows.length>=100;
   async function save(e:React.FormEvent){
     e.preventDefault();
     if(busy||!name.trim()||!filter.trim())return;
+    if(duplicate&&!confirmReplace)return;
+    if(incompleteNames&&!confirmReplace)return;
     setError("");setNotice("");setBusy(true);
     try{
       await api("/api/v1/saved-views",{method:"POST",
         body:JSON.stringify({name:name.trim(),payload:{resource_type:target,filter:filter.trim()}})});
-      setName("");setNotice("Private filter saved. Check My saved filters for the latest list.");refresh();
+      setName("");setConfirmReplace(false);
+      setNotice("Private filter saved. Check My saved filters for the latest list.");refresh();
     }catch(e:any){setError(e.message||String(e))}
     finally{setBusy(false)}
   }
-  const rows=Array.isArray(data?.items)?data.items:[];
   return <div className="dr-resource-workspace">
     <header className="dr-page-intro"><div><p className="dr-eyebrow">Activity &amp; Health · Preferences</p>
       <h2>Saved Views</h2><p className="muted">Reuse a named filter for observed Hosts or Remote Services. These are private display preferences, never access policies.</p></div></header>
@@ -48,15 +64,22 @@ export function SavedViewsWorkspace({data,api,onNavigate,refresh,initialDraft}:{
       {safeDraft&&<p role="status" className="muted">Pre-filled from {safeDraft.resource_type==="managed-host"?"Servers & Agents":"Published Services"}. Give this text filter a name, then explicitly save it. Other list controls and unpublished Core pages are not included.</p>}
       <form onSubmit={save}>
         <div className="toolbar">
-          <label>View name <input value={name} maxLength={80} onChange={e=>setName(e.target.value)} placeholder="Offline hosts" required/></label>
-          <label>Resource type <select value={target} onChange={e=>setTarget(e.target.value as StoredViewTarget)}>
+          <label>View name <input value={name} maxLength={80} onChange={e=>{setName(e.target.value);setConfirmReplace(false);setNotice("")}} placeholder="Offline hosts" required/></label>
+          <label>Resource type <select value={target} onChange={e=>{setTarget(e.target.value as StoredViewTarget);setConfirmReplace(false)}}>
             <option value="managed-host">Servers &amp; Agents</option>
             <option value="remote-service">Published Services</option>
           </select></label>
-          <label>Filter text <input value={filter} maxLength={120} onChange={e=>setFilter(e.target.value)} placeholder="offline" required/></label>
-          <button type="submit" className="primary" disabled={busy||!name.trim()||!filter.trim()}>
-            {busy?"Saving…":"Save filter"}</button>
+          <label>Filter text <input value={filter} maxLength={120} onChange={e=>{setFilter(e.target.value);setConfirmReplace(false)}} placeholder="offline" required/></label>
+          <button type="submit" className="primary" disabled={busy||!name.trim()||!filter.trim()||!!(duplicate&&!confirmReplace)||incompleteNames&&!confirmReplace}>
+            {busy?"Saving…":duplicate?"Replace filter":"Save filter"}</button>
         </div>
+        {!!name.trim()&&(duplicate||incompleteNames)&&<label className="warning-box">
+          <input type="checkbox" checked={confirmReplace} onChange={e=>setConfirmReplace(e.target.checked)} disabled={busy}/>
+          <strong>{duplicate?"Replace existing saved filter":"Possible name collision"}</strong>
+          <span>{duplicate
+            ? "An existing name in your observed private list matches this name (case-insensitive): "+duplicate+". Confirm to replace its saved resource type and text filter."
+            : "The first 100 private views were observed, but older names may be missing. Saving this name could replace an unlisted private filter. Confirm before proceeding."}</span>
+        </label>}
       </form>
     </section>
     <section className="card dr-list-card"><h3>My saved filters</h3>
