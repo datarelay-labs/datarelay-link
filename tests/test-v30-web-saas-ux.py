@@ -444,7 +444,10 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         https = ADMIN_SOURCE.split('"core.https":{', 1)[1].split('    },', 1)[0]
         users = ADMIN_SOURCE.split('"core.users":{', 1)[1].split('    },', 1)[0]
         self.assertIn('availability:"read_only"', https)
-        self.assertIn('access:"view"', https)
+        self.assertIn('const authenticated=admin||role==="Operator"||role==="Read Only"', ADMIN_SOURCE)
+        self.assertIn('const readAccess=authenticated?"view":"none"', ADMIN_SOURCE)
+        self.assertIn('access:readAccess', https)
+        self.assertIn('...(authenticated?{target:', https)
         self.assertIn('MCP TLS certificate status only', https)
         self.assertIn('Shared Web HTTPS listener and redirect configuration', https)
         self.assertIn('actionId:"link.certificate"', https)
@@ -461,6 +464,13 @@ class V30WebSaasUxContractTests(unittest.TestCase):
             self.assertIn(f'"{name}":unavailable', ADMIN_SOURCE)
         for name in ("core.audit", "core.health"):
             self.assertIn(f'"{name}":{{', ADMIN_SOURCE)
+            self.assertIn(
+                f'"{name}":{{\n      availability:"read_only",access:readAccess',
+                ADMIN_SOURCE,
+            )
+        # An unrecognized role must not inherit any incidental View target.
+        self.assertIn('...(authenticated?{target:{kind:"action" as const,actionId:"link.audit"}}:{})', ADMIN_SOURCE)
+        self.assertIn('...(authenticated?{target:{kind:"action" as const,actionId:"link.health"}}:{})', ADMIN_SOURCE)
 
     def test_managed_host_admission_is_visible_separately_from_connection(self):
         # An admission filter alone is not enough; the selected state must be
