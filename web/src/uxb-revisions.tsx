@@ -1,22 +1,53 @@
 import React, {useEffect,useRef,useState} from "react";
 import {isPartialCorePage,requireObservedMenuPayload,selectMenuPage,type MenuPagePosition} from "./uxb-menu-evidence";
 
+/** A successful Core HTTP read still must be a genuine bounded revision page.
+ * A structurally valid but wrong-family page is UNKNOWN, never an empty history. */
+export function validateObservedRevisionPage(value:unknown):any{
+  const fail=()=>{throw new Error("UNKNOWN · Core Change History returned an invalid or out-of-order revision page.");};
+  if(!value||typeof value!=="object"||Array.isArray(value))return fail();
+  const page=value as Record<string,any>;
+  if(page.resource_type!=="revision"||page.limit!==100
+    ||!Array.isArray(page.items)||page.items.length>100
+    ||(page.next_cursor!==null&&(typeof page.next_cursor!=="string"||!page.next_cursor))
+    ||(!page.items.length&&page.next_cursor!==null))return fail();
+  let previous=Infinity;
+  for(const row of page.items){
+    if(!row||typeof row!=="object"||Array.isArray(row)
+      ||!Number.isSafeInteger(row.revision)||row.revision<0
+      ||row.revision>=previous
+      ||["actor","command","created_at","summary"].some(key=>
+        row[key]!==null&&row[key]!==undefined&&typeof row[key]!=="string"))return fail();
+    previous=row.revision;
+  }
+  return value;
+}
+
 /** Activity & Health → Change History. A Core keyset page is never a total. */
 export function RevisionHistory({initial,api}:{
   initial:any,api:(path:string)=>Promise<any>
 }){
-  const first=requireObservedMenuPayload("revisions",initial);
+  // An inconsistent initial Core response must render UNKNOWN in this workspace,
+  // rather than throw during React render and tear down the entire Web shell.
+  let first:any=null,initialIssue="";
+  try{first=validateObservedRevisionPage(requireObservedMenuPayload("revisions",initial))}
+  catch(e:any){initialIssue=e.message||String(e)}
   const [page,setPage]=useState<any>(first);
   const [position,setPosition]=useState<MenuPagePosition>({cursor:"",history:[]});
   const [requested,setRequested]=useState<MenuPagePosition>({cursor:"",history:[]});
-  const [loading,setLoading]=useState(false),[error,setError]=useState("");
+  const [loading,setLoading]=useState(false),[error,setError]=useState(initialIssue);
   const requestEpoch=useRef(0);
   useEffect(()=>{
     requestEpoch.current+=1;
-    setPage(requireObservedMenuPayload("revisions",initial));
+    try{
+      setPage(validateObservedRevisionPage(requireObservedMenuPayload("revisions",initial)));
+      setError("");
+    }catch(e:any){
+      setPage(null);setError(e.message||String(e));
+    }
     setPosition({cursor:"",history:[]});
     setRequested({cursor:"",history:[]});
-    setLoading(false);setError("");
+    setLoading(false);
     return()=>{requestEpoch.current+=1};
   },[initial]);
 
@@ -26,7 +57,7 @@ export function RevisionHistory({initial,api}:{
     try{
       const url="/api/v1/revisions?limit=100"+
         (target.cursor?"&cursor="+encodeURIComponent(target.cursor):"");
-      const observed=requireObservedMenuPayload("revisions",await api(url));
+      const observed=validateObservedRevisionPage(requireObservedMenuPayload("revisions",await api(url)));
       if(epoch!==requestEpoch.current)return;
       if(observed.resource_type&&observed.resource_type!=="revision")
         throw new Error("Core Change History returned another resource type. State is UNKNOWN.");

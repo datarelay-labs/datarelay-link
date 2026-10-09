@@ -847,6 +847,79 @@ class V30WebSaasUxContractTests(unittest.TestCase):
             self.assertIn(marker,audit,marker)
         self.assertNotIn('setMessage("Audit export created: "+String(value.path||""))',audit)
 
+    def test_inventory_export_requires_authoritative_bounded_artifact_receipt(self):
+        job = SOURCE.split("function JobOperations(", 1)[1].split("function ResourceWorkspace(", 1)[0]
+        helper = (ROOT / "web/src/uxb-menu-evidence.ts").read_text(encoding="utf-8")
+        self.assertIn("export function requireObservedInventoryExport(", helper)
+        for marker in (
+            "const inventoryExportInFlight=useRef(false);",
+            "const [inventoryExportBusy,setInventoryExportBusy]=useState(false);",
+            "if(inventoryExportInFlight.current)return;",
+            'requireObservedInventoryExport(await api("/api/v1/inventory/export",',
+            "setInventoryExport(null);",
+            "Core Inventory Export status UNKNOWN",
+            'disabled={inventoryExportBusy}',
+            "No Web download",
+            "record_count:inventoryExport.record_count",
+            "limits:inventoryExport.limits",
+        ):
+            self.assertIn(marker, job)
+        self.assertNotIn('setMessage("Inventory export created at "+String(result.path||""))',job)
+
+    def test_fleet_preview_never_survives_changed_target_or_stale_response(self):
+        jobs=SOURCE.split("function JobOperations(",1)[1].split("function ObjectsWorkspace(",1)[0]
+        for marker in (
+            'const fleetPreviewEpoch=useRef(0);',
+            'const [fleetPreviewBusy,setFleetPreviewBusy]=useState(false);',
+            'const [fleetPreviewKey,setFleetPreviewKey]=useState<string|null>(null);',
+            'const fleetDraftKey=JSON.stringify([',
+            'function invalidateFleetReview(){',
+            'fleetPreviewEpoch.current+=1;',
+            'const epoch=++fleetPreviewEpoch.current;',
+            'const requestedKey=fleetDraftKey;',
+            'if(epoch!==fleetPreviewEpoch.current)return;',
+            'setFleetPreviewKey(requestedKey);',
+            'if(!fleetPreviewGuard||fleetConfirm!=="APPLY")return;',
+            'const fleetPreviewGuard=',
+            'const fleetApplyInFlight=useRef(false);',
+            'if(fleetApplyInFlight.current)return;',
+            'const request={resource_type:fleetResourceType,resource:fleetResource,changes};',
+            'Fleet tags must be a JSON object with text keys and text values.',
+            'Enter a description, tags or group membership change before Preview.',
+            'requireObservedFleetPreview(await api("/api/v1/fleet/metadata/preview",',
+            'requireObservedFleetApplyForPreview(await api("/api/v1/fleet/metadata/apply",',
+            'setFleetPreviewKey(null);',
+            'disabled={fleetPreviewBusy||fleetApplyBusy',
+            'disabled={!fleetPreviewGuard||fleetConfirm!=="APPLY"}',
+        ):
+            self.assertIn(marker,jobs,marker)
+        self.assertNotIn('onChange={e=>{setFleetResource(e.target.value);setFleetPreview(null)}}',jobs)
+        self.assertNotIn('setFleetPreview(result);\n    }catch(e:any)',jobs)
+
+    def test_jobs_detail_and_cancel_never_reuse_stale_core_evidence(self):
+        jobs=SOURCE.split("function JobOperations(",1)[1].split("function ObjectsWorkspace(",1)[0]
+        helper=(ROOT / "web/src/uxb-menu-evidence.ts").read_text(encoding="utf-8")
+        self.assertIn("export function requireObservedJobDetail(",helper)
+        self.assertIn("export function requireObservedJobCancellation(",helper)
+        for marker in (
+            'const detailReadEpoch=useRef(0);',
+            'const cancelInFlight=useRef(false);',
+            'const [detailBusy,setDetailBusy]=useState(false);',
+            'const [cancelBusy,setCancelBusy]=useState(false);',
+            'requireObservedJobDetail(await api("/api/v1/jobs/"+encodeURIComponent(target)),target)',
+            'if(epoch!==detailReadEpoch.current)return;',
+            'detailReadEpoch.current+=1;',
+            'requireObservedJobCancellation(await api("/api/v1/jobs/cancel",',
+            'Cancellation request recorded; running targets may still finish.',
+            'Already terminal; no new cancellation was applied.',
+            'UNKNOWN · Core Job cancellation response',
+            'disabled={detailBusy||cancelBusy}',
+        ):
+            self.assertIn(marker,jobs,marker)
+        self.assertIn('const result=requireObservedJobDetail(await api(',jobs)
+        self.assertIn('if(epoch!==detailReadEpoch.current)return;',jobs)
+        self.assertNotIn('setMessage("Cancellation requested. Queued targets are cancelled;',jobs)
+
     def test_irreversible_retention_requires_typed_confirmation_and_fresh_policy(self):
         audit=SOURCE.split("function AuditExplorer(",1)[1].split("function AgentRolloutPreviewPanel(",1)[0]
         helper=(ROOT / "web/src/uxb-menu-evidence.ts").read_text(encoding="utf-8")
@@ -906,13 +979,13 @@ class V30WebSaasUxContractTests(unittest.TestCase):
             self.assertIn(marker,evidence,marker)
         for marker in (
             "requireObservedJobStart(await api(",
-            "requireObservedFleetApply(await api(",
+            "requireObservedFleetApplyForPreview(await api(",
             "Core job request accepted",
             "UNKNOWN · Core Job start response",
             "UNKNOWN · Fleet metadata apply response",
-            "setFleetPreview(null);setFleetConfirm(\"\");",
+            "setFleetPreview(null);setFleetPreviewKey(null);setFleetConfirm(\"\");",
             'const [fleetApplyBusy,setFleetApplyBusy]=useState(false);',
-            'disabled={fleetConfirm!=="APPLY"||fleetApplyBusy}',
+            'disabled={!fleetPreviewGuard||fleetConfirm!=="APPLY"}',
         ):
             self.assertIn(marker,jobs,marker)
         self.assertNotIn('result.selection?.target_count||0',jobs)
@@ -976,6 +1049,22 @@ class V30WebSaasUxContractTests(unittest.TestCase):
             'No configuration revisions on this observed Core page.',
         ):
             self.assertIn(marker, revisions, marker)
+
+    def test_change_history_invalid_initial_core_page_renders_unknown_not_exception(self):
+        revisions=(ROOT / "web/src/uxb-revisions.tsx").read_text(encoding="utf-8")
+        for marker in (
+            "export function validateObservedRevisionPage(",
+            'page.resource_type!=="revision"||page.limit!==100',
+            'let first:any=null,initialIssue="";',
+            'try{first=validateObservedRevisionPage(requireObservedMenuPayload("revisions",initial))}',
+            'catch(e:any){initialIssue=e.message||String(e)}',
+            'setPage(null);setError(e.message||String(e));',
+            'const observed=validateObservedRevisionPage(requireObservedMenuPayload("revisions",await api(url)));',
+            'UNKNOWN · Core Change History unavailable',
+            'Retry Core page →',
+        ):
+            self.assertIn(marker,revisions,marker)
+        self.assertIn('tests/uxb-revisions.test.mjs',PACKAGE)
 
     def test_agent_version_drift_is_not_synthetic_when_server_version_unknown(self):
         versions=(ROOT / "web/src/uxb-versions.tsx").read_text(encoding="utf-8")

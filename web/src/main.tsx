@@ -7,7 +7,7 @@ import {AccessEvidenceExplorer,GuidedPolicyJourney,coreFlowKey,coreCutoffKey,vis
 import {EnrollmentOnboarding} from "./p0-enrollment";
 import {navGroups,groupFor,labelFor,pageDescriptions,visibleRoute,navMatches,setupContextForObjectFamily} from "./uxb-navigation";
 import {FirstUseHome,isFreshInstallation,observedRecentFeed,observedNumber,accessPlaneCount,coreHealthState,type RecentFeed} from "./uxb-home";
-import {requireObservedMenuPayload,requireObservedInventoryContinuation,requireObservedObjectContinuation,requireObservedAuditRetention,auditRetentionRunPermitted,requireObservedAccessHygiene,hygieneInspectTarget,requireObservedJobStart,requireObservedFleetApply,requireObservedAuditExport,requireObservedRolloutPreview,isPartialCorePage,selectMenuPage,combineObservedPolicyPlanes,type MenuPagePosition} from "./uxb-menu-evidence";
+import {requireObservedMenuPayload,requireObservedInventoryContinuation,requireObservedObjectContinuation,requireObservedAuditRetention,auditRetentionRunPermitted,requireObservedAccessHygiene,hygieneInspectTarget,requireObservedJobStart,requireObservedFleetApply,requireObservedFleetPreview,requireObservedFleetApplyForPreview,requireObservedAuditExport,requireObservedRolloutPreview,requireObservedInventoryExport,requireObservedJobDetail,requireObservedJobCancellation,isPartialCorePage,selectMenuPage,combineObservedPolicyPlanes,type MenuPagePosition} from "./uxb-menu-evidence";
 import {RemoteServiceEditor} from "./uxb-remote-service";
 import {RevisionHistory} from "./uxb-revisions";
 import {AgentVersionDrift} from "./uxb-versions";
@@ -1155,7 +1155,21 @@ function JobOperations({operator}:{operator:any}){
   const [jobType,setJobType]=useState("doctor"),[resourceType,setResourceType]=useState("managed-host"),[resource,setResource]=useState(""),[detailId,setDetailId]=useState("");
   const [fleetResourceType,setFleetResourceType]=useState("managed-host"),[fleetResource,setFleetResource]=useState(""),[fleetDescription,setFleetDescription]=useState(""),[fleetTags,setFleetTags]=useState(""),[fleetRemoveTags,setFleetRemoveTags]=useState(""),[fleetAddGroups,setFleetAddGroups]=useState(""),[fleetRemoveGroups,setFleetRemoveGroups]=useState(""),[fleetPreview,setFleetPreview]=useState<any>(null),[fleetConfirm,setFleetConfirm]=useState("");
   const [fleetApplyBusy,setFleetApplyBusy]=useState(false);
+  const fleetApplyInFlight=useRef(false);
+  const fleetPreviewInFlight=useRef(false);
+  const fleetPreviewEpoch=useRef(0);
+  const [fleetPreviewBusy,setFleetPreviewBusy]=useState(false);
+  const [fleetPreviewKey,setFleetPreviewKey]=useState<string|null>(null);
+  const fleetDraftKey=JSON.stringify([
+    fleetResourceType,fleetResource,fleetDescription,fleetTags,fleetRemoveTags,fleetAddGroups,fleetRemoveGroups
+  ]);
   const [jobStartBusy,setJobStartBusy]=useState(false);
+  const detailReadEpoch=useRef(0);
+  const [detailBusy,setDetailBusy]=useState(false);
+  const cancelInFlight=useRef(false);
+  const [cancelBusy,setCancelBusy]=useState(false);
+  const inventoryExportInFlight=useRef(false);
+  const [inventoryExportBusy,setInventoryExportBusy]=useState(false);
   async function refresh(){
     const epoch=++jobsReadEpoch.current;
     setError("");setJobsState("loading");
@@ -1169,6 +1183,7 @@ function JobOperations({operator}:{operator:any}){
     }
   }
   useEffect(()=>{refresh();return()=>{jobsReadEpoch.current+=1}},[jobsCursor]);
+  useEffect(()=>()=>{detailReadEpoch.current+=1;fleetPreviewEpoch.current+=1},[]);
   function olderJobsPage(){
     if(!isPartialCorePage(jobs))return;
     setJobsHistory([...jobsHistory,jobsCursor]);
@@ -1186,6 +1201,7 @@ function JobOperations({operator}:{operator:any}){
       const body:any={job_type:jobType,resource_type:resourceType};
       if(resource)body.resource=resource;
       const result=requireObservedJobStart(await api("/api/v1/jobs/diagnostic",{method:"POST",body:JSON.stringify(body)}),jobType);
+      detailReadEpoch.current+=1;setDetailBusy(false);
       setDetail(result.job);
       setDetailId(result.job.id);
       setMessage("Core job request accepted: "+result.job.id+" · status "+result.job.status+" · "+result.selection.target_count+" Managed Host(s). Completion NOT VERIFIED.");
@@ -1195,59 +1211,121 @@ function JobOperations({operator}:{operator:any}){
     finally{setJobStartBusy(false)}
   }
   async function loadDetail(id?:string){
-    const target=(id||detailId).trim();if(!target)return;
-    setError("");
-    try{const result=await api("/api/v1/jobs/"+encodeURIComponent(target));setDetail(result);setDetailId(target)}catch(e:any){setError(e.message||String(e))}
+    const target=(id||detailId).trim();
+    if(!target||cancelBusy)return;
+    const epoch=++detailReadEpoch.current;
+    setDetail(null);setDetailBusy(true);setError("");
+    try{
+      const result=requireObservedJobDetail(await api("/api/v1/jobs/"+encodeURIComponent(target)),target);
+      if(epoch!==detailReadEpoch.current)return;
+      setDetail(result);setDetailId(target);
+    }catch(e:any){
+      if(epoch===detailReadEpoch.current)setError("UNKNOWN · Core Job Detail does not match the requested Job ID: "+(e.message||String(e)));
+    }finally{
+      if(epoch===detailReadEpoch.current)setDetailBusy(false);
+    }
   }
   function csvList(value:string){return value.split(",").map(x=>x.trim()).filter(Boolean)}
+  function invalidateFleetReview(){
+    fleetPreviewEpoch.current+=1;
+    fleetPreviewInFlight.current=false;
+    setFleetPreview(null);setFleetPreviewKey(null);setFleetConfirm("");
+    setFleetPreviewBusy(false);setError("");setMessage("");
+  }
   async function previewFleetMetadata(){
+    if(fleetPreviewInFlight.current||fleetApplyInFlight.current||fleetApplyBusy)return;
+    fleetPreviewInFlight.current=true;
+    const epoch=++fleetPreviewEpoch.current;
+    const requestedKey=fleetDraftKey;
     setError("");setMessage("");setFleetConfirm("");
+    setFleetPreview(null);setFleetPreviewKey(null);setFleetPreviewBusy(true);
     try{
       const changes:any={};
       if(fleetDescription!=="")changes.description=fleetDescription;
-      if(fleetTags.trim())changes.tags=JSON.parse(fleetTags);
+      if(fleetTags.trim()){
+        const parsed=JSON.parse(fleetTags);
+        if(!parsed||typeof parsed!=="object"||Array.isArray(parsed)
+          ||Object.entries(parsed).some(([key,value])=>!key.trim()||typeof value!=="string"))
+          throw new Error("Fleet tags must be a JSON object with text keys and text values.");
+        if(Object.keys(parsed).length)changes.tags=parsed;
+      }
       const removeTags=csvList(fleetRemoveTags);if(removeTags.length)changes.remove_tags=removeTags;
       const addGroups=csvList(fleetAddGroups);if(addGroups.length)changes.add_groups=addGroups;
       const removeGroups=csvList(fleetRemoveGroups);if(removeGroups.length)changes.remove_groups=removeGroups;
-      const result=await api("/api/v1/fleet/metadata/preview",{method:"POST",body:JSON.stringify({
-        resource_type:fleetResourceType,resource:fleetResource,changes
-      })});
-      setFleetPreview(result);
-    }catch(e:any){setFleetPreview(null);setError(e.message||String(e))}
+      if(!Object.keys(changes).length)
+        throw new Error("Enter a description, tags or group membership change before Preview.");
+      const request={resource_type:fleetResourceType,resource:fleetResource,changes};
+      const result=requireObservedFleetPreview(await api("/api/v1/fleet/metadata/preview",{
+        method:"POST",body:JSON.stringify(request)
+      }),request);
+      if(epoch!==fleetPreviewEpoch.current)return;
+      setFleetPreview(result);setFleetPreviewKey(requestedKey);
+    }catch(e:any){
+      if(epoch===fleetPreviewEpoch.current){
+        setFleetPreview(null);setFleetPreviewKey(null);
+        setError(e.message||String(e));
+      }
+    }finally{
+      if(epoch===fleetPreviewEpoch.current){fleetPreviewInFlight.current=false;setFleetPreviewBusy(false)}
+    }
   }
+  const fleetPreviewGuard=!!fleetPreview&&fleetPreviewKey===fleetDraftKey&&!fleetPreviewBusy&&!fleetApplyBusy
+    &&typeof fleetPreview.change_plan_id==="string";
   async function applyFleetMetadata(){
-    if(!fleetPreview||fleetApplyBusy||fleetConfirm!=="APPLY")return;
+    if(fleetApplyInFlight.current)return;
+    if(!fleetPreviewGuard||fleetConfirm!=="APPLY")return;
+    fleetApplyInFlight.current=true;
     setError("");setMessage("");setFleetApplyBusy(true);
     try{
-      const result=requireObservedFleetApply(await api("/api/v1/fleet/metadata/apply",{method:"POST",body:JSON.stringify({
-        change_plan_id:fleetPreview.change_plan_id,confirmation:fleetConfirm
-      })}));
+      const reviewed=fleetPreview;
+      const result=requireObservedFleetApplyForPreview(await api("/api/v1/fleet/metadata/apply",{method:"POST",body:JSON.stringify({
+        change_plan_id:reviewed.change_plan_id,confirmation:fleetConfirm
+      })}),reviewed);
       setMessage("Core confirmed Fleet metadata APPLIED at revision "+result.revision+" to "+result.result.target_count+" Managed Host(s).");
-      setFleetPreview(null);setFleetConfirm("");
+      setFleetPreview(null);setFleetPreviewKey(null);setFleetConfirm("");
     }catch(e:any){
       // The Core may have committed even if the Web response was interrupted.
       // Never allow reusing an ambiguous Apply plan without fresh Preview.
-      setFleetPreview(null);setFleetConfirm("");
+      setFleetPreview(null);setFleetPreviewKey(null);setFleetConfirm("");
       setError("UNKNOWN · Fleet metadata apply response could not be confirmed. Inspect Change History before attempting a fresh Preview: "+(e.message||String(e)));
-    }finally{setFleetApplyBusy(false)}
+    }finally{fleetApplyInFlight.current=false;setFleetApplyBusy(false)}
   }
   async function exportInventory(){
-    setError("");setMessage("");
+    if(inventoryExportInFlight.current)return;
+    inventoryExportInFlight.current=true;setInventoryExportBusy(true);
+    setError("");setMessage("");setInventoryExport(null);
     try{
-      const result=await api("/api/v1/inventory/export",{method:"POST",body:"{}"});
+      const result=requireObservedInventoryExport(await api("/api/v1/inventory/export",{method:"POST",body:"{}"}));
       setInventoryExport(result);
-      setMessage("Inventory export created at "+String(result.path||""));
-    }catch(e:any){setError(e.message||String(e))}
+      setMessage("Core confirmed a bounded server-side Inventory Export: "+result.record_count+" resources. No Web download is available.");
+    }catch(e:any){
+      setError("Core Inventory Export status UNKNOWN. "+(e.message||String(e))+" The export may already exist; inspect Core before retrying.");
+    }finally{
+      inventoryExportInFlight.current=false;setInventoryExportBusy(false);
+    }
   }
   async function cancelJob(){
-    if(!detail?.id)return;
-    setError("");setMessage("");
+    if(cancelInFlight.current||!detail?.id||detailBusy)return;
+    cancelInFlight.current=true;setCancelBusy(true);
+    const jobId=String(detail.id);
+    detailReadEpoch.current+=1;setError("");setMessage("");
     try{
-      const result=await api("/api/v1/jobs/cancel",{method:"POST",body:JSON.stringify({job_id:detail.id})});
-      setDetail(result);
-      setMessage("Cancellation requested. Queued targets are cancelled; running targets are not claimed terminated.");
+      const confirmed=requireObservedJobCancellation(await api("/api/v1/jobs/cancel",{
+        method:"POST",body:JSON.stringify({job_id:jobId})
+      }),jobId);
+      setDetail(confirmed.job);
+      setMessage(confirmed.outcome==="REQUESTED"
+        ?"Cancellation request recorded; running targets may still finish."
+        :"Already terminal; no new cancellation was applied.");
       await refresh();
-    }catch(e:any){setError(e.message||String(e))}
+    }catch(e:any){
+      // An ambiguous response could represent a real Core cancellation.
+      // Do not claim success or blindly send another cancel.
+      setDetail(null);
+      setError("UNKNOWN · Core Job cancellation response did not confirm the exact Job. Load Detail before retrying: "+(e.message||String(e)));
+    }finally{
+      cancelInFlight.current=false;setCancelBusy(false);
+    }
   }
   const rows=(jobs?.items||[]).map((x:any)=>({id:x.id,job_type:x.job_type,status:x.status,resource_type:x.resource_type,resource_ref:x.resource_ref,target_count:x.target_count,created_at:x.created_at,finished_at:x.finished_at||""}));
   return <>
@@ -1262,8 +1340,12 @@ function JobOperations({operator}:{operator:any}){
         <input value={resource} onChange={e=>setResource(e.target.value)} placeholder={resourceType==="managed-host"?"Host selector; blank = all trusted":"Managed Host Group name / ID"}/>
         <button className="primary" onClick={start} disabled={jobStartBusy||(resourceType==="managed-host-group"&&!resource.trim())}>{jobStartBusy?"Submitting Core Job…":"Start Job"}</button>
       </div>}
-      <div className="toolbar"><button className="secondary" onClick={refresh}>Refresh Jobs</button><input value={detailId} onChange={e=>setDetailId(e.target.value)} placeholder="Job ID"/><button className="secondary" onClick={()=>loadDetail()}>Load Detail</button><button className="secondary" onClick={exportInventory}>Export Inventory</button></div>
-      {inventoryExport&&<pre className="plan">{JSON.stringify({path:inventoryExport.path,record_count:inventoryExport.record_count,counts:inventoryExport.counts,sha256:inventoryExport.sha256,download_exposed:inventoryExport.download_exposed},null,2)}</pre>}
+      <div className="toolbar"><button className="secondary" onClick={refresh}>Refresh Jobs</button><input value={detailId} onChange={e=>{detailReadEpoch.current+=1;setDetail(null);setDetailBusy(false);setDetailId(e.target.value)}} placeholder="Job ID" disabled={cancelBusy}/><button className="secondary" onClick={()=>loadDetail()} disabled={detailBusy||cancelBusy}>{detailBusy?"Loading Core Job…":"Load Detail"}</button><button className="secondary" onClick={exportInventory} disabled={inventoryExportBusy}>{inventoryExportBusy?"Exporting inventory…":"Export Inventory"}</button></div>
+      {inventoryExport&&<section role="status" className="dr-export-evidence">
+        <strong>Core Inventory Export CREATED · No Web download</strong>
+        <p className="muted">This bounded sanitized inventory artifact is stored on the Server. It is not a downloadable browser file or a complete history of every resource type.</p>
+        <pre className="plan">{JSON.stringify({status:inventoryExport.status,path:inventoryExport.path,record_count:inventoryExport.record_count,counts:inventoryExport.counts,limits:inventoryExport.limits,size_bytes:inventoryExport.size_bytes,sha256:inventoryExport.sha256,download_exposed:inventoryExport.download_exposed},null,2)}</pre>
+      </section>}
       {jobsState!=="ready"?<p role="status" className="warning-box">
         {jobsState==="loading"?"Loading Management Jobs from Core…":"UNKNOWN · Core Jobs inventory is unavailable. Retry using Refresh Jobs; an empty list has not been confirmed."}
       </p>:<>
@@ -1279,29 +1361,31 @@ function JobOperations({operator}:{operator:any}){
     {operator.role!=="Read Only"&&<section className="card dr-fleet-card">
       <div className="dr-section-head"><div><p className="dr-eyebrow">Fleet change</p><h3>Fleet Metadata Change Plan</h3><p className="muted">Bounded to 100 trusted Managed Hosts. Changes apply atomically as one revision after Preview.</p></div></div>
       <div className="dr-form-section"><h4>Target scope</h4><div className="dr-form-grid two">
-        <label className="dr-field"><span>Target type</span><select value={fleetResourceType} onChange={e=>{setFleetResourceType(e.target.value);setFleetResource("");setFleetPreview(null)}}><option value="managed-host">Managed Host(s)</option><option value="managed-host-group">Managed Host Group</option></select></label>
-        <label className="dr-field"><span>Target selector</span><input value={fleetResource} onChange={e=>{setFleetResource(e.target.value);setFleetPreview(null)}} placeholder={fleetResourceType==="managed-host"?"Blank selects all trusted hosts":"Managed Host Group name / ID"}/></label>
+        <label className="dr-field"><span>Target type</span><select value={fleetResourceType} disabled={fleetApplyBusy} onChange={e=>{invalidateFleetReview();setFleetResourceType(e.target.value);setFleetResource("")}}><option value="managed-host">Managed Host(s)</option><option value="managed-host-group">Managed Host Group</option></select></label>
+        <label className="dr-field"><span>Target selector</span><input value={fleetResource} disabled={fleetApplyBusy} onChange={e=>{invalidateFleetReview();setFleetResource(e.target.value)}} placeholder={fleetResourceType==="managed-host"?"Blank selects all trusted hosts":"Managed Host Group name / ID"}/></label>
       </div></div>
       <div className="dr-form-section"><h4>Metadata</h4><div className="dr-form-grid two">
-        <label className="dr-field"><span>Description</span><input value={fleetDescription} onChange={e=>{setFleetDescription(e.target.value);setFleetPreview(null)}} placeholder="Optional description for selected hosts"/></label>
-        <label className="dr-field"><span>Tags JSON</span><input value={fleetTags} onChange={e=>{setFleetTags(e.target.value);setFleetPreview(null)}} placeholder='{"site":"lab","owner":"secops"}'/></label>
-        <label className="dr-field"><span>Remove tag keys</span><input value={fleetRemoveTags} onChange={e=>{setFleetRemoveTags(e.target.value);setFleetPreview(null)}} placeholder="owner,environment"/></label>
+        <label className="dr-field"><span>Description</span><input value={fleetDescription} disabled={fleetApplyBusy} onChange={e=>{invalidateFleetReview();setFleetDescription(e.target.value)}} placeholder="Optional description for selected hosts"/></label>
+        <label className="dr-field"><span>Tags JSON</span><input value={fleetTags} disabled={fleetApplyBusy} onChange={e=>{invalidateFleetReview();setFleetTags(e.target.value)}} placeholder='{"site":"lab","owner":"secops"}'/></label>
+        <label className="dr-field"><span>Remove tag keys</span><input value={fleetRemoveTags} disabled={fleetApplyBusy} onChange={e=>{invalidateFleetReview();setFleetRemoveTags(e.target.value)}} placeholder="owner,environment"/></label>
       </div></div>
       <div className="dr-form-section"><h4>Group membership</h4><div className="dr-form-grid two">
-        <label className="dr-field"><span>Add groups</span><input value={fleetAddGroups} onChange={e=>{setFleetAddGroups(e.target.value);setFleetPreview(null)}} placeholder="group-a, group-b"/></label>
-        <label className="dr-field"><span>Remove groups</span><input value={fleetRemoveGroups} onChange={e=>{setFleetRemoveGroups(e.target.value);setFleetPreview(null)}} placeholder="group-c"/></label>
+        <label className="dr-field"><span>Add groups</span><input value={fleetAddGroups} disabled={fleetApplyBusy} onChange={e=>{invalidateFleetReview();setFleetAddGroups(e.target.value)}} placeholder="group-a, group-b"/></label>
+        <label className="dr-field"><span>Remove groups</span><input value={fleetRemoveGroups} disabled={fleetApplyBusy} onChange={e=>{invalidateFleetReview();setFleetRemoveGroups(e.target.value)}} placeholder="group-c"/></label>
       </div></div>
-      <div className="dr-form-actions"><button className="primary" onClick={previewFleetMetadata} disabled={fleetResourceType==="managed-host-group"&&!fleetResource.trim()}>Preview fleet change</button></div>
-      {fleetPreview&&<div className="dr-preview-panel">
+      <div className="dr-form-actions"><button className="primary" onClick={previewFleetMetadata} disabled={fleetPreviewBusy||fleetApplyBusy||(fleetResourceType==="managed-host-group"&&!fleetResource.trim())}>{fleetPreviewBusy?"Reading Core Preview…":"Preview fleet change"}</button></div>
+      {fleetPreviewBusy&&<p role="status" className="muted">Waiting for this form's Core Change Plan. Editing the form invalidates this request.</p>}
+      {fleetPreview&&fleetPreviewKey===fleetDraftKey&&<div className="dr-preview-panel">
+        <p className="muted">This Core Change Plan is for the exact form values shown. Review impacted Managed Hosts before Apply; Preview alone makes no change.</p>
         <pre className="plan">{JSON.stringify({selection:fleetPreview.selection,changes:fleetPreview.changes,preview:fleetPreview.preview,impact:fleetPreview.impact},null,2)}</pre>
-        <label className="apply-label">Type APPLY to commit<input value={fleetConfirm} onChange={e=>setFleetConfirm(e.target.value)} placeholder="APPLY"/></label>
-        <button className="danger" onClick={applyFleetMetadata} disabled={fleetConfirm!=="APPLY"||fleetApplyBusy}>{fleetApplyBusy?"Confirming Core Apply…":"Apply Fleet Metadata"}</button>
+        <label className="apply-label">Type APPLY to commit<input value={fleetConfirm} onChange={e=>setFleetConfirm(e.target.value)} placeholder="APPLY" disabled={fleetApplyBusy}/></label>
+        <button className="danger" onClick={applyFleetMetadata} disabled={!fleetPreviewGuard||fleetConfirm!=="APPLY"}>{fleetApplyBusy?"Confirming Core Apply…":"Apply Fleet Metadata"}</button>
       </div>}
     </section>}
     {detail&&<div className="card">
       <h3>Job Detail</h3>
       <div className="grid"><Metric label="Status" value={detail.status}/><Metric label="Targets" value={detail.target_count}/><Metric label="Type" value={detail.job_type}/></div>
-      {operator.role!=="Read Only"&&["QUEUED","RUNNING"].includes(String(detail.status||""))&&<button className="danger" onClick={cancelJob}>Cancel Job</button>}
+      {operator.role!=="Read Only"&&["QUEUED","RUNNING"].includes(String(detail.status||""))&&<button className="danger" onClick={cancelJob} disabled={cancelBusy||detailBusy}>{cancelBusy?"Requesting Core cancellation…":"Cancel Job"}</button>}
       <Table items={(detail.targets||[]).map((x:any)=>({target_id:x.target_id,status:x.status,attempt:x.attempt,error:x.error||"",updated_at:x.updated_at}))}/>
       <pre className="plan">{JSON.stringify({id:detail.id,resource_type:detail.resource_type,resource_ref:detail.resource_ref,deadline_at:detail.deadline_at,last_error:detail.last_error,targets:(detail.targets||[]).map((x:any)=>({target_id:x.target_id,status:x.status,result:x.result,error:x.error}))},null,2)}</pre>
     </div>}

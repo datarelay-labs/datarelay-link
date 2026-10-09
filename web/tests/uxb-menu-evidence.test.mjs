@@ -292,6 +292,121 @@ test('Agent rollout preview is advisory for exactly the Core-observed requested 
     assert.throws(()=>menu.requireObservedRolloutPreview(bad,request),/UNKNOWN/);
   }
 });
+test('Inventory Export cannot claim CREATED without a real bounded Core artifact',()=>{
+  const counts={managed_hosts:2,remote_services:1,managed_host_groups:1,managed_host_tags:3};
+  const limits={managed_hosts:100,remote_services:1000,managed_host_groups:200,managed_host_tags:1000};
+  const good={status:'CREATED',path:'/var/lib/drlink/exports/drlink-inventory-20261009T132300Z-deadbeef.ndjson',
+    sha256:'a'.repeat(64),size_bytes:700,record_count:7,counts,limits,
+    sanitized:true,download_exposed:false,authoritative_mutation:false};
+  assert.equal(menu.requireObservedInventoryExport(good),good);
+  const empty={...good,record_count:0,counts:{managed_hosts:0,remote_services:0,managed_host_groups:0,managed_host_tags:0}};
+  assert.equal(menu.requireObservedInventoryExport(empty),empty);
+  for(const bad of [null,{},[],{error:'connection lost'},
+    {...good,status:'QUEUED'},{...good,path:'/tmp/inventory.ndjson'},
+    {...good,path:'/var/lib/drlink/exports/../private.ndjson'},
+    {...good,sha256:'x'.repeat(64)},{...good,sha256:undefined},
+    {...good,size_bytes:0},{...good,record_count:0},
+    {...good,record_count:'7'},{...good,counts:{...counts,managed_hosts:120}},
+    {...good,counts:{...counts,managed_host_tags:undefined}},
+    {...good,limits:{...limits,managed_hosts:101}},
+    {...good,limits:{...limits,remote_services:null}},
+    {...good,sanitized:false},{...good,download_exposed:true},
+    {...good,authoritative_mutation:true}]){
+    assert.throws(()=>menu.requireObservedInventoryExport(bad),/UNKNOWN/);
+  }
+});
+test('Fleet metadata preview is bound to the actual Core selection, changes and impact',()=>{
+  const request={resource_type:'managed-host',resource:'',changes:{
+    description:'Fleet A',tags:{site:'lab'},add_groups:['ops','ops']
+  }};
+  const ok={change_plan_id:'cp_1234567890abcdefghijABCDEFGHIJ',operation_class:'CHANGE',
+    operation:'fleet-metadata.apply',resource_type:'managed-host-fleet',
+    resource_ref:'all',confirmation_class:'APPLY',expected_revision:18,
+    selection:{resource_type:'managed-host',resource_ref:'all',resource_display:'All hosts',target_count:2},
+    changes:{description:'Fleet A',tags:{site:'lab'},add_groups:['ops']},
+    preview:{target_count:2,operation_count:6,targets:[
+      {managed_host_id:'a',operation_count:3},{managed_host_id:'b',operation_count:3}]},
+    impact:{target_count:2,operation_count:6,requires_confirmation:true,
+      destructive:false,access_broadened:false,access_narrowed:false}
+  };
+  assert.equal(menu.requireObservedFleetPreview(ok,request),ok);
+  for(const invalid of [null,{},[],
+    {...ok,change_plan_id:''},{...ok,expected_revision:'18'},
+    {...ok,selection:{...ok.selection,resource_type:'managed-host-group'}},
+    {...ok,selection:{...ok.selection,resource_ref:''}},
+    {...ok,selection:{...ok.selection,target_count:0}},
+    {...ok,changes:{...ok.changes,description:'Other fleet'}},
+    {...ok,changes:{...ok.changes,tags:{site:'remote'}}},
+    {...ok,preview:{...ok.preview,target_count:3}},
+    {...ok,preview:{...ok.preview,targets:[ok.preview.targets[0],ok.preview.targets[0]]}},
+    {...ok,preview:{...ok.preview,operation_count:5}},
+    {...ok,impact:{...ok.impact,operation_count:0}},
+    {...ok,impact:{...ok.impact,access_broadened:true}},
+    {...ok,impact:{...ok.impact,requires_confirmation:false}},
+    {...ok,impact:{...ok.impact,target_count:101}},
+  ])assert.throws(()=>menu.requireObservedFleetPreview(invalid,request),/UNKNOWN/);
+  assert.throws(()=>menu.requireObservedFleetPreview(ok,
+    {...request,resource_type:'managed-host-group'}),/UNKNOWN/);
+  assert.throws(()=>menu.requireObservedFleetPreview(ok,
+    {...request,changes:{description:'Changed'}}),/UNKNOWN/);
+});
+test('Fleet Apply response matches the exact reviewed Core plan, revision and targets',()=>{
+  const reviewed={
+    expected_revision:41,
+    selection:{resource_type:'managed-host',resource_ref:'all',resource_display:'All hosts',target_count:2},
+    changes:{description:'Ops fleet',tags:{site:'west'}},
+    preview:{target_count:2,operation_count:4,targets:[
+      {managed_host_id:'a',operation_count:2},{managed_host_id:'b',operation_count:2}]}
+  };
+  const applied={status:'APPLIED',revision:42,selection:reviewed.selection,
+    changes:reviewed.changes,
+    result:{target_count:2,operation_count:4,targets:reviewed.preview.targets}};
+  assert.equal(menu.requireObservedFleetApplyForPreview(applied,reviewed),applied);
+  for(const altered of [null,{}, {...applied,status:'QUEUED'},
+    {...applied,revision:41},{...applied,revision:43},
+    {...applied,selection:{...applied.selection,resource_ref:'other'}},
+    {...applied,changes:{description:'Other fleet',tags:{site:'west'}}},
+    {...applied,result:{...applied.result,target_count:1}},
+    {...applied,result:{...applied.result,operation_count:3}},
+    {...applied,result:{...applied.result,targets:[]}},
+    {...applied,result:{...applied.result,targets:[
+      {...applied.result.targets[0],managed_host_id:'wrong'},applied.result.targets[1]]}},
+  ])assert.throws(()=>menu.requireObservedFleetApplyForPreview(altered,reviewed),/UNKNOWN/);
+  assert.throws(()=>menu.requireObservedFleetApplyForPreview(applied,null),/UNKNOWN/);
+});
+test('Management Job Detail belongs to requested Core Job and never borrows stale status',()=>{
+  const item=(id,status='QUEUED')=>({target_id:id,status,attempt:0});
+  const base={id:'mjob_001',job_type:'doctor',status:'QUEUED',target_count:2,
+    cancel_requested:0,targets:[item('host-a'),item('host-b')]};
+  assert.equal(menu.requireObservedJobDetail(base,'mjob_001'),base);
+  for(const bad of [null,{}, {error:'unavailable'},
+    {...base,id:'mjob_002'}, {...base,id:''},{...base,status:'unknown'},
+    {...base,job_type:null},{...base,target_count:0},
+    {...base,target_count:3},{...base,cancel_requested:null},
+    {...base,targets:[]},{...base,targets:[item('host-a'),item('host-a')]},
+    {...base,targets:[item('host-a'),item('host-b','UNKNOWN')]},
+    {...base,targets:[null,item('host-b')]}]){
+    assert.throws(()=>menu.requireObservedJobDetail(bad,'mjob_001'),/UNKNOWN/);
+  }
+});
+test('Job Cancel accepts Core acknowledgement or honest already-terminal result, never an invented cancellation',()=>{
+  const job={id:'mjob_123',job_type:'doctor',status:'RUNNING',target_count:2,
+    cancel_requested:1,targets:[
+      {target_id:'host-a',status:'RUNNING'},
+      {target_id:'host-b',status:'CANCELLED'}]};
+  assert.deepEqual(menu.requireObservedJobCancellation(job,'mjob_123'),{job,outcome:'REQUESTED'});
+  const finished={...job,status:'SUCCEEDED',cancel_requested:0,
+    targets:job.targets.map(x=>({...x,status:'SUCCEEDED'}))};
+  assert.deepEqual(menu.requireObservedJobCancellation(finished,'mjob_123'),{job:finished,outcome:'ALREADY_TERMINAL'});
+  const failedAfterPriorCancel={...job,status:'FAILED'};
+  assert.deepEqual(menu.requireObservedJobCancellation(failedAfterPriorCancel,'mjob_123'),
+    {job:failedAfterPriorCancel,outcome:'ALREADY_TERMINAL'});
+  for(const invalid of [null,{}, {...job,id:'mjob_wrong'}, {...job,cancel_requested:0},
+    {...job,status:'QUEUED'}, {...job,status:'CANCELLED',cancel_requested:2},
+    {...job,targets:[]}]){
+    assert.throws(()=>menu.requireObservedJobCancellation(invalid,'mjob_123'),/UNKNOWN/);
+  }
+});
 test('partial Objects inventory remains available for its existing explicit UNKNOWN warning',()=>{
   // ObjectsWorkspace itself distinguishes incomplete resources from a valid empty list.
   for(const response of [{resources:{}},{resources:{'network-object':{items:[]}}}]){

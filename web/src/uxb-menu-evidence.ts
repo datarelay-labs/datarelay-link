@@ -261,6 +261,75 @@ export function requireObservedRolloutPreview(payload:unknown,request:unknown):a
   return payload;
 }
 
+/** Core Inventory Export is a bounded server-side file, not a Web download.
+ * Never infer CREATED from HTTP status, fabricated counts or a missing digest. */
+export function requireObservedInventoryExport(payload:unknown):any{
+  const fail=()=>{throw new Error("UNKNOWN · Core Inventory Export receipt did not confirm a bounded server-side file. Inspect Core export records before retrying.");};
+  if(!payload||typeof payload!=="object"||Array.isArray(payload))return fail();
+  const value=payload as Record<string,any>;
+  const limits:Record<string,number>={managed_hosts:100,remote_services:1000,
+    managed_host_groups:200,managed_host_tags:1000};
+  const keys=Object.keys(limits);
+  if(value.status!=="CREATED"
+    ||typeof value.path!=="string"
+    ||!/^\/var\/lib\/drlink\/exports\/drlink-inventory-\d{8}T\d{6}Z-[a-f0-9]{8}\.ndjson$/.test(value.path)
+    ||typeof value.sha256!=="string"||!/^[a-f0-9]{64}$/.test(value.sha256)
+    ||typeof value.size_bytes!=="number"||!Number.isSafeInteger(value.size_bytes)||value.size_bytes<1
+    ||typeof value.record_count!=="number"||!Number.isSafeInteger(value.record_count)||value.record_count<0
+    ||value.sanitized!==true||value.download_exposed!==false||value.authoritative_mutation!==false
+    ||!value.counts||typeof value.counts!=="object"||Array.isArray(value.counts)
+    ||!value.limits||typeof value.limits!=="object"||Array.isArray(value.limits)
+    ||Object.keys(value.counts).length!==keys.length||Object.keys(value.limits).length!==keys.length)return fail();
+  let sum=0;
+  for(const key of keys){
+    if(value.limits[key]!==limits[key]
+      ||typeof value.counts[key]!=="number"||!Number.isSafeInteger(value.counts[key])
+      ||value.counts[key]<0||value.counts[key]>limits[key])return fail();
+    sum+=value.counts[key];
+  }
+  if(value.record_count!==sum)return fail();
+  return payload;
+}
+
+/** A Job detail belongs to one explicitly requested ID. Incomplete or
+ * superseded reads must not imply a matching current Job or cancellable state. */
+export function requireObservedJobDetail(payload:unknown,requestedId:unknown):any{
+  const fail=()=>{throw new Error("UNKNOWN · Core Job Detail is missing, mismatched or incomplete. Retry the exact Job ID.");};
+  if(!payload||typeof payload!=="object"||Array.isArray(payload)
+    ||typeof requestedId!=="string"||!requestedId.trim())return fail();
+  const job=payload as Record<string,any>;
+  const validStates=new Set(["QUEUED","RUNNING","SUCCEEDED","FAILED","CANCELLED"]);
+  if(job.id!==requestedId||typeof job.id!=="string"||!job.id.trim()
+    ||typeof job.job_type!=="string"||!job.job_type.trim()
+    ||!validStates.has(job.status)
+    ||typeof job.target_count!=="number"||!Number.isSafeInteger(job.target_count)
+    ||job.target_count<1||job.target_count>100
+    ||![true,false,0,1].includes(job.cancel_requested)
+    ||!Array.isArray(job.targets)||job.targets.length!==job.target_count)return fail();
+  const seen=new Set<string>();
+  for(const t of job.targets){
+    if(!t||typeof t!=="object"||Array.isArray(t)
+      ||typeof t.target_id!=="string"||!t.target_id.trim()
+      ||seen.has(t.target_id)||!validStates.has(t.status))return fail();
+    seen.add(t.target_id);
+  }
+  return payload;
+}
+
+/** Job cancellation may finish with running targets still active, or an already
+ * terminal Job. Neither condition is proof all target operations stopped. */
+export function requireObservedJobCancellation(payload:unknown,requestedId:string):
+  {job:any,outcome:"REQUESTED"|"ALREADY_TERMINAL"}{
+  const job=requireObservedJobDetail(payload,requestedId);
+  const recorded=job.cancel_requested===1||job.cancel_requested===true;
+  if(["SUCCEEDED","FAILED"].includes(job.status)
+    ||job.status==="CANCELLED"&&!recorded)
+    return {job,outcome:"ALREADY_TERMINAL"};
+  if(recorded&&["RUNNING","CANCELLED"].includes(job.status))
+    return {job,outcome:"REQUESTED"};
+  throw new Error("UNKNOWN · Core Job cancellation response did not confirm the current Job or cancellation state.");
+}
+
 /** A 200 response does not prove a Job was enqueued. Check the actual
  * Core queue identity, status and bounded target counts before reporting it. */
 export function requireObservedJobStart(payload:unknown,expectedJobType:string):any{
@@ -281,6 +350,85 @@ export function requireObservedJobStart(payload:unknown,expectedJobType:string):
   return payload;
 }
 
+/** A Fleet Preview is only meaningful when the Core plan belongs to this
+ * form's resource family and the exact intended normalized metadata change. */
+export function requireObservedFleetPreview(payload:unknown,request:unknown):any{
+  const fail=()=>{throw new Error("UNKNOWN · Core Fleet Preview has mismatched targets, changes, or impact. Recheck the selection before creating a fresh Change Plan.");};
+  const object=(v:unknown):v is Record<string,any>=>!!v&&typeof v==="object"&&!Array.isArray(v);
+  if(!object(payload)||!object(request)||!object(request.changes)
+    ||!["managed-host","managed-host-group"].includes(request.resource_type)
+    ||typeof request.resource!=="string")return fail();
+  const plan=payload as Record<string,any>,sel=plan.selection,preview=plan.preview,
+    impact=plan.impact;
+  if(!object(sel)||!object(preview)||!object(impact)||!object(plan.changes))return fail();
+  const validCount=(n:unknown)=>typeof n==="number"&&Number.isSafeInteger(n)&&n>=1&&n<=100;
+  if(typeof plan.change_plan_id!=="string"||!/^cp_[A-Za-z0-9_-]{20,}$/.test(plan.change_plan_id)
+    ||plan.operation_class!=="CHANGE"||plan.operation!=="fleet-metadata.apply"
+    ||plan.resource_type!=="managed-host-fleet"||plan.confirmation_class!=="APPLY"
+    ||typeof plan.expected_revision!=="number"||!Number.isSafeInteger(plan.expected_revision)||plan.expected_revision<0
+    ||sel.resource_type!==request.resource_type
+    ||typeof sel.resource_ref!=="string"||!sel.resource_ref.trim()
+    ||typeof sel.resource_display!=="string"||!sel.resource_display.trim()
+    ||(request.resource_type==="managed-host"&&!request.resource.trim()&&sel.resource_ref!=="all")
+    ||plan.resource_ref!==sel.resource_ref
+    ||!validCount(sel.target_count)||preview.target_count!==sel.target_count
+    ||impact.target_count!==sel.target_count
+    ||!Array.isArray(preview.targets)||preview.targets.length!==sel.target_count
+    ||typeof preview.operation_count!=="number"||!Number.isSafeInteger(preview.operation_count)||preview.operation_count<0
+    ||impact.operation_count!==preview.operation_count
+    ||impact.requires_confirmation!==true||impact.destructive!==false
+    ||impact.access_broadened!==false||impact.access_narrowed!==false)return fail();
+  let totalOperations=0;
+  const ids=new Set<string>();
+  for(const item of preview.targets){
+    if(!object(item)||typeof item.managed_host_id!=="string"||!item.managed_host_id.trim()
+      ||ids.has(item.managed_host_id)||typeof item.operation_count!=="number"
+      ||!Number.isSafeInteger(item.operation_count)||item.operation_count<0)return fail();
+    ids.add(item.managed_host_id);totalOperations+=item.operation_count;
+  }
+  if(totalOperations!==preview.operation_count)return fail();
+
+  const keys=["description","tags","remove_tags","add_groups","remove_groups"];
+  if(Object.keys(request.changes).some(k=>!keys.includes(k))
+    ||Object.keys(plan.changes).some(k=>!keys.includes(k)))return fail();
+  const expected:Record<string,any>={};
+  for(const key of keys){
+    if(!Object.prototype.hasOwnProperty.call(request.changes,key))continue;
+    const value=request.changes[key];
+    if(key==="description"){
+      if(typeof value!=="string")return fail();
+      expected[key]=value.trim();
+    }else if(key==="tags"){
+      if(!object(value)||Object.keys(value).length>64)return fail();
+      const clean:Record<string,string>={};
+      for(const [k,v] of Object.entries(value)){
+        if(typeof v!=="string"||!k.trim()||Object.prototype.hasOwnProperty.call(clean,k.trim()))return fail();
+        clean[k.trim()]=v.trim();
+      }
+      expected[key]=clean;
+    }else{
+      if(!Array.isArray(value)||value.length>(key==="remove_tags"?64:32))return fail();
+      const out:string[]=[];
+      for(const v of value){
+        if(typeof v!=="string"||!v.trim())return fail();
+        if(!out.includes(v.trim()))out.push(v.trim());
+      }
+      expected[key]=out;
+    }
+  }
+  if(Object.keys(expected).length!==Object.keys(plan.changes).length)return fail();
+  for(const key of Object.keys(expected)){
+    const a=expected[key],b=plan.changes[key];
+    if(Array.isArray(a)){
+      if(!Array.isArray(b)||a.length!==b.length||a.some((v,i)=>v!==b[i]))return fail();
+    }else if(object(a)){
+      if(!object(b)||Object.keys(a).length!==Object.keys(b).length
+        ||Object.keys(a).some(k=>b[k]!==a[k]))return fail();
+    }else if(a!==b)return fail();
+  }
+  return payload;
+}
+
 /** A fleet Apply is acknowledged only with Core status/revision/target facts.
  * A missing field is UNKNOWN even if HTTP returned 200 and the change applied. */
 export function requireObservedFleetApply(payload:unknown):any{
@@ -294,6 +442,34 @@ export function requireObservedFleetApply(payload:unknown):any{
     ||typeof result.target_count!=="number"||!Number.isSafeInteger(result.target_count)
     ||result.target_count<1||result.target_count>100)
     throw new Error("UNKNOWN · Fleet metadata apply response lacks confirmed status, revision or target count. Inspect Change History before retrying.");
+  return payload;
+}
+
+/** Confirm an Apply receipt against the exact Core Preview that the user
+ * reviewed. HTTP success alone does not establish which fleet was updated. */
+export function requireObservedFleetApplyForPreview(payload:unknown,preview:unknown):any{
+  const fail=()=>{throw new Error("UNKNOWN · Fleet metadata Apply receipt differs from the reviewed Core Change Plan. Inspect Change History before any retry.");};
+  const obj=(v:unknown):v is Record<string,any>=>!!v&&typeof v==="object"&&!Array.isArray(v);
+  if(!obj(preview))return fail();
+  const applied=requireObservedFleetApply(payload) as Record<string,any>;
+  if(!obj(applied.selection)||!obj(applied.changes)||!obj(applied.result)
+    ||!obj(preview.selection)||!obj(preview.changes)||!obj(preview.preview))return fail();
+  const same=(a:unknown,b:unknown):boolean=>{
+    if(Array.isArray(a)||Array.isArray(b))
+      return Array.isArray(a)&&Array.isArray(b)&&a.length===b.length
+        &&a.every((value,i)=>same(value,b[i]));
+    if(obj(a)||obj(b))
+      return obj(a)&&obj(b)&&Object.keys(a).length===Object.keys(b).length
+        &&Object.keys(a).every(key=>Object.prototype.hasOwnProperty.call(b,key)&&same(a[key],b[key]));
+    return a===b;
+  };
+  if(applied.revision!==preview.expected_revision+1
+    ||!same(applied.selection,preview.selection)
+    ||!same(applied.changes,preview.changes)
+    ||applied.result.target_count!==preview.preview.target_count
+    ||applied.result.operation_count!==preview.preview.operation_count
+    ||!Array.isArray(applied.result.targets)
+    ||!same(applied.result.targets,preview.preview.targets))return fail();
   return payload;
 }
 
