@@ -1086,19 +1086,38 @@ function JobOperations({operator}:{operator:any}){
   </>;
 }
 
-function ObjectsWorkspace({data,onNavigate}:{data:any,onNavigate?:(id:string,groupId?:string)=>void}){
-  const [family,setFamily]=useState("all"),[filter,setFilter]=useState(""),[selected,setSelected]=useState<any>(null);
+function ObjectsWorkspace({data,onNavigate,context}:{data:any,onNavigate?:(id:string,groupId?:string)=>void,context?:any}){
+  const initialFamily=["all","network","service","permission","ai"].includes(String(context?.family||""))
+    ?String(context.family):"all";
+  const [family,setFamily]=useState(initialFamily),[filter,setFilter]=useState(""),[selected,setSelected]=useState<any>(null);
+  useEffect(()=>{setFamily(initialFamily);setFilter("");setSelected(null)},[initialFamily]);
   useEscapeClose(!!selected,()=>setSelected(null));
-  const all=Object.entries(data.resources||{}).flatMap(([type,page]:any)=>(page.items||[]).map((item:any)=>({...item,resource_type:type})));
+  const resources=data?.resources&&typeof data.resources==="object"?data.resources:null;
+  const requiredTypes=["network-object","network-group","service-object","service-group",
+    "permission-object","permission-group","ai-identity"];
+  const incomplete=!resources||requiredTypes.some(type=>!Array.isArray(resources[type]?.items));
+  const all=Object.entries(resources||{}).flatMap(([type,page]:any)=>
+    (Array.isArray(page?.items)?page.items:[]).map((item:any)=>({...item,resource_type:type})));
   const familyFor=(type:string)=>type.startsWith("network-")?"network":type.startsWith("service-")?"service":type.startsWith("permission-")?"permission":type==="ai-identity"?"ai":"other";
+  const truncated=Object.entries(resources||{}).some(([type,page]:any)=>
+    (family==="all"||familyFor(type)===family)&&!!page?.next_cursor);
   const q=filter.trim().toLowerCase();
   const rows=all.filter((item:any)=>(family==="all"||familyFor(item.resource_type)===family)&&(!q||Object.values(item).some(v=>String(v??"").toLowerCase().includes(q))));
   const families=[["all","All"],["network","Network"],["service","Service"],["permission","Permission"],["ai","AI Identity"]];
   return <div className="dr-resource-workspace">
     <section className="dr-page-intro"><div><p className="dr-eyebrow">Connections</p><h2>Objects & Groups</h2><p className="muted">Reusable network, service, permission and AI identity selectors for policy work.</p></div><div className="dr-page-actions"><button className="secondary" onClick={()=>onNavigate?.("policies","access")}>Use in policy</button></div></section>
     <div className="dr-access-tabs" role="tablist" aria-label="Object family">{families.map(([id,label])=><button key={id} role="tab" aria-selected={family===id} className={family===id?"active":""} onClick={()=>setFamily(id)}>{label}</button>)}</div>
-    <section className="card dr-list-card"><div className="dr-list-toolbar"><div><strong>{rows.length}</strong><span>resources</span></div><label className="dr-filter-field"><WorkspaceIcon kind="search"/><input value={filter} onChange={e=>setFilter(e.target.value)} placeholder="Filter objects and groups…"/>{filter&&<button onClick={()=>setFilter("")} aria-label="Clear filter">×</button>}</label></div>
-      {!rows.length?<div className="dr-empty-state"><span className="dr-empty-icon"><WorkspaceIcon kind="infrastructure"/></span><strong>No matching objects</strong><p>Create or adjust a reusable object below, or change the current filter.</p></div>:<div className="dr-table-scroll"><table className="dr-resource-table"><thead><tr><th>Name</th><th>Kind</th><th>Type</th><th>Status</th><th>Description</th></tr></thead><tbody>{rows.map((item:any)=><tr key={item.resource_type+":"+item.id} tabIndex={0} onClick={()=>setSelected(item)} onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();setSelected(item)}}}><td><strong>{item.name||item.id}</strong><small>{item.id}</small></td><td>{item.resource_type}</td><td>{item.type||"—"}</td><td>{item.status||item.credential_status||(item.enabled===undefined?"—":item.enabled?"Enabled":"Disabled")}</td><td>{item.description||"—"}</td></tr>)}</tbody></table></div>}
+    <section className="card dr-list-card"><div className="dr-list-toolbar"><div><strong>{rows.length}</strong><span>visible Core resources</span></div><label className="dr-filter-field"><WorkspaceIcon kind="search"/><input value={filter} onChange={e=>setFilter(e.target.value)} placeholder="Filter loaded objects and groups…"/>{filter&&<button onClick={()=>setFilter("")} aria-label="Clear filter">×</button>}</label></div>
+      {incomplete&&<p className="warning-box" role="alert">UNKNOWN · Core Objects & Groups inventory is incomplete. Some names may not be visible; check System Health before interpreting missing records.</p>}
+      {truncated&&<div className="dr-uxb-catalog-page-notice" role="status"><span>Partial Core snapshot · up to 50 names per kind were loaded. This filter checks only the loaded records.</span>
+        <button type="button" className="secondary" onClick={()=>onNavigate?.("setup","connections")}>Find another Core name →</button>
+      </div>}
+      {!rows.length?<div className="dr-empty-state"><span className="dr-empty-icon"><WorkspaceIcon kind="infrastructure"/></span>
+        <strong>{incomplete?"Core resource evidence UNKNOWN":truncated?"No match in loaded Core resources":"No matching objects"}</strong>
+        <p>{incomplete?"A failed or malformed inventory read does not prove an object is missing.":
+          truncated?"Other names may exist beyond this first page. Use Find another Core name for a fresh Core search.":
+          "Create or adjust a reusable object below, or change the current filter."}</p>
+      </div>:<div className="dr-table-scroll"><table className="dr-resource-table"><thead><tr><th>Name</th><th>Kind</th><th>Type</th><th>Status</th><th>Description</th></tr></thead><tbody>{rows.map((item:any)=><tr key={item.resource_type+":"+item.id} tabIndex={0} onClick={()=>setSelected(item)} onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();setSelected(item)}}}><td><strong>{item.name||item.id}</strong><small>{item.id}</small></td><td>{item.resource_type}</td><td>{item.type||"—"}</td><td>{item.status||item.credential_status||(item.enabled===undefined?"—":item.enabled?"Enabled":"Disabled")}</td><td>{item.description||"—"}</td></tr>)}</tbody></table></div>}
     </section>
     {selected&&<div className="dr-drawer-backdrop" onMouseDown={e=>{if(e.currentTarget===e.target)setSelected(null)}}><aside className="dr-detail-drawer" role="dialog" aria-modal="true" aria-label="Object detail" tabIndex={-1} autoFocus><header><div><p className="dr-eyebrow">{selected.resource_type}</p><h2>{selected.name||selected.id}</h2><p>{selected.id}</p></div><button className="dr-icon-button" onClick={()=>setSelected(null)} aria-label="Close detail">×</button></header><div className="dr-detail-fields">{Object.entries(selected).filter(([,value])=>typeof value!=="object"&&value!==null&&value!=="").map(([key,value])=><div key={key}><span>{key.replaceAll("_"," ")}</span><strong>{String(value)}</strong></div>)}</div><footer><button className="primary" onClick={()=>{setSelected(null);onNavigate?.("policies","access")}}>Use in policy</button></footer></aside></div>}
   </div>;
@@ -1413,7 +1432,7 @@ function View({active,operator,onNavigate,context,setupDraft,onSetupDraftChange}
   if(active==="overview"&&data)return <CommandCenter data={data} operator={operator} onNavigate={onNavigate}/>;
   if(active==="versions"&&data)return <><div className="grid"><Metric label="Server version" value={data.server_version}/><Metric label="Drift" value={data.drift_count}/><Metric label="Unknown" value={data.unknown_count}/></div><Table items={data.hosts||[]}/></>;
   if(active==="system"&&data)return <SystemAdministrationWorkspace data={data} operator={operator} onNavigate={onNavigate}/>;
-  if(active==="objects"&&data)return <><ObjectsWorkspace data={data} onNavigate={onNavigate}/>{operator.role!=="Read Only"&&<GuidedObjectPanel/>}</>;
+  if(active==="objects"&&data)return <><ObjectsWorkspace data={data} onNavigate={onNavigate} context={context}/>{operator.role!=="Read Only"&&<GuidedObjectPanel/>}</>;
   if(active==="hosts"&&data)return <><ResourceWorkspace kind="host" items={data.items||[]} operator={operator} onNavigate={onNavigate}/>{operator.role!=="Read Only"&&<ManagedHostMetadataPanel/>}{operator.role==="Admin"&&<ManagedHostAdmissionPanel/>}{operator.role==="Admin"&&<ManagedHostLifecyclePanel/>}</>;
   if(active==="services"&&data)return <><ResourceWorkspace kind="service" items={data.items||[]} operator={operator} onNavigate={onNavigate}/>{operator.role!=="Read Only"&&<RemoteServiceEditor api={api}/>}</>;
   if(active==="policies"&&data)return <><PolicyWorkspace data={data} operator={operator} onNavigate={onNavigate}/>{operator.role!=="Read Only"&&<GuidedPolicyJourney api={api} onNavigate={onNavigate}/>}<PolicySafetyPanel operator={operator}/>{operator.role!=="Read Only"&&<><GuidedPolicySettingsPanel/><TemporaryAccessPanel/></>}</>;

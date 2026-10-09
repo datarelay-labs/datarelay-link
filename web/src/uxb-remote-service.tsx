@@ -86,7 +86,7 @@ export function RemoteServiceEditor({api,ownerHint="",onSelection,initialSelecti
     <h3>Choose what an approved Agent makes available</h3>
     <p className="muted">A Managed Host is not automatically accessible. Each Remote Service needs a real host, a configured Service Object and an explicit Core access rule.</p>
     {operation==="set"&&<div className="dr-uxb-catalog-guide"><strong>Which protocol / port should be published?</strong>
-      <CoreChoiceField catalog={catalog} plane="remote" field="selector" value={service} disabled={busy} onChoose={value=>edit(setService,value)}/>
+      <CoreChoiceField api={api} catalog={catalog} plane="remote" field="selector" value={service} disabled={busy} onChoose={value=>edit(setService,value)}/>
       <p className="muted">Example: choose your existing TCP/22 Service Object. The Remote Service name is a separate label you choose below.</p>
     </div>}
     {error&&<p className="error" role="alert">{error}</p>}

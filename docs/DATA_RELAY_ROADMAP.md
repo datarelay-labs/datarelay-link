@@ -832,7 +832,7 @@ Its priority is **how a novice completes a real workflow**, not more widgets:
   raw exact-name input and mandatory Core change validation. For a verified
   empty installation show first-use tasks instead of a NOC-style KPI wall.
   Implementation/tests and the 19-vendor research mapping are recorded in
-  `docs/WEB_USER_JOURNEY_UX_ROADMAP.md` §14; real browser/user acceptance is pending.
+  `docs/WEB_USER_JOURNEY_UX_ROADMAP.md` §§14–15; real browser/user acceptance is pending.
 
 **Status (2026-10-09):** UXB-00 research/roadmap documented; UXB-01..05
 **CODE IMPLEMENTED ON ISOLATED DEV WEB SOURCE**, with offline SSR/static/package

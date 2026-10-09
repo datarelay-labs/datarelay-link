@@ -280,6 +280,63 @@ class V30WebServiceTests(unittest.TestCase):
         self.assertEqual(system["identity"]["project_version"], "3.0.0")
         self.assertEqual(system["backup"]["directory"], "/var/lib/drlink/backups")
 
+    def test_core_selector_search_uses_authenticated_read_only_inventory(self):
+        """UXB-07: bounded exact Core names, never a fabricated/authoritative UI cache."""
+        status, _, unauthenticated = self.request(
+            "GET", "/api/v1/inventory?resource_type=network-object&q=office&limit=50"
+        )
+        self.assertEqual(status, 401, unauthenticated)
+
+        plane = ControlPlane(self.tmp)
+        try:
+            v24.set_network_object(
+                plane, "office-edge-07", type="ip",
+                value="198.51.100.47", oneshot=True,
+            )
+            v24.set_service_object(
+                plane, "ssh-admin-07", type="tcp", port=22, oneshot=True,
+            )
+            revision = plane.current_revision()
+        finally:
+            plane.close()
+
+        self.login()
+        status, _, snapshot = self.request("GET", "/api/v1/objects-groups?limit=50")
+        self.assertEqual(status, 200, snapshot)
+        self.assertIn("network-object", snapshot.get("resources", {}))
+        self.assertIn("network-group", snapshot["resources"])
+        self.assertIn("service-object", snapshot["resources"])
+        self.assertIn("permission-group", snapshot["resources"])
+        self.assertIn("ai-identity", snapshot["resources"])
+        self.assertTrue(any(
+            item["name"] == "office-edge-07"
+            for item in snapshot["resources"]["network-object"]["items"]
+        ), snapshot)
+
+        for resource, needle, expected in (
+            ("network-object", "office", "office-edge-07"),
+            ("service-object", "ssh-admin", "ssh-admin-07"),
+        ):
+            status, _, result = self.request(
+                "GET", "/api/v1/inventory?resource_type=%s&q=%s&limit=50"
+                % (resource, needle)
+            )
+            self.assertEqual(status, 200, result)
+            self.assertIn(expected, [item["name"] for item in result["items"]])
+            self.assertIn("next_cursor", result)
+
+        status, _, absent = self.request(
+            "GET", "/api/v1/inventory?resource_type=network-object&q=no-such-07&limit=50"
+        )
+        self.assertEqual(status, 200, absent)
+        self.assertEqual(absent["items"], [])
+
+        readonly = ControlPlane(self.tmp, read_only=True)
+        try:
+            self.assertEqual(readonly.current_revision(), revision)
+        finally:
+            readonly.close()
+
     def test_system_validation_routes_are_csrf_protected_and_non_mutating(self):
         self.login()
         plane = ControlPlane(self.tmp)

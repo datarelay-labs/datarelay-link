@@ -203,9 +203,9 @@ export function GuidedPolicyJourney({api,onNavigate,initialPlane="remote",locked
       <h4>Choose who, where and what (from Core)</h4>
       <p>Start by selecting names that already exist. You may also type another exact name below. A selection is not approval; Core validates the change.</p>
       <div className="dr-uxb-catalog-grid">
-        <CoreChoiceField catalog={catalog} plane={plane} field="source" value={source} disabled={busy} onChoose={v=>changeFlow("source",v)}/>
-        <CoreChoiceField catalog={catalog} plane={plane} field="destination" value={destination} disabled={busy} onChoose={v=>changeFlow("destination",v)}/>
-        <CoreChoiceField catalog={catalog} plane={plane} field="selector" value={selector} disabled={busy} onChoose={v=>changeFlow("selector",v)}/>
+        <CoreChoiceField api={api} catalog={catalog} plane={plane} field="source" value={source} disabled={busy} onChoose={v=>changeFlow("source",v)}/>
+        <CoreChoiceField api={api} catalog={catalog} plane={plane} field="destination" value={destination} disabled={busy} onChoose={v=>changeFlow("destination",v)}/>
+        <CoreChoiceField api={api} catalog={catalog} plane={plane} field="selector" value={selector} disabled={busy} onChoose={v=>changeFlow("selector",v)}/>
       </div>
       <button type="button" className="secondary" onClick={()=>onNavigate?.("objects","access")}>Manage missing Objects & Groups →</button>
     </section>}

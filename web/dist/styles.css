@@ -233,3 +233,19 @@
 .dr-uxb-manual-fields summary{font-size:12px;font-weight:600;cursor:pointer}
 .dr-uxb-manual-fields summary:focus-visible{outline:2px solid var(--dr-focus-ring);outline-offset:3px}
 .dr-uxb-manual-fields>.dr-uxb-form{margin-top:12px}
+
+/* UXB-07: explicitly queried Core names beyond the bounded first page. */
+.dr-uxb-core-search{display:grid;gap:8px;min-width:0;padding:10px;border:1px solid var(--dr-border-default);border-radius:var(--dr-radius-card);background:var(--dr-surface-panel)}
+.dr-uxb-core-search>.dr-field{min-width:0}
+.dr-uxb-core-search input{width:100%;min-width:0}
+.dr-uxb-core-search-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.dr-uxb-core-search-actions button{max-width:100%;white-space:normal}
+.dr-uxb-core-search .warning-box{margin:0;overflow-wrap:anywhere}
+.dr-uxb-core-search-count,.dr-uxb-core-selection{font-size:11px;line-height:1.5;color:var(--dr-text-secondary)}
+.dr-uxb-core-search input:focus-visible{outline:2px solid var(--dr-focus-ring);outline-offset:3px}
+@media(max-width:560px){.dr-uxb-core-search-actions>button{width:100%}}
+
+/* A first-page Core snapshot is not a complete inventory. */
+.dr-uxb-catalog-page-notice{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:11px 13px;border:1px solid var(--dr-border-default);border-radius:var(--dr-radius-card);background:var(--dr-surface-section);color:var(--dr-text-secondary);font-size:12px}
+.dr-uxb-catalog-page-notice button{white-space:normal}
+@media(max-width:560px){.dr-uxb-catalog-page-notice button{width:100%}}

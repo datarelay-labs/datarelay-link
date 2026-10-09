@@ -3,7 +3,7 @@ import {EnrollmentOnboarding,hostReadinessLabel} from "./p0-enrollment";
 import {AccessEvidenceExplorer,GuidedPolicyJourney,type AccessPlane,type LinkApi} from "./p0-access-policy";
 import {RemoteServiceEditor} from "./uxb-remote-service";
 import {CoreChoiceField,type CoreCatalog} from "./uxb-core-choices";
-type Navigate=(id:string,groupId?:string)=>void;
+type Navigate=(id:string,groupId?:string,context?:any)=>void;
 export type SetupDraft={
   plane?:AccessPlane,step?:number,selectedHost?:string,serviceName?:string,
   source?:string,destination?:string,selector?:string,
@@ -136,9 +136,9 @@ export function FirstConnectionSetup({api,operator,onNavigate,initialDraft,onDra
       <p>{plane==="internet"
         ?"Internet Access controls permitted outbound requests from a managed/protected source, not published inbound Remote Services."
         :"AI Access grants named permissions to an authenticated AI Identity. It does not expose an SSH port."}</p>
-      <CoreChoiceField catalog={catalog} plane={plane} field="source" value={source} onChoose={setSource}/>
+      <CoreChoiceField api={api} catalog={catalog} plane={plane} field="source" value={source} onChoose={setSource}/>
       {source&&<p className="dr-uxb-selection-note">Selected source: <strong>{source}</strong>. Core checks its meaning during policy preview.</p>}
-      <button className="secondary" onClick={()=>onNavigate?.("objects","access")}>{plane==="internet"?"Browse Network Objects & Groups →":"Inspect configured AI Identities →"}</button>
+      <button className="secondary" onClick={()=>onNavigate?.("objects","access",{family:plane==="ai"?"ai":"network"})}>{plane==="internet"?"Browse Network Objects & Groups →":"Inspect configured AI Identities →"}</button>
     </section>}
     {step===2&&plane==="remote"&&<div className="dr-uxb-setup-section">
       <div className="dr-uxb-context"><strong>Why publish a Remote Service?</strong><p>Choose exactly one service/port from an approved Agent. This queues an authenticated Agent job — it does not instantly prove success or user authorization.</p></div>
@@ -157,14 +157,14 @@ export function FirstConnectionSetup({api,operator,onNavigate,initialDraft,onDra
       <p>{plane==="internet"?"Use an approved Network Object/Group for the external destination and a Service Object/Group for its protocol/port."
         :"Choose Permission Object/Group and an AI destination. A permission is not a network port."}</p>
       <div className="dr-uxb-catalog-grid">{plane==="internet"?<>
-        <CoreChoiceField catalog={catalog} plane={plane} field="destination" value={destination} onChoose={setDestination}/>
-        <CoreChoiceField catalog={catalog} plane={plane} field="selector" value={selector} onChoose={setSelector}/>
+        <CoreChoiceField api={api} catalog={catalog} plane={plane} field="destination" value={destination} onChoose={setDestination}/>
+        <CoreChoiceField api={api} catalog={catalog} plane={plane} field="selector" value={selector} onChoose={setSelector}/>
       </>:<>
-        <CoreChoiceField catalog={catalog} plane={plane} field="selector" value={selector} onChoose={setSelector}/>
-        <CoreChoiceField catalog={catalog} plane={plane} field="destination" value={destination} onChoose={setDestination}/>
+        <CoreChoiceField api={api} catalog={catalog} plane={plane} field="selector" value={selector} onChoose={setSelector}/>
+        <CoreChoiceField api={api} catalog={catalog} plane={plane} field="destination" value={destination} onChoose={setDestination}/>
       </>}</div>
       <p className="muted">These are suggestions from existing Core resources, not a new grant. You can edit exact names in the next stage; Core preview validates them.</p>
-      <button className="secondary" onClick={()=>onNavigate?.("objects","access")}>Manage Objects & Groups (advanced) →</button>
+      <button className="secondary" onClick={()=>onNavigate?.("objects","access",{family:plane==="ai"?"permission":"network"})}>Manage Objects & Groups (advanced) →</button>
     </section>}
     {step===3&&<div className="dr-uxb-setup-section">
       <div className="dr-uxb-context"><strong>{plane==="remote"?"Grant only the intended source":"Define the exact intended access"}</strong>
@@ -182,9 +182,9 @@ export function FirstConnectionSetup({api,operator,onNavigate,initialDraft,onDra
         <p>Enter Network/Service or AI Identity/Permission object names and run a real Core trace. ALLOW is a policy result, not proof a target is reachable. Unknown remains UNKNOWN.</p></div>
       <section className="dr-uxb-catalog-guide"><h3>Choose existing Core resources (or enter exact names below)</h3>
         <div className="dr-uxb-catalog-grid">
-          <CoreChoiceField catalog={catalog} plane={plane} field="source" value={source} onChoose={setSource}/>
-          <CoreChoiceField catalog={catalog} plane={plane} field="destination" value={destination} onChoose={setDestination}/>
-          <CoreChoiceField catalog={catalog} plane={plane} field="selector" value={selector} onChoose={setSelector}/>
+          <CoreChoiceField api={api} catalog={catalog} plane={plane} field="source" value={source} onChoose={setSource}/>
+          <CoreChoiceField api={api} catalog={catalog} plane={plane} field="destination" value={destination} onChoose={setDestination}/>
+          <CoreChoiceField api={api} catalog={catalog} plane={plane} field="selector" value={selector} onChoose={setSelector}/>
         </div>
       </section>
       <div className="dr-uxb-form">

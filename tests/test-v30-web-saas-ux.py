@@ -240,12 +240,12 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         chooser=(ROOT / "web/src/uxb-core-choices.tsx").read_text(encoding="utf-8")
         policy=(ROOT / "web/src/p0-access-policy.tsx").read_text(encoding="utf-8")
         service=(ROOT / "web/src/uxb-remote-service.tsx").read_text(encoding="utf-8")
-        self.assertIn('CoreChoiceField catalog={catalog} plane={plane} field="source"', SETUP_SOURCE)
-        self.assertIn('CoreChoiceField catalog={catalog} plane={plane} field="destination"', SETUP_SOURCE)
-        self.assertIn('CoreChoiceField catalog={catalog} plane={plane} field="selector"', SETUP_SOURCE)
+        self.assertIn('CoreChoiceField api={api} catalog={catalog} plane={plane} field="source"', SETUP_SOURCE)
+        self.assertIn('CoreChoiceField api={api} catalog={catalog} plane={plane} field="destination"', SETUP_SOURCE)
+        self.assertIn('CoreChoiceField api={api} catalog={catalog} plane={plane} field="selector"', SETUP_SOURCE)
         self.assertIn('api("/api/v1/objects-groups?limit=50")', SETUP_SOURCE+chooser)
-        self.assertIn('CoreChoiceField catalog={catalog} plane={plane} field="source"', policy)
-        self.assertIn('CoreChoiceField catalog={catalog} plane="remote" field="selector"', service)
+        self.assertIn('CoreChoiceField api={api} catalog={catalog} plane={plane} field="source"', policy)
+        self.assertIn('CoreChoiceField api={api} catalog={catalog} plane="remote" field="selector"', service)
         self.assertIn('disabled={busy} onChoose={value=>edit(setService,value)}', service)
         self.assertIn('disabled={busy} onChoose={v=>changeFlow("source",v)}', policy)
         self.assertIn('aria-pressed={plane===item.id}', SETUP_SOURCE)
@@ -261,6 +261,27 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn('This is an unverified draft.', policy)
         self.assertIn('.dr-uxb-rule-summary', CSS)
         self.assertIn('resourceCatalog={catalog}', SETUP_SOURCE)
+        self.assertIn('export async function searchCoreSelectorCatalog(', chooser)
+        self.assertIn('"/api/v1/inventory?resource_type="+encodeURIComponent(type)', chooser)
+        self.assertIn('+"&q="+encodeURIComponent(needle)+"&limit=50"', chooser)
+        self.assertIn('const generation=++requestGeneration.current;', chooser)
+        self.assertIn('if(generation!==requestGeneration.current)return;', chooser)
+        self.assertIn('Core name search unavailable:', chooser)
+        self.assertIn('Find matching names', chooser)
+        self.assertIn('api={api} catalog={catalog}', SETUP_SOURCE)
+        self.assertIn('api={api} catalog={catalog}', policy)
+        self.assertIn('api={api} catalog={catalog}', service)
+        self.assertIn('onNavigate?.("objects","access",{family:plane==="ai"?"ai":"network"})', SETUP_SOURCE)
+        self.assertIn('onNavigate?.("objects","access",{family:plane==="ai"?"permission":"network"})', SETUP_SOURCE)
+        self.assertIn('<ObjectsWorkspace data={data} onNavigate={onNavigate} context={context}/>', SOURCE)
+        self.assertIn('const initialFamily=["all","network","service","permission","ai"]', SOURCE)
+        self.assertIn('setFamily(initialFamily);setFilter("");setSelected(null)', SOURCE)
+        self.assertIn('const incomplete=!resources||requiredTypes.some', SOURCE)
+        self.assertIn('const truncated=Object.entries(resources||{}).some', SOURCE)
+        self.assertIn('No match in loaded Core resources', SOURCE)
+        self.assertIn('Partial Core snapshot · up to 50 names per kind', SOURCE)
+        self.assertIn('Find another Core name →', SOURCE)
+        self.assertIn('.dr-uxb-catalog-page-notice', CSS)
         self.assertNotIn('localStorage.', chooser+SETUP_SOURCE)
         self.assertNotIn('/api/v1/policy/direct-apply', chooser+policy)
         self.assertIn('.dr-uxb-mode-card:focus-visible', CSS)
@@ -423,7 +444,7 @@ class V30WebSaasUxContractTests(unittest.TestCase):
             "Policy Simulator",
             "Filter hosts",
             "Filter services",
-            "Filter objects and groups",
+            "Filter loaded objects and groups",
             "Filter policies",
             "Skip to content",
             "drlink-main-content",

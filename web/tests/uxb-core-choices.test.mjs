@@ -51,6 +51,53 @@ test("Unknown, empty and paginated Core choices never invent availability",()=>{
  assert.equal(got.truncated,true);
  assert.deepEqual(got.names,["ssh-tcp22"]);
 });
+test("Filtered Core search uses existing read-only inventory endpoints for exact resource types",async()=>{
+ const calls=[];
+ const api=async path=>{
+   calls.push(path);
+   const params=new URL(path,"https://example.test").searchParams;
+   const type=params.get("resource_type");
+   return {items:type==="network-object"?[{name:"office-east"}]:[{name:"office-group"}],next_cursor:null};
+ };
+ const result=await choices.searchCoreSelectorCatalog(api,"remote","source","office east");
+ assert.deepEqual(choices.coreSelectorOptions(result,"remote","source").names,["office-east","office-group"]);
+ assert.equal(calls.length,2);
+ for(const path of calls){
+  assert.ok(path.startsWith("/api/v1/inventory?"),path);
+  assert.match(path,/q=office%20east/);
+  assert.match(path,/limit=50/);
+  assert.ok(path.includes("resource_type=network-object")||path.includes("resource_type=network-group"));
+ }
+ assert.deepEqual(choices.coreSelectorOptions(
+   await choices.searchCoreSelectorCatalog(async()=>({items:[]}),"ai","source","bot"),"ai","source"
+ ).names,[]);
+});
+test("Partial, invalid and failing Core search never invents an available resource",async()=>{
+ await assert.rejects(choices.searchCoreSelectorCatalog(async()=>({items:[]}),"ai","source","a"),/at least two/);
+ await assert.rejects(
+   choices.searchCoreSelectorCatalog(async()=>({items:null}),"ai","source","robot"),/missing items/
+ );
+ await assert.rejects(
+   choices.searchCoreSelectorCatalog(async path=>path.includes("service-object")
+     ?{items:[{name:"ssh"}]}:Promise.reject(new Error("Core unavailable")),"remote","selector","ssh"),/Core unavailable/
+ );
+ const limited=await choices.searchCoreSelectorCatalog(async()=>({
+   items:[{name:"ssh-tcp22"}],next_cursor:"more"
+ }),"remote","selector","ssh");
+ assert.equal(choices.coreSelectorOptions(limited,"remote","selector").truncated,true);
+});
+test("A Core choice exposes an explicit name search without automatic mutation",()=>{
+ const html=renderToStaticMarkup(React.createElement(choices.CoreChoiceField,{
+   catalog:fixture,plane:"remote",field:"selector",value:"",api:async()=>{throw new Error("SSR must not call Core")},
+   onChoose:()=>{throw new Error("SSR cannot select")}
+ }));
+ assert.match(html,/Search Core Service Object \/ Group/);
+ assert.match(html,/Find another existing Service Object \/ Group/);
+ assert.match(html,/Find matching names/);
+ assert.match(html,/type at least two|Type at least two/);
+ assert.match(html,/<button[^>]*disabled=""[^>]*>Find matching names<\/button>/);
+ assert.doesNotMatch(html,/Grant access|Access granted|Change applied/);
+});
 test("Operator chooses a Core selector deliberately, never an implicit allow",()=>{
  const render=(catalog,plane,field,value)=>renderToStaticMarkup(React.createElement(
    choices.CoreChoiceField,{catalog,plane,field,value,onChoose:()=>{}}
