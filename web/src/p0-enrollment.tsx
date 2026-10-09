@@ -37,6 +37,7 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate,onBus
   useEffect(()=>{onBusyChange?.(busy)},[busy]);
   useEffect(()=>()=>{onBusyChange?.(false)},[]);
   const [error,setError]=useState(""),[inventoryError,setInventoryError]=useState("");
+  const [copyStatus,setCopyStatus]=useState("");
   const [preview,setPreview]=useState<any>(null),[confirm,setConfirm]=useState(""),[message,setMessage]=useState("");
   const approvalGeneration=useRef(0);
   const admin=operator?.role==="Admin";
@@ -57,9 +58,21 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate,onBus
     }catch(e:any){setHosts(null);setSelectedHost("");setInventoryError(String(e.message||e))}
     finally{setFetchBusy(false)}
   }
+  async function copyIssued(label:string,value:string){
+    setCopyStatus("");
+    if(!value)return;
+    try{
+      if(typeof navigator==="undefined"||!navigator.clipboard?.writeText)
+        throw new Error("Secure clipboard unavailable");
+      await navigator.clipboard.writeText(value);
+      setCopyStatus(label+" copied. Clipboard may be visible to other apps. Clear it after use.");
+    }catch{
+      setCopyStatus("Copy unavailable. Select the displayed text manually.");
+    }
+  }
   async function issue(){
     if(!admin||busy)return;
-    setError("");setMessage("");setIssued(null);setBusy(true);
+    setCopyStatus("");setError("");setMessage("");setIssued(null);setBusy(true);
     try{
       const result=await api(mode==="manual"?"/api/v1/enrollments/manual":"/api/v1/enrollments/zero-touch",{
         method:"POST",body:JSON.stringify({platform,ttl_seconds:ttl,label,note,
@@ -124,8 +137,13 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate,onBus
         {issued?<div className="warning-box">
           <p><strong>Display-once credential · expires {issued.expires_at||"UNKNOWN"}</strong></p>
           <p>First Host admission: {issued.pre_approved?"Pre-approved by explicit Admin choice":"Pending Approval"}</p>
-          {issued.enrollment_code&&<><p>Enrollment code</p><pre className="plan">{issued.enrollment_code}</pre></>}
+          {issued.enrollment_code&&<><p>Enrollment code</p><pre className="plan">{issued.enrollment_code}</pre>
+            <button type="button" className="secondary" onClick={()=>copyIssued("Enrollment code",issued.enrollment_code)}>Copy enrollment code</button>
+          </>}
           <p>Canonical install command</p><pre className="plan">{issued.command||"No install command issued"}</pre>
+          {issued.command&&<button type="button" className="secondary" onClick={()=>copyIssued("Install command",issued.command)}>Copy install command</button>}
+          {copyStatus&&<p className="notice" role="status">{copyStatus}</p>}
+          <p className="muted">Copy only when you intend to install this Agent. Paste secrets only into the intended trusted machine and clear sensitive clipboard content afterward.</p>
           <p>{issued.next_step}</p>
         </div>:<p className="muted">No invitation issued during this session. Return to Step 1 to create one, or continue to inspect a previously enrolled Host.</p>}
         <button className="primary" onClick={()=>setStep(3)}>Next: inspect Host admission →</button>

@@ -236,6 +236,17 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn("disabled={step===4||wizardBusy}", SETUP_SOURCE)
         self.assertIn("onClick={refreshCore} disabled={checking||wizardBusy}", SETUP_SOURCE)
 
+    def test_one_time_agent_invitation_copy_is_user_initiated_and_ephemeral(self):
+        self.assertIn("async function copyIssued(label:string,value:string){", P0_ENROLL_SOURCE)
+        self.assertIn("navigator.clipboard.writeText(value)", P0_ENROLL_SOURCE)
+        self.assertIn('Copy enrollment code', P0_ENROLL_SOURCE)
+        self.assertIn('Copy install command', P0_ENROLL_SOURCE)
+        self.assertIn('Clipboard may be visible to other apps.', P0_ENROLL_SOURCE)
+        self.assertIn('Copy unavailable. Select the displayed text manually.', P0_ENROLL_SOURCE)
+        self.assertIn('setCopyStatus("");setError("");setMessage("");setIssued(null);', P0_ENROLL_SOURCE)
+        self.assertNotIn("localStorage", P0_ENROLL_SOURCE)
+        self.assertNotIn("sessionStorage", P0_ENROLL_SOURCE)
+
     def test_uxb_first_use_keeps_three_planes_and_core_authority_separate(self):
         self.assertIn('FirstUseHome data={data}', SOURCE)
         self.assertIn('if(active==="setup"){', SOURCE)
