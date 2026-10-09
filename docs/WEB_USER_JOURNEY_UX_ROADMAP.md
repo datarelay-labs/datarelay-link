@@ -1,6 +1,6 @@
 # Data Relay Link 3.0 — Workflow-First Web UX Roadmap (DRL3-7B)
 
-> **Status:** OWNER-REQUESTED ROADMAP / IMPLEMENTATION PENDING (2026-10-09)
+> **Status:** UXB-01..05 CODE IMPLEMENTED IN ISOLATED PF-5B WEB PREVIEW (2026-10-09); UXB-06 ACTUAL-USER BROWSER E2E / RELEASE PENDING
 > **Position:** follows DRL3-7A SaaS/Web shell and PF-5B Administration; precedes final DRL3-8 Web qualification if approved as the target-release UX gate.
 > **Product authority:** `docs/PRODUCT_MASTER.md`, `docs/WEB_MANAGEMENT.md`, `docs/MANAGEMENT_SURFACE_CONTRACT.md`
 > **Shared UI authority:** `docs/WEB_SAAS_UX_SYSTEM.md` and pinned Product Foundation; Data Relay Control is the family visual/semantic reference.
@@ -173,11 +173,11 @@ Tooltips alone are not an accessibility or first-run solution. Use explanatory s
 | ID | Priority | Exact deliverable / minimum slice | Prerequisite | Status |
 | --- | --- | --- | --- | --- |
 | **UXB-00** | P0 | 19-product vendor-source audit, mapping of confusing current labels, target IA/role/task journeys, test contract | Current Web source and product SSOT | **DOC COMPLETE in this roadmap**; user navigation validation PENDING |
-| **UXB-01** | P0 | Rename **navigation presentation only** to “Home / Connections / Access / Activity & Health / Administration”; map existing routes, preserve old names as search aliases; role-aware accessible menu subtitles / breadcrumbs | Owner reviews exact menu copy; canonical DR Control and Foundation shared semantics | **NOT IMPLEMENTED** |
-| **UXB-02** | P0 | Home onboarding/next-action cards for new vs deployed installations: Agent → admission → Remote Service → Access Rule → Verify; verify each Core-observed completion state/unknown; deep-link with context preserved | UXB-01 route map; existing P0 APIs | **NOT IMPLEMENTED** |
-| **UXB-03** | P0 | End-to-end **publish-and-allow** flow in one workspace, displaying dependency chain, basic form by access plane, Core preview/test and typed Apply; advanced ConfigurationBundle optional | UXB-01/02, P0 guided policy components and existing Core | **NOT IMPLEMENTED** |
-| **UXB-04** | P1 | Host/Remote Service/Policy detail “Who can connect?”, “Why denied?”, “Check connection” actions; preserve selection across Core traces, audit and troubleshooting, distinguish evidence freshness and partial observation | UXB-03 and Core read-only diagnosis/trace contracts | **NOT IMPLEMENTED** |
-| **UXB-05** | P1 | Simplified daily admin page: explicit routine/advanced/destructive sections under the canonical Foundation four groups, contextual role messages, local Help/tooltips, consistent errors, statuses, empty-state guidance | UXB-01; Product Foundation and Control parity | **NOT IMPLEMENTED** |
+| **UXB-01** | P0 | Rename **navigation presentation only** to “Home / Connections / Access / Activity & Health / Administration”; map existing routes, preserve old names as search aliases; role-aware accessible menu subtitles / breadcrumbs | Canonical DR Control and Foundation shared semantics; no API/CLI rename | **CODE IMPLEMENTED / BROWSER NOT VERIFIED** |
+| **UXB-02** | P0 | Home onboarding/next-action cards for new vs deployed installations: Agent → admission → Remote Service → Access Rule → Verify; verify each Core-observed completion state/unknown; deep-link with context preserved | UXB-01 route map; existing P0 APIs | **CODE IMPLEMENTED / BROWSER NOT VERIFIED** |
+| **UXB-03** | P0 | End-to-end **publish-and-allow** flow in one workspace, displaying dependency chain, basic form by access plane, Core preview/test and typed Apply; advanced ConfigurationBundle optional | UXB-01/02, P0 guided policy components and existing Core | **CODE IMPLEMENTED / ACTUAL CONNECTION NOT E2E VERIFIED** |
+| **UXB-04** | P1 | Host/Remote Service/Policy detail “Who can connect?”, “Why denied?”, “Check connection” actions; preserve selection across Core traces, audit and troubleshooting, distinguish evidence freshness and partial observation | UXB-03 and Core read-only diagnosis/trace contracts | **CODE IMPLEMENTED / REAL-USAGE FIDELITY NOT VERIFIED** |
+| **UXB-05** | P1 | Simplified daily admin page: explicit routine/advanced/destructive sections under the canonical Foundation four groups, contextual role messages, local Help/tooltips, consistent errors, statuses, empty-state guidance | UXB-01; Product Foundation and Control parity | **CODE IMPLEMENTED / BROWSER USABILITY NOT VERIFIED** |
 | **UXB-06** | P0 release gate after UXB-01..05 | Actual-user usability study and manual/real-browser E2E on desktop/375px/320px, Admin/Operator/Read Only, security regression, offline build/package, owner review, exact-HEAD freeze and CI | All preceding UXB milestones; policy-permitted browser testing | **NOT VERIFIED / NOT COMPLETE** |
 
 UXB-01/02/03 are the **next recommended implementation tranche**. Do not add dozens of new settings or unrelated features to satisfy this roadmap. First prove the core first-use journey.
@@ -256,13 +256,43 @@ UXB-01/02/03 are the **next recommended implementation tranche**. Do not add doz
 5. Do not introduce SSO, Messenger setup, external AI service, automatic trust, AI-generated access rules, packet inspection or agent session recording merely for UI completeness.
 6. Preserve the owner-visible existing PF-5B preview as **a candidate**, not a release. Do not modify existing v2.4 runtime or live production config when working on the UI roadmap.
 7. Historical blockers still stand: platform previously refused the Client fixture test, Playwright install and preview-login automation. These are **NOT VERIFIED**, and any denied action must not be rerouted through a different command, host or CI.
-8. The owner should first approve the **UXB-01 navigation terms and UXB-02 homepage workflow**, then a human walkthrough of the prepared lab should drive minimal iterations before P1 polish.
+8. Owner authorized implementing the roadmap on 2026-10-09. UXB-01..05 source and offline regression work has been performed; the owner still must visually review the new menu and Home, and real permitted browser/user E2E must drive targeted usability iterations.
 
 ## 7. Status summary and next runnable action
 
 - **Implemented technical starting point:** 3.0 Web shell, PF-5B shared Administration, Core-backed P0 access trace/graph, guided policy, four-step Agent UI, favicon and public-IP HTTPS development preview. These have static/SSR/build/package/HTTP evidence from prior work; actual user browser E2E and release still incomplete.
-- **Roadmap design now documented:** **UXB-00** completed as a *documentation/research artifact only*. The first implementation slice **UXB-01** (plain-language navigation, old-label search, role-aware help) and **UXB-02** (first-time Home guided task path) is the immediate UX priority.
+- **Roadmap code implemented:** **UXB-00** remains the research artifact; **UXB-01..05** are implemented in the isolated optional-Web UI (simplified navigation and old-name search, Home setup, a 4-stage connection journey, contextual diagnosis and audit, progressive Foundation/Core Administration). Offline Node SSR, static contracts, compiled assets and bundle tests support the implementation; **real-user first-use acceptance is not yet verified**.
 - **Non-goals:** No duplicate feature implementation, new policy engine, new root navigation overload, synthetic status data, unrequested stable publication, or bypass of previously denied tests.
 - **Acceptance condition for calling this the “target UI”:** owner can perform the end-to-end first-use/diagnose flows without asking what each menu means, independently observed user tests meet proposed success criteria, and every real-browser/security/release gate passes at the frozen candidate HEAD.
 
-**Owner conclusion:** the current UI is a **useful intermediate product**, but it is **not the UI we should sign off as final**. The highest-return redesign is *menu vocabulary + a connected first-use journey + contextual troubleshooting*, not additional dashboards.
+**Owner conclusion:** the earlier DRL3-7A/P0 Web was an intermediate UI. UXB-01..05 now have code implementations, but the target UI is **not signed off as final** until actual users complete first-use tasks and the full product/release gates pass.
+
+
+## 8. UXB-01..05 implementation checkpoint — 2026-10-09
+
+Owner explicitly requested implementing the roadmap in the isolated PF-5B DRLink 3.0 Web worktree. This section separates **implemented code and offline tests** from **unobserved browser/user/release outcomes**.
+
+| Slice | Implemented product source | Observable behavior / bound |
+| --- | --- | --- |
+| UXB-01 | `web/src/uxb-navigation.ts`, `web/src/main.tsx` | Four grouped destinations plus Home; stable existing route IDs; Admin/Read Only visibility; plain English descriptions and breadcrumbs; Ctrl/Cmd+K finds old and new menu terms without a backend migration |
+| UXB-02 | `web/src/uxb-home.tsx`, `web/src/main.tsx` | Five-step first-use checklist derived from Core overview and actual Managed Host inventory; successful configuration remains separate from verified reachability; missing Core data remains UNKNOWN |
+| UXB-03 | `web/src/uxb-setup.tsx`, `web/src/uxb-remote-service.tsx`, updated `web/src/p0-access-policy.tsx` | Context-preserving four-step connection workspace, separate Remote/Internet/AI semantics, reuse of canonical Agent enrollment, remote-service preview/queued Agent job, Core guided policy preview/required tests/typed Apply, and read-only Core access trace |
+| UXB-04 | `web/src/main.tsx` | Resource/Policy detail → contextual “Why can/cannot connect?” Core trace; preserving selected origin, valid policy plane, and specific rule flow where known; no synthetic mapping from Managed Host to Network Object; Audit filter carries source resource ID via ephemeral React state |
+| UXB-05 | `web/src/main.tsx`, `web/dist/styles.css` | Routine vs Admin-only vs advanced Core tasks; original Foundation 4-group System Administration preserved; sensitive certificate/update/backup/restore operation panel disclosed on demand; missing health/attention numbers shown as UNKNOWN, not Healthy/zero |
+
+**Implementation/regression command set (offline, nonbrowser):**
+```sh
+cd web
+npm run test:journey
+npm run test:p0
+npm run test:administration
+npm run build
+cd ..
+python3 tests/test-v30-web-saas-ux.py -q
+python3 tests/test-v30-web-bundle.py -q
+bash tests/test-v30-web-package.sh
+```
+
+These checks validate route mappings, roles, SSR-visible stage controls, effective result UNKNOWN, Core policy-apply gates, unapproved API/secret-storage avoidance, package integrity and offline build. The real Web package is served from the isolated worktree `web/dist` at the existing loopback/public-IP HTTPS preview. No Core/CLI/back-end policy authority is changed by UXB-01..05.
+
+**UXB-06 remains PENDING:** Actual browser logged-in Admin/Operator/Read Only navigation, popup/keyboard, 320/375/mobile UI, interactions through each step including a real queued job, actual Core policy decision and deliberately denied flow, owner visual acceptance, independent first-user study, two-user exact-HEAD Full User E2E and release/CI/security gates **are NOT passed or claimed**. An earlier OpenAI platform safety denial of the Playwright installer and preview login automation cannot be circumvented with alternate commands/tools. Previously platform-denied Client fixture remains separately unqualified/uncommitted. The public-IP HTTPS preview uses a short-lived self-signed certificate, not a stable production deployment.

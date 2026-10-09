@@ -2,7 +2,7 @@
 
 > **Status:** normative 3.0 Web UX contract
 > **Roadmap:** DRL3-7A (visual shell) + DRL3-7B (workflow-first usability)
-> **Usability roadmap:** `docs/WEB_USER_JOURNEY_UX_ROADMAP.md` (19-product vendor evidence; implementation pending)
+> **Usability roadmap:** `docs/WEB_USER_JOURNEY_UX_ROADMAP.md` (19-product vendor evidence; UXB-01..05 code implemented, UXB-06 actual-user E2E pending)
 > **Visual reference authority:** Data Relay Control `main-v2` semantic foundation and App Shell
 > **Product authority:** `PRODUCT_MASTER.md`, `WEB_MANAGEMENT.md`, `MANAGEMENT_SURFACE_CONTRACT.md`
 
@@ -409,7 +409,7 @@ It contains:
 - UXB-01..06 implementation slices and actual first-time-user/real-browser
   E2E acceptance before claiming a final product UI.
 
-**DRL3-7B status: NOT IMPLEMENTED / USER E2E NOT VERIFIED.** The current
+**DRL3-7B status (2026-10-09): UXB-01..05 CODE IMPLEMENTED IN ISOLATED WEB PREVIEW / USER E2E NOT VERIFIED.** The current
 `DRL3-7A` visual acceptance and source-level Web P0 test evidence must not
 be interpreted as DRL3-7B first-time usability PASS. All proposed navigation
 renames are **presentation aliases only** until owner review and a scoped

@@ -826,8 +826,9 @@ Its priority is **how a novice completes a real workflow**, not more widgets:
   320px/375px/desktop usability, first-time-user observations, source/role
   security regression and offline Web compatibility on one frozen candidate.
 
-**Status:** UXB-00 official-vendor-source research and roadmap are documented;
-UXB-01..06 remain **IMPLEMENTATION / USER E2E PENDING**. Earlier P0 technical
+**Status (2026-10-09):** UXB-00 research/roadmap documented; UXB-01..05
+**CODE IMPLEMENTED ON ISOLATED DEV WEB SOURCE**, with offline SSR/static/package
+qualification only. UXB-06 **ACTUAL USER BROWSER / HUMAN STUDY / RELEASE PENDING**. Earlier P0 technical
 components, unit/SSR/Web bundle tests and HTTP preview are not proof of a
 novice-friendly UI or browser PASS. Work is scoped to the optional Web
 projection; no second Core policy authority, network exposure change, or

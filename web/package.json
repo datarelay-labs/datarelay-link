@@ -5,7 +5,8 @@
   "scripts": {
     "build": "esbuild src/main.tsx --bundle --minify --target=es2020 --outfile=dist/app.js --define:process.env.NODE_ENV='\"production\"' && esbuild node_modules/@datarelay-labs/foundation/styles.css --bundle --minify --outfile=dist/foundation.css",
     "test:administration": "node --test tests/foundation-administration-render.test.mjs",
-    "test:p0": "node --test tests/p0-ux-render.test.mjs"
+    "test:p0": "node --test tests/p0-ux-render.test.mjs",
+    "test:journey": "node --test tests/uxb-first-use.test.mjs tests/uxb-connection.test.mjs"
   },
   "dependencies": {
     "qrcode.react": "4.2.0",

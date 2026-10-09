@@ -5,15 +5,12 @@ import {AdministrationHub,type AdministrationHubTask} from "@datarelay-labs/foun
 import {createLinkFoundationAdministrationTasks} from "./foundation-administration";
 import {AccessEvidenceExplorer,GuidedPolicyJourney,type AccessPlane} from "./p0-access-policy";
 import {EnrollmentOnboarding} from "./p0-enrollment";
+import {navGroups,groupFor,labelFor,pageDescriptions,visibleRoute,navMatches} from "./uxb-navigation";
+import {FirstUseHome} from "./uxb-home";
+import {RemoteServiceEditor} from "./uxb-remote-service";
+import {FirstConnectionSetup} from "./uxb-setup";
 
 type Json = Record<string, any>;
-const navGroups=[
-  {id:"infrastructure",label:"Infrastructure",items:[["hosts","Managed Hosts"],["services","Remote Services"],["objects","Objects & Groups"]]},
-  {id:"access",label:"Access Control",items:[["access","Access Operations"],["policies","Policies"]]},
-  {id:"operations",label:"Operations",items:[["jobs","Jobs"],["hygiene","Access Hygiene"],["versions","Version Drift"],["revisions","Revisions"]]},
-  {id:"observability",label:"Observability",items:[["audit","Audit"],["health","Health"]]},
-  {id:"administration",label:"Administration",items:[["users","Users"],["integrations","Integrations"],["system","System"]]},
-] as const;
 
 let csrf="";
 
@@ -388,45 +385,6 @@ function GuidedObjectPanel(){
   return <div><div className="card"><h3>Guided Object / Group</h3><div className="toolbar"><select value={kind} onChange={e=>{setKind(e.target.value);setSubtype(e.target.value==="service-object"?"tcp":"ip")}}><option value="network-object">Network Object</option><option value="network-group">Network Group</option><option value="service-object">Service Object</option><option value="service-group">Service Group</option><option value="permission-object">Permission Object</option><option value="permission-group">Permission Group</option></select><select value={operation} onChange={e=>setOperation(e.target.value)}><option value="set">Create / edit</option><option value="delete">Delete</option></select><input value={name} onChange={e=>setName(e.target.value)} placeholder="Name"/>{operation==="set"&&kind==="network-object"&&<><input value={subtype} onChange={e=>setSubtype(e.target.value)} placeholder="ip/fqdn/network/host"/><input value={value} onChange={e=>setValue(e.target.value)} placeholder="Value"/></>}{operation==="set"&&kind==="service-object"&&<><input value={subtype} onChange={e=>setSubtype(e.target.value)} placeholder="tcp/udp/fixed-tcp"/><input value={port} onChange={e=>setPort(e.target.value)} placeholder="Port"/></>}{operation==="set"&&!(["network-object","service-object"] as string[]).includes(kind)&&<input value={items} onChange={e=>setItems(e.target.value)} placeholder={kind==="permission-object"?"Permissions, comma-separated":"Members, comma-separated"}/>}</div></div><GuidedApplyPanel title="Object / Group Change Plan" build={request}/></div>;
 }
 
-function RemoteServicePanel(){
-  const [owner,setOwner]=useState(""),[name,setName]=useState(""),[operation,setOperation]=useState("set"),[destination,setDestination]=useState("this-host"),[service,setService]=useState(""),[enabled,setEnabled]=useState(true);
-  const [preview,setPreview]=useState<any>(null),[confirmation,setConfirmation]=useState(""),[job,setJob]=useState<any>(null),[error,setError]=useState("");
-  async function doPreview(){
-    setError("");setJob(null);
-    try{
-      const body:any={owner,name,operation};
-      if(operation==="set"){body.destination=destination;body.service=service;body.enabled=enabled;}
-      const result=await api("/api/v1/remote-services/preview",{method:"POST",body:JSON.stringify(body)});
-      setPreview(result);setConfirmation("");
-    }catch(e:any){setError(e.message||String(e))}
-  }
-  async function doApply(){
-    setError("");
-    try{
-      const result=await api("/api/v1/remote-services/apply",{method:"POST",body:JSON.stringify({change_plan_id:preview?.change_plan_id||"",confirmation})});
-      setJob(result);setPreview(null);setConfirmation("");
-    }catch(e:any){setError(e.message||String(e))}
-  }
-  async function refreshJob(){
-    if(!job?.job_id)return;
-    try{setJob(await api("/api/v1/jobs/"+encodeURIComponent(job.job_id)))}catch(e:any){setError(e.message||String(e))}
-  }
-  const ready=owner&&name&&(operation==="delete"||(destination&&service));
-  return <div className="card"><h3>Guided Remote Service</h3>
-    <div className="muted">Agent-owned lifecycle. Apply only queues work to the authenticated owner Agent; runtime success is shown only after the Job completes.</div>
-    {error&&<div className="error">{error}</div>}
-    <div className="toolbar">
-      <input value={owner} onChange={e=>setOwner(e.target.value)} placeholder="Owner Managed Host ID/name"/>
-      <input value={name} onChange={e=>setName(e.target.value)} placeholder="Remote Service name"/>
-      <select value={operation} onChange={e=>setOperation(e.target.value)}><option value="set">Create / edit</option><option value="delete">Delete</option></select>
-      {operation==="set"&&<><input value={destination} onChange={e=>setDestination(e.target.value)} placeholder="Destination"/><input value={service} onChange={e=>setService(e.target.value)} placeholder="Service Object"/><label><input type="checkbox" checked={enabled} onChange={e=>setEnabled(e.target.checked)}/> Enabled</label></>}
-      <button className="primary" onClick={doPreview} disabled={!ready}>Preview</button>
-    </div>
-    {preview&&<div className="card"><pre className="plan">{JSON.stringify({owner:preview.owner,impact:preview.impact,valid_until:preview.valid_until},null,2)}</pre><label className="apply-label">Type APPLY to queue<input value={confirmation} onChange={e=>setConfirmation(e.target.value)} placeholder="APPLY"/></label><button className="danger" onClick={doApply} disabled={confirmation!=="APPLY"}>Queue Agent Job</button></div>}
-    {job&&<div className="notice"><strong>Job:</strong> {job.job_id||job.id} · {job.job_status||job.status}<button className="secondary" onClick={refreshJob}>Refresh Job</button><pre className="plan">{JSON.stringify(job,null,2)}</pre></div>}
-  </div>;
-}
-
 function GuidedPolicySettingsPanel(){
   const [plane,setPlane]=useState("remote"),[operation,setOperation]=useState("set-enforcement"),[enabled,setEnabled]=useState(true);
   function request(){const payload:any={operation};if(operation==="set-enforcement")payload.enabled=enabled;return {change_type:plane+"-access-policy",payload};}
@@ -619,6 +577,10 @@ function LinkFoundationAdministration({
       case "link.audit":onNavigate?.("audit","observability");break;
       case "link.health":onNavigate?.("health","observability");break;
       case "link.certificate":
+        // The shared read-only certificate shortcut reveals the distinct
+        // product-owned Core panel; it is NOT Web HTTPS listener management.
+        const advanced=document.getElementById("drlink-core-advanced") as HTMLDetailsElement|null;
+        if(advanced)advanced.open=true;
         document.getElementById("drlink-certificate-status")?.scrollIntoView({block:"start"});
         break;
     }
@@ -723,8 +685,9 @@ function SystemPanel({data,operator}:{data:any,operator:any}){
   </>;
 }
 
-function AccessOperations({operator,onNavigate}:{operator:any,onNavigate?:(id:string,groupId?:string)=>void}){
-  const [plane,setPlane]=useState("remote"),[source,setSource]=useState(""),[destination,setDestination]=useState(""),[selector,setSelector]=useState("");
+function AccessOperations({operator,onNavigate,context}:{operator:any,onNavigate?:(id:string,groupId?:string,context?:any)=>void,context?:any}){
+  const initialPlane=["remote","internet","ai"].includes(String(context?.plane))?String(context.plane):"remote";
+  const [plane,setPlane]=useState(initialPlane),[source,setSource]=useState(context?.source||""),[destination,setDestination]=useState(context?.destination||""),[selector,setSelector]=useState(context?.selector||"");
   const [diagnosis,setDiagnosis]=useState<any>(null),[live,setLive]=useState<any>(null),[error,setError]=useState("");
   const [liveResource,setLiveResource]=useState(""),[cutoffState,setCutoffState]=useState<any>(null);
   const [scopeKind,setScopeKind]=useState("plane"),[scopeRef,setScopeRef]=useState(""),[cutoffOperation,setCutoffOperation]=useState("apply"),[reason,setReason]=useState("");
@@ -778,6 +741,7 @@ function AccessOperations({operator,onNavigate}:{operator:any,onNavigate?:(id:st
   const planeLabel=plane==="remote"?"Remote Access":plane==="internet"?"Internet Access":"AI Access";
   return <div className="dr-access-workspace">
     {error&&<div className="error">{error}</div>}
+    {context?.originId&&<section className="dr-uxb-context card" role="note"><strong>Investigating {context.originType||"resource"}: {context.originId}</strong><p>Core resource names are not automatically Network/Service Objects. Select the exact source, destination and selector before interpreting any Core access decision.</p><button className="secondary" onClick={()=>onNavigate?.("audit","activity",context)}>Review matching Activity log →</button></section>}
     <section className="dr-page-intro"><div><p className="dr-eyebrow">Access Control</p><h2>Access Workspace</h2><p className="muted">Understand who can reach what, why the decision is made, and what is active now.</p></div><div className="dr-page-actions"><button className="secondary" onClick={()=>onNavigate?.("policies","access")}>Policies</button>{operator.role!=="Read Only"&&<button className="primary" onClick={()=>onNavigate?.("drafts","access")}>Draft change</button>}</div></section>
     <div className="dr-access-tabs" role="tablist" aria-label="Access plane">{[["remote","Remote Access"],["internet","Internet Access"],["ai","AI Access"]].map(([value,label])=><button key={value} role="tab" aria-selected={plane===value} className={plane===value?"active":""} onClick={()=>changePlane(value)}>{label}</button>)}</div>
     <section className="card dr-access-map-card">
@@ -847,9 +811,9 @@ function AccessOperations({operator,onNavigate}:{operator:any,onNavigate?:(id:st
   </div>;
 }
 
-function AuditExplorer({operator}:{operator:any}){
+function AuditExplorer({operator,context}:{operator:any,context?:any}){
   const [data,setData]=useState<any>(null),[retention,setRetention]=useState<any>(null),[error,setError]=useState(""),[message,setMessage]=useState(""),[exportResult,setExportResult]=useState<any>(null);
-  const [start,setStart]=useState(""),[end,setEnd]=useState(""),[category,setCategory]=useState(""),[eventType,setEventType]=useState(""),[actor,setActor]=useState(""),[resource,setResource]=useState(""),[result,setResult]=useState(""),[correlation,setCorrelation]=useState("");
+  const [start,setStart]=useState(""),[end,setEnd]=useState(""),[category,setCategory]=useState(""),[eventType,setEventType]=useState(""),[actor,setActor]=useState(""),[resource,setResource]=useState(String(context?.originId||"")),[result,setResult]=useState(""),[correlation,setCorrelation]=useState("");
   const [controlDays,setControlDays]=useState("365"),[accessDays,setAccessDays]=useState("90"),[maxEvents,setMaxEvents]=useState("500000");
 
   function filterParams(){
@@ -1113,7 +1077,7 @@ function ObjectsWorkspace({data,onNavigate}:{data:any,onNavigate?:(id:string,gro
   </div>;
 }
 
-function PolicyWorkspace({data,operator,onNavigate}:{data:any,operator:any,onNavigate?:(id:string,groupId?:string)=>void}){
+function PolicyWorkspace({data,operator,onNavigate}:{data:any,operator:any,onNavigate?:(id:string,groupId?:string,context?:any)=>void}){
   const [plane,setPlane]=useState("all"),[filter,setFilter]=useState(""),[selected,setSelected]=useState<any>(null);
   useEscapeClose(!!selected,()=>setSelected(null));
   const q=filter.trim().toLowerCase();
@@ -1125,11 +1089,11 @@ function PolicyWorkspace({data,operator,onNavigate}:{data:any,operator:any,onNav
     <section className="card dr-list-card"><div className="dr-list-toolbar"><div><strong>{rows.length}</strong><span>policy rules</span></div><label className="dr-filter-field"><WorkspaceIcon kind="search"/><input value={filter} onChange={e=>setFilter(e.target.value)} placeholder="Filter policies…"/>{filter&&<button onClick={()=>setFilter("")} aria-label="Clear filter">×</button>}</label></div>
       {!rows.length?<div className="dr-empty-state"><span className="dr-empty-icon"><WorkspaceIcon kind="access"/></span><strong>No matching policy rules</strong><p>Change the filter or use the guided policy controls below.</p></div>:<div className="dr-table-scroll"><table className="dr-resource-table"><thead><tr><th>Policy</th><th>Plane</th><th>Action</th><th>State</th><th>Expires</th><th>Description</th></tr></thead><tbody>{rows.map((item:any)=><tr key={(item.plane||"policy")+":"+item.id} tabIndex={0} onClick={()=>setSelected(item)} onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();setSelected(item)}}}><td><strong>{item.name||item.id}</strong><small>{item.id}</small></td><td>{item.plane||"—"}</td><td>{item.action||"—"}</td><td><span className={item.enabled?"dr-state active":"dr-state"}><i/>{item.enabled?"Enabled":"Disabled"}</span></td><td>{item.expires_at||"Never"}</td><td>{item.description||"—"}</td></tr>)}</tbody></table></div>}
     </section>
-    {selected&&<div className="dr-drawer-backdrop" onMouseDown={e=>{if(e.currentTarget===e.target)setSelected(null)}}><aside className="dr-detail-drawer" role="dialog" aria-modal="true" aria-label="Policy detail" tabIndex={-1} autoFocus><header><div><p className="dr-eyebrow">{selected.plane||"Policy"} access</p><h2>{selected.name||selected.id}</h2><p>{selected.id}</p></div><button className="dr-icon-button" onClick={()=>setSelected(null)} aria-label="Close detail">×</button></header><div className="dr-drawer-status"><span className={selected.enabled?"dr-state active":"dr-state"}><i/>{selected.enabled?"Enabled":"Disabled"}</span></div><div className="dr-detail-fields">{Object.entries(selected).filter(([,value])=>typeof value!=="object"&&value!==null&&value!=="").map(([key,value])=><div key={key}><span>{key.replaceAll("_"," ")}</span><strong>{String(value)}</strong></div>)}</div><footer><button className="secondary" onClick={()=>{setSelected(null);onNavigate?.("audit","observability")}}>Recent activity</button><button className="primary" onClick={()=>{setSelected(null);onNavigate?.("access","access")}}>Test / explain</button></footer></aside></div>}
+    {selected&&<div className="dr-drawer-backdrop" onMouseDown={e=>{if(e.currentTarget===e.target)setSelected(null)}}><aside className="dr-detail-drawer" role="dialog" aria-modal="true" aria-label="Policy detail" tabIndex={-1} autoFocus><header><div><p className="dr-eyebrow">{selected.plane||"Policy"} access</p><h2>{selected.name||selected.id}</h2><p>{selected.id}</p></div><button className="dr-icon-button" onClick={()=>setSelected(null)} aria-label="Close detail">×</button></header><div className="dr-drawer-status"><span className={selected.enabled?"dr-state active":"dr-state"}><i/>{selected.enabled?"Enabled":"Disabled"}</span></div><div className="dr-detail-fields">{Object.entries(selected).filter(([,value])=>typeof value!=="object"&&value!==null&&value!=="").map(([key,value])=><div key={key}><span>{key.replaceAll("_"," ")}</span><strong>{String(value)}</strong></div>)}</div><footer><button className="secondary" onClick={()=>{setSelected(null);onNavigate?.("audit","observability")}}>Recent activity</button><button className="primary" onClick={()=>{const target={originId:String(selected.id||selected.name||""),originType:"access-rule",plane:selected.plane||"remote",source:String(selected.source||""),destination:String(selected.destination||""),selector:String(selected.plane==="ai"?selected.permission||"":selected.service||"")};setSelected(null);onNavigate?.("access","access",target)}}>Why allowed / denied?</button></footer></aside></div>}
   </div>;
 }
 
-function ResourceWorkspace({kind,items,operator,onNavigate}:{kind:"host"|"service",items:any[],operator:any,onNavigate?:(id:string,groupId?:string)=>void}){
+function ResourceWorkspace({kind,items,operator,onNavigate}:{kind:"host"|"service",items:any[],operator:any,onNavigate?:(id:string,groupId?:string,context?:any)=>void}){
   const [filter,setFilter]=useState(""),[selected,setSelected]=useState<any>(null);
   const [admissionFilter,setAdmissionFilter]=useState("all");
   useEscapeClose(!!selected,()=>setSelected(null));
@@ -1157,7 +1121,7 @@ function ResourceWorkspace({kind,items,operator,onNavigate}:{kind:"host"|"servic
       {!rows.length?<div className="dr-empty-state"><span className="dr-empty-icon"><WorkspaceIcon kind="infrastructure"/></span><strong>{filter?"No matching resources":"No resources yet"}</strong><p>{filter?"Try a different filter.":isHost?"Connect an Agent to populate managed inventory.":"Publish a Remote Service from a managed host."}</p>{!filter&&isHost&&operator.role==="Admin"&&<button className="primary" onClick={()=>onNavigate?.("enrollments","infrastructure")}>Connect Agent</button>}</div>:
       <div className="dr-table-scroll"><table className="dr-resource-table"><thead><tr>{isHost?<><th>Host</th><th>Admission</th><th>Connection</th><th>Trust</th><th>Platform</th><th>Version</th><th>Last activity</th></>:<><th>Service</th><th>Managed host</th><th>Type</th><th>Public port</th><th>Target</th><th>State</th></>}</tr></thead><tbody>{rows.map((item:any)=><tr key={item.id} tabIndex={0} onClick={()=>setSelected(item)} onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();setSelected(item)}}}>{isHost?<><td><strong>{item.name||item.id}</strong><small>{item.hostname||item.id}</small></td><td><span className={item.admission_state==="APPROVED"?"dr-state active":"dr-state"}><i/>{item.admission_state==="APPROVED"?"Approved":item.admission_state==="PENDING_APPROVAL"?"Pending approval":item.admission_state==="QUARANTINED"?"Quarantined":"Unknown"}</span></td><td><span className={item.connected?"dr-state active":"dr-state"}><i/>{item.connected?"Connected":item.agent_lifecycle_state||item.status||"Unknown"}</span></td><td>{item.trust_status||"—"}</td><td>{item.agent_platform||"—"}</td><td>{item.agent_version||"—"}</td><td>{item.agent_heartbeat_at||item.last_seen||"—"}</td></>:<><td><strong>{item.name||item.id}</strong><small>{item.id}</small></td><td>{item.managed_host||item.managed_host_id||"—"}</td><td>{item.service_type||"—"}</td><td>{item.public_port??"—"}</td><td>{[item.target_host,item.target_port].filter(Boolean).join(":")||item.target_mode||"—"}</td><td><span className={item.enabled&&!item.released?"dr-state active":"dr-state"}><i/>{item.released?"Released":item.enabled?"Enabled":"Disabled"}</span></td></>}</tr>)}</tbody></table></div>}
     </section>
-    {selected&&<div className="dr-drawer-backdrop" onMouseDown={e=>{if(e.currentTarget===e.target)setSelected(null)}}><aside className="dr-detail-drawer" role="dialog" aria-modal="true" aria-label={heading+" detail"} tabIndex={-1} autoFocus><header><div><p className="dr-eyebrow">{isHost?"Managed Host":"Remote Service"}</p><h2>{selected.name||selected.id}</h2><p>{selected.hostname||selected.id}</p></div><button className="dr-icon-button" onClick={()=>setSelected(null)} aria-label="Close detail">×</button></header><div className="dr-drawer-status"><span className={(isHost?selected.connected:selected.enabled&&!selected.released)?"dr-state active":"dr-state"}><i/>{isHost?(selected.connected?"Connected":selected.status||"Unknown"):(selected.released?"Released":selected.enabled?"Enabled":"Disabled")}</span>{isHost&&<span className={selected.admission_state==="APPROVED"?"dr-state active":"dr-state"}>{selected.admission_state==="PENDING_APPROVAL"?"Pending approval":selected.admission_state==="QUARANTINED"?"Quarantined":selected.admission_state==="APPROVED"?"Approved":"Unknown admission"}</span>}</div><div className="dr-detail-fields">{Object.entries(selected).filter(([,value])=>typeof value!=="object"&&value!==null&&value!=="").map(([key,value])=><div key={key}><span>{key.replaceAll("_"," ")}</span><strong>{String(value)}</strong></div>)}</div><footer><button className="secondary" onClick={()=>{setSelected(null);onNavigate?.("audit","observability")}}>Recent activity</button><button className="primary" onClick={()=>{setSelected(null);onNavigate?.("access","access")}}>Access context</button></footer></aside></div>}
+    {selected&&<div className="dr-drawer-backdrop" onMouseDown={e=>{if(e.currentTarget===e.target)setSelected(null)}}><aside className="dr-detail-drawer" role="dialog" aria-modal="true" aria-label={heading+" detail"} tabIndex={-1} autoFocus><header><div><p className="dr-eyebrow">{isHost?"Managed Host":"Remote Service"}</p><h2>{selected.name||selected.id}</h2><p>{selected.hostname||selected.id}</p></div><button className="dr-icon-button" onClick={()=>setSelected(null)} aria-label="Close detail">×</button></header><div className="dr-drawer-status"><span className={(isHost?selected.connected:selected.enabled&&!selected.released)?"dr-state active":"dr-state"}><i/>{isHost?(selected.connected?"Connected":selected.status||"Unknown"):(selected.released?"Released":selected.enabled?"Enabled":"Disabled")}</span>{isHost&&<span className={selected.admission_state==="APPROVED"?"dr-state active":"dr-state"}>{selected.admission_state==="PENDING_APPROVAL"?"Pending approval":selected.admission_state==="QUARANTINED"?"Quarantined":selected.admission_state==="APPROVED"?"Approved":"Unknown admission"}</span>}</div><div className="dr-detail-fields">{Object.entries(selected).filter(([,value])=>typeof value!=="object"&&value!==null&&value!=="").map(([key,value])=><div key={key}><span>{key.replaceAll("_"," ")}</span><strong>{String(value)}</strong></div>)}</div><footer><button className="secondary" onClick={()=>{const target={originType:isHost?"managed-host":"remote-service",originId:String(selected.id||"")};setSelected(null);onNavigate?.("audit","activity",target)}}>Recent activity</button><button className="primary" onClick={()=>{const target={originType:isHost?"managed-host":"remote-service",originId:String(selected.id||""),plane:"remote"};setSelected(null);onNavigate?.("access","access",target)}}>Why can / cannot connect?</button></footer></aside></div>}
   </div>;
 }
 
@@ -1253,18 +1217,20 @@ function CommandCenter({data,operator,onNavigate}:{data:any,operator:any,onNavig
     return()=>{cancelled=true};
   },[]);
   const h=data.overview?.managed_hosts||{},svc=data.overview?.remote_services||{},j=data.overview?.management_jobs||{},pol=data.overview?.policies||{};
-  const attention=data.attention?.items||[];
+  const attention=Array.isArray(data.attention?.items)?data.attention.items:null;
+  const observed=(value:any)=>typeof value==="number"&&Number.isFinite(value)?value:"UNKNOWN";
   const policyRows=[
     {label:"Remote Access",key:"remote",value:pol.remote||{}},
     {label:"Internet Access",key:"internet",value:pol.internet||{}},
     {label:"AI Access",key:"ai",value:pol.ai||{}},
   ];
   return <div className="dr-command-center">
-    <section className="dr-hero-row"><div><p className="dr-eyebrow">Command Center</p><h2>Manage connectivity with the next action in context.</h2><p className="muted">Current Core posture, access policy coverage, recent change and operator attention in one bounded workspace.</p></div><div className="dr-hero-actions">{operator.role==="Admin"&&<button className="primary" onClick={()=>onNavigate?.("enrollments","infrastructure")}>Connect Agent</button>}<button className="secondary" onClick={()=>onNavigate?.("policies","access")}>Review Access</button></div></section>
-    <section className="dr-kpi-strip"><div><span>Managed Hosts</span><strong>{h.total||0}</strong><small>{h.connected||0} connected</small></div><div><span>Remote Services</span><strong>{svc.total||0}</strong><small>{svc.enabled||0} enabled</small></div><div><span>Active Jobs</span><strong>{j.active_jobs||0}</strong><small>{j.failed_jobs||0} failed</small></div><div><span>Needs Attention</span><strong>{attention.length}</strong><small>{attention.some((x:any)=>x.severity==="critical")?"Critical item present":"Current findings"}</small></div></section>
+    <section className="dr-hero-row"><div><p className="dr-eyebrow">Welcome · Data Relay Link</p><h2>Connect one service. Control who can use it.</h2><p className="muted">Start with the steps below, or inspect the existing Core status and activity.</p></div><div className="dr-hero-actions">{operator.role==="Admin"&&<button className="primary" onClick={()=>onNavigate?.("setup","connections")}>Set up a connection →</button>}<button className="secondary" onClick={()=>onNavigate?.("access","access")}>Test access</button></div></section>
+    <FirstUseHome data={data} operator={operator} api={api} onNavigate={onNavigate}/>
+    <section className="dr-kpi-strip"><div><span>Managed Hosts</span><strong>{observed(h.total)}</strong><small>{observed(h.connected)} connected</small></div><div><span>Remote Services</span><strong>{observed(svc.total)}</strong><small>{observed(svc.enabled)} enabled</small></div><div><span>Active Jobs</span><strong>{observed(j.active_jobs)}</strong><small>{observed(j.failed_jobs)} failed</small></div><div><span>Needs Attention</span><strong>{attention?attention.length:"UNKNOWN"}</strong><small>{!attention?"Core attention evidence unavailable":attention.some((x:any)=>x.severity==="critical")?"Critical item present":"Current findings"}</small></div></section>
     <div className="dr-overview-columns">
-      <section className="card dr-attention-card"><div className="dr-section-head"><div><p className="dr-eyebrow">Posture</p><h3>Needs Attention</h3></div><button className="dr-text-action" onClick={()=>onNavigate?.("doctor","observability")}>Troubleshoot →</button></div>{attention.length?<div className="dr-attention-list">{attention.slice(0,8).map((x:any)=><div className="dr-attention-row" key={x.kind}><span className={"dr-severity-dot "+x.severity}/><span><strong>{x.label}</strong><small>{x.count} affected</small></span><span className={"badge "+x.severity}>{x.severity}</span></div>)}</div>:<div className="dr-good-state"><span className="dr-good-mark">✓</span><div><strong>No current attention items</strong><p>Core-derived checks are not reporting operator action.</p></div></div>}</section>
-      <section className="card dr-access-card"><div className="dr-section-head"><div><p className="dr-eyebrow">Access</p><h3>Policy Coverage</h3></div><button className="dr-text-action" onClick={()=>onNavigate?.("access","access")}>Open workspace →</button></div><div className="dr-access-posture">{policyRows.map(row=><button key={row.key} onClick={()=>onNavigate?.("policies","access")}><span className="dr-access-icon"><WorkspaceIcon kind="access"/></span><span><strong>{row.label}</strong><small>{Number(row.value.enabled||0)} enabled of {Number(row.value.total||0)}</small></span><b>{Number(row.value.enabled||0)}</b></button>)}</div></section>
+      <section className="card dr-attention-card"><div className="dr-section-head"><div><p className="dr-eyebrow">Posture</p><h3>Needs Attention</h3></div><button className="dr-text-action" onClick={()=>onNavigate?.("doctor","observability")}>Troubleshoot →</button></div>{!attention?<div className="dr-compact-empty">UNKNOWN · Core attention evidence unavailable. Check System Health.</div>:attention.length?<div className="dr-attention-list">{attention.slice(0,8).map((x:any)=><div className="dr-attention-row" key={x.kind}><span className={"dr-severity-dot "+x.severity}/><span><strong>{x.label}</strong><small>{x.count} affected</small></span><span className={"badge "+x.severity}>{x.severity}</span></div>)}</div>:<div className="dr-good-state"><span className="dr-good-mark">✓</span><div><strong>No current attention items</strong><p>Core-derived checks are not reporting operator action.</p></div></div>}</section>
+      <section className="card dr-access-card"><div className="dr-section-head"><div><p className="dr-eyebrow">Access</p><h3>Policy Coverage</h3></div><button className="dr-text-action" onClick={()=>onNavigate?.("access","access")}>Open workspace →</button></div><div className="dr-access-posture">{policyRows.map(row=><button key={row.key} onClick={()=>onNavigate?.("policies","access")}><span className="dr-access-icon"><WorkspaceIcon kind="access"/></span><span><strong>{row.label}</strong><small>{observed(row.value.enabled)} enabled of {observed(row.value.total)}</small></span><b>{observed(row.value.enabled)}</b></button>)}</div></section>
     </div>
     <div className="dr-overview-columns">
       <section className="card"><div className="dr-section-head"><div><p className="dr-eyebrow">Activity</p><h3>Recent Activity</h3></div><button className="dr-text-action" onClick={()=>onNavigate?.("audit","observability")}>Open audit →</button></div>{activity.length?<div className="dr-activity-list">{activity.map((item:any,i:number)=><button key={item.event_id||item.id||i} onClick={()=>onNavigate?.("audit","observability")}><span className={item.result==="deny"||item.result==="failed"?"dr-activity-mark warning":"dr-activity-mark"}/><span><strong>{item.event_type||item.action||item.operation||"Activity"}</strong><small>{item.actor_id||item.actor||"system"} · {item.occurred_at||item.timestamp||""}</small></span><span>{item.result||item.category||""}</span></button>)}</div>:<div className="dr-compact-empty">No retained recent activity.</div>}</section>
@@ -1278,15 +1244,16 @@ function HealthWorkspace({data,onNavigate}:{data:any,onNavigate?:(id:string,grou
   const generations=data.generations||{};
   const jobs=data.management_jobs||{};
   const planes=["remote","internet","ai"].map(name=>({name,value:generations[name]||{}}));
-  const coreHealthy=!!data.db_healthy&&!data.mismatch;
+  const coreHealthy=data.db_healthy===true&&!data.mismatch;
+  const coreStatus=typeof data.db_healthy!=="boolean"?"UNKNOWN":coreHealthy?"Healthy":"Attention";
   const configuredPlanes=planes.filter(row=>row.value.status==="active").length;
   return <div className="dr-resource-workspace">
     <section className="dr-page-intro"><div><p className="dr-eyebrow">Observability</p><h2>Health</h2><p className="muted">Core readiness, runtime generations and bounded management capacity without raw-debug-first presentation.</p></div><div className="dr-page-actions"><button className="secondary" onClick={()=>onNavigate?.("doctor","observability")}>Troubleshoot</button><button className="secondary" onClick={()=>onNavigate?.("system","administration")}>System readiness</button></div></section>
     <section className="dr-health-summary">
-      <article className="card dr-health-card"><span>Core</span><strong className={coreHealthy?"healthy":"attention"}>{coreHealthy?"Healthy":"Attention"}</strong><small>{data.mismatch?"Runtime generation mismatch":data.db_healthy?"Control database healthy":"Control database issue"}</small></article>
-      <article className="card dr-health-card"><span>Control DB</span><strong className={data.db_healthy?"healthy":"critical-text"}>{data.db_healthy?"Healthy":"Critical"}</strong><small>Schema {data.schema??"—"} · Revision {data.revision??"—"}</small></article>
+      <article className="card dr-health-card"><span>Core</span><strong className={coreHealthy?"healthy":"attention"}>{coreStatus}</strong><small>{typeof data.db_healthy!=="boolean"?"Core health evidence unavailable":data.mismatch?"Runtime generation mismatch":data.db_healthy?"Control database healthy":"Control database issue"}</small></article>
+      <article className="card dr-health-card"><span>Control DB</span><strong className={data.db_healthy?"healthy":"critical-text"}>{typeof data.db_healthy!=="boolean"?"UNKNOWN":data.db_healthy?"Healthy":"Critical"}</strong><small>Schema {data.schema??"—"} · Revision {data.revision??"—"}</small></article>
       <article className="card dr-health-card"><span>Access planes</span><strong>{configuredPlanes} / 3</strong><small>{data.ai_configured?"Remote, Internet and AI configured":"AI may be intentionally unconfigured"}</small></article>
-      <article className="card dr-health-card"><span>Management jobs</span><strong className={jobs.saturated?"attention":"healthy"}>{jobs.saturated?"Saturated":"Healthy"}</strong><small>{jobs.active_jobs||0} active · {jobs.queued_jobs||0} queued</small></article>
+      <article className="card dr-health-card"><span>Management jobs</span><strong className={jobs.saturated?"attention":"healthy"}>{typeof jobs.saturated!=="boolean"?"UNKNOWN":jobs.saturated?"Saturated":"Healthy"}</strong><small>{jobs.active_jobs??"UNKNOWN"} active · {jobs.queued_jobs??"UNKNOWN"} queued</small></article>
     </section>
     <section className="card dr-health-section"><div className="dr-section-head"><div><p className="dr-eyebrow">Runtime</p><h3>Policy planes</h3><p className="muted">Compiled generation state stays separate from configured policy state.</p></div></div><div className="dr-health-plane-list">{planes.map(row=>{const state=String(row.value.status||"unknown");const good=state==="active"||state==="not_configured";return <div className="dr-health-plane" key={row.name}><span className={good?"dr-severity-dot":"dr-severity-dot warning"}/><div><strong>{row.name[0].toUpperCase()+row.name.slice(1)}</strong><small>DB rev {row.value.db_revision??"—"} · generation {row.value.generation??"—"}</small></div><span className={state==="active"?"dr-state active":"dr-state"}><i/>{state.replaceAll("_"," ")}</span>{row.value.error&&<small className="dr-health-error">{row.value.error}</small>}</div>})}</div></section>
     <section className="card dr-health-section"><div className="dr-section-head"><div><p className="dr-eyebrow">Capacity</p><h3>Management workload</h3><p className="muted">Bounded job engine status for asynchronous fleet operations.</p></div><button className="dr-text-action" onClick={()=>onNavigate?.("jobs","operations")}>Open jobs →</button></div><div className="dr-kpi-strip"><div><span>Active</span><strong>{jobs.active_jobs||0}</strong><small>Currently active jobs</small></div><div><span>Queued</span><strong>{jobs.queued_jobs||0}</strong><small>{jobs.queued_targets||0} queued targets</small></div><div><span>Running</span><strong>{jobs.running_jobs||0}</strong><small>{jobs.running_targets||0} running targets</small></div><div><span>Failed</span><strong>{jobs.failed_jobs||0}</strong><small>Completed with failure</small></div></div></section>
@@ -1353,7 +1320,29 @@ function AccessHygienePanel({data,onRefresh,onNavigate,operator}:{data:any,onRef
   </div>;
 }
 
-function View({active,operator,onNavigate}:{active:string,operator:any,onNavigate?:(id:string,groupId?:string)=>void}){
+function SystemAdministrationWorkspace({data,operator,onNavigate}:{data:any,operator:any,onNavigate?:(id:string,groupId?:string)=>void}){
+  return <div className="dr-uxb-system">
+    <LinkFoundationAdministration operator={operator} onNavigate={onNavigate}/>
+    <section className="card dr-uxb-admin-guide" aria-label="System administration guidance">
+      <p className="dr-eyebrow">Administration · First use</p><h2>Which settings are routine and which change the system?</h2>
+      <div className="dr-uxb-admin-guide-grid">
+        <div><strong>Routine · read-only</strong><p>Use System Health and the Activity log to inspect Core and access decisions. No access changes are made by viewing these pages.</p>
+          <button className="secondary" onClick={()=>onNavigate?.("health","activity")}>System health →</button></div>
+        <div><strong>Admin-only changes</strong><p>Users & MFA, integration credentials and approved configuration changes require role checks. Read Only users cannot perform mutations.</p>
+          {operator.role==="Admin"?<button className="secondary" onClick={()=>onNavigate?.("users","administration")}>Users & MFA →</button>:<span className="dr-uxb-role-hint">Admin role required</span>}</div>
+        <div><strong>Advanced · confirm before applying</strong><p>Core-owned MCP TLS certificates, product updates, backup and restore are sensitive operations. Web HTTPS listener settings are not implemented here.</p>
+          <button className="secondary" onClick={()=>{const advanced=document.getElementById("drlink-core-advanced") as HTMLDetailsElement|null;if(advanced){advanced.open=true;advanced.scrollIntoView({block:"start"})}}}>Review advanced controls →</button></div>
+      </div>
+    </section>
+    <details id="drlink-core-advanced" className="dr-uxb-advanced-panel">
+      <summary>Advanced Core operations · certificates, update, backup and recovery</summary>
+      <p className="muted">Sensitive changes remain Core-authoritative and role/confirmation guarded. This is not the shared Web HTTPS listener management screen.</p>
+      <SystemPanel data={data} operator={operator}/>
+    </details>
+  </div>;
+}
+
+function View({active,operator,onNavigate,context}:{active:string,operator:any,onNavigate?:(id:string,groupId?:string,context?:any)=>void,context?:any}){
   const [data,setData]=useState<any>(null),[error,setError]=useState(""),[query,setQuery]=useState("");
   useEffect(()=>{
     setData(null);setError("");
@@ -1370,18 +1359,19 @@ function View({active,operator,onNavigate}:{active:string,operator:any,onNavigat
   if(active==="users")return <UsersPanel operator={operator}/>;
   if(active==="integrations")return operator.role==="Admin"?<IntegrationsPanel/>:<div className="error">Admin role required</div>;
   if(active==="drafts")return <DraftWorkspace/>;
-  if(active==="access")return <AccessOperations operator={operator} onNavigate={onNavigate}/>;
+  if(active==="access")return <AccessOperations operator={operator} onNavigate={onNavigate} context={context}/>;
   if(active==="jobs")return <JobOperations operator={operator}/>;
   if(active==="hygiene"&&data)return <AccessHygienePanel data={data} operator={operator} onRefresh={()=>api("/api/v1/access-hygiene").then(setData).catch((e:any)=>setError(e.message||String(e)))} onNavigate={onNavigate}/>;
-  if(active==="audit")return <AuditExplorer operator={operator}/>;
+  if(active==="audit")return <AuditExplorer operator={operator} context={context}/>;
   if(active==="enrollments"&&data)return <EnrollmentOnboarding api={api} data={data} operator={operator} onNavigate={onNavigate} refresh={()=>api("/api/v1/enrollments?limit=50").then(setData)}/>;
+  if(active==="setup")return <FirstConnectionSetup api={api} operator={operator} onNavigate={onNavigate}/>;
   if(active==="search")return <div><div className="toolbar"><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search resources and policy"/><button className="primary" onClick={()=>api("/api/v1/search?q="+encodeURIComponent(query)+"&limit=50").then(setData).catch((e:any)=>setError(e.message))}>Search</button></div>{data&&<Table items={(data.items||[]).map((x:any)=>({type:x.resource_type,id:x.id,name:x.name}))}/>}</div>;
   if(active==="overview"&&data)return <CommandCenter data={data} operator={operator} onNavigate={onNavigate}/>;
   if(active==="versions"&&data)return <><div className="grid"><Metric label="Server version" value={data.server_version}/><Metric label="Drift" value={data.drift_count}/><Metric label="Unknown" value={data.unknown_count}/></div><Table items={data.hosts||[]}/></>;
-  if(active==="system"&&data)return <><LinkFoundationAdministration operator={operator} onNavigate={onNavigate}/><SystemPanel data={data} operator={operator}/></>;
+  if(active==="system"&&data)return <SystemAdministrationWorkspace data={data} operator={operator} onNavigate={onNavigate}/>;
   if(active==="objects"&&data)return <><ObjectsWorkspace data={data} onNavigate={onNavigate}/>{operator.role!=="Read Only"&&<GuidedObjectPanel/>}</>;
   if(active==="hosts"&&data)return <><ResourceWorkspace kind="host" items={data.items||[]} operator={operator} onNavigate={onNavigate}/>{operator.role!=="Read Only"&&<ManagedHostMetadataPanel/>}{operator.role==="Admin"&&<ManagedHostAdmissionPanel/>}{operator.role==="Admin"&&<ManagedHostLifecyclePanel/>}</>;
-  if(active==="services"&&data)return <><ResourceWorkspace kind="service" items={data.items||[]} operator={operator} onNavigate={onNavigate}/>{operator.role!=="Read Only"&&<RemoteServicePanel/>}</>;
+  if(active==="services"&&data)return <><ResourceWorkspace kind="service" items={data.items||[]} operator={operator} onNavigate={onNavigate}/>{operator.role!=="Read Only"&&<RemoteServiceEditor api={api}/>}</>;
   if(active==="policies"&&data)return <><PolicyWorkspace data={data} operator={operator} onNavigate={onNavigate}/>{operator.role!=="Read Only"&&<GuidedPolicyJourney api={api} onNavigate={onNavigate}/>}<PolicySafetyPanel operator={operator}/>{operator.role!=="Read Only"&&<><GuidedPolicySettingsPanel/><TemporaryAccessPanel/></>}</>;
   if(active==="doctor"&&data)return <><div className="grid"><Metric label="Attention" value={data.attention?.count}/><Metric label="Checks" value={(data.checks||[]).length}/></div><Table items={data.checks||[]}/></>;
   if(active==="health"&&data)return <HealthWorkspace data={data} onNavigate={onNavigate}/>;
@@ -1399,10 +1389,10 @@ function SavedViews({data,refresh}:{data:any,refresh:()=>void}){
 function WorkspaceIcon({kind}:{kind:string}){
   const common={viewBox:"0 0 24 24",fill:"none",stroke:"currentColor",strokeWidth:1.8,strokeLinecap:"round" as const,strokeLinejoin:"round" as const,"aria-hidden":true};
   if(kind==="overview")return <svg {...common}><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>;
-  if(kind==="infrastructure")return <svg {...common}><rect x="4" y="4" width="16" height="6" rx="2"/><rect x="4" y="14" width="16" height="6" rx="2"/><path d="M8 7h.01M8 17h.01M12 7h5M12 17h5"/></svg>;
+  if(kind==="connections"||kind==="infrastructure")return <svg {...common}><rect x="4" y="4" width="16" height="6" rx="2"/><rect x="4" y="14" width="16" height="6" rx="2"/><path d="M8 7h.01M8 17h.01M12 7h5M12 17h5"/></svg>;
   if(kind==="access")return <svg {...common}><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>;
   if(kind==="operations")return <svg {...common}><path d="M4 12h3l2-5 4 10 2-5h5"/></svg>;
-  if(kind==="observability")return <svg {...common}><path d="M2.5 12s3.4-6 9.5-6 9.5 6 9.5 6-3.4 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/></svg>;
+  if(kind==="activity"||kind==="observability")return <svg {...common}><path d="M2.5 12s3.4-6 9.5-6 9.5 6 9.5 6-3.4 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/></svg>;
   if(kind==="administration")return <svg {...common}><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3A1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/></svg>;
   if(kind==="search")return <svg {...common}><circle cx="11" cy="11" r="6"/><path d="m16 16 4 4"/></svg>;
   if(kind==="refresh")return <svg {...common}><path d="M20 6v5h-5M4 18v-5h5"/><path d="M18.2 9A7 7 0 0 0 6.4 6.4L4 9m16 6-2.4 2.6A7 7 0 0 1 5.8 15"/></svg>;
@@ -1414,7 +1404,7 @@ function WorkspaceIcon({kind}:{kind:string}){
   return <svg {...common}><circle cx="12" cy="12" r="8"/></svg>;
 }
 
-function GlobalSearch({open,onClose,onNavigate}:{open:boolean,onClose:()=>void,onNavigate:(id:string,groupId?:string)=>void}){
+function GlobalSearch({open,onClose,onNavigate,operator}:{open:boolean,onClose:()=>void,onNavigate:(id:string,groupId?:string)=>void,operator:any}){
   const [query,setQuery]=useState(""),[results,setResults]=useState<any[]>([]),[busy,setBusy]=useState(false),[error,setError]=useState("");
   useEffect(()=>{if(!open){setQuery("");setResults([]);setError("")}},[open]);
   useEffect(()=>{
@@ -1422,6 +1412,7 @@ function GlobalSearch({open,onClose,onNavigate}:{open:boolean,onClose:()=>void,o
     function onKey(e:KeyboardEvent){if(e.key==="Escape")onClose()}
     window.addEventListener("keydown",onKey);return()=>window.removeEventListener("keydown",onKey);
   },[open]);
+  const localMatches=navMatches(query,operator.role);
   if(!open)return null;
   function targetFor(type:string):[string,string]{
     const value=String(type||"").toLowerCase();
@@ -1444,12 +1435,14 @@ function GlobalSearch({open,onClose,onNavigate}:{open:boolean,onClose:()=>void,o
       {error&&<div className="dr-command-error">{error}</div>}
       <div className="dr-command-body">
         {!query.trim()&&<><p className="dr-command-label">Quick actions</p><div className="dr-command-actions">
-          <button onClick={()=>go("enrollments","infrastructure")}><WorkspaceIcon kind="infrastructure"/><span><strong>Connect Agent</strong><small>Issue enrollment guidance</small></span></button>
+          {operator.role==="Admin"&&<button onClick={()=>go("setup","connections")}><WorkspaceIcon kind="connections"/><span><strong>Set up a connection</strong><small>Add an Agent, publish one service and define narrow access</small></span></button>}
           <button onClick={()=>go("access","access")}><WorkspaceIcon kind="access"/><span><strong>Access workspace</strong><small>Diagnose and inspect current access</small></span></button>
           <button onClick={()=>go("views","observability")}><WorkspaceIcon kind="observability"/><span><strong>Saved Views</strong><small>Open operator-saved filters</small></span></button>
           <button onClick={()=>go("doctor","observability")}><WorkspaceIcon kind="observability"/><span><strong>Troubleshoot</strong><small>Open bounded Doctor checks</small></span></button>
         </div></>}
-        {query.trim()&&<><div className="dr-command-results-head"><p className="dr-command-label">Search results</p><button className="dr-text-action" onClick={()=>search()} disabled={busy}>{busy?"Searching…":"Refresh"}</button></div>{!busy&&!results.length&&<div className="dr-command-empty">No matching resources. Press Enter to search again.</div>}<div className="dr-command-results">{results.map((item:any,i:number)=>{const [id,group]=targetFor(item.resource_type);return <button key={item.id||i} onClick={()=>go(id,group)}><span className="dr-search-kind">{item.resource_type||"resource"}</span><span><strong>{item.name||item.id}</strong><small>{item.id||""}</small></span><span aria-hidden="true">→</span></button>})}</div></>}
+        {query.trim()&&<><div className="dr-command-results-head"><p className="dr-command-label">Pages and tasks · old names also work</p><button className="dr-text-action" onClick={()=>search()} disabled={busy}>{busy?"Searching…":"Search resources"}</button></div>
+        {localMatches.length>0&&<div className="dr-command-results" aria-label="Page and task matches">{localMatches.map(item=><button key={"nav:"+item.id} onClick={()=>go(item.id,item.group)}><span className="dr-search-kind">Page</span><span><strong>{item.label}</strong><small>{item.description}</small></span><span aria-hidden="true">→</span></button>)}</div>}
+        {!busy&&!results.length&&!localMatches.length&&<div className="dr-command-empty">No local page matches. Press Enter to search Core resources.</div>}<div className="dr-command-results">{results.map((item:any,i:number)=>{const [id,group]=targetFor(item.resource_type);return <button key={item.id||i} onClick={()=>go(id,group)}><span className="dr-search-kind">{item.resource_type||"resource"}</span><span><strong>{item.name||item.id}</strong><small>{item.id||""}</small></span><span aria-hidden="true">→</span></button>})}</div></>}
       </div>
       <footer className="dr-command-footer"><span><kbd>Enter</kbd> search</span><span><kbd>Esc</kbd> close</span><span>Security state is never stored in browser preferences.</span></footer>
     </section>
@@ -1461,53 +1454,62 @@ function Shell({operator,onLogout}:{operator:any,onLogout:()=>void}){
   const [collapsed,setCollapsed]=useState(()=>{try{return localStorage.getItem("drlink_web_sidebar_collapsed")==="1"}catch{return false}});
   const [dark,setDark]=useState(()=>{try{return localStorage.getItem("drlink_web_theme")==="dark"}catch{return false}});
   const [refreshNonce,setRefreshNonce]=useState(0);
-  const [coreHealthy,setCoreHealthy]=useState<boolean|undefined>(undefined);
+  const [coreHealthy,setCoreHealthy]=useState<"loading"|"healthy"|"attention"|"unknown">("loading");
   const [searchOpen,setSearchOpen]=useState(false);
-  const activeGroup=navGroups.find(group=>group.items.some(([id])=>id===active))?.id||"";
-  const [expanded,setExpanded]=useState<Record<string,boolean>>(()=>Object.fromEntries(navGroups.map(group=>[group.id,group.id===activeGroup||group.id==="infrastructure"])));
+  const [navigationContext,setNavigationContext]=useState<any>(null);
+  const activeGroup=groupFor(active);
+  const [expanded,setExpanded]=useState<Record<string,boolean>>(()=>Object.fromEntries(navGroups.map(group=>[group.id,group.id===activeGroup||group.id==="connections"])));
 
   useEffect(()=>{
     document.documentElement.setAttribute("data-dr-theme",dark?"dark":"light");
     try{localStorage.setItem("drlink_web_theme",dark?"dark":"light")}catch{}
   },[dark]);
   useEffect(()=>{try{localStorage.setItem("drlink_web_sidebar_collapsed",collapsed?"1":"0")}catch{}},[collapsed]);
-  useEffect(()=>{api("/api/v1/health").then(()=>setCoreHealthy(true)).catch(()=>setCoreHealthy(false))},[refreshNonce]);
+  useEffect(()=>{
+    let active=true;
+    setCoreHealthy("loading");
+    api("/api/v1/health").then(result=>{
+      if(!active)return;
+      setCoreHealthy(typeof result?.db_healthy!=="boolean"?"unknown"
+        :result.db_healthy&&!result.mismatch?"healthy":"attention");
+    }).catch(()=>{if(active)setCoreHealthy("unknown")});
+    return()=>{active=false};
+  },[refreshNonce]);
   useEffect(()=>{
     function onKey(e:KeyboardEvent){if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="k"){e.preventDefault();setSearchOpen(true)}}
     window.addEventListener("keydown",onKey);return()=>window.removeEventListener("keydown",onKey);
   },[]);
 
   async function logout(){try{await api("/api/v1/auth/logout",{method:"POST",body:"{}"})}finally{csrf="";onLogout()}}
-  function visible(id:string){
-    if(id==="users")return operator.role==="Admin";
-    if(id==="integrations")return operator.role==="Admin";
-    if(id==="enrollments")return operator.role==="Admin";
-    if(id==="drafts")return operator.role!=="Read Only";
-    return true;
-  }
-  function activate(id:string,groupId?:string){
+  function visible(id:string){return visibleRoute(id,operator.role)}
+  function activate(id:string,groupId?:string,context?:any){
+    if(!visible(id))return;
+    // Navigation context is ephemeral, never written to browser storage or URL.
+    setNavigationContext(context||null);
     setActive(id);
-    if(groupId)setExpanded(prev=>({...prev,[groupId]:true}));
+    // Legacy components still emit "infrastructure"/"observability"/"operations".
+    // Derive the canonical grouping from the stable route id.
+    const group=groupFor(id);
+    if(group)setExpanded(prev=>({...prev,[group]:true}));
   }
   function chooseGroup(groupId:string){
     if(collapsed){setCollapsed(false);setExpanded(prev=>({...prev,[groupId]:true}));return}
     setExpanded(prev=>({...prev,[groupId]:!prev[groupId]}));
   }
-  const currentItem=navGroups.flatMap(group=>group.items).find(([id])=>id===active);
-  const contextualTitles:Record<string,string>={search:"Search",views:"Saved Views",enrollments:"Connect Agent",drafts:"Draft Workspace",doctor:"Troubleshoot"};
-  const title=active==="overview"?"Overview":currentItem?.[1]||contextualTitles[active]||"Overview";
-  const healthText=coreHealthy===undefined?"Checking":coreHealthy?"Healthy":"Attention";
+  const title=labelFor(active);
+  const crumb=navGroups.find(group=>group.id===activeGroup)?.label||"Connections";
+  const healthText={loading:"Checking",healthy:"Healthy",attention:"Attention",unknown:"UNKNOWN"}[coreHealthy];
   return <div className={collapsed?"shell dr-shell is-collapsed":"shell dr-shell"}>
     <a className="dr-skip-link" href="#drlink-main-content">Skip to content</a>
     <aside className={collapsed?"sidebar dr-sidebar is-collapsed":"sidebar dr-sidebar"}>
       <div className="dr-sidebar-brand">
-        <button className="dr-brand-home" onClick={()=>activate("overview")} aria-label="DataRelay Link — Overview">
+        <button className="dr-brand-home" onClick={()=>activate("overview")} aria-label="DataRelay Link — Home">
           <img src="/logo/datarelay-logo.svg" alt=""/><span className="dr-brand-copy"><strong><span>Data</span><em>Relay</em></strong><small>Data Relay Link</small></span>
         </button>
         <button className="dr-icon-button dr-collapse" onClick={()=>setCollapsed(!collapsed)} aria-label={collapsed?"Expand menu":"Collapse menu"}><WorkspaceIcon kind={collapsed?"expand":"collapse"}/></button>
       </div>
       <nav className="nav dr-nav" aria-label="Primary navigation">
-        <button className={active==="overview"?"active nav-home":"nav-home"} onClick={()=>activate("overview")} title={collapsed?"Overview":undefined}><span className="dr-nav-icon"><WorkspaceIcon kind="overview"/></span><span className="dr-nav-label">Overview</span></button>
+        <button className={active==="overview"?"active nav-home":"nav-home"} onClick={()=>activate("overview")} title={collapsed?"Home":undefined}><span className="dr-nav-icon"><WorkspaceIcon kind="overview"/></span><span className="dr-nav-label">Home</span></button>
         {navGroups.map(group=>{
           const items=group.items.filter(([id])=>visible(id));
           if(!items.length)return null;
@@ -1517,7 +1519,7 @@ function Shell({operator,onLogout}:{operator:any,onLogout:()=>void}){
             <button className="nav-group-toggle" aria-expanded={open} onClick={()=>chooseGroup(group.id)} title={collapsed?group.label:undefined}>
               <span className="dr-nav-icon"><WorkspaceIcon kind={group.id}/></span><span className="dr-nav-label">{group.label}</span><span className="nav-chevron" aria-hidden="true">{open?"▾":"▸"}</span>
             </button>
-            {!collapsed&&open&&<div className="nav-group-items">{items.map(([id,label])=><button key={id} className={id===active?"active":""} onClick={()=>activate(id,group.id)}>{label}</button>)}</div>}
+            {!collapsed&&open&&<div className="nav-group-items">{items.map(([id,label])=><button key={id} className={id===active?"active":""} onClick={()=>activate(id,group.id)} title={pageDescriptions[id]||label}>{label}</button>)}</div>}
           </section>;
         })}
       </nav>
@@ -1531,16 +1533,19 @@ function Shell({operator,onLogout}:{operator:any,onLogout:()=>void}){
     </aside>
     <div className="dr-shell-main">
       <header className="dr-topbar">
-        <div className="dr-topbar-context"><h1>{title}</h1><span className={coreHealthy===false?"dr-health-pill attention":"dr-health-pill"}><i/>{healthText}</span><span className="dr-runtime-summary">Core management · Web 3.0</span></div>
+        <div className="dr-topbar-context"><div className="dr-uxb-header">
+          <nav className="dr-uxb-breadcrumb" aria-label="Breadcrumb"><button type="button" onClick={()=>activate("overview")}>Home</button>{active!=="overview"&&<><span aria-hidden="true">/</span><span>{crumb}</span><span aria-hidden="true">/</span><strong>{title}</strong></>}</nav>
+          <div className="dr-uxb-title"><h1>{title}</h1><span className={coreHealthy==="attention"||coreHealthy==="unknown"?"dr-health-pill attention":"dr-health-pill"}><i/>{healthText}</span></div>
+          <p>{pageDescriptions[active]||"Core-backed management workspace"}</p></div></div>
         <div className="dr-topbar-actions">
           <button className="dr-search-trigger" onClick={()=>setSearchOpen(true)}><WorkspaceIcon kind="search"/><span>Search</span><kbd>⌘K</kbd></button>
           <button className="dr-icon-button" onClick={()=>setRefreshNonce(x=>x+1)} title="Refresh"><WorkspaceIcon kind="refresh"/></button>
           <button className="dr-icon-button" onClick={()=>setDark(!dark)} title="Toggle theme"><WorkspaceIcon kind={dark?"sun":"moon"}/></button>
         </div>
       </header>
-      <main id="drlink-main-content" className="content dr-workspace" tabIndex={-1}><div className="dr-content-frame"><View key={active+":"+refreshNonce} active={active} operator={operator} onNavigate={activate}/></div></main>
+      <main id="drlink-main-content" className="content dr-workspace" tabIndex={-1}><div className="dr-content-frame"><View key={active+":"+refreshNonce+":"+(navigationContext?.originId||"")} active={active} operator={operator} onNavigate={activate} context={navigationContext}/></div></main>
     </div>
-    <GlobalSearch open={searchOpen} onClose={()=>setSearchOpen(false)} onNavigate={activate}/>
+    <GlobalSearch open={searchOpen} onClose={()=>setSearchOpen(false)} onNavigate={activate} operator={operator}/>
   </div>;
 }
 

@@ -10,6 +10,9 @@ SOURCE = (ROOT / "web/src/main.tsx").read_text(encoding="utf-8")
 ADMIN_SOURCE = (ROOT / "web/src/foundation-administration.ts").read_text(encoding="utf-8")
 P0_ACCESS_SOURCE = (ROOT / "web/src/p0-access-policy.tsx").read_text(encoding="utf-8")
 P0_ENROLL_SOURCE = (ROOT / "web/src/p0-enrollment.tsx").read_text(encoding="utf-8")
+NAV_SOURCE = (ROOT / "web/src/uxb-navigation.ts").read_text(encoding="utf-8")
+HOME_SOURCE = (ROOT / "web/src/uxb-home.tsx").read_text(encoding="utf-8")
+SETUP_SOURCE = (ROOT / "web/src/uxb-setup.tsx").read_text(encoding="utf-8")
 CSS = (ROOT / "web/dist/styles.css").read_text(encoding="utf-8")
 PACKAGE = (ROOT / "web/package.json").read_text(encoding="utf-8")
 PACKAGE_LOCK = (ROOT / "web/package-lock.json").read_text(encoding="utf-8")
@@ -55,30 +58,70 @@ class V30WebSaasUxContractTests(unittest.TestCase):
             self.assertIn(global_marker, CSS)
 
     def test_navigation_is_bounded_and_utilities_are_contextual(self):
-        block = re.search(r"const navGroups=\[(.*?)\] as const;", SOURCE, re.S)
+        block = re.search(r"export const navGroups = \[(.*?)\] as const;", NAV_SOURCE, re.S)
         self.assertIsNotNone(block)
         text = block.group(1)
         groups = re.findall(r'id:"([^"]+)",label:"([^"]+)"', text)
         self.assertEqual(
             groups,
             [
-                ("infrastructure", "Infrastructure"),
-                ("access", "Access Control"),
-                ("operations", "Operations"),
-                ("observability", "Observability"),
+                ("connections", "Connections"),
+                ("access", "Access"),
+                ("activity", "Activity & Health"),
                 ("administration", "Administration"),
             ],
         )
+        self.assertIn('if(id==="overview")return "Home"', NAV_SOURCE)
         for utility in ('["search","Search"]', '["views","Saved Views"]', '["doctor","Doctor"]', '["enrollments","Connect Agent"]', '["drafts","Draft Workspace"]'):
             self.assertNotIn(utility, text)
         for contextual in (
             'Search hosts, services, policies, identities',
-            'Saved Views',
-            'Connect Agent',
-            'Draft change',
-            'Troubleshoot',
+            'Saved Views', 'Set up a connection', 'Troubleshoot',
         ):
-            self.assertIn(contextual, SOURCE)
+            self.assertIn(contextual, SOURCE + NAV_SOURCE)
+        self.assertIn('const group=groupFor(id)', SOURCE)
+        self.assertIn('navMatches(query,operator.role)', SOURCE)
+        self.assertIn('pageDescriptions[active]', SOURCE)
+        self.assertIn('aria-label="Breadcrumb"', SOURCE)
+
+    def test_uxb_first_use_keeps_three_planes_and_core_authority_separate(self):
+        self.assertIn('FirstUseHome data={data}', SOURCE)
+        self.assertIn('if(active==="setup")return <FirstConnectionSetup', SOURCE)
+        self.assertIn('firstConnectionStates', HOME_SOURCE)
+        for marker in ("PENDING_APPROVAL", "Approved", "Remote Access", "Internet Access", "AI Access"):
+            self.assertIn(marker.lower(), (HOME_SOURCE + SETUP_SOURCE).lower())
+        self.assertIn('GuidedPolicyJourney key={plane}', SETUP_SOURCE)
+        self.assertIn('lockedPlane', SETUP_SOURCE)
+        self.assertIn('AccessEvidenceExplorer api={api}', SETUP_SOURCE)
+        self.assertIn('RemoteServiceEditor api={api}', SETUP_SOURCE)
+        self.assertNotIn("localStorage", SETUP_SOURCE + HOME_SOURCE)
+
+    def test_uxb_contextual_diagnosis_and_safe_system_disclosure(self):
+        # UXB-04 keeps an entity reference in ephemeral shell memory while
+        # preserving canonical Core object-vs-host semantics.
+        for marker in (
+            'setNavigationContext(context||null)',
+            'context={navigationContext}', 'context={context}',
+            'Investigating {context.originType', 'originType:"access-rule"',
+            'originType:isHost?"managed-host":"remote-service"',
+            'Why can / cannot connect?', 'Why allowed / denied?',
+            'initialPlane=["remote","internet","ai"]',
+            'setResource]=useState(String(context?.originId||""))',
+        ):
+            self.assertIn(marker, SOURCE)
+        # UXB-05 keeps Foundation administration visible but hides privileged
+        # product-owned controls behind an explicit advanced disclosure.
+        self.assertIn('function SystemAdministrationWorkspace(', SOURCE)
+        self.assertIn('id="drlink-core-advanced"', SOURCE)
+        self.assertIn('<SystemPanel data={data} operator={operator}/>', SOURCE)
+        self.assertIn('if(advanced)advanced.open=true', SOURCE)
+        self.assertIn('Web HTTPS listener settings are not implemented here', SOURCE)
+        self.assertIn('Admin role required', SOURCE)
+        # Incomplete Core status must never be presented as an observed zero
+        # or a healthy system.
+        self.assertIn('Core attention evidence unavailable', SOURCE)
+        self.assertIn('typeof result?.db_healthy!=="boolean"?"unknown"', SOURCE)
+        self.assertIn('UNKNOWN', SOURCE)
 
     def test_foundation_administration_keeps_support_separate_from_actor_access(self):
         # Foundation's availability is the product capability; access is the

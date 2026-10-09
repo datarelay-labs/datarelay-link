@@ -26,6 +26,10 @@ BUILD_FILES = (
     "web/src/foundation-administration.ts",
     "web/src/p0-access-policy.tsx",
     "web/src/p0-enrollment.tsx",
+    "web/src/uxb-navigation.ts",
+    "web/src/uxb-home.tsx",
+    "web/src/uxb-remote-service.tsx",
+    "web/src/uxb-setup.tsx",
 )
 
 

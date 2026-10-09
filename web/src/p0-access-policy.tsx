@@ -109,10 +109,14 @@ export function AccessEvidenceExplorer({api,plane,source,destination,selector,on
   </section>;
 }
 
-export function GuidedPolicyJourney({api,onNavigate}: {api:LinkApi,onNavigate?:Navigate}) {
-  const [plane,setPlane]=useState<AccessPlane>("remote"),[operation,setOperation]=useState("set");
+export function GuidedPolicyJourney({api,onNavigate,initialPlane="remote",lockedPlane=false,initialFlow,onFlowChange}: {
+  api:LinkApi,onNavigate?:Navigate,initialPlane?:AccessPlane,lockedPlane?:boolean,
+  initialFlow?:{source?:string,destination?:string,selector?:string},
+  onFlowChange?:(flow:{source:string,destination:string,selector:string})=>void,
+}) {
+  const [plane,setPlane]=useState<AccessPlane>(initialPlane),[operation,setOperation]=useState("set");
   const [name,setName]=useState(""),[mode,setMode]=useState("whitelist");
-  const [source,setSource]=useState(""),[destination,setDestination]=useState(""),[selector,setSelector]=useState("");
+  const [source,setSource]=useState(initialFlow?.source||""),[destination,setDestination]=useState(initialFlow?.destination||""),[selector,setSelector]=useState(initialFlow?.selector||"");
   const [paths,setPaths]=useState(""),[expiresAt,setExpiresAt]=useState(""),[purpose,setPurpose]=useState("");
   const [enabled,setEnabled]=useState(true),[phase,setPhase]=useState(1);
   const [preview,setPreview]=useState<any>(null),[tests,setTests]=useState<any>(null);
@@ -124,6 +128,13 @@ export function GuidedPolicyJourney({api,onNavigate}: {api:LinkApi,onNavigate?:N
     setPhase(1);setMessage("");setError("");
   }
   function change<T>(setter:(value:T)=>void,value:T){setter(value);invalidate()}
+  function changeFlow(key:"source"|"destination"|"selector",value:string){
+    if(key==="source")setSource(value);
+    else if(key==="destination")setDestination(value);
+    else setSelector(value);
+    onFlowChange?.({source:key==="source"?value:source,destination:key==="destination"?value:destination,selector:key==="selector"?value:selector});
+    invalidate();
+  }
   const ready=!!name.trim()&&(operation==="delete"||!!(source.trim()&&destination.trim()&&selector.trim()));
   async function review(){
     if(!ready||busy)return;
@@ -186,7 +197,7 @@ export function GuidedPolicyJourney({api,onNavigate}: {api:LinkApi,onNavigate?:N
     {error&&<div className="error" role="alert">{error}</div>}
     {message&&<div className="notice" role="status">{message}</div>}
     <fieldset className="dr-p0-form" disabled={busy}>
-      <label className="dr-field"><span>Access plane</span><select value={plane} onChange={e=>{change(setPlane,e.target.value as AccessPlane);setSelector("");setPaths("")}}>
+      <label className="dr-field"><span>Access plane</span><select value={plane} disabled={lockedPlane} onChange={e=>{change(setPlane,e.target.value as AccessPlane);setSelector("");setPaths("")}}>
         <option value="remote">Remote Access</option><option value="internet">Internet Access</option><option value="ai">AI Access</option></select></label>
       <label className="dr-field"><span>Change</span><select value={operation} onChange={e=>change(setOperation,e.target.value)}>
         <option value="set">Create / edit rule</option><option value="delete">Delete existing rule</option></select></label>
@@ -194,9 +205,9 @@ export function GuidedPolicyJourney({api,onNavigate}: {api:LinkApi,onNavigate?:N
       {operation==="set"&&<>
         <label className="dr-field"><span>Policy mode</span><select value={mode} onChange={e=>change(setMode,e.target.value)}>
           <option value="whitelist">Whitelist · grant matching access</option><option value="blacklist">Blacklist · deny matching access</option></select></label>
-        <label className="dr-field"><span>Who · source</span><input value={source} onChange={e=>change(setSource,e.target.value)} placeholder={plane==="ai"?"AI identity":"Source object or group"}/></label>
-        <label className="dr-field"><span>What · destination</span><input value={destination} onChange={e=>change(setDestination,e.target.value)} placeholder="Destination object or group"/></label>
-        <label className="dr-field"><span>{plane==="ai"?"Permission":"Service"} selector</span><input value={selector} onChange={e=>change(setSelector,e.target.value)} placeholder={plane==="ai"?"Permission object/group":"Service object/group"}/></label>
+        <label className="dr-field"><span>Who · source</span><input value={source} onChange={e=>changeFlow("source",e.target.value)} placeholder={plane==="ai"?"AI identity":"Source object or group"}/></label>
+        <label className="dr-field"><span>What · destination</span><input value={destination} onChange={e=>changeFlow("destination",e.target.value)} placeholder="Destination object or group"/></label>
+        <label className="dr-field"><span>{plane==="ai"?"Permission":"Service"} selector</span><input value={selector} onChange={e=>changeFlow("selector",e.target.value)} placeholder={plane==="ai"?"Permission object/group":"Service object/group"}/></label>
         {plane==="ai"&&<label className="dr-field"><span>Optional AI paths (comma-separated)</span><input value={paths} onChange={e=>change(setPaths,e.target.value)} placeholder="/path/a, /path/b"/></label>}
         <label className="dr-field"><span>Optional expiry · ISO 8601</span><input value={expiresAt} onChange={e=>change(setExpiresAt,e.target.value)} placeholder="2030-01-01T00:00:00Z"/></label>
         <label className="dr-field dr-p0-check"><input type="checkbox" checked={enabled} onChange={e=>change(setEnabled,e.target.checked)}/><span>Rule enabled</span></label>
