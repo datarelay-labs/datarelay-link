@@ -59,7 +59,7 @@ export function FirstUseHome({data,operator,api,onNavigate}:{
     <div className="dr-section-head"><div><p className="dr-eyebrow">Get started · Core-observed progress</p>
       <h2>{newInstall?"Your first protected connection starts here":"What would you like to do next?"}</h2>
       <p className="muted">Five steps from adding one server to explaining an access decision. No setup status is stored in your browser.</p>
-    </div><button className="primary" onClick={()=>onNavigate?.("setup","connections")} disabled={operator?.role!=="Admin"}>Open guided setup →</button></div>
+    </div><button className="primary" onClick={()=>onNavigate?.("setup","connections")}>Open guided setup →</button></div>
     {loadState==="error"&&<p className="warning-box" role="alert">Managed Host inventory unavailable ({error}). Agent readiness is UNKNOWN, not healthy.</p>}
     <ol className="dr-uxb-task-list">
       {cards.map((item,i)=>{

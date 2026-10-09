@@ -87,6 +87,14 @@ class V30WebSaasUxContractTests(unittest.TestCase):
     def test_uxb_first_use_keeps_three_planes_and_core_authority_separate(self):
         self.assertIn('FirstUseHome data={data}', SOURCE)
         self.assertIn('if(active==="setup")return <FirstConnectionSetup', SOURCE)
+        self.assertIn('className="dr-uxb-nav-advanced"', SOURCE)
+        self.assertIn('<summary>Advanced tools</summary>', SOURCE)
+        self.assertIn('.dr-uxb-nav-advanced>summary:focus-visible', CSS)
+        self.assertIn('const [setupDraft,setSetupDraft]=useState<SetupDraft|null>(null)', SOURCE)
+        self.assertIn('onSetupDraftChange={setSetupDraft}', SOURCE)
+        self.assertIn('initialDraft={setupDraft}', SOURCE)
+        self.assertIn('onDraftChange?.({plane,step,selectedHost,serviceName,', SETUP_SOURCE)
+        self.assertIn('initialSelection={serviceDraft}', SETUP_SOURCE)
         self.assertIn('firstConnectionStates', HOME_SOURCE)
         for marker in ("PENDING_APPROVAL", "Approved", "Remote Access", "Internet Access", "AI Access"):
             self.assertIn(marker.lower(), (HOME_SOURCE + SETUP_SOURCE).lower())

@@ -3,6 +3,11 @@ import {EnrollmentOnboarding,hostReadinessLabel} from "./p0-enrollment";
 import {AccessEvidenceExplorer,GuidedPolicyJourney,type AccessPlane,type LinkApi} from "./p0-access-policy";
 import {RemoteServiceEditor} from "./uxb-remote-service";
 type Navigate=(id:string,groupId?:string)=>void;
+export type SetupDraft={
+  plane?:AccessPlane,step?:number,selectedHost?:string,serviceName?:string,
+  source?:string,destination?:string,selector?:string,
+  service?:{owner:string,name:string,service:string,destination:string}
+};
 
 export const firstUseStages = {
   remote:["Add & approve Agent","Publish one Remote Service","Define a narrow access rule","Verify the decision"],
@@ -10,19 +15,30 @@ export const firstUseStages = {
   ai:["Select AI Identity","Choose a Permission Object","Define an AI Access rule","Verify the permission"],
 } as const;
 
-export function FirstConnectionSetup({api,operator,onNavigate}:{
-  api:LinkApi,operator:any,onNavigate?:Navigate
+export function FirstConnectionSetup({api,operator,onNavigate,initialDraft,onDraftChange}:{
+  api:LinkApi,operator:any,onNavigate?:Navigate,initialDraft?:SetupDraft|null,
+  onDraftChange?:(draft:SetupDraft)=>void,
 }){
-  const [plane,setPlane]=useState<AccessPlane>("remote"),[step,setStep]=useState(1);
+  const [plane,setPlane]=useState<AccessPlane>(initialDraft?.plane||"remote");
+  const [step,setStep]=useState(Math.min(4,Math.max(1,initialDraft?.step||1)));
   const [hosts,setHosts]=useState<any[]|null>(null),[services,setServices]=useState<any[]|null>(null);
   const [enrollments,setEnrollments]=useState<any>({items:[]});
   const [error,setError]=useState(""),[checking,setChecking]=useState(false);
-  const [selectedHost,setSelectedHost]=useState(""),[serviceName,setServiceName]=useState("");
-  const [source,setSource]=useState(""),[destination,setDestination]=useState(""),[selector,setSelector]=useState("");
+  const [selectedHost,setSelectedHost]=useState(initialDraft?.selectedHost||"");
+  const [serviceName,setServiceName]=useState(initialDraft?.serviceName||"");
+  const [serviceDraft,setServiceDraft]=useState(initialDraft?.service||{owner:"",name:"",service:"",destination:"this-host"});
+  const [source,setSource]=useState(initialDraft?.source||"");
+  const [destination,setDestination]=useState(initialDraft?.destination||"");
+  const [selector,setSelector]=useState(initialDraft?.selector||"");
   const canEdit=operator?.role==="Admin"||operator?.role==="Operator";
   const selected=hosts?.find(h=>String(h.id)===selectedHost)||null;
   const service=services?.find(s=>String(s.name||s.id)===serviceName)||null;
   useEffect(()=>{void refreshCore()},[]);
+  // Only non-secret form choices stay in Shell's current authenticated React
+  // session. A Core change plan, OTP, token or invitation is never persisted.
+  useEffect(()=>{onDraftChange?.({plane,step,selectedHost,serviceName,
+    source,destination,selector,service:serviceDraft})},
+    [plane,step,selectedHost,serviceName,source,destination,selector,serviceDraft]);
   async function refreshCore(){
     setChecking(true);setError("");
     const r=await Promise.allSettled([
@@ -40,7 +56,8 @@ export function FirstConnectionSetup({api,operator,onNavigate}:{
     setChecking(false);
   }
   const stages=firstUseStages[plane];
-  function changePlane(value:AccessPlane){setPlane(value);setStep(1);setSource("");setDestination("");setSelector("");setError("")}
+  function changePlane(value:AccessPlane){setPlane(value);setStep(1);setSource("");setDestination("");setSelector("");
+    setServiceName("");setServiceDraft({owner:"",name:"",service:"",destination:"this-host"});setError("")}
   return <div className="dr-uxb-setup" data-testid="uxb-connection-setup">
     <section className="card dr-uxb-setup-hero">
       <p className="dr-eyebrow">One safe path · Core-authoritative connection setup</p>
@@ -97,7 +114,8 @@ export function FirstConnectionSetup({api,operator,onNavigate}:{
         {!hosts?.length&&<option value="">No observed Managed Host</option>}
         {(hosts||[]).map(h=><option key={h.id} value={String(h.id)}>{h.name||h.label||h.id}</option>)}
       </select></label>
-      {canEdit?<RemoteServiceEditor api={api} ownerHint={selectedHost} onSelection={s=>{setServiceName(s.name);if(s.service)setSelector(s.service)}}/>:
+      {canEdit?<RemoteServiceEditor api={api} ownerHint={selectedHost} initialSelection={serviceDraft}
+        onSelection={s=>{setServiceDraft(s);setServiceName(s.name);if(s.service)setSelector(s.service)}}/>:
       <p className="warning-box">Your role can inspect services but cannot publish them.</p>}
       <button className="secondary" onClick={()=>onNavigate?.("services","connections")}>View actual Published Services →</button>
     </div>}

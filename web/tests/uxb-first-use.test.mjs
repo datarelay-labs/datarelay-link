@@ -86,7 +86,8 @@ test("Home SSR has useful actions, no fake connection claims or credential URLs"
   }
   assert.ok(html.includes("Needs verification"));
   assert.ok(!html.includes("Secret="));
-  if(role==="Admin")assert.match(html,/>Open guided setup →<\/button>/);
-  else assert.match(html,/<button[^>]*disabled=""[^>]*>Open guided setup →<\/button>/);
+  // Read Only can view the setup guide, but role-bound changes stay disabled.
+  assert.match(html,/>Open guided setup →<\/button>/);
+  assert.doesNotMatch(html,/<button[^>]*disabled=""[^>]*>Open guided setup →<\/button>/);
  }
 });

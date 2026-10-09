@@ -1,17 +1,25 @@
-import React,{useEffect,useState} from "react";
+import React,{useEffect,useRef,useState} from "react";
 import type {LinkApi} from "./p0-access-policy";
 
 /** UXB-03: one canonical Remote Service editor used from both Services and Setup. */
-export function RemoteServiceEditor({api,ownerHint="",onSelection}:{
+export function RemoteServiceEditor({api,ownerHint="",onSelection,initialSelection}:{
   api:LinkApi,ownerHint?:string,
   onSelection?:(selection:{owner:string,name:string,service:string,destination:string})=>void,
+  initialSelection?:{owner?:string,name?:string,service?:string,destination?:string},
 }){
-  const [owner,setOwner]=useState(ownerHint),[name,setName]=useState("");
-  const [operation,setOperation]=useState("set"),[destination,setDestination]=useState("this-host");
-  const [service,setService]=useState(""),[enabled,setEnabled]=useState(true);
+  const [owner,setOwner]=useState(initialSelection?.owner||ownerHint||""),[name,setName]=useState(initialSelection?.name||"");
+  const [operation,setOperation]=useState("set"),[destination,setDestination]=useState(initialSelection?.destination||"this-host");
+  const [service,setService]=useState(initialSelection?.service||""),[enabled,setEnabled]=useState(true);
   const [preview,setPreview]=useState<any>(null),[confirmation,setConfirmation]=useState("");
   const [job,setJob]=useState<any>(null),[error,setError]=useState(""),[busy,setBusy]=useState(false);
-  useEffect(()=>{setOwner(ownerHint);setPreview(null);setConfirmation("")},[ownerHint]);
+  const lastOwnerHint=useRef(ownerHint);
+  useEffect(()=>{
+    // Do not overwrite a resumed, intentionally selected owner on mount.
+    // A genuinely different host selected in Setup resets the owner and plan.
+    if(lastOwnerHint.current===ownerHint)return;
+    lastOwnerHint.current=ownerHint;
+    setOwner(ownerHint);setPreview(null);setConfirmation("");
+  },[ownerHint]);
   useEffect(()=>{onSelection?.({owner,name,service,destination})},[owner,name,service,destination]);
   function edit<T>(setter:(value:T)=>void,value:T){
     setter(value);setPreview(null);setConfirmation("");setJob(null);setError("");

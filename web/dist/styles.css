@@ -175,3 +175,10 @@
 .dr-access-workspace .dr-uxb-context p{margin:4px 0 9px}
 @media(max-width:850px){.dr-uxb-admin-guide-grid{grid-template-columns:1fr}}
 @media(max-width:560px){.dr-uxb-admin-guide,.dr-uxb-advanced-panel{padding:13px}}
+
+/* UXB-06 accessibility preflight: advanced-only resource routes stay reachable. */
+.dr-uxb-nav-advanced{margin:4px 5px;border-top:1px solid var(--dr-border-default)}
+.dr-uxb-nav-advanced>summary{padding:9px 11px;color:var(--dr-text-secondary);font-size:12px;font-weight:600;cursor:pointer}
+.dr-uxb-nav-advanced>summary:focus-visible{outline:2px solid var(--dr-focus-ring);outline-offset:2px;border-radius:5px}
+.dr-uxb-nav-advanced>button{display:block;width:100%;text-align:left}
+.dr-uxb-nav-advanced[open]>summary{color:var(--dr-text-primary)}

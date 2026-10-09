@@ -8,7 +8,7 @@ import {EnrollmentOnboarding} from "./p0-enrollment";
 import {navGroups,groupFor,labelFor,pageDescriptions,visibleRoute,navMatches} from "./uxb-navigation";
 import {FirstUseHome} from "./uxb-home";
 import {RemoteServiceEditor} from "./uxb-remote-service";
-import {FirstConnectionSetup} from "./uxb-setup";
+import {FirstConnectionSetup,type SetupDraft} from "./uxb-setup";
 
 type Json = Record<string, any>;
 
@@ -1342,7 +1342,7 @@ function SystemAdministrationWorkspace({data,operator,onNavigate}:{data:any,oper
   </div>;
 }
 
-function View({active,operator,onNavigate,context}:{active:string,operator:any,onNavigate?:(id:string,groupId?:string,context?:any)=>void,context?:any}){
+function View({active,operator,onNavigate,context,setupDraft,onSetupDraftChange}:{active:string,operator:any,onNavigate?:(id:string,groupId?:string,context?:any)=>void,context?:any,setupDraft?:SetupDraft|null,onSetupDraftChange?:(draft:SetupDraft)=>void}){
   const [data,setData]=useState<any>(null),[error,setError]=useState(""),[query,setQuery]=useState("");
   useEffect(()=>{
     setData(null);setError("");
@@ -1364,7 +1364,7 @@ function View({active,operator,onNavigate,context}:{active:string,operator:any,o
   if(active==="hygiene"&&data)return <AccessHygienePanel data={data} operator={operator} onRefresh={()=>api("/api/v1/access-hygiene").then(setData).catch((e:any)=>setError(e.message||String(e)))} onNavigate={onNavigate}/>;
   if(active==="audit")return <AuditExplorer operator={operator} context={context}/>;
   if(active==="enrollments"&&data)return <EnrollmentOnboarding api={api} data={data} operator={operator} onNavigate={onNavigate} refresh={()=>api("/api/v1/enrollments?limit=50").then(setData)}/>;
-  if(active==="setup")return <FirstConnectionSetup api={api} operator={operator} onNavigate={onNavigate}/>;
+  if(active==="setup")return <FirstConnectionSetup api={api} operator={operator} onNavigate={onNavigate} initialDraft={setupDraft} onDraftChange={onSetupDraftChange}/>;
   if(active==="search")return <div><div className="toolbar"><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search resources and policy"/><button className="primary" onClick={()=>api("/api/v1/search?q="+encodeURIComponent(query)+"&limit=50").then(setData).catch((e:any)=>setError(e.message))}>Search</button></div>{data&&<Table items={(data.items||[]).map((x:any)=>({type:x.resource_type,id:x.id,name:x.name}))}/>}</div>;
   if(active==="overview"&&data)return <CommandCenter data={data} operator={operator} onNavigate={onNavigate}/>;
   if(active==="versions"&&data)return <><div className="grid"><Metric label="Server version" value={data.server_version}/><Metric label="Drift" value={data.drift_count}/><Metric label="Unknown" value={data.unknown_count}/></div><Table items={data.hosts||[]}/></>;
@@ -1457,6 +1457,9 @@ function Shell({operator,onLogout}:{operator:any,onLogout:()=>void}){
   const [coreHealthy,setCoreHealthy]=useState<"loading"|"healthy"|"attention"|"unknown">("loading");
   const [searchOpen,setSearchOpen]=useState(false);
   const [navigationContext,setNavigationContext]=useState<any>(null);
+  // Current authenticated React session only, never URL or localStorage.
+  // Store only non-secret wizard choices; Core plans and tokens always expire.
+  const [setupDraft,setSetupDraft]=useState<SetupDraft|null>(null);
   const activeGroup=groupFor(active);
   const [expanded,setExpanded]=useState<Record<string,boolean>>(()=>Object.fromEntries(navGroups.map(group=>[group.id,group.id===activeGroup||group.id==="connections"])));
 
@@ -1519,7 +1522,13 @@ function Shell({operator,onLogout}:{operator:any,onLogout:()=>void}){
             <button className="nav-group-toggle" aria-expanded={open} onClick={()=>chooseGroup(group.id)} title={collapsed?group.label:undefined}>
               <span className="dr-nav-icon"><WorkspaceIcon kind={group.id}/></span><span className="dr-nav-label">{group.label}</span><span className="nav-chevron" aria-hidden="true">{open?"▾":"▸"}</span>
             </button>
-            {!collapsed&&open&&<div className="nav-group-items">{items.map(([id,label])=><button key={id} className={id===active?"active":""} onClick={()=>activate(id,group.id)} title={pageDescriptions[id]||label}>{label}</button>)}</div>}
+            {!collapsed&&open&&<div className="nav-group-items">
+              {items.filter(([id])=>id!=="objects"&&id!=="versions").map(([id,label])=><button key={id} className={id===active?"active":""} onClick={()=>activate(id,group.id)} title={pageDescriptions[id]||label}>{label}</button>)}
+              {items.some(([id])=>id==="objects"||id==="versions")&&<details className="dr-uxb-nav-advanced" open={items.some(([id])=>id===active&&(id==="objects"||id==="versions"))}>
+                <summary>Advanced tools</summary>
+                {items.filter(([id])=>id==="objects"||id==="versions").map(([id,label])=><button key={id} className={id===active?"active":""} onClick={()=>activate(id,group.id)} title={pageDescriptions[id]||label}>{label}</button>)}
+              </details>}
+            </div>}
           </section>;
         })}
       </nav>
@@ -1543,7 +1552,7 @@ function Shell({operator,onLogout}:{operator:any,onLogout:()=>void}){
           <button className="dr-icon-button" onClick={()=>setDark(!dark)} title="Toggle theme"><WorkspaceIcon kind={dark?"sun":"moon"}/></button>
         </div>
       </header>
-      <main id="drlink-main-content" className="content dr-workspace" tabIndex={-1}><div className="dr-content-frame"><View key={active+":"+refreshNonce+":"+(navigationContext?.originId||"")} active={active} operator={operator} onNavigate={activate} context={navigationContext}/></div></main>
+      <main id="drlink-main-content" className="content dr-workspace" tabIndex={-1}><div className="dr-content-frame"><View key={active+":"+refreshNonce+":"+(navigationContext?.originId||"")} active={active} operator={operator} onNavigate={activate} context={navigationContext} setupDraft={setupDraft} onSetupDraftChange={setSetupDraft}/></div></main>
     </div>
     <GlobalSearch open={searchOpen} onClose={()=>setSearchOpen(false)} onNavigate={activate} operator={operator}/>
   </div>;

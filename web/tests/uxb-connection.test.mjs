@@ -95,6 +95,27 @@ test("setup fixes selected plane for the Core-backed guided policy editor",()=>{
  assert.match(src,/AccessEvidenceExplorer api=\{api\}/);
 });
 
+test("Returning to the setup guide restores non-secret stage and choices",()=>{
+ const initialDraft={plane:"ai",step:4,source:"identity-a",destination:"object-b",selector:"permission-read",selectedHost:""};
+ const html=renderToStaticMarkup(React.createElement(setup.FirstConnectionSetup,{
+  api:async()=>{throw new Error("SSR must not request Core API")},operator:{role:"Read Only"},initialDraft,
+ }));
+ assert.match(html,/Verify the permission/);
+ assert.match(html,/value="identity-a"/);
+ assert.match(html,/value="object-b"/);
+ assert.match(html,/value="permission-read"/);
+ assert.doesNotMatch(html,/Issue enrollment →/);
+ const svc=renderToStaticMarkup(React.createElement(service.RemoteServiceEditor,{
+   api:async()=>{throw new Error("SSR must not request Core API")},
+   ownerHint:"host-b", // A prior manual owner selection must survive remount.
+   initialSelection:{owner:"host-a",name:"ssh-admin",service:"ssh-tcp22",destination:"this-host"},
+ }));
+ assert.match(svc,/value="host-a"/);
+ assert.match(svc,/value="ssh-admin"/);
+ assert.match(svc,/value="ssh-tcp22"/);
+ assert.doesNotMatch(svc,/Queue authenticated Agent job/); // no resumed mutation plan
+});
+
 test("no browser-local credentials or unapproved backend policy engine",()=>{
  const src=["uxb-navigation.ts","uxb-home.tsx","uxb-setup.tsx","uxb-remote-service.tsx"].map(
   x=>readFileSync(join(root,"src",x),"utf8")).join("\n");

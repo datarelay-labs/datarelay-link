@@ -296,3 +296,50 @@ bash tests/test-v30-web-package.sh
 These checks validate route mappings, roles, SSR-visible stage controls, effective result UNKNOWN, Core policy-apply gates, unapproved API/secret-storage avoidance, package integrity and offline build. The real Web package is served from the isolated worktree `web/dist` at the existing loopback/public-IP HTTPS preview. No Core/CLI/back-end policy authority is changed by UXB-01..05.
 
 **UXB-06 remains PENDING:** Actual browser logged-in Admin/Operator/Read Only navigation, popup/keyboard, 320/375/mobile UI, interactions through each step including a real queued job, actual Core policy decision and deliberately denied flow, owner visual acceptance, independent first-user study, two-user exact-HEAD Full User E2E and release/CI/security gates **are NOT passed or claimed**. An earlier OpenAI platform safety denial of the Playwright installer and preview login automation cannot be circumvented with alternate commands/tools. Previously platform-denied Client fixture remains separately unqualified/uncommitted. The public-IP HTTPS preview uses a short-lived self-signed certificate, not a stable production deployment.
+
+
+## 9. UXB-06 independent Web prequalification — 2026-10-09
+
+This is **source/SSR/static/offline-package supporting evidence only**. It does
+**not** mark UXB-06, UXE-01..12, actual User E2E, or DRL3-8 PASS.
+
+Targeted issues found by a source-level walkthrough of the implemented
+first-time-user journey and corrected in the isolated Web projection:
+
+- **Read-only guide access:** Read Only users were blocked at Home's
+  `Open guided setup` button even though the workflow offers read-only
+  views and keeps Agent issuance, policy mutations and Core approval
+  privilege-gated. The guide is now accessible to all three personas;
+  backend authorization and admin-only actions are unchanged.
+- **Resume after context switch:** leaving the setup wizard previously
+  discarded stage, selected Host, source/destination, Service Object and
+  related non-secret Remote Service form inputs. `Shell` now keeps an
+  ephemeral `SetupDraft` **only in current authenticated React memory**;
+  returning to Setup resumes non-secret choices. Session/logout ends this
+  memory. No enrollment ticket, one-time code, password, secret, OTP,
+  `change_plan_id`, preview safety result or confirmation is stored;
+  those still require a new Core preview/test/typed confirmation.
+- **Advanced menu overload:** `Resources & groups` and `Agent version
+  drift` are now in a keyboard-focusable **Advanced tools** disclosure
+  in their corresponding sidebar groups, still reachable by search.
+  Existing CLI, API route IDs and RBAC are untouched.
+
+Observed supplementary results on the local UXB-06 candidate:
+`npm run test:journey` **12/12 PASS**, `npm run test:p0` **8/8 PASS**,
+`npm run test:administration` **6/6 PASS**,
+`python3 tests/test-v30-web-saas-ux.py` **15/15 PASS**,
+`python3 tests/test-v30-management-foundation.py` **12/12 PASS**,
+`python3 tests/test-v30-web-bundle.py` **6/6 PASS**,
+`bash tests/test-v30-web-package.sh` **WEB_PACKAGE_LIFECYCLE=PASS**,
+and `npm run build` PASS. Exact compiled UI/CSS and favicon bytes
+were served HTTP 200 on the existing short-lived public-IP HTTPS preview.
+
+**Pending mandatory UXB-06**: real first-time Admin/Operator/Read Only
+human browser sessions; 320px, 375px and desktop click/keyboard/focus
+verification; actual Host registration, admission, service/job completion,
+Remote/Internet/AI policy enforcement and denied-source troubleshooting;
+five first-time participants' task outcomes; two-user identical-head Full
+User E2E; source freeze, CI/artifact/hash/provenance and owner acceptance.
+Prior explicit platform safety refusals for Playwright installation,
+preview-login automation and the Client test remain in force and must
+not be rerouted. Partial static evidence cannot close these gates.
