@@ -768,7 +768,7 @@ class V30WebSaasUxContractTests(unittest.TestCase):
 
     def test_policy_read_does_not_hide_internet_and_ai_behind_remote_limit(self):
         helper = (ROOT / "web/src/uxb-menu-evidence.ts").read_text(encoding="utf-8")
-        view = SOURCE.split("function View(", 1)[1].split("function SavedViews(", 1)[0]
+        view = SOURCE.split("function View(", 1)[1].split("function WorkspaceIcon(", 1)[0]
         policy = SOURCE.split("function PolicyWorkspace(", 1)[1].split("function ResourceWorkspace(", 1)[0]
         for marker in (
             'function combineObservedPolicyPlanes(',
@@ -863,6 +863,25 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         ):
             self.assertIn(marker, doctor, marker)
         self.assertIn("tests/uxb-doctor.test.mjs", PACKAGE)
+
+    def test_saved_views_can_open_explicit_non_security_resource_filters(self):
+        saved=(ROOT / "web/src/uxb-saved-views.tsx").read_text(encoding="utf-8")
+        self.assertIn('import {SavedViewsWorkspace} from "./uxb-saved-views"', SOURCE)
+        self.assertIn('if(active==="views"&&data)return <SavedViewsWorkspace data={data} api={api} onNavigate={onNavigate}', SOURCE)
+        self.assertIn('initialFilter={String(context?.savedFilter||"").slice(0,120)}', SOURCE)
+        self.assertIn('useEffect(()=>{setFilter(initialFilter)},[kind,initialFilter]);', SOURCE)
+        for marker in (
+            'export function readSavedView(value:unknown)',
+            'payload.resource_type==="managed-host"',
+            'payload.resource_type==="remote-service"',
+            'onNavigate?.(parsed.route,"connections",{savedFilter:parsed.filter})',
+            'payload:{resource_type:target,filter:filter.trim()}',
+            'Legacy/unsupported view; save a new named target',
+            'private display preferences, never access policies',
+            'does not fetch missing inventory pages',
+        ):
+            self.assertIn(marker, saved, marker)
+        self.assertIn("tests/uxb-saved-views.test.mjs", PACKAGE)
 
     def test_normative_ux_doc_binds_control_reference_and_competitive_sources(self):
         for required in (

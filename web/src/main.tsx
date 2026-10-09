@@ -12,6 +12,7 @@ import {RemoteServiceEditor} from "./uxb-remote-service";
 import {RevisionHistory} from "./uxb-revisions";
 import {AgentVersionDrift} from "./uxb-versions";
 import {CoreDoctorWorkspace} from "./uxb-doctor";
+import {SavedViewsWorkspace} from "./uxb-saved-views";
 import {FirstConnectionSetup,type SetupDraft} from "./uxb-setup";
 
 type Json = Record<string, any>;
@@ -1344,8 +1345,9 @@ function PolicyWorkspace({data,operator,onNavigate,api}:{data:any,operator:any,o
   </div>;
 }
 
-function ResourceWorkspace({kind,data,operator,onNavigate,api}:{kind:"host"|"service",data:any,operator:any,onNavigate?:(id:string,groupId?:string,context?:any)=>void,api:(path:string)=>Promise<any>}){
-  const [filter,setFilter]=useState(""),[selected,setSelected]=useState<any>(null);
+function ResourceWorkspace({kind,data,operator,onNavigate,api,initialFilter=""}:{kind:"host"|"service",data:any,operator:any,onNavigate?:(id:string,groupId?:string,context?:any)=>void,api:(path:string)=>Promise<any>,initialFilter?:string}){
+  const [filter,setFilter]=useState(initialFilter),[selected,setSelected]=useState<any>(null);
+  useEffect(()=>{setFilter(initialFilter)},[kind,initialFilter]);
   const [admissionFilter,setAdmissionFilter]=useState("all");
   const [loaded,setLoaded]=useState<any[]>(data.items||[]);
   const [cursor,setCursor]=useState<string|null>(isPartialCorePage(data)?data.next_cursor:null);
@@ -1726,21 +1728,15 @@ function View({active,operator,onNavigate,context,setupDraft,onSetupDraftChange}
   if(active==="versions"&&data)return <AgentVersionDrift data={data} onNavigate={onNavigate}/>;
   if(active==="system"&&data)return <SystemAdministrationWorkspace data={data} operator={operator} onNavigate={onNavigate}/>;
   if(active==="objects"&&data)return <><ObjectsWorkspace data={data} onNavigate={onNavigate} context={context} api={api}/>{operator.role!=="Read Only"&&<GuidedObjectPanel/>}</>;
-  if(active==="hosts"&&data)return <><ResourceWorkspace kind="host" data={data} operator={operator} onNavigate={onNavigate} api={api}/>{operator.role!=="Read Only"&&<ManagedHostMetadataPanel/>}{operator.role==="Admin"&&<ManagedHostAdmissionPanel/>}{operator.role==="Admin"&&<ManagedHostLifecyclePanel/>}</>;
-  if(active==="services"&&data)return <><ResourceWorkspace kind="service" data={data} operator={operator} onNavigate={onNavigate} api={api}/>{operator.role!=="Read Only"&&<RemoteServiceEditor api={api}/>}</>;
+  if(active==="hosts"&&data)return <><ResourceWorkspace kind="host" data={data} operator={operator} onNavigate={onNavigate} api={api} initialFilter={String(context?.savedFilter||"").slice(0,120)}/>{operator.role!=="Read Only"&&<ManagedHostMetadataPanel/>}{operator.role==="Admin"&&<ManagedHostAdmissionPanel/>}{operator.role==="Admin"&&<ManagedHostLifecyclePanel/>}</>;
+  if(active==="services"&&data)return <><ResourceWorkspace kind="service" data={data} operator={operator} onNavigate={onNavigate} api={api} initialFilter={String(context?.savedFilter||"").slice(0,120)}/>{operator.role!=="Read Only"&&<RemoteServiceEditor api={api}/>}</>;
   if(active==="policies"&&data)return <><PolicyWorkspace data={data} operator={operator} onNavigate={onNavigate} api={api}/>{operator.role!=="Read Only"&&<GuidedPolicyJourney api={api} onNavigate={onNavigate}/>}<PolicySafetyPanel operator={operator}/>{operator.role!=="Read Only"&&<><GuidedPolicySettingsPanel/><TemporaryAccessPanel/></>}</>;
   if(active==="doctor"&&data)return <CoreDoctorWorkspace data={data} onNavigate={onNavigate}/>;
   if(active==="health"&&data)return <HealthWorkspace data={data} onNavigate={onNavigate}/>;
   if(active==="revisions"&&data)return <RevisionHistory initial={data} api={api}/>;
-  if(active==="views"&&data)return <SavedViews data={data} refresh={()=>api("/api/v1/saved-views").then(payload=>setData(requireObservedMenuPayload("views",payload))).catch((e:any)=>setError(e.message||String(e)))}/>;
+  if(active==="views"&&data)return <SavedViewsWorkspace data={data} api={api} onNavigate={onNavigate} refresh={()=>api("/api/v1/saved-views").then(payload=>setData(requireObservedMenuPayload("views",payload))).catch((e:any)=>setError(e.message||String(e)))}/>;
   if(data)return <Table items={data.items||[]}/>;
   return <PageSkeleton/>;
-}
-
-function SavedViews({data,refresh}:{data:any,refresh:()=>void}){
-  const [name,setName]=useState(""),[filter,setFilter]=useState(""),[error,setError]=useState("");
-  async function save(){try{await api("/api/v1/saved-views",{method:"POST",body:JSON.stringify({name,payload:{filter}})});setName("");setFilter("");refresh()}catch(e:any){setError(e.message||String(e))}}
-  return <>{error&&<div className="error">{error}</div>}<div className="toolbar"><input placeholder="View name" value={name} onChange={e=>setName(e.target.value)}/><input placeholder="Filter text" value={filter} onChange={e=>setFilter(e.target.value)}/><button className="primary" onClick={save}>Save current view</button></div><Table items={(data.items||[]).map((x:any)=>({id:x.id,name:x.name,updated_at:x.updated_at}))}/></>;
 }
 
 function WorkspaceIcon({kind}:{kind:string}){
