@@ -129,6 +129,118 @@ class V30WebServiceTests(unittest.TestCase):
         self.assertNotIn("session_token", json.dumps(payload))
         return payload
 
+    def test_staged_login_http_requires_otp_before_cookie(self):
+        status, headers, pending = self.request(
+            "POST", "/api/v1/auth/login/start",
+            {"username": "admin", "password": "ValidPass1"},
+        )
+        self.assertEqual(status, 200, pending)
+        self.assertTrue(pending.get("mfa_challenge_required"))
+        self.assertNotIn("set-cookie", headers)
+        self.assertNotIn("csrf_token", pending)
+        self.assertNotIn("session_id", pending)
+        with WebAuthService(self.tmp) as auth:
+            self.assertEqual(auth.conn.execute(
+                "SELECT COUNT(*) FROM web_sessions"
+            ).fetchone()[0], 0)
+
+        # A challenge alone has no authenticated privileges; bad factor
+        # consumes it without ever producing an HTTP session cookie.
+        bad, bad_headers, _ = self.request(
+            "POST", "/api/v1/auth/login/complete",
+            {"challenge_token": pending["challenge_token"], "totp": "invalid"},
+        )
+        self.assertEqual(bad, 401)
+        self.assertNotIn("set-cookie", bad_headers)
+
+        status, headers, again = self.request(
+            "POST", "/api/v1/auth/login/start",
+            {"username": "admin", "password": "ValidPass1"},
+        )
+        self.assertEqual(status, 200, again)
+        done, final_headers, full = self.request(
+            "POST", "/api/v1/auth/login/complete",
+            {
+                "challenge_token": again["challenge_token"],
+                "recovery_code": self.recovery_code,
+            },
+        )
+        self.assertEqual(done, 200, full)
+        self.assertIn("csrf_token", full)
+        self.assertIn("set-cookie", final_headers)
+        self.assertIn("HttpOnly", final_headers["set-cookie"])
+        self.assertNotIn("session_token", full)
+
+        reuse, reuse_headers, _ = self.request(
+            "POST", "/api/v1/auth/login/complete",
+            {
+                "challenge_token": again["challenge_token"],
+                "recovery_code": self.recovery_code,
+            },
+        )
+        self.assertEqual(reuse, 401)
+        self.assertNotIn("set-cookie", reuse_headers)
+
+    def test_staged_login_cancel_and_bad_password_are_unprivileged(self):
+        bad, hdr, _ = self.request(
+            "POST", "/api/v1/auth/login/start",
+            {"username": "admin", "password": "wrong"},
+        )
+        self.assertEqual(bad, 401)
+        self.assertNotIn("set-cookie", hdr)
+        st, hdr, challenge = self.request(
+            "POST", "/api/v1/auth/login/start",
+            {"username": "admin", "password": "ValidPass1"},
+        )
+        self.assertEqual(st, 200, challenge)
+        self.assertNotIn("set-cookie", hdr)
+        cancel, _, cancelled = self.request(
+            "POST", "/api/v1/auth/login/cancel",
+            {"challenge_token": challenge["challenge_token"]},
+        )
+        self.assertEqual(cancel, 200)
+        self.assertTrue(cancelled["cancelled"])
+        verify, vh, _ = self.request(
+            "POST", "/api/v1/auth/login/complete",
+            {
+                "challenge_token": challenge["challenge_token"],
+                "recovery_code": self.recovery_code,
+            },
+        )
+        self.assertEqual(verify, 401)
+        self.assertNotIn("set-cookie", vh)
+
+    def test_staged_login_source_agent_binding_and_default_off_session(self):
+        status, headers, pending = self.request(
+            "POST", "/api/v1/auth/login/start",
+            {"username": "admin", "password": "ValidPass1"},
+            headers={"User-Agent": "fixture-browser-one"},
+        )
+        self.assertEqual(status, 200, pending)
+        self.assertNotIn("set-cookie", headers)
+        denied, denied_headers, _ = self.request(
+            "POST", "/api/v1/auth/login/complete",
+            {"challenge_token": pending["challenge_token"], "recovery_code": self.recovery_code},
+            headers={"User-Agent": "fixture-browser-two"},
+        )
+        self.assertEqual(denied, 401)
+        self.assertNotIn("set-cookie", denied_headers)
+
+        # A user without an MFA requirement still gets an authenticated
+        # session on the password stage; no dummy OTP challenge is created.
+        with WebAuthService(self.tmp) as auth:
+            auth.create_operator_local(
+                username="operator", role="Operator", password="OperatorPass1",
+            )
+        succeeded, cookie_headers, data = self.request(
+            "POST", "/api/v1/auth/login/start",
+            {"username": "operator", "password": "OperatorPass1"},
+        )
+        self.assertEqual(succeeded, 200, data)
+        self.assertIn("set-cookie", cookie_headers)
+        self.assertIn("csrf_token", data)
+        self.assertFalse(data.get("mfa_challenge_required", False))
+
     def test_loopback_health_static_and_security_headers(self):
         status, headers, payload = self.request("GET", "/healthz")
         self.assertEqual(status, 200)

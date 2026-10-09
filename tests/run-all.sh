@@ -297,6 +297,8 @@ python3 tests/test-v30-audit-worker.py
 python3 tests/test-v30-audit-convergence.py
 python3 tests/test-v30-ai-audit-convergence.py
 python3 tests/test-v30-web-auth.py
+python3 tests/test-v30-web-password-otp.py
+python3 tests/test-v30-web-staged-login-ui.py
 python3 tests/test-v30-web-mfa-policy.py
 python3 tests/test-v30-web-saas-ux.py
 python3 tests/test-v30-web-service.py
