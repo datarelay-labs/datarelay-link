@@ -216,7 +216,10 @@ def main(argv=None):
                 command = zt_mod.pinned_ca_manual_linux_command(
                     installer, allocator_url, ca_fp, env
                 )
-            issued.append((label, str(enroll_record['id']), str(ticket_record.get('expires_at')), command))
+            # Public inventory deduplicates the paired enrollment by the
+            # *bootstrap ticket ID*. Emit that selector (not the internal
+            # Enrollment Code ID) so CSV rows work with show/unset enrollment.
+            issued.append((label, str(ticket_record['id']), str(ticket_record.get('expires_at')), command))
             _audit_emit(
                 'enrollment.created',
                 details={'label': label, 'batch_id': batch_id, 'ticket_id': ticket_id},

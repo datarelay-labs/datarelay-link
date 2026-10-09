@@ -71,15 +71,34 @@ records=[json.loads(p.read_text()) for p in Path(sys.argv[3]).glob('*.json')]
 assert len(records)==5
 assert len({r['id'] for r in records})==5
 assert len({r['enrollment_id'] for r in records})==5
+# CSV identifiers must be the same public selectors returned by
+# `show enrollments`, not paired internal Enrollment Code IDs (F026).
 public_ids = {row['enrollment_id'] for row in rows}
-persisted_ids = {rec['enrollment_id'] for rec in records}
+persisted_ids = {rec['id'] for rec in records}
 assert public_ids == persisted_ids, (public_ids, persisted_ids)
-assert {rec['id'] for rec in records}.isdisjoint(public_ids)
+assert {rec['enrollment_id'] for rec in records}.isdisjoint(public_ids)
 for ticket,record in zip(sorted(tickets), sorted(records,key=lambda r:r['id'])):
     assert ticket not in json.dumps(record)
 assert any(r.get('services')==[] for r in records)
 assert any((r.get('services') or [{}])[0].get('preset')=='ssh' for r in records if r.get('services'))
 PY
+# F026: a published CSV row must address the same user-visible enrollment
+# through inventory, detail and operator revoke (not just stored paired IDs).
+PUBLIC_ID="$(python3 - "$WORK/count.csv" <<'PY'
+import csv,sys
+with open(sys.argv[1], newline='') as handle:
+    print(next(csv.DictReader(handle))['enrollment_id'])
+PY
+)"
+python3 "$ROOT/tools/frp-enrollments" >"$WORK/public-enrollments.txt"
+grep -Fq "$PUBLIC_ID" "$WORK/public-enrollments.txt"
+python3 "$ROOT/tools/frp-enrollments" "$PUBLIC_ID" >"$WORK/public-enrollment-detail.txt"
+grep -Fq "ID      : $PUBLIC_ID" "$WORK/public-enrollment-detail.txt"
+python3 "$ROOT/tools/frp-enrollment-revoke" "$PUBLIC_ID" >"$WORK/public-revoke.txt"
+grep -Fq "Revoked enrollment $PUBLIC_ID" "$WORK/public-revoke.txt"
+[[ "$(python3 "$ROOT/tools/frp-enrollments" "$PUBLIC_ID" --state-only)" == 'revoked' ]]
+echo "PASS BULK_CSV_PUBLIC_SELECTOR_AND_REVOKE"
+
 # Invalid input must point to the public wizard and never emit internal argparse flags.
 if python3 "$ROOT/tools/frp-enroll-bulk" --count 11 >"$WORK/count-invalid.out" 2>"$WORK/count-invalid.err"; then
   echo "FAIL over-capacity batch was accepted" >&2
