@@ -72,6 +72,7 @@ Pinned allocator CA verification and hostname/IP SAN checks both apply on the .N
 
 - `drlink system update engine` refreshes pinned `frpc.exe` with SHA256 verify; failure restores binary, metadata, config, and prior running/stopped state (`RECOVERY_REQUIRED=YES` if rollback itself fails).
 - `drlink system update product` does **not** download a project artifact in this release. On an installed client, re-run the canonical Windows installer to refresh management tools (identity/ports preserved). Developers/CI may set `FRP_WINDOWS_PROJECT_SRC` to a `windows/` tree.
+- `drlink system version` prints both the installed candidate **Source HEAD** and the packaged **Content Source HEAD**. `Source HEAD: UNKNOWN` means the currently installed Windows management tools lack a verified candidate provenance receipt; it must **not** be relabeled to match the Server by editing the `version` file. Obtain the matching SHA256-verified Windows installer from the DRLink Server administrator, refresh the existing Agent management tools through the supported installer path without re-enrollment, and recheck `system version`. Until it reports the exact candidate, that Windows host is not qualified for same-HEAD release E2E.
 - Check modes are distinct: `system update product -Check` checks the project-update path and `system update engine -Check` / `system update check-engine` check Relay Engine availability without applying it.
 - Stop kills only a PID whose recorded exe matches the managed `frpc.exe`.
 - Secret ACL application is fail-closed on Windows.
