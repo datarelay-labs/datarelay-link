@@ -196,6 +196,23 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn("if(requestGeneration.current!==generation)return;", search)
         self.assertIn('if(!Array.isArray(data?.items))throw new Error(', search)
 
+    def test_agent_and_service_preview_rejects_responses_for_changed_host(self):
+        remote = (ROOT / "web/src/uxb-remote-service.tsx").read_text(encoding="utf-8")
+        enrollment = P0_ENROLL_SOURCE
+        # The Host may change while a read-only Core preview is still awaiting
+        # a response; obsolete plans must not reappear and become actionable.
+        for src, guard in (
+            (remote, "requestGeneration"),
+            (enrollment, "approvalGeneration"),
+        ):
+            self.assertIn("const " + guard + "=useRef(0);", src)
+            self.assertIn(guard + ".current+=1;", src)
+            self.assertIn("const generation=++" + guard + ".current;", src)
+            self.assertIn("if(generation!==" + guard + ".current)return;", src)
+        self.assertIn('setPreview(null);setConfirmation("");setJob(null)', remote)
+        self.assertIn("disabled={busy||fetchBusy}", enrollment)
+        self.assertIn("disabled={busy||fetchBusy}", enrollment)
+
     def test_uxb_first_use_keeps_three_planes_and_core_authority_separate(self):
         self.assertIn('FirstUseHome data={data}', SOURCE)
         self.assertIn('if(active==="setup")return <FirstConnectionSetup', SOURCE)

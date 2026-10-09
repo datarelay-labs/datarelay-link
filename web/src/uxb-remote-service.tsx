@@ -22,50 +22,62 @@ export function RemoteServiceEditor({api,ownerHint="",onSelection,initialSelecti
   const [preview,setPreview]=useState<any>(null),[confirmation,setConfirmation]=useState("");
   const [job,setJob]=useState<any>(null),[error,setError]=useState(""),[busy,setBusy]=useState(false);
   const lastOwnerHint=useRef(ownerHint);
+  const requestGeneration=useRef(0);
   useEffect(()=>{
     // Do not overwrite a resumed, intentionally selected owner on mount.
     // A genuinely different host selected in Setup resets the owner and plan.
     if(lastOwnerHint.current===ownerHint)return;
     lastOwnerHint.current=ownerHint;
-    setOwner(ownerHint);setPreview(null);setConfirmation("");
+    requestGeneration.current+=1;
+    setOwner(ownerHint);setPreview(null);setConfirmation("");setJob(null);setError("");setBusy(false);
   },[ownerHint]);
   useEffect(()=>{onSelection?.({owner,name,service,destination})},[owner,name,service,destination]);
   function edit<T>(setter:(value:T)=>void,value:T){
+    requestGeneration.current+=1;
     setter(value);setPreview(null);setConfirmation("");setJob(null);setError("");
   }
   const ready=!!(owner.trim()&&name.trim()&&(operation==="delete"||destination.trim()&&service.trim()));
   const required=String(preview?.confirmation_class||"APPLY");
   async function doPreview(){
     if(!ready||busy)return;
-    setError("");setJob(null);setBusy(true);
+    const generation=++requestGeneration.current;
+    setError("");setPreview(null);setConfirmation("");setJob(null);setBusy(true);
     try{
       const body:any={owner:owner.trim(),name:name.trim(),operation};
       if(operation==="set")Object.assign(body,{destination:destination.trim(),service:service.trim(),enabled});
       const result=await api("/api/v1/remote-services/preview",{method:"POST",body:JSON.stringify(body)});
+      if(generation!==requestGeneration.current)return;
       setPreview(result);setConfirmation("");
-    }catch(e:any){setPreview(null);setError(String(e?.message||e))}
-    finally{setBusy(false)}
+    }catch(e:any){if(generation===requestGeneration.current){setPreview(null);setError(String(e?.message||e))}}
+    finally{if(generation===requestGeneration.current)setBusy(false)}
   }
   async function doApply(){
     if(!preview?.change_plan_id||confirmation!==required||busy)return;
+    const generation=++requestGeneration.current;
     setError("");setBusy(true);
     try{
       const result=await api("/api/v1/remote-services/apply",{method:"POST",
         body:JSON.stringify({change_plan_id:preview.change_plan_id,confirmation})});
       // A queued Agent job is NOT a published service or a successful connection.
+      if(generation!==requestGeneration.current){
+        setError("Owner changed during a previous Agent job request. Review Jobs before proceeding.");
+        return;
+      }
       setJob(result);setPreview(null);setConfirmation("");
-    }catch(e:any){setError(String(e?.message||e))}
-    finally{setBusy(false)}
+    }catch(e:any){if(generation===requestGeneration.current)setError(String(e?.message||e))}
+    finally{if(generation===requestGeneration.current)setBusy(false)}
   }
   async function refreshJob(){
     if(!job?.job_id||busy)return;
+    const generation=++requestGeneration.current;
     setBusy(true);
     try{
       const detail=await api("/api/v1/jobs/"+encodeURIComponent(String(job.job_id)));
+      if(generation!==requestGeneration.current)return;
       setJob(mergeRemoteServiceJob(job,detail));
     }
-    catch(e:any){setError(String(e?.message||e))}
-    finally{setBusy(false)}
+    catch(e:any){if(generation===requestGeneration.current)setError(String(e?.message||e))}
+    finally{if(generation===requestGeneration.current)setBusy(false)}
   }
   return <section className="card dr-uxb-service" data-testid="uxb-remote-service">
     <p className="dr-eyebrow">Publish one internal service</p>

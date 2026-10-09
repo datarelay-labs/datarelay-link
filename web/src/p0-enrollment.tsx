@@ -1,4 +1,4 @@
-import React,{useEffect,useState} from "react";
+import React,{useEffect,useRef,useState} from "react";
 import type {LinkApi} from "./p0-access-policy";
 
 type Navigate=(id:string,groupId?:string)=>void;
@@ -35,12 +35,14 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate}:{
   const [fetchBusy,setFetchBusy]=useState(false),[busy,setBusy]=useState(false);
   const [error,setError]=useState(""),[inventoryError,setInventoryError]=useState("");
   const [preview,setPreview]=useState<any>(null),[confirm,setConfirm]=useState(""),[message,setMessage]=useState("");
+  const approvalGeneration=useRef(0);
   const admin=operator?.role==="Admin";
   const selected=hosts?.find(h=>String(h.id)===selectedHost)||null;
   const readiness=hostReadiness(selected);
   const required=String(preview?.confirmation_class||"APPROVE");
   useEffect(()=>{if(step>=3)void refreshHosts()},[step]);
   async function refreshHosts(){
+    approvalGeneration.current+=1;
     setFetchBusy(true);setInventoryError("");setPreview(null);setConfirm("");
     try{
       const result=await api("/api/v1/inventory?resource_type=managed-host&limit=100");
@@ -65,15 +67,17 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate}:{
     finally{setBusy(false)}
   }
   async function previewApproval(){
-    if(!admin||!selectedHost||busy)return;
+    if(!admin||!selectedHost||busy||fetchBusy)return;
+    const generation=++approvalGeneration.current;
     setBusy(true);setError("");setPreview(null);setConfirm("");
     try{
       const result=await api("/api/v1/managed-hosts/admission/preview",{
         method:"POST",body:JSON.stringify({host:selectedHost,operation:"approve"}),
       });
+      if(generation!==approvalGeneration.current)return;
       setPreview(result);
-    }catch(e:any){setError(String(e.message||e))}
-    finally{setBusy(false)}
+    }catch(e:any){if(generation===approvalGeneration.current)setError(String(e.message||e))}
+    finally{if(generation===approvalGeneration.current)setBusy(false)}
   }
   async function applyApproval(){
     if(!admin||!selectedHost||!preview?.change_plan_id||confirm!==required||busy)return;
@@ -94,7 +98,7 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate}:{
       <p className="muted">Issue → install → approve → verify. Admission approval never guarantees network reachability; pre-approval is off by default.</p>
       <ol className="dr-p0-steps" aria-label="Agent enrollment stages">{enrollmentSteps.map((name,i)=>
         <li className={step===i+1?"active":step>i+1?"done":""} key={name}>
-          <button type="button" onClick={()=>{setStep(i+1);setError("");setPreview(null);setConfirm("")}} aria-current={step===i+1?"step":undefined}>
+          <button type="button" disabled={busy||fetchBusy} onClick={()=>{approvalGeneration.current+=1;setStep(i+1);setError("");setPreview(null);setConfirm("")}} aria-current={step===i+1?"step":undefined}>
             <span>{i+1}</span>{name}</button></li>
       )}</ol>
       {error&&<p className="error" role="alert">{error}</p>}
@@ -126,9 +130,9 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate}:{
       {step>=3&&<div className="dr-p0-stage">
         <div className="dr-section-head"><div><h3>{step===3?"3. Review and approve the Host":"4. Verify admission, trust and connectivity"}</h3>
           <p className="muted">Current data comes from the canonical Managed Host inventory, not from the enrollment ticket.</p>
-        </div><button className="secondary" onClick={refreshHosts} disabled={fetchBusy}>{fetchBusy?"Refreshing…":"Refresh inventory"}</button></div>
+        </div><button className="secondary" onClick={refreshHosts} disabled={busy||fetchBusy}>{fetchBusy?"Refreshing…":"Refresh inventory"}</button></div>
         {inventoryError&&<p className="error" role="alert">Inventory unavailable: {inventoryError}</p>}
-        <label className="dr-field"><span>Managed Host</span><select value={selectedHost} onChange={e=>{setSelectedHost(e.target.value);setPreview(null);setConfirm("")}}>
+        <label className="dr-field"><span>Managed Host</span><select value={selectedHost} disabled={busy||fetchBusy} onChange={e=>{approvalGeneration.current+=1;setSelectedHost(e.target.value);setPreview(null);setConfirm("")}}>
           {!selectedHost&&<option value="">{hosts===null?"Host inventory: UNKNOWN":hosts.length?"Select an observed Managed Host":"No observed Hosts"}</option>}
           {(hosts||[]).map(h=><option value={String(h.id)} key={h.id}>{h.name||h.label||h.id} · {h.id}</option>)}
         </select></label>
@@ -140,7 +144,7 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate}:{
         </div>
         {step===3&&<>
           <p className="muted">Approval restores normal Core policy evaluation; it does not establish trust or a reachable session. Quarantine remains available under Managed Hosts.</p>
-          <button className="secondary" disabled={!admin||!selectedHost||busy} onClick={previewApproval}>Preview approval impact</button>
+          <button className="secondary" disabled={!admin||!selectedHost||busy||fetchBusy} onClick={previewApproval}>Preview approval impact</button>
           {preview&&<div className="dr-p0-review">
             <p>Authoritative Core plan · valid until {preview.valid_until||"UNKNOWN"}</p>
             <details><summary>Review exact approval impact</summary><pre className="plan">{JSON.stringify({preview:preview.preview,impact:preview.impact},null,2)}</pre></details>
@@ -152,7 +156,7 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate}:{
           <p className="muted">Even CONNECTED · APPROVED · TRUSTED does not prove a policy ALLOW or target TCP reachability. Run a Core access decision trace separately.</p>
           <button className="primary" onClick={()=>onNavigate?.("access","access")}>Verify effective access →</button>
         </>}
-        <button className="secondary" onClick={()=>onNavigate?.("hosts","infrastructure")}>Open Managed Hosts →</button>
+        <button className="secondary" disabled={busy||fetchBusy} onClick={()=>onNavigate?.("hosts","infrastructure")}>Open Managed Hosts →</button>
       </div>}
     </div>
     <div className="card"><h3>Enrollment history · Core</h3>
