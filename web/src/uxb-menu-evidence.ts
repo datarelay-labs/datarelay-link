@@ -82,6 +82,23 @@ export function requireObservedInventoryContinuation(
   return page;
 }
 
+/** Objects & Groups uses the same Core inventory keyset API for seven public
+ * resource types. A continuation is valid only for the requested family. */
+export function requireObservedObjectContinuation(
+  type:string,payload:unknown,requestedCursor:string,limit:number
+):any{
+  const allowed=new Set(["network-object","network-group","service-object",
+    "service-group","permission-object","permission-group","ai-identity"]);
+  const page=requireObservedMenuPayload("objects",payload);
+  if(!allowed.has(type)||page.resource_type!==type
+    ||!Array.isArray(page.items)||page.limit!==limit
+    ||!Number.isSafeInteger(limit)||limit<1||page.items.length>limit
+    ||page.next_cursor===requestedCursor
+    ||page.items.some((item:any)=>!item||typeof item.id!=="string"||!item.id))
+    throw new Error("Core Objects & Groups page is not the requested type, size or cursor. State is UNKNOWN.");
+  return page;
+}
+
 export function requireObservedMenuPayload(route:string,payload:unknown):any{
   if(payload===null||typeof payload!=="object"||Array.isArray(payload))
     throw new Error("Core response unavailable or malformed. Page state is UNKNOWN; retry the read.");

@@ -72,6 +72,26 @@ test('Managed Host and Remote Service pagination accepts only matching observed 
   }
 });
 
+test('each Objects & Groups family consumes only its authorized Core inventory cursor',()=>{
+  const cursor='opaque-object-list-cursor';
+  for(const type of ['network-object','network-group','service-object','service-group',
+    'permission-object','permission-group','ai-identity']){
+    const page={resource_type:type,limit:50,items:[{id:'object-51',name:'Observed'}],next_cursor:null};
+    assert.equal(menu.requireObservedObjectContinuation(type,page,cursor,50),page);
+    for(const bad of [
+      {...page,resource_type:'managed-host'}, {...page,limit:100},
+      {...page,items:[null]}, {...page,items:[{id:''}]},
+      {...page,items:Array.from({length:51},(_,i)=>({id:String(i)}))},
+      {...page,next_cursor:cursor}, {items:null}, null,
+    ]){
+      assert.throws(()=>menu.requireObservedObjectContinuation(type,bad,cursor,50),
+        /Core|UNKNOWN/,type);
+    }
+  }
+  assert.throws(()=>menu.requireObservedObjectContinuation(
+    'invalid-object-type',{resource_type:'invalid-object-type',limit:50,items:[]},cursor,50),
+    /Core|UNKNOWN/);
+});
 test('Audit keyset backward and forward pagination uses opaque observed Core cursors only',()=>{
   const start={cursor:'',history:[]};
   assert.deepEqual(menu.selectMenuPage(start,'cursor-page-2','older'),

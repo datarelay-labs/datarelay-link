@@ -7,7 +7,7 @@ import {AccessEvidenceExplorer,GuidedPolicyJourney,coreFlowKey,coreCutoffKey,vis
 import {EnrollmentOnboarding} from "./p0-enrollment";
 import {navGroups,groupFor,labelFor,pageDescriptions,visibleRoute,navMatches,setupContextForObjectFamily} from "./uxb-navigation";
 import {FirstUseHome,isFreshInstallation,observedRecentFeed,observedNumber,accessPlaneCount,coreHealthState,type RecentFeed} from "./uxb-home";
-import {requireObservedMenuPayload,requireObservedInventoryContinuation,isPartialCorePage,selectMenuPage,combineObservedPolicyPlanes,type MenuPagePosition} from "./uxb-menu-evidence";
+import {requireObservedMenuPayload,requireObservedInventoryContinuation,requireObservedObjectContinuation,isPartialCorePage,selectMenuPage,combineObservedPolicyPlanes,type MenuPagePosition} from "./uxb-menu-evidence";
 import {RemoteServiceEditor} from "./uxb-remote-service";
 import {RevisionHistory} from "./uxb-revisions";
 import {FirstConnectionSetup,type SetupDraft} from "./uxb-setup";
@@ -1201,7 +1201,7 @@ function JobOperations({operator}:{operator:any}){
   </>;
 }
 
-function ObjectsWorkspace({data,onNavigate,context}:{data:any,onNavigate?:(id:string,groupId?:string,context?:any)=>void,context?:any}){
+function ObjectsWorkspace({data,onNavigate,context,api}:{data:any,onNavigate?:(id:string,groupId?:string,context?:any)=>void,context?:any,api:(path:string)=>Promise<any>}){
   const initialFamily=["all","network","service","permission","ai"].includes(String(context?.family||""))
     ?String(context.family):"all";
   const [family,setFamily]=useState(initialFamily),[filter,setFilter]=useState(""),[selected,setSelected]=useState<any>(null);
@@ -1211,11 +1211,49 @@ function ObjectsWorkspace({data,onNavigate,context}:{data:any,onNavigate?:(id:st
   const requiredTypes=["network-object","network-group","service-object","service-group",
     "permission-object","permission-group","ai-identity"];
   const incomplete=!resources||requiredTypes.some(type=>!Array.isArray(resources[type]?.items));
+  const [extraByType,setExtraByType]=useState<Record<string,any[]>>({});
+  const [nextByType,setNextByType]=useState<Record<string,string|null>>(()=>Object.fromEntries(
+    requiredTypes.map(type=>[type,isPartialCorePage(resources?.[type])?resources[type].next_cursor:null])
+  ));
+  const [busyType,setBusyType]=useState(""),[pageError,setPageError]=useState("");
+  const pageEpoch=useRef(0);
+  useEffect(()=>{
+    pageEpoch.current+=1;setExtraByType({});setPageError("");setBusyType("");
+    setNextByType(Object.fromEntries(requiredTypes.map(type=>[
+      type,isPartialCorePage(resources?.[type])?resources[type].next_cursor:null
+    ])));
+    return()=>{pageEpoch.current+=1};
+  },[data]);
+  async function loadObjectPage(type:string){
+    const cursor=nextByType[type];
+    if(!cursor||busyType)return;
+    const generation=++pageEpoch.current;
+    setBusyType(type);setPageError("");
+    try{
+      const query="/api/v1/inventory?resource_type="+encodeURIComponent(type)+
+        "&limit=50&cursor="+encodeURIComponent(cursor);
+      const page=requireObservedObjectContinuation(type,await api(query),cursor,50);
+      if(generation!==pageEpoch.current)return;
+      const loaded=[...(resources?.[type]?.items||[]),...(extraByType[type]||[])];
+      const known=new Set(loaded.map((row:any)=>row.id));
+      const fresh=page.items.filter((row:any)=>!known.has(row.id));
+      if(page.items.length&&!fresh.length)
+        throw new Error("Core returned previously loaded object IDs only. State is UNKNOWN.");
+      setExtraByType(previous=>({...previous,[type]:[...(previous[type]||[]),...fresh]}));
+      setNextByType(previous=>({...previous,[type]:isPartialCorePage(page)?page.next_cursor:null}));
+    }catch(e:any){
+      if(generation===pageEpoch.current)setPageError(e.message||String(e));
+    }finally{
+      if(generation===pageEpoch.current)setBusyType("");
+    }
+  }
   const all=Object.entries(resources||{}).flatMap(([type,page]:any)=>
-    (Array.isArray(page?.items)?page.items:[]).map((item:any)=>({...item,resource_type:type})));
+    [...(Array.isArray(page?.items)?page.items:[]),...(extraByType[type]||[])]
+      .map((item:any)=>({...item,resource_type:type})));
   const familyFor=(type:string)=>type.startsWith("network-")?"network":type.startsWith("service-")?"service":type.startsWith("permission-")?"permission":type==="ai-identity"?"ai":"other";
-  const truncated=Object.entries(resources||{}).some(([type,page]:any)=>
-    (family==="all"||familyFor(type)===family)&&!!page?.next_cursor);
+  const availableTypes=requiredTypes.filter(type=>
+    (family==="all"||familyFor(type)===family)&&!!nextByType[type]);
+  const truncated=availableTypes.length>0;
   const q=filter.trim().toLowerCase();
   const rows=all.filter((item:any)=>(family==="all"||familyFor(item.resource_type)===family)&&(!q||Object.values(item).some(v=>String(v??"").toLowerCase().includes(q))));
   const families=[["all","All"],["network","Network"],["service","Service"],["permission","Permission"],["ai","AI Identity"]];
@@ -1224,8 +1262,15 @@ function ObjectsWorkspace({data,onNavigate,context}:{data:any,onNavigate?:(id:st
     <div className="dr-access-tabs" role="tablist" aria-label="Object family">{families.map(([id,label])=><button key={id} role="tab" aria-selected={family===id} className={family===id?"active":""} onClick={()=>setFamily(id)}>{label}</button>)}</div>
     <section className="card dr-list-card"><div className="dr-list-toolbar"><div><strong>{rows.length}</strong><span>visible Core resources</span></div><label className="dr-filter-field"><WorkspaceIcon kind="search"/><input value={filter} onChange={e=>setFilter(e.target.value)} placeholder="Filter loaded objects and groups…"/>{filter&&<button onClick={()=>setFilter("")} aria-label="Clear filter">×</button>}</label></div>
       {incomplete&&<p className="warning-box" role="alert">UNKNOWN · Core Objects & Groups inventory is incomplete. Some names may not be visible; check System Health before interpreting missing records.</p>}
-      {truncated&&<div className="dr-uxb-catalog-page-notice" role="status"><span>Partial Core snapshot · up to 50 names per kind were loaded. This filter checks only the loaded records.</span>
+      {truncated&&<div className="dr-uxb-catalog-page-notice" role="status"><span>Partial Core snapshot · more names exist for {availableTypes.join(", ")}. The filter checks only loaded records.</span>
         <button type="button" className="secondary" onClick={()=>onNavigate?.("setup","connections",setupContextForObjectFamily(family)||undefined)}>Find another Core name →</button>
+      </div>}
+      {pageError&&<p className="warning-box" role="alert">UNKNOWN · Core Objects & Groups page unavailable: {pageError}. Existing observed names remain visible.</p>}
+      {availableTypes.length>0&&<div className="toolbar" role="group" aria-label="Object inventory pagination">
+        {availableTypes.map(type=><button key={type} type="button" className="secondary"
+          disabled={!!busyType} onClick={()=>loadObjectPage(type)}>
+          {busyType===type?"Loading "+type+"…":"Load more "+type.replaceAll("-"," ")+" →"}
+        </button>)}
       </div>}
       {!rows.length?<div className="dr-empty-state"><span className="dr-empty-icon"><WorkspaceIcon kind="infrastructure"/></span>
         <strong>{incomplete?"Core resource evidence UNKNOWN":truncated?"No match in loaded Core resources":"No matching objects"}</strong>
@@ -1678,7 +1723,7 @@ function View({active,operator,onNavigate,context,setupDraft,onSetupDraftChange}
   if(active==="overview"&&data)return <CommandCenter data={data} operator={operator} onNavigate={onNavigate}/>;
   if(active==="versions"&&data)return <><div className="grid"><Metric label="Server version" value={data.server_version}/><Metric label="Drift" value={data.drift_count}/><Metric label="Unknown" value={data.unknown_count}/></div><Table items={data.hosts||[]}/></>;
   if(active==="system"&&data)return <SystemAdministrationWorkspace data={data} operator={operator} onNavigate={onNavigate}/>;
-  if(active==="objects"&&data)return <><ObjectsWorkspace data={data} onNavigate={onNavigate} context={context}/>{operator.role!=="Read Only"&&<GuidedObjectPanel/>}</>;
+  if(active==="objects"&&data)return <><ObjectsWorkspace data={data} onNavigate={onNavigate} context={context} api={api}/>{operator.role!=="Read Only"&&<GuidedObjectPanel/>}</>;
   if(active==="hosts"&&data)return <><ResourceWorkspace kind="host" data={data} operator={operator} onNavigate={onNavigate} api={api}/>{operator.role!=="Read Only"&&<ManagedHostMetadataPanel/>}{operator.role==="Admin"&&<ManagedHostAdmissionPanel/>}{operator.role==="Admin"&&<ManagedHostLifecyclePanel/>}</>;
   if(active==="services"&&data)return <><ResourceWorkspace kind="service" data={data} operator={operator} onNavigate={onNavigate} api={api}/>{operator.role!=="Read Only"&&<RemoteServiceEditor api={api}/>}</>;
   if(active==="policies"&&data)return <><PolicyWorkspace data={data} operator={operator} onNavigate={onNavigate} api={api}/>{operator.role!=="Read Only"&&<GuidedPolicyJourney api={api} onNavigate={onNavigate}/>}<PolicySafetyPanel operator={operator}/>{operator.role!=="Read Only"&&<><GuidedPolicySettingsPanel/><TemporaryAccessPanel/></>}</>;
