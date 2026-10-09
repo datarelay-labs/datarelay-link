@@ -38,6 +38,28 @@ export function selectMenuPage(
     history:current.history.slice(0,-1)};
 }
 
+/** Fetch each policy plane separately: a single all-plane 100-row limit can
+ * hide an entire later plane behind earlier Remote rules. Keep the limit honest. */
+export function combineObservedPolicyPlanes(
+  pages:unknown[],limit:number
+):{items:any[],possibly_truncated_planes:string[]}{
+  const planes=["remote","internet","ai"] as const;
+  if(!Array.isArray(pages)||pages.length!==planes.length
+    ||!Number.isSafeInteger(limit)||limit<1)
+    throw new Error("Core policy plane inventory is incomplete. State is UNKNOWN.");
+  const items:any[]=[],possibly_truncated_planes:string[]=[];
+  for(let i=0;i<planes.length;i++){
+    const page=requireObservedMenuPayload("policies",pages[i]);
+    if(page.plane!==planes[i]||page.limit!==limit
+      ||page.items.length>limit
+      ||page.items.some((item:any)=>item.plane!==planes[i]))
+      throw new Error("Core "+planes[i]+" policy response is inconsistent. State is UNKNOWN.");
+    items.push(...page.items);
+    if(page.items.length===limit)possibly_truncated_planes.push(planes[i]);
+  }
+  return {items,possibly_truncated_planes};
+}
+
 export function requireObservedMenuPayload(route:string,payload:unknown):any{
   if(payload===null||typeof payload!=="object"||Array.isArray(payload))
     throw new Error("Core response unavailable or malformed. Page state is UNKNOWN; retry the read.");

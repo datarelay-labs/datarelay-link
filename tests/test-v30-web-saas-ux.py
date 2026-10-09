@@ -676,7 +676,7 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn('function isPartialCorePage(', helper)
         self.assertIn('from "./uxb-menu-evidence"', SOURCE)
         self.assertIn('partial={isPartialCorePage(data)}', SOURCE)
-        self.assertIn('Partial Core policy list', SOURCE)
+        self.assertIn('Core policy list may be incomplete', SOURCE)
         self.assertIn('Partial Core inventory', SOURCE)
         self.assertIn('No match in loaded policy rules', SOURCE)
         self.assertIn('No match in loaded resources', SOURCE)
@@ -751,6 +751,33 @@ class V30WebSaasUxContractTests(unittest.TestCase):
             'Filters cleared. Select Search audit to load current Core records.',
         ):
             self.assertIn(expected, audit, expected)
+
+    def test_policy_read_does_not_hide_internet_and_ai_behind_remote_limit(self):
+        helper = (ROOT / "web/src/uxb-menu-evidence.ts").read_text(encoding="utf-8")
+        view = SOURCE.split("function View(", 1)[1].split("function SavedViews(", 1)[0]
+        policy = SOURCE.split("function PolicyWorkspace(", 1)[1].split("function ResourceWorkspace(", 1)[0]
+        for marker in (
+            'function combineObservedPolicyPlanes(',
+            'const planes=["remote","internet","ai"]',
+            'page.plane!==planes[i]||page.limit!==limit',
+            'possibly_truncated_planes.push(planes[i])',
+        ):
+            self.assertIn(marker, helper, marker)
+        for marker in (
+            'if(active==="policies"){',
+            'Promise.all(["remote","internet","ai"].map(plane=>',
+            '"/api/v1/policies?plane="+plane+"&limit=100"',
+            'setData(combineObservedPolicyPlanes(pages,100))',
+            'if(!current)return;',
+        ):
+            self.assertIn(marker, view, marker)
+        for marker in (
+            'data.possibly_truncated_planes',
+            'selectedMayBeLimited',
+            'Core policy list may be incomplete',
+            'No match in loaded policy rules',
+        ):
+            self.assertIn(marker, policy, marker)
 
     def test_normative_ux_doc_binds_control_reference_and_competitive_sources(self):
         for required in (

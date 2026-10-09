@@ -7,7 +7,7 @@ import {AccessEvidenceExplorer,GuidedPolicyJourney,coreFlowKey,coreCutoffKey,vis
 import {EnrollmentOnboarding} from "./p0-enrollment";
 import {navGroups,groupFor,labelFor,pageDescriptions,visibleRoute,navMatches,setupContextForObjectFamily} from "./uxb-navigation";
 import {FirstUseHome,isFreshInstallation,observedRecentFeed,observedNumber,accessPlaneCount,coreHealthState,type RecentFeed} from "./uxb-home";
-import {requireObservedMenuPayload,isPartialCorePage,selectMenuPage,type MenuPagePosition} from "./uxb-menu-evidence";
+import {requireObservedMenuPayload,isPartialCorePage,selectMenuPage,combineObservedPolicyPlanes,type MenuPagePosition} from "./uxb-menu-evidence";
 import {RemoteServiceEditor} from "./uxb-remote-service";
 import {FirstConnectionSetup,type SetupDraft} from "./uxb-setup";
 
@@ -1242,14 +1242,16 @@ function PolicyWorkspace({data,operator,onNavigate}:{data:any,operator:any,onNav
   useEscapeClose(!!selected,()=>setSelected(null));
   const q=filter.trim().toLowerCase();
   const partial=isPartialCorePage(data);
+  const limitedPlanes=Array.isArray(data.possibly_truncated_planes)?data.possibly_truncated_planes:[];
+  const selectedMayBeLimited=limitedPlanes.some((kind:string)=>plane==="all"||plane===kind);
   const rows=(data.items||[]).filter((item:any)=>(plane==="all"||item.plane===plane)&&(!q||Object.values(item).some(v=>String(v??"").toLowerCase().includes(q))));
   const tabs=[["all","All"],["remote","Remote"],["internet","Internet"],["ai","AI"]];
   return <div className="dr-resource-workspace">
     <section className="dr-page-intro"><div><p className="dr-eyebrow">Access</p><h2>Policies</h2><p className="muted">One policy workspace with separate Remote, Internet and AI security semantics.</p></div><div className="dr-page-actions"><button className="secondary" onClick={()=>onNavigate?.("access","access")}>Test & explain access</button>{operator.role!=="Read Only"&&<button className="primary" onClick={()=>onNavigate?.("drafts","access")}>Draft change</button>}</div></section>
     <div className="dr-access-tabs" role="tablist" aria-label="Policy plane">{tabs.map(([id,label])=><button key={id} role="tab" aria-selected={plane===id} className={plane===id?"active":""} onClick={()=>setPlane(id)}>{label}</button>)}</div>
     <section className="card dr-list-card"><div className="dr-list-toolbar"><div><strong>{rows.length}</strong><span>policy rules</span></div><label className="dr-filter-field"><WorkspaceIcon kind="search"/><input value={filter} onChange={e=>setFilter(e.target.value)} placeholder="Filter policies…"/>{filter&&<button onClick={()=>setFilter("")} aria-label="Clear filter">×</button>}</label></div>
-      {partial&&<p className="dr-uxb-catalog-page-notice" role="status">Partial Core policy list · additional rules exist beyond the loaded page. This filter checks loaded rules only. Use Search to find other rules.</p>}
-      {!rows.length?<div className="dr-empty-state"><span className="dr-empty-icon"><WorkspaceIcon kind="access"/></span><strong>{partial?"No match in loaded policy rules":"No matching policy rules"}</strong><p>{partial?"Other rules may exist beyond this Core page. Use Search to find them.":"Change the filter or use the guided policy controls below."}</p></div>:<div className="dr-table-scroll"><table className="dr-resource-table"><thead><tr><th>Policy</th><th>Plane</th><th>Action</th><th>State</th><th>Expires</th><th>Description</th></tr></thead><tbody>{rows.map((item:any)=><tr key={(item.plane||"policy")+":"+item.id} tabIndex={0} onClick={()=>setSelected(item)} onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();setSelected(item)}}}><td><strong>{item.name||item.id}</strong><small>{item.id}</small></td><td>{item.plane||"—"}</td><td>{item.action||"—"}</td><td><span className={item.enabled?"dr-state active":"dr-state"}><i/>{item.enabled?"Enabled":"Disabled"}</span></td><td>{item.expires_at||"Never"}</td><td>{item.description||"—"}</td></tr>)}</tbody></table></div>}
+      {(partial||selectedMayBeLimited)&&<p className="dr-uxb-catalog-page-notice" role="status">Core policy list may be incomplete · {limitedPlanes.length?limitedPlanes.map((kind:string)=>kind.toUpperCase()).join(", ")+" reached the per-plane 100-rule API limit.": "Additional rules exist beyond the loaded page."} Filters inspect only loaded rules. Use Search to find a specific policy.</p>}
+      {!rows.length?<div className="dr-empty-state"><span className="dr-empty-icon"><WorkspaceIcon kind="access"/></span><strong>{partial||selectedMayBeLimited?"No match in loaded policy rules":"No matching policy rules"}</strong><p>{partial||selectedMayBeLimited?"Other rules may exist beyond the fetched Core policy pages. Use Search for a specific policy.":"Change the filter or use the guided policy controls below."}</p></div>:<div className="dr-table-scroll"><table className="dr-resource-table"><thead><tr><th>Policy</th><th>Plane</th><th>Action</th><th>State</th><th>Expires</th><th>Description</th></tr></thead><tbody>{rows.map((item:any)=><tr key={(item.plane||"policy")+":"+item.id} tabIndex={0} onClick={()=>setSelected(item)} onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();setSelected(item)}}}><td><strong>{item.name||item.id}</strong><small>{item.id}</small></td><td>{item.plane||"—"}</td><td>{item.action||"—"}</td><td><span className={item.enabled?"dr-state active":"dr-state"}><i/>{item.enabled?"Enabled":"Disabled"}</span></td><td>{item.expires_at||"Never"}</td><td>{item.description||"—"}</td></tr>)}</tbody></table></div>}
     </section>
     {selected&&<div className="dr-drawer-backdrop" onMouseDown={e=>{if(e.currentTarget===e.target)setSelected(null)}}><aside className="dr-detail-drawer" role="dialog" aria-modal="true" aria-label="Policy detail" tabIndex={-1} autoFocus><header><div><p className="dr-eyebrow">{selected.plane||"Policy"} access</p><h2>{selected.name||selected.id}</h2><p>{selected.id}</p></div><button className="dr-icon-button" onClick={()=>setSelected(null)} aria-label="Close detail">×</button></header><div className="dr-drawer-status"><span className={selected.enabled?"dr-state active":"dr-state"}><i/>{selected.enabled?"Enabled":"Disabled"}</span></div><div className="dr-detail-fields">{Object.entries(selected).filter(([,value])=>typeof value!=="object"&&value!==null&&value!=="").map(([key,value])=><div key={key}><span>{key.replaceAll("_"," ")}</span><strong>{String(value)}</strong></div>)}</div><footer><button className="secondary" onClick={()=>{const target={originId:String(selected.id||selected.name||""),originType:"access-rule"};setSelected(null);onNavigate?.("audit","activity",target)}}>Recent activity</button><button className="primary" onClick={()=>{const target={originId:String(selected.id||selected.name||""),originType:"access-rule",plane:selected.plane||"remote",source:String(selected.source||""),destination:String(selected.destination||""),selector:String(selected.plane==="ai"?selected.permission||"":selected.service||"")};setSelected(null);onNavigate?.("access","access",target)}}>Why allowed / denied?</button></footer></aside></div>}
   </div>;
@@ -1553,11 +1555,21 @@ function View({active,operator,onNavigate,context,setupDraft,onSetupDraftChange}
     const paths:Record<string,string>={
       overview:"/api/v1/overview",hosts:"/api/v1/inventory?resource_type=managed-host&limit=100",
       services:"/api/v1/inventory?resource_type=remote-service&limit=100",
-      objects:"/api/v1/objects-groups?limit=50",policies:"/api/v1/policies?limit=100",
+      objects:"/api/v1/objects-groups?limit=50",
       versions:"/api/v1/versions",hygiene:"/api/v1/access-hygiene",system:"/api/v1/system",revisions:"/api/v1/revisions?limit=100",
       doctor:"/api/v1/doctor",health:"/api/v1/health",views:"/api/v1/saved-views",enrollments:"/api/v1/enrollments?limit=50",
     };
-    if(paths[active])api(paths[active]).then(payload=>{
+    if(active==="policies"){
+      // A combined 100-rule Core query may hide later Internet/AI planes entirely.
+      // Observe all three independently, then display any per-plane limit honestly.
+      Promise.all(["remote","internet","ai"].map(plane=>
+        api("/api/v1/policies?plane="+plane+"&limit=100")
+      )).then(pages=>{
+        if(!current)return;
+        try{setData(combineObservedPolicyPlanes(pages,100))}
+        catch(e:any){setError(e.message||String(e))}
+      }).catch((e:any)=>{if(current)setError(e.message||String(e))});
+    }else if(paths[active])api(paths[active]).then(payload=>{
       if(!current)return;
       try{setData(requireObservedMenuPayload(active,payload))}
       catch(e:any){setError(e.message||String(e))}

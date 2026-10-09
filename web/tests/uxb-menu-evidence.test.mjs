@@ -65,6 +65,29 @@ test('Audit keyset backward and forward pagination uses opaque observed Core cur
     assert.equal(menu.selectMenuPage(page2,invalid,'older'),null);
   }
 });
+test('large Remote policy family cannot hide observed Internet or AI rules',()=>{
+  const corePage=(plane,ids,limit=2)=>({plane,limit,
+    items:ids.map(id=>({id,plane,name:id}))});
+  const pages=[
+    corePage('remote',['r-1','r-2']),
+    corePage('internet',['i-1']),
+    corePage('ai',['a-1'])
+  ];
+  const observed=menu.combineObservedPolicyPlanes(pages,2);
+  assert.deepEqual(observed.items.map(row=>row.id),['r-1','r-2','i-1','a-1']);
+  assert.deepEqual(observed.possibly_truncated_planes,['remote']);
+  assert.deepEqual(menu.combineObservedPolicyPlanes(pages.map(page=>({...page,items:[]})),2),
+    {items:[],possibly_truncated_planes:[]});
+  for(const bad of [
+    pages.slice(0,2),null,[],[pages[1],pages[0],pages[2]],
+    [pages[0],{plane:'internet',limit:2,items:null},pages[2]],
+    [pages[0],{...pages[1],items:[{id:'wrong',plane:'remote'}]},pages[2]],
+    [pages[0],{...pages[1],limit:1},pages[2]],
+    [pages[0],{...pages[1],items:[{plane:'internet'},{plane:'internet'},{plane:'internet'}]},pages[2]],
+  ]){
+    assert.throws(()=>menu.combineObservedPolicyPlanes(bad,2),/Core|UNKNOWN/);
+  }
+});
 test('partial Objects inventory remains available for its existing explicit UNKNOWN warning',()=>{
   // ObjectsWorkspace itself distinguishes incomplete resources from a valid empty list.
   for(const response of [{resources:{}},{resources:{'network-object':{items:[]}}}]){
