@@ -8,6 +8,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = (ROOT / "web/src/main.tsx").read_text(encoding="utf-8")
 ADMIN_SOURCE = (ROOT / "web/src/foundation-administration.ts").read_text(encoding="utf-8")
+P0_ACCESS_SOURCE = (ROOT / "web/src/p0-access-policy.tsx").read_text(encoding="utf-8")
+P0_ENROLL_SOURCE = (ROOT / "web/src/p0-enrollment.tsx").read_text(encoding="utf-8")
 CSS = (ROOT / "web/dist/styles.css").read_text(encoding="utf-8")
 PACKAGE = (ROOT / "web/package.json").read_text(encoding="utf-8")
 PACKAGE_LOCK = (ROOT / "web/package-lock.json").read_text(encoding="utf-8")
@@ -131,12 +133,34 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn("active connections are not terminated", SOURCE)
 
     def test_zero_touch_preapproval_is_explicit_admin_only_and_defaults_off(self):
-        self.assertIn('const [preApproved,setPreApproved]=useState(false)', SOURCE)
-        self.assertIn('mode==="zero-touch"?{pre_approved:preApproved}:{}', SOURCE)
-        self.assertIn('operator.role==="Admin"&&mode==="zero-touch"', SOURCE)
-        self.assertIn('setPreApproved(false);setIssued(null)', SOURCE)
-        self.assertIn('Pre-approve this enrollment', SOURCE)
-        self.assertIn('operator={operator} refresh=', SOURCE)
+        self.assertIn('const [preApproved,setPreApproved]=useState(false)', P0_ENROLL_SOURCE)
+        self.assertIn('mode==="zero-touch"?{pre_approved:preApproved}:{}', P0_ENROLL_SOURCE)
+        self.assertIn('admin&&mode==="zero-touch"', P0_ENROLL_SOURCE)
+        self.assertIn('setPreApproved(false);setIssued(null)', P0_ENROLL_SOURCE)
+        self.assertIn('Pre-approve first Host from this ticket', P0_ENROLL_SOURCE)
+        self.assertIn('data={data} operator={operator} onNavigate={onNavigate} refresh=', SOURCE)
+
+    def test_p0_ux_uses_canonical_core_read_and_change_plans(self):
+        self.assertIn('AccessEvidenceExplorer api={api}', SOURCE)
+        self.assertIn('GuidedPolicyJourney api={api}', SOURCE)
+        self.assertIn('EnrollmentOnboarding api={api}', SOURCE)
+        for marker in (
+            '/api/v1/policy/trace', '/api/v1/policy/graph',
+            '/api/v1/guided/preview', '/api/v1/policy-tests/run',
+            '/api/v1/guided/apply', 'required_only:true',
+            'canApplyGuidedRule(preview,tests,acknowledge)',
+            'Decision: UNKNOWN until a fresh Core decision trace succeeds',
+        ):
+            self.assertIn(marker, P0_ACCESS_SOURCE)
+        for marker in (
+            '/api/v1/enrollments/manual', '/api/v1/enrollments/zero-touch',
+            '/api/v1/inventory?resource_type=managed-host&limit=100',
+            '/api/v1/managed-hosts/admission/preview',
+            '/api/v1/managed-hosts/admission/apply',
+            'Effective policy reachability:', 'NOT VERIFIED',
+        ):
+            self.assertIn(marker, P0_ENROLL_SOURCE)
+        self.assertNotIn('localStorage', P0_ACCESS_SOURCE + P0_ENROLL_SOURCE)
 
     def test_agent_update_preview_is_admin_only_and_not_an_apply_surface(self):
         self.assertIn("function AgentRolloutPreviewPanel()", SOURCE)

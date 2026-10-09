@@ -188,6 +188,8 @@ class V30WebBundleTests(unittest.TestCase):
         # Rebuilding the offline Web UI must not lose its Link-owned
         # Administration projection source after extraction.
         self.assertIn("data-relay-link-web/web/src/foundation-administration.ts", names)
+        self.assertIn("data-relay-link-web/web/src/p0-access-policy.tsx", names)
+        self.assertIn("data-relay-link-web/web/src/p0-enrollment.tsx", names)
         self.assertIn("data-relay-link-web/web/.foundation/packs/datarelay-labs-foundation-0.1.0-pf5b.1.tgz", names)
         self.assertNotIn("data-relay-link-web/var/lib/drlink/drlink.db", names)
 

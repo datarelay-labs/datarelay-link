@@ -24,6 +24,8 @@ BUILD_FILES = (
     "web/foundation.lock.json",
     "web/src/main.tsx",
     "web/src/foundation-administration.ts",
+    "web/src/p0-access-policy.tsx",
+    "web/src/p0-enrollment.tsx",
 )
 
 
