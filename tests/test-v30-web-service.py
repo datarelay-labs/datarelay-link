@@ -148,6 +148,11 @@ class V30WebServiceTests(unittest.TestCase):
         status, css_headers, _ = self.request("GET", "/styles.css")
         self.assertEqual(status, 200)
         self.assertEqual(css_headers.get("cache-control"), "no-cache")
+        status, favicon_headers, icon = self.request("GET", "/favicon.svg")
+        self.assertEqual(status, 200)
+        self.assertEqual(favicon_headers.get("content-type"), "image/svg+xml")
+        self.assertIn('viewBox="0 0 64 64"', icon)
+        self.assertIn("<path ", icon)
         # DR Control parity persists only non-security UX preferences locally.
         # Session/authentication material remains cookie/Core-owned.
         source = (ROOT / "web/src/main.tsx").read_text(encoding="utf-8")
