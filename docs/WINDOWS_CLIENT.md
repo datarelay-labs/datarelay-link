@@ -139,6 +139,7 @@ tools\drlink.cmd system uninstall
 | --- | --- |
 | `system pause/resume/restart` | Manages the local Agent runtime while preserving identity and Remote Service intent |
 | `show/set/unset remote-service(s)` | Canonical Agent Remote Service lifecycle; Service Objects are resolved from the synchronized Server catalog |
+| `show/set/unset remote-access` and `internet-access` | Server-only policies; the Windows Agent rejects these operations without changing state and directs the operator to the DRLink Server |
 | `test/system ... configuration` | Canonical Agent ConfigurationBundle validation, diff, export and atomic apply surface |
 | `system info` | Prints connection details without secrets |
 | `system update product/engine` | Separates Data Relay Link management updates from Relay Engine updates |

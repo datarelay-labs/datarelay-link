@@ -95,6 +95,18 @@ function Write-FrpLegacyCliError {
     exit 2
 }
 
+function Exit-FrpServerOwnedAccessPolicy {
+    param([string]$Resource)
+    if ($Resource -notin @('remote-access', 'internet-access')) { return }
+    $family = if ($Resource -eq 'remote-access') { 'Remote Access' } else { 'Internet Access' }
+    Write-Host ("ERROR: {0} policy is managed on the DRLink Server." -f $family)
+    Write-Host ''
+    Write-Host 'No changes were applied.'
+    Write-Host ''
+    Write-Host 'Run this command on the DRLink Server.'
+    exit 1
+}
+
 function Set-FrpV24RemoteTokens {
     $tokens = @(@($Property, $Value, $Extra1, $Extra2, $Extra3, $Extra4) |
         Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
@@ -164,6 +176,7 @@ switch -Regex ($cmdLower) {
                 else { Assert-FrpNoTrailingAfterId; $Command = 'v24-show' }
             }
             default {
+                Exit-FrpServerOwnedAccessPolicy -Resource $subLower
                 Write-Host ("ERROR: unknown show resource: {0}" -f $SubCommand)
                 Write-Host 'Use: drlink show status'
                 Write-Host 'Use: drlink show agent'
@@ -177,6 +190,7 @@ switch -Regex ($cmdLower) {
     '^set$' {
         if ($subLower -eq '?') { Assert-FrpNoTrailingAfterSubcommand; $Command = 'help-set'; $normalized = $true; break }
         if ($subLower -ne 'remote-service') {
+            Exit-FrpServerOwnedAccessPolicy -Resource $subLower
             Write-Host ("ERROR: unknown set resource: {0}" -f $SubCommand)
             Write-Host 'Use: set remote-service <NAME> ...'
             exit 2
@@ -190,6 +204,7 @@ switch -Regex ($cmdLower) {
     '^unset$' {
         if ($subLower -eq '?') { Assert-FrpNoTrailingAfterSubcommand; $Command = 'help-unset'; $normalized = $true; break }
         if ($subLower -ne 'remote-service') {
+            Exit-FrpServerOwnedAccessPolicy -Resource $subLower
             Write-Host ("ERROR: unknown unset resource: {0}" -f $SubCommand)
             Write-Host 'Use: unset remote-service <NAME>'
             exit 2

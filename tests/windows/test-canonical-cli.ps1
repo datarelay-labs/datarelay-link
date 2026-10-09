@@ -42,6 +42,22 @@ try {
     Assert-FrpTrue ($help -notmatch '(?m)^  start\s') 'help hides legacy root start'
     Assert-FrpTrue ($help -notmatch '(?m)^  stop\s') 'help hides legacy root stop'
 
+    # A Windows Agent must guide an operator to the Server when the requested
+    # access policy is Server-owned, matching Linux Agent role/context semantics.
+    foreach ($case in @(
+        @('set', 'remote-access', 'Remote Access policy'),
+        @('unset', 'remote-access', 'Remote Access policy'),
+        @('set', 'internet-access', 'Internet Access policy'),
+        @('unset', 'internet-access', 'Internet Access policy'),
+        @('show', 'remote-access', 'Remote Access policy'),
+        @('show', 'internet-access', 'Internet Access policy')
+    )) {
+        $wrong = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath $case[0] $case[1] e2e-wrong-role 2>&1 | Out-String
+        Assert-FrpTrue ($LASTEXITCODE -ne 0) ("server-only " + $case[0] + " " + $case[1] + " rejects on Agent")
+        Assert-FrpTrue ($wrong.Contains($case[2]) -and $wrong.Contains('DRLink Server')) ("server-only guidance: " + $case[1])
+        Assert-FrpTrue ($wrong.Contains('No changes were applied.')) ("server-only action is explicitly atomic: " + $case[1])
+    }
+
     $list = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath show remote-services 2>&1 | Out-String
     Assert-FrpTrue ($LASTEXITCODE -eq 0) 'show remote-services exits 0'
     Assert-FrpTrue ($list -match 'rdp') 'show remote-services shows rdp'
