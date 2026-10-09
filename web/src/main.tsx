@@ -1523,9 +1523,15 @@ function WorkspaceIcon({kind}:{kind:string}){
   return <svg {...common}><circle cx="12" cy="12" r="8"/></svg>;
 }
 
-function GlobalSearch({open,onClose,onNavigate,operator}:{open:boolean,onClose:()=>void,onNavigate:(id:string,groupId?:string)=>void,operator:any}){
+function GlobalSearch({open,onClose,onNavigate,operator,returnFocusRef}:{
+  open:boolean,onClose:()=>void,onNavigate:(id:string,groupId?:string)=>void,
+  operator:any,returnFocusRef:React.RefObject<HTMLElement|null>
+}){
   const [query,setQuery]=useState(""),[results,setResults]=useState<any[]>([]),[busy,setBusy]=useState(false),[error,setError]=useState("");
   const requestGeneration=useRef(0);
+  const dialogRef=useRef<HTMLElement|null>(null);
+  const onCloseRef=useRef(onClose);
+  onCloseRef.current=onClose;
   function changeQuery(value:string){
     // Old Core resource results must never follow a newer query.
     requestGeneration.current+=1;
@@ -1537,9 +1543,35 @@ function GlobalSearch({open,onClose,onNavigate,operator}:{open:boolean,onClose:(
   }},[open]);
   useEffect(()=>{
     if(!open)return;
-    function onKey(e:KeyboardEvent){if(e.key==="Escape")onClose()}
-    window.addEventListener("keydown",onKey);return()=>window.removeEventListener("keydown",onKey);
-  },[open]);
+    function onKey(e:KeyboardEvent){
+      if(e.key==="Escape"){
+        e.preventDefault();
+        onCloseRef.current();
+        return;
+      }
+      if(e.key!=="Tab"||!dialogRef.current)return;
+      const dialog=dialogRef.current;
+      const focusable=Array.from(dialog.querySelectorAll<HTMLElement>(
+        'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])'
+      )).filter(element=>element.getClientRects().length>0&&!element.closest("[inert],[hidden]"));
+      if(!focusable.length){e.preventDefault();dialog.focus();return}
+      const first=focusable[0],last=focusable[focusable.length-1];
+      const active=document.activeElement;
+      if(e.shiftKey&&(active===first||!dialog.contains(active))){
+        e.preventDefault();last.focus();
+      }else if(!e.shiftKey&&(active===last||!dialog.contains(active))){
+        e.preventDefault();first.focus();
+      }
+    }
+    window.addEventListener("keydown",onKey);
+    return()=>{
+      window.removeEventListener("keydown",onKey);
+      // Restore the original trigger, not the auto-focused search input.
+      const target=returnFocusRef.current;
+      if(target?.isConnected)target.focus();
+      returnFocusRef.current=null;
+    };
+  },[open,returnFocusRef]);
   const localMatches=navMatches(query,operator.role);
   if(!open)return null;
   function targetFor(type:string):[string,string]{
@@ -1567,7 +1599,7 @@ function GlobalSearch({open,onClose,onNavigate,operator}:{open:boolean,onClose:(
   }
   function go(id:string,group?:string){onNavigate(id,group);onClose()}
   return <div className="dr-command-overlay" role="presentation" onMouseDown={e=>{if(e.currentTarget===e.target)onClose()}}>
-    <section className="dr-command-palette" role="dialog" aria-modal="true" aria-label="Global search">
+    <section ref={dialogRef} tabIndex={-1} className="dr-command-palette" role="dialog" aria-modal="true" aria-label="Global search">
       <form className="dr-command-search" onSubmit={search}><WorkspaceIcon kind="search"/><input autoFocus value={query} onChange={e=>changeQuery(e.target.value)} placeholder="Search hosts, services, policies, identities…"/><kbd>Esc</kbd></form>
       {error&&<div className="dr-command-error">{error}</div>}
       <div className="dr-command-body">
@@ -1593,6 +1625,7 @@ function Shell({operator,onLogout}:{operator:any,onLogout:()=>void}){
   const [refreshNonce,setRefreshNonce]=useState(0);
   const [coreHealthy,setCoreHealthy]=useState<"loading"|"healthy"|"attention"|"unknown">("loading");
   const [searchOpen,setSearchOpen]=useState(false);
+  const searchReturnFocusRef=useRef<HTMLElement|null>(null);
   const [navigationContext,setNavigationContext]=useState<any>(null);
   // Current authenticated React session only, never URL or localStorage.
   // Store only non-secret wizard choices; Core plans and tokens always expire.
@@ -1615,10 +1648,23 @@ function Shell({operator,onLogout}:{operator:any,onLogout:()=>void}){
     }).catch(()=>{if(active)setCoreHealthy("unknown")});
     return()=>{active=false};
   },[refreshNonce]);
+  function openSearch(invoker?:HTMLElement){
+    // Safari need not focus a button clicked with the pointer.
+    searchReturnFocusRef.current=invoker||(
+      document.activeElement instanceof HTMLElement?document.activeElement:null
+    );
+    setSearchOpen(true);
+  }
   useEffect(()=>{
-    function onKey(e:KeyboardEvent){if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="k"){e.preventDefault();setSearchOpen(true)}}
+    function onKey(e:KeyboardEvent){
+      if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="k"){
+        e.preventDefault();
+        // Repeated shortcuts while the dialog is open must not replace its return target.
+        if(!searchOpen)openSearch();
+      }
+    }
     window.addEventListener("keydown",onKey);return()=>window.removeEventListener("keydown",onKey);
-  },[]);
+  },[searchOpen]);
 
   async function logout(){try{await api("/api/v1/auth/logout",{method:"POST",body:"{}"})}finally{csrf="";onLogout()}}
   function visible(id:string){return visibleRoute(id,operator.role)}
@@ -1684,14 +1730,14 @@ function Shell({operator,onLogout}:{operator:any,onLogout:()=>void}){
           <div className="dr-uxb-title"><h1>{title}</h1><span className={coreHealthy==="attention"||coreHealthy==="unknown"?"dr-health-pill attention":"dr-health-pill"}><i/>{healthText}</span></div>
           <p>{pageDescriptions[active]||"Core-backed management workspace"}</p></div></div>
         <div className="dr-topbar-actions">
-          <button className="dr-search-trigger" onClick={()=>setSearchOpen(true)}><WorkspaceIcon kind="search"/><span>Search</span><kbd>⌘K</kbd></button>
+          <button className="dr-search-trigger" onClick={e=>openSearch(e.currentTarget)}><WorkspaceIcon kind="search"/><span>Search</span><kbd>⌘K</kbd></button>
           <button className="dr-icon-button" onClick={()=>setRefreshNonce(x=>x+1)} title="Refresh"><WorkspaceIcon kind="refresh"/></button>
           <button className="dr-icon-button" onClick={()=>setDark(!dark)} title="Toggle theme"><WorkspaceIcon kind={dark?"sun":"moon"}/></button>
         </div>
       </header>
       <main id="drlink-main-content" className="content dr-workspace" tabIndex={-1}><div className="dr-content-frame"><View key={active+":"+refreshNonce+":"+(navigationContext?.originId||"")} active={active} operator={operator} onNavigate={activate} context={navigationContext} setupDraft={setupDraft} onSetupDraftChange={setSetupDraft}/></div></main>
     </div>
-    <GlobalSearch open={searchOpen} onClose={()=>setSearchOpen(false)} onNavigate={activate} operator={operator}/>
+    <GlobalSearch open={searchOpen} onClose={()=>setSearchOpen(false)} onNavigate={activate} operator={operator} returnFocusRef={searchReturnFocusRef}/>
   </div>;
 }
 

@@ -603,6 +603,37 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn('if(e.key==="Escape")onClose()', SOURCE)
         self.assertIn('tabIndex={-1} autoFocus', SOURCE)
 
+    def test_uxb_global_search_keeps_keyboard_focus_inside_modal(self):
+        # Static integration guard only; the real 320/375px browser keyboard
+        # scenario still requires authenticated human acceptance (UXE-10).
+        dialog = SOURCE.split("function GlobalSearch(", 1)[1].split("function Shell(", 1)[0]
+        shell = SOURCE.split("function Shell(", 1)[1].split("function App(", 1)[0]
+        for required in (
+            'ref={dialogRef} tabIndex={-1}',
+            'role="dialog" aria-modal="true"',
+            'if(e.key!=="Tab"||!dialogRef.current)return;',
+            "dialog.querySelectorAll<HTMLElement>",
+            'element.getClientRects().length>0',
+            'if(e.shiftKey&&(active===first||!dialog.contains(active)))',
+            'else if(!e.shiftKey&&(active===last||!dialog.contains(active)))',
+            'e.preventDefault();last.focus();',
+            'e.preventDefault();first.focus();',
+            'if(e.key==="Escape")',
+            "onCloseRef.current();",
+            "if(target?.isConnected)target.focus();",
+            "returnFocusRef.current=null;",
+        ):
+            self.assertIn(required, dialog, required)
+        for required in (
+            'searchReturnFocusRef=useRef<HTMLElement|null>(null)',
+            'searchReturnFocusRef.current=invoker||(',
+            'document.activeElement instanceof HTMLElement',
+            'if(!searchOpen)openSearch();',
+            'onClick={e=>openSearch(e.currentTarget)}',
+            'returnFocusRef={searchReturnFocusRef}',
+        ):
+            self.assertIn(required, shell, required)
+
     def test_normative_ux_doc_binds_control_reference_and_competitive_sources(self):
         for required in (
             "Product Foundation PF-5B Administration projection",
