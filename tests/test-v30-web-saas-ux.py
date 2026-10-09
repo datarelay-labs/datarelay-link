@@ -1010,6 +1010,22 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         ):
             self.assertIn(marker, revisions, marker)
 
+    def test_change_history_invalid_initial_core_page_renders_unknown_not_exception(self):
+        revisions=(ROOT / "web/src/uxb-revisions.tsx").read_text(encoding="utf-8")
+        for marker in (
+            "export function validateObservedRevisionPage(",
+            'page.resource_type!=="revision"||page.limit!==100',
+            'let first:any=null,initialIssue="";',
+            'try{first=validateObservedRevisionPage(requireObservedMenuPayload("revisions",initial))}',
+            'catch(e:any){initialIssue=e.message||String(e)}',
+            'setPage(null);setError(e.message||String(e));',
+            'const observed=validateObservedRevisionPage(requireObservedMenuPayload("revisions",await api(url)));',
+            'UNKNOWN · Core Change History unavailable',
+            'Retry Core page →',
+        ):
+            self.assertIn(marker,revisions,marker)
+        self.assertIn('tests/uxb-revisions.test.mjs',PACKAGE)
+
     def test_agent_version_drift_is_not_synthetic_when_server_version_unknown(self):
         versions=(ROOT / "web/src/uxb-versions.tsx").read_text(encoding="utf-8")
         self.assertIn('import {AgentVersionDrift} from "./uxb-versions";', SOURCE)
