@@ -192,6 +192,8 @@ class EnrollEnv:
     def __init__(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
+        self._previous_audit_log = os.environ.get('FRP_AUDIT_LOG')
+        os.environ['FRP_AUDIT_LOG'] = str(self.root / 'audit.jsonl')
         self.registry = self.root / 'registry.json'
         self.token = self.root / 'server_token'
         self.enrollments = self.root / 'enrollments'
@@ -211,9 +213,12 @@ class EnrollEnv:
             'registry_file': str(self.registry),
             'enrollments_dir': str(self.enrollments),
             'token_file': str(self.token),
+            'control_plane_root': str(self.root),
         }, indent=2) + '\n')
         MOD.atomic_write_json(self.registry, MOD.empty_registry())
         self.allocator = MOD.Allocator(str(self.cfg))
+        if MOD.RP is None or MOD.RP.root_from_cfg(json.loads(self.cfg.read_text())) != str(self.root):
+            raise AssertionError('core correctness test fixture is not isolated')
         MOD.port_is_available = lambda port: True
         self.eid = 'abcdef0123456789'
         self.secret = 'enroll-secret-abcdef0123456789'
@@ -236,6 +241,10 @@ class EnrollEnv:
         self.operation_id = '0123456789abcdef0123456789abcdef'
 
     def cleanup(self):
+        if self._previous_audit_log is None:
+            os.environ.pop('FRP_AUDIT_LOG', None)
+        else:
+            os.environ['FRP_AUDIT_LOG'] = self._previous_audit_log
         self.tmp.cleanup()
 
     def body(self, machine_id='machine-one', services=None, pubkey=None):
@@ -382,6 +391,7 @@ def test_redeem_nested_lock_bounded():
         'bootstrap_dir': str(bootstrap),
         'token_file': str(token),
         'enrollment_retention_days': 1,
+        'control_plane_root': str(root),
     }
     cfg_path.write_text(json.dumps(cfg) + '\n')
     now = int(time.time())
@@ -429,4 +439,14 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    # Earlier retention tests also emit audit events; isolate the entire run.
+    previous_audit_log = os.environ.get('FRP_AUDIT_LOG')
+    with tempfile.TemporaryDirectory(prefix='drlink-core-audit-') as audit_dir:
+        os.environ['FRP_AUDIT_LOG'] = str(Path(audit_dir) / 'audit.jsonl')
+        try:
+            main()
+        finally:
+            if previous_audit_log is None:
+                os.environ.pop('FRP_AUDIT_LOG', None)
+            else:
+                os.environ['FRP_AUDIT_LOG'] = previous_audit_log

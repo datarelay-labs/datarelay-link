@@ -51,7 +51,11 @@ class Env:
             "registry_file": str(self.registry),
             "enrollments_dir": str(self.enrollments),
             "token_file": str(self.token),
+            "control_plane_root": str(self.root),
         }
+        # Fault injection must exercise the disposable Core, never host state.
+        if MOD.RP is None or MOD.RP.root_from_cfg(cfg) != str(self.root):
+            raise AssertionError("atomicity test Core fixture is not isolated")
         self.cfg.write_text(json.dumps(cfg, indent=2) + "\n")
         MOD.atomic_write_json(self.registry, MOD.empty_registry())
         self.allocator = MOD.Allocator(str(self.cfg))
@@ -94,9 +98,10 @@ class Env:
         return json.loads((self.enrollments / f"{eid}.json").read_text(encoding="utf-8"))
 
 
-def inject(point_name):
+def inject(point_name, observed):
     def boom(point):
         if point == point_name:
+            observed.append(point)
             raise OSError("injected %s" % point_name)
 
     return boom
@@ -108,11 +113,13 @@ def main():
     try:
         eid, secret = env.add_enrollment("a" * 16, "secret-" + "a" * 16)
         orig = MOD._test_enrollment_failure_point
-        MOD._test_enrollment_failure_point = inject("AFTER_REGISTRY_COMMIT")
+        observed = []
+        MOD._test_enrollment_failure_point = inject("AFTER_REGISTRY_COMMIT", observed)
         try:
             code, result = env.enroll("machine-split", eid, secret)
         finally:
             MOD._test_enrollment_failure_point = orig
+        assert observed == ["AFTER_REGISTRY_COMMIT"], observed
         reg = env.load_registry()
         enr = env.load_enrollment(eid)
         assert code != 200, result
@@ -128,11 +135,13 @@ def main():
     try:
         eid, secret = env.add_enrollment("b" * 16, "secret-" + "b" * 16)
         orig = MOD._test_enrollment_failure_point
-        MOD._test_enrollment_failure_point = inject("AFTER_ENROLLMENT_RECORD_COMMIT")
+        observed = []
+        MOD._test_enrollment_failure_point = inject("AFTER_ENROLLMENT_RECORD_COMMIT", observed)
         try:
             code, result = env.enroll("machine-rec", eid, secret)
         finally:
             MOD._test_enrollment_failure_point = orig
+        assert observed == ["AFTER_ENROLLMENT_RECORD_COMMIT"], observed
         reg = env.load_registry()
         enr = env.load_enrollment(eid)
         enrolled = "machine-rec" in (reg.get("clients") or {})
@@ -147,11 +156,13 @@ def main():
     try:
         eid, secret = env.add_enrollment("c" * 16, "secret-" + "c" * 16)
         orig = MOD._test_enrollment_failure_point
-        MOD._test_enrollment_failure_point = inject("AFTER_BOOTSTRAP_CONSUME")
+        observed = []
+        MOD._test_enrollment_failure_point = inject("AFTER_BOOTSTRAP_CONSUME", observed)
         try:
             code, result = env.enroll("machine-boot", eid, secret)
         finally:
             MOD._test_enrollment_failure_point = orig
+        assert observed == ["AFTER_BOOTSTRAP_CONSUME"], observed
         reg = env.load_registry()
         enr = env.load_enrollment(eid)
         enrolled = "machine-boot" in (reg.get("clients") or {})
