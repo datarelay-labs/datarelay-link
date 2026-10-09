@@ -12,13 +12,19 @@ export function mergeRemoteServiceJob(queued:any,detail:any){
 }
 
 /** UXB-03: one canonical Remote Service editor used from both Services and Setup. */
-export function RemoteServiceEditor({api,ownerHint="",onSelection,initialSelection,resourceCatalog,onBusyChange}:{
-  api:LinkApi,ownerHint?:string,resourceCatalog?:CoreCatalog|null,
+/** Bind the guided setup to its observed Host, not a retained/manual editor value.
+ * The standalone advanced Services editor intentionally remains unbound. */
+export function remoteServiceOwner(owner:string,ownerHint:string,lockOwner:boolean):string{
+  return String(lockOwner?ownerHint:owner||"").trim();
+}
+
+export function RemoteServiceEditor({api,ownerHint="",onSelection,initialSelection,resourceCatalog,onBusyChange,lockOwner=false}:{
+  api:LinkApi,ownerHint?:string,resourceCatalog?:CoreCatalog|null,lockOwner?:boolean,
   onBusyChange?:(busy:boolean)=>void,
   onSelection?:(selection:{owner:string,name:string,service:string,destination:string})=>void,
   initialSelection?:{owner?:string,name?:string,service?:string,destination?:string},
 }){
-  const [owner,setOwner]=useState(initialSelection?.owner||ownerHint||""),[name,setName]=useState(initialSelection?.name||"");
+  const [owner,setOwner]=useState(lockOwner?ownerHint:initialSelection?.owner||ownerHint||""),[name,setName]=useState(initialSelection?.name||"");
   const [operation,setOperation]=useState("set"),[destination,setDestination]=useState(initialSelection?.destination||"this-host");
   const [service,setService]=useState(initialSelection?.service||""),[enabled,setEnabled]=useState(true);
   const [preview,setPreview]=useState<any>(null),[confirmation,setConfirmation]=useState("");
@@ -36,19 +42,20 @@ export function RemoteServiceEditor({api,ownerHint="",onSelection,initialSelecti
     requestGeneration.current+=1;
     setOwner(ownerHint);setPreview(null);setConfirmation("");setJob(null);setError("");setBusy(false);
   },[ownerHint]);
-  useEffect(()=>{onSelection?.({owner,name,service,destination})},[owner,name,service,destination]);
+  const actualOwner=remoteServiceOwner(owner,ownerHint,lockOwner);
+  useEffect(()=>{onSelection?.({owner:actualOwner,name,service,destination})},[actualOwner,name,service,destination]);
   function edit<T>(setter:(value:T)=>void,value:T){
     requestGeneration.current+=1;
     setter(value);setPreview(null);setConfirmation("");setJob(null);setError("");
   }
-  const ready=!!(owner.trim()&&name.trim()&&(operation==="delete"||destination.trim()&&service.trim()));
+  const ready=!!(actualOwner&&name.trim()&&(operation==="delete"||destination.trim()&&service.trim()));
   const required=String(preview?.confirmation_class||"APPLY");
   async function doPreview(){
     if(!ready||busy)return;
     const generation=++requestGeneration.current;
     setError("");setPreview(null);setConfirmation("");setJob(null);setBusy(true);
     try{
-      const body:any={owner:owner.trim(),name:name.trim(),operation};
+      const body:any={owner:actualOwner,name:name.trim(),operation};
       if(operation==="set")Object.assign(body,{destination:destination.trim(),service:service.trim(),enabled});
       const result=await api("/api/v1/remote-services/preview",{method:"POST",body:JSON.stringify(body)});
       if(generation!==requestGeneration.current)return;
@@ -94,7 +101,11 @@ export function RemoteServiceEditor({api,ownerHint="",onSelection,initialSelecti
     </div>}
     {error&&<p className="error" role="alert">{error}</p>}
     <fieldset className="dr-uxb-form" disabled={busy}>
-      <label className="dr-field"><span>Owning Agent / Managed Host</span><input value={owner} onChange={e=>edit(setOwner,e.target.value)} placeholder="Host name or ID"/></label>
+      <label className="dr-field"><span>Owning Agent / Managed Host</span>
+        <input value={actualOwner} readOnly={lockOwner}
+          onChange={e=>{if(!lockOwner)edit(setOwner,e.target.value)}} placeholder="Host name or ID"/>
+        {lockOwner&&<small>Bound to the observed Agent selected above. To change the owner, choose another Agent in the setup guide.</small>}
+      </label>
       <label className="dr-field"><span>Remote Service name</span><input value={name} onChange={e=>edit(setName,e.target.value)} placeholder="e.g. ssh-admin"/></label>
       <label className="dr-field"><span>Change</span><select value={operation} onChange={e=>edit(setOperation,e.target.value)}><option value="set">Create / edit</option><option value="delete">Delete</option></select></label>
       {operation==="set"&&<>

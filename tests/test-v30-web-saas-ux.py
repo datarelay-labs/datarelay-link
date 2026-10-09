@@ -247,6 +247,16 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertNotIn("localStorage", P0_ENROLL_SOURCE)
         self.assertNotIn("sessionStorage", P0_ENROLL_SOURCE)
 
+    def test_first_connection_refresh_ignores_superseded_core_inventory(self):
+        self.assertIn("const refreshGeneration=useRef(0);", SETUP_SOURCE)
+        self.assertIn("const planeRef=useRef(plane);", SETUP_SOURCE)
+        self.assertIn("const generation=++refreshGeneration.current;", SETUP_SOURCE)
+        self.assertIn("if(refreshGeneration.current!==generation)return;", SETUP_SOURCE)
+        self.assertIn("return()=>{refreshGeneration.current+=1;}", SETUP_SOURCE)
+        self.assertIn('if(planeRef.current==="remote")chooseRemoteHost("");', SETUP_SOURCE)
+        self.assertIn("selectedHostRef.current=\"\";", SETUP_SOURCE)
+        self.assertIn("planeRef.current=value;", SETUP_SOURCE)
+
     def test_uxb_first_use_keeps_three_planes_and_core_authority_separate(self):
         self.assertIn('FirstUseHome data={data}', SOURCE)
         self.assertIn('if(active==="setup"){', SOURCE)
@@ -267,7 +277,12 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn('GuidedPolicyJourney key={plane}', SETUP_SOURCE)
         self.assertIn('lockedPlane', SETUP_SOURCE)
         self.assertIn('AccessEvidenceExplorer api={api}', SETUP_SOURCE)
-        self.assertIn('RemoteServiceEditor key={selectedHost||"no-observed-host"} api={api}', SETUP_SOURCE)
+        self.assertIn('canEdit&&selected?<RemoteServiceEditor key={selectedHost} api={api} ownerHint={selectedHost} lockOwner', SETUP_SOURCE)
+        self.assertIn('Selected Agent must be observed before publishing', SETUP_SOURCE)
+        self.assertIn('Go to Agent selection', SETUP_SOURCE)
+        self.assertIn('Publishing for {selected.name||selected.label||selected.hostname||selected.id}', SETUP_SOURCE)
+        self.assertIn('const actualOwner=remoteServiceOwner(owner,ownerHint,lockOwner);', (ROOT/"web/src/uxb-remote-service.tsx").read_text())
+        self.assertIn('const body:any={owner:actualOwner,name:name.trim(),operation}', (ROOT/"web/src/uxb-remote-service.tsx").read_text())
         self.assertIn('function chooseRemoteHost(nextHost:string)', SETUP_SOURCE)
         self.assertIn('retargetRemoteHost(', SETUP_SOURCE)
         self.assertIn('className="dr-uxb-next-guidance"', SETUP_SOURCE)

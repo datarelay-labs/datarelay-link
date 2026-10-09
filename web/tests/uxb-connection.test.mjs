@@ -140,6 +140,46 @@ test("Core-backed policy suggestions are optional; no implicit change is queued"
  assert.match(html,/Core validates the change/);
  assert.doesNotMatch(html,/Apply through Core/);
 });
+test("Guided setup cannot publish to a Host other than the observed explicit selection",()=>{
+ assert.equal(service.remoteServiceOwner("host-a","host-b",true),"host-b");
+ assert.equal(service.remoteServiceOwner("host-a","host-b",false),"host-a");
+ assert.equal(service.remoteServiceOwner("host-a","",true),"");
+ const guided=renderToStaticMarkup(React.createElement(service.RemoteServiceEditor,{
+  api:async()=>{throw new Error("SSR must not call Core")},
+  ownerHint:"host-b",lockOwner:true,
+  initialSelection:{owner:"host-a",name:"ssh-admin",service:"ssh-tcp22",destination:"this-host"}
+ }));
+ assert.match(guided,/Owning Agent \/ Managed Host/);
+ assert.match(guided,/value="host-b"/);
+ assert.match(guided,/readOnly=""/);
+ assert.doesNotMatch(guided,/value="host-a"/);
+ const unset=renderToStaticMarkup(React.createElement(service.RemoteServiceEditor,{
+  api:async()=>{throw new Error("SSR must not call Core")},
+  ownerHint:"",lockOwner:true,
+  initialSelection:{owner:"host-a",name:"ssh-admin",service:"ssh-tcp22",destination:"this-host"}
+ }));
+ assert.match(unset,/readOnly=""/);
+ assert.match(unset,/value=""/);
+ assert.match(unset,/<button[^>]*disabled=""[^>]*>Preview service impact<\/button>/);
+ const raw=renderToStaticMarkup(React.createElement(service.RemoteServiceEditor,{
+  api:async()=>{throw new Error("SSR must not call Core")},
+  ownerHint:"host-b",
+  initialSelection:{owner:"host-a",name:"ssh-admin",service:"ssh-tcp22",destination:"this-host"}
+ }));
+ assert.match(raw,/value="host-a"/);
+ assert.doesNotMatch(raw,/readOnly=""/);
+});
+test("Setup does not mount a Host-bound editor until selected Host is observed",()=>{
+ const html=renderToStaticMarkup(React.createElement(setup.FirstConnectionSetup,{
+  api:async()=>{throw new Error("SSR must not call Core")},
+  operator:{role:"Admin"},
+  initialDraft:{plane:"remote",step:2,selectedHost:"host-a",
+   service:{owner:"host-a",name:"ssh-admin",service:"ssh-tcp22",destination:"this-host"}},
+ }));
+ assert.match(html,/Selected Agent must be observed/);
+ assert.match(html,/Go to Agent selection/);
+ assert.doesNotMatch(html,/data-testid="uxb-remote-service"/);
+});
 test("service publication is preview/typed/queued and cannot imply deployed",()=>{
  const html=renderToStaticMarkup(React.createElement(service.RemoteServiceEditor,{
   api:async()=>{throw new Error("SSR must not call Core API")},
@@ -184,7 +224,7 @@ test("setup fixes selected plane for the Core-backed guided policy editor",()=>{
  const src=readFileSync(join(root,"src","uxb-setup.tsx"),"utf8");
  assert.match(src,/initialPlane=\{plane\} lockedPlane/);
  assert.match(src,/onFlowChange=\{f=>/);
- assert.match(src,/RemoteServiceEditor key=\{selectedHost\|\|"no-observed-host"\} api=\{api\}/);
+ assert.match(src,/canEdit&&selected\?<RemoteServiceEditor key=\{selectedHost\} api=\{api\} ownerHint=\{selectedHost\} lockOwner/);
  assert.match(src,/AccessEvidenceExplorer api=\{api\}/);
 });
 

@@ -88,6 +88,8 @@ export function FirstConnectionSetup({api,operator,onNavigate,initialDraft,onDra
   const wizardBusy=serviceBusy||enrollmentBusy;
   const [selectedHost,setSelectedHost]=useState(initialDraft?.selectedHost||"");
   const selectedHostRef=useRef(initialDraft?.selectedHost||"");
+  const refreshGeneration=useRef(0);
+  const planeRef=useRef(plane);
   const [serviceName,setServiceName]=useState(initialDraft?.serviceName||"");
   const [serviceDraft,setServiceDraft]=useState(initialDraft?.service||{owner:"",name:"",service:"",destination:"this-host"});
   const [source,setSource]=useState(initialDraft?.source||"");
@@ -106,13 +108,14 @@ export function FirstConnectionSetup({api,operator,onNavigate,initialDraft,onDra
     setServiceDraft(cleared.service!);
     setServiceName("");setSource("");setDestination("");setSelector("");setError("");
   }
-  useEffect(()=>{void refreshCore()},[]);
+  useEffect(()=>{void refreshCore();return()=>{refreshGeneration.current+=1;}},[]);
   // Only non-secret form choices stay in Shell's current authenticated React
   // session. A Core change plan, OTP, token or invitation is never persisted.
   useEffect(()=>{onDraftChange?.({plane,step,selectedHost,serviceName,
     source,destination,selector,service:serviceDraft})},
     [plane,step,selectedHost,serviceName,source,destination,selector,serviceDraft]);
   async function refreshCore(){
+    const generation=++refreshGeneration.current;
     setChecking(true);setError("");
     const r=await Promise.allSettled([
       api("/api/v1/inventory?resource_type=managed-host&limit=100"),
@@ -120,6 +123,8 @@ export function FirstConnectionSetup({api,operator,onNavigate,initialDraft,onDra
       api("/api/v1/enrollments?limit=50"),
       api("/api/v1/objects-groups?limit=50"),
     ]);
+    // An older Core snapshot cannot override a newer completed refresh.
+    if(refreshGeneration.current!==generation)return;
     if(r[0].status==="fulfilled"&&Array.isArray(r[0].value?.items)){
       const list=r[0].value.items;setHosts(list);
       // Do not silently switch the owning Agent to the first list entry.
@@ -128,14 +133,14 @@ export function FirstConnectionSetup({api,operator,onNavigate,initialDraft,onDra
       const currentHost=selectedHostRef.current;
       if(currentHost&&!list.some((x:any)=>String(x.id)===currentHost)){
         // A previously selected Agent is not evidence of another live owner.
-        if(plane==="remote")chooseRemoteHost("");
+        if(planeRef.current==="remote")chooseRemoteHost("");
         else{
           selectedHostRef.current="";
           setSelectedHost("");setServiceDraft(prev=>({...prev,owner:""}));
         }
       }
     }else{setHosts(null);setError("Managed Host inventory unavailable; prerequisite state is UNKNOWN.");
-      if(plane==="remote"&&selectedHostRef.current)chooseRemoteHost("");}
+      if(planeRef.current==="remote"&&selectedHostRef.current)chooseRemoteHost("");}
     if(r[1].status==="fulfilled"&&Array.isArray(r[1].value?.items))setServices(r[1].value.items);
     else setServices(null);
     if(r[2].status==="fulfilled"&&Array.isArray(r[2].value?.items))setEnrollments(r[2].value);
@@ -147,8 +152,12 @@ export function FirstConnectionSetup({api,operator,onNavigate,initialDraft,onDra
   }
   const stages=firstUseStages[plane];
   const nextAction=firstConnectionGuidance(plane,step,{hosts,selectedHost,source,destination,selector,serviceName});
-  function changePlane(value:AccessPlane){setPlane(value);setStep(1);setSource("");setDestination("");setSelector("");
-    setServiceName("");setServiceDraft({owner:"",name:"",service:"",destination:"this-host"});setError("")}
+  function changePlane(value:AccessPlane){
+    if(value===planeRef.current)return;
+    planeRef.current=value;selectedHostRef.current="";
+    setPlane(value);setSelectedHost("");setStep(1);setSource("");setDestination("");setSelector("");
+    setServiceName("");setServiceDraft({owner:"",name:"",service:"",destination:"this-host"});setError("");
+  }
   return <div className="dr-uxb-setup" data-testid="uxb-connection-setup">
     <section className="card dr-uxb-setup-hero">
       <p className="dr-eyebrow">One safe path · Core-authoritative connection setup</p>
@@ -222,11 +231,19 @@ export function FirstConnectionSetup({api,operator,onNavigate,initialDraft,onDra
         {!selectedHost&&<option value="">{hosts===null?"Managed Host inventory: UNKNOWN":hosts.length?"Select an observed Managed Host":"No observed Managed Host"}</option>}
         {(hosts||[]).map(h=><option key={h.id} value={String(h.id)}>{h.name||h.label||h.id}</option>)}
       </select></label>
-      {!selectedHost&&<p className="warning-box" role="status">Select the actual owning Agent above. No Host is selected; a name typed manually will still require Core validation.</p>}
-      {canEdit?<RemoteServiceEditor key={selectedHost||"no-observed-host"} api={api} ownerHint={selectedHost} initialSelection={serviceDraft} resourceCatalog={catalog}
+      {!selected?<div className="warning-box dr-uxb-owner-guidance" role="status">
+        <strong>Selected Agent must be observed before publishing</strong>
+        <p>Choose the intended Agent in Step 1 and refresh Core if its status is UNKNOWN. This guide cannot preview for a typed, unobserved owner.</p>
+        <button className="secondary" type="button" disabled={wizardBusy} onClick={()=>setStep(1)}>Go to Agent selection →</button>
+      </div>:<p className="dr-uxb-selected-owner" role="status">
+        <strong>Publishing for {selected.name||selected.label||selected.hostname||selected.id}</strong>
+        <span> · Agent ID {selected.id} · {hostReadinessLabel(selected)}. Connection remains NOT VERIFIED.</span>
+      </p>}
+      {canEdit&&selected?<RemoteServiceEditor key={selectedHost} api={api} ownerHint={selectedHost} lockOwner
+        initialSelection={serviceDraft} resourceCatalog={catalog}
         onBusyChange={setServiceBusy}
         onSelection={s=>{setServiceDraft(s);setServiceName(s.name);if(s.service)setSelector(s.service)}}/>:
-      <p className="warning-box">Your role can inspect services but cannot publish them.</p>}
+       !canEdit?<p className="warning-box">Your role can inspect services but cannot publish them.</p>:null}
       <button className="secondary" onClick={()=>onNavigate?.("services","connections")}>View actual Published Services →</button>
     </div>}
     {step===2&&plane!=="remote"&&<section className="card dr-uxb-choice">
