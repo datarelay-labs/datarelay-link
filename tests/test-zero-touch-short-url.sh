@@ -157,12 +157,27 @@ OUT_DOMAIN_WINDOWS="$WORKDIR/domain-windows-fallback.out"
 python3 "$ROOT/tools/frp-create-client" --one-line --platform windows --rdp \
   --client-name domain-win-fallback --note 'dns-win' >"$OUT_DOMAIN_WINDOWS" \
   || fail "Windows one-line with public_url_host domain"
-grep -q 'powershell.exe -NoProfile -ExecutionPolicy Bypass -Command' "$OUT_DOMAIN_WINDOWS" \
-  || { cat "$OUT_DOMAIN_WINDOWS"; fail "Windows private-CA fallback missing pinned command"; }
-grep -q 'CA fingerprint mismatch' "$OUT_DOMAIN_WINDOWS" \
-  || { cat "$OUT_DOMAIN_WINDOWS"; fail "Windows private-CA fallback missing CA fingerprint gate"; }
-grep -q 'FRP_ALLOCATOR_CA_SHA256' "$OUT_DOMAIN_WINDOWS" \
-  || { cat "$OUT_DOMAIN_WINDOWS"; fail "Windows private-CA fallback missing CA pin environment"; }
+# Windows now transports the hash-before-execute script as UTF-16LE
+# -EncodedCommand. Validate the decoded source without echoing the embedded
+# one-time credential in failed-test logs (F001 regression).
+python3 - "$OUT_DOMAIN_WINDOWS" <<'PY' || fail "Windows private-CA fallback missing pinned command or security gates"
+import base64
+import re
+import sys
+from pathlib import Path
+output = Path(sys.argv[1]).read_text(encoding='utf-8')
+match = re.search(
+    r'powershell\.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand ([A-Za-z0-9+/=]+)',
+    output,
+)
+assert match, 'Windows launcher must be an encoded PowerShell command'
+inner = base64.b64decode(match.group(1), validate=True).decode('utf-16le')
+assert 'CA fingerprint mismatch' in inner, 'pinned CA fingerprint validation missing'
+assert 'FRP_ALLOCATOR_CA_SHA256' in inner, 'CA pin environment missing'
+assert 'SHA256 mismatch' in inner, 'installer hash validation missing'
+assert 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File' in inner
+assert 'bootstrap-client.ps1' in inner, 'installer target missing'
+PY
 if grep -q '/i/' "$OUT_DOMAIN_WINDOWS"; then
   cat "$OUT_DOMAIN_WINDOWS"
   fail "Windows public_url_host incorrectly enabled short URL without bootstrap_hostname"
