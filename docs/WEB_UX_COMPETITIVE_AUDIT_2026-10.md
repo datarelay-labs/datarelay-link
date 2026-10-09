@@ -1,5 +1,12 @@
 # DRLink 3.0 Web UI/UX Competitive Audit — 2026-10-09
 
+> **Historical first pass (13 products):** Expanded on 2026-10-09 in
+> `docs/WEB_USER_JOURNEY_UX_ROADMAP.md` with **19 official-vendor
+> references** and a separate novice-navigation/first-use UI roadmap.
+> The first three P0 technical UI components have since been committed
+> to the isolated Web development preview; do not confuse that with
+> completion of DRL3-7B beginner usability or User E2E.
+
 Status: **RESEARCH / PROPOSED**. This is not a release decision, a new feature claim, or authorization to change Core policy/security. It supplements `docs/WEB_SAAS_UX_SYSTEM.md` and the DR Control visual/semantic-token reference.
 
 ## Basis, coverage, limitations
