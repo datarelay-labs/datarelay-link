@@ -139,6 +139,23 @@ test('large Remote policy family cannot hide observed Internet or AI rules',()=>
     assert.throws(()=>menu.combineObservedPolicyPlanes(bad,2),/Core|UNKNOWN/);
   }
 });
+test('Audit retention status is never fabricated as Normal or zero from missing Core evidence',()=>{
+  const full={config:{control_days:365,access_days:90,max_events:500000},
+    total_events:0,db_size_bytes:0,capacity_exceeded:false,
+    capacity_policy:"Core separates control and access retention"};
+  assert.deepEqual(menu.requireObservedAuditRetention(full),full);
+  assert.equal(menu.requireObservedAuditRetention({...full,total_events:17,db_size_bytes:943,
+    capacity_exceeded:true}).capacity_exceeded,true);
+  for(const broken of [null,undefined,{},[],{error:"offline"},
+    {...full,total_events:undefined},{...full,total_events:-1},
+    {...full,total_events:"0"},{...full,db_size_bytes:null},
+    {...full,capacity_exceeded:undefined},{...full,capacity_exceeded:"false"},
+    {...full,config:null},{...full,config:{control_days:365,access_days:90}},
+    {...full,config:{control_days:365,access_days:0,max_events:500000}},
+    {...full,capacity_policy:12}]){
+    assert.throws(()=>menu.requireObservedAuditRetention(broken),/UNKNOWN/);
+  }
+});
 test('partial Objects inventory remains available for its existing explicit UNKNOWN warning',()=>{
   // ObjectsWorkspace itself distinguishes incomplete resources from a valid empty list.
   for(const response of [{resources:{}},{resources:{'network-object':{items:[]}}}]){

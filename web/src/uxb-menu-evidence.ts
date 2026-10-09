@@ -99,6 +99,30 @@ export function requireObservedObjectContinuation(
   return page;
 }
 
+/** A retention read must prove every metric before the UI can say "Normal".
+ * Zero is valid only when Core explicitly returned the numeric value. */
+export type ObservedAuditRetention={
+  config:{control_days:number,access_days:number,max_events:number},
+  total_events:number,db_size_bytes:number,capacity_exceeded:boolean,
+  capacity_policy:string,
+};
+export function requireObservedAuditRetention(payload:unknown):ObservedAuditRetention{
+  const fail=()=>{throw new Error("Core Audit Retention status is incomplete or malformed. State is UNKNOWN.");};
+  if(!payload||typeof payload!=="object"||Array.isArray(payload))return fail();
+  const record=payload as Record<string,unknown>;
+  const config=record.config;
+  if(!config||typeof config!=="object"||Array.isArray(config))return fail();
+  const values=config as Record<string,unknown>;
+  const nonnegative=(n:unknown)=>typeof n==="number"&&Number.isSafeInteger(n)&&n>=0;
+  const positive=(n:unknown)=>nonnegative(n)&&Number(n)>0;
+  if(!nonnegative(record.total_events)||!nonnegative(record.db_size_bytes)
+    ||typeof record.capacity_exceeded!=="boolean"
+    ||typeof record.capacity_policy!=="string"||!record.capacity_policy.trim()
+    ||!positive(values.control_days)||!positive(values.access_days)
+    ||!positive(values.max_events))return fail();
+  return payload as ObservedAuditRetention;
+}
+
 export function requireObservedMenuPayload(route:string,payload:unknown):any{
   if(payload===null||typeof payload!=="object"||Array.isArray(payload))
     throw new Error("Core response unavailable or malformed. Page state is UNKNOWN; retry the read.");

@@ -768,6 +768,28 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         ):
             self.assertIn(expected, audit, expected)
 
+    def test_audit_retention_missing_core_evidence_is_unknown_and_never_normal_zero(self):
+        audit = SOURCE.split("function AuditExplorer(", 1)[1].split("function AgentRolloutPreviewPanel(", 1)[0]
+        evidence=(ROOT / "web/src/uxb-menu-evidence.ts").read_text(encoding="utf-8")
+        self.assertIn("export function requireObservedAuditRetention(", evidence)
+        for marker in (
+            'const [retentionState,setRetentionState]=useState<"loading"|"ready"|"unknown">("loading");',
+            'const retentionReadEpoch=useRef(0);',
+            'requireObservedAuditRetention(await api("/api/v1/audit/retention"))',
+            'setRetention(null);setRetentionState("unknown");',
+            'retentionState==="ready"&&retention&&',
+            'retentionState==="unknown"&&',
+            'Retry Audit Retention read',
+            'disabled={retentionState!=="ready"',
+            'setRetention(null);setRetentionState("loading");',
+        ):
+            self.assertIn(marker,audit,marker)
+        for false_status in ('retention.total_events||0','retention.db_size_bytes||0',
+                             '{retention&&<div className="dr-kpi-strip'):
+            self.assertNotIn(false_status,audit)
+        self.assertIn('retentionState==="ready"&&retention&&<div className="dr-kpi-strip',audit)
+        self.assertIn('retention.capacity_exceeded?"Exceeded":"Normal"',audit)
+
     def test_policy_read_does_not_hide_internet_and_ai_behind_remote_limit(self):
         helper = (ROOT / "web/src/uxb-menu-evidence.ts").read_text(encoding="utf-8")
         view = SOURCE.split("function View(", 1)[1].split("function WorkspaceIcon(", 1)[0]
