@@ -2,6 +2,7 @@
 """PF-9 real two-stage Web password -> OTP sign-in, no session until factor."""
 from __future__ import annotations
 
+import hashlib
 import tempfile
 import time
 import unittest
@@ -167,6 +168,53 @@ class PasswordThenOtpTests(unittest.TestCase):
         with self.assertRaisesRegex(ControlPlaneError, "Invalid credentials or MFA"):
             self.start()
         self.assertEqual(self.auth.conn.execute("SELECT COUNT(*) FROM web_sessions").fetchone()[0], 0)
+
+    def test_full_global_challenge_pool_never_evicts_unexpired_login(self):
+        # A flooded global pool cannot invalidate an unexpired proof,
+        # including one belonging to another operator in the same service.
+        # Build a second MFA-enabled operator in the temporary test catalog.
+        # A reader who knows their own password must not terminate Admin's
+        # pending proof by flooding the shared challenge pool.
+        second_material = self.auth.prepare_mfa_material("reader")
+        reader_code, _ = totp_code(second_material["totp_secret"], at=self.base)
+        reader = self.auth.create_operator_local(
+            username="reader", role="Read Only", password="ReaderPass1",
+            totp_secret=second_material["totp_secret"],
+            recovery_codes=second_material["recovery_codes"],
+            totp_value=reader_code, now=self.base,
+        )
+        def reader_login():
+            return self.auth.begin_password_login(
+                username="reader", password="ReaderPass1",
+                source_addr="127.0.0.1", user_agent="fixture-client",
+                now=self.step,
+            )
+
+        with patch("drlink_web_auth.MFA_LOGIN_CHALLENGE_LIMIT", 2):
+            original = self.start()
+            reader_pending = reader_login()
+            with self.assertRaisesRegex(ControlPlaneError, "Invalid credentials or MFA"):
+                reader_login()
+            self.assertEqual(len(self.auth._mfa_logins), 2)
+            original_hash = hashlib.sha256(original.challenge_token.encode()).hexdigest()
+            self.assertIn(original_hash, self.auth._mfa_logins)
+            self.assertIsInstance(reader_pending, WebMfaLoginChallenge)
+            self.assertEqual(
+                self.auth._mfa_logins[
+                    hashlib.sha256(reader_pending.challenge_token.encode()).hexdigest()
+                ]["operator_id"], str(reader["operator_id"]),
+            )
+            self.assertIsInstance(self.finish(original), WebSessionIssue)
+            self.assertEqual(len(self.auth._mfa_logins), 1)
+
+
+    def test_per_account_pending_challenge_quota_preserves_existing_proofs(self):
+        with patch("drlink_web_auth.MFA_LOGIN_PER_ACCOUNT_LIMIT", 2):
+            original = self.start()
+            self.start()
+            with self.assertRaisesRegex(ControlPlaneError, "Invalid credentials or MFA"):
+                self.start()
+            self.assertIsInstance(self.finish(original), WebSessionIssue)
 
     def test_wrong_password_never_returns_challenge_or_session(self):
         with self.assertRaisesRegex(ControlPlaneError, "Invalid credentials or MFA"):

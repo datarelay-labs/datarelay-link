@@ -17,8 +17,10 @@ verifies the product's password hash and current operator status:
   enrollment key and QR onboarding. Enrollment confirmation must succeed
   before a full session is issued.
 - **MFA required and already enrolled:** issues a cryptographically random
-  short-lived **pre-auth challenge** (3-minute TTL, max 1,024 in memory)
-  with no session ID, cookie, CSRF token, role or TOTP secret.
+  short-lived **pre-auth challenge** (3-minute TTL, max 1,024 globally
+  and 5 per account in memory). New challenges are rejected at capacity,
+  never allowed to evict another valid unexpired password proof.
+  There is no session ID, cookie, CSRF token, role or TOTP secret.
   The frontend clears the password input and displays a **separate**
   authenticator-code or one-time recovery-code screen.
 - `POST /api/v1/auth/login/complete` consumes that challenge **once**,
@@ -44,6 +46,10 @@ verifies the product's password hash and current operator status:
 - A password-successful but **MFA-incomplete** attempt does not reset
   prior OTP failure counters. Repeated invalid codes across newly
   requested challenges still trigger the normal login rate limit.
+- The pending-challenge pool is bounded globally **and by account**.
+  If full, the server denies additional challenge creation without
+  deleting an unexpired proof that another sign-in may still need.
+  Expired challenges are pruned before enforcing either limit.
 - The final Core transaction re-reads the effective role, enabled state,
   policy revision and MFA enrollment, and atomically consumes recovery
   codes or advances the `mfa_last_counter` **only when larger**.

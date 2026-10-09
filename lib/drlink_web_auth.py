@@ -46,6 +46,7 @@ MFA_ENROLLMENT_SECONDS = 10 * 60
 MFA_ENROLLMENT_LIMIT = 1024
 MFA_LOGIN_CHALLENGE_SECONDS = 3 * 60
 MFA_LOGIN_CHALLENGE_LIMIT = 1024
+MFA_LOGIN_PER_ACCOUNT_LIMIT = 5
 
 _USERNAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9._-]{0,63}$")
 _RECOVERY_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
@@ -827,9 +828,22 @@ class WebAuthService:
             for token_hash, value in list(self._mfa_logins.items()):
                 if float(value["expires_mono"]) <= now_mono:
                     self._mfa_logins.pop(token_hash, None)
-            if len(self._mfa_logins) >= MFA_LOGIN_CHALLENGE_LIMIT:
-                oldest = min(self._mfa_logins, key=lambda h: self._mfa_logins[h]["created_mono"])
-                self._mfa_logins.pop(oldest, None)
+            # Never evict an unexpired proof, especially one belonging to
+            # a different operator. Keep a separate per-account bound so a
+            # password-known principal cannot monopolize the global pool.
+            pending_for_account = sum(
+                value["operator_id"] == str(row["id"])
+                for value in self._mfa_logins.values()
+            )
+            if (
+                pending_for_account >= MFA_LOGIN_PER_ACCOUNT_LIMIT
+                or len(self._mfa_logins) >= MFA_LOGIN_CHALLENGE_LIMIT
+            ):
+                self._audit(
+                    "web.login.failed", actor_id=str(row["id"]),
+                    result="deny", reason_code="MFA_CHALLENGE_LIMIT",
+                )
+                raise ControlPlaneError("Invalid credentials or MFA.")
             token = secrets.token_urlsafe(32)
             token_hash = _sha256_text(token)
             self._mfa_logins[token_hash] = {

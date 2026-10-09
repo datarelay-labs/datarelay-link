@@ -98,6 +98,7 @@ scenarios:
       - "password proof for enrolled MFA issues only a short-lived non-session challenge"
       - "current operator state, source agent, factor and replay must pass before session/cookie"
       - "invalid OTP does not reset per-account MFA throttle"
+      - "global and per-account pre-auth quotas never evict unrelated unexpired challenges"
       - "Web login screen moves OTP to a separate second stage with no persisted credential"
     release_gate: true
 
