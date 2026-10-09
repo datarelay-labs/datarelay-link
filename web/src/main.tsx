@@ -7,7 +7,7 @@ import {AccessEvidenceExplorer,GuidedPolicyJourney,coreFlowKey,coreCutoffKey,vis
 import {EnrollmentOnboarding} from "./p0-enrollment";
 import {navGroups,groupFor,labelFor,pageDescriptions,visibleRoute,navMatches,setupContextForObjectFamily} from "./uxb-navigation";
 import {FirstUseHome,isFreshInstallation,observedRecentFeed,observedNumber,accessPlaneCount,coreHealthState,type RecentFeed} from "./uxb-home";
-import {requireObservedMenuPayload,requireObservedInventoryContinuation,requireObservedObjectContinuation,requireObservedAuditRetention,auditRetentionRunPermitted,requireObservedAccessHygiene,hygieneInspectTarget,requireObservedJobStart,requireObservedFleetApply,requireObservedAuditExport,requireObservedRolloutPreview,requireObservedInventoryExport,requireObservedJobDetail,requireObservedJobCancellation,isPartialCorePage,selectMenuPage,combineObservedPolicyPlanes,type MenuPagePosition} from "./uxb-menu-evidence";
+import {requireObservedMenuPayload,requireObservedInventoryContinuation,requireObservedObjectContinuation,requireObservedAuditRetention,auditRetentionRunPermitted,requireObservedAccessHygiene,hygieneInspectTarget,requireObservedJobStart,requireObservedFleetApply,requireObservedFleetPreview,requireObservedFleetApplyForPreview,requireObservedAuditExport,requireObservedRolloutPreview,requireObservedInventoryExport,requireObservedJobDetail,requireObservedJobCancellation,isPartialCorePage,selectMenuPage,combineObservedPolicyPlanes,type MenuPagePosition} from "./uxb-menu-evidence";
 import {RemoteServiceEditor} from "./uxb-remote-service";
 import {RevisionHistory} from "./uxb-revisions";
 import {AgentVersionDrift} from "./uxb-versions";
@@ -1155,6 +1155,8 @@ function JobOperations({operator}:{operator:any}){
   const [jobType,setJobType]=useState("doctor"),[resourceType,setResourceType]=useState("managed-host"),[resource,setResource]=useState(""),[detailId,setDetailId]=useState("");
   const [fleetResourceType,setFleetResourceType]=useState("managed-host"),[fleetResource,setFleetResource]=useState(""),[fleetDescription,setFleetDescription]=useState(""),[fleetTags,setFleetTags]=useState(""),[fleetRemoveTags,setFleetRemoveTags]=useState(""),[fleetAddGroups,setFleetAddGroups]=useState(""),[fleetRemoveGroups,setFleetRemoveGroups]=useState(""),[fleetPreview,setFleetPreview]=useState<any>(null),[fleetConfirm,setFleetConfirm]=useState("");
   const [fleetApplyBusy,setFleetApplyBusy]=useState(false);
+  const fleetApplyInFlight=useRef(false);
+  const fleetPreviewInFlight=useRef(false);
   const fleetPreviewEpoch=useRef(0);
   const [fleetPreviewBusy,setFleetPreviewBusy]=useState(false);
   const [fleetPreviewKey,setFleetPreviewKey]=useState<string|null>(null);
@@ -1226,11 +1228,13 @@ function JobOperations({operator}:{operator:any}){
   function csvList(value:string){return value.split(",").map(x=>x.trim()).filter(Boolean)}
   function invalidateFleetReview(){
     fleetPreviewEpoch.current+=1;
+    fleetPreviewInFlight.current=false;
     setFleetPreview(null);setFleetPreviewKey(null);setFleetConfirm("");
     setFleetPreviewBusy(false);setError("");setMessage("");
   }
   async function previewFleetMetadata(){
-    if(fleetPreviewBusy||fleetApplyBusy)return;
+    if(fleetPreviewInFlight.current||fleetApplyInFlight.current||fleetApplyBusy)return;
+    fleetPreviewInFlight.current=true;
     const epoch=++fleetPreviewEpoch.current;
     const requestedKey=fleetDraftKey;
     setError("");setMessage("");setFleetConfirm("");
@@ -1238,16 +1242,23 @@ function JobOperations({operator}:{operator:any}){
     try{
       const changes:any={};
       if(fleetDescription!=="")changes.description=fleetDescription;
-      if(fleetTags.trim())changes.tags=JSON.parse(fleetTags);
+      if(fleetTags.trim()){
+        const parsed=JSON.parse(fleetTags);
+        if(!parsed||typeof parsed!=="object"||Array.isArray(parsed)
+          ||Object.entries(parsed).some(([key,value])=>!key.trim()||typeof value!=="string"))
+          throw new Error("Fleet tags must be a JSON object with text keys and text values.");
+        if(Object.keys(parsed).length)changes.tags=parsed;
+      }
       const removeTags=csvList(fleetRemoveTags);if(removeTags.length)changes.remove_tags=removeTags;
       const addGroups=csvList(fleetAddGroups);if(addGroups.length)changes.add_groups=addGroups;
       const removeGroups=csvList(fleetRemoveGroups);if(removeGroups.length)changes.remove_groups=removeGroups;
-      const result=await api("/api/v1/fleet/metadata/preview",{method:"POST",body:JSON.stringify({
-        resource_type:fleetResourceType,resource:fleetResource,changes
-      })});
+      if(!Object.keys(changes).length)
+        throw new Error("Enter a description, tags or group membership change before Preview.");
+      const request={resource_type:fleetResourceType,resource:fleetResource,changes};
+      const result=requireObservedFleetPreview(await api("/api/v1/fleet/metadata/preview",{
+        method:"POST",body:JSON.stringify(request)
+      }),request);
       if(epoch!==fleetPreviewEpoch.current)return;
-      if(typeof result?.change_plan_id!=="string"||!result.change_plan_id.trim())
-        throw new Error("UNKNOWN · Core Fleet Preview did not confirm a Change Plan ID.");
       setFleetPreview(result);setFleetPreviewKey(requestedKey);
     }catch(e:any){
       if(epoch===fleetPreviewEpoch.current){
@@ -1255,16 +1266,21 @@ function JobOperations({operator}:{operator:any}){
         setError(e.message||String(e));
       }
     }finally{
-      if(epoch===fleetPreviewEpoch.current)setFleetPreviewBusy(false);
+      if(epoch===fleetPreviewEpoch.current){fleetPreviewInFlight.current=false;setFleetPreviewBusy(false)}
     }
   }
+  const fleetPreviewGuard=!!fleetPreview&&fleetPreviewKey===fleetDraftKey&&!fleetPreviewBusy&&!fleetApplyBusy
+    &&typeof fleetPreview.change_plan_id==="string";
   async function applyFleetMetadata(){
-    if(!fleetPreview||fleetApplyBusy||fleetPreviewBusy||fleetPreviewKey!==fleetDraftKey||fleetConfirm!=="APPLY")return;
+    if(fleetApplyInFlight.current)return;
+    if(!fleetPreviewGuard||fleetConfirm!=="APPLY")return;
+    fleetApplyInFlight.current=true;
     setError("");setMessage("");setFleetApplyBusy(true);
     try{
-      const result=requireObservedFleetApply(await api("/api/v1/fleet/metadata/apply",{method:"POST",body:JSON.stringify({
-        change_plan_id:fleetPreview.change_plan_id,confirmation:fleetConfirm
-      })}));
+      const reviewed=fleetPreview;
+      const result=requireObservedFleetApplyForPreview(await api("/api/v1/fleet/metadata/apply",{method:"POST",body:JSON.stringify({
+        change_plan_id:reviewed.change_plan_id,confirmation:fleetConfirm
+      })}),reviewed);
       setMessage("Core confirmed Fleet metadata APPLIED at revision "+result.revision+" to "+result.result.target_count+" Managed Host(s).");
       setFleetPreview(null);setFleetPreviewKey(null);setFleetConfirm("");
     }catch(e:any){
@@ -1272,7 +1288,7 @@ function JobOperations({operator}:{operator:any}){
       // Never allow reusing an ambiguous Apply plan without fresh Preview.
       setFleetPreview(null);setFleetPreviewKey(null);setFleetConfirm("");
       setError("UNKNOWN · Fleet metadata apply response could not be confirmed. Inspect Change History before attempting a fresh Preview: "+(e.message||String(e)));
-    }finally{setFleetApplyBusy(false)}
+    }finally{fleetApplyInFlight.current=false;setFleetApplyBusy(false)}
   }
   async function exportInventory(){
     if(inventoryExportInFlight.current)return;
@@ -1363,7 +1379,7 @@ function JobOperations({operator}:{operator:any}){
         <p className="muted">This Core Change Plan is for the exact form values shown. Review impacted Managed Hosts before Apply; Preview alone makes no change.</p>
         <pre className="plan">{JSON.stringify({selection:fleetPreview.selection,changes:fleetPreview.changes,preview:fleetPreview.preview,impact:fleetPreview.impact},null,2)}</pre>
         <label className="apply-label">Type APPLY to commit<input value={fleetConfirm} onChange={e=>setFleetConfirm(e.target.value)} placeholder="APPLY" disabled={fleetApplyBusy}/></label>
-        <button className="danger" onClick={applyFleetMetadata} disabled={!fleetPreview?.change_plan_id||fleetPreviewKey!==fleetDraftKey||fleetPreviewBusy||fleetConfirm!=="APPLY"||fleetApplyBusy}>{fleetApplyBusy?"Confirming Core Apply…":"Apply Fleet Metadata"}</button>
+        <button className="danger" onClick={applyFleetMetadata} disabled={!fleetPreviewGuard||fleetConfirm!=="APPLY"}>{fleetApplyBusy?"Confirming Core Apply…":"Apply Fleet Metadata"}</button>
       </div>}
     </section>}
     {detail&&<div className="card">

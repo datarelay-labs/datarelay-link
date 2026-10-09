@@ -315,6 +315,65 @@ test('Inventory Export cannot claim CREATED without a real bounded Core artifact
     assert.throws(()=>menu.requireObservedInventoryExport(bad),/UNKNOWN/);
   }
 });
+test('Fleet metadata preview is bound to the actual Core selection, changes and impact',()=>{
+  const request={resource_type:'managed-host',resource:'',changes:{
+    description:'Fleet A',tags:{site:'lab'},add_groups:['ops','ops']
+  }};
+  const ok={change_plan_id:'cp_1234567890abcdefghijABCDEFGHIJ',operation_class:'CHANGE',
+    operation:'fleet-metadata.apply',resource_type:'managed-host-fleet',
+    resource_ref:'all',confirmation_class:'APPLY',expected_revision:18,
+    selection:{resource_type:'managed-host',resource_ref:'all',resource_display:'All hosts',target_count:2},
+    changes:{description:'Fleet A',tags:{site:'lab'},add_groups:['ops']},
+    preview:{target_count:2,operation_count:6,targets:[
+      {managed_host_id:'a',operation_count:3},{managed_host_id:'b',operation_count:3}]},
+    impact:{target_count:2,operation_count:6,requires_confirmation:true,
+      destructive:false,access_broadened:false,access_narrowed:false}
+  };
+  assert.equal(menu.requireObservedFleetPreview(ok,request),ok);
+  for(const invalid of [null,{},[],
+    {...ok,change_plan_id:''},{...ok,expected_revision:'18'},
+    {...ok,selection:{...ok.selection,resource_type:'managed-host-group'}},
+    {...ok,selection:{...ok.selection,resource_ref:''}},
+    {...ok,selection:{...ok.selection,target_count:0}},
+    {...ok,changes:{...ok.changes,description:'Other fleet'}},
+    {...ok,changes:{...ok.changes,tags:{site:'remote'}}},
+    {...ok,preview:{...ok.preview,target_count:3}},
+    {...ok,preview:{...ok.preview,targets:[ok.preview.targets[0],ok.preview.targets[0]]}},
+    {...ok,preview:{...ok.preview,operation_count:5}},
+    {...ok,impact:{...ok.impact,operation_count:0}},
+    {...ok,impact:{...ok.impact,access_broadened:true}},
+    {...ok,impact:{...ok.impact,requires_confirmation:false}},
+    {...ok,impact:{...ok.impact,target_count:101}},
+  ])assert.throws(()=>menu.requireObservedFleetPreview(invalid,request),/UNKNOWN/);
+  assert.throws(()=>menu.requireObservedFleetPreview(ok,
+    {...request,resource_type:'managed-host-group'}),/UNKNOWN/);
+  assert.throws(()=>menu.requireObservedFleetPreview(ok,
+    {...request,changes:{description:'Changed'}}),/UNKNOWN/);
+});
+test('Fleet Apply response matches the exact reviewed Core plan, revision and targets',()=>{
+  const reviewed={
+    expected_revision:41,
+    selection:{resource_type:'managed-host',resource_ref:'all',resource_display:'All hosts',target_count:2},
+    changes:{description:'Ops fleet',tags:{site:'west'}},
+    preview:{target_count:2,operation_count:4,targets:[
+      {managed_host_id:'a',operation_count:2},{managed_host_id:'b',operation_count:2}]}
+  };
+  const applied={status:'APPLIED',revision:42,selection:reviewed.selection,
+    changes:reviewed.changes,
+    result:{target_count:2,operation_count:4,targets:reviewed.preview.targets}};
+  assert.equal(menu.requireObservedFleetApplyForPreview(applied,reviewed),applied);
+  for(const altered of [null,{}, {...applied,status:'QUEUED'},
+    {...applied,revision:41},{...applied,revision:43},
+    {...applied,selection:{...applied.selection,resource_ref:'other'}},
+    {...applied,changes:{description:'Other fleet',tags:{site:'west'}}},
+    {...applied,result:{...applied.result,target_count:1}},
+    {...applied,result:{...applied.result,operation_count:3}},
+    {...applied,result:{...applied.result,targets:[]}},
+    {...applied,result:{...applied.result,targets:[
+      {...applied.result.targets[0],managed_host_id:'wrong'},applied.result.targets[1]]}},
+  ])assert.throws(()=>menu.requireObservedFleetApplyForPreview(altered,reviewed),/UNKNOWN/);
+  assert.throws(()=>menu.requireObservedFleetApplyForPreview(applied,null),/UNKNOWN/);
+});
 test('Management Job Detail belongs to requested Core Job and never borrows stale status',()=>{
   const item=(id,status='QUEUED')=>({target_id:id,status,attempt:0});
   const base={id:'mjob_001',job_type:'doctor',status:'QUEUED',target_count:2,

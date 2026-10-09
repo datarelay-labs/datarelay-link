@@ -869,11 +869,18 @@ class V30WebSaasUxContractTests(unittest.TestCase):
             'const requestedKey=fleetDraftKey;',
             'if(epoch!==fleetPreviewEpoch.current)return;',
             'setFleetPreviewKey(requestedKey);',
-            'if(!fleetPreview||fleetApplyBusy||fleetPreviewBusy||fleetPreviewKey!==fleetDraftKey||fleetConfirm!=="APPLY")return;',
-            'disabled={fleetPreviewBusy||fleetApplyBusy',
-            'fleetPreviewKey!==fleetDraftKey',
+            'if(!fleetPreviewGuard||fleetConfirm!=="APPLY")return;',
+            'const fleetPreviewGuard=',
+            'const fleetApplyInFlight=useRef(false);',
+            'if(fleetApplyInFlight.current)return;',
+            'const request={resource_type:fleetResourceType,resource:fleetResource,changes};',
+            'Fleet tags must be a JSON object with text keys and text values.',
+            'Enter a description, tags or group membership change before Preview.',
+            'requireObservedFleetPreview(await api("/api/v1/fleet/metadata/preview",',
+            'requireObservedFleetApplyForPreview(await api("/api/v1/fleet/metadata/apply",',
             'setFleetPreviewKey(null);',
-            'disabled={fleetApplyBusy}',
+            'disabled={fleetPreviewBusy||fleetApplyBusy',
+            'disabled={!fleetPreviewGuard||fleetConfirm!=="APPLY"}',
         ):
             self.assertIn(marker,jobs,marker)
         self.assertNotIn('onChange={e=>{setFleetResource(e.target.value);setFleetPreview(null)}}',jobs)
@@ -962,13 +969,13 @@ class V30WebSaasUxContractTests(unittest.TestCase):
             self.assertIn(marker,evidence,marker)
         for marker in (
             "requireObservedJobStart(await api(",
-            "requireObservedFleetApply(await api(",
+            "requireObservedFleetApplyForPreview(await api(",
             "Core job request accepted",
             "UNKNOWN · Core Job start response",
             "UNKNOWN · Fleet metadata apply response",
             "setFleetPreview(null);setFleetPreviewKey(null);setFleetConfirm(\"\");",
             'const [fleetApplyBusy,setFleetApplyBusy]=useState(false);',
-            'disabled={!fleetPreview?.change_plan_id||fleetPreviewKey!==fleetDraftKey||fleetPreviewBusy||fleetConfirm!=="APPLY"||fleetApplyBusy}',
+            'disabled={!fleetPreviewGuard||fleetConfirm!=="APPLY"}',
         ):
             self.assertIn(marker,jobs,marker)
         self.assertNotIn('result.selection?.target_count||0',jobs)
