@@ -6893,12 +6893,25 @@ def unset_remote_service_agent(plane_db, name: str, *, root: Optional[str] = Non
     if getattr(plane_db, "_batch_mode", False):
         return result
     # Always remove local runtime proxy immediately (including offline tombstone deletes).
+    # The desired-state deletion may already be committed locally and on the
+    # Server. An unsuccessful frpc refresh must not be reported as a completed
+    # removal while the prior runtime could still expose the endpoint.
     try:
         import drlink_v24_runtime as runtime
 
-        runtime.apply_agent_runtime(plane_db, root=root)
-    except Exception:
-        pass
+        applied = runtime.apply_agent_runtime(plane_db, root=root)
+        if not isinstance(applied, dict) or not applied.get("ok"):
+            raise RuntimeError("runtime refresh did not confirm success")
+    except Exception as exc:
+        _clear_agent_mgmt_side_effects(plane_db)
+        raise ControlPlaneError(
+            "ERROR:\nRemote Service deletion was saved, but runtime deactivation "
+            "could not be verified.\n\n"
+            "PARTIAL: The previous relay endpoint may remain active until "
+            "the Agent runtime is refreshed.\n"
+            "Run:\n  system diagnostics\n  system restart\n"
+            "Then verify the service is absent and its endpoint is closed."
+        ) from exc
     _clear_agent_mgmt_side_effects(plane_db)
     return result
 
