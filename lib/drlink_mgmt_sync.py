@@ -1700,6 +1700,13 @@ def server_report_remote_service_status(plane, auth: MgmtAuthContext, body: dict
                 projection = _canonical_status_projection(name, pub, meta, status, extra or "")
                 pending = int(projection["pending_allocation"])
                 verified_flag = 1 if status == "HEALTHY" else 0
+                # Return the Server's *validated* runtime result to the Agent.
+                # Omitting this field made the Agent ACK reconciler clear
+                # runtime_verified even after a successful live proxy apply,
+                # leaving the public view falsely DEGRADED on every sync.
+                # Never echo the unvalidated Agent claim; HEALTHY is only
+                # computed by effective_remote_service_status above.
+                projection["runtime_verified"] = bool(verified_flag)
                 try:
                     current_verified = int(meta["runtime_verified"] or 0)
                 except (KeyError, IndexError, TypeError):

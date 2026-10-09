@@ -120,6 +120,69 @@ class StatusParityTests(unittest.TestCase):
         ).fetchone()
         self.assertEqual((state['status'], state['runtime_verified']), ('HEALTHY', 0))
 
+    def test_verified_status_report_ack_preserves_local_runtime_verification(self):
+        # A signed Server ACK reflects the Server's validated effective state.
+        # Losing the verified field in that ACK falsely marks an actual
+        # currently-active proxy DEGRADED in the Agent's public CLI.
+        created = mgmt.upsert_remote_service_on_server(
+            root=self.agent_tmp,
+            name="ssh-access",
+            destination="this-host",
+            service="ssh",
+            enabled=True,
+            pool_class="normal",
+            target_host="127.0.0.1",
+            target_port=22,
+            target_mode="self",
+            runtime_verified=True,
+        )
+        self.assertEqual(created["status"], "HEALTHY")
+        port = int(self._server_status("ssh-access")["public_port"])
+        self.agent.conn.execute(
+            "INSERT INTO agent_remote_services"
+            "(name, destination, service_object, enabled, status, endpoint_host, "
+            "endpoint_port, pending_allocation, delete_pending, pool_class, reason, "
+            "updated_at, runtime_verified) "
+            "VALUES ('ssh-access', 'this-host', 'ssh', 1, 'HEALTHY', 'example.test', "
+            "?, 0, 0, 'normal', '', '2026-10-09T00:00:00Z', 1)",
+            (port,),
+        )
+        self.agent.conn.commit()
+
+        returned = mgmt.report_remote_service_status_on_server(
+            root=self.agent_tmp,
+            services=[{
+                "name": "ssh-access", "status": "HEALTHY",
+                "runtime_verified": True, "endpoint_port": port, "reason": "",
+            }],
+        )
+        self.assertEqual(returned["count"], 1)
+        self.assertTrue(returned["services"][0]["runtime_verified"], returned)
+        self.assertEqual(v24._push_agent_remote_service_status(
+            self.agent, root=self.agent_tmp,
+        ), 0)
+        row = self.agent.conn.execute(
+            "SELECT status, runtime_verified FROM agent_remote_services "
+            "WHERE name='ssh-access'"
+        ).fetchone()
+        self.assertEqual((row["status"], row["runtime_verified"]), ("HEALTHY", 1))
+
+        unverified = mgmt.report_remote_service_status_on_server(
+            root=self.agent_tmp,
+            services=[{
+                "name": "ssh-access", "status": "HEALTHY",
+                "runtime_verified": False, "endpoint_port": port, "reason": "",
+            }],
+        )
+        self.assertEqual(unverified["services"][0]["status"], "DEGRADED")
+        self.assertFalse(unverified["services"][0]["runtime_verified"])
+        v24._reconcile_agent_from_server_status(self.agent, unverified)
+        row = self.agent.conn.execute(
+            "SELECT status, runtime_verified FROM agent_remote_services "
+            "WHERE name='ssh-access'"
+        ).fetchone()
+        self.assertEqual((row["status"], row["runtime_verified"]), ("DEGRADED", 0))
+
     def test_F019_transient_missing_service_object_rechecks_authoritative_catalog(self):
         # A previous Agent cache refresh can miss a concurrently committed
         # Server Fixed TCP Service Object. If it is still present in the
