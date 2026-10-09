@@ -620,7 +620,8 @@ class V30WebSaasUxContractTests(unittest.TestCase):
             'e.preventDefault();first.focus();',
             'if(e.key==="Escape")',
             "onCloseRef.current();",
-            "if(target?.isConnected)target.focus();",
+            "else if(target?.isConnected){",
+            "target.focus();",
             "returnFocusRef.current=null;",
         ):
             self.assertIn(required, dialog, required)
@@ -633,6 +634,33 @@ class V30WebSaasUxContractTests(unittest.TestCase):
             'returnFocusRef={searchReturnFocusRef}',
         ):
             self.assertIn(required, shell, required)
+
+    def test_uxb_search_result_navigation_and_feedback_are_accessible(self):
+        # Source guard; human keyboard and assistive-tech browser E2E is separate.
+        dialog = SOURCE.split("function GlobalSearch(", 1)[1].split("function Shell(", 1)[0]
+        for marker in (
+            'const navigatingRef=useRef(false);',
+            'if(!visibleRoute(id,operator.role)){',
+            'setError("Your role cannot open this page.");',
+            'navigatingRef.current=true;',
+            'if(navigatingRef.current){',
+            'document.getElementById("drlink-main-content")?.focus();',
+            'target.focus();',
+            'className="dr-command-error" role="alert"',
+            'role="status" aria-live="polite"',
+            'role="group" aria-label="Core resource matches" aria-busy={busy}',
+        ):
+            self.assertIn(marker, dialog, marker)
+        self.assertLess(
+            dialog.index('if(!visibleRoute(id,operator.role)){'),
+            dialog.index('navigatingRef.current=true;'),
+        )
+        self.assertLess(
+            dialog.index('navigatingRef.current=true;'),
+            dialog.index('onNavigate(id,group);'),
+        )
+        self.assertIn('id="drlink-main-content"', SOURCE)
+        self.assertIn('tabIndex={-1}', SOURCE)
 
     def test_normative_ux_doc_binds_control_reference_and_competitive_sources(self):
         for required in (

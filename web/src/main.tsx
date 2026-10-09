@@ -1530,6 +1530,7 @@ function GlobalSearch({open,onClose,onNavigate,operator,returnFocusRef}:{
   const [query,setQuery]=useState(""),[results,setResults]=useState<any[]>([]),[busy,setBusy]=useState(false),[error,setError]=useState("");
   const requestGeneration=useRef(0);
   const dialogRef=useRef<HTMLElement|null>(null);
+  const navigatingRef=useRef(false);
   const onCloseRef=useRef(onClose);
   onCloseRef.current=onClose;
   function changeQuery(value:string){
@@ -1566,10 +1567,16 @@ function GlobalSearch({open,onClose,onNavigate,operator,returnFocusRef}:{
     window.addEventListener("keydown",onKey);
     return()=>{
       window.removeEventListener("keydown",onKey);
-      // Restore the original trigger, not the auto-focused search input.
+      // Closing returns to the opener; choosing a result moves focus into
+      // the destination instead of leaving keyboard users at Search again.
       const target=returnFocusRef.current;
-      if(target?.isConnected)target.focus();
       returnFocusRef.current=null;
+      if(navigatingRef.current){
+        navigatingRef.current=false;
+        document.getElementById("drlink-main-content")?.focus();
+      }else if(target?.isConnected){
+        target.focus();
+      }
     };
   },[open,returnFocusRef]);
   const localMatches=navMatches(query,operator.role);
@@ -1597,11 +1604,19 @@ function GlobalSearch({open,onClose,onNavigate,operator,returnFocusRef}:{
     }catch(err:any){if(requestGeneration.current===generation)setError(err.message||String(err))}
     finally{if(requestGeneration.current===generation)setBusy(false)}
   }
-  function go(id:string,group?:string){onNavigate(id,group);onClose()}
+  function go(id:string,group?:string){
+    if(!visibleRoute(id,operator.role)){
+      setError("Your role cannot open this page.");
+      return;
+    }
+    navigatingRef.current=true;
+    onNavigate(id,group);
+    onClose();
+  }
   return <div className="dr-command-overlay" role="presentation" onMouseDown={e=>{if(e.currentTarget===e.target)onClose()}}>
     <section ref={dialogRef} tabIndex={-1} className="dr-command-palette" role="dialog" aria-modal="true" aria-label="Global search">
       <form className="dr-command-search" onSubmit={search}><WorkspaceIcon kind="search"/><input autoFocus value={query} onChange={e=>changeQuery(e.target.value)} placeholder="Search hosts, services, policies, identities…"/><kbd>Esc</kbd></form>
-      {error&&<div className="dr-command-error">{error}</div>}
+      {error&&<div className="dr-command-error" role="alert">{error}</div>}
       <div className="dr-command-body">
         {!query.trim()&&<><p className="dr-command-label">Quick actions</p><div className="dr-command-actions">
           {operator.role==="Admin"&&<button onClick={()=>go("setup","connections")}><WorkspaceIcon kind="connections"/><span><strong>Set up a connection</strong><small>Add an Agent, publish one service and define narrow access</small></span></button>}
@@ -1610,8 +1625,9 @@ function GlobalSearch({open,onClose,onNavigate,operator,returnFocusRef}:{
           <button onClick={()=>go("doctor","observability")}><WorkspaceIcon kind="observability"/><span><strong>Troubleshoot</strong><small>Open bounded Doctor checks</small></span></button>
         </div></>}
         {query.trim()&&<><div className="dr-command-results-head"><p className="dr-command-label">Pages and tasks · old names also work</p><button className="dr-text-action" onClick={()=>search()} disabled={busy}>{busy?"Searching…":"Search resources"}</button></div>
+        <p className="dr-command-label" role="status" aria-live="polite">{busy?"Searching Core resources…":results.length?results.length+" Core matches returned":""}</p>
         {localMatches.length>0&&<div className="dr-command-results" aria-label="Page and task matches">{localMatches.map(item=><button key={"nav:"+item.id} onClick={()=>go(item.id,item.group)}><span className="dr-search-kind">Page</span><span><strong>{item.label}</strong><small>{item.description}</small></span><span aria-hidden="true">→</span></button>)}</div>}
-        {!busy&&!results.length&&!localMatches.length&&<div className="dr-command-empty">No local page matches. Press Enter to search Core resources.</div>}<div className="dr-command-results">{results.map((item:any,i:number)=>{const [id,group]=targetFor(item.resource_type);return <button key={item.id||i} onClick={()=>go(id,group)}><span className="dr-search-kind">{item.resource_type||"resource"}</span><span><strong>{item.name||item.id}</strong><small>{item.id||""}</small></span><span aria-hidden="true">→</span></button>})}</div></>}
+        {!busy&&!results.length&&!localMatches.length&&<div className="dr-command-empty">No local page matches. Press Enter to search Core resources.</div>}<div className="dr-command-results" role="group" aria-label="Core resource matches" aria-busy={busy}>{results.map((item:any,i:number)=>{const [id,group]=targetFor(item.resource_type);return <button key={item.id||i} onClick={()=>go(id,group)}><span className="dr-search-kind">{item.resource_type||"resource"}</span><span><strong>{item.name||item.id}</strong><small>{item.id||""}</small></span><span aria-hidden="true">→</span></button>})}</div></>}
       </div>
       <footer className="dr-command-footer"><span><kbd>Enter</kbd> search</span><span><kbd>Esc</kbd> close</span><span>Security state is never stored in browser preferences.</span></footer>
     </section>
