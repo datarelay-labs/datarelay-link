@@ -9,6 +9,7 @@ import {navGroups,groupFor,labelFor,pageDescriptions,visibleRoute,navMatches,set
 import {FirstUseHome,isFreshInstallation,observedRecentFeed,observedNumber,accessPlaneCount,coreHealthState,type RecentFeed} from "./uxb-home";
 import {requireObservedMenuPayload,isPartialCorePage,selectMenuPage,combineObservedPolicyPlanes,type MenuPagePosition} from "./uxb-menu-evidence";
 import {RemoteServiceEditor} from "./uxb-remote-service";
+import {RevisionHistory} from "./uxb-revisions";
 import {FirstConnectionSetup,type SetupDraft} from "./uxb-setup";
 
 type Json = Record<string, any>;
@@ -1641,6 +1642,7 @@ function View({active,operator,onNavigate,context,setupDraft,onSetupDraftChange}
   if(active==="policies"&&data)return <><PolicyWorkspace data={data} operator={operator} onNavigate={onNavigate} api={api}/>{operator.role!=="Read Only"&&<GuidedPolicyJourney api={api} onNavigate={onNavigate}/>}<PolicySafetyPanel operator={operator}/>{operator.role!=="Read Only"&&<><GuidedPolicySettingsPanel/><TemporaryAccessPanel/></>}</>;
   if(active==="doctor"&&data)return <><div className="grid"><Metric label="Attention" value={data.attention?.count}/><Metric label="Checks" value={(data.checks||[]).length}/></div><Table items={data.checks||[]}/></>;
   if(active==="health"&&data)return <HealthWorkspace data={data} onNavigate={onNavigate}/>;
+  if(active==="revisions"&&data)return <RevisionHistory initial={data} api={api}/>;
   if(active==="views"&&data)return <SavedViews data={data} refresh={()=>api("/api/v1/saved-views").then(payload=>setData(requireObservedMenuPayload("views",payload))).catch((e:any)=>setError(e.message||String(e)))}/>;
   if(data)return <Table items={data.items||[]}/>;
   return <PageSkeleton/>;

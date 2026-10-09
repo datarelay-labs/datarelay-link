@@ -788,6 +788,29 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         ):
             self.assertIn(marker, policy, marker)
 
+    def test_uxb_change_history_uses_observed_core_pagination(self):
+        revisions=(ROOT / "web/src/uxb-revisions.tsx").read_text(encoding="utf-8")
+        self.assertIn('import {RevisionHistory} from "./uxb-revisions"', SOURCE)
+        self.assertIn('if(active==="revisions"&&data)return <RevisionHistory initial={data} api={api}/>', SOURCE)
+        self.assertIn('revisions:"/api/v1/revisions?limit=100"', SOURCE)
+        for marker in (
+            'requireObservedMenuPayload("revisions",initial)',
+            'requireObservedMenuPayload("revisions",await api(url))',
+            'const epoch=++requestEpoch.current;',
+            'if(epoch!==requestEpoch.current)return;',
+            'return()=>{requestEpoch.current+=1};',
+            'setPage(null);setLoading(true);setError("");',
+            'setRequested(target);',
+            'selectMenuPage(position,page.next_cursor,"older")',
+            'selectMenuPage(position,page.next_cursor,"newer")',
+            'Core Change History unavailable',
+            'Retry Core page →',
+            'Older revisions →',
+            '← Newer revisions',
+            'No configuration revisions on this observed Core page.',
+        ):
+            self.assertIn(marker, revisions, marker)
+
     def test_normative_ux_doc_binds_control_reference_and_competitive_sources(self):
         for required in (
             "Product Foundation PF-5B Administration projection",
