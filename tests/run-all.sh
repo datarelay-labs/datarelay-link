@@ -202,6 +202,8 @@ python3 tests/test-service-profiles.py
 ./tests/test-legacy-identity-migration.sh
 ./tests/test-legacy-frpc-unit-migration.sh
 ./tests/test-client-proxy-health-wait.sh
+bash tests/test-proxy-readiness-session-causality.sh
+bash tests/test-macos-proxy-wait-cursor.sh
 ./tests/test-ca-bootstrap.sh
 ./tests/test-allocator-process-cleanup.sh
 ./tests/test-pki-https.py

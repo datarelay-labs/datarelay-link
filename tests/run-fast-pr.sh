@@ -33,6 +33,9 @@ python3 tests/test-full-e2e-public-recovery-regressions.py
 python3 tests/test-cli-rule-selector-and-runtime-recovery.py
 python3 tests/test-native-public-consent.py
 bash tests/test-status-surface-parity.sh
+bash tests/test-proxy-readiness-session-causality.sh
+bash tests/test-client-proxy-health-wait.sh
+bash tests/test-macos-proxy-wait-cursor.sh
 python3 tests/test-enrollment-public-guidance.py
 python3 tests/test-no-legacy-current-surface.py
 python3 tests/test-canonical-runtime-policy.py

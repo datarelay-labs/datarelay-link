@@ -2395,7 +2395,7 @@ wait_for_proxies() {
   # Only evidence AFTER the optional generation cursor (FRP_PROXY_WAIT_CURSOR
   # or --since-cursor=...) may satisfy readiness. On Darwin the cursor is a
   # file byte-offset (logpos), not a timestamp substring.
-  local logs proxy missing
+  local logs proxy
   local -a names=()
   local since_cursor="${FRP_PROXY_WAIT_CURSOR:-}"
   local arg
@@ -2410,26 +2410,66 @@ wait_for_proxies() {
   local max_attempts="${FRP_PROXY_WAIT_MAX_ATTEMPTS:-24}"
   local sleep_s="${FRP_PROXY_WAIT_SLEEP_S:-1}"
   local max_sleep="${FRP_PROXY_WAIT_MAX_SLEEP_S:-3}"
+  # Bulk 85+ proxies can exceed 400 journal lines per connection generation.
+  # Preserve the connection/login marker and all proxy announcements.
+  local max_log_lines=$(( 500 + ${#names[@]} * 12 ))
+  (( max_log_lines > 4096 )) && max_log_lines=4096
+  local wanted
+  wanted="$(printf '%s\n' "${names[@]}")"
   while (( attempt < max_attempts )); do
     attempt=$((attempt + 1))
     if (( sleep_s > 0 )); then
       sleep "$sleep_s"
     fi
-    logs="$(frp_client_recent_runtime_logs 400 "$since_cursor")"
-    if ! grep -q 'login to server success' <<<"$logs"; then
-      if (( sleep_s < max_sleep )) && (( attempt % 3 == 0 )); then
-        sleep_s=$((sleep_s + 1))
-      fi
-      continue
-    fi
-    missing=""
-    for proxy in "${names[@]}"; do
-      if ! grep -Fq "[${proxy}] start proxy success" <<<"$logs"; then
-        missing="$proxy"
-        break
-      fi
-    done
-    if [[ -z "$missing" ]]; then
+    logs="$(frp_client_recent_runtime_logs "$max_log_lines" "$since_cursor")"
+    # A success from an earlier connection epoch is not live registration.
+    # Respect the last login/connection failure and last event per proxy in
+    # the current epoch. POSIX awk keeps this compatible with macOS Bash 3.2.
+    if printf '%s\n' "$logs" | awk -v required="$wanted" '
+      BEGIN {
+        count=split(required, names, "\n")
+        for (i=1; i<=count; i++) {
+          name=tolower(names[i])
+          if (name != "") { expected[name]=1; ready[name]=0 }
+        }
+        connected=0
+      }
+      {
+        line=tolower($0)
+        if (index(line, "login to server success")) {
+          connected=1
+          for (name in expected) ready[name]=0
+          next
+        }
+        if (index(line, "login server failed") ||
+            index(line, "login to server failed") ||
+            index(line, "session closed") ||
+            index(line, "control worker is closed") ||
+            index(line, "try to reconnect") ||
+            index(line, "try to connect to server") ||
+            index(line, "connect to server error") ||
+            index(line, "read from control stream closed")) {
+          connected=0
+          for (name in expected) ready[name]=0
+          next
+        }
+        if (!connected) next
+        if (match(line, /\[[^]]+\][[:space:]]+(start proxy success|start proxy error|start proxy failed|stop proxy)/)) {
+          event=substr(line,RSTART,RLENGTH)
+          name=event
+          sub(/^\[/,"",name)
+          sub(/\].*$/,"",name)
+          if (name in expected) {
+            if (index(event, "start proxy success")) ready[name]=1
+            else ready[name]=0
+          }
+        }
+      }
+      END {
+        if (!connected) exit 1
+        for (name in expected) if (!ready[name]) exit 1
+        exit 0
+      }'; then
       return 0
     fi
     if (( sleep_s < max_sleep )) && (( attempt % 3 == 0 )); then
