@@ -22,7 +22,8 @@ export function FirstConnectionSetup({api,operator,onNavigate,initialDraft,onDra
   const [plane,setPlane]=useState<AccessPlane>(initialDraft?.plane||"remote");
   const [step,setStep]=useState(Math.min(4,Math.max(1,initialDraft?.step||1)));
   const [hosts,setHosts]=useState<any[]|null>(null),[services,setServices]=useState<any[]|null>(null);
-  const [enrollments,setEnrollments]=useState<any>({items:[]});
+  // Null means not observed / API unavailable; an authoritative empty list is different.
+  const [enrollments,setEnrollments]=useState<any>(null);
   const [error,setError]=useState(""),[checking,setChecking]=useState(false);
   const [selectedHost,setSelectedHost]=useState(initialDraft?.selectedHost||"");
   const [serviceName,setServiceName]=useState(initialDraft?.serviceName||"");
@@ -48,11 +49,18 @@ export function FirstConnectionSetup({api,operator,onNavigate,initialDraft,onDra
     ]);
     if(r[0].status==="fulfilled"&&Array.isArray(r[0].value?.items)){
       const list=r[0].value.items;setHosts(list);
-      setSelectedHost(prev=>list.some((x:any)=>String(x.id)===prev)?prev:String(list[0]?.id||""));
+      // Do not silently switch the owning Agent to the first list entry.
+      // Also discard the retained editor owner when its formerly selected
+      // Agent vanishes; a remounted editor must not revive that old target.
+      if(selectedHost&&!list.some((x:any)=>String(x.id)===selectedHost)){
+        setServiceDraft(prev=>({...prev,owner:""}));
+      }
+      setSelectedHost(prev=>prev&&list.some((x:any)=>String(x.id)===prev)?prev:"");
     }else{setHosts(null);setError("Managed Host inventory unavailable; prerequisite state is UNKNOWN.")}
     if(r[1].status==="fulfilled"&&Array.isArray(r[1].value?.items))setServices(r[1].value.items);
     else setServices(null);
     if(r[2].status==="fulfilled"&&Array.isArray(r[2].value?.items))setEnrollments(r[2].value);
+    else setEnrollments(null); // UNKNOWN, never a fabricated empty enrollment list.
     setChecking(false);
   }
   const stages=firstUseStages[plane];
@@ -94,7 +102,7 @@ export function FirstConnectionSetup({api,operator,onNavigate,initialDraft,onDra
       <EnrollmentOnboarding api={api} data={enrollments} refresh={refreshCore} operator={operator} onNavigate={onNavigate}/>
       <section className="card dr-uxb-choice"><h3>Continue with an enrolled server</h3>
         <label className="dr-field"><span>Managed Host</span><select value={selectedHost} onChange={e=>setSelectedHost(e.target.value)}>
-          {!hosts?.length&&<option value="">No observed Managed Host</option>}
+          {!selectedHost&&<option value="">{hosts===null?"Managed Host inventory: UNKNOWN":hosts.length?"Select an observed Managed Host":"No observed Managed Host"}</option>}
           {(hosts||[]).map(h=><option key={h.id} value={String(h.id)}>{h.name||h.label||h.id} · {h.id}</option>)}
         </select></label>
         {selected&&<p>{hostReadinessLabel(selected)} · Trust: {selected.trust_status||"UNKNOWN"} · Last seen: {selected.agent_heartbeat_at||"UNKNOWN"}</p>}
@@ -111,7 +119,7 @@ export function FirstConnectionSetup({api,operator,onNavigate,initialDraft,onDra
     {step===2&&plane==="remote"&&<div className="dr-uxb-setup-section">
       <div className="dr-uxb-context"><strong>Why publish a Remote Service?</strong><p>Choose exactly one service/port from an approved Agent. This queues an authenticated Agent job — it does not instantly prove success or user authorization.</p></div>
       <label className="dr-field"><span>Use observed Managed Host as owner</span><select value={selectedHost} onChange={e=>setSelectedHost(e.target.value)}>
-        {!hosts?.length&&<option value="">No observed Managed Host</option>}
+        {!selectedHost&&<option value="">{hosts===null?"Managed Host inventory: UNKNOWN":hosts.length?"Select an observed Managed Host":"No observed Managed Host"}</option>}
         {(hosts||[]).map(h=><option key={h.id} value={String(h.id)}>{h.name||h.label||h.id}</option>)}
       </select></label>
       {canEdit?<RemoteServiceEditor api={api} ownerHint={selectedHost} initialSelection={serviceDraft}

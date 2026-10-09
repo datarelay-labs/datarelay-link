@@ -81,6 +81,16 @@ test("Guided policy screen shows four stages and hides Apply without Core plan",
   assert.doesNotMatch(html,/Apply through Core/);
 });
 
+test("Enrollment history distinguishes unavailable Core state from an observed empty list",()=>{
+ const render=data=>renderToStaticMarkup(React.createElement(enroll.EnrollmentOnboarding,{
+  api:async()=>{throw new Error("SSR must not call Core API")},data,refresh:()=>{},
+  operator:{role:"Read Only"},
+ }));
+ assert.match(render(null),/Enrollment history: UNKNOWN/);
+ assert.doesNotMatch(render(null),/No enrollment history reported/);
+ assert.match(render({items:[]}),/No enrollment history reported/);
+});
+
 test("Host readiness preserves admission, trust, connection and policy as separate concepts",()=>{
   assert.equal(enroll.hostReadinessLabel(null),"NO CONNECTION EVIDENCE");
   assert.equal(enroll.hostReadiness(null).policy,"NOT VERIFIED");

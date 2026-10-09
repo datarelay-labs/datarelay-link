@@ -128,6 +128,20 @@ test("Returning to the setup guide restores non-secret stage and choices",()=>{
  assert.doesNotMatch(svc,/Queue authenticated Agent job/); // no resumed mutation plan
 });
 
+test("Host approval needs explicit selection and missing enrollment evidence is UNKNOWN",()=>{
+ const html=renderToStaticMarkup(React.createElement(setup.FirstConnectionSetup,{
+  api:async()=>{throw new Error("SSR must not call Core API")},operator:{role:"Admin"},
+ }));
+ assert.match(html,/Enrollment history: UNKNOWN/);
+ assert.doesNotMatch(html,/No enrollment history reported\./);
+ const setupSource=readFileSync(join(root,"src","uxb-setup.tsx"),"utf8");
+ const enrollSource=readFileSync(join(root,"src","p0-enrollment.tsx"),"utf8");
+ assert.match(setupSource,/setSelectedHost\(prev=>prev&&list\.some/);
+ assert.match(setupSource,/setServiceDraft\(prev=>\(\{\.\.\.prev,owner:""\}\)\)/);
+ assert.match(enrollSource,/setSelectedHost\(value=>value&&items\.some/);
+ assert.match(enrollSource,/Select an observed Managed Host/);
+});
+
 test("no browser-local credentials or unapproved backend policy engine",()=>{
  const src=["uxb-navigation.ts","uxb-home.tsx","uxb-setup.tsx","uxb-remote-service.tsx"].map(
   x=>readFileSync(join(root,"src",x),"utf8")).join("\n");

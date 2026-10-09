@@ -378,3 +378,10 @@ not be rerouted. Partial static evidence cannot close these gates.
 4. UXE-12 remains gated by independently confirmed Web/Core/CLI and offline lifecycle results at the qualified exact HEAD, plus the documented two-user Full User E2E sequence and owner acceptance.
 
 **Explicit boundary:** The platform-denied automated browser install/login and denied Client fixture remain **NOT RUN / NOT BYPASSED**. Only the isolated preview static GET is included here. Preserve the unrelated local `tests/test-frp-client.sh` modification without staging. Do not claim UXB-06 PASS until permitted real-user browser evidence and exact-HEAD qualifications exist.
+
+
+## 11. UXB-06 first-time enrollment/empty-state follow-up — 2026-10-09
+
+The existing UI was silently selecting the **first Managed Host** after loading or refreshing the inventory whenever the previously selected Host was absent. In onboarding/approval and Remote Service ownership workflows that could direct a subsequent explicit operator action to the wrong Host. Both the Setup guide and Agent admission wizard now retain the previous Host only if it still exists; otherwise the controlled selector returns to an explicit **Select an observed Managed Host** placeholder and mutation/approval buttons remain gated until the operator makes a choice. A failed or malformed Core inventory response is now **UNKNOWN**, not an observed empty set, and invalidates an old admission preview.
+
+The Setup guide now initializes Enrollment history as **UNKNOWN** until Core returns an authoritative `items` array. A failed enrollment-inventory request is no longer disguised as `No enrollment history reported`, which is only shown after a *successful observed empty* result. These are UXE-01/02/09 source and SSR-level improvements only; real first-time enrollment and cross-role browser workflows remain **NOT VERIFIED**. Offline regressions cover the null-vs-empty rendering and the no-auto-selection source contract. The human manual checklist in §10 remains authoritative for later evidence and blocking decisions.

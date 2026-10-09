@@ -31,23 +31,25 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate}:{
   const [step,setStep]=useState(1),[mode,setMode]=useState("zero-touch"),[platform,setPlatform]=useState("linux");
   const [ttl,setTtl]=useState("3600"),[label,setLabel]=useState(""),[note,setNote]=useState("");
   const [preApproved,setPreApproved]=useState(false),[issued,setIssued]=useState<any>(null);
-  const [hosts,setHosts]=useState<any[]>([]),[selectedHost,setSelectedHost]=useState("");
+  const [hosts,setHosts]=useState<any[]|null>(null),[selectedHost,setSelectedHost]=useState("");
   const [fetchBusy,setFetchBusy]=useState(false),[busy,setBusy]=useState(false);
   const [error,setError]=useState(""),[inventoryError,setInventoryError]=useState("");
   const [preview,setPreview]=useState<any>(null),[confirm,setConfirm]=useState(""),[message,setMessage]=useState("");
   const admin=operator?.role==="Admin";
-  const selected=hosts.find(h=>String(h.id)===selectedHost)||null;
+  const selected=hosts?.find(h=>String(h.id)===selectedHost)||null;
   const readiness=hostReadiness(selected);
   const required=String(preview?.confirmation_class||"APPROVE");
   useEffect(()=>{if(step>=3)void refreshHosts()},[step]);
   async function refreshHosts(){
-    setFetchBusy(true);setInventoryError("");
+    setFetchBusy(true);setInventoryError("");setPreview(null);setConfirm("");
     try{
       const result=await api("/api/v1/inventory?resource_type=managed-host&limit=100");
-      const items=Array.isArray(result.items)?result.items:[];
+      if(!Array.isArray(result?.items))throw new Error("Managed Host inventory response incomplete");
+      const items=result.items;
       setHosts(items);
-      setSelectedHost(value=>items.some((h:any)=>String(h.id)===value)?value:String(items[0]?.id||""));
-    }catch(e:any){setHosts([]);setInventoryError(String(e.message||e))}
+      // Explicit selection is required; never approve a different first Host.
+      setSelectedHost(value=>value&&items.some((h:any)=>String(h.id)===value)?value:"");
+    }catch(e:any){setHosts(null);setSelectedHost("");setInventoryError(String(e.message||e))}
     finally{setFetchBusy(false)}
   }
   async function issue(){
@@ -127,10 +129,10 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate}:{
         </div><button className="secondary" onClick={refreshHosts} disabled={fetchBusy}>{fetchBusy?"Refreshing…":"Refresh inventory"}</button></div>
         {inventoryError&&<p className="error" role="alert">Inventory unavailable: {inventoryError}</p>}
         <label className="dr-field"><span>Managed Host</span><select value={selectedHost} onChange={e=>{setSelectedHost(e.target.value);setPreview(null);setConfirm("")}}>
-          {hosts.length===0&&<option value="">No observed Hosts</option>}
-          {hosts.map(h=><option value={String(h.id)} key={h.id}>{h.name||h.label||h.id} · {h.id}</option>)}
+          {!selectedHost&&<option value="">{hosts===null?"Host inventory: UNKNOWN":hosts.length?"Select an observed Managed Host":"No observed Hosts"}</option>}
+          {(hosts||[]).map(h=><option value={String(h.id)} key={h.id}>{h.name||h.label||h.id} · {h.id}</option>)}
         </select></label>
-        <p className="dr-p0-status">{selected?hostReadinessLabel(selected):"NO HOST OBSERVED · enrollment may still be pending"}</p>
+        <p className="dr-p0-status">{selected?hostReadinessLabel(selected):hosts===null?"HOST INVENTORY UNKNOWN":(hosts.length?"NO HOST SELECTED · select the intended Host":"NO HOST OBSERVED · enrollment may still be pending")}</p>
         <div className="dr-p0-counters">
           <span>Admission: {readiness.admission}</span><span>Trust: {readiness.trust}</span>
           <span>Connection: {readiness.connection}</span><span>Last observation: {readiness.observedAt}</span>
@@ -158,7 +160,8 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate}:{
         <tbody>{(data?.items||[]).map((item:any)=><tr key={item.id}><td>{item.label||item.id}</td><td>{item.type}</td><td>{item.state||"UNKNOWN"}</td>
           <td>{item.first_host_admission||"UNKNOWN"}</td><td>{item.remaining_seconds??"UNKNOWN"} seconds</td></tr>)}</tbody>
       </table></div>
-      {!(data?.items||[]).length&&<p className="muted">No enrollment history reported.</p>}
+      {data===null?<p className="warning-box" role="status">Enrollment history: UNKNOWN — Core has not returned authoritative records. Refresh observed state before interpreting history.</p>:
+        !(data?.items||[]).length&&<p className="muted">No enrollment history reported.</p>}
     </div>
   </section>;
 }
