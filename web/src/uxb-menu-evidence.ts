@@ -167,6 +167,38 @@ export function auditRetentionRunPermitted(
     &&form.max_events===String(value.config.max_events);
 }
 
+/** Audit Export is a bounded, server-side operation, NOT a Web download.
+ * A successful HTTP code alone cannot prove an artifact was actually created.
+ * Match the acknowledged artifact and filter facts from authoritative Core. */
+export function requireObservedAuditExport(payload:unknown,requestedFilters:unknown):any{
+  const fail=()=>{throw new Error("UNKNOWN · Core Audit Export response did not confirm the submitted filters and server-side artifact. Inspect Activity log before retrying.");};
+  if(!payload||typeof payload!=="object"||Array.isArray(payload)
+    ||!requestedFilters||typeof requestedFilters!=="object"||Array.isArray(requestedFilters))return fail();
+  const data=payload as Record<string,any>;
+  const clean=requestedFilters as Record<string,unknown>;
+  const received=data.filters;
+  const allowed=new Set(["start","end","category","event_type","actor","resource","result","correlation"]);
+  if(data.status!=="CREATED"||data.schema_version!==1
+    ||typeof data.path!=="string"
+    ||!/^\/var\/lib\/drlink\/audit-exports\/drlink-audit-\d{8}T\d{6}Z-[a-f0-9]{8}\.ndjson$/.test(data.path)
+    ||typeof data.sha256!=="string"||!/^[a-f0-9]{64}$/.test(data.sha256)
+    ||typeof data.event_count!=="number"||!Number.isSafeInteger(data.event_count)
+    ||data.event_count<0||data.event_count>50000
+    ||typeof data.size_bytes!=="number"||!Number.isSafeInteger(data.size_bytes)
+    ||data.size_bytes<1||data.size_bytes>64*1024*1024
+    ||data.sanitized!==true||data.download_exposed!==false
+    ||data.authoritative_mutation!==false
+    ||!received||typeof received!=="object"||Array.isArray(received))return fail();
+  const got=received as Record<string,unknown>;
+  const expectedKeys=Object.keys(clean),receivedKeys=Object.keys(got);
+  if(expectedKeys.length!==receivedKeys.length
+    ||expectedKeys.some(key=>!allowed.has(key)||typeof clean[key]!=="string"
+      ||!(clean[key] as string).trim()||(clean[key] as string)!==(clean[key] as string).trim()
+      ||got[key]!==clean[key])
+    ||receivedKeys.some(key=>!allowed.has(key)||!Object.prototype.hasOwnProperty.call(clean,key)))return fail();
+  return payload;
+}
+
 /** A 200 response does not prove a Job was enqueued. Check the actual
  * Core queue identity, status and bounded target counts before reporting it. */
 export function requireObservedJobStart(payload:unknown,expectedJobType:string):any{

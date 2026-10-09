@@ -7,7 +7,7 @@ import {AccessEvidenceExplorer,GuidedPolicyJourney,coreFlowKey,coreCutoffKey,vis
 import {EnrollmentOnboarding} from "./p0-enrollment";
 import {navGroups,groupFor,labelFor,pageDescriptions,visibleRoute,navMatches,setupContextForObjectFamily} from "./uxb-navigation";
 import {FirstUseHome,isFreshInstallation,observedRecentFeed,observedNumber,accessPlaneCount,coreHealthState,type RecentFeed} from "./uxb-home";
-import {requireObservedMenuPayload,requireObservedInventoryContinuation,requireObservedObjectContinuation,requireObservedAuditRetention,auditRetentionRunPermitted,requireObservedAccessHygiene,hygieneInspectTarget,requireObservedJobStart,requireObservedFleetApply,isPartialCorePage,selectMenuPage,combineObservedPolicyPlanes,type MenuPagePosition} from "./uxb-menu-evidence";
+import {requireObservedMenuPayload,requireObservedInventoryContinuation,requireObservedObjectContinuation,requireObservedAuditRetention,auditRetentionRunPermitted,requireObservedAccessHygiene,hygieneInspectTarget,requireObservedJobStart,requireObservedFleetApply,requireObservedAuditExport,isPartialCorePage,selectMenuPage,combineObservedPolicyPlanes,type MenuPagePosition} from "./uxb-menu-evidence";
 import {RemoteServiceEditor} from "./uxb-remote-service";
 import {RevisionHistory} from "./uxb-revisions";
 import {AgentVersionDrift} from "./uxb-versions";
@@ -903,6 +903,8 @@ function AuditExplorer({operator,context}:{operator:any,context?:any}){
   const [data,setData]=useState<any>(null),[retention,setRetention]=useState<any>(null),[error,setError]=useState(""),[message,setMessage]=useState(""),[exportResult,setExportResult]=useState<any>(null);
   const [auditState,setAuditState]=useState<"loading"|"ready"|"unknown"|"idle">("loading");
   const auditReadEpoch=useRef(0);
+  const exportInFlight=useRef(false);
+  const [exportBusy,setExportBusy]=useState(false),[exportError,setExportError]=useState("");
   const retentionReadEpoch=useRef(0);
   const [retentionState,setRetentionState]=useState<"loading"|"ready"|"unknown">("loading");
   const [retentionError,setRetentionError]=useState(""),[retentionWriteBusy,setRetentionWriteBusy]=useState(false);
@@ -956,8 +958,21 @@ function AuditExplorer({operator,context}:{operator:any,context?:any}){
   }
   useEffect(()=>{load();loadRetention();return()=>{auditReadEpoch.current+=1;retentionReadEpoch.current+=1}},[]);
   async function exportAudit(){
-    setError("");setMessage("");
-    try{const value=await api("/api/v1/audit/export",{method:"POST",body:JSON.stringify({filters:exportFilters()})});setExportResult(value);setMessage("Audit export created: "+String(value.path||""))}catch(e:any){setError(e.message||String(e))}
+    if(exportInFlight.current)return;
+    exportInFlight.current=true;
+    const selectedFilters=exportFilters();
+    setExportResult(null);setExportError("");setMessage("");setExportBusy(true);
+    try{
+      const value=requireObservedAuditExport(await api("/api/v1/audit/export",{
+        method:"POST",body:JSON.stringify({filters:selectedFilters})
+      }),selectedFilters);
+      setExportResult(value);
+      setMessage("Core confirmed a server-side Audit Export: "+String(value.event_count)+" events. No Web download is available.");
+    }catch(e:any){
+      setExportError("Core Audit Export status UNKNOWN. "+(e.message||String(e)));
+    }finally{
+      exportInFlight.current=false;setExportBusy(false);
+    }
   }
   async function configureRetention(){
     if(retentionState!=="ready"||retentionWriteBusy)return;
@@ -1005,7 +1020,8 @@ function AuditExplorer({operator,context}:{operator:any,context?:any}){
   return <>
     {error&&<div className="error" role="alert">{error}</div>}{message&&<div className="notice">{message}</div>}
     <section className="card dr-audit-card">
-      <div className="dr-section-head"><div><p className="dr-eyebrow">Activity & Health</p><h3>Audit Explorer</h3><p className="muted">Unified control, access-decision and security-lifecycle history with bounded keyset pagination.</p></div><button className="secondary" onClick={exportAudit}>Export NDJSON</button></div>
+      <div className="dr-section-head"><div><p className="dr-eyebrow">Activity & Health</p><h3>Audit Explorer</h3><p className="muted">Unified control, access-decision and security-lifecycle history with bounded keyset pagination.</p></div><button className="secondary" onClick={exportAudit} disabled={exportBusy}>{exportBusy?"Exporting with Core…":"Export NDJSON"}</button></div>
+      {exportError&&<p role="alert" className="warning-box">{exportError} The result may have been committed; inspect Activity log before trying again.</p>}
       <div className="dr-audit-filter-grid">
         <label className="dr-field"><span>Start UTC</span><input value={start} onChange={e=>setStart(e.target.value)} placeholder="YYYY-MM-DDTHH:MM:SSZ"/></label>
         <label className="dr-field"><span>End UTC</span><input value={end} onChange={e=>setEnd(e.target.value)} placeholder="YYYY-MM-DDTHH:MM:SSZ"/></label>
@@ -1027,7 +1043,11 @@ function AuditExplorer({operator,context}:{operator:any,context?:any}){
         {auditPage.history.length>0&&<button className="secondary" onClick={()=>{const previous=selectMenuPage(auditPage,data?.next_cursor,"newer");if(previous)load(previous)}}>← Newer Audit</button>}
         {isPartialCorePage(data)&&<button className="secondary" onClick={()=>{const older=selectMenuPage(auditPage,data.next_cursor,"older");if(older)load(older)}}>Older Audit →</button>}
       </div>}
-      {exportResult&&<pre className="plan">{JSON.stringify({path:exportResult.path,event_count:exportResult.event_count,schema_version:exportResult.schema_version,sha256:exportResult.sha256,download_exposed:exportResult.download_exposed},null,2)}</pre>}
+      {exportResult&&<section role="status" className="dr-export-evidence">
+        <strong>Core Audit Export CREATED · No Web download</strong>
+        <p className="muted">The artifact is stored on the Server for the exact submitted filters shown here. Editing the search fields does not change this export; no browser download endpoint exists.</p>
+        <pre className="plan">{JSON.stringify({status:exportResult.status,path:exportResult.path,event_count:exportResult.event_count,size_bytes:exportResult.size_bytes,schema_version:exportResult.schema_version,sha256:exportResult.sha256,filters:exportResult.filters,download_exposed:exportResult.download_exposed},null,2)}</pre>
+      </section>}
     </section>
     <section className="card dr-retention-card">
       <div className="dr-section-head"><div><p className="dr-eyebrow">Storage policy</p><h3>Audit Retention</h3><p className="muted">{retentionState==="ready"&&retention?retention.capacity_policy:"Core Audit Retention status requires a verified read; missing metrics are not zero or Normal."}</p></div></div>

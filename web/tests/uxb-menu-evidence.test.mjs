@@ -233,6 +233,33 @@ test('Fleet apply reports completion only when Core confirms APPLIED revision an
     assert.throws(()=>menu.requireObservedFleetApply(invalid),/UNKNOWN/);
   }
 });
+test('Audit Export reports CREATED only for the actual Core artifact and requested filters',()=>{
+  const requested={category:'CONTROL',actor:'alice'};
+  const verified={
+    status:'CREATED',path:'/var/lib/drlink/audit-exports/drlink-audit-20261009T135012Z-1234abcd.ndjson',
+    sha256:'a'.repeat(64),schema_version:1,size_bytes:500,event_count:0,
+    sanitized:true,download_exposed:false,authoritative_mutation:false,
+    filters:{actor:'alice',category:'CONTROL'}
+  };
+  assert.equal(menu.requireObservedAuditExport(verified,requested),verified);
+  assert.equal(menu.requireObservedAuditExport({...verified,filters:{}},{}).event_count,0);
+  for(const bad of [null,{},[],{error:'Core unavailable'},
+    {...verified,status:'QUEUED'},{...verified,path:'/tmp/preview.ndjson'},
+    {...verified,path:'/var/lib/drlink/audit-exports/../../secret.ndjson'},
+    {...verified,sha256:''},{...verified,sha256:'0'.repeat(63)},
+    {...verified,schema_version:0},{...verified,size_bytes:0},
+    {...verified,size_bytes:67108865},{...verified,event_count:-1},
+    {...verified,event_count:50001},{...verified,event_count:'0'},
+    {...verified,sanitized:false},{...verified,download_exposed:true},
+    {...verified,authoritative_mutation:true},
+    {...verified,filters:{category:'CONTROL'}},
+    {...verified,filters:{...requested,extra:'data'}},
+    {...verified,filters:{...requested,actor:'bob'}},
+  ]){
+    assert.throws(()=>menu.requireObservedAuditExport(bad,requested),/UNKNOWN/);
+  }
+  assert.throws(()=>menu.requireObservedAuditExport(verified,{category:'CONTROL',actor:12}),/UNKNOWN/);
+});
 test('partial Objects inventory remains available for its existing explicit UNKNOWN warning',()=>{
   // ObjectsWorkspace itself distinguishes incomplete resources from a valid empty list.
   for(const response of [{resources:{}},{resources:{'network-object':{items:[]}}}]){

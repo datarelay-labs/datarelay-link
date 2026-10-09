@@ -796,6 +796,26 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn('retentionState==="ready"&&retention&&<div className="dr-kpi-strip',audit)
         self.assertIn('retention.capacity_exceeded?"Exceeded":"Normal"',audit)
 
+    def test_audit_export_requires_matching_core_ack_and_no_false_download(self):
+        audit=SOURCE.split("function AuditExplorer(",1)[1].split("function AgentRolloutPreviewPanel(",1)[0]
+        evidence=(ROOT / "web/src/uxb-menu-evidence.ts").read_text(encoding="utf-8")
+        self.assertIn("export function requireObservedAuditExport(",evidence)
+        for marker in (
+            'const exportInFlight=useRef(false);',
+            'const [exportBusy,setExportBusy]=useState(false)',
+            'if(exportInFlight.current)return;',
+            'const selectedFilters=exportFilters();',
+            'requireObservedAuditExport(await api("/api/v1/audit/export",',
+            'selectedFilters)',
+            'setExportResult(null);',
+            'Core Audit Export status UNKNOWN',
+            'No Web download',
+            'disabled={exportBusy}',
+            'filters:exportResult.filters',
+        ):
+            self.assertIn(marker,audit,marker)
+        self.assertNotIn('setMessage("Audit export created: "+String(value.path||""))',audit)
+
     def test_irreversible_retention_requires_typed_confirmation_and_fresh_policy(self):
         audit=SOURCE.split("function AuditExplorer(",1)[1].split("function AgentRolloutPreviewPanel(",1)[0]
         helper=(ROOT / "web/src/uxb-menu-evidence.ts").read_text(encoding="utf-8")
