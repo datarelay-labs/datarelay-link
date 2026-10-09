@@ -10,6 +10,7 @@ import {FirstUseHome,isFreshInstallation,observedRecentFeed,observedNumber,acces
 import {requireObservedMenuPayload,requireObservedInventoryContinuation,requireObservedObjectContinuation,isPartialCorePage,selectMenuPage,combineObservedPolicyPlanes,type MenuPagePosition} from "./uxb-menu-evidence";
 import {RemoteServiceEditor} from "./uxb-remote-service";
 import {RevisionHistory} from "./uxb-revisions";
+import {AgentVersionDrift} from "./uxb-versions";
 import {FirstConnectionSetup,type SetupDraft} from "./uxb-setup";
 
 type Json = Record<string, any>;
@@ -1721,7 +1722,7 @@ function View({active,operator,onNavigate,context,setupDraft,onSetupDraftChange}
   }
   if(active==="search")return <div><div className="toolbar"><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search resources and policy"/><button className="primary" onClick={()=>api("/api/v1/search?q="+encodeURIComponent(query)+"&limit=50").then(setData).catch((e:any)=>setError(e.message))}>Search</button></div>{data&&<Table items={(data.items||[]).map((x:any)=>({type:x.resource_type,id:x.id,name:x.name}))}/>}</div>;
   if(active==="overview"&&data)return <CommandCenter data={data} operator={operator} onNavigate={onNavigate}/>;
-  if(active==="versions"&&data)return <><div className="grid"><Metric label="Server version" value={data.server_version}/><Metric label="Drift" value={data.drift_count}/><Metric label="Unknown" value={data.unknown_count}/></div><Table items={data.hosts||[]}/></>;
+  if(active==="versions"&&data)return <AgentVersionDrift data={data} onNavigate={onNavigate}/>;
   if(active==="system"&&data)return <SystemAdministrationWorkspace data={data} operator={operator} onNavigate={onNavigate}/>;
   if(active==="objects"&&data)return <><ObjectsWorkspace data={data} onNavigate={onNavigate} context={context} api={api}/>{operator.role!=="Read Only"&&<GuidedObjectPanel/>}</>;
   if(active==="hosts"&&data)return <><ResourceWorkspace kind="host" data={data} operator={operator} onNavigate={onNavigate} api={api}/>{operator.role!=="Read Only"&&<ManagedHostMetadataPanel/>}{operator.role==="Admin"&&<ManagedHostAdmissionPanel/>}{operator.role==="Admin"&&<ManagedHostLifecyclePanel/>}</>;

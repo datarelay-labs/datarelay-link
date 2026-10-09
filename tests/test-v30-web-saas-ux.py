@@ -825,6 +825,25 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         ):
             self.assertIn(marker, revisions, marker)
 
+    def test_agent_version_drift_is_not_synthetic_when_server_version_unknown(self):
+        versions=(ROOT / "web/src/uxb-versions.tsx").read_text(encoding="utf-8")
+        self.assertIn('import {AgentVersionDrift} from "./uxb-versions";', SOURCE)
+        self.assertIn('if(active==="versions"&&data)return <AgentVersionDrift data={data} onNavigate={onNavigate}/>', SOURCE)
+        for marker in (
+            'function observedVersionState(server:unknown,agent:unknown)',
+            'if(!good(server)||!good(agent))return "UNKNOWN";',
+            'function validatedVersionInventory(payload:unknown)',
+            'No Agent can be classified as matching or different',
+            'do not interpret the Core drift count as zero problems',
+            'Partial Core version snapshot possible',
+            'View Servers &amp; Agents →',
+            'data.hosts.length>Number(data.limit)',
+            'row.comparison==="DIFFERENT"',
+            'observed Agent records',
+        ):
+            self.assertIn(marker, versions, marker)
+        self.assertIn("tests/uxb-versions.test.mjs", PACKAGE)
+
     def test_normative_ux_doc_binds_control_reference_and_competitive_sources(self):
         for required in (
             "Product Foundation PF-5B Administration projection",
