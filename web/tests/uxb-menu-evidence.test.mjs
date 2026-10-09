@@ -206,6 +206,33 @@ test('Access Hygiene inspect has only meaningful authorized destinations',()=>{
   assert.equal(menu.hygieneInspectTarget('unsupported','Admin'),null);
   assert.equal(menu.hygieneInspectTarget(null,'Admin'),null);
 });
+test('A diagnostic Job response cannot fabricate an accepted zero-target Queue from incomplete Core data',()=>{
+  const valid={job:{id:'mjob_123',job_type:'doctor',status:'QUEUED',target_count:2},
+    selection:{target_count:2,resource_type:'managed-host'}};
+  assert.equal(menu.requireObservedJobStart(valid,'doctor'),valid);
+  for(const invalid of [null,{}, {job:null,selection:null}, {...valid,job:{...valid.job,id:''}},
+    {...valid,job:{...valid.job,job_type:'refresh'}},
+    {...valid,job:{...valid.job,status:'SUCCEEDED'}},
+    {...valid,job:{...valid.job,target_count:undefined}},
+    {...valid,job:{...valid.job,target_count:0}},
+    {...valid,selection:{target_count:0,resource_type:'managed-host'}},
+    {...valid,selection:{target_count:2,resource_type:'remote-service'}},
+    {...valid,job:{...valid.job,target_count:101}}
+  ]){
+    assert.throws(()=>menu.requireObservedJobStart(invalid,'doctor'),/UNKNOWN/);
+  }
+});
+test('Fleet apply reports completion only when Core confirms APPLIED revision and targets',()=>{
+  const valid={status:'APPLIED',revision:17,result:{target_count:2}};
+  assert.equal(menu.requireObservedFleetApply(valid),valid);
+  for(const invalid of [null,{}, {...valid,status:'QUEUED'},
+    {...valid,revision:undefined},{...valid,revision:'17'},
+    {...valid,result:null},{...valid,result:{target_count:0}},
+    {...valid,result:{target_count:101}},{...valid,result:{target_count:'2'}}
+  ]){
+    assert.throws(()=>menu.requireObservedFleetApply(invalid),/UNKNOWN/);
+  }
+});
 test('partial Objects inventory remains available for its existing explicit UNKNOWN warning',()=>{
   // ObjectsWorkspace itself distinguishes incomplete resources from a valid empty list.
   for(const response of [{resources:{}},{resources:{'network-object':{items:[]}}}]){

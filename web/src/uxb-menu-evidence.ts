@@ -167,6 +167,42 @@ export function auditRetentionRunPermitted(
     &&form.max_events===String(value.config.max_events);
 }
 
+/** A 200 response does not prove a Job was enqueued. Check the actual
+ * Core queue identity, status and bounded target counts before reporting it. */
+export function requireObservedJobStart(payload:unknown,expectedJobType:string):any{
+  const failure=()=>{throw new Error("UNKNOWN · Core Job start response did not confirm the requested queue entry. Inspect Jobs before retrying.");};
+  if(!payload||typeof payload!=="object"||Array.isArray(payload))return failure();
+  const record=payload as Record<string,any>;
+  const job=record.job,selection=record.selection;
+  const validCount=(value:unknown)=>typeof value==="number"&&Number.isSafeInteger(value)
+    &&value>=1&&value<=100;
+  if(!job||typeof job!=="object"||Array.isArray(job)
+    ||!selection||typeof selection!=="object"||Array.isArray(selection)
+    ||typeof job.id!=="string"||!job.id.trim()
+    ||job.job_type!==expectedJobType||job.status!=="QUEUED"
+    ||!validCount(job.target_count)||!validCount(selection.target_count)
+    ||job.target_count!==selection.target_count
+    ||!["managed-host","managed-host-group"].includes(selection.resource_type))
+    return failure();
+  return payload;
+}
+
+/** A fleet Apply is acknowledged only with Core status/revision/target facts.
+ * A missing field is UNKNOWN even if HTTP returned 200 and the change applied. */
+export function requireObservedFleetApply(payload:unknown):any{
+  if(!payload||typeof payload!=="object"||Array.isArray(payload))
+    throw new Error("UNKNOWN · Fleet metadata apply response is incomplete. Inspect Change History before retrying.");
+  const value=payload as Record<string,any>;
+  const result=value.result;
+  if(value.status!=="APPLIED"
+    ||typeof value.revision!=="number"||!Number.isSafeInteger(value.revision)||value.revision<0
+    ||!result||typeof result!=="object"||Array.isArray(result)
+    ||typeof result.target_count!=="number"||!Number.isSafeInteger(result.target_count)
+    ||result.target_count<1||result.target_count>100)
+    throw new Error("UNKNOWN · Fleet metadata apply response lacks confirmed status, revision or target count. Inspect Change History before retrying.");
+  return payload;
+}
+
 export function requireObservedMenuPayload(route:string,payload:unknown):any{
   if(payload===null||typeof payload!=="object"||Array.isArray(payload))
     throw new Error("Core response unavailable or malformed. Page state is UNKNOWN; retry the read.");

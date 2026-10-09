@@ -842,6 +842,31 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertNotIn('data?.count||0',view)
         self.assertNotIn('data?.summary?.unknown_evidence??',view)
 
+    def test_jobs_and_fleet_web_responses_must_have_true_core_confirmation(self):
+        evidence=(ROOT / "web/src/uxb-menu-evidence.ts").read_text(encoding="utf-8")
+        jobs=SOURCE.split("function JobOperations(",1)[1].split("function ObjectsWorkspace(",1)[0]
+        for marker in (
+            "export function requireObservedJobStart(",
+            "export function requireObservedFleetApply(",
+            'job.status!=="QUEUED"',
+            'value.status!=="APPLIED"',
+            'result.target_count',
+        ):
+            self.assertIn(marker,evidence,marker)
+        for marker in (
+            "requireObservedJobStart(await api(",
+            "requireObservedFleetApply(await api(",
+            "Core job request accepted",
+            "UNKNOWN · Core Job start response",
+            "UNKNOWN · Fleet metadata apply response",
+            "setFleetPreview(null);setFleetConfirm(\"\");",
+            'const [fleetApplyBusy,setFleetApplyBusy]=useState(false);',
+            'disabled={fleetConfirm!=="APPLY"||fleetApplyBusy}',
+        ):
+            self.assertIn(marker,jobs,marker)
+        self.assertNotIn('result.selection?.target_count||0',jobs)
+        self.assertNotIn('result.result?.target_count||0',jobs)
+
     def test_policy_read_does_not_hide_internet_and_ai_behind_remote_limit(self):
         helper = (ROOT / "web/src/uxb-menu-evidence.ts").read_text(encoding="utf-8")
         view = SOURCE.split("function View(", 1)[1].split("function WorkspaceIcon(", 1)[0]

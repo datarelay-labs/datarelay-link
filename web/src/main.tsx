@@ -7,7 +7,7 @@ import {AccessEvidenceExplorer,GuidedPolicyJourney,coreFlowKey,coreCutoffKey,vis
 import {EnrollmentOnboarding} from "./p0-enrollment";
 import {navGroups,groupFor,labelFor,pageDescriptions,visibleRoute,navMatches,setupContextForObjectFamily} from "./uxb-navigation";
 import {FirstUseHome,isFreshInstallation,observedRecentFeed,observedNumber,accessPlaneCount,coreHealthState,type RecentFeed} from "./uxb-home";
-import {requireObservedMenuPayload,requireObservedInventoryContinuation,requireObservedObjectContinuation,requireObservedAuditRetention,auditRetentionRunPermitted,requireObservedAccessHygiene,hygieneInspectTarget,isPartialCorePage,selectMenuPage,combineObservedPolicyPlanes,type MenuPagePosition} from "./uxb-menu-evidence";
+import {requireObservedMenuPayload,requireObservedInventoryContinuation,requireObservedObjectContinuation,requireObservedAuditRetention,auditRetentionRunPermitted,requireObservedAccessHygiene,hygieneInspectTarget,requireObservedJobStart,requireObservedFleetApply,isPartialCorePage,selectMenuPage,combineObservedPolicyPlanes,type MenuPagePosition} from "./uxb-menu-evidence";
 import {RemoteServiceEditor} from "./uxb-remote-service";
 import {RevisionHistory} from "./uxb-revisions";
 import {AgentVersionDrift} from "./uxb-versions";
@@ -1114,6 +1114,8 @@ function JobOperations({operator}:{operator:any}){
   const jobsReadEpoch=useRef(0);
   const [jobType,setJobType]=useState("doctor"),[resourceType,setResourceType]=useState("managed-host"),[resource,setResource]=useState(""),[detailId,setDetailId]=useState("");
   const [fleetResourceType,setFleetResourceType]=useState("managed-host"),[fleetResource,setFleetResource]=useState(""),[fleetDescription,setFleetDescription]=useState(""),[fleetTags,setFleetTags]=useState(""),[fleetRemoveTags,setFleetRemoveTags]=useState(""),[fleetAddGroups,setFleetAddGroups]=useState(""),[fleetRemoveGroups,setFleetRemoveGroups]=useState(""),[fleetPreview,setFleetPreview]=useState<any>(null),[fleetConfirm,setFleetConfirm]=useState("");
+  const [fleetApplyBusy,setFleetApplyBusy]=useState(false);
+  const [jobStartBusy,setJobStartBusy]=useState(false);
   async function refresh(){
     const epoch=++jobsReadEpoch.current;
     setError("");setJobsState("loading");
@@ -1138,17 +1140,19 @@ function JobOperations({operator}:{operator:any}){
     setJobsHistory(jobsHistory.slice(0,-1));
   }
   async function start(){
-    setError("");setMessage("");
+    if(jobStartBusy)return;
+    setError("");setMessage("");setJobStartBusy(true);
     try{
       const body:any={job_type:jobType,resource_type:resourceType};
       if(resource)body.resource=resource;
-      const result=await api("/api/v1/jobs/diagnostic",{method:"POST",body:JSON.stringify(body)});
+      const result=requireObservedJobStart(await api("/api/v1/jobs/diagnostic",{method:"POST",body:JSON.stringify(body)}),jobType);
       setDetail(result.job);
-      setDetailId(result.job?.id||"");
-      setMessage("Queued "+jobType+" for "+String(result.selection?.target_count||0)+" Managed Host(s)");
+      setDetailId(result.job.id);
+      setMessage("Core job request accepted: "+result.job.id+" · status "+result.job.status+" · "+result.selection.target_count+" Managed Host(s). Completion NOT VERIFIED.");
       if(jobsCursor){setJobsCursor("");setJobsHistory([])}
       else await refresh();
-    }catch(e:any){setError(e.message||String(e))}
+    }catch(e:any){setError("UNKNOWN · Core Job start response could not be confirmed. Inspect Jobs before retrying: "+(e.message||String(e)))}
+    finally{setJobStartBusy(false)}
   }
   async function loadDetail(id?:string){
     const target=(id||detailId).trim();if(!target)return;
@@ -1172,15 +1176,20 @@ function JobOperations({operator}:{operator:any}){
     }catch(e:any){setFleetPreview(null);setError(e.message||String(e))}
   }
   async function applyFleetMetadata(){
-    if(!fleetPreview)return;
-    setError("");setMessage("");
+    if(!fleetPreview||fleetApplyBusy||fleetConfirm!=="APPLY")return;
+    setError("");setMessage("");setFleetApplyBusy(true);
     try{
-      const result=await api("/api/v1/fleet/metadata/apply",{method:"POST",body:JSON.stringify({
+      const result=requireObservedFleetApply(await api("/api/v1/fleet/metadata/apply",{method:"POST",body:JSON.stringify({
         change_plan_id:fleetPreview.change_plan_id,confirmation:fleetConfirm
-      })});
-      setMessage("Fleet metadata applied at revision "+String(result.revision)+" to "+String(result.result?.target_count||0)+" Managed Host(s)");
+      })}));
+      setMessage("Core confirmed Fleet metadata APPLIED at revision "+result.revision+" to "+result.result.target_count+" Managed Host(s).");
       setFleetPreview(null);setFleetConfirm("");
-    }catch(e:any){setError(e.message||String(e))}
+    }catch(e:any){
+      // The Core may have committed even if the Web response was interrupted.
+      // Never allow reusing an ambiguous Apply plan without fresh Preview.
+      setFleetPreview(null);setFleetConfirm("");
+      setError("UNKNOWN · Fleet metadata apply response could not be confirmed. Inspect Change History before attempting a fresh Preview: "+(e.message||String(e)));
+    }finally{setFleetApplyBusy(false)}
   }
   async function exportInventory(){
     setError("");setMessage("");
@@ -1211,7 +1220,7 @@ function JobOperations({operator}:{operator:any}){
         <select value={jobType} onChange={e=>setJobType(e.target.value)}><option value="doctor">Doctor diagnostics</option><option value="refresh">Synchronize / refresh</option><option value="version-check">Version check</option><option value="support-bundle">Support bundle</option></select>
         <select value={resourceType} onChange={e=>{setResourceType(e.target.value);setResource("")}}><option value="managed-host">Managed Host(s)</option><option value="managed-host-group">Managed Host Group</option></select>
         <input value={resource} onChange={e=>setResource(e.target.value)} placeholder={resourceType==="managed-host"?"Host selector; blank = all trusted":"Managed Host Group name / ID"}/>
-        <button className="primary" onClick={start} disabled={resourceType==="managed-host-group"&&!resource.trim()}>Start Job</button>
+        <button className="primary" onClick={start} disabled={jobStartBusy||(resourceType==="managed-host-group"&&!resource.trim())}>{jobStartBusy?"Submitting Core Job…":"Start Job"}</button>
       </div>}
       <div className="toolbar"><button className="secondary" onClick={refresh}>Refresh Jobs</button><input value={detailId} onChange={e=>setDetailId(e.target.value)} placeholder="Job ID"/><button className="secondary" onClick={()=>loadDetail()}>Load Detail</button><button className="secondary" onClick={exportInventory}>Export Inventory</button></div>
       {inventoryExport&&<pre className="plan">{JSON.stringify({path:inventoryExport.path,record_count:inventoryExport.record_count,counts:inventoryExport.counts,sha256:inventoryExport.sha256,download_exposed:inventoryExport.download_exposed},null,2)}</pre>}
@@ -1246,7 +1255,7 @@ function JobOperations({operator}:{operator:any}){
       {fleetPreview&&<div className="dr-preview-panel">
         <pre className="plan">{JSON.stringify({selection:fleetPreview.selection,changes:fleetPreview.changes,preview:fleetPreview.preview,impact:fleetPreview.impact},null,2)}</pre>
         <label className="apply-label">Type APPLY to commit<input value={fleetConfirm} onChange={e=>setFleetConfirm(e.target.value)} placeholder="APPLY"/></label>
-        <button className="danger" onClick={applyFleetMetadata} disabled={fleetConfirm!=="APPLY"}>Apply Fleet Metadata</button>
+        <button className="danger" onClick={applyFleetMetadata} disabled={fleetConfirm!=="APPLY"||fleetApplyBusy}>{fleetApplyBusy?"Confirming Core Apply…":"Apply Fleet Metadata"}</button>
       </div>}
     </section>}
     {detail&&<div className="card">
