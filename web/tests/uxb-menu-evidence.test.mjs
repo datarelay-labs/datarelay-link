@@ -49,6 +49,29 @@ test('Core pagination is visible and local filters never imply a complete list',
   assert.equal(menu.requireObservedMenuPayload('hosts',paged),paged);
   assert.equal(menu.requireObservedMenuPayload('policies',paged),paged);
 });
+test('Managed Host and Remote Service pagination accepts only matching observed Core pages',()=>{
+  const cursor='observed-opaque-core-page';
+  for(const [route,resource_type] of [
+    ['hosts','managed-host'],['services','remote-service']
+  ]){
+    const page={resource_type,limit:100,items:[{id:'item-101',name:'Observed'}],next_cursor:null};
+    assert.equal(menu.requireObservedInventoryContinuation(route,page,cursor,100),page);
+    for(const wrong of [
+      {...page,resource_type:route==='hosts'?'remote-service':'managed-host'},
+      {...page,limit:50},
+      {...page,items:[{id:''}]},
+      {...page,items:[{id:17}]},
+      {...page,items:Array.from({length:101},(_,i)=>({id:String(i)}))},
+      {...page,next_cursor:cursor},
+      {...page,items:null},
+      {error:'Core unreachable'},
+    ]){
+      assert.throws(()=>menu.requireObservedInventoryContinuation(route,wrong,cursor,100),
+        /Core|UNKNOWN/,route);
+    }
+  }
+});
+
 test('Audit keyset backward and forward pagination uses opaque observed Core cursors only',()=>{
   const start={cursor:'',history:[]};
   assert.deepEqual(menu.selectMenuPage(start,'cursor-page-2','older'),

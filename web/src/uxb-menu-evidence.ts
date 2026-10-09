@@ -66,6 +66,22 @@ export function combineObservedPolicyPlanes(
   return {items,possibly_truncated_planes,next_cursor_by_plane};
 }
 
+/** Only observed Core pages of the requested resource family may extend a
+ * loaded inventory. Never guess a next cursor or silently swap Host/Service. */
+export function requireObservedInventoryContinuation(
+  route:"hosts"|"services",payload:unknown,requestedCursor:string,limit:number
+):any{
+  const page=requireObservedMenuPayload(route,payload);
+  const expected=route==="hosts"?"managed-host":"remote-service";
+  if(page.resource_type!==expected||page.limit!==limit
+    ||!Number.isSafeInteger(limit)||limit<1
+    ||page.items.length>limit||page.next_cursor===requestedCursor
+    ||page.items.some((item:any)=>typeof item.id!=="string"||!item.id))
+    throw new Error("Core inventory page does not match the requested "+expected+
+      " resource type, size or cursor. State is UNKNOWN.");
+  return page;
+}
+
 export function requireObservedMenuPayload(route:string,payload:unknown):any{
   if(payload===null||typeof payload!=="object"||Array.isArray(payload))
     throw new Error("Core response unavailable or malformed. Page state is UNKNOWN; retry the read.");

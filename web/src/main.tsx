@@ -7,7 +7,7 @@ import {AccessEvidenceExplorer,GuidedPolicyJourney,coreFlowKey,coreCutoffKey,vis
 import {EnrollmentOnboarding} from "./p0-enrollment";
 import {navGroups,groupFor,labelFor,pageDescriptions,visibleRoute,navMatches,setupContextForObjectFamily} from "./uxb-navigation";
 import {FirstUseHome,isFreshInstallation,observedRecentFeed,observedNumber,accessPlaneCount,coreHealthState,type RecentFeed} from "./uxb-home";
-import {requireObservedMenuPayload,isPartialCorePage,selectMenuPage,combineObservedPolicyPlanes,type MenuPagePosition} from "./uxb-menu-evidence";
+import {requireObservedMenuPayload,requireObservedInventoryContinuation,isPartialCorePage,selectMenuPage,combineObservedPolicyPlanes,type MenuPagePosition} from "./uxb-menu-evidence";
 import {RemoteServiceEditor} from "./uxb-remote-service";
 import {RevisionHistory} from "./uxb-revisions";
 import {FirstConnectionSetup,type SetupDraft} from "./uxb-setup";
@@ -1297,13 +1297,49 @@ function PolicyWorkspace({data,operator,onNavigate,api}:{data:any,operator:any,o
   </div>;
 }
 
-function ResourceWorkspace({kind,items,partial,operator,onNavigate}:{kind:"host"|"service",items:any[],partial:boolean,operator:any,onNavigate?:(id:string,groupId?:string,context?:any)=>void}){
+function ResourceWorkspace({kind,data,operator,onNavigate,api}:{kind:"host"|"service",data:any,operator:any,onNavigate?:(id:string,groupId?:string,context?:any)=>void,api:(path:string)=>Promise<any>}){
   const [filter,setFilter]=useState(""),[selected,setSelected]=useState<any>(null);
   const [admissionFilter,setAdmissionFilter]=useState("all");
+  const [loaded,setLoaded]=useState<any[]>(data.items||[]);
+  const [cursor,setCursor]=useState<string|null>(isPartialCorePage(data)?data.next_cursor:null);
+  const [moreBusy,setMoreBusy]=useState(false),[moreError,setMoreError]=useState("");
+  const [pagesLoaded,setPagesLoaded]=useState(1);
+  const loadEpoch=useRef(0);
   useEscapeClose(!!selected,()=>setSelected(null));
-  const q=filter.trim().toLowerCase();
+  useEffect(()=>{
+    loadEpoch.current+=1;setLoaded(data.items||[]);
+    setCursor(isPartialCorePage(data)?data.next_cursor:null);
+    setMoreBusy(false);setMoreError("");setPagesLoaded(1);setSelected(null);
+    return()=>{loadEpoch.current+=1};
+  },[kind,data]);
   const isHost=kind==="host";
-  const rows=(items||[])
+  const partial=!!cursor;
+  async function loadMore(){
+    const requestedCursor=cursor;
+    if(!requestedCursor||moreBusy)return;
+    const epoch=++loadEpoch.current;
+    setMoreBusy(true);setMoreError("");
+    try{
+      const type=isHost?"managed-host":"remote-service";
+      const route=isHost?"hosts":"services";
+      const path="/api/v1/inventory?resource_type="+type+"&limit=100&cursor="+encodeURIComponent(requestedCursor);
+      const page=requireObservedInventoryContinuation(route,await api(path),requestedCursor,100);
+      if(epoch!==loadEpoch.current)return;
+      const seen=new Set(loaded.map((item:any)=>item.id));
+      const fresh=page.items.filter((item:any)=>!seen.has(item.id));
+      if(page.items.length&&!fresh.length)
+        throw new Error("Core returned only previously loaded resources. State is UNKNOWN; retry the page.");
+      setLoaded(previous=>[...previous,...fresh]);
+      setCursor(isPartialCorePage(page)?page.next_cursor:null);
+      setPagesLoaded(previous=>previous+1);
+    }catch(e:any){
+      if(epoch===loadEpoch.current)setMoreError(e.message||String(e));
+    }finally{
+      if(epoch===loadEpoch.current)setMoreBusy(false);
+    }
+  }
+  const q=filter.trim().toLowerCase();
+  const rows=loaded
     .filter((item:any)=>(!q||Object.values(item).some(value=>String(value??"").toLowerCase().includes(q)))
       &&(!isHost||admissionFilter==="all"||item.admission_state===admissionFilter))
     .sort((a:any,b:any)=>isHost?
@@ -1322,7 +1358,13 @@ function ResourceWorkspace({kind,items,partial,operator,onNavigate}:{kind:"host"
           <option value="QUARANTINED">Quarantined</option>
         </select>}
         <label className="dr-filter-field"><WorkspaceIcon kind="search"/><input value={filter} onChange={e=>setFilter(e.target.value)} placeholder={isHost?"Filter hosts…":"Filter services…"}/>{filter&&<button onClick={()=>setFilter("")} aria-label="Clear filter">×</button>}</label></div>
-      {partial&&<p className="dr-uxb-catalog-page-notice" role="status">Partial Core inventory · additional {isHost?"Managed Hosts":"Remote Services"} exist beyond the loaded page. Filters check loaded rows only. Use Search to find other resources.</p>}
+      {partial&&<p className="dr-uxb-catalog-page-notice" role="status">Partial Core inventory · more {isHost?"Managed Hosts":"Remote Services"} exist beyond the loaded pages. Filters check loaded rows only. Load more to inspect additional Core records.</p>}
+      {moreError&&<p className="warning-box" role="alert">UNKNOWN · Next Core inventory page unavailable: {moreError} Existing observed resources remain visible.</p>}
+      <div className="toolbar" role="status">
+        <span>{loaded.length} Core records observed in {pagesLoaded} page{pagesLoaded===1?"":"s"} · not a total inventory count</span>
+        {partial&&<button type="button" className="secondary" disabled={moreBusy}
+          onClick={loadMore}>{moreBusy?"Loading next Core page…":isHost?"Load more Managed Hosts →":"Load more Remote Services →"}</button>}
+      </div>
       {!rows.length?<div className="dr-empty-state"><span className="dr-empty-icon"><WorkspaceIcon kind="infrastructure"/></span><strong>{partial?"No match in loaded resources":filter?"No matching resources":"No resources yet"}</strong><p>{partial?"Other resources may exist beyond this Core page. Use Search to find them.":filter?"Try a different filter.":isHost?"Connect an Agent to populate managed inventory.":"Publish a Remote Service from a managed host."}</p>{!filter&&isHost&&operator.role==="Admin"&&<button className="primary" onClick={()=>onNavigate?.("enrollments","infrastructure")}>Connect Agent</button>}</div>:
       <div className="dr-table-scroll"><table className="dr-resource-table"><thead><tr>{isHost?<><th>Host</th><th>Admission</th><th>Connection</th><th>Trust</th><th>Platform</th><th>Version</th><th>Last activity</th></>:<><th>Service</th><th>Managed host</th><th>Type</th><th>Public port</th><th>Target</th><th>State</th></>}</tr></thead><tbody>{rows.map((item:any)=><tr key={item.id} tabIndex={0} onClick={()=>setSelected(item)} onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();setSelected(item)}}}>{isHost?<><td><strong>{item.name||item.id}</strong><small>{item.hostname||item.id}</small></td><td><span className={item.admission_state==="APPROVED"?"dr-state active":"dr-state"}><i/>{item.admission_state==="APPROVED"?"Approved":item.admission_state==="PENDING_APPROVAL"?"Pending approval":item.admission_state==="QUARANTINED"?"Quarantined":"Unknown"}</span></td><td><span className={item.connected?"dr-state active":"dr-state"}><i/>{item.connected?"Connected":item.agent_lifecycle_state||item.status||"Unknown"}</span></td><td>{item.trust_status||"—"}</td><td>{item.agent_platform||"—"}</td><td>{item.agent_version||"—"}</td><td>{item.agent_heartbeat_at||item.last_seen||"—"}</td></>:<><td><strong>{item.name||item.id}</strong><small>{item.id}</small></td><td>{item.managed_host||item.managed_host_id||"—"}</td><td>{item.service_type||"—"}</td><td>{item.public_port??"—"}</td><td>{[item.target_host,item.target_port].filter(Boolean).join(":")||item.target_mode||"—"}</td><td><span className={item.enabled&&!item.released?"dr-state active":"dr-state"}><i/>{item.released?"Released":item.enabled?"Enabled":"Disabled"}</span></td></>}</tr>)}</tbody></table></div>}
     </section>
@@ -1637,8 +1679,8 @@ function View({active,operator,onNavigate,context,setupDraft,onSetupDraftChange}
   if(active==="versions"&&data)return <><div className="grid"><Metric label="Server version" value={data.server_version}/><Metric label="Drift" value={data.drift_count}/><Metric label="Unknown" value={data.unknown_count}/></div><Table items={data.hosts||[]}/></>;
   if(active==="system"&&data)return <SystemAdministrationWorkspace data={data} operator={operator} onNavigate={onNavigate}/>;
   if(active==="objects"&&data)return <><ObjectsWorkspace data={data} onNavigate={onNavigate} context={context}/>{operator.role!=="Read Only"&&<GuidedObjectPanel/>}</>;
-  if(active==="hosts"&&data)return <><ResourceWorkspace kind="host" items={data.items||[]} partial={isPartialCorePage(data)} operator={operator} onNavigate={onNavigate}/>{operator.role!=="Read Only"&&<ManagedHostMetadataPanel/>}{operator.role==="Admin"&&<ManagedHostAdmissionPanel/>}{operator.role==="Admin"&&<ManagedHostLifecyclePanel/>}</>;
-  if(active==="services"&&data)return <><ResourceWorkspace kind="service" items={data.items||[]} partial={isPartialCorePage(data)} operator={operator} onNavigate={onNavigate}/>{operator.role!=="Read Only"&&<RemoteServiceEditor api={api}/>}</>;
+  if(active==="hosts"&&data)return <><ResourceWorkspace kind="host" data={data} operator={operator} onNavigate={onNavigate} api={api}/>{operator.role!=="Read Only"&&<ManagedHostMetadataPanel/>}{operator.role==="Admin"&&<ManagedHostAdmissionPanel/>}{operator.role==="Admin"&&<ManagedHostLifecyclePanel/>}</>;
+  if(active==="services"&&data)return <><ResourceWorkspace kind="service" data={data} operator={operator} onNavigate={onNavigate} api={api}/>{operator.role!=="Read Only"&&<RemoteServiceEditor api={api}/>}</>;
   if(active==="policies"&&data)return <><PolicyWorkspace data={data} operator={operator} onNavigate={onNavigate} api={api}/>{operator.role!=="Read Only"&&<GuidedPolicyJourney api={api} onNavigate={onNavigate}/>}<PolicySafetyPanel operator={operator}/>{operator.role!=="Read Only"&&<><GuidedPolicySettingsPanel/><TemporaryAccessPanel/></>}</>;
   if(active==="doctor"&&data)return <><div className="grid"><Metric label="Attention" value={data.attention?.count}/><Metric label="Checks" value={(data.checks||[]).length}/></div><Table items={data.checks||[]}/></>;
   if(active==="health"&&data)return <HealthWorkspace data={data} onNavigate={onNavigate}/>;
