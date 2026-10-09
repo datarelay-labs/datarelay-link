@@ -796,6 +796,28 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn('retentionState==="ready"&&retention&&<div className="dr-kpi-strip',audit)
         self.assertIn('retention.capacity_exceeded?"Exceeded":"Normal"',audit)
 
+    def test_irreversible_retention_requires_typed_confirmation_and_fresh_policy(self):
+        audit=SOURCE.split("function AuditExplorer(",1)[1].split("function AgentRolloutPreviewPanel(",1)[0]
+        helper=(ROOT / "web/src/uxb-menu-evidence.ts").read_text(encoding="utf-8")
+        self.assertIn("export function auditRetentionRunPermitted(",helper)
+        for marker in (
+            'const [retentionConfirmation,setRetentionConfirmation]=useState("");',
+            'if(!auditRetentionRunPermitted(',
+            'value={retentionConfirmation}',
+            'Type RUN RETENTION to confirm',
+            'retentionEdited&&',
+            'Unsaved retention policy changes',
+            'onChange={e=>{setControlDays(e.target.value);setRetentionConfirmation("")}}',
+            'setRetentionConfirmation("");',
+            'disabled={!retentionRunAllowed}',
+        ):
+            self.assertIn(marker,audit,marker)
+        self.assertIn('confirmation!=="RUN RETENTION"',helper)
+        self.assertIn('value.config.control_days',helper)
+        self.assertIn('value.config.access_days',helper)
+        self.assertIn('value.config.max_events',helper)
+        self.assertIn('"/api/v1/audit/retention/run"',audit)
+
     def test_access_hygiene_requires_observed_count_and_true_inspect_target(self):
         helper=(ROOT / "web/src/uxb-menu-evidence.ts").read_text(encoding="utf-8")
         view=SOURCE.split("function AccessHygienePanel(", 1)[1].split("function SystemAdministrationWorkspace(", 1)[0]

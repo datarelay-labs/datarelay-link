@@ -152,6 +152,21 @@ export function requireObservedAuditRetention(payload:unknown):ObservedAuditRete
   return payload as ObservedAuditRetention;
 }
 
+/** Retention deletes old audit rows. Require explicit typed approval against
+ * the exact observed Core policy, not a merely edited local form. */
+export function auditRetentionRunPermitted(
+  snapshot:unknown,draft:unknown,state:unknown,busy:unknown,confirmation:unknown
+):boolean{
+  if(state!=="ready"||busy!==false||confirmation!=="RUN RETENTION"
+    ||!draft||typeof draft!=="object"||Array.isArray(draft))return false;
+  let value:ObservedAuditRetention;
+  try{value=requireObservedAuditRetention(snapshot)}catch{return false}
+  const form=draft as Record<string,unknown>;
+  return form.control_days===String(value.config.control_days)
+    &&form.access_days===String(value.config.access_days)
+    &&form.max_events===String(value.config.max_events);
+}
+
 export function requireObservedMenuPayload(route:string,payload:unknown):any{
   if(payload===null||typeof payload!=="object"||Array.isArray(payload))
     throw new Error("Core response unavailable or malformed. Page state is UNKNOWN; retry the read.");

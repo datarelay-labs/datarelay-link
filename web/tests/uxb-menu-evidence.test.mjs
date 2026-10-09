@@ -156,6 +156,27 @@ test('Audit retention status is never fabricated as Normal or zero from missing 
     assert.throws(()=>menu.requireObservedAuditRetention(broken),/UNKNOWN/);
   }
 });
+test('Irreversible audit retention cannot run without exact typed review of observed saved policy',()=>{
+  const core={config:{control_days:365,access_days:90,max_events:500000},
+    total_events:4,db_size_bytes:1024,capacity_exceeded:false,
+    capacity_policy:"Age and capacity"};
+  const form={control_days:"365",access_days:"90",max_events:"500000"};
+  assert.equal(menu.auditRetentionRunPermitted(core,form,"ready",false,"RUN RETENTION"),true);
+  for(const [snapshot,input,status,busy,confirm] of [
+    [core,form,"loading",false,"RUN RETENTION"],
+    [core,form,"unknown",false,"RUN RETENTION"],
+    [core,form,"ready",true,"RUN RETENTION"],
+    [core,form,"ready",false,"RUN"],
+    [core,form,"ready",false,"run retention"],
+    [core,{...form,control_days:"7"},"ready",false,"RUN RETENTION"],
+    [core,{...form,max_events:"200"},"ready",false,"RUN RETENTION"],
+    [core,{...form,access_days:""},"ready",false,"RUN RETENTION"],
+    [{...core,capacity_exceeded:"false"},form,"ready",false,"RUN RETENTION"],
+    [null,form,"ready",false,"RUN RETENTION"]
+  ]){
+    assert.equal(menu.auditRetentionRunPermitted(snapshot,input,status,busy,confirm),false);
+  }
+});
 test('Access Hygiene requires Core read-only evidence and truthful total/unknown counts',()=>{
   const sample={items:[],count:0,summary:{action_required:0,unknown_evidence:0},
     authoritative:false,read_only:true,auto_mutation:false,

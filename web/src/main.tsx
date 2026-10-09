@@ -7,7 +7,7 @@ import {AccessEvidenceExplorer,GuidedPolicyJourney,coreFlowKey,coreCutoffKey,vis
 import {EnrollmentOnboarding} from "./p0-enrollment";
 import {navGroups,groupFor,labelFor,pageDescriptions,visibleRoute,navMatches,setupContextForObjectFamily} from "./uxb-navigation";
 import {FirstUseHome,isFreshInstallation,observedRecentFeed,observedNumber,accessPlaneCount,coreHealthState,type RecentFeed} from "./uxb-home";
-import {requireObservedMenuPayload,requireObservedInventoryContinuation,requireObservedObjectContinuation,requireObservedAuditRetention,requireObservedAccessHygiene,hygieneInspectTarget,isPartialCorePage,selectMenuPage,combineObservedPolicyPlanes,type MenuPagePosition} from "./uxb-menu-evidence";
+import {requireObservedMenuPayload,requireObservedInventoryContinuation,requireObservedObjectContinuation,requireObservedAuditRetention,auditRetentionRunPermitted,requireObservedAccessHygiene,hygieneInspectTarget,isPartialCorePage,selectMenuPage,combineObservedPolicyPlanes,type MenuPagePosition} from "./uxb-menu-evidence";
 import {RemoteServiceEditor} from "./uxb-remote-service";
 import {RevisionHistory} from "./uxb-revisions";
 import {AgentVersionDrift} from "./uxb-versions";
@@ -906,6 +906,7 @@ function AuditExplorer({operator,context}:{operator:any,context?:any}){
   const retentionReadEpoch=useRef(0);
   const [retentionState,setRetentionState]=useState<"loading"|"ready"|"unknown">("loading");
   const [retentionError,setRetentionError]=useState(""),[retentionWriteBusy,setRetentionWriteBusy]=useState(false);
+  const [retentionConfirmation,setRetentionConfirmation]=useState("");
   const [auditPage,setAuditPage]=useState<MenuPagePosition>({cursor:"",history:[]});
   const [auditFilterKey,setAuditFilterKey]=useState<string|null>(null);
   const [start,setStart]=useState(""),[end,setEnd]=useState(""),[category,setCategory]=useState(""),[eventType,setEventType]=useState(""),[actor,setActor]=useState(""),[resource,setResource]=useState(String(context?.originId||"")),[result,setResult]=useState(""),[correlation,setCorrelation]=useState("");
@@ -938,7 +939,7 @@ function AuditExplorer({operator,context}:{operator:any,context?:any}){
   }
   async function loadRetention(){
     const epoch=++retentionReadEpoch.current;
-    setRetention(null);setRetentionState("loading");setRetentionError("");
+    setRetention(null);setRetentionState("loading");setRetentionError("");setRetentionConfirmation("");
     try{
       const value=requireObservedAuditRetention(await api("/api/v1/audit/retention"));
       if(epoch!==retentionReadEpoch.current)return;
@@ -970,8 +971,8 @@ function AuditExplorer({operator,context}:{operator:any,context?:any}){
     finally{setRetentionWriteBusy(false)}
   }
   async function runRetention(){
-    if(retentionState!=="ready"||retentionWriteBusy)return;
-    setError("");setMessage("");setRetentionWriteBusy(true);
+    if(!auditRetentionRunPermitted(retention,retentionDraft,retentionState,retentionWriteBusy,retentionConfirmation))return;
+    setError("");setMessage("");setRetentionWriteBusy(true);setRetentionConfirmation("");
     try{
       const value=await api("/api/v1/audit/retention/run",{method:"POST",body:"{}"});
       const counts=[value?.control_deleted,value?.access_deleted,value?.capacity_deleted];
@@ -982,6 +983,13 @@ function AuditExplorer({operator,context}:{operator:any,context?:any}){
     }catch(e:any){setError(e.message||String(e))}
     finally{setRetentionWriteBusy(false)}
   }
+  const retentionDraft={control_days:controlDays,access_days:accessDays,max_events:maxEvents};
+  const retentionEdited=retentionState==="ready"&&retention&&(
+    controlDays!==String(retention.config.control_days)||
+    accessDays!==String(retention.config.access_days)||
+    maxEvents!==String(retention.config.max_events)
+  );
+  const retentionRunAllowed=auditRetentionRunPermitted(retention,retentionDraft,retentionState,retentionWriteBusy,retentionConfirmation);
   const auditFiltersEdited=auditState==="ready"&&auditFilterKey!==filterParams().toString();
   const rows=(data?.items||[]).map((x:any)=>({
     event_id:x.event_id||("legacy:"+x.row_id),
@@ -1037,13 +1045,19 @@ function AuditExplorer({operator,context}:{operator:any,context?:any}){
       {operator.role==="Admin"&&<div className="dr-retention-config">
         {retentionState!=="ready"&&<p className="muted" role="status">Retention changes are unavailable until current Core configuration is verified.</p>}
         <div className="dr-form-grid three">
-          <label className="dr-field"><span>Control / security days</span><input value={retentionState==="ready"?controlDays:""} onChange={e=>setControlDays(e.target.value)} inputMode="numeric" placeholder="UNKNOWN" disabled={retentionState!=="ready"||retentionWriteBusy}/></label>
-          <label className="dr-field"><span>Access decision days</span><input value={retentionState==="ready"?accessDays:""} onChange={e=>setAccessDays(e.target.value)} inputMode="numeric" placeholder="UNKNOWN" disabled={retentionState!=="ready"||retentionWriteBusy}/></label>
-          <label className="dr-field"><span>Maximum events</span><input value={retentionState==="ready"?maxEvents:""} onChange={e=>setMaxEvents(e.target.value)} inputMode="numeric" placeholder="UNKNOWN" disabled={retentionState!=="ready"||retentionWriteBusy}/></label>
+          <label className="dr-field"><span>Control / security days</span><input value={retentionState==="ready"?controlDays:""} onChange={e=>{setControlDays(e.target.value);setRetentionConfirmation("")}} inputMode="numeric" placeholder="UNKNOWN" disabled={retentionState!=="ready"||retentionWriteBusy}/></label>
+          <label className="dr-field"><span>Access decision days</span><input value={retentionState==="ready"?accessDays:""} onChange={e=>{setAccessDays(e.target.value);setRetentionConfirmation("")}} inputMode="numeric" placeholder="UNKNOWN" disabled={retentionState!=="ready"||retentionWriteBusy}/></label>
+          <label className="dr-field"><span>Maximum events</span><input value={retentionState==="ready"?maxEvents:""} onChange={e=>{setMaxEvents(e.target.value);setRetentionConfirmation("")}} inputMode="numeric" placeholder="UNKNOWN" disabled={retentionState!=="ready"||retentionWriteBusy}/></label>
         </div>
+        {retentionEdited&&<p role="status" className="dr-uxb-catalog-page-notice">Unsaved retention policy changes are present. Save policy and reload Core status before running retention; the operation only uses the last Core-saved policy.</p>}
+        <p className="warning-box">Audit retention permanently deletes audit rows older than the saved control/access windows and may prune oldest access decisions for capacity. Review the observed settings above. This Web confirmation does not replace Core Admin authorization.</p>
+        <label className="dr-field"><span>Type RUN RETENTION to confirm deletion using the observed saved policy</span>
+          <input value={retentionConfirmation} onChange={e=>setRetentionConfirmation(e.target.value)} placeholder="RUN RETENTION" autoComplete="off"
+            disabled={retentionState!=="ready"||retentionWriteBusy||!!retentionEdited}/>
+        </label>
         <div className="dr-form-actions">
           <button className="secondary" onClick={configureRetention} disabled={retentionState!=="ready"||retentionWriteBusy}>Save policy</button>
-          <button className="danger" onClick={runRetention} disabled={retentionState!=="ready"||retentionWriteBusy}>Run retention now</button>
+          <button className="danger" onClick={runRetention} disabled={!retentionRunAllowed}>Run retention now</button>
         </div>
       </div>}
     </section>
