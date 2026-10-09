@@ -42,6 +42,27 @@ try {
     Assert-FrpTrue ($statusOut -match '(?i)enrolled=') ("status output while lock held: $statusOut")
     Remove-Item -LiteralPath $lock -Recurse -Force
 
+    # F027: a stale PowerShell lock PID can be reused by an unrelated live OS
+    # process (observed Windows svchost.exe). Never mistake it for the owner.
+    $other = Get-Process | Where-Object {
+        $_.Id -gt 0 -and $_.ProcessName -notin @('powershell', 'pwsh')
+    } | Sort-Object Id | Select-Object -First 1
+    Assert-FrpTrue ($null -ne $other) 'fixture has a live unrelated OS process'
+    New-Item -ItemType Directory -Path $lock -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $lock 'pid') -Value ([string]$other.Id)
+    Assert-FrpTrue (Enter-FrpClientLock) 'stale reused PID does not block update'
+    Exit-FrpClientLock
+    Assert-FrpTrue ($null -ne (Get-Process -Id $other.Id -ErrorAction SilentlyContinue)) 'unrelated process untouched'
+
+    # Even another PowerShell process can inherit a reused numeric PID.
+    # Its process start time must not be newer than the lock ownership file.
+    New-Item -ItemType Directory -Path $lock -Force | Out-Null
+    $pidFile = Join-Path $lock 'pid'
+    Set-Content -LiteralPath $pidFile -Value ([string]$PID)
+    (Get-Item -LiteralPath $pidFile).LastWriteTimeUtc = [datetime]::UtcNow.AddDays(-2)
+    Assert-FrpTrue (Enter-FrpClientLock) 'reused PowerShell PID with older lock is reclaimed'
+    Exit-FrpClientLock
+
     New-Item -ItemType Directory -Path $lock -Force | Out-Null
     Set-Content -LiteralPath (Join-Path $lock 'pid') -Value '999999'
     Assert-FrpTrue (Enter-FrpClientLock) 'stale pid reclaimed'
