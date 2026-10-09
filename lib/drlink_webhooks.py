@@ -232,7 +232,8 @@ class WebhookStore:
             })
         return {"items": items}
 
-    def enqueue(self, webhook_id: str, event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+    def enqueue(self, webhook_id: str, event_type: str, payload: dict[str, Any], *,
+                audit_actor_id: Optional[str] = None) -> dict[str, Any]:
         if not isinstance(payload, dict):
             raise ControlPlaneError("Webhook event body must be an object.")
         eid = "whe_" + secrets.token_hex(16)
@@ -260,11 +261,37 @@ class WebhookStore:
                 "payload_json,next_attempt_at,created_at) VALUES (?,?,?,?,?,?)",
                 (eid, webhook_id, event_type, serialized, event["timestamp"], event["timestamp"]),
             )
+            if audit_actor_id is not None:
+                self._audit("management_webhook.test_requested", webhook_id, audit_actor_id)
             self.conn.execute("COMMIT")
         except Exception:
             self.conn.execute("ROLLBACK")
             raise
         return event
+
+    def test_delivery(self, webhook_id: str, *, actor_id: str = "local-admin") -> dict[str, str]:
+        """Queue an explicit signed test event with an atomic audit record.
+
+        A worker performs delivery later; this operation never bypasses
+        endpoint selection, queue bounds, or HTTPS destination validation.
+        """
+        row = self.conn.execute(
+            "SELECT event_classes FROM management_webhooks WHERE id=? AND enabled=1",
+            (webhook_id,),
+        ).fetchone()
+        if not row:
+            raise ControlPlaneError("Active webhook was not found.")
+        event_type = next(
+            (klass for klass in str(row["event_classes"]).splitlines()
+             if klass in ALLOWED_EVENTS), None,
+        )
+        if event_type is None:
+            raise ControlPlaneError("Active webhook has no supported event class.")
+        event = self.enqueue(
+            webhook_id, event_type, {"kind": "test-delivery"},
+            audit_actor_id=actor_id,
+        )
+        return {"webhook_id": webhook_id, "event_id": event["event_id"], "status": "QUEUED"}
 
     def rotate_secret(self, webhook_id: str, *, actor_id: str = "local-admin") -> dict[str, str]:
         secret = "drlink_wh_" + secrets.token_urlsafe(32)

@@ -7,6 +7,46 @@ from drlink_control_db import ControlPlaneError
 from drlink_webhooks import WebhookStore, validate_webhook_url
 
 class WebhookTests(unittest.TestCase):
+    def test_explicit_test_delivery_is_audited_atomically_and_bounded(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory(prefix="drlink-wh-test-event-") as root:
+            with WebhookStore(root) as store:
+                hook = store.create(
+                    "test-sink", "https://hooks.example.org/events",
+                    ["security.lifecycle"], actor_id="web:admin",
+                )
+                queued = store.test_delivery(hook["id"], actor_id="web:admin")
+                self.assertEqual(queued["webhook_id"], hook["id"])
+                self.assertEqual(queued["status"], "QUEUED")
+                self.assertNotIn("secret", queued)
+                row = store.conn.execute(
+                    "SELECT event_type,status,payload_json FROM management_webhook_outbox "
+                    "WHERE event_id=?", (queued["event_id"],),
+                ).fetchone()
+                self.assertEqual((row["event_type"], row["status"]),
+                                 ("security.lifecycle", "PENDING"))
+                self.assertEqual(__import__("json").loads(row["payload_json"])["data"],
+                                 {"kind": "test-delivery"})
+                self.assertNotIn(hook["secret"], row["payload_json"])
+                audit = store.conn.execute(
+                    "SELECT actor_id FROM audit_events WHERE "
+                    "event_type='management_webhook.test_requested' AND entity_id=?",
+                    (hook["id"],),
+                ).fetchone()
+                self.assertEqual(audit["actor_id"], "web:admin")
+                before = store.conn.execute(
+                    "SELECT COUNT(*) FROM management_webhook_outbox"
+                ).fetchone()[0]
+                with patch.object(store, "_audit", side_effect=RuntimeError("audit down")):
+                    with self.assertRaises(RuntimeError):
+                        store.test_delivery(hook["id"], actor_id="web:admin")
+                self.assertEqual(store.conn.execute(
+                    "SELECT COUNT(*) FROM management_webhook_outbox"
+                ).fetchone()[0], before)
+                store.disable(hook["id"], actor_id="web:admin")
+                with self.assertRaises(ControlPlaneError):
+                    store.test_delivery(hook["id"], actor_id="web:admin")
+
     def test_https_webhook_rejects_empty_userinfo_in_authority(self):
         for url in (
             "https://@hooks.example.org/events",

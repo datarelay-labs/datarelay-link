@@ -461,6 +461,8 @@ class WebApplication:
                     raise ControlPlaneError("Webhook ID is required.")
                 if path == "/api/v1/webhooks/rotate":
                     return store.rotate_secret(webhook_id, actor_id="web:" + principal.operator_id)
+                if path == "/api/v1/webhooks/test":
+                    return store.test_delivery(webhook_id, actor_id="web:" + principal.operator_id)
                 if path == "/api/v1/webhooks/disable":
                     store.disable(webhook_id, actor_id="web:" + principal.operator_id)
                     return {"id": webhook_id, "enabled": False}

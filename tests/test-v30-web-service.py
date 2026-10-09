@@ -189,6 +189,43 @@ class V30WebServiceTests(unittest.TestCase):
         validate_web_bind("127.0.0.1")
         validate_web_bind("::1")
 
+    def test_admin_webhook_test_delivery_is_csrf_guarded_and_audited(self):
+        from drlink_webhooks import WebhookStore
+        self.login()
+        status, _, created = self.request(
+            "POST", "/api/v1/webhooks",
+            {"name": "test-sink", "url": "https://hooks.example.org/events",
+             "event_classes": ["security.lifecycle"]},
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, created)
+        self.assertTrue(created["secret"])
+        identifier = created["id"]
+        status, _, _ = self.request(
+            "POST", "/api/v1/webhooks/test", {"webhook_id": identifier},
+        )
+        self.assertEqual(status, 403)
+        status, _, queued = self.request(
+            "POST", "/api/v1/webhooks/test", {"webhook_id": identifier},
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, queued)
+        self.assertEqual(queued["status"], "QUEUED")
+        self.assertNotIn(created["secret"], json.dumps(queued))
+        with WebhookStore(self.tmp) as store:
+            row = store.conn.execute(
+                "SELECT status FROM management_webhook_outbox WHERE event_id=?",
+                (queued["event_id"],),
+            ).fetchone()
+            self.assertEqual(row["status"], "PENDING")
+            audit = store.conn.execute(
+                "SELECT actor_id FROM audit_events WHERE "
+                "event_type='management_webhook.test_requested' AND entity_id=?",
+                (identifier,),
+            ).fetchone()
+            self.assertTrue(audit["actor_id"].startswith("web:wop_"))
+            self.assertNotIn(created["secret"], audit["actor_id"])
+
     def test_agent_rollout_preview_is_admin_csrf_guarded_and_does_not_enqueue(self):
         self.login()
         from drlink_v30_jobs import ManagementJobEngine
