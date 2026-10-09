@@ -6736,13 +6736,28 @@ def set_remote_service_agent(
             _push_agent_remote_service_status(plane_db, root=root, names=[name])
         _clear_agent_mgmt_side_effects(plane_db)
     elif not en:
-        # Disabled: ensure runtime proxy removed.
+        # Disabled desired state is not proof the old frpc listener stopped.
         try:
             import drlink_v24_runtime as runtime
 
-            runtime.apply_agent_runtime(plane_db, root=root)
-        except Exception:
-            pass
+            applied = runtime.apply_agent_runtime(plane_db, root=root)
+            if not isinstance(applied, dict) or not applied.get("ok"):
+                raise RuntimeError("runtime refresh did not confirm success")
+        except Exception as exc:
+            status = "DEGRADED"
+            reason = "Runtime deactivation could not be verified."
+            _persist_status(status, reason)
+            # Server desired-state disable remains intact; never roll back to
+            # ENABLED simply because the local runtime refresh failed.
+            _clear_agent_mgmt_side_effects(plane_db)
+            raise ControlPlaneError(
+                "ERROR:\nRemote Service was marked disabled, but runtime "
+                "deactivation could not be verified.\n\n"
+                "PARTIAL: The previous relay endpoint may remain active until "
+                "the Agent runtime is refreshed.\n"
+                "Run:\n  system diagnostics\n  system restart\n"
+                "Then verify the service is disabled and its endpoint is closed."
+            ) from exc
         status = "DISABLED"
         reason = DISABLED_OPERATOR_REASON
         _persist_status(status, reason)

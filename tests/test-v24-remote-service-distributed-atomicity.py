@@ -387,6 +387,32 @@ class RemoteServiceDistributedAtomicity(unittest.TestCase):
         pub = self._server_pub("svc-runtime-exception")
         self.assertTrue(pub is None or int(pub["released"] or 0) == 1)
 
+    def test_direct_disable_runtime_failure_does_not_claim_success(self):
+        # Disabling desired state is not proof that the previous local frpc
+        # publication has stopped. Never report an unverified shutdown as done.
+        self._create("svc-disable-stale")
+        with mock.patch(
+            "drlink_v24_runtime.apply_agent_runtime",
+            return_value={"ok": False, "error": "transport failed to refresh"},
+        ):
+            with self.assertRaises(ControlPlaneError) as ctx:
+                v24.set_remote_service_agent(
+                    self.agent, "svc-disable-stale", destination="this-host",
+                    service="ssh", enabled=False, oneshot=True,
+                    root=self.agent_tmp, server_reachable=True,
+                )
+        self.assertIn("PARTIAL", str(ctx.exception))
+        self.assertIn("system diagnostics", str(ctx.exception))
+        row = self.agent.conn.execute(
+            "SELECT enabled, status FROM agent_remote_services WHERE name = 'svc-disable-stale'"
+        ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(int(row["enabled"]), 0)
+        self.assertEqual(row["status"], "DEGRADED")
+        pub = self._server_pub("svc-disable-stale")
+        self.assertIsNotNone(pub)
+        self.assertEqual(int(pub["enabled"]), 0)
+
     def test_successful_create_update_delete_unchanged(self):
         created = self._create("svc-ok")
         port = int(created["view"]["endpoint_port"])
