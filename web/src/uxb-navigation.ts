@@ -2,6 +2,12 @@
  * DRL3-7B: product presentation vocabulary only. IDs are the existing
  * Web/Core routes; this file never changes authorization or policy semantics.
  */
+/** Only AI Identity and Permission selectors are unique to AI Access.
+ * Network/Service objects are shared by Remote and Internet; never guess. */
+export function setupContextForObjectFamily(family:string):{plane:"ai"}|null{
+  return family==="ai"||family==="permission"?{plane:"ai"}:null;
+}
+
 export const navGroups = [
   {id:"connections",label:"Connections",description:"Servers and services you intentionally connect",items:[
     ["hosts","Servers & Agents"],["services","Published services"],

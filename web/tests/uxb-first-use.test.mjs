@@ -38,6 +38,13 @@ test("exactly Home and four task-first sidebar groups; canonical routes survive"
   assert.ok(ids.includes(id),id);
  }
 });
+test("Objects-family search returns only an unambiguous setup context",()=>{
+ assert.deepEqual(nav.setupContextForObjectFamily("ai"),{plane:"ai"});
+ assert.deepEqual(nav.setupContextForObjectFamily("permission"),{plane:"ai"});
+ for(const ambiguous of ["network","service","all","unexpected"]){
+  assert.equal(nav.setupContextForObjectFamily(ambiguous),null,ambiguous);
+ }
+});
 test("old menu names, user tasks, and canonical public nouns all searchable",()=>{
  for(const [query,id] of [
   ["managed hosts","hosts"],["remote services","services"],["access operations","access"],

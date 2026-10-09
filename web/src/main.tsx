@@ -5,7 +5,7 @@ import {AdministrationHub,type AdministrationHubTask} from "@datarelay-labs/foun
 import {createLinkFoundationAdministrationTasks} from "./foundation-administration";
 import {AccessEvidenceExplorer,GuidedPolicyJourney,type AccessPlane} from "./p0-access-policy";
 import {EnrollmentOnboarding} from "./p0-enrollment";
-import {navGroups,groupFor,labelFor,pageDescriptions,visibleRoute,navMatches} from "./uxb-navigation";
+import {navGroups,groupFor,labelFor,pageDescriptions,visibleRoute,navMatches,setupContextForObjectFamily} from "./uxb-navigation";
 import {FirstUseHome,isFreshInstallation,observedRecentFeed,observedNumber,accessPlaneCount,coreHealthState,type RecentFeed} from "./uxb-home";
 import {RemoteServiceEditor} from "./uxb-remote-service";
 import {FirstConnectionSetup,type SetupDraft} from "./uxb-setup";
@@ -1086,7 +1086,7 @@ function JobOperations({operator}:{operator:any}){
   </>;
 }
 
-function ObjectsWorkspace({data,onNavigate,context}:{data:any,onNavigate?:(id:string,groupId?:string)=>void,context?:any}){
+function ObjectsWorkspace({data,onNavigate,context}:{data:any,onNavigate?:(id:string,groupId?:string,context?:any)=>void,context?:any}){
   const initialFamily=["all","network","service","permission","ai"].includes(String(context?.family||""))
     ?String(context.family):"all";
   const [family,setFamily]=useState(initialFamily),[filter,setFilter]=useState(""),[selected,setSelected]=useState<any>(null);
@@ -1110,7 +1110,7 @@ function ObjectsWorkspace({data,onNavigate,context}:{data:any,onNavigate?:(id:st
     <section className="card dr-list-card"><div className="dr-list-toolbar"><div><strong>{rows.length}</strong><span>visible Core resources</span></div><label className="dr-filter-field"><WorkspaceIcon kind="search"/><input value={filter} onChange={e=>setFilter(e.target.value)} placeholder="Filter loaded objects and groups…"/>{filter&&<button onClick={()=>setFilter("")} aria-label="Clear filter">×</button>}</label></div>
       {incomplete&&<p className="warning-box" role="alert">UNKNOWN · Core Objects & Groups inventory is incomplete. Some names may not be visible; check System Health before interpreting missing records.</p>}
       {truncated&&<div className="dr-uxb-catalog-page-notice" role="status"><span>Partial Core snapshot · up to 50 names per kind were loaded. This filter checks only the loaded records.</span>
-        <button type="button" className="secondary" onClick={()=>onNavigate?.("setup","connections")}>Find another Core name →</button>
+        <button type="button" className="secondary" onClick={()=>onNavigate?.("setup","connections",setupContextForObjectFamily(family)||undefined)}>Find another Core name →</button>
       </div>}
       {!rows.length?<div className="dr-empty-state"><span className="dr-empty-icon"><WorkspaceIcon kind="infrastructure"/></span>
         <strong>{incomplete?"Core resource evidence UNKNOWN":truncated?"No match in loaded Core resources":"No matching objects"}</strong>

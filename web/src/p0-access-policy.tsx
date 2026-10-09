@@ -110,9 +110,10 @@ export function AccessEvidenceExplorer({api,plane,source,destination,selector,on
   </section>;
 }
 
-export function GuidedPolicyJourney({api,onNavigate,initialPlane="remote",lockedPlane=false,initialFlow,onFlowChange,resourceCatalog}: {
+export function GuidedPolicyJourney({api,onNavigate,initialPlane="remote",lockedPlane=false,initialFlow,onFlowChange,resourceCatalog,onBusyChange}: {
   api:LinkApi,onNavigate?:Navigate,initialPlane?:AccessPlane,lockedPlane?:boolean,
   resourceCatalog?:CoreCatalog|null,
+  onBusyChange?:(busy:boolean)=>void,
   initialFlow?:{source?:string,destination?:string,selector?:string},
   onFlowChange?:(flow:{source:string,destination:string,selector:string})=>void,
 }) {
@@ -126,6 +127,8 @@ export function GuidedPolicyJourney({api,onNavigate,initialPlane="remote",locked
   const [busy,setBusy]=useState(false),[error,setError]=useState(""),[message,setMessage]=useState("");
   const seq=useRef(0);
   const catalog=useCoreCatalog(api,resourceCatalog);
+  useEffect(()=>{onBusyChange?.(busy)},[busy]);
+  useEffect(()=>()=>{onBusyChange?.(false)},[]);
   function invalidate(){
     seq.current+=1;setPreview(null);setTests(null);setConfirmation("");setAcknowledge(false);
     setPhase(1);setMessage("");setError("");
@@ -192,7 +195,7 @@ export function GuidedPolicyJourney({api,onNavigate,initialPlane="remote",locked
     <div className="dr-section-head"><div><p className="dr-eyebrow">P0 · Guided policy workflow</p>
       <h3>Define → Preview → Test → Apply</h3>
       <p className="muted">Uses existing Core Change Plans. No changes happen until the last confirmed step; expired plans are rejected by Core.</p></div>
-      <button className="secondary" onClick={()=>onNavigate?.("access","access")}>Explain access first →</button></div>
+      <button className="secondary" disabled={busy} onClick={()=>onNavigate?.("access","access")}>Explain access first →</button></div>
     <ol className="dr-p0-steps" aria-label="Policy change stages">
       {["Define rule","Review impact","Verify required tests","Confirm apply"].map((label,i)=>
         <li key={label} className={phase===i+1?"active":phase>i+1?"done":""}><span>{i+1}</span>{label}</li>)}
@@ -207,7 +210,7 @@ export function GuidedPolicyJourney({api,onNavigate,initialPlane="remote",locked
         <CoreChoiceField api={api} catalog={catalog} plane={plane} field="destination" value={destination} disabled={busy} onChoose={v=>changeFlow("destination",v)}/>
         <CoreChoiceField api={api} catalog={catalog} plane={plane} field="selector" value={selector} disabled={busy} onChoose={v=>changeFlow("selector",v)}/>
       </div>
-      <button type="button" className="secondary" onClick={()=>onNavigate?.("objects","access")}>Manage missing Objects & Groups →</button>
+      <button type="button" className="secondary" disabled={busy} onClick={()=>onNavigate?.("objects","access")}>Manage missing Objects & Groups →</button>
     </section>}
     <fieldset className="dr-p0-form" disabled={busy}>
       <label className="dr-field"><span>Access plane</span><select value={plane} disabled={lockedPlane} onChange={e=>{change(setPlane,e.target.value as AccessPlane);setSelector("");setPaths("")}}>

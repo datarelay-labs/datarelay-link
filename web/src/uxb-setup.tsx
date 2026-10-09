@@ -84,6 +84,12 @@ export function firstConnectionGuidance(
   return "Choose your intended task; Core observations determine readiness, not this progress indicator.";
 }
 
+/** Never let the parent wizard discard an in-flight Core mutation/test result.
+ * Advancing a stage is navigation only; this flag is not a success signal. */
+export function isWizardBusy(serviceBusy:boolean,enrollmentBusy:boolean,policyBusy:boolean):boolean{
+  return serviceBusy||enrollmentBusy||policyBusy;
+}
+
 export function FirstConnectionSetup({api,operator,onNavigate,initialDraft,onDraftChange}:{
   api:LinkApi,operator:any,onNavigate?:Navigate,initialDraft?:SetupDraft|null,
   onDraftChange?:(draft:SetupDraft)=>void,
@@ -98,7 +104,8 @@ export function FirstConnectionSetup({api,operator,onNavigate,initialDraft,onDra
   const [error,setError]=useState(""),[checking,setChecking]=useState(false);
   const [serviceBusy,setServiceBusy]=useState(false);
   const [enrollmentBusy,setEnrollmentBusy]=useState(false);
-  const wizardBusy=serviceBusy||enrollmentBusy;
+  const [policyBusy,setPolicyBusy]=useState(false);
+  const wizardBusy=isWizardBusy(serviceBusy,enrollmentBusy,policyBusy);
   const [selectedHost,setSelectedHost]=useState(restoredDraft.selectedHost||"");
   const selectedHostRef=useRef(restoredDraft.selectedHost||"");
   const refreshGeneration=useRef(0);
@@ -280,6 +287,7 @@ export function FirstConnectionSetup({api,operator,onNavigate,initialDraft,onDra
           :"AI Access uses a verified AI Identity, destination and Permission Object; it is separate from Remote Access."}</p>
       </div>
       {canEdit?<GuidedPolicyJourney key={plane} api={api} initialPlane={plane} lockedPlane resourceCatalog={catalog}
+        onBusyChange={setPolicyBusy}
         initialFlow={{source,destination,selector}}
         onFlowChange={f=>{setSource(f.source);setDestination(f.destination);setSelector(f.selector)}} onNavigate={onNavigate}/>:
         <p className="warning-box">Your role is read-only. You can test access but cannot create or apply a rule.</p>}

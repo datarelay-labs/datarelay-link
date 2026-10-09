@@ -225,12 +225,23 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn("onChange={e=>chooseRemoteHost(e.target.value)}", SETUP_SOURCE)
         self.assertIn("disabled={wizardBusy} onChange={e=>chooseRemoteHost(e.target.value)}", SETUP_SOURCE)
 
+    def test_policy_preview_tests_apply_prevents_wizard_stage_escape(self):
+        policy = P0_ACCESS_SOURCE
+        self.assertIn("onBusyChange?:(busy:boolean)=>void", policy)
+        self.assertIn("onBusyChange?.(busy)", policy)
+        self.assertIn("onBusyChange?.(false)", policy)
+        self.assertIn("onBusyChange={setPolicyBusy}", SETUP_SOURCE)
+        self.assertIn("const wizardBusy=isWizardBusy(serviceBusy,enrollmentBusy,policyBusy);", SETUP_SOURCE)
+        self.assertIn('disabled={busy} onClick={()=>onNavigate?.("access","access")}', policy)
+        self.assertIn('className="secondary" disabled={busy} onClick={()=>onNavigate?.("objects","access")}', policy)
+        self.assertIn('disabled={wizardBusy} onClick={()=>setStep(i+1)}', SETUP_SOURCE)
+
     def test_enrollment_issue_blocks_parent_wizard_navigation(self):
         self.assertIn("onBusyChange?:(busy:boolean)=>void", P0_ENROLL_SOURCE)
         self.assertIn("onBusyChange?.(busy)", P0_ENROLL_SOURCE)
         self.assertIn("onBusyChange?.(false)", P0_ENROLL_SOURCE)
         self.assertIn("onBusyChange={setEnrollmentBusy}", SETUP_SOURCE)
-        self.assertIn("const wizardBusy=serviceBusy||enrollmentBusy;", SETUP_SOURCE)
+        self.assertIn("const wizardBusy=isWizardBusy(serviceBusy,enrollmentBusy,policyBusy);", SETUP_SOURCE)
         self.assertIn("disabled={wizardBusy} onClick={()=>changePlane(item.id)}", SETUP_SOURCE)
         self.assertIn("disabled={step===1||wizardBusy}", SETUP_SOURCE)
         self.assertIn("disabled={step===4||wizardBusy}", SETUP_SOURCE)
@@ -259,6 +270,12 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn("const restoredDraft=reconcileHostBoundDraft(initialDraft);", SETUP_SOURCE)
         self.assertIn("const [serviceDraft,setServiceDraft]=useState(restoredDraft.service||", SETUP_SOURCE)
         self.assertIn("const [selectedHost,setSelectedHost]=useState(restoredDraft.selectedHost||", SETUP_SOURCE)
+
+    def test_objects_family_returns_to_correct_first_connection_plane(self):
+        self.assertIn('export function setupContextForObjectFamily(', NAV_SOURCE)
+        self.assertIn('setupContextForObjectFamily(family)||undefined', SOURCE)
+        self.assertIn('onNavigate?.("setup","connections",setupContextForObjectFamily(family)||undefined)', SOURCE)
+        self.assertIn('function ObjectsWorkspace({data,onNavigate,context}', SOURCE)
 
     def test_uxb_first_use_keeps_three_planes_and_core_authority_separate(self):
         self.assertIn('FirstUseHome data={data}', SOURCE)

@@ -26,6 +26,13 @@ before(async()=>{
 });
 after(()=>{if(scratch)rmSync(scratch,{recursive:true,force:true})});
 
+test("Policy Preview, required tests and Apply lock parent setup navigation without claiming completion",()=>{
+ assert.equal(setup.isWizardBusy(false,false,false),false);
+ assert.equal(setup.isWizardBusy(true,false,false),true);
+ assert.equal(setup.isWizardBusy(false,true,false),true);
+ assert.equal(setup.isWizardBusy(false,false,true),true);
+ assert.equal(setup.isWizardBusy(true,true,true),true);
+});
 test("separate Remote, Internet and AI first-use journeys preserve security semantics",()=>{
  assert.deepEqual(setup.firstUseStages.remote,[
   "Add & approve Agent","Publish one Remote Service","Define a narrow access rule","Verify the decision"]);
