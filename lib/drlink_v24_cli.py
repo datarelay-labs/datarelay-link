@@ -637,13 +637,14 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
             if row["pending_allocation"] or row["endpoint_port"] is None
             else "%s:%s" % (_public_endpoint_host(plane, row["endpoint_host"]), row["endpoint_port"])
         )
+        effective_status = _agent_service_status(plane, row, _agent_runtime_level(plane))
         sys.stdout.write(
             "Remote Service: %s\nDestination: %s\nService: %s\nStatus: %s\nEndpoint: %s\nEnabled: %s\n"
             % (
                 row["name"],
                 row["destination"],
                 row["service_object"],
-                _agent_service_status(plane, row, _agent_runtime_level(plane)),
+                effective_status,
                 endpoint,
                 "YES" if row["enabled"] else "NO",
             )
@@ -665,6 +666,23 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
                     "  show remote-service %s\n"
                     "  show status\n" % row["name"]
                 )
+        elif (
+            row["enabled"]
+            and effective_status == "DEGRADED"
+            and str(row["status"] or "").strip().upper() == "HEALTHY"
+        ):
+            # The stored status is not sufficient evidence of a currently
+            # verified generation. Explain this read-only, fail-closed
+            # projection rather than leaving DEGRADED without a reason.
+            sys.stdout.write(
+                "Reason: Current Agent runtime verification could not confirm this service.\n"
+                "Next action:\n"
+                "  system diagnostics\n"
+                "  system synchronize\n"
+                "Then verify:\n"
+                "  show remote-service %s\n"
+                "  show status\n" % row["name"]
+            )
         return 0
     return None
 

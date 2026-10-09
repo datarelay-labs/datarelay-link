@@ -583,6 +583,26 @@ class StaleEndpointTruthTests(unittest.TestCase):
         self.assertEqual(rc, 0, buf.getvalue())
         return buf.getvalue()
 
+    def test_unverified_runtime_degraded_has_actionable_public_reason(self):
+        # A stored HEALTHY flag without a verifiable current runtime generation
+        # is deliberately DEGRADED. The public show output must explain that
+        # distinction instead of presenting an unexplained contradiction.
+        from unittest import mock
+
+        self._seed_agent_service("e2e-runtime", "this-host", 6001, status="HEALTHY")
+        self.agent.conn.execute(
+            "UPDATE agent_remote_services SET runtime_verified=1, reason='' "
+            "WHERE name='e2e-runtime'"
+        )
+        self.agent.conn.commit()
+        with mock.patch("drlink_v24_cli._agent_runtime_level", return_value="Warning"):
+            shown = self._show_agent("e2e-runtime")
+        self.assertIn("Status: DEGRADED", shown)
+        self.assertIn("Reason: Current Agent runtime verification", shown)
+        self.assertIn("system diagnostics", shown)
+        self.assertIn("system synchronize", shown)
+        self.assertIn("show remote-service e2e-runtime", shown)
+
     def test_STALE_ENDPOINT_SERVER_RELEASE_AND_AGENT_CLEAR(self):
         self._write_registry(
             {

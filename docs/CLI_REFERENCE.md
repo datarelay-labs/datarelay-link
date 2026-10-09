@@ -464,7 +464,7 @@ Status   : DEGRADED
 Endpoint : Pending allocation
 ```
 
-After reconnect, DRLink synchronizes, allocates/activates, and transitions to `HEALTHY`.
+After reconnect, DRLink synchronizes, allocates/activates, and transitions to `HEALTHY` only when the current runtime generation is verified. If stored state says `HEALTHY` but the active Agent generation cannot be verified, `show remote-service <NAME>` remains `DEGRADED` and explains that verification is unavailable. The operator can follow `system diagnostics`, `system synchronize`, then `show remote-service <NAME>`; a `DEGRADED` projection alone does not establish that real target traffic is down.
 
 ## 12. Fixed TCP
 
