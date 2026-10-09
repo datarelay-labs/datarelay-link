@@ -7,7 +7,7 @@ import {AccessEvidenceExplorer,GuidedPolicyJourney,coreFlowKey,coreCutoffKey,vis
 import {EnrollmentOnboarding} from "./p0-enrollment";
 import {navGroups,groupFor,labelFor,pageDescriptions,visibleRoute,navMatches,setupContextForObjectFamily} from "./uxb-navigation";
 import {FirstUseHome,isFreshInstallation,observedRecentFeed,observedNumber,accessPlaneCount,coreHealthState,type RecentFeed} from "./uxb-home";
-import {requireObservedMenuPayload,requireObservedInventoryContinuation,requireObservedObjectContinuation,requireObservedAuditRetention,auditRetentionRunPermitted,requireObservedAccessHygiene,hygieneInspectTarget,requireObservedJobStart,requireObservedFleetApply,requireObservedAuditExport,requireObservedRolloutPreview,isPartialCorePage,selectMenuPage,combineObservedPolicyPlanes,type MenuPagePosition} from "./uxb-menu-evidence";
+import {requireObservedMenuPayload,requireObservedInventoryContinuation,requireObservedObjectContinuation,requireObservedAuditRetention,auditRetentionRunPermitted,requireObservedAccessHygiene,hygieneInspectTarget,requireObservedJobStart,requireObservedFleetApply,requireObservedAuditExport,requireObservedRolloutPreview,requireObservedInventoryExport,isPartialCorePage,selectMenuPage,combineObservedPolicyPlanes,type MenuPagePosition} from "./uxb-menu-evidence";
 import {RemoteServiceEditor} from "./uxb-remote-service";
 import {RevisionHistory} from "./uxb-revisions";
 import {AgentVersionDrift} from "./uxb-versions";
@@ -1156,6 +1156,8 @@ function JobOperations({operator}:{operator:any}){
   const [fleetResourceType,setFleetResourceType]=useState("managed-host"),[fleetResource,setFleetResource]=useState(""),[fleetDescription,setFleetDescription]=useState(""),[fleetTags,setFleetTags]=useState(""),[fleetRemoveTags,setFleetRemoveTags]=useState(""),[fleetAddGroups,setFleetAddGroups]=useState(""),[fleetRemoveGroups,setFleetRemoveGroups]=useState(""),[fleetPreview,setFleetPreview]=useState<any>(null),[fleetConfirm,setFleetConfirm]=useState("");
   const [fleetApplyBusy,setFleetApplyBusy]=useState(false);
   const [jobStartBusy,setJobStartBusy]=useState(false);
+  const inventoryExportInFlight=useRef(false);
+  const [inventoryExportBusy,setInventoryExportBusy]=useState(false);
   async function refresh(){
     const epoch=++jobsReadEpoch.current;
     setError("");setJobsState("loading");
@@ -1232,12 +1234,18 @@ function JobOperations({operator}:{operator:any}){
     }finally{setFleetApplyBusy(false)}
   }
   async function exportInventory(){
-    setError("");setMessage("");
+    if(inventoryExportInFlight.current)return;
+    inventoryExportInFlight.current=true;setInventoryExportBusy(true);
+    setError("");setMessage("");setInventoryExport(null);
     try{
-      const result=await api("/api/v1/inventory/export",{method:"POST",body:"{}"});
+      const result=requireObservedInventoryExport(await api("/api/v1/inventory/export",{method:"POST",body:"{}"}));
       setInventoryExport(result);
-      setMessage("Inventory export created at "+String(result.path||""));
-    }catch(e:any){setError(e.message||String(e))}
+      setMessage("Core confirmed a bounded server-side Inventory Export: "+result.record_count+" resources. No Web download is available.");
+    }catch(e:any){
+      setError("Core Inventory Export status UNKNOWN. "+(e.message||String(e))+" The export may already exist; inspect Core before retrying.");
+    }finally{
+      inventoryExportInFlight.current=false;setInventoryExportBusy(false);
+    }
   }
   async function cancelJob(){
     if(!detail?.id)return;
@@ -1262,8 +1270,12 @@ function JobOperations({operator}:{operator:any}){
         <input value={resource} onChange={e=>setResource(e.target.value)} placeholder={resourceType==="managed-host"?"Host selector; blank = all trusted":"Managed Host Group name / ID"}/>
         <button className="primary" onClick={start} disabled={jobStartBusy||(resourceType==="managed-host-group"&&!resource.trim())}>{jobStartBusy?"Submitting Core Job…":"Start Job"}</button>
       </div>}
-      <div className="toolbar"><button className="secondary" onClick={refresh}>Refresh Jobs</button><input value={detailId} onChange={e=>setDetailId(e.target.value)} placeholder="Job ID"/><button className="secondary" onClick={()=>loadDetail()}>Load Detail</button><button className="secondary" onClick={exportInventory}>Export Inventory</button></div>
-      {inventoryExport&&<pre className="plan">{JSON.stringify({path:inventoryExport.path,record_count:inventoryExport.record_count,counts:inventoryExport.counts,sha256:inventoryExport.sha256,download_exposed:inventoryExport.download_exposed},null,2)}</pre>}
+      <div className="toolbar"><button className="secondary" onClick={refresh}>Refresh Jobs</button><input value={detailId} onChange={e=>setDetailId(e.target.value)} placeholder="Job ID"/><button className="secondary" onClick={()=>loadDetail()}>Load Detail</button><button className="secondary" onClick={exportInventory} disabled={inventoryExportBusy}>{inventoryExportBusy?"Exporting inventory…":"Export Inventory"}</button></div>
+      {inventoryExport&&<section role="status" className="dr-export-evidence">
+        <strong>Core Inventory Export CREATED · No Web download</strong>
+        <p className="muted">This bounded sanitized inventory artifact is stored on the Server. It is not a downloadable browser file or a complete history of every resource type.</p>
+        <pre className="plan">{JSON.stringify({status:inventoryExport.status,path:inventoryExport.path,record_count:inventoryExport.record_count,counts:inventoryExport.counts,limits:inventoryExport.limits,size_bytes:inventoryExport.size_bytes,sha256:inventoryExport.sha256,download_exposed:inventoryExport.download_exposed},null,2)}</pre>
+      </section>}
       {jobsState!=="ready"?<p role="status" className="warning-box">
         {jobsState==="loading"?"Loading Management Jobs from Core…":"UNKNOWN · Core Jobs inventory is unavailable. Retry using Refresh Jobs; an empty list has not been confirmed."}
       </p>:<>

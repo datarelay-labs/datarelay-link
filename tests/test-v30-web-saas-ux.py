@@ -837,6 +837,25 @@ class V30WebSaasUxContractTests(unittest.TestCase):
             self.assertIn(marker,audit,marker)
         self.assertNotIn('setMessage("Audit export created: "+String(value.path||""))',audit)
 
+    def test_inventory_export_requires_authoritative_bounded_artifact_receipt(self):
+        job = SOURCE.split("function JobOperations(", 1)[1].split("function ResourceWorkspace(", 1)[0]
+        helper = (ROOT / "web/src/uxb-menu-evidence.ts").read_text(encoding="utf-8")
+        self.assertIn("export function requireObservedInventoryExport(", helper)
+        for marker in (
+            "const inventoryExportInFlight=useRef(false);",
+            "const [inventoryExportBusy,setInventoryExportBusy]=useState(false);",
+            "if(inventoryExportInFlight.current)return;",
+            'requireObservedInventoryExport(await api("/api/v1/inventory/export",',
+            "setInventoryExport(null);",
+            "Core Inventory Export status UNKNOWN",
+            'disabled={inventoryExportBusy}',
+            "No Web download",
+            "record_count:inventoryExport.record_count",
+            "limits:inventoryExport.limits",
+        ):
+            self.assertIn(marker, job)
+        self.assertNotIn('setMessage("Inventory export created at "+String(result.path||""))',job)
+
     def test_irreversible_retention_requires_typed_confirmation_and_fresh_policy(self):
         audit=SOURCE.split("function AuditExplorer(",1)[1].split("function AgentRolloutPreviewPanel(",1)[0]
         helper=(ROOT / "web/src/uxb-menu-evidence.ts").read_text(encoding="utf-8")

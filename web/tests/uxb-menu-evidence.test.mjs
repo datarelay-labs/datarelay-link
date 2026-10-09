@@ -292,6 +292,29 @@ test('Agent rollout preview is advisory for exactly the Core-observed requested 
     assert.throws(()=>menu.requireObservedRolloutPreview(bad,request),/UNKNOWN/);
   }
 });
+test('Inventory Export cannot claim CREATED without a real bounded Core artifact',()=>{
+  const counts={managed_hosts:2,remote_services:1,managed_host_groups:1,managed_host_tags:3};
+  const limits={managed_hosts:100,remote_services:1000,managed_host_groups:200,managed_host_tags:1000};
+  const good={status:'CREATED',path:'/var/lib/drlink/exports/drlink-inventory-20261009T132300Z-deadbeef.ndjson',
+    sha256:'a'.repeat(64),size_bytes:700,record_count:7,counts,limits,
+    sanitized:true,download_exposed:false,authoritative_mutation:false};
+  assert.equal(menu.requireObservedInventoryExport(good),good);
+  const empty={...good,record_count:0,counts:{managed_hosts:0,remote_services:0,managed_host_groups:0,managed_host_tags:0}};
+  assert.equal(menu.requireObservedInventoryExport(empty),empty);
+  for(const bad of [null,{},[],{error:'connection lost'},
+    {...good,status:'QUEUED'},{...good,path:'/tmp/inventory.ndjson'},
+    {...good,path:'/var/lib/drlink/exports/../private.ndjson'},
+    {...good,sha256:'x'.repeat(64)},{...good,sha256:undefined},
+    {...good,size_bytes:0},{...good,record_count:0},
+    {...good,record_count:'7'},{...good,counts:{...counts,managed_hosts:120}},
+    {...good,counts:{...counts,managed_host_tags:undefined}},
+    {...good,limits:{...limits,managed_hosts:101}},
+    {...good,limits:{...limits,remote_services:null}},
+    {...good,sanitized:false},{...good,download_exposed:true},
+    {...good,authoritative_mutation:true}]){
+    assert.throws(()=>menu.requireObservedInventoryExport(bad),/UNKNOWN/);
+  }
+});
 test('partial Objects inventory remains available for its existing explicit UNKNOWN warning',()=>{
   // ObjectsWorkspace itself distinguishes incomplete resources from a valid empty list.
   for(const response of [{resources:{}},{resources:{'network-object':{items:[]}}}]){

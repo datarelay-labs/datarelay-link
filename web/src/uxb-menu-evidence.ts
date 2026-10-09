@@ -261,6 +261,36 @@ export function requireObservedRolloutPreview(payload:unknown,request:unknown):a
   return payload;
 }
 
+/** Core Inventory Export is a bounded server-side file, not a Web download.
+ * Never infer CREATED from HTTP status, fabricated counts or a missing digest. */
+export function requireObservedInventoryExport(payload:unknown):any{
+  const fail=()=>{throw new Error("UNKNOWN · Core Inventory Export receipt did not confirm a bounded server-side file. Inspect Core export records before retrying.");};
+  if(!payload||typeof payload!=="object"||Array.isArray(payload))return fail();
+  const value=payload as Record<string,any>;
+  const limits:Record<string,number>={managed_hosts:100,remote_services:1000,
+    managed_host_groups:200,managed_host_tags:1000};
+  const keys=Object.keys(limits);
+  if(value.status!=="CREATED"
+    ||typeof value.path!=="string"
+    ||!/^\/var\/lib\/drlink\/exports\/drlink-inventory-\d{8}T\d{6}Z-[a-f0-9]{8}\.ndjson$/.test(value.path)
+    ||typeof value.sha256!=="string"||!/^[a-f0-9]{64}$/.test(value.sha256)
+    ||typeof value.size_bytes!=="number"||!Number.isSafeInteger(value.size_bytes)||value.size_bytes<1
+    ||typeof value.record_count!=="number"||!Number.isSafeInteger(value.record_count)||value.record_count<0
+    ||value.sanitized!==true||value.download_exposed!==false||value.authoritative_mutation!==false
+    ||!value.counts||typeof value.counts!=="object"||Array.isArray(value.counts)
+    ||!value.limits||typeof value.limits!=="object"||Array.isArray(value.limits)
+    ||Object.keys(value.counts).length!==keys.length||Object.keys(value.limits).length!==keys.length)return fail();
+  let sum=0;
+  for(const key of keys){
+    if(value.limits[key]!==limits[key]
+      ||typeof value.counts[key]!=="number"||!Number.isSafeInteger(value.counts[key])
+      ||value.counts[key]<0||value.counts[key]>limits[key])return fail();
+    sum+=value.counts[key];
+  }
+  if(value.record_count!==sum)return fail();
+  return payload;
+}
+
 /** A 200 response does not prove a Job was enqueued. Check the actual
  * Core queue identity, status and bounded target counts before reporting it. */
 export function requireObservedJobStart(payload:unknown,expectedJobType:string):any{
