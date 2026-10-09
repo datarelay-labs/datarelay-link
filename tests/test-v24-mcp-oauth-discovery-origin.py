@@ -22,6 +22,34 @@ import drlink_mcp_tls
 
 
 class McpIssuerOriginTests(unittest.TestCase):
+    def test_tls_fqdn_outweighs_old_ip_env_override_after_configuration(self):
+        # PASS1 F008: a stale boot-time URL override may still point at the
+        # Server IP when an operator explicitly configures a dedicated MCP TLS
+        # hostname. Protected-resource + OAuth issuer must share that host.
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory(prefix="drlink-f008-override-") as td:
+            config = Path(td) / "etc/drlink/config.json"
+            config.parent.mkdir(parents=True, exist_ok=True)
+            config.write_text(json.dumps({
+                "role": "server", "deployment_mode": "single443",
+                "public_host": "203.0.113.10", "frp_control_public_port": 443,
+            }) + "\n")
+            plane = ControlPlane(td)
+            bridge = MCPBridge(root=td, plane=plane)
+            try:
+                with patch.dict("os.environ", {"DRLINK_MCP_PUBLIC_URL": "https://203.0.113.10/mcp"}):
+                    self.assertEqual(bridge.as_metadata()["issuer"], "https://203.0.113.10")
+                    drlink_mcp_tls.configure_intent(
+                        plane, hostname="mcp.example.test", mode="user-certificate"
+                    )
+                    desired = "https://mcp.example.test"
+                    self.assertEqual(bridge.as_metadata()["issuer"], desired)
+                    self.assertEqual(bridge.as_metadata()["registration_endpoint"], desired + "/oauth/register")
+                    self.assertEqual(bridge.oauth_metadata()["resource"], desired + "/mcp")
+            finally:
+                bridge.close()
+                plane.close()
+
     def test_tls_fqdn_wins_over_default_ip_for_all_discovery_routes(self):
         with tempfile.TemporaryDirectory(prefix="drlink-f008-") as td:
             cfg = Path(td) / "etc/drlink/config.json"

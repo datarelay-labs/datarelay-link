@@ -5872,10 +5872,11 @@ class ControlPlane:
         # there rather than an HTTP MCP endpoint.
         if raw_mode and mode not in ("single443", "enterprise", "enterprisesingle443"):
             return "Not configured"
-        override = (os.environ.get("DRLINK_MCP_PUBLIC_URL") or "").strip().rstrip("/")
-        if override:
-            return override if override.endswith("/mcp") else override + "/mcp"
-        # Prefer dedicated MCP TLS hostname when configured.
+        # A dedicated MCP TLS hostname is the operator-selected public
+        # certificate/SNI identity. It must also be the OAuth issuer and
+        # registration origin; an old process-wide IP override must never
+        # silently supersede it (F008). The override remains the explicit
+        # fallback when no dedicated TLS hostname is configured.
         try:
             import drlink_mcp_tls as mcp_tls
 
@@ -5885,6 +5886,9 @@ class ControlPlane:
                 return "https://%s/mcp" % host
         except Exception:
             pass
+        override = (os.environ.get("DRLINK_MCP_PUBLIC_URL") or "").strip().rstrip("/")
+        if override:
+            return override if override.endswith("/mcp") else override + "/mcp"
         if mode not in ("single443", "enterprise", "enterprisesingle443"):
             return "Not configured"
         try:
