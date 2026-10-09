@@ -4,9 +4,22 @@ import sys,tempfile,unittest
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1];sys.path.insert(0,str(ROOT/"lib"))
 from drlink_control_db import ControlPlaneError
-from drlink_webhooks import WebhookStore
+from drlink_webhooks import WebhookStore, validate_webhook_url
 
 class WebhookTests(unittest.TestCase):
+    def test_https_webhook_rejects_empty_userinfo_in_authority(self):
+        for url in (
+            "https://@hooks.example.org/events",
+            "https://:@hooks.example.org/events",
+        ):
+            with self.subTest(url=url):
+                with self.assertRaises(ControlPlaneError):
+                    validate_webhook_url(url)
+        self.assertEqual(
+            validate_webhook_url("https://hooks.example.org/events"),
+            ("https://hooks.example.org/events", "hooks.example.org", "/events"),
+        )
+
     def test_https_signature_and_event_filter(self):
         root=tempfile.mkdtemp(prefix="drlink-wh-")
         with WebhookStore(root) as store:

@@ -54,7 +54,8 @@ def validate_webhook_url(url: str) -> tuple[str, str, str]:
         ascii_host = hostname.encode("idna").decode("ascii")
     except (ValueError, UnicodeError) as exc:
         raise ControlPlaneError("Invalid HTTPS webhook endpoint.") from exc
-    if parsed.scheme != "https" or not hostname or parsed.username or parsed.password:
+    if (parsed.scheme != "https" or not hostname or
+        parsed.username is not None or parsed.password is not None):
         raise ControlPlaneError("Webhook endpoint must use HTTPS DNS hostname without userinfo.")
     if parsed.fragment or parsed.query or parsed.netloc.endswith("@"):
         raise ControlPlaneError("Webhook endpoint must not contain query, fragment, or credentials.")
