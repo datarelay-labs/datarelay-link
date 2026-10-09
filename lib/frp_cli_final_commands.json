@@ -1219,7 +1219,7 @@
     "roles": "any",
     "category": "System",
     "summary": "Uninstall Data Relay Link on this host",
-    "detail": "Guided uninstall for the installed role(s). Completely removes local Data Relay Link software and product-owned state for that role. Agent uninstall does not contact the server; the Managed Host record and endpoint reservations remain until an operator retires that host with unset managed-host <HOST>.",
+    "detail": "Guided uninstall for the installed role(s). Completely removes local Data Relay Link software and product-owned state for that role. Agent uninstall attempts a signed disconnect notification when reachable; the Managed Host record and endpoint reservations remain until an operator retires that host with unset managed-host <HOST>.",
     "examples": [
       "system uninstall"
     ],
@@ -1622,7 +1622,7 @@
     "examples": [
       "set ai-access <RULE>",
       "set ai-access allow-ops mode whitelist source automation-ai destination production-servers permission operations enabled",
-      "set ai-access allow-read mode whitelist source automation-ai destination ubuntu-prod permission read-only paths /var/lib/vendor/** enabled",
+      "set ai-access allow-read mode whitelist source automation-ai destination ubuntu-prod permission read-only paths '/var/lib/vendor/**' enabled",
       "set ai-access enabled",
       "set ai-access disabled"
     ],

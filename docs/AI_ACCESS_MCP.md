@@ -177,7 +177,7 @@ Direct file operations must enforce configured path scope after safe canonical p
 Public v2.4 configuration binds those scopes on the AI Access rule:
 
 ```text
-set ai-access allow-read ... permission read-only paths /var/lib/vendor/** enabled
+set ai-access allow-read ... permission read-only paths '/var/lib/vendor/**' enabled
 ```
 
 ConfigurationBundle rules use the same `paths` list. Omit `paths` on edit to preserve existing scopes; export includes configured scopes so same-state reapply is NO CHANGE.

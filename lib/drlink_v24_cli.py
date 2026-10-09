@@ -879,7 +879,7 @@ def _show_ai_log(plane: ControlPlane, args: list[str]) -> int:
             % (
                 row.get("timestamp") or "-",
                 row.get("principal") or row.get("principal_name") or "-",
-                row.get("endpoint") or "-",
+                row.get("endpoint_name") or row.get("endpoint") or "-",
                 v24.CAP_TO_PERMISSION.get(str(cap), str(cap)),
                 row.get("result") or row.get("decision") or "-",
             )

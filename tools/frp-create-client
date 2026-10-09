@@ -1111,9 +1111,13 @@ def print_one_line_windows(
                 .replace('__CA__', ps_single_quote(ca_fp))
                 .replace('__TICKET__', ps_single_quote(ticket))
             )
+            # Use the same native Windows argv encoding as the shared helper.
+            # POSIX-style outer single quotes around -Command are not a
+            # reliable Windows PowerShell escaping boundary.
+            import base64
             command = (
-                'powershell.exe -NoProfile -ExecutionPolicy Bypass -Command '
-                + ps_single_quote(inner)
+                'powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand '
+                + base64.b64encode(inner.encode('utf-16le')).decode('ascii')
             )
 
     tracking_id = str(ticket_id or '').strip()

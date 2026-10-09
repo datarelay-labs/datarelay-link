@@ -2016,13 +2016,19 @@ Verify support output identifies Agent Host role, includes useful provenance, an
 Agent Host:
 
 ~~~text
-system update check-engine
 system update product
 system update engine
 system version
 ~~~
 
-Verify product and upstream engine versions remain separate, check-engine is read-only, product update and engine update are independently discoverable/actions, update does not require ordinary re-enrollment, and endpoint/identity/state are preserved.
+Server (read-only upstream release inspection):
+
+~~~text
+system update check-engine
+system version
+~~~
+
+Verify product and upstream engine versions remain separate, Server check-engine is read-only, Agent product and engine updates are independently discoverable/actions, update does not require ordinary re-enrollment, and endpoint/identity/state are preserved. The Agent must not advertise a Server-only check-engine action; an Agent invocation must give an actionable Server-only explanation without changing Agent state.
 
 ## O-010 — Reboot/autostart recovery — MANDATORY
 
@@ -3658,7 +3664,6 @@ system autostart enable
 system autostart disable
 
 system update product
-system update check-engine
 system update engine
 system synchronize
 

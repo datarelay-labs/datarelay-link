@@ -35,7 +35,9 @@ for name in sys.argv[1:3]:
     with open(name,newline='') as f:
         batch=list(csv.DictReader(f))
         assert all(row.get('expires') for row in batch)
+        assert all(row.get('enrollment_id') for row in batch)
         assert all(row.get('bootstrap_command') for row in batch)
+        assert len({row['enrollment_id'] for row in batch}) == len(batch)
         assert len({row['label'] for row in batch})==len(batch)
         rows.extend(batch)
 assert len(rows)==5
@@ -69,11 +71,24 @@ records=[json.loads(p.read_text()) for p in Path(sys.argv[3]).glob('*.json')]
 assert len(records)==5
 assert len({r['id'] for r in records})==5
 assert len({r['enrollment_id'] for r in records})==5
+public_ids = {row['enrollment_id'] for row in rows}
+persisted_ids = {rec['enrollment_id'] for rec in records}
+assert public_ids == persisted_ids, (public_ids, persisted_ids)
+assert {rec['id'] for rec in records}.isdisjoint(public_ids)
 for ticket,record in zip(sorted(tickets), sorted(records,key=lambda r:r['id'])):
     assert ticket not in json.dumps(record)
 assert any(r.get('services')==[] for r in records)
 assert any((r.get('services') or [{}])[0].get('preset')=='ssh' for r in records if r.get('services'))
 PY
+# Invalid input must point to the public wizard and never emit internal argparse flags.
+if python3 "$ROOT/tools/frp-enroll-bulk" --count 11 >"$WORK/count-invalid.out" 2>"$WORK/count-invalid.err"; then
+  echo "FAIL over-capacity batch was accepted" >&2
+  exit 1
+fi
+grep -q 'Retry: sudo drlink set enrollment bulk' "$WORK/count-invalid.err"
+! grep -q 'frp-enroll-bulk\|usage:' "$WORK/count-invalid.err"
+echo "PASS BULK_PUBLIC_ERROR_GUIDANCE"
+
 # Pre-validate all rows: a bad later row issues zero tickets.
 BAD="$WORK/bad.csv"
 cat >"$BAD" <<'CSV'

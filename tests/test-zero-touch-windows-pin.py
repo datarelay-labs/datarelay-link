@@ -75,8 +75,44 @@ class WindowsPinnedCaCommandTests(unittest.TestCase):
             ticket="bt1." + ("b" * 16) + "." + ("c" * 64),
             sums_url="https://203.0.113.10:6099/artifacts/SHA256SUMS",
         )
-        self.assertTrue(cmd.startswith("powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "))
+        self.assertTrue(cmd.startswith("powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand "))
         self.assertIsNone(re.search(r'(^|[^a-z0-9])(irm|iex)([^a-z0-9]|$)', cmd.lower()))
+        import base64
+        inner = base64.b64decode(cmd.split()[-1]).decode('utf-16le')
+        self.assertIn('qualified Windows bootstrap provenance mismatch', inner)
+        self.assertIn('agent/bootstrap-client.ps1', inner)
+        self.assertIn('& powershell.exe -NoProfile -ExecutionPolicy Bypass -File', inner)
+        self.assertLess(len(cmd), 32767)  # Windows command-line limit
+
+    @unittest.skipUnless(shutil.which('pwsh'), 'PowerShell parser unavailable')
+    def test_encoded_launcher_survives_native_shell_parsing(self):
+        import base64
+        command = zt.pinned_ca_windows_command(
+            installer_url='https://owned.test/artifacts/agent/bootstrap-client.ps1',
+            allocator_url='https://owned.test/enroll',
+            ca_sha256='a' * 64,
+            ticket='bt1.' + 'b' * 16 + '.' + 'c' * 64,
+            sums_url='https://owned.test/artifacts/SHA256SUMS',
+        )
+        inner = base64.b64decode(command.split()[-1]).decode('utf-16le')
+        # Verify both the generated script AST and the actual argv decoding.
+        parser = subprocess.run(
+            ['pwsh', '-NoProfile', '-Command',
+             '$s=[Console]::In.ReadToEnd();$t=$null;$e=$null;'
+             '[void][System.Management.Automation.Language.Parser]::ParseInput($s,[ref]$t,[ref]$e);'
+             'if($e.Count){$e|ForEach-Object {Write-Error $_.Message};exit 1};'
+             'Write-Output PARSER_OK'],
+            input=inner, capture_output=True, text=True, timeout=10,
+        )
+        self.assertEqual(parser.returncode, 0, parser.stderr)
+        self.assertIn('PARSER_OK', parser.stdout)
+        probe = zt.windows_encoded_command("Write-Output 'EXECUTION_OK'")
+        result = subprocess.run(
+            ['pwsh', '-NoProfile', '-EncodedCommand', probe.split()[-1]],
+            capture_output=True, text=True, timeout=10,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('EXECUTION_OK', result.stdout)
 
     def test_compact_windows_path_never_uses_irm_iex(self):
         compact = "A" * 22
@@ -94,7 +130,9 @@ class WindowsPinnedCaCommandTests(unittest.TestCase):
             compact,
             "https://203.0.113.10:6099/artifacts/SHA256SUMS",
         )
-        for text in (cmd, script, pinned):
+        import base64
+        decoded_pinned = base64.b64decode(pinned.split()[-1]).decode('utf-16le')
+        for text in (cmd, script, decoded_pinned):
             lowered = text.lower()
             self.assertIsNone(re.search(r'(^|[^a-z0-9])(irm|iex)([^a-z0-9]|$)', lowered))
             self.assertNotIn("invoke-restmethod", lowered)

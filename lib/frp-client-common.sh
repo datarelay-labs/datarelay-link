@@ -1118,13 +1118,15 @@ PY
 }
 
 frp_ux_intro() {
-  cat <<'EOF'
+  local platform='Linux'
+  frp_is_darwin && platform='macOS'
+  cat <<EOF
 
 =========================================
  Data Relay Link Agent Setup
 =========================================
 
-This installer creates Remote Services on this Linux system
+This installer creates Remote Services on this ${platform} system
 through your Data Relay Link server.
 
 Before continuing, you need an Enrollment Code.
@@ -1258,7 +1260,7 @@ EOF
 frp_ux_ssh_user_help() {
   cat <<'EOF'
 SSH user (optional connection example)
-  Linux username shown in the generated SSH command only.
+  Operating-system username shown in the generated SSH command only.
 
   This does NOT create an operating-system account,
   change a password, or configure SSH authentication.
@@ -1450,7 +1452,7 @@ frp_ux_prompt_new_service() {
 
 frp_ux_print_install_summary() {
   local services_file="$1" version="${2:-0.71.0}"
-  python3 - "$services_file" "$version" <<'PY'
+  python3 - "$services_file" "$version" "$(frp_os)" <<'PY'
 import json, sys
 from pathlib import Path
 services = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
@@ -1484,15 +1486,25 @@ else:
 print('The installer will:')
 print()
 print(f'  - install FRP v{version}')
-print('  - create /etc/frp/frpc.toml')
-print('  - write /etc/frp/client-state.json')
-if services:
-    print('  - install the frpc systemd service')
-    print('  - enable drlink-client at boot')
-    print('  - start the FRP client')
+if sys.argv[3] == 'darwin':
+    print('  - create /Library/Application Support/drlink/frpc.toml')
+    print('  - write /Library/Application Support/drlink/client-state.json')
+    print('  - install the com.datarelay.drlink.frpc launchd daemon')
+    if services:
+        print('  - enable the Agent at boot')
+        print('  - start the Agent runtime')
+    else:
+        print('  - leave the Agent runtime stopped until a service is added')
 else:
-    print('  - install the frpc systemd service (left stopped)')
-    print('  - leave the FRP client stopped until a service is added')
+    print('  - create /etc/frp/frpc.toml')
+    print('  - write /etc/frp/client-state.json')
+    if services:
+        print('  - install the frpc systemd service')
+        print('  - enable drlink-client at boot')
+        print('  - start the FRP client')
+    else:
+        print('  - install the frpc systemd service (left stopped)')
+        print('  - leave the FRP client stopped until a service is added')
 print()
 PY
 }
@@ -2206,7 +2218,12 @@ for item in services:
     local_ip = clean(item.get('local_ip'))
     local_port = item.get('local_port')
     remote_port = item.get('remote_port')
-    lines.append(sid if name == sid else f'{sid} ({name})')
+    # v2.4 rs-IDs are internal runtime identifiers, not public CLI selectors.
+    # Display only the user-selectable Remote Service name for these records.
+    if sid.startswith('rs-'):
+        lines.append(sid[3:])
+    else:
+        lines.append(sid if name == sid else f'{sid} ({name})')
     lines.append(f'  Target : {local_ip}:{local_port}')
     preferred = alias if alias and alias != server else ''
     if preferred:
@@ -4931,8 +4948,15 @@ frp_client_autostart_enabled() {
   if frp_is_darwin; then
     # launchctl print-disabled is the durable disabled bit for pause/resume.
     local disabled
-    disabled="$(launchctl print-disabled system 2>/dev/null | awk -F'[= "]+' -v label="${FRP_MACOS_LAUNCHD_LABEL}" '$2==label {print tolower($3); exit}')"
-    [[ "$disabled" != "true" ]]
+    disabled="$(launchctl print-disabled system 2>/dev/null |
+      awk -v label="${FRP_MACOS_LAUNCHD_LABEL}" '
+        index($0, "\"" label "\"") {
+          if ($0 ~ /=>[[:space:]]*true([[:space:]]|$)/) print "true"
+          else if ($0 ~ /=>[[:space:]]*false([[:space:]]|$)/) print "false"
+          exit
+        }')"
+    # Unknown launchctl state must not be advertised as enabled.
+    [[ "$disabled" == "false" ]]
     return $?
   fi
   local en

@@ -165,7 +165,7 @@ set service-group web-services members http,https
 set permission-object read-only permissions host-info,process-read,file-read
 set permission-group operators members read-only,operator
 
-set ai-access allow-read mode whitelist source automation-ai destination ubuntu-prod permission read-only paths /var/lib/vendor/** enabled
+set ai-access allow-read mode whitelist source automation-ai destination ubuntu-prod permission read-only paths '/var/lib/vendor/**' enabled
 ```
 
 ## 4. Access Policy commands
@@ -192,7 +192,7 @@ AI Access:
 
 ```text
 set ai-access claude-prod mode whitelist source claude destination production-servers permission read-only enabled
-set ai-access allow-read mode whitelist source automation-ai destination ubuntu-prod permission read-only paths /var/lib/vendor/**,/opt/app/** enabled
+set ai-access allow-read mode whitelist source automation-ai destination ubuntu-prod permission read-only paths '/var/lib/vendor/**',/opt/app/** enabled
 ```
 
 File permissions (`file-read` / `file-write` / `file-upload` / `file-download`) use rule-bound `paths` scopes. Omit `paths` on edit to preserve existing scopes; use `paths -` or `paths none` to clear. Missing scopes remain fail-closed at runtime (no unrestricted filesystem default).

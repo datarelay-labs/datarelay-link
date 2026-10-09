@@ -1041,6 +1041,28 @@ except Exception as exc:
 PY
 }
 
+frp_server_upgrade_ensure_egress_account() {
+  # The immutable v2.3.0 baseline predates the non-root Egress service user.
+  # A project update installs units that require User=drlink-egress; a current
+  # account must exist before systemd loads them, not just after first install.
+  # Fixture/test roots MUST NOT add accounts to the real machine.
+  if frp_server_test_mode; then
+    return 0
+  fi
+  if ! declare -F frp_server_ensure_sandbox_dirs >/dev/null 2>&1; then
+    echo "ERROR: required egress runtime-account preparation is unavailable" >&2
+    return 1
+  fi
+  frp_server_ensure_sandbox_dirs || return 1
+  if ! getent passwd drlink-egress >/dev/null 2>&1 ||
+      ! getent group drlink-egress >/dev/null 2>&1; then
+    echo "ERROR: drlink-egress system user/group missing after preparation" >&2
+    return 1
+  fi
+  return 0
+}
+
+
 frp_server_upgrade_ensure_egress() {
   # Bootstrap Controlled Egress state/unit on upgrades from pre-egress installs.
   local egress_file cfg_file unit_file
@@ -1322,6 +1344,52 @@ PY
   return 0
 }
 
+# Pre-rename v2.3 state lives under the legacy prefix. A --check is read-only
+# even for those hosts: validate a private temporary projection, never mutate
+# the installed paths or create compatibility symlinks just to inspect them.
+frp_server_upgrade_check_legacy_readonly() (
+  local source="$1" original_root scratch rel actual target
+  original_root="${FRP_SERVER_TEST_ROOT:-}"
+  scratch="$(frp_secure_mktemp_dir)" || return 1
+  chmod 0700 "$scratch" || return 1
+  trap 'rm -rf -- "$scratch"' EXIT
+
+  for rel in \
+    etc/frp-auto-deploy/config.json \
+    etc/frp-auto-deploy/version \
+    etc/frp-auto-deploy/pki/ca.crt \
+    etc/frp/server_token \
+    var/lib/frp-auto-deploy/registry.json; do
+    actual="${original_root%/}/$rel"
+    if [[ ! -f "$actual" ]]; then
+      echo "ERROR: prior-stable update check is missing $rel" >&2
+      return 1
+    fi
+    case "$rel" in
+      etc/frp-auto-deploy/*)
+        target="$scratch/etc/drlink/${rel#etc/frp-auto-deploy/}" ;;
+      var/lib/frp-auto-deploy/*)
+        target="$scratch/var/lib/drlink/${rel#var/lib/frp-auto-deploy/}" ;;
+      *) target="$scratch/$rel" ;;
+    esac
+    mkdir -p "$(dirname "$target")" || return 1
+    cp -p -- "$actual" "$target" || return 1
+  done
+  # Rewrite only the scratch config's CA path to its private projected copy.
+  python3 - "$scratch/etc/drlink/config.json" "$scratch" <<'PYCODE' || return 1
+import json, sys
+from pathlib import Path
+path, root = Path(sys.argv[1]), Path(sys.argv[2])
+cfg = json.loads(path.read_text())
+ca = str(cfg.get('tls_ca_cert') or '')
+if ca.startswith('/etc/frp-auto-deploy/'):
+    cfg['tls_ca_cert'] = str(root / 'etc/drlink' / ca.split('/etc/frp-auto-deploy/', 1)[1])
+path.write_text(json.dumps(cfg, sort_keys=True) + '\n')
+PYCODE
+  FRP_SERVER_TEST_ROOT="$scratch" frp_server_apply_project_upgrade "$source" 1
+)
+
+
 frp_server_apply_project_upgrade() {
   local source="$1" check_only="${2:-0}"
   local version_file previous target staged snapshot backups preserved_before
@@ -1348,13 +1416,19 @@ frp_server_apply_project_upgrade() {
     echo "ERROR: run with sudo" >&2
     return 1
   fi
-  # Upgrade from pre-rename installs must migrate paths before presence checks.
-  frp_migrate_legacy_product_paths || return 1
-  # v2.3 supervisors keep running until canonical units are staged. Preserve
-  # their historical absolute paths during that window so an update check or
-  # failed preflight does not strand the prior-stable runtime.
-  if frp_server_upgrade_has_legacy_server_units; then
-    frp_server_upgrade_ensure_legacy_path_compat || return 1
+  # Read-only update checks must not migrate live paths or make symlinks.
+  if [[ "$check_only" == "1" ]] &&
+      [[ ! -f "$(frp_server_fs /etc/drlink/config.json)" ]] &&
+      [[ -f "$(frp_server_fs /etc/frp-auto-deploy/config.json)" ]]; then
+    frp_server_upgrade_check_legacy_readonly "$source"
+    return $?
+  fi
+  if [[ "$check_only" != "1" ]]; then
+    frp_migrate_legacy_product_paths || return 1
+    # Historical supervisors keep their paths until new units are staged.
+    if frp_server_upgrade_has_legacy_server_units; then
+      frp_server_upgrade_ensure_legacy_path_compat || return 1
+    fi
   fi
   [[ -f "$(frp_server_fs /etc/drlink/config.json)" ]] &&
   [[ -s "$(frp_server_fs /etc/frp/server_token)" ]] &&
@@ -1546,6 +1620,13 @@ frp_server_apply_project_upgrade() {
   if ! frp_server_upgrade_ensure_egress; then
     frp_server_upgrade_rollback "$snapshot"
     frp_emit_failure_class FILE_COMMIT_FAILED
+    return 1
+  fi
+  # Complete the same least-privilege account + runtime directory prep that
+  # clean installs perform. Without it, prior-stable upgrades fail 217/USER.
+  if ! frp_server_upgrade_ensure_egress_account; then
+    frp_server_upgrade_rollback "$snapshot"
+    frp_emit_failure_class EGRESS_ACCOUNT_PREPARATION_FAILED
     return 1
   fi
   restart_egress=1

@@ -4754,7 +4754,8 @@ frpctl_client_uninstall_flow() {
   echo "Public port reservations"
   echo "Server-side policy state"
   echo
-  echo "This uninstall does not contact the server and does not release ports."
+  echo "A signed disconnect notification is attempted when the Server is reachable."
+  echo "This does not retire the Managed Host or release Server-side reservations."
   echo
   if [[ "$yes" != "1" ]]; then
     ans="$(FRP_CTL_TEST_INPUT= frpctl_read "Remove local Data Relay Link Agent? [y/N]: " "N")" || return 1

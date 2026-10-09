@@ -446,16 +446,26 @@ def pinned_ca_windows_inner(
     )
 
 
+def windows_encoded_command(inner):
+    """Pass a verified installer program as a literal PowerShell script.
+
+    Windows PowerShell does not treat the POSIX-style single quotes around
+    -Command as shell quoting. The nested PS literals could be unquoted
+    before the child parser ran, breaking the generated enrollment command.
+    UTF-16LE -EncodedCommand is the supported Windows PowerShell argv format
+    and avoids command-line re-parsing without invoking evaluation helpers.
+    """
+    encoded = base64.b64encode(str(inner).encode('utf-16le')).decode('ascii')
+    return 'powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand ' + encoded
+
+
 def pinned_ca_windows_command(
     installer_url, allocator_url, ca_sha256, ticket, sums_url
 ):
     inner = pinned_ca_windows_inner(
         installer_url, allocator_url, ca_sha256, ticket, sums_url
     )
-    return (
-        "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "
-        + powershell_quote(inner)
-    )
+    return windows_encoded_command(inner)
 
 
 def powershell_quote(value):
