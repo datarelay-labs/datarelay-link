@@ -1405,10 +1405,28 @@ def server_delete_remote_service(plane, auth: MgmtAuthContext, name: str) -> dic
 
     allocator = getattr(auth, "allocator", None)
     if allocator is not None:
+        # Both the authenticated Server database and the FRP allocator own
+        # deletion state. Never acknowledge DELETED after a failed or
+        # mismatched allocator release: doing so strands a registry port and
+        # leaves a referenced Service Object behind (PASS1 F020).
         try:
-            allocator.release_remote_service_endpoint(machine_id, name)
-        except Exception:
-            pass
+            released = allocator.release_remote_service_endpoint(machine_id, name)
+        except Exception as exc:
+            raise MgmtSyncError(
+                "Remote Service endpoint release was not confirmed by the Server allocator. "
+                "Server publication was not deleted. Inspect diagnostics before retrying."
+            ) from exc
+        expected_port = int(pub["public_port"]) if pub["public_port"] is not None else None
+        returned_port = released.get("released_port") if isinstance(released, dict) else None
+        try:
+            returned_port = int(returned_port) if returned_port is not None else None
+        except (TypeError, ValueError) as exc:
+            raise MgmtSyncError("Server allocator returned an invalid released port.") from exc
+        if returned_port != expected_port:
+            raise MgmtSyncError(
+                "Server allocator release did not match the published Remote Service port. "
+                "Server publication was not deleted; check endpoint ownership."
+            )
 
     def write():
         if pub["public_port"] is not None:

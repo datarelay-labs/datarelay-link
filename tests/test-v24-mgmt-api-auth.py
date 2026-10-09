@@ -555,6 +555,70 @@ class MgmtApiAuthTests(unittest.TestCase):
         ).fetchone()
         self.assertIsNone(ports)
 
+    def test_F020_failed_registry_release_cannot_report_deleted(self):
+        # The public DELETE must never discard Server publication/dependency
+        # metadata when the authoritative allocator failed to release its port.
+        from types import SimpleNamespace
+
+        created = mgmt.upsert_remote_service_on_server(
+            root=self.agent_tmp,
+            name="f020-keep-on-failure",
+            destination="this-host",
+            service="ssh",
+            enabled=True,
+            pool_class="normal",
+            target_host="127.0.0.1",
+            target_port=22,
+            target_mode="self",
+        )
+        port = int(created["endpoint_port"])
+        before = self.server.conn.execute(
+            "SELECT id, released, public_port FROM published_services "
+            "WHERE name = 'f020-keep-on-failure'"
+        ).fetchone()
+        self.assertEqual(before["released"], 0)
+
+        class FailingAllocator:
+            def release_remote_service_endpoint(self, *_args):
+                raise RuntimeError("simulated registry storage failure")
+
+        class WrongPortAllocator:
+            def release_remote_service_endpoint(self, *_args):
+                return {"released_port": port + 1, "proxy_id": "rs-f020-keep-on-failure"}
+
+        auth = SimpleNamespace(machine_id=MACHINE_A, allocator=None)
+        for allocator in (FailingAllocator(), WrongPortAllocator()):
+            with self.subTest(allocator=type(allocator).__name__):
+                auth.allocator = allocator
+                with self.assertRaises(mgmt.MgmtSyncError):
+                    mgmt.server_delete_remote_service(
+                        self.server, auth, "f020-keep-on-failure"
+                    )
+                row = self.server.conn.execute(
+                    "SELECT id, released, public_port FROM published_services "
+                    "WHERE name = 'f020-keep-on-failure'"
+                ).fetchone()
+                self.assertEqual(tuple(row), tuple(before))
+                reserved = self.server.conn.execute(
+                    "SELECT released FROM port_reservations WHERE public_port=?", (port,)
+                ).fetchone()
+                self.assertIsNotNone(reserved)
+                self.assertEqual(reserved["released"], 0)
+
+        class ConfirmingAllocator:
+            def release_remote_service_endpoint(self, *_args):
+                return {"released_port": port, "proxy_id": "rs-f020-keep-on-failure"}
+
+        auth.allocator = ConfirmingAllocator()
+        deleted = mgmt.server_delete_remote_service(
+            self.server, auth, "f020-keep-on-failure"
+        )
+        self.assertEqual(deleted["status"], "DELETED")
+        row = self.server.conn.execute(
+            "SELECT released FROM published_services WHERE name='f020-keep-on-failure'"
+        ).fetchone()
+        self.assertEqual(row["released"], 1)
+
     def test_UNAUTHENTICATED_REQUEST_NO_PORT_RESERVATION(self):
         before = self._snapshot()
         code, _payload = self._http(
