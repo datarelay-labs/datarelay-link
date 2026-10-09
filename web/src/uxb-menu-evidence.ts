@@ -99,6 +99,35 @@ export function requireObservedObjectContinuation(
   return page;
 }
 
+/** Access Hygiene is read-only, bounded, and never a clearance/zero inferred
+ * from omitted Core summary values or an incomplete item list. */
+export function requireObservedAccessHygiene(payload:unknown):any{
+  const page=requireObservedMenuPayload("hygiene",payload);
+  const whole=(n:unknown)=>typeof n==="number"&&Number.isSafeInteger(n)&&n>=0;
+  const summary=page.summary;
+  if(!whole(page.count)||page.count<page.items.length||page.items.length>200
+    ||!summary||typeof summary!=="object"||Array.isArray(summary)
+    ||!whole(summary.action_required)||summary.action_required>page.count
+    ||!whole(summary.unknown_evidence)||summary.unknown_evidence>page.count
+    ||page.authoritative!==false||page.read_only!==true||page.auto_mutation!==false
+    ||typeof page.generated_at!=="string"||!page.generated_at.trim())
+    throw new Error("Core Access Hygiene report is incomplete. State is UNKNOWN; no clean result can be inferred.");
+  return page;
+}
+
+/** Only true, role-appropriate workspaces offer an Inspect action.
+ * Unrecognized resource kinds must not show a clickable no-op. */
+export function hygieneInspectTarget(type:unknown,role:unknown):{route:string,group:string}|null{
+  if(type==="service-account"&&role!=="Admin")return null;
+  const destinations:Record<string,{route:string,group:string}>={
+    "managed-host":{route:"hosts",group:"connections"},
+    "object":{route:"objects",group:"access"},
+    "access-rule":{route:"policies",group:"access"},
+    "service-account":{route:"integrations",group:"administration"},
+  };
+  return typeof type==="string"?destinations[type]||null:null;
+}
+
 /** A retention read must prove every metric before the UI can say "Normal".
  * Zero is valid only when Core explicitly returned the numeric value. */
 export type ObservedAuditRetention={

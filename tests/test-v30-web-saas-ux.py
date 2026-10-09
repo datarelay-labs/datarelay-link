@@ -530,12 +530,17 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn("Update availability remains UNKNOWN", SOURCE)
 
     def test_access_hygiene_orphan_filter_and_resource_navigation(self):
+        helper=(ROOT / "web/src/uxb-menu-evidence.ts").read_text(encoding="utf-8")
         self.assertIn('quality==="ORPHANED"&&x.kind!=="orphan-object"', SOURCE)
-        self.assertIn('"object":["objects","infrastructure"]', SOURCE)
-        self.assertIn('"service-account":["integrations","administration"]', SOURCE)
-        self.assertIn('"managed-host":["hosts","infrastructure"]', SOURCE)
-        self.assertIn('disabled={x.resource_type==="service-account"&&operator.role!=="Admin"}', SOURCE)
-        self.assertIn('data?.summary?.unknown_evidence', SOURCE)
+        for route in ('"object":{route:"objects",group:"access"}',
+                      '"service-account":{route:"integrations",group:"administration"}',
+                      '"managed-host":{route:"hosts",group:"connections"}'):
+            self.assertIn(route,helper)
+        self.assertIn('if(type==="service-account"&&role!=="Admin")return null;',helper)
+        self.assertIn('hygieneInspectTarget(x.resource_type,operator.role)', SOURCE)
+        self.assertIn('No compatible detail workspace', SOURCE)
+        self.assertIn('const unknown=data.summary.unknown_evidence;', SOURCE)
+        self.assertIn('data.generated_at', SOURCE)
         self.assertIn('x.observation_window_days===0?"Current"', SOURCE)
         self.assertIn('aria-label="Filter finding severity"', SOURCE)
         self.assertIn('severityFilter!=="all"&&x.severity!==severityFilter', SOURCE)
@@ -696,7 +701,7 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn('Partial Core inventory', SOURCE)
         self.assertIn('No match in loaded policy rules', SOURCE)
         self.assertIn('No match in loaded resources', SOURCE)
-        self.assertIn('setData(requireObservedMenuPayload(active,payload))', SOURCE)
+        self.assertIn('setData(active==="hygiene"?requireObservedAccessHygiene(payload):requireObservedMenuPayload(active,payload))', SOURCE)
         self.assertIn('if(!current)return;', SOURCE)
         self.assertIn('return()=>{current=false}', SOURCE)
         self.assertIn('Core data unavailable · UNKNOWN', SOURCE)
@@ -713,8 +718,9 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn('Access · Advanced', SOURCE)
         self.assertIn('jobsState!=="ready"', SOURCE)
         self.assertIn('UNKNOWN · Core Jobs inventory is unavailable.', SOURCE)
-        for name in ("hygiene", "enrollments", "views"):
+        for name in ("enrollments", "views"):
             self.assertIn('requireObservedMenuPayload("'+name+'",payload)', SOURCE)
+        self.assertIn('setData(requireObservedAccessHygiene(payload))', SOURCE)
 
     def test_administration_inventory_failures_never_show_fake_empty_users_or_integrations(self):
         # Integration source contract: do not conceal auth/API errors as empty data.
@@ -789,6 +795,30 @@ class V30WebSaasUxContractTests(unittest.TestCase):
             self.assertNotIn(false_status,audit)
         self.assertIn('retentionState==="ready"&&retention&&<div className="dr-kpi-strip',audit)
         self.assertIn('retention.capacity_exceeded?"Exceeded":"Normal"',audit)
+
+    def test_access_hygiene_requires_observed_count_and_true_inspect_target(self):
+        helper=(ROOT / "web/src/uxb-menu-evidence.ts").read_text(encoding="utf-8")
+        view=SOURCE.split("function AccessHygienePanel(", 1)[1].split("function SystemAdministrationWorkspace(", 1)[0]
+        for marker in (
+            'export function requireObservedAccessHygiene(',
+            'export function hygieneInspectTarget(',
+            'if(type==="service-account"&&role!=="Admin")return null;',
+            'authoritative!==false||page.read_only!==true||page.auto_mutation!==false',
+        ):
+            self.assertIn(marker,helper,marker)
+        for marker in (
+            'requireObservedAccessHygiene(payload)',
+            'const unknown=data.summary.unknown_evidence;',
+            'Metric label="Review findings" value={data.count}',
+            'const partial=data.count>source.length;',
+            'Some Core findings were not included in this bounded read',
+            'hygieneInspectTarget(x.resource_type,operator.role)',
+            'No compatible detail workspace',
+            'Admin role required',
+        ):
+            self.assertIn(marker,SOURCE,marker)
+        self.assertNotIn('data?.count||0',view)
+        self.assertNotIn('data?.summary?.unknown_evidence??',view)
 
     def test_policy_read_does_not_hide_internet_and_ai_behind_remote_limit(self):
         helper = (ROOT / "web/src/uxb-menu-evidence.ts").read_text(encoding="utf-8")

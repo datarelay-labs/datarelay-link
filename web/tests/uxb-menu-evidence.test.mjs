@@ -156,6 +156,35 @@ test('Audit retention status is never fabricated as Normal or zero from missing 
     assert.throws(()=>menu.requireObservedAuditRetention(broken),/UNKNOWN/);
   }
 });
+test('Access Hygiene requires Core read-only evidence and truthful total/unknown counts',()=>{
+  const sample={items:[],count:0,summary:{action_required:0,unknown_evidence:0},
+    authoritative:false,read_only:true,auto_mutation:false,
+    generated_at:"2026-10-09T00:00:00Z"};
+  assert.equal(menu.requireObservedAccessHygiene(sample),sample);
+  const partial={...sample,items:[{resource_type:'managed-host',resource_id:'host-1'}],count:2,
+    summary:{action_required:1,unknown_evidence:1}};
+  assert.equal(menu.requireObservedAccessHygiene(partial),partial);
+  for(const bad of [null,{}, {items:[]},
+    {...sample,count:undefined},{...sample,count:-1},{...sample,count:'0'},
+    {...sample,count:0,items:[{resource_type:'object'}]},
+    {...sample,summary:{}},{...sample,summary:{action_required:0,unknown_evidence:'0'}},
+    {...sample,summary:{action_required:1,unknown_evidence:0}},
+    {...sample,read_only:false},{...sample,authoritative:true},
+    {...sample,auto_mutation:true},{...sample,generated_at:undefined},
+    {...sample,items:Array.from({length:201},()=>({}))}]){
+    assert.throws(()=>menu.requireObservedAccessHygiene(bad),/UNKNOWN/);
+  }
+});
+test('Access Hygiene inspect has only meaningful authorized destinations',()=>{
+  assert.deepEqual(menu.hygieneInspectTarget('managed-host','Read Only'),{route:'hosts',group:'connections'});
+  assert.deepEqual(menu.hygieneInspectTarget('object','Operator'),{route:'objects',group:'access'});
+  assert.deepEqual(menu.hygieneInspectTarget('access-rule','Read Only'),{route:'policies',group:'access'});
+  assert.deepEqual(menu.hygieneInspectTarget('service-account','Admin'),{route:'integrations',group:'administration'});
+  assert.equal(menu.hygieneInspectTarget('service-account','Operator'),null);
+  assert.equal(menu.hygieneInspectTarget('service-account','Read Only'),null);
+  assert.equal(menu.hygieneInspectTarget('unsupported','Admin'),null);
+  assert.equal(menu.hygieneInspectTarget(null,'Admin'),null);
+});
 test('partial Objects inventory remains available for its existing explicit UNKNOWN warning',()=>{
   // ObjectsWorkspace itself distinguishes incomplete resources from a valid empty list.
   for(const response of [{resources:{}},{resources:{'network-object':{items:[]}}}]){

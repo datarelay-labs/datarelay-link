@@ -7,7 +7,7 @@ import {AccessEvidenceExplorer,GuidedPolicyJourney,coreFlowKey,coreCutoffKey,vis
 import {EnrollmentOnboarding} from "./p0-enrollment";
 import {navGroups,groupFor,labelFor,pageDescriptions,visibleRoute,navMatches,setupContextForObjectFamily} from "./uxb-navigation";
 import {FirstUseHome,isFreshInstallation,observedRecentFeed,observedNumber,accessPlaneCount,coreHealthState,type RecentFeed} from "./uxb-home";
-import {requireObservedMenuPayload,requireObservedInventoryContinuation,requireObservedObjectContinuation,requireObservedAuditRetention,isPartialCorePage,selectMenuPage,combineObservedPolicyPlanes,type MenuPagePosition} from "./uxb-menu-evidence";
+import {requireObservedMenuPayload,requireObservedInventoryContinuation,requireObservedObjectContinuation,requireObservedAuditRetention,requireObservedAccessHygiene,hygieneInspectTarget,isPartialCorePage,selectMenuPage,combineObservedPolicyPlanes,type MenuPagePosition} from "./uxb-menu-evidence";
 import {RemoteServiceEditor} from "./uxb-remote-service";
 import {RevisionHistory} from "./uxb-revisions";
 import {AgentVersionDrift} from "./uxb-versions";
@@ -1644,11 +1644,8 @@ function HealthWorkspace({data,onNavigate}:{data:any,onNavigate?:(id:string,grou
 function AccessHygienePanel({data,onRefresh,onNavigate,operator}:{data:any,onRefresh:()=>void,onNavigate?:(id:string,groupId?:string)=>void,operator:any}){
   const [quality,setQuality]=useState("all"),[filter,setFilter]=useState("");
   const [severityFilter,setSeverityFilter]=useState("all"),[kindFilter,setKindFilter]=useState("all"),[ageFilter,setAgeFilter]=useState("all");
-  const destination:Record<string,[string,string]>={
-    "managed-host":["hosts","infrastructure"],"object":["objects","infrastructure"],
-    "access-rule":["policies","access"],"service-account":["integrations","administration"],
-  };
   const source=Array.isArray(data?.items)?data.items:[];
+  const partial=data.count>source.length;
   const kinds=Array.from(new Set(source.map((x:any)=>String(x.kind||"")).filter(Boolean))).sort();
   const items=source.filter((x:any)=>{
     if(severityFilter!=="all"&&x.severity!==severityFilter)return false;
@@ -1661,13 +1658,15 @@ function AccessHygienePanel({data,onRefresh,onNavigate,operator}:{data:any,onRef
     const q=filter.trim().toLowerCase();
     return !q||[x.kind,x.resource_type,x.resource_id,x.label,x.plane].some(v=>String(v||"").toLowerCase().includes(q));
   });
-  const unknown=Number(data?.summary?.unknown_evidence??source.filter((x:any)=>x.finding_status==="UNKNOWN_EVIDENCE").length);
+  const unknown=data.summary.unknown_evidence;
   return <div className="dr-resource-workspace">
     <section className="dr-page-intro"><div><p className="dr-eyebrow">Operations · Access Hygiene</p>
       <h2>Access Hygiene</h2><p className="muted">Evidence-qualified review only. No access rule, Host, account, or permission is changed automatically.</p></div>
       <div className="dr-page-actions"><button className="secondary" onClick={onRefresh}>Refresh evidence</button></div>
     </section>
-    <div className="grid"><Metric label="Review findings" value={data?.count||0}/><Metric label="Unknown evidence" value={unknown}/></div>
+    <div className="grid"><Metric label="Review findings" value={data.count}/><Metric label="Unknown evidence" value={unknown}/></div>
+    <p className="muted">Read-only Core hygiene snapshot generated at {data.generated_at}. This report is advisory, not an authorization or completed remediation.</p>
+    {partial&&<p role="status" className="dr-uxb-catalog-page-notice">Some Core findings were not included in this bounded read. Filters and Inspect apply only to the {source.length} observed findings; the reported total is {data.count}. Do not interpret an unmatched filter as a clean Core inventory.</p>}
     <section className="card">
       <div className="dr-list-toolbar"><div><strong>{items.length}</strong><span>visible recommendations</span></div>
         <div className="toolbar"><input aria-label="Filter access hygiene" value={filter} onChange={e=>setFilter(e.target.value)} placeholder="Filter resource or finding"/>
@@ -1688,13 +1687,15 @@ function AccessHygienePanel({data,onRefresh,onNavigate,operator}:{data:any,onRef
         </div>
       </div>
       <p className="muted">Incomplete or unverified audit coverage is UNKNOWN_EVIDENCE, not proof of unused access. Recommendations are always advisory.</p>
-      {!items.length?<div className="dr-empty-state"><strong>No matching findings</strong><p>There is no evidence-qualified action matching the current filters.</p></div>:
+      {!items.length?<div className="dr-empty-state"><strong>{partial?"No match in loaded findings":"No matching findings"}</strong><p>{partial?"More Core findings may exist outside the loaded first page. The current filters cover observed items only.":"There is no evidence-qualified action matching the current filters."}</p></div>:
       <div className="dr-table-scroll"><table className="dr-resource-table"><thead><tr><th>Resource</th><th>Review</th><th>Evidence</th><th>Observed age</th><th>Window</th><th>Recommendation</th><th>Inspect</th></tr></thead>
       <tbody>{items.map((x:any,i:number)=><tr key={x.kind+":"+x.resource_id+":"+i}><td><strong>{x.label||x.resource_id}</strong><small>{x.resource_type||""} · {x.kind||""}</small></td>
         <td><span className={x.finding_status==="UNKNOWN_EVIDENCE"?"dr-state":"dr-state active"}><i/>{x.finding_status||"UNKNOWN_EVIDENCE"}</span></td>
         <td>{x.evidence_quality||"UNKNOWN_EVIDENCE"}</td><td title={x.age_reference||"No verified age timestamp"}>{typeof x.age_days==="number"?x.age_days+" days":"Unknown"}</td><td>{x.observation_window_days===0?"Current":(x.observation_window_days??"—")+" days"}</td>
         <td>{x.recommendation||"Review the authoritative resource."}</td>
-        <td><button className="secondary" disabled={x.resource_type==="service-account"&&operator.role!=="Admin"} onClick={()=>{const route=destination[x.resource_type];if(route)onNavigate?.(route[0],route[1])}}>Inspect</button></td>
+        <td>{hygieneInspectTarget(x.resource_type,operator.role)?
+          <button className="secondary" onClick={()=>{const target=hygieneInspectTarget(x.resource_type,operator.role);if(target)onNavigate?.(target.route,target.group)}}>Inspect</button>:
+          <span className="muted">{x.resource_type==="service-account"&&operator.role!=="Admin"?"Admin role required":"No compatible detail workspace"}</span>}</td>
       </tr>)}</tbody></table></div>}
     </section>
   </div>;
@@ -1747,7 +1748,7 @@ function View({active,operator,onNavigate,context,setupDraft,onSetupDraftChange}
       }).catch((e:any)=>{if(current)setError(e.message||String(e))});
     }else if(paths[active])api(paths[active]).then(payload=>{
       if(!current)return;
-      try{setData(requireObservedMenuPayload(active,payload))}
+      try{setData(active==="hygiene"?requireObservedAccessHygiene(payload):requireObservedMenuPayload(active,payload))}
       catch(e:any){setError(e.message||String(e))}
     }).catch((e:any)=>{if(current)setError(e.message||String(e))});
     return()=>{current=false};
@@ -1760,7 +1761,7 @@ function View({active,operator,onNavigate,context,setupDraft,onSetupDraftChange}
   if(active==="drafts")return <DraftWorkspace/>;
   if(active==="access")return <AccessOperations operator={operator} onNavigate={onNavigate} context={context}/>;
   if(active==="jobs")return <JobOperations operator={operator}/>;
-  if(active==="hygiene"&&data)return <AccessHygienePanel data={data} operator={operator} onRefresh={()=>api("/api/v1/access-hygiene").then(payload=>setData(requireObservedMenuPayload("hygiene",payload))).catch((e:any)=>setError(e.message||String(e)))} onNavigate={onNavigate}/>;
+  if(active==="hygiene"&&data)return <AccessHygienePanel data={data} operator={operator} onRefresh={()=>api("/api/v1/access-hygiene").then(payload=>setData(requireObservedAccessHygiene(payload))).catch((e:any)=>setError(e.message||String(e)))} onNavigate={onNavigate}/>;
   if(active==="audit")return <AuditExplorer operator={operator} context={context}/>;
   if(active==="enrollments"&&data)return <EnrollmentOnboarding api={api} data={data} operator={operator} onNavigate={onNavigate} refresh={()=>api("/api/v1/enrollments?limit=50").then(payload=>setData(requireObservedMenuPayload("enrollments",payload))).catch((e:any)=>setError(e.message||String(e)))}/>;
   if(active==="setup"){
