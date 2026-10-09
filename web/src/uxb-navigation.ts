@@ -17,7 +17,7 @@ export const navGroups = [
   ]},
   {id:"activity",label:"Activity & Health",description:"Find problems, audit decisions and track changes",items:[
     ["health","System health"],["hygiene","Attention & troubleshooting"],["audit","Activity log"],
-    ["jobs","Jobs"],["versions","Agent version drift · Advanced"],["revisions","Change history"],
+    ["jobs","Jobs"],["versions","Agent version drift · Advanced"],["revisions","Change history"],["views","Saved Views"],
   ]},
   {id:"administration",label:"Administration",description:"Operator accounts and product settings",items:[
     ["system","System administration"],["users","Users & MFA"],["integrations","Integrations"],
@@ -29,7 +29,6 @@ export const contextualRoutes = [
   {id:"setup",label:"Set up a connection",group:"connections",description:"One guided path from Agent to narrow access"},
   {id:"drafts",label:"Advanced configuration draft",group:"access",description:"Core-backed ConfigurationBundle test, preview and apply"},
   {id:"doctor",label:"Troubleshoot",group:"activity",description:"Investigate a specific system error"},
-  {id:"views",label:"Saved views",group:"activity",description:"Reuse saved resource filters"},
 ] as const;
 
 export const pageDescriptions: Record<string,string> = {

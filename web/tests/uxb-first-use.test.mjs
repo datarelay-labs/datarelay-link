@@ -38,6 +38,18 @@ test("exactly Home and four task-first sidebar groups; canonical routes survive"
   assert.ok(ids.includes(id),id);
  }
 });
+test("Saved Views stays discoverable once in Activity & Health for all Web roles",()=>{
+ const activity=nav.navGroups.find(group=>group.id==="activity");
+ assert.deepEqual(activity.items.filter(row=>row[0]==="views"),[["views","Saved Views"]]);
+ assert.equal(nav.contextualRoutes.some(route=>route.id==="views"),false);
+ assert.equal(nav.groupFor("views"),"activity");
+ assert.equal(nav.labelFor("views"),"Saved Views");
+ for(const role of ["Admin","Operator","Read Only"]){
+  assert.equal(nav.visibleRoute("views",role),true);
+  assert.equal(nav.navMatches("saved views",role).filter(row=>row.id==="views").length,1);
+  assert.equal(nav.navMatches("saved filters",role).filter(row=>row.id==="views").length,1);
+ }
+});
 test("Objects-family search returns only an unambiguous setup context",()=>{
  assert.deepEqual(nav.setupContextForObjectFamily("ai"),{plane:"ai"});
  assert.deepEqual(nav.setupContextForObjectFamily("permission"),{plane:"ai"});

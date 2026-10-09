@@ -72,8 +72,10 @@ class V30WebSaasUxContractTests(unittest.TestCase):
             ],
         )
         self.assertIn('if(id==="overview")return "Home"', NAV_SOURCE)
-        for utility in ('["search","Search"]', '["views","Saved Views"]', '["doctor","Doctor"]', '["enrollments","Connect Agent"]', '["drafts","Draft Workspace"]'):
+        for utility in ('["search","Search"]', '["doctor","Doctor"]', '["enrollments","Connect Agent"]', '["drafts","Draft Workspace"]'):
             self.assertNotIn(utility, text)
+        self.assertIn('["views","Saved Views"]', text)
+        self.assertNotIn('{id:"views",label:"Saved views",group:"activity"', NAV_SOURCE)
         for contextual in (
             'Search hosts, services, policies, identities',
             'Saved Views', 'Set up a connection', 'Troubleshoot',
