@@ -597,21 +597,96 @@ def apply_agent_runtime(
     }
 
 
+def _configured_v24_runtime_ports(root: Optional[str] = None) -> dict:
+    """Map the exact Remote Services *included* in the installed frpc generation.
+
+    The runtime only verifies proxies rendered in client-state/frpc.toml.
+    Excluded rows (missing Service Object, invalid destination, mismatched
+    endpoint, or stale projection) are not proven HEALTHY merely because
+    the new frpc process successfully registered other proxies.
+    """
+    state = load_client_state(root)
+    services = state.get("services")
+    if not isinstance(services, dict):
+        return {}
+    included = {}
+    for sid, record in services.items():
+        if not isinstance(record, dict) or not record.get("v24_remote_service"):
+            continue
+        if record.get("enabled", True) is False:
+            continue
+        name = str(record.get("name") or "").strip()
+        if not name or str(sid) != remote_service_proxy_id(name):
+            continue
+        if str(record.get("id") or sid) != str(sid):
+            continue
+        try:
+            port = int(record["remote_port"])
+            local_port = int(record["local_port"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if not (1 <= port <= 65535 and 1 <= local_port <= 65535):
+            continue
+        key = name.lower()
+        if key not in included:
+            included[key] = port
+        elif included[key] != port:
+            # Ambiguous local projection must never authorize verification.
+            included[key] = None
+    return included
+
+
 def mark_runtime_status(plane_db, *, ok: bool, reason: str = "", generation: int = 0) -> None:
     now = utc_now_iso()
     if ok:
-        # Only promote rows that were waiting on runtime (or already healthy).
-        # Never overwrite destination-unreachable or other non-runtime DEGRADED reasons.
-        # verify_runtime_proxies success is the verification event for runtime_verified.
-        plane_db.conn.execute(
-            "UPDATE agent_remote_services SET status = 'HEALTHY', reason = '', "
-            "runtime_verified = 1, updated_at = ? "
-            "WHERE delete_pending = 0 AND endpoint_port IS NOT NULL AND pending_allocation = 0 "
-            "AND enabled = 1 AND ("
-            "  reason = '' OR lower(reason) LIKE 'runtime%' OR lower(reason) LIKE '%activation%'"
-            ") AND lower(reason) NOT LIKE '%unreachable%'",
-            (now,),
-        )
+        installed = _configured_v24_runtime_ports(getattr(plane_db, "root", None))
+        rows = list(plane_db.conn.execute(
+            "SELECT name, status, reason, runtime_verified, endpoint_port, pending_allocation "
+            "FROM agent_remote_services WHERE delete_pending = 0 AND enabled = 1"
+        ))
+        for row in rows:
+            name = str(row["name"] or "")
+            local_port = row["endpoint_port"]
+            bound_port = installed.get(name.lower())
+            in_generation = (
+                local_port is not None
+                and bound_port is not None
+                and int(row["pending_allocation"] or 0) == 0
+                and int(local_port) == bound_port
+            )
+            old_reason = str(row["reason"] or "")
+            allow_promotion = (
+                not old_reason
+                or old_reason.lower().startswith("runtime")
+                or "activation" in old_reason.lower()
+            ) and "unreachable" not in old_reason.lower()
+            if in_generation and allow_promotion:
+                # Called only after apply_agent_runtime verified this generation.
+                plane_db.conn.execute(
+                    "UPDATE agent_remote_services SET status = 'HEALTHY', reason = '', "
+                    "runtime_verified = 1, updated_at = ? WHERE name = ? COLLATE NOCASE",
+                    (now, name),
+                )
+            elif (
+                str(row["status"] or "").upper() == "HEALTHY"
+                or int(row["runtime_verified"] or 0)
+                or (
+                    not in_generation and local_port is not None
+                    and int(row["pending_allocation"] or 0) == 0
+                    and allow_promotion
+                )
+            ):
+                # Reconciled/activated runtime cannot retain a falsely HEALTHY
+                # row that has no current proxy. Keep specific dependency errors.
+                why = old_reason
+                if not why or allow_promotion:
+                    why = "Runtime proxy is not present in the verified generation."
+                plane_db.conn.execute(
+                    "UPDATE agent_remote_services SET status = 'DEGRADED', "
+                    "runtime_verified = 0, reason = ?, updated_at = ? "
+                    "WHERE name = ? COLLATE NOCASE",
+                    (why, now, name),
+                )
     else:
         brief = reason or "Runtime activation pending or failed"
         if brief.startswith("ERROR:"):

@@ -188,6 +188,52 @@ class RuntimeApplyRemoveTests(unittest.TestCase):
                   "DRLINK_FAULT_RUNTIME_CONFIG", "DRLINK_FAULT_RUNTIME_VERIFY", "DRLINK_FAULT_RUNTIME_RESTART"):
             os.environ.pop(k, None)
 
+    def test_F004_F017_runtime_omitted_service_cannot_be_healthy(self):
+        # PASS1 F004/F017: a published row with a public port but no local
+        # service object is excluded from the generated frpc proxy config.
+        # A successful apply of other proxies must never mark that row HEALTHY.
+        self.plane.conn.execute(
+            "INSERT INTO agent_remote_services"
+            "(name,destination,service_object,enabled,status,endpoint_host,endpoint_port,"
+            "pending_allocation,delete_pending,pool_class,reason,updated_at) "
+            "VALUES ('orphan','agent-1','absent-service-object',1,'DEGRADED',"
+            "'example.test',6090,0,0,'normal','Runtime activation pending.',"
+            "'2026-10-09T00:00:00Z')"
+        )
+        self.plane.conn.commit()
+        result = runtime.apply_agent_runtime(self.plane, root=self.tmp)
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["applied"], ["rs-web"])
+        state = runtime.load_client_state(self.tmp)["services"]
+        self.assertNotIn("rs-orphan", state)
+        orphan = self.plane.conn.execute(
+            "SELECT status,runtime_verified,reason FROM agent_remote_services "
+            "WHERE name='orphan'"
+        ).fetchone()
+        self.assertEqual(orphan["status"], "DEGRADED", dict(orphan))
+        self.assertEqual(orphan["runtime_verified"], 0, dict(orphan))
+        self.assertIn("runtime proxy", orphan["reason"].lower())
+        valid = self.plane.conn.execute(
+            "SELECT status,runtime_verified FROM agent_remote_services "
+            "WHERE name='web'"
+        ).fetchone()
+        self.assertEqual((valid["status"],valid["runtime_verified"]), ("HEALTHY",1))
+
+    def test_F004_stale_port_mismatch_cannot_be_marked_verified(self):
+        applied = runtime.apply_agent_runtime(self.plane, root=self.tmp)
+        self.assertTrue(applied["ok"], applied)
+        self.plane.conn.execute(
+            "UPDATE agent_remote_services SET endpoint_port=6091, "
+            "status='HEALTHY', runtime_verified=1 WHERE name='web'"
+        )
+        self.plane.conn.commit()
+        runtime.mark_runtime_status(self.plane, ok=True)
+        row = self.plane.conn.execute(
+            "SELECT status,runtime_verified FROM agent_remote_services "
+            "WHERE name='web'"
+        ).fetchone()
+        self.assertEqual((row["status"],row["runtime_verified"]), ("DEGRADED",0))
+
     def test_REMOTE_SERVICE_RUNTIME_APPLY(self):
         result = runtime.apply_agent_runtime(self.plane, root=self.tmp)
         self.assertTrue(result["ok"], result)
