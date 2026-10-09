@@ -260,6 +260,38 @@ test('Audit Export reports CREATED only for the actual Core artifact and request
   }
   assert.throws(()=>menu.requireObservedAuditExport(verified,{category:'CONTROL',actor:12}),/UNKNOWN/);
 });
+test('Agent rollout preview is advisory for exactly the Core-observed requested targets',()=>{
+  const request={targets:['host-b','host-a','host-b'],canary_targets:[],
+    artifact:{version:'3.0.0-rc.1',source_ref:'a'.repeat(40),sha256:'b'.repeat(64)},
+    wave_size:1,failure_threshold_percent:20};
+  const row=(id)=>({target_id:id,current_version:'unknown',target_version:'3.0.0-rc.1',
+    platform:'unknown',version_relation:'UNKNOWN',last_heartbeat:null,
+    provenance:'NOT_VERIFIED',update_available:'UNKNOWN'});
+  const valid={read_only:true,eligible:false,ready_to_apply:false,creates_job:false,
+    requires_fresh_validation_on_apply:true,artifact_qualification:'NOT_VERIFIED',
+    qualification_note:'Artifact identity only; signed delivery not qualified',
+    targets:['host-b','host-a'],target_count:2,blocked_targets:['host-a'],
+    canary_targets:['host-b'],wave_size:1,failure_threshold_percent:20,
+    artifact:request.artifact,target_observations:[row('host-b'),row('host-a')]};
+  assert.equal(menu.requireObservedRolloutPreview(valid,request),valid);
+  assert.equal(menu.requireObservedRolloutPreview({...valid,eligible:true,blocked_targets:[]},request).eligible,true);
+  for(const bad of [
+    null,{}, {error:'Core unavailable'},
+    {...valid,read_only:false},{...valid,ready_to_apply:true},
+    {...valid,creates_job:true},{...valid,requires_fresh_validation_on_apply:false},
+    {...valid,artifact_qualification:'PASS'},{...valid,eligible:true},
+    {...valid,targets:['host-a','host-b']},{...valid,target_count:0},
+    {...valid,blocked_targets:['outsider']},{...valid,canary_targets:['host-a']},
+    {...valid,wave_size:2},{...valid,failure_threshold_percent:21},
+    {...valid,artifact:{...request.artifact,sha256:'c'.repeat(64)}},
+    {...valid,target_observations:[row('host-a')]},
+    {...valid,target_observations:[{...row('host-b'),provenance:'VERIFIED'},row('host-a')]},
+    {...valid,target_observations:[{...row('host-b'),update_available:'YES'},row('host-a')]},
+    {...valid,target_observations:[{...row('host-b'),target_version:'2.0.0'},row('host-a')]},
+  ]){
+    assert.throws(()=>menu.requireObservedRolloutPreview(bad,request),/UNKNOWN/);
+  }
+});
 test('partial Objects inventory remains available for its existing explicit UNKNOWN warning',()=>{
   // ObjectsWorkspace itself distinguishes incomplete resources from a valid empty list.
   for(const response of [{resources:{}},{resources:{'network-object':{items:[]}}}]){

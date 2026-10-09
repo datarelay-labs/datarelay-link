@@ -529,6 +529,27 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn("Observed version", SOURCE)
         self.assertIn("Update availability remains UNKNOWN", SOURCE)
 
+    def test_agent_rollout_preview_disregards_stale_and_malformed_core_results(self):
+        preview=SOURCE.split('function AgentRolloutPreviewPanel(){',1)[1].split('function JobOperations(',1)[0]
+        helper=(ROOT / 'web/src/uxb-menu-evidence.ts').read_text(encoding='utf-8')
+        self.assertIn('export function requireObservedRolloutPreview(',helper)
+        for expected in (
+            'const previewGeneration=useRef(0);',
+            'const previewInFlight=useRef(false);',
+            'previewGeneration.current+=1;',
+            'if(previewInFlight.current)return;',
+            'const epoch=++previewGeneration.current;',
+            'requireObservedRolloutPreview(await api("/api/v1/jobs/agent-update-rollout/preview",',
+            'if(epoch!==previewGeneration.current)return;',
+            'UNKNOWN · Core Agent Update Preview',
+            'disabled={busy||!hosts.trim()',
+            'setPreview(null);setError("");',
+            'return()=>{previewGeneration.current+=1};',
+        ):
+            self.assertIn(expected,preview,expected)
+        self.assertNotIn('setPreview(await api(',preview)
+        self.assertIn('if(epoch===previewGeneration.current){previewInFlight.current=false;setBusy(false)}',preview)
+
     def test_access_hygiene_orphan_filter_and_resource_navigation(self):
         helper=(ROOT / "web/src/uxb-menu-evidence.ts").read_text(encoding="utf-8")
         self.assertIn('quality==="ORPHANED"&&x.kind!=="orphan-object"', SOURCE)
