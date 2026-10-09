@@ -7,7 +7,7 @@ import {AccessEvidenceExplorer,GuidedPolicyJourney,coreFlowKey,coreCutoffKey,vis
 import {EnrollmentOnboarding} from "./p0-enrollment";
 import {navGroups,groupFor,labelFor,pageDescriptions,visibleRoute,navMatches,setupContextForObjectFamily} from "./uxb-navigation";
 import {FirstUseHome,isFreshInstallation,observedRecentFeed,observedNumber,accessPlaneCount,coreHealthState,type RecentFeed} from "./uxb-home";
-import {requireObservedMenuPayload,isPartialCorePage} from "./uxb-menu-evidence";
+import {requireObservedMenuPayload,isPartialCorePage,selectMenuPage,type MenuPagePosition} from "./uxb-menu-evidence";
 import {RemoteServiceEditor} from "./uxb-remote-service";
 import {FirstConnectionSetup,type SetupDraft} from "./uxb-setup";
 
@@ -899,6 +899,8 @@ function AuditExplorer({operator,context}:{operator:any,context?:any}){
   const [data,setData]=useState<any>(null),[retention,setRetention]=useState<any>(null),[error,setError]=useState(""),[message,setMessage]=useState(""),[exportResult,setExportResult]=useState<any>(null);
   const [auditState,setAuditState]=useState<"loading"|"ready"|"unknown"|"idle">("loading");
   const auditReadEpoch=useRef(0);
+  const [auditPage,setAuditPage]=useState<MenuPagePosition>({cursor:"",history:[]});
+  const [auditFilterKey,setAuditFilterKey]=useState<string|null>(null);
   const [start,setStart]=useState(""),[end,setEnd]=useState(""),[category,setCategory]=useState(""),[eventType,setEventType]=useState(""),[actor,setActor]=useState(""),[resource,setResource]=useState(String(context?.originId||"")),[result,setResult]=useState(""),[correlation,setCorrelation]=useState("");
   const [controlDays,setControlDays]=useState("365"),[accessDays,setAccessDays]=useState("90"),[maxEvents,setMaxEvents]=useState("500000");
 
@@ -912,14 +914,16 @@ function AuditExplorer({operator,context}:{operator:any,context?:any}){
     for(const [key,value] of [["start",start],["end",end],["category",category],["event_type",eventType],["actor",actor],["resource",resource],["result",result],["correlation",correlation]] as string[][]){if(value.trim())out[key]=value.trim()}
     return out;
   }
-  async function load(cursor?:string){
+  async function load(position:MenuPagePosition={cursor:"",history:[]}){
     const epoch=++auditReadEpoch.current;
     setError("");setData(null);setAuditState("loading");
+    const q=filterParams();
+    const filterKey=q.toString();
     try{
-      const q=filterParams();if(cursor)q.set("cursor",cursor);
+      if(position.cursor)q.set("cursor",position.cursor);
       const page=requireObservedMenuPayload("audit",await api("/api/v1/audit?"+q.toString()));
       if(epoch!==auditReadEpoch.current)return;
-      setData(page);setAuditState("ready");
+      setData(page);setAuditPage(position);setAuditFilterKey(filterKey);setAuditState("ready");
     }catch(e:any){
       if(epoch!==auditReadEpoch.current)return;
       setData(null);setAuditState("unknown");setError(e.message||String(e));
@@ -950,6 +954,7 @@ function AuditExplorer({operator,context}:{operator:any,context?:any}){
     setError("");setMessage("");
     try{const value=await api("/api/v1/audit/retention/run",{method:"POST",body:"{}"});setMessage("Audit retention: "+value.status+" · deleted "+String((value.control_deleted||0)+(value.access_deleted||0)+(value.capacity_deleted||0)));await load();await loadRetention()}catch(e:any){setError(e.message||String(e))}
   }
+  const auditFiltersEdited=auditState==="ready"&&auditFilterKey!==filterParams().toString();
   const rows=(data?.items||[]).map((x:any)=>({
     event_id:x.event_id||("legacy:"+x.row_id),
     occurred_at:x.occurred_at,
@@ -975,11 +980,17 @@ function AuditExplorer({operator,context}:{operator:any,context?:any}){
         <label className="dr-field"><span>Result</span><input value={result} onChange={e=>setResult(e.target.value)} placeholder="success / deny"/></label>
         <label className="dr-field"><span>Correlation ID</span><input value={correlation} onChange={e=>setCorrelation(e.target.value)} placeholder="Correlation ID"/></label>
       </div>
-      <div className="dr-form-actions"><button className="primary" onClick={()=>load()}>Search audit</button><button className="secondary" onClick={()=>{auditReadEpoch.current+=1;setData(null);setAuditState("idle");setError("");setStart("");setEnd("");setCategory("");setEventType("");setActor("");setResource("");setResult("");setCorrelation("")}}>Clear filters</button></div>
+      <div className="dr-form-actions"><button className="primary" onClick={()=>load()}>Search audit</button><button className="secondary" onClick={()=>{auditReadEpoch.current+=1;setData(null);setAuditState("idle");setAuditPage({cursor:"",history:[]});setAuditFilterKey(null);setError("");setStart("");setEnd("");setCategory("");setEventType("");setActor("");setResource("");setResult("");setCorrelation("")}}>Clear filters</button></div>
+      {auditFiltersEdited&&<p className="dr-uxb-catalog-page-notice" role="status">Filters changed since the loaded Audit page. Select Search audit to apply them; results below still belong to the previous search.</p>}
       <div className="dr-audit-table">{auditState==="ready"?<Table items={rows}/>:
         <p role="status" className="warning-box">{auditState==="loading"?"Loading Activity log from Core…":auditState==="idle"?"Filters cleared. Select Search audit to load current Core records.":"UNKNOWN · Core Audit inventory unavailable. No empty history was confirmed. Retry with Search audit."}</p>}
       </div>
-      {auditState==="ready"&&data?.next_cursor&&<div className="dr-form-actions"><button className="secondary" onClick={()=>load(data.next_cursor)}>Next page</button></div>}
+      {auditState==="ready"&&!auditFiltersEdited&&(auditPage.history.length>0||isPartialCorePage(data))&&
+      <div className="dr-form-actions" role="group" aria-label="Audit pagination">
+        <span className="muted">Page {auditPage.history.length+1} · current Core query</span>
+        {auditPage.history.length>0&&<button className="secondary" onClick={()=>{const previous=selectMenuPage(auditPage,data?.next_cursor,"newer");if(previous)load(previous)}}>← Newer Audit</button>}
+        {isPartialCorePage(data)&&<button className="secondary" onClick={()=>{const older=selectMenuPage(auditPage,data.next_cursor,"older");if(older)load(older)}}>Older Audit →</button>}
+      </div>}
       {exportResult&&<pre className="plan">{JSON.stringify({path:exportResult.path,event_count:exportResult.event_count,schema_version:exportResult.schema_version,sha256:exportResult.sha256,download_exposed:exportResult.download_exposed},null,2)}</pre>}
     </section>
     <section className="card dr-retention-card">

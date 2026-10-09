@@ -22,6 +22,22 @@ export function isPartialCorePage(payload:any):boolean{
   return typeof payload?.next_cursor==="string"&&payload.next_cursor.length>0;
 }
 
+/** Keyset page navigation only uses observed opaque Core cursors. The UI may
+ * navigate backwards using previous request cursors; it never guesses a total. */
+export type MenuPagePosition={cursor:string,history:string[]};
+export function selectMenuPage(
+  current:MenuPagePosition, nextCursor:unknown, direction:"older"|"newer"|"reset"
+):MenuPagePosition|null{
+  if(direction==="reset")return {cursor:"",history:[]};
+  if(direction==="older"){
+    if(typeof nextCursor!=="string"||!nextCursor||nextCursor===current.cursor)return null;
+    return {cursor:nextCursor,history:[...current.history,current.cursor]};
+  }
+  if(!current.history.length)return null;
+  return {cursor:current.history[current.history.length-1],
+    history:current.history.slice(0,-1)};
+}
+
 export function requireObservedMenuPayload(route:string,payload:unknown):any{
   if(payload===null||typeof payload!=="object"||Array.isArray(payload))
     throw new Error("Core response unavailable or malformed. Page state is UNKNOWN; retry the read.");

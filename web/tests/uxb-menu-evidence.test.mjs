@@ -49,6 +49,22 @@ test('Core pagination is visible and local filters never imply a complete list',
   assert.equal(menu.requireObservedMenuPayload('hosts',paged),paged);
   assert.equal(menu.requireObservedMenuPayload('policies',paged),paged);
 });
+test('Audit keyset backward and forward pagination uses opaque observed Core cursors only',()=>{
+  const start={cursor:'',history:[]};
+  assert.deepEqual(menu.selectMenuPage(start,'cursor-page-2','older'),
+    {cursor:'cursor-page-2',history:['']});
+  const page2=menu.selectMenuPage(start,'cursor-page-2','older');
+  assert.deepEqual(menu.selectMenuPage(page2,'cursor-page-3','older'),
+    {cursor:'cursor-page-3',history:['','cursor-page-2']});
+  const page3=menu.selectMenuPage(page2,'cursor-page-3','older');
+  assert.deepEqual(menu.selectMenuPage(page3,null,'newer'),page2);
+  assert.deepEqual(menu.selectMenuPage(page2,null,'newer'),start);
+  assert.deepEqual(menu.selectMenuPage(page3,null,'reset'),start);
+  assert.equal(menu.selectMenuPage(start,null,'newer'),null);
+  for(const invalid of [null,undefined,{},'',false,'cursor-page-2']){
+    assert.equal(menu.selectMenuPage(page2,invalid,'older'),null);
+  }
+});
 test('partial Objects inventory remains available for its existing explicit UNKNOWN warning',()=>{
   // ObjectsWorkspace itself distinguishes incomplete resources from a valid empty list.
   for(const response of [{resources:{}},{resources:{'network-object':{items:[]}}}]){
