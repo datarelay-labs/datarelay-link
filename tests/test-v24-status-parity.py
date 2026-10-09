@@ -210,6 +210,100 @@ class StatusParityTests(unittest.TestCase):
         self.assertIn("missing or invalid", row["reason"])
         self.assertEqual(result["status"], "DEGRADED")
 
+    def test_F024_stale_sync_snapshot_cannot_recreate_deleted_service(self):
+        # F024 race: synchronizer snapshots an Agent row, a public operator
+        # deletes that row, then the synchronizer blindly replays its old
+        # definition. Reconciliation must be update-only, not implicit create.
+        from unittest import mock
+
+        name = "f024-deleted"
+        self.agent.conn.execute(
+            "INSERT INTO agent_remote_services"
+            "(name, destination, destination_client_id, service_object, enabled, status, "
+            "endpoint_host, endpoint_port, pending_allocation, delete_pending, pool_class, "
+            "reason, updated_at) VALUES (?, 'this-host', ?, 'ssh', 1, 'DEGRADED', "
+            "'example.test', 6030, 0, 0, 'normal', 'Runtime activation pending.', "
+            "'2026-10-09T00:00:00Z')",
+            (name, MACHINE),
+        )
+        self.agent.conn.commit()
+        original_set = v24.set_remote_service_agent
+        seen = []
+
+        def deleted_before_replay(plane, svc_name, **kwargs):
+            seen.append(svc_name)
+            if svc_name == name:
+                self.agent.conn.execute(
+                    "DELETE FROM agent_remote_services WHERE name=?", (name,)
+                )
+                self.agent.conn.commit()
+            return original_set(plane, svc_name, **kwargs)
+
+        os.environ["DRLINK_SERVER_REACHABLE"] = "1"
+        try:
+            with mock.patch.object(v24, "set_remote_service_agent",
+                                   side_effect=deleted_before_replay):
+                result = v24.synchronize_agent_remote_services(
+                    self.agent, root=self.agent_tmp,
+                )
+        finally:
+            os.environ.pop("DRLINK_SERVER_REACHABLE", None)
+
+        self.assertIn(name, seen)
+        self.assertIsNone(self.agent.conn.execute(
+            "SELECT 1 FROM agent_remote_services WHERE name=?", (name,)
+        ).fetchone(), result)
+        self.assertIsNone(self.server.conn.execute(
+            "SELECT 1 FROM published_services WHERE name=? AND released=0", (name,)
+        ).fetchone(), result)
+
+    def test_F024_catalog_refresh_delete_race_skips_but_explicit_create_is_allowed(self):
+        # A signed Server catalog read may race user deletion inside the same
+        # sync operation. An update-only replay must not re-publish the name,
+        # but an independent new public set operation is permitted.
+        from unittest import mock
+        name = "f024-between-reads"
+        self.agent.conn.execute(
+            "INSERT INTO agent_remote_services"
+            "(name, destination, destination_client_id, service_object, enabled, status, "
+            "endpoint_host, endpoint_port, pending_allocation, delete_pending, pool_class, "
+            "reason, updated_at) VALUES (?, 'this-host', ?, 'ssh', 1, 'DEGRADED', "
+            "'example.test', 6031, 0, 0, 'normal', 'Runtime activation pending.', "
+            "'2026-10-09T00:00:00Z')",
+            (name, MACHINE),
+        )
+        self.agent.conn.commit()
+
+        def delete_during_catalog_refresh(_plane, server_plane=None, *, root=None):
+            self.agent.conn.execute(
+                "DELETE FROM agent_remote_services WHERE name=?", (name,)
+            )
+            self.agent.conn.commit()
+            return 0
+
+        with mock.patch.object(v24, "sync_agent_catalog_from_server",
+                               side_effect=delete_during_catalog_refresh):
+            response = v24.set_remote_service_agent(
+                self.agent, name, destination="this-host", service="ssh",
+                enabled=True, oneshot=True, root=self.agent_tmp,
+                server_reachable=True, reconcile_existing=True,
+            )
+        self.assertTrue(response.get("skipped"), response)
+        self.assertIsNone(self.server.conn.execute(
+            "SELECT 1 FROM published_services WHERE name=? AND released=0", (name,)
+        ).fetchone())
+
+        # Explicit re-creation has different authority from internal sync.
+        created = v24.set_remote_service_agent(
+            self.agent, name, destination="this-host", service="ssh",
+            enabled=True, oneshot=True, root=self.agent_tmp,
+            server_reachable=True,
+        )
+        self.assertFalse(created.get("skipped", False))
+        self.assertIsNotNone(self.agent.conn.execute(
+            "SELECT 1 FROM agent_remote_services WHERE name=?", (name,)
+        ).fetchone())
+
     def test_AGENT_DEGRADED_PROPAGATES_TO_SERVER(self):
         created = mgmt.upsert_remote_service_on_server(
             root=self.agent_tmp,

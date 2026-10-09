@@ -5899,6 +5899,7 @@ def synchronize_agent_remote_services(plane_db, *, root: Optional[str] = None, f
                     oneshot=True,
                     root=root,
                     server_reachable=True,
+                    reconcile_existing=True,
                 )
             except ControlPlaneError as exc:
                 msg = str(exc)
@@ -6071,6 +6072,7 @@ def set_remote_service_agent(
     oneshot: bool = False,
     root: Optional[str] = None,
     server_reachable: bool = True,
+    reconcile_existing: bool = False,
 ) -> dict:
     name = validate_public_name(name, "Remote Service name")
     identity = load_agent_identity(root)
@@ -6078,6 +6080,11 @@ def set_remote_service_agent(
     existing = plane_db.conn.execute(
         "SELECT * FROM agent_remote_services WHERE name = ? COLLATE NOCASE", (name,)
     ).fetchone()
+    if reconcile_existing and (existing is None or int(existing["delete_pending"] or 0)):
+        # F024: a synchronizer's stale iteration row does not authorize a
+        # CREATE after the operator has deleted it. Only an explicit public
+        # set remote-service / Bundle apply may create a new desired row.
+        return {"operation": "skipped", "skipped": True, "reason": "Remote Service no longer exists"}
     if oneshot and existing is None:
         missing = []
         if destination is None:
@@ -6384,6 +6391,15 @@ def set_remote_service_agent(
         import drlink_mgmt_sync as mgmt
 
         live_mgmt = mgmt.use_live_mgmt_path(root)
+        if reconcile_existing:
+            # Network-backed catalog refresh can complete after an operator
+            # deletion. Recheck immediately before any Server allocation.
+            current = plane_db.conn.execute(
+                "SELECT delete_pending FROM agent_remote_services WHERE name = ? COLLATE NOCASE",
+                (name,),
+            ).fetchone()
+            if current is None or int(current["delete_pending"] or 0):
+                return {"operation": "skipped", "skipped": True, "reason": "Remote Service deleted during synchronization"}
         if live_mgmt:
             # Authoritative Server allocator — Agent must not mint online reservations.
             # Disabled services still upsert so immutable destination references remain
