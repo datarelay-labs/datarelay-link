@@ -856,6 +856,29 @@ class V30WebSaasUxContractTests(unittest.TestCase):
             self.assertIn(marker, job)
         self.assertNotIn('setMessage("Inventory export created at "+String(result.path||""))',job)
 
+    def test_fleet_preview_never_survives_changed_target_or_stale_response(self):
+        jobs=SOURCE.split("function JobOperations(",1)[1].split("function ObjectsWorkspace(",1)[0]
+        for marker in (
+            'const fleetPreviewEpoch=useRef(0);',
+            'const [fleetPreviewBusy,setFleetPreviewBusy]=useState(false);',
+            'const [fleetPreviewKey,setFleetPreviewKey]=useState<string|null>(null);',
+            'const fleetDraftKey=JSON.stringify([',
+            'function invalidateFleetReview(){',
+            'fleetPreviewEpoch.current+=1;',
+            'const epoch=++fleetPreviewEpoch.current;',
+            'const requestedKey=fleetDraftKey;',
+            'if(epoch!==fleetPreviewEpoch.current)return;',
+            'setFleetPreviewKey(requestedKey);',
+            'if(!fleetPreview||fleetApplyBusy||fleetPreviewBusy||fleetPreviewKey!==fleetDraftKey||fleetConfirm!=="APPLY")return;',
+            'disabled={fleetPreviewBusy||fleetApplyBusy',
+            'fleetPreviewKey!==fleetDraftKey',
+            'setFleetPreviewKey(null);',
+            'disabled={fleetApplyBusy}',
+        ):
+            self.assertIn(marker,jobs,marker)
+        self.assertNotIn('onChange={e=>{setFleetResource(e.target.value);setFleetPreview(null)}}',jobs)
+        self.assertNotIn('setFleetPreview(result);\n    }catch(e:any)',jobs)
+
     def test_jobs_detail_and_cancel_never_reuse_stale_core_evidence(self):
         jobs=SOURCE.split("function JobOperations(",1)[1].split("function ObjectsWorkspace(",1)[0]
         helper=(ROOT / "web/src/uxb-menu-evidence.ts").read_text(encoding="utf-8")
@@ -943,9 +966,9 @@ class V30WebSaasUxContractTests(unittest.TestCase):
             "Core job request accepted",
             "UNKNOWN · Core Job start response",
             "UNKNOWN · Fleet metadata apply response",
-            "setFleetPreview(null);setFleetConfirm(\"\");",
+            "setFleetPreview(null);setFleetPreviewKey(null);setFleetConfirm(\"\");",
             'const [fleetApplyBusy,setFleetApplyBusy]=useState(false);',
-            'disabled={fleetConfirm!=="APPLY"||fleetApplyBusy}',
+            'disabled={!fleetPreview?.change_plan_id||fleetPreviewKey!==fleetDraftKey||fleetPreviewBusy||fleetConfirm!=="APPLY"||fleetApplyBusy}',
         ):
             self.assertIn(marker,jobs,marker)
         self.assertNotIn('result.selection?.target_count||0',jobs)

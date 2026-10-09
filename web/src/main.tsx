@@ -1155,6 +1155,12 @@ function JobOperations({operator}:{operator:any}){
   const [jobType,setJobType]=useState("doctor"),[resourceType,setResourceType]=useState("managed-host"),[resource,setResource]=useState(""),[detailId,setDetailId]=useState("");
   const [fleetResourceType,setFleetResourceType]=useState("managed-host"),[fleetResource,setFleetResource]=useState(""),[fleetDescription,setFleetDescription]=useState(""),[fleetTags,setFleetTags]=useState(""),[fleetRemoveTags,setFleetRemoveTags]=useState(""),[fleetAddGroups,setFleetAddGroups]=useState(""),[fleetRemoveGroups,setFleetRemoveGroups]=useState(""),[fleetPreview,setFleetPreview]=useState<any>(null),[fleetConfirm,setFleetConfirm]=useState("");
   const [fleetApplyBusy,setFleetApplyBusy]=useState(false);
+  const fleetPreviewEpoch=useRef(0);
+  const [fleetPreviewBusy,setFleetPreviewBusy]=useState(false);
+  const [fleetPreviewKey,setFleetPreviewKey]=useState<string|null>(null);
+  const fleetDraftKey=JSON.stringify([
+    fleetResourceType,fleetResource,fleetDescription,fleetTags,fleetRemoveTags,fleetAddGroups,fleetRemoveGroups
+  ]);
   const [jobStartBusy,setJobStartBusy]=useState(false);
   const detailReadEpoch=useRef(0);
   const [detailBusy,setDetailBusy]=useState(false);
@@ -1175,7 +1181,7 @@ function JobOperations({operator}:{operator:any}){
     }
   }
   useEffect(()=>{refresh();return()=>{jobsReadEpoch.current+=1}},[jobsCursor]);
-  useEffect(()=>()=>{detailReadEpoch.current+=1},[]);
+  useEffect(()=>()=>{detailReadEpoch.current+=1;fleetPreviewEpoch.current+=1},[]);
   function olderJobsPage(){
     if(!isPartialCorePage(jobs))return;
     setJobsHistory([...jobsHistory,jobsCursor]);
@@ -1218,8 +1224,17 @@ function JobOperations({operator}:{operator:any}){
     }
   }
   function csvList(value:string){return value.split(",").map(x=>x.trim()).filter(Boolean)}
+  function invalidateFleetReview(){
+    fleetPreviewEpoch.current+=1;
+    setFleetPreview(null);setFleetPreviewKey(null);setFleetConfirm("");
+    setFleetPreviewBusy(false);setError("");setMessage("");
+  }
   async function previewFleetMetadata(){
+    if(fleetPreviewBusy||fleetApplyBusy)return;
+    const epoch=++fleetPreviewEpoch.current;
+    const requestedKey=fleetDraftKey;
     setError("");setMessage("");setFleetConfirm("");
+    setFleetPreview(null);setFleetPreviewKey(null);setFleetPreviewBusy(true);
     try{
       const changes:any={};
       if(fleetDescription!=="")changes.description=fleetDescription;
@@ -1230,22 +1245,32 @@ function JobOperations({operator}:{operator:any}){
       const result=await api("/api/v1/fleet/metadata/preview",{method:"POST",body:JSON.stringify({
         resource_type:fleetResourceType,resource:fleetResource,changes
       })});
-      setFleetPreview(result);
-    }catch(e:any){setFleetPreview(null);setError(e.message||String(e))}
+      if(epoch!==fleetPreviewEpoch.current)return;
+      if(typeof result?.change_plan_id!=="string"||!result.change_plan_id.trim())
+        throw new Error("UNKNOWN · Core Fleet Preview did not confirm a Change Plan ID.");
+      setFleetPreview(result);setFleetPreviewKey(requestedKey);
+    }catch(e:any){
+      if(epoch===fleetPreviewEpoch.current){
+        setFleetPreview(null);setFleetPreviewKey(null);
+        setError(e.message||String(e));
+      }
+    }finally{
+      if(epoch===fleetPreviewEpoch.current)setFleetPreviewBusy(false);
+    }
   }
   async function applyFleetMetadata(){
-    if(!fleetPreview||fleetApplyBusy||fleetConfirm!=="APPLY")return;
+    if(!fleetPreview||fleetApplyBusy||fleetPreviewBusy||fleetPreviewKey!==fleetDraftKey||fleetConfirm!=="APPLY")return;
     setError("");setMessage("");setFleetApplyBusy(true);
     try{
       const result=requireObservedFleetApply(await api("/api/v1/fleet/metadata/apply",{method:"POST",body:JSON.stringify({
         change_plan_id:fleetPreview.change_plan_id,confirmation:fleetConfirm
       })}));
       setMessage("Core confirmed Fleet metadata APPLIED at revision "+result.revision+" to "+result.result.target_count+" Managed Host(s).");
-      setFleetPreview(null);setFleetConfirm("");
+      setFleetPreview(null);setFleetPreviewKey(null);setFleetConfirm("");
     }catch(e:any){
       // The Core may have committed even if the Web response was interrupted.
       // Never allow reusing an ambiguous Apply plan without fresh Preview.
-      setFleetPreview(null);setFleetConfirm("");
+      setFleetPreview(null);setFleetPreviewKey(null);setFleetConfirm("");
       setError("UNKNOWN · Fleet metadata apply response could not be confirmed. Inspect Change History before attempting a fresh Preview: "+(e.message||String(e)));
     }finally{setFleetApplyBusy(false)}
   }
@@ -1320,23 +1345,25 @@ function JobOperations({operator}:{operator:any}){
     {operator.role!=="Read Only"&&<section className="card dr-fleet-card">
       <div className="dr-section-head"><div><p className="dr-eyebrow">Fleet change</p><h3>Fleet Metadata Change Plan</h3><p className="muted">Bounded to 100 trusted Managed Hosts. Changes apply atomically as one revision after Preview.</p></div></div>
       <div className="dr-form-section"><h4>Target scope</h4><div className="dr-form-grid two">
-        <label className="dr-field"><span>Target type</span><select value={fleetResourceType} onChange={e=>{setFleetResourceType(e.target.value);setFleetResource("");setFleetPreview(null)}}><option value="managed-host">Managed Host(s)</option><option value="managed-host-group">Managed Host Group</option></select></label>
-        <label className="dr-field"><span>Target selector</span><input value={fleetResource} onChange={e=>{setFleetResource(e.target.value);setFleetPreview(null)}} placeholder={fleetResourceType==="managed-host"?"Blank selects all trusted hosts":"Managed Host Group name / ID"}/></label>
+        <label className="dr-field"><span>Target type</span><select value={fleetResourceType} disabled={fleetApplyBusy} onChange={e=>{invalidateFleetReview();setFleetResourceType(e.target.value);setFleetResource("")}}><option value="managed-host">Managed Host(s)</option><option value="managed-host-group">Managed Host Group</option></select></label>
+        <label className="dr-field"><span>Target selector</span><input value={fleetResource} disabled={fleetApplyBusy} onChange={e=>{invalidateFleetReview();setFleetResource(e.target.value)}} placeholder={fleetResourceType==="managed-host"?"Blank selects all trusted hosts":"Managed Host Group name / ID"}/></label>
       </div></div>
       <div className="dr-form-section"><h4>Metadata</h4><div className="dr-form-grid two">
-        <label className="dr-field"><span>Description</span><input value={fleetDescription} onChange={e=>{setFleetDescription(e.target.value);setFleetPreview(null)}} placeholder="Optional description for selected hosts"/></label>
-        <label className="dr-field"><span>Tags JSON</span><input value={fleetTags} onChange={e=>{setFleetTags(e.target.value);setFleetPreview(null)}} placeholder='{"site":"lab","owner":"secops"}'/></label>
-        <label className="dr-field"><span>Remove tag keys</span><input value={fleetRemoveTags} onChange={e=>{setFleetRemoveTags(e.target.value);setFleetPreview(null)}} placeholder="owner,environment"/></label>
+        <label className="dr-field"><span>Description</span><input value={fleetDescription} disabled={fleetApplyBusy} onChange={e=>{invalidateFleetReview();setFleetDescription(e.target.value)}} placeholder="Optional description for selected hosts"/></label>
+        <label className="dr-field"><span>Tags JSON</span><input value={fleetTags} disabled={fleetApplyBusy} onChange={e=>{invalidateFleetReview();setFleetTags(e.target.value)}} placeholder='{"site":"lab","owner":"secops"}'/></label>
+        <label className="dr-field"><span>Remove tag keys</span><input value={fleetRemoveTags} disabled={fleetApplyBusy} onChange={e=>{invalidateFleetReview();setFleetRemoveTags(e.target.value)}} placeholder="owner,environment"/></label>
       </div></div>
       <div className="dr-form-section"><h4>Group membership</h4><div className="dr-form-grid two">
-        <label className="dr-field"><span>Add groups</span><input value={fleetAddGroups} onChange={e=>{setFleetAddGroups(e.target.value);setFleetPreview(null)}} placeholder="group-a, group-b"/></label>
-        <label className="dr-field"><span>Remove groups</span><input value={fleetRemoveGroups} onChange={e=>{setFleetRemoveGroups(e.target.value);setFleetPreview(null)}} placeholder="group-c"/></label>
+        <label className="dr-field"><span>Add groups</span><input value={fleetAddGroups} disabled={fleetApplyBusy} onChange={e=>{invalidateFleetReview();setFleetAddGroups(e.target.value)}} placeholder="group-a, group-b"/></label>
+        <label className="dr-field"><span>Remove groups</span><input value={fleetRemoveGroups} disabled={fleetApplyBusy} onChange={e=>{invalidateFleetReview();setFleetRemoveGroups(e.target.value)}} placeholder="group-c"/></label>
       </div></div>
-      <div className="dr-form-actions"><button className="primary" onClick={previewFleetMetadata} disabled={fleetResourceType==="managed-host-group"&&!fleetResource.trim()}>Preview fleet change</button></div>
-      {fleetPreview&&<div className="dr-preview-panel">
+      <div className="dr-form-actions"><button className="primary" onClick={previewFleetMetadata} disabled={fleetPreviewBusy||fleetApplyBusy||(fleetResourceType==="managed-host-group"&&!fleetResource.trim())}>{fleetPreviewBusy?"Reading Core Preview…":"Preview fleet change"}</button></div>
+      {fleetPreviewBusy&&<p role="status" className="muted">Waiting for this form's Core Change Plan. Editing the form invalidates this request.</p>}
+      {fleetPreview&&fleetPreviewKey===fleetDraftKey&&<div className="dr-preview-panel">
+        <p className="muted">This Core Change Plan is for the exact form values shown. Review impacted Managed Hosts before Apply; Preview alone makes no change.</p>
         <pre className="plan">{JSON.stringify({selection:fleetPreview.selection,changes:fleetPreview.changes,preview:fleetPreview.preview,impact:fleetPreview.impact},null,2)}</pre>
-        <label className="apply-label">Type APPLY to commit<input value={fleetConfirm} onChange={e=>setFleetConfirm(e.target.value)} placeholder="APPLY"/></label>
-        <button className="danger" onClick={applyFleetMetadata} disabled={fleetConfirm!=="APPLY"||fleetApplyBusy}>{fleetApplyBusy?"Confirming Core Apply…":"Apply Fleet Metadata"}</button>
+        <label className="apply-label">Type APPLY to commit<input value={fleetConfirm} onChange={e=>setFleetConfirm(e.target.value)} placeholder="APPLY" disabled={fleetApplyBusy}/></label>
+        <button className="danger" onClick={applyFleetMetadata} disabled={!fleetPreview?.change_plan_id||fleetPreviewKey!==fleetDraftKey||fleetPreviewBusy||fleetConfirm!=="APPLY"||fleetApplyBusy}>{fleetApplyBusy?"Confirming Core Apply…":"Apply Fleet Metadata"}</button>
       </div>}
     </section>}
     {detail&&<div className="card">
