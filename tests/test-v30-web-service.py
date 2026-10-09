@@ -268,6 +268,19 @@ class V30WebServiceTests(unittest.TestCase):
             status, _, payload = self.request("GET", path)
             self.assertEqual(status, 200, (path, payload))
 
+        # Per-plane bounded reads support real opaque Core pagination while
+        # preserving the old unscoped, combined Policy API for existing clients.
+        for plane in ("remote", "internet", "ai"):
+            path = "/api/v1/policies?plane=%s&limit=1" % plane
+            status, _, scoped = self.request("GET", path)
+            self.assertEqual(status, 200, (plane, scoped))
+            self.assertEqual(scoped["plane"], plane)
+            self.assertEqual(scoped["limit"], 1)
+            self.assertIn("next_cursor", scoped)
+            self.assertLessEqual(len(scoped["items"]), 1)
+            status, _, invalid = self.request("GET", path + "&cursor=invalid")
+            self.assertEqual(status, 400, (plane, invalid))
+
         status, _, versions = self.request("GET", "/api/v1/versions")
         self.assertEqual(status, 200)
         self.assertEqual(versions["server_version"], "3.0.0")

@@ -286,6 +286,7 @@ class WebApplication:
                 return service.policy_list(
                     plane=_first(query, "plane") or None,
                     limit=_int_arg(_first(query, "limit"), 50),
+                    cursor=_first(query, "cursor") or None,
                 )
         if path == "/api/v1/policy/graph":
             return self.adapter.policy_effective_access_graph(

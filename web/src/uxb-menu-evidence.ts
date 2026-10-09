@@ -42,12 +42,13 @@ export function selectMenuPage(
  * hide an entire later plane behind earlier Remote rules. Keep the limit honest. */
 export function combineObservedPolicyPlanes(
   pages:unknown[],limit:number
-):{items:any[],possibly_truncated_planes:string[]}{
+):{items:any[],possibly_truncated_planes:string[],next_cursor_by_plane:Record<string,string|null>}{
   const planes=["remote","internet","ai"] as const;
   if(!Array.isArray(pages)||pages.length!==planes.length
     ||!Number.isSafeInteger(limit)||limit<1)
     throw new Error("Core policy plane inventory is incomplete. State is UNKNOWN.");
   const items:any[]=[],possibly_truncated_planes:string[]=[];
+  const next_cursor_by_plane:Record<string,string|null>={};
   for(let i=0;i<planes.length;i++){
     const page=requireObservedMenuPayload("policies",pages[i]);
     if(page.plane!==planes[i]||page.limit!==limit
@@ -55,9 +56,14 @@ export function combineObservedPolicyPlanes(
       ||page.items.some((item:any)=>item.plane!==planes[i]))
       throw new Error("Core "+planes[i]+" policy response is inconsistent. State is UNKNOWN.");
     items.push(...page.items);
-    if(page.items.length===limit)possibly_truncated_planes.push(planes[i]);
+    // New Core supports real per-plane next_cursor. A legacy response that
+    // exactly reaches the limit must still be marked potentially incomplete.
+    const hasCursor=Object.prototype.hasOwnProperty.call(page,"next_cursor");
+    next_cursor_by_plane[planes[i]]=isPartialCorePage(page)?page.next_cursor:null;
+    if(page.items.length===limit&&(!hasCursor||!!page.next_cursor))
+      possibly_truncated_planes.push(planes[i]);
   }
-  return {items,possibly_truncated_planes};
+  return {items,possibly_truncated_planes,next_cursor_by_plane};
 }
 
 export function requireObservedMenuPayload(route:string,payload:unknown):any{

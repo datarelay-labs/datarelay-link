@@ -76,8 +76,16 @@ test('large Remote policy family cannot hide observed Internet or AI rules',()=>
   const observed=menu.combineObservedPolicyPlanes(pages,2);
   assert.deepEqual(observed.items.map(row=>row.id),['r-1','r-2','i-1','a-1']);
   assert.deepEqual(observed.possibly_truncated_planes,['remote']);
+  assert.deepEqual(observed.next_cursor_by_plane,{remote:null,internet:null,ai:null});
   assert.deepEqual(menu.combineObservedPolicyPlanes(pages.map(page=>({...page,items:[]})),2),
-    {items:[],possibly_truncated_planes:[]});
+    {items:[],possibly_truncated_planes:[],next_cursor_by_plane:{remote:null,internet:null,ai:null}});
+  const withCursors=menu.combineObservedPolicyPlanes(
+    pages.map((page,i)=>({...page,next_cursor:i===0?'opaque-next-page':null})),2);
+  assert.equal(withCursors.next_cursor_by_plane.remote,'opaque-next-page');
+  assert.deepEqual(withCursors.possibly_truncated_planes,['remote']);
+  const lastPage=menu.combineObservedPolicyPlanes(
+    pages.map(page=>({...page,next_cursor:null})),2);
+  assert.deepEqual(lastPage.possibly_truncated_planes,[]);
   for(const bad of [
     pages.slice(0,2),null,[],[pages[1],pages[0],pages[2]],
     [pages[0],{plane:'internet',limit:2,items:null},pages[2]],

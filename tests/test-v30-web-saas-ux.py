@@ -776,6 +776,15 @@ class V30WebSaasUxContractTests(unittest.TestCase):
             'selectedMayBeLimited',
             'Core policy list may be incomplete',
             'No match in loaded policy rules',
+            'const [nextByPlane,setNextByPlane]=useState<Record<string,string|null>>',
+            'const [additional,setAdditional]=useState<any[]>([])',
+            'async function loadMore(planeName:string){',
+            'const cursor=nextByPlane[planeName];',
+            'requireObservedMenuPayload("policies",await api(query))',
+            'page.plane!==planeName||page.limit!==100',
+            'page.items.some((row:any)=>row.plane!==planeName)',
+            'Load more "+kind+" rules',
+            'if(!page.next_cursor)setExhausted',
         ):
             self.assertIn(marker, policy, marker)
 
