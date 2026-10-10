@@ -35,6 +35,16 @@ function connectivity(data:HostFields):"Connected"|"Disconnected"|"UNKNOWN"{
 /** A Host list row distinguishes observed Core facts from missing evidence.
  * agent_heartbeat_at is connectivity telemetry, never an alias for last_seen.
  */
+/** Safe presentation identity shared by Host table and detail headings. */
+export function hostVisibleIdentity(value:unknown):{primary:string,secondary:string}{
+  const data:HostFields=value!==null&&typeof value==="object"&&!Array.isArray(value)
+    ?value as HostFields:{};
+  const ident=safeText(data,"id")||"UNKNOWN";
+  return {
+    primary:safeText(data,"name")||ident,
+    secondary:safeText(data,"hostname")||ident,
+  };
+}
 export function hostInventoryFacts(value:unknown):{
   trust:"Trusted"|"Revoked"|"Untrusted"|"UNKNOWN";
   platform:string;version:string;lastActivity:string;

@@ -7,12 +7,12 @@ import {dirname,join} from "node:path";
 import {fileURLToPath,pathToFileURL} from "node:url";
 const root=dirname(dirname(fileURLToPath(import.meta.url)));
 const scratch=mkdtempSync(join(root,"node_modules",".pfci-host-detail-"));
-let hostDetailSections,hostConnectionState,hostInventoryFacts;
+let hostDetailSections,hostConnectionState,hostInventoryFacts,hostVisibleIdentity;
 try{
  const outfile=join(scratch,"projection.mjs");
  await build({entryPoints:[join(root,"src","uxb-host-detail.ts")],outfile,
   bundle:true,platform:"node",format:"esm",logLevel:"silent"});
- ({hostDetailSections,hostConnectionState,hostInventoryFacts}=await import(pathToFileURL(outfile).href));
+ ({hostDetailSections,hostConnectionState,hostInventoryFacts,hostVisibleIdentity}=await import(pathToFileURL(outfile).href));
 }finally{rmSync(scratch,{recursive:true,force:true})}
 const flatten=v=>hostDetailSections(v).flatMap(x=>x.fields.map(y=>y.label+": "+y.value)).join(" | ");
 
@@ -125,4 +125,19 @@ test("Host table never conflates Agent heartbeat with Core last-activity evidenc
  assert.match(resource,/hostInventoryFacts\(item\)\.trust/);
  assert.match(resource,/hostInventoryFacts\(item\)\.lastActivity/);
  assert.doesNotMatch(resource,/item\.agent_heartbeat_at\|\|item\.last_seen/);
+});
+
+test("Host list and detail heading use sanitized bounded visible names",()=>{
+ const obj={id:"host-a",name:"A\u202e\nB".repeat(120),hostname:"machine\nspoofed"};
+ const visible=hostVisibleIdentity(obj);
+ assert.equal(visible.primary.length<=140,true);
+ assert.equal(visible.secondary.length<=140,true);
+ assert.ok(!/[\u202e\n]/.test(JSON.stringify(visible)));
+ assert.deepEqual(hostVisibleIdentity({id:"host-a",name:" "}),
+   {primary:"host-a",secondary:"host-a"});
+ assert.deepEqual(hostVisibleIdentity({}),{primary:"UNKNOWN",secondary:"UNKNOWN"});
+ const source=readFileSync(join(root,"src","main.tsx"),"utf8");
+ const resource=source.split("function ResourceWorkspace(",2)[1]?.split("function UsersPanel(",1)[0]||"";
+ assert.match(resource,/hostVisibleIdentity\(item\)\.primary/);
+ assert.match(resource,/hostVisibleIdentity\(selected\)\.primary/);
 });

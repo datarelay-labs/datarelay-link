@@ -34,6 +34,12 @@ function safeValue(data:ServiceFields,key:string):string{
  const result=raw.replace(FORBIDDEN_TEXT," ").trim();
  return result?result.slice(0,140):"UNKNOWN";
 }
+/** Safe presentation identity shared by Service table and detail headings. */
+export function serviceVisibleIdentity(value:unknown):{primary:string,secondary:string}{
+ const data=object(value),id=safeValue(data,"id"),name=safeValue(data,"name");
+ return {primary:name==="UNKNOWN"?id:name,secondary:id};
+}
+
 /** Identity and owning Host describe an inventory association, not connectivity. */
 export function serviceDetailSections(value:unknown):ServiceDetailSection[]{
  const data=object(value);

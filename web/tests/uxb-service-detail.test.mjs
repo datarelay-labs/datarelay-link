@@ -8,12 +8,12 @@ import {fileURLToPath,pathToFileURL} from "node:url";
 
 const root=dirname(dirname(fileURLToPath(import.meta.url)));
 const scratch=mkdtempSync(join(root,"node_modules",".pfci-service-detail-"));
-let serviceStateLabel,serviceDetailSections;
+let serviceStateLabel,serviceDetailSections,serviceVisibleIdentity;
 try{
  const output=join(scratch,"projection.mjs");
  await build({entryPoints:[join(root,"src","uxb-service-detail.ts")],outfile:output,
   bundle:true,platform:"node",format:"esm",logLevel:"silent"});
- ({serviceStateLabel,serviceDetailSections}=await import(pathToFileURL(output).href));
+ ({serviceStateLabel,serviceDetailSections,serviceVisibleIdentity}=await import(pathToFileURL(output).href));
 }finally{rmSync(scratch,{recursive:true,force:true})}
 const flatten=value=>serviceDetailSections(value).flatMap(s=>s.fields).map(f=>f.label+": "+f.value).join(" | ");
 
@@ -92,4 +92,17 @@ test("Actual Web inventory list and drawer use the same safe status and detail p
  assert.match(resource,/serviceDetailSections\(selected\)\.map/);
  assert.doesNotMatch(resource,/Object\.entries\(selected\)/);
  assert.match(resource,/Why can \/ cannot connect\?/);
+});
+
+test("Remote Service list and drawer headings never display unbounded control text",()=>{
+ const visible=serviceVisibleIdentity({id:"svc1",name:"service\u202e\nR".repeat(160)});
+ assert.ok(visible.primary.length<=140);
+ assert.ok(!/[\u202e\n]/.test(JSON.stringify(visible)));
+ assert.deepEqual(serviceVisibleIdentity({id:"s",name:""}),{primary:"s",secondary:"s"});
+ assert.deepEqual(serviceVisibleIdentity(null),{primary:"UNKNOWN",secondary:"UNKNOWN"});
+ const src=readFileSync(join(root,"src","main.tsx"),"utf8");
+ const section=src.split("function ResourceWorkspace(",2)[1]?.split("function UsersPanel(",1)[0]||"";
+ assert.match(section,/serviceVisibleIdentity\(item\)\.primary/);
+ assert.match(section,/serviceVisibleIdentity\(selected\)\.primary/);
+ assert.match(section,/Enabled means configuration is selected/);
 });
