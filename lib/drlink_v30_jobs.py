@@ -1367,8 +1367,35 @@ class BoundedAgentRpcWorkerPool:
         for _ in range(reserved - len(claims)):
             self._slots.release()
         futures: list[Future] = []
-        for claim in claims:
-            future = self._executor.submit(self._run_claim, engine, claim, handler)
+        for index, claim in enumerate(claims):
+            try:
+                future = self._executor.submit(self._run_claim, engine, claim, handler)
+            except Exception as exc:
+                # A shutdown/resource failure after the SQLite claim must not
+                # strand unsubmitted work as RUNNING or leak reserved slots.
+                # Already-submitted futures retain their completion callbacks.
+                recovery_failed = False
+                for unsubmitted in claims[index:]:
+                    try:
+                        engine.complete_target(
+                            job_id=unsubmitted["job_id"],
+                            target_id=unsubmitted["target_id"],
+                            claim_token=unsubmitted["claim_token"],
+                            status=FAILED,
+                            error="AGENT_RPC_DISPATCH_UNAVAILABLE",
+                        )
+                    except Exception:
+                        # Lease/deadline recovery remains the fallback if a
+                        # concurrent actor invalidated this claim.
+                        recovery_failed = True
+                    finally:
+                        self._slots.release()
+                reason = (
+                    "Agent RPC dispatch failed; reconcile unsubmitted claims."
+                    if recovery_failed
+                    else "Agent RPC dispatch unavailable; unsubmitted claims failed closed."
+                )
+                raise ControlPlaneError(reason) from exc
             future.add_done_callback(lambda _f: self._slots.release())
             futures.append(future)
         return futures

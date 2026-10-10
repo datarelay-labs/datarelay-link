@@ -9,6 +9,7 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
@@ -548,6 +549,74 @@ class V30ManagementJobTests(unittest.TestCase):
             self.assertEqual(len(futures), 1)
             futures[0].result(timeout=2)
             self.assertEqual(self.engine.get(job["id"])["status"], SUCCEEDED)
+
+    def test_worker_pool_submit_rejection_does_not_strand_claim_or_slot(self):
+        # An executor may shut down between claiming work and submit().
+        # The Job must fail closed rather than remaining RUNNING indefinitely.
+        job = self._enqueue(targets=("host-a",), timeout_seconds=3600)
+        pool = BoundedAgentRpcWorkerPool(max_workers=1, max_pending=0)
+        try:
+            with patch.object(pool._executor, "submit",
+                              side_effect=RuntimeError("executor unavailable")):
+                with self.assertRaises(ControlPlaneError):
+                    pool.dispatch_once(
+                        self.engine, lambda claim: {"ok": True},
+                        worker_id="failure-injection", limit=1,
+                    )
+            detail = self.engine.get(job["id"])
+            self.assertEqual(detail["status"], FAILED)
+            self.assertEqual(detail["targets"][0]["status"], FAILED)
+            self.assertIn("DISPATCH", detail["targets"][0]["error"])
+            self.assertTrue(pool._slots.acquire(blocking=False))
+            pool._slots.release()
+            self.assertEqual(
+                self.engine.conn.execute(
+                    "SELECT COUNT(*) FROM management_job_targets "
+                    "WHERE job_id=? AND status='RUNNING'", (job["id"],)
+                ).fetchone()[0], 0
+            )
+        finally:
+            pool.close()
+
+    def test_worker_pool_partial_submit_failure_preserves_inflight_work(self):
+        job = self._enqueue(
+            targets=("host-a", "host-b"), timeout_seconds=3600,
+        )
+        pool = BoundedAgentRpcWorkerPool(max_workers=1, max_pending=1)
+        submitted = []
+        original_submit = pool._executor.submit
+
+        def reject_second(*args, **kwargs):
+            if submitted:
+                raise RuntimeError("executor refused second target")
+            future = original_submit(*args, **kwargs)
+            submitted.append(future)
+            return future
+
+        try:
+            with patch.object(pool._executor, "submit", side_effect=reject_second):
+                with self.assertRaises(ControlPlaneError):
+                    pool.dispatch_once(
+                        self.engine, lambda claim: {"target": claim["target_id"]},
+                        worker_id="partial-submit", limit=2,
+                    )
+            submitted[0].result(timeout=5)
+            detail = self.engine.get(job["id"])
+            self.assertEqual(detail["status"], FAILED)
+            self.assertEqual(
+                sorted(item["status"] for item in detail["targets"]),
+                [FAILED, SUCCEEDED],
+            )
+            self.assertFalse(
+                any(item["status"] == RUNNING for item in detail["targets"])
+            )
+            self.assertEqual(
+                sum(pool._slots.acquire(blocking=False) for _ in range(2)), 2
+            )
+            pool._slots.release()
+            pool._slots.release()
+        finally:
+            pool.close()
 
     def test_worker_pool_backpressure_does_not_preclaim_unbounded_targets(self):
         job = self._enqueue(targets=("host-a", "host-b"), timeout_seconds=3600)
