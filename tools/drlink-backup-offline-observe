@@ -1,0 +1,47 @@
+#!/usr/bin/env python3
+"""Explicit native/offline read-only Link DR archive byte observation.
+
+A successful SHA256 observation is NOT a restore or an authenticated backup
+signature. No archive contents are returned; no restore/network writes occur.
+This local operator tool is never exposed by the Web route.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+from drlink_control_db import ControlPlaneError
+from drlink_management_system import ManagementSystemService
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--root", required=True, help="explicit absolute product root; '/' on installed host")
+    parser.add_argument("--archive", required=True, help="canonical /var/lib/drlink/backups/ path")
+    parser.add_argument("--expected-sha256", help="optional caller-provided, unauthenticated digest")
+    args = parser.parse_args(argv)
+    try:
+        if not Path(args.root).is_absolute() or ".." in Path(args.root).parts:
+            raise ControlPlaneError("invalid product root")
+        observed = ManagementSystemService(args.root).backup_integrity_offline(
+            args.archive, expected_sha256=args.expected_sha256
+        )
+    except ControlPlaneError:
+        # Never print the untrusted archive path, OS error or archive body.
+        print(json.dumps({"status": "INVALID", "restore_authorized": False,
+                          "reason": "offline_archive_unavailable"}, sort_keys=True))
+        return 3
+    print(json.dumps({
+        "status": "BLOCKED",
+        "restore_authorized": False,
+        "observation": observed,
+    }, sort_keys=True))
+    # An observed digest can never be represented as restore-ready success.
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

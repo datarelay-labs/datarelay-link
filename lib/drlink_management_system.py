@@ -28,7 +28,9 @@ from frp_version_identity import identity_from_kv, read_version_file
 _MAX_TOOL_OUTPUT = 16 * 1024
 # An authenticated Web read-only observation is not a bulk backup download.
 # Larger archives require a separately qualified native/offline integrity job.
+# Web reads stay capped: native offline observation is a distinct, never-routed entry.
 MAX_BACKUP_OBSERVE_BYTES = 128 * 1024 * 1024
+MAX_BACKUP_OFFLINE_OBSERVE_BYTES = 2 * 1024 * 1024 * 1024
 _BACKUP_OBSERVE_CHUNK_BYTES = 128 * 1024
 AUDIT_RETENTION_CONTROL_DAYS_DEFAULT = 365
 AUDIT_RETENTION_ACCESS_DAYS_DEFAULT = 90
@@ -505,7 +507,30 @@ class ManagementSystemService:
     def backup_integrity(
         self, path: str, *, expected_sha256: str | None = None,
     ) -> dict[str, Any]:
-        """Observe real archive bytes without making a restore readiness claim.
+        """Admin Web-only 128 MiB read-only observation; no bulk Web override."""
+        return self._observe_backup_integrity(
+            path, expected_sha256=expected_sha256,
+            size_limit=MAX_BACKUP_OBSERVE_BYTES,
+        )
+
+    def backup_integrity_offline(
+        self, path: str, *, expected_sha256: str | None = None,
+    ) -> dict[str, Any]:
+        """Native offline-only 2 GiB observation; never routed to Web/API.
+
+        This cannot authorize restore, authenticate a supplied checksum, or
+        prove encryption, provenance or successful isolated recovery.
+        """
+        return self._observe_backup_integrity(
+            path, expected_sha256=expected_sha256,
+            size_limit=MAX_BACKUP_OFFLINE_OBSERVE_BYTES,
+        )
+
+    def _observe_backup_integrity(
+        self, path: str, *, expected_sha256: str | None,
+        size_limit: int,
+    ) -> dict[str, Any]:
+        """Read real bytes from one no-follow descriptor with a strict cap.
 
         Caller-supplied SHA256 is NOT publisher proof. Each component is
         opened under its parent directory FD without following symlinks.
@@ -538,7 +563,7 @@ class ManagementSystemService:
             before = os.fstat(archive_fd)
             if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
                 raise ControlPlaneError("Backup archive must be a regular single-link file.")
-            if not 0 < before.st_size <= MAX_BACKUP_OBSERVE_BYTES:
+            if not 0 < before.st_size <= size_limit:
                 raise ControlPlaneError("Backup archive size exceeds read-only observation limit.")
             checksum = hashlib.sha256()
             observed = 0
