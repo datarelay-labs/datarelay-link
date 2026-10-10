@@ -44,6 +44,45 @@ test("separate Remote, Internet and AI first-use journeys preserve security sema
  assert.equal(setup.firstUseStages.ai.some(x=>x.includes("Remote Service")),false);
 });
 
+test("Guided Policy to Access Workspace preserves only complete bounded non-secret flow intent",()=>{
+ const full=setup.connectionReviewContext("internet"," office "," archive "," https-443 ");
+ assert.deepEqual(full,{plane:"internet",source:"office",destination:"archive",selector:"https-443"});
+ assert.deepEqual(setup.connectionReviewContext("ai"," bot "," repo "," read "),{
+   plane:"ai",source:"bot",destination:"repo",selector:"read"});
+ for(const fields of [["","dst","svc"],["src","","svc"],["src","dst",""],
+   ["src\nsecret","dst","svc"],["src","dst","a".repeat(161)],[null,"dst","svc"]]){
+   assert.deepEqual(setup.connectionReviewContext("remote",...fields),{plane:"remote"});
+ }
+ assert.deepEqual(setup.connectionReviewContext("remote","one","two","three"),{
+   plane:"remote",source:"one",destination:"two",selector:"three"});
+});
+test("Guided policy exposes contextual Core explanation without automatic Apply or saved credentials",()=>{
+ for(const role of ["Admin","Operator","Read Only"]){
+   const html=renderToStaticMarkup(React.createElement(setup.FirstConnectionSetup,{
+     api:async()=>{throw new Error("SSR cannot contact Core")},operator:{role},
+     initialDraft:{plane:"internet",step:3,source:"source-a",destination:"target-b",selector:"https-443"},
+   }));
+   assert.match(html,/Test &amp; explain selected access/);
+   assert.match(html,/navigation only/);
+   assert.doesNotMatch(html,/Core applied rule change at revision/);
+   assert.match(html,/source-a/);
+   if(role==="Read Only")assert.match(html,/Your role is read-only/);
+ }
+ const incomplete=renderToStaticMarkup(React.createElement(setup.FirstConnectionSetup,{
+   api:async()=>{throw new Error("SSR cannot contact Core")},operator:{role:"Operator"},
+   initialDraft:{plane:"ai",step:3,source:"bot-a",destination:"",selector:"read"},
+ }));
+ assert.match(incomplete,/incomplete/);
+ const review=renderToStaticMarkup(React.createElement(setup.FirstConnectionSetup,{
+   api:async()=>{throw new Error("SSR cannot contact Core")},operator:{role:"Admin"},
+   initialDraft:{plane:"ai",step:4,source:"bot-a",destination:"resource-b",selector:"read"},
+ }));
+ assert.match(review,/Review selected flow in Guided Policy/);
+ assert.match(review,/Returning to rule definition starts a fresh Core Preview/);
+ const source=readFileSync(join(root,"src","uxb-setup.tsx"),"utf8");
+ assert.match(source,/onNavigate=\{navigateFromSetup\}/);
+ assert.match(source,/id==="access"\?reviewContext:context/);
+});
 test("Explicitly switching owning Agent invalidates prior service and policy choices",()=>{
  const saved={
   plane:"remote",step:2,selectedHost:"host-a",serviceName:"ssh-on-a",

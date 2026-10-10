@@ -105,6 +105,28 @@ test("Home welcome requires confirmed empty Core across Hosts, Services and ever
   policies:{ai:{total:0},remote:{enabled:0}}}},"ready"),false);
  assert.equal(home.showFreshHomeWelcome(null,"ready"),false);
 });
+test("Approval queue prioritizes the complete Core overview over an incomplete 100-Host page",()=>{
+ const data={overview:{managed_hosts:{total:130,pending_approval:7,approved:120},
+   remote_services:{total:2,enabled:1},policies:{ai:{total:0,enabled:0}}}};
+ const loaded=Array.from({length:100},(_,i)=>({id:"host-"+i,
+   admission_state:"APPROVED",trust_status:"untrusted",connected:false}));
+ assert.equal(home.observedApprovalQueueCount(data,loaded,false),7);
+ assert.equal(home.firstConnectionStates(data,loaded,false)[1],"Needs approval");
+ assert.equal(home.observedApprovalQueueCount({overview:{managed_hosts:{pending_approval:0}}},loaded,false),0);
+ assert.equal(home.observedApprovalQueueCount(null,loaded,false),"UNKNOWN");
+ assert.equal(home.observedApprovalQueueCount(null,loaded,true),0);
+ assert.equal(home.observedApprovalQueueCount({overview:{managed_hosts:{total:130}}},loaded,true),"UNKNOWN");
+ assert.equal(home.observedApprovalQueueCount({overview:{managed_hosts:{total:100}}},loaded,true),0);
+ assert.equal(home.observedApprovalQueueCount({overview:{managed_hosts:{pending_approval:-1}}},loaded,false),"UNKNOWN");
+ assert.equal(home.observedApprovalQueueCount({overview:{managed_hosts:{pending_approval:"7"}}},loaded,false),"UNKNOWN");
+ assert.equal(home.firstConnectionStates({overview:{managed_hosts:{total:130},
+   remote_services:{total:0,enabled:0},policies:{ai:{total:0,enabled:0}}}},loaded,false)[1],"Unknown");
+ assert.equal(home.observedApprovalQueueCount(null,null,true),"UNKNOWN");
+ assert.equal(home.hostInventoryPageComplete({items:[],next_cursor:null}),true);
+ assert.equal(home.hostInventoryPageComplete({items:loaded,next_cursor:"cursor-101"}),false);
+ assert.equal(home.hostInventoryPageComplete({items:loaded}),null);
+ assert.equal(home.hostInventoryPageComplete({items:null,next_cursor:null}),null);
+});
 test("first-use states are fail-closed without trustworthy evidence",()=>{
  assert.deepEqual(home.firstConnectionStates(null,null),[
   "Unknown","Unknown","Unknown","Unknown","Needs verification"]);
