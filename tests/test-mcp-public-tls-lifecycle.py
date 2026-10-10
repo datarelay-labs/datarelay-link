@@ -521,7 +521,9 @@ class McpTlsLifecycleTests(unittest.TestCase):
 
         os.environ["DRLINK_MCP_PUBLIC_URL"] = "https://override.example.test/mcp"
         try:
-            self.assertEqual(self.plane.mcp_public_url(), "https://override.example.test/mcp")
+            # Direct mode must not advertise an MCP URL even with a stale
+            # explicit override; canonical v2.4 requires single443.
+            self.assertEqual(self.plane.mcp_public_url(), "Not configured")
         finally:
             os.environ.pop("DRLINK_MCP_PUBLIC_URL", None)
 
@@ -1081,8 +1083,13 @@ spec:
         purge_cmd = catalog.find(["unset", "mcp-tls", "purge"], role="server")
         self.assertIsNotNone(base_cmd)
         self.assertIsNotNone(purge_cmd)
-        self.assertFalse(base_cmd["destructive"])
+        self.assertTrue(base_cmd["destructive"])
+        self.assertEqual(base_cmd["risk"], "outage")
         self.assertEqual(base_cmd["confirmation"], "none")
+        base_help = catalog.command_help(base_cmd)
+        self.assertIn("Active MCP/OAuth connections may be interrupted", base_help)
+        self.assertIn("Risk: outage", base_help)
+        self.assertIn("explicit command is sufficient approval", base_help)
         self.assertTrue(purge_cmd["destructive"])
         self.assertEqual(purge_cmd["risk"], "irreversible")
         self.assertEqual(purge_cmd["confirmation"], "y_n")

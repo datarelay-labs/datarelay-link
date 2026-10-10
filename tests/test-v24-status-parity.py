@@ -87,6 +87,313 @@ class StatusParityTests(unittest.TestCase):
             (name,),
         ).fetchone()
 
+    def test_F001_synchronize_does_not_claim_success_for_unverified_healthy_text(self):
+        # A signed Server ACK may retain HEALTHY text while explicitly
+        # revoking runtime_verified. Agent show/status projects this as
+        # DEGRADED. Synchronize must not contradict that public display.
+        self.agent.conn.execute(
+            "INSERT INTO agent_remote_services"
+            "(name, destination, service_object, enabled, status, endpoint_port,"
+            " pending_allocation, delete_pending, reason, updated_at, runtime_verified)"
+            " VALUES ('stale-healthy', 'this-host', 'ssh', 1, 'HEALTHY', 6010,"
+            " 0, 0, '', '2026-10-10T00:00:00Z', 0)"
+        )
+        self.agent.conn.commit()
+        affected = v24._collect_degraded_remote_services(self.agent)
+        self.assertEqual([x['name'] for x in affected], ['stale-healthy'])
+        self.assertIn('verif', affected[0]['reason'].lower())
+        displayed = v24.format_synchronize_result(
+            {'status': 'DEGRADED' if affected else 'SYNCHRONIZED',
+             'affected': affected})
+        self.assertIn('Synchronization DEGRADED', displayed)
+        self.assertIn('show remote-service stale-healthy', displayed)
+        self.assertEqual(
+            self.agent.conn.execute(
+                "SELECT status, runtime_verified FROM agent_remote_services"
+                " WHERE name='stale-healthy'"
+            ).fetchone()['runtime_verified'], 0
+        )
+
+    def test_SERVER_ACK_REFRESHES_VERIFIED_FLAG_WITHOUT_STATUS_TEXT_CHANGE(self):
+        # F018: a real runtime generation can be acknowledged while the
+        # already-HEALTHY status text is unchanged. Never leave the old
+        # verification bit stale; conversely an unverified Server ACK must
+        # not preserve an earlier verified bit.
+        self.agent.conn.execute(
+            "INSERT INTO agent_remote_services"
+            "(name, destination, service_object, enabled, status, endpoint_host, endpoint_port, "
+            "pending_allocation, delete_pending, pool_class, reason, updated_at, runtime_verified) "
+            "VALUES ('keepalive-ssh', 'this-host', 'ssh', 1, 'HEALTHY', 'example.test', 6020, "
+            "0, 0, 'normal', '', '2026-10-09T00:00:00Z', 0)"
+        )
+        self.agent.conn.commit()
+        response = {
+            "services": [{
+                "name": "keepalive-ssh", "status": "HEALTHY",
+                "runtime_verified": True, "endpoint_port": 6020,
+                "reason": "",
+            }]
+        }
+        self.assertEqual(v24._reconcile_agent_from_server_status(self.agent, response), 1)
+        state = self.agent.conn.execute(
+            "SELECT status, runtime_verified FROM agent_remote_services WHERE name='keepalive-ssh'"
+        ).fetchone()
+        self.assertEqual((state['status'], state['runtime_verified']), ('HEALTHY', 1))
+        # Same status, but no verified generation -- must clear the bit.
+        response['services'][0]['runtime_verified'] = False
+        self.assertEqual(v24._reconcile_agent_from_server_status(self.agent, response), 1)
+        state = self.agent.conn.execute(
+            "SELECT status, runtime_verified FROM agent_remote_services WHERE name='keepalive-ssh'"
+        ).fetchone()
+        self.assertEqual((state['status'], state['runtime_verified']), ('HEALTHY', 0))
+
+    def test_verified_status_report_ack_preserves_local_runtime_verification(self):
+        # A signed Server ACK reflects the Server's validated effective state.
+        # Losing the verified field in that ACK falsely marks an actual
+        # currently-active proxy DEGRADED in the Agent's public CLI.
+        created = mgmt.upsert_remote_service_on_server(
+            root=self.agent_tmp,
+            name="ssh-access",
+            destination="this-host",
+            service="ssh",
+            enabled=True,
+            pool_class="normal",
+            target_host="127.0.0.1",
+            target_port=22,
+            target_mode="self",
+            runtime_verified=True,
+        )
+        self.assertEqual(created["status"], "HEALTHY")
+        port = int(self._server_status("ssh-access")["public_port"])
+        self.agent.conn.execute(
+            "INSERT INTO agent_remote_services"
+            "(name, destination, service_object, enabled, status, endpoint_host, "
+            "endpoint_port, pending_allocation, delete_pending, pool_class, reason, "
+            "updated_at, runtime_verified) "
+            "VALUES ('ssh-access', 'this-host', 'ssh', 1, 'HEALTHY', 'example.test', "
+            "?, 0, 0, 'normal', '', '2026-10-09T00:00:00Z', 1)",
+            (port,),
+        )
+        self.agent.conn.commit()
+
+        returned = mgmt.report_remote_service_status_on_server(
+            root=self.agent_tmp,
+            services=[{
+                "name": "ssh-access", "status": "HEALTHY",
+                "runtime_verified": True, "endpoint_port": port, "reason": "",
+            }],
+        )
+        self.assertEqual(returned["count"], 1)
+        self.assertTrue(returned["services"][0]["runtime_verified"], returned)
+        self.assertEqual(v24._push_agent_remote_service_status(
+            self.agent, root=self.agent_tmp,
+        ), 0)
+        row = self.agent.conn.execute(
+            "SELECT status, runtime_verified FROM agent_remote_services "
+            "WHERE name='ssh-access'"
+        ).fetchone()
+        self.assertEqual((row["status"], row["runtime_verified"]), ("HEALTHY", 1))
+
+        unverified = mgmt.report_remote_service_status_on_server(
+            root=self.agent_tmp,
+            services=[{
+                "name": "ssh-access", "status": "HEALTHY",
+                "runtime_verified": False, "endpoint_port": port, "reason": "",
+            }],
+        )
+        self.assertEqual(unverified["services"][0]["status"], "DEGRADED")
+        self.assertFalse(unverified["services"][0]["runtime_verified"])
+        v24._reconcile_agent_from_server_status(self.agent, unverified)
+        row = self.agent.conn.execute(
+            "SELECT status, runtime_verified FROM agent_remote_services "
+            "WHERE name='ssh-access'"
+        ).fetchone()
+        self.assertEqual((row["status"], row["runtime_verified"]), ("DEGRADED", 0))
+
+    def test_F019_transient_missing_service_object_rechecks_authoritative_catalog(self):
+        # A previous Agent cache refresh can miss a concurrently committed
+        # Server Fixed TCP Service Object. If it is still present in the
+        # authoritative Server, synchronize must not demote a live publication
+        # for a transient incomplete local snapshot.
+        from unittest import mock
+
+        service_object = "f019-capacity-fixed"
+        name = "f019-live"
+        v24.set_service_object(
+            self.server, service_object,
+            type="fixed-tcp", port=20087, oneshot=True,
+        )
+        self.agent.conn.execute(
+            "INSERT INTO agent_remote_services "
+            "(name, destination, destination_client_id, service_object, enabled, status, "
+            "endpoint_host, endpoint_port, pending_allocation, delete_pending, pool_class, "
+            "reason, updated_at) "
+            "VALUES (?, 'this-host', ?, ?, 1, 'HEALTHY', '203.0.113.10', 6287, "
+            "0, 0, 'fixed-tcp', '', '2026-10-09T00:00:00Z')",
+            (name, MACHINE, service_object),
+        )
+        self.agent.conn.commit()
+
+        real_sync = v24.sync_agent_catalog_from_server
+        fetches = []
+
+        def first_snapshot_incomplete(plane, server_plane=None, *, root=None):
+            count = real_sync(plane, server_plane, root=root)
+            fetches.append(1)
+            if len(fetches) == 1:
+                plane.conn.execute(
+                    "DELETE FROM agent_object_catalog "
+                    "WHERE kind='service-object' AND name=?", (service_object,),
+                )
+                plane.conn.commit()
+            return count
+
+        os.environ["DRLINK_SERVER_REACHABLE"] = "1"
+        try:
+            with mock.patch.object(v24, "sync_agent_catalog_from_server",
+                                   side_effect=first_snapshot_incomplete):
+                result = v24.synchronize_agent_remote_services(
+                    self.agent, root=self.agent_tmp,
+                )
+        finally:
+            os.environ.pop("DRLINK_SERVER_REACHABLE", None)
+        self.assertGreaterEqual(len(fetches), 2, fetches)
+        row = self.agent.conn.execute(
+            "SELECT status, endpoint_port, reason FROM agent_remote_services "
+            "WHERE name=?", (name,),
+        ).fetchone()
+        self.assertNotIn("missing or invalid", str(row["reason"]).lower(), result)
+        self.assertEqual(int(row["endpoint_port"] or 0), 6287)
+        self.assertIn(result.get("status"), ("SYNCHRONIZED", "DEGRADED"))
+
+    def test_F019_permanently_missing_fixed_tcp_dependency_stays_degraded(self):
+        # The authoritative retry must never invent a removed Service Object
+        # or make a missing dependency HEALTHY.
+        from unittest import mock
+        name = "f019-gone"
+        self.agent.conn.execute(
+            "INSERT INTO agent_remote_services "
+            "(name, destination, destination_client_id, service_object, enabled, status, "
+            "endpoint_host, endpoint_port, pending_allocation, delete_pending, pool_class, "
+            "reason, updated_at) "
+            "VALUES (?, 'this-host', ?, 'f019-no-such-service', 1, 'HEALTHY', "
+            "'203.0.113.10', 6288, 0, 0, 'fixed-tcp', '', '2026-10-09T00:00:00Z')",
+            (name, MACHINE),
+        )
+        self.agent.conn.commit()
+        os.environ["DRLINK_SERVER_REACHABLE"] = "1"
+        try:
+            with mock.patch.object(
+                v24, "set_remote_service_agent", side_effect=AssertionError(
+                    "missing dependency must never activate a Remote Service"
+                )
+            ):
+                result = v24.synchronize_agent_remote_services(
+                    self.agent, root=self.agent_tmp
+                )
+        finally:
+            os.environ.pop("DRLINK_SERVER_REACHABLE", None)
+        row = self.agent.conn.execute(
+            "SELECT status, reason FROM agent_remote_services WHERE name=?", (name,)
+        ).fetchone()
+        self.assertEqual(row["status"], "DEGRADED", result)
+        self.assertIn("missing or invalid", row["reason"])
+        self.assertEqual(result["status"], "DEGRADED")
+
+    def test_F024_stale_sync_snapshot_cannot_recreate_deleted_service(self):
+        # F024 race: synchronizer snapshots an Agent row, a public operator
+        # deletes that row, then the synchronizer blindly replays its old
+        # definition. Reconciliation must be update-only, not implicit create.
+        from unittest import mock
+
+        name = "f024-deleted"
+        self.agent.conn.execute(
+            "INSERT INTO agent_remote_services"
+            "(name, destination, destination_client_id, service_object, enabled, status, "
+            "endpoint_host, endpoint_port, pending_allocation, delete_pending, pool_class, "
+            "reason, updated_at) VALUES (?, 'this-host', ?, 'ssh', 1, 'DEGRADED', "
+            "'example.test', 6030, 0, 0, 'normal', 'Runtime activation pending.', "
+            "'2026-10-09T00:00:00Z')",
+            (name, MACHINE),
+        )
+        self.agent.conn.commit()
+        original_set = v24.set_remote_service_agent
+        seen = []
+
+        def deleted_before_replay(plane, svc_name, **kwargs):
+            seen.append(svc_name)
+            if svc_name == name:
+                self.agent.conn.execute(
+                    "DELETE FROM agent_remote_services WHERE name=?", (name,)
+                )
+                self.agent.conn.commit()
+            return original_set(plane, svc_name, **kwargs)
+
+        os.environ["DRLINK_SERVER_REACHABLE"] = "1"
+        try:
+            with mock.patch.object(v24, "set_remote_service_agent",
+                                   side_effect=deleted_before_replay):
+                result = v24.synchronize_agent_remote_services(
+                    self.agent, root=self.agent_tmp,
+                )
+        finally:
+            os.environ.pop("DRLINK_SERVER_REACHABLE", None)
+
+        self.assertIn(name, seen)
+        self.assertIsNone(self.agent.conn.execute(
+            "SELECT 1 FROM agent_remote_services WHERE name=?", (name,)
+        ).fetchone(), result)
+        self.assertIsNone(self.server.conn.execute(
+            "SELECT 1 FROM published_services WHERE name=? AND released=0", (name,)
+        ).fetchone(), result)
+
+    def test_F024_catalog_refresh_delete_race_skips_but_explicit_create_is_allowed(self):
+        # A signed Server catalog read may race user deletion inside the same
+        # sync operation. An update-only replay must not re-publish the name,
+        # but an independent new public set operation is permitted.
+        from unittest import mock
+        name = "f024-between-reads"
+        self.agent.conn.execute(
+            "INSERT INTO agent_remote_services"
+            "(name, destination, destination_client_id, service_object, enabled, status, "
+            "endpoint_host, endpoint_port, pending_allocation, delete_pending, pool_class, "
+            "reason, updated_at) VALUES (?, 'this-host', ?, 'ssh', 1, 'DEGRADED', "
+            "'example.test', 6031, 0, 0, 'normal', 'Runtime activation pending.', "
+            "'2026-10-09T00:00:00Z')",
+            (name, MACHINE),
+        )
+        self.agent.conn.commit()
+
+        def delete_during_catalog_refresh(_plane, server_plane=None, *, root=None):
+            self.agent.conn.execute(
+                "DELETE FROM agent_remote_services WHERE name=?", (name,)
+            )
+            self.agent.conn.commit()
+            return 0
+
+        with mock.patch.object(v24, "sync_agent_catalog_from_server",
+                               side_effect=delete_during_catalog_refresh):
+            response = v24.set_remote_service_agent(
+                self.agent, name, destination="this-host", service="ssh",
+                enabled=True, oneshot=True, root=self.agent_tmp,
+                server_reachable=True, reconcile_existing=True,
+            )
+        self.assertTrue(response.get("skipped"), response)
+        self.assertIsNone(self.server.conn.execute(
+            "SELECT 1 FROM published_services WHERE name=? AND released=0", (name,)
+        ).fetchone())
+
+        # Explicit re-creation has different authority from internal sync.
+        created = v24.set_remote_service_agent(
+            self.agent, name, destination="this-host", service="ssh",
+            enabled=True, oneshot=True, root=self.agent_tmp,
+            server_reachable=True,
+        )
+        self.assertFalse(created.get("skipped", False))
+        self.assertIsNotNone(self.agent.conn.execute(
+            "SELECT 1 FROM agent_remote_services WHERE name=?", (name,)
+        ).fetchone())
+
     def test_AGENT_DEGRADED_PROPAGATES_TO_SERVER(self):
         created = mgmt.upsert_remote_service_on_server(
             root=self.agent_tmp,
@@ -365,6 +672,26 @@ class StaleEndpointTruthTests(unittest.TestCase):
             )
         self.assertEqual(rc, 0, buf.getvalue())
         return buf.getvalue()
+
+    def test_unverified_runtime_degraded_has_actionable_public_reason(self):
+        # A stored HEALTHY flag without a verifiable current runtime generation
+        # is deliberately DEGRADED. The public show output must explain that
+        # distinction instead of presenting an unexplained contradiction.
+        from unittest import mock
+
+        self._seed_agent_service("e2e-runtime", "this-host", 6001, status="HEALTHY")
+        self.agent.conn.execute(
+            "UPDATE agent_remote_services SET runtime_verified=1, reason='' "
+            "WHERE name='e2e-runtime'"
+        )
+        self.agent.conn.commit()
+        with mock.patch("drlink_v24_cli._agent_runtime_level", return_value="Warning"):
+            shown = self._show_agent("e2e-runtime")
+        self.assertIn("Status: DEGRADED", shown)
+        self.assertIn("Reason: Current Agent runtime verification", shown)
+        self.assertIn("system diagnostics", shown)
+        self.assertIn("system synchronize", shown)
+        self.assertIn("show remote-service e2e-runtime", shown)
 
     def test_STALE_ENDPOINT_SERVER_RELEASE_AND_AGENT_CLEAR(self):
         self._write_registry(

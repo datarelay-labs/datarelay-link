@@ -1352,11 +1352,11 @@ PY
     exit 1
   fi
   if (( 10#$FRP_EGRESS_LISTEN_PORT >= 10#$FRP_PORT_START && 10#$FRP_EGRESS_LISTEN_PORT <= 10#$FRP_PORT_END )); then
-    echo "ERROR: Controlled Egress listen port must be outside the FRP service port range" >&2
+    echo "ERROR: Internet Access listen port must be outside the FRP service port range" >&2
     exit 1
   fi
   if (( 10#$FRP_EGRESS_LISTEN_PORT == 10#$FRP_CONTROL_LISTEN_PORT || 10#$FRP_EGRESS_LISTEN_PORT == 10#$FRP_ALLOCATOR_LISTEN_PORT )); then
-    echo "ERROR: Controlled Egress listen port collides with another infrastructure listener" >&2
+    echo "ERROR: Internet Access listen port collides with another infrastructure listener" >&2
     exit 1
   fi
   # Refuse published service ranges that collide with the Fixed TCP Egress pool
@@ -2379,7 +2379,7 @@ frp_server_health_egress() {
 frp_server_health_tcp_egress() {
   # Fixed TCP Egress readiness: unit active. Isolated from inbound FRP health.
   if [[ "${FRP_INSTALL_HOOK_TCP_EGRESS_HEALTH_FAIL:-}" == "1" ]]; then
-    echo "ERROR: simulated Fixed TCP Egress health check failure" >&2
+    echo "ERROR: simulated Fixed TCP relay health check failure" >&2
     return 1
   fi
   if frp_server_skip_systemd; then
@@ -2965,7 +2965,7 @@ PY
   fi
   if [[ "$need_tcp_egress_restart" == "1" ]] || [[ "$existing_install" != "1" ]]; then
     if ! frp_server_health_tcp_egress; then
-      frp_server_fail_after_mutation HEALTH_CHECK_FAILED "Fixed TCP Egress health check failed; previous semantic configuration restored."
+      frp_server_fail_after_mutation HEALTH_CHECK_FAILED "Fixed TCP relay health check failed; previous semantic configuration restored."
       return 1
     fi
   fi

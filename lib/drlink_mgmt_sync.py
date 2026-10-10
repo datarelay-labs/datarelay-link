@@ -703,7 +703,21 @@ def fetch_server_catalog(root: Optional[str] = None) -> dict:
             "ERROR:\nNo Server management URL is configured for catalog synchronization.\n\n"
             "No changes were applied."
         )
-    return _request_json("GET", base + "/v1/catalog", root=root)
+    # Catalog reads can wait for a network timeout before an offline edit can
+    # decide whether cached state is sufficient. Keep terminal users informed,
+    # without adding output to machine consumers or changing error classes.
+    terminal = sys.stderr.isatty()
+    if terminal:
+        print("Checking Server catalog (request timeout: 8 seconds)...", file=sys.stderr, flush=True)
+    try:
+        catalog = _request_json("GET", base + "/v1/catalog", root=root, timeout=8.0)
+    except Exception:
+        if terminal:
+            print("Server catalog request failed.", file=sys.stderr, flush=True)
+        raise
+    if terminal:
+        print("Server catalog received.", file=sys.stderr, flush=True)
+    return catalog
 
 
 def upsert_remote_service_on_server(
@@ -833,6 +847,7 @@ def complete_ai_job_on_server(
         base + "/v1/ai-jobs/complete",
         body,
         root=root,
+        timeout=15.0,  # bounded signed completion payload (up to 64 KiB stdout)
     )
 
 
@@ -1227,27 +1242,42 @@ def server_upsert_remote_service(plane, auth: MgmtAuthContext, body: dict) -> di
 
     endpoint_port = None
     proxy_id = None
-    if preserve is not None:
-        endpoint_port = int(preserve)
-    elif existing and existing["public_port"]:
+    # The Server reservation is authoritative. An Agent's cached port hint
+    # may be stale after reconnect; it must never move an existing endpoint.
+    if existing is not None and existing["public_port"] is not None:
         endpoint_port = int(existing["public_port"])
+    elif preserve is not None:
+        endpoint_port = int(preserve)
 
     allocator = getattr(auth, "allocator", None)
     if endpoint_port is None and not enabled:
         pass
     elif allocator is not None and enabled:
         # Authoritative FRP registry allocation (single allocator authority).
+        # Exclude only this existing publication's *own* Server reservation.
+        # Its FRP registry proxy may be missing during reconnect/re-render:
+        # treating its held port as a different owner's collision silently
+        # reallocates the public endpoint on enable/reconcile (F002).
+        # Every other reservation/publication remains protected, including
+        # ambiguous/legacy reservations without matching owner IDs.
+        own_id = existing["id"] if existing is not None else None
         extra_used = {
-            r[0]
+            r["public_port"]
             for r in plane.conn.execute(
-                "SELECT public_port FROM port_reservations WHERE released = 0 AND public_port IS NOT NULL"
+                "SELECT public_port, client_id, service_id FROM port_reservations "
+                "WHERE released = 0 AND public_port IS NOT NULL"
+            )
+            if own_id is None or not (
+                r["client_id"] == client["id"] and r["service_id"] == own_id
             )
         }
         extra_used |= {
-            r[0]
+            r["public_port"]
             for r in plane.conn.execute(
-                "SELECT public_port FROM published_services WHERE public_port IS NOT NULL AND released = 0"
+                "SELECT id, public_port FROM published_services "
+                "WHERE public_port IS NOT NULL AND released = 0"
             )
+            if own_id is None or r["id"] != own_id
         }
         try:
             reserved = allocator.reserve_remote_service_endpoint(
@@ -1391,10 +1421,28 @@ def server_delete_remote_service(plane, auth: MgmtAuthContext, name: str) -> dic
 
     allocator = getattr(auth, "allocator", None)
     if allocator is not None:
+        # Both the authenticated Server database and the FRP allocator own
+        # deletion state. Never acknowledge DELETED after a failed or
+        # mismatched allocator release: doing so strands a registry port and
+        # leaves a referenced Service Object behind (PASS1 F020).
         try:
-            allocator.release_remote_service_endpoint(machine_id, name)
-        except Exception:
-            pass
+            released = allocator.release_remote_service_endpoint(machine_id, name)
+        except Exception as exc:
+            raise MgmtSyncError(
+                "Remote Service endpoint release was not confirmed by the Server allocator. "
+                "Server publication was not deleted. Inspect diagnostics before retrying."
+            ) from exc
+        expected_port = int(pub["public_port"]) if pub["public_port"] is not None else None
+        returned_port = released.get("released_port") if isinstance(released, dict) else None
+        try:
+            returned_port = int(returned_port) if returned_port is not None else None
+        except (TypeError, ValueError) as exc:
+            raise MgmtSyncError("Server allocator returned an invalid released port.") from exc
+        if returned_port != expected_port:
+            raise MgmtSyncError(
+                "Server allocator release did not match the published Remote Service port. "
+                "Server publication was not deleted; check endpoint ownership."
+            )
 
     def write():
         if pub["public_port"] is not None:
@@ -1439,11 +1487,24 @@ def server_report_agent_lifecycle(plane, auth: MgmtAuthContext, body: dict) -> d
         "SELECT agent_heartbeat_at, agent_lifecycle_state FROM clients WHERE id = ?",
         (machine_id,),
     ).fetchone()
+    # Presence can remain fresh while Server verification is lost during
+    # reconciliation. A locally HEALTHY Agent otherwise skips synchronization
+    # forever. Request a new runtime report without treating heartbeat as proof.
+    verification_missing = plane.conn.execute(
+        "SELECT 1 FROM published_services p "
+        "LEFT JOIN remote_service_meta m ON m.service_id = p.id "
+        "WHERE p.client_id = ? AND p.released = 0 AND p.enabled = 1 "
+        "AND COALESCE(m.delete_pending, 0) = 0 "
+        "AND COALESCE(m.runtime_verified, 0) = 0 LIMIT 1",
+        (machine_id,),
+    ).fetchone() is not None
     return {
         "ok": True,
         "state": client["agent_lifecycle_state"] if client else state,
         "heartbeat_at": client["agent_heartbeat_at"] if client else None,
-        "reconcile_required": bool(state == "connected" and not was_fresh),
+        "reconcile_required": bool(
+            state == "connected" and (not was_fresh or verification_missing)
+        ),
     }
 
 
@@ -1639,6 +1700,13 @@ def server_report_remote_service_status(plane, auth: MgmtAuthContext, body: dict
                 projection = _canonical_status_projection(name, pub, meta, status, extra or "")
                 pending = int(projection["pending_allocation"])
                 verified_flag = 1 if status == "HEALTHY" else 0
+                # Return the Server's *validated* runtime result to the Agent.
+                # Omitting this field made the Agent ACK reconciler clear
+                # runtime_verified even after a successful live proxy apply,
+                # leaving the public view falsely DEGRADED on every sync.
+                # Never echo the unvalidated Agent claim; HEALTHY is only
+                # computed by effective_remote_service_status above.
+                projection["runtime_verified"] = bool(verified_flag)
                 try:
                     current_verified = int(meta["runtime_verified"] or 0)
                 except (KeyError, IndexError, TypeError):

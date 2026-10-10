@@ -33,7 +33,7 @@ try {
     foreach ($exe in @($hosts | Select-Object -Unique)) {
         $label = Split-Path -Leaf $exe
         $doctorOut = & $exe -NoProfile -ExecutionPolicy Bypass -File $clientPath system diagnostics 2>&1 | Out-String
-        Assert-FrpTrue ($doctorOut -match 'Data Relay Link client diagnostics') "$label diagnostics entrypoint ran"
+        Assert-FrpTrue ($doctorOut -match 'Data Relay Link Agent Host diagnostics') "$label diagnostics entrypoint ran"
         Assert-FrpTrue ($doctorOut -match 'Root:') "$label diagnostics called Get-FrpWindowsRoot"
         Assert-FrpTrue ($doctorOut -notmatch 'is not recognized') "$label diagnostics has module functions"
 

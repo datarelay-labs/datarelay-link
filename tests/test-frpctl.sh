@@ -204,9 +204,34 @@ export FRP_DEPLOY_TEST_ROOT="$SERVER"
 
 "$CTL" show status >"$WORKDIR/server-status.out"
 "$CTL" system status >"$WORKDIR/server-system-status.out"
-cmp -s "$WORKDIR/server-status.out" "$WORKDIR/server-system-status.out"   || { diff -u "$WORKDIR/server-status.out" "$WORKDIR/server-system-status.out" >&2 || true; fail "status parity"; }
+status_lines="$(wc -l <"$WORKDIR/server-status.out")"
+head -n "$status_lines" "$WORKDIR/server-system-status.out" >"$WORKDIR/server-system-status-prefix.out"
+# Portable distro images do not promise cmp/diff (diffutils). Compare exact
+# bytes and print a bounded unified diff using the Python runtime already
+# required by the client/Server CLI.
+if ! python3 - "$WORKDIR/server-status.out" "$WORKDIR/server-system-status-prefix.out" <<'PY_STATUS'
+import difflib
+import sys
+from pathlib import Path
+
+left = Path(sys.argv[1]).read_bytes()
+right = Path(sys.argv[2]).read_bytes()
+if left != right:
+    a = left.decode("utf-8", "replace").splitlines(keepends=True)
+    b = right.decode("utf-8", "replace").splitlines(keepends=True)
+    sys.stderr.writelines(list(difflib.unified_diff(a, b, fromfile="show status", tofile="system status"))[:80])
+    raise SystemExit(1)
+PY_STATUS
+then
+  fail "status summary preservation"
+fi
 grep -q 'DRLink Server' "$WORKDIR/server-status.out" || fail "server role"
 grep -q 'Control DB' "$WORKDIR/server-status.out" || fail "server control DB"
+grep -q '^Server Settings$' "$WORKDIR/server-system-status.out" || fail "server settings heading"
+grep -q '^Public hostname ' "$WORKDIR/server-system-status.out" || fail "server public hostname setting"
+grep -q '^Bootstrap hostname ' "$WORKDIR/server-system-status.out" || fail "server bootstrap hostname setting"
+grep -q '^Linux/macOS Agent installer ' "$WORKDIR/server-system-status.out" || fail "server installer setting"
+grep -q '^Windows Agent installer ' "$WORKDIR/server-system-status.out" || fail "server windows installer setting"
 
 "$CTL" system version >"$WORKDIR/server-version.out"
 grep -q 'Data Relay Link: 1.4.0-dev' "$WORKDIR/server-version.out" || fail "server display identity"
@@ -403,6 +428,14 @@ for root_token in (
 PY
 pass "FRPCTL_GREENFIELD_SURFACE"
 
-git -C "$ROOT" diff --check -- tools/frpctl lib/frp_ctl_grammar.py lib/frp_cli_catalog.py tests/test-frpctl.sh
+# Minimal distro images intentionally omit Git. Whitespace / source-tree
+# checks are performed by the repository's native GitHub lint/PR gate, not
+# by the runtime portability test inside the stripped-down container.
+if command -v git >/dev/null 2>&1 && git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  git -C "$ROOT" diff --check -- tools/frpctl lib/frp_ctl_grammar.py lib/frp_cli_catalog.py tests/test-frpctl.sh
+  echo "FRPCTL_SOURCE_DIFF_CHECK=PASS"
+else
+  echo "FRPCTL_SOURCE_DIFF_CHECK=NOT_TESTED_GIT_UNAVAILABLE"
+fi
 
 echo "FRPCTL_TESTS=PASS"

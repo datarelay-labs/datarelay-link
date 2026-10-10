@@ -243,14 +243,14 @@ frpctl_install_state_unreadable() {
 }
 
 frpctl_require_install() {
-  if frpctl_is_client || frpctl_is_server; then
-    return 0
-  fi
   # Distinguish missing install from permission-denied on root-owned state dirs.
   if frpctl_install_state_unreadable; then
     echo "ERROR: Data Relay Link appears installed, but this user cannot read the install state." >&2
     echo "Retry with: sudo ${FRP_CTL_CMD_NAME}" >&2
     return 1
+  fi
+  if frpctl_is_client || frpctl_is_server; then
+    return 0
   fi
   echo "ERROR: no ${FRP_CTL_PRODUCT_NAME} installation was found on this host." >&2
   echo "Install the Server or Agent bootstrap first." >&2
@@ -645,7 +645,7 @@ try:
         payload['inventory_warning'] = False
 except Exception:
     # Never advertise stale legacy selectors after an authoritative read fails.
-    payload.update(names=[], clients=[], services={}, local_services=[], groups=[])
+    payload.update(names=[], clients=[], services={}, local_services=[], groups=[], inventory={})
     payload['inventory_warning'] = True
 json.dump(payload, sys.stdout)
 PY
@@ -727,6 +727,10 @@ frpctl_header() {
 
 frpctl_print_version() {
   local version_py="" lib_dir="" ver_file role project channel source_ref source_head frp_ver bundle
+  if frpctl_install_state_unreadable; then
+    frpctl_require_install
+    return 1
+  fi
   ver_file="$(frpctl_path /etc/drlink/version)"
   role="$(frpctl_role_label)"
   project="$(frpctl_project_version)"
@@ -795,7 +799,8 @@ frpctl_control_plane_dispatch() {
   libdir="$(dirname "$cli_py")"
   # Use python -c (not a stdin heredoc) so ConfigurationBundle '-' can read
   # the operator's stdin for copy/paste apply/test/diff workflows.
-  PYTHONPATH="${libdir}${PYTHONPATH:+:$PYTHONPATH}" python3 -c '
+  # Ambient backend approval is never operator consent at the public boundary.
+  DRLINK_CONFIRM= PYTHONPATH="${libdir}${PYTHONPATH:+:$PYTHONPATH}" python3 -c '
 import json
 import os
 import sys
@@ -819,6 +824,58 @@ frpctl_control_plane_status() {
   cli_py="$(frpctl_lib_candidate drlink_control_cli.py)" || return 1
   libdir="$(dirname "$cli_py")"
   PYTHONPATH="${libdir}${PYTHONPATH:+:$PYTHONPATH}" python3 "$cli_py" show status
+}
+
+frpctl_print_server_settings() {
+  local cfg scfg_py artifacts_py
+  cfg="$(frpctl_path /etc/drlink/config.json)"
+  scfg_py="$(frpctl_lib_candidate frp_server_config.py)" || return 1
+  artifacts_py="$(frpctl_lib_candidate drlink_qualified_artifacts.py)" || return 1
+  python3 - "$scfg_py" "$cfg" "$artifacts_py" <<'PY_SERVER_SETTINGS'
+import importlib.util
+import sys
+
+spec = importlib.util.spec_from_file_location("_drlink_server_settings", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+cfg = mod.load_config(sys.argv[2])
+try:
+    control = mod.control_host(cfg)
+except Exception:
+    control = "unconfigured"
+public = mod.public_hostname(cfg)
+bootstrap = mod.bootstrap_hostname(cfg)
+linux_url = str(cfg.get("client_installer_url") or "").strip()
+windows_url = str(cfg.get("windows_client_installer_url") or "").strip()
+spec = importlib.util.spec_from_file_location("_drlink_qualified_sources", sys.argv[3])
+artifacts = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = artifacts
+spec.loader.exec_module(artifacts)
+def effective_installer_source(configured, platform):
+    # Same source rejection and Server-local derivation as enrollment output.
+    if configured and not artifacts.is_forbidden_public_installer_url(configured):
+        return configured
+    try:
+        effective = artifacts.agent_installer_url(cfg.get("allocator_public_url"), platform)
+    except artifacts.ArtifactError:
+        return "Unavailable (qualified Server-local installer source is unconfigured)"
+    if artifacts.is_forbidden_public_installer_url(effective):
+        return "Unavailable (qualified Server-local installer source is unconfigured)"
+    label = "configured former public source ignored" if configured else "automatic qualified source"
+    return "%s (%s)" % (effective, label)
+print("Server Settings")
+print("===============")
+print("Public hostname              : %s" % (public or ("Automatic (Public IP: %s)" % control)))
+print("Bootstrap hostname           : %s" % (bootstrap or "Automatic (pinned-CA zt1 bootstrap)"))
+print("Linux/macOS Agent installer : %s" % effective_installer_source(linux_url, "linux"))
+print("Windows Agent installer     : %s" % effective_installer_source(windows_url, "windows"))
+PY_SERVER_SETTINGS
+}
+
+frpctl_control_plane_server_status() {
+  frpctl_control_plane_status || return $?
+  echo
+  frpctl_print_server_settings
 }
 
 frpctl_print_catalog_overview() {
@@ -997,9 +1054,40 @@ PY
 
 frpctl_nav_dispatch_command() {
   local cmd="$1"
+  local prompt="" path="" rule_name=""
   local -a toks=()
   # shellcheck disable=SC2206
   toks=($cmd)
+  case "$cmd" in
+    "set network-object"|"set network-group"|"set service-object"|"set service-group"|"set permission-object"|"set permission-group"|"set remote-access"|"set internet-access"|"set ai-access"|"set ai-identity")
+      prompt="Name (empty cancels): "
+      ;;
+    "test configuration"|"system diff configuration"|"system apply configuration")
+      prompt="Configuration file path or '-' for pasted YAML (empty cancels): "
+      ;;
+    "system export configuration")
+      prompt="Output file path (empty cancels): "
+      ;;
+  esac
+  if [[ -n "$prompt" ]]; then
+    path="$(frpctl_read "$prompt" "")" || return 1
+    if [[ -z "${path//[[:space:]]/}" ]]; then
+      echo "Cancelled."
+      echo "No changes were applied."
+      return 0
+    fi
+    rule_name="${path#"${path%%[![:space:]]*}"}"
+    rule_name="${rule_name%"${rule_name##*[![:space:]]}"}"
+    rule_name="$(printf '%s' "$rule_name" | tr '[:upper:]' '[:lower:]')"
+    case "$cmd:$rule_name" in
+      "set remote-access:enabled"|"set remote-access:disabled"|"set internet-access:enabled"|"set internet-access:disabled"|"set ai-access:enabled"|"set ai-access:disabled")
+        echo "ERROR: this name is reserved for policy enforcement. Choose another rule name." >&2
+        echo "No changes were applied." >&2
+        return 1
+        ;;
+    esac
+    toks+=("$path")
+  fi
   frpctl_dispatch "${toks[@]}" || true
 }
 
@@ -1972,69 +2060,69 @@ frpctl_zt_run_services() {
 
 frpctl_guided_zero_touch_linux() {
   local choice
-  echo
-  echo "How do you want to configure this Managed Host?"
-  echo
-  echo "1) SSH only"
-  echo "2) Choose Remote Services"
-  echo "3) Back"
-  echo
-  choice="$(frpctl_read "Select: " "")" || return 1
-  case "$choice" in
-    1) _FRP_ZT_PLATFORM=linux; frpctl_zt_run_ssh ;;
-    2) _FRP_ZT_PLATFORM=linux; frpctl_zt_run_services ;;
-    3|"") return 0 ;;
-    *)
-      frpctl_menu_selection_error 1 3 "$choice"
-      return 1
-      ;;
-  esac
+  # An invalid selector must not discard the already-entered Managed Host draft.
+  while true; do
+    echo
+    echo "How do you want to configure this Managed Host?"
+    echo
+    echo "1) SSH only"
+    echo "2) Choose Remote Services"
+    echo "3) Back"
+    echo
+    choice="$(frpctl_read "Select: " "")" || return 1
+    case "$choice" in
+      1) _FRP_ZT_PLATFORM=linux; frpctl_zt_run_ssh; return $? ;;
+      2) _FRP_ZT_PLATFORM=linux; frpctl_zt_run_services; return $? ;;
+      3|"") return 0 ;;
+      *) frpctl_menu_selection_error 1 3 "$choice" ;;
+    esac
+  done
 }
 
 frpctl_guided_zero_touch_windows() {
   local choice
-  echo
-  echo "How do you want to configure this Managed Host?"
-  echo
-  echo "1) RDP only"
-  echo "2) SSH only"
-  echo "3) Choose Remote Services"
-  echo "4) Back"
-  echo
-  choice="$(frpctl_read "Select: " "")" || return 1
-  case "$choice" in
-    1) frpctl_zt_run_rdp ;;
-    2) _FRP_ZT_PLATFORM=windows; frpctl_zt_run_ssh ;;
-    3) _FRP_ZT_PLATFORM=windows; frpctl_zt_run_services ;;
-    4|"") return 0 ;;
-    *)
-      frpctl_menu_selection_error 1 4 "$choice"
-      return 1
-      ;;
-  esac
+  # An invalid selector must not discard the already-entered Managed Host draft.
+  while true; do
+    echo
+    echo "How do you want to configure this Managed Host?"
+    echo
+    echo "1) RDP only"
+    echo "2) SSH only"
+    echo "3) Choose Remote Services"
+    echo "4) Back"
+    echo
+    choice="$(frpctl_read "Select: " "")" || return 1
+    case "$choice" in
+      1) frpctl_zt_run_rdp; return $? ;;
+      2) _FRP_ZT_PLATFORM=windows; frpctl_zt_run_ssh; return $? ;;
+      3) _FRP_ZT_PLATFORM=windows; frpctl_zt_run_services; return $? ;;
+      4|"") return 0 ;;
+      *) frpctl_menu_selection_error 1 4 "$choice" ;;
+    esac
+  done
 }
 
 frpctl_guided_zero_touch_macos() {
   # macOS uses the same bash Zero-Touch installer as Linux; bootstrap detects Darwin
   # and installs launchd. Do not add a dead menu entry — this is the real path.
   local choice
-  echo
-  echo "How do you want to configure this Managed Host?"
-  echo
-  echo "1) SSH only"
-  echo "2) Choose Remote Services"
-  echo "3) Back"
-  echo
-  choice="$(frpctl_read "Select: " "")" || return 1
-  case "$choice" in
-    1) _FRP_ZT_PLATFORM=linux; frpctl_zt_run_ssh ;;
-    2) _FRP_ZT_PLATFORM=linux; frpctl_zt_run_services ;;
-    3|"") return 0 ;;
-    *)
-      frpctl_menu_selection_error 1 3 "$choice"
-      return 1
-      ;;
-  esac
+  # An invalid selector must not discard the already-entered Managed Host draft.
+  while true; do
+    echo
+    echo "How do you want to configure this Managed Host?"
+    echo
+    echo "1) SSH only"
+    echo "2) Choose Remote Services"
+    echo "3) Back"
+    echo
+    choice="$(frpctl_read "Select: " "")" || return 1
+    case "$choice" in
+      1) _FRP_ZT_PLATFORM=linux; frpctl_zt_run_ssh; return $? ;;
+      2) _FRP_ZT_PLATFORM=linux; frpctl_zt_run_services; return $? ;;
+      3|"") return 0 ;;
+      *) frpctl_menu_selection_error 1 3 "$choice" ;;
+    esac
+  done
 }
 
 frpctl_guided_zero_touch() {
@@ -2172,6 +2260,27 @@ frpctl_guided_bulk_enrollment() {
     *) echo "ERROR: select 1-3. No enrollments were issued." >&2; return 2 ;;
   esac
   lifetime="$(frpctl_read "Lifetime [1h; maximum 24h]: " "1h")" || return 1
+  # Fail before Review for invalid lifetimes. The backend must not be relied on
+  # to reject bad values after the operator has already confirmed issuance.
+  local ttl_number ttl_unit ttl_max
+  ttl_max=0
+  if [[ "$lifetime" =~ ^([0-9]{1,9})([sSmMhHdD]?)$ ]]; then
+    ttl_number=$((10#${BASH_REMATCH[1]}))
+    ttl_unit="${BASH_REMATCH[2],,}"
+    case "$ttl_unit" in
+      ""|s) ttl_max=86400 ;;
+      m) ttl_max=1440 ;;
+      h) ttl_max=24 ;;
+      d) ttl_max=1 ;;
+    esac
+  else
+    ttl_number=0
+  fi
+  if (( ttl_number < 1 || ttl_number > ttl_max )); then
+    echo "ERROR: Lifetime must be between 1 second and 24h (e.g. 30m, 1h, 1d). No enrollments were issued." >&2
+    echo "Retry: drlink set enrollment bulk" >&2
+    return 2
+  fi
   args+=(--ttl "$lifetime")
   echo
   echo "Review"
@@ -3162,9 +3271,11 @@ def _load_restore_mod():
 try:
     restore_mod = _load_restore_mod()
 except Exception as exc:
-    print("Access security impact: unavailable (%s)" % exc)
-    print()
-    restore_mod = None
+    print("ERROR: restore preflight unavailable: %s" % exc, file=sys.stderr)
+    raise SystemExit(1)
+if restore_mod is None:
+    print("ERROR: restore preflight unavailable; no changes were applied.", file=sys.stderr)
+    raise SystemExit(1)
 if restore_mod is not None:
     tmp = None
     try:
@@ -3188,9 +3299,9 @@ if restore_mod is not None:
             print("Access security impact: no broadening or DENY ALL outage detected.")
             print()
     except Exception as exc:
-        # Preflight impact is advisory here; frp-restore re-checks authoritatively.
-        print("Access security impact: unavailable (%s)" % exc)
-        print()
+        print("ERROR: restore preflight failed: %s" % exc, file=sys.stderr)
+        print("No changes were applied.", file=sys.stderr)
+        raise SystemExit(1)
     finally:
         if tmp is not None:
             tmp.cleanup()
@@ -3294,7 +3405,13 @@ PY
 
 frpctl_confirm_restore() {
   local archive="$1"
-  local ans="" yes=0 pt
+  local ans=""
+  if [[ ! -t 0 ]]; then
+    echo "ERROR: restore requires interactive TTY confirmation." >&2
+    echo "Run interactively and answer y." >&2
+    echo "No changes were applied." >&2
+    return 1
+  fi
   frpctl_restore_preflight "$archive"
   local rc=$?
   if [[ "$rc" -eq 2 ]]; then
@@ -3303,22 +3420,9 @@ frpctl_confirm_restore() {
   if [[ "$rc" -ne 0 ]]; then
     return 1
   fi
-  for pt in "${_frpctl_pt[@]+"${_frpctl_pt[@]}"}"; do
-    [[ "$pt" == "--yes" ]] && yes=1
-  done
-  if [[ "$yes" == "1" ]]; then
-    return 0
-  fi
-  if [[ -n "${FRP_CTL_TEST_INPUT:-}" || -t 0 ]]; then
-    ans="$(frpctl_read "Continue with restore? [y/N]: " "N")" || return 1
-  elif IFS= read -r ans; then
-    :
-  else
-    echo "ERROR: restore requires confirmation." >&2
-    echo "Run interactively and answer y." >&2
-    echo "No changes were applied." >&2
-    return 1
-  fi
+  # Test-input spools and internal passthrough flags cannot supply operator
+  # consent for the public interactive-only restore workflow.
+  ans="$(FRP_CTL_TEST_INPUT= frpctl_read "Continue with restore? [y/N]: " "N")" || return 1
   case "$(printf '%s' "$ans" | tr '[:upper:]' '[:lower:]')" in
     y|yes) return 0 ;;
     *)
@@ -3899,8 +4003,8 @@ frpctl_unset_enrollment() {
       ;;
   esac
 
-  if [[ -n "${FRP_CTL_TEST_INPUT:-}" || -t 0 ]]; then
-    ans="$(frpctl_read "Continue? [y/N]: " "N")" || return 1
+  if [[ -t 0 ]]; then
+    ans="$(FRP_CTL_TEST_INPUT= frpctl_read "Continue? [y/N]: " "N")" || return 1
   elif IFS= read -r ans; then
     :
   else
@@ -3999,9 +4103,18 @@ frpctl_dispatch_canonical() {
     show_server_status)
       frpctl_require_server || return 1
       frpctl_load_passthrough "$result"
-      frpctl_with_pt frpctl_control_plane_status
+      frpctl_with_pt frpctl_control_plane_server_status
       ;;
-    show_version) echo; frpctl_print_version; echo ;;
+    show_version)
+      echo
+      frpctl_print_version
+      _version_rc=$?
+      echo
+      if [[ "$_version_rc" -ne 0 ]]; then
+        _FRP_CTL_RC="$_version_rc"
+        return 0
+      fi
+      ;;
     control_plane)
       # Shared control-plane dispatcher for Server and Agent Host.
       # Role-specific resource enforcement lives in drlink_v24_cli /
@@ -4341,12 +4454,12 @@ frpctl_dispatch_canonical() {
       # Product-owned confirmation. Public group deletion is interactive only;
       # backend --yes is internal and is used only after this public y/N gate.
       _del_ans=""
-      if [[ -n "${FRP_CTL_TEST_INPUT:-}" || -t 0 ]]; then
+      if [[ -t 0 ]]; then
         echo
         echo "Delete Managed Host Group \"${_del_group}\"?"
         echo "Group membership is removed. Managed Host identity, Remote Services, and public ports"
         echo "are not changed."
-        _del_ans="$(frpctl_read "Delete Managed Host Group? [y/N]: " "N")" || {
+        _del_ans="$(FRP_CTL_TEST_INPUT= frpctl_read "Delete Managed Host Group? [y/N]: " "N")" || {
           _FRP_CTL_RC=1
           return 0
         }
@@ -4507,7 +4620,7 @@ frpctl_dispatch_canonical() {
         _FRP_CTL_RC="$_restore_rc"
         return 0
       fi
-      # Product-owned confirmation already completed (or --yes). Pass --yes so
+      # Product-owned interactive confirmation already completed. Pass --yes so
       # frp-restore's authoritative security-impact gate does not double-prompt;
       # it still recalculates against live state immediately before cutover.
       frpctl_run frp-restore --yes "$_restore_path"
@@ -4662,10 +4775,11 @@ frpctl_client_uninstall_flow() {
   echo "Public port reservations"
   echo "Server-side policy state"
   echo
-  echo "This uninstall does not contact the server and does not release ports."
+  echo "A signed disconnect notification is attempted when the Server is reachable."
+  echo "This does not retire the Managed Host or release Server-side reservations."
   echo
   if [[ "$yes" != "1" ]]; then
-    ans="$(frpctl_read "Remove local Data Relay Link Agent? [y/N]: " "N")" || return 1
+    ans="$(FRP_CTL_TEST_INPUT= frpctl_read "Remove local Data Relay Link Agent? [y/N]: " "N")" || return 1
     case "$(printf '%s' "$ans" | tr '[:upper:]' '[:lower:]')" in
       y|yes) ;;
       *) echo "Cancelled."; return 0 ;;
@@ -4716,7 +4830,7 @@ frpctl_server_uninstall_flow() {
   echo "This cannot be undone. Back up the server first if you need to restore later."
   echo
   if [[ "$yes" != "1" ]]; then
-    ans="$(frpctl_read "Remove the Data Relay Link server role from this host? [y/N]: " "N")" || return 1
+    ans="$(FRP_CTL_TEST_INPUT= frpctl_read "Remove the Data Relay Link server role from this host? [y/N]: " "N")" || return 1
     case "$(printf '%s' "$ans" | tr '[:upper:]' '[:lower:]')" in
       y|yes) ;;
       *) echo "Cancelled."; return 0 ;;

@@ -213,6 +213,12 @@ frp_matrix_run_one() {
       echo "failed checks:"
       grep -E '^FAIL |^ERROR:' "$logfile" | tail -n 8 | sed 's/^/    /'
     fi
+    # Some failures originate well before the final status lines. Keep a
+    # bounded, actionable excerpt without dumping all portability logs.
+    if grep -F 'FAIL status summary preservation' "$logfile" >/dev/null; then
+      echo "status-parity mismatch detail:"
+      grep -B 32 -A 1 -F 'FAIL status summary preservation' "$logfile" | tail -n 36 | sed 's/^/    /'
+    fi
     echo "last lines:"
     frp_matrix_tail "$logfile" | sed 's/^/    /'
     FRP_MATRIX_RESULTS+=("${image}|FAIL|${logfile}")

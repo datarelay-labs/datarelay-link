@@ -298,24 +298,78 @@ class AgentLoop:
         if self.agent_root:
             import drlink_mgmt_sync as mgmt
 
-            mgmt.complete_ai_job_on_server(
+            response = mgmt.complete_ai_job_on_server(
                 root=self.agent_root,
                 job_id=job_id,
                 result=result,
                 claim_token=claim_token,
                 attempt_id=attempt_id,
             )
+            if not isinstance(response, dict) or response.get("ok") is not True:
+                raise ControlPlaneError("Agent job completion was not acknowledged")
             return
         body = {"id": job_id, "result": result}
         if claim_token is not None:
             body["claim_token"] = claim_token
         if attempt_id is not None:
             body["attempt_id"] = attempt_id
-        _agent_post(
+        response = _agent_post(
             self.base_url + "/agent/v1/complete",
             self.token,
             body,
         )
+        if not isinstance(response, dict) or response.get("ok") is not True:
+            raise ControlPlaneError("Agent job completion was not acknowledged")
+
+    @staticmethod
+    def _transient_completion_failure(exc: Exception) -> bool:
+        """Retry connectivity faults, never credentials, policy, or job state."""
+        import urllib.error
+        if isinstance(exc, urllib.error.HTTPError):
+            return False
+        if isinstance(exc, (OSError, TimeoutError, ConnectionError)):
+            return True
+        # The signed management client wraps URL/network failures in its
+        # operational exception; authorization failures share its parent.
+        try:
+            import drlink_mgmt_sync as mgmt
+            if isinstance(exc, mgmt.MgmtAuthError):
+                return False
+            if isinstance(exc, mgmt.MgmtSyncError):
+                cause = getattr(exc, "__cause__", None)
+                return (isinstance(cause, (OSError, urllib.error.URLError))
+                        and not isinstance(cause, urllib.error.HTTPError))
+        except ImportError:
+            pass
+        return False
+
+    def _complete_with_retry(self, job_id, result, *, claim_token=None,
+                             attempt_id=None, deadline_at=None) -> None:
+        """Retry delivery of the *same* result, never re-run the AI command.
+
+        The server's signed claim_token/attempt_id owns the completion.
+        Rejected/terminal outcomes are not retried; the server continues to
+        enforce the job deadline and exactly-once execution state.
+        """
+        for attempt in range(3):
+            try:
+                self._complete(
+                    job_id, result,
+                    claim_token=claim_token, attempt_id=attempt_id,
+                )
+                return
+            except Exception as exc:
+                if (attempt == 2 or self.stop_event.is_set()
+                        or _deadline_passed(deadline_at)
+                        or not self._transient_completion_failure(exc)):
+                    # Do not log result bodies, commands, tokens or sensitive
+                    # transport details in the Agent's service journal.
+                    import sys
+                    print("WARNING: AI completion unacknowledged (%s)" %
+                          type(exc).__name__, file=sys.stderr)
+                    return
+                if self.stop_event.wait(0.2 * (attempt + 1)):
+                    return
 
     def run_once(self) -> int:
         jobs = self._claim()
@@ -328,15 +382,10 @@ class AgentLoop:
                     "result": "DENY",
                     "error": "job deadline expired before execution",
                 }
-                try:
-                    self._complete(
-                        job_id,
-                        result,
-                        claim_token=claim_token,
-                        attempt_id=attempt_id,
-                    )
-                except Exception:
-                    pass
+                self._complete_with_retry(
+                    job_id, result, claim_token=claim_token,
+                    attempt_id=attempt_id, deadline_at=job.get("deadline_at"),
+                )
                 continue
             try:
                 result = execute_local(
@@ -349,16 +398,10 @@ class AgentLoop:
                 result = {"result": "DENY", "error": str(exc)}
             except Exception as exc:
                 result = {"result": "ERROR", "error": str(exc)}
-            try:
-                self._complete(
-                    job_id,
-                    result,
-                    claim_token=claim_token,
-                    attempt_id=attempt_id,
-                )
-            except Exception:
-                # Keep polling; Server-side job remains running until timeout/retry policy.
-                pass
+            self._complete_with_retry(
+                job_id, result, claim_token=claim_token,
+                attempt_id=attempt_id, deadline_at=job.get("deadline_at"),
+            )
         return len(jobs)
 
     def run(self) -> None:

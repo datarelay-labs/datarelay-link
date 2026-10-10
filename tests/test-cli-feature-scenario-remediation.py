@@ -33,6 +33,114 @@ import frp_cli_catalog as catalog
 
 
 class CliFeatureScenarioRemediation(unittest.TestCase):
+    def test_noncanonical_show_recovery_identifies_replacement_owner(self):
+        replacements = {
+            "backups": ("system backup", "DRLink Server"),
+            "audit": ("system audit", "DRLink Server"),
+            "info": ("system info", "Agent Host"),
+        }
+        for role in ("client", "server", "both"):
+            for resource, (command, owner) in replacements.items():
+                for tokens in (["show", resource], ["show", resource, "?"],
+                               ["help", "show", resource]):
+                    with self.subTest(role=role, tokens=tokens):
+                        result = grammar.match(tokens, role)
+                        self.assertEqual(result["status"], "error", result)
+                        self.assertEqual(result["exit_code"], 2)
+                        self.assertIn(command, result["message"])
+                        self.assertIn(owner, result["message"])
+        with tempfile.TemporaryDirectory(prefix="drlink-backup-role-recovery-") as temp:
+            config = Path(temp, "etc/frp/client-state.json")
+            config.parent.mkdir(parents=True)
+            config.write_text('{"services":{}}\n')
+            before = {str(p.relative_to(temp)): p.read_bytes()
+                      for p in Path(temp).rglob("*") if p.is_file()}
+            env = dict(os.environ, FRP_CTL_TEST_ROOT=temp, FRP_DEPLOY_TEST_ROOT=temp)
+            for tokens in (["show", "backups"], ["show", "backups", "?"],
+                           ["help", "show", "backups"]):
+                proc = subprocess.run(["bash", str(ROOT / "tools/drlink"), *tokens],
+                                      env=env, capture_output=True, text=True, timeout=30)
+                self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+                self.assertIn("DRLink Server", proc.stdout + proc.stderr)
+            after = {str(p.relative_to(temp)): p.read_bytes()
+                     for p in Path(temp).rglob("*") if p.is_file()}
+            self.assertEqual(after, before)
+
+    def test_retired_nested_help_rejects_like_command_without_state_changes(self):
+        paths = (["system", "services"], ["system", "services", "list"],
+                 ["show", "service-profile"], ["set", "acl"], ["menu", "clients"])
+        for role in ("server", "client"):
+            for path in paths:
+                for tokens in (list(path), list(path) + ["?"], ["help"] + list(path)):
+                    with self.subTest(role=role, tokens=tokens):
+                        result = grammar.match(tokens, role)
+                        self.assertEqual(result["status"], "error", result)
+                        self.assertEqual(result["exit_code"], 2)
+                self.assertTrue(grammar.help_text(path, role).startswith("Unknown help topic:"))
+            with tempfile.TemporaryDirectory(prefix="drlink-retired-nested-help-") as temp:
+                root = Path(temp)
+                config = root / ("etc/drlink/config.json" if role == "server" else "etc/frp/client-state.json")
+                config.parent.mkdir(parents=True)
+                config.write_text('{"role":"server"}\n' if role == "server" else '{"services":{}}\n')
+                before = config.read_bytes()
+                env = dict(os.environ, FRP_CTL_TEST_ROOT=temp, FRP_DEPLOY_TEST_ROOT=temp)
+                proc = subprocess.run(["bash", str(ROOT / "tools/drlink"), "help", "system", "services"],
+                                      env=env, capture_output=True, text=True, timeout=30)
+                self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+                self.assertIn("system synchronize", proc.stdout + proc.stderr)
+                self.assertEqual(config.read_bytes(), before)
+        self.assertIn("TCP", grammar.help_text(["remote-services"], "client"))
+        self.assertIn("Enrollment", grammar.help_text(["set", "enrollment"], "server"))
+
+    def test_new_and_historical_revision_views_use_public_host_nouns_without_history_rewrite(self):
+        self.plane.upsert_client("a" * 32, label="client-labelled-host", hostname="client-hostname")
+        revision = self.plane.current_revision()
+        current = self.plane.revision_record(revision)
+        self.assertIn("managed-host", current["command"])
+        self.assertEqual(current["summary"], "upsert Managed Host")
+        self.plane.conn.execute(
+            "UPDATE config_revisions SET command = ?, summary = ? WHERE revision = ?",
+            ("upsert client aaaaaaaa", "upsert client/endpoint", revision),
+        )
+        self.plane.conn.commit()
+        historical = self.plane.revision_record(revision)
+        for tokens in (["system", "revisions"], ["system", "revision", str(revision)]):
+            rc, out, err = self._dispatch(tokens)
+            self.assertEqual(rc, 0, err)
+            self.assertIn("upsert managed-host aaaaaaaa", out)
+            self.assertNotIn("upsert client", out)
+        self.assertEqual(self.plane.revision_record(revision), historical)
+        self.assertEqual(self.plane.current_revision(), revision)
+        self.assertEqual(cli._public_revision_command("set client client-production label"),
+                         "set managed-host client-production label")
+        self.assertEqual(cli._public_revision_command("set network-object client-ip"),
+                         "set network-object client-ip")
+
+    def test_revision_remote_service_nouns_do_not_rewrite_stored_history(self):
+        self.plane.upsert_client("b" * 32, label="revision-agent")
+        revision = self.plane.current_revision()
+        for action in ("set", "unset"):
+            with self.subTest(action=action):
+                self.plane.conn.execute(
+                    "UPDATE config_revisions SET command = ?, summary = ? WHERE revision = ?",
+                    (action + " published-service published-service-target",
+                     action + " published service", revision),
+                )
+                self.plane.conn.commit()
+                stored = self.plane.revision_record(revision)
+                for tokens in (["system", "revisions"], ["system", "revision", str(revision)]):
+                    rc, out, err = self._dispatch(tokens)
+                    self.assertEqual(rc, 0, err)
+                    self.assertIn(action + " remote-service published-service-target", out)
+                    self.assertNotIn(action + " published-service ", out)
+                    if tokens[1] == "revision":
+                        self.assertIn(action + " Remote Service", out)
+                        self.assertNotIn(action + " published service", out)
+                self.assertEqual(self.plane.revision_record(revision), stored)
+                self.assertEqual(self.plane.current_revision(), revision)
+        self.assertEqual(cli._public_revision_command("set network-object published-service-target"),
+                         "set network-object published-service-target")
+
     def test_undeclared_options_reject_question_help_like_direct_commands(self):
         paths = (["system", "update"], ["system", "update", "product"],
                  ["system", "update", "engine"], ["show", "status"],
@@ -392,6 +500,56 @@ class CliFeatureScenarioRemediation(unittest.TestCase):
         self.assertNotIn("frp-enroll-bulk", text)
         self.assertFalse((Path(self.tmp) / "var/lib/drlink/bootstrap").exists())
 
+    def test_public_bulk_invalid_ttl_rejected_before_review(self):
+        """Enforce the exact public 24h bound before accepting the operator's review."""
+        for ttl, valid in (
+            ("25h", False), ("86401", False), ("2d", False), ("0", False),
+            ("24h", True), ("1d", True),
+        ):
+            with self.subTest(ttl=ttl):
+                master, slave = pty.openpty()
+                proc = subprocess.Popen(
+                    ["bash", str(ROOT / "tools/drlink"), "set", "enrollment", "bulk"],
+                    stdin=slave, stdout=slave, stderr=slave,
+                    env=dict(os.environ, FRP_CTL_TEST_ROOT=self.tmp,
+                             FRP_CTL_BIN_DIR=str(ROOT / "tools")),
+                )
+                os.close(slave)
+                output = bytearray()
+                try:
+                    command = "1\\n2\\nreview-node\\n\\n\\n" + ttl + "\\n"
+                    if valid:
+                        command += "n\\n"
+                    os.write(master, command.encode().replace(b"\\n", b"\n"))
+                    deadline = time.monotonic() + 25
+                    while time.monotonic() < deadline:
+                        if select.select([master], [], [], 0.2)[0]:
+                            try:
+                                data = os.read(master, 65536)
+                            except OSError:
+                                break
+                            if not data:
+                                break
+                            output.extend(data)
+                        if proc.poll() is not None:
+                            break
+                    proc.wait(timeout=max(1, deadline - time.monotonic()))
+                finally:
+                    if proc.poll() is None:
+                        proc.kill()
+                        proc.wait()
+                    os.close(master)
+                text = output.decode("utf-8", "replace")
+                self.assertEqual(proc.returncode, 0 if valid else 2, text)
+                if valid:
+                    self.assertIn("Review", text)
+                    self.assertIn("Cancelled.", text)
+                else:
+                    self.assertIn("Lifetime must be between 1 second and 24h", text)
+                    self.assertNotIn("Review", text)
+                self.assertNotIn("frp-enroll-bulk", text)
+                self.assertFalse((Path(self.tmp) / "var/lib/drlink/bootstrap").exists())
+
     def test_public_help_allows_early_pipeline_close_without_traceback(self):
         root = Path(self.tmp)
         (root / "etc/drlink/config.json").unlink()
@@ -525,6 +683,7 @@ class CliFeatureScenarioRemediation(unittest.TestCase):
         payload = self._completion_payload()
         self.assertEqual(payload["names"], [])
         self.assertEqual(payload["local_services"], [])
+        self.assertEqual(payload["inventory"], {})
         self.assertTrue(payload["inventory_warning"])
         self.assertEqual(db.read_bytes(), b"not a SQLite database")
 
@@ -898,6 +1057,125 @@ frpctl_nav_workflow manage_host
         self.assertFalse(enabled.call_args.kwargs["default"])
         self.assertEqual(self.plane.conn.execute("SELECT enabled FROM agent_remote_services WHERE name='http'").fetchone()[0], 0)
 
+    def test_codex_audit_retired_parser_and_menu_help_routes_fail_closed(self):
+        retired = (
+            ["set", "access-assign"],
+            ["set", "access-public"],
+            ["show", "access-lists"],
+            ["show", "egress"],
+            ["show", "egress-tcp"],
+            ["show", "egress-tcp-entry", "audit-item"],
+            ["test", "egress", "audit-item", "group", "edge"],
+        )
+        before = self.plane.current_revision()
+        for tokens in retired:
+            for form in (tokens, tokens + ["?"]):
+                with self.subTest(form=form):
+                    result = grammar.match(form, "server")
+                    self.assertEqual(result.get("status"), "error", result)
+                    self.assertEqual(result.get("exit_code"), 2, result)
+            help_text = grammar.help_text(tokens, "server")
+            self.assertTrue(help_text.startswith("Unknown help topic:"), help_text)
+        for tokens in (["menu", "clients"], ["menu", "services"]):
+            for form in (tokens, tokens + ["?"]):
+                result = grammar.match(form, "server")
+                self.assertEqual(result.get("status"), "error", result)
+                self.assertEqual(result.get("exit_code"), 2, result)
+                self.assertIn("Guided menu", result.get("message", ""))
+        self.assertEqual(self.plane.current_revision(), before)
+
+    def test_codex_audit_nested_help_and_policy_parent_discovery_are_complete(self):
+        for tokens in (["set", "enrollment", "zero-touch"],
+                       ["set", "enrollment", "manual"],
+                       ["system", "certificate", "issue"],
+                       ["system", "certificate", "renew"],
+                       ["system", "credential", "deny-oauth"],
+                       ["system", "credential", "approve-oauth"]):
+            with self.subTest(tokens=tokens):
+                text = grammar.help_text(tokens, "server")
+                self.assertFalse(text.startswith("Unknown help topic:"), text)
+                self.assertIn(" ".join(tokens[:2]), text)
+        for resource, example in (
+            ("remote-access", "set remote-access block-partner"),
+            ("internet-access", "set internet-access github-https"),
+            ("ai-access", "set ai-access allow-ops"),
+        ):
+            result = grammar.match(["set", resource, "?"], "server")
+            self.assertEqual(result.get("status"), "ok", result)
+            text = result.get("message", "")
+            self.assertIn("Create or edit", text)
+            self.assertIn(example, text)
+            self.assertIn("enabled", text)
+            self.assertIn("disabled", text)
+
+    def test_codex_audit_remote_service_help_explains_object_and_endpoint_ownership(self):
+        text = grammar.help_text(["remote-services"], "client")
+        self.assertIn("Server-defined TCP or Fixed TCP Service Object", text)
+        self.assertIn("Server allocates/reserves the public endpoint", text)
+        self.assertIn("do not choose a public port", text)
+        command = catalog.find(["set", "remote-service"])
+        self.assertIsNotNone(command)
+        detail = command["detail"]
+        self.assertIn("Server-defined TCP or Fixed TCP Service Object", detail)
+        self.assertIn("does not choose a public port", detail)
+
+    def test_codex_audit_system_status_exposes_all_server_settings_read_only(self):
+        cfg = Path(self.tmp) / "etc/drlink/config.json"
+        cfg.write_text(json.dumps({
+            "role": "server",
+            "public_ip": "203.0.113.10",
+            "public_hostname": "access.example.test",
+            "bootstrap_hostname": "bootstrap.example.test",
+            "client_installer_url": "https://install.example.test/install.sh",
+            "windows_client_installer_url": "https://install.example.test/install.ps1",
+        }) + "\n", encoding="utf-8")
+        before = self.plane.current_revision()
+        env = dict(os.environ, FRP_CTL_TEST_ROOT=self.tmp, FRP_DEPLOY_TEST_ROOT=self.tmp)
+        proc = subprocess.run(
+            ["bash", str(ROOT / "tools/frpctl"), "system", "status"],
+            env=env, text=True, capture_output=True, timeout=30,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("Server Settings", proc.stdout)
+        self.assertIn("access.example.test", proc.stdout)
+        self.assertIn("bootstrap.example.test", proc.stdout)
+        self.assertIn("https://install.example.test/install.sh", proc.stdout)
+        self.assertIn("https://install.example.test/install.ps1", proc.stdout)
+        self.assertEqual(self.plane.current_revision(), before)
+        menu = catalog.render_navigation_menu("server.system.settings", title="Server Settings")
+        self.assertIn("Show current Server settings", menu)
+
+    def test_codex_audit_unprivileged_version_fails_with_canonical_recovery(self):
+        with tempfile.TemporaryDirectory(prefix="drlink-version-permission-") as temp:
+            root = Path(temp)
+            state = root / "etc/drlink"
+            state.mkdir(parents=True)
+            (state / "config.json").write_text('{"role":"server"}\n', encoding="utf-8")
+            state.chmod(0)
+            try:
+                env = dict(os.environ, FRP_CTL_TEST_ROOT=temp, FRP_DEPLOY_TEST_ROOT=temp)
+                proc = subprocess.run(
+                    ["bash", str(ROOT / "tools/drlink"), "system", "version"],
+                    env=env, text=True, capture_output=True, timeout=30,
+                )
+            finally:
+                state.chmod(0o755)
+            self.assertNotEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            self.assertIn("cannot read the install state", proc.stderr)
+            self.assertIn("Retry with: sudo drlink", proc.stderr)
+            self.assertNotIn("Source HEAD: unknown", proc.stdout + proc.stderr)
+
+    def test_codex_audit_generated_guidance_uses_executable_cli_and_current_nouns(self):
+        create_client = (ROOT / "tools/frp-create-client").read_text(encoding="utf-8")
+        common = (LIB / "frp-common.sh").read_text(encoding="utf-8")
+        self.assertIn("drlink system synchronize", create_client)
+        self.assertNotIn("apply with:\\n  system synchronize", create_client)
+        self.assertIn("Do not re-enroll Agent Hosts", common)
+        self.assertNotIn("Do not re-enroll clients", common)
+        update_help = grammar.help_text(["update"], "server")
+        self.assertIn("does not re-enroll Agent Hosts", update_help)
+        self.assertNotIn("does not re-enroll clients", update_help)
+
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="drlink-cli-fcs-remediation-")
         root = Path(self.tmp)
@@ -1194,6 +1472,7 @@ frpctl_nav_workflow manage_host
             (["unset", "remote-access", "?"], "unset remote-access <RULE>", "policy"),
             (["unset", "internet-access", "?"], "unset internet-access <RULE>", "policy"),
             (["unset", "ai-access", "?"], "unset ai-access <RULE>", "policy"),
+            (["unset", "mcp-tls", "?"], "unset mcp-tls", "purge"),
             (["system", "diff", "?"], "system diff <REVISION_A> <REVISION_B>", "configuration"),
             (["system", "backup", "?"], "system backup [<path>]", "validate"),
         )
@@ -1203,6 +1482,14 @@ frpctl_nav_workflow manage_host
             text = result.get("message") or ""
             self.assertIn(usage, text, (tokens, text))
             self.assertIn(child, text, (tokens, text))
+
+        tls = grammar.match(["unset", "mcp-tls", "?"], role="server")
+        tls_text = tls.get("message") or ""
+        self.assertIn("Risk: outage", tls_text)
+        self.assertIn("retaining DRLink-owned certificate", tls_text)
+        self.assertIn("explicit command is sufficient approval", tls_text)
+        self.assertIn("system certificate status", tls_text)
+        self.assertIn("Additional forms:", tls_text)
 
         managed = grammar.match(
             ["unset", "managed-host", "?"], role="server", names=["host-a"]
@@ -1317,7 +1604,9 @@ frpctl_nav_workflow manage_host
             "sudo -n drlink system version",
             "conditional_y_n",
             "Do **not** invent a universal TTY-only rule",
-            "ChatGPT itself executes both sides of every AI-assisted lane",
+            "The owner-selected model executor performs BOTH Direct and AI-assisted lanes itself",
+            "ISSUE_165_PRIMARY_PERSONA_EXECUTOR=CODEX",
+            "docs/CODEX_DUAL_ROLE_TEST_PROTOCOL.md",
             "<!-- CLI_FEATURE_SCENARIO_FINAL_START -->",
             "<!-- CLI_FEATURE_SCENARIO_FINAL_END -->",
         ):

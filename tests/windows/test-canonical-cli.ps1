@@ -42,6 +42,22 @@ try {
     Assert-FrpTrue ($help -notmatch '(?m)^  start\s') 'help hides legacy root start'
     Assert-FrpTrue ($help -notmatch '(?m)^  stop\s') 'help hides legacy root stop'
 
+    # A Windows Agent must guide an operator to the Server when the requested
+    # access policy is Server-owned, matching Linux Agent role/context semantics.
+    foreach ($case in @(
+        @('set', 'remote-access', 'Remote Access policy'),
+        @('unset', 'remote-access', 'Remote Access policy'),
+        @('set', 'internet-access', 'Internet Access policy'),
+        @('unset', 'internet-access', 'Internet Access policy'),
+        @('show', 'remote-access', 'Remote Access policy'),
+        @('show', 'internet-access', 'Internet Access policy')
+    )) {
+        $wrong = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath $case[0] $case[1] e2e-wrong-role 2>&1 | Out-String
+        Assert-FrpTrue ($LASTEXITCODE -ne 0) ("server-only " + $case[0] + " " + $case[1] + " rejects on Agent")
+        Assert-FrpTrue ($wrong.Contains($case[2]) -and $wrong.Contains('DRLink Server')) ("server-only guidance: " + $case[1])
+        Assert-FrpTrue ($wrong.Contains('No changes were applied.')) ("server-only action is explicitly atomic: " + $case[1])
+    }
+
     $list = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath show remote-services 2>&1 | Out-String
     Assert-FrpTrue ($LASTEXITCODE -eq 0) 'show remote-services exits 0'
     Assert-FrpTrue ($list -match 'rdp') 'show remote-services shows rdp'
@@ -65,7 +81,7 @@ try {
     $doctorTxt = Get-ChildItem -Path $extractDir -Recurse -Filter 'doctor.txt' | Select-Object -First 1
     Assert-FrpTrue ($null -ne $doctorTxt) 'support bundle contains doctor.txt'
     $doctorBody = Get-Content -LiteralPath $doctorTxt.FullName -Raw
-    Assert-FrpTrue ($doctorBody -match 'Data Relay Link client diagnostics') 'doctor.txt has diagnostics header'
+    Assert-FrpTrue ($doctorBody -match 'Data Relay Link Agent Host diagnostics') 'doctor.txt has diagnostics header'
     Assert-FrpTrue ($doctorBody -match 'MISS|Enrolled|Doctor|diagnostics') 'doctor.txt has diagnostic content'
     Assert-FrpTrue ($doctorBody -notmatch '^\s*[01]\s*$') 'doctor.txt is not bare exit code'
 
@@ -80,7 +96,7 @@ try {
     $projCheck = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath system update product -Check 2>&1 | Out-String
     Assert-FrpTrue ($LASTEXITCODE -eq 0) 'WINDOWS_UPDATE_PROJECT_CHECK_SEMANTICS exit 0'
     Assert-FrpTrue ($projCheck -match 'Data Relay Link project') 'WINDOWS_UPDATE_PROJECT_CHECK_SEMANTICS shows project'
-    Assert-FrpTrue ($projCheck -match 're-run the Windows client installer') 'WINDOWS_UPDATE_PROJECT_CHECK_SEMANTICS installer path'
+    Assert-FrpTrue ($projCheck -match 'verified immutable repository package') 'WINDOWS_UPDATE_PROJECT_CHECK_SEMANTICS source path'
     Assert-FrpTrue ($projCheck -notmatch 'Would download:') 'WINDOWS_UPDATE_PROJECT_CHECK_SEMANTICS omits engine download'
     Assert-FrpTrue ($projCheck -notmatch 'FRP engine') 'WINDOWS_UPDATE_PROJECT_CHECK_SEMANTICS omits engine section'
 
@@ -104,7 +120,7 @@ try {
         $projApply = & $hostExe -NoProfile -ExecutionPolicy Bypass -File $clientPath system update product 2>&1 | Out-String
         Assert-FrpTrue ($LASTEXITCODE -ne 0) 'update project without source fails'
         Assert-FrpTrue ($projApply -match 'PROJECT_UPDATE_USE_INSTALLER') 'update project FAILURE_CLASS=PROJECT_UPDATE_USE_INSTALLER'
-        Assert-FrpTrue ($projApply -match 're-run the canonical Windows client installer') 'update project guides to installer'
+        Assert-FrpTrue ($projApply -match 'FRP_WINDOWS_PROJECT_SRC' -and $projApply -match 'docs/UPGRADE.md') 'update project guides to reviewed source'
     } finally {
         if ($null -ne $prevSrc -and $prevSrc -ne '') {
             $env:FRP_WINDOWS_PROJECT_SRC = $prevSrc

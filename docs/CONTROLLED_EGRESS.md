@@ -303,20 +303,23 @@ An existing established proxy/TCP connection is not implicitly terminated solely
 
 ## 19. Rule creation safety
 
-New Internet Access rules are created disabled at the bottom.
+Internet Access Rules have no position or priority. The first Rule must specify
+`mode whitelist`; later Rules may omit the already configured mode. A guided
+workflow reviews activation, while a complete one-shot form specifies `enabled`
+or `disabled` explicitly.
 
-Enabling or moving a rule runs:
+Creating, editing, enabling, or disabling a Rule runs:
 
 ```text
 context validation
-shadow/conflict analysis
 policy-impact analysis
-access-broadening confirmation when required
+confirmation for calculated access widening or material narrowing
 ```
 
 ## 20. Object changes
 
-Object/Object Group mutation can change Internet Access without changing a Rule row.
+Network/Service Object or Group mutation can change Internet Access without
+changing a Rule. Referenced-object edits receive the same security-impact review.
 
 Example:
 
@@ -331,42 +334,60 @@ after:
   openai.com
 ```
 
-If an enabled ALLOW rule references `external2`, adding `openai.com` is access broadening and requires impact analysis/confirmation.
+If an enabled WHITELIST Rule references the Network Group `external2`, adding
+`openai.com` can broaden access and requires impact analysis/confirmation.
+Removing an actually authorized destination can materially narrow access and
+also requires confirmation. Safe creation and no-change paths need no extra
+confirmation; cancellation preserves state.
 
-## 21. Shadowing
+## 21. Overlapping Rules
 
-Overlapping rules are valid.
+Overlapping Rules are valid and are evaluated without ordering. An enabled
+WHITELIST Rule matching the source, destination, and Service authorizes that
+request, subject to the independent DNS/transport security checks. Effective
+authorization is the union of enabled Rule matches. There are no per-rule DENY
+actions or later Rules that override an earlier match.
 
 Example:
 
 ```text
-10 allow-web   internal1 → external2 → HTTPS/443 → ALLOW
-20 block-openai internal1 → openai    → HTTPS/443 → DENY
+allow-web    internal1 → external2 → https    enabled
+allow-openai internal1 → openai    → https    enabled
 ```
 
-If `openai` becomes a member of `external2`, rule 20 can become shadowed. The operator is warned before the effective behavior is broadened.
+If `openai` is also a member of `external2`, either matching Rule can authorize
+it. Disabling or deleting `allow-openai` does not deny that destination while
+`allow-web` still authorizes it. Review every matching Rule and Group membership
+before changing access; use the policy test to inspect the resulting matches.
+No Policy, no matching enabled Rule, or disabled enforcement means DENY.
 
 ## 22. Test/explain
 
-Canonical example:
+Use existing Network Object/Group and Service Object/Group names. Inspect them
+with `show network-objects`, `show network-groups`, `show service-objects`, and
+`show service-groups`; `show internet-access` lists the current policy. For this
+example, `protected-host` is a valid source, `google` is an FQDN destination
+Network Object for `google.com`, and `https` is a TCP Service Object on port 443.
+Internet Access destinations cannot be Managed Hosts; UDP Services are rejected.
+
+Canonical example using those names:
 
 ```text
-test internet-access 10.10.10.20 google.com 443 https
+test internet-access source protected-host destination google service https
 ```
 
 The result should show:
 
 ```text
-Source Network Object matches
-Destination Network Object matches
-Service Object matches
-DNS/security validation
+Source / Destination / Service selectors
 Policy Mode / Enforcement
-Enabled Rule match / no match
-Final effective action
+Matched Rules
+Effective Result
 ```
 
-`test` is policy explanation unless explicitly documented as a live connection test.
+`test` explains configured policy without mutation. ALLOW is not live traffic
+evidence: runtime DNS/address safety, connection establishment, and CONNECT/SNI
+validation must still succeed.
 
 ## 23. Audit
 

@@ -78,7 +78,7 @@ printf 'exit\n' | python3 "$ROOT/lib/frp_ctl_repl.py" --frpctl /bin/true \
   >"$WORK/inventory.out" 2>"$WORK/inventory.err" || fail "inventory-warning REPL failure"
 unset FRP_CTL_GRAMMAR_PAYLOAD
 [[ "$(grep -c 'completion inventory could not be loaded' "$WORK/inventory.err" || true)" -eq 1 ]] || fail "inventory warning count"
-grep -qE 'Run: (doctor|system diagnostics)' "$WORK/inventory.err" || fail "inventory doctor hint"
+grep -qF 'Run: system diagnostics' "$WORK/inventory.err" || fail "inventory diagnostics hint"
 ! grep -Eq 'Traceback|JSONDecodeError|registry.json' "$WORK/inventory.err" || fail "inventory details leaked"
 pass COMPLETION_INVENTORY_WARNING_SAFE
 
@@ -94,13 +94,13 @@ fake=FakeReadline(); real=repl.readline; repl.readline=fake
 try:
     editor=repl.LineEditor({'role':'server','names':[],'clients':[],'services':{},'local_services':[]})
     out=io.StringIO()
-    with contextlib.redirect_stdout(out): editor.display_matches('', ['client','installer-url'], 13)
+    with contextlib.redirect_stdout(out): editor.display_matches('', ['managed-host','network-object'], 14)
     first=out.getvalue()
-    assert 'client' in first and 'installer-url' in first
+    assert 'managed-host' in first and 'network-object' in first
     assert first.count('drlink> set ') == 1, first
     assert fake.line == 'set '
     out=io.StringIO()
-    with contextlib.redirect_stdout(out): editor.display_matches('', ['client','installer-url'], 13)
+    with contextlib.redirect_stdout(out): editor.display_matches('', ['managed-host','network-object'], 14)
     assert out.getvalue() == '', out.getvalue()
 finally:
     repl.readline=real
@@ -127,10 +127,10 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(sys.argv[1]) / 'lib'))
 import frp_ctl_repl as repl
-assert repl._should_refresh_inventory(['restore', 'backup', '/tmp/x.tar'])
+assert repl._should_refresh_inventory(['system', 'restore', '/tmp/x.tar'])
 assert repl._should_refresh_inventory(['system', 'update', 'product'])
-assert repl._should_refresh_inventory(['system', 'backup', 'create'])
-assert not repl._should_refresh_inventory(['status'])
+assert repl._should_refresh_inventory(['system', 'backup'])
+assert not repl._should_refresh_inventory(['show', 'status'])
 assert not repl._should_refresh_inventory(['help'])
 PY
 pass REPL_REFRESH_AFTER_MUTATIONS

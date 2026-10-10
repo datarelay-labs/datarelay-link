@@ -124,6 +124,7 @@ binary usr/local/bin/frps - - none
 version etc/drlink/version - - none
 protected etc/frp/server_token - - none
 protected var/lib/drlink/registry.json - - none
+protected var/lib/drlink/runtime/client-inventory.json - - none
 protected var/lib/drlink/access-control.json - - none
 protected var/lib/drlink/egress-control.json - - none
 protected var/lib/drlink/service-profiles.json - - none

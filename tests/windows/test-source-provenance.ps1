@@ -47,12 +47,18 @@ try {
     $output = & $exe -NoProfile -File (Join-Path (Get-FrpToolsDir) 'FrpClient.ps1') system version 2>&1 | Out-String
     Assert-FrpEqual 0 $LASTEXITCODE 'installed version exit'
     Assert-FrpTrue ($output.Contains("Source HEAD: $candidate")) 'public exact source survives temporary payload removal'
+    Assert-FrpTrue (-not $output.Contains('Source provenance is not verified')) 'verified Source HEAD does not recommend unnecessary reinstall'
 
     # Different local source content must never inherit old exact-candidate identity.
     $m = @{project_version='2.4.0';channel='development';git_ref=('c' * 40)}
     $m | ConvertTo-Json | Set-Content -LiteralPath (Join-Path (Get-FrpWindowsRoot) 'release-manifest.json')
     Write-FrpInstalledVersion
     Assert-FrpTrue ((Get-Content -LiteralPath (Get-FrpVersionPath) -Raw).Contains('SOURCE_HEAD=UNKNOWN')) 'changed unverified source fails closed'
+    $unverifiedOutput = & $exe -NoProfile -File (Join-Path (Get-FrpToolsDir) 'FrpClient.ps1') system version 2>&1 | Out-String
+    Assert-FrpEqual 0 $LASTEXITCODE 'unverified installed version command returns an operator result'
+    Assert-FrpTrue ($unverifiedOutput.Contains('Source HEAD: UNKNOWN') -and $unverifiedOutput.Contains('Next action:')) 'unknown Source HEAD explains how to recover qualified provenance'
+    Assert-FrpTrue ($unverifiedOutput.Contains('FRP_WINDOWS_PROJECT_SRC') -and $unverifiedOutput.Contains('drlink system update product')) 'unknown Source HEAD names the supported update command and verified package selector'
+    Assert-FrpTrue ($unverifiedOutput.Contains('keep release qualification on HOLD')) 'local package refresh must not falsely imply qualified provenance'
 
     # An altered outer payload cannot acquire the Server's qualified source.
     $env:FRP_WINDOWS_BOOTSTRAP_PATH = Join-Path (Get-FrpWindowsRoot) 'altered-bootstrap.ps1'

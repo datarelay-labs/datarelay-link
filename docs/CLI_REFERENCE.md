@@ -165,7 +165,7 @@ set service-group web-services members http,https
 set permission-object read-only permissions host-info,process-read,file-read
 set permission-group operators members read-only,operator
 
-set ai-access allow-read mode whitelist source automation-ai destination ubuntu-prod permission read-only paths /var/lib/vendor/** enabled
+set ai-access allow-read mode whitelist source automation-ai destination ubuntu-prod permission read-only paths '/var/lib/vendor/**' enabled
 ```
 
 ## 4. Access Policy commands
@@ -178,6 +178,10 @@ Remote Access:
 set remote-access block-partner mode blacklist source partner-office destination ubuntu-prod service ssh enabled
 ```
 
+Rule detail uses `Service` for the selected Service Object or Service Group name,
+which can be reused in `test` or an edit. `Service details` shows its expanded
+protocol/port values; those values do not replace the named selector.
+
 Internet Access:
 
 ```text
@@ -188,7 +192,7 @@ AI Access:
 
 ```text
 set ai-access claude-prod mode whitelist source claude destination production-servers permission read-only enabled
-set ai-access allow-read mode whitelist source automation-ai destination ubuntu-prod permission read-only paths /var/lib/vendor/**,/opt/app/** enabled
+set ai-access allow-read mode whitelist source automation-ai destination ubuntu-prod permission read-only paths '/var/lib/vendor/**',/opt/app/** enabled
 ```
 
 File permissions (`file-read` / `file-write` / `file-upload` / `file-download`) use rule-bound `paths` scopes. Omit `paths` on edit to preserve existing scopes; use `paths -` or `paths none` to clear. Missing scopes remain fail-closed at runtime (no unrestricted filesystem default).
@@ -275,9 +279,11 @@ unset mcp-tls
 unset mcp-tls purge
 ```
 
-`unset mcp-tls` clears TLS intent while retaining DRLink-owned certificate and ACME account material. `unset mcp-tls purge` removes that retained material only after interactive y/N confirmation; non-interactive use fails closed.
+`unset mcp-tls` clears TLS intent and removes the active public MCP route while retaining DRLink-owned certificate and ACME account material. Active MCP/OAuth connections may be interrupted; the explicit command approves this change without an additional confirmation prompt. Check `system certificate status` and `system diagnostics mcp` afterward. `unset mcp-tls purge` removes that retained material only after interactive y/N confirmation; non-interactive use fails closed.
 
 Referenced Objects/Groups/Identities/Managed Hosts are protected from deletion until references are removed.
+
+For Permission dependencies, inspect `show ai-access` and `show ai-access <RULE>`; inspect `show permission-groups` and `show permission-group <GROUP>` for Object membership. A blocked `unset permission-object <PERMISSION>` or `unset permission-group <GROUP>` lists the references before confirmation and applies no changes. Review each referencing Rule with `set ai-access <RULE>` to choose a replacement permission, or explicitly remove that Rule with `unset ai-access <RULE>`. Use `set permission-group <GROUP>` to review membership without the Object being retired. Disabling a Rule retains its reference. Review access impact and the required confirmations, then retry deletion only when all references have been removed. No Permission `references` subcommand is required.
 
 `unset enrollment <ENROLLMENT>`, `unset network-object`, `unset network-group`, `unset service-object`, `unset service-group`, `unset permission-object`, `unset permission-group`, and `unset ai-identity` are destructive lifecycle operations and require explicit `y/N` confirmation after existence/reference validation. Default is No and cancellation applies no change. These are normal `y_n` flows rather than TTY-only flows, so controlled automation may provide `y`/`yes` on stdin; there is no public hidden environment-variable or `--yes` bypass for these commands. Policy Rule deletion uses effect-aware `conditional_y_n`: confirmation is required when the calculated change broadens or materially narrows access, while full `unset <plane>-access policy` reset always requires explicit confirmation.
 
@@ -337,6 +343,16 @@ system update check-engine
 system support-bundle
 system uninstall
 ```
+
+Restore validates the archive before offering live replacement confirmation.
+After replacement, backup-time host presence and proxy health require fresh
+Agent verification; reconnect reconciliation reapplies the Agent runtime while
+preserving its identity and allocated endpoints.
+Connected Agents also reconcile when the Server lacks current Remote Service
+verification. A heartbeat alone never establishes service health.
+
+`system status` is the detailed Server read-only view. In addition to runtime/control-plane health, it shows the current public hostname, bootstrap hostname, Linux/macOS Agent installer source, and Windows Agent installer source, including their automatic/default fallback semantics. `show status` remains the role-aware summary.
+
 
 `system certificate status` is the single public MCP TLS/certificate status surface. Configure TLS intent with `set mcp-tls ...`; there is no separate MCP TLS status read command.
 
@@ -398,7 +414,10 @@ Agent one-shot example:
 
 ```text
 set remote-service ssh-access destination this-host service ssh enabled
+
 ```
+
+`SERVICE` selects a Server-defined TCP or Fixed TCP Service Object. The Server allocates and reserves the public endpoint; the Agent does not choose a public port.
 
 Relay example executed on `branch-gateway`:
 
@@ -445,7 +464,7 @@ Status   : DEGRADED
 Endpoint : Pending allocation
 ```
 
-After reconnect, DRLink synchronizes, allocates/activates, and transitions to `HEALTHY`.
+After reconnect, DRLink synchronizes, allocates/activates, and transitions to `HEALTHY` only when the current runtime generation is verified. If stored state says `HEALTHY` but the active Agent generation cannot be verified, `show remote-service <NAME>` remains `DEGRADED` and explains that verification is unavailable. The operator can follow `system diagnostics`, `system synchronize`, then `show remote-service <NAME>`; a `DEGRADED` projection alone does not establish that real target traffic is down.
 
 ## 12. Fixed TCP
 
@@ -490,6 +509,16 @@ stdin terminator:
 ```
 
 Server Bundle and Agent Bundle are independently atomic within their current CLI context. Cross-context distributed atomicity is not provided.
+
+An exported Bundle carries `sourceRevision`. If the revision is outdated, `test configuration` and `system diff configuration` report `WARNING: STALE_CONFIGURATION_REVISION` with the base/current values. A syntactically valid Bundle is **not** necessarily safe to apply; a stale snapshot is rejected by the authoritative apply transaction. Re-export and review the new state rather than applying an old copy.
+
+For two administrators editing the same Network Object, first read the current `Configuration revision` from `show network-object <NAME>` and bind the proposed mutation using the existing public one-shot guard:
+
+```bash
+sudo env DRLINK_EXPECTED_REVISION=42 drlink set network-object branch-dns value 198.51.100.20
+```
+
+A concurrent change causes `REVISION_CONFLICT` and applies nothing. Without that explicit user-reviewed revision, independently prepared sequential edits can still overwrite one another; the internal per-object guard additionally rejects overlapping stale writes. Use a freshly read revision for each intentional edit.
 
 ## 15. Wrong-context errors
 

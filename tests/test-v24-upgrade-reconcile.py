@@ -167,6 +167,37 @@ class UpgradeReconcileTests(unittest.TestCase):
     def _apply(self):
         return UR.apply_upgrade_reconciliation(self.plane, self.registry, connected=False)
 
+    def test_allocator_startup_reconciles_runtime_generation(self):
+        from types import SimpleNamespace
+        self.plane.compile_runtime()
+        before = self.plane.status()["revision"]
+        result = UR.reconcile_from_allocator(SimpleNamespace(cfg={"control_plane_root": self.tmp}))
+        self.assertTrue(result.get("ok"), result)
+        self.assertTrue(result.get("applied"), result)
+        status = self.plane.status()
+        self.assertGreater(status["revision"], before)
+        self.assertFalse(status.get("mismatch"), status)
+        for generation in status["generations"].values():
+            self.assertEqual(generation["generation"], status["revision"])
+
+    def test_allocator_startup_reports_runtime_compile_failure(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        self.plane.compile_runtime()
+        with patch.object(ControlPlane, "compile_runtime", side_effect=RuntimeError("fixture compile failure")):
+            result = UR.reconcile_from_allocator(SimpleNamespace(cfg={"control_plane_root": self.tmp}))
+        self.assertFalse(result.get("ok"), result)
+        self.assertTrue(result.get("applied"), result)
+        self.assertIn("startup runtime compilation failed", result.get("error", ""))
+        self.assertTrue(self.plane.status().get("mismatch"))
+
+        # A later start must recover the committed revision even though the
+        # registry reconciliation itself is now idempotent.
+        retry = UR.reconcile_from_allocator(SimpleNamespace(cfg={"control_plane_root": self.tmp}))
+        self.assertTrue(retry.get("ok"), retry)
+        self.assertFalse(retry.get("applied"), retry)
+        self.assertFalse(self.plane.status().get("mismatch"))
+
     def test_UPGRADE_REGISTRY_CLIENT_BACKFILL(self):
         before = self.plane.conn.execute("SELECT COUNT(*) FROM clients").fetchone()[0]
         self.assertEqual(int(before), 1)

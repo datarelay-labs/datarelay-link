@@ -88,7 +88,7 @@ def reconcile_once(root: Optional[str] = None) -> dict:
         ensure_v2_schema(plane.conn)
         if not force_sync and not reconciliation_needed(plane):
             return {"status": "HEARTBEAT", "updated": 0}
-        return synchronize_agent_remote_services(plane, root=root)
+        return synchronize_agent_remote_services(plane, root=root, force_runtime=force_sync)
     finally:
         plane.close()
 

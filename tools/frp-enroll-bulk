@@ -17,6 +17,17 @@ ROOT = os.environ.get('FRP_DEPLOY_TEST_ROOT', '')
 CONFIG = Path(ROOT + '/etc/drlink/config.json')
 
 
+class PublicBulkArgumentParser(argparse.ArgumentParser):
+    """Guide invalid bulk input back to the public enrollment command."""
+
+    def error(self, message):
+        self.exit(
+            2,
+            'ERROR: %s. No enrollments were issued.\n'
+            'Retry: sudo drlink set enrollment bulk\n' % message,
+        )
+
+
 def load_create_client():
     path = Path(__file__).resolve().parent / 'frp-create-client'
     spec = importlib.util.spec_from_loader(
@@ -70,7 +81,7 @@ def _audit_emit(event, **kwargs):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description='Create independent one-time enrollment commands')
+    parser = PublicBulkArgumentParser(description='Create independent one-time enrollment commands')
     parser.add_argument('csv_path', nargs='?', metavar='CSV', help='CSV file with label,ssh_user,note columns')
     parser.add_argument('--count', type=int, help='number of management-only enrollments')
     parser.add_argument('--csv', dest='csv_option', metavar='PATH', help='CSV file with label,ssh_user,note columns')
@@ -205,7 +216,10 @@ def main(argv=None):
                 command = zt_mod.pinned_ca_manual_linux_command(
                     installer, allocator_url, ca_fp, env
                 )
-            issued.append((label, str(ticket_record.get('expires_at')), command))
+            # Public inventory deduplicates the paired enrollment by the
+            # *bootstrap ticket ID*. Emit that selector (not the internal
+            # Enrollment Code ID) so CSV rows work with show/unset enrollment.
+            issued.append((label, str(ticket_record['id']), str(ticket_record.get('expires_at')), command))
             _audit_emit(
                 'enrollment.created',
                 details={'label': label, 'batch_id': batch_id, 'ticket_id': ticket_id},
@@ -245,10 +259,11 @@ def main(argv=None):
         raise SystemExit(f'ERROR: bulk enrollment failed; issued tickets from this batch were revoked: {exc}')
 
     print('This credential will not be shown again.', file=sys.stderr)
-    print('label,expires,bootstrap_command')
-    for label, expires, command in issued:
+    print('label,enrollment_id,expires,bootstrap_command')
+    for label, enrollment_id, expires, command in issued:
         print(','.join([
             csv_quote(label),
+            csv_quote(enrollment_id),
             csv_quote(expires),
             csv_quote(command),
         ]))

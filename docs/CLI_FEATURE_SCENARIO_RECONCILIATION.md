@@ -1,12 +1,20 @@
 # Data Relay Link — Feature ↔ CLI/AI ↔ Operator Workflow Reconciliation
 
 > **Document role:** Canonical non-destructive audit contract for product capability ↔ public CLI + AI-assisted operator support ↔ operator workflow coherence
-> **Executor:** ChatGPT acting as real operator/user personas plus a logically separate auditor
+> **Executor:** owner-selected ChatGPT or Codex as real User/Operator, AI-supported User, Codex AI-adviser and independent auditor; **Issue #165 explicitly selects CODEX for TEST ONLY**, and ChatGPT for product fixes.
 > **Scope:** feature/CLI/AI-assisted workflow completeness, uniqueness, discoverability, terminology, procedure, structure, safety contract, recovery guidance, and audit cleanup
 > **Target:** v2.4 and later until superseded
 > **Execution boundary:** this audit is **runtime non-destructive**. It never changes Data Relay Link product state.
 > **Release relationship:** release qualification may consume a completed reconciliation result, but candidate installation/lifecycle qualification belongs to release/FULL_USER_E2E workflows
 > **Companion:** `CLI_EXHAUSTIVE_AUDIT.md`
+
+### Current owner-selected Codex executor — Issue #165
+
+For this Work Packet, the explicit owner instruction controls executor selection: **CODEX executes BOTH the Direct CLI user role AND the AI-assisted user role for the SAME feature, scenario, and negative/recovery steps.** In the AI-assisted lane, Codex also acts as a separate AI support persona. Only ChatGPT Chat implements fixes. See `docs/CODEX_DUAL_ROLE_TEST_PROTOCOL.md`.
+
+The Codex auditor reads the complete canonical contract, but fresh **different Codex thread IDs** act as Direct User, AI-supported User, and AI Adviser, with no inherited auditor/source/test-answer context. These threads belong to **one locked audit RUN_ID**, not competing audits. AI Adviser sees only the goal and the AI user's already-observed public CLI output; its first answer is recorded unedited. Same starting environment and outcome are compared; `DIRECT_PASS` without a genuine AI mirror **is not PASS**. No external AI/model/service is required: all three actors are Codex. A role reset in one already-informed auditor context does not establish knowledge isolation.
+
+This owner override supersedes generic passages below that refer to ChatGPT as the acting test persona. It **does not** change the read-only FCS boundary, alter any security denial, authorize Full User E2E, permit Codex source edits, or relax mandatory feature/command coverage. Preflight readiness must be GO before a new Codex acceptance run.
 
 ## 1. Exact execution trigger
 
@@ -110,7 +118,7 @@ Update the active `[AI Work]` GitHub Issue **once, after the audit has exhausted
 
 The primary executor is always a **realistic operator/user persona**, never a shell/Python test wrapper.
 
-**ChatGPT itself executes both sides of every AI-assisted lane. No external AI executor, second model, plugin, or separate AI session is required.** Keep the roles logically separate: first act as the operator and supply only the natural-language goal plus user-visible product output, then act as the AI assistant using only that supplied information, then return to the operator role and validate the guidance against the public `drlink` surface. External AI unavailability is not an AI-lane blocker.
+**The owner-selected model executor performs BOTH Direct and AI-assisted lanes itself. For Issue #165 this executor is CODEX, not ChatGPT.** No different model, plugin or outside AI provider is needed. Because the auditor reads the canonical contract, fresh independently started Codex actor threads (not forks/resumes of the auditor) are required for truthful first-time Direct User, AI User and AI Adviser knowledge boundaries. Within one AI-assisted scenario resume the same AI Adviser thread for normal public-error recovery. The Codex AI User asks the adviser the natural-language goal, receives public-CLI-based advice, and follows it unedited when safe. See `docs/CODEX_DUAL_ROLE_TEST_PROTOCOL.md`. An unisolated role label or scripted answer does not count as an AI lane.
 
 For each applicable Feature and FCS:
 
@@ -136,7 +144,8 @@ Parallel execution means multiple independent **persona-led audit lanes** plus s
 
 ~~~text
 USER_ROLE_EXECUTION=REQUIRED
-PRIMARY_PERSONA_EXECUTOR=ChatGPT
+PRIMARY_PERSONA_EXECUTOR=OWNER_SELECTED_RUNTIME
+ISSUE_165_PRIMARY_PERSONA_EXECUTOR=CODEX
 SCRIPTED_USER_SCENARIO_EXECUTION=FORBIDDEN
 AUTOMATED_HARNESS_ROLE=SUPPLEMENTAL_ONLY
 DIRECT_USER_FEATURE_COVERAGE=100%
@@ -203,7 +212,8 @@ AUDIT_PROFILE=CLI_FEATURE_SCENARIO_RECONCILIATION
 AUDIT_SEMANTICS=FEATURE_CLI_AI_OPERATOR_WORKFLOW
 FIRST_ACTION=EXECUTE
 USER_ROLE_EXECUTION=REQUIRED
-PRIMARY_PERSONA_EXECUTOR=ChatGPT
+PRIMARY_PERSONA_EXECUTOR=OWNER_SELECTED_RUNTIME
+ISSUE_165_PRIMARY_PERSONA_EXECUTOR=CODEX
 SCRIPTED_USER_SCENARIO_EXECUTION=FORBIDDEN
 AUTOMATED_HARNESS_ROLE=SUPPLEMENTAL_ONLY
 DIRECT_USER_FEATURE_COVERAGE_REQUIRED=100%
@@ -1005,6 +1015,12 @@ ledger/execution-lanes.tsv
 
 `docs-example-ledger.tsv` must contain every mandatory active-document/generated-output surface listed in section 21 exactly once. Do not treat a grep transcript alone as a completed documentation ledger.
 
+### 22.1.1 Codex owner-selected paired-role receipts (Issue #165)
+
+Keep `ledger/fcs-results.tsv` and `ledger/feature-ledger.tsv` as existing authoritative ledgers. Add **supporting** `ledger/codex-dual-role-pairs.tsv` using the columns in `docs/CODEX_DUAL_ROLE_TEST_PROTOCOL.md`. For every applicable FCS-001..FCS-015 and discovered feature/CLI variant, record a Direct Codex user thread, a different AI-assisted Codex user thread and a different Codex AI-adviser thread within ONE RUN_ID. Capture equal goal/baseline hashes, public-only actor inputs, first AI reply, and actual role-specific public outcomes.
+
+Run the read-only **paired-ledger consistency validator** after capturing both lanes. The validator is an auditor-only supporting check and cannot manufacture persona/PASS evidence. `DIRECT_PASS` plus `AI_NOT_RUN`, a missing first answer, same/inherited auditor thread or unequal starting conditions **always forbids** `FINAL_RESULT=PASS`. Genuine context isolation and operator action are checked independently. No new Codex testing is allowed until approved lab readiness GO.
+
 ### 22.2 Canonical evidence authority and summary consistency
 
 The final summary and GitHub report must be **derived from machine-readable ledgers**, not manually re-counted from memory or prose files.
@@ -1417,6 +1433,9 @@ READ THE COMPLETE CURRENT CANONICAL CONTRACT
 ~~~
 
 Do not turn findings into pauses during an individual audit run. Record them and continue until that run is exhausted. Once the run is reported/read back and offboarded, findings are an immediate remediation trigger for an active release-quality workstream, not a reason to return control to the owner. ChatGPT must implement the fixes, test them, and launch the next full run without waiting for another owner prompt. A subset PASS, targeted regression PASS, CI PASS, or a single audit pass never terminates the closed loop.
+
+**Issue #165 owner-selected handoff exception:** ChatGPT Chat directly implements frozen findings and focused regressions; only Codex is the real-user/AI-assisted TEST-ONLY executor of the next FCS or Full E2E audit, and only AFTER the owner-authorized cleanroom/readiness gate is genuinely GO. Neither an active security/permission denial nor an unready lab authorizes automatically dispatching a Codex test. The same Codex owns both Direct and AI-supported user roles, per `docs/CODEX_DUAL_ROLE_TEST_PROTOCOL.md`. No Codex source changes, no duplicate work packet, no early release.
+
 
 For a **standalone CLI reconciliation request**, a clean CLI result completes this trigger; it does not itself authorize state-changing FULL_USER_E2E. When the current owner intent / active Work Packet is **release-quality closure**, the scheduler must next resolve `docs/FULL_USER_E2E_SCENARIOS.md`, read that entire current contract before any E2E action, and execute its separate closed loop until clean. Only after both required release-quality gates converge on the same exact HEAD may candidate freeze / release qualification begin.
 

@@ -146,6 +146,45 @@ class ShowAgentTests(unittest.TestCase):
         self.assertIn("show remote-services", text)
 
 
+    def test_macos_show_agent_autostart_uses_launchd_disabled_flag(self):
+        # F013: systemctl is Linux-only. macOS's persistent autostart flag is
+        # "launchctl print-disabled system": true means disabled.
+        cases = (
+            ('{"com.datarelay.drlink.frpc" => false}', "enabled"),
+            ('{"com.datarelay.drlink.frpc" => true}', "disabled"),
+            ('{"com.unrelated.service" => false}', "unknown"),
+        )
+        for raw, expected in cases:
+            with self.subTest(expected=expected), \
+                    mock.patch("platform.system", return_value="Darwin"), \
+                    mock.patch.object(v24, "load_agent_identity", return_value={}), \
+                    mock.patch.object(v24, "probe_agent_runtime_unit", return_value={}), \
+                    mock.patch.object(v24, "_agent_state_file_candidates", return_value=[]), \
+                    mock.patch("subprocess.run", return_value=subprocess.CompletedProcess(
+                        args=[], returncode=0, stdout=raw
+                    )) as runner:
+                result = v24.format_show_agent(None)
+            self.assertIn("Autostart         : " + expected, result)
+            self.assertEqual(
+                runner.call_args.args[0],
+                ["launchctl", "print-disabled", "system"],
+            )
+
+    def test_linux_show_agent_autostart_still_uses_systemd(self):
+        with mock.patch("platform.system", return_value="Linux"), \
+                mock.patch.object(v24, "load_agent_identity", return_value={}), \
+                mock.patch.object(v24, "probe_agent_runtime_unit", return_value={}), \
+                mock.patch.object(v24, "_agent_state_file_candidates", return_value=[]), \
+                mock.patch("subprocess.run", return_value=subprocess.CompletedProcess(
+                    args=[], returncode=0, stdout="enabled\n"
+                )) as runner:
+            result = v24.format_show_agent(None)
+        self.assertIn("Autostart         : enabled", result)
+        self.assertEqual(
+            runner.call_args.args[0], ["systemctl", "is-enabled", "drlink-client.service"]
+        )
+
+
 class DoctorPresentationTests(unittest.TestCase):
     def test_agent_host_terminology_in_detect_role(self):
         tmp = tempfile.mkdtemp(prefix="drlink-doc-")

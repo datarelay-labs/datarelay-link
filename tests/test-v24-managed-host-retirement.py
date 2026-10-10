@@ -150,6 +150,48 @@ class ManagedHostRetirement(unittest.TestCase):
             )
             self.plane.conn.commit()
 
+    def _insert_archived_port_reuse(self, client_id, name, port):
+        """Historical, released publication points to a port already reused."""
+        self.plane.conn.execute(
+            "INSERT INTO published_services(id, client_id, name, service_type, "
+            "target_mode, target_host, target_port, public_port, enabled, "
+            "released, created_at, updated_at) "
+            "VALUES (?, ?, ?, 'tcp', 'self', '127.0.0.1', 22, ?, 0, 1, "
+            "datetime('now'), datetime('now'))",
+            ("archived-" + name, client_id, name, port),
+        )
+        self.plane.conn.commit()
+
+    def test_F004_retirement_preview_distinguishes_archived_port_reuse(self):
+        self._seed_host(MID, "stale-host", with_service=True)
+        self._insert_archived_port_reuse(MID, "old-capacity", 6011)
+        os.environ.pop("DRLINK_CONFIRM", None)
+        with self.assertRaises(ConfirmationRequired) as ctx:
+            self.plane.unset_managed_host("stale-host")
+        impact = ctx.exception.impact
+        self.assertIn("historical published service old-capacity", impact["cleanup"])
+        self.assertIn("published service ssh-access", impact["cleanup"])
+        self.assertEqual(impact["cleanup"].count("port reservation 6011"), 1)
+        self.assertIn("services=1 active_reservations=1", impact["before"])
+        self.assertIsNotNone(self.plane.get_client(MID))
+
+    def test_F004_archived_other_host_pub_cannot_release_live_foreign_port(self):
+        self._seed_host(MID, "retired-host")
+        self._seed_host(MID2, "survivor-host", with_service=True)
+        self._insert_archived_port_reuse(MID, "archived-other", 6011)
+        current = self.plane.conn.execute(
+            "SELECT client_id, released FROM port_reservations WHERE public_port=6011"
+        ).fetchone()
+        self.assertEqual(current["client_id"], MID2)
+        self.assertEqual(int(current["released"]), 0)
+        self.plane.unset_managed_host("retired-host", confirm=True)
+        survivor = self.plane.conn.execute(
+            "SELECT client_id, released FROM port_reservations WHERE public_port=6011"
+        ).fetchone()
+        self.assertEqual(survivor["client_id"], MID2)
+        self.assertEqual(int(survivor["released"]), 0)
+        self.assertIsNotNone(self.plane.get_client("survivor-host"))
+
     def test_unreferenced_managed_host_removed(self):
         self._seed_host(MID, "ubuntu-prod")
         rc, out, err = self._dispatch(["unset", "managed-host", "ubuntu-prod"])

@@ -1118,13 +1118,15 @@ PY
 }
 
 frp_ux_intro() {
-  cat <<'EOF'
+  local platform='Linux'
+  frp_is_darwin && platform='macOS'
+  cat <<EOF
 
 =========================================
  Data Relay Link Agent Setup
 =========================================
 
-This installer creates Remote Services on this Linux system
+This installer creates Remote Services on this ${platform} system
 through your Data Relay Link server.
 
 Before continuing, you need an Enrollment Code.
@@ -1258,7 +1260,7 @@ EOF
 frp_ux_ssh_user_help() {
   cat <<'EOF'
 SSH user (optional connection example)
-  Linux username shown in the generated SSH command only.
+  Operating-system username shown in the generated SSH command only.
 
   This does NOT create an operating-system account,
   change a password, or configure SSH authentication.
@@ -1450,7 +1452,7 @@ frp_ux_prompt_new_service() {
 
 frp_ux_print_install_summary() {
   local services_file="$1" version="${2:-0.71.0}"
-  python3 - "$services_file" "$version" <<'PY'
+  python3 - "$services_file" "$version" "$(frp_os)" <<'PY'
 import json, sys
 from pathlib import Path
 services = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
@@ -1484,15 +1486,25 @@ else:
 print('The installer will:')
 print()
 print(f'  - install FRP v{version}')
-print('  - create /etc/frp/frpc.toml')
-print('  - write /etc/frp/client-state.json')
-if services:
-    print('  - install the frpc systemd service')
-    print('  - enable drlink-client at boot')
-    print('  - start the FRP client')
+if sys.argv[3] == 'darwin':
+    print('  - create /Library/Application Support/drlink/frpc.toml')
+    print('  - write /Library/Application Support/drlink/client-state.json')
+    print('  - install the com.datarelay.drlink.frpc launchd daemon')
+    if services:
+        print('  - enable the Agent at boot')
+        print('  - start the Agent runtime')
+    else:
+        print('  - leave the Agent runtime stopped until a service is added')
 else:
-    print('  - install the frpc systemd service (left stopped)')
-    print('  - leave the FRP client stopped until a service is added')
+    print('  - create /etc/frp/frpc.toml')
+    print('  - write /etc/frp/client-state.json')
+    if services:
+        print('  - install the frpc systemd service')
+        print('  - enable drlink-client at boot')
+        print('  - start the FRP client')
+    else:
+        print('  - install the frpc systemd service (left stopped)')
+        print('  - leave the FRP client stopped until a service is added')
 print()
 PY
 }
@@ -2206,7 +2218,13 @@ for item in services:
     local_ip = clean(item.get('local_ip'))
     local_port = item.get('local_port')
     remote_port = item.get('remote_port')
-    lines.append(sid if name == sid else f'{sid} ({name})')
+    # v2.4 rs-IDs are internal runtime identifiers, not public CLI selectors.
+    # Prefer the stored public Remote Service name even if an internal ID
+    # predates a rename; stripping rs- can yield an unusable selector (F005).
+    if sid.startswith('rs-'):
+        lines.append(name)
+    else:
+        lines.append(sid if name == sid else f'{sid} ({name})')
     lines.append(f'  Target : {local_ip}:{local_port}')
     preferred = alias if alias and alias != server else ''
     if preferred:
@@ -2378,7 +2396,7 @@ wait_for_proxies() {
   # Only evidence AFTER the optional generation cursor (FRP_PROXY_WAIT_CURSOR
   # or --since-cursor=...) may satisfy readiness. On Darwin the cursor is a
   # file byte-offset (logpos), not a timestamp substring.
-  local logs proxy missing
+  local logs proxy
   local -a names=()
   local since_cursor="${FRP_PROXY_WAIT_CURSOR:-}"
   local arg
@@ -2393,26 +2411,66 @@ wait_for_proxies() {
   local max_attempts="${FRP_PROXY_WAIT_MAX_ATTEMPTS:-24}"
   local sleep_s="${FRP_PROXY_WAIT_SLEEP_S:-1}"
   local max_sleep="${FRP_PROXY_WAIT_MAX_SLEEP_S:-3}"
+  # Bulk 85+ proxies can exceed 400 journal lines per connection generation.
+  # Preserve the connection/login marker and all proxy announcements.
+  local max_log_lines=$(( 500 + ${#names[@]} * 12 ))
+  (( max_log_lines > 4096 )) && max_log_lines=4096
+  local wanted
+  wanted="$(printf '%s\n' "${names[@]}")"
   while (( attempt < max_attempts )); do
     attempt=$((attempt + 1))
     if (( sleep_s > 0 )); then
       sleep "$sleep_s"
     fi
-    logs="$(frp_client_recent_runtime_logs 400 "$since_cursor")"
-    if ! grep -q 'login to server success' <<<"$logs"; then
-      if (( sleep_s < max_sleep )) && (( attempt % 3 == 0 )); then
-        sleep_s=$((sleep_s + 1))
-      fi
-      continue
-    fi
-    missing=""
-    for proxy in "${names[@]}"; do
-      if ! grep -Fq "[${proxy}] start proxy success" <<<"$logs"; then
-        missing="$proxy"
-        break
-      fi
-    done
-    if [[ -z "$missing" ]]; then
+    logs="$(frp_client_recent_runtime_logs "$max_log_lines" "$since_cursor")"
+    # A success from an earlier connection epoch is not live registration.
+    # Respect the last login/connection failure and last event per proxy in
+    # the current epoch. POSIX awk keeps this compatible with macOS Bash 3.2.
+    if printf '%s\n' "$logs" | awk -v required="$wanted" '
+      BEGIN {
+        count=split(required, names, "\n")
+        for (i=1; i<=count; i++) {
+          name=tolower(names[i])
+          if (name != "") { expected[name]=1; ready[name]=0 }
+        }
+        connected=0
+      }
+      {
+        line=tolower($0)
+        if (index(line, "login to server success")) {
+          connected=1
+          for (name in expected) ready[name]=0
+          next
+        }
+        if (index(line, "login server failed") ||
+            index(line, "login to server failed") ||
+            index(line, "session closed") ||
+            index(line, "control worker is closed") ||
+            index(line, "try to reconnect") ||
+            index(line, "try to connect to server") ||
+            index(line, "connect to server error") ||
+            index(line, "read from control stream closed")) {
+          connected=0
+          for (name in expected) ready[name]=0
+          next
+        }
+        if (!connected) next
+        if (match(line, /\[[^]]+\][[:space:]]+(start proxy success|start proxy error|start proxy failed|stop proxy)/)) {
+          event=substr(line,RSTART,RLENGTH)
+          name=event
+          sub(/^\[/,"",name)
+          sub(/\].*$/,"",name)
+          if (name in expected) {
+            if (index(event, "start proxy success")) ready[name]=1
+            else ready[name]=0
+          }
+        }
+      }
+      END {
+        if (!connected) exit 1
+        for (name in expected) if (!ready[name]) exit 1
+        exit 0
+      }'; then
       return 0
     fi
     if (( sleep_s < max_sleep )) && (( attempt % 3 == 0 )); then
@@ -4931,8 +4989,15 @@ frp_client_autostart_enabled() {
   if frp_is_darwin; then
     # launchctl print-disabled is the durable disabled bit for pause/resume.
     local disabled
-    disabled="$(launchctl print-disabled system 2>/dev/null | awk -F'[= "]+' -v label="${FRP_MACOS_LAUNCHD_LABEL}" '$2==label {print tolower($3); exit}')"
-    [[ "$disabled" != "true" ]]
+    disabled="$(launchctl print-disabled system 2>/dev/null |
+      awk -v label="${FRP_MACOS_LAUNCHD_LABEL}" '
+        index($0, "\"" label "\"") {
+          if ($0 ~ /=>[[:space:]]*true([[:space:]]|$)/) print "true"
+          else if ($0 ~ /=>[[:space:]]*false([[:space:]]|$)/) print "false"
+          exit
+        }')"
+    # Unknown launchctl state must not be advertised as enabled.
+    [[ "$disabled" == "false" ]]
     return $?
   fi
   local en
@@ -5776,12 +5841,33 @@ frp_client_upgrade_stage() {
 }
 
 frp_client_upgrade_install_staged() {
-  local staged="$1" live rel mode src
+  local staged="$1" live rel mode src rendered
   local replaced=0
   while IFS=: read -r rel mode src; do
     [[ -n "$rel" ]] || continue
     live="$(frp_client_path "/${rel}")"
-    frp_client_atomic_install "${staged}/${rel}" "$live" "$mode" || return 1
+    case "$rel" in
+      etc/systemd/system/drlink-*.service)
+        # Staged packages carry portable unit *templates*. EL8's distro
+        # /usr/bin/python3 is 3.6 and cannot import current management code.
+        # Render the previously selected compatible Python binary at the
+        # atomic install boundary; otherwise an upgrade overwrites the
+        # correct units with /usr/bin/python3 and reports false convergence.
+        rendered="$(mktemp)" || return 1
+        if ! frp_write_compatible_systemd_unit "${staged}/${rel}" "$rendered"; then
+          rm -f "$rendered"
+          return 1
+        fi
+        if ! frp_client_atomic_install "$rendered" "$live" "$mode"; then
+          rm -f "$rendered"
+          return 1
+        fi
+        rm -f "$rendered"
+        ;;
+      *)
+        frp_client_atomic_install "${staged}/${rel}" "$live" "$mode" || return 1
+        ;;
+    esac
     replaced=$((replaced + 1))
     if [[ "$replaced" -eq 1 && "${FRP_CLIENT_UPGRADE_HOOK_FAIL:-}" == "install" ]]; then
       echo "ERROR: simulated tool install failure" >&2
@@ -6379,6 +6465,51 @@ if artifact_head and re.fullmatch(r"[0-9a-fA-F]{40}", source_ref):
 
 print(f"{channel}\t{source_ref}\t{sha}")
 PY
+}
+
+frp_client_verify_fresh_source_provenance() {
+  # The embedded manifest identifies the content parent. A generated-only
+  # candidate is identified by the pinned Server's qualified outer bundle.
+  local origin installer="${FRP_INSTALLER_URL:-}" work metadata channel source_ref digest ca expected_channel
+  [[ -n "$installer" ]] || return 0
+  origin="$(frp_allocator_origin_url "$ALLOCATOR_URL")" || return 1
+  [[ "$installer" == "$origin/artifacts/agent/bootstrap-client.sh" ]] || return 0
+  [[ -f "${FRP_BUNDLE_FILE:-}" ]] || {
+    echo "ERROR: fresh Server-local install requires the downloaded bundle file" >&2
+    return 1
+  }
+  ca="$(frp_allocator_ca_path)"
+  work="$(mktemp -d)" || return 1
+  if ! curl -fsSL --proto '=https' --cacert "$ca" "$origin/artifacts/manifest.json" -o "$work/manifest.json" \
+      || ! curl -fsSL --proto '=https' --cacert "$ca" "$origin/artifacts/SHA256SUMS" -o "$work/SHA256SUMS"; then
+    rm -rf "$work"
+    return 1
+  fi
+  metadata="$(frp_client_parse_qualified_update_manifest "$work/manifest.json")" || { rm -rf "$work"; return 1; }
+  IFS=$'\t' read -r channel source_ref digest <<<"$metadata"
+  expected_channel="$(frp_client_explicit_expected_channel || true)"
+  if [[ -n "$expected_channel" && "$expected_channel" != "$channel" ]]; then
+    rm -rf "$work"
+    echo "ERROR: fresh qualified artifact release channel does not match requested channel" >&2
+    return 1
+  fi
+  # Do not let update-only checksum overrides replace the pinned fresh metadata.
+  if ! FRP_CLIENT_UPDATE_SHA256='' FRP_RELEASE_SHA256SUMS_FILE='' \
+      frp_verify_client_update_artifact "$FRP_BUNDLE_FILE" "$work/SHA256SUMS" agent/bootstrap-client.sh "$digest"; then
+    rm -rf "$work"
+    return 1
+  fi
+  rm -rf "$work"
+  if [[ -n "${FRP_EXPECTED_SOURCE_REF:-}" && "$FRP_EXPECTED_SOURCE_REF" != "$source_ref" ]] \
+      || [[ -n "${FRP_EXPECTED_SOURCE_HEAD:-}" && "$source_ref" =~ ^[0-9a-fA-F]{40}$ && "$FRP_EXPECTED_SOURCE_HEAD" != "$source_ref" ]]; then
+    echo "ERROR: fresh qualified artifact source does not match requested source" >&2
+    return 1
+  fi
+  export FRP_RELEASE_CHANNEL="$channel" FRP_EXPECTED_RELEASE_CHANNEL="$channel"
+  export FRP_EXPECTED_SOURCE_REF="$source_ref" FRP_BUNDLE_SHA256="$digest"
+  if [[ "$source_ref" =~ ^[0-9a-fA-F]{40}$ ]]; then
+    export FRP_EXPECTED_SOURCE_HEAD="$source_ref"
+  fi
 }
 
 frp_client_fetch_and_upgrade() {

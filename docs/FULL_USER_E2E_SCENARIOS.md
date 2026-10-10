@@ -13,6 +13,8 @@
 > **Release validation:** docs/RELEASE_VALIDATION.md
 > **Release checklist:** docs/RELEASE_CHECKLIST.md
 > **Status:** Normative living document
+> **Current owner-ordered preparation gate (2026-10-10):** Before any new Codex FULL_USER_E2E or CLI Feature/Scenario acceptance run, CHATGPT_CHAT first repairs/dispositions findings from the frozen Codex E2E, then updates and validates the test method/procedure in `docs/E2E_EXECUTION_PROCEDURE.md`, then proves a separate authorized lab ready. The auditor still reads **this entire canonical document**; an acting persona must not read the procedure/contract or use source/test oracle to choose actions. No skipped scenario, independent AI mirror, real traffic, 3,600s soak, or two same-HEAD release PASS is waived. Codex is TEST-ONLY by the explicit current owner order; only CHATGPT_CHAT edits product code. This gate is not a new test executor, alternate E2E contract or permission override; previously denied security effects remain binding.
+> **Codex both-role owner override (#165):** Codex directly performs each same applicable Full E2E scenario twice: as a first-time Direct public-CLI User, and as a first-time AI-assisted User guided by a separate Codex AI Adviser. Follow `docs/CODEX_DUAL_ROLE_TEST_PROTOCOL.md` for fresh role contexts, paired goal/topology, original AI first answer, prospective evidence, real traffic, and fail-closed incomplete AI lanes. Earlier generic ChatGPT-as-tester wording is superseded for this Work Packet by the explicitly owner-selected CODEX TEST-ONLY executor; ChatGPT Chat alone implements code fixes. No new Full User E2E is authorized while lab readiness is NOT_READY.
 
 
 ### Continuous execution and finding accumulation
@@ -64,13 +66,15 @@ A release-qualification request uses this full suite plus the exact-HEAD double-
 
 ### 1.1 User E2E execution ownership
 
-FULL_USER_E2E is executed and independently evaluated by **ChatGPT**, not by Cursor.
+FULL_USER_E2E defaults to **ChatGPT** unless the owner selects a different authorized tester. For **Issue #165 the owner explicitly selects CODEX (TEST ONLY)** to act as both the Direct CLI User and the AI-assisted User, with a separate Codex AI Adviser under one auditor-owned RUN_ID. ChatGPT Chat alone implements product remediation. Cursor remains disabled.
 
-This is a hard ownership rule:
+This is an owner-selected tester identity rule (the current explicit owner overrides the repository default):
 
 ~~~text
-USER_E2E_EXECUTOR=ChatGPT
-USER_E2E_FINAL_AUDITOR=ChatGPT
+USER_E2E_EXECUTOR=OWNER_SELECTED_RUNTIME
+ISSUE_165_USER_E2E_EXECUTOR=CODEX
+USER_E2E_FINAL_AUDITOR=OWNER_SELECTED_RUNTIME
+ISSUE_165_USER_E2E_FINAL_AUDITOR=CODEX
 CURSOR_MAY_EXECUTE_FULL_USER_E2E=NO
 CURSOR_MAY_DECLARE_USER_E2E_PASS=NO
 ~~~
@@ -80,7 +84,7 @@ FULL_USER_E2E never chooses or starts an implementation agent. Product remediati
 The required loop is:
 
 ~~~text
-ChatGPT
+OWNER_SELECTED_TEST_EXECUTOR (CODEX TEST ONLY for Issue #165)
 → pin exact candidate HEAD/build
 → execute FULL_USER_E2E to exhaustion
 → freeze evidence and final findings
@@ -88,19 +92,19 @@ ChatGPT
 
 If implementation change is required after the run:
   Engineering workflow
-  → use the currently authorized implementer from AGENTS.md / Work Packet
+  → for Issue #165 use CHATGPT_CHAT as the only product implementation owner
   → implement the bounded fix
   → run implementation-level deterministic tests
   → report exact branch/HEAD/evidence
 
-ChatGPT
+OWNER_SELECTED_TEST_EXECUTOR (CODEX for Issue #165, after legitimate lab GO)
 → independently verify the implementation result with targeted deterministic regression as supporting evidence
 → because product/public-surface/contract remediation changed the candidate, start a brand-new **complete FULL_USER_E2E run from the beginning with a new RUN_ID**
 → repeat complete run → final report/readback/offboarding → remediation → complete rerun with no fixed pass limit until the latest complete run has zero new/unresolved actionable findings and zero mandatory FAIL/PARTIAL/BLOCKED
 → make the final E2E PASS/PARTIAL/FAIL determination only from the latest complete persona-led run
 ~~~
 
-Implementation-agent output may be supporting evidence for static/source review, isolated deterministic checks, or remediation verification, but it does **not** substitute for ChatGPT's requested persona-led User E2E execution.
+Implementation-agent output may be supporting evidence for static/source review, isolated deterministic checks, or remediation verification, but it does **not** substitute for the **owner-selected CODEX** first-time Direct/AI persona-led User E2E in Issue #165. No scripted test may impersonate either Codex actor.
 
 A Cursor session must never be treated as the executor of an unqualified request such as:
 
@@ -113,11 +117,14 @@ User E2E
 전수 사용자 테스트
 ~~~
 
-If ChatGPT cannot execute a mandatory scenario because the real environment is unavailable, the result is `BLOCKED_ENVIRONMENT`; the scenario must not be delegated to Cursor merely to obtain PASS.
+If the owner-selected tester cannot execute a mandatory scenario because the real environment is unavailable, the result is `BLOCKED_ENVIRONMENT`; the scenario must not be delegated to Cursor merely to obtain PASS.
 
-Historical PASS results, synthetic tests, unit tests, Docker-only results, Cursor-run results, or results from another Git HEAD do not replace a requested real User E2E run by ChatGPT.
+Historical PASS results, synthetic tests, unit tests, Docker-only results, Cursor-run results, or results from another Git HEAD do not replace a requested real User E2E run by the owner-selected tester.
 
 If product code, dependencies, generated runtime artifacts, or the tested build changes during a full pass, record the new HEAD/build identity and invalidate the affected pass. For final release qualification, the double-pass counter resets as defined by the release validation policy.
+
+
+For this owner-selected Work Packet, Codex must read the full current canonical contract, then use `docs/CODEX_DUAL_ROLE_TEST_PROTOCOL.md` to perform **both** same-scenario Direct and AI-assisted lanes. A fresh Codex AI adviser thread is the AI helper; a separate Codex User thread actually tests its public CLI advice. Codex must not edit source. The current lab gate must be GO before a new Full User E2E run, and the prior 116-ID frozen run remains immutable. Missing AI mirrors remain PARTIAL/NOT_RUN, not PASS.
 
 ## 1.2 Immediate-execution contract (hard gate)
 
@@ -2016,13 +2023,19 @@ Verify support output identifies Agent Host role, includes useful provenance, an
 Agent Host:
 
 ~~~text
-system update check-engine
 system update product
 system update engine
 system version
 ~~~
 
-Verify product and upstream engine versions remain separate, check-engine is read-only, product update and engine update are independently discoverable/actions, update does not require ordinary re-enrollment, and endpoint/identity/state are preserved.
+Server (read-only upstream release inspection):
+
+~~~text
+system update check-engine
+system version
+~~~
+
+Verify product and upstream engine versions remain separate, Server check-engine is read-only, Agent product and engine updates are independently discoverable/actions, update does not require ordinary re-enrollment, and endpoint/identity/state are preserved. The Agent must not advertise a Server-only check-engine action; an Agent invocation must give an actionable Server-only explanation without changing Agent state.
 
 ## O-010 — Reboot/autostart recovery — MANDATORY
 
@@ -2317,6 +2330,8 @@ system diagnostics
 ~~~
 
 Validate the newly created backup before restore. Exercise at least one invalid/corrupt backup through `system backup validate` and require a clear failure before any restore mutation.
+
+A known-invalid restore archive must fail before offering live replacement confirmation. Restored backup-time host presence and proxy verification are stale: require fresh Agent runtime verification and actual SSH/HTTP/TCP traffic recovery on the preserved identities/endpoints before accepting restored health.
 
 Restore into the supported clean/recovery topology.
 
@@ -3656,7 +3671,6 @@ system autostart enable
 system autostart disable
 
 system update product
-system update check-engine
 system update engine
 system synchronize
 
@@ -4168,7 +4182,7 @@ The invariant for future User E2E requests is:
 
 ~~~text
 USER_E2E_REQUEST
--> ChatGPT is the executor and final auditor; do not delegate User E2E execution to Cursor
+-> Issue #165 owner override: Codex is test-only executor and final auditor for Direct + AI-assisted roles; ChatGPT implements fixes; Cursor remains disabled.
 -> locate this canonical document at docs/FULL_USER_E2E_SCENARIOS.md
 -> capture candidate/build identity only; do not perform a pre-run code review
 -> probe all configured test hosts, remove previous-run DRLink state/test services/load processes/temp artifacts, preserve only explicit management access infrastructure, and require the section 5.3 clean-room gate before fresh product activity

@@ -752,6 +752,7 @@ class V24Plan:
     security_impact: list[str] = field(default_factory=list)
     raw: dict = field(default_factory=dict)
     base_revision: Optional[int] = None
+    current_revision: Optional[int] = None
     source_text: str = ""
 
     @property
@@ -1415,12 +1416,26 @@ def prepare_v24_plan(plane: ControlPlane, raw_text: str, *, role: Optional[str] 
         security_impact=impact,
         raw=validated_body,
         base_revision=base_revision,
+        current_revision=int(plane.current_revision()),
         source_text=str(raw_text or ""),
     )
 
 
 def format_v24_plan(plan: V24Plan) -> str:
-    lines = ["VALID" if not plan.no_change or plan.changes else "VALID", "", "Planned changes:"]
+    lines = ["VALID", ""]
+    # Syntax-valid does not mean the snapshot is current or safe to apply.
+    # The apply path already rejects stale sourceRevision atomically; surface
+    # the same mismatch to users during read-only test/diff review.
+    if (plan.base_revision is not None and plan.current_revision is not None
+            and int(plan.base_revision) != int(plan.current_revision)):
+        lines.extend([
+            "WARNING: STALE_CONFIGURATION_REVISION",
+            "Base revision: %s" % plan.base_revision,
+            "Current revision: %s" % plan.current_revision,
+            "Apply will reject this stale snapshot. Re-export/review the Bundle.",
+            "",
+        ])
+    lines.append("Planned changes:")
     if plan.no_change:
         lines.append("  NO CHANGE")
     else:

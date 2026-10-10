@@ -3,7 +3,7 @@
   "project_version": "2.4.0",
   "frp_version": "0.71.0",
   "channel": "development",
-  "git_ref": "e6ceca552c89d05839472fe41cc5fc3ccc1d1fb6",
+  "git_ref": "b6f20071db262f1d248fdd879bf4ef5ca98e631c",
   "owner": "datarelay-labs",
   "repo": "datarelay-link",
   "https_raw_base": "https://raw.githubusercontent.com/datarelay-labs/datarelay-link",
@@ -66,22 +66,22 @@
     "bootstrap-client.sh": {
       "path": "dist/bootstrap-client.sh",
       "url_path": "dist/bootstrap-client.sh",
-      "sha256": "eb93102523633e2de2eb3ae7401d372e668d4e370696c00c565466723c1e2026"
+      "sha256": "8c1cea1b38667d07dd8347ebb7adb41883837cea79ac2274e74f9a95f21227dd"
     },
     "bootstrap-client.ps1": {
       "path": "dist/bootstrap-client.ps1",
       "url_path": "dist/bootstrap-client.ps1",
-      "sha256": "109674a4a2fedbf41d22ba13de9dedcbe657c6e268d08ee9109348daea5d954a"
+      "sha256": "51b2cfbd7dd81c8217009d0916b8ed3410dedbd88b4965b8589fc9add84451c9"
     },
     "bootstrap-server.sh": {
       "path": "dist/bootstrap-server.sh",
       "url_path": "dist/bootstrap-server.sh",
-      "sha256": "d232fcc323dac8251b51ea2fb43da6857856bc72f14dd4d8571fc2012928bb76"
+      "sha256": "febb7e4c54d7edc2dd6e8a7e543d79ad392f6f27ad949ff965797ff209032af8"
     },
     "uninstall-client.sh": {
       "path": "dist/uninstall-client.sh",
       "url_path": "dist/uninstall-client.sh",
-      "sha256": "1296af25ea7aaa5d820e44071f2952630666f7ebdb31fc7b26cdfdf294e98755"
+      "sha256": "18b1e8ff1beb49773bcb6cc6b7f1ff5fbeb3e9cdeda7aec749abe0dbd0ea14b7"
     },
     "uninstall-server.sh": {
       "path": "dist/uninstall-server.sh",
@@ -89,9 +89,9 @@
       "sha256": "e49f8fbf55301fb00ce456cb880fb0e3083e216f7e44404f406e9de8362671c7"
     }
   },
-  "source_head": "e6ceca552c89d05839472fe41cc5fc3ccc1d1fb6",
+  "source_head": "b6f20071db262f1d248fdd879bf4ef5ca98e631c",
   "features": {
     "mcp_included": true
   },
-  "immutable_source_ref": "e6ceca552c89d05839472fe41cc5fc3ccc1d1fb6"
+  "immutable_source_ref": "b6f20071db262f1d248fdd879bf4ef5ca98e631c"
 }

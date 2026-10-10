@@ -87,6 +87,14 @@ class DoctorError(Exception):
 
 MARKER_NOTE = 'Do not delete the pending marker by hand unless recovering from a known-good backup. doctor does not delete the marker.'
 
+INTERNET_ACCESS_LISTENER_RECOVERY = (
+    'Internet Access listener settings are installer-owned. Re-run the same immutable '
+    'Server installer with FRP_EGRESS_LISTEN_ADDR=<trusted-server-address> and, only '
+    'if changing the port, FRP_EGRESS_LISTEN_PORT=<valid-port>. Preserve the current '
+    'deployment mode and Server identity. See docs/INSTALLATION.md#internet-access-listener-recovery. '
+    'Then check show internet-access and system diagnostics.'
+)
+
 
 def _recovery_for_role(role, kind):
     if kind == 'frp':
@@ -2263,7 +2271,7 @@ def check_egress_control(report, paths, facts, cfg):
         host, port = eg.listen_bind(cfg if isinstance(cfg, dict) else None)
         report.add(
             'EGRESS_LISTEN', INFO,
-            'Controlled Egress listen configured',
+            'Internet Access listener configured',
             '%s:%s' % (host, port),
             '',
             'runtime',
@@ -2271,15 +2279,15 @@ def check_egress_control(report, paths, facts, cfg):
         if host in ('0.0.0.0', '::', '*'):
             report.add(
                 'EGRESS_LISTEN_BIND', WARN,
-                'Controlled Egress listens on all interfaces',
+                'Internet Access listener is bound to all interfaces',
                 host,
-                'prefer an internal/trusted egress_listen_addr (e.g. management LAN)',
+                INTERNET_ACCESS_LISTENER_RECOVERY,
                 'runtime',
             )
         else:
             report.add(
                 'EGRESS_LISTEN_BIND', PASS,
-                'Controlled Egress listen address is scoped',
+                'Internet Access listener address is scoped',
                 host,
                 '',
                 'runtime',
@@ -2287,9 +2295,9 @@ def check_egress_control(report, paths, facts, cfg):
     except Exception as exc:
         report.add(
             'EGRESS_CONFIG_ERROR', FAIL,
-            'EGRESS_CONFIG_ERROR: invalid egress listen configuration',
+            'EGRESS_CONFIG_ERROR: invalid Internet Access listener configuration',
             str(exc),
-            'fix egress_listen_addr / egress_listen_port in config.json',
+            INTERNET_ACCESS_LISTENER_RECOVERY,
             'state',
         )
         return
@@ -2318,23 +2326,23 @@ def check_egress_control(report, paths, facts, cfg):
             if colliding:
                 report.add(
                     'EGRESS_PORT_COLLISION', FAIL,
-                    'infrastructure egress port collides with service range',
+                    'Internet Access listener port collides with service range',
                     ', '.join(str(p) for p in sorted(colliding)),
-                    'change egress_listen_port or service port range',
+                    INTERNET_ACCESS_LISTENER_RECOVERY,
                     'state',
                 )
             else:
                 report.add(
                     'EGRESS_PORT_COLLISION', PASS,
-                    'egress listen port does not collide with service range',
+                    'Internet Access listener port does not collide with service range',
                     '', '', 'state',
                 )
         except Exception as exc:
             report.add(
                 'EGRESS_PORT_COLLISION', FAIL,
-                'egress port collision check failed',
+                'Internet Access listener port collision check failed',
                 str(exc),
-                'inspect egress_listen_port and registry allocations',
+                INTERNET_ACCESS_LISTENER_RECOVERY,
                 'state',
             )
 
@@ -2491,7 +2499,7 @@ def check_egress_control(report, paths, facts, cfg):
                 'EGRESS_TCP_SERVICE_USER', WARN,
                 'drlink-tcp-egress unit is not configured for User=drlink-egress',
                 '',
-                're-run the server installer to apply non-root Fixed TCP Egress',
+                're-run the server installer to apply the non-root Fixed TCP relay runtime',
                 'runtime',
             )
 
@@ -2501,7 +2509,7 @@ def check_egress_control(report, paths, facts, cfg):
         relays = []
     report.add(
         'EGRESS_TCP_RELAYS', INFO,
-        'Fixed TCP Egress relays',
+        'Fixed TCP relays',
         'count=%d enabled=%d'
         % (
             len(relays),
@@ -2563,7 +2571,7 @@ def check_egress_control(report, paths, facts, cfg):
             if healthy_tcp:
                 report.add(
                     'EGRESS_TCP_EFFECTIVE', PASS,
-                    'Fixed TCP Egress effective runtime is healthy',
+                    'Fixed TCP relay effective runtime is healthy',
                     'generation=%s' % effective_tcp.get('policy_generation'),
                     '',
                     'runtime',
@@ -2571,7 +2579,7 @@ def check_egress_control(report, paths, facts, cfg):
             else:
                 report.add(
                     'EGRESS_TCP_EFFECTIVE', FAIL,
-                    'Fixed TCP Egress effective runtime is unhealthy (fail-closed)',
+                    'Fixed TCP relay effective runtime is unhealthy (fail-closed)',
                     str(effective_tcp.get('load_error') or ''),
                     'Run: sudo drlink show service-objects; then inspect the owning Agent Host with sudo drlink show managed-host <HOST> remote-services',
                     'runtime',
@@ -2579,7 +2587,7 @@ def check_egress_control(report, paths, facts, cfg):
         except Exception as exc:
             report.add(
                 'EGRESS_TCP_EFFECTIVE', WARN,
-                'Fixed TCP Egress effective runtime snapshot is unreadable',
+                'Fixed TCP relay effective runtime snapshot is unreadable',
                 str(exc),
                 'Run: sudo drlink system diagnostics\nIf Data Relay Link remains unhealthy: inspect journalctl -u drlink-tcp-egress',
                 'runtime',
@@ -2587,7 +2595,7 @@ def check_egress_control(report, paths, facts, cfg):
     elif tcp_unit_active == 'active':
         report.add(
             'EGRESS_TCP_EFFECTIVE', WARN,
-            'Fixed TCP Egress unit is active but effective snapshot is missing',
+            'Fixed TCP relay unit is active but effective snapshot is missing',
             tcp_effective,
             'Run: sudo drlink system diagnostics\nIf Data Relay Link remains unhealthy: inspect journalctl -u drlink-tcp-egress',
             'runtime',
@@ -3195,8 +3203,11 @@ def check_server(report, paths, facts, skip_network):
                 'enrollment_retention_config', WARN,
                 'enrollment_retention_days is invalid; using default 30',
                 str(exc),
-                'set enrollment_retention_days to an integer between 1 and 3650',
-                'config',
+                'Enrollment retention is installer-owned. Use the same immutable Server installer '
+                'to restore the supported 30-day default; preserve deployment mode and Server identity. '
+                'Follow docs/INSTALLATION.md#enrollment-retention-recovery, then run show enrollments '
+                'and system diagnostics. Do not invent a retention set command or edit config.json by hand.',
+                'state',
             )
             retention_days = 30
     if paths.is_dir(bootstrap_abs) or paths.is_dir(enrollments_abs):
@@ -3269,6 +3280,101 @@ def check_server(report, paths, facts, skip_network):
             'allocator_listen': '%s:%s' % (ports.get('listen_host') or '0.0.0.0', ports.get('alloc_listen') or '?'),
             'service_range': '%s-%s' % (ports.get('port_start') or '?', ports.get('port_end') or '?'),
         }
+
+
+def check_agent_runtime_projection(report, paths, state):
+    """F004/F017: detect a falsely HEALTHY Agent catalog omitted by frpc.
+
+    Public Doctor stays read-only: it only compares the existing Agent DB
+    projection against the already-rendered client-state. Diagnostic PASS
+    must not imply that this source can verify actual external TCP reachability.
+    """
+    services = state.get('services') if isinstance(state, dict) else None
+    if not isinstance(services, dict):
+        return
+    db_file = paths.p('/var/lib/drlink/drlink.db')
+    if not db_file.is_file():
+        return
+    try:
+        import sqlite3
+        from urllib.parse import quote
+        uri = 'file:%s?mode=ro' % quote(db_file.as_posix(), safe='/')
+        conn = sqlite3.connect(uri, uri=True, timeout=0.25)
+        try:
+            conn.row_factory = sqlite3.Row
+            rows = list(conn.execute(
+                'SELECT name, enabled, status, endpoint_port, pending_allocation, '
+                'delete_pending, runtime_verified, enrollment_seed '
+                'FROM agent_remote_services'
+            ))
+        finally:
+            conn.close()
+    except sqlite3.Error as exc:
+        # Older installed schema is not an Agent v2.4 runtime catalog.
+        # Its absence is not a health failure or a migration trigger.
+        if 'no such table: agent_remote_services' in str(exc).lower():
+            return
+        report.add('agent_runtime_projection', WARN,
+                   'Agent runtime catalog could not be inspected read-only',
+                   'verification unavailable', 'Run sudo drlink system diagnostics',
+                   'state')
+        return
+
+    mismatch = []
+    degraded = []
+    for row in rows:
+        name = str(row['name'] or '?')
+        status = str(row['status'] or '').upper()
+        allocated = (
+            int(row['enabled'] or 0)
+            and not int(row['pending_allocation'] or 0)
+            and not int(row['delete_pending'] or 0)
+            and bool(coerce_port(row['endpoint_port']))
+        )
+        if allocated and (status == 'DEGRADED' or
+                          (status == 'HEALTHY' and not int(row['runtime_verified'] or 0))):
+            degraded.append(name)
+        if status != 'HEALTHY' and not int(row['runtime_verified'] or 0):
+            continue
+        # A current healthy report demands one matching enabled proxy with
+        # the same public port. Pending, deleted and disabled rows never pass.
+        name = str(row['name'] or '').lower()
+        port = coerce_port(row['endpoint_port'])
+        matched = False
+        if int(row['enabled'] or 0) and not int(row['delete_pending'] or 0) and not int(row['pending_allocation'] or 0):
+            for sid, rec in services.items():
+                if not isinstance(rec, dict) or rec.get('enabled', True) is False:
+                    continue
+                candidate = str(rec.get('name') or '').strip().lower()
+                v24 = rec.get('v24_remote_service') is True
+                legacy_seed = bool(row['enrollment_seed']) and (
+                    str(sid).lower() == name or str(rec.get('id') or '').lower() == name
+                )
+                if (v24 and candidate == name or legacy_seed) and coerce_port(rec.get('remote_port')) == port:
+                    matched = True
+                    break
+        if not matched:
+            mismatch.append(str(row['name'] or '?'))
+    if mismatch:
+        report.add(
+            'agent_runtime_projection', FAIL,
+            'Agent catalog reports HEALTHY without a matching generated runtime proxy',
+            'missing or mismatched proxy: %s' % ', '.join(mismatch[:10]),
+            'Inspect the Agent runtime and use sudo drlink system synchronize for recovery. '
+            'Validate public TCP/SSH traffic separately.',
+            'runtime',
+        )
+    if degraded:
+        report.add(
+            'agent_remote_services_degraded', WARN,
+            'Allocated Remote Services remain DEGRADED or runtime-unverified',
+            'unverified: %s' % ', '.join(degraded[:10]),
+            'Inspect with sudo drlink show remote-services and '
+            'sudo drlink show remote-service <NAME>; run sudo drlink system diagnostics. '
+            'Consider sudo drlink system synchronize only after reviewing its impact; '
+            'verify public TCP/SSH traffic separately.',
+            'runtime',
+        )
 
 
 def check_client(report, paths, facts, skip_network):
@@ -3434,7 +3540,10 @@ def check_client(report, paths, facts, skip_network):
         else:
             toml_text = paths.read_text(toml_path) or ''
             proxies = parse_frpc_proxies(toml_text)
-            proxy_names = [str(p.get('name') or '') for p in proxies]
+            host_id = str(state.get('host_id') or '').strip()
+            if not host_id:
+                machine_id = str(state.get('machine_id') or '')
+                host_id = '%s-%s' % (state.get('hostname') or 'host', machine_id[:8] or 'local')
             missing_proxy = []
             port_mismatch = []
             extra_enabled = []
@@ -3442,7 +3551,11 @@ def check_client(report, paths, facts, skip_network):
                 if not isinstance(rec, dict):
                     continue
                 sid_s = str(rec.get('id') or sid)
-                present = any(sid_s and sid_s in name for name in proxy_names)
+                # Match the same complete identity emitted by the Agent renderer.
+                # Substrings conflate http/https and short/long service names.
+                expected_name = '%s-%s' % (host_id, sid_s)
+                matching = [p for p in proxies if p.get('name') == expected_name]
+                present = bool(matching)
                 if rec.get('enabled', True) is False:
                     if present:
                         extra_enabled.append(sid_s)
@@ -3451,10 +3564,9 @@ def check_client(report, paths, facts, skip_network):
                     missing_proxy.append(sid_s)
                     continue
                 want = coerce_port(rec.get('remote_port'))
-                for proxy in proxies:
-                    if sid_s in str(proxy.get('name') or ''):
-                        if want is not None and coerce_port(proxy.get('remotePort')) not in (None, want):
-                            port_mismatch.append(sid_s)
+                for proxy in matching:
+                    if want is not None and coerce_port(proxy.get('remotePort')) != want:
+                        port_mismatch.append(sid_s)
             if missing_proxy or port_mismatch:
                 report.add(
                     'frpc_config', FAIL,
@@ -3491,6 +3603,7 @@ def check_client(report, paths, facts, skip_network):
     elif not paths.is_file(toml_path) and report.role in ('client', 'dual', 'partial_client'):
         report.add('frpc_config', FAIL, 'frpc.toml is missing', '', 'sudo drlink system synchronize, or restore from backup', 'state')
 
+    check_agent_runtime_projection(report, paths, state)
     if state is not None and not client_has_enabled_services(state):
         info = (facts.get('units') or {}).get('frpc') or {}
         active = str(info.get('active') or 'unknown')

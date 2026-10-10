@@ -541,6 +541,7 @@ def _cmd(
     risk="none",
     confirmation="none",
     surface="",
+    tail_fields=None,
 ):
     """Describe one canonical command.
 
@@ -587,6 +588,7 @@ def _cmd(
         "risk": risk_text,
         "confirmation": confirm_text,
         "surface": surface_text,
+        "tail_fields": tail_fields or {},
     }
 
 
@@ -658,6 +660,7 @@ def _load_final_commands():
                 args=args,
                 flags=flags,
                 tail=row.get("tail"),
+                tail_fields=row.get("tail_fields"),
                 internal=tuple(row["internal"]) if row.get("internal") else None,
                 aliases=tuple(tuple(a) for a in (row.get("aliases") or ())),
                 destructive=bool(row.get("destructive")),
@@ -1690,6 +1693,11 @@ def domain_help(topic, role):
             "  set network-group <NAME> members a,b,c\n"
             "  show network-group <NAME> references\n"
             "  unset network-object <NAME>\n"
+            "\nConcurrent administrator edits:\n"
+            "  Read configuration revision from show network-object <NAME>.\n"
+            "  To reject a stale update from a shell, use:\n"
+            "  sudo env DRLINK_EXPECTED_REVISION=<REV> drlink set network-object <NAME> value <VALUE>\n"
+            "  A revision mismatch reports REVISION_CONFLICT; no change is made.\n"
         )
     if topic in ("service-object", "service-objects"):
         if not server:
@@ -1741,7 +1749,10 @@ def domain_help(topic, role):
             "Remote Services\n"
             "===============\n\n"
             "Agent-local connectivity objects with DRLink endpoints.\n"
-            "UDP Remote Service is not supported.\n\n"
+            "UDP Remote Service is not supported.\n"
+            "SERVICE selects a Server-defined TCP or Fixed TCP Service Object.\n"
+            "The Server allocates/reserves the public endpoint; do not choose a public port on the Agent.\n"
+            "Use destination this-host for the Agent itself or a supported destination object.\n\n"
             "Everyday commands:\n"
             "  show remote-services\n"
             "  show remote-service <NAME>\n"
@@ -1811,6 +1822,7 @@ def domain_help(topic, role):
             "",
             "Everyday commands:",
             "  show status",
+            *(["  system status"] if server else []),
             "  system version",
             "  system diagnostics",
             "  system support-bundle",
@@ -1978,6 +1990,13 @@ def command_help(cmd):
             else:
                 rows.append((arg["name"], "required" if arg["required"] else "optional"))
         lines.extend(["", "Arguments:"])
+        lines.extend(_fmt_rows(rows))
+    if cmd.get("tail_fields"):
+        rows = []
+        for field, choices in cmd["tail_fields"].items():
+            description = "one of: %s" % ", ".join(choices) if isinstance(choices, list) else ("switch" if choices is False else "value")
+            rows.append((field, description))
+        lines.extend(["", "Fields after the name:"])
         lines.extend(_fmt_rows(rows))
     shown_flags = []
     # Public command help never advertises GNU-style --options.
@@ -2421,6 +2440,7 @@ NAVIGATION_TREE = {
         ("back", "Back", "", "back", None),
     ),
     "server.system.settings": (
+        ("server_show_settings", "Show current Server settings", "", "command", "system status"),
         ("server_set_public", "Remote Service public hostname", "", "workflow", "set_public_hostname"),
         ("server_set_bootstrap", "Bootstrap hostname", "", "workflow", "set_bootstrap_hostname"),
         ("server_set_installer", "Linux/macOS Agent installer URL", "", "workflow", "set_installer_url"),
