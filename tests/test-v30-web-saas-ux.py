@@ -1141,6 +1141,22 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertNotIn('Host admission selection is not included.', SOURCE)
         self.assertNotIn('method:"PUT"', saved)
 
+    def test_managed_host_detail_allowlist_and_operator_groups(self):
+        helper=(ROOT / "web/src/uxb-host-detail.ts").read_text(encoding="utf-8")
+        stylesheet=(ROOT / "web/dist/styles.css").read_text(encoding="utf-8")
+        self.assertIn('hostDetailSections(selected).map(', SOURCE)
+        self.assertIn('className="dr-host-detail-section"', SOURCE)
+        self.assertIn('import {hostDetailSections} from "./uxb-host-detail"', SOURCE)
+        self.assertIn(".dr-host-detail-section", stylesheet)
+        self.assertIn("Trust & Admission", helper)
+        self.assertIn("Connectivity & Version", helper)
+        self.assertIn("admission_state", helper)
+        self.assertIn("connected===false", helper)
+        self.assertNotIn("Object.entries", helper)
+        self.assertIn("tests/uxb-host-detail.test.mjs", PACKAGE)
+        self.assertIn("Recent activity", SOURCE)
+        self.assertIn("Why can / cannot connect?", SOURCE)
+
     def test_saved_view_name_replacement_requires_explicit_review(self):
         saved=(ROOT / "web/src/uxb-saved-views.tsx").read_text(encoding="utf-8")
         for marker in (

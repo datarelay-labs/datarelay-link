@@ -265,3 +265,10 @@
 
 /* One-time Agent invitation / approval requests must be observed before leaving. */
 .dr-uxb-busy-note{margin:0;padding:11px 13px;border:1px solid var(--dr-border-default);border-left:3px solid var(--dr-action-primary);border-radius:var(--dr-radius-card);background:var(--dr-surface-section);color:var(--dr-text-primary);font-size:12px;line-height:1.5}
+
+/* PF-CI: Host detail uses explicit, bounded operator groups; generic service drawer stays unchanged. */
+.dr-detail-fields>.dr-host-detail-section{display:grid;grid-template-columns:minmax(0,1fr);gap:0;min-width:0;border:0;padding:11px 0}
+.dr-host-detail-section h3{font-size:12px;font-weight:650;letter-spacing:.01em;color:var(--dr-text-primary);margin:0 0 6px}
+.dr-host-detail-section>div{display:grid;grid-template-columns:145px minmax(0,1fr);gap:12px;border-bottom:1px solid var(--dr-border-divider);padding:8px 0}
+.dr-host-detail-section>div strong{overflow-wrap:anywhere}
+@media(max-width:480px){.dr-host-detail-section>div{grid-template-columns:minmax(0,1fr);gap:3px}}
