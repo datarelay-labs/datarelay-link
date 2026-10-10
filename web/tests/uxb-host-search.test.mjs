@@ -169,3 +169,31 @@ test("Missing OS/trust fields are UNKNOWN, not evidence of no host or false zero
   assert.equal(trust.unknownCount,1);
   assert.match(trust.warning,/UNKNOWN|not observed|missing/i);
 });
+
+test("50/100 Host pages never imply fleet-wide typed search completeness",()=>{
+  // Authoritative Core uses a 100-record page ceiling and optional cursor.
+  // A loaded-only typed search cannot see page 2 until it is fetched.
+  const fleet=Array.from({length:101},(_,index)=>({
+    id:"host-"+String(index+1).padStart(3,"0"),
+    name:"Node-"+String(index+1).padStart(3,"0"),
+    hostname:"node-"+String(index+1).padStart(3,"0")+".example",
+    status:"active",trust_status:"trusted",admission_state:"APPROVED",
+    agent_platform:"linux",agent_version:"3.0.0",connected:1,
+  }));
+  for(const size of [50,100]){
+    const loaded=fleet.slice(0,size);
+    const result=filterObservedHosts(loaded,"name:node-101","APPROVED");
+    assert.equal(result.applied,true);
+    assert.equal(result.scope,"loaded-only");
+    assert.deepEqual(result.items,[]);
+    assert.equal(result.unknownCount,0);
+    assert.equal(loaded.length,size);
+    assert.equal(fleet[0].id,"host-001");
+  }
+  const afterPageTwo=filterObservedHosts(fleet,"name:node-101","APPROVED");
+  assert.deepEqual(afterPageTwo.items.map(host=>host.id),["host-101"]);
+  assert.equal(afterPageTwo.scope,"loaded-only");
+  const denied=filterObservedHosts(fleet.slice(0,100),"tag:sre");
+  assert.equal(denied.applied,false);
+  assert.match(denied.error,/does not expose|not available/i);
+});
