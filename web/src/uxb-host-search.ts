@@ -35,8 +35,16 @@ function errorResult(items:ObservedHost[],error:string):ObservedHostSearch {
 }
 export function filterObservedHosts(source:unknown,query:unknown):ObservedHostSearch {
   if(!Array.isArray(source))return errorResult([],"Core Host inventory was not observed. Retry before searching.");
+  // Core Host records must carry an observed stable identity and display name.
+  // A partially corrupted page cannot be silently converted to an empty,
+  // successfully searched fleet.
   const items=source.filter((item):item is ObservedHost=>
-    item!==null&&typeof item==="object"&&!Array.isArray(item));
+    item!==null&&typeof item==="object"&&!Array.isArray(item)&&
+    typeof item.id==="string"&&!!item.id.trim()&&
+    typeof item.name==="string"&&!!item.name.trim());
+  const invalidCount=source.length-items.length;
+  if(invalidCount&&!items.length)
+    return errorResult([],"Core Host inventory contained only invalid Host records. Search not applied.");
   if(typeof query!=="string"||query.length>120||CONTROL.test(query))
     return errorResult(items,"Invalid Host search expression. Use at most 120 plain-text characters.");
   const tokens=query.trim()?query.trim().split(/\s+/):[];
@@ -67,7 +75,9 @@ export function filterObservedHosts(source:unknown,query:unknown):ObservedHostSe
   }
   const requiredFields=new Set(filters.filter(f=>f.field).map(f=>f.field as string));
   const hasFreeText=filters.some(f=>f.field===null);
-  let unknownCount=0;
+  // Invalid page entries were not valid search candidates; count and disclose
+  // them even on a blank query instead of presenting a misleading clean list.
+  let unknownCount=invalidCount;
   if(requiredFields.size||hasFreeText){
     for(const row of items){
       // Free-text inspects multiple allowlisted Core fields. If even one of
@@ -83,8 +93,11 @@ export function filterObservedHosts(source:unknown,query:unknown):ObservedHostSe
         ?observedText(row,f.field)===f.term
         :(observedText(row,f.field)?.includes(f.term)??false))
       :FREE_FIELDS.some(key=>observedText(row,key)?.includes(f.term)??false)));
-  const warning=unknownCount
-    ?unknownCount+" loaded Host(s) have UNKNOWN requested field values; an unmatched filter cannot prove absence."
-    :null;
+  const warning=invalidCount
+    ?invalidCount+" invalid/UNKNOWN Core Host record(s) were excluded from this loaded page; the search is incomplete and cannot prove absence."+
+      (unknownCount>invalidCount?" "+(unknownCount-invalidCount)+" valid Host(s) also have UNKNOWN requested field values.":"")
+    :unknownCount
+      ?unknownCount+" loaded Host(s) have UNKNOWN requested field values; an unmatched filter cannot prove absence."
+      :null;
   return {items:matches,applied:true,scope:"loaded-only",error:null,warning,unknownCount};
 }

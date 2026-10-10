@@ -93,6 +93,28 @@ test("Free-text no-match does not claim absence when loaded Core fields are UNKN
   assert.equal(blank.unknownCount,0);
   assert.equal(blank.warning,null);
 });
+test("Malformed Core Host rows cannot silently become an empty valid search",()=>{
+  const invalidOnly=filterObservedHosts([null,7,"bad",[],{}, {id:123,name:"bogus"}, {id:"only"}],"host:node");
+  assert.equal(invalidOnly.applied,false);
+  assert.match(invalidOnly.error,/invalid|not observed|not available/i);
+  assert.deepEqual(invalidOnly.items,[]);
+
+  const partial=filterObservedHosts([null,rows[0],[]],"name:nomatch");
+  assert.equal(partial.applied,true);
+  assert.deepEqual(partial.items,[]);
+  assert.equal(partial.unknownCount,2);
+  assert.match(partial.warning,/invalid|unknown|incomplete/i);
+
+  const blank=filterObservedHosts([rows[0],null],"");
+  assert.deepEqual(blank.items.map(x=>x.id),["host-a"]);
+  assert.equal(blank.unknownCount,1);
+  assert.match(blank.warning,/invalid|unknown|incomplete/i);
+
+  const empty=filterObservedHosts([],"");
+  assert.equal(empty.applied,true);
+  assert.equal(empty.warning,null);
+  assert.equal(empty.unknownCount,0);
+});
 test("Missing OS/trust fields are UNKNOWN, not evidence of no host or false zero",()=>{
   const os=search("os:freebsd");
   assert.equal(os.applied,true);
