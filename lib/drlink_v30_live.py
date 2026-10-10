@@ -129,6 +129,16 @@ def write_live_snapshot(
     return payload
 
 
+def _valid_snapshot_time(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    try:
+        instant = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (ValueError, OverflowError):
+        return False
+    return instant.tzinfo is not None and instant.utcoffset() is not None
+
+
 def read_live_snapshot(path: Path) -> dict[str, Any]:
     target = Path(path)
     try:
@@ -147,11 +157,24 @@ def read_live_snapshot(path: Path) -> dict[str, Any]:
             "active_count": None,
             "reason": "live-access producer snapshot is unreadable",
         }
+    expected_producer = {"egress": "internet-gateway", "tcp-egress": "fixed-tcp"}.get(
+        target.parent.name
+    )
     if (
         not isinstance(payload, dict)
+        or type(payload.get("schema_version")) is not int
         or payload.get("schema_version") != LIVE_SCHEMA_VERSION
         or payload.get("fidelity") != FIDELITY_EXACT
+        or payload.get("plane") != "internet"
+        or payload.get("producer") not in ("internet-gateway", "fixed-tcp")
+        or (expected_producer is not None and payload.get("producer") != expected_producer)
+        or type(payload.get("producer_pid")) is not int
+        or payload.get("producer_pid") <= 0
+        or not _valid_snapshot_time(payload.get("updated_at"))
         or not isinstance(payload.get("observations"), list)
+        or any(not isinstance(item, dict) for item in payload["observations"])
+        or type(payload.get("active_count")) is not int
+        or payload["active_count"] != len(payload["observations"])
     ):
         return {
             "fidelity": FIDELITY_UNKNOWN,
