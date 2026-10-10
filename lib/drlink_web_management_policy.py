@@ -10,12 +10,14 @@ import json
 import os
 import re
 import stat
+import time
 from dataclasses import dataclass
 
 from drlink_foundation_security import (
     FoundationAllowEntry,
     FoundationManagementPolicy,
     FoundationSurfacePolicy,
+    foundation_authorize_management,
     foundation_canonical_network,
 )
 
@@ -165,3 +167,72 @@ def load_management_ingress(path: str) -> WebIngressConfiguration:
         if directory_fd is not None:
             os.close(directory_fd)
     return _decode(raw)
+
+
+def preview_management_ingress(
+    *, policy_file: str, source_peer: str | None,
+    forwarded_for: str | None = None, now: int | None = None,
+) -> dict:
+    """Only simulate an operator-supplied management source against local ACL.
+
+    Neither peer provenance nor deployed Web listener configuration is
+    observed. Even a matching CIDR CANNOT authorize a live policy switch,
+    SSH access change, or recovery commitment.
+    """
+    if type(source_peer) not in (str, type(None)):
+        raise ValueError("invalid simulated management source")
+    if type(forwarded_for) not in (str, type(None)):
+        raise ValueError("invalid simulated proxy chain")
+    if type(now) is not int and now is not None:
+        raise ValueError("invalid simulation timestamp")
+    if now is None:
+        now = int(time.time())
+    if now < 0:
+        raise ValueError("invalid simulation timestamp")
+    for value in (source_peer, forwarded_for):
+        if value is not None and (
+            len(value) > 1024 or any(character in value for character in "\r\n\x00")
+        ):
+            raise ValueError("invalid simulated management source")
+
+    configured = load_management_ingress(policy_file)
+    web = configured.policy.web
+    match = foundation_authorize_management(
+        configured.policy, "web",
+        direct_peer=source_peer,
+        x_forwarded_for=forwarded_for,
+        trusted_proxy_cidrs=configured.trusted_proxy_cidrs,
+        now=now,
+    )
+    # Disabled policy permits HTTP traffic for compatibility, but that does
+    # not establish an allowlist, nor prove the operator's access path.
+    simulation = (
+        "NOT_ENFORCED" if not web.enabled else "ALLOW" if match.allowed else "DENY"
+    )
+    blockers = [
+        "observed_management_path_unverified",
+        "rollback_unverified",
+        "offline_console_unverified",
+        "two_user_acceptance_unverified",
+        "ssh_host_enforcement_unavailable",
+    ]
+    if not web.enabled:
+        blockers.insert(0, "web_policy_disabled")
+    elif not match.allowed:
+        blockers.insert(0, "simulation_did_not_allow_source")
+    return {
+        "status": "BLOCKED",
+        "management_source_simulation": simulation,
+        "policy_enabled": bool(web.enabled),
+        "policy_revision": web.revision,
+        "source_count": len(web.sources),
+        "trusted_proxy_count": len(configured.trusted_proxy_cidrs),
+        "caller_supplied_source_only": True,
+        "authoritative_peer_observed": False,
+        "runtime_policy_observed": False,
+        "rollback_verified": False,
+        "ssh_host_enforced": False,
+        "safe_to_activate": False,
+        "read_only": True,
+        "blockers": blockers,
+    }
