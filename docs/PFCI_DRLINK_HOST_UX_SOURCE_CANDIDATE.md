@@ -13,18 +13,18 @@ This setting is **only a display preference**: it does not grant, revoke, approv
 
 ## UX-P1 C: Task-grouped and allowlisted Host details
 
-The former Host detail drawer rendered arbitrary scalar keys from the selected Core object. The new Host-only presentation uses an explicit positive list of fields under Identity, Trust & Admission, and Connectivity & Version. Missing admission/trust/connection facts are explicitly **UNKNOWN**; false connectivity is Disconnected, not inferred healthy. Input text is length-bounded and control/bidi characters are removed before React HTML escaping.
+The former Host detail drawer rendered arbitrary scalar keys from the selected Core object. The new Host-only presentation uses an explicit positive list of fields under Identity, Trust & Admission, and Connectivity & Version. Missing admission/trust/connection facts are explicitly **UNKNOWN**; false connectivity (including SQLite `0`) is Disconnected, explicit true/SQLite `1` is Connected, and absent/invalid values remain UNKNOWN. Input text is length-bounded and control/bidi characters are removed before React HTML escaping.
 
 Raw source metadata, nested objects, unknown properties, tokens, private keys, cookie/session material and credential fields are not printed. The existing Recent activity and Why can/cannot connect navigation actions are preserved. The Remote Service detail remains unchanged by this slice.
 
 ## UX-P1 B: Typed Host search — explicitly deferred
 
-MeshCentral documents user/ip/group/tag/os tokens but the DRLink Web currently filters only **observed/loaded Core pages**. A typed/global Host search could falsely hide valid Hosts if server-side authorization, metadata coverage or cursor completion has not been independently verified. No new query engine, network discovery, Core search API or false fleet-wide filter is introduced here. Reconcile active Core projections and the real 1–100 Host UX before scheduling implementation.
+MeshCentral documents user/ip/group/tag/os tokens but the DRLink Web currently filters only **observed/loaded Core pages**. The exact DRLink v3 `lib/drlink_management_service.py` `managed-host` inventory SQL projection provides id/name/hostname/admission/trust/platform/version/heartbeat but **does not project tag/group/IP attributes**; its server-side `query` predicate matches the canonical Host name expression only, not those MeshCentral facets. A typed/global Host search could therefore hide valid Hosts or imply completeness without authoritative field coverage and cursor/role proofs. No new query engine, network discovery, Core search API or false fleet-wide filter is introduced here. Reconcile product-owned Core projection, pagination and the real 1–100 Host UX before scheduling implementation.
 
 ## Validation and release boundary
 
 - Red before implementation: two saved-admission cases failed (null admission-only view and invalid admission erroneously accepted).
-- New source after fixes: private filter contract Node 9/9 PASS, Web Journey 82/82 PASS, Web UX source contract 55/55 PASS, Web build PASS, deterministic Web bundle 6/6 PASS and `git diff --check` PASS.
+- New source after fixes: private filter contract Node 9/9 PASS, Web Journey 83/83 PASS, Web UX source contract 55/55 PASS, Web build PASS, deterministic Web bundle 6/6 PASS and `git diff --check` PASS.
 - These checks **are not** authenticated Admin/Operator/Read Only browser testing or Full User E2E. Original platform denials on Playwright/preview login, Chromium install and protected Client tests remain untouched. No production/v2.4/allocator/Agent changes.
 - Generated `web/dist/app.js` and static CSS are committed with the source, as an isolated optional Web candidate. No release archive, SHA freeze, source verification artifact, service restart, merge or GA approval is inferred.
 - Next true user gate: the current UXB-06F browser ledger in the owning Link workstream, on a coherent exact Web/Core HEAD and legitimately authorized sandbox; preserve existing active-dirty test file.

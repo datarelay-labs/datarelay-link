@@ -1151,7 +1151,7 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn("Trust & Admission", helper)
         self.assertIn("Connectivity & Version", helper)
         self.assertIn("admission_state", helper)
-        self.assertIn("connected===false", helper)
+        self.assertIn("connected===false||data.connected===0", helper)
         self.assertNotIn("Object.entries", helper)
         self.assertIn("tests/uxb-host-detail.test.mjs", PACKAGE)
         self.assertIn("Recent activity", SOURCE)

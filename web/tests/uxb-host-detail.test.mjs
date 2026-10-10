@@ -30,6 +30,13 @@ test("Three ordered task-specific groups with bounded safe host facts",()=>{
  assert.ok(fields.some(x=>x.label==="Agent version"&&x.value==="3.0.0"));
 });
 
+test("SQLite numeric 0/1 connection state does not become UNKNOWN",()=>{
+ assert.match(flatten({id:"node-a",connected:1}),/Connection: Connected/);
+ assert.match(flatten({id:"node-b",connected:0}),/Connection: Disconnected/);
+ assert.match(flatten({id:"node-c",connected:2}),/Connection: UNKNOWN/);
+ assert.match(flatten({id:"node-d",connected:"1"}),/Connection: UNKNOWN/);
+});
+
 test("No observed Core state means UNKNOWN, never Approved or Connected",()=>{
  const text=flatten({id:"unknown-node"});
  assert.match(text,/Admission: UNKNOWN/);

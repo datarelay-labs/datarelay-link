@@ -25,8 +25,9 @@ function admission(data:HostFields):string{
   return "UNKNOWN";
 }
 function connectivity(data:HostFields):string{
-  if(data.connected===true)return "Connected";
-  if(data.connected===false)return "Disconnected";
+  // The authoritative SQLite inventory projection may serialize BOOL as 1/0.
+  if(data.connected===true||data.connected===1)return "Connected";
+  if(data.connected===false||data.connected===0)return "Disconnected";
   return "UNKNOWN";
 }
 export function hostDetailSections(value:unknown):HostDetailSection[]{
