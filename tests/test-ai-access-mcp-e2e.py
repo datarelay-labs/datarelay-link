@@ -699,6 +699,7 @@ class MCPBridgeE2ETests(unittest.TestCase):
             "exec",
             "read_file",
             "write_file",
+            "delete_file",
             "upload_file",
             "download_file",
             "list_processes",
@@ -712,6 +713,9 @@ class MCPBridgeE2ETests(unittest.TestCase):
             self.assertTrue(any(s.get("type") == "oauth2" for s in (tool.get("securitySchemes") or [])))
         by_name = {t["name"]: t for t in payload["result"]["tools"]}
         self.assertFalse(by_name["exec"]["annotations"]["readOnlyHint"])
+        self.assertFalse(by_name["write_file"]["annotations"]["readOnlyHint"])
+        self.assertFalse(by_name["delete_file"]["annotations"]["readOnlyHint"])
+        self.assertTrue(by_name["delete_file"]["annotations"]["destructiveHint"])
         self.assertTrue(by_name["read_file"]["annotations"]["readOnlyHint"])
         status, _payload = rpc(
             self.url,
@@ -749,6 +753,10 @@ class MCPBridgeE2ETests(unittest.TestCase):
             )
             self.assertIn("DENY", self.text_of(payload))
         status, payload = self.call(
+            self.chatgpt, "delete_file", {"endpoint": "Expernet-DP1", "path": str(self.vendor / "x")}
+        )
+        self.assertIn("DENY", self.text_of(payload))
+        status, payload = self.call(
             self.chatgpt,
             "download_file",
             {"endpoint": "Expernet-DP1", "path": str(self.vendor / "app.log")},
@@ -771,6 +779,15 @@ class MCPBridgeE2ETests(unittest.TestCase):
         )
         self.assertNotIn("DENY", self.text_of(payload))
         self.assertTrue((self.etc_vendor / "test-file").is_file())
+        status, payload = self.call(
+            self.cursor, "delete_file", {"endpoint": "lab1", "path": str(self.etc_vendor / "test-file")}
+        )
+        self.assertNotIn("DENY", self.text_of(payload))
+        self.assertFalse((self.etc_vendor / "test-file").exists())
+        status, payload = self.call(
+            self.cursor, "delete_file", {"endpoint": "lab1", "path": str(Path(self.tmp) / "outside-delete")}
+        )
+        self.assertIn("DENY", self.text_of(payload))
         blob = base64.b64encode(b"bin").decode("ascii")
         status, payload = self.call(
             self.cursor,
@@ -1046,6 +1063,7 @@ class MCPBridgeE2ETests(unittest.TestCase):
             "exec",
             "read_file",
             "write_file",
+            "delete_file",
             "upload_file",
             "download_file",
             "list_processes",

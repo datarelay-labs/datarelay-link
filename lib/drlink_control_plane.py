@@ -38,6 +38,12 @@ from drlink_control_db import (
     utc_now_iso,
 )
 
+class OAuthScopeError(ControlPlaneError):
+    """OAuth request exceeds the server/client scope contract."""
+
+    oauth_error = "invalid_scope"
+
+
 class OAuthPendingCapacityError(ControlPlaneError):
     """Live pending OAuth transactions are at the admission cap."""
 
@@ -106,12 +112,13 @@ AI_CAPABILITIES = (
     "exec",
     "read_file",
     "write_file",
+    "delete_file",
     "upload_file",
     "download_file",
     "list_processes",
 )
-FILE_CAPABILITIES = frozenset({"read_file", "write_file", "upload_file", "download_file"})
-AI_MUTATING_CAPABILITIES = frozenset({"exec", "write_file", "upload_file"})
+FILE_CAPABILITIES = frozenset({"read_file", "write_file", "delete_file", "upload_file", "download_file"})
+AI_MUTATING_CAPABILITIES = frozenset({"exec", "write_file", "delete_file", "upload_file"})
 AI_TERMINAL_JOB_STATUSES = frozenset(
     {"done", "timeout", "cancelled", "expired", "recovery_required"}
 )
@@ -3976,7 +3983,7 @@ class ControlPlane:
             raise ControlPlaneError("CIMD metadata client_id must exactly match the requested URL")
         return doc
 
-    def register_oauth_client(self, metadata: dict) -> dict:
+    def register_oauth_client(self, metadata: dict, *, supported_scopes=("drlink.ai", "offline_access")) -> dict:
         """RFC 7591 Dynamic Client Registration (public clients)."""
         if not isinstance(metadata, dict):
             raise ControlPlaneError("client metadata must be a JSON object")
@@ -3995,6 +4002,11 @@ class ControlPlane:
         auth_method = str(metadata.get("token_endpoint_auth_method") or "none").strip() or "none"
         if auth_method not in ("none", "client_secret_post", "client_secret_basic"):
             raise ControlPlaneError("unsupported token_endpoint_auth_method")
+        requested_scope = str(metadata.get("scope") or " ".join(supported_scopes)).strip()
+        requested_scopes = tuple(x for x in requested_scope.split() if x)
+        allowed_scopes = tuple(str(x) for x in supported_scopes)
+        if "drlink.ai" not in requested_scopes or any(x not in allowed_scopes for x in requested_scopes):
+            raise ControlPlaneError("unsupported scope in registration")
         grant_types = metadata.get("grant_types") or ["authorization_code", "refresh_token"]
         if not isinstance(grant_types, list):
             raise ControlPlaneError("grant_types must be a list")
@@ -4010,13 +4022,14 @@ class ControlPlane:
         now = utc_now_iso()
         self.conn.execute(
             "INSERT INTO ai_oauth_dcr_clients(client_id, redirect_uris, token_endpoint_auth_method, "
-            "client_secret_hash, client_name, metadata_url, created_at) VALUES (?, ?, ?, ?, ?, '', ?)",
+            "client_secret_hash, client_name, metadata_url, scope, created_at) VALUES (?, ?, ?, ?, ?, '', ?, ?)",
             (
                 client_id,
                 "\n".join(cleaned),
                 auth_method,
                 secret_hash,
                 str(metadata.get("client_name") or "")[:128],
+                " ".join(requested_scopes),
                 now,
             ),
         )
@@ -4027,6 +4040,7 @@ class ControlPlane:
             "token_endpoint_auth_method": auth_method,
             "grant_types": ["authorization_code", "refresh_token"],
             "response_types": ["code"],
+            "scope": " ".join(requested_scopes),
             "client_name": str(metadata.get("client_name") or "")[:128] or None,
         }
         if secret:
@@ -4052,6 +4066,7 @@ class ControlPlane:
                 "principal_id": principal["id"],
                 "principal_name": principal["name"],
                 "redirect_uri": redirect_uri,
+                "allowed_scopes": str(static["scope"] or "drlink.ai offline_access"),
                 "unbound": False,
                 "source": "static",
             }
@@ -4065,6 +4080,7 @@ class ControlPlane:
                 "principal_id": self._ensure_oauth_unbound_principal(),
                 "principal_name": OAUTH_UNBOUND_PRINCIPAL,
                 "redirect_uri": redirect_uri,
+                "allowed_scopes": str(dcr["scope"] or "drlink.ai offline_access"),
                 "unbound": True,
                 "source": "dcr",
             }
@@ -4078,14 +4094,19 @@ class ControlPlane:
             if redirect_uri not in allowed:
                 raise ControlPlaneError("redirect_uri is not registered")
             now = utc_now_iso()
+            cimd_scope = str(doc.get("scope") or "drlink.ai offline_access").strip()
+            cimd_scopes = tuple(dict.fromkeys(x for x in cimd_scope.split() if x))
+            if "drlink.ai" not in cimd_scopes or any(x not in ("drlink.ai", "offline_access") for x in cimd_scopes):
+                raise ControlPlaneError("unsupported scope in CIMD metadata")
             self.conn.execute(
                 "INSERT OR REPLACE INTO ai_oauth_dcr_clients(client_id, redirect_uris, token_endpoint_auth_method, "
-                "client_secret_hash, client_name, metadata_url, created_at) VALUES (?, ?, 'none', NULL, ?, ?, ?)",
+                "client_secret_hash, client_name, metadata_url, scope, created_at) VALUES (?, ?, 'none', NULL, ?, ?, ?, ?)",
                 (
                     client_id,
                     "\n".join(allowed),
                     str(doc.get("client_name") or "cimd")[:128],
                     client_id,
+                    " ".join(cimd_scopes),
                     now,
                 ),
             )
@@ -4094,6 +4115,7 @@ class ControlPlane:
                 "principal_id": self._ensure_oauth_unbound_principal(),
                 "principal_name": OAUTH_UNBOUND_PRINCIPAL,
                 "redirect_uri": redirect_uri,
+                "allowed_scopes": " ".join(cimd_scopes),
                 "unbound": True,
                 "source": "cimd",
             }
@@ -4121,9 +4143,10 @@ class ControlPlane:
             )
             if normalized == "oauth":
                 self.conn.execute(
-                    "INSERT OR REPLACE INTO ai_oauth_clients(client_id, principal_id, redirect_uris, created_at) "
-                    "VALUES (?, ?, COALESCE((SELECT redirect_uris FROM ai_oauth_clients WHERE client_id = ?), ''), ?)",
-                    (principal["name"], principal["id"], principal["name"], now),
+                    "INSERT OR REPLACE INTO ai_oauth_clients(client_id, principal_id, redirect_uris, scope, created_at) "
+                    "VALUES (?, ?, COALESCE((SELECT redirect_uris FROM ai_oauth_clients WHERE client_id = ?), ''), "
+                    "COALESCE((SELECT scope FROM ai_oauth_clients WHERE client_id = ?), 'drlink.ai offline_access'), ?)",
+                    (principal["name"], principal["id"], principal["name"], principal["name"], now),
                 )
             return {
                 "entity": {"type": "ai-principal", "id": principal["id"], "name": name},
@@ -4142,18 +4165,19 @@ class ControlPlane:
         def write():
             now = utc_now_iso()
             row = self.conn.execute(
-                "SELECT redirect_uris FROM ai_oauth_clients WHERE client_id = ?",
+                "SELECT redirect_uris, scope FROM ai_oauth_clients WHERE client_id = ?",
                 (principal["name"],),
             ).fetchone()
             existing = [p for p in str(row["redirect_uris"] if row else "").split("\n") if p]
+            allowed_scope = str(row["scope"] if row else "drlink.ai offline_access")
             if text not in existing:
                 if len(existing) >= OAUTH_MAX_REDIRECTS:
                     raise ControlPlaneError("too many redirect_uris")
                 existing.append(text)
             self.conn.execute(
-                "INSERT OR REPLACE INTO ai_oauth_clients(client_id, principal_id, redirect_uris, created_at) "
-                "VALUES (?, ?, ?, ?)",
-                (principal["name"], principal["id"], "\n".join(existing), now),
+                "INSERT OR REPLACE INTO ai_oauth_clients(client_id, principal_id, redirect_uris, scope, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (principal["name"], principal["id"], "\n".join(existing), allowed_scope, now),
             )
             self.conn.execute(
                 "UPDATE ai_principals SET auth_mode = 'oauth', oauth_subject = ?, row_version = row_version + 1, "
@@ -4176,9 +4200,14 @@ class ControlPlane:
         resource: str,
         state: str = "",
         source: str = "",
+        scope: str = "drlink.ai offline_access",
     ) -> dict:
         if not code_challenge:
             raise ControlPlaneError("code_challenge is required")
+        requested_scopes = tuple(dict.fromkeys(x for x in str(scope or "drlink.ai offline_access").split() if x))
+        if "drlink.ai" not in requested_scopes or any(x not in ("drlink.ai", "offline_access") for x in requested_scopes):
+            raise ControlPlaneError("unsupported OAuth scope")
+        requested_scope = " ".join(requested_scopes)
         # CIMD metadata is fetched before the DB lock so a slow peer cannot stall admission.
         cimd_doc = None
         with self._db_lock:
@@ -4197,6 +4226,11 @@ class ControlPlane:
             resolved = self.resolve_oauth_authorize_client(
                 client_id, redirect_uri, _cimd_doc=cimd_doc
             )
+            allowed_scopes = tuple(
+                x for x in str(resolved.get("allowed_scopes") or "drlink.ai offline_access").split() if x
+            )
+            if any(x not in allowed_scopes for x in requested_scopes):
+                raise OAuthScopeError("requested OAuth scope exceeds registered client scope")
             self.conn.execute("BEGIN IMMEDIATE")
             try:
                 self._sweep_expired_oauth_pending()
@@ -4230,9 +4264,9 @@ class ControlPlane:
                         scope = "global"
                     raise OAuthPendingCapacityError(scope)
                 self.conn.execute(
-                    "INSERT INTO ai_oauth_pending(id, principal_id, client_id, redirect_uri, code_challenge, resource, state, "
+                    "INSERT INTO ai_oauth_pending(id, principal_id, client_id, redirect_uri, code_challenge, resource, scope, state, "
                     "created_at, completion_token, status, expires_at, decision_at, consumed_at, code_plain, source_addr) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, '', '', '', ?)",
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, '', '', '', ?)",
                     (
                         pending_id,
                         resolved["principal_id"],
@@ -4240,6 +4274,7 @@ class ControlPlane:
                         resolved["redirect_uri"],
                         code_challenge,
                         resource or "",
+                        requested_scope,
                         state or "",
                         now,
                         completion_token,
@@ -4348,10 +4383,11 @@ class ControlPlane:
             now = utc_now_iso()
             dcr = self._lookup_dcr_client(row["client_id"])
             redirects = dcr["redirect_uris"] if dcr is not None else row["redirect_uri"]
+            allowed_scope = str(dcr["scope"] if dcr is not None else row["scope"] or "drlink.ai")
             self.conn.execute(
-                "INSERT OR REPLACE INTO ai_oauth_clients(client_id, principal_id, redirect_uris, created_at) "
-                "VALUES (?, ?, ?, ?)",
-                (row["client_id"], target["id"], redirects, now),
+                "INSERT OR REPLACE INTO ai_oauth_clients(client_id, principal_id, redirect_uris, scope, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (row["client_id"], target["id"], redirects, allowed_scope, now),
             )
             self.conn.execute(
                 "UPDATE ai_principals SET auth_mode = 'oauth', oauth_subject = COALESCE(NULLIF(oauth_subject, ''), ?), "
@@ -4373,8 +4409,8 @@ class ControlPlane:
         digest = hashlib.sha256(code.encode("utf-8")).hexdigest()
         now = utc_now_iso()
         self.conn.execute(
-            "INSERT INTO ai_oauth_codes(code_hash, principal_id, client_id, redirect_uri, code_challenge, resource, expires_at, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO ai_oauth_codes(code_hash, principal_id, client_id, redirect_uri, code_challenge, resource, scope, expires_at, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 digest,
                 principal_id,
@@ -4382,6 +4418,7 @@ class ControlPlane:
                 row["redirect_uri"],
                 row["code_challenge"],
                 row["resource"],
+                str(row["scope"] or "drlink.ai"),
                 self._iso_plus_seconds(300),
                 now,
             ),
@@ -4513,7 +4550,12 @@ class ControlPlane:
         ttl: int = OAUTH_ACCESS_TTL,
         include_refresh: bool = False,
         rotated_from: Optional[str] = None,
+        scope: str = "drlink.ai",
     ) -> dict:
+        granted = tuple(dict.fromkeys(x for x in str(scope or "drlink.ai").split() if x))
+        if "drlink.ai" not in granted or any(x not in ("drlink.ai", "offline_access") for x in granted):
+            raise ControlPlaneError("unsupported OAuth scope")
+        granted_scope = " ".join(granted)
         token = "drauth_" + secrets.token_urlsafe(32)
         digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
         fp = digest[:12]
@@ -4527,9 +4569,9 @@ class ControlPlane:
             "access_token": token,
             "token_type": "Bearer",
             "expires_in": int(ttl),
-            "scope": "drlink.ai offline_access",
+            "scope": granted_scope,
         }
-        if include_refresh:
+        if include_refresh and "offline_access" in granted:
             refresh = "drref_" + secrets.token_urlsafe(32)
             rdigest = hashlib.sha256(refresh.encode("utf-8")).hexdigest()
             self.conn.execute(
@@ -4558,7 +4600,7 @@ class ControlPlane:
         if not resource:
             raise ControlPlaneError("resource is required")
         return self.issue_oauth_access_token(
-            principal_id=principal["id"], client_id=client_id, resource=resource, include_refresh=False
+            principal_id=principal["id"], client_id=client_id, resource=resource, include_refresh=False, scope="drlink.ai"
         )
 
     def exchange_authorization_code(
@@ -4588,7 +4630,8 @@ class ControlPlane:
             principal_id=row["principal_id"],
             client_id=client_id,
             resource=row["resource"] or resource,
-            include_refresh=True,
+            include_refresh=("offline_access" in str(row["scope"] or "").split()),
+            scope=str(row["scope"] or "drlink.ai"),
         )
 
     def exchange_refresh_token(
@@ -4624,6 +4667,7 @@ class ControlPlane:
             resource=stored,
             include_refresh=True,
             rotated_from=digest,
+            scope="drlink.ai offline_access",
         )
 
     def revoke_oauth_credential(self, token: str) -> bool:

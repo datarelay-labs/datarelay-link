@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   windows-powershell51:
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' || github.base_ref == 'feature/v2.4.0-final-product-closure'
     name: Windows PowerShell 5.1
     runs-on: windows-latest
     steps:
@@ -44,7 +44,7 @@ jobs:
           & .\tests\windows\frp-binary-smoke.ps1
 
   windows-pwsh7:
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' || github.base_ref == 'feature/v2.4.0-final-product-closure'
     name: Windows PowerShell 7
     runs-on: windows-latest
     steps:

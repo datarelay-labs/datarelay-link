@@ -126,6 +126,17 @@ def write_file(path: str, content: bytes, patterns: list[str]) -> dict:
     return {"path": str(final), "bytes": len(content)}
 
 
+def delete_file(path: str, patterns: list[str]) -> dict:
+    resolved = validate_safe_path(path, patterns, must_exist=True)
+    raw = Path(path)
+    if raw.is_symlink() or resolved.is_symlink():
+        raise ControlPlaneError("symlink escape denied")
+    if _is_unsafe_file(resolved) or not resolved.is_file():
+        raise ControlPlaneError("not a regular file")
+    resolved.unlink()
+    return {"path": str(resolved), "deleted": True}
+
+
 def exec_command(command: str, timeout: int) -> dict:
     timeout = int(timeout or DEFAULT_EXEC_TIMEOUT)
     if timeout < 1:
@@ -208,6 +219,8 @@ def execute_local(capability: str, arguments: dict, *, patterns: list[str], time
         else:
             payload = str(content or "").encode("utf-8")
         return write_file(arguments.get("path") or "", payload, patterns)
+    if cap == "delete_file":
+        return delete_file(arguments.get("path") or arguments.get("operand") or "", patterns)
     if cap == "download_file":
         return read_file(arguments.get("path") or "", patterns)
     if cap == "exec":

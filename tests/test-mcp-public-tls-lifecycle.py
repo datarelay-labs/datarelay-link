@@ -521,6 +521,8 @@ class McpTlsLifecycleTests(unittest.TestCase):
 
         os.environ["DRLINK_MCP_PUBLIC_URL"] = "https://override.example.test/mcp"
         try:
+            # Direct mode must not advertise an MCP URL even with a stale
+            # explicit override; canonical v2.4 requires single443.
             self.assertEqual(self.plane.mcp_public_url(), "Not configured")
         finally:
             os.environ.pop("DRLINK_MCP_PUBLIC_URL", None)

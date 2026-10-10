@@ -24,7 +24,7 @@ jobs:
           bash scripts/check-public-metadata.sh
 
   apple-silicon:
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' || github.base_ref == 'feature/v2.4.0-final-product-closure'
     runs-on: macos-15
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
