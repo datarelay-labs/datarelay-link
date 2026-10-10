@@ -213,6 +213,23 @@ class WebhookTests(unittest.TestCase):
                 self.assertEqual(store.prune_history(max_completed=10), 2)
                 self.assertEqual(total(), 10)
 
+    def test_invalid_pending_limits_never_return_surprise_event_payloads(self):
+        # Zero/negative or coercible types do not authorize returning even
+        # one queued event. Keep read and lease-count boundaries aligned.
+        with tempfile.TemporaryDirectory(prefix="drlink-wh-pending-bound-") as root:
+            with WebhookStore(root) as store:
+                sink = store.create(
+                    "pending-bound", "https://hooks.example.org/events", ["attention"]
+                )
+                event = store.enqueue(sink["id"], "attention", {"kind": "queued"})
+                for value in (0, -1, False, True, 1.5, "1", None):
+                    with self.subTest(limit=value):
+                        with self.assertRaises(ControlPlaneError):
+                            store.pending(value)
+                pending = store.pending(1)
+                self.assertEqual(len(pending), 1)
+                self.assertEqual(pending[0]["event_id"], event["event_id"])
+
     def test_reenabled_hook_does_not_alert_on_intentionally_discarded_queue(self):
         from drlink_management_service import ManagementQueryService
         with tempfile.TemporaryDirectory(prefix="drlink-wh-reenable-attention-") as root:

@@ -424,7 +424,11 @@ class WebhookStore:
         return removed
 
     def pending(self, limit: int = 25) -> list[dict[str, Any]]:
-        size = max(1, min(int(limit), 100))
+        # A read-only zero-limit request must not disclose one event through
+        # implicit coercion; match the direct claim and retention boundaries.
+        if type(limit) is not int or limit < 1:
+            raise ControlPlaneError("Webhook pending limit must be a positive integer.")
+        size = min(limit, 100)
         rows = self.conn.execute(
             "SELECT event_id,webhook_id,event_type,payload_json,attempts "
             "FROM management_webhook_outbox WHERE status='PENDING' "
