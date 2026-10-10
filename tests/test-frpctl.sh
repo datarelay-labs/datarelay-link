@@ -206,7 +206,25 @@ export FRP_DEPLOY_TEST_ROOT="$SERVER"
 "$CTL" system status >"$WORKDIR/server-system-status.out"
 status_lines="$(wc -l <"$WORKDIR/server-status.out")"
 head -n "$status_lines" "$WORKDIR/server-system-status.out" >"$WORKDIR/server-system-status-prefix.out"
-cmp -s "$WORKDIR/server-status.out" "$WORKDIR/server-system-status-prefix.out"   || { diff -u "$WORKDIR/server-status.out" "$WORKDIR/server-system-status-prefix.out" >&2 || true; fail "status summary preservation"; }
+# Portable distro images do not promise cmp/diff (diffutils). Compare exact
+# bytes and print a bounded unified diff using the Python runtime already
+# required by the client/Server CLI.
+if ! python3 - "$WORKDIR/server-status.out" "$WORKDIR/server-system-status-prefix.out" <<'PY_STATUS'
+import difflib
+import sys
+from pathlib import Path
+
+left = Path(sys.argv[1]).read_bytes()
+right = Path(sys.argv[2]).read_bytes()
+if left != right:
+    a = left.decode("utf-8", "replace").splitlines(keepends=True)
+    b = right.decode("utf-8", "replace").splitlines(keepends=True)
+    sys.stderr.writelines(list(difflib.unified_diff(a, b, fromfile="show status", tofile="system status"))[:80])
+    raise SystemExit(1)
+PY_STATUS
+then
+  fail "status summary preservation"
+fi
 grep -q 'DRLink Server' "$WORKDIR/server-status.out" || fail "server role"
 grep -q 'Control DB' "$WORKDIR/server-status.out" || fail "server control DB"
 grep -q '^Server Settings$' "$WORKDIR/server-system-status.out" || fail "server settings heading"

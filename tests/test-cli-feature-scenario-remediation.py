@@ -1155,7 +1155,7 @@ frpctl_nav_workflow manage_host
             try:
                 env = dict(os.environ, FRP_CTL_TEST_ROOT=temp, FRP_DEPLOY_TEST_ROOT=temp)
                 proc = subprocess.run(
-                    ["bash", str(ROOT / "tools/frpctl"), "system", "version"],
+                    ["bash", str(ROOT / "tools/drlink"), "system", "version"],
                     env=env, text=True, capture_output=True, timeout=30,
                 )
             finally:

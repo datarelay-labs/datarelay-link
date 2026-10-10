@@ -45,23 +45,17 @@ payload = {
 }
 env["FRP_CTL_GRAMMAR_PAYLOAD"] = json.dumps(payload)
 
-master, slave = pty.openpty()
-pid = os.fork()
+# pty.fork() attaches a controlling terminal on both Darwin/libedit and
+# Linux/GNU Readline. An inherited openpty fd after setsid() is not a
+# controlling TTY on macOS and may cause the REPL to exit after one action.
+pid, master = pty.fork()
 if pid == 0:
-    os.close(master)
-    os.setsid()
-    os.dup2(slave, 0)
-    os.dup2(slave, 1)
-    os.dup2(slave, 2)
-    if slave > 2:
-        os.close(slave)
     os.chdir(root)
     os.execve(
         sys.executable,
         [sys.executable, "-u", str(Path(root) / "lib" / "frp_ctl_repl.py")],
         env,
     )
-os.close(slave)
 
 buf = b""
 

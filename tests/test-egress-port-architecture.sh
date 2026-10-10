@@ -113,17 +113,28 @@ unset FRP_PUBLIC_IP FRP_PUBLIC_HOST FRP_INTERNAL_IP FRP_CONTROL_PORT \
   FRP_ALLOCATOR_URL FRP_ALLOCATOR_PUBLIC_URL FRP_CLIENT_INSTALLER_URL \
   FRP_SERVER_CONFIG FRP_EGRESS_LISTEN_PORT || true
 export FRP_PUBLIC_HOST=203.0.113.10
+# Ensure this negative preflight reaches egress-range validation even when a
+# runner's inherited controlling TTY would otherwise prompt for fresh-setup
+# fields (or in a noninteractive distro CI container).
+export FRP_PUBLIC_HOSTNAME=""
+export FRP_INTERNAL_IP="192.0.2.10"
+export FRP_DEPLOYMENT_MODE="direct"
 export FRP_EGRESS_LISTEN_PORT=6080
 export FRP_PORT_START=6000
 export FRP_PORT_END=6098
 export FRP_SERVER_CONFIG="$WORKDIR/missing.json"
 if (
+  # CI and local developer terminals must exercise the same noninteractive
+  # negative validation; never let an inherited /dev/tty steal input.
+  frp_has_tty() { return 1; }
   load_existing_server_config
   resolve_server_settings
 ) >/dev/null 2>"$WORKDIR/egress-range.err"; then
   fail "egress listen in service range should fail"
 fi
-grep -qi 'egress' "$WORKDIR/egress-range.err" || fail "egress range message"
+# The public product labels egress as Internet Access. Accept that canonical
+# operator-facing term while still requiring the invalid range to be rejected.
+grep -Eqi '(Internet Access|egress)' "$WORKDIR/egress-range.err" || { cat "$WORKDIR/egress-range.err" >&2; fail "Internet Access range message"; }
 pass "installer rejects egress inside published range"
 
 # Consistency: active defaults must not diverge across modules/docs fixtures.
@@ -155,6 +166,11 @@ allowed_6080 = {
 }
 hits = []
 for path in root.rglob("*"):
+    # Historical, immutable user-run evidence may contain the formerly used
+    # 6080. It is not an active product default and must not cause source
+    # governance to fail.
+    if "e2e-reports" in path.parts:
+        continue
     if not path.is_file() or ".git" in path.parts or "frp_" in path.name and path.suffix == "":
         continue
     if any(p.startswith(".") for p in path.parts if p not in (".",)):
