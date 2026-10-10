@@ -161,6 +161,67 @@ class LinkConnectivityTests(unittest.TestCase):
                         side_effect=__import__("subprocess").TimeoutExpired([], 3)):
             self.assertFalse(_probe_dns("mcp.example.test"))
 
+    def test_chrony_remaining_system_time_not_old_last_offset_drives_totp(self):
+        from subprocess import CompletedProcess
+
+        def stub(argv, **kwargs):
+            if "timedatectl" in argv[0]:
+                return CompletedProcess(argv, 0, stdout="yes\n")
+            return CompletedProcess(
+                argv, 0,
+                stdout=(
+                    "System time     : 31.250 seconds slow of NTP time\n"
+                    "Last offset     : +0.001 seconds\n"
+                    "Leap status     : Normal\n"
+                ),
+            )
+
+        self.configure_tls()
+        with mock.patch("drlink_web_connectivity.Path.is_file", return_value=True), \
+             mock.patch("drlink_web_connectivity.subprocess.run", side_effect=stub):
+            observed = _probe_ntp()
+        self.assertEqual(observed, (True, -31250))
+        report = self.sample(
+            resolver=lambda _: True, ntp_probe=lambda: observed,
+            cert_reader=lambda _: {"not_after": TLS_VALID},
+        )
+        self.assertEqual(report["status"], "fail")
+        self.assertEqual(report["findings"][1]["code"], "time_offset_high")
+
+    def test_chrony_missing_system_time_cannot_show_healthy_ntp(self):
+        from subprocess import CompletedProcess
+
+        def stub(argv, **kwargs):
+            if "timedatectl" in argv[0]:
+                return CompletedProcess(argv, 0, stdout="yes\n")
+            return CompletedProcess(
+                argv, 0,
+                stdout="Last offset     : +0.004 seconds\nLeap status     : Normal\n",
+            )
+
+        with mock.patch("drlink_web_connectivity.Path.is_file", return_value=True), \
+             mock.patch("drlink_web_connectivity.subprocess.run", side_effect=stub):
+            self.assertEqual(_probe_ntp(), (True, None))
+
+    def test_chrony_leap_not_synchronised_overrides_timedatectl_yes(self):
+        from subprocess import CompletedProcess
+
+        def stub(argv, **kwargs):
+            if "timedatectl" in argv[0]:
+                return CompletedProcess(argv, 0, stdout="yes\n")
+            return CompletedProcess(
+                argv, 0,
+                stdout=(
+                    "System time     : 0.001 seconds fast of NTP time\n"
+                    "Last offset     : +0.001 seconds\n"
+                    "Leap status     : Not synchronised\n"
+                ),
+            )
+
+        with mock.patch("drlink_web_connectivity.Path.is_file", return_value=True), \
+             mock.patch("drlink_web_connectivity.subprocess.run", side_effect=stub):
+            self.assertEqual(_probe_ntp(), (False, None))
+
     def test_ntp_probe_only_uses_absolute_read_only_commands(self):
         from subprocess import CompletedProcess
         def stub(argv, **kwargs):
@@ -168,7 +229,14 @@ class LinkConnectivityTests(unittest.TestCase):
             self.assertLessEqual(kwargs["timeout"], 2)
             if "timedatectl" in argv[0]:
                 return CompletedProcess(argv, 0, stdout="yes\n")
-            return CompletedProcess(argv, 0, stdout="Last offset     : +0.004 seconds\n")
+            return CompletedProcess(
+                argv, 0,
+                stdout=(
+                    "System time     : 0.004 seconds fast of NTP time\n"
+                    "Last offset     : +0.250 seconds\n"
+                    "Leap status     : Normal\n"
+                ),
+            )
         with mock.patch("drlink_web_connectivity.Path.is_file", return_value=True), \
              mock.patch("drlink_web_connectivity.subprocess.run", side_effect=stub):
             self.assertEqual(_probe_ntp(), (True, 4))

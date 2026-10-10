@@ -31,9 +31,14 @@ severity engine.
   status and, if available, `/usr/bin/chronyc` or
   `/usr/sbin/chronyc` tracking, each limited to 2 seconds.
   Sync `no` is FAIL. Sync `yes` **without a measured offset** is
-  UNKNOWN. A measured offset goes through the Foundation PF11B
-  recommended 10-second WARN / 30-second FAIL thresholds relevant to
-  opt-in TOTP logins. No NTP setting is modified.
+  UNKNOWN. The current-clock estimate comes from `chronyc -n tracking`'s
+  **System time** (remaining local-clock correction), not the potentially
+  misleading historic **Last offset** from the last update. A `Leap status`
+  of `Not synchronised` overrides stale `timedatectl=yes` with FAIL; an
+  absent/unknown `System time` or leap status never creates NTP PASS.
+  The resulting measured correction goes through Foundation PF11B's
+  10-second WARN / 30-second FAIL thresholds relevant to opt-in TOTP.
+  No NTP setting is modified.
 - **TLS certificate:** the product's existing MCP TLS native active
   certificate reader supplies only the verified present certificate's
   expiration timestamp, not its private key, hostname, issuer or PEM.

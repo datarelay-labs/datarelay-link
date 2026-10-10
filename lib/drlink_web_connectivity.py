@@ -32,9 +32,15 @@ _DNS_SCRIPT = (
     "except (OSError,ValueError):\n"
     " sys.exit(1)\n"
 )
-_CHRONY_OFFSET = re.compile(
-    r"(?im)^\s*Last offset\s*:\s*([+-]?[0-9]+(?:\.[0-9]+)?)\s+seconds\s*$"
+# Chrony "Last offset" is the estimate from the last *clock update*, NOT
+# the remaining correction of the system clock that TOTP actually uses.
+# chronyc tracking "System time" is the remaining local clock correction;
+# require chrony's independent leap/synchronization evidence as well.
+_CHRONY_SYSTEM_TIME = re.compile(
+    r"(?im)^\s*System time\s*:\s*([0-9]+(?:\.[0-9]+)?)"
+    r"\s+seconds\s+(slow|fast)\s+of\s+NTP\s+time\s*$"
 )
+_CHRONY_LEAP = re.compile(r"(?im)^\s*Leap status\s*:\s*(\S[^\r\n]*)\s*$")
 
 
 def _probe_dns(hostname: str) -> bool:
@@ -87,16 +93,27 @@ def _probe_ntp() -> tuple[bool | None, int | None]:
         return True, None
     if result.returncode != 0:
         return True, None
-    match = _CHRONY_OFFSET.search(result.stdout[:4096])
+    observed = result.stdout[:4096]
+    leap = _CHRONY_LEAP.search(observed)
+    if leap is None:
+        return True, None
+    leap_state = leap.group(1).strip().lower()
+    if leap_state in ("not synchronised", "not synchronized"):
+        return False, None
+    if leap_state != "normal":
+        # Unknown or a transitional leap state cannot certify TOTP drift.
+        return True, None
+    match = _CHRONY_SYSTEM_TIME.search(observed)
     if match is None:
         return True, None
     try:
-        milliseconds = round(float(match.group(1)) * 1000)
+        seconds = float(match.group(1))
+        milliseconds = round(seconds * 1000)
     except (ValueError, OverflowError):
         return True, None
-    if not -86_400_000 <= milliseconds <= 86_400_000:
+    if not 0 <= milliseconds <= 86_400_000:
         return True, None
-    return True, milliseconds
+    return True, milliseconds if match.group(2).lower() == "fast" else -milliseconds
 
 
 def _product_hostname(root: str | None) -> str | None:

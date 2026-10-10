@@ -152,7 +152,8 @@ scenarios:
     command: "python3 tests/test-v30-web-connectivity.py -q && python3 tests/test-v30-web-service.py V30WebServiceTests.test_pf11b_admin_only_connectivity_is_redacted_and_no_fixture_host_probe V30WebServiceTests.test_pf11b_connectivity_queries_are_singleflight_and_30s_cached -q && python3 tests/test-v30-web-connectivity-ui.py -q"
     invariants:
       - "product-configured MCP TLS hostname alone is eligible for bounded DNS lookup; no caller-host SSRF"
-      - "real NTP sync must include measured clock offset before health PASS and high drift blocks TOTP readiness"
+      - "real NTP sync must include measured current System time (not Last offset), confirmed chrony leap status and high drift blocks TOTP readiness"
+      - "chronyc unsynchronised leap state overrides stale timedatectl yes; absent current-offset proof remains UNKNOWN"
       - "unobserved or stale evidence remains UNKNOWN; proxy/enterprise CA not marked trusted without product proof"
       - "actual Web route requires current Admin session; lower roles cannot activate source probes"
       - "no hostnames, certificate/key bytes, proxy URLs, secrets or arbitrary native diagnostic output returned"
