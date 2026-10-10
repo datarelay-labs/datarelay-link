@@ -355,6 +355,37 @@ class V30AuditIngestorTests(unittest.TestCase):
         ).fetchone()[0]
         self.assertEqual(checkpoint, 2)
 
+    def test_ingest_rejects_coerced_schema_and_sequence_before_checkpoint(self):
+        valid = self.spool.enqueue(self._event("ALLOW", "typed-evidence"))
+        segment = self.spool.seal_active()
+        self.assertIsNotNone(segment)
+        for key, invalid in (
+            ("schema_version", True),
+            ("schema_version", "1"),
+            ("schema_version", 1.5),
+            ("source_sequence", True),
+            ("source_sequence", "1"),
+            ("source_sequence", 1.7),
+        ):
+            with self.subTest(field=key, value=repr(invalid)):
+                malformed = dict(valid, **{key: invalid})
+                segment.write_text(json.dumps(malformed) + "\n", encoding="utf-8")
+                with self.assertRaises(AuditEventInvalid):
+                    self.ingestor.ingest(max_segments=1)
+                self.assertTrue(segment.exists())
+                self.assertIsNone(
+                    self.plane.conn.execute(
+                        "SELECT * FROM audit_ingest_checkpoints WHERE source='remote-access'"
+                    ).fetchone()
+                )
+                self.assertEqual(
+                    self.plane.conn.execute(
+                        "SELECT COUNT(*) FROM audit_events WHERE category='ACCESS_DECISION'"
+                    ).fetchone()[0], 0
+                )
+        segment.write_text(json.dumps(valid) + "\n", encoding="utf-8")
+        self.assertEqual(self.ingestor.ingest(max_segments=1)["inserted"], 1)
+
     def test_invalid_segment_is_retained_and_not_checkpointed(self):
         # A durable producer has sequence state even when a segment is corrupt.
         self.spool.state_path.write_text(

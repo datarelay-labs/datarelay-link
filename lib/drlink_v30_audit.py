@@ -426,18 +426,18 @@ def validate_access_event(event: dict[str, Any]) -> None:
             raise AuditEventInvalid("Audit metadata contains unapproved fields.")
         if any(isinstance(value, (dict, list, tuple, bool)) for value in metadata.values()):
             raise AuditEventInvalid("Audit metadata values must be scalar.")
-    if int(event.get("schema_version") or 0) != AUDIT_SCHEMA_VERSION:
+    if (
+        type(event.get("schema_version")) is not int
+        or event["schema_version"] != AUDIT_SCHEMA_VERSION
+    ):
         raise AuditEventInvalid("Unsupported audit schema version.")
     if event.get("category") != ACCESS_DECISION:
         raise AuditEventInvalid("Unsupported audit category for access spool.")
     for key in ("event_id", "event_type", "occurred_at", "source"):
         if not _safe_text(event.get(key), limit=1024):
             raise AuditEventInvalid("Audit event missing required field: %s" % key)
-    try:
-        sequence = int(event.get("source_sequence"))
-    except (TypeError, ValueError) as exc:
-        raise AuditEventInvalid("Audit source_sequence is invalid.") from exc
-    if sequence < 1:
+    sequence = event.get("source_sequence")
+    if type(sequence) is not int or sequence < 1:
         raise AuditEventInvalid("Audit source_sequence is invalid.")
     if str(event.get("result") or "").upper() not in ("ALLOW", "DENY"):
         raise AuditEventInvalid("Audit result is invalid.")
