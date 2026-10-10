@@ -114,27 +114,54 @@ def load_management_ingress(path: str) -> WebIngressConfiguration:
     """
     if type(path) is not str or not path.startswith("/") or "\x00" in path:
         raise ValueError("management ingress policy needs an absolute file path")
-    if not hasattr(os, "O_NOFOLLOW"):
-        raise ValueError("secure no-follow file read unavailable")
-    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
-    flags |= getattr(os, "O_CLOEXEC", 0)
+    # Validate literal components before opening; Path.resolve() and a final
+    # O_NOFOLLOW alone would follow a symlink in any ancestor directory.
+    components = path.split("/")
+    if len(components) < 2 or any(
+        not component or component in (".", "..") for component in components[1:]
+    ):
+        raise ValueError("noncanonical Web ingress configuration path")
+    if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY"):
+        raise ValueError("secure no-follow path traversal unavailable")
+    close_on_exec = getattr(os, "O_CLOEXEC", 0)
+    directory_flags = (
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | close_on_exec
+    )
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | close_on_exec
+    directory_fd = None
+    file_fd = None
     try:
-        fd = os.open(path, flags)
-        try:
-            info = os.fstat(fd)
-            if (
-                not stat.S_ISREG(info.st_mode)
-                or info.st_nlink != 1
-                or info.st_uid not in (0, os.geteuid())
-                or info.st_mode & 0o077
-                or not 0 < info.st_size <= MAX_CONFIG_BYTES
-            ):
-                raise ValueError("untrusted Web ingress configuration file")
-            raw = os.read(fd, MAX_CONFIG_BYTES + 1)
-            if len(raw) != info.st_size:
-                raise ValueError("Web ingress configuration size changed")
-        finally:
-            os.close(fd)
+        # Walk each component with directory descriptors. The final policy
+        # file is opened only under the verified parent descriptor; no
+        # path-level reopen or trust in a symlinked parent.
+        directory_fd = os.open("/", directory_flags)
+        for component in components[1:-1]:
+            next_fd = os.open(component, directory_flags, dir_fd=directory_fd)
+            os.close(directory_fd)
+            directory_fd = next_fd
+        file_fd = os.open(components[-1], flags, dir_fd=directory_fd)
+        info = os.fstat(file_fd)
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_nlink != 1
+            or info.st_uid not in (0, os.geteuid())
+            or info.st_mode & 0o077
+            or not 0 < info.st_size <= MAX_CONFIG_BYTES
+        ):
+            raise ValueError("untrusted Web ingress configuration file")
+        raw = os.read(file_fd, MAX_CONFIG_BYTES + 1)
+        final = os.fstat(file_fd)
+        if (
+            len(raw) != info.st_size
+            or (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_nlink)
+            != (final.st_dev, final.st_ino, final.st_size, final.st_mtime_ns, final.st_ctime_ns, final.st_nlink)
+        ):
+            raise ValueError("Web ingress configuration changed during read")
     except OSError as exc:
         raise ValueError("unavailable trusted Web ingress configuration file") from exc
+    finally:
+        if file_fd is not None:
+            os.close(file_fd)
+        if directory_fd is not None:
+            os.close(directory_fd)
     return _decode(raw)

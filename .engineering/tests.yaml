@@ -127,6 +127,7 @@ scenarios:
       - "status never exposes policy file bytes, raw source CIDRs, or live SSH apply claims"
       - "optional host-admin-selected owner-private ACL file enables strict versioned Web policy with no live mutation"
       - "unavailable, symlinked, world/group exposed, duplicate-key or oversized files fail startup closed"
+      - "every ancestor directory uses no-follow FDs; ambiguous literal path and modified in-flight bytes fail closed"
       - "default-OFF policy preserves pre-existing login, health and static UI"
       - "explicit unavailable or enabled-denied source blocks static, login and management API before auth"
       - "untrusted/ambiguous forwarded chains cannot bypass pinned source ACL"

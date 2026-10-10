@@ -134,9 +134,19 @@ the final file must be regular, have only one hard link, be owned by
 root or the Web service UID, and have no group/other permission bits.
 Symbolic links, unsafe modes, duplicate keys, malformed UTF-8/JSON,
 unbounded files (above 16 KiB), and invalid/unsupported CIDRs are
-rejected before the Web listener starts. The file is opened without
-following the final symbolic link and parsed from the verified file
-descriptor; there is no read/write API for the running HTTP service.
+rejected before the Web listener starts. The absolute operator-selected
+path is strict (no empty/double-slash, `.` or `..` components), and
+**every parent directory** is opened using no-follow directory FDs,
+rather than checking the final file alone. The regular, owner-private
+file is opened relative to its verified parent FD, read once, and
+rechecked on the same FD for device/inode, link count, exact size and
+mtime/ctime stability. A source changed during the read fails startup
+closed; there is no read/write API for the running HTTP service.
+
+RED→GREEN synthetic fixture tests specifically exercise a symlinked
+parent directory, ambiguous literal paths and a policy changed during
+the verified FD read. These source-only tests do not enable a policy,
+restart an installed Web service or qualify live host ingress/recovery.
 
 **No deployment or permission change is authorized by this source.**
 Actual operator selection of a policy file and restart of a managed
