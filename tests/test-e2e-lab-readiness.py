@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -66,6 +67,24 @@ class LabReadinessSupportingTests(unittest.TestCase):
         row = lab.classify_host(host("frp-e2e-windows", "native-agent"), result, HASH_A)
         self.assertEqual(row["ssh_error_class"], "CONNECTION_REFUSED")
         self.assertEqual(row["status"], "NOT_READY")
+
+    def test_run_evidence_uses_immutable_run_scoped_directory(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "durable"
+            report = {"run_id": "fixed-run-001", "status": "NOT_READY"}
+            destination = lab.write_run_evidence(root, report, [
+                {"ssh_alias": "frp-e2e-server", "role": "server", "ssh_rc": 0,
+                 "installed": "YES", "status": "NOT_READY",
+                 "reason": "STALE_INSTALLED_SOURCE_HEAD"},
+            ])
+            self.assertEqual(destination.name, "fixed-run-001")
+            self.assertTrue((destination / "PREFLIGHT_STATUS.json").is_file())
+            self.assertTrue((destination / "CLEANROOM_LEDGER.tsv").is_file())
+            with self.assertRaises(FileExistsError):
+                lab.write_run_evidence(root, report, [])
+            self.assertEqual(json.loads(
+                (destination / "PREFLIGHT_STATUS.json").read_text()
+            )["status"], "NOT_READY")
 
     def test_approval_gates_are_explicit_and_never_inferred(self):
         names = ["dedicated_disposable_lab", "server_cleanup_B014_resolved",

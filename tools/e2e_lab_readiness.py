@@ -181,6 +181,29 @@ def evaluate(manifest: dict, hosts: list[dict], repo_head: str) -> dict:
             "host_count": len(hosts), "note": "Read-only readiness, never full user E2E"}
 
 
+def write_run_evidence(root: Path, report: dict, hosts: list[dict]) -> Path:
+    """Append-only run directory: never replace the evidence of an earlier run."""
+    import csv
+    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(root, 0o700)
+    run_dir = root / report["run_id"]
+    run_dir.mkdir(mode=0o700, exist_ok=False)
+    dest = run_dir / "PREFLIGHT_STATUS.json"
+    dest.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
+    os.chmod(dest, 0o600)
+    with (run_dir / "CLEANROOM_LEDGER.tsv").open("w", newline="") as fh:
+        writer = csv.DictWriter(
+            fh, delimiter="\t",
+            fieldnames=["ssh_alias", "role", "ssh_rc", "os_id",
+                        "os_version", "installed", "source_head",
+                        "status", "reason"])
+        writer.writeheader()
+        for host in hosts:
+            writer.writerow({k: host.get(k, "") for k in writer.fieldnames})
+    os.chmod(run_dir / "CLEANROOM_LEDGER.tsv", 0o600)
+    return run_dir
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", required=True, type=Path)
@@ -219,25 +242,11 @@ def main() -> int:
                    "hosts": hosts,
                    "excluded_hosts": sorted(EXCLUDED_ALIASES),
                    "security_denials_are_binding": True})
-    root.mkdir(parents=True, exist_ok=True, mode=0o700)
-    os.chmod(root, 0o700)
-    dest = root / "PREFLIGHT_STATUS.json"
-    dest.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
-    os.chmod(dest, 0o600)
-    import csv
-    with (root / "CLEANROOM_LEDGER.tsv").open("w", newline="") as fh:
-        writer = csv.DictWriter(fh, delimiter="\t",
-                                fieldnames=["ssh_alias", "role", "ssh_rc", "os_id",
-                                            "os_version", "installed", "source_head",
-                                            "status", "reason"])
-        writer.writeheader()
-        for host in hosts:
-            writer.writerow({k: host.get(k, "") for k in writer.fieldnames})
-    os.chmod(root / "CLEANROOM_LEDGER.tsv", 0o600)
+    run_dir = write_run_evidence(root, report, hosts)
     print(json.dumps({"status": report["status"], "run_id": report["run_id"],
                       "repo_head": head, "host_count": len(hosts),
                       "not_ready_gate_ids": report["not_ready_gate_ids"],
-                      "evidence_dir": str(root)}, indent=2))
+                      "evidence_dir": str(run_dir)}, indent=2))
     return 0 if report["status"] == "GO" else 3
 
 
