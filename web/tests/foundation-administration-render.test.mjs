@@ -90,17 +90,23 @@ for (const role of ["Admin", "Operator", "Read Only"]) {
       assert.ok(html.includes('data-group-id="' + id + '"'), id);
     for (const label of ["HTTPS", "Audit", "System Health"])
       assert.ok(html.includes('aria-label="View ' + label + '"'), label);
-    assert.equal((html.match(/aria-label="View /g) || []).length, 3);
+    // React escapes '&' in the canonical Foundation label in SSR markup.
+    assert.ok(html.includes('aria-label="View Backup &amp; Import"'));
+    assert.equal((html.match(/aria-label="View /g) || []).length, 4);
     assert.match(html, /MCP TLS certificate status only/);
     assert.match(html, /Shared Web HTTPS listener and redirect configuration is not available/);
     for (const id of [
-      "core.password", "core.timezone", "core.network",
-      "core.retention", "core.backup-import",
+      "core.password", "core.timezone", "core.network", "core.retention",
     ]) {
       const task = tasks.find(t => t.id === id);
       assert.equal(task.availability, "unavailable", id);
       assert.equal(task.target, undefined, id);
     }
-    assert.equal(tasks.filter(t => t.availability === "read_only").length, 3);
+    const backup = tasks.find(t => t.id === "core.backup-import");
+    assert.equal(backup.availability, "read_only");
+    assert.equal(backup.access, "view");
+    assert.deepEqual(backup.target, {kind:"action",actionId:"link.backup"});
+    assert.match(backup.notes,/generic configuration import is unavailable/);
+    assert.equal(tasks.filter(t => t.availability === "read_only").length, 4);
   });
 }

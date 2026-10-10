@@ -12,6 +12,9 @@ paths:
   "lib/**":
     domains:
       - "shared"
+  "web/**":
+    domains:
+      - "shared"
   "tests/**":
     domains:
       - "shared"
@@ -34,6 +37,27 @@ scenarios:
     command: "bash tests/run-all.sh"
     invariants:
       - "project-native tests remain green for affected changes"
+    release_gate: true
+
+  - id: DRLINK-PF5B-B1-LINK-ADMIN-CONSUMER
+    name: Exact B1 Link Administration action and backup validation conformance
+    level: integration
+    cost: cheap
+    agent_default: true
+    domains:
+      - "shared"
+    triggers:
+      - affected
+      - pr
+      - preflight
+    platforms:
+      - "linux"
+    command: "cd web && npm run test:administration && cd .. && python3 tests/test-v30-web-saas-ux.py -q"
+    invariants:
+      - "one SHA-pinned Foundation B1 UI/Testkit package family and nine four-group tasks"
+      - "actual Link Web dispatch matches product-owned read-only backup validation action"
+      - "generic configuration import never advertised as supported and backup restore remains Admin/Core guarded"
+      - "unrecognized actor cannot obtain a task action; Browser and Full User E2E gates remain separate"
     release_gate: true
 
   - id: DRLINK-CLI-FEATURE-SCENARIO-RELEASE

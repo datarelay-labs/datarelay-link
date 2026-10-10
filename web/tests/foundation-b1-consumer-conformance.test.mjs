@@ -38,7 +38,7 @@ function actualLinkActionIds() {
   const actions=[...section.matchAll(/case ["'](link\.[a-z0-9._-]+)["']\s*:/g)].map(match=>match[1]);
   assert.equal(new Set(actions).size,actions.length);
   assert.deepEqual(actions.sort(),[
-    "link.users","link.audit","link.health","link.certificate"
+    "link.users","link.audit","link.health","link.certificate","link.backup"
   ].sort());
   return actions;
 }
@@ -50,9 +50,9 @@ function preflight(role, registeredActionIds=actualLinkActionIds()) {
     registeredPaths:[],
     registeredActionIds,
     requiredCoreTaskIds:role==="Admin"
-      ? ["core.users","core.https","core.audit","core.health"]
+      ? ["core.users","core.https","core.audit","core.health","core.backup-import"]
       : role==="Operator"||role==="Read Only"
-        ? ["core.https","core.audit","core.health"] : []
+        ? ["core.https","core.audit","core.health","core.backup-import"] : []
   });
 }
 
@@ -90,6 +90,30 @@ test("unrecognized or missing product role never creates an actionable Administr
     );
     assert.deepEqual(preflight(role),{ok:true,findings:[]});
   }
+});
+
+test("backup task is read-only and backed by existing Link native validator", () => {
+  const source=readFileSync(join(webRoot,"src","main.tsx"),"utf8");
+  const dispatch=source.split("function LinkFoundationAdministration(",2)[1].split("function SystemPanel(",1)[0];
+  const system=source.split("function SystemPanel(",2)[1].split("function AccessOperations(",1)[0];
+  assert.ok(dispatch.includes('case "link.backup":'));
+  assert.ok(dispatch.includes('getElementById("drlink-backup-status")'));
+  assert.ok(system.includes('id="drlink-backup-status"'));
+  assert.ok(system.includes('onClick={validateBackup}'));
+  assert.ok(system.includes('operator.role==="Admin"&&<button className="primary" onClick={createBackup}'));
+  assert.ok(system.includes('operator.role==="Admin"&&validation?.valid'));
+  for(const role of ["Admin","Operator","Read Only"]){
+    const task=createTasks(role).find(task=>task.id==="core.backup-import");
+    assert.equal(task.availability,"read_only");
+    assert.equal(task.access,"view");
+    assert.equal(task.target?.kind,"action");
+    assert.equal(task.target?.actionId,"link.backup");
+    assert.match(task.notes,/validation/i);
+    assert.match(task.notes,/import.*unavailable/i);
+  }
+  const unknown=createTasks("Unknown").find(task=>task.id==="core.backup-import");
+  assert.equal(unknown.access,"none");
+  assert.equal(unknown.target,undefined);
 });
 
 test("missing real Link callback produces a structural failure, not a fabricated PASS", () => {

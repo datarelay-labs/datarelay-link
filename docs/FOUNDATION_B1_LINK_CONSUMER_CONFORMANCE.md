@@ -36,6 +36,31 @@ supplemental, not direct-user Browser or Full User E2E evidence.
 - A deliberate missing `link.audit` dispatch case produces `ADMIN_TARGET_UNREGISTERED`; invented action registration cannot grant the non-admin user-management target.
 - Existing static UX source assertions were **strengthened** to require guarded read-only access, not bypassed or removed. Offline bundle test was made version-independent and now requires **all 10** exact lock-bound tarballs, rather than one hard-coded `pf5b.1` filename.
 
+## B2 product-native Backup & Import task parity (2026-10-10)
+
+A native consumer discrepancy was reproduced: the shared canonical
+`core.backup-import` task appeared as **Unavailable**, despite Link already
+supporting authenticated read-only backup archive validation through
+`POST /api/v1/system/backup/validate`. Link's Core allows Admin, Operator
+and Read Only validation with `management-diagnose`; backup creation and
+restore are independently restricted to Admin with distinct Core permissions
+and restore confirmation. The product does **not** support the shared
+configuration-import editor.
+
+The Link consumer now projects this task as **read-only validation**, with
+explicit notes that generic configuration Import is unavailable and Restore
+remains independently Admin-authorized. A registered `link.backup` action
+opens the existing Advanced Core section and focuses its actual Backup
+validator, rather than inventing a new endpoint or backend permission.
+Unknown/unauthenticated roles still have no actionable task target.
+
+The pinned Foundation B1 `verifyAdministrationConsumer` checks this
+fifth real Web action for Admin, Operator and Read Only and rejects an
+unregistered callback. SSR asserts the fourth truthful View task under
+the unchanged canonical four groups. Existing Web button role checks and
+native Core validation/restore admission are unchanged; this is Web
+presentation and navigation only, not a backup/restore proof.
+
 ## Evidence and remaining B2 release gates
 
 - Offline clean Link Web npm installation (no browser/Playwright package install): **PASS**.

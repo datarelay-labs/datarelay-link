@@ -601,6 +601,13 @@ function LinkFoundationAdministration({
         break;
       case "link.audit":onNavigate?.("audit","observability");break;
       case "link.health":onNavigate?.("health","observability");break;
+      case "link.backup":
+        // Only navigate to the existing read-only backup validator; all
+        // create/restore authority and confirmation stay in native Core.
+        const backupAdvanced=document.getElementById("drlink-core-advanced") as HTMLDetailsElement|null;
+        if(backupAdvanced)backupAdvanced.open=true;
+        document.getElementById("drlink-backup-status")?.scrollIntoView({block:"start"});
+        break;
       case "link.certificate":
         // The shared read-only certificate shortcut reveals the distinct
         // product-owned Core panel; it is NOT Web HTTPS listener management.
@@ -690,7 +697,7 @@ function SystemPanel({data,operator}:{data:any,operator:any}){
       {certAction&&<pre className="plan">{JSON.stringify(certAction,null,2)}</pre>}
       {renewal&&<pre className="plan">{JSON.stringify(renewal,null,2)}</pre>}
     </div>
-    <div className="card">
+    <div className="card" id="drlink-backup-status">
       <h3>Backup</h3>
       <div className="muted">Backup archives are protected server-side artifacts containing secrets. Web never downloads or displays their contents.</div>
       {operator.role==="Admin"&&<button className="primary" onClick={createBackup} disabled={!backup.create_available}>Create Protected Backup</button>}

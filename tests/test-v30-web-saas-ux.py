@@ -458,10 +458,19 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn('if(admin)onNavigate?.("users","administration")', component)
         self.assertIn('showUnavailable onOpen={openTask}', component)
         for name in (
-            "core.password", "core.timezone", "core.network",
-            "core.retention", "core.backup-import"
+            "core.password", "core.timezone", "core.network", "core.retention"
         ):
             self.assertIn(f'"{name}":unavailable', ADMIN_SOURCE)
+        backup = ADMIN_SOURCE.split('"core.backup-import":{', 1)[1].split('    },', 1)[0]
+        self.assertIn('availability:"read_only"', backup)
+        self.assertIn('access:readAccess', backup)
+        self.assertIn('generic configuration import is unavailable', backup)
+        self.assertIn('actionId:"link.backup"', backup)
+        self.assertIn('case "link.backup":', component)
+        self.assertIn('getElementById("drlink-backup-status")', component)
+        self.assertIn('id="drlink-backup-status"', SOURCE)
+        self.assertIn('onClick={validateBackup}', SOURCE)
+        self.assertIn('operator.role==="Admin"&&validation?.valid', SOURCE)
         for name in ("core.audit", "core.health"):
             self.assertIn(f'"{name}":{{', ADMIN_SOURCE)
             self.assertIn(

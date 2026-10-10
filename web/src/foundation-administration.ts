@@ -34,7 +34,15 @@ export function createLinkFoundationAdministrationTasks(role:string){
     "core.timezone":unavailable,
     "core.network":unavailable,
     "core.retention":unavailable,
-    "core.backup-import":unavailable,
+    "core.backup-import":{
+      // Link provides Core-owned backup validation, not the generic shared
+      // configuration import editor. A restore remains Admin-only, separately
+      // confirmed and authorized by Core; this shortcut never enables it.
+      availability:"read_only",
+      access:readAccess,
+      notes:"Native backup archive validation only; generic configuration import is unavailable. Restore requires separate Admin authorization and confirmation.",
+      ...(authenticated?{target:{kind:"action" as const,actionId:"link.backup"}}:{})
+    },
     "core.audit":{
       availability:"read_only",access:readAccess,
       ...(authenticated?{target:{kind:"action" as const,actionId:"link.audit"}}:{})
