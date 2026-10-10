@@ -354,6 +354,41 @@ class WebhookTests(unittest.TestCase):
             self.assertEqual((row["event_id"], row["status"], row["lease_token"]),
                              ("legacy-event", "PENDING", ""))
 
+    def test_delivery_ack_rejects_coerced_success_without_mutating_lease(self):
+        # False-like non-booleans (notably the string "false") must not
+        # record a successful delivery or consume a retry attempt.
+        with tempfile.TemporaryDirectory(prefix="drlink-wh-ack-bool-") as root:
+            with WebhookStore(root) as store:
+                sink = store.create(
+                    "ack-type", "https://hooks.example.org/events", ["attention"]
+                )
+                event = store.enqueue(sink["id"], "attention", {"kind": "ack"})
+                claim = store.claim_due()[0]
+                def state():
+                    row = store.conn.execute(
+                        "SELECT status,attempts,lease_token FROM management_webhook_outbox "
+                        "WHERE event_id=?", (event["event_id"],)
+                    ).fetchone()
+                    return row["status"], row["attempts"], row["lease_token"]
+
+                before = state()
+                self.assertEqual(before[:2], ("SENDING", 0))
+                for invalid in ("false", "true", 0, 1, None, [], {}):
+                    with self.subTest(delivered=invalid):
+                        with self.assertRaises(ControlPlaneError):
+                            store.record_attempt(
+                                event["event_id"],
+                                lease_token=claim["lease_token"],
+                                delivered=invalid,
+                            )
+                        self.assertEqual(state(), before)
+                self.assertTrue(store.record_attempt(
+                    event["event_id"],
+                    lease_token=claim["lease_token"],
+                    delivered=True,
+                ))
+                self.assertEqual(state()[:2], ("DELIVERED", 1))
+
     def test_reclaimed_delivery_rejects_old_lease_and_preserves_event_id(self):
         root = tempfile.mkdtemp(prefix="drlink-wh-reclaim-")
         with WebhookStore(root) as first_worker:

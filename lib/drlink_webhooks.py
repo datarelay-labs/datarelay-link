@@ -494,6 +494,10 @@ class WebhookStore:
         worker's state. A successful HTTP response can still be delivered
         twice across crashes; consumers deduplicate with the stable event id.
         """
+        # A string such as "false" is truthy in Python and must not be able
+        # to falsely acknowledge a signed delivery as successful.
+        if type(delivered) is not bool:
+            raise ControlPlaneError("Webhook delivery outcome must be a boolean.")
         if not isinstance(lease_token, str) or not re.fullmatch(r"[0-9a-f]{32}", lease_token):
             raise ControlPlaneError("A valid webhook delivery lease is required.")
         self.conn.execute("BEGIN IMMEDIATE")
