@@ -428,6 +428,14 @@ for root_token in (
 PY
 pass "FRPCTL_GREENFIELD_SURFACE"
 
-git -C "$ROOT" diff --check -- tools/frpctl lib/frp_ctl_grammar.py lib/frp_cli_catalog.py tests/test-frpctl.sh
+# Minimal distro images intentionally omit Git. Whitespace / source-tree
+# checks are performed by the repository's native GitHub lint/PR gate, not
+# by the runtime portability test inside the stripped-down container.
+if command -v git >/dev/null 2>&1 && git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  git -C "$ROOT" diff --check -- tools/frpctl lib/frp_ctl_grammar.py lib/frp_cli_catalog.py tests/test-frpctl.sh
+  echo "FRPCTL_SOURCE_DIFF_CHECK=PASS"
+else
+  echo "FRPCTL_SOURCE_DIFF_CHECK=NOT_TESTED_GIT_UNAVAILABLE"
+fi
 
 echo "FRPCTL_TESTS=PASS"
