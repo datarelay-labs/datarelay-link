@@ -87,7 +87,238 @@ class RuntimeRenderTests(unittest.TestCase):
         self.assertTrue(runtime.remote_service_proxy_id("x").startswith("rs-"))
 
 
+class FRPAuthenticatedReloadSecurityTests(unittest.TestCase):
+    def test_existing_admin_requires_strong_auth_and_loopback_private_file(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root, "frpc.toml")
+            secure = (
+                'serverAddr = "203.0.113.9"\n'
+                'webServer.addr = "127.0.0.1"\n'
+                'webServer.port = 17400\n'
+                'webServer.user = "drlink-admin"\n'
+                'webServer.password = "%s"\n'
+            ) % ("AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_abcd"[:40])
+            path.write_text(secure)
+            self.assertIsNone(runtime._trusted_existing_frpc_admin(path, secure))
+            path.chmod(0o600)
+            self.assertIsNotNone(runtime._trusted_existing_frpc_admin(path, secure))
+            for bad in (
+                secure.replace('"127.0.0.1"', '"0.0.0.0"'),
+                secure.replace('"127.0.0.1"', '"::1"'),
+                secure.replace('17400', '80'),
+                secure.replace('drlink-admin', ''),
+                secure.replace('AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_abcd'[:40], 'admin'),
+                secure + 'webServer.enablePrometheus = true\n',
+            ):
+                self.assertIsNone(runtime._trusted_existing_frpc_admin(path, bad))
+
+    def test_authenticated_local_reload_must_verify_all_proxy_statuses(self):
+        from drlink_control_db import ControlPlaneError
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root, "frpc.toml")
+            outputs = [
+                mock.Mock(returncode=0, stdout="frpc: syntax is ok"),
+                mock.Mock(returncode=0, stdout="reload success"),
+                mock.Mock(returncode=0, stdout="NAME TYPE STATUS\nagent-web tcp running"),
+            ]
+            with (mock.patch.object(runtime, "_frpc_running_invocation_id",
+                                  return_value="a" * 32),
+                  mock.patch.object(runtime.Path, "is_file", return_value=True),
+                 mock.patch.object(runtime.subprocess, "run", side_effect=outputs) as call,
+                 mock.patch.object(runtime, "_current_runtime_ready", return_value=True)):
+                runtime._reload_frpc_authenticated(
+                    path, root=None, host_id="agent",
+                    expected={"web": {"id": "web", "enabled": True}},
+                )
+            self.assertEqual(call.call_count, 3)
+            self.assertEqual([x.args[0][1] for x in call.call_args_list],
+                             ["verify", "reload", "status"])
+            with (mock.patch.object(runtime, "_frpc_running_invocation_id",
+                                  return_value="a" * 32),
+                  mock.patch.object(runtime.Path, "is_file", return_value=True),
+                 mock.patch.object(runtime.subprocess, "run",
+                                  side_effect=[outputs[0], outputs[1],
+                                               mock.Mock(returncode=0, stdout="NAME TYPE STATUS")]),
+                 mock.patch.object(runtime, "_current_runtime_ready", return_value=True)):
+                with self.assertRaisesRegex(ControlPlaneError, "all expected proxies"):
+                    runtime._reload_frpc_authenticated(
+                        path, root=None, host_id="agent",
+                        expected={"web": {"id": "web", "enabled": True}},
+                    )
+
+    def test_removed_proxy_must_not_remain_running_after_reload(self):
+        from drlink_control_db import ControlPlaneError
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root, "frpc.toml")
+            result = [
+                mock.Mock(returncode=0, stdout="frpc: syntax is ok"),
+                mock.Mock(returncode=0, stdout="reload success"),
+                mock.Mock(returncode=0,
+                          stdout="NAME TYPE STATUS\nagent-web tcp running\n"
+                                 "agent-retired tcp running\n"),
+            ]
+            with (mock.patch.object(runtime, "_frpc_running_invocation_id",
+                                    return_value="a" * 32),
+                  mock.patch.object(runtime.Path, "is_file", return_value=True),
+                  mock.patch.object(runtime.subprocess, "run", side_effect=result),
+                  mock.patch.object(runtime, "_current_runtime_ready", return_value=True)):
+                with self.assertRaisesRegex(ControlPlaneError, "retained a removed"):
+                    runtime._reload_frpc_authenticated(
+                        path, root=None, host_id="agent",
+                        expected={"web": {"id": "web", "enabled": True}},
+                        removed_names={"agent-retired"},
+                    )
+
+    def test_reload_must_not_treat_changed_process_generation_as_healthy(self):
+        from drlink_control_db import ControlPlaneError
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root, "frpc.toml")
+            result = [
+                mock.Mock(returncode=0, stdout="frpc: syntax is ok"),
+                mock.Mock(returncode=0, stdout="reload success"),
+                mock.Mock(returncode=0, stdout="agent-web tcp running\n"),
+            ]
+            with (mock.patch.object(runtime, "_frpc_running_invocation_id",
+                                    side_effect=["a" * 32, "b" * 32]),
+                  mock.patch.object(runtime.Path, "is_file", return_value=True),
+                  mock.patch.object(runtime.subprocess, "run", side_effect=result),
+                  mock.patch.object(runtime, "_current_runtime_ready", return_value=True)):
+                with self.assertRaisesRegex(ControlPlaneError, "changed the Agent process"):
+                    runtime._reload_frpc_authenticated(
+                        path, root=None, host_id="agent",
+                        expected={"web": {"id": "web", "enabled": True}},
+                    )
+
+    def test_admin_reload_errors_never_leak_credentials(self):
+        from drlink_control_db import ControlPlaneError
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root, "frpc.toml")
+            private = "EXAMPLE_SECRET_MUST_NOT_APPEAR"
+            result = [
+                mock.Mock(returncode=0, stdout="frpc: syntax is ok"),
+                mock.Mock(returncode=1, stdout="", stderr=private),
+            ]
+            with (mock.patch.object(runtime, "_frpc_running_invocation_id",
+                                    return_value="a" * 32),
+                  mock.patch.object(runtime.Path, "is_file", return_value=True),
+                  mock.patch.object(runtime.subprocess, "run", side_effect=result)):
+                with self.assertRaises(ControlPlaneError) as ctx:
+                    runtime._reload_frpc_authenticated(
+                        path, root=None, host_id="agent", expected={}
+                    )
+            self.assertNotIn(private, str(ctx.exception))
+
+
+
 class RuntimeApplyRemoveTests(unittest.TestCase):
+    def _provision_existing_secure_admin_fixture(self):
+        # Explicitly test the already-approved/admin-provisioned path;
+        # the product must not auto-open a new HTTP management endpoint.
+        frp = Path(self.tmp, "etc/frp")
+        config = frp / "frpc.toml"
+        state = json.loads((frp / "client-state.json").read_text())
+        admin = {"port": 17400, "user": "local-admin",
+                 "password": "AaBbCcDdEeFfGgHhIiJjKkLlMmNnOoPp0123456789_"[:40]}
+        text = runtime.render_frpc_toml_text(
+            server=state["frp_server"], server_port=state["frp_server_port"],
+            token="tok", host_id=state["host_id"],
+            services=state["services"], reload_admin=admin,
+        )
+        config.write_text(text, encoding="utf-8")
+        config.chmod(0o600)
+        self.assertIsNotNone(runtime._trusted_existing_frpc_admin(config, text))
+        return config, state
+
+    def test_F007_securely_provisioned_admin_reloads_changed_proxy_without_full_restart(self):
+        config, state = self._provision_existing_secure_admin_fixture()
+        with (mock.patch.object(runtime, "_current_runtime_ready", return_value=True),
+              mock.patch.object(runtime, "_restart_frpc") as restart,
+              mock.patch.object(runtime, "_reload_frpc_authenticated") as reload):
+            result = runtime.apply_agent_runtime(self.plane, root=self.tmp)
+        self.assertTrue(result["ok"], result)
+        reload.assert_called_once()
+        restart.assert_not_called()
+        self.assertIn('webServer.addr = "127.0.0.1"', config.read_text())
+        self.assertIn("rs-web", json.loads(
+            Path(self.tmp, "etc/frp/client-state.json").read_text())["services"])
+        self.assertIn("remotePort = 6010", config.read_text())
+        row = self.plane.conn.execute(
+            "SELECT status, runtime_verified FROM agent_remote_services "
+            "WHERE name='web'"
+        ).fetchone()
+        self.assertEqual((row["status"], row["runtime_verified"]), ("HEALTHY", 1))
+
+    def test_F007_failed_secure_reload_restores_config_without_full_restart(self):
+        from drlink_control_db import ControlPlaneError
+        config, state = self._provision_existing_secure_admin_fixture()
+        previous = config.read_bytes()
+        old_state = Path(self.tmp, "etc/frp/client-state.json").read_bytes()
+        with (mock.patch.object(runtime, "_current_runtime_ready", return_value=True),
+              mock.patch.object(runtime, "_restart_frpc") as restart,
+              mock.patch.object(runtime, "_reload_frpc_authenticated",
+                                side_effect=[ControlPlaneError("reload rejected"), None]) as reload):
+            result = runtime.apply_agent_runtime(self.plane, root=self.tmp)
+        self.assertFalse(result["ok"], result)
+        self.assertEqual(reload.call_count, 2)  # old config rollback, no global restart
+        restart.assert_not_called()
+        self.assertEqual(config.read_bytes(), previous)
+        self.assertEqual(
+            Path(self.tmp, "etc/frp/client-state.json").read_bytes(), old_state
+        )
+
+    def test_F007_reload_rollback_failure_is_recovery_required_not_restart(self):
+        from drlink_control_db import ControlPlaneError
+        config, _state = self._provision_existing_secure_admin_fixture()
+        with (mock.patch.object(runtime, "_current_runtime_ready", return_value=True),
+              mock.patch.object(runtime, "_restart_frpc") as restart,
+              mock.patch.object(runtime, "_reload_frpc_authenticated",
+                                side_effect=ControlPlaneError("admin rejected")) as reload):
+            result = runtime.apply_agent_runtime(self.plane, root=self.tmp)
+        self.assertFalse(result["ok"], result)
+        self.assertIn("RECOVERY_REQUIRED", result["error"])
+        self.assertEqual(reload.call_count, 2)
+        restart.assert_not_called()
+
+    def test_F007_weak_admin_cannot_silently_enable_new_management_listener(self):
+        config, _state = self._provision_existing_secure_admin_fixture()
+        original = config.read_text(encoding="utf-8")
+        config.write_text(original.replace("local-admin", "admin")
+                          .replace("AaBbCcDdEeFfGgHhIiJjKkLlMmNnOoPp0123456789_"[:40],
+                                   "weak"), encoding="utf-8")
+        self.assertIsNone(runtime._trusted_existing_frpc_admin(
+            config, config.read_text()
+        ))
+        with (mock.patch.object(runtime, "_current_runtime_ready", return_value=True),
+              mock.patch.object(runtime, "_restart_frpc") as restart,
+              mock.patch.object(runtime, "_reload_frpc_authenticated") as reload):
+            result = runtime.apply_agent_runtime(self.plane, root=self.tmp)
+        self.assertTrue(result["ok"], result)
+        restart.assert_called_once()
+        reload.assert_not_called()
+        self.assertNotIn("webServer.", config.read_text(encoding="utf-8"))
+
+    def test_F007_missing_or_unverified_admin_uses_existing_restart_contract(self):
+        config, state = self._provision_existing_secure_admin_fixture()
+        with (mock.patch.object(runtime, "_current_runtime_ready", return_value=False),
+              mock.patch.object(runtime, "_restart_frpc") as restart,
+              mock.patch.object(runtime, "_reload_frpc_authenticated") as reload):
+            result = runtime.apply_agent_runtime(self.plane, root=self.tmp)
+        self.assertTrue(result["ok"], result)
+        restart.assert_called_once()
+        reload.assert_not_called()
+
+    def test_F007_common_server_config_change_cannot_use_proxy_hot_reload(self):
+        config, state = self._provision_existing_secure_admin_fixture()
+        state["frp_server_port"] = 7001
+        _write_json(Path(self.tmp, "etc/frp/client-state.json"), state)
+        with (mock.patch.object(runtime, "_current_runtime_ready", return_value=True),
+              mock.patch.object(runtime, "_restart_frpc") as restart,
+              mock.patch.object(runtime, "_reload_frpc_authenticated") as reload):
+            result = runtime.apply_agent_runtime(self.plane, root=self.tmp)
+        self.assertTrue(result["ok"], result)
+        restart.assert_called_once()
+        reload.assert_not_called()
+
     def test_reconnect_forces_fresh_generation_even_with_identical_artifacts(self):
         with mock.patch.object(runtime, '_restart_frpc') as restart:
             self.assertTrue(runtime.apply_agent_runtime(self.plane, root=self.tmp)['ok'])

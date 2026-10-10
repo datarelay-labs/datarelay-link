@@ -19,6 +19,8 @@ The official `docs/FULL_USER_E2E_SCENARIOS.md` is the required 4,283-line full u
 
 **Next:** CHATGPT_CHAT repairs the method/procedure in `docs/E2E_EXECUTION_PROCEDURE.md` and its canonical reference, including first-time user/AI isolation, prospective evidence, dynamic command inventory, 3600s stable soak vs separate chaos/stress, no leaked passwords, artifact/source pinning and persistent non-`/tmp` evidence. Focused deterministic fix tests are not new E2E or CLI acceptance runs.
 
+**Current source remediation boundary:** Source now supports strict preexisting-admin, localhost-only, authenticated FRP reload and a truthful sync status report. Both still AWAIT AUTHORIZED LIVE RETEST. Without the legitimately provisioned preexisting management API, proxy-set changes retain the legacy full restart; never mark F007 closed based on isolated tests.
+
 **Only after those two gates:** execute the LAB-P0-01..05 readiness work packages below, seek legitimate approvals and attest GO on owned disposable hosts. A current NOT_READY result forbids the next Codex acceptance run. Codex remains TEST-ONLY; no duplicate Codex session, premature soak, CLI FCS, merge or release.
 
 ## P0 work packages (implement in priority order; keep independent actionable work moving)

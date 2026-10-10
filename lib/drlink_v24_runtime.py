@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import stat
 import shutil
 import subprocess
 import tempfile
@@ -133,6 +134,7 @@ def render_frpc_toml_text(
     services: dict,
     transport: str = "tcp",
     ca_file: str = "",
+    reload_admin: Optional[dict] = None,
 ) -> str:
     transport = (transport or "tcp").strip().lower() or "tcp"
     lines = [
@@ -151,6 +153,16 @@ def render_frpc_toml_text(
                 'transport.tls.trustedCaFile = "%s"' % ca_file,
             ]
         )
+    if reload_admin:
+        # Only preserve an already-provisioned, authenticated loopback admin
+        # listener. The renderer itself never opens a new management port.
+        lines.extend([
+            "",
+            'webServer.addr = "127.0.0.1"',
+            "webServer.port = %d" % int(reload_admin["port"]),
+            "webServer.user = %s" % json.dumps(reload_admin["user"]),
+            "webServer.password = %s" % json.dumps(reload_admin["password"]),
+        ])
     for sid, item in sorted(services.items(), key=lambda kv: str(kv[0])):
         if not isinstance(item, dict):
             continue
@@ -292,6 +304,170 @@ def build_desired_runtime_services(
             "pool_class": row["pool_class"] or "normal",
         }
     return services
+
+
+def _trusted_existing_frpc_admin(path: Path, config_text: Optional[str]) -> Optional[dict]:
+    """Recognize a *preexisting* owner-provisioned secure local reload API.
+
+    Never mint credentials, open ports or accept unauthenticated/wildcard
+    webServer settings through a configuration replay. This parser is intentionally
+    narrow: unexpected webServer fields disable this optimization.
+    """
+    if not config_text:
+        return None
+    try:
+        metadata = path.lstat()
+        folder = path.parent.stat()
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_mode & 0o077
+            or metadata.st_nlink != 1
+            or metadata.st_uid != os.geteuid()
+            or folder.st_uid != os.geteuid()
+            or folder.st_mode & 0o022
+        ):
+            return None
+    except OSError:
+        return None
+    pairs = {}
+    # Ignore sections after the first proxy table for admin eligibility:
+    # webServer fields may not be forged as apparent top-level settings
+    # inside a proxy record.
+    for raw in config_text.split("\n[[proxies]]", 1)[0].splitlines():
+        line = raw.strip()
+        if not line.startswith("webServer."):
+            continue
+        m = re.fullmatch(
+            r"webServer\.(addr|port|user|password)\s*=\s*(.+)", line
+        )
+        if not m or m.group(1) in pairs:
+            return None
+        key, value = m.groups()
+        try:
+            decoded = int(value) if key == "port" else json.loads(value)
+        except (ValueError, TypeError, json.JSONDecodeError):
+            return None
+        pairs[key] = decoded
+    if set(pairs) != {"addr", "port", "user", "password"}:
+        return None
+    if pairs["addr"] != "127.0.0.1":
+        return None
+    if not isinstance(pairs["port"], int) or isinstance(pairs["port"], bool):
+        return None
+    if not 1024 <= pairs["port"] <= 65535:
+        return None
+    user, password = pairs["user"], pairs["password"]
+    if not isinstance(user, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", user):
+        return None
+    if (not isinstance(password, str)
+            or not re.fullmatch(r"[A-Za-z0-9_-]{40,128}", password)
+            or len(set(password)) < 16):
+        return None
+    return pairs
+
+
+def _unchanged_frpc_common(prev_text: str, next_text: str) -> bool:
+    """Hot reload changes *only* proxy declarations, never common settings."""
+    return (prev_text.split("\n[[proxies]]", 1)[0].strip()
+            == next_text.split("\n[[proxies]]", 1)[0].strip())
+
+
+def _frpc_running_invocation_id() -> str:
+    """Systemd current process generation; never trust an earlier start."""
+    try:
+        result = subprocess.check_output(
+            ["systemctl", "show", "drlink-client",
+             "-p", "ActiveState", "-p", "InvocationID"],
+            timeout=5, text=True,
+        )
+        state = dict(line.split("=", 1) for line in result.splitlines() if "=" in line)
+        if state.get("ActiveState") == "active":
+            candidate = state.get("InvocationID") or ""
+            if re.fullmatch(r"[0-9a-f]{32}", candidate):
+                return candidate
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return ""
+
+
+def _frpc_proxy_names(host_id: str, services: dict) -> set[str]:
+    return {
+        "%s-%s" % (host_id, rec.get("id") or sid)
+        for sid, rec in services.items()
+        if isinstance(rec, dict) and rec.get("enabled", True) is not False
+    }
+
+
+def _reload_frpc_authenticated(
+    path: Path, *, root: Optional[str], host_id: str, expected: dict,
+    removed_names: Optional[set[str]] = None,
+) -> None:
+    """Reload over an existing authenticated local API and verify fresh state.
+
+    No secret or raw admin response is included in public errors. Rejected,
+    missing or stale admin endpoint fails closed rather than restarting all
+    unrelated active Remote Services.
+    """
+    # The active FRP process generation must not change during hot reload.
+    # Mac/non-systemd instances must first implement equivalent native proof.
+    real_runtime = not root or str(root).rstrip("/") in ("", "/")
+    prior_invocation = _frpc_running_invocation_id() if real_runtime else "unit-fixture"
+    if not prior_invocation:
+        raise ControlPlaneError(
+            "Authenticated local frpc reload requires a verified running Agent generation."
+        )
+    binary = Path("/usr/local/bin/frpc")
+    if not binary.is_file():
+        raise ControlPlaneError("Authenticated local frpc reload is unavailable; no broad restart performed.")
+    for op in ("verify", "reload", "status"):
+        try:
+            completed = subprocess.run(
+                [str(binary), op, "-c", str(path)],
+                capture_output=True, text=True, timeout=30, check=False,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise ControlPlaneError(
+                "Authenticated local frpc %s could not be completed; check system diagnostics." % op
+            ) from exc
+        if completed.returncode != 0:
+            raise ControlPlaneError(
+                "Authenticated local frpc %s was rejected or failed; no broad restart performed." % op
+            )
+        if op == "status":
+            # Status must unambiguously contain a separate healthy row for
+            # every desired proxy. A CLI exit 0 by itself is not evidence.
+            lines = (completed.stdout or "").splitlines()
+            if removed_names:
+                for name in removed_names:
+                    for line in lines:
+                        words = line.split()
+                        if words and words[0] == name:
+                            # A removed proxy must not remain in the active
+                            # Admin inventory, even as Error: it could later
+                            # reconnect without operator authorization.
+                            raise ControlPlaneError(
+                                "Authenticated reload retained a removed live proxy."
+                            )
+            for sid, rec in expected.items():
+                if not isinstance(rec, dict) or rec.get("enabled", True) is False:
+                    continue
+                name = "%s-%s" % (host_id, rec.get("id") or sid)
+                entries = [line.split() for line in lines
+                           if line.split() and line.split()[0] == name]
+                if len(entries) != 1 or not any(
+                    value.lower() in ("running", "online") for value in entries[0][1:]
+                ):
+                    raise ControlPlaneError(
+                        "Authenticated local frpc status did not verify all expected proxies."
+                    )
+    if real_runtime and _frpc_running_invocation_id() != prior_invocation:
+        raise ControlPlaneError(
+            "Authenticated local frpc reload changed the Agent process generation."
+        )
+    if not _current_runtime_ready(root, host_id, expected):
+        raise ControlPlaneError(
+            "Authenticated local frpc reload lacks verified current-generation proxy evidence."
+        )
 
 
 def _restart_frpc(root: Optional[str] = None) -> None:
@@ -550,6 +726,8 @@ def apply_agent_runtime(
     )
 
     restart_attempted = False
+    reload_attempted = False
+    hot_reload_admin = _trusted_existing_frpc_admin(prev_toml, backup_toml)
     artifacts_written = False
     try:
         toml_text = render_frpc_toml_text(
@@ -560,6 +738,7 @@ def apply_agent_runtime(
             services=desired,
             transport=transport,
             ca_file=ca_file,
+            reload_admin=hot_reload_admin,
         )
         validate_frpc_toml_text(toml_text)
         if str(os.environ.get("DRLINK_FAULT_RUNTIME_CONFIG") or "").strip().lower() in (
@@ -592,8 +771,19 @@ def apply_agent_runtime(
                     'host_id': host_id, 'toml': str(prev_toml)}
 
         real_runtime = not root or str(root).rstrip('/') in ('', '/')
-        cursor = _runtime_log_cursor() if real_runtime else None
-        # A restart invalidates verification for every proxy in this runtime.
+        # A previously provisioned strongly authenticated loopback admin API
+        # permits narrowly scoped proxy updates without disrupting unrelated
+        # running FRP connections. This cannot bootstrap/create the API; its
+        # first enablement is a separate, explicitly authorized change.
+        reload_safe = (
+            hot_reload_admin is not None and not force_reapply
+            and backup_toml is not None
+            and _unchanged_frpc_common(backup_toml, toml_text)
+            and _current_runtime_ready(root, host_id, state.get("services") or {})
+        )
+        cursor = _runtime_log_cursor() if real_runtime and not reload_safe else None
+        # Any changed generation invalidates prior verification until fresh
+        # runtime and registered-proxy evidence is obtained.
         # Refresh all included rows after the complete generation is verified.
         plane_db.conn.execute(
             'UPDATE agent_remote_services SET runtime_verified = 0 WHERE delete_pending = 0')
@@ -601,13 +791,29 @@ def apply_agent_runtime(
         artifacts_written = True
         _atomic_write_json(prev_state_path, new_state)
         _atomic_write_text(prev_toml, toml_text)
-        restart_attempted = True
-        _restart_frpc(root)
-        verify_runtime_proxies(root=root, host_id=host_id, expected=desired, toml_text=toml_text, since_cursor=cursor)
+        if reload_safe:
+            reload_attempted = True
+            _reload_frpc_authenticated(
+                prev_toml, root=root, host_id=host_id, expected=desired,
+                removed_names=(
+                    _frpc_proxy_names(host_id, state.get("services") or {})
+                    - _frpc_proxy_names(host_id, desired)
+                ),
+            )
+        else:
+            restart_attempted = True
+            _restart_frpc(root)
+            verify_runtime_proxies(
+                root=root, host_id=host_id, expected=desired,
+                toml_text=toml_text, since_cursor=cursor
+            )
         if names is None:
             mark_runtime_status(plane_db, ok=True)
     except Exception as exc:
-        # Rollback previous runtime artifacts when possible.
+        # Rollback saved files first. A failed authenticated hot reload must
+        # NEVER silently fall back to a full process restart: that would flap
+        # unrelated Remote Services and defeat the continuity boundary.
+        rollback_error = ""
         try:
             if artifacts_written and backup_state is not None:
                 _atomic_write_text(prev_state_path, backup_state)
@@ -615,13 +821,25 @@ def apply_agent_runtime(
                 _atomic_write_text(prev_toml, backup_toml)
             if restart_attempted and backup_toml is not None:
                 _restart_frpc(root)
+            elif reload_attempted and backup_toml is not None:
+                _reload_frpc_authenticated(
+                    prev_toml, root=root, host_id=host_id,
+                    expected=state.get("services") or {},
+                    removed_names=(
+                        _frpc_proxy_names(host_id, desired)
+                        - _frpc_proxy_names(host_id, state.get("services") or {})
+                    ),
+                )
         except Exception:
-            pass
+            rollback_error = (
+                " RECOVERY_REQUIRED: the previous authenticated runtime "
+                "configuration could not be verified after rollback."
+            )
         return {
             "ok": False,
             "applied": [],
             "removed": [],
-            "error": str(exc),
+            "error": str(exc) + rollback_error,
             "generation": 0,
         }
 

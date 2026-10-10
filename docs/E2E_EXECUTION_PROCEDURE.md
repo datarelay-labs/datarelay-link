@@ -22,6 +22,8 @@
 5. Closed code findings remain `CODE_FIXED_AWAITING_LIVE_RETEST` until the next qualified human-persona E2E on the new exact candidate. Blocked reviews remain `BLOCKED_TOOLING`, not `PASS`. Document the unmodified Codex run as historical, never edit its original evidence.
 6. Commit/verify the exact owner-authorized fix branch, use the existing PR #178 and Issue #165 rather than duplicate Work Packets; never merge/tag/release without separate owner authority.
 
+**F001/F007 follow-up:** Source has fail-closed synchronization reporting and a conditional authenticated, loopback-only FRP proxy hot reload capability **only when an authorized operator already provisioned a qualifying local management endpoint**. This does not grant security approval or enable it. Full closure still requires the actual immutable candidate installed, signed Server+Agent status, real unchanged service traffic and three Fixed TCP on/off rounds in an explicitly approved disposable lab. If that lab cannot be legitimately approved, leave both findings and the full test gate OPEN. See docs/F001_F007_RUNTIME_CONTINUITY_REMEDIATION.md.
+
 **Gate R1:** all actionable known F/D items have a truthful disposition, regression evidence, and either targeted fix ready for real retest or precise unresolved blocker. Do not start a new full run while mandatory unresolved product or environment prerequisites make acceptance impossible.
 
 ### R2 — Procedure and readiness gate: make failures attributable

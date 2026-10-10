@@ -5692,11 +5692,28 @@ def _reconcile_agent_from_server_status(plane_db, result: dict) -> int:
 
 
 def _collect_degraded_remote_services(plane_db) -> list[dict]:
+    """Public Agent synchronization cannot claim a runtime-unverified PASS.
+
+    The authenticated Server ACK can preserve HEALTHY status text while
+    explicitly clearing runtime_verified. That state is intentionally shown
+    as DEGRADED in Agent views. Include it in synchronize outcome without
+    granting verification or mutating the authoritative Agent/Server state.
+    """
     rows = []
     for row in plane_db.conn.execute(
-        "SELECT name, reason FROM agent_remote_services WHERE delete_pending = 0 AND status = 'DEGRADED' ORDER BY name"
+        "SELECT name, status, reason, runtime_verified FROM agent_remote_services "
+        "WHERE delete_pending = 0 AND enabled = 1 "
+        "AND (upper(status) = 'DEGRADED' "
+        "OR (upper(status) = 'HEALTHY' AND runtime_verified = 0)) "
+        "ORDER BY name"
     ):
-        rows.append({"name": row["name"], "reason": str(row["reason"] or "").strip()})
+        reason = str(row["reason"] or "").strip()
+        if not reason and str(row["status"] or "").upper() == "HEALTHY":
+            reason = (
+                "Runtime generation verification is pending; the Server "
+                "acknowledged the service without a verified active proxy."
+            )
+        rows.append({"name": row["name"], "reason": reason})
     return rows
 
 

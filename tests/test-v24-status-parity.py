@@ -87,6 +87,33 @@ class StatusParityTests(unittest.TestCase):
             (name,),
         ).fetchone()
 
+    def test_F001_synchronize_does_not_claim_success_for_unverified_healthy_text(self):
+        # A signed Server ACK may retain HEALTHY text while explicitly
+        # revoking runtime_verified. Agent show/status projects this as
+        # DEGRADED. Synchronize must not contradict that public display.
+        self.agent.conn.execute(
+            "INSERT INTO agent_remote_services"
+            "(name, destination, service_object, enabled, status, endpoint_port,"
+            " pending_allocation, delete_pending, reason, updated_at, runtime_verified)"
+            " VALUES ('stale-healthy', 'this-host', 'ssh', 1, 'HEALTHY', 6010,"
+            " 0, 0, '', '2026-10-10T00:00:00Z', 0)"
+        )
+        self.agent.conn.commit()
+        affected = v24._collect_degraded_remote_services(self.agent)
+        self.assertEqual([x['name'] for x in affected], ['stale-healthy'])
+        self.assertIn('verif', affected[0]['reason'].lower())
+        displayed = v24.format_synchronize_result(
+            {'status': 'DEGRADED' if affected else 'SYNCHRONIZED',
+             'affected': affected})
+        self.assertIn('Synchronization DEGRADED', displayed)
+        self.assertIn('show remote-service stale-healthy', displayed)
+        self.assertEqual(
+            self.agent.conn.execute(
+                "SELECT status, runtime_verified FROM agent_remote_services"
+                " WHERE name='stale-healthy'"
+            ).fetchone()['runtime_verified'], 0
+        )
+
     def test_SERVER_ACK_REFRESHES_VERIFIED_FLAG_WITHOUT_STATUS_TEXT_CHANGE(self):
         # F018: a real runtime generation can be acknowledged while the
         # already-HEALTHY status text is unchanged. Never leave the old
