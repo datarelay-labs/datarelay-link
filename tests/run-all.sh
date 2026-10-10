@@ -32,6 +32,12 @@ for script in tools/frp-server-status tools/frp-project-update tools/frp-update 
 done
 ./tests/test-shell-syntax-enumeration.sh
 
+# Check complete test registration before the expensive full functional suite.
+# Previously this ran last and wasted an entire CI run when new tests were
+# forgotten; preserve fail-closed orphan detection while failing fast.
+echo "=== test registration completeness ==="
+./tests/test-orphan-suite-coverage.sh
+
 echo "=== Python compile ==="
 python3 -m py_compile server/frp-port-allocator.py server/frp-access-plugin.py server/frp-egress-gateway.py server/drlink-tcp-egress.py server/migrate_token.py server/drlink-mcp-bridge.py scripts/build-bundles.py scripts/generate-sbom.py scripts/check-chatgpt-owner-acceptance.py lib/frp_mgmt_auth.py lib/frp_pki.py lib/frp_frontend.py lib/frp_doctor.py lib/frp_install_txn.py lib/frp_client_registry.py lib/frp_audit.py lib/frp_project_files.py lib/frp_control_locks.py lib/frp_server_config.py lib/frp_zero_touch.py lib/drlink_qualified_artifacts.py lib/frp_ctl_grammar.py lib/frp_cli_catalog.py lib/frp_version_identity.py lib/frp_ctl_repl.py lib/frp_enrollment_lifecycle.py lib/frp_access_control.py lib/frp_egress_control.py lib/frp_egress_runtime.py lib/frp_infrastructure_ports.py lib/frp_health_check.py lib/frp_service_profiles.py lib/frp_machine_id.py lib/frp_bounded_server.py lib/frp_public_suffix.py lib/frp_policy_fingerprint.py lib/frp_state_paths.py lib/drlink_control_db.py lib/drlink_control_plane.py lib/drlink_control_cli.py lib/drlink_ai_agent.py lib/drlink_mcp_bridge.py lib/drlink_agent_payload.py
 python3 -m py_compile tools/frp-create-client tools/frp-enrollments tools/frp-enrollment-revoke tools/frp-enrollment-purge tools/frp-enroll-bulk tools/frp-clients tools/frp-client-info tools/frp-client-set tools/frp-release-client tools/frp-release-service tools/frp-revoke-client tools/frp-set-client-installer-url tools/frp-server-set tools/frp-backup tools/frp-restore
@@ -294,7 +300,20 @@ python3 tests/test-v24-whitelist-last-rule-outage-safety.py
 python3 tests/test-v24-empty-state-cli.py
 python3 tests/test-human-ux-framework-unit.py
 ./tests/test-agent-runtime-payload.sh
-./tests/test-orphan-suite-coverage.sh
+# Every newly added deterministic functional regression is executed by the
+# full non-Docker suite; orphan coverage must remain a hard gate, not an
+# allowlist waiver for missing functional tests.
+python3 tests/test-agent-catalog-progress.py
+python3 tests/test-cli-rule-selector-and-runtime-recovery.py
+python3 tests/test-doctor-proxy-identity.py
+python3 tests/test-full-e2e-public-recovery-regressions.py
+python3 tests/test-guided-configuration-input.py
+python3 tests/test-v24-ai-completion-delivery.py
+python3 tests/test-v24-denied-upload-response.py
+bash tests/test-v24-legacy-update-check-readonly.sh
+python3 tests/test-v24-mcp-oauth-discovery-origin.py
+python3 tests/test-v24-pass1-output-regressions.py
+bash tests/test-v24-upgrade-egress-account.sh
 
 echo "=== leftover test allocators ==="
 # shellcheck source=lib/frp-test-procs.sh
