@@ -71,9 +71,14 @@ export function filterObservedServices(source:unknown,query:unknown):ServiceSear
   return FREE_FIELDS.some(k=>observedText(row,k)?.includes(filter.term)??false)||
     (serviceStateLabel(row)!=="UNKNOWN"&&serviceStateLabel(row).toLowerCase().includes(filter.term));
  };
+ // An absent alternative field cannot prove a negative match:
+ // host name may differ while Host ID is unobserved; public port may
+ // differ while target port is unobserved. Only nonmatches need a warning.
  const unknownFor=(row:ServiceRow,filter:{facet:string|null,term:string}):boolean=>
-   filter.facet?fields(row,filter.facet).every(v=>v===null):
-     FREE_FIELDS.every(key=>observedText(row,key)===null);
+   !matchFilter(row,filter) &&
+   (filter.facet?fields(row,filter.facet).some(v=>v===null):
+     FREE_FIELDS.some(key=>observedText(row,key)===null)||
+       serviceStateLabel(row)==="UNKNOWN");
  let unknownCount=invalidCount;
  if(filters.length)unknownCount+=items.filter(row=>filters.some(f=>unknownFor(row,f))).length;
  const matches=items.filter(row=>filters.every(filter=>matchFilter(row,filter)));

@@ -1680,9 +1680,15 @@ function ResourceWorkspace({kind,data,operator,onNavigate,api,initialFilter="",i
           <option value="APPROVED">Approved</option>
           <option value="QUARANTINED">Quarantined</option>
         </select>}
-        <label className="dr-filter-field"><WorkspaceIcon kind="search"/><input value={filter} maxLength={120} onChange={e=>setFilter(e.target.value)} placeholder={isHost?"Filter hosts (name:, host:, os:, admission:)…":"Filter services…"}/>{filter&&<button onClick={()=>setFilter("")} aria-label="Clear filter">×</button>}</label></div>
+        <label className="dr-filter-field"><WorkspaceIcon kind="search"/><input value={filter} maxLength={120} aria-label={isHost?"Filter Managed Hosts":"Filter Remote Services"}
+          onChange={e=>setFilter(e.target.value)}
+          placeholder={isHost?"Filter hosts (name:, host:, os:, admission:)…":"Filter services (name:, host:, port:, state:)…"}/>{filter&&<button onClick={()=>setFilter("")} aria-label="Clear filter">×</button>}</label></div>
       {isHost&&hostSearch?.error&&<p className="warning-box" role="alert">Typed Host search not applied: {hostSearch.error} Displaying only previously loaded Core records, still scoped by admission state.</p>}
       {isHost&&hostSearch?.warning&&<p className="dr-uxb-catalog-page-notice" role="status">{hostSearch.warning}</p>}
+      {!isHost&&<p className="muted" role="note">Service search only checks loaded authorized Core pages.
+        Use name:, host:, port:, state: or type: to filter observed Service fields; a plain word checks
+        safe visible Service fields. Use Load more Remote Services to inspect additional Core pages.
+        No credentials or remote Host discovery are searched.</p>}
       {!isHost&&serviceSearch?.error&&<p className="warning-box" role="alert">Service search not applied: {serviceSearch.error} Showing only previously observed Core rows.</p>}
       {!isHost&&serviceSearch?.warning&&<p className="dr-uxb-catalog-page-notice" role="status">UNKNOWN coverage · {serviceSearch.warning}</p>}
       {savedDraft&&<div className="toolbar"><button type="button" className="secondary"

@@ -74,6 +74,40 @@ test("Incomplete/malformed Core rows and partial service facts stay visibly UNKN
  assert.ok(bad.error);
 });
 
+test("No-match must be UNKNOWN when any candidate Host/port/target fact is unobserved",()=>{
+ const partial=[
+  {id:"s1",name:"SSH",managed_host:"alpha",managed_host_id:null,
+   public_port:443,target_port:null,enabled:1,released:0,
+   service_type:"tcp",target_host:null},
+ ];
+ for(const q of ["host:beta","port:22","target:other","unlikely"]){
+  const result=filterObservedServices(partial,q);
+  assert.deepEqual(result.items,[],q);
+  assert.equal(result.applied,true,q);
+  assert.equal(result.unknownCount,1,q);
+  assert.match(result.warning||"",/UNKNOWN|cannot prove absence/i,q);
+ }
+ for(const q of ["host:alpha","port:443","name:SSH"]){
+  const matched=filterObservedServices(partial,q);
+  assert.equal(matched.items.length,1,q);
+  assert.equal(matched.unknownCount,0,q); // unobserved alternate is immaterial to this match
+ }
+ assert.equal(filterObservedServices([
+  {id:"s2",name:"Completed",managed_host:"beta",managed_host_id:"host2",
+   public_port:22,target_port:2222,enabled:true,released:false,
+   service_type:"tcp",target_host:"10.2.0.4",target_mode:"host"}
+ ],"port:5000").unknownCount,0);
+});
+
+test("Remote Service UI explains safe supported facets and loaded-page scope",()=>{
+ const source=readFileSync(join(root,"src","main.tsx"),"utf8");
+ const scope=source.split("function ResourceWorkspace(",2)[1]?.split("function UsersPanel(",1)[0]||"";
+ for(const text of ["name:","host:","port:","state:","type:"]){
+  assert.ok(scope.includes(text),"missing field help: "+text);
+ }
+ assert.match(scope,/Service search only checks loaded authorized Core pages/);
+ assert.match(scope,/aria-label=\{isHost\?"Filter Managed Hosts":"Filter Remote Services"\}/);
+});
 test("Remote Service page wiring shows actual filtered Core page only, not whole fleet",()=>{
  const source=readFileSync(join(root,"src","main.tsx"),"utf8");
  const page=source.split("function ResourceWorkspace(",2)[1]?.split("function UsersPanel(",1)[0]||"";
