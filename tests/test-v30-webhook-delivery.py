@@ -257,6 +257,22 @@ class WebhookDeliveryTests(unittest.TestCase):
             self.assertGreater(row["next_attempt_at"], event["timestamp"])
             self.assertEqual(store.claim_due(), [])  # no retry storm
 
+    def test_nonpositive_or_nonnumeric_tick_limit_does_not_claim_or_send(self):
+        hook, event = self._event()
+        with patch("drlink_webhook_delivery.send_signed_event",
+                   side_effect=AssertionError("unexpected delivery")):
+            for invalid in (0, -1, False, True, "0", 1.5):
+                with self.subTest(limit=invalid), self.assertRaises(ControlPlaneError):
+                    delivery_tick(self.root, limit=invalid)
+        with WebhookStore(self.root) as store:
+            row = store.conn.execute(
+                "SELECT status, attempts, lease_token FROM management_webhook_outbox "
+                "WHERE event_id=?", (event["event_id"],),
+            ).fetchone()
+            self.assertEqual((row["status"], row["attempts"], row["lease_token"]),
+                             ("PENDING", 0, ""))
+            self.assertEqual(store.pending()[0]["event_id"], event["event_id"])
+
     def test_secret_key_loss_and_private_address_denied(self):
         hook, _ = self._event()
         with WebhookStore(self.root) as store:

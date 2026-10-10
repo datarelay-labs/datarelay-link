@@ -93,6 +93,10 @@ def send_signed_event(url: str, body_json: str, event_id: str, secret: str) -> i
 
 def delivery_tick(root: Optional[str] = None, *, limit: int = MAX_TICK) -> dict[str, int]:
     """Run a bounded independent worker tick. Never affects policy enforcement."""
+    # A zero/negative or coerced limit must never silently claim one delivery.
+    # Reject before retention, audit-cursor staging, or any outbox mutation.
+    if type(limit) is not int or limit < 1:
+        raise ControlPlaneError("Webhook delivery limit must be a positive integer.")
     result = {"claimed": 0, "delivered": 0, "failed": 0}
     from drlink_webhook_events import stage_audit_events
     with WebhookStore(root) as store:
