@@ -67,6 +67,10 @@ files=[
  'lib/drlink_v30_jobs.py',
  'lib/drlink_v30_capability.py',
  'lib/drlink_v30_readmodels.py',
+ # Required server-side signed Agent staging/validation payload.
+ 'lib/drlink_agent_payload.py',
+ 'lib/drlink_v30_agent_artifact.py',
+ 'lib/drlink_v30_signed_distribution.py',
  'lib/drlink_management_catalog.py',
  'lib/drlink_management_service.py',
  'lib/drlink_management_change.py',

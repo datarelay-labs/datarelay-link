@@ -36,6 +36,29 @@ if "frp_server_upgrade_destinations" not in upgrade:
 if "server-project-files.manifest" not in (root / "scripts" / "build-bundles.py").read_text():
     raise SystemExit("bundle builder missing canonical manifest")
 
+# An update distributed through bootstrap-server.sh must contain every
+# non-optional managed source. An omitted source can pass local --source tests
+# but makes the generated remote update fail partway through staging.
+# SHA256SUMS is intentionally external: embedding it would introduce a
+# bootstrap-server.sh self-hash cycle.
+import ast
+builder = ast.parse((root / "scripts" / "build-bundles.py").read_text(encoding="utf-8"))
+payload_node = next(
+    node.value
+    for node in builder.body
+    if isinstance(node, ast.Assign)
+    and any(isinstance(target, ast.Name) and target.id == "files" for target in node.targets)
+)
+embedded_sources = set(ast.literal_eval(payload_node))
+required_sources = {
+    entry.source
+    for entry in frp_project_files.load_entries()
+    if entry.cls in {"project", "unit", "unit-single443"}
+}
+missing_from_bundle = sorted(required_sources - embedded_sources)
+if missing_from_bundle:
+    raise SystemExit("server bootstrap payload missing managed sources: %s" % missing_from_bundle)
+
 required = {
     "usr/local/lib/drlink/frp_audit.py",
     "usr/local/lib/drlink/frp_support_bundle.py",
