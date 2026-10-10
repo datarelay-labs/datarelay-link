@@ -1097,7 +1097,7 @@ class V30WebSaasUxContractTests(unittest.TestCase):
 
     def test_saved_views_can_open_explicit_non_security_resource_filters(self):
         saved=(ROOT / "web/src/uxb-saved-views.tsx").read_text(encoding="utf-8")
-        self.assertIn('import {SavedViewsWorkspace,saveDraftForResource} from "./uxb-saved-views"', SOURCE)
+        self.assertIn('import {SavedViewsWorkspace,saveDraftForResource,isSavedAdmission,type HostAdmission} from "./uxb-saved-views"', SOURCE)
         self.assertIn('if(active==="views"&&data)return <SavedViewsWorkspace data={data} api={api} onNavigate={onNavigate}', SOURCE)
         self.assertIn('initialFilter={String(context?.savedFilter||"").slice(0,120)}', SOURCE)
         self.assertIn('useEffect(()=>{setFilter(initialFilter)},[kind,initialFilter]);', SOURCE)
@@ -1105,8 +1105,8 @@ class V30WebSaasUxContractTests(unittest.TestCase):
             'export function readSavedView(value:unknown)',
             'payload.resource_type==="managed-host"',
             'payload.resource_type==="remote-service"',
-            'onNavigate?.(parsed.route,"connections",{savedFilter:parsed.filter})',
-            'payload:{resource_type:target,filter:filter.trim()}',
+            'onNavigate?.(parsed.route,"connections",{savedFilter:parsed.filter,savedAdmission:parsed.admission||"all"})',
+            'payload:currentDraft',
             'Legacy/unsupported view; save a new named target',
             'private display preferences, never access policies',
             'does not fetch missing inventory pages',
@@ -1121,9 +1121,25 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn('const prepared=readSavedView({payload:initialDraft});', saved)
         self.assertIn('onNavigate?.("views","activity",{savedViewDraft:savedDraft})', SOURCE)
         self.assertIn('initialDraft={context?.savedViewDraft}', SOURCE)
-        self.assertIn('Save this filter →', SOURCE)
+        self.assertIn('Save this view →', SOURCE)
         self.assertIn('maxLength={120}', SOURCE)
         self.assertIn('Pre-filled from', saved)
+
+    def test_saved_view_optional_host_admission_without_security_policy_mutation(self):
+        saved=(ROOT / "web/src/uxb-saved-views.tsx").read_text(encoding="utf-8")
+        self.assertIn('export type HostAdmission="all"|"PENDING_APPROVAL"|"APPROVED"|"QUARANTINED"', saved)
+        self.assertIn('export function isSavedAdmission(value:unknown)', saved)
+        self.assertIn('const currentDraft=saveDraftForResource(', saved)
+        self.assertIn('payload:currentDraft', saved)
+        self.assertIn('Filter Managed Host admission', saved)
+        self.assertIn('setAdmission("all")', saved)
+        self.assertIn('savedAdmission:parsed.admission||"all"', saved)
+        self.assertIn('initialAdmission={context?.savedAdmission}', SOURCE)
+        self.assertIn('isSavedAdmission(initialAdmission)', SOURCE)
+        self.assertIn('isHost?admissionFilter:"all"', SOURCE)
+        self.assertIn('Save this view →', SOURCE)
+        self.assertNotIn('Host admission selection is not included.', SOURCE)
+        self.assertNotIn('method:"PUT"', saved)
 
     def test_saved_view_name_replacement_requires_explicit_review(self):
         saved=(ROOT / "web/src/uxb-saved-views.tsx").read_text(encoding="utf-8")
@@ -1135,7 +1151,7 @@ class V30WebSaasUxContractTests(unittest.TestCase):
             'setConfirmReplace(false);',
             "Replace existing saved filter",
             "checked={confirmReplace}",
-            "disabled={busy||!name.trim()||!filter.trim()||!!(duplicate&&!confirmReplace)||incompleteNames&&!confirmReplace}",
+            "disabled={busy||!name.trim()||!currentDraft||!!(duplicate&&!confirmReplace)||incompleteNames&&!confirmReplace}",
             "if(incompleteNames&&!confirmReplace)return;",
             'setName(e.target.value);setConfirmReplace(false);',
             'setFilter(e.target.value);setConfirmReplace(false)',
