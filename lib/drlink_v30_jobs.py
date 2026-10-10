@@ -108,6 +108,27 @@ def _normalize_targets(targets: Iterable[str], *, max_targets: int) -> tuple[str
     return tuple(ordered)
 
 
+def _planned_rollout_batches(
+    target_ids: Iterable[str], canary_targets: Iterable[str], wave_size: int,
+) -> list[dict[str, Any]]:
+    """Expose the exact deterministic Canary/Wave groups without queue mutation.
+
+    Batch order matches the persisted-ID ordering used by the claim barrier;
+    it is not a signed artifact qualification or permission to Apply.
+    """
+    canaries = set(canary_targets)
+    stages = (
+        ("CANARY", sorted(canaries)),
+        ("WAVE", sorted(host for host in target_ids if host not in canaries)),
+    )
+    return [
+        {"phase": phase, "batch": index // wave_size + 1,
+         "targets": hosts[index:index + wave_size]}
+        for phase, hosts in stages
+        for index in range(0, len(hosts), wave_size)
+    ]
+
+
 def job_operational_summary(conn, *, max_active_jobs: int = MAX_ACTIVE_JOBS) -> dict[str, Any]:
     """Return a rebuildable operational summary; never configuration authority."""
     rows = conn.execute(
@@ -520,6 +541,23 @@ class ManagementJobEngine:
 
         running = sum(s == RUNNING for s in states.values())
         if running >= wave_size:
+            return False
+
+        # A staged wave is a bounded *batch*, not a sliding concurrency
+        # window. A fast completion must not admit the next wave while
+        # another Host in the current wave remains in flight. Apply the
+        # barrier both to multi-batch canaries and to ordinary Host waves.
+        # Sorting persisted target IDs keeps the boundary stable across
+        # independent worker connections and Server restarts.
+        group = sorted(
+            canaries if target in canaries
+            else (host for host in states if host not in canaries)
+        )
+        if target not in group:
+            return False
+        preceding_count = (group.index(target) // wave_size) * wave_size
+        if any(states[host] not in TERMINAL_STATUSES
+               for host in group[:preceding_count]):
             return False
         return True
 
@@ -947,6 +985,9 @@ class ManagementJobEngine:
             "blocked_targets": blocked,
             "canary_targets": list(payload["canary_targets"]),
             "wave_size": payload["wave_size"],
+            "planned_batches": _planned_rollout_batches(
+                target_ids, payload["canary_targets"], payload["wave_size"]
+            ),
             "failure_threshold_percent": payload["failure_threshold_percent"],
             "artifact": dict(payload["artifact"]),
             "artifact_qualification": "NOT_VERIFIED",

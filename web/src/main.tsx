@@ -1037,6 +1037,11 @@ function AgentRolloutPreviewPanel(){
           <td>{host.version_relation}</td><td>{host.provenance}</td><td>{host.update_available}</td>
         </tr>)}</tbody>
       </table></div>
+      <p className="muted"><strong>Planned Canary/Wave batches · read-only:</strong> Every prior batch must reach a terminal outcome before the next one starts. These groups are not approval to Apply an unqualified artifact.</p>
+      <div className="dr-table-scroll"><table className="dr-resource-table">
+        <thead><tr><th>Phase</th><th>Batch</th><th>Exact Managed Host IDs</th></tr></thead>
+        <tbody>{(preview.planned_batches||[]).map((batch:any,index:number)=><tr key={batch.phase+"-"+batch.batch+"-"+index}><td>{batch.phase}</td><td>{batch.batch}</td><td>{(batch.targets||[]).join(", ")}</td></tr>)}</tbody>
+      </table></div>
       <p className="muted">Heartbeat freshness comes from the last authenticated Agent lifecycle report. Even a recent report does not prove current reachability, signed package provenance, or rollback readiness. Update availability remains UNKNOWN.</p>
       <pre className="plan">{JSON.stringify({targets:preview.targets,canaries:preview.canary_targets,blocked:preview.blocked_targets,wave_size:preview.wave_size,artifact:preview.artifact,qualification_note:preview.qualification_note},null,2)}</pre>
     </div>}

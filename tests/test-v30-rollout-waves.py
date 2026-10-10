@@ -174,6 +174,116 @@ class StagedRolloutSchedulingTests(unittest.TestCase):
         self.assertEqual(final["payload"]["rollout_state"], "WAVE")
         self.assertEqual({x["status"] for x in final["targets"]}, {SUCCEEDED})
 
+    def test_two_host_wave_waits_for_every_result_before_next_batch(self):
+        # Scheduler-only simulation in the disposable test DB. No Agent updater
+        # may run or be inferred qualified by these synthetic completions.
+        plane = ControlPlane(self.tmp.name)
+        try:
+            for host in ("c-third", "d-fourth", "e-fifth"):
+                plane.upsert_client(host, hostname=host)
+        finally:
+            plane.close()
+        job = self.engine.enqueue_rollout(
+            targets=("a-first", "b-second", "c-third", "d-fourth", "e-fifth", "z-canary"),
+            canary_targets=("z-canary",),
+            requested_by="ops-admin", artifact=self.artifact,
+            wave_size=2, failure_threshold_percent=20, now=self.now,
+        )
+        canary = self.engine.claim_targets(
+            worker_id="canary", limit=3, now=self.now + timedelta(seconds=1)
+        )
+        self.assertEqual([item["target_id"] for item in canary], ["z-canary"])
+        self._complete(job, canary[0], SUCCEEDED)
+        first = self.engine.claim_targets(
+            worker_id="wave-1", limit=3, now=self.now + timedelta(seconds=3)
+        )
+        self.assertEqual([item["target_id"] for item in first], ["a-first", "b-second"])
+        self._complete(job, first[0], SUCCEEDED, tick=4)
+        # The other wave-1 target is still in-flight: no wave-2 claim is safe.
+        with ManagementJobEngine(self.tmp.name, max_targets=8) as another_worker:
+            self.assertEqual(another_worker.claim_targets(
+                worker_id="wave-2", limit=3, now=self.now + timedelta(seconds=5)
+            ), [])
+        self._complete(job, first[1], SUCCEEDED, tick=6)
+        second = self.engine.claim_targets(
+            worker_id="wave-2", limit=3, now=self.now + timedelta(seconds=7)
+        )
+        self.assertEqual([item["target_id"] for item in second], ["c-third", "d-fourth"])
+        self._complete(job, second[0], SUCCEEDED, tick=8)
+        self.assertEqual(self.engine.claim_targets(
+            worker_id="wave-3", limit=3, now=self.now + timedelta(seconds=9)
+        ), [])
+        self._complete(job, second[1], SUCCEEDED, tick=10)
+        third = self.engine.claim_targets(
+            worker_id="wave-3", limit=3, now=self.now + timedelta(seconds=11)
+        )
+        self.assertEqual([item["target_id"] for item in third], ["e-fifth"])
+        self._complete(job, third[0], SUCCEEDED, tick=12)
+        self.assertEqual(self.engine.get(job["id"])["status"], SUCCEEDED)
+
+    def test_canary_batches_wait_for_prior_canary_outcomes(self):
+        # Canaries can exceed wave_size; the next canary batch must never
+        # fill a released slot while the preceding canary batch is in flight.
+        plane = ControlPlane(self.tmp.name)
+        try:
+            plane.upsert_client("c-ordinary", hostname="c-ordinary")
+        finally:
+            plane.close()
+        job = self.engine.enqueue_rollout(
+            targets=("a-first", "b-second", "z-canary", "c-ordinary"),
+            canary_targets=("a-first", "b-second", "z-canary"),
+            requested_by="ops-admin", artifact=self.artifact,
+            wave_size=2, now=self.now,
+        )
+        first = self.engine.claim_targets(
+            worker_id="canary-batch-1", limit=4,
+            now=self.now + timedelta(seconds=1),
+        )
+        self.assertEqual([item["target_id"] for item in first], ["a-first", "b-second"])
+        self._complete(job, first[0], SUCCEEDED, tick=2)
+        self.assertEqual(self.engine.claim_targets(
+            worker_id="canary-batch-2", limit=4,
+            now=self.now + timedelta(seconds=3),
+        ), [])
+        self._complete(job, first[1], SUCCEEDED, tick=4)
+        second = self.engine.claim_targets(
+            worker_id="canary-batch-2", limit=4,
+            now=self.now + timedelta(seconds=5),
+        )
+        self.assertEqual([item["target_id"] for item in second], ["z-canary"])
+        self.assertEqual(self.engine.claim_targets(
+            worker_id="ordinary", limit=4, now=self.now + timedelta(seconds=6)
+        ), [])
+        self._complete(job, second[0], SUCCEEDED, tick=7)
+        ordinary = self.engine.claim_targets(
+            worker_id="ordinary", limit=4, now=self.now + timedelta(seconds=8)
+        )
+        self.assertEqual([item["target_id"] for item in ordinary], ["c-ordinary"])
+        self._complete(job, ordinary[0], SUCCEEDED, tick=9)
+        self.assertEqual(self.engine.get(job["id"])["status"], SUCCEEDED)
+
+    def test_preview_lists_stable_canary_and_host_batches_without_enqueuing(self):
+        plane = ControlPlane(self.tmp.name)
+        try:
+            for host in ("c-third", "d-fourth"):
+                plane.upsert_client(host, hostname=host)
+        finally:
+            plane.close()
+        preview = self.engine.preview_rollout(
+            targets=("d-fourth", "z-canary", "a-first", "c-third", "b-second"),
+            canary_targets=("z-canary", "b-second", "a-first"),
+            requested_by="ops-admin", artifact=self.artifact, wave_size=2,
+        )
+        self.assertEqual(preview["planned_batches"], [
+            {"phase": "CANARY", "batch": 1, "targets": ["a-first", "b-second"]},
+            {"phase": "CANARY", "batch": 2, "targets": ["z-canary"]},
+            {"phase": "WAVE", "batch": 1, "targets": ["c-third", "d-fourth"]},
+        ])
+        self.assertTrue(preview["read_only"])
+        self.assertFalse(preview["ready_to_apply"])
+        self.assertFalse(preview["creates_job"])
+        self.assertEqual(self.engine.summary()["active_jobs"], 0)
+
     def test_generic_rpc_worker_cannot_falsely_complete_unqualified_rollout(self):
         job = self._start()
         executed = []

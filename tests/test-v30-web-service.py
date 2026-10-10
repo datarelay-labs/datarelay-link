@@ -277,6 +277,9 @@ class V30WebServiceTests(unittest.TestCase):
         self.assertEqual(preview["artifact_qualification"], "NOT_VERIFIED")
         self.assertFalse(preview["creates_job"])
         self.assertEqual(preview["canary_targets"], ["host-a"])
+        self.assertEqual(preview["planned_batches"], [
+            {"phase": "CANARY", "batch": 1, "targets": ["host-a"]},
+        ])
         self.assertTrue(preview["requires_fresh_validation_on_apply"])
         with ManagementJobEngine(self.tmp) as engine:
             after = engine.conn.execute(

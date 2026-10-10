@@ -131,6 +131,10 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn("preview.artifact_qualification", SOURCE)
         self.assertIn("preview.blocked_targets", SOURCE)
         self.assertIn("preview.target_observations", SOURCE)
+        self.assertIn("Planned Canary/Wave batches", SOURCE)
+        self.assertIn("preview.planned_batches||[]", SOURCE)
+        self.assertIn("Every prior batch must reach a terminal outcome", SOURCE)
+        self.assertIn("Exact Managed Host IDs", SOURCE)
         self.assertIn("Observed version", SOURCE)
         self.assertIn("Update availability remains UNKNOWN", SOURCE)
 
