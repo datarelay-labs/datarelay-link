@@ -362,6 +362,75 @@ class V30ManagementDraftTests(unittest.TestCase):
         self.assertEqual(stored["status"], "EXPIRED")
         self.assertEqual(self.service.plane.current_revision(), revision)
 
+    def test_concurrent_draft_creates_preserve_per_actor_limit(self):
+        from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+        import threading
+
+        actor = "web:concurrent-bound"
+        for idx in range(MAX_ACTIVE_DRAFTS_PER_ACTOR - 1):
+            self.service.create(actor_id=actor, now=self.base_time)
+
+        first = ManagementDraftService(self.tmp)
+        second = ManagementDraftService(self.tmp)
+        count_read = threading.Event()
+        release_read = threading.Event()
+
+        class PausedCountConnection:
+            def __init__(self, real):
+                self.real = real
+
+            def __getattr__(self, name):
+                return getattr(self.real, name)
+
+            def execute(self, sql, *args):
+                cursor = self.real.execute(sql, *args)
+                if sql.startswith("SELECT COUNT(*) FROM management_drafts"):
+                    result = cursor.fetchone()
+                    count_read.set()
+                    if not release_read.wait(5):
+                        raise AssertionError("Test count-read coordination timed out")
+
+                    class CountResult:
+                        def fetchone(self):
+                            return result
+
+                    return CountResult()
+                return cursor
+
+        first.plane.conn = PausedCountConnection(first.plane.conn)
+        try:
+            with ThreadPoolExecutor(max_workers=2) as workers:
+                pending_first = workers.submit(
+                    first.create, actor_id=actor, now=self.base_time,
+                )
+                self.assertTrue(count_read.wait(3))
+                pending_second = workers.submit(
+                    second.create, actor_id=actor, now=self.base_time,
+                )
+                try:
+                    pending_second.result(timeout=0.25)
+                except FutureTimeoutError:
+                    pass
+                finally:
+                    release_read.set()
+                outcomes = []
+                for future in (pending_first, pending_second):
+                    try:
+                        outcomes.append(future.result(timeout=5))
+                    except ControlPlaneError as exc:
+                        outcomes.append(exc)
+            successes = sum(isinstance(value, dict) for value in outcomes)
+            self.assertEqual(successes, 1, outcomes)
+            count = self.service.plane.conn.execute(
+                "SELECT COUNT(*) FROM management_drafts "
+                "WHERE actor_id=? AND status='DRAFT'", (actor,),
+            ).fetchone()[0]
+            self.assertEqual(count, MAX_ACTIVE_DRAFTS_PER_ACTOR)
+        finally:
+            release_read.set()
+            first.close()
+            second.close()
+
     def test_draft_count_and_size_are_bounded(self):
         revision = self.service.plane.current_revision()
         for idx in range(MAX_ACTIVE_DRAFTS_PER_ACTOR):

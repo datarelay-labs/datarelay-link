@@ -144,37 +144,45 @@ class ManagementDraftService(ManagementChangeService):
         current = now or _utc_now()
         now_text = _utc_text(current)
         expires = _utc_text(current + timedelta(seconds=DRAFT_TTL_SECONDS))
-        self._expire(now=current)
-        active = int(
-            self.plane.conn.execute(
-                "SELECT COUNT(*) FROM management_drafts "
-                "WHERE actor_id=? AND status='DRAFT'",
-                (actor,),
-            ).fetchone()[0]
-            or 0
-        )
-        if active >= MAX_ACTIVE_DRAFTS_PER_ACTOR:
-            raise ControlPlaneError(
-                "Draft Workspace limit reached (%d active drafts)."
-                % MAX_ACTIVE_DRAFTS_PER_ACTOR
+        # Lock before counting so concurrent sessions cannot exceed the
+        # per-actor draft capacity after reading the same stale count.
+        self.plane.conn.execute("BEGIN IMMEDIATE")
+        try:
+            self._expire(now=current)
+            active = int(
+                self.plane.conn.execute(
+                    "SELECT COUNT(*) FROM management_drafts "
+                    "WHERE actor_id=? AND status='DRAFT'",
+                    (actor,),
+                ).fetchone()[0]
+                or 0
             )
-        ident = "draft_" + secrets.token_hex(12)
-        base_revision = int(self.plane.current_revision())
-        self.plane.conn.execute(
-            "INSERT INTO management_drafts("
-            "id,actor_id,base_revision,bundle_text,status,created_at,updated_at,"
-            "expires_at,applied_revision,last_error"
-            ") VALUES (?,?,?,?,'DRAFT',?,?,?,NULL,'')",
-            (
-                ident,
-                actor,
-                base_revision,
-                text,
-                now_text,
-                now_text,
-                expires,
-            ),
-        )
+            if active >= MAX_ACTIVE_DRAFTS_PER_ACTOR:
+                raise ControlPlaneError(
+                    "Draft Workspace limit reached (%d active drafts)."
+                    % MAX_ACTIVE_DRAFTS_PER_ACTOR
+                )
+            ident = "draft_" + secrets.token_hex(12)
+            base_revision = int(self.plane.current_revision())
+            self.plane.conn.execute(
+                "INSERT INTO management_drafts("
+                "id,actor_id,base_revision,bundle_text,status,created_at,updated_at,"
+                "expires_at,applied_revision,last_error"
+                ") VALUES (?,?,?,?,'DRAFT',?,?,?,NULL,'')",
+                (
+                    ident,
+                    actor,
+                    base_revision,
+                    text,
+                    now_text,
+                    now_text,
+                    expires,
+                ),
+            )
+            self.plane.conn.execute("COMMIT")
+        except Exception:
+            self.plane.conn.execute("ROLLBACK")
+            raise
         return self.get(ident, actor_id=actor, now=current)
 
     def get(
