@@ -129,6 +129,42 @@ class V30WebServiceTests(unittest.TestCase):
         self.assertNotIn("session_token", json.dumps(payload))
         return payload
 
+    def test_admin_management_ingress_status_is_read_only_and_role_guarded(self):
+        # The shared Web ACL must be inspectable by a genuine current Admin
+        # session, but not by anonymous or lower-privilege Web operators.
+        status, _, _ = self.request("GET", "/api/v1/admin/management-ingress/status")
+        self.assertEqual(status, 401)
+        self.login()
+        status, _, report = self.request(
+            "GET", "/api/v1/admin/management-ingress/status"
+        )
+        self.assertEqual(status, 200, report)
+        self.assertEqual(report["web"]["status"], "DISABLED")
+        self.assertEqual(report["web"]["source_count"], 0)
+        self.assertIsNone(report["web"]["policy_revision"])
+        self.assertEqual(report["ssh_host"]["status"], "UNAVAILABLE")
+        self.assertFalse(report["apply_available"])
+        self.assertNotIn("password", json.dumps(report).lower())
+        self.assertNotIn("secret", json.dumps(report).lower())
+
+        # MFA-OFF read-only user still receives a normal user session, but
+        # cannot inspect the Administrator-only ingress configuration.
+        with WebAuthService(self.tmp) as auth:
+            auth.create_operator_local(
+                username="reader", role="Read Only", password="ReaderPass1",
+            )
+        code, hdr, _ = self.request(
+            "POST", "/api/v1/auth/login/start",
+            {"username": "reader", "password": "ReaderPass1"},
+        )
+        self.assertEqual(code, 200)
+        self.assertIn("set-cookie", hdr)
+        self.cookie = hdr["set-cookie"].split(";", 1)[0]
+        status, _, _ = self.request(
+            "GET", "/api/v1/admin/management-ingress/status"
+        )
+        self.assertEqual(status, 403)
+
     def test_staged_login_http_requires_otp_before_cookie(self):
         status, headers, pending = self.request(
             "POST", "/api/v1/auth/login/start",

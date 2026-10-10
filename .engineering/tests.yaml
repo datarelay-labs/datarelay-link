@@ -119,8 +119,10 @@ scenarios:
       - preflight
     platforms:
       - "linux"
-    command: "python3 tests/test-v30-web-management-ingress.py -q && python3 tests/test-v30-web-management-ingress-config.py -q"
+    command: "python3 tests/test-v30-web-management-ingress.py -q && python3 tests/test-v30-web-management-ingress-config.py -q && python3 tests/test-v30-web-service.py V30WebServiceTests.test_admin_management_ingress_status_is_read_only_and_role_guarded -q"
     invariants:
+      - "current authenticated Administrator sees read-only effective Web ingress status; anonymous and Read Only denied"
+      - "status never exposes policy file bytes, raw source CIDRs, or live SSH apply claims"
       - "optional host-admin-selected owner-private ACL file enables strict versioned Web policy with no live mutation"
       - "unavailable, symlinked, world/group exposed, duplicate-key or oversized files fail startup closed"
       - "default-OFF policy preserves pre-existing login, health and static UI"

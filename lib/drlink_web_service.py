@@ -31,6 +31,7 @@ DEFAULT_WEB_PORT = 8741
 SESSION_COOKIE = "drlink_session"
 MAX_REQUEST_BYTES = 64 * 1024
 WEB_API_PREFIX = "/api/v1"
+ADMIN_WEB_INGRESS_STATUS_PATH = "/api/v1/admin/management-ingress/status"
 
 CSP = (
     "default-src 'self'; "
@@ -145,6 +146,26 @@ class WebApplication:
             trusted_proxy_cidrs=self._trusted_proxy_cidrs,
             now=now,
         )
+
+    def management_ingress_status(self) -> dict[str, Any]:
+        """Actual startup policy status only; no raw CIDRs or secrets."""
+        source = self._management_acl
+        web = None if source is None else source.web
+        return {
+            "web": {
+                "status": (
+                    "UNAVAILABLE" if web is None
+                    else "ENABLED" if web.enabled else "DISABLED"
+                ),
+                "policy_revision": (web.revision or None) if web is not None else None,
+                "source_count": len(web.sources) if web is not None else 0,
+                "trusted_proxy_count": len(self._trusted_proxy_cidrs),
+                "surfaces": ["static_ui", "login", "management_api", "automation_api", "health"],
+            },
+            "ssh_host": {"status": "UNAVAILABLE", "enforcement_supported": False},
+            "apply_available": False,
+            "configuration_mutation_supported": False,
+        }
 
     def close(self) -> None:
         self.auth.close()
@@ -341,6 +362,10 @@ class WebApplication:
         principal: WebPrincipal,
     ) -> dict[str, Any]:
         actor = self._actor(principal)
+        if path == ADMIN_WEB_INGRESS_STATUS_PATH:
+            if principal.role != ROLE_ADMIN:
+                raise ControlPlaneError("Administrator role required.")
+            return self.management_ingress_status()
         if path == "/api/v1/session":
             return {
                 "operator": {
@@ -1152,6 +1177,9 @@ class DrlinkWebHandler(BaseHTTPRequestHandler):
             principal = self._principal()
             if principal is None:
                 self._error(401, "authentication required")
+                return
+            if parsed.path == ADMIN_WEB_INGRESS_STATUS_PATH and principal.role != ROLE_ADMIN:
+                self._error(403, "Administrator role required.")
                 return
             try:
                 payload = self.app.read_api(

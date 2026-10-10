@@ -213,6 +213,38 @@ class WebIngressConfigTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             load_management_ingress(self.save(source))
 
+    def test_actual_loaded_status_is_explicit_and_redacted(self):
+        self.start(self.save(config(
+            source="127.0.0.1/32", proxies=("198.51.100.2/32",),
+        )))
+        report = self.server.app.management_ingress_status()
+        self.assertEqual(report["web"]["status"], "ENABLED")
+        self.assertEqual(report["web"]["policy_revision"], "test-revision-1")
+        self.assertEqual(report["web"]["source_count"], 1)
+        self.assertEqual(report["web"]["trusted_proxy_count"], 1)
+        self.assertEqual(report["ssh_host"]["status"], "UNAVAILABLE")
+        self.assertFalse(report["apply_available"])
+        self.assertFalse(report["configuration_mutation_supported"])
+        encoded = json.dumps(report)
+        self.assertNotIn("127.0.0.1/32", encoded)
+        self.assertNotIn("198.51.100.2", encoded)
+
+    def test_explicit_missing_policy_status_is_unavailable_not_healthy(self):
+        self.server = create_server(
+            root=str(self.root), listen="127.0.0.1", port=0,
+            management_acl=None,
+        )
+        report = self.server.app.management_ingress_status()
+        self.assertEqual(report["web"]["status"], "UNAVAILABLE")
+        self.assertIsNone(report["web"]["policy_revision"])
+        self.assertFalse(report["apply_available"])
+        self.assertEqual(report["ssh_host"]["status"], "UNAVAILABLE")
+        self.thread = threading.Thread(
+            target=self.server.serve_forever, daemon=True,
+        )
+        self.thread.start()
+        self.assertEqual(self.request("GET", "/healthz")[0], 403)
+
     def test_file_and_direct_policy_cannot_be_combined(self):
         from drlink_foundation_security import FoundationManagementPolicy
         f = self.save(config())

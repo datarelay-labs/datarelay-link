@@ -153,3 +153,28 @@ The additively expanded native acceptance contract is:
 `python3 tests/test-v30-web-management-ingress-config.py -q`,
 including real isolated HTTP assertions plus CLI argument dispatch
 without starting any installed or production Web service.
+
+## Read-only Administrator policy status
+
+An authenticated, current **Admin** Web session can read
+`GET /api/v1/admin/management-ingress/status` to see the *effective
+in-memory* Web ingress policy after service startup, not a submitted
+or pending draft. The endpoint returns:
+
+- `web.status`: `DISABLED` (default), `ENABLED` (a validated
+  policy is injected), or `UNAVAILABLE` (explicit policy unknown);
+- `web.policy_revision`, configured `source_count`, and
+  `trusted_proxy_count`, without raw networks or the policy file;
+- `ssh_host.status=UNAVAILABLE`, `ssh_host.enforcement_supported=false`,
+  `apply_available=false`, and
+  `configuration_mutation_supported=false`.
+
+Anonymous calls require a valid full Web session and return HTTP 401;
+a current Read Only/Operator session receives HTTP 403. The internal
+Web application dispatch also enforces Admin-only read access. All
+requests remain subject to the ingress guard itself, so an explicitly
+unavailable policy cannot be bypassed by using this status endpoint.
+Neither GET nor any other route creates, edits, saves or applies a
+source allowlist, host SSH firewall rule, recovery timer, or credentials.
+This is a product-native read path, not a declaration of a completed
+Administrative settings UI or a host-safe rollout.
