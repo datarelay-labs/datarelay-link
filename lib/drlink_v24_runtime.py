@@ -513,6 +513,36 @@ def apply_agent_runtime(
             "generation": 0,
         }
 
+    if transport not in ("tcp", "wss"):
+        return {
+            "ok": False,
+            "applied": [],
+            "removed": [],
+            "error": "unsupported FRP transport '%s' (expected tcp or wss)" % transport,
+            "generation": 0,
+        }
+
+    ca_file = ""
+    if transport == "wss":
+        # Bind WSS trust to this Agent's existing state layout. Linux keeps
+        # the CA under /etc/drlink; macOS maps both into the same flat state
+        # directory (including an overridden FRP_MACOS_STATE_ROOT).
+        state_path = _client_state_path(root)
+        linux_state_path = _base(root) / "etc/frp/client-state.json"
+        ca_path = (_base(root) / "etc/drlink/allocator-ca.crt"
+                   if state_path == linux_state_path
+                   else state_path.with_name("allocator-ca.crt"))
+        # Never rewrite a working WSS runtime with an empty trust anchor.
+        if not ca_path.is_file():
+            return {
+                "ok": False,
+                "applied": [],
+                "removed": [],
+                "error": "allocator CA is required for WSS FRP control",
+                "generation": 0,
+            }
+        ca_file = str(ca_path)
+
     new_state = dict(state)
     new_state["services"] = desired
     new_state["management_only"] = not any(
@@ -529,6 +559,7 @@ def apply_agent_runtime(
             host_id=host_id,
             services=desired,
             transport=transport,
+            ca_file=ca_file,
         )
         validate_frpc_toml_text(toml_text)
         if str(os.environ.get("DRLINK_FAULT_RUNTIME_CONFIG") or "").strip().lower() in (

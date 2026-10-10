@@ -109,6 +109,76 @@ class RuntimeApplyRemoveTests(unittest.TestCase):
             self.assertEqual(row['runtime_verified'], 1)
             self.assertEqual(row['status'], 'HEALTHY')
 
+    def test_wss_runtime_apply_preserves_trusted_allocator_ca(self):
+        """A Remote Service reconciliation must keep the WSS trust anchor."""
+        frp = Path(self.tmp, "etc/frp")
+        state_path = frp / "client-state.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state["frp_transport"] = "wss"
+        _write_json(state_path, state)
+        ca_path = Path(self.tmp, "etc/drlink/allocator-ca.crt")
+        ca_path.parent.mkdir(parents=True, exist_ok=True)
+        ca_path.write_text("test-owned CA fixture", encoding="utf-8")
+
+        applied = runtime.apply_agent_runtime(self.plane, root=self.tmp)
+        self.assertTrue(applied["ok"], applied)
+        rendered = (frp / "frpc.toml").read_text(encoding="utf-8")
+        self.assertIn('transport.protocol = "wss"', rendered)
+        self.assertIn('transport.tls.trustedCaFile = "%s"' % ca_path, rendered)
+        self.assertNotIn('transport.tls.trustedCaFile = ""', rendered)
+
+    def test_wss_macos_flat_state_uses_its_own_allocator_ca(self):
+        """Apple Silicon's flat Application Support state keeps its own CA."""
+        linux = Path(self.tmp, "etc/frp")
+        state = json.loads((linux / "client-state.json").read_text(encoding="utf-8"))
+        state["frp_transport"] = "wss"
+        mac = Path(self.tmp, "Library/Application Support/drlink")
+        mac.mkdir(parents=True, exist_ok=True)
+        _write_json(mac / "client-state.json", state)
+        (mac / "frpc.toml").write_text(
+            (linux / "frpc.toml").read_text(encoding="utf-8"), encoding="utf-8"
+        )
+        ca_path = mac / "allocator-ca.crt"
+        ca_path.write_text("test-owned macOS CA fixture", encoding="utf-8")
+        (linux / "client-state.json").unlink()
+        (linux / "frpc.toml").unlink()
+
+        with mock.patch.dict(os.environ, {"FRP_MACOS_STATE_ROOT": str(mac)}):
+            result = runtime.apply_agent_runtime(self.plane, root=self.tmp)
+        self.assertTrue(result["ok"], result)
+        rendered = (mac / "frpc.toml").read_text(encoding="utf-8")
+        self.assertIn('transport.tls.trustedCaFile = "%s"' % ca_path, rendered)
+
+    def test_unsupported_transport_does_not_silently_fallback_to_tcp(self):
+        """An invalid enrolled transport must not rewrite the live Agent."""
+        frp = Path(self.tmp, "etc/frp")
+        state_path = frp / "client-state.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state["frp_transport"] = "invalid-transport"
+        _write_json(state_path, state)
+        existing = (frp / "frpc.toml").read_text(encoding="utf-8")
+
+        with mock.patch.object(runtime, "_restart_frpc") as restart:
+            result = runtime.apply_agent_runtime(self.plane, root=self.tmp)
+        self.assertFalse(result["ok"], result)
+        self.assertIn("unsupported FRP transport", result["error"])
+        self.assertEqual((frp / "frpc.toml").read_text(encoding="utf-8"), existing)
+        restart.assert_not_called()
+
+    def test_wss_missing_allocator_ca_fails_before_runtime_rewrite(self):
+        """Missing WSS CA must not install an untrusted frpc configuration."""
+        frp = Path(self.tmp, "etc/frp")
+        state_path = frp / "client-state.json"
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state["frp_transport"] = "wss"
+        _write_json(state_path, state)
+        existing = (frp / "frpc.toml").read_text(encoding="utf-8")
+
+        result = runtime.apply_agent_runtime(self.plane, root=self.tmp)
+        self.assertFalse(result["ok"], result)
+        self.assertIn("allocator CA", result["error"])
+        self.assertEqual((frp / "frpc.toml").read_text(encoding="utf-8"), existing)
+
     def test_successful_full_apply_refreshes_all_included_verification(self):
         self.plane.conn.execute("UPDATE agent_remote_services SET runtime_verified=1, status='HEALTHY', reason=''")
         self.plane.conn.commit()
