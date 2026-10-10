@@ -72,7 +72,12 @@ does not render raw records or enable administrator mutations.
 
 Native temporary-root tests use real synthetic SQLite revision rows
 containing deliberately sensitive fake actors, IPs, tokens and rule
-names. RED pre-implementation test and GREEN data/role/HTTP/UI
+names. An additional regression invokes the genuine Link Core
+`v24.set_network_object` product write twice against a disposable root
+to prove that **the real exporter-generated revision snapshots** are
+compatible with this read-only adapter, and its network-object count
+changes without revealing native IP bytes.
+RED pre-implementation test and GREEN data/role/HTTP/UI
 regressions check deterministic count results, missing/duplicate/
 malformed YAML, invalid revisions, case-specific nonleakage,
 read-only DB snapshots and blocked rollback. Existing Web auth,

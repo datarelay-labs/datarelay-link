@@ -174,6 +174,46 @@ class ConfigHistoryTests(unittest.TestCase):
             plane.close()
         self.assertEqual(before, after)
 
+    def test_genuine_link_core_revision_writes_are_compatible(self):
+        # Exercise the actual product exporter, not manually seeded snapshots.
+        # All native writes are confined to this disposable test root.
+        import drlink_v24 as v24
+        with tempfile.TemporaryDirectory(prefix="pf12a-native-core-export-") as root:
+            config = Path(root, "etc/drlink")
+            config.mkdir(parents=True, exist_ok=True)
+            (config / "config.json").write_text(
+                '{"role":"server"}\\n', encoding="utf-8",
+            )
+            plane = ControlPlane(root)
+            try:
+                v24.set_network_object(
+                    plane, "source-one", type="ip",
+                    value="198.51.100.10", oneshot=True,
+                )
+                first = plane.current_revision()
+                first_record = plane.revision_snapshot(first)
+                self.assertEqual(
+                    first_record["snapshot_format"],
+                    "drlink-revision-configuration-v1",
+                )
+                v24.set_network_object(
+                    plane, "source-two", type="ip",
+                    value="198.51.100.11", oneshot=True,
+                )
+                second = plane.current_revision()
+                self.assertGreater(second, first)
+            finally:
+                plane.close()
+            result = compare_product_revisions(root, first, second)
+            self.assertEqual(result["from_revision"], first)
+            self.assertEqual(result["to_revision"], second)
+            self.assertEqual(
+                result["counts"]["from"]["network_objects"] + 1,
+                result["counts"]["to"]["network_objects"],
+            )
+            self.assertFalse(result["rollback_preview"]["may_submit_to_product_authority"])
+            self.assertNotIn("198.51.100.", json.dumps(result))
+
     def test_corrupt_authoritative_database_error_is_redacted(self):
         with mock.patch(
             "drlink_web_config_history.ControlPlane",
