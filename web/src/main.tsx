@@ -1001,7 +1001,7 @@ function AuditExplorer({operator}:{operator:any}){
 
 function AgentRolloutPreviewPanel(){
   const [hosts,setHosts]=useState(""),[canaries,setCanaries]=useState(""),[version,setVersion]=useState(""),[sourceRef,setSourceRef]=useState(""),[digest,setDigest]=useState("");
-  const [wave,setWave]=useState("1"),[threshold,setThreshold]=useState("20"),[preview,setPreview]=useState<any>(null),[error,setError]=useState("");
+  const [wave,setWave]=useState("1"),[threshold,setThreshold]=useState("0"),[preview,setPreview]=useState<any>(null),[error,setError]=useState("");
   function edit(setter:(value:string)=>void,value:string){setter(value);setPreview(null);setError("")}
   async function inspect(){
     setPreview(null);setError("");
@@ -1022,7 +1022,7 @@ function AgentRolloutPreviewPanel(){
       <label className="dr-field"><span>Source commit (40-character SHA)</span><input value={sourceRef} onChange={e=>edit(setSourceRef,e.target.value)} placeholder="Immutable Git commit"/></label>
       <label className="dr-field"><span>Artifact SHA256 (64 hex characters)</span><input value={digest} onChange={e=>edit(setDigest,e.target.value)} placeholder="SHA256 digest"/></label>
       <label className="dr-field"><span>Wave size</span><input type="number" min="1" max="25" value={wave} onChange={e=>edit(setWave,e.target.value)}/></label>
-      <label className="dr-field"><span>Failure threshold (%)</span><input type="number" min="0" max="100" value={threshold} onChange={e=>edit(setThreshold,e.target.value)}/></label>
+      <label className="dr-field"><span>Failure threshold (%) · 0 = halt on first failure</span><input type="number" min="0" max="100" value={threshold} onChange={e=>edit(setThreshold,e.target.value)}/></label>
     </div>
     <div className="dr-form-actions"><button className="secondary" disabled={!hosts.trim()||!version.trim()||!sourceRef.trim()||!digest.trim()} onClick={inspect}>Preview only · No updates</button></div>
     {error&&<div className="error">{error}</div>}

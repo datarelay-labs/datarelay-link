@@ -375,7 +375,7 @@ class ManagementCoreService:
     def rollout_preview(
         self, *, actor: ManagementActor, targets: list[str],
         artifact: dict[str, Any], canary_targets: list[str] | None = None,
-        wave_size: int = 10, failure_threshold_percent: int = 20,
+        wave_size: int = 10, failure_threshold_percent: int = 0,
     ) -> dict[str, Any]:
         """Read-only bounded preview; never grants update authority or starts work."""
         from drlink_v30_jobs import ManagementJobEngine

@@ -277,6 +277,7 @@ class V30WebServiceTests(unittest.TestCase):
         self.assertEqual(preview["artifact_qualification"], "NOT_VERIFIED")
         self.assertFalse(preview["creates_job"])
         self.assertEqual(preview["canary_targets"], ["host-a"])
+        self.assertEqual(preview["failure_threshold_percent"], 0)
         self.assertEqual(preview["planned_batches"], [
             {"phase": "CANARY", "batch": 1, "targets": ["host-a"]},
         ])

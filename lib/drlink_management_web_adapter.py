@@ -364,7 +364,7 @@ class ManagementWebApiAdapter:
     def rollout_preview(
         self, *, actor: ManagementActor, targets: list[str],
         artifact: dict[str, Any], canary_targets: list[str] | None = None,
-        wave_size: int = 10, failure_threshold_percent: int = 20,
+        wave_size: int = 10, failure_threshold_percent: int = 0,
     ) -> dict[str, Any]:
         return self.core.rollout_preview(
             actor=actor, targets=targets, artifact=artifact,

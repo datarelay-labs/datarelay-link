@@ -284,6 +284,49 @@ class StagedRolloutSchedulingTests(unittest.TestCase):
         self.assertFalse(preview["creates_job"])
         self.assertEqual(self.engine.summary()["active_jobs"], 0)
 
+    def test_default_halts_after_single_failed_agent_even_when_below_twenty_percent(self):
+        # The 3.0 contract defaults to halt-on-first-update-failure.
+        # One failed Host after five terminal results is less than 20%;
+        # it must NOT silently authorize the next Agent wave.
+        plane = ControlPlane(self.tmp.name)
+        try:
+            for host in ("c-third", "d-fourth", "e-fifth", "f-sixth", "g-seventh"):
+                plane.upsert_client(host, hostname=host)
+        finally:
+            plane.close()
+        job = self.engine.enqueue_rollout(
+            targets=("a-first", "b-second", "c-third", "d-fourth", "e-fifth",
+                     "f-sixth", "g-seventh", "z-canary"),
+            canary_targets=("z-canary",),
+            requested_by="ops-admin", artifact=self.artifact,
+            wave_size=5, now=self.now,
+        )
+        self.assertEqual(job["payload"]["failure_threshold_percent"], 0)
+        canary = self.engine.claim_targets(
+            worker_id="canary", limit=8, now=self.now + timedelta(seconds=1),
+        )[0]
+        self._complete(job, canary, SUCCEEDED, tick=2)
+        first = self.engine.claim_targets(
+            worker_id="wave-1", limit=8, now=self.now + timedelta(seconds=3),
+        )
+        self.assertEqual(
+            [c["target_id"] for c in first],
+            ["a-first", "b-second", "c-third", "d-fourth", "e-fifth"],
+        )
+        for index, claim in enumerate(first[:4]):
+            self._complete(job, claim, SUCCEEDED, tick=4 + index)
+        failure = self._complete(job, first[4], FAILED, tick=8)
+        self.assertEqual(failure["status"], FAILED)
+        self.assertEqual(failure["payload"]["rollout_state"], "HALTED")
+        self.assertEqual(failure["payload"]["halt_reason"], "FAILURE_THRESHOLD_REACHED")
+        self.assertEqual(
+            {t["status"] for t in failure["targets"] if t["target_id"] in
+             ("f-sixth", "g-seventh")}, {CANCELLED},
+        )
+        self.assertEqual(self.engine.claim_targets(
+            worker_id="wave-2", limit=8, now=self.now + timedelta(seconds=9),
+        ), [])
+
     def test_generic_rpc_worker_cannot_falsely_complete_unqualified_rollout(self):
         job = self._start()
         executed = []

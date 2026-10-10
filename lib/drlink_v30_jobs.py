@@ -871,7 +871,7 @@ class ManagementJobEngine:
     def _rollout_arguments(
         self, *, targets: Iterable[str], artifact: Mapping[str, Any],
         canary_targets: Iterable[str] = (), wave_size: int = 10,
-        failure_threshold_percent: int = 20,
+        failure_threshold_percent: int = 0,
     ) -> tuple[tuple[str, ...], dict[str, Any]]:
         """Validate one immutable request shape for both preview and apply."""
         target_ids = _normalize_targets(targets, max_targets=self.max_targets)
@@ -929,7 +929,7 @@ class ManagementJobEngine:
     def preview_rollout(
         self, *, targets: Iterable[str], requested_by: str,
         artifact: Mapping[str, Any], canary_targets: Iterable[str] = (),
-        wave_size: int = 10, failure_threshold_percent: int = 20,
+        wave_size: int = 10, failure_threshold_percent: int = 0,
     ) -> dict[str, Any]:
         """Read-only assessment, not an Apply plan or approval to update Agents."""
         _bounded_text(requested_by, field="Management Job actor")
@@ -1008,7 +1008,7 @@ class ManagementJobEngine:
         artifact: Mapping[str, Any],
         canary_targets: Iterable[str] = (),
         wave_size: int = 10,
-        failure_threshold_percent: int = 20,
+        failure_threshold_percent: int = 0,
         timeout_seconds: int = DEFAULT_JOB_TIMEOUT_SECONDS,
         now: Optional[datetime] = None,
     ) -> dict[str, Any]:

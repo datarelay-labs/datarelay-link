@@ -540,7 +540,7 @@ class WebApplication:
                 actor=self._actor(principal),
                 targets=targets, canary_targets=canaries, artifact=artifact,
                 wave_size=body.get("wave_size", 10),
-                failure_threshold_percent=body.get("failure_threshold_percent", 20),
+                failure_threshold_percent=body.get("failure_threshold_percent", 0),
             )
         if path == "/api/v1/jobs/agent-update-rollout":
             if principal.role != ROLE_ADMIN:

@@ -184,6 +184,17 @@ A rollout is a Management Job with per-target states and durable progress. Each 
 uses the canonical verified Agent updater and keeps identity/state preservation and
 rollback semantics.
 
+- **Default failure threshold = 0%**: halt upon the first failed target. A
+  nonzero threshold is an explicit operator-selected tolerance; Canary failure
+  always halts regardless of the selected percentage.
+- Canary and ordinary Host groups are divided into fixed-size deterministic
+  batches. A new batch may start only after **every Host** in the preceding
+  batch has a terminal outcome and the failure policy has been evaluated.
+  Completed Hosts do not create sliding-window capacity for the next batch.
+- Preview displays the exact planned batch membership and remains read-only.
+  Signature, running-Agent Health, real Rollback and release qualification
+  must be independently verified before enabling any live Apply.
+
 ### 5.2 UX acceptance
 
 - Update Center shows current/target version, provenance, update availability, and drift.
