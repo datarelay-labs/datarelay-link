@@ -110,6 +110,45 @@ class AuditEventBridgeTests(unittest.TestCase):
                 ).fetchone()[0], 0)
             self.assertEqual(stage_audit_events(hooks, limit=1)["staged"], 1)
 
+    def test_bounded_audit_fanout_follows_subscription_creation_order(self):
+        # Webhook IDs are randomized; lexical ID order is not the operator's
+        # subscription order. Force the later hook's ID to sort first.
+        import secrets
+        import drlink_webhook_events
+        from unittest.mock import patch
+        original_token_hex = secrets.token_hex
+        identifiers = iter(("f" * 24, "0" * 24))
+
+        def token_hex(n):
+            return next(identifiers) if n == 12 else original_token_hex(n)
+
+        with patch("drlink_webhooks.secrets.token_hex", side_effect=token_hex):
+            with WebhookStore(self.root) as hooks:
+                first = hooks.create(
+                    "first", "https://sink.example.net/first",
+                    ["security.lifecycle"]
+                )
+                second = hooks.create(
+                    "second", "https://sink.example.net/second",
+                    ["security.lifecycle"]
+                )
+        self.assertGreater(first["id"], second["id"])
+        with WebhookStore(self.root) as hooks:
+            stage_audit_events(hooks)
+            for claim in hooks.claim_due():
+                self.assertTrue(hooks.record_attempt(
+                    claim["event_id"], lease_token=claim["lease_token"],
+                    delivered=True,
+                ))
+        with ServiceAccountStore(self.root) as accounts:
+            accounts.create("new-audit-event", ["management-read"])
+        with patch.object(drlink_webhook_events, "MAX_OUTBOX", 1):
+            with WebhookStore(self.root) as hooks:
+                self.assertEqual(stage_audit_events(hooks)["staged"], 1)
+                pending = hooks.pending()
+                self.assertEqual(len(pending), 1)
+                self.assertEqual(pending[0]["webhook_id"], first["id"])
+
     def test_bounded_multi_subscription_backlog_preserves_each_audit_cursor(self):
         import drlink_webhook_events
         from unittest.mock import patch
@@ -155,11 +194,14 @@ class AuditEventBridgeTests(unittest.TestCase):
                     (row["webhook_id"], json.loads(row["payload_json"])["data"]["event"])
                     for row in rows
                 ]
+                # The two stable event IDs are checked as an exact multiset.
+                # Random hook IDs must not determine this assertion's order;
+                # creation-order scheduling is asserted separately above.
                 self.assertEqual(
                     sorted((hook_id, event) for hook_id, event in observed
                            if event == "service_account.created"),
-                    [(first["id"], "service_account.created"),
-                     (second["id"], "service_account.created")],
+                    sorted([(first["id"], "service_account.created"),
+                            (second["id"], "service_account.created")]),
                 )
 
     def test_irrelevant_events_do_not_generate_deliveries(self):

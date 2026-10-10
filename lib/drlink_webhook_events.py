@@ -49,8 +49,11 @@ def stage_audit_events(store: WebhookStore, limit: int = AUDIT_BATCH) -> dict[st
     conn = store.conn
     conn.execute("BEGIN IMMEDIATE")
     try:
+        # Hook IDs are randomized credentials, not a scheduling order. Use
+        # SQLite insertion order so a full bounded queue admits the earliest
+        # created subscription first, including when timestamps collide.
         subscriptions = conn.execute(
-            "SELECT id,event_classes FROM management_webhooks WHERE enabled=1 ORDER BY id"
+            "SELECT id,event_classes FROM management_webhooks WHERE enabled=1 ORDER BY rowid"
         ).fetchall()
         backlog = int(conn.execute(
             "SELECT COUNT(*) FROM management_webhook_outbox WHERE status IN ('PENDING','SENDING')"
