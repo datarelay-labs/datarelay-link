@@ -60,7 +60,12 @@ disabled for test-only synthetic product roots.
 Authenticated current **Admin-only** GET
 `/api/v1/system/connectivity` invokes this read-only product
 evidence. Anonymous users receive 401; Read Only or Operator users
-receive 403 before a probe. The existing B3 management Web source
+receive 403 before a probe. A 30-second in-process, single-flight
+snapshot prevents concurrent Admin requests from multiplying the fixed
+DNS/time subprocesses; the response retains its actual collection
+timestamp. Expiry or collection failure is not silently promoted to
+PASS. No long-lived product configuration cache or external service is
+introduced. The existing B3 management Web source
 allowlist is enforced first, so diagnostics do not bypass ingress ACL.
 
 The existing Administration → System page adds one small read-only

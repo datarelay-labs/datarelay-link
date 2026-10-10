@@ -9,6 +9,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -128,6 +129,46 @@ class V30WebServiceTests(unittest.TestCase):
         self.csrf = payload["csrf_token"]
         self.assertNotIn("session_token", json.dumps(payload))
         return payload
+
+    def test_pf11b_connectivity_queries_are_singleflight_and_30s_cached(self):
+        # A valid admin session must not turn each page reload into a
+        # proliferation of DNS resolver children / OS status commands.
+        self.login()
+        target = "/api/v1/system/connectivity"
+        report = {
+            "status": "unknown", "read_only": True,
+            "findings": [], "authoritative_mutation": False,
+        }
+        calls = []
+        def fake_collection(root):
+            calls.append(root)
+            time.sleep(.12)
+            return dict(report)
+        results = []
+        with mock.patch(
+            "drlink_web_service.collect_link_connectivity",
+            side_effect=fake_collection,
+        ) as collection:
+            threads = [
+                threading.Thread(
+                    target=lambda: results.append(self.request("GET", target)[0]),
+                    daemon=True,
+                )
+                for _ in range(4)
+            ]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=8)
+            self.assertEqual(sorted(results), [200] * 4, results)
+            collection.assert_called_once_with(self.tmp)
+            self.assertEqual(calls, [self.tmp])
+            # Expired snapshots are not promoted to a current PASS report.
+            self.server.app._connectivity_snapshot = (
+                time.monotonic() - 31, dict(report)
+            )
+            self.assertEqual(self.request("GET", target)[0], 200)
+            self.assertEqual(collection.call_count, 2)
 
     def test_pf11b_admin_only_connectivity_is_redacted_and_no_fixture_host_probe(self):
         endpoint = "/api/v1/system/connectivity"

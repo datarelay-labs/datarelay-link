@@ -9,6 +9,8 @@ import mimetypes
 import os
 import ssl
 import threading
+import time
+from copy import deepcopy
 from http import cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -119,6 +121,10 @@ class WebApplication:
         self._trusted_proxy_cidrs = tuple(
             foundation_canonical_network(cidr) for cidr in trusted_proxy_cidrs
         )
+        # Single-flight, short-lived read-only probe evidence. An Admin-only
+        # status GET must not spawn unbounded DNS/time subprocesses.
+        self._connectivity_lock = threading.Lock()
+        self._connectivity_snapshot: tuple[float, dict[str, Any]] | None = None
         self.auth = WebAuthService(root)
         self.adapter = ManagementWebApiAdapter(root)
         self._restore_lock = threading.RLock()
@@ -148,6 +154,17 @@ class WebApplication:
             trusted_proxy_cidrs=self._trusted_proxy_cidrs,
             now=now,
         )
+
+    def connectivity_status(self) -> dict[str, Any]:
+        """One 30-second product snapshot at a time; never cache exceptions."""
+        with self._connectivity_lock:
+            now = time.monotonic()
+            cached = self._connectivity_snapshot
+            if cached is not None and 0 <= now - cached[0] < 30:
+                return deepcopy(cached[1])
+            observed = collect_link_connectivity(self.root)
+            self._connectivity_snapshot = (time.monotonic(), observed)
+            return deepcopy(observed)
 
     def management_ingress_status(self) -> dict[str, Any]:
         """Actual startup policy status only; no raw CIDRs or secrets."""
@@ -367,7 +384,7 @@ class WebApplication:
         if path == ADMIN_CONNECTIVITY_STATUS_PATH:
             if principal.role != ROLE_ADMIN or "management-diagnose" not in actor.permissions:
                 raise ControlPlaneError("Administrator diagnosis permission required.")
-            return collect_link_connectivity(self.root)
+            return self.connectivity_status()
         if path == ADMIN_WEB_INGRESS_STATUS_PATH:
             if principal.role != ROLE_ADMIN:
                 raise ControlPlaneError("Administrator role required.")
