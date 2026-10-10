@@ -52,6 +52,12 @@ def _utc_now() -> datetime:
 
 
 def _utc_text(value: datetime) -> str:
+    if (
+        not isinstance(value, datetime)
+        or value.tzinfo is None
+        or value.utcoffset() is None
+    ):
+        raise ControlPlaneError("Management Job timestamp requires a timezone.")
     return value.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace(
         "+00:00", "Z"
     )

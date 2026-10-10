@@ -67,6 +67,23 @@ class V30ManagementJobTests(unittest.TestCase):
         ai_count = self.engine.conn.execute("SELECT COUNT(*) FROM ai_jobs").fetchone()[0]
         self.assertEqual(ai_count, 0)
 
+    def test_naive_timestamp_cannot_schedule_or_claim_management_jobs(self):
+        from datetime import datetime as Datetime
+
+        naive = Datetime(2026, 10, 10, 12, 0, 0)
+        with self.assertRaises(ControlPlaneError):
+            self._enqueue(targets=("host-a",), now=naive)
+        self.assertEqual(
+            self.engine.conn.execute("SELECT COUNT(*) FROM management_jobs").fetchone()[0],
+            0,
+        )
+        job = self._enqueue(targets=("host-a",), now=self.now)
+        with self.assertRaises(ControlPlaneError):
+            self.engine.claim_targets(worker_id="worker-a", now=naive)
+        state = self.engine.get(job["id"])
+        self.assertEqual(state["status"], QUEUED)
+        self.assertEqual(state["targets"][0]["status"], QUEUED)
+
     def test_engine_rejects_invalid_queue_configuration_before_db_open(self):
         from drlink_v30_jobs import MAX_ACTIVE_JOBS
 
