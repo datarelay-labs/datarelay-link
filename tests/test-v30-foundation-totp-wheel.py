@@ -84,7 +84,7 @@ class LinkFoundationTotpTests(unittest.TestCase):
     def test_optional_web_manifest_and_uninstall_own_two_files(self):
         manifest = (ROOT / "lib/web-project-files.manifest").read_text(encoding="utf-8")
         uninstall = (ROOT / "uninstall-web.sh").read_text(encoding="utf-8")
-        for name in ("drlink_foundation_security.py", WHEEL_NAME):
+        for name in ("drlink_foundation_security.py", "drlink_web_management_policy.py", WHEEL_NAME):
             self.assertIn("lib/" + name, manifest)
             self.assertIn("usr/local/lib/drlink/" + name, manifest)
             self.assertIn("usr/local/lib/drlink/" + name, uninstall)

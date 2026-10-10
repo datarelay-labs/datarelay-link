@@ -4,6 +4,7 @@ lib/drlink_web_auth.py usr/local/lib/drlink/drlink_web_auth.py 0644 python
 lib/drlink_foundation_security.py usr/local/lib/drlink/drlink_foundation_security.py 0644 python
 lib/datarelay_onprem_security-0.10.0.dev0-py3-none-any.whl usr/local/lib/drlink/datarelay_onprem_security-0.10.0.dev0-py3-none-any.whl 0644 python
 lib/drlink_web_service.py usr/local/lib/drlink/drlink_web_service.py 0644 python
+lib/drlink_web_management_policy.py usr/local/lib/drlink/drlink_web_management_policy.py 0644 python
 server/drlink-web.py usr/local/lib/drlink/drlink-web.py 0755 python
 server/drlink-web.service etc/systemd/system/drlink-web.service 0644 systemd
 tools/drlink-web-bootstrap usr/local/bin/drlink-web-bootstrap 0755 python

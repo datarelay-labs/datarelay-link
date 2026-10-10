@@ -22,6 +22,7 @@ from drlink_foundation_security import (
 )
 from drlink_management_core import ManagementActor
 from drlink_management_service import ManagementQueryService
+from drlink_web_management_policy import load_management_ingress
 from drlink_management_web_adapter import ManagementWebApiAdapter
 from drlink_web_auth import ROLE_ADMIN, WebAuthService, WebMfaEnrollmentChallenge, WebMfaLoginChallenge, WebPrincipal
 
@@ -1375,7 +1376,14 @@ def create_server(
     tls_key: Optional[str] = None,
     management_acl: FoundationManagementPolicy | None = FoundationManagementPolicy(),
     trusted_proxy_cidrs: tuple[str, ...] = (),
+    management_acl_file: Optional[str] = None,
 ) -> DrlinkWebServer:
+    if management_acl_file is not None:
+        if management_acl != FoundationManagementPolicy() or trusted_proxy_cidrs:
+            raise ValueError("cannot combine file and injected ingress policy")
+        loaded = load_management_ingress(management_acl_file)
+        management_acl = loaded.policy
+        trusted_proxy_cidrs = loaded.trusted_proxy_cidrs
     validate_web_bind(listen, tls_cert=tls_cert, tls_key=tls_key)
     use_tls = bool(tls_cert and tls_key)
     app = WebApplication(
@@ -1399,6 +1407,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--static-root")
     parser.add_argument("--tls-cert")
     parser.add_argument("--tls-key")
+    parser.add_argument("--management-acl-file")
     args = parser.parse_args(argv)
     server = create_server(
         root=args.root,
@@ -1407,6 +1416,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         static_root=args.static_root,
         tls_cert=args.tls_cert,
         tls_key=args.tls_key,
+        management_acl_file=args.management_acl_file,
     )
     try:
         server.serve_forever(poll_interval=0.5)

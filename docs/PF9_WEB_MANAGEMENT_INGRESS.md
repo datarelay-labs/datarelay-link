@@ -77,8 +77,8 @@ server = create_server(
 )
 ```
 
-A real product-managed configuration reader and persistence/UI must
-separately prove effective revision, authenticated administrator authority,
+A product-owned configuration writer, Administration UI and rollout
+coordinator must separately prove effective revision, authenticated administrator authority,
 active-source self-lockout protection, emergency console access, and a
 durable rollback deadline **before** enabling a restrictive management
 policy on any installed system.
@@ -99,3 +99,57 @@ policy revisions, admin settings UI, maintenance recovery, actual
 Browser/Full User E2E, release or owner acceptance. Live host, identity,
 credential, firewall, service and database operations are outside this
 Work Packet.
+
+## Opt-in read-only configuration file bootstrap (B3 follow-on)
+
+The Web service now supports the optional `--management-acl-file`
+command-line argument. Without that argument, the established default
+**OFF** policy and legacy behavior are unchanged. The service does not
+fetch settings, auto-enable a restrictive policy or watch for hot reloads.
+
+A host or product operator may *prepare* a strictly versioned and private
+UTF-8 JSON configuration in an offline staging context:
+
+```json
+{
+  "schema_version": 1,
+  "web": {
+    "enabled": true,
+    "revision": "owner-approved-revision-001",
+    "sources": [
+      {"cidr": "192.0.2.10/32", "name": "management-station"}
+    ]
+  },
+  "trusted_proxy_cidrs": []
+}
+```
+
+Only the exact fields shown above are supported. `sources` may contain
+up to 128 entries with optional `name` and UTC-epoch `expires_at`;
+`trusted_proxy_cidrs` may contain up to 16 verified and unique networks.
+When `enabled=false`, the `sources` list should be empty.
+SSH rules, arbitrary commands, credentials, hostnames and unknown JSON
+keys are not accepted as a Web policy. The file path must be absolute,
+the final file must be regular, have only one hard link, be owned by
+root or the Web service UID, and have no group/other permission bits.
+Symbolic links, unsafe modes, duplicate keys, malformed UTF-8/JSON,
+unbounded files (above 16 KiB), and invalid/unsupported CIDRs are
+rejected before the Web listener starts. The file is opened without
+following the final symbolic link and parsed from the verified file
+descriptor; there is no read/write API for the running HTTP service.
+
+**No deployment or permission change is authorized by this source.**
+Actual operator selection of a policy file and restart of a managed
+Web listener is a separate privileged operation. Before such an action,
+the product/installer must independently verify the current management
+source, maintenance console, appropriate secure proxy provenance,
+durable rollback timer, exact revision, active-probe read-back and
+two-persona acceptance. A restrictive Web policy also protects
+`/healthz`, so platform health probes must be explicitly considered in
+the rollout plan. The host SSH allowlist is not implemented here.
+
+The additively expanded native acceptance contract is:
+`python3 tests/test-v30-web-management-ingress.py -q` and
+`python3 tests/test-v30-web-management-ingress-config.py -q`,
+including real isolated HTTP assertions plus CLI argument dispatch
+without starting any installed or production Web service.
