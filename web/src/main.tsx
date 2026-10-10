@@ -22,6 +22,7 @@ import {serviceVisibleIdentity} from "./uxb-service-detail";
 import {filterObservedServices} from "./uxb-service-search";
 import {operatorAccountState,operatorMfaState,operatorMfaAction,operatorLastLogin} from "./uxb-users-state";
 import {operatorUserLabel} from "./uxb-users-state";
+import {auditInvestigation,matchObservedAuditReturn,matchObservedPolicyReturn} from "./uxb-audit-context";
 import {serviceAccountStatus,serviceAccountExpiry,serviceAccountPermissions,webhookStatus,webhookDeliverySummary} from "./uxb-integrations-state";
 import {filterObservedHosts} from "./uxb-host-search";
 import {FirstConnectionSetup,connectionReviewContext,type SetupDraft} from "./uxb-setup";
@@ -957,7 +958,7 @@ function AccessOperations({operator,onNavigate,context}:{operator:any,onNavigate
   </div>;
 }
 
-function AuditExplorer({operator,context}:{operator:any,context?:any}){
+function AuditExplorer({operator,context,onNavigate}:{operator:any,context?:any,onNavigate?:(id:string,groupId?:string,context?:any)=>void}){
   const [data,setData]=useState<any>(null),[retention,setRetention]=useState<any>(null),[error,setError]=useState(""),[message,setMessage]=useState(""),[exportResult,setExportResult]=useState<any>(null);
   const [auditState,setAuditState]=useState<"loading"|"ready"|"unknown"|"idle">("loading");
   const auditReadEpoch=useRef(0);
@@ -969,7 +970,11 @@ function AuditExplorer({operator,context}:{operator:any,context?:any}){
   const [retentionConfirmation,setRetentionConfirmation]=useState("");
   const [auditPage,setAuditPage]=useState<MenuPagePosition>({cursor:"",history:[]});
   const [auditFilterKey,setAuditFilterKey]=useState<string|null>(null);
-  const [start,setStart]=useState(""),[end,setEnd]=useState(""),[category,setCategory]=useState(""),[eventType,setEventType]=useState(""),[actor,setActor]=useState(""),[resource,setResource]=useState(String(context?.originId||"")),[result,setResult]=useState(""),[correlation,setCorrelation]=useState("");
+  const investigation=auditInvestigation(context);
+  const [start,setStart]=useState(""),[end,setEnd]=useState(""),
+    [category,setCategory]=useState(investigation.category),[eventType,setEventType]=useState(""),
+    [actor,setActor]=useState(investigation.actor),[resource,setResource]=useState(investigation.resource),
+    [result,setResult]=useState(investigation.result),[correlation,setCorrelation]=useState("");
   const [controlDays,setControlDays]=useState("365"),[accessDays,setAccessDays]=useState("90"),[maxEvents,setMaxEvents]=useState("500000");
 
   function filterParams(){
@@ -1077,9 +1082,34 @@ function AuditExplorer({operator,context}:{operator:any,context?:any}){
   }));
   return <>
     {error&&<div className="error" role="alert">{error}</div>}{message&&<div className="notice">{message}</div>}
+    {investigation.returnTarget&&<section className="card dr-uxb-context" role="note"
+      aria-label="Selected resource audit investigation">
+      <strong>Investigating {investigation.originType}: {investigation.resource}</strong>
+      <p>Core audit resource ID filter = <code>{investigation.resource}</code>. This selects the
+        entity ID in the authorized Core Audit read, not a proven type-unique resource,
+        current policy decision or live connection. Verify event type, actor and result
+        in each returned row; no result does not prove absence beyond the retained scope.</p>
+      <div className="toolbar">
+        <button type="button" className="secondary"
+          onClick={()=>{setResource(investigation.resource);
+            setActor(investigation.actor);setCategory(investigation.category);setResult(investigation.result)}}>
+          Restore original Audit filters →</button>
+        <button type="button" className="secondary"
+          onClick={()=>onNavigate?.(investigation.returnTarget.id,investigation.returnTarget.group,investigation.returnTarget.context)}>
+          Back to {investigation.originType==="managed-host"?"Managed Hosts":investigation.originType==="remote-service"?"Published services":"Access rules"} →
+        </button>
+      </div>
+      <p className="muted">Return can reopen a detail only when exactly one matching
+        resource is already present in the authorized loaded Core inventory. Otherwise
+        the original ID stays as a loaded-page filter; use permitted pagination.
+        No privileged resource-by-ID fetch is performed.</p>
+    </section>}
     <section className="card dr-audit-card">
       <div className="dr-section-head"><div><p className="dr-eyebrow">Activity & Health</p><h3>Audit Explorer</h3><p className="muted">Unified control, access-decision and security-lifecycle history with bounded keyset pagination.</p></div><button className="secondary" onClick={exportAudit} disabled={exportBusy}>{exportBusy?"Exporting with Core…":"Export NDJSON"}</button></div>
       {exportError&&<p role="alert" className="warning-box">{exportError} The result may have been committed; inspect Activity log before trying again.</p>}
+      <p className="muted">Audit filters are applied to observed Core events; an empty page is not proof
+        of no historical activity outside the selected filters or retained Core window.
+        Resource filters match the entity ID only; verify the event resource type before attribution.</p>
       <div className="dr-audit-filter-grid">
         <label className="dr-field"><span>Start UTC</span><input value={start} onChange={e=>setStart(e.target.value)} placeholder="YYYY-MM-DDTHH:MM:SSZ"/></label>
         <label className="dr-field"><span>End UTC</span><input value={end} onChange={e=>setEnd(e.target.value)} placeholder="YYYY-MM-DDTHH:MM:SSZ"/></label>
@@ -1541,7 +1571,9 @@ function PolicyWorkspace({data,operator,onNavigate,api,context}:{data:any,operat
     carriedPlane,context?.source,context?.destination,context?.selector):null;
   const focusName=typeof context?.focusPolicy?.name==="string"&&context.focusPolicy.name.length<=160
     ?context.focusPolicy.name:"";
-  const [plane,setPlane]=useState<string>(focusPlane||carriedPlane||"all"),[filter,setFilter]=useState(focusName),[selected,setSelected]=useState<any>(null);
+  const inspectPolicyId=typeof context?.inspectPolicyId==="string"&&context.inspectPolicyId.length<=160
+    ?context.inspectPolicyId:"";
+  const [plane,setPlane]=useState<string>(focusPlane||carriedPlane||"all"),[filter,setFilter]=useState(focusName||inspectPolicyId),[selected,setSelected]=useState<any>(null);
   const [additional,setAdditional]=useState<any[]>([]);
   const [nextByPlane,setNextByPlane]=useState<Record<string,string|null>>(data.next_cursor_by_plane||{});
   const [exhausted,setExhausted]=useState<string[]>([]);
@@ -1553,6 +1585,13 @@ function PolicyWorkspace({data,operator,onNavigate,api,context}:{data:any,operat
     setExhausted([]);setPageError("");setLoadingPlane("");
     return()=>{pageEpoch.current+=1};
   },[data]);
+  useEffect(()=>{
+    if(inspectPolicyId){
+      // Never treat an Audit ID alone as an authorization/rule identity:
+      // only a unique, currently loaded same-plane Core inventory row may open.
+      setSelected(matchObservedPolicyReturn([...(data.items||[]),...additional],inspectPolicyId,carriedPlane));
+    }
+  },[data,additional,inspectPolicyId,carriedPlane]);
   async function loadMore(planeName:string){
     const cursor=nextByPlane[planeName];
     if(loadingPlane||!cursor)return;
@@ -1597,6 +1636,13 @@ function PolicyWorkspace({data,operator,onNavigate,api,context}:{data:any,operat
       <p>The selected names are not an approved rule, current Core decision, or draft.
         Review the explicit Core Preview and required tests below before any change.</p>
     </section>}
+    {inspectPolicyId&&<section className="card dr-uxb-context" role="status">
+      <strong>Returning from Activity log to previously selected Core policy ID: {inspectPolicyId}</strong>
+      <p>Only an exact same-plane item already in the authorized loaded Core policy inventory
+        can reopen its detail. If this rule is not loaded, the ID remains a filter;
+        use the existing Load more controls for that plane. This is not a new Core lookup
+        and does not prove a governing policy decision.</p>
+    </section>}
     {focusPlane&&focusName&&plane===focusPlane&&<section className="card dr-uxb-context" role="status">
       <strong>Rule requested from a fresh Core access trace: {focusName}</strong>
       <p>Trace rule names are not policy IDs. A detail link is available only when the entire
@@ -1614,11 +1660,14 @@ function PolicyWorkspace({data,operator,onNavigate,api,context}:{data:any,operat
           onClick={()=>loadMore(kind)}>{loadingPlane===kind?"Loading "+kind+" rules…":"Load more "+kind+" rules →"}</button>)}
       {!rows.length?<div className="dr-empty-state"><span className="dr-empty-icon"><WorkspaceIcon kind="access"/></span><strong>{partial||selectedMayBeLimited?"No match in loaded policy rules":"No matching policy rules"}</strong><p>{partial||selectedMayBeLimited?"Other rules may exist beyond the fetched Core policy pages. Use Search for a specific policy.":"Change the filter or use the guided policy controls below."}</p></div>:<div className="dr-table-scroll"><table className="dr-resource-table"><thead><tr><th>Policy</th><th>Plane</th><th>Action</th><th>State</th><th>Expires</th><th>Description</th></tr></thead><tbody>{rows.map((item:any)=><tr key={(item.plane||"policy")+":"+item.id} tabIndex={0} onClick={()=>setSelected(item)} onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();setSelected(item)}}}><td><strong>{item.name||item.id}</strong><small>{item.id}</small></td><td>{item.plane||"—"}</td><td>{item.action||"—"}</td><td><span className={policyStateLabel(item.enabled)==="Enabled"?"dr-state active":"dr-state"}><i/>{policyStateLabel(item.enabled)}</span></td><td>{policyExpiryLabel(item)}</td><td>{item.description||"—"}</td></tr>)}</tbody></table></div>}
     </section>
-    {selected&&<div className="dr-drawer-backdrop" onMouseDown={e=>{if(e.currentTarget===e.target)setSelected(null)}}><aside className="dr-detail-drawer" role="dialog" aria-modal="true" aria-label="Policy detail" tabIndex={-1} autoFocus><header><div><p className="dr-eyebrow">{selected.plane||"Policy"} access</p><h2>{selected.name||selected.id}</h2><p>{selected.id}</p></div><button className="dr-icon-button" onClick={()=>setSelected(null)} aria-label="Close detail">×</button></header><div className="dr-drawer-status"><span className={policyStateLabel(selected.enabled)==="Enabled"?"dr-state active":"dr-state"}><i/>{policyStateLabel(selected.enabled)}</span></div><div className="dr-detail-fields">{Object.entries(selected).filter(([,value])=>typeof value!=="object"&&value!==null&&value!=="").map(([key,value])=><div key={key}><span>{key.replaceAll("_"," ")}</span><strong>{String(value)}</strong></div>)}</div><footer><button className="secondary" onClick={()=>{const target={originId:String(selected.id||selected.name||""),originType:"access-rule"};setSelected(null);onNavigate?.("audit","activity",target)}}>Recent activity</button><button className="primary" onClick={()=>{const target={originId:String(selected.id||selected.name||""),originType:"access-rule",plane:selected.plane||"remote",source:String(selected.source||""),destination:String(selected.destination||""),selector:String(selected.plane==="ai"?selected.permission||"":selected.service||"")};setSelected(null);onNavigate?.("access","access",target)}}>Why allowed / denied?</button></footer></aside></div>}
+    {selected&&<div className="dr-drawer-backdrop" onMouseDown={e=>{if(e.currentTarget===e.target)setSelected(null)}}><aside className="dr-detail-drawer" role="dialog" aria-modal="true" aria-label="Policy detail" tabIndex={-1} autoFocus><header><div><p className="dr-eyebrow">{selected.plane||"Policy"} access</p><h2>{selected.name||selected.id}</h2><p>{selected.id}</p></div><button className="dr-icon-button" onClick={()=>setSelected(null)} aria-label="Close detail">×</button></header><div className="dr-drawer-status"><span className={policyStateLabel(selected.enabled)==="Enabled"?"dr-state active":"dr-state"}><i/>{policyStateLabel(selected.enabled)}</span></div><div className="dr-detail-fields">{Object.entries(selected).filter(([,value])=>typeof value!=="object"&&value!==null&&value!=="").map(([key,value])=><div key={key}><span>{key.replaceAll("_"," ")}</span><strong>{String(value)}</strong></div>)}</div><footer><button className="secondary" onClick={()=>{const target={originId:String(selected.id||selected.name||""),originType:"access-rule",plane:selected.plane};setSelected(null);onNavigate?.("audit","activity",target)}}>Recent activity</button><button className="primary" onClick={()=>{const target={originId:String(selected.id||selected.name||""),originType:"access-rule",plane:selected.plane||"remote",source:String(selected.source||""),destination:String(selected.destination||""),selector:String(selected.plane==="ai"?selected.permission||"":selected.service||"")};setSelected(null);onNavigate?.("access","access",target)}}>Why allowed / denied?</button></footer></aside></div>}
   </div>;
 }
 
-function ResourceWorkspace({kind,data,operator,onNavigate,api,initialFilter="",initialAdmission="all"}:{kind:"host"|"service",data:any,operator:any,onNavigate?:(id:string,groupId?:string,context?:any)=>void,api:(path:string)=>Promise<any>,initialFilter?:string,initialAdmission?:unknown}){
+function ResourceWorkspace({kind,data,operator,onNavigate,api,initialFilter="",initialAdmission="all",initialInspectId}:{
+  kind:"host"|"service",data:any,operator:any,onNavigate?:(id:string,groupId?:string,context?:any)=>void,
+  api:(path:string)=>Promise<any>,initialFilter?:string,initialAdmission?:unknown,initialInspectId?:unknown
+}){
   const isHost=kind==="host";
   const [filter,setFilter]=useState(initialFilter),[selected,setSelected]=useState<any>(null);
   useEffect(()=>{setFilter(initialFilter)},[kind,initialFilter]);
@@ -1636,6 +1685,13 @@ function ResourceWorkspace({kind,data,operator,onNavigate,api,initialFilter="",i
     setMoreBusy(false);setMoreError("");setPagesLoaded(1);setSelected(null);
     return()=>{loadEpoch.current+=1};
   },[kind,data]);
+  useEffect(()=>{
+    if(initialInspectId!==undefined){
+      // Reopen a known detail only when exactly one authorized Core inventory
+      // row is already loaded; unresolved IDs stay in the visible filter.
+      setSelected(matchObservedAuditReturn(loaded,initialInspectId));
+    }
+  },[loaded,initialInspectId]);
   const partial=!!cursor;
   async function loadMore(){
     const requestedCursor=cursor;
@@ -2033,7 +2089,7 @@ function View({active,operator,onNavigate,context,setupDraft,onSetupDraftChange}
   if(active==="access")return <AccessOperations operator={operator} onNavigate={onNavigate} context={context}/>;
   if(active==="jobs")return <JobOperations operator={operator}/>;
   if(active==="hygiene"&&data)return <AccessHygienePanel data={data} operator={operator} onRefresh={()=>api("/api/v1/access-hygiene").then(payload=>setData(requireObservedAccessHygiene(payload))).catch((e:any)=>setError(e.message||String(e)))} onNavigate={onNavigate}/>;
-  if(active==="audit")return <AuditExplorer operator={operator} context={context}/>;
+  if(active==="audit")return <AuditExplorer operator={operator} context={context} onNavigate={onNavigate}/>;
   if(active==="enrollments"&&data)return <EnrollmentOnboarding api={api} data={data} operator={operator} onNavigate={onNavigate} refresh={()=>api("/api/v1/enrollments?limit=50").then(payload=>setData(requireObservedMenuPayload("enrollments",payload))).catch((e:any)=>setError(e.message||String(e)))}/>;
   if(active==="setup"){
     const requestedPlane=["remote","internet","ai"].includes(String(context?.plane||""))?context.plane:null;
@@ -2045,8 +2101,8 @@ function View({active,operator,onNavigate,context,setupDraft,onSetupDraftChange}
   if(active==="versions"&&data)return <AgentVersionDrift data={data} onNavigate={onNavigate}/>;
   if(active==="system"&&data)return <SystemAdministrationWorkspace data={data} operator={operator} onNavigate={onNavigate}/>;
   if(active==="objects"&&data)return <><ObjectsWorkspace data={data} onNavigate={onNavigate} context={context} api={api}/>{operator.role!=="Read Only"&&<GuidedObjectPanel/>}</>;
-  if(active==="hosts"&&data)return <><ResourceWorkspace kind="host" data={data} operator={operator} onNavigate={onNavigate} api={api} initialFilter={String(context?.savedFilter||"").slice(0,120)} initialAdmission={context?.savedAdmission}/>{operator.role!=="Read Only"&&<ManagedHostMetadataPanel/>}{operator.role==="Admin"&&<ManagedHostAdmissionPanel/>}{operator.role==="Admin"&&<ManagedHostLifecyclePanel/>}</>;
-  if(active==="services"&&data)return <><ResourceWorkspace kind="service" data={data} operator={operator} onNavigate={onNavigate} api={api} initialFilter={String(context?.savedFilter||"").slice(0,120)}/>{operator.role!=="Read Only"&&<RemoteServiceEditor api={api}/>}</>;
+  if(active==="hosts"&&data)return <><ResourceWorkspace kind="host" data={data} operator={operator} onNavigate={onNavigate} api={api} initialFilter={String(context?.savedFilter||"").slice(0,120)} initialAdmission={context?.savedAdmission} initialInspectId={context?.inspectResourceId}/>{operator.role!=="Read Only"&&<ManagedHostMetadataPanel/>}{operator.role==="Admin"&&<ManagedHostAdmissionPanel/>}{operator.role==="Admin"&&<ManagedHostLifecyclePanel/>}</>;
+  if(active==="services"&&data)return <><ResourceWorkspace kind="service" data={data} operator={operator} onNavigate={onNavigate} api={api} initialFilter={String(context?.savedFilter||"").slice(0,120)} initialInspectId={context?.inspectResourceId}/>{operator.role!=="Read Only"&&<RemoteServiceEditor api={api}/>}</>;
   if(active==="policies"&&data){
     const selectedPlane=["remote","internet","ai"].includes(String(context?.plane||context?.focusPolicy?.plane))
       ?String(context?.plane||context?.focusPolicy?.plane) as AccessPlane:"remote";

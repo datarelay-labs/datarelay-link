@@ -413,7 +413,10 @@ class V30WebSaasUxContractTests(unittest.TestCase):
             'originType:isHost?"managed-host":"remote-service"',
             'Why can / cannot connect?', 'Why allowed / denied?',
             'initialPlane=["remote","internet","ai"]',
-            'setResource]=useState(String(context?.originId||""))',
+            'setResource]=useState(investigation.resource)',
+            'const investigation=auditInvestigation(context);',
+            'onNavigate?.(investigation.returnTarget.id,investigation.returnTarget.group,investigation.returnTarget.context)',
+            'matchObservedAuditReturn(loaded,initialInspectId)',
         ):
             self.assertIn(marker, SOURCE)
         # UXB-05 keeps Foundation administration visible but hides privileged
