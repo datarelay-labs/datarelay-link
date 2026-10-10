@@ -102,6 +102,8 @@ pki = root / 'pki'
     'registry_file': str(root / 'registry.json'),
     'enrollments_dir': str(root / 'enrollments'),
     'token_file': str(root / 'server_token'),
+    # Bind the HTTPS allocator's actual Core DB to this disposable test root.
+    'control_plane_root': str(root),
 }, indent=2) + '\n')
 PY
 start_allocator "$ALLOC_ROOT/config.json"
@@ -129,6 +131,7 @@ export FRP_CLIENT_SOURCED=1
 # shellcheck source=../install-client.sh
 . "$ROOT/install-client.sh"
 frp_client_main >"$WORKDIR/install.out"
+[[ -f "$ALLOC_ROOT/var/lib/drlink/drlink.db" ]] || fail "allocator Core DB escaped isolated test root"
 
 STATE="$TREE/etc/frp/client-state.json"
 HOOK="$WORKDIR/hook.log"
