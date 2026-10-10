@@ -117,7 +117,15 @@ class InternetAccessRecoveryGuidanceTests(unittest.TestCase):
             })
             # Invoke only the real isolated resolution/write helpers, never install.
             script = 'source "$1/install-server.sh"; load_existing_server_config; resolve_server_settings; write_server_config'
-            proc = subprocess.run(["bash", "-euo", "pipefail", "-c", script, "listener-fixture", str(ROOT)], env=env, capture_output=True, text=True, timeout=20)
+            # Desktop/SSH runners may have a controlling /dev/tty even when
+            # stdout/stderr are captured. The fixture exercises a noninteractive
+            # installer config resolution, so detach only this child session;
+            # otherwise resolve_server_settings prompts on the runner TTY.
+            proc = subprocess.run(
+                ["bash", "-euo", "pipefail", "-c", script, "listener-fixture", str(ROOT)],
+                env=env, stdin=subprocess.DEVNULL, start_new_session=True,
+                capture_output=True, text=True, timeout=20,
+            )
             self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
             observed = json.loads(config.read_text())
             self.assertEqual(observed["egress_listen_addr"], "192.0.2.10")
