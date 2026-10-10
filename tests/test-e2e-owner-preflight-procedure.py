@@ -93,9 +93,11 @@ class CodexDualRoleEvidenceContractTests(unittest.TestCase):
         for n in range(1, 16):
             key = f"{n:03d}"
             for suffix in ("direct", "ai-first", "ai-user"):
-                (evidence_root / f"{key}-{suffix}.txt").write_text(
-                    f"Supporting fixture output for {key}:{suffix}. Never real user E2E.\n"
+                output = (
+                    "fixture only; never E2E PASS" if suffix == "ai-first"
+                    else f"Supporting fixture output for {key}:{suffix}. Never real user E2E.\n"
                 )
+                (evidence_root / f"{key}-{suffix}.txt").write_text(output)
             threads = {
                 role: str(uuid.uuid5(uuid.NAMESPACE_DNS, "fixture-%s-%s" % (key, role)))
                 for role in ("direct", "ai-operator", "ai-adviser")
@@ -256,6 +258,38 @@ class CodexDualRoleEvidenceContractTests(unittest.TestCase):
                         self.assertFalse(result["ALL_PAIRS_STRUCTURALLY_PASS"])
                     finally:
                         filename.write_text(original)
+
+    def test_first_ai_answer_must_equal_original_codex_message_not_self_hash(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            rows = self._fixture(root)
+            first = root / rows[0]["AI_FIRST_ANSWER_EVIDENCE"]
+            fake = "FAKE_AI_ANSWER_THE_MODEL_NEVER_RETURNED"
+            first.write_text(fake)
+            rows[0]["AI_FIRST_ANSWER_SHA256"] = hashlib.sha256(
+                fake.encode("utf-8")
+            ).hexdigest()
+            report = self._check(rows, root)
+            self.assertEqual(report["EVIDENCE_SCHEMA"], "FAIL")
+            self.assertIn(
+                "first AI answer differs from original Codex",
+                " | ".join(report["ERRORS"]),
+            )
+
+    def test_unknown_ai_adviser_tool_type_is_rejected_fail_closed(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            rows = self._fixture(root)
+            path = root / rows[0]["AI_ADVISER_CODEX_EVENTS"]
+            events = [json.loads(line) for line in path.read_text().splitlines()]
+            events.insert(-1, {
+                "type": "item.started",
+                "item": {"type": "new_future_tool_not_in_blacklist"},
+            })
+            path.write_text("\n".join(json.dumps(x) for x in events) + "\n")
+            report = self._check(rows, root)
+            self.assertEqual(report["EVIDENCE_SCHEMA"], "FAIL")
+            self.assertIn("Codex AI Adviser used tools", " | ".join(report["ERRORS"]))
 
     def test_new_codex_threads_must_not_be_reused_across_pairs(self):
         with tempfile.TemporaryDirectory() as temp:

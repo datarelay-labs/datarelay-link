@@ -57,6 +57,33 @@ def evidence_file(root: Path, ref: str) -> Path | None:
     return p
 
 
+def first_adviser_agent_message(events_path: Path) -> bytes | None:
+    """Return EXACT bytes of the first completed Codex AI-adviser answer.
+
+    A copied/rewritten AI-first-answer file can match its own SHA but differ
+    from what the AI model actually said. Never infer it from a later answer.
+    """
+    try:
+        with events_path.open(encoding="utf-8") as stream:
+            for number, raw in enumerate(stream, 1):
+                if number > 500000:
+                    return None
+                event = json.loads(raw)
+                if not isinstance(event, dict):
+                    return None
+                if event.get("type") != "item.completed":
+                    continue
+                item = event.get("item") or {}
+                if isinstance(item, dict) and item.get("type") == "agent_message":
+                    message = item.get("text")
+                    if isinstance(message, str) and message:
+                        return message.encode("utf-8")
+                    return None
+    except (OSError, UnicodeError, ValueError, TypeError):
+        return None
+    return None
+
+
 def check_codex_actor_events(
     evidence_root: Path, path_ref: str, expected_thread_id: str,
     *, role: str,
@@ -87,10 +114,11 @@ def check_codex_actor_events(
                 if event.get("type") == "turn.completed":
                     completed += 1
                 item = event.get("item") or {}
+                # AI Advisers are text-only. Unknown future Codex tool
+                # types fail closed; a blacklist can silently miss new tools.
                 if (role == "AI_ADVISER" and isinstance(item, dict)
-                        and item.get("type") in (
-                            "command_execution", "mcp_tool_call",
-                            "file_change", "web_search", "browser_action",
+                        and item.get("type") not in (
+                            None, "agent_message", "reasoning",
                         )):
                     forbidden_tools.append(str(item["type"]))
     except (OSError, ValueError, TypeError, UnicodeError) as exc:
@@ -211,6 +239,20 @@ def evaluate(
                     sha = hashlib.sha256(path.read_bytes()).hexdigest()
                     if sha != row.get("AI_FIRST_ANSWER_SHA256"):
                         problems.append(prefix + ": first AI answer SHA256 mismatch")
+                    adviser_events = evidence_file(
+                        evidence_root,
+                        str(row.get("AI_ADVISER_CODEX_EVENTS") or ""),
+                    )
+                    real_first = (
+                        first_adviser_agent_message(adviser_events)
+                        if adviser_events is not None else None
+                    )
+                    if (real_first is None
+                            or path.read_bytes() != real_first):
+                        problems.append(
+                            prefix + ": first AI answer differs from original "
+                            "Codex AI-adviser agent_message"
+                        )
 
     for scenario in sorted(expected_ids - present_scenarios):
         problems.append("missing scenario " + scenario)
