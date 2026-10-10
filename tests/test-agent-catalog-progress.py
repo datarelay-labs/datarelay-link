@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Public terminal catalog reads announce waits without changing failure safety."""
 import io
+import time
 from pathlib import Path
 import sys
 import unittest
@@ -37,6 +38,38 @@ class CatalogProgressTests(unittest.TestCase):
 
 
 class RemoteServiceProgressTests(unittest.TestCase):
+    def test_slow_terminal_operation_emits_heartbeat_then_stops(self):
+        import drlink_v24_cli as cli
+        output = Terminal()
+        with mock.patch.object(cli.sys, 'stderr', output):
+            with cli._agent_operation_wait_progress(
+                "Updating Remote Service", interval_seconds=0.005
+            ):
+                time.sleep(0.025)
+            finished = output.getvalue()
+            self.assertIn("still in progress", finished)
+            self.assertIn("Do not repeat the command", finished)
+            self.assertIn("system diagnostics", finished)
+            time.sleep(0.012)
+            self.assertEqual(output.getvalue(), finished)
+
+    def test_nonterminal_and_exception_preserve_contract(self):
+        import drlink_v24_cli as cli
+        stream = io.StringIO()
+        with mock.patch.object(cli.sys, 'stderr', stream):
+            with cli._agent_operation_wait_progress(
+                "Updating Remote Service", interval_seconds=0.001
+            ):
+                time.sleep(0.006)
+            self.assertEqual(stream.getvalue(), "")
+        terminal = Terminal()
+        with mock.patch.object(cli.sys, 'stderr', terminal):
+            with self.assertRaisesRegex(RuntimeError, "expected failure"):
+                with cli._agent_operation_wait_progress(
+                    "Removing Remote Service", interval_seconds=0.001
+                ):
+                    raise RuntimeError("expected failure")
+
     def test_offline_set_announces_before_reachability_and_runtime(self):
         import drlink_v24_cli as cli
         output = Terminal(); plane = mock.Mock(root='/fixture')

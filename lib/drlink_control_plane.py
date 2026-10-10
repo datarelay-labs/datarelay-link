@@ -1891,11 +1891,15 @@ class ControlPlane:
         )
         for pub in pubs:
             if pub["public_port"] is not None:
-                self.conn.execute(
-                    "UPDATE port_reservations SET released = 1 WHERE public_port = ?",
-                    (int(pub["public_port"]),),
+                # An archived publication may point at a port later reused
+                # by another Managed Host. Never release a foreign reservation.
+                released = self.conn.execute(
+                    "UPDATE port_reservations SET released = 1 "
+                    "WHERE public_port = ? AND client_id = ? AND released = 0",
+                    (int(pub["public_port"]), client_id),
                 )
-                cleaned.append("release port reservation %s" % pub["public_port"])
+                if released.rowcount:
+                    cleaned.append("release port reservation %s" % pub["public_port"])
             # remote_service_meta cascades from published_services
             self.conn.execute("DELETE FROM published_services WHERE id = ?", (pub["id"],))
             cleaned.append("delete published service %s" % pub["name"])
@@ -1903,11 +1907,13 @@ class ControlPlane:
             "SELECT public_port FROM port_reservations WHERE client_id = ? AND released = 0",
             (client_id,),
         ):
-            self.conn.execute(
-                "UPDATE port_reservations SET released = 1 WHERE public_port = ?",
-                (int(res["public_port"]),),
+            released = self.conn.execute(
+                "UPDATE port_reservations SET released = 1 "
+                "WHERE public_port = ? AND client_id = ? AND released = 0",
+                (int(res["public_port"]), client_id),
             )
-            cleaned.append("release port reservation %s" % res["public_port"])
+            if released.rowcount:
+                cleaned.append("release port reservation %s" % res["public_port"])
         self.conn.execute("DELETE FROM client_group_members WHERE client_id = ?", (client_id,))
         self.conn.execute("DELETE FROM client_tags WHERE client_id = ?", (client_id,))
         return cleaned
@@ -1985,7 +1991,7 @@ class ControlPlane:
 
         pubs = list(
             self.conn.execute(
-                "SELECT name, public_port FROM published_services WHERE client_id = ? ORDER BY name",
+                "SELECT name, public_port, released FROM published_services WHERE client_id = ? ORDER BY name",
                 (client["id"],),
             )
         )
@@ -1998,14 +2004,23 @@ class ControlPlane:
             )
         ]
         cleanup_preview: list[str] = []
+        # Keep history visible for removal, but do not describe a released
+        # publication as a second active endpoint after the port was reused.
+        active_ports = set(ports)
+        mentioned_ports: set[int] = set()
+        live_pubs = [pub for pub in pubs if not int(pub["released"] or 0)]
         for pub in pubs:
-            cleanup_preview.append("published service %s" % pub["name"])
-            if pub["public_port"] is not None:
-                cleanup_preview.append("port reservation %s" % pub["public_port"])
+            label = ("published service " if not int(pub["released"] or 0)
+                     else "historical published service ")
+            cleanup_preview.append(label + str(pub["name"]))
+            port = pub["public_port"]
+            if port is not None and int(port) in active_ports and int(port) not in mentioned_ports:
+                cleanup_preview.append("port reservation %s" % port)
+                mentioned_ports.add(int(port))
         for port in ports:
-            label = "port reservation %s" % port
-            if label not in cleanup_preview:
-                cleanup_preview.append(label)
+            if port not in mentioned_ports:
+                cleanup_preview.append("port reservation %s" % port)
+                mentioned_ports.add(port)
         if ep:
             cleanup_preview.append("managed endpoint inventory %s" % ep["name"])
         cleanup_preview.append("client trust/inventory %s" % (client["id"][:8],))
@@ -2041,7 +2056,7 @@ class ControlPlane:
             % (
                 client["trust_status"],
                 "yes" if client["connected"] else "no",
-                len(pubs),
+                len(live_pubs),
                 len(ports),
             ),
             "after": "Managed Host removed; published services deleted; port reservations released",

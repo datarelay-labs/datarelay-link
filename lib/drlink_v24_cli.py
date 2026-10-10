@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import sys
+import threading
+from contextlib import contextmanager
 from typing import Optional
 
 from drlink_control_db import ControlPlaneError
@@ -22,6 +24,44 @@ def _presence_word(connectivity: str) -> str:
 def _agent_operation_progress(message: str) -> None:
     if sys.stderr.isatty():
         print(message, file=sys.stderr, flush=True)
+
+
+@contextmanager
+def _agent_operation_wait_progress(operation: str, *, interval_seconds: float = 15.0):
+    """TTY-only heartbeat for potentially slow Agent/Server mutations.
+
+    This is operator feedback, NOT confirmation that a remote mutation
+    succeeded, and does not loosen timeout, rollback, or security behavior.
+    """
+    stream = sys.stderr
+    if not stream.isatty():
+        yield
+        return
+    completed = threading.Event()
+
+    def heartbeat():
+        while not completed.wait(interval_seconds):
+            try:
+                print(
+                    "%s is still in progress. Server connectivity may be delayed. "
+                    "Do not repeat the command; verify the final result and use "
+                    "show remote-service / system diagnostics for recovery."
+                    % operation,
+                    file=stream,
+                    flush=True,
+                )
+            except (OSError, ValueError):
+                return
+
+    worker = threading.Thread(
+        target=heartbeat, name="drlink-agent-operation-progress", daemon=True
+    )
+    worker.start()
+    try:
+        yield
+    finally:
+        completed.set()
+        worker.join(timeout=0.5)
 
 
 def _public_endpoint_host(plane: ControlPlane, stored: str = "") -> str:
@@ -1233,17 +1273,18 @@ def handle_set(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         if "enabled" in kv:
             enabled = str(kv["enabled"]).lower() in ("yes", "true", "1", "enabled")
         _agent_operation_progress("Updating Remote Service; checking Server connectivity and local runtime...")
-        reachable = v24.detect_server_reachable(plane, plane.root)
-        result = v24.set_remote_service_agent(
-            plane,
-            name,
-            destination=kv.get("destination"),
-            service=kv.get("service"),
-            enabled=enabled,
-            oneshot=True,
-            root=plane.root,
-            server_reachable=reachable,
-        )
+        with _agent_operation_wait_progress("Updating Remote Service"):
+            reachable = v24.detect_server_reachable(plane, plane.root)
+            result = v24.set_remote_service_agent(
+                plane,
+                name,
+                destination=kv.get("destination"),
+                service=kv.get("service"),
+                enabled=enabled,
+                oneshot=True,
+                root=plane.root,
+                server_reachable=reachable,
+            )
         sys.stdout.write(v24.format_remote_service_view(result.get("view") or {"name": name, "destination": "-", "service": "-", "status": "HEALTHY", "endpoint": "-"}))
         return 0
     return None
@@ -1415,10 +1456,11 @@ def handle_unset(plane: ControlPlane, rest: list[str]) -> Optional[int]:
             sys.stdout.write("Cancelled.\nNo changes were applied.\n")
             return 1
         _agent_operation_progress("Removing Remote Service; checking Server connectivity and local runtime...")
-        reachable = v24.detect_server_reachable(plane, plane.root)
-        v24.unset_remote_service_agent(
-            plane, name, root=plane.root, server_reachable=reachable
-        )
+        with _agent_operation_wait_progress("Removing Remote Service"):
+            reachable = v24.detect_server_reachable(plane, plane.root)
+            v24.unset_remote_service_agent(
+                plane, name, root=plane.root, server_reachable=reachable
+            )
         sys.stdout.write(
             "Remote Service deleted: %s\n" % name
             if reachable
