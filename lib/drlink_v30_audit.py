@@ -313,8 +313,6 @@ class DurableAuditSpool:
         try:
             state = self._load_state_locked()
             sequence = int(state["next_sequence"])
-            state["next_sequence"] = sequence + 1
-            self._store_state_locked(state)
 
             record = dict(event or {})
             if record.get("category") != ACCESS_DECISION:
@@ -334,6 +332,12 @@ class DurableAuditSpool:
                 raise AuditEventInvalid("Audit event exceeds maximum encoded size.")
             if self.spool_bytes() + len(line) > self.high_water_bytes:
                 raise AuditUnavailable("Audit spool high-water limit reached.")
+
+            # Reject an invalid envelope without consuming a durable sequence.
+            # Persist the next sequence before the append so a failed write or
+            # crash cannot reuse an already reserved event identity.
+            state["next_sequence"] = sequence + 1
+            self._store_state_locked(state)
 
             out = os.open(
                 str(self.active_path),
@@ -433,6 +437,14 @@ def validate_access_event(event: dict[str, Any]) -> None:
             raise AuditEventInvalid("Audit metadata contains unapproved fields.")
         if any(isinstance(value, (dict, list, tuple, bool)) for value in metadata.values()):
             raise AuditEventInvalid("Audit metadata values must be scalar.")
+        # Builders normalize ports to an integer. Imported JSONL must not
+        # silently coerce strings or fractional evidence to a different port.
+        if (
+            key == "destination_meta"
+            and metadata.get("port") is not None
+            and type(metadata["port"]) is not int
+        ):
+            raise AuditEventInvalid("Audit destination port must be an integer.")
     if (
         type(event.get("schema_version")) is not int
         or event["schema_version"] != AUDIT_SCHEMA_VERSION
@@ -446,6 +458,18 @@ def validate_access_event(event: dict[str, Any]) -> None:
     sequence = event.get("source_sequence")
     if type(sequence) is not int or sequence < 1:
         raise AuditEventInvalid("Audit source_sequence is invalid.")
+    policies = event.get("matched_policy", [])
+    if (
+        not isinstance(policies, list)
+        or len(policies) > 32
+        or any(
+            not isinstance(name, str)
+            or not name.strip()
+            or len(name) > 256
+            for name in policies
+        )
+    ):
+        raise AuditEventInvalid("Audit matched_policy must be a bounded list of rule names.")
     if str(event.get("result") or "").upper() not in ("ALLOW", "DENY"):
         raise AuditEventInvalid("Audit result is invalid.")
     _safe_meta(event.get("source_meta") or {}, SOURCE_META_KEYS)

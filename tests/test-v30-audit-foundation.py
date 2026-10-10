@@ -212,6 +212,33 @@ class V30AuditSpoolTests(unittest.TestCase):
                     self.spool.enqueue(event)
                 self.assertEqual(self.spool.spool_bytes(), previous_bytes)
 
+    def test_matched_policy_envelope_rejects_untrusted_values_without_sequence_loss(self):
+        first = self.spool.enqueue(self._event())
+        self.assertEqual(first["source_sequence"], 1)
+        before_state = self.spool.state_path.read_bytes()
+        before_active = self.spool.active_path.read_bytes()
+        malformed = (
+            "allow-ssh",
+            {"policy": "allow-ssh"},
+            [42],
+            [{"credential": "sensitive-not-a-rule"}],
+            [None],
+            [""],
+            [" "],
+            ["x" * 257],
+            ["rule-%02d" % i for i in range(33)],
+        )
+        for value in malformed:
+            with self.subTest(value=repr(value)[:70]):
+                event = self._event()
+                event["matched_policy"] = value
+                with self.assertRaises(AuditEventInvalid):
+                    self.spool.enqueue(event)
+                self.assertEqual(self.spool.state_path.read_bytes(), before_state)
+                self.assertEqual(self.spool.active_path.read_bytes(), before_active)
+        second = self.spool.enqueue(self._event(result="DENY"))
+        self.assertEqual(second["source_sequence"], 2)
+
     def test_spool_seals_active_segment(self):
         self.spool.enqueue(self._event())
         segment = self.spool.seal_active()
@@ -383,6 +410,48 @@ class V30AuditIngestorTests(unittest.TestCase):
                         "SELECT COUNT(*) FROM audit_events WHERE category='ACCESS_DECISION'"
                     ).fetchone()[0], 0
                 )
+        segment.write_text(json.dumps(valid) + "\n", encoding="utf-8")
+        self.assertEqual(self.ingestor.ingest(max_segments=1)["inserted"], 1)
+
+    def test_ingest_rejects_nested_or_nonlist_policy_evidence(self):
+        valid = self.spool.enqueue(self._event("ALLOW", "strict-policy-evidence"))
+        segment = self.spool.seal_active()
+        self.assertIsNotNone(segment)
+        for invalid in ("allow-ssh", {"policy": "allow-ssh"},
+                        [{"credential": "must-not-be-imported"}], [False],
+                        [" "], ["x" * 257]):
+            with self.subTest(value=repr(invalid)[:70]):
+                malformed = dict(valid, matched_policy=invalid)
+                segment.write_text(json.dumps(malformed) + "\n", encoding="utf-8")
+                with self.assertRaises(AuditEventInvalid):
+                    self.ingestor.ingest(max_segments=1)
+                self.assertTrue(segment.exists())
+                self.assertIsNone(self.plane.conn.execute(
+                    "SELECT * FROM audit_ingest_checkpoints WHERE source='remote-access'"
+                ).fetchone())
+                self.assertEqual(self.plane.conn.execute(
+                    "SELECT COUNT(*) FROM audit_events WHERE category='ACCESS_DECISION'"
+                ).fetchone()[0], 0)
+        segment.write_text(json.dumps(valid) + "\n", encoding="utf-8")
+        self.assertEqual(self.ingestor.ingest(max_segments=1)["inserted"], 1)
+
+    def test_ingest_rejects_coerced_destination_port_evidence(self):
+        valid = self.spool.enqueue(self._event("ALLOW", "port-evidence"))
+        segment = self.spool.seal_active()
+        self.assertIsNotNone(segment)
+        for invalid in ("22", 22.9, True, False):
+            with self.subTest(port=repr(invalid)):
+                malformed = dict(valid)
+                malformed["destination_meta"] = dict(valid["destination_meta"], port=invalid)
+                segment.write_text(json.dumps(malformed) + "\n", encoding="utf-8")
+                with self.assertRaises(AuditEventInvalid):
+                    self.ingestor.ingest(max_segments=1)
+                self.assertIsNone(self.plane.conn.execute(
+                    "SELECT * FROM audit_ingest_checkpoints WHERE source='remote-access'"
+                ).fetchone())
+                self.assertEqual(self.plane.conn.execute(
+                    "SELECT COUNT(*) FROM audit_events WHERE category='ACCESS_DECISION'"
+                ).fetchone()[0], 0)
         segment.write_text(json.dumps(valid) + "\n", encoding="utf-8")
         self.assertEqual(self.ingestor.ingest(max_segments=1)["inserted"], 1)
 
