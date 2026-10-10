@@ -83,6 +83,37 @@ test("Guided policy exposes contextual Core explanation without automatic Apply 
  assert.match(source,/onNavigate=\{navigateFromSetup\}/);
  assert.match(source,/id==="access"\?reviewContext:context/);
 });
+test("Access → Draft → Guided Policy navigation keeps bounded intent as read-only reference",()=>{
+ const src=readFileSync(join(root,"src","main.tsx"),"utf8");
+ const access=src.split("function AccessOperations(",2)[1]?.split("function AuditExplorer(",1)[0]||"";
+ const draftRef=src.split("function DraftWorkflowReference(",2)[1]?.split("function DraftWorkspace(){",1)[0]||"";
+ const policy=src.split("function PolicyWorkspace(",2)[1]?.split("function ResourceWorkspace(",1)[0]||"";
+ const view=src.split("function View(",2)[1]?.split("function WorkspaceIcon(",1)[0]||"";
+ assert.match(access,/const flowContext=connectionReviewContext\(plane as AccessPlane,source,destination,selector\)/);
+ assert.match(access,/onNavigate\?\.\("drafts","access",flowContext\)/);
+ assert.match(access,/onNavigate\?\.\("policies","access",flowContext\)/);
+ assert.match(draftRef,/connectionReviewContext\(plane,context\?\.source,context\?\.destination,context\?\.selector\)/);
+ assert.match(draftRef,/reference only/);
+ assert.match(draftRef,/not added to ConfigurationBundle/);
+ assert.match(draftRef,/not carry a Change Plan or approval/);
+ assert.match(draftRef,/onNavigate\?\.\("policies","access",selected\)/);
+ assert.match(draftRef,/onNavigate\?\.\("access","access",selected\)/);
+ assert.match(policy,/onNavigate\?\.\("drafts","access",carriedFlow\|\|undefined\)/);
+ assert.match(policy,/not an approved rule/);
+ assert.match(view,/DraftWorkflowReference context=\{context\} onNavigate=\{onNavigate\}/);
+ assert.match(view,/initialPlane=\{selectedPlane\} initialFlow=\{"source" in initialFlow\?initialFlow:undefined\}/);
+ const coreDraft=src.split("function DraftWorkspace(){",2)[1]?.split("function BlastRadiusView(",1)[0]||"";
+ assert.match(coreDraft,/if\(!draftId\|\|!preview\?\.change_plan_id\|\|confirmation!=="APPLY"\)return;/);
+ assert.match(coreDraft,/onChange=\{e=>changeBundle\(e.target.value\)\}/);
+ for(const unsafe of ["connectionReviewContext","setBundle(context","autoApply","/api/v1/policy/direct-apply"])
+   assert.ok(!coreDraft.includes(unsafe),unsafe);
+});
+test("Only an explicit, complete recognized-plane selection can be reused for navigation",()=>{
+ const s=setup.connectionReviewContext("remote","  net-a  "," server-b ","ssh");
+ assert.deepEqual(s,{plane:"remote",source:"net-a",destination:"server-b",selector:"ssh"});
+ assert.deepEqual(setup.connectionReviewContext("ai","identity","object",""),{plane:"ai"});
+ assert.deepEqual(setup.connectionReviewContext("internet","id","target","service\ninvalid"),{plane:"internet"});
+});
 test("Explicitly switching owning Agent invalidates prior service and policy choices",()=>{
  const saved={
   plane:"remote",step:2,selectedHost:"host-a",serviceName:"ssh-on-a",

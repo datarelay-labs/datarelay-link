@@ -15,7 +15,7 @@ import {CoreDoctorWorkspace} from "./uxb-doctor";
 import {SavedViewsWorkspace,saveDraftForResource,isSavedAdmission,type HostAdmission} from "./uxb-saved-views";
 import {hostDetailSections,hostConnectionState} from "./uxb-host-detail";
 import {filterObservedHosts} from "./uxb-host-search";
-import {FirstConnectionSetup,type SetupDraft} from "./uxb-setup";
+import {FirstConnectionSetup,connectionReviewContext,type SetupDraft} from "./uxb-setup";
 
 type Json = Record<string, any>;
 
@@ -146,6 +146,31 @@ function Login({onLogin}:{onLogin:(op:any)=>void}){
       <p className="dr-login-admin-note">Accounts are created by an administrator. Self-service registration is not available.</p>
     </form>
   </AuthScaffold>;
+}
+
+function DraftWorkflowReference({context,onNavigate}:{
+  context?:any,onNavigate?:(id:string,groupId?:string,context?:any)=>void
+}){
+  const plane=["remote","internet","ai"].includes(String(context?.plane))
+    ?String(context.plane) as AccessPlane:null;
+  if(!plane)return null;
+  const selected=connectionReviewContext(plane,context?.source,context?.destination,context?.selector);
+  const complete="source" in selected;
+  return <section className="card dr-uxb-context" role="note" aria-label="Access context for advanced draft">
+    <strong>{plane.toUpperCase()} Access · selected task reference only</strong>
+    {complete?<p>Source: {selected.source} · Destination: {selected.destination}
+      · {plane==="ai"?"Permission":"Service"}: {selected.selector}</p>:
+      <p>Core object selection is incomplete or unverified. Recheck the matching access plane.</p>}
+    <p>This context is not added to ConfigurationBundle, does not represent a Core policy
+      decision, and does not carry a Change Plan or approval across screens. The draft
+      editor and explicit Core Test → Diff & Preview → typed Apply remain independent.</p>
+    <div className="toolbar">
+      <button className="secondary" onClick={()=>onNavigate?.("access","access",selected)}>
+        Recheck selected access in Core →</button>
+      {complete&&<button className="secondary" onClick={()=>onNavigate?.("policies","access",selected)}>
+        Use Guided Policy for this flow →</button>}
+    </div>
+  </section>;
 }
 
 function DraftWorkspace(){
@@ -834,10 +859,11 @@ function AccessOperations({operator,onNavigate,context}:{operator:any,onNavigate
   }
   const layers=(matchingDiagnosis?.layers||[]).map((x:any)=>({layer:x.layer,status:x.status,summary:x.summary}));
   const planeLabel=plane==="remote"?"Remote Access":plane==="internet"?"Internet Access":"AI Access";
+  const flowContext=connectionReviewContext(plane as AccessPlane,source,destination,selector);
   return <div className="dr-access-workspace">
     {error&&<div className="error">{error}</div>}
     {context?.originId&&<section className="dr-uxb-context card" role="note"><strong>Investigating {context.originType||"resource"}: {context.originId}</strong><p>Core resource names are not automatically Network/Service Objects. Select the exact source, destination and selector before interpreting any Core access decision.</p><button className="secondary" onClick={()=>onNavigate?.("audit","activity",context)}>Review matching Activity log →</button></section>}
-    <section className="dr-page-intro"><div><p className="dr-eyebrow">Access</p><h2>Access Workspace</h2><p className="muted">Understand who can reach what, why the decision is made, and what is active now.</p></div><div className="dr-page-actions"><button className="secondary" onClick={()=>onNavigate?.("policies","access")}>Policies</button>{operator.role!=="Read Only"&&<button className="primary" onClick={()=>onNavigate?.("drafts","access")}>Draft change</button>}</div></section>
+    <section className="dr-page-intro"><div><p className="dr-eyebrow">Access</p><h2>Access Workspace</h2><p className="muted">Understand who can reach what, why the decision is made, and what is active now.</p></div><div className="dr-page-actions"><button className="secondary" onClick={()=>onNavigate?.("policies","access",flowContext)}>Policies</button>{operator.role!=="Read Only"&&<button className="primary" onClick={()=>onNavigate?.("drafts","access",flowContext)}>Draft change</button>}</div></section>
     <div className="dr-access-tabs" role="tablist" aria-label="Access plane">{[["remote","Remote Access"],["internet","Internet Access"],["ai","AI Access"]].map(([value,label])=><button key={value} role="tab" aria-selected={plane===value} className={plane===value?"active":""} disabled={cutoffBusy} onClick={()=>changePlane(value)}>{label}</button>)}</div>
     <section className="card dr-access-map-card">
       <div className="dr-section-head"><div><p className="dr-eyebrow">Relationship</p><h3>{planeLabel}</h3></div><button className="dr-text-action" onClick={()=>onNavigate?.("policies","access")}>View policies →</button></div>
@@ -1487,9 +1513,13 @@ function ObjectsWorkspace({data,onNavigate,context,api}:{data:any,onNavigate?:(i
 function PolicyWorkspace({data,operator,onNavigate,api,context}:{data:any,operator:any,onNavigate?:(id:string,groupId?:string,context?:any)=>void,api:(path:string)=>Promise<any>,context?:any}){
   const focusPlane=["remote","internet","ai"].includes(context?.focusPolicy?.plane)
     ?String(context.focusPolicy.plane) as AccessPlane:null;
+  const carriedPlane=["remote","internet","ai"].includes(String(context?.plane))
+    ?String(context.plane) as AccessPlane:focusPlane;
+  const carriedFlow=carriedPlane?connectionReviewContext(
+    carriedPlane,context?.source,context?.destination,context?.selector):null;
   const focusName=typeof context?.focusPolicy?.name==="string"&&context.focusPolicy.name.length<=160
     ?context.focusPolicy.name:"";
-  const [plane,setPlane]=useState<string>(focusPlane||"all"),[filter,setFilter]=useState(focusName),[selected,setSelected]=useState<any>(null);
+  const [plane,setPlane]=useState<string>(focusPlane||carriedPlane||"all"),[filter,setFilter]=useState(focusName),[selected,setSelected]=useState<any>(null);
   const [additional,setAdditional]=useState<any[]>([]);
   const [nextByPlane,setNextByPlane]=useState<Record<string,string|null>>(data.next_cursor_by_plane||{});
   const [exhausted,setExhausted]=useState<string[]>([]);
@@ -1536,8 +1566,15 @@ function PolicyWorkspace({data,operator,onNavigate,api,context}:{data:any,operat
     (plane==="all"||item.plane===plane)&&(!q||Object.values(item).some(v=>String(v??"").toLowerCase().includes(q))));
   const tabs=[["all","All"],["remote","Remote"],["internet","Internet"],["ai","AI"]];
   return <div className="dr-resource-workspace">
-    <section className="dr-page-intro"><div><p className="dr-eyebrow">Access</p><h2>Policies</h2><p className="muted">One policy workspace with separate Remote, Internet and AI security semantics.</p></div><div className="dr-page-actions"><button className="secondary" onClick={()=>onNavigate?.("access","access")}>Test & explain access</button>{operator.role!=="Read Only"&&<button className="primary" onClick={()=>onNavigate?.("drafts","access")}>Draft change</button>}</div></section>
+    <section className="dr-page-intro"><div><p className="dr-eyebrow">Access</p><h2>Policies</h2><p className="muted">One policy workspace with separate Remote, Internet and AI security semantics.</p></div><div className="dr-page-actions"><button className="secondary" onClick={()=>onNavigate?.("access","access",carriedFlow||undefined)}>Test & explain access</button>{operator.role!=="Read Only"&&<button className="primary" onClick={()=>onNavigate?.("drafts","access",carriedFlow||undefined)}>Draft change</button>}</div></section>
     <div className="dr-access-tabs" role="tablist" aria-label="Policy plane">{tabs.map(([id,label])=><button key={id} role="tab" aria-selected={plane===id} className={plane===id?"active":""} onClick={()=>setPlane(id)}>{label}</button>)}</div>
+    {carriedFlow&&"source" in carriedFlow&&<section className="card dr-uxb-context" role="note" aria-label="Selected Core policy task">
+      <strong>Selected {carriedFlow.plane.toUpperCase()} Access flow · reference only</strong>
+      <p>Source: {carriedFlow.source} · Destination: {carriedFlow.destination}
+        · {carriedFlow.plane==="ai"?"Permission":"Service"}: {carriedFlow.selector}</p>
+      <p>The selected names are not an approved rule, current Core decision, or draft.
+        Review the explicit Core Preview and required tests below before any change.</p>
+    </section>}
     {focusPlane&&focusName&&plane===focusPlane&&<section className="card dr-uxb-context" role="status">
       <strong>Rule requested from a fresh Core access trace: {focusName}</strong>
       <p>Trace rule names are not policy IDs. A detail link is available only when the entire
@@ -1937,7 +1974,7 @@ function View({active,operator,onNavigate,context,setupDraft,onSetupDraftChange}
   </section>;
   if(active==="users")return <UsersPanel operator={operator}/>;
   if(active==="integrations")return operator.role==="Admin"?<IntegrationsPanel/>:<div className="error">Admin role required</div>;
-  if(active==="drafts")return <DraftWorkspace/>;
+  if(active==="drafts")return <><DraftWorkflowReference context={context} onNavigate={onNavigate}/><DraftWorkspace/></>;
   if(active==="access")return <AccessOperations operator={operator} onNavigate={onNavigate} context={context}/>;
   if(active==="jobs")return <JobOperations operator={operator}/>;
   if(active==="hygiene"&&data)return <AccessHygienePanel data={data} operator={operator} onRefresh={()=>api("/api/v1/access-hygiene").then(payload=>setData(requireObservedAccessHygiene(payload))).catch((e:any)=>setError(e.message||String(e)))} onNavigate={onNavigate}/>;
@@ -1955,7 +1992,14 @@ function View({active,operator,onNavigate,context,setupDraft,onSetupDraftChange}
   if(active==="objects"&&data)return <><ObjectsWorkspace data={data} onNavigate={onNavigate} context={context} api={api}/>{operator.role!=="Read Only"&&<GuidedObjectPanel/>}</>;
   if(active==="hosts"&&data)return <><ResourceWorkspace kind="host" data={data} operator={operator} onNavigate={onNavigate} api={api} initialFilter={String(context?.savedFilter||"").slice(0,120)} initialAdmission={context?.savedAdmission}/>{operator.role!=="Read Only"&&<ManagedHostMetadataPanel/>}{operator.role==="Admin"&&<ManagedHostAdmissionPanel/>}{operator.role==="Admin"&&<ManagedHostLifecyclePanel/>}</>;
   if(active==="services"&&data)return <><ResourceWorkspace kind="service" data={data} operator={operator} onNavigate={onNavigate} api={api} initialFilter={String(context?.savedFilter||"").slice(0,120)}/>{operator.role!=="Read Only"&&<RemoteServiceEditor api={api}/>}</>;
-  if(active==="policies"&&data)return <><PolicyWorkspace data={data} operator={operator} onNavigate={onNavigate} api={api} context={context}/>{operator.role!=="Read Only"&&<GuidedPolicyJourney api={api} onNavigate={onNavigate}/>}<PolicySafetyPanel operator={operator}/>{operator.role!=="Read Only"&&<><GuidedPolicySettingsPanel/><TemporaryAccessPanel/></>}</>;
+  if(active==="policies"&&data){
+    const selectedPlane=["remote","internet","ai"].includes(String(context?.plane||context?.focusPolicy?.plane))
+      ?String(context?.plane||context?.focusPolicy?.plane) as AccessPlane:"remote";
+    const initialFlow=connectionReviewContext(selectedPlane,context?.source,context?.destination,context?.selector);
+    return <><PolicyWorkspace data={data} operator={operator} onNavigate={onNavigate} api={api} context={context}/>
+      {operator.role!=="Read Only"&&<GuidedPolicyJourney api={api} onNavigate={onNavigate}
+        initialPlane={selectedPlane} initialFlow={"source" in initialFlow?initialFlow:undefined}/>}<PolicySafetyPanel operator={operator}/>{operator.role!=="Read Only"&&<><GuidedPolicySettingsPanel/><TemporaryAccessPanel/></>}</>;
+  }
   if(active==="doctor"&&data)return <CoreDoctorWorkspace data={data} onNavigate={onNavigate}/>;
   if(active==="health"&&data)return <HealthWorkspace data={data} onNavigate={onNavigate}/>;
   if(active==="revisions"&&data)return <RevisionHistory initial={data} api={api}/>;
