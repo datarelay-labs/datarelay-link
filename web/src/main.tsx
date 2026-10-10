@@ -14,6 +14,7 @@ import {AgentVersionDrift} from "./uxb-versions";
 import {CoreDoctorWorkspace} from "./uxb-doctor";
 import {SavedViewsWorkspace,saveDraftForResource,isSavedAdmission,type HostAdmission} from "./uxb-saved-views";
 import {hostDetailSections} from "./uxb-host-detail";
+import {filterObservedHosts} from "./uxb-host-search";
 import {FirstConnectionSetup,type SetupDraft} from "./uxb-setup";
 
 type Json = Record<string, any>;
@@ -1577,16 +1578,20 @@ function ResourceWorkspace({kind,data,operator,onNavigate,api,initialFilter="",i
       if(epoch===loadEpoch.current)setMoreBusy(false);
     }
   }
+  // Typed Host search is expressly limited to already authorized/loaded Core
+  // inventory pages. Core currently supports name-only server-side query.
+  const hostSearch=isHost?filterObservedHosts(loaded,filter):null;
   const q=filter.trim().toLowerCase();
-  const rows=loaded
-    .filter((item:any)=>(!q||Object.values(item).some(value=>String(value??"").toLowerCase().includes(q)))
-      &&(!isHost||admissionFilter==="all"||item.admission_state===admissionFilter))
+  const rows=(isHost?(hostSearch?.items||loaded):loaded
+    .filter((item:any)=>!q||Object.values(item).some(value=>String(value??"").toLowerCase().includes(q))))
+    .filter((item:any)=>!isHost||admissionFilter==="all"||item.admission_state===admissionFilter)
     .sort((a:any,b:any)=>isHost?
       (a.admission_state==="PENDING_APPROVAL"?-1:a.admission_state==="QUARANTINED"?0:1)
       -(b.admission_state==="PENDING_APPROVAL"?-1:b.admission_state==="QUARANTINED"?0:1):0);
   const heading=isHost?"Managed Hosts":"Remote Services";
   const description=isHost?"Agent inventory, trust, connectivity, platform and version in one resource workspace.":"Published services, owning hosts, ports and release state with contextual access actions.";
-  const savedDraft=saveDraftForResource(kind,filter,isHost?admissionFilter:"all");
+  const savedDraft=(!isHost||!hostSearch?.error)
+    ?saveDraftForResource(kind,filter,isHost?admissionFilter:"all"):null;
   return <div className="dr-resource-workspace">
     <section className="dr-page-intro"><div><p className="dr-eyebrow">Connections</p><h2>{heading}</h2><p className="muted">{description}</p></div><div className="dr-page-actions">{isHost&&operator.role==="Admin"&&<button className="primary" onClick={()=>onNavigate?.("enrollments","infrastructure")}>Connect Agent</button>}<button className="secondary" onClick={()=>onNavigate?.("access","access")}>Access workspace</button></div></section>
     <section className="card dr-list-card">
@@ -1597,7 +1602,9 @@ function ResourceWorkspace({kind,data,operator,onNavigate,api,initialFilter="",i
           <option value="APPROVED">Approved</option>
           <option value="QUARANTINED">Quarantined</option>
         </select>}
-        <label className="dr-filter-field"><WorkspaceIcon kind="search"/><input value={filter} maxLength={120} onChange={e=>setFilter(e.target.value)} placeholder={isHost?"Filter hosts…":"Filter services…"}/>{filter&&<button onClick={()=>setFilter("")} aria-label="Clear filter">×</button>}</label></div>
+        <label className="dr-filter-field"><WorkspaceIcon kind="search"/><input value={filter} maxLength={120} onChange={e=>setFilter(e.target.value)} placeholder={isHost?"Filter hosts (name:, host:, os:, admission:)…":"Filter services…"}/>{filter&&<button onClick={()=>setFilter("")} aria-label="Clear filter">×</button>}</label></div>
+      {isHost&&hostSearch?.error&&<p className="warning-box" role="alert">Typed Host search not applied: {hostSearch.error} Displaying only previously loaded Core records, still scoped by admission state.</p>}
+      {isHost&&hostSearch?.warning&&<p className="dr-uxb-catalog-page-notice" role="status">{hostSearch.warning}</p>}
       {savedDraft&&<div className="toolbar"><button type="button" className="secondary"
         onClick={()=>onNavigate?.("views","activity",{savedViewDraft:savedDraft})}>Save this view →</button>
         <span className="muted">Saves the visible text filter and optional Host admission selection as a private display preference after you name it. Unloaded Core inventory pages are not included.</span></div>}
@@ -1608,7 +1615,7 @@ function ResourceWorkspace({kind,data,operator,onNavigate,api,initialFilter="",i
         {partial&&<button type="button" className="secondary" disabled={moreBusy}
           onClick={loadMore}>{moreBusy?"Loading next Core page…":isHost?"Load more Managed Hosts →":"Load more Remote Services →"}</button>}
       </div>
-      {!rows.length?<div className="dr-empty-state"><span className="dr-empty-icon"><WorkspaceIcon kind="infrastructure"/></span><strong>{partial?"No match in loaded resources":filter?"No matching resources":"No resources yet"}</strong><p>{partial?"Other resources may exist beyond this Core page. Use Search to find them.":filter?"Try a different filter.":isHost?"Connect an Agent to populate managed inventory.":"Publish a Remote Service from a managed host."}</p>{!filter&&isHost&&operator.role==="Admin"&&<button className="primary" onClick={()=>onNavigate?.("enrollments","infrastructure")}>Connect Agent</button>}</div>:
+      {!rows.length?<div className="dr-empty-state"><span className="dr-empty-icon"><WorkspaceIcon kind="infrastructure"/></span><strong>{isHost&&hostSearch?.error?"Search not applied":isHost&&!!hostSearch?.unknownCount&&!!filter?"No confirmed match in observed Hosts":partial?"No match in loaded resources":filter?"No matching resources":"No resources yet"}</strong><p>{isHost&&hostSearch?.error?"Correct the unsupported filter; no unobserved Core data was searched.":isHost&&!!hostSearch?.unknownCount&&!!filter?"Some loaded Hosts have UNKNOWN values for that field. No-match does not prove their absence.":partial?"Other resources may exist beyond this Core page. Use Search to find them.":filter?"Try a different filter.":isHost?"Connect an Agent to populate managed inventory.":"Publish a Remote Service from a managed host."}</p>{!filter&&isHost&&operator.role==="Admin"&&<button className="primary" onClick={()=>onNavigate?.("enrollments","infrastructure")}>Connect Agent</button>}</div>:
       <div className="dr-table-scroll"><table className="dr-resource-table"><thead><tr>{isHost?<><th>Host</th><th>Admission</th><th>Connection</th><th>Trust</th><th>Platform</th><th>Version</th><th>Last activity</th></>:<><th>Service</th><th>Managed host</th><th>Type</th><th>Public port</th><th>Target</th><th>State</th></>}</tr></thead><tbody>{rows.map((item:any)=><tr key={item.id} tabIndex={0} onClick={()=>setSelected(item)} onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();setSelected(item)}}}>{isHost?<><td><strong>{item.name||item.id}</strong><small>{item.hostname||item.id}</small></td><td><span className={item.admission_state==="APPROVED"?"dr-state active":"dr-state"}><i/>{item.admission_state==="APPROVED"?"Approved":item.admission_state==="PENDING_APPROVAL"?"Pending approval":item.admission_state==="QUARANTINED"?"Quarantined":"Unknown"}</span></td><td><span className={item.connected?"dr-state active":"dr-state"}><i/>{item.connected?"Connected":item.agent_lifecycle_state||item.status||"Unknown"}</span></td><td>{item.trust_status||"—"}</td><td>{item.agent_platform||"—"}</td><td>{item.agent_version||"—"}</td><td>{item.agent_heartbeat_at||item.last_seen||"—"}</td></>:<><td><strong>{item.name||item.id}</strong><small>{item.id}</small></td><td>{item.managed_host||item.managed_host_id||"—"}</td><td>{item.service_type||"—"}</td><td>{item.public_port??"—"}</td><td>{[item.target_host,item.target_port].filter(Boolean).join(":")||item.target_mode||"—"}</td><td><span className={item.enabled&&!item.released?"dr-state active":"dr-state"}><i/>{item.released?"Released":item.enabled?"Enabled":"Disabled"}</span></td></>}</tr>)}</tbody></table></div>}
     </section>
     {selected&&<div className="dr-drawer-backdrop" onMouseDown={e=>{if(e.currentTarget===e.target)setSelected(null)}}><aside className="dr-detail-drawer" role="dialog" aria-modal="true" aria-label={heading+" detail"} tabIndex={-1} autoFocus><header><div><p className="dr-eyebrow">{isHost?"Managed Host":"Remote Service"}</p><h2>{selected.name||selected.id}</h2><p>{selected.hostname||selected.id}</p></div><button className="dr-icon-button" onClick={()=>setSelected(null)} aria-label="Close detail">×</button></header><div className="dr-drawer-status"><span className={(isHost?selected.connected:selected.enabled&&!selected.released)?"dr-state active":"dr-state"}><i/>{isHost?(selected.connected?"Connected":selected.status||"Unknown"):(selected.released?"Released":selected.enabled?"Enabled":"Disabled")}</span>{isHost&&<span className={selected.admission_state==="APPROVED"?"dr-state active":"dr-state"}>{selected.admission_state==="PENDING_APPROVAL"?"Pending approval":selected.admission_state==="QUARANTINED"?"Quarantined":selected.admission_state==="APPROVED"?"Approved":"Unknown admission"}</span>}</div><div className="dr-detail-fields">{isHost?hostDetailSections(selected).map(section=><section key={section.title} className="dr-host-detail-section"><h3>{section.title}</h3>{section.fields.map(field=><div key={field.label}><span>{field.label}</span><strong>{field.value}</strong></div>)}</section>):Object.entries(selected).filter(([,value])=>typeof value!=="object"&&value!==null&&value!=="").map(([key,value])=><div key={key}><span>{key.replaceAll("_"," ")}</span><strong>{String(value)}</strong></div>)}</div><footer><button className="secondary" onClick={()=>{const target={originType:isHost?"managed-host":"remote-service",originId:String(selected.id||"")};setSelected(null);onNavigate?.("audit","activity",target)}}>Recent activity</button><button className="primary" onClick={()=>{const target={originType:isHost?"managed-host":"remote-service",originId:String(selected.id||""),plane:"remote"};setSelected(null);onNavigate?.("access","access",target)}}>Why can / cannot connect?</button></footer></aside></div>}

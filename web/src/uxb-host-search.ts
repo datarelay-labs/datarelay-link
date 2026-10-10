@@ -1,0 +1,85 @@
+// PF-CI: typed filters against the currently observed, authorized Core Host pages.
+// This is intentionally NOT a fleet-wide or server-side search contract.
+export type ObservedHost=Record<string,unknown>;
+export type ObservedHostSearch={
+  items:ObservedHost[],applied:boolean,scope:"loaded-only",
+  error:string|null,warning:string|null,unknownCount:number
+};
+
+const FIELDS:Record<string,string>={
+  name:"name",id:"id",host:"hostname",hostname:"hostname",
+  status:"status",trust:"trust_status",admission:"admission_state",
+  os:"agent_platform",platform:"agent_platform",version:"agent_version",
+  connected:"connected",
+};
+const FREE_FIELDS=["id","name","hostname","status","trust_status",
+  "admission_state","agent_platform","agent_version"] as const;
+const MISSING_REQUIRES_CORE=new Set(["tag","group","ip"]);
+const EXACT_FIELDS=new Set(["status","trust_status","admission_state","connected"]);
+const CONTROL=/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/;
+
+function observedText(row:ObservedHost,key:string):string|null {
+  const raw=row[key];
+  if(key==="connected"){
+    if(raw===true||raw===1)return "connected";
+    if(raw===false||raw===0)return "disconnected";
+    return null;
+  }
+  if(typeof raw==="string")return raw.trim()?raw.toLowerCase():null;
+  // A DB NULL, unrecognized object or absent Agent version cannot
+  // be interpreted as a confirmed nonmatch without an evidence caveat.
+  return null;
+}
+function errorResult(items:ObservedHost[],error:string):ObservedHostSearch {
+  return {items,applied:false,scope:"loaded-only",error,warning:null,unknownCount:0};
+}
+export function filterObservedHosts(source:unknown,query:unknown):ObservedHostSearch {
+  if(!Array.isArray(source))return errorResult([],"Core Host inventory was not observed. Retry before searching.");
+  const items=source.filter((item):item is ObservedHost=>
+    item!==null&&typeof item==="object"&&!Array.isArray(item));
+  if(typeof query!=="string"||query.length>120||CONTROL.test(query))
+    return errorResult(items,"Invalid Host search expression. Use at most 120 plain-text characters.");
+  const tokens=query.trim()?query.trim().split(/\s+/):[];
+  const filters:{field:string|null,term:string}[]=[];
+  for(const token of tokens){
+    const separator=token.indexOf(":");
+    if(separator>=0){
+      const fieldName=token.slice(0,separator).toLowerCase();
+      if(!Object.prototype.hasOwnProperty.call(FIELDS,fieldName)){
+        const reason=MISSING_REQUIRES_CORE.has(fieldName)
+          ?"Core does not expose this field in the Managed Host inventory projection."
+          :"Unsupported Host search facet.";
+        return errorResult(items,fieldName.slice(0,24)+": not available. "+reason+" Search not applied.");
+      }
+      let term=token.slice(separator+1).toLowerCase();
+      if(!term||term.length>120)
+        return errorResult(items,"A typed Host filter needs a nonempty bounded value. Search not applied.");
+      const field=FIELDS[fieldName];
+      if(field==="connected"){
+        if(["1","true","yes","connected"].includes(term))term="connected";
+        else if(["0","false","no","disconnected"].includes(term))term="disconnected";
+        else return errorResult(items,"Connection state must be connected/disconnected (true/false). Search not applied.");
+      }
+      filters.push({field,term});
+    }else{
+      filters.push({field:null,term:token.toLowerCase()});
+    }
+  }
+  const requiredFields=new Set(filters.filter(f=>f.field).map(f=>f.field as string));
+  let unknownCount=0;
+  if(requiredFields.size){
+    for(const row of items){
+      if([...requiredFields].some(key=>observedText(row,key)===null))unknownCount++;
+    }
+  }
+  const matches=items.filter(row=>filters.every(f=>
+    f.field
+      ?(EXACT_FIELDS.has(f.field)
+        ?observedText(row,f.field)===f.term
+        :(observedText(row,f.field)?.includes(f.term)??false))
+      :FREE_FIELDS.some(key=>observedText(row,key)?.includes(f.term)??false)));
+  const warning=unknownCount
+    ?unknownCount+" loaded Host(s) have UNKNOWN requested field values; an unmatched filter cannot prove absence."
+    :null;
+  return {items:matches,applied:true,scope:"loaded-only",error:null,warning,unknownCount};
+}

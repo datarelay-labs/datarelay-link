@@ -1176,6 +1176,32 @@ class V30WebSaasUxContractTests(unittest.TestCase):
             self.assertIn(marker,saved,marker)
         self.assertNotIn('method:"PUT"',saved)
 
+    def test_typed_host_search_uses_only_observed_core_fields_and_pages(self):
+        typed = (ROOT / "web/src/uxb-host-search.ts").read_text(encoding="utf-8")
+        core = (ROOT / "lib/drlink_management_service.py").read_text(encoding="utf-8")
+        # Product-owned Core query is display-name-only; the new helper must
+        # never imply tag/group/ip or privilege-expanding global search.
+        self.assertIn('"managed-host": {', core)
+        self.assertIn('"c.agent_platform AS agent_platform', core)
+        self.assertIn('where_parts.append("LOWER(%s) LIKE ?" % name_expr)', core)
+        for marker in (
+            'export function filterObservedHosts(',
+            '"name","hostname"',  # Only allowlisted, not arbitrary metadata.
+            'tag","group","ip',
+            'scope:"loaded-only"',
+            'UNKNOWN requested field values',
+            'return errorResult(items,',
+        ):
+            self.assertIn(marker, typed, marker)
+        self.assertIn('filterObservedHosts(loaded,filter)', SOURCE)
+        self.assertIn('Typed Host search not applied:', SOURCE)
+        self.assertIn('hostSearch?.warning', SOURCE)
+        self.assertIn('!hostSearch?.error', SOURCE)
+        self.assertIn('Partial Core inventory', SOURCE)
+        self.assertIn('requireObservedInventoryContinuation', SOURCE)
+        self.assertIn('tests/uxb-host-search.test.mjs', PACKAGE)
+        self.assertNotIn('MISSING_CORE_TAG_QUERY_ENGINE', typed)
+
     def test_normative_ux_doc_binds_control_reference_and_competitive_sources(self):
         for required in (
             "Product Foundation PF-5B Administration projection",
