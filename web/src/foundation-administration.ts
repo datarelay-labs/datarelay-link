@@ -1,5 +1,16 @@
 import {createStandardAdministrationTasks} from "@datarelay-labs/foundation";
 
+/** Native Core backup command availability is not backup existence,
+ * archive integrity or restore qualification. Never turn missing flags into NO.
+ */
+export function backupToolReadiness(status:unknown):"AVAILABLE"|"UNAVAILABLE"|"UNKNOWN"{
+  if(!status||typeof status!=="object"||Array.isArray(status))return "UNKNOWN";
+  const data=status as Record<string,unknown>;
+  if(typeof data.create_available!=="boolean"||typeof data.validate_available!=="boolean")
+    return "UNKNOWN";
+  return data.create_available&&data.validate_available?"AVAILABLE":"UNAVAILABLE";
+}
+
 /**
  * Product-owned PF-5B Administration capability projection.
  *

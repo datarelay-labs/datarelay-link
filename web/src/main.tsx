@@ -3,6 +3,7 @@ import {createRoot} from "react-dom/client";
 import {QRCodeSVG} from "qrcode.react";
 import {AdministrationHub,type AdministrationHubTask} from "@datarelay-labs/foundation";
 import {createLinkFoundationAdministrationTasks} from "./foundation-administration";
+import {backupToolReadiness} from "./foundation-administration";
 import {AccessEvidenceExplorer,GuidedPolicyJourney,coreFlowKey,coreCutoffKey,visibleCoreEvidence,resolveCompletePolicyMatch,type AccessPlane} from "./p0-access-policy";
 import {EnrollmentOnboarding} from "./p0-enrollment";
 import {navGroups,groupFor,labelFor,pageDescriptions,visibleRoute,navMatches,setupContextForObjectFamily} from "./uxb-navigation";
@@ -679,8 +680,12 @@ function SystemPanel({data,operator}:{data:any,operator:any}){
       <Metric label="Data Relay Link" value={identity.display_identity||identity.project_version}/>
       <Metric label="Relay Engine" value={identity.relay_engine_version}/>
       <Metric label="Channel" value={identity.channel}/>
-      <Metric label="Backup Ready" value={backup.create_available&&backup.validate_available?"YES":"NO"}/>
+      <Metric label="Backup tools" value={backupToolReadiness(backup)}/>
     </div>
+    <p className="muted" role="note">Backup tools reflect Core command availability only.
+      This status does not verify an actual protected archive or a successful restore.
+      Missing tool evidence remains UNKNOWN; any restore still needs a separately approved
+      Core-authoritative check.</p>
     <div className="card">
       <h3>Release Provenance</h3>
       <Table items={[{source_ref:identity.source_ref,source_head:identity.source_head,bundle_sha256:identity.bundle_sha256||"not recorded"}]}/>

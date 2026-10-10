@@ -16,7 +16,7 @@ import {
 
 const webRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 let scratch;
-let createLinkFoundationAdministrationTasks;
+let createLinkFoundationAdministrationTasks,backupToolReadiness;
 before(async () => {
   // Transpile the actual product projection without a browser or new packages.
   // Emit below ignored node_modules so the pinned Foundation package resolves.
@@ -27,7 +27,7 @@ before(async () => {
     outfile, bundle: true, platform: "node", format: "esm",
     external: ["@datarelay-labs/foundation"], logLevel: "silent",
   });
-  ({createLinkFoundationAdministrationTasks} = await import(
+  ({createLinkFoundationAdministrationTasks,backupToolReadiness} = await import(
     pathToFileURL(outfile).href
   ));
 });
@@ -139,4 +139,19 @@ test("native Link retention and backup shortcuts resolve to existing guarded pan
   // Neither shortcut is permission to create a backup or apply a restore.
   assert.match(source, /operator\.role==="Admin"&&<button className="primary" onClick=\{createBackup\}/);
   assert.match(source, /operator\.role==="Admin"&&validation\?\.valid/);
+});
+
+test("Core backup tool status distinguishes explicit unavailable from missing evidence",()=>{
+  assert.equal(backupToolReadiness({create_available:true,validate_available:true}),"AVAILABLE");
+  assert.equal(backupToolReadiness({create_available:true,validate_available:false}),"UNAVAILABLE");
+  assert.equal(backupToolReadiness({create_available:false,validate_available:true}),"UNAVAILABLE");
+  for(const incomplete of [null,{},[],{create_available:true},
+    {create_available:false,validate_available:null},
+    {create_available:1,validate_available:true},
+    {create_available:"true",validate_available:false}]){
+    assert.equal(backupToolReadiness(incomplete),"UNKNOWN");
+  }
+  const source=readFileSync(join(webRoot,"src","main.tsx"),"utf8");
+  assert.match(source,/Metric label="Backup tools" value=\{backupToolReadiness\(backup\)\}/);
+  assert.match(source,/does not verify an actual protected archive or a successful restore/);
 });
