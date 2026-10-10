@@ -2,7 +2,7 @@
 
 > **Status:** normative 3.0 Web UX contract
 > **Roadmap:** DRL3-7A (visual shell) + DRL3-7B (workflow-first usability)
-> **Active usability roadmap:** `docs/WEB_USER_JOURNEY_UX_ROADMAP.md` B1–B5, tracked in [Issue #184](https://github.com/datarelay-labs/datarelay-link/issues/184). Historical UXB/19-product research is preserved in Git history and competitive audit; real user/browser acceptance remains NOT VERIFIED.
+> **ONE active roadmap:** [Issue #184 unified R1–R7](https://github.com/datarelay-labs/datarelay-link/issues/184), with `docs/WEB_USER_JOURNEY_UX_ROADMAP.md` as a repo-local index. R2 owns shared Web/Core/Administration source integration; R7 owns genuine Admin/Operator/Read Only Browser and same-HEAD two-user E2E. Historical UXB/19-product research remains in Git history; real user/browser acceptance is NOT VERIFIED.
 > **Visual reference authority:** Data Relay Control `main-v2` semantic foundation and App Shell
 > **Product authority:** `PRODUCT_MASTER.md`, `WEB_MANAGEMENT.md`, `MANAGEMENT_SURFACE_CONTRACT.md`
 

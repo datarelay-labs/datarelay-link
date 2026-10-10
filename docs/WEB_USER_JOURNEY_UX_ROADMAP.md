@@ -1,82 +1,55 @@
-# DataRelay Link 3.0 — Consolidated Web UX and release delivery roadmap (B1–B5)
+# DataRelay Link 3.0 — Unified R1–R7 Execution Roadmap
 
-> **Replaced:** the former 830-line historical UXB-00..06 / UXB-06F chronological roadmap. Git history and existing acceptance contracts retain earlier investigation/evidence, but **do not schedule implementation from prior dated snapshots**.
->
-> **Canonical live schedule:** [GitHub Roadmap #184](https://github.com/datarelay-labs/datarelay-link/issues/184). This file is the repo-readable version of that schedule; if this isolated #206 Web branch is behind active Core, reconcile source-HEAD evidence before any integrated claim.
->
-> **Owner product constraints:** `PRODUCT_MASTER.md`, `WEB_MANAGEMENT.md`, `MANAGEMENT_SURFACE_CONTRACT.md`, `DATA_RELAY_ROADMAP.md`; common style: `WEB_SAAS_UX_SYSTEM.md` and Control/Product Foundation; signed Agent/CLI and release contracts remain authoritative. **One Server + SQLite, optional Web, complete CLI, Remote / Internet / AI planes separate.**
+> **ONE CURRENT EXECUTION ROADMAP:** [GitHub Issue #184 — DataRelay Link 3.0 R1–R7](https://github.com/datarelay-labs/datarelay-link/issues/184).
+> This file is a **repository-local index, not an additional task queue**. The old UXB-00..06, UXB-06F, L-CI-0..4 and B1–B5 per-feature execution lists are **superseded** as roadmaps by #184. Their historical code, tests, source investigations, review evidence and mandatory acceptance contracts are retained in Git history and the named canonical documents; **do not delete/reimplement verified completed functionality**.
+> Product authority: `PRODUCT_MASTER.md`, `WEB_MANAGEMENT.md`, `MANAGEMENT_SURFACE_CONTRACT.md`, `DATA_RELAY_ROADMAP.md`, `WEB_SAAS_UX_SYSTEM.md`. DRLink Core/CLI retains authorization authority; Web is optional, SQLite is the one Core datastore, Remote / Internet / AI remain separate security planes.
+> Link Product Foundation B2–B6 coordinator [#207](https://github.com/datarelay-labs/datarelay-link/issues/207) now points to the same issue. Foundation's separate cross-product [#87](https://github.com/datarelay-labs/datarelay-product-foundation/issues/87) is **not** a second Link implementation queue.
 
-## Baseline and protected state — 2026-10-10
+## Large work blocks (actual status is always the latest exact HEAD / CI / worktree)
 
-| Ownership | Actual branch / source | Safe status |
+| Block | Scope / existing owners | Source status vs outstanding acceptance |
 | --- | --- | --- |
-| Work Packet #182 / parent PR #183 | `feat/v3-pf5b-foundation-administration` @ `870d310d`; parent worktree `pf5b-foundation-web` | OPEN, parent unmerged; **9 dirty additions in `tests/test-frp-client.sh` safety-denied**, preserved and not executed/staged |
-| PF-CI Draft PR #206 | `feat/drl3-ux-saved-admission-pfci` @ initial `e808bf54`; isolated `pfci-saved-admission` | Parent #183 stacked baseline, initially clean, source-only implementation |
-| Core Work Packet #135 / PR #168 | `fix/v300-roadmap-qualification-convergence` @ last verified `96246f91`; separate `v300-drl3-0` | **49 dirty additions in `tests/test-v30-webhook-delivery.py` safety-denied**, preserved |
-| Foundation candidate #191 / PR #193, scope #179 / PR #180 | separate open branches | Review/input only; do not recreate, auto-merge or transplant into #206 |
+| **R1 — Preserve work & PF9 ACL preflight** | #196 / Draft #197 | Five original WIP files are already committed as `444b87c1`, tree clean; native affected ACL/MFA/Web tests PASS. Linux CI remains FAIL in inherited protected Client/Core enrollment path; no real Web/SSH ACL activation |
+| **R2 — B2 shared Administration + PF-CI modern UX** | #191/#193 + #182/#183 + #206 | Common Administration, Saved Host admission filter, grouped Host detail and *bounded loaded-only* typed Host Search are source implemented; cross-branch Web/Core/API compatibility and actual Browser/roles remain OPEN |
+| **R3 — B3 Web MFA and management ACL** | #188/#189 + #196/#197 | Password→separate OTP default OFF, byte-pinned Foundation ingress evaluator and read-only Admin status are source implemented; installed Web/SSH source enforcement, proxy trust, recovery & rollback NOT VERIFIED |
+| **R4 — B4 connectivity & operations** | #200/#201 | Product-owned DNS, time and cert diagnostics in source; proxy/CA/SMTP/Webhook authentic outcomes/negative cases still unqualified |
+| **R5 — B5 backup / restore / offline upgrade** | #202/#203 + #204/#205; **#198/#199 HOLD** | Configuration diff and offline byte-level preflight source-only; real isolated restore/upgrade/signer proof missing. Protected #199 generated bootstrap scope must not be changed or rerouted |
+| **R6 — Core 3.0 functional & 100-host hardening** | #135/#168 | Core/Agent jobs, audit, Webhooks and Access Hygiene source/fixtures exist; independent signed Agent Canary/Health/failure/rollback, CLI Direct+AI feature/scenario ledger and exact-head native CI still required |
+| **R7 — B6 genuine users ×2 and release** | Browser / CLI / Full User E2E contracts | Directly observed Admin/Operator/Read Only Browser PASS → two real users PASS1/PASS2 same **installed immutable HEAD** → freeze → native CI/hash/SBOM/provenance/public smoke → owner acceptance and separately authorized release. **NOT VERIFIED** |
 
-**Already implemented, no duplicate coding:**
-1. Workflow-first Home / Connections / Access / Activity & Health / Administration, 4-step setup, resource context and diagnosis, progressive Administration (#183).
-2. Session/CSRF state, UI→Core read/preview/write contracts, bounded paginated read models, revision/history/export/job validation (#183).
-3. **Host Saved Views with optional per-user admission enum**, admission-only and legacy text compatible (#206).
-4. **Positive-list grouped Host detail** with UNKNOWN/SQLite 0/1 connectivity, activity/diagnosis actions (#206).
-5. P0/P1 Core Host admission, bounded Agent update jobs, audit, Automation API, signed Webhooks, Access Hygiene source suites (#135); signed/live rollout and two-user E2E not yet qualified.
+Do not reimplement already source-delivered L-CI saved filter/detail/typed search (Draft #206). Typed search can operate only on **loaded, authorized Core projection**; unsupported `tag:`, `group:`, `ip:`, unobserved data and partial pagination must not fabricate a fleet-wide zero or healthy result. Source/SSR/test success does **not** qualify a live user experience.
 
-**Inherited CI failure classification:** parent #183 lint run `37956615105` and child #206 lint run `38022147889` both fail the native Full local non-Docker suite with exactly `allocator rejected enrollment: enrollment could not be committed to Core`, after dual-role restore checks. Child #206 changes only Web source, assets, tests and documentation, so this **is not introduced by typed/personal Host UX**. Prior explicit platform denial of the original Client test, browser/Chromium/Playwright and preview login/restart remains binding. No fixture edit, bypass or alternate-host retry; Linux gate stays FAIL until genuinely qualified.
+## R2 scoped source and integration evidence retained from commit `db09e331`
 
-## Execution blocks
+- On this isolated #206 source candidate, `08791676` corrected a real Host table vs detail discrepancy: untrusted truthy `connected` / unrelated lifecycle/status text had been displayed as confirmed connectivity. Both now consume the same Core Boolean / SQLite 0/1 tri-state mapping, **Connected / Disconnected / UNKNOWN**. Before-fix regression RED; after-fix Host detail 6/6, Web Journey 90/90, UX source 56/56, P0 11/11, Foundation Admin 6/6, Core Query 24/24, Web bundle 6/6, Web build, secret and metadata scans PASS **on the corresponding source HEAD**. These are not Browser or Full User E2E.
+- Read-only stacked PR integration found real overlapping files: #206 sits on #183; #193 Foundation source shares #183 but overlaps `web/src/main.tsx`, `web/package.json`, compiled assets and UX tests. Core #168 head `96246f91` and Web source share older `153e3dd4` and have additional source/generated-bundle conflicts. **No auto-merge or tree overwrite**; reconcile conflict-by-conflict on an independently authorized coherent candidate and rerun its native/real-user qualification.
+- Both parent #183 and child #206 Linux native CI have independently failed with `allocator rejected enrollment: enrollment could not be committed to Core` after dual-role restore. This predates the Typed Host Search/Host status fixes. Previous denied Client test and browser/preview routes are not rerouted; integrated R2, genuine 3-role acceptance and 100-Host page completeness remain OPEN.
 
-### B1 — Native CI diagnosis and typed, evidence-qualified Host search (active)
+## Protected worktrees, denial boundaries and release policy
 
-**Owner:** existing #206 isolated worktree; do not change #183/#135 worktrees.
+- **Web parent:** `pf5b-foundation-web` (#182/#183) has existing platform-denied uncommitted `tests/test-frp-client.sh`. Preserve unchanged, unstaged, unexecuted. Parent/child Linux native lint fails at `allocator rejected enrollment: enrollment could not be committed to Core`; no CI bypass or alternative test route.
+- **Core 3.0:** `v300-drl3-0` (#135/#168) has existing platform-denied uncommitted `tests/test-v30-webhook-delivery.py`. Preserve unchanged, unstaged, unexecuted.
+- **B5:** #198/#199 remains an explicit protected generated bootstrap packaging safety hold. No rerun/rebuild/revert/merge of denied target via any tool/host.
+- **#206 child branch:** `pfci-saved-admission` is an isolated source candidate stacked on Web parent #183; do not auto-merge, rebase or overwrite the parent/Core worktrees.
+- Real policy activation, SSH/firewall, signer/public key pin, installed Web preview/restart, irreversible restore, production/release and permissions require separate explicit authority and recovery. A proposed roadmap never waives a denial.
 
-- Record exact inherited Linux CI errors on both parent and child, compare paths and test phase; inspect Client/Core config **read-only**. When a narrow source repair would require previously forbidden Client regression actions, keep it blocked, not silently green.
-- **Current Core fact table:** `lib/drlink_management_service.py` provides `managed-host` `id/name/hostname/status/trust_status/admission_state/connected/agent_platform/agent_version`. The server's inventory `query` searches only the **name expression**, with bounded cursor/limit; the Web has separately loaded paginated Core records.
-- Implement **only** a local, explicit, allowlisted typed filter on authorized records observed in the current Web session: `name:`, `host:`, `hostname:`, `id:`, `status:`, `trust:`, `admission:`, `os:`, `platform:`, `version:`, `connected:` (where concrete Core field observed). Respect existing Core role/session/CSRF and 1–100-host target.
-- Unsupported `tag:`, `group:`, `ip:` or other unknown fields are **NOT AVAILABLE**, not a false 0/healthy or a broad global search. UNKNOWN per-Host values and partial pagination are visible; malformed typed input leaves observed rows unchanged rather than an invented empty result. No new Core APIs/metadata discovery, permission changes or Saved View backend.
-- RED→GREEN pure helper tests, all Web Journey / UX source tests, build and static scans; commit existing branch and maintain independent PR/CI evidence. **Never call synthetic/SSR a user E2E.**
+## UXE-01..12 authentic user acceptance inventory — ALL NOT VERIFIED
 
-**Exit:** Source-ready scoped typed search and per-user Saved View compatibility; no false fleet-wide claim; CI failure classified inherited and still unresolved if denied path required.
-
-### B2 — Web/Core/Foundational integration and review (P0 / pending)
-
-Reconcile current #206 atop the existing #183 Web UX stack, then #191/#193 Foundation candidate and actual #135 Core API state without overwriting other worktrees or copying P0/P1 code. Verify per-user saved preferences, 3 roles, CSP/CSRF, Host approval/quarantine, Core-backed activity/diagnosis, partial pages, missing/invalid evidence, 100-host performance, error states and policy separation. Only propose a stack migration/merge after native CI and security review; this document alone is not merge approval.
-
-**B2 scoped progress (2026-10-10; source only, NOT integration complete):**
-- On the clean #206 worktree, `08791676` fixed a genuine Web/Core parity bug: the Host table and drawer previously treated arbitrary truthy `connected` or an unrelated lifecycle/status string as confirmed connectivity, while the Host detail projection correctly recognized only Core Boolean/SQLite `0/1`. Both now reuse one `Connected / Disconnected / UNKNOWN` fact with no new API, role, permission, data source or Agent effect. RED→GREEN shared-fact regression, Host detail 6/6, Web Journey 90/90, UX source 56/56, P0 11/11, Foundation Admin 6/6, Core Query 24/24, offline bundle 6/6, Web build, Secret Scan and Public Metadata PASS. These are **not browser or user E2E**.
-- Read-only PR stack comparison: #206 remains a child of #183; separate #193 (Foundation candidate `53f7ccdd`) shares parent `870d310d` but **both edit** `web/src/main.tsx`, `web/package.json`, compiled assets and UX source tests. #168 Core `96246f91` and Web #206 share older source `153e3dd4`, with additional source/generated-bundle conflicts. Do **not** auto-merge or overwrite independently owned branches. A coherent candidate needs explicit conflict-by-conflict source reconciliation and fresh regression on a new exact HEAD.
-- Parent #183 and child #206 exact native Linux CI both independently end at `allocator rejected enrollment: enrollment could not be committed to Core` after dual-role restore. This **predates the #206 Host UI work**, not a proven Typed Host Search bug. The previously safety-denied Client test and Web preview/browser routes remain blocked without rerouting. B2 is **PARTIAL**; real Admin/Operator/Read Only, 100-Host pagination and full Foundation/Core integration remain open.
-
-
-### B3 — Hands-on Admin / Operator / Read Only acceptance (P0 / environment blocked)
-
-**Canonical pre-read, in full:** `UXB_06F_B2_BROWSER_ACCEPTANCE_LEDGER.md`, current User/Operator/Admin Surface Reconciliation, `FULL_USER_E2E_SCENARIOS.md`; historical UXE-01..12 acceptance preserved below. On one authorized, coherent Web/Core+Agent candidate, directly use Admin/Operator/Read Only at desktop 1440 / 375 / 320 and keyboard. Five independent novice-user observations; actual Host approval/quarantine, text/admission/typed searches, partial/UNKNOWN, real permit/deny network, recent activity, Access diagnosis, session failures and invalid/stale plans. No wrapper, static HTTP probe or fake UI success can substitute. If existing preview/Chrome/login tool safety is denied, request owner-authorized execution, not another path.
-
-### B4 — Signed Agent, CLI/AI and machine release prerequisites (P0, independent #135)
-
-On exact candidate installed Server+Agent, require separately authorized signer/pin and disposable Host; real Canary/Health/wave halt/rollback and fail-closed behavior, Automation Apply atomicity, Direct+AI CLI Feature/Scenario **100% persona-led** ledger, audit/recovery/security/100-host saturation, Windows/macOS/Linux/Engineering CI and deterministic SHA256/SBOM/provenance. Do not bypass denied Client/Automation test writing. Synthetic scale ≠ real Agent.
-
-### B5 — Frozen same-HEAD double Full User E2E + release (last, owner approval)
-
-Browser PASS → actual User E2E PASS1+PASS2, two distinct users at identical HEAD → freeze → native CI / source identity / signed provenance / public smoke / owner acceptance. No automatic merge of #183/#206/#168 or production, tag, signer, release without explicit authorizations.
-
-## Actual-user UXE-01..12 acceptance inventory (NOT PASS)
-
-| Scenario | Operator evidence to collect |
+| Scenario | Directly observed operator evidence required |
 | --- | --- |
-| UXE-01 | Admin first login, Home and all root menu explanations |
-| UXE-02 | Agent enrollment code and managed Host admission/pending |
-| UXE-03 | Approve vs quarantine with legitimate rights and Core revision |
-| UXE-04 | Publish narrow SSH Remote Service; draft and policy preview |
-| UXE-05 | True allowed traffic, actual counterparty observation |
-| UXE-06 | True denied traffic, exact Core decision/why/audit evidence |
-| UXE-07 | Internet Access uses separate policy semantics and evidence |
-| UXE-08 | AI Access uses separate identity/permission semantics |
-| UXE-09 | Operator activity, jobs, diagnostics and read/write role boundaries |
-| UXE-10 | Read Only menu, access to observables, blocked mutation |
-| UXE-11 | Wrong/expired/stale plan, offline/unknown/partial pages and recovery |
-| UXE-12 | 1440/375/320, keyboard, Web absent/uninstalled Core isolation |
+| UXE-01 | Admin first login, Home, every root menu and Help orientation |
+| UXE-02 | Real enrollment code and Managed Host pending admission |
+| UXE-03 | Approve vs quarantine, operator rights and Core revision |
+| UXE-04 | Narrow SSH Remote Service, draft and policy preview |
+| UXE-05 | Actual allowed traffic, peer/Agent and evidence readback |
+| UXE-06 | Actual denied traffic, Core decision, explanation and audit |
+| UXE-07 | Internet Access separate policy and observation |
+| UXE-08 | AI Access separate identity/permission policy |
+| UXE-09 | Operator activity, jobs, diagnoses and role write limits |
+| UXE-10 | Read Only menu visibility and mutation denial |
+| UXE-11 | Stale/invalid plan, unknown/partial/no-data and recovery |
+| UXE-12 | Desktop 1440px, phone 375/320px, keyboard, Web uninstall/Core isolation |
 
-Each row requires authenticated direct user evidence and a full contract pre-read, not an implied result. Historical detailed source studies, including the 19-product official-doc matrix and UXB-06F prior iteration logs, are recoverable from Git history before this rewrite. [PF-CI Host source candidate](PFCI_DRLINK_HOST_UX_SOURCE_CANDIDATE.md) and [browser acceptance ledger](UXB_06F_B2_BROWSER_ACCEPTANCE_LEDGER.md) retain their separate non-merged acceptance scopes.
+Before real execution read the **entire** corresponding contracts, especially `UXB_06F_B2_BROWSER_ACCEPTANCE_LEDGER.md`, the original User/Operator/Admin Surface Reconciliation, `CLI_FEATURE_SCENARIO_RECONCILIATION.md`, and `FULL_USER_E2E_SCENARIOS.md`. Use ChatGPT as the actual product user, record exact actor/runtime/source/evidence and repeat source fix → true retest. Script/SSR/API/Playwright green is supporting only; previously denied Browser/preview routes must not be bypassed. Keep `PFCI_DRLINK_HOST_UX_SOURCE_CANDIDATE.md` and the Browser Acceptance Ledger as **evidence**, not a parallel roadmap.
 
-**Explicit exclusions:** MeshCentral RMM terminal, desktop, file transfer/recording, MDM and device-rights, bulk discovery, thousand-host orchestration, new Core data stores, hidden client permissions, false `tag:/group:/ip:` facet results, false release PASS.
+**Explicit exclusions:** MeshCentral RMM remote desktop/terminal/file transfer/recording, MDM/device administration, mass device discovery, thousands-host unbounded operations, second Core datastore, global typed search without authoritative data, implicit admin permission or auto-approval.
