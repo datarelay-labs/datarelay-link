@@ -10,13 +10,16 @@ export FRP_CLIENT_TEST_ROOT="$TMP/root"
 . "$ROOT/lib/frp-client-common.sh"
 
 # SIP forbids writing /usr/bin on macOS; secure_path copy is Linux-only.
-if frp_client_upgrade_destinations | grep -q '^usr/bin/drlink:'; then
+# Consume the complete producer output: grep -q closes the pipe on the
+# first match, causing SIGPIPE under pipefail and a false missing-destination
+# result on macOS arm64 when the Agent payload has many entries.
+if frp_client_upgrade_destinations | grep '^usr/bin/drlink:' >/dev/null; then
   echo "FAIL: Darwin upgrade destinations must not include usr/bin/drlink" >&2
   exit 1
 fi
 (
   export FRP_TEST_UNAME_S=Linux
-  if ! frp_client_upgrade_destinations | grep -q '^usr/bin/drlink:'; then
+  if ! frp_client_upgrade_destinations | grep '^usr/bin/drlink:' >/dev/null; then
     echo "FAIL: Linux upgrade destinations must include usr/bin/drlink" >&2
     exit 1
   fi
