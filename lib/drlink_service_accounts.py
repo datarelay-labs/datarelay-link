@@ -209,8 +209,19 @@ class ServiceAccountStore:
             ).fetchone()
             if not row or not int(row["enabled"]):
                 raise ControlPlaneError("Service Account was not found.")
-            if row["expires_at"] and str(row["expires_at"]) <= now:
-                raise ControlPlaneError("Expired Service Account cannot be rotated.")
+            if row["expires_at"]:
+                try:
+                    expiry = datetime.fromisoformat(
+                        str(row["expires_at"]).replace("Z", "+00:00")
+                    )
+                    active = (
+                        expiry.tzinfo is not None
+                        and expiry.astimezone(timezone.utc) > datetime.now(timezone.utc)
+                    )
+                except ValueError:
+                    active = False
+                if not active:
+                    raise ControlPlaneError("Expired Service Account cannot be rotated.")
             self.conn.execute(
                 "UPDATE management_service_account_credentials SET revoked_at=?"
                 " WHERE account_id=? AND revoked_at IS NULL", (now, account_id),

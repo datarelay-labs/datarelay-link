@@ -1504,7 +1504,8 @@ class ManagementQueryService:
         row = self.conn.execute(
             "SELECT "
             "COALESCE(SUM(CASE WHEN o.status='PENDING' THEN 1 ELSE 0 END),0) AS pending,"
-            "COALESCE(SUM(CASE WHEN o.status='FAILED' THEN 1 ELSE 0 END),0) AS failed,"
+            "COALESCE(SUM(CASE WHEN o.status='FAILED' "
+            "AND o.last_error<>'webhook disabled' THEN 1 ELSE 0 END),0) AS failed,"
             "COALESCE(SUM(CASE WHEN o.status='SENDING' "
             "AND o.last_attempt_at<? THEN 1 ELSE 0 END),0) AS stale_lease "
             "FROM management_webhook_outbox o JOIN management_webhooks w "

@@ -169,6 +169,26 @@ class WebhookTests(unittest.TestCase):
                 "SELECT COUNT(*) FROM management_webhook_outbox WHERE status='DELIVERED'"
             ).fetchone()[0], 10)
 
+    def test_reenabled_hook_does_not_alert_on_intentionally_discarded_queue(self):
+        from drlink_management_service import ManagementQueryService
+        with tempfile.TemporaryDirectory(prefix="drlink-wh-reenable-attention-") as root:
+            with WebhookStore(root) as store:
+                hook = store.create(
+                    "intentionally-paused", "https://hooks.example.org/events", ["attention"]
+                )
+                store.enqueue(hook["id"], "attention", {"kind": "queued-before-disable"})
+                store.disable(hook["id"])
+                store.enable(hook["id"])
+                row = store.conn.execute(
+                    "SELECT status,last_error FROM management_webhook_outbox "
+                    "WHERE webhook_id=?", (hook["id"],)
+                ).fetchone()
+                self.assertEqual((row["status"], row["last_error"]),
+                                 ("FAILED", "webhook disabled"))
+            with ManagementQueryService(root) as service:
+                # Intentionally discarded jobs are terminal but not transport failures.
+                self.assertEqual(service._webhook_delivery_attention()["failed"], 0)
+
     def test_attention_surfaces_delivery_failure_without_mutating_policy(self):
         from drlink_management_service import ManagementQueryService
         root = tempfile.mkdtemp(prefix="drlink-wh-health-")

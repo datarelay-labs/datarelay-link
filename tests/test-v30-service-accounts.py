@@ -43,4 +43,27 @@ class ServiceAccountTests(unittest.TestCase):
             self.assertEqual(tuple(event), ("drlink_inventory_list", first["id"]))
             self.assertEqual(len(store.list_accounts()["items"]), 1)
 
+    def test_rotation_rejects_unparseable_stored_expiry_without_issuing_token(self):
+        from datetime import datetime, timedelta, timezone
+        root = tempfile.mkdtemp(prefix="drlink-sa-corrupt-expiry-")
+        with ServiceAccountStore(root) as store:
+            future = (datetime.now(timezone.utc) + timedelta(days=2)).isoformat()
+            created = store.create("rotation-safety", ["management-read"], future)
+            store.conn.execute(
+                "UPDATE management_service_accounts SET expires_at=? WHERE id=?",
+                ("zz-not-an-iso-timestamp", created["id"]),
+            )
+            before = store.conn.execute(
+                "SELECT COUNT(*) FROM management_service_account_credentials "
+                "WHERE account_id=?", (created["id"],),
+            ).fetchone()[0]
+            with self.assertRaisesRegex(ControlPlaneError, "Expired"):
+                store.rotate(created["id"])
+            self.assertEqual(store.conn.execute(
+                "SELECT COUNT(*) FROM management_service_account_credentials "
+                "WHERE account_id=?", (created["id"],),
+            ).fetchone()[0], before)
+            with self.assertRaises(ControlPlaneError):
+                store.authenticate(created["credential"])
+
 if __name__=="__main__": unittest.main()
