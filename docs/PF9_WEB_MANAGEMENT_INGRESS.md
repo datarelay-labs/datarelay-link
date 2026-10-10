@@ -134,9 +134,19 @@ the final file must be regular, have only one hard link, be owned by
 root or the Web service UID, and have no group/other permission bits.
 Symbolic links, unsafe modes, duplicate keys, malformed UTF-8/JSON,
 unbounded files (above 16 KiB), and invalid/unsupported CIDRs are
-rejected before the Web listener starts. The file is opened without
-following the final symbolic link and parsed from the verified file
-descriptor; there is no read/write API for the running HTTP service.
+rejected before the Web listener starts. The absolute operator-selected
+path is strict (no empty/double-slash, `.` or `..` components), and
+**every parent directory** is opened using no-follow directory FDs,
+rather than checking the final file alone. The regular, owner-private
+file is opened relative to its verified parent FD, read once, and
+rechecked on the same FD for device/inode, link count, exact size and
+mtime/ctime stability. A source changed during the read fails startup
+closed; there is no read/write API for the running HTTP service.
+
+RED→GREEN synthetic fixture tests specifically exercise a symlinked
+parent directory, ambiguous literal paths and a policy changed during
+the verified FD read. These source-only tests do not enable a policy,
+restart an installed Web service or qualify live host ingress/recovery.
 
 **No deployment or permission change is authorized by this source.**
 Actual operator selection of a policy file and restart of a managed
@@ -153,6 +163,46 @@ The additively expanded native acceptance contract is:
 `python3 tests/test-v30-web-management-ingress-config.py -q`,
 including real isolated HTTP assertions plus CLI argument dispatch
 without starting any installed or production Web service.
+
+## Offline Web ACL management-source simulation (source-only)
+
+A standalone **read-only** product utility can preview whether a **claimed**
+management source would match the exact private startup ACL policy, including
+the product-configured trusted-proxy chain. It uses the same pinned Foundation
+`authorize_management` primitive as the actual Web listener. No duplicate
+CIDR implementation and no Web API, live network/host test or policy writer.
+
+```bash
+python3 tools/drlink-web-acl-preflight \
+  --policy-file /absolute/private/operator-selected/web-acl.json \
+  --source-peer 192.0.2.6
+# For a *claimed* proxy peer and forwarded chain only:
+python3 tools/drlink-web-acl-preflight \
+  --policy-file /absolute/private/operator-selected/web-acl.json \
+  --source-peer 127.0.0.1 --forwarded-for 192.0.2.6
+```
+
+The report says `ALLOW`, `DENY` or `NOT_ENFORCED` **simulation only**,
+then **always** reports `status=BLOCKED`, `safe_to_activate=false` and
+`ssh_host_enforced=false`. It does not report raw source IPs, networks,
+private local paths, credentials or policy contents. A disabled Web policy
+is NOT treated as verified allowlist coverage, even though it permits legacy
+HTTP traffic. Invalid/unavailable policy sources fail closed with generic,
+redacted errors.
+
+The executable exits **2** for a valid but permanently BLOCKED simulation,
+**3** for invalid source/policy, and has no activation-success exit. The caller
+supplies the peer and optional forwarded chain: **neither is measured from
+the actual management socket**. The installed service's effective revision,
+out-of-band console, safe rollback timer, emergency SSH path and genuine
+two-persona access are all separately unverified. This source candidate
+is **not installed/published** and performs no permission/network/host
+change, policy activation, restore or service restart.
+
+Synthetic native test: `python3 tests/test-v30-web-acl-preflight.py -q`
+validates direct allow/deny, spoofed/recognized proxy, expired/disabled
+policy, SHA256-pinned Foundation decision, report redaction and
+fail-closed CLI exit behavior; it is **not** an actual Web Browser/FUE.
 
 ## Read-only Administrator policy status
 

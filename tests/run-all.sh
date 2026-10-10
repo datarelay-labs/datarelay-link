@@ -281,6 +281,7 @@ python3 tests/test-v30-remote-service-management.py
 python3 tests/test-v30-emergency-cutoff.py
 python3 tests/test-v30-management-jobs.py
 python3 tests/test-v30-management-job-transport.py
+python3 tests/test-v30-contract-freeze.py
 python3 tests/test-v30-rollout-waves.py
 python3 tests/test-v30-host-admission-runtime.py
 python3 tests/test-v30-internet-admission-runtime.py
@@ -299,6 +300,11 @@ python3 tests/test-v30-audit-worker.py
 python3 tests/test-v30-audit-convergence.py
 python3 tests/test-v30-ai-audit-convergence.py
 python3 tests/test-v30-web-auth.py
+python3 tests/test-v30-foundation-totp-wheel.py
+python3 tests/test-v30-web-management-ingress.py
+python3 tests/test-v30-web-management-ingress-config.py
+python3 tests/test-v30-web-acl-preflight.py
+python3 tests/test-v30-web-management-ingress-ui.py
 python3 tests/test-v30-web-password-otp.py
 python3 tests/test-v30-web-staged-login-ui.py
 python3 tests/test-v30-web-config-history.py
