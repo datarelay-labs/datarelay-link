@@ -268,14 +268,30 @@ class ManagementJobEngine:
         max_targets: int = MAX_JOB_TARGETS,
         lease_seconds: int = DEFAULT_LEASE_SECONDS,
     ):
+        # Resource limits are configuration security boundaries. Reject
+        # coercion and unsafe ranges before creating or migrating SQLite state.
+        for name, value in (
+            ("max_active_jobs", max_active_jobs),
+            ("max_targets", max_targets),
+            ("lease_seconds", lease_seconds),
+        ):
+            if type(value) is not int or value < 1:
+                raise ControlPlaneError(
+                    "Management Job %s must be a positive integer." % name
+                )
+        if max_active_jobs > MAX_ACTIVE_JOBS:
+            raise ControlPlaneError(
+                "Management Job max_active_jobs exceeds the %d-job bound."
+                % MAX_ACTIVE_JOBS
+            )
         self.root = root
         self.conn = open_control_db(root)
         # One engine connection may be completed from several RPC workers.
         # Serialize only short SQLite state transitions; remote work never holds it.
         self._lock = threading.RLock()
-        self.max_active_jobs = max(1, int(max_active_jobs))
-        self.max_targets = max(1, min(int(max_targets), MAX_JOB_TARGETS))
-        self.lease_seconds = max(5, min(int(lease_seconds), MAX_JOB_TIMEOUT_SECONDS))
+        self.max_active_jobs = max_active_jobs
+        self.max_targets = min(max_targets, MAX_JOB_TARGETS)
+        self.lease_seconds = max(5, min(lease_seconds, MAX_JOB_TIMEOUT_SECONDS))
 
     def close(self) -> None:
         self.conn.close()

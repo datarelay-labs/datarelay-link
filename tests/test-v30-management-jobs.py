@@ -66,6 +66,29 @@ class V30ManagementJobTests(unittest.TestCase):
         ai_count = self.engine.conn.execute("SELECT COUNT(*) FROM ai_jobs").fetchone()[0]
         self.assertEqual(ai_count, 0)
 
+    def test_engine_rejects_invalid_queue_configuration_before_db_open(self):
+        from drlink_v30_jobs import MAX_ACTIVE_JOBS
+
+        cases = (
+            ("max_active_jobs", 0), ("max_active_jobs", -1),
+            ("max_active_jobs", True), ("max_active_jobs", 1.5),
+            ("max_active_jobs", "8"),
+            ("max_active_jobs", MAX_ACTIVE_JOBS + 1),
+            ("max_targets", 0), ("max_targets", -1),
+            ("max_targets", False), ("max_targets", 2.5),
+            ("max_targets", "8"),
+            ("lease_seconds", 0), ("lease_seconds", -3),
+            ("lease_seconds", True), ("lease_seconds", 30.5),
+            ("lease_seconds", "60"),
+        )
+        for field, invalid in cases:
+            with self.subTest(field=field, value=repr(invalid)):
+                fresh = Path(tempfile.mkdtemp(prefix="drlink-job-invalid-"))
+                with self.assertRaises(ControlPlaneError):
+                    with ManagementJobEngine(str(fresh), **{field: invalid}):
+                        pass
+                self.assertEqual(list(fresh.rglob("*")), [])
+
     def test_existing_schema_v3_additively_gains_job_tables(self):
         legacy_root = tempfile.mkdtemp(prefix="drlink-v30-existing-schema-")
         conn = open_control_db(legacy_root)
