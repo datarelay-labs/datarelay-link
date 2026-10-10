@@ -430,7 +430,11 @@ class WebhookStore:
 
     def claim_due(self, limit: int = 10) -> list[dict[str, Any]]:
         """Lease bounded due deliveries with a persisted state transition."""
-        size = max(1, min(int(limit), 25))
+        # Never claim even one event for a zero, negative, boolean or coerced
+        # limit. This is a direct mutable-store API, not only a worker option.
+        if type(limit) is not int or limit < 1:
+            raise ControlPlaneError("Webhook claim limit must be a positive integer.")
+        size = min(limit, 25)
         now = _now()
         stale = (datetime.now(timezone.utc) - timedelta(seconds=90)).replace(
             microsecond=0).isoformat().replace("+00:00", "Z")

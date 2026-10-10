@@ -260,6 +260,30 @@ class WebhookTests(unittest.TestCase):
             self.assertIn("webhook-delivery", {x["kind"] for x in result["items"]})
             self.assertEqual(result["signals"]["webhook_delivery"]["failed"], 1)
 
+    def test_invalid_direct_claim_limits_cannot_mutate_delivery_queue(self):
+        # The public worker rejects these inputs, and the underlying store
+        # must apply the same boundary before touching a lease or retry state.
+        with tempfile.TemporaryDirectory(prefix="drlink-wh-claim-bound-") as root:
+            with WebhookStore(root) as store:
+                sink = store.create(
+                    "bounded", "https://hooks.example.org/events", ["attention"]
+                )
+                event = store.enqueue(sink["id"], "attention", {"kind": "queued"})
+                for invalid in (0, -1, False, True, 1.5, "1", None):
+                    with self.subTest(limit=invalid):
+                        with self.assertRaises(ControlPlaneError):
+                            store.claim_due(invalid)
+                        row = store.conn.execute(
+                            "SELECT status,lease_token,last_attempt_at "
+                            "FROM management_webhook_outbox WHERE event_id=?",
+                            (event["event_id"],),
+                        ).fetchone()
+                        self.assertEqual(
+                            (row["status"], row["lease_token"], row["last_attempt_at"]),
+                            ("PENDING", "", None),
+                        )
+                self.assertEqual(len(store.claim_due(1)), 1)
+
     def test_existing_webhook_outbox_adds_lease_token_without_losing_events(self):
         from drlink_control_db import open_control_db
 
