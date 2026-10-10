@@ -823,6 +823,47 @@ function ManagementIngressReadOnly({operator}:{operator:any}){
   </section>;
 }
 
+function LinkConfigHistoryReadOnly({operator}:{operator:any}){
+  const [fromRevision,setFromRevision]=useState("1");
+  const [toRevision,setToRevision]=useState("2");
+  const [report,setReport]=useState<any>(null);
+  const [error,setError]=useState("");
+  if(operator.role!=="Admin")return null;
+  const validNumbers=/^[1-9][0-9]{0,9}$/;
+  const valid=validNumbers.test(fromRevision)&&validNumbers.test(toRevision)&&
+    Number(fromRevision)<Number(toRevision)&&Number(toRevision)<=2147483647;
+  async function compareRevisions(){
+    setReport(null);
+    setError("");
+    if(!valid){setError("Two ascending revision numbers are required.");return}
+    const params=new URLSearchParams({from_revision:fromRevision,to_revision:toRevision});
+    try{
+      setReport(await api("/api/v1/system/configuration/history?"+params.toString()));
+    }catch(e:any){setError(e.message||"History evidence unavailable")}
+  }
+  const evidence=report?.from_revision===Number(fromRevision)&&
+    report?.to_revision===Number(toRevision)?report:null;
+  return <section className="card dr-health-section" data-testid="drlink-config-history-counts" aria-label="Configuration history">
+    <div className="dr-section-head"><div>
+      <p className="dr-eyebrow">Administration · Configuration</p>
+      <h3>Configuration revision comparison</h3>
+      <p className="muted">Count-only, read-only category summary; not a full semantic diff. No settings are changed.</p>
+    </div></div>
+    <div className="toolbar">
+      <label>From revision <input type="number" value={fromRevision} min={1} max={2147483647} onChange={e=>{setFromRevision(e.target.value);setReport(null)}}/></label>
+      <label>To revision <input type="number" value={toRevision} min={1} max={2147483647} onChange={e=>{setToRevision(e.target.value);setReport(null)}}/></label>
+      <button className="secondary" disabled={!valid} onClick={compareRevisions}>Compare revisions</button>
+    </div>
+    {error&&<p className="muted" role="status">History evidence unavailable: {error}</p>}
+    {evidence&&<div>
+      <div className="grid"><Metric label="Changed categories" value={evidence.changed_categories}/><Metric label="Rollback supported" value="NO"/></div>
+      <Table items={(report?.changes||[]).map((x:any)=>({category:x.category,before_count:x.before_count,after_count:x.after_count}))}/>
+      <p className="muted">The number of objects changing does not prove individual configuration equality. Category counts are not a full semantic diff.</p>
+      <p className="muted">Rollback blocked: {(evidence.rollback_preview?.blockers||[]).join(", ")||"Safety evidence unavailable"}. No actual rollback or change can be applied here.</p>
+    </div>}
+  </section>;
+}
+
 function SystemPanel({data,operator}:{data:any,operator:any}){
   const [backupPath,setBackupPath]=useState("/var/lib/drlink/backups/");
   const [renewConfirmation,setRenewConfirmation]=useState(""),[restoreConfirmation,setRestoreConfirmation]=useState("");
@@ -1570,7 +1611,7 @@ function View({active,operator,onNavigate}:{active:string,operator:any,onNavigat
   if(active==="search")return <div><div className="toolbar"><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search resources and policy"/><button className="primary" onClick={()=>api("/api/v1/search?q="+encodeURIComponent(query)+"&limit=50").then(setData).catch((e:any)=>setError(e.message))}>Search</button></div>{data&&<Table items={(data.items||[]).map((x:any)=>({type:x.resource_type,id:x.id,name:x.name}))}/>}</div>;
   if(active==="overview"&&data)return <CommandCenter data={data} operator={operator} onNavigate={onNavigate}/>;
   if(active==="versions"&&data)return <><div className="grid"><Metric label="Server version" value={data.server_version}/><Metric label="Drift" value={data.drift_count}/><Metric label="Unknown" value={data.unknown_count}/></div><Table items={data.hosts||[]}/></>;
-  if(active==="system"&&data)return <><LinkFoundationAdministration operator={operator} onNavigate={onNavigate}/><ManagementIngressReadOnly operator={operator}/><SystemPanel data={data} operator={operator}/></>;
+  if(active==="system"&&data)return <><LinkFoundationAdministration operator={operator} onNavigate={onNavigate}/><ManagementIngressReadOnly operator={operator}/><LinkConfigHistoryReadOnly operator={operator}/><SystemPanel data={data} operator={operator}/></>;
   if(active==="objects"&&data)return <><ObjectsWorkspace data={data} onNavigate={onNavigate}/>{operator.role!=="Read Only"&&<GuidedObjectPanel/>}</>;
   if(active==="hosts"&&data)return <><ResourceWorkspace kind="host" items={data.items||[]} operator={operator} onNavigate={onNavigate}/>{operator.role!=="Read Only"&&<ManagedHostMetadataPanel/>}{operator.role==="Admin"&&<ManagedHostAdmissionPanel/>}{operator.role==="Admin"&&<ManagedHostLifecyclePanel/>}</>;
   if(active==="services"&&data)return <><ResourceWorkspace kind="service" items={data.items||[]} operator={operator} onNavigate={onNavigate}/>{operator.role!=="Read Only"&&<RemoteServicePanel/>}</>;

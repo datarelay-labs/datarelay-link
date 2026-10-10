@@ -136,6 +136,34 @@ scenarios:
       - "no SSH host ACL or policy application without separate authorization"
     release_gate: true
 
+  - id: DRLINK-PF12A-NONSECRET-CONFIG-HISTORY
+    name: Link native safe configuration category history and blocked rollback preview
+    level: integration
+    cost: medium
+    estimated_seconds: 65
+    timeout_seconds: 240
+    agent_default: true
+    domains:
+      - "server"
+      - "shared"
+    triggers:
+      - affected
+      - pr
+      - preflight
+    platforms:
+      - "linux"
+    command: "python3 tests/test-v30-web-config-history.py -q && python3 tests/test-v30-web-service.py V30WebServiceTests.test_pf12a_admin_only_config_history_is_count_only_and_never_rolls_back -q && python3 tests/test-v30-web-config-history-ui.py -q"
+    invariants:
+      - "product-owned SQLite revision snapshots are read with read-only Core authority only"
+      - "only bounded allowlisted category counts enter pinned Foundation diff_configurations"
+      - "actor, hostname, IP, token, object names and raw ConfigurationBundle never leave API"
+      - "count equality is NOT semantic equivalence and fingerprints cover only count projections"
+      - "rollback preview remains blocked without independent Admin/MFA/backup/recovery/audit authority"
+      - "current Admin only GET; anonymous and Read Only denied before database access"
+      - "legacy/malformed/duplicate-key YAML or unavailable snapshots fail closed with generic errors"
+      - "Web package optional install/remove does not alter Core state, credentials or policy"
+    release_gate: true
+
   - id: DRLINK-CLI-FEATURE-SCENARIO-RELEASE
     name: CLI feature/operator workflow reconciliation evidence validation
     level: static
