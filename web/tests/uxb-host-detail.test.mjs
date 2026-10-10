@@ -141,3 +141,15 @@ test("Host list and detail heading use sanitized bounded visible names",()=>{
  assert.match(resource,/hostVisibleIdentity\(item\)\.primary/);
  assert.match(resource,/hostVisibleIdentity\(selected\)\.primary/);
 });
+
+test("Host/Service inventory exposes discoverable inspect actions while keeping table semantics",()=>{
+ const source=readFileSync(join(root,"src","main.tsx"),"utf8");
+ const resource=source.split("function ResourceWorkspace(",2)[1]?.split("function UsersPanel(",1)[0]||"";
+ assert.match(resource,/Inspect Managed Host /);
+ assert.match(resource,/Inspect Remote Service /);
+ assert.match(resource,/stopPropagation\(\);setSelected\(item\)/);
+ assert.match(resource,/<button type="button" className="dr-text-action"/);
+ assert.match(resource,/aria-label=\{"Inspect Managed Host "/);
+ assert.match(resource,/aria-label=\{"Inspect Remote Service "/);
+ assert.match(resource,/onKeyDown=\{e=>\{if\(e.key==="Enter"/);
+});
