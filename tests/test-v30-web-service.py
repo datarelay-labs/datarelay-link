@@ -129,6 +129,61 @@ class V30WebServiceTests(unittest.TestCase):
         self.assertNotIn("session_token", json.dumps(payload))
         return payload
 
+    def test_pf11b_admin_only_connectivity_is_redacted_and_no_fixture_host_probe(self):
+        endpoint = "/api/v1/system/connectivity"
+        self.assertEqual(self.request("GET", endpoint)[0], 401)
+        self.login()
+        import drlink_mcp_tls as native_tls
+        from unittest import mock
+        plane = ControlPlane(self.tmp)
+        try:
+            state = native_tls.default_state()
+            state["hostname"] = "mcp.example.test"
+            state["mode"] = native_tls.MODE_PRIVATE_CA
+            native_tls.save_state(plane, state)
+        finally:
+            plane.close()
+        with mock.patch(
+            "drlink_web_connectivity._probe_dns",
+            side_effect=AssertionError("synthetic Web must not probe real DNS"),
+        ) as dns, mock.patch(
+            "drlink_web_connectivity._probe_ntp",
+            side_effect=AssertionError("synthetic Web must not run host commands"),
+        ) as ntp:
+            code, _, report = self.request("GET", endpoint)
+            self.assertEqual(code, 200, report)
+            self.assertEqual(report["status"], "unknown")
+            self.assertEqual(
+                [row["area"] for row in report["findings"]],
+                ["dns", "ntp", "proxy", "trusted_ca", "certificate"],
+            )
+            self.assertFalse(report["all_required_checks_verified"])
+            self.assertTrue(report["read_only"])
+            self.assertFalse(report["authoritative_mutation"])
+            self.assertFalse(report["proxy_and_ca_trust_verified"])
+            encoded = json.dumps(report)
+            self.assertNotIn("mcp.example.test", encoded)
+            self.assertNotIn("http://", encoded)
+            self.assertNotIn("private_key", encoded)
+            dns.assert_not_called()
+            ntp.assert_not_called()
+        with WebAuthService(self.tmp) as auth:
+            auth.create_operator_local(
+                username="viewer", role="Read Only", password="ReaderPass1",
+            )
+        response, headers, _ = self.request(
+            "POST", "/api/v1/auth/login/start",
+            {"username": "viewer", "password": "ReaderPass1"},
+        )
+        self.assertEqual(response, 200)
+        self.cookie = headers["set-cookie"].split(";", 1)[0]
+        with mock.patch(
+            "drlink_web_service.collect_link_connectivity",
+            side_effect=AssertionError("non-admin must not run probes"),
+        ) as forbidden:
+            self.assertEqual(self.request("GET", endpoint)[0], 403)
+            forbidden.assert_not_called()
+
     def test_admin_management_ingress_status_is_read_only_and_role_guarded(self):
         # The shared Web ACL must be inspectable by a genuine current Admin
         # session, but not by anonymous or lower-privilege Web operators.

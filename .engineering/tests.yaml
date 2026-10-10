@@ -133,6 +133,34 @@ scenarios:
       - "no SSH host ACL or policy application without separate authorization"
     release_gate: true
 
+  - id: DRLINK-PF11B-NATIVE-CONNECTIVITY
+    name: Link real product-sourced DNS and clock evidence through pinned PF-11B diagnostics
+    level: integration
+    cost: medium
+    estimated_seconds: 60
+    timeout_seconds: 240
+    agent_default: true
+    domains:
+      - "server"
+      - "shared"
+    triggers:
+      - affected
+      - pr
+      - preflight
+    platforms:
+      - "linux"
+    command: "python3 tests/test-v30-web-connectivity.py -q && python3 tests/test-v30-web-service.py V30WebServiceTests.test_pf11b_admin_only_connectivity_is_redacted_and_no_fixture_host_probe -q && python3 tests/test-v30-web-connectivity-ui.py -q"
+    invariants:
+      - "product-configured MCP TLS hostname alone is eligible for bounded DNS lookup; no caller-host SSRF"
+      - "real NTP sync must include measured clock offset before health PASS and high drift blocks TOTP readiness"
+      - "unobserved or stale evidence remains UNKNOWN; proxy/enterprise CA not marked trusted without product proof"
+      - "actual Web route requires current Admin session; lower roles cannot activate source probes"
+      - "no hostnames, certificate/key bytes, proxy URLs, secrets or arbitrary native diagnostic output returned"
+      - "synthetic product roots do not query live DNS or execute host time commands"
+      - "single exact pinned Foundation wheel used; optional Web install owns module without base Core dependency"
+      - "no host network settings, TLS, SSH, credentials, package update, running service or DB mutation"
+    release_gate: true
+
   - id: DRLINK-CLI-FEATURE-SCENARIO-RELEASE
     name: CLI feature/operator workflow reconciliation evidence validation
     level: static

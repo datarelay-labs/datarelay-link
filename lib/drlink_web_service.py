@@ -22,6 +22,7 @@ from drlink_foundation_security import (
 )
 from drlink_management_core import ManagementActor
 from drlink_management_service import ManagementQueryService
+from drlink_web_connectivity import collect_link_connectivity
 from drlink_web_management_policy import load_management_ingress
 from drlink_management_web_adapter import ManagementWebApiAdapter
 from drlink_web_auth import ROLE_ADMIN, WebAuthService, WebMfaEnrollmentChallenge, WebMfaLoginChallenge, WebPrincipal
@@ -32,6 +33,7 @@ SESSION_COOKIE = "drlink_session"
 MAX_REQUEST_BYTES = 64 * 1024
 WEB_API_PREFIX = "/api/v1"
 ADMIN_WEB_INGRESS_STATUS_PATH = "/api/v1/admin/management-ingress/status"
+ADMIN_CONNECTIVITY_STATUS_PATH = "/api/v1/system/connectivity"
 
 CSP = (
     "default-src 'self'; "
@@ -362,6 +364,10 @@ class WebApplication:
         principal: WebPrincipal,
     ) -> dict[str, Any]:
         actor = self._actor(principal)
+        if path == ADMIN_CONNECTIVITY_STATUS_PATH:
+            if principal.role != ROLE_ADMIN or "management-diagnose" not in actor.permissions:
+                raise ControlPlaneError("Administrator diagnosis permission required.")
+            return collect_link_connectivity(self.root)
         if path == ADMIN_WEB_INGRESS_STATUS_PATH:
             if principal.role != ROLE_ADMIN:
                 raise ControlPlaneError("Administrator role required.")
@@ -1178,7 +1184,9 @@ class DrlinkWebHandler(BaseHTTPRequestHandler):
             if principal is None:
                 self._error(401, "authentication required")
                 return
-            if parsed.path == ADMIN_WEB_INGRESS_STATUS_PATH and principal.role != ROLE_ADMIN:
+            if parsed.path in (
+                ADMIN_WEB_INGRESS_STATUS_PATH, ADMIN_CONNECTIVITY_STATUS_PATH,
+            ) and principal.role != ROLE_ADMIN:
                 self._error(403, "Administrator role required.")
                 return
             try:
