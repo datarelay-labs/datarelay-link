@@ -40,7 +40,7 @@ scenarios:
     release_gate: true
 
   - id: DRLINK-PF5B-B1-LINK-ADMIN-CONSUMER
-    name: Exact B1 Link Administration action and backup validation conformance
+    name: Exact B1 Link Administration backup and audit-retention role parity
     level: integration
     cost: cheap
     agent_default: true
@@ -55,8 +55,8 @@ scenarios:
     command: "cd web && npm run test:administration && cd .. && python3 tests/test-v30-web-saas-ux.py -q"
     invariants:
       - "one SHA-pinned Foundation B1 UI/Testkit package family and nine four-group tasks"
-      - "actual Link Web dispatch matches product-owned read-only backup validation action"
-      - "generic configuration import never advertised as supported and backup restore remains Admin/Core guarded"
+      - "actual Link Web dispatch matches product-owned read-only backup and Audit retention action targets"
+      - "generic import/global retention unsupported; backup restore and audit cleanup remain Admin/Core guarded"
       - "unrecognized actor cannot obtain a task action; Browser and Full User E2E gates remain separate"
     release_gate: true
 

@@ -600,6 +600,7 @@ function LinkFoundationAdministration({
         if(admin)onNavigate?.("users","administration");
         break;
       case "link.audit":onNavigate?.("audit","observability");break;
+      case "link.retention":onNavigate?.("audit","observability");break;
       case "link.health":onNavigate?.("health","observability");break;
       case "link.backup":
         // Only navigate to the existing read-only backup validator; all

@@ -33,7 +33,15 @@ export function createLinkFoundationAdministrationTasks(role:string){
     "core.password":unavailable,
     "core.timezone":unavailable,
     "core.network":unavailable,
-    "core.retention":unavailable,
+    "core.retention":{
+      // Only Audit retention is implemented. A general per-product data
+      // cleanup scheduler is not available; native Core owns any policy edit
+      // or deletion, independently guarded by Admin-only permissions.
+      availability:"read_only",
+      access:readAccess,
+      notes:"Audit retention status only; general data retention scheduler is unavailable. Admin policy changes and cleanup are separately Core-authorized.",
+      ...(authenticated?{target:{kind:"action" as const,actionId:"link.retention"}}:{})
+    },
     "core.backup-import":{
       // Link provides Core-owned backup validation, not the generic shared
       // configuration import editor. A restore remains Admin-only, separately

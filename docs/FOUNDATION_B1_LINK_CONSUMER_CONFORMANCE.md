@@ -61,6 +61,24 @@ the unchanged canonical four groups. Existing Web button role checks and
 native Core validation/restore admission are unchanged; this is Web
 presentation and navigation only, not a backup/restore proof.
 
+## B2 Audit Retention presentation parity (2026-10-10)
+
+The canonical shared `core.retention` task also appeared unavailable,
+even though Link's existing Audit workspace already exposes
+`GET /api/v1/audit/retention` and numeric retention status. The Link
+Core enforces `management-read` for status, while changing or
+executing audit cleanup requires Admin plus `management-config`;
+the Web hides those mutations from lower roles.
+
+The shared Retention task now uses a *read-only Audit retention* projection
+and its already registered `link.audit` destination. The card explicitly
+says that a **general data retention scheduler is unavailable**; it is
+not a shortcut that grants cleanup. No new route, API, role, deletion,
+configuration change or system-wide retention promise was added.
+Canonical group/task labels and source-pinned packages remain unchanged.
+Admin/Operator/Read Only see existing Audit retention under their own
+native product permissions; unknown roles have no actionable target.
+
 ## Evidence and remaining B2 release gates
 
 - Offline clean Link Web npm installation (no browser/Playwright package install): **PASS**.

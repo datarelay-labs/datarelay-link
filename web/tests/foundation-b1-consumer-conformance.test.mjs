@@ -38,7 +38,7 @@ function actualLinkActionIds() {
   const actions=[...section.matchAll(/case ["'](link\.[a-z0-9._-]+)["']\s*:/g)].map(match=>match[1]);
   assert.equal(new Set(actions).size,actions.length);
   assert.deepEqual(actions.sort(),[
-    "link.users","link.audit","link.health","link.certificate","link.backup"
+    "link.users","link.audit","link.retention","link.health","link.certificate","link.backup"
   ].sort());
   return actions;
 }
@@ -50,9 +50,9 @@ function preflight(role, registeredActionIds=actualLinkActionIds()) {
     registeredPaths:[],
     registeredActionIds,
     requiredCoreTaskIds:role==="Admin"
-      ? ["core.users","core.https","core.audit","core.health","core.backup-import"]
+      ? ["core.users","core.https","core.audit","core.health","core.retention","core.backup-import"]
       : role==="Operator"||role==="Read Only"
-        ? ["core.https","core.audit","core.health","core.backup-import"] : []
+        ? ["core.https","core.audit","core.health","core.retention","core.backup-import"] : []
   });
 }
 
@@ -90,6 +90,25 @@ test("unrecognized or missing product role never creates an actionable Administr
     );
     assert.deepEqual(preflight(role),{ok:true,findings:[]});
   }
+});
+
+test("retention task exposes only existing Audit retention, not a global data scheduler", () => {
+  const source=readFileSync(join(webRoot,"src","main.tsx"),"utf8");
+  assert.ok(source.includes('if(active==="audit")return <AuditExplorer'));
+  assert.ok(source.includes('api("/api/v1/audit/retention")'));
+  assert.ok(source.includes('case "link.retention":onNavigate?.("audit","observability");break;'));
+  assert.ok(source.includes('operator.role==="Admin"&&<div className="dr-retention-config">'));
+  for(const role of ["Admin","Operator","Read Only"]){
+    const task=createTasks(role).find(item=>item.id==="core.retention");
+    assert.equal(task.availability,"read_only");
+    assert.equal(task.access,"view");
+    assert.deepEqual(task.target,{kind:"action",actionId:"link.retention"});
+    assert.match(task.notes,/audit retention/i);
+    assert.match(task.notes,/general.*unavailable/i);
+  }
+  const unknown=createTasks("Unknown").find(item=>item.id==="core.retention");
+  assert.equal(unknown.access,"none");
+  assert.equal(unknown.target,undefined);
 });
 
 test("backup task is read-only and backed by existing Link native validator", () => {

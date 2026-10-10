@@ -457,10 +457,17 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn('actionId:"link.users"', users)
         self.assertIn('if(admin)onNavigate?.("users","administration")', component)
         self.assertIn('showUnavailable onOpen={openTask}', component)
-        for name in (
-            "core.password", "core.timezone", "core.network", "core.retention"
-        ):
+        for name in ("core.password", "core.timezone", "core.network"):
             self.assertIn(f'"{name}":unavailable', ADMIN_SOURCE)
+        retention = ADMIN_SOURCE.split('"core.retention":{', 1)[1].split('    },', 1)[0]
+        self.assertIn('availability:"read_only"', retention)
+        self.assertIn('access:readAccess', retention)
+        self.assertIn('Audit retention status only', retention)
+        self.assertIn('general data retention scheduler is unavailable', retention)
+        self.assertIn('actionId:"link.retention"', retention)
+        self.assertIn('case "link.retention":onNavigate?.("audit","observability");break;', component)
+        self.assertIn('operator.role==="Admin"&&<div className="dr-retention-config">', SOURCE)
+        self.assertIn('api("/api/v1/audit/retention")', SOURCE)
         backup = ADMIN_SOURCE.split('"core.backup-import":{', 1)[1].split('    },', 1)[0]
         self.assertIn('availability:"read_only"', backup)
         self.assertIn('access:readAccess', backup)
