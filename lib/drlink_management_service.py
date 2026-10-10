@@ -1348,10 +1348,14 @@ class ManagementQueryService:
             # Compare actual UTC instants, not lexical text. Invalid timestamps
             # also need operator review as UNKNOWN_EVIDENCE even when their
             # unparseable prefix sorts after a normal ISO-8601 cutoff.
+            # A future heartbeat is evidence of clock skew, not proof of
+            # recent activity. Classify it UNKNOWN_EVIDENCE in the read-only
+            # projection rather than silently treating the Host as healthy.
             "FROM clients WHERE last_seen IS NULL "
             "OR julianday(last_seen) IS NULL "
-            "OR julianday(last_seen)<julianday(?) ORDER BY id LIMIT 100",
-            (stale_before,),
+            "OR julianday(last_seen)<julianday(?) "
+            "OR julianday(last_seen)>julianday(?) ORDER BY id LIMIT 100",
+            (stale_before, self._attention_utc_text(current)),
         ):
             observed = self._parse_attention_timestamp(str(row["last_seen"] or ""))
             age_days = (

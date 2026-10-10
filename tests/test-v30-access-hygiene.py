@@ -53,6 +53,8 @@ class AccessHygieneTests(unittest.TestCase):
             plane.upsert_client("unknown-age", hostname="unknown-age")
             plane.upsert_client("invalid-age", hostname="invalid-age")
             plane.upsert_client("invalid-late", hostname="invalid-late")
+            plane.upsert_client("future-age", hostname="future-age")
+            plane.upsert_client("recent-age", hostname="recent-age")
             plane.conn.execute(
                 "UPDATE clients SET last_seen=? WHERE id=?",
                 (last_seen.isoformat().replace("+00:00", "Z"), "known-age"),
@@ -69,6 +71,16 @@ class AccessHygieneTests(unittest.TestCase):
             # from the review just because it sorts after the UTC cutoff.
             plane.conn.execute(
                 "UPDATE clients SET last_seen='zz-not-a-timestamp' WHERE id='invalid-late'"
+            )
+            # A valid but impossible future observation also has unknown
+            # evidence quality, not a healthy or recently active Host.
+            plane.conn.execute(
+                "UPDATE clients SET last_seen=? WHERE id='future-age'",
+                ((now + timedelta(days=3)).isoformat(),),
+            )
+            plane.conn.execute(
+                "UPDATE clients SET last_seen=? WHERE id='recent-age'",
+                ((now - timedelta(days=1)).isoformat(),),
             )
             plane.conn.commit()
             revision = plane.current_revision()
@@ -90,6 +102,9 @@ class AccessHygieneTests(unittest.TestCase):
         self.assertEqual(by_id["invalid-late"]["age_days"], None)
         self.assertEqual(by_id["invalid-late"]["evidence_quality"], "UNKNOWN_EVIDENCE")
         self.assertEqual(by_id["invalid-late"]["finding_status"], "UNKNOWN_EVIDENCE")
+        self.assertEqual(by_id["future-age"]["evidence_quality"], "UNKNOWN_EVIDENCE")
+        self.assertEqual(by_id["future-age"]["age_days"], None)
+        self.assertNotIn("recent-age", by_id)
         self.assertTrue(result["read_only"])
         self.assertFalse(result["auto_mutation"])
         reader = ControlPlane(root, read_only=True)
