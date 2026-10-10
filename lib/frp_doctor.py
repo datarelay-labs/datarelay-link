@@ -3321,8 +3321,20 @@ def check_agent_runtime_projection(report, paths, state):
         return
 
     mismatch = []
+    degraded = []
     for row in rows:
-        if str(row['status'] or '').upper() != 'HEALTHY' and not int(row['runtime_verified'] or 0):
+        name = str(row['name'] or '?')
+        status = str(row['status'] or '').upper()
+        allocated = (
+            int(row['enabled'] or 0)
+            and not int(row['pending_allocation'] or 0)
+            and not int(row['delete_pending'] or 0)
+            and bool(coerce_port(row['endpoint_port']))
+        )
+        if allocated and (status == 'DEGRADED' or
+                          (status == 'HEALTHY' and not int(row['runtime_verified'] or 0))):
+            degraded.append(name)
+        if status != 'HEALTHY' and not int(row['runtime_verified'] or 0):
             continue
         # A current healthy report demands one matching enabled proxy with
         # the same public port. Pending, deleted and disabled rows never pass.
@@ -3350,6 +3362,17 @@ def check_agent_runtime_projection(report, paths, state):
             'missing or mismatched proxy: %s' % ', '.join(mismatch[:10]),
             'Inspect the Agent runtime and use sudo drlink system synchronize for recovery. '
             'Validate public TCP/SSH traffic separately.',
+            'runtime',
+        )
+    if degraded:
+        report.add(
+            'agent_remote_services_degraded', WARN,
+            'Allocated Remote Services remain DEGRADED or runtime-unverified',
+            'unverified: %s' % ', '.join(degraded[:10]),
+            'Inspect with sudo drlink show remote-services and '
+            'sudo drlink show remote-service <NAME>; run sudo drlink system diagnostics. '
+            'Consider sudo drlink system synchronize only after reviewing its impact; '
+            'verify public TCP/SSH traffic separately.',
             'runtime',
         )
 

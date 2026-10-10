@@ -20,7 +20,7 @@ import frp_doctor as doctor
 
 class AgentProjectionDiagnostics(unittest.TestCase):
     def _checks(self, *, healthy=True, rendered=False, matching_port=True,
-                legacy_seed=False, old_schema=False):
+                legacy_seed=False, old_schema=False, verified=None, enabled=True):
         with tempfile.TemporaryDirectory(prefix="drlink-doctor-runtime-") as temp:
             base = Path(temp, "etc/frp")
             base.mkdir(parents=True)
@@ -65,9 +65,10 @@ class AgentProjectionDiagnostics(unittest.TestCase):
                         "(name,destination,service_object,enabled,status,endpoint_host,"
                         "endpoint_port,pending_allocation,delete_pending,pool_class,"
                         "reason,updated_at,runtime_verified,enrollment_seed) "
-                        "VALUES ('ssh','this-host','ssh',1,?,'203.0.113.10',6001,"
+                        "VALUES ('ssh','this-host','ssh',?,?,'203.0.113.10',6001,"
                         "0,0,'normal','', '2026-10-09T00:00:00Z',?,?)",
-                        ("HEALTHY" if healthy else "DEGRADED", 1 if healthy else 0,
+                        (1 if enabled else 0, "HEALTHY" if healthy else "DEGRADED",
+                         1 if (healthy if verified is None else verified) else 0,
                          1 if legacy_seed else 0),
                     )
                     plane.conn.commit()
@@ -95,6 +96,26 @@ class AgentProjectionDiagnostics(unittest.TestCase):
     def test_degraded_missing_dependency_does_not_claim_false_healthy(self):
         checks = self._checks(healthy=False, rendered=False)
         self.assertNotIn("agent_runtime_projection", checks)
+
+    def test_allocated_degraded_remote_service_is_visible_as_doctor_warning(self):
+        # A Doctor "Overall PASS" must not conceal a service users see as DEGRADED.
+        checks = self._checks(healthy=False, rendered=True)
+        self.assertIn("agent_remote_services_degraded", checks)
+        finding = checks["agent_remote_services_degraded"]
+        self.assertEqual(finding["status"], doctor.WARN)
+        self.assertIn("ssh", finding["detail"])
+        self.assertIn("show remote-service <NAME>", finding["recommendation"])
+        self.assertIn("verify public TCP/SSH traffic separately", finding["recommendation"])
+
+    def test_healthy_but_unverified_proxy_does_not_count_as_fully_healthy(self):
+        checks = self._checks(healthy=True, verified=False, rendered=True)
+        self.assertIn("agent_remote_services_degraded", checks)
+        self.assertEqual(checks["agent_remote_services_degraded"]["status"], doctor.WARN)
+        self.assertNotIn("agent_runtime_projection", checks)
+
+    def test_disabled_degraded_remote_service_does_not_warn(self):
+        checks = self._checks(healthy=False, enabled=False, rendered=False)
+        self.assertNotIn("agent_remote_services_degraded", checks)
 
     def test_enrollment_seed_legacy_proxy_id_is_legitimate(self):
         # Fresh bootstrap can initially retain the seed proxy id, even
