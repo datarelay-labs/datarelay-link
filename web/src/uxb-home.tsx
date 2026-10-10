@@ -111,6 +111,28 @@ const steps=[
   {title:"Test and explain the connection",description:"A saved ALLOW is not proof of target reachability. Ask Core for the decision.",route:"access",group:"access",action:"Test a connection"},
 ] as const;
 
+/** A missing/denied/unverified prerequisite must never be skipped in the
+ * suggested task merely because a later count happens to be zero.
+ * Read Only users receive inspect actions, never edit/issue prompts.
+ */
+export function nextFirstConnectionAction(states:TaskState[],role:string){
+  const host=states[1]||"Unknown";
+  if(host==="Unknown"||host==="Needs approval"||host==="Needs verification")
+    return {title:host==="Needs approval"?"Review pending Agent approvals":"Verify Managed Host readiness",
+      route:"hosts",group:"connections",action:"Inspect Servers & Agents"};
+  if(host==="Not started")return role==="Admin"?steps[1]:{
+    title:"Check available Managed Hosts",route:"hosts",group:"connections",action:"Inspect Servers & Agents"};
+  const service=states[2]||"Unknown";
+  if(service!=="Configured · verify")
+    return {title:"Review the published services",route:"services",group:"connections",
+      action:role==="Read Only"?"Review published services":"Publish or inspect one service"};
+  const rule=states[3]||"Unknown";
+  if(rule!=="Configured · verify")
+    return {title:"Review the access rules",route:"policies",group:"access",
+      action:role==="Read Only"?"Inspect access rules":"Set or inspect access rules"};
+  return steps[4];
+}
+
 export function FirstUseHome({data,operator,api,onNavigate}:{
   data:any,operator:any,api:(path:string)=>Promise<any>,
   onNavigate?:(id:string,groupId?:string,context?:any)=>void
@@ -133,9 +155,7 @@ export function FirstUseHome({data,operator,api,onNavigate}:{
   const newInstall=showFreshHomeWelcome(data,loadState);
   const pending=observedApprovalQueueCount(data,inventory,inventoryComplete===true);
   const cards=steps.map((item,i)=>({...item,status:stage[i]}));
-  const next=operator?.role==="Admin"?
-    cards.find((x,i)=>i>0 && (x.status==="Not started"||x.status==="Needs approval"||x.status==="Needs verification"))||cards[4]:
-    cards.find((x,i)=>i>0&&x.status==="Needs verification")||cards[4];
+  const next=nextFirstConnectionAction(stage,String(operator?.role||"Read Only"));
   return <section className="card dr-uxb-home" data-testid="uxb-first-connection">
     <div className="dr-section-head"><div><p className="dr-eyebrow">Get started · Core-observed progress</p>
       <h2>{newInstall?"Your first protected connection starts here":"What would you like to do next?"}</h2>

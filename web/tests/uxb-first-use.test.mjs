@@ -105,6 +105,21 @@ test("Home welcome requires confirmed empty Core across Hosts, Services and ever
   policies:{ai:{total:0},remote:{enabled:0}}}},"ready"),false);
  assert.equal(home.showFreshHomeWelcome(null,"ready"),false);
 });
+test("Home next action never skips UNKNOWN or unapproved Agent prerequisites",()=>{
+ const ready="Configured · verify",unknown="Unknown",todo="Not started",verify="Needs verification";
+ assert.equal(home.nextFirstConnectionAction([ready,unknown,todo,todo,verify],"Admin").route,"hosts");
+ assert.equal(home.nextFirstConnectionAction([ready,unknown,todo,todo,verify],"Read Only").route,"hosts");
+ assert.equal(home.nextFirstConnectionAction([ready,"Needs approval",todo,todo,verify],"Admin").route,"hosts");
+ assert.equal(home.nextFirstConnectionAction([ready,todo,todo,todo,verify],"Admin").route,"enrollments");
+ assert.equal(home.nextFirstConnectionAction([ready,todo,todo,todo,verify],"Operator").route,"hosts");
+ assert.equal(home.nextFirstConnectionAction([ready,verify,todo,todo,verify],"Admin").route,"hosts");
+ assert.equal(home.nextFirstConnectionAction([ready,ready,todo,todo,verify],"Admin").route,"services");
+ const readOnlySvc=home.nextFirstConnectionAction([ready,ready,todo,todo,verify],"Read Only");
+ assert.equal(readOnlySvc.route,"services");
+ assert.match(readOnlySvc.action,/Review|Inspect/);
+ assert.equal(home.nextFirstConnectionAction([ready,ready,ready,todo,verify],"Read Only").route,"policies");
+ assert.equal(home.nextFirstConnectionAction([ready,ready,ready,ready,verify],"Admin").route,"access");
+});
 test("Approval queue prioritizes the complete Core overview over an incomplete 100-Host page",()=>{
  const data={overview:{managed_hosts:{total:130,pending_approval:7,approved:120},
    remote_services:{total:2,enabled:1},policies:{ai:{total:0,enabled:0}}}};
