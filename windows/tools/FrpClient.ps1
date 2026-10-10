@@ -1296,7 +1296,8 @@ switch ($Command) {
             }
             if ([string]$values['SOURCE_HEAD'] -notmatch '^[0-9a-f]{40}$') {
                 Write-Host 'Source provenance is not verified. This Agent Host cannot qualify as an exact release candidate.'
-                Write-Host 'Next action: Obtain the matching SHA256-verified Windows installer from the DRLink Server administrator and refresh the Agent management tools using the supported installer path without re-enrollment. Then run system version again. Do not assign Source HEAD manually.'
+                Write-Host 'Next action: Obtain a verified immutable Windows source package and set FRP_WINDOWS_PROJECT_SRC to its windows/ directory. Run drlink system update product, then run drlink system version again. See docs/UPGRADE.md.'
+                Write-Host 'Do not rerun Zero-Touch, re-enroll, or edit provenance files. If Source HEAD remains UNKNOWN, keep release qualification on HOLD until source provenance is independently verified.'
             }
         } else {
             Write-Host 'Data Relay Link Windows Agent Host'
