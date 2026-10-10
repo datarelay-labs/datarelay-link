@@ -15,6 +15,7 @@ import re
 
 HEX64 = re.compile(r"^[0-9a-f]{64}$")
 HEX40 = re.compile(r"^[0-9a-f]{40}$")
+UUID36 = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 OUTCOMES = {
     "PASS", "FAIL", "PARTIAL", "BLOCKED_TOOLING",
     "BLOCKED_ENVIRONMENT", "BLOCKED", "NOT_RUN", "NOT_APPLICABLE",
@@ -28,7 +29,9 @@ FIELDS = (
     "DIRECT_SOURCE_HEAD", "AI_SOURCE_HEAD",
     "DIRECT_RESULT", "AI_RESULT", "FINAL_RESULT",
     "DIRECT_EVIDENCE", "AI_FIRST_ANSWER_EVIDENCE",
-    "AI_FIRST_ANSWER_SHA256", "AI_OPERATOR_EVIDENCE", "BLOCK_REASON",
+    "AI_FIRST_ANSWER_SHA256", "AI_OPERATOR_EVIDENCE",
+    "DIRECT_CODEX_EVENTS", "AI_OPERATOR_CODEX_EVENTS",
+    "AI_ADVISER_CODEX_EVENTS", "BLOCK_REASON",
 )
 
 
@@ -54,6 +57,54 @@ def evidence_file(root: Path, ref: str) -> Path | None:
     return p
 
 
+def check_codex_actor_events(
+    evidence_root: Path, path_ref: str, expected_thread_id: str,
+    *, role: str,
+) -> list[str]:
+    """Check *raw* Codex CLI JSONL receipts, not a self-asserted role label.
+
+    Structural event checks cannot prove knowledge isolation or actual product
+    behavior. In particular an AI adviser may not access ANY tool or file.
+    """
+    path = evidence_file(evidence_root, path_ref)
+    if path is None:
+        return ["missing/outside/unsafe Codex actor event log"]
+    if path.stat().st_size > 64 * 1024 * 1024:
+        return ["Codex event log exceeds per-actor bound"]
+    thread_ids: list[str] = []
+    completed = 0
+    forbidden_tools: list[str] = []
+    try:
+        with path.open(encoding="utf-8") as f:
+            for number, line in enumerate(f, 1):
+                if number > 500000:
+                    return ["Codex event stream too large"]
+                event = json.loads(line)
+                if not isinstance(event, dict):
+                    return ["Codex event is not an object"]
+                if event.get("type") == "thread.started":
+                    thread_ids.append(str(event.get("thread_id") or ""))
+                if event.get("type") == "turn.completed":
+                    completed += 1
+                item = event.get("item") or {}
+                if (role == "AI_ADVISER" and isinstance(item, dict)
+                        and item.get("type") in (
+                            "command_execution", "mcp_tool_call",
+                            "file_change", "web_search", "browser_action",
+                        )):
+                    forbidden_tools.append(str(item["type"]))
+    except (OSError, ValueError, TypeError, UnicodeError) as exc:
+        return ["Codex actor event log invalid: " + type(exc).__name__]
+    issues: list[str] = []
+    if thread_ids != [expected_thread_id]:
+        issues.append("Codex thread.started ID does not match recorded actor")
+    if completed < 1:
+        issues.append("Codex actor lacks turn.completed")
+    if forbidden_tools:
+        issues.append("Codex AI Adviser used tools: " + ",".join(sorted(set(forbidden_tools))))
+    return issues
+
+
 def evaluate(
     rows: list[dict], *,
     evidence_root: Path,
@@ -63,6 +114,7 @@ def evaluate(
 ) -> dict:
     problems: list[str] = []
     seen_pairs: set[str] = set()
+    actor_threads_in_other_pairs: dict[str, str] = {}
     present_scenarios: set[str] = set()
     present_features: set[str] = set()
     fresult = {"PASS": 0, "FAIL": 0, "PARTIAL": 0, "BLOCKED": 0, "N_A": 0}
@@ -129,8 +181,25 @@ def evaluate(
                 "AUDITOR_CODEX_THREAD", "DIRECT_CODEX_THREAD",
                 "AI_OPERATOR_CODEX_THREAD", "AI_ADVISER_CODEX_THREAD",
             )]
+            if any(not UUID36.fullmatch(ident) for ident in ids):
+                problems.append(prefix + ": invalid Codex thread identifier format")
             if any(not ident for ident in ids) or len(set(ids)) != 4:
                 problems.append(prefix + ": missing/identical Codex actor contexts")
+            for ident in ids[1:]:
+                prior = actor_threads_in_other_pairs.get(ident)
+                if prior is not None and prior != pair:
+                    problems.append(prefix + ": Codex actor thread reused across pairs")
+                actor_threads_in_other_pairs[ident] = pair
+            for role, field, thread in (
+                ("DIRECT_USER", "DIRECT_CODEX_EVENTS", ids[1]),
+                ("AI_OPERATOR", "AI_OPERATOR_CODEX_EVENTS", ids[2]),
+                ("AI_ADVISER", "AI_ADVISER_CODEX_EVENTS", ids[3]),
+            ):
+                for issue in check_codex_actor_events(
+                    evidence_root, str(row.get(field) or ""), thread,
+                    role=role,
+                ):
+                    problems.append(prefix + ": " + field + " " + issue)
             if not row.get("ROLE"):
                 problems.append(prefix + ": missing role")
             for key in ("DIRECT_EVIDENCE", "AI_FIRST_ANSWER_EVIDENCE",

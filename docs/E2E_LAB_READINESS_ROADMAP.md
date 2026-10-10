@@ -57,6 +57,8 @@ The official `docs/FULL_USER_E2E_SCENARIOS.md` is the required 4,283-line full u
 
 **Acceptance:** `AI_MIRRORS_WITHOUT_DIRECT_BASELINE=0`, `DIRECT_USE_CASES_WITHOUT_AI_MIRROR=0`, documented knowledge isolation, prospective evidence intact, all in-scope complete once user states truly verified.
 
+**Dual-role dispatch hard gate:** `tools/codex_fcs_actor_dispatch.py` (with unit regressions in `tests/test-e2e-owner-preflight-procedure.py`) requires a real installed-candidate GO, exact Git/source identity, canonical single-run lock, explicit separately owned Codex phase authorization and private prompts. A NOT_READY test returned exit 3 without launching Codex. Actual knowledge isolation and user/AI parity remain unproven until real Codex role transcripts are independently audited. See `docs/CODEX_DUAL_ROLE_TEST_PROTOCOL.md`.
+
 ### LAB-P0-04 — Separate stable soak from controlled faults and saturation
 
 - Define a validated baseline with OS/host topology and traffic correctness. For steady-mode user workload use contract's **60s warmup, 300s measurable steady windows, 3600s soak**. Capture CPU, RSS, FD, connection/CPS/goodput, p50/p95/p99, per-path errors and recovery with times/IDs.

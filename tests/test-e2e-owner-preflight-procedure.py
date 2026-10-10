@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Auditor-only static guard: E2E operator procedure cannot weaken the contract."""
 from pathlib import Path
+from unittest import mock
 import csv
 import hashlib
 import json
@@ -8,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 CANONICAL = ROOT / "docs" / "FULL_USER_E2E_SCENARIOS.md"
@@ -94,16 +96,35 @@ class CodexDualRoleEvidenceContractTests(unittest.TestCase):
                 (evidence_root / f"{key}-{suffix}.txt").write_text(
                     f"Supporting fixture output for {key}:{suffix}. Never real user E2E.\n"
                 )
+            threads = {
+                role: str(uuid.uuid5(uuid.NAMESPACE_DNS, "fixture-%s-%s" % (key, role)))
+                for role in ("direct", "ai-operator", "ai-adviser")
+            }
+            event_paths = {}
+            for role, thread in threads.items():
+                path = evidence_root / ("%s-%s-events.jsonl" % (key, role))
+                path.write_text(
+                    "\n".join(json.dumps(event) for event in (
+                        {"type": "thread.started", "thread_id": thread},
+                        {"type": "turn.started"},
+                        {"type": "item.completed",
+                         "item": {"type": "agent_message",
+                                  "text": "fixture only; never E2E PASS"}},
+                        {"type": "turn.completed"},
+                    )) + "\n"
+                )
+                event_paths[role] = path.name
             goal = h("Neutral first-time operator mission")
             baseline = h("Equivalent isolated demo source baseline")
             pairs.append({
                 "PAIR_ID": "PAIR-" + key, "SCENARIO_ID": "FCS-" + key,
                 "FEATURE_ID": "FEATURE-CLI" if n % 2 else "FEATURE-AI",
                 "ROLE": "Operator",
-                "AUDITOR_CODEX_THREAD": "auditor",
-                "DIRECT_CODEX_THREAD": "direct-" + key,
-                "AI_OPERATOR_CODEX_THREAD": "ai-operator-" + key,
-                "AI_ADVISER_CODEX_THREAD": "ai-adviser-" + key,
+                "AUDITOR_CODEX_THREAD": str(
+                    uuid.uuid5(uuid.NAMESPACE_DNS, "fixture-auditor")),
+                "DIRECT_CODEX_THREAD": threads["direct"],
+                "AI_OPERATOR_CODEX_THREAD": threads["ai-operator"],
+                "AI_ADVISER_CODEX_THREAD": threads["ai-adviser"],
                 "DIRECT_GOAL_SHA256": goal, "AI_GOAL_SHA256": goal,
                 "DIRECT_BASELINE_SHA256": baseline,
                 "AI_BASELINE_SHA256": baseline,
@@ -116,6 +137,9 @@ class CodexDualRoleEvidenceContractTests(unittest.TestCase):
                     (evidence_root / (key + "-ai-first.txt")).read_bytes()
                 ).hexdigest(),
                 "AI_OPERATOR_EVIDENCE": key + "-ai-user.txt",
+                "DIRECT_CODEX_EVENTS": event_paths["direct"],
+                "AI_OPERATOR_CODEX_EVENTS": event_paths["ai-operator"],
+                "AI_ADVISER_CODEX_EVENTS": event_paths["ai-adviser"],
                 "BLOCK_REASON": "",
             })
         return pairs
@@ -196,6 +220,57 @@ class CodexDualRoleEvidenceContractTests(unittest.TestCase):
             self.assertEqual(false_pass.returncode, 2)
             self.assertIn("FINAL PASS requires both", false_pass.stdout)
 
+    def test_bad_raw_codex_thread_receipts_are_not_counted_as_actors(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            good = self._fixture(root)
+            cases = (
+                ("missing-final-turn", None),
+                ("wrong-thread-start", None),
+                ("ai-adviser-command-execution", None),
+                ("ai-adviser-file-change", None),
+            )
+            for issue, _ in cases:
+                with self.subTest(issue=issue):
+                    rows = [dict(r) for r in good]
+                    filename = root / rows[0]["AI_ADVISER_CODEX_EVENTS"]
+                    original = filename.read_text()
+                    try:
+                        events = [json.loads(line) for line in original.splitlines()]
+                        if issue == "missing-final-turn":
+                            events = events[:-1]
+                        elif issue == "wrong-thread-start":
+                            events[0]["thread_id"] = str(uuid.uuid4())
+                        elif issue == "ai-adviser-command-execution":
+                            events.insert(-1, {"type": "item.started",
+                                               "item": {"type": "command_execution",
+                                                        "command": "cat source.py"}})
+                        elif issue == "ai-adviser-file-change":
+                            events.insert(-1, {"type": "item.started",
+                                               "item": {"type": "file_change"}})
+                        filename.write_text(
+                            "\n".join(json.dumps(x) for x in events) + "\n"
+                        )
+                        result = self._check(rows, root)
+                        self.assertEqual(result["EVIDENCE_SCHEMA"], "FAIL", issue)
+                        self.assertFalse(result["ALL_PAIRS_STRUCTURALLY_PASS"])
+                    finally:
+                        filename.write_text(original)
+
+    def test_new_codex_threads_must_not_be_reused_across_pairs(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            rows = self._fixture(root)
+            rows[1]["DIRECT_CODEX_THREAD"] = rows[0]["DIRECT_CODEX_THREAD"]
+            path = root / rows[1]["DIRECT_CODEX_EVENTS"]
+            event_log = [json.loads(line) for line in path.read_text().splitlines()]
+            event_log[0]["thread_id"] = rows[0]["DIRECT_CODEX_THREAD"]
+            path.write_text("\n".join(json.dumps(x) for x in event_log) + "\n")
+            result = self._check(rows, root)
+            self.assertIn("Codex actor thread reused across pairs",
+                          " | ".join(result["ERRORS"]))
+            self.assertEqual(result["EVIDENCE_SCHEMA"], "FAIL")
+
     def test_no_missing_fcs_or_feature_accepted(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -223,6 +298,164 @@ class CodexDualRoleEvidenceContractTests(unittest.TestCase):
         self.assertIn("different fresh", plan.lower())
         self.assertIn("NOT_READY", plan)
         self.assertIn("TEST ONLY", plan)
+
+
+class CodexActorDispatchSafeguards(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0, str(ROOT / "tools"))
+        import codex_fcs_actor_dispatch as dispatcher
+        cls.dispatch = dispatcher
+
+    def fixture(self, root: Path):
+        base = root / "FCS-001-run"
+        base.mkdir(mode=0o700)
+        prompt = base / "ai-adviser-first-prompt.txt"
+        prompt.write_text(
+            "I am a new operator. My task is to discover the version. "
+            "This is a fixed synthetic fixture without any credential."
+        )
+        prompt.chmod(0o600)
+        lab = base / "PREFLIGHT_STATUS.json"
+        status = {
+            "status": "GO", "not_ready_gate_ids": [],
+            "lab_phase": "INSTALLED_CANDIDATE",
+            "repo_head": "a" * 40,
+            "candidate_source_head": "b" * 40,
+        }
+        lab.write_text(json.dumps(status))
+        lock = base / ".cli-feature-scenario.lock"
+        lock.write_text("RUN_ID=FCS-001-run\n")
+        owner = base / "owner-phase-state.json"
+        owner.write_text(json.dumps({
+            "phase": "CODEX_CLI_FEATURE_SCENARIO_ONLY",
+            "next_codex_test_authorized": True, "p0_go_status": "GO",
+            "latest_source_head": "a" * 40,
+        }))
+        return base, prompt, lab, lock, status
+
+    def test_qualified_receipt_preflight_allows_plan_but_does_not_launch_model(self):
+        with tempfile.TemporaryDirectory(dir=Path.home()) as temp:
+            root, prompt, lab, lock, _ = self.fixture(Path(temp))
+            with mock.patch.object(
+                self.dispatch.subprocess, "check_output",
+                return_value="a" * 40 + "\n",
+            ), mock.patch.object(
+                self.dispatch, "OWNER_PHASE_STATE", root / "owner-phase-state.json"
+            ):
+                ready = self.dispatch.validate_launch(
+                    run_root=root, run_id="FCS-001-run", pair_id="PAIR-001",
+                    role="AI_ADVISER", prompt_file=prompt,
+                    preflight_file=lab, lock_file=lock,
+                )
+            self.assertEqual(ready["source_head"], "b" * 40)
+            self.assertEqual(ready["repo_head"], "a" * 40)
+            self.assertEqual(ready["role"], "AI_ADVISER")
+            self.assertFalse(ready["target"].exists())
+
+    def test_blockers_prevent_any_model_launch(self):
+        with tempfile.TemporaryDirectory(dir=Path.home()) as temp:
+            root, prompt, lab, lock, receipt = self.fixture(Path(temp))
+            blocked = dict(receipt, status="NOT_READY",
+                           not_ready_gate_ids=["SERVER_CLEANUP_B014"])
+            lab.write_text(json.dumps(blocked))
+            with mock.patch.object(
+                self.dispatch.subprocess, "check_output",
+                return_value="a" * 40 + "\n",
+            ), mock.patch.object(
+                self.dispatch.shutil, "which",
+                side_effect=AssertionError("Codex binary lookup not allowed"),
+            ), mock.patch.object(
+                sys, "argv", [
+                    "codex_fcs_actor_dispatch.py", "--run-root", str(root),
+                    "--run-id", "FCS-001-run", "--pair-id", "PAIR-001",
+                    "--role", "AI_ADVISER", "--prompt-file", str(prompt),
+                    "--preflight", str(lab), "--lock", str(lock),
+                ],
+            ):
+                self.assertEqual(self.dispatch.main(), 3)
+            self.assertFalse((root / "actors").exists())
+
+    def test_lock_head_permission_and_duplicate_gates(self):
+        with tempfile.TemporaryDirectory(dir=Path.home()) as temp:
+            root, prompt, lab, lock, receipt = self.fixture(Path(temp))
+            args = dict(run_root=root, run_id="FCS-001-run",
+                        pair_id="PAIR-001", role="DIRECT_USER",
+                        prompt_file=prompt, preflight_file=lab,
+                        lock_file=lock)
+            with mock.patch.object(self.dispatch.subprocess, "check_output",
+                                   return_value="a" * 40 + "\n"), \
+                 mock.patch.object(
+                     self.dispatch, "OWNER_PHASE_STATE",
+                     root / "owner-phase-state.json",
+                 ):
+                self.assertEqual(self.dispatch.validate_launch(**args)["role"],
+                                 "DIRECT_USER")
+                lock.write_text("RUN_ID=FOREIGN-RUN\n")
+                with self.assertRaisesRegex(ValueError, "lock is not owned"):
+                    self.dispatch.validate_launch(**args)
+                lock.write_text("RUN_ID=FCS-001-run\n")
+                receipt["repo_head"] = "c" * 40
+                lab.write_text(json.dumps(receipt))
+                with self.assertRaisesRegex(ValueError, "repo HEAD"):
+                    self.dispatch.validate_launch(**args)
+                receipt["repo_head"] = "a" * 40
+                lab.write_text(json.dumps(receipt))
+                prompt.chmod(0o644)
+                with self.assertRaisesRegex(ValueError, "not private"):
+                    self.dispatch.validate_launch(**args)
+                prompt.chmod(0o600)
+                (root / "actors" / "PAIR-001" / "DIRECT_USER"
+                 ).mkdir(parents=True)
+                with self.assertRaises(FileExistsError):
+                    self.dispatch.validate_launch(**args)
+
+    def test_go_receipt_cannot_override_owner_denied_phase(self):
+        with tempfile.TemporaryDirectory(dir=Path.home()) as temp:
+            root, prompt, lab, lock, receipt = self.fixture(Path(temp))
+            owner = root / "owner-phase-state.json"
+            owner.write_text(json.dumps({
+                "phase": "CHATGPT_CODEX_E2E_FINDINGS_FIX_AND_SOP",
+                "next_codex_test_authorized": False,
+                "p0_go_status": "NOT_READY",
+                "latest_source_head": "a" * 40,
+            }))
+            with mock.patch.object(
+                self.dispatch.subprocess, "check_output",
+                return_value="a" * 40 + "\n",
+            ), mock.patch.object(
+                self.dispatch, "OWNER_PHASE_STATE", owner
+            ):
+                with self.assertRaisesRegex(ValueError, "not enabled"):
+                    self.dispatch.validate_launch(
+                        run_root=root, run_id="FCS-001-run",
+                        pair_id="PAIR-001", role="AI_ADVISER",
+                        prompt_file=prompt, preflight_file=lab,
+                        lock_file=lock,
+                    )
+
+    def test_actor_log_from_real_codex_jsonl_shape_is_audit_only(self):
+        with tempfile.TemporaryDirectory(dir=Path.home()) as temp:
+            root = Path(temp)
+            events = root / "events.jsonl"
+            thread_id = str(uuid.uuid4())
+            base = [
+                {"type": "thread.started", "thread_id": thread_id},
+                {"type": "turn.started"},
+                {"type": "item.completed", "item": {
+                    "type": "agent_message", "text": "fixture only"}},
+                {"type": "turn.completed"},
+            ]
+            events.write_text("\n".join(json.dumps(x) for x in base) + "\n")
+            a = self.dispatch.extract_receipt(events, "AI_ADVISER")
+            self.assertEqual(a["status"], "STRUCTURAL_PASS")
+            self.assertEqual(a["thread_id"], thread_id)
+            base.insert(-1, {"type": "item.started",
+                             "item": {"type": "mcp_tool_call", "name": "search"}})
+            events.write_text("\n".join(json.dumps(x) for x in base) + "\n")
+            bad = self.dispatch.extract_receipt(events, "AI_ADVISER")
+            self.assertEqual(bad["status"], "STRUCTURAL_FAIL")
+            self.assertIn("mcp_tool_call", bad["forbidden_ai_tool_types"])
 
 
 if __name__ == "__main__":

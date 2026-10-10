@@ -39,6 +39,8 @@
 
 **Codex direct/AI parity gate:** Same Codex model executes both roles using **fresh separately identifiable threads** under a single audit RUN_ID, including one AI Adviser thread distinct from the Direct User and AI-assisted User. The supported pair-ledger consistency check and FCS-001..015 / E2E 116-ID inventories are in `docs/CODEX_DUAL_ROLE_TEST_PROTOCOL.md`. Neither a nominal role switch in an auditor context nor generic AI CLI guidance counts as an actual same-scenario AI mirror. A complete Direct lane with missing AI advice remains incomplete, not PASS.
 
+**Actor dispatch preflight:** The audited Codex dual-role plan is executable through `tools/codex_fcs_actor_dispatch.py` for the **read-only CLI FCS** only. It refuses to start Codex when the actual lab receipt or separate owner phase state is not GO, and records fresh Codex JSONL role/thread/PID metadata to permanent 0600 evidence. It cannot be used to authorize product mutations or replace approved Full User E2E role dispatch. Raw event structure alone does not prove knowledge isolation; public prompts, absence of AI Adviser tools, and real operator effects must be independently reviewed.
+
 **Gate R2:** self-contained evidence schema, test actor isolation and authorized cleanroom readiness are verified *before* first E2E public action; unready full run stays HOLD, while independently safe diagnostic/fix tasks continue.
 
 ### R3 — Performance and chaos are separately attributable (both still mandatory)
