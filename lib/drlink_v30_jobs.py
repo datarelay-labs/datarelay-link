@@ -85,9 +85,15 @@ def _bounded_text(value: Any, *, field: str, max_len: int = 256) -> str:
 
 
 def _normalize_targets(targets: Iterable[str], *, max_targets: int) -> tuple[str, ...]:
+    # Strings and mappings are iterable but never a valid explicit Host set.
+    if (isinstance(targets, (str, bytes, bytearray, Mapping))
+        or not isinstance(targets, Iterable)):
+        raise ControlPlaneError("Management Job targets must be a Host ID collection.")
     seen: set[str] = set()
     ordered: list[str] = []
     for raw in targets:
+        if not isinstance(raw, str):
+            raise ControlPlaneError("Management Job target must be a string Host ID.")
         target = _bounded_text(raw, field="Management Job target")
         if target in seen:
             continue
@@ -290,10 +296,9 @@ class ManagementJobEngine:
             )
         actor = _bounded_text(requested_by, field="Management Job actor")
         target_ids = _normalize_targets(targets, max_targets=self.max_targets)
-        try:
-            timeout = int(timeout_seconds)
-        except (TypeError, ValueError) as exc:
-            raise ControlPlaneError("Management Job timeout must be an integer.") from exc
+        if type(timeout_seconds) is not int:
+            raise ControlPlaneError("Management Job timeout must be an integer.")
+        timeout = timeout_seconds
         if timeout < 1 or timeout > MAX_JOB_TIMEOUT_SECONDS:
             raise ControlPlaneError(
                 "Management Job timeout must be between 1 and %d seconds."
@@ -527,7 +532,9 @@ class ManagementJobEngine:
         now: Optional[datetime] = None,
     ) -> list[dict[str, Any]]:
         worker = _bounded_text(worker_id, field="Management Job worker")
-        count = max(1, min(int(limit), MAX_CLAIM_BATCH))
+        if type(limit) is not int or limit < 1:
+            raise ControlPlaneError("Management Job claim limit must be a positive integer.")
+        count = min(limit, MAX_CLAIM_BATCH)
         # A small requested claim batch must not hide eligible canaries behind
         # alphabetically earlier non-canary targets or other paused jobs.
         scan_limit = min(
@@ -830,6 +837,9 @@ class ManagementJobEngine:
     ) -> tuple[tuple[str, ...], dict[str, Any]]:
         """Validate one immutable request shape for both preview and apply."""
         target_ids = _normalize_targets(targets, max_targets=self.max_targets)
+        if (isinstance(canary_targets, (str, bytes, bytearray, Mapping))
+            or not isinstance(canary_targets, Iterable)):
+            raise ControlPlaneError("Rollout canary targets must be a Host ID collection.")
         requested_canaries = tuple(canary_targets)
         canaries = (
             _normalize_targets(requested_canaries, max_targets=self.max_targets)
@@ -837,11 +847,10 @@ class ManagementJobEngine:
         )
         if set(canaries) - set(target_ids):
             raise ControlPlaneError("Rollout canary target is outside the explicit target set.")
-        try:
-            size = int(wave_size)
-            threshold = int(failure_threshold_percent)
-        except (TypeError, ValueError) as exc:
-            raise ControlPlaneError("Rollout wave size and failure threshold must be integers.") from exc
+        if type(wave_size) is not int or type(failure_threshold_percent) is not int:
+            raise ControlPlaneError("Rollout wave size and failure threshold must be integers.")
+        size = wave_size
+        threshold = failure_threshold_percent
         if size < 1 or size > min(MAX_ROLLOUT_WAVE_SIZE, self.max_targets):
             raise ControlPlaneError("Rollout wave size is outside the bounded 3.0 range.")
         if not canaries:
@@ -970,6 +979,9 @@ class ManagementJobEngine:
         target_ids = _normalize_targets(targets, max_targets=self.max_targets)
         # Materialize a caller-provided iterator once; consuming it to check
         # emptiness must not silently discard the actual canary selection.
+        if (isinstance(canary_targets, (str, bytes, bytearray, Mapping))
+            or not isinstance(canary_targets, Iterable)):
+            raise ControlPlaneError("Rollout canary targets must be a Host ID collection.")
         requested_canaries = tuple(canary_targets)
         canaries = (
             _normalize_targets(requested_canaries, max_targets=self.max_targets)
@@ -978,11 +990,10 @@ class ManagementJobEngine:
         unknown = sorted(set(canaries) - set(target_ids))
         if unknown:
             raise ControlPlaneError("Rollout canary target is outside the explicit target set.")
-        try:
-            size = int(wave_size)
-            threshold = int(failure_threshold_percent)
-        except (TypeError, ValueError) as exc:
-            raise ControlPlaneError("Rollout wave size and failure threshold must be integers.") from exc
+        if type(wave_size) is not int or type(failure_threshold_percent) is not int:
+            raise ControlPlaneError("Rollout wave size and failure threshold must be integers.")
+        size = wave_size
+        threshold = failure_threshold_percent
         if size < 1 or size > min(MAX_ROLLOUT_WAVE_SIZE, self.max_targets):
             raise ControlPlaneError("Rollout wave size is outside the bounded 3.0 range.")
         # When no explicit canary is provided, treat the first bounded wave

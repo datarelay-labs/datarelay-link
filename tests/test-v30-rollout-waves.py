@@ -64,6 +64,98 @@ class StagedRolloutSchedulingTests(unittest.TestCase):
             now=self.now + timedelta(seconds=tick),
         )
 
+    def test_rollout_preview_and_enqueue_reject_coerced_numeric_bounds(self):
+        # Operator-controlled numeric fields must not silently coerce bool,
+        # fractional values, or strings into rollout scheduling authority.
+        for field, values in (
+            ("wave_size", (True, False, 1.5, "1", 0, -1)),
+            ("failure_threshold_percent", (True, False, 20.5, "20", -1, 101)),
+        ):
+            for value in values:
+                with self.subTest(field=field, value=value):
+                    kwargs = {
+                        "targets": ("a-first", "b-second", "z-canary"),
+                        "canary_targets": ("z-canary",),
+                        "requested_by": "ops-admin",
+                        "artifact": self.artifact,
+                        "wave_size": 1,
+                        "failure_threshold_percent": 20,
+                    }
+                    kwargs[field] = value
+                    with self.assertRaises(ControlPlaneError):
+                        self.engine.preview_rollout(**kwargs)
+                    with self.assertRaises(ControlPlaneError):
+                        self.engine.enqueue_rollout(**kwargs, now=self.now)
+                    self.assertEqual(self.engine.summary()["active_jobs"], 0)
+
+    def test_rollout_enqueue_rejects_coerced_timeout_without_creating_jobs(self):
+        for invalid in (True, False, 300.5, "300", 0, -1, 3601):
+            with self.subTest(timeout_seconds=invalid):
+                with self.assertRaises(ControlPlaneError):
+                    self.engine.enqueue_rollout(
+                        targets=("a-first", "b-second", "z-canary"),
+                        canary_targets=("z-canary",),
+                        requested_by="ops-admin",
+                        artifact=self.artifact,
+                        wave_size=1,
+                        timeout_seconds=invalid,
+                        now=self.now,
+                    )
+                self.assertEqual(self.engine.summary()["active_jobs"], 0)
+        # Normal positive integral timeout must still schedule the canary.
+        self._start()
+        self.assertEqual(
+            [item["target_id"] for item in self._claim(1)], ["z-canary"]
+        )
+
+    def test_rollout_rejects_scalar_or_mapping_host_selectors(self):
+        valid = {
+            "targets": ("a-first", "b-second", "z-canary"),
+            "canary_targets": ("z-canary",),
+            "requested_by": "ops-admin",
+            "artifact": self.artifact,
+            "wave_size": 1,
+        }
+        for field, invalid in (
+            ("targets", "a-first"),
+            ("targets", {"a-first": "include"}),
+            ("targets", ["a-first", 123]),
+            ("canary_targets", "z-canary"),
+            ("canary_targets", {"z-canary": "canary"}),
+            ("canary_targets", ["z-canary", 123]),
+        ):
+            with self.subTest(field=field, value=invalid):
+                request = dict(valid)
+                request[field] = invalid
+                with self.assertRaises(ControlPlaneError):
+                    self.engine.preview_rollout(**request)
+                with self.assertRaises(ControlPlaneError):
+                    self.engine.enqueue_rollout(**request, now=self.now)
+                self.assertEqual(self.engine.summary()["active_jobs"], 0)
+
+    def test_invalid_claim_limit_does_not_dispatch_or_expire_rollout(self):
+        # Reject before deadline recovery or any lease/write side effects.
+        job = self._start()
+        for value in (0, -1, False, True, 1.5, "0"):
+            with self.subTest(value=value):
+                with self.assertRaises(ControlPlaneError):
+                    self.engine.claim_targets(
+                        worker_id="worker-invalid", limit=value,
+                        now=self.now + timedelta(seconds=301),
+                    )
+                with self.assertRaises(ControlPlaneError):
+                    self.engine.claim_targets_for_target(
+                        target_id="z-canary", worker_id="worker-invalid",
+                        limit=value, now=self.now + timedelta(seconds=301),
+                    )
+                state = self.engine.get(job["id"])
+                self.assertEqual(state["status"], QUEUED)
+                self.assertFalse(any(t["attempt"] for t in state["targets"]))
+        # Valid request still honors the canary gate.
+        self.assertEqual(
+            [item["target_id"] for item in self._claim(1)], ["z-canary"]
+        )
+
     def test_canary_wins_even_if_sorted_last_then_waves_are_serial(self):
         job = self._start()
         first = self._claim()
