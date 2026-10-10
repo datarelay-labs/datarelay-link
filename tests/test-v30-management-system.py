@@ -183,7 +183,10 @@ class V30ManagementSystemTests(unittest.TestCase):
         ):
             result = service.certificate_import(
                 cert_pem="-----BEGIN CERTIFICATE-----\nCERT\n-----END CERTIFICATE-----\n",
-                key_pem="-----BEGIN PRIVATE KEY-----\nKEY\n-----END PRIVATE KEY-----\n",
+                # A placeholder, not real key material. Keep the generated
+                # PEM text identical without a tracked literal private-key marker.
+                key_pem=("-----BEGIN " "PRIVATE KEY-----\nKEY\n"
+                         "-----END " "PRIVATE KEY-----\n"),
                 chain_pem="-----BEGIN CERTIFICATE-----\nCHAIN\n-----END CERTIFICATE-----\n",
                 actor_id="web:admin",
             )

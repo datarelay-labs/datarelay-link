@@ -103,6 +103,39 @@ scenarios:
       - "Web login screen moves OTP to a separate second stage with no persisted credential"
     release_gate: true
 
+  - id: DRLINK-PF9-WEB-MANAGEMENT-INGRESS
+    name: DRLink Web/API management source ACL through verified Foundation policy
+    level: integration
+    cost: medium
+    estimated_seconds: 50
+    timeout_seconds: 180
+    agent_default: true
+    domains:
+      - "server"
+      - "shared"
+    triggers:
+      - affected
+      - pr
+      - preflight
+    platforms:
+      - "linux"
+    command: "python3 tests/test-v30-web-management-ingress.py -q && python3 tests/test-v30-web-management-ingress-config.py -q && python3 tests/test-v30-web-acl-preflight.py -q && python3 tests/test-v30-web-service.py V30WebServiceTests.test_admin_management_ingress_status_is_read_only_and_role_guarded -q && python3 tests/test-v30-web-management-ingress-ui.py -q"
+    invariants:
+      - "read-only System panel for current Admin reflects live Web policy; failed status remains unavailable"
+      - "no policy write/activation or SSH host access claims in Web status display"
+      - "current authenticated Administrator sees read-only effective Web ingress status; anonymous and Read Only denied"
+      - "status never exposes policy file bytes, raw source CIDRs, or live SSH apply claims"
+      - "optional host-admin-selected owner-private ACL file enables strict versioned Web policy with no live mutation"
+      - "unavailable, symlinked, world/group exposed, duplicate-key or oversized files fail startup closed"
+      - "every ancestor directory uses no-follow FDs; ambiguous literal path and modified in-flight bytes fail closed"
+      - "offline source simulation uses the single pinned shared Foundation ACL engine; never authorizes host/SSH access or rollout"
+      - "CLI omits private source/proxy/path data and never returns policy-activation success"
+      - "default-OFF policy preserves pre-existing login, health and static UI"
+      - "explicit unavailable or enabled-denied source blocks static, login and management API before auth"
+      - "untrusted/ambiguous forwarded chains cannot bypass pinned source ACL"
+      - "no SSH host ACL or policy application without separate authorization"
+    release_gate: true
+
   - id: DRLINK-CLI-FEATURE-SCENARIO-RELEASE
     name: CLI feature/operator workflow reconciliation evidence validation
     level: static

@@ -37,6 +37,7 @@ for f in \
   /usr/local/lib/drlink/drlink_foundation_security.py \
   /usr/local/lib/drlink/datarelay_onprem_security-0.10.0.dev0-py3-none-any.whl \
   /usr/local/lib/drlink/drlink_web_service.py \
+  /usr/local/lib/drlink/drlink_web_management_policy.py \
   /usr/local/lib/drlink/drlink-web.py \
   /usr/local/share/drlink-web/index.html \
   /usr/local/share/drlink-web/app.js \
@@ -49,6 +50,19 @@ for f in \
   /etc/systemd/system/drlink-web.service; do
   [[ -f "$TMP$f" ]] || { echo "FAIL missing installed Web file: $f" >&2; exit 1; }
 done
+
+# The new private policy loader must be importable from actual temporary-root
+# optional Web package bytes, not accidentally from the source checkout.
+PYTHONPATH="$TMP/usr/local/lib/drlink" python3 - "$TMP/usr/local/lib/drlink" <<'PY'
+import pathlib
+import sys
+import drlink_web_management_policy as loader
+from drlink_foundation_security import FOUNDATION_VERSION
+assert pathlib.Path(loader.__file__).resolve().parent == pathlib.Path(sys.argv[1]).resolve()
+assert FOUNDATION_VERSION == "0.10.0.dev0"
+assert callable(loader.load_management_ingress)
+print("WEB_INGRESS_INSTALLED_IMPORT=PASS")
+PY
 
 grep -q 'Welcome to Data Relay Link' "$TMP/usr/local/share/drlink-web/app.js" || {
   echo "FAIL DR Control-aligned login UI missing from built Web app" >&2; exit 1;
@@ -120,6 +134,7 @@ DRLINK_WEB_INSTALL_ROOT="$TMP" "$ROOT/uninstall-web.sh" >/tmp/drlink-web-uninsta
 
 [[ ! -e "$TMP/etc/systemd/system/drlink-web.service" ]] || { echo "FAIL Web service survived uninstall" >&2; exit 1; }
 [[ ! -e "$TMP/usr/local/lib/drlink/drlink_foundation_security.py" ]] || { echo "FAIL Foundation bootstrap survived uninstall" >&2; exit 1; }
+[[ ! -e "$TMP/usr/local/lib/drlink/drlink_web_management_policy.py" ]] || { echo "FAIL Web ingress policy parser survived uninstall" >&2; exit 1; }
 [[ ! -e "$TMP/usr/local/lib/drlink/datarelay_onprem_security-0.10.0.dev0-py3-none-any.whl" ]] || { echo "FAIL pinned Foundation wheel survived uninstall" >&2; exit 1; }
 [[ ! -e "$TMP/usr/local/share/drlink-web" ]] || { echo "FAIL Web static assets survived uninstall" >&2; exit 1; }
 [[ -f "$TMP/var/lib/drlink/drlink.db" ]] || { echo "FAIL Web uninstall removed Core DB" >&2; exit 1; }

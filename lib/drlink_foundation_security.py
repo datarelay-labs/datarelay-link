@@ -37,6 +37,12 @@ _WHEEL_PATH = str(_WHEEL)
 if _WHEEL_PATH not in sys.path:
     sys.path.insert(0, _WHEEL_PATH)
 from datarelay_onprem_security import (  # noqa: E402
+    AllowEntry as FoundationAllowEntry,
+    Decision as FoundationIngressDecision,
+    ManagementPolicy as FoundationManagementPolicy,
+    SurfacePolicy as FoundationSurfacePolicy,
+    authorize_management as foundation_authorize_management,
+    canonical_network as foundation_canonical_network,
     code_at as foundation_totp_code_at,
     new_totp_secret as foundation_new_totp_secret,
     verify_totp as foundation_verify_totp,
@@ -52,6 +58,12 @@ __all__ = [
     "FOUNDATION_SOURCE_HEAD",
     "FOUNDATION_VERSION",
     "FOUNDATION_WHEEL_SHA256",
+    "FoundationAllowEntry",
+    "FoundationIngressDecision",
+    "FoundationManagementPolicy",
+    "FoundationSurfacePolicy",
+    "foundation_authorize_management",
+    "foundation_canonical_network",
     "foundation_new_totp_secret",
     "foundation_totp_code_at",
     "foundation_verify_totp",

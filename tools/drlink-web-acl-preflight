@@ -1,0 +1,45 @@
+#!/usr/bin/env python3
+"""Read-only Web ACL source simulation, NOT a host access/recovery approval."""
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+from drlink_web_management_policy import preview_management_ingress  # noqa: E402
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Simulate a claimed Web management source from private ACL file. "
+            "No live peer, ACL activation, network access or rollback proof."
+        )
+    )
+    parser.add_argument("--policy-file", required=True, help="Absolute private local JSON path")
+    parser.add_argument("--source-peer", required=True, help="Operator-supplied peer IP")
+    parser.add_argument("--forwarded-for", help="Optional operator-supplied forwarded chain")
+    opts = parser.parse_args(argv)
+    try:
+        result = preview_management_ingress(
+            policy_file=opts.policy_file,
+            source_peer=opts.source_peer,
+            forwarded_for=opts.forwarded_for,
+        )
+    except (ValueError, TypeError, OSError):
+        print(json.dumps({
+            "status": "INVALID",
+            "reason": "unqualified_acl_source",
+            "safe_to_activate": False,
+            "read_only": True,
+        }, sort_keys=True))
+        return 3
+    print(json.dumps(result, sort_keys=True))
+    # Source simulations can NEVER signal policy activation readiness.
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -788,6 +788,41 @@ function LinkFoundationAdministration({
   </section>;
 }
 
+function ManagementIngressReadOnly({operator}:{operator:any}){
+  const [report,setReport]=useState<any>(null);
+  const [error,setError]=useState("");
+  useEffect(()=>{
+    if(operator.role!=="Admin")return;
+    let mounted=true;
+    api("/api/v1/admin/management-ingress/status").then(result=>{
+      if(mounted){setReport(result);setError("")}
+    }).catch((e:any)=>{
+      if(mounted){setReport(null);setError(e.message||"Status unavailable")}
+    });
+    return()=>{mounted=false};
+  },[operator.role]);
+  if(operator.role!=="Admin")return null;
+  const state=report?.web?.status||"UNAVAILABLE";
+  const label=state==="ENABLED"?"Enabled for Web":
+    state==="DISABLED"?"Disabled (not enforced)":"Unavailable";
+  return <section className="card dr-health-section" data-testid="drlink-management-ingress-status" aria-label="Management access status">
+    <div className="dr-section-head"><div>
+      <p className="dr-eyebrow">Administration · Security</p>
+      <h3>Management access status</h3>
+      <p className="muted">Read-only server-observed policy, not a configuration editor.</p>
+    </div></div>
+    {error&&<p role="status" className="muted">Status unavailable: {error}. No enforcement state can be verified.</p>}
+    <div className="dr-kpi-strip">
+      <div><span>Web UI and API</span><strong>{label}</strong><small>Effective policy in this Web process</small></div>
+      <div><span>Configured sources</span><strong>{typeof report?.web?.source_count==="number"?report.web.source_count:"Unknown"}</strong><small>Source counts only; no CIDR details</small></div>
+      <div><span>Trusted proxies</span><strong>{typeof report?.web?.trusted_proxy_count==="number"?report.web.trusted_proxy_count:"Unknown"}</strong><small>Verified by configured trust boundaries</small></div>
+      <div><span>Policy revision</span><strong>{report?.web?.policy_revision||"Unknown"}</strong><small>Source changes require a separate authorized rollout</small></div>
+    </div>
+    <p className="muted">SSH host: Not available. This Web service cannot configure or enforce host SSH/firewall rules.</p>
+    <p className="muted">Read-only. Apply and policy editing are not supported here; a verified administrator rollout and rollback remain required.</p>
+  </section>;
+}
+
 function SystemPanel({data,operator}:{data:any,operator:any}){
   const [backupPath,setBackupPath]=useState("/var/lib/drlink/backups/");
   const [renewConfirmation,setRenewConfirmation]=useState(""),[restoreConfirmation,setRestoreConfirmation]=useState("");
@@ -1535,7 +1570,7 @@ function View({active,operator,onNavigate}:{active:string,operator:any,onNavigat
   if(active==="search")return <div><div className="toolbar"><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search resources and policy"/><button className="primary" onClick={()=>api("/api/v1/search?q="+encodeURIComponent(query)+"&limit=50").then(setData).catch((e:any)=>setError(e.message))}>Search</button></div>{data&&<Table items={(data.items||[]).map((x:any)=>({type:x.resource_type,id:x.id,name:x.name}))}/>}</div>;
   if(active==="overview"&&data)return <CommandCenter data={data} operator={operator} onNavigate={onNavigate}/>;
   if(active==="versions"&&data)return <><div className="grid"><Metric label="Server version" value={data.server_version}/><Metric label="Drift" value={data.drift_count}/><Metric label="Unknown" value={data.unknown_count}/></div><Table items={data.hosts||[]}/></>;
-  if(active==="system"&&data)return <><LinkFoundationAdministration operator={operator} onNavigate={onNavigate}/><SystemPanel data={data} operator={operator}/></>;
+  if(active==="system"&&data)return <><LinkFoundationAdministration operator={operator} onNavigate={onNavigate}/><ManagementIngressReadOnly operator={operator}/><SystemPanel data={data} operator={operator}/></>;
   if(active==="objects"&&data)return <><ObjectsWorkspace data={data} onNavigate={onNavigate}/>{operator.role!=="Read Only"&&<GuidedObjectPanel/>}</>;
   if(active==="hosts"&&data)return <><ResourceWorkspace kind="host" items={data.items||[]} operator={operator} onNavigate={onNavigate}/>{operator.role!=="Read Only"&&<ManagedHostMetadataPanel/>}{operator.role==="Admin"&&<ManagedHostAdmissionPanel/>}{operator.role==="Admin"&&<ManagedHostLifecyclePanel/>}</>;
   if(active==="services"&&data)return <><ResourceWorkspace kind="service" items={data.items||[]} operator={operator} onNavigate={onNavigate}/>{operator.role!=="Read Only"&&<RemoteServicePanel/>}</>;
