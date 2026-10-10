@@ -11,6 +11,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
@@ -166,6 +167,47 @@ class WebIngressConfigTests(unittest.TestCase):
             load_management_ingress(str(self.file))
         with self.assertRaises(ValueError):
             load_management_ingress(str(self.root))
+
+    def test_symlinked_parent_and_ambiguous_config_path_fail_closed(self):
+        self.save(config())
+        private = self.root / "private-policy"
+        private.mkdir()
+        real = private / "ingress.json"
+        real.write_bytes(self.file.read_bytes())
+        real.chmod(0o600)
+        alias = self.root / "alias-policy"
+        alias.symlink_to(private, target_is_directory=True)
+        # O_NOFOLLOW on the final JSON file alone must not authorize a
+        # symlinked parent that redirects the operator-selected ACL path.
+        for path in (
+            str(alias / "ingress.json"),
+            str(self.root) + "/./web-acl-policy.json",
+            str(self.root) + "//web-acl-policy.json",
+            str(private) + "/../web-acl-policy.json",
+        ):
+            with self.subTest(path=path):
+                with self.assertRaises(ValueError):
+                    load_management_ingress(path)
+
+    def test_policy_bytes_changed_during_verified_fd_read_fail_closed(self):
+        self.save(config())
+        original_read = os.read
+        initial = self.file.stat()
+
+        def changed_during_read(fd, length):
+            payload = original_read(fd, length)
+            os.utime(
+                self.file,
+                ns=(initial.st_atime_ns, initial.st_mtime_ns + 1_000_000_000),
+            )
+            return payload
+
+        with mock.patch(
+            "drlink_web_management_policy.os.read",
+            side_effect=changed_during_read,
+        ):
+            with self.assertRaises(ValueError):
+                load_management_ingress(str(self.file))
 
     def test_relative_and_oversized_file_rejected(self):
         with self.assertRaises(ValueError):

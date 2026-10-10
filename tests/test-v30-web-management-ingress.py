@@ -119,6 +119,8 @@ class LinkWebIngressTests(unittest.TestCase):
         for method, path in (
             ("GET", "/healthz"), ("GET", "/"),
             ("GET", "/api/v1/health"),
+            # B4 diagnostics is behind source ACL before its own role check.
+            ("GET", "/api/v1/system/connectivity"),
             ("POST", "/api/v1/auth/login/start"),
             ("POST", "/api/v1/auth/login/cancel"),
         ):
@@ -133,6 +135,7 @@ class LinkWebIngressTests(unittest.TestCase):
         for method, path in (
             ("GET", "/healthz"), ("GET", "/"),
             ("GET", "/api/v1/health"),
+            ("GET", "/api/v1/system/connectivity"),
             ("POST", "/api/v1/auth/login/start"),
             ("POST", "/api/automation/v1/jobs"),
         ):
@@ -146,6 +149,7 @@ class LinkWebIngressTests(unittest.TestCase):
         self.assertEqual(self.request("GET", "/healthz")[0], 200)
         self.assertEqual(self.request("GET", "/")[0], 200)
         self.assertEqual(self.request("GET", "/api/v1/health")[0], 401)
+        self.assertEqual(self.request("GET", "/api/v1/system/connectivity")[0], 401)
         self.assertEqual(self.request("POST", "/api/v1/auth/login/start", body={})[0], 401)
         self.assertTrue(
             self.server.app.authorize_web_ingress("::ffff:127.0.0.1").allowed
