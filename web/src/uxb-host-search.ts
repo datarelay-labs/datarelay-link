@@ -66,10 +66,15 @@ export function filterObservedHosts(source:unknown,query:unknown):ObservedHostSe
     }
   }
   const requiredFields=new Set(filters.filter(f=>f.field).map(f=>f.field as string));
+  const hasFreeText=filters.some(f=>f.field===null);
   let unknownCount=0;
-  if(requiredFields.size){
+  if(requiredFields.size||hasFreeText){
     for(const row of items){
-      if([...requiredFields].some(key=>observedText(row,key)===null))unknownCount++;
+      // Free-text inspects multiple allowlisted Core fields. If even one of
+      // those fields is UNKNOWN, a no-match is not evidence of absence.
+      // Do not silently claim the free-text projection is complete.
+      if([...requiredFields].some(key=>observedText(row,key)===null)||
+         (hasFreeText&&FREE_FIELDS.some(key=>observedText(row,key)===null)))unknownCount++;
     }
   }
   const matches=items.filter(row=>filters.every(f=>

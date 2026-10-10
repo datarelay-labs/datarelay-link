@@ -82,6 +82,17 @@ test("Malformed queries never claim a successful search or fleet-wide completene
   }
   assert.equal(search("os:linux").scope,"loaded-only");
 });
+test("Free-text no-match does not claim absence when loaded Core fields are UNKNOWN",()=>{
+  const result=search("unknown-release");
+  assert.equal(result.applied,true);
+  assert.equal(result.scope,"loaded-only");
+  assert.deepEqual(result.items,[]);
+  assert.equal(result.unknownCount,1);
+  assert.match(result.warning,/UNKNOWN requested field values/);
+  const blank=search("");
+  assert.equal(blank.unknownCount,0);
+  assert.equal(blank.warning,null);
+});
 test("Missing OS/trust fields are UNKNOWN, not evidence of no host or false zero",()=>{
   const os=search("os:freebsd");
   assert.equal(os.applied,true);
