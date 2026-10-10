@@ -304,6 +304,11 @@ python3 tests/test-human-ux-framework-unit.py
 # full non-Docker suite; orphan coverage must remain a hard gate, not an
 # allowlist waiver for missing functional tests.
 python3 tests/test-agent-catalog-progress.py
+# Direct bugfix workflow prerequisites: each newly introduced LAB-P0 /
+# Codex-finding regression must run in the full non-Docker CI suite.
+python3 tests/test-e2e-lab-readiness.py
+python3 tests/test-e2e-owner-preflight-procedure.py
+python3 tests/test-v24-e2e-actionable-doc-parity.py
 python3 tests/test-cli-rule-selector-and-runtime-recovery.py
 python3 tests/test-doctor-proxy-identity.py
 python3 tests/test-full-e2e-public-recovery-regressions.py
