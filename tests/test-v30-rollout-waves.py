@@ -526,6 +526,9 @@ class StagedRolloutSchedulingTests(unittest.TestCase):
         self.assertEqual(progress["update_outcome_qualification"], "NOT_VERIFIED")
         self.assertFalse(progress["signed_agent_update_verified"])
         self.assertFalse(progress["rollback_verified"])
+        self.assertFalse(progress["post_update_health_verified"])
+        self.assertFalse(progress["operator_reconciliation_required"])
+        self.assertEqual(progress["recovery_guidance"], "")
 
     def test_internal_halted_progress_reports_failed_and_cancelled(self):
         job = self._start()
@@ -539,6 +542,29 @@ class StagedRolloutSchedulingTests(unittest.TestCase):
         self.assertEqual(progress["completed_count"], 3)
         self.assertEqual(progress["reported_success_count"], 0)
         self.assertEqual(progress["update_outcome_qualification"], "NOT_VERIFIED")
+        self.assertFalse(progress["post_update_health_verified"])
+        self.assertFalse(progress["rollback_verified"])
+        self.assertTrue(progress["operator_reconciliation_required"])
+        self.assertIn("installed Agent", progress["recovery_guidance"])
+        self.assertIn("rollback", progress["recovery_guidance"])
+
+    def test_tolerated_failed_wave_still_requires_operator_reconciliation(self):
+        # A deliberately nonzero threshold can allow a later wave, but an
+        # individual FAILED Agent must never be reported as a verified
+        # installation, healthy process, or successful rollback.
+        job = self._start(threshold=90)
+        canary = self._claim()[0]
+        self._complete(job, canary, SUCCEEDED)
+        wave = self._claim(3)[0]
+        result = self._complete(job, wave, FAILED, tick=4)
+        self.assertEqual(result["payload"]["rollout_state"], "WAVE")
+        progress = result["rollout_progress"]
+        self.assertEqual(progress["failed_count"], 1)
+        self.assertTrue(progress["operator_reconciliation_required"])
+        self.assertFalse(progress["signed_agent_update_verified"])
+        self.assertFalse(progress["post_update_health_verified"])
+        self.assertFalse(progress["rollback_verified"])
+        self.assertIn("rollback", progress["recovery_guidance"])
 
     def test_mutable_source_ref_rejected_even_with_valid_digest(self):
         for ref in ("main", "feature/v3.0-drl3-0", "v3.0.0", "a" * 39, "f" * 41):

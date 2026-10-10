@@ -1048,6 +1048,33 @@ function AgentRolloutPreviewPanel(){
   </section>;
 }
 
+function AgentRolloutRecoveryDetail({detail}:{detail:any}){
+  const progress=detail.rollout_progress;
+  if(!progress)return null;
+  const failed=(detail.targets||[]).filter((host:any)=>host.status==="FAILED");
+  return <section className="dr-preview-panel" aria-label="Agent rollout recovery">
+    <h4>Agent rollout recovery · {progress.phase||"UNKNOWN"}</h4>
+    <p className="muted">Status counts are not proof of an installed Agent update. Live Agent validation and independent release signing remain separate gates.</p>
+    <div className="grid">
+      <Metric label="Job-reported success" value={progress.reported_success_count||0}/>
+      <Metric label="Failed targets" value={progress.failed_count||0}/>
+      <Metric label="Queued targets" value={progress.queued_count||0}/>
+      <Metric label="In-flight targets" value={progress.running_count||0}/>
+    </div>
+    <p><strong>Agent update qualification:</strong> {progress.update_outcome_qualification||"NOT_VERIFIED"}</p>
+    <p><strong>Post-update Agent Health:</strong> {progress.post_update_health_verified?"VERIFIED":"NOT VERIFIED"}</p>
+    <p><strong>Rollback verification:</strong> {progress.rollback_verified?"VERIFIED":"NOT VERIFIED"}</p>
+    {progress.halt_reason&&<p><strong>Halt reason:</strong> {progress.halt_reason}</p>}
+    {progress.operator_reconciliation_required&&<div className="notice" role="status">
+      <strong>Operator reconciliation required</strong>
+      <p>{progress.recovery_guidance||"Inspect affected Agents before a new qualified rollout."}</p>
+      {failed.length>0&&<ul>{failed.map((host:any)=><li key={host.target_id}>
+        {host.target_id}: {host.error||"Agent failure reported"} · Rollback NOT VERIFIED
+      </li>)}</ul>}
+    </div>}
+  </section>;
+}
+
 function JobOperations({operator}:{operator:any}){
   const [jobs,setJobs]=useState<any>(null),[detail,setDetail]=useState<any>(null),[error,setError]=useState(""),[message,setMessage]=useState(""),[inventoryExport,setInventoryExport]=useState<any>(null);
   const [jobType,setJobType]=useState("doctor"),[resourceType,setResourceType]=useState("managed-host"),[resource,setResource]=useState(""),[detailId,setDetailId]=useState("");
@@ -1161,6 +1188,7 @@ function JobOperations({operator}:{operator:any}){
     {detail&&<div className="card">
       <h3>Job Detail</h3>
       <div className="grid"><Metric label="Status" value={detail.status}/><Metric label="Targets" value={detail.target_count}/><Metric label="Type" value={detail.job_type}/></div>
+      {detail.job_type==="agent-update-rollout"&&detail.rollout_progress&&<AgentRolloutRecoveryDetail detail={detail}/>}
       {operator.role!=="Read Only"&&["QUEUED","RUNNING"].includes(String(detail.status||""))&&<button className="danger" onClick={cancelJob}>Cancel Job</button>}
       <Table items={(detail.targets||[]).map((x:any)=>({target_id:x.target_id,status:x.status,attempt:x.attempt,error:x.error||"",updated_at:x.updated_at}))}/>
       <pre className="plan">{JSON.stringify({id:detail.id,resource_type:detail.resource_type,resource_ref:detail.resource_ref,deadline_at:detail.deadline_at,last_error:detail.last_error,targets:(detail.targets||[]).map((x:any)=>({target_id:x.target_id,status:x.status,result:x.result,error:x.error}))},null,2)}</pre>

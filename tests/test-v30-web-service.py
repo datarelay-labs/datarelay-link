@@ -301,6 +301,49 @@ class V30WebServiceTests(unittest.TestCase):
                 before,
             )
 
+    def test_rollout_job_detail_reports_recovery_without_claiming_live_update(self):
+        self.login()
+        from drlink_v30_jobs import ManagementJobEngine, FAILED
+        artifact = {
+            "version": "3.0.0-rc.1",
+            "source_ref": "a" * 40,
+            "sha256": "b" * 64,
+        }
+        with ManagementJobEngine(self.tmp) as engine:
+            job = engine.enqueue_rollout(
+                targets=("host-a",), canary_targets=("host-a",),
+                artifact=artifact, requested_by="local-fixture",
+                wave_size=1,
+            )
+            claims = engine.claim_targets(worker_id="fixture-only", limit=1)
+            self.assertEqual(len(claims), 1)
+            engine.complete_target(
+                job_id=job["id"], target_id="host-a",
+                claim_token=claims[0]["claim_token"], status=FAILED,
+                error="SIMULATED_CANARY_FAILURE",
+            )
+        status, _, detail = self.request("GET", "/api/v1/jobs/" + job["id"])
+        self.assertEqual(status, 200, detail)
+        self.assertEqual(detail["job_type"], "agent-update-rollout")
+        progress = detail["rollout_progress"]
+        self.assertEqual(progress["phase"], "HALTED")
+        self.assertEqual(progress["halt_reason"], "CANARY_FAILED")
+        self.assertEqual(progress["update_outcome_qualification"], "NOT_VERIFIED")
+        self.assertFalse(progress["signed_agent_update_verified"])
+        self.assertFalse(progress["post_update_health_verified"])
+        self.assertFalse(progress["rollback_verified"])
+        self.assertTrue(progress["operator_reconciliation_required"])
+        self.assertIn("rollback", progress["recovery_guidance"])
+        self.assertNotIn("artifact", progress)
+        self.assertNotIn("source_ref", progress)
+        self.assertIn("SIMULATED_CANARY_FAILURE", detail["targets"][0]["error"])
+        # A deliberately simulated Job status is never proof of a signed
+        # Agent install and must not enable Web/public rollout Apply.
+        with ManagementJobEngine(self.tmp) as engine:
+            self.assertEqual(engine.claim_targets(
+                worker_id="following-wave", limit=1,
+            ), [])
+
     def test_auth_required_on_loopback_and_read_views(self):
         status, _, _ = self.request("GET", "/api/v1/overview")
         self.assertEqual(status, 401)

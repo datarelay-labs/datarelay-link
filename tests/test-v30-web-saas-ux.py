@@ -140,6 +140,18 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn("Observed version", SOURCE)
         self.assertIn("Update availability remains UNKNOWN", SOURCE)
 
+    def test_agent_rollout_job_detail_shows_truthful_health_rollback_and_recovery(self):
+        self.assertIn('detail.job_type==="agent-update-rollout"', SOURCE)
+        self.assertIn('detail.rollout_progress', SOURCE)
+        self.assertIn('Agent rollout recovery', SOURCE)
+        self.assertIn('Agent update qualification', SOURCE)
+        self.assertIn('Post-update Agent Health', SOURCE)
+        self.assertIn('Rollback verification', SOURCE)
+        self.assertIn('Operator reconciliation required', SOURCE)
+        self.assertIn('progress.recovery_guidance', SOURCE)
+        self.assertIn('Status counts are not proof of an installed Agent update.', SOURCE)
+        self.assertNotIn("public rollout Apply enabled", SOURCE)
+
     def test_access_hygiene_orphan_filter_and_resource_navigation(self):
         self.assertIn('quality==="ORPHANED"&&x.kind!=="orphan-object"', SOURCE)
         self.assertIn('"object":["objects","infrastructure"]', SOURCE)

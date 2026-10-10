@@ -203,7 +203,12 @@ rollback semantics.
 - Any canary/update verification failure halts further rollout by default.
 - Operator can pause, resume, or cancel queued future targets.
 - Already-running target work is never falsely reported as forcibly cancelled.
-- Failed target shows rollback result and recovery guidance.
+- Failed target shows rollback result and recovery guidance. Until an
+  independently qualified live Agent update/rollback reports trusted evidence,
+  the Job Detail read model must explicitly show **NOT_VERIFIED** for signed
+  update, post-update Agent Health and rollback, even if Job target rows say
+  SUCCEEDED. Halted or failed targets require clear operator reconciliation
+  guidance. This read-only view must not grant public rollout Apply authority.
 - No "Update All" action exists without bounded target preview and concurrency limits.
 
 ### 5.3 CLI acceptance

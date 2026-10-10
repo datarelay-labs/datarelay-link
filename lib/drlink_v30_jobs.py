@@ -211,10 +211,50 @@ def rollout_progress_summary(
             by_host.get(host) == SUCCEEDED for host in canaries
         ),
         "operator_paused": bool(body.get("operator_paused", False)),
+        # Job rows reflect scheduler outcomes, not a signed installed Agent,
+        # a live Health probe, or proof of rollback on the affected Host.
         "update_outcome_qualification": "NOT_VERIFIED",
         "signed_agent_update_verified": False,
+        "post_update_health_verified": False,
         "rollback_verified": False,
+        "operator_reconciliation_required": (
+            phase == "HALTED" or totals[FAILED] > 0
+        ),
+        "recovery_guidance": (
+            "Inspect the installed Agent identity, live Health, and rollback "
+            "on affected Hosts before creating a new qualified rollout plan."
+            if phase == "HALTED" or totals[FAILED] > 0 else ""
+        ),
     }
+
+
+def rollout_progress_for_query(
+    conn, job_id: str, targets: list[Mapping[str, Any]], target_count: int
+) -> dict[str, Any]:
+    """Project read-only rollout facts from the same query connection.
+
+    The public management query view omits internal job payloads. Only
+    scheduler fields needed for this bounded progress summary are decoded;
+    neither the immutable artifact nor a release-signing trust root is
+    exposed to Web/MCP consumers. Never upgrades reported Job success to
+    installed-Agent, Health or rollback qualification.
+    """
+    row = conn.execute(
+        "SELECT job_type,payload_json FROM management_jobs WHERE id=?",
+        (job_id,),
+    ).fetchone()
+    if not row or str(row["job_type"]) != ROLLOUT_JOB_TYPE:
+        raise ControlPlaneError("Agent rollout Job was not found.")
+    try:
+        payload = json.loads(str(row["payload_json"] or "{}"))
+    except (TypeError, ValueError):
+        payload = {}
+    progress = rollout_progress_summary(
+        ROLLOUT_JOB_TYPE, payload, targets, target_count,
+    )
+    if progress is None:
+        raise ControlPlaneError("Agent rollout progress is unavailable.")
+    return progress
 
 
 class ManagementJobEngine:

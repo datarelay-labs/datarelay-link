@@ -314,7 +314,14 @@ class ManagementCoreService:
     def _invoke_drlink_job_get(self, actor: ManagementActor, data: dict) -> dict:
         del actor
         with ManagementQueryService(self.root) as service:
-            return service.job_get(data["job_id"])
+            detail = service.job_get(data["job_id"])
+            if detail.get("job_type") == "agent-update-rollout":
+                from drlink_v30_jobs import rollout_progress_for_query
+                detail["rollout_progress"] = rollout_progress_for_query(
+                    service.conn, detail["id"], detail["targets"],
+                    detail["target_count"],
+                )
+            return detail
 
     def _invoke_drlink_diagnostic_job_start(
         self, actor: ManagementActor, data: dict
