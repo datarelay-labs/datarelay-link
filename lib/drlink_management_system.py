@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import secrets
+import stat
 import subprocess
 import sys
 import tempfile
@@ -415,17 +416,57 @@ class ManagementSystemService:
                 "Web backup validation is limited to /var/lib/drlink/backups/."
             )
         relative = requested[len(canonical_prefix) :]
-        if not relative or relative in (".", ".."):
-            raise ControlPlaneError("A backup archive file is required.")
-        backup_root = (self.root_path / "var/lib/drlink/backups").resolve()
-        candidate = (backup_root / relative).resolve()
+        # Do not silently normalize parent segments, duplicate separators,
+        # trailing slashes or escaped control characters into another archive.
+        # The canonical CLI validator receives only one unambiguous source.
+        segments = relative.split("/")
+        if not relative or any(
+            segment in ("", ".", "..") for segment in segments
+        ):
+            raise ControlPlaneError(
+                "A canonical archive under /var/lib/drlink/backups/ is required."
+            )
+        if len(relative) > 1024 or any(
+            ch in relative for ch in ("\\", "\x00", "\r", "\n")
+        ):
+            raise ControlPlaneError("Invalid backup archive path.")
+
+        # The old resolve()-only check treated a symlinked backup root as the
+        # authoritative root and allowed symlinks pointing to *other* files
+        # inside the backup directory. Require each path component to be
+        # product-owned and never resolve a symlink to establish authority.
+        candidate = self.root_path
+        if candidate.is_symlink():
+            raise ControlPlaneError("Backup path must not contain a symlink.")
+        for part in ("var", "lib", "drlink", "backups", *segments):
+            candidate = candidate / part
+            if candidate.is_symlink():
+                raise ControlPlaneError("Backup path must not contain a symlink.")
+        backup_root = self.root_path / "var/lib/drlink/backups"
+        # A hard link could alias an unrelated same-filesystem inode, while
+        # a directory/FIFO/socket is not a backup archive at all. A missing
+        # path remains eligible for the canonical validator's invalid result.
         try:
-            candidate.relative_to(backup_root)
-        except ValueError as exc:
+            details = candidate.lstat()
+        except FileNotFoundError:
+            details = None
+        except OSError as exc:
+            raise ControlPlaneError("Unable to inspect backup archive.") from exc
+        if details is not None and (
+            not stat.S_ISREG(details.st_mode) or details.st_nlink != 1
+        ):
+            raise ControlPlaneError(
+                "Backup archive must be a regular single-link file."
+            )
+        try:
+            canonical_root = backup_root.resolve()
+            canonical_candidate = candidate.resolve()
+            canonical_candidate.relative_to(canonical_root)
+        except (ValueError, OSError, RuntimeError) as exc:
             raise ControlPlaneError(
                 "Backup path must remain under /var/lib/drlink/backups/."
             ) from exc
-        return requested, candidate
+        return requested, canonical_candidate
 
     def backup_validate(self, path: str) -> dict[str, Any]:
         requested, target = self._backup_target(path)

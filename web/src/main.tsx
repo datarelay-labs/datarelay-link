@@ -852,7 +852,7 @@ function SystemPanel({data,operator}:{data:any,operator:any}){
       <Metric label="Data Relay Link" value={identity.display_identity||identity.project_version}/>
       <Metric label="Relay Engine" value={identity.relay_engine_version}/>
       <Metric label="Channel" value={identity.channel}/>
-      <Metric label="Backup Ready" value={backup.create_available&&backup.validate_available?"YES":"NO"}/>
+      <Metric label="Backup tools" value={backup.create_available&&backup.validate_available?"Available":"Unavailable"}/>
     </div>
     <div className="card">
       <h3>Release Provenance</h3>
@@ -901,6 +901,7 @@ function SystemPanel({data,operator}:{data:any,operator:any}){
     <div className="card">
       <h3>Backup</h3>
       <div className="muted">Backup archives are protected server-side artifacts containing secrets. Web never downloads or displays their contents.</div>
+      <div className="muted">Backup tooling availability is not evidence of a recent verified backup, encrypted-at-rest provenance, or a successful isolated restore drill. Archive validation is read-only and cannot prove complete disaster recovery readiness.</div>
       {operator.role==="Admin"&&<button className="primary" onClick={createBackup} disabled={!backup.create_available}>Create Protected Backup</button>}
       {backupArtifact&&<pre className="plan">{JSON.stringify(backupArtifact,null,2)}</pre>}
       <h4>Validate Existing Backup</h4>

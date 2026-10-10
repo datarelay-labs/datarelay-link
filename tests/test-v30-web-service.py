@@ -9,6 +9,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -1971,6 +1972,28 @@ class V30WebServiceTests(unittest.TestCase):
         self.assertEqual(status, 200, recovered)
         self.assertEqual(recovered["count"], 0)
         self.assertEqual(recovered["items"], [])
+
+    def test_backup_validation_rejects_symlinked_archive_over_authenticated_http(self):
+        # The Web credential/CSRF boundary must not weaken product-native
+        # backup ownership: a symlink alias never reaches frp-restore CLI.
+        self.login()
+        storage = Path(self.tmp) / "var/lib/drlink/backups"
+        storage.mkdir(parents=True, exist_ok=True)
+        (storage / "original.tar.gz").write_bytes(b"synthetic-only-archive")
+        (storage / "alias.tar.gz").symlink_to(storage / "original.tar.gz")
+        with mock.patch("drlink_management_system.subprocess.run") as run:
+            status, _, body = self.request(
+                "POST", "/api/v1/system/backup/validate",
+                {"path": "/var/lib/drlink/backups/alias.tar.gz"},
+                headers={"X-CSRF-Token": self.csrf},
+            )
+            self.assertEqual(status, 400, body)
+            self.assertIn("symlink", body["error"].lower())
+            run.assert_not_called()
+        self.assertEqual(
+            (storage / "original.tar.gz").read_bytes(),
+            b"synthetic-only-archive",
+        )
 
     def test_system_status_certificate_preflight_and_backup_validate(self):
         self.login()
