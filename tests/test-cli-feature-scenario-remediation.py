@@ -1604,7 +1604,9 @@ frpctl_nav_workflow manage_host
             "sudo -n drlink system version",
             "conditional_y_n",
             "Do **not** invent a universal TTY-only rule",
-            "ChatGPT itself executes both sides of every AI-assisted lane",
+            "The owner-selected model executor performs BOTH Direct and AI-assisted lanes itself",
+            "ISSUE_165_PRIMARY_PERSONA_EXECUTOR=CODEX",
+            "docs/CODEX_DUAL_ROLE_TEST_PROTOCOL.md",
             "<!-- CLI_FEATURE_SCENARIO_FINAL_START -->",
             "<!-- CLI_FEATURE_SCENARIO_FINAL_END -->",
         ):

@@ -45,6 +45,8 @@ The official `docs/FULL_USER_E2E_SCENARIOS.md` is the required 4,283-line full u
 
 **Implemented support tooling (post-reboot):** `tools/e2e_lab_readiness.py` with isolated regression `tests/test-e2e-lab-readiness.py` performs approved-alias, read-only host/Source HEAD and ownership-precondition inventory. Provide a private lab-ownership JSON manifest through `--manifest` and durable `--output-dir`; it writes `PREFLIGHT_STATUS.json` and `CLEANROOM_LEDGER.tsv` outside `/tmp`, with exit code 3 when `NOT_READY`. The script cannot approve its own host permissions or override denied effects. Native Windows is not qualified from management reachability alone. This is supporting preflight, **not** a persona test or product readiness PASS.
 
+**Owner-selected Codex dual-role method:** `docs/CODEX_DUAL_ROLE_TEST_PROTOCOL.md` now defines a Codex auditor and three independent Codex actor contexts (Direct User, AI-assisted User, AI Adviser) within ONE locked RUN_ID. Each applicable feature/FCS and Full User E2E scenario uses the same goal and starting state; first advice is preserved, public-CLI use is observed and paired ledgers are validated. No outside model or ChatGPT test executor is substituted. **Method documented/testable, actor execution NOT YET VERIFIED; preflight remains NOT_READY.**
+
 ### LAB-P0-03 — Prospective first-time user/AI role isolation
 
 - The auditor executor **first reads the entire 4,283-line contract end-to-end** in bounded chunks and manages the canonical 116 scenario IDs, 18 use cases and public-command coverage oracle.
