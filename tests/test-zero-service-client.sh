@@ -27,6 +27,8 @@ cfg.write_text(json.dumps({
     'enrollments_dir': str(enroll),
     'bootstrap_dir': str(work / 'bootstrap'),
     'token_file': str(token),
+    # Real allocator Core authority must remain inside the disposable fixture.
+    'control_plane_root': str(work),
 }) + '\n')
 a = mod.Allocator(str(cfg))
 mod.port_is_available = lambda port: True
@@ -71,6 +73,7 @@ assert a.used_ports(state) == set(), state
 
 status, result = enroll_hmac([])
 assert status == 200 and result['services'] == [], (status, result)
+assert (work / 'var/lib/drlink/drlink.db').is_file(), 'Core DB escaped isolated fixture'
 state = a.load_registry()
 client = state['clients']['machine-zero']
 assert client['mgmt_status'] == 'enrolled', client

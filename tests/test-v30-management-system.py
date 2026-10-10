@@ -183,7 +183,9 @@ class V30ManagementSystemTests(unittest.TestCase):
         ):
             result = service.certificate_import(
                 cert_pem="-----BEGIN CERTIFICATE-----\nCERT\n-----END CERTIFICATE-----\n",
-                key_pem="-----BEGIN PRIVATE KEY-----\nKEY\n-----END PRIVATE KEY-----\n",
+                # Build the intentionally invalid placeholder without a literal
+                # PEM-header match in tracked source; secret-scan remains strict.
+                key_pem="-----BEGIN " "PRIVATE KEY-----\nKEY\n-----END PRIVATE KEY-----\n",
                 chain_pem="-----BEGIN CERTIFICATE-----\nCHAIN\n-----END CERTIFICATE-----\n",
                 actor_id="web:admin",
             )

@@ -6,9 +6,9 @@ type Json = Record<string, any>;
 const navGroups=[
   {id:"infrastructure",label:"Infrastructure",items:[["hosts","Managed Hosts"],["services","Remote Services"],["objects","Objects & Groups"]]},
   {id:"access",label:"Access Control",items:[["access","Access Operations"],["policies","Policies"]]},
-  {id:"operations",label:"Operations",items:[["jobs","Jobs"],["versions","Version Drift"],["revisions","Revisions"]]},
+  {id:"operations",label:"Operations",items:[["jobs","Jobs"],["hygiene","Access Hygiene"],["versions","Version Drift"],["revisions","Revisions"]]},
   {id:"observability",label:"Observability",items:[["audit","Audit"],["health","Health"]]},
-  {id:"administration",label:"Administration",items:[["users","Users"],["system","System"]]},
+  {id:"administration",label:"Administration",items:[["users","Users"],["integrations","Integrations"],["system","System"]]},
 ] as const;
 
 let csrf="";
@@ -289,6 +289,50 @@ function ManagedHostMetadataPanel(){
   return <div><div className="card"><h3>Guided Managed Host Metadata</h3><div className="toolbar"><input value={host} onChange={e=>setHost(e.target.value)} placeholder="Managed Host ID/name"/><input value={label} onChange={e=>setLabel(e.target.value)} placeholder="Optional label"/><input value={description} onChange={e=>setDescription(e.target.value)} placeholder="Description (blank clears)"/><input value={tags} onChange={e=>setTags(e.target.value)} placeholder="tags: env=prod,owner=netops"/></div></div><GuidedApplyPanel title="Managed Host Change Plan" build={request}/></div>;
 }
 
+function ManagedHostAdmissionPanel(){
+  const [host,setHost]=useState(""),[operation,setOperation]=useState("quarantine");
+  const [preview,setPreview]=useState<any>(null),[confirmation,setConfirmation]=useState("");
+  const [message,setMessage]=useState(""),[error,setError]=useState("");
+  async function doPreview(){
+    setError("");setMessage("");
+    try{
+      const result=await api("/api/v1/managed-hosts/admission/preview",{
+        method:"POST",body:JSON.stringify({host,operation}),
+      });
+      setPreview(result);setConfirmation("");
+    }catch(e:any){setPreview(null);setError(e.message||String(e))}
+  }
+  async function doApply(){
+    setError("");setMessage("");
+    try{
+      const result=await api("/api/v1/managed-hosts/admission/apply",{
+        method:"POST",body:JSON.stringify({change_plan_id:preview?.change_plan_id||"",confirmation}),
+      });
+      setMessage("Host admission "+(operation==="approve"?"approved":"quarantined")+" at revision "+result.revision+". Reload Managed Hosts to view the new state.");
+      setPreview(null);setConfirmation("");
+    }catch(e:any){setError(e.message||String(e))}
+  }
+  const required=preview?.confirmation_class||"";
+  return <div className="card">
+    <h3>Managed Host Approval / Quarantine</h3>
+    <p className="muted">Admission is separate from connection and management trust. Quarantine denies new Host access; active connections are not terminated. Identity, policy references, services and public ports are preserved. Approval restores normal policy evaluation, not unconditional access.</p>
+    {error&&<div className="error">{error}</div>}{message&&<div className="notice">{message}</div>}
+    <div className="toolbar">
+      <input value={host} onChange={e=>{setHost(e.target.value);setPreview(null)}} placeholder="Managed Host ID/name"/>
+      <select aria-label="Admission action" value={operation} onChange={e=>{setOperation(e.target.value);setPreview(null);setConfirmation("")}}>
+        <option value="quarantine">Quarantine new access</option>
+        <option value="approve">Approve / restore access</option>
+      </select>
+      <button className="secondary" disabled={!host.trim()} onClick={doPreview}>Preview Admission Impact</button>
+    </div>
+    {preview&&<div className="warning-box">
+      <pre className="plan">{JSON.stringify({preview:preview.preview,impact:preview.impact,valid_until:preview.valid_until},null,2)}</pre>
+      <label className="apply-label">Type {required} to continue<input value={confirmation} onChange={e=>setConfirmation(e.target.value)} placeholder={required}/></label>
+      <button className={operation==="quarantine"?"danger":"primary"} disabled={confirmation!==required} onClick={doApply}>{operation==="quarantine"?"Quarantine Managed Host":"Approve Managed Host"}</button>
+    </div>}
+  </div>;
+}
+
 function ManagedHostLifecyclePanel(){
   const [host,setHost]=useState(""),[operation,setOperation]=useState("revoke-trust");
   const [preview,setPreview]=useState<any>(null),[confirmation,setConfirmation]=useState(""),[message,setMessage]=useState(""),[error,setError]=useState("");
@@ -379,14 +423,17 @@ function RemoteServicePanel(){
   </div>;
 }
 
-function EnrollmentPanel({data,refresh}:{data:any,refresh:()=>void}){
+function EnrollmentPanel({data,refresh,operator}:{data:any,refresh:()=>void,operator:any}){
   const [mode,setMode]=useState("zero-touch"),[platform,setPlatform]=useState("linux"),[ttl,setTtl]=useState("3600"),[label,setLabel]=useState(""),[note,setNote]=useState("");
+  const [preApproved,setPreApproved]=useState(false);
   const [issued,setIssued]=useState<any>(null),[error,setError]=useState("");
   async function issue(){
     setError("");setIssued(null);
     try{
       const path=mode==="manual"?"/api/v1/enrollments/manual":"/api/v1/enrollments/zero-touch";
-      const result=await api(path,{method:"POST",body:JSON.stringify({platform,ttl_seconds:ttl,label,note})});
+      const result=await api(path,{method:"POST",body:JSON.stringify({
+        platform,ttl_seconds:ttl,label,note,...(mode==="zero-touch"?{pre_approved:preApproved}:{})
+      })});
       setIssued(result);refresh();
     }catch(e:any){setError(e.message||String(e))}
   }
@@ -396,15 +443,18 @@ function EnrollmentPanel({data,refresh}:{data:any,refresh:()=>void}){
       <div className="muted">Zero-Touch is recommended. Manual Enrollment keeps the credential out of the install command and prompts for it interactively. Secret-bearing material is display-once.</div>
       {error&&<div className="error">{error}</div>}
       <div className="toolbar">
-        <select value={mode} onChange={e=>{setMode(e.target.value);setIssued(null);setTtl(e.target.value==="manual"?"600":"3600")}}><option value="zero-touch">Zero-Touch</option><option value="manual">Manual Enrollment</option></select>
+        <select value={mode} onChange={e=>{setMode(e.target.value);setPreApproved(false);setIssued(null);setTtl(e.target.value==="manual"?"600":"3600")}}><option value="zero-touch">Zero-Touch</option><option value="manual">Manual Enrollment</option></select>
         <select value={platform} onChange={e=>setPlatform(e.target.value)}><option value="linux">Linux</option><option value="macos">macOS</option>{mode!=="manual"&&<option value="windows">Windows</option>}</select>
         <input value={ttl} onChange={e=>setTtl(e.target.value)} placeholder={"TTL seconds (60-"+maxTtl+")"}/>
         <input value={label} onChange={e=>setLabel(e.target.value)} placeholder="Managed Host label"/>
         <input value={note} onChange={e=>setNote(e.target.value)} placeholder="Optional note"/>
-        <button className="primary" onClick={issue}>Issue Enrollment</button>
+        {operator.role==="Admin"&&mode==="zero-touch"&&<label><input type="checkbox" checked={preApproved} onChange={e=>setPreApproved(e.target.checked)}/> Pre-approve this enrollment (explicit Admin access grant)</label>}
+        {operator.role==="Admin"&&<button className="primary" onClick={issue}>Issue Enrollment</button>}
       </div>
+      <p className="muted">Newly enrolled Hosts begin Pending Approval. Pre-approval is OFF by default and binds only the first Host using the issued ticket; it never changes an existing quarantined Host.</p>
       {issued&&<div className="warning-box">
         <strong>Display once · expires {issued.expires_at}</strong>
+        <div>Admission: {issued.pre_approved?"Pre-approved by Admin":"Pending Approval on first connection"}</div>
         {issued.enrollment_code&&<><div>Enrollment Code</div><pre className="plan">{issued.enrollment_code}</pre></>}
         <div>Install command</div><pre className="plan">{issued.command}</pre>
         <div>{issued.next_step}</div>
@@ -949,6 +999,82 @@ function AuditExplorer({operator}:{operator:any}){
   </>;
 }
 
+function AgentRolloutPreviewPanel(){
+  const [hosts,setHosts]=useState(""),[canaries,setCanaries]=useState(""),[version,setVersion]=useState(""),[sourceRef,setSourceRef]=useState(""),[digest,setDigest]=useState("");
+  const [wave,setWave]=useState("1"),[threshold,setThreshold]=useState("0"),[preview,setPreview]=useState<any>(null),[error,setError]=useState("");
+  function edit(setter:(value:string)=>void,value:string){setter(value);setPreview(null);setError("")}
+  async function inspect(){
+    setPreview(null);setError("");
+    try{
+      const body={targets:hosts.split(",").map(x=>x.trim()).filter(Boolean),canary_targets:canaries.split(",").map(x=>x.trim()).filter(Boolean),
+        artifact:{version:version.trim(),source_ref:sourceRef.trim(),sha256:digest.trim()},
+        wave_size:Number(wave),failure_threshold_percent:Number(threshold)};
+      setPreview(await api("/api/v1/jobs/agent-update-rollout/preview",{method:"POST",body:JSON.stringify(body)}));
+    }catch(e:any){setError(e.message||String(e))}
+  }
+  return <section className="card" aria-label="Agent update preview">
+    <h3>Managed Agent Updates · Read-only Preview</h3>
+    <p className="muted">Inspect an explicit bounded target set and canary wave. This does not enqueue updates or authorize an Apply. Artifact signatures, provenance, live Agent health and rollback remain unverified.</p>
+    <div className="dr-form-grid three">
+      <label className="dr-field"><span>Managed Host IDs (comma-separated)</span><input value={hosts} onChange={e=>edit(setHosts,e.target.value)} placeholder="host-a, host-b"/></label>
+      <label className="dr-field"><span>Canary Host IDs (optional)</span><input value={canaries} onChange={e=>edit(setCanaries,e.target.value)} placeholder="host-a"/></label>
+      <label className="dr-field"><span>Target version</span><input value={version} onChange={e=>edit(setVersion,e.target.value)} placeholder="3.0.0-rc.1"/></label>
+      <label className="dr-field"><span>Source commit (40-character SHA)</span><input value={sourceRef} onChange={e=>edit(setSourceRef,e.target.value)} placeholder="Immutable Git commit"/></label>
+      <label className="dr-field"><span>Artifact SHA256 (64 hex characters)</span><input value={digest} onChange={e=>edit(setDigest,e.target.value)} placeholder="SHA256 digest"/></label>
+      <label className="dr-field"><span>Wave size</span><input type="number" min="1" max="25" value={wave} onChange={e=>edit(setWave,e.target.value)}/></label>
+      <label className="dr-field"><span>Failure threshold (%) · 0 = halt on first failure</span><input type="number" min="0" max="100" value={threshold} onChange={e=>edit(setThreshold,e.target.value)}/></label>
+    </div>
+    <div className="dr-form-actions"><button className="secondary" disabled={!hosts.trim()||!version.trim()||!sourceRef.trim()||!digest.trim()} onClick={inspect}>Preview only · No updates</button></div>
+    {error&&<div className="error">{error}</div>}
+    {preview&&<div className="dr-preview-panel">
+      <p className="muted"><strong>Qualification: {preview.artifact_qualification}</strong> · Ready to apply: NO. Preview is advisory and must be revalidated before any future Apply.</p>
+      <div className="dr-table-scroll"><table className="dr-resource-table">
+        <thead><tr><th>Host</th><th>Platform</th><th>Agent heartbeat</th><th>Observed version</th><th>Target version</th><th>Version comparison</th><th>Provenance</th><th>Update available</th></tr></thead>
+        <tbody>{(preview.target_observations||[]).map((host:any)=><tr key={host.target_id}>
+          <td>{host.target_id}</td><td>{host.platform}</td>
+          <td>{host.agent_heartbeat_fresh ? "Recent report" : "Stale / unknown"}</td>
+          <td>{host.current_version}</td><td>{host.target_version}</td>
+          <td>{host.version_relation}</td><td>{host.provenance}</td><td>{host.update_available}</td>
+        </tr>)}</tbody>
+      </table></div>
+      <p className="muted"><strong>Planned Canary/Wave batches · read-only:</strong> Every prior batch must reach a terminal outcome before the next one starts. These groups are not approval to Apply an unqualified artifact.</p>
+      <div className="dr-table-scroll"><table className="dr-resource-table">
+        <thead><tr><th>Phase</th><th>Batch</th><th>Exact Managed Host IDs</th></tr></thead>
+        <tbody>{(preview.planned_batches||[]).map((batch:any,index:number)=><tr key={batch.phase+"-"+batch.batch+"-"+index}><td>{batch.phase}</td><td>{batch.batch}</td><td>{(batch.targets||[]).join(", ")}</td></tr>)}</tbody>
+      </table></div>
+      <p className="muted">Heartbeat freshness comes from the last authenticated Agent lifecycle report. Even a recent report does not prove current reachability, signed package provenance, or rollback readiness. Update availability remains UNKNOWN.</p>
+      <pre className="plan">{JSON.stringify({targets:preview.targets,canaries:preview.canary_targets,blocked:preview.blocked_targets,wave_size:preview.wave_size,artifact:preview.artifact,qualification_note:preview.qualification_note},null,2)}</pre>
+    </div>}
+  </section>;
+}
+
+function AgentRolloutRecoveryDetail({detail}:{detail:any}){
+  const progress=detail.rollout_progress;
+  if(!progress)return null;
+  const failed=(detail.targets||[]).filter((host:any)=>host.status==="FAILED");
+  return <section className="dr-preview-panel" aria-label="Agent rollout recovery">
+    <h4>Agent rollout recovery · {progress.phase||"UNKNOWN"}</h4>
+    <p className="muted">Status counts are not proof of an installed Agent update. Live Agent validation and independent release signing remain separate gates.</p>
+    <div className="grid">
+      <Metric label="Job-reported success" value={progress.reported_success_count||0}/>
+      <Metric label="Failed targets" value={progress.failed_count||0}/>
+      <Metric label="Queued targets" value={progress.queued_count||0}/>
+      <Metric label="In-flight targets" value={progress.running_count||0}/>
+    </div>
+    <p><strong>Agent update qualification:</strong> {progress.update_outcome_qualification||"NOT_VERIFIED"}</p>
+    <p><strong>Post-update Agent Health:</strong> {progress.post_update_health_verified?"VERIFIED":"NOT VERIFIED"}</p>
+    <p><strong>Rollback verification:</strong> {progress.rollback_verified?"VERIFIED":"NOT VERIFIED"}</p>
+    {progress.halt_reason&&<p><strong>Halt reason:</strong> {progress.halt_reason}</p>}
+    {progress.operator_reconciliation_required&&<div className="notice" role="status">
+      <strong>Operator reconciliation required</strong>
+      <p>{progress.recovery_guidance||"Inspect affected Agents before a new qualified rollout."}</p>
+      {failed.length>0&&<ul>{failed.map((host:any)=><li key={host.target_id}>
+        {host.target_id}: {host.error||"Agent failure reported"} · Rollback NOT VERIFIED
+      </li>)}</ul>}
+    </div>}
+  </section>;
+}
+
 function JobOperations({operator}:{operator:any}){
   const [jobs,setJobs]=useState<any>(null),[detail,setDetail]=useState<any>(null),[error,setError]=useState(""),[message,setMessage]=useState(""),[inventoryExport,setInventoryExport]=useState<any>(null);
   const [jobType,setJobType]=useState("doctor"),[resourceType,setResourceType]=useState("managed-host"),[resource,setResource]=useState(""),[detailId,setDetailId]=useState("");
@@ -1023,6 +1149,7 @@ function JobOperations({operator}:{operator:any}){
   const rows=(jobs?.items||[]).map((x:any)=>({id:x.id,job_type:x.job_type,status:x.status,resource_type:x.resource_type,resource_ref:x.resource_ref,target_count:x.target_count,created_at:x.created_at,finished_at:x.finished_at||""}));
   return <>
     {error&&<div className="error">{error}</div>}{message&&<div className="notice">{message}</div>}
+    {operator.role==="Admin"&&<AgentRolloutPreviewPanel/>}
     <div className="card">
       <h3>Bounded Management Jobs</h3>
       <div className="muted">Safe fleet operations only. Jobs are bounded to at most 100 trusted Managed Hosts and use the signed Agent claim/complete transport.</div>
@@ -1061,6 +1188,7 @@ function JobOperations({operator}:{operator:any}){
     {detail&&<div className="card">
       <h3>Job Detail</h3>
       <div className="grid"><Metric label="Status" value={detail.status}/><Metric label="Targets" value={detail.target_count}/><Metric label="Type" value={detail.job_type}/></div>
+      {detail.job_type==="agent-update-rollout"&&detail.rollout_progress&&<AgentRolloutRecoveryDetail detail={detail}/>}
       {operator.role!=="Read Only"&&["QUEUED","RUNNING"].includes(String(detail.status||""))&&<button className="danger" onClick={cancelJob}>Cancel Job</button>}
       <Table items={(detail.targets||[]).map((x:any)=>({target_id:x.target_id,status:x.status,attempt:x.attempt,error:x.error||"",updated_at:x.updated_at}))}/>
       <pre className="plan">{JSON.stringify({id:detail.id,resource_type:detail.resource_type,resource_ref:detail.resource_ref,deadline_at:detail.deadline_at,last_error:detail.last_error,targets:(detail.targets||[]).map((x:any)=>({target_id:x.target_id,status:x.status,result:x.result,error:x.error}))},null,2)}</pre>
@@ -1104,25 +1232,39 @@ function PolicyWorkspace({data,operator,onNavigate}:{data:any,operator:any,onNav
 
 function ResourceWorkspace({kind,items,operator,onNavigate}:{kind:"host"|"service",items:any[],operator:any,onNavigate?:(id:string,groupId?:string)=>void}){
   const [filter,setFilter]=useState(""),[selected,setSelected]=useState<any>(null);
+  const [admissionFilter,setAdmissionFilter]=useState("all");
   useEscapeClose(!!selected,()=>setSelected(null));
   const q=filter.trim().toLowerCase();
-  const rows=(items||[]).filter((item:any)=>!q||Object.values(item).some(value=>String(value??"").toLowerCase().includes(q)));
   const isHost=kind==="host";
+  const rows=(items||[])
+    .filter((item:any)=>(!q||Object.values(item).some(value=>String(value??"").toLowerCase().includes(q)))
+      &&(!isHost||admissionFilter==="all"||item.admission_state===admissionFilter))
+    .sort((a:any,b:any)=>isHost?
+      (a.admission_state==="PENDING_APPROVAL"?-1:a.admission_state==="QUARANTINED"?0:1)
+      -(b.admission_state==="PENDING_APPROVAL"?-1:b.admission_state==="QUARANTINED"?0:1):0);
   const heading=isHost?"Managed Hosts":"Remote Services";
   const description=isHost?"Agent inventory, trust, connectivity, platform and version in one resource workspace.":"Published services, owning hosts, ports and release state with contextual access actions.";
   return <div className="dr-resource-workspace">
     <section className="dr-page-intro"><div><p className="dr-eyebrow">Infrastructure</p><h2>{heading}</h2><p className="muted">{description}</p></div><div className="dr-page-actions">{isHost&&operator.role==="Admin"&&<button className="primary" onClick={()=>onNavigate?.("enrollments","infrastructure")}>Connect Agent</button>}<button className="secondary" onClick={()=>onNavigate?.("access","access")}>Access workspace</button></div></section>
     <section className="card dr-list-card">
-      <div className="dr-list-toolbar"><div><strong>{rows.length}</strong><span>{heading.toLowerCase()}</span></div><label className="dr-filter-field"><WorkspaceIcon kind="search"/><input value={filter} onChange={e=>setFilter(e.target.value)} placeholder={isHost?"Filter hosts…":"Filter services…"}/>{filter&&<button onClick={()=>setFilter("")} aria-label="Clear filter">×</button>}</label></div>
+      <div className="dr-list-toolbar"><div><strong>{rows.length}</strong><span>{heading.toLowerCase()}</span></div>
+        {isHost&&<select aria-label="Filter Managed Host admission" value={admissionFilter} onChange={e=>setAdmissionFilter(e.target.value)}>
+          <option value="all">All admission states</option>
+          <option value="PENDING_APPROVAL">Pending approval</option>
+          <option value="APPROVED">Approved</option>
+          <option value="QUARANTINED">Quarantined</option>
+        </select>}
+        <label className="dr-filter-field"><WorkspaceIcon kind="search"/><input value={filter} onChange={e=>setFilter(e.target.value)} placeholder={isHost?"Filter hosts…":"Filter services…"}/>{filter&&<button onClick={()=>setFilter("")} aria-label="Clear filter">×</button>}</label></div>
       {!rows.length?<div className="dr-empty-state"><span className="dr-empty-icon"><WorkspaceIcon kind="infrastructure"/></span><strong>{filter?"No matching resources":"No resources yet"}</strong><p>{filter?"Try a different filter.":isHost?"Connect an Agent to populate managed inventory.":"Publish a Remote Service from a managed host."}</p>{!filter&&isHost&&operator.role==="Admin"&&<button className="primary" onClick={()=>onNavigate?.("enrollments","infrastructure")}>Connect Agent</button>}</div>:
-      <div className="dr-table-scroll"><table className="dr-resource-table"><thead><tr>{isHost?<><th>Host</th><th>State</th><th>Trust</th><th>Platform</th><th>Version</th><th>Last activity</th></>:<><th>Service</th><th>Managed host</th><th>Type</th><th>Public port</th><th>Target</th><th>State</th></>}</tr></thead><tbody>{rows.map((item:any)=><tr key={item.id} tabIndex={0} onClick={()=>setSelected(item)} onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();setSelected(item)}}}>{isHost?<><td><strong>{item.name||item.id}</strong><small>{item.hostname||item.id}</small></td><td><span className={item.connected?"dr-state active":"dr-state"}><i/>{item.connected?"Connected":item.agent_lifecycle_state||item.status||"Unknown"}</span></td><td>{item.trust_status||"—"}</td><td>{item.agent_platform||"—"}</td><td>{item.agent_version||"—"}</td><td>{item.agent_heartbeat_at||item.last_seen||"—"}</td></>:<><td><strong>{item.name||item.id}</strong><small>{item.id}</small></td><td>{item.managed_host||item.managed_host_id||"—"}</td><td>{item.service_type||"—"}</td><td>{item.public_port??"—"}</td><td>{[item.target_host,item.target_port].filter(Boolean).join(":")||item.target_mode||"—"}</td><td><span className={item.enabled&&!item.released?"dr-state active":"dr-state"}><i/>{item.released?"Released":item.enabled?"Enabled":"Disabled"}</span></td></>}</tr>)}</tbody></table></div>}
+      <div className="dr-table-scroll"><table className="dr-resource-table"><thead><tr>{isHost?<><th>Host</th><th>Admission</th><th>Connection</th><th>Trust</th><th>Platform</th><th>Version</th><th>Last activity</th></>:<><th>Service</th><th>Managed host</th><th>Type</th><th>Public port</th><th>Target</th><th>State</th></>}</tr></thead><tbody>{rows.map((item:any)=><tr key={item.id} tabIndex={0} onClick={()=>setSelected(item)} onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();setSelected(item)}}}>{isHost?<><td><strong>{item.name||item.id}</strong><small>{item.hostname||item.id}</small></td><td><span className={item.admission_state==="APPROVED"?"dr-state active":"dr-state"}><i/>{item.admission_state==="APPROVED"?"Approved":item.admission_state==="PENDING_APPROVAL"?"Pending approval":item.admission_state==="QUARANTINED"?"Quarantined":"Unknown"}</span></td><td><span className={item.connected?"dr-state active":"dr-state"}><i/>{item.connected?"Connected":item.agent_lifecycle_state||item.status||"Unknown"}</span></td><td>{item.trust_status||"—"}</td><td>{item.agent_platform||"—"}</td><td>{item.agent_version||"—"}</td><td>{item.agent_heartbeat_at||item.last_seen||"—"}</td></>:<><td><strong>{item.name||item.id}</strong><small>{item.id}</small></td><td>{item.managed_host||item.managed_host_id||"—"}</td><td>{item.service_type||"—"}</td><td>{item.public_port??"—"}</td><td>{[item.target_host,item.target_port].filter(Boolean).join(":")||item.target_mode||"—"}</td><td><span className={item.enabled&&!item.released?"dr-state active":"dr-state"}><i/>{item.released?"Released":item.enabled?"Enabled":"Disabled"}</span></td></>}</tr>)}</tbody></table></div>}
     </section>
-    {selected&&<div className="dr-drawer-backdrop" onMouseDown={e=>{if(e.currentTarget===e.target)setSelected(null)}}><aside className="dr-detail-drawer" role="dialog" aria-modal="true" aria-label={heading+" detail"} tabIndex={-1} autoFocus><header><div><p className="dr-eyebrow">{isHost?"Managed Host":"Remote Service"}</p><h2>{selected.name||selected.id}</h2><p>{selected.hostname||selected.id}</p></div><button className="dr-icon-button" onClick={()=>setSelected(null)} aria-label="Close detail">×</button></header><div className="dr-drawer-status"><span className={(isHost?selected.connected:selected.enabled&&!selected.released)?"dr-state active":"dr-state"}><i/>{isHost?(selected.connected?"Connected":selected.status||"Unknown"):(selected.released?"Released":selected.enabled?"Enabled":"Disabled")}</span></div><div className="dr-detail-fields">{Object.entries(selected).filter(([,value])=>typeof value!=="object"&&value!==null&&value!=="").map(([key,value])=><div key={key}><span>{key.replaceAll("_"," ")}</span><strong>{String(value)}</strong></div>)}</div><footer><button className="secondary" onClick={()=>{setSelected(null);onNavigate?.("audit","observability")}}>Recent activity</button><button className="primary" onClick={()=>{setSelected(null);onNavigate?.("access","access")}}>Access context</button></footer></aside></div>}
+    {selected&&<div className="dr-drawer-backdrop" onMouseDown={e=>{if(e.currentTarget===e.target)setSelected(null)}}><aside className="dr-detail-drawer" role="dialog" aria-modal="true" aria-label={heading+" detail"} tabIndex={-1} autoFocus><header><div><p className="dr-eyebrow">{isHost?"Managed Host":"Remote Service"}</p><h2>{selected.name||selected.id}</h2><p>{selected.hostname||selected.id}</p></div><button className="dr-icon-button" onClick={()=>setSelected(null)} aria-label="Close detail">×</button></header><div className="dr-drawer-status"><span className={(isHost?selected.connected:selected.enabled&&!selected.released)?"dr-state active":"dr-state"}><i/>{isHost?(selected.connected?"Connected":selected.status||"Unknown"):(selected.released?"Released":selected.enabled?"Enabled":"Disabled")}</span>{isHost&&<span className={selected.admission_state==="APPROVED"?"dr-state active":"dr-state"}>{selected.admission_state==="PENDING_APPROVAL"?"Pending approval":selected.admission_state==="QUARANTINED"?"Quarantined":selected.admission_state==="APPROVED"?"Approved":"Unknown admission"}</span>}</div><div className="dr-detail-fields">{Object.entries(selected).filter(([,value])=>typeof value!=="object"&&value!==null&&value!=="").map(([key,value])=><div key={key}><span>{key.replaceAll("_"," ")}</span><strong>{String(value)}</strong></div>)}</div><footer><button className="secondary" onClick={()=>{setSelected(null);onNavigate?.("audit","observability")}}>Recent activity</button><button className="primary" onClick={()=>{setSelected(null);onNavigate?.("access","access")}}>Access context</button></footer></aside></div>}
   </div>;
 }
 
 function UsersPanel({operator}:{operator:any}){
   const [data,setData]=useState<any>({items:[]}),[error,setError]=useState(""),[busy,setBusy]=useState("");
+  const [newUsername,setNewUsername]=useState(""),[newPassword,setNewPassword]=useState(""),[newRole,setNewRole]=useState("Read Only");
   async function refresh(){try{setData(await api("/api/v1/operators"));setError("")}catch(e:any){setError(e.message||String(e))}}
   useEffect(()=>{refresh()},[]);
   async function setMfa(id:string,required:boolean){
@@ -1133,13 +1275,80 @@ function UsersPanel({operator}:{operator:any}){
       await refresh();
     }catch(e:any){setError(e.message||String(e))}finally{setBusy("")}
   }
+  async function createUser(e:any){
+    e.preventDefault();setBusy("create");setError("");
+    try{await api("/api/v1/operators",{method:"POST",body:JSON.stringify({username:newUsername,password:newPassword,role:newRole})});setNewUsername("");setNewPassword("");setNewRole("Read Only");await refresh()}
+    catch(e:any){setError(e.message||String(e))}finally{setBusy("")}
+  }
   return <>{error&&<div className="error">{error}</div>}<div className="card">
     <h3>Web Users</h3>
+    <form className="toolbar" onSubmit={createUser}><input value={newUsername} onChange={e=>setNewUsername(e.target.value)} placeholder="Username" autoComplete="off"/><input type="password" value={newPassword} onChange={e=>setNewPassword(e.target.value)} placeholder="Initial password" autoComplete="new-password"/><select value={newRole} onChange={e=>setNewRole(e.target.value)}><option>Read Only</option><option>Operator</option><option>Admin</option></select><button className="primary" type="submit" disabled={busy==="create"||!newUsername||!newPassword}>{busy==="create"?"Creating…":"Create user"}</button></form>
     <div className="muted">MFA is disabled by default. Enable it per user. Enabling MFA revokes that user's active sessions; on the next password sign-in the user completes TOTP setup and receives recovery codes directly.</div>
     <table><thead><tr><th>User</th><th>Role</th><th>Status</th><th>MFA</th><th>Last login</th><th>Action</th></tr></thead><tbody>
       {(data.items||[]).map((x:any)=>{const mfa=x.mfa_required?(x.mfa_enrolled?"Enabled":"Setup pending"):"Disabled";return <tr key={x.id}><td>{x.username}{x.recovery_admin?" · recovery admin":""}</td><td>{x.role}</td><td>{x.enabled?"Enabled":"Disabled"}</td><td>{mfa}</td><td>{x.last_login_at||"-"}</td><td><button className={x.mfa_required?"secondary":"primary"} disabled={busy===x.id} onClick={()=>setMfa(x.id,!x.mfa_required)}>{x.mfa_required?"Disable MFA":"Enable MFA"}</button></td></tr>})}
     </tbody></table>
   </div></>;
+}
+
+function IntegrationsPanel(){
+  const [accounts,setAccounts]=useState<any[]>([]),[hooks,setHooks]=useState<any[]>([]);
+  const [error,setError]=useState(""),[busy,setBusy]=useState(false),[once,setOnce]=useState<any>(null);
+  const [notice,setNotice]=useState("");
+  const [accountName,setAccountName]=useState(""),[accountExpiry,setAccountExpiry]=useState("");
+  const [permissions,setPermissions]=useState<string[]>(["management-read"]);
+  const [hookName,setHookName]=useState(""),[hookUrl,setHookUrl]=useState("");
+  const [hookEvent,setHookEvent]=useState("attention");
+  const allowedPermissions=["management-read","management-diagnose","management-policy-test","management-job-observe"];
+  async function refresh(){
+    try{const [a,w]=await Promise.all([api("/api/v1/service-accounts"),api("/api/v1/webhooks")]);
+      setAccounts(a.items||[]);setHooks(w.items||[]);setError("");
+    }catch(e:any){setError(e.message||String(e))}
+  }
+  useEffect(()=>{refresh()},[]);
+  async function mutate(path:string,body:any,secretKind?:string){
+    setBusy(true);setError("");setOnce(null);
+    try{
+      const result=await api(path,{method:"POST",body:JSON.stringify(body)});
+      if(secretKind)setOnce({kind:secretKind,secret:result.credential||result.secret,id:result.id||result.credential_id});
+      await refresh();
+    }catch(e:any){setError(e.message||String(e))}finally{setBusy(false)}
+  }
+  async function createAccount(e:React.FormEvent){
+    e.preventDefault();if(!accountName||!permissions.length)return;
+    await mutate("/api/v1/service-accounts",{name:accountName,permissions,expires_at:accountExpiry?new Date(accountExpiry).toISOString():undefined},"Service Account token");
+    setAccountName("");setAccountExpiry("");
+  }
+  async function createWebhook(e:React.FormEvent){
+    e.preventDefault();if(!hookName||!hookUrl)return;
+    await mutate("/api/v1/webhooks",{name:hookName,url:hookUrl,event_classes:[hookEvent]},"Webhook signing secret");
+    setHookName("");setHookUrl("");
+  }
+  async function testWebhook(webhookId:string){
+    setBusy(true);setError("");setNotice("");
+    try{
+      const result=await api("/api/v1/webhooks/test",{method:"POST",body:JSON.stringify({webhook_id:webhookId})});
+      setNotice("Signed test event queued: "+result.event_id+". Check delivery status after the worker runs.");
+      await refresh();
+    }catch(e:any){setError(e.message||String(e))}finally{setBusy(false)}
+  }
+  return <div>
+    <section className="dr-page-intro"><div><p className="dr-eyebrow">Administration</p><h2>Integrations</h2><p className="muted">Manage scoped non-human API access and optional signed HTTPS events. Web login credentials and these integration secrets are never shared.</p></div></section>
+    {error&&<div className="error">{error}</div>}
+    {notice&&<div className="card" role="status">{notice}</div>}
+    {once&&<div className="card" role="status"><h3>Copy once: {once.kind}</h3><p className="muted">This value will not appear in inventory or after a refresh. Store it in an approved secret manager.</p>
+      <div className="toolbar"><input aria-label="One-time integration secret" readOnly value={once.secret} style={{minWidth:320,flex:1}}/><button className="secondary" onClick={()=>navigator.clipboard?.writeText(once.secret)}>Copy</button><button className="primary" onClick={()=>setOnce(null)}>Done</button></div></div>}
+    <section className="card"><h3>Service Accounts</h3><p className="muted">The public Automation API uses Bearer tokens, per-account rate limits and explicit read-only Core operations in this phase.</p>
+      <form onSubmit={createAccount}><div className="toolbar"><input value={accountName} onChange={e=>setAccountName(e.target.value)} placeholder="Account name" required/><input type="datetime-local" value={accountExpiry} onChange={e=>setAccountExpiry(e.target.value)} title="Optional token expiry"/></div>
+        <div className="toolbar">{allowedPermissions.map(p=><label key={p}><input type="checkbox" checked={permissions.includes(p)} onChange={e=>setPermissions(a=>e.target.checked?[...a,p]:a.filter(x=>x!==p))}/>{p}</label>)}</div>
+        <button className="primary" disabled={busy||!accountName||!permissions.length} type="submit">Create Service Account</button>
+      </form>
+      <table><thead><tr><th>Account</th><th>Permissions</th><th>Expires</th><th>Status</th><th>Actions</th></tr></thead><tbody>{accounts.map(a=><tr key={a.id}><td>{a.name}</td><td>{(a.permissions||[]).join(", ")}</td><td>{a.expires_at||"No expiry"}</td><td>{a.enabled?"Active":"Revoked"}</td><td>{a.enabled&&<><button className="secondary" disabled={busy} onClick={()=>mutate("/api/v1/service-accounts/rotate",{account_id:a.id},"Rotated Service Account token")}>Rotate</button><button className="danger" disabled={busy} onClick={()=>{if(window.confirm("Revoke this Service Account now?"))mutate("/api/v1/service-accounts/revoke",{account_id:a.id})}}>Revoke</button></>}</td></tr>)}</tbody></table>
+    </section>
+    <section className="card"><h3>Signed Event Webhooks</h3><p className="muted">HTTPS only, certificate-verified and DNS-pinned. Failed deliveries use bounded retries; event delivery never controls access enforcement.</p>
+      <form className="toolbar" onSubmit={createWebhook}><input value={hookName} onChange={e=>setHookName(e.target.value)} placeholder="Endpoint name" required/><input value={hookUrl} onChange={e=>setHookUrl(e.target.value)} placeholder="https://hooks.example.com/events" required type="url"/><select value={hookEvent} onChange={e=>setHookEvent(e.target.value)}><option value="attention">Attention</option><option value="security.lifecycle">Security lifecycle</option><option value="policy.change">Policy change</option><option value="managed_host.lifecycle">Managed Host lifecycle</option></select><button className="primary" disabled={busy||!hookName||!hookUrl} type="submit">Add webhook</button></form>
+      <table><thead><tr><th>Endpoint</th><th>URL</th><th>Events</th><th>Status</th><th>Delivery</th><th>Actions</th></tr></thead><tbody>{hooks.map(h=><tr key={h.id}><td>{h.name}</td><td>{h.url}</td><td>{(h.event_classes||[]).join(", ")}</td><td>{h.enabled?"Enabled":"Disabled"}</td><td><div>{Object.entries(h.delivery_counts||{}).map(([k,v])=>k+":"+v).join(" · ")||"—"}</div>{h.last_success_at&&<div className="muted">Last delivered: {new Date(h.last_success_at).toLocaleString()}</div>}{h.last_failure_at&&<div className="muted">Last failed: {new Date(h.last_failure_at).toLocaleString()}</div>}{h.next_retry_at&&<div className="muted">Next retry: {new Date(h.next_retry_at).toLocaleString()}</div>}</td><td>{h.enabled?<><button className="secondary" disabled={busy} onClick={()=>testWebhook(h.id)}>Send test</button><button className="secondary" disabled={busy} onClick={()=>mutate("/api/v1/webhooks/rotate",{webhook_id:h.id},"Rotated Webhook secret")}>Rotate</button><button className="danger" disabled={busy} onClick={()=>{if(window.confirm("Disable this webhook and fail queued deliveries?"))mutate("/api/v1/webhooks/disable",{webhook_id:h.id})}}>Disable</button></>:<button className="secondary" disabled={busy} onClick={()=>mutate("/api/v1/webhooks/enable",{webhook_id:h.id})}>Enable</button>}</td></tr>)}</tbody></table>
+    </section>
+  </div>;
 }
 
 function CommandCenter({data,operator,onNavigate}:{data:any,operator:any,onNavigate?:(id:string,groupId?:string)=>void}){
@@ -1196,6 +1405,65 @@ function HealthWorkspace({data,onNavigate}:{data:any,onNavigate?:(id:string,grou
   </div>;
 }
 
+function AccessHygienePanel({data,onRefresh,onNavigate,operator}:{data:any,onRefresh:()=>void,onNavigate?:(id:string,groupId?:string)=>void,operator:any}){
+  const [quality,setQuality]=useState("all"),[filter,setFilter]=useState("");
+  const [severityFilter,setSeverityFilter]=useState("all"),[kindFilter,setKindFilter]=useState("all"),[ageFilter,setAgeFilter]=useState("all");
+  const destination:Record<string,[string,string]>={
+    "managed-host":["hosts","infrastructure"],"object":["objects","infrastructure"],
+    "access-rule":["policies","access"],"service-account":["integrations","administration"],
+  };
+  const source=Array.isArray(data?.items)?data.items:[];
+  const kinds=Array.from(new Set(source.map((x:any)=>String(x.kind||"")).filter(Boolean))).sort();
+  const items=source.filter((x:any)=>{
+    if(severityFilter!=="all"&&x.severity!==severityFilter)return false;
+    if(kindFilter!=="all"&&x.kind!==kindFilter)return false;
+    const observedAge=typeof x.age_days==="number"&&Number.isFinite(x.age_days)?x.age_days:null;
+    if(ageFilter==="unknown"&&observedAge!==null)return false;
+    if(ageFilter!=="all"&&ageFilter!=="unknown"&&(observedAge===null||observedAge<Number(ageFilter)))return false;
+    if(quality==="ORPHANED"&&x.kind!=="orphan-object")return false;
+    if(quality!=="all"&&quality!=="ORPHANED"&&x.finding_status!==quality)return false;
+    const q=filter.trim().toLowerCase();
+    return !q||[x.kind,x.resource_type,x.resource_id,x.label,x.plane].some(v=>String(v||"").toLowerCase().includes(q));
+  });
+  const unknown=Number(data?.summary?.unknown_evidence??source.filter((x:any)=>x.finding_status==="UNKNOWN_EVIDENCE").length);
+  return <div className="dr-resource-workspace">
+    <section className="dr-page-intro"><div><p className="dr-eyebrow">Operations · Access Hygiene</p>
+      <h2>Access Hygiene</h2><p className="muted">Evidence-qualified review only. No access rule, Host, account, or permission is changed automatically.</p></div>
+      <div className="dr-page-actions"><button className="secondary" onClick={onRefresh}>Refresh evidence</button></div>
+    </section>
+    <div className="grid"><Metric label="Review findings" value={data?.count||0}/><Metric label="Unknown evidence" value={unknown}/></div>
+    <section className="card">
+      <div className="dr-list-toolbar"><div><strong>{items.length}</strong><span>visible recommendations</span></div>
+        <div className="toolbar"><input aria-label="Filter access hygiene" value={filter} onChange={e=>setFilter(e.target.value)} placeholder="Filter resource or finding"/>
+          <select aria-label="Finding status" value={quality} onChange={e=>setQuality(e.target.value)}>
+            <option value="all">All findings</option><option value="STALE_OR_UNUSED">Stale</option>
+            <option value="ACTION_REQUIRED">Action required</option><option value="ORPHANED">Orphaned</option>
+            <option value="UNKNOWN_EVIDENCE">Unknown evidence</option>
+          </select>
+          <select aria-label="Filter finding severity" value={severityFilter} onChange={e=>setSeverityFilter(e.target.value)}>
+            <option value="all">All severities</option><option value="warning">Warning</option><option value="info">Informational</option><option value="critical">Critical</option>
+          </select>
+          <select aria-label="Filter finding type" value={kindFilter} onChange={e=>setKindFilter(e.target.value)}>
+            <option value="all">All types</option>{kinds.map(kind=><option key={kind} value={kind}>{kind.replaceAll("-"," ")}</option>)}
+          </select>
+          <select aria-label="Filter observed age" value={ageFilter} onChange={e=>setAgeFilter(e.target.value)}>
+            <option value="all">All ages</option><option value="7">7+ days</option><option value="30">30+ days</option><option value="90">90+ days</option><option value="unknown">Age unknown</option>
+          </select>
+        </div>
+      </div>
+      <p className="muted">Incomplete or unverified audit coverage is UNKNOWN_EVIDENCE, not proof of unused access. Recommendations are always advisory.</p>
+      {!items.length?<div className="dr-empty-state"><strong>No matching findings</strong><p>There is no evidence-qualified action matching the current filters.</p></div>:
+      <div className="dr-table-scroll"><table className="dr-resource-table"><thead><tr><th>Resource</th><th>Review</th><th>Evidence</th><th>Observed age</th><th>Window</th><th>Recommendation</th><th>Inspect</th></tr></thead>
+      <tbody>{items.map((x:any,i:number)=><tr key={x.kind+":"+x.resource_id+":"+i}><td><strong>{x.label||x.resource_id}</strong><small>{x.resource_type||""} · {x.kind||""}</small></td>
+        <td><span className={x.finding_status==="UNKNOWN_EVIDENCE"?"dr-state":"dr-state active"}><i/>{x.finding_status||"UNKNOWN_EVIDENCE"}</span></td>
+        <td>{x.evidence_quality||"UNKNOWN_EVIDENCE"}</td><td title={x.age_reference||"No verified age timestamp"}>{typeof x.age_days==="number"?x.age_days+" days":"Unknown"}</td><td>{x.observation_window_days===0?"Current":(x.observation_window_days??"—")+" days"}</td>
+        <td>{x.recommendation||"Review the authoritative resource."}</td>
+        <td><button className="secondary" disabled={x.resource_type==="service-account"&&operator.role!=="Admin"} onClick={()=>{const route=destination[x.resource_type];if(route)onNavigate?.(route[0],route[1])}}>Inspect</button></td>
+      </tr>)}</tbody></table></div>}
+    </section>
+  </div>;
+}
+
 function View({active,operator,onNavigate}:{active:string,operator:any,onNavigate?:(id:string,groupId?:string)=>void}){
   const [data,setData]=useState<any>(null),[error,setError]=useState(""),[query,setQuery]=useState("");
   useEffect(()=>{
@@ -1204,24 +1472,26 @@ function View({active,operator,onNavigate}:{active:string,operator:any,onNavigat
       overview:"/api/v1/overview",hosts:"/api/v1/inventory?resource_type=managed-host&limit=100",
       services:"/api/v1/inventory?resource_type=remote-service&limit=100",
       objects:"/api/v1/objects-groups?limit=50",policies:"/api/v1/policies?limit=100",
-      versions:"/api/v1/versions",system:"/api/v1/system",revisions:"/api/v1/revisions?limit=100",
+      versions:"/api/v1/versions",hygiene:"/api/v1/access-hygiene",system:"/api/v1/system",revisions:"/api/v1/revisions?limit=100",
       doctor:"/api/v1/doctor",health:"/api/v1/health",views:"/api/v1/saved-views",enrollments:"/api/v1/enrollments?limit=50",
     };
     if(paths[active])api(paths[active]).then(setData).catch((e:any)=>setError(e.message||String(e)));
   },[active]);
   if(error)return <div className="error">{error}</div>;
   if(active==="users")return <UsersPanel operator={operator}/>;
+  if(active==="integrations")return operator.role==="Admin"?<IntegrationsPanel/>:<div className="error">Admin role required</div>;
   if(active==="drafts")return <DraftWorkspace/>;
   if(active==="access")return <AccessOperations operator={operator} onNavigate={onNavigate}/>;
   if(active==="jobs")return <JobOperations operator={operator}/>;
+  if(active==="hygiene"&&data)return <AccessHygienePanel data={data} operator={operator} onRefresh={()=>api("/api/v1/access-hygiene").then(setData).catch((e:any)=>setError(e.message||String(e)))} onNavigate={onNavigate}/>;
   if(active==="audit")return <AuditExplorer operator={operator}/>;
-  if(active==="enrollments"&&data)return <EnrollmentPanel data={data} refresh={()=>api("/api/v1/enrollments?limit=50").then(setData)}/>;
+  if(active==="enrollments"&&data)return <EnrollmentPanel data={data} operator={operator} refresh={()=>api("/api/v1/enrollments?limit=50").then(setData)}/>;
   if(active==="search")return <div><div className="toolbar"><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search resources and policy"/><button className="primary" onClick={()=>api("/api/v1/search?q="+encodeURIComponent(query)+"&limit=50").then(setData).catch((e:any)=>setError(e.message))}>Search</button></div>{data&&<Table items={(data.items||[]).map((x:any)=>({type:x.resource_type,id:x.id,name:x.name}))}/>}</div>;
   if(active==="overview"&&data)return <CommandCenter data={data} operator={operator} onNavigate={onNavigate}/>;
   if(active==="versions"&&data)return <><div className="grid"><Metric label="Server version" value={data.server_version}/><Metric label="Drift" value={data.drift_count}/><Metric label="Unknown" value={data.unknown_count}/></div><Table items={data.hosts||[]}/></>;
   if(active==="system"&&data)return <SystemPanel data={data} operator={operator}/>;
   if(active==="objects"&&data)return <><ObjectsWorkspace data={data} onNavigate={onNavigate}/>{operator.role!=="Read Only"&&<GuidedObjectPanel/>}</>;
-  if(active==="hosts"&&data)return <><ResourceWorkspace kind="host" items={data.items||[]} operator={operator} onNavigate={onNavigate}/>{operator.role!=="Read Only"&&<ManagedHostMetadataPanel/>}{operator.role==="Admin"&&<ManagedHostLifecyclePanel/>}</>;
+  if(active==="hosts"&&data)return <><ResourceWorkspace kind="host" items={data.items||[]} operator={operator} onNavigate={onNavigate}/>{operator.role!=="Read Only"&&<ManagedHostMetadataPanel/>}{operator.role==="Admin"&&<ManagedHostAdmissionPanel/>}{operator.role==="Admin"&&<ManagedHostLifecyclePanel/>}</>;
   if(active==="services"&&data)return <><ResourceWorkspace kind="service" items={data.items||[]} operator={operator} onNavigate={onNavigate}/>{operator.role!=="Read Only"&&<RemoteServicePanel/>}</>;
   if(active==="policies"&&data)return <><PolicyWorkspace data={data} operator={operator} onNavigate={onNavigate}/><PolicySafetyPanel operator={operator}/>{operator.role!=="Read Only"&&<><GuidedPolicySettingsPanel/><GuidedPolicyRulePanel/><TemporaryAccessPanel/></>}</>;
   if(active==="doctor"&&data)return <><div className="grid"><Metric label="Attention" value={data.attention?.count}/><Metric label="Checks" value={(data.checks||[]).length}/></div><Table items={data.checks||[]}/></>;
@@ -1321,6 +1591,7 @@ function Shell({operator,onLogout}:{operator:any,onLogout:()=>void}){
   async function logout(){try{await api("/api/v1/auth/logout",{method:"POST",body:"{}"})}finally{csrf="";onLogout()}}
   function visible(id:string){
     if(id==="users")return operator.role==="Admin";
+    if(id==="integrations")return operator.role==="Admin";
     if(id==="enrollments")return operator.role==="Admin";
     if(id==="drafts")return operator.role!=="Read Only";
     return true;

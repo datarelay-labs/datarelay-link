@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import base64
+import json
 import os
 import sys
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
@@ -108,6 +111,52 @@ class V30ManagementQueryServiceTests(unittest.TestCase):
         with self.assertRaises(ControlPlaneError):
             self.service.list_inventory("managed-host", cursor="not-a-real-cursor")
 
+    def test_cursor_shapes_are_fail_closed_across_read_surfaces(self):
+        invalid = base64.urlsafe_b64encode(json.dumps([]).encode()).decode().rstrip("=")
+        methods = (
+            ("inventory", lambda c: self.service.list_inventory("managed-host", cursor=c)),
+            ("audit", lambda c: self.service.audit_query(cursor=c)),
+            ("jobs", lambda c: self.service.job_list(cursor=c)),
+            ("live", lambda c: self.service.live_access(plane="remote", cursor=c)),
+            ("revisions", lambda c: self.service.revision_list(cursor=c)),
+        )
+        for name, invoke in methods:
+            with self.subTest(surface=name, case="non-object"):
+                with self.assertRaises(ControlPlaneError):
+                    invoke(invalid)
+            with self.subTest(surface=name, case="oversized-before-base64"):
+                with patch("drlink_management_service.base64.urlsafe_b64decode") as decode:
+                    with self.assertRaises(ControlPlaneError):
+                        invoke("A" * 8192)
+                    decode.assert_not_called()
+
+    def test_invalid_job_cursor_is_rejected_before_deadline_reconciliation(self):
+        with patch.object(self.service, "_reconcile_management_job_deadlines") as reconcile:
+            with self.assertRaises(ControlPlaneError):
+                self.service.job_list(cursor="not-a-valid-cursor")
+            reconcile.assert_not_called()
+
+    def test_numeric_cursor_keys_reject_bool_or_text_and_non_string_inputs(self):
+        def encoded(payload):
+            return base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
+
+        for row_id in (True, False, "1", 1.5, None):
+            with self.subTest(surface="audit", row_id=repr(row_id)):
+                with self.assertRaises(ControlPlaneError):
+                    self.service.audit_query(cursor=encoded({
+                        "v": 1, "resource": "audit", "time": "2026-10-10T00:00:00Z",
+                        "id": row_id,
+                    }))
+            with self.subTest(surface="revision", row_id=repr(row_id)):
+                with self.assertRaises(ControlPlaneError):
+                    self.service.revision_list(cursor=encoded({
+                        "v": 1, "resource": "revision", "revision": row_id,
+                    }))
+        for invalid in (True, 0, b"abc", [], {}):
+            with self.subTest(case="invalid-cursor-input-type", input=repr(invalid)):
+                with self.assertRaises(ControlPlaneError):
+                    self.service.list_inventory("managed-host", cursor=invalid)
+
     def test_limit_defaults_caps_and_rejects_zero(self):
         self.assertEqual(
             self.service.list_inventory("managed-host").limit,
@@ -119,6 +168,12 @@ class V30ManagementQueryServiceTests(unittest.TestCase):
         )
         with self.assertRaises(ControlPlaneError):
             self.service.list_inventory("managed-host", limit=0)
+
+    def test_limit_rejects_boolean_fractional_and_text_coercion(self):
+        for raw in (True, False, 1.5, "10", b"10"):
+            with self.subTest(limit=repr(raw)):
+                with self.assertRaises(ControlPlaneError):
+                    self.service.list_inventory("managed-host", limit=raw)
 
     def test_get_inventory_supports_id_and_name(self):
         by_id = self.service.get_inventory("managed-host", "client-a")
@@ -502,6 +557,88 @@ class V30ManagementQueryServiceTests(unittest.TestCase):
         )
         self.assertEqual(state_path.read_bytes(), before)
 
+    def test_attention_reports_missing_or_corrupt_spool_sequence_as_critical(self):
+        from drlink_v30_audit import (
+            DurableAuditSpool,
+            build_access_decision_event,
+            default_access_spool_root,
+        )
+
+        spool = DurableAuditSpool(
+            default_access_spool_root("remote", self.tmp), "remote-access"
+        )
+        spool.enqueue(build_access_decision_event(
+            source="remote-access",
+            event_type="remote.access.decision",
+            result="ALLOW",
+        ))
+        before_events = spool.active_path.read_bytes()
+        for invalid in (None, b'{"next_sequence":0}\n'):
+            with self.subTest(state=repr(invalid)):
+                if invalid is None:
+                    spool.state_path.unlink(missing_ok=True)
+                else:
+                    spool.state_path.write_bytes(invalid)
+                attention = self.service.attention_summary()
+                self.assertEqual(
+                    attention["signals"]["audit_spool"]["degraded_count"], 1
+                )
+                item = next(
+                    row for row in attention["items"] if row["kind"] == "audit-spool"
+                )
+                self.assertEqual(item["severity"], "critical")
+                remote = next(
+                    row for row in attention["signals"]["audit_spool"]["items"]
+                    if row["source"] == "remote-access"
+                )
+                self.assertEqual(remote["state_status"], "UNREADABLE")
+                self.assertIsNone(remote["enqueue_failures"])
+                self.assertIsNone(remote["dropped_deny_count"])
+                self.assertEqual(spool.active_path.read_bytes(), before_events)
+                if invalid is None:
+                    self.assertFalse(spool.state_path.exists())
+                else:
+                    self.assertEqual(spool.state_path.read_bytes(), invalid)
+
+    def test_invalid_spool_failure_counters_do_not_hide_critical_attention(self):
+        from drlink_v30_audit import (
+            AuditUnavailable, DurableAuditSpool, build_access_decision_event,
+            default_access_spool_root,
+        )
+
+        spool = DurableAuditSpool(
+            default_access_spool_root("remote", self.tmp), "remote-access",
+        )
+        event = build_access_decision_event(
+            source="remote-access", event_type="remote.access.decision",
+            result="ALLOW",
+        )
+        spool.enqueue(event)
+        state = json.loads(spool.state_path.read_text(encoding="utf-8"))
+        original_events = spool.active_path.read_bytes()
+        for counter in ("enqueue_failures", "dropped_deny_count"):
+            for invalid in (-1, True, 1.5, "3", None):
+                with self.subTest(counter=counter, invalid=repr(invalid)):
+                    invalid_state = dict(state)
+                    invalid_state[counter] = invalid
+                    spool.state_path.write_text(
+                        json.dumps(invalid_state) + "\n", encoding="utf-8",
+                    )
+                    before = spool.state_path.read_bytes()
+                    attention = self.service.attention_summary()
+                    source = next(
+                        row for row in attention["signals"]["audit_spool"]["items"]
+                        if row["source"] == "remote-access"
+                    )
+                    self.assertEqual(source["state_status"], "UNREADABLE")
+                    self.assertGreaterEqual(
+                        attention["signals"]["audit_spool"]["degraded_count"], 1,
+                    )
+                    with self.assertRaises(AuditUnavailable):
+                        spool.enqueue(event)
+                    self.assertEqual(spool.state_path.read_bytes(), before)
+                    self.assertEqual(spool.active_path.read_bytes(), original_events)
+
     def test_management_job_target_resolution_is_bounded_and_stable(self):
         one = self.service.resolve_management_job_targets(
             resource_type="managed-host",
@@ -580,6 +717,7 @@ class V30ManagementQueryServiceTests(unittest.TestCase):
                 "drlink_live_access",
                 "drlink_job_list",
                 "drlink_job_get",
+                "drlink_access_hygiene",
             },
         )
 

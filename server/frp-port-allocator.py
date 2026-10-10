@@ -175,18 +175,22 @@ def _open_control_plane(cfg):
         return None
 
 
-def sync_enrollment_to_control_plane(cfg, client, machine_id):
+def sync_enrollment_to_control_plane(cfg, client, machine_id, *, require_success=False):
     """Persist enrolled client inventory into SQLite (authoritative).
 
     The allocator may also maintain a derived enrollment inventory projection
     under /var/lib/drlink/runtime/ for transport/reconcile, but SQLite is SSOT.
     """
     if RP is None or not isinstance(client, dict) or not machine_id:
+        if require_success:
+            raise RuntimeError('authoritative enrollment Core is unavailable')
         return
     try:
         plane = RP.open_plane(cfg)
     except Exception as exc:
         print('allocator control-plane open failed: %s' % exc, flush=True)
+        if require_success:
+            raise RuntimeError('authoritative enrollment Core cannot open') from exc
         return
     try:
         addresses = []
@@ -197,6 +201,22 @@ def sync_enrollment_to_control_plane(cfg, client, machine_id):
                 addresses.append({'address': addr, 'active': True})
         hostname = str(client.get('hostname') or '')
         label = str(client.get('label') or hostname or '')
+        initial = client.get('initial_admission_state', 'APPROVED')
+        if initial not in ('PENDING_APPROVAL', 'APPROVED'):
+            raise ValueError('enrollment admission state is invalid')
+        # New Hosts cannot become approved between registry creation and
+        # durable ticket consumption. A qualified preapproval is promoted only
+        # after both enrollment and ticket commits have succeeded.
+        if require_success:
+            existing_core = plane.get_client(str(machine_id))
+            if (
+                existing_core is not None
+                and str(existing_core['admission_state'] or '') != 'PENDING_APPROVAL'
+            ):
+                raise RuntimeError(
+                    'new enrollment cannot adopt an already approved/quarantined Core Host'
+                )
+            initial = 'PENDING_APPROVAL'
         RP.sync_enrolled_client(
             plane,
             client_id=str(machine_id),
@@ -206,14 +226,70 @@ def sync_enrollment_to_control_plane(cfg, client, machine_id):
             services=client.get('services') if isinstance(client.get('services'), dict) else {},
             addresses=addresses,
             connected=True,
+            initial_admission_state=initial,
         )
     except Exception as exc:
         print('allocator control-plane sync failed: %s' % exc, flush=True)
+        if require_success:
+            raise RuntimeError('authoritative enrollment Core sync failed') from exc
     finally:
         try:
             plane.close()
         except Exception:
             pass
+
+
+def activate_preapproved_host_after_commit(cfg, machine_id, actor):
+    """Promote a committed preapproved enrollment, never an unconsumed ticket.
+
+    Initial Core projection is always PENDING. This explicit activation only
+    occurs once the allocator has durably consumed the matching bootstrap
+    ticket and the enrollment record, and is audited by Core under its own
+    normal revision and runtime-activation contract.
+    """
+    if RP is None:
+        raise RuntimeError('Core runtime unavailable for preapproval activation')
+    principal = str(actor or '').strip()
+    if not principal or len(principal) > 128:
+        raise ValueError('preapproval actor is missing')
+    plane = RP.open_plane(cfg)
+    try:
+        prior = plane.require_client(machine_id)
+        if str(prior['admission_state'] or '') == 'APPROVED':
+            # A replay of the exact consumed enrollment must not issue a
+            # second revision or override a subsequent administrator action.
+            return {'status': 'ALREADY_APPROVED'}
+        def writer():
+            row = plane.require_client(machine_id)
+            if (
+                str(row['admission_state'] or '') != 'PENDING_APPROVAL'
+                or str(row['trust_status'] or '') != 'trusted'
+                or str(row['status'] or '').lower() in ('retired','removed','deleted')
+            ):
+                raise RuntimeError('Host is not eligible for preapproval activation')
+            current = utc_now_iso()
+            plane.conn.execute(
+                "UPDATE clients SET admission_state='APPROVED',"
+                "admission_actor=?,admission_changed_at=?,"
+                "admission_reason='zero-touch-preapproved',"
+                "row_version=row_version+1,updated_at=? WHERE id=?",
+                (principal, current, current, machine_id),
+            )
+            return {
+                'entity': {'type': 'managed-host', 'id': machine_id},
+                'operation': 'zero-touch-preapproved',
+                'after': 'admission approved after committed enrollment',
+            }
+
+        return plane._mutate(
+            'zero-touch preapproved enrollment',
+            'activate preapproved Host after bound ticket consumption',
+            writer, expected_revision=plane.current_revision(),
+            compile_runtime=True, confirm=True,
+            actor=principal, interface='ENROLLMENT',
+        )
+    finally:
+        plane.close()
 
 
 def _load_machine_id():
@@ -1083,7 +1159,8 @@ def enrollment_state_dir(enrollments_dir, cfg=None):
 
 
 def _prepare_bootstrap_ticket_pair(
-    services, ttl, note='', label='', batch_id='', windows_inputs=None, wrap_secret=''
+    services, ttl, note='', label='', batch_id='', windows_inputs=None, wrap_secret='',
+    pre_approved=False, pre_approval_actor='',
 ):
     """Build enrollment+ticket records, bt1 secret, and display-once short handle.
 
@@ -1095,6 +1172,11 @@ def _prepare_bootstrap_ticket_pair(
     note = str(note or '')
     label = str(label or '')
     batch_id = str(batch_id or '').strip()
+    if type(pre_approved) is not bool:
+        raise ValueError('pre_approved must be a boolean')
+    actor = str(pre_approval_actor or '').strip()
+    if pre_approved and (not actor or len(actor) > 128):
+        raise ValueError('pre-approved enrollment requires a bounded authorized actor')
     enrollment_id = secrets.token_hex(8)
     enroll_secret = secrets.token_hex(32)
     ticket_id = secrets.token_hex(8)
@@ -1118,6 +1200,9 @@ def _prepare_bootstrap_ticket_pair(
         'note': note,
         'label': label,
         'authorized_services': services,
+        'bootstrap_ticket_id': ticket_id,
+        'pre_approved': pre_approved,
+        'pre_approval_actor': actor if pre_approved else '',
     }
     ticket_record = {
         'schema': 1,
@@ -1135,6 +1220,8 @@ def _prepare_bootstrap_ticket_pair(
         'label': label,
         'services': services,
         'use_count_max': ZERO_TOUCH_USE_COUNT,
+        'pre_approved': pre_approved,
+        'pre_approval_actor': actor if pre_approved else '',
     }
     if batch_id:
         ticket_record['batch_id'] = batch_id
@@ -1212,6 +1299,8 @@ def _allocate_and_persist_bootstrap_ticket_pair(
     batch_id='',
     windows_inputs=None,
     wrap_secret='',
+    pre_approved=False,
+    pre_approval_actor='',
 ):
     """Persist one pair, retrying when the ticket or handle path already exists."""
     last = None
@@ -1224,6 +1313,8 @@ def _allocate_and_persist_bootstrap_ticket_pair(
             batch_id=batch_id,
             windows_inputs=windows_inputs,
             wrap_secret=wrap_secret,
+            pre_approved=pre_approved,
+            pre_approval_actor=pre_approval_actor,
         )
         try:
             _persist_bootstrap_ticket_pair(
@@ -1247,6 +1338,8 @@ def issue_bootstrap_ticket(
     *,
     batch_id='',
     requested_count=1,
+    pre_approved=False,
+    pre_approval_actor='',
 ):
     """Create a hashed bootstrap ticket plus a normal enrollment record.
 
@@ -1306,6 +1399,8 @@ def issue_bootstrap_ticket(
             batch_id=batch_id,
             windows_inputs=windows_inputs,
             wrap_secret=wrap_secret,
+            pre_approved=pre_approved,
+            pre_approval_actor=pre_approval_actor,
         )
 
 
@@ -2185,7 +2280,10 @@ class Allocator:
             already_locked=already_locked,
         )
 
-    def issue_bootstrap_ticket(self, services, ttl, note='', label='', *, batch_id='', requested_count=1):
+    def issue_bootstrap_ticket(
+        self, services, ttl, note='', label='', *, batch_id='', requested_count=1,
+        pre_approved=False, pre_approval_actor='',
+    ):
         ensure_secret_dir(self.bootstrap_dir, 0o700)
         return issue_bootstrap_ticket(
             self.enrollments_dir,
@@ -2197,6 +2295,8 @@ class Allocator:
             cfg=self.cfg,
             batch_id=batch_id,
             requested_count=requested_count,
+            pre_approved=pre_approved,
+            pre_approval_actor=pre_approval_actor,
         )
 
     def issue_bootstrap_ticket_batch(self, rows, ttl, *, batch_id=None):
@@ -2963,6 +3063,69 @@ class Allocator:
         )
         return 200, response_payload
 
+    def initial_admission_from_enrollment(self, enrollment, machine_id):
+        """Bind the first Host admission state to a verified enrollment pair.
+
+        An unissued/legacy Manual Enrollment is always pending. The only
+        pre-approval authority is the matching root-owned Zero-Touch ticket
+        already redeemed by this exact machine, with a recorded Admin actor.
+        """
+        if not isinstance(enrollment, dict):
+            raise ValueError('enrollment record is unavailable')
+        approved = enrollment.get('pre_approved', False)
+        if type(approved) is not bool:
+            raise ValueError('enrollment pre-approval metadata is invalid')
+        ticket_id = str(enrollment.get('bootstrap_ticket_id') or '').strip().lower()
+        actor = str(enrollment.get('pre_approval_actor') or '').strip()
+        if ticket_id:
+            if len(ticket_id) != BOOTSTRAP_ID_HEX_LEN or not HEX_RE.fullmatch(ticket_id):
+                raise ValueError('enrollment ticket reference is malformed')
+            ticket, _path = self.load_bootstrap(ticket_id)
+            if (
+                not isinstance(ticket, dict)
+                or str(ticket.get('id') or '').strip().lower() != ticket_id
+                or str(ticket.get('enrollment_id') or '') != str(enrollment.get('id') or '')
+                or type(ticket.get('pre_approved')) is not bool
+                or ticket.get('pre_approved') is not approved
+                or str(ticket.get('pre_approval_actor') or '').strip() != actor
+            ):
+                raise ValueError('paired enrollment admission metadata does not match')
+            if approved:
+                if (
+                    not actor or len(actor) > 128
+                    or str(ticket.get('bound_machine_id') or '') != machine_id
+                    or ticket.get('revoked_at') or ticket.get('completed_at')
+                    or int(ticket.get('expires_at') or 0) < int(time.time())
+                ):
+                    raise ValueError('pre-approved enrollment is not bound and active')
+        elif approved or actor:
+            raise ValueError('pre-approved enrollment requires a matched bootstrap ticket')
+        return 'APPROVED' if approved else 'PENDING_APPROVAL'
+
+    def finalize_preapproved_host(self, enrollment, machine_id):
+        """Never activate an Admin preapproval without committed paired proof."""
+        if not isinstance(enrollment, dict) or enrollment.get('pre_approved') is not True:
+            return None
+        ticket_id = str(enrollment.get('bootstrap_ticket_id') or '').strip().lower()
+        if not ticket_id or not HEX_RE.fullmatch(ticket_id) or len(ticket_id) != BOOTSTRAP_ID_HEX_LEN:
+            raise ValueError('preapproved enrollment ticket reference is invalid')
+        ticket, _path = self.load_bootstrap(ticket_id)
+        actor = str(enrollment.get('pre_approval_actor') or '').strip()
+        if (
+            not isinstance(ticket, dict)
+            or ticket.get('id') != ticket_id
+            or ticket.get('enrollment_id') != enrollment.get('id')
+            or ticket.get('pre_approved') is not True
+            or not actor or len(actor) > 128
+            or ticket.get('pre_approval_actor') != actor
+            or ticket.get('bound_machine_id') != machine_id
+            or enrollment.get('bound_machine_id') != machine_id
+            or not ticket.get('completed_at')
+            or not enrollment.get('used_at')
+        ):
+            raise ValueError('preapproved enrollment commit proof is unavailable')
+        return activate_preapproved_host_after_commit(self.cfg, machine_id, actor)
+
     def enroll(self, enrollment_id, timestamp, signature, body, headers=None, peer_host=None):
         headers = headers or {}
         identity_auth = str(headers.get('X-Mgmt-Auth') or '').strip() == '1'
@@ -3070,6 +3233,18 @@ class Allocator:
                         )
                         if replay_error:
                             return 403, api_error(replay_error, 'AUTH_FAILED')
+                        if (
+                            client is not None
+                            and client.get('initial_admission_state') == 'APPROVED'
+                            and record.get('pre_approved') is True
+                        ):
+                            try:
+                                self.finalize_preapproved_host(record, machine_id)
+                            except Exception:
+                                return 503, api_error(
+                                    'preapproval activation is pending Core recovery',
+                                    'PREAPPROVAL_ACTIVATION_PENDING',
+                                )
                     elif identity_auth:
                         now_iso = utc_now_iso()
                         error, _now, pending_nonce = self.verify_mgmt_against_client(
@@ -3193,11 +3368,21 @@ class Allocator:
                         now_iso = utc_now_iso()
 
                         if client is None:
+                            try:
+                                initial_admission = self.initial_admission_from_enrollment(
+                                    record, machine_id
+                                )
+                            except (ValueError, OSError):
+                                return 403, api_error(
+                                    'enrollment admission evidence is invalid',
+                                    'ENROLLMENT_ADMISSION_INVALID',
+                                )
                             client = {
                                 'hostname': hostname,
                                 'created_at': now_iso,
                                 'last_enrolled_at': now_iso,
                                 'mgmt_status': 'legacy',
+                                'initial_admission_state': initial_admission,
                                 'services': {},
                             }
                             CREG.seed_admin_metadata(
@@ -3282,7 +3467,24 @@ class Allocator:
 
                         client['services'] = updated
                         self.save_registry(state)
-                        sync_enrollment_to_control_plane(self.cfg, client, machine_id)
+                        try:
+                            sync_enrollment_to_control_plane(
+                                self.cfg, client, machine_id,
+                                require_success=previous_client is None,
+                            )
+                        except Exception:
+                            # Core admission is security authority for a newly
+                            # enrolled Host; never report success or leave its
+                            # registry identity usable when projection fails.
+                            if previous_client is None:
+                                clients.pop(machine_id, None)
+                            else:
+                                clients[machine_id] = previous_client
+                            self.save_registry(state)
+                            return 500, api_error(
+                                'enrollment could not be committed to Core',
+                                'ENROLLMENT_CORE_UNAVAILABLE',
+                            )
 
                         def _rollback_enrollment_attempt():
                             if previous_client is None:
@@ -3344,6 +3546,21 @@ class Allocator:
                                 # generation (registry + enrollment bound). Do not resurrect
                                 # an unused enrollment code after bootstrap was spent.
                                 raise
+                            if (
+                                previous_client is None
+                                and client.get('initial_admission_state') == 'APPROVED'
+                            ):
+                                try:
+                                    self.finalize_preapproved_host(record, machine_id)
+                                except Exception:
+                                    # Registered identity remains PENDING and
+                                    # consumed ticket cannot be reused as a new
+                                    # credential. Exact authenticated replay
+                                    # retries activation without broadening scope.
+                                    return 503, api_error(
+                                        'preapproval activation is pending Core recovery',
+                                        'PREAPPROVAL_ACTIVATION_PENDING',
+                                    )
                         response_mac_key = None
         except RegistrySchemaError as exc:
             print('allocator registry error: %s' % exc, flush=True)

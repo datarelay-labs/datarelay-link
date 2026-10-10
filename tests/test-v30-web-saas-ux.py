@@ -77,6 +77,99 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         ):
             self.assertIn(contextual, SOURCE)
 
+    def test_managed_host_admission_is_visible_separately_from_connection(self):
+        # An admission filter alone is not enough; the selected state must be
+        # visible in the inventory row and independent of connectivity.
+        self.assertIn(
+            "<th>Admission</th><th>Connection</th><th>Trust</th>", SOURCE
+        )
+        self.assertIn(
+            'item.admission_state==="APPROVED"?"Approved"', SOURCE
+        )
+        self.assertIn("selected.admission_state", SOURCE)
+        self.assertIn('value="PENDING_APPROVAL"', SOURCE)
+        self.assertIn('value="QUARANTINED"', SOURCE)
+
+    def test_admission_changes_are_admin_only_and_confirmation_bound(self):
+        self.assertIn("function ManagedHostAdmissionPanel()", SOURCE)
+        self.assertIn("/api/v1/managed-hosts/admission/preview", SOURCE)
+        self.assertIn("/api/v1/managed-hosts/admission/apply", SOURCE)
+        self.assertIn('operator.role==="Admin"&&<ManagedHostAdmissionPanel/>', SOURCE)
+        self.assertIn('confirmation!==required', SOURCE)
+        self.assertIn("active connections are not terminated", SOURCE)
+
+    def test_zero_touch_preapproval_is_explicit_admin_only_and_defaults_off(self):
+        self.assertIn('const [preApproved,setPreApproved]=useState(false)', SOURCE)
+        self.assertIn('mode==="zero-touch"?{pre_approved:preApproved}:{}', SOURCE)
+        self.assertIn('operator.role==="Admin"&&mode==="zero-touch"', SOURCE)
+        self.assertIn('setPreApproved(false);setIssued(null)', SOURCE)
+        self.assertIn('Pre-approve this enrollment', SOURCE)
+        self.assertIn('operator={operator} refresh=', SOURCE)
+
+    def test_signed_webhook_ui_offers_explicit_test_with_queued_feedback(self):
+        self.assertIn('async function testWebhook(webhookId:string)', SOURCE)
+        self.assertIn('api("/api/v1/webhooks/test"', SOURCE)
+        self.assertIn('onClick={()=>testWebhook(h.id)}>Send test</button>', SOURCE)
+        self.assertIn('mutate("/api/v1/webhooks/enable",{webhook_id:h.id})', SOURCE)
+        self.assertIn('>Enable</button>', SOURCE)
+        self.assertIn("Signed test event queued:", SOURCE)
+        self.assertIn("Check delivery status after the worker runs.", SOURCE)
+        self.assertIn('notice&&<div className="card" role="status">', SOURCE)
+        for label in ("Last delivered:", "Last failed:", "Next retry:"):
+            self.assertIn(label, SOURCE)
+
+    def test_agent_update_preview_is_admin_only_and_not_an_apply_surface(self):
+        self.assertIn("function AgentRolloutPreviewPanel()", SOURCE)
+        self.assertIn(
+            'operator.role==="Admin"&&<AgentRolloutPreviewPanel/>', SOURCE
+        )
+        self.assertIn(
+            '/api/v1/jobs/agent-update-rollout/preview', SOURCE
+        )
+        self.assertIn("Preview only · No updates", SOURCE)
+        self.assertIn("Ready to apply: NO", SOURCE)
+        self.assertIn("preview.artifact_qualification", SOURCE)
+        self.assertIn("preview.blocked_targets", SOURCE)
+        self.assertIn("preview.target_observations", SOURCE)
+        self.assertIn("Planned Canary/Wave batches", SOURCE)
+        self.assertIn('[threshold,setThreshold]=useState("0")', SOURCE)
+        self.assertIn("0 = halt on first failure", SOURCE)
+        self.assertIn("preview.planned_batches||[]", SOURCE)
+        self.assertIn("Every prior batch must reach a terminal outcome", SOURCE)
+        self.assertIn("Exact Managed Host IDs", SOURCE)
+        self.assertIn("Observed version", SOURCE)
+        self.assertIn("Update availability remains UNKNOWN", SOURCE)
+
+    def test_agent_rollout_job_detail_shows_truthful_health_rollback_and_recovery(self):
+        self.assertIn('detail.job_type==="agent-update-rollout"', SOURCE)
+        self.assertIn('detail.rollout_progress', SOURCE)
+        self.assertIn('Agent rollout recovery', SOURCE)
+        self.assertIn('Agent update qualification', SOURCE)
+        self.assertIn('Post-update Agent Health', SOURCE)
+        self.assertIn('Rollback verification', SOURCE)
+        self.assertIn('Operator reconciliation required', SOURCE)
+        self.assertIn('progress.recovery_guidance', SOURCE)
+        self.assertIn('Status counts are not proof of an installed Agent update.', SOURCE)
+        self.assertNotIn("public rollout Apply enabled", SOURCE)
+
+    def test_access_hygiene_orphan_filter_and_resource_navigation(self):
+        self.assertIn('quality==="ORPHANED"&&x.kind!=="orphan-object"', SOURCE)
+        self.assertIn('"object":["objects","infrastructure"]', SOURCE)
+        self.assertIn('"service-account":["integrations","administration"]', SOURCE)
+        self.assertIn('"managed-host":["hosts","infrastructure"]', SOURCE)
+        self.assertIn('disabled={x.resource_type==="service-account"&&operator.role!=="Admin"}', SOURCE)
+        self.assertIn('data?.summary?.unknown_evidence', SOURCE)
+        self.assertIn('x.observation_window_days===0?"Current"', SOURCE)
+        self.assertIn('aria-label="Filter finding severity"', SOURCE)
+        self.assertIn('severityFilter!=="all"&&x.severity!==severityFilter', SOURCE)
+        self.assertIn('aria-label="Filter finding type"', SOURCE)
+        self.assertIn('kindFilter!=="all"&&x.kind!==kindFilter', SOURCE)
+        self.assertIn('aria-label="Filter observed age"', SOURCE)
+        self.assertIn('ageFilter==="unknown"&&observedAge!==null', SOURCE)
+        self.assertIn('observedAge===null||observedAge<Number(ageFilter)', SOURCE)
+        self.assertIn('x.age_days==="number"?x.age_days+" days":"Unknown"', SOURCE)
+        self.assertIn('<th>Observed age</th><th>Window</th>', SOURCE)
+
     def test_shell_command_center_and_resource_workspaces_exist(self):
         for marker in (
             "drlink_web_sidebar_collapsed",

@@ -1,0 +1,13 @@
+[Unit]
+Description=Data Relay Link 3.0 bounded signed Webhook dispatch
+ConditionPathExists=/var/lib/drlink/drlink.db
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=30s
+AccuracySec=5s
+Unit=drlink-webhook-delivery.service
+Persistent=false
+
+[Install]
+WantedBy=timers.target

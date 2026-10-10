@@ -41,6 +41,8 @@ def normalize_cutoff_scope(
 
 def active_cutoffs(conn, plane: str) -> list[dict[str, Any]]:
     family = str(plane or "").strip().lower()
+    if family not in CUTOFF_SCOPE_KINDS:
+        raise ControlPlaneError("Unsupported access plane: %s" % plane)
     rows = conn.execute(
         "SELECT id,plane,scope_kind,scope_ref,reason,row_version,updated_at "
         "FROM emergency_cutoffs WHERE active=1 AND plane=? "
@@ -65,6 +67,8 @@ def matching_cutoff(
 ) -> Optional[dict[str, Any]]:
     """Return the active cutoff that blocks this new authorization, if any."""
     family = str(plane or "").strip().lower()
+    if family not in CUTOFF_SCOPE_KINDS:
+        raise ControlPlaneError("Unsupported access plane: %s" % plane)
     hosts = tuple(str(x or "").strip() for x in managed_hosts if str(x or "").strip())
     for cutoff in active_cutoffs(conn, family):
         kind = str(cutoff["scope_kind"])

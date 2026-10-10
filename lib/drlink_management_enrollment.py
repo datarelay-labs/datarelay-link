@@ -223,7 +223,10 @@ class ManagementEnrollmentService:
         label: str = "",
         note: str = "",
         actor_id: str = "web:unknown",
+        pre_approved: bool = False,
     ) -> dict[str, Any]:
+        if type(pre_approved) is not bool:
+            raise ControlPlaneError("Pre-approve this enrollment must be boolean.")
         target = str(platform or "").strip().lower()
         if target not in SUPPORTED_PLATFORMS:
             raise ControlPlaneError("Unsupported Agent platform: %s" % platform)
@@ -248,6 +251,8 @@ class ManagementEnrollmentService:
                 safe_note,
                 label=safe_label,
                 cfg=normalized_cfg,
+                pre_approved=pre_approved,
+                pre_approval_actor=str(actor_id) if pre_approved else "",
             )
         except Exception as exc:
             raise ControlPlaneError("Zero-Touch enrollment issuance failed: %s" % exc) from exc
@@ -267,9 +272,11 @@ class ManagementEnrollmentService:
                 "label": safe_label,
                 "enrollment_id": str(ticket_record.get("id") or ""),
                 "ttl_seconds": ttl,
+                "pre_approved": pre_approved,
             },
         )
         return {
+            "pre_approved": pre_approved,
             "enrollment_id": str(ticket_record.get("id") or ""),
             "enrollment_record_id": str(enroll_record.get("id") or ""),
             "mode": "zero-touch",
@@ -394,6 +401,17 @@ class ManagementEnrollmentService:
                     "label": str(rec.get("label") or ""),
                     "note": str(rec.get("note") or ""),
                     "pair_error": str(row.get("pair_error") or ""),
+                    "pre_approved": (
+                        row.get("type") == "zero-touch"
+                        and not row.get("pair_error")
+                        and rec.get("pre_approved") is True
+                    ),
+                    "first_host_admission": (
+                        "INVALID_PAIR" if row.get("pair_error")
+                        else "APPROVED"
+                        if row.get("type") == "zero-touch" and rec.get("pre_approved") is True
+                        else "PENDING_APPROVAL"
+                    ),
                 }
             )
         return {"items": items, "total": len(rows)}

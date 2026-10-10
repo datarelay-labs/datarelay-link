@@ -26,6 +26,10 @@ ATTENTION_DENY_WINDOW = timedelta(minutes=15)
 ATTENTION_DENY_THRESHOLD = 3
 ATTENTION_EXPIRY_WINDOW = timedelta(hours=24)
 ATTENTION_AUDIT_BACKLOG_SECONDS = 300
+HYGIENE_STALE_HOST_WINDOW = timedelta(days=7)
+HYGIENE_ACCESS_REVIEW_WINDOW = timedelta(days=30)
+HYGIENE_LONG_GRANT_WINDOW = timedelta(days=7)
+HYGIENE_CREDENTIAL_EXPIRY_WINDOW = timedelta(days=14)
 
 # A catalog entry is not advertised merely because its name/schema is frozen.
 # Only handlers implemented by this service may be projected by a future MCP
@@ -35,6 +39,7 @@ IMPLEMENTED_MANAGEMENT_TOOLS = frozenset(
         "drlink_inventory_list",
         "drlink_inventory_get",
         "drlink_health",
+        "drlink_access_hygiene",
         "drlink_diagnose_connection",
         "drlink_policy_test",
         "drlink_audit_query",
@@ -72,6 +77,9 @@ _RESOURCE_SPECS: dict[str, dict[str, str]] = {
             "c.id AS id, "
             "COALESCE(NULLIF(c.label, ''), NULLIF(c.hostname, ''), c.id) AS name, "
             "c.hostname AS hostname, c.status AS status, c.trust_status AS trust_status, "
+            "c.admission_state AS admission_state, "
+            "c.admission_changed_at AS admission_changed_at, "
+            "c.admission_actor AS admission_actor, "
             "c.connected AS connected, c.last_seen AS last_seen, "
             "c.agent_heartbeat_at AS agent_heartbeat_at, "
             "c.agent_lifecycle_state AS agent_lifecycle_state, "
@@ -166,10 +174,9 @@ def supported_inventory_types() -> tuple[str, ...]:
 def _bounded_limit(value: Optional[int]) -> int:
     if value is None:
         return DEFAULT_PAGE_SIZE
-    try:
-        limit = int(value)
-    except (TypeError, ValueError) as exc:
-        raise ControlPlaneError("Management query limit must be an integer.") from exc
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ControlPlaneError("Management query limit must be an integer.")
+    limit = value
     if limit < 1:
         raise ControlPlaneError("Management query limit must be at least 1.")
     return min(limit, MAX_PAGE_SIZE)
@@ -189,17 +196,36 @@ def _encode_cursor(resource_type: str, name_key: str, resource_id: str) -> str:
     return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
 
-def _decode_cursor(
-    cursor: Optional[str], resource_type: str
-) -> Optional[tuple[str, str]]:
-    if cursor is None or not str(cursor).strip():
+MAX_CURSOR_LENGTH = 4096
+
+
+def _cursor_payload(cursor: Optional[str], *, message: str) -> Optional[dict[str, Any]]:
+    """Reject malformed/oversized client cursors before decoding or SQL reads."""
+    if cursor is None:
         return None
-    text = str(cursor).strip()
+    if not isinstance(cursor, str):
+        raise ControlPlaneError(message)
+    text = cursor.strip()
+    if not text:
+        return None
+    if len(text) > MAX_CURSOR_LENGTH:
+        raise ControlPlaneError(message)
     try:
         padded = text + "=" * (-len(text) % 4)
         payload = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")))
     except Exception as exc:
-        raise ControlPlaneError("Invalid management query cursor.") from exc
+        raise ControlPlaneError(message) from exc
+    if not isinstance(payload, dict):
+        raise ControlPlaneError(message)
+    return payload
+
+
+def _decode_cursor(
+    cursor: Optional[str], resource_type: str
+) -> Optional[tuple[str, str]]:
+    payload = _cursor_payload(cursor, message="Invalid management query cursor.")
+    if payload is None:
+        return None
     if (
         payload.get("v") != _CURSOR_VERSION
         or payload.get("resource") != resource_type
@@ -225,19 +251,15 @@ def _encode_audit_cursor(occurred_at: str, row_id: int) -> str:
 
 
 def _decode_audit_cursor(cursor: Optional[str]) -> Optional[tuple[str, int]]:
-    if cursor is None or not str(cursor).strip():
+    payload = _cursor_payload(cursor, message="Invalid audit query cursor.")
+    if payload is None:
         return None
-    text = str(cursor).strip()
-    try:
-        padded = text + "=" * (-len(text) % 4)
-        payload = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")))
-        row_id = int(payload.get("id"))
-    except Exception as exc:
-        raise ControlPlaneError("Invalid audit query cursor.") from exc
+    row_id = payload.get("id")
     if (
         payload.get("v") != _CURSOR_VERSION
         or payload.get("resource") != "audit"
         or not isinstance(payload.get("time"), str)
+        or type(row_id) is not int
         or row_id < 1
     ):
         raise ControlPlaneError("Audit query cursor is invalid.")
@@ -259,14 +281,9 @@ def _encode_job_cursor(created_at: str, job_id: str) -> str:
 
 
 def _decode_job_cursor(cursor: Optional[str]) -> Optional[tuple[str, str]]:
-    if cursor is None or not str(cursor).strip():
+    payload = _cursor_payload(cursor, message="Invalid management Job cursor.")
+    if payload is None:
         return None
-    text = str(cursor).strip()
-    try:
-        padded = text + "=" * (-len(text) % 4)
-        payload = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")))
-    except Exception as exc:
-        raise ControlPlaneError("Invalid management Job cursor.") from exc
     if (
         payload.get("v") != _CURSOR_VERSION
         or payload.get("resource") != "management-job"
@@ -304,14 +321,9 @@ def _encode_live_cursor(plane: str, started_at: str, observation_id: str) -> str
 def _decode_live_cursor(
     cursor: Optional[str], plane: str
 ) -> Optional[tuple[str, str]]:
-    if cursor is None or not str(cursor).strip():
+    payload = _cursor_payload(cursor, message="Invalid live-access cursor.")
+    if payload is None:
         return None
-    text = str(cursor).strip()
-    try:
-        padded = text + "=" * (-len(text) % 4)
-        payload = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")))
-    except Exception as exc:
-        raise ControlPlaneError("Invalid live-access cursor.") from exc
     if (
         payload.get("v") != _CURSOR_VERSION
         or payload.get("resource") != "live:%s" % plane
@@ -505,16 +517,17 @@ class ManagementQueryService:
         """Return descending configuration revisions with bounded keyset pagination."""
         page_limit = _bounded_limit(limit)
         before: Optional[int] = None
-        if cursor:
-            text = str(cursor).strip()
-            try:
-                padded = text + "=" * (-len(text) % 4)
-                payload = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")))
-                if payload.get("v") != _CURSOR_VERSION or payload.get("resource") != "revision":
-                    raise ValueError("cursor mismatch")
-                before = int(payload["revision"])
-            except Exception as exc:
-                raise ControlPlaneError("Invalid revision cursor.") from exc
+        payload = _cursor_payload(cursor, message="Invalid revision cursor.")
+        if payload is not None:
+            revision = payload.get("revision")
+            if (
+                payload.get("v") != _CURSOR_VERSION
+                or payload.get("resource") != "revision"
+                or type(revision) is not int
+                or revision < 1
+            ):
+                raise ControlPlaneError("Invalid revision cursor.")
+            before = revision
         where = " WHERE revision < ?" if before is not None else ""
         args: list[Any] = [before] if before is not None else []
         args.append(page_limit + 1)
@@ -686,7 +699,8 @@ class ManagementQueryService:
                 if not client_id or client_id in seen:
                     continue
                 client = core.conn.execute(
-                    "SELECT id,label,hostname,status,trust_status,connected,last_seen,"
+                    "SELECT id,label,hostname,status,trust_status,admission_state,"
+                    "admission_changed_at,admission_actor,connected,last_seen,"
                     "agent_heartbeat_at,agent_lifecycle_state,agent_platform,agent_version "
                     "FROM clients WHERE id=?",
                     (client_id,),
@@ -1262,7 +1276,8 @@ class ManagementQueryService:
             one["plane"] = plane
             health.append(one)
             unhealthy = bool(
-                one.get("high_water")
+                one.get("state_status") != "OK"
+                or one.get("high_water")
                 or int(one.get("enqueue_failures") or 0) > 0
                 or int(one.get("dropped_deny_count") or 0) > 0
                 or (
@@ -1328,10 +1343,204 @@ class ManagementQueryService:
             "error": "",
         }
 
+    def access_hygiene(self, *, now: Optional[datetime] = None) -> dict[str, Any]:
+        """Return read-only evidence-backed hygiene recommendations."""
+        current = now or datetime.now(timezone.utc)
+        stale_before = self._attention_utc_text(current - HYGIENE_STALE_HOST_WINDOW)
+        access_since = self._attention_utc_text(current - HYGIENE_ACCESS_REVIEW_WINDOW)
+        findings: list[dict[str, Any]] = []
+        for row in self.conn.execute(
+            "SELECT id,COALESCE(NULLIF(label,''),NULLIF(hostname,''),id) AS name,last_seen "
+            # Compare actual UTC instants, not lexical text. Invalid timestamps
+            # also need operator review as UNKNOWN_EVIDENCE even when their
+            # unparseable prefix sorts after a normal ISO-8601 cutoff.
+            # A future heartbeat is evidence of clock skew, not proof of
+            # recent activity. Classify it UNKNOWN_EVIDENCE in the read-only
+            # projection rather than silently treating the Host as healthy.
+            "FROM clients WHERE last_seen IS NULL "
+            "OR julianday(last_seen) IS NULL "
+            "OR julianday(last_seen)<julianday(?) "
+            "OR julianday(last_seen)>julianday(?) ORDER BY id LIMIT 100",
+            (stale_before, self._attention_utc_text(current)),
+        ):
+            observed = self._parse_attention_timestamp(str(row["last_seen"] or ""))
+            age_days = (
+                max(0, int((current - observed).total_seconds() // 86400))
+                if observed and observed <= current else None
+            )
+            findings.append({
+                "kind": "stale-host", "resource_type": "managed-host",
+                "resource_id": str(row["id"]), "label": str(row["name"]),
+                "age_days": age_days,
+                "age_reference": "last_seen" if age_days is not None else None,
+                "evidence_quality": "OBSERVED" if age_days is not None else "UNKNOWN_EVIDENCE",
+                "finding_status": "STALE_OR_UNUSED" if age_days is not None else "UNKNOWN_EVIDENCE",
+                "severity": "warning" if age_days is not None else "info",
+                "observation_window_days": int(HYGIENE_STALE_HOST_WINDOW.days),
+                "evidence": {"last_seen": row["last_seen"]},
+                "recommendation": "Review host lifecycle and connectivity; no automatic mutation is performed.",
+            })
+        audit_row = self.conn.execute(
+            "SELECT MIN(occurred_at) AS oldest,COUNT(*) AS n FROM audit_events "
+            "WHERE category='ACCESS_DECISION' AND occurred_at>=?", (access_since,)
+        ).fetchone()
+        # Event count alone never proves an absence of successful access.
+        for table, plane in (("policy_rules", "remote/internet"), ("ai_policy_rules", "ai")):
+            rows = self.conn.execute(
+                "SELECT id,name,expires_at,created_at FROM %s WHERE enabled=1 ORDER BY id LIMIT 100" % table
+            ).fetchall()
+            for row in rows:
+                expiry = self._parse_attention_timestamp(str(row["expires_at"] or ""))
+                created = self._parse_attention_timestamp(str(row["created_at"] or ""))
+                if expiry and created and expiry - created >= HYGIENE_LONG_GRANT_WINDOW:
+                    findings.append({
+                        "kind": "long-lived-grant", "resource_type": "access-rule",
+                        "resource_id": str(row["id"]), "label": str(row["name"]),
+                        "plane": plane, "evidence_quality": "OBSERVED",
+                        "finding_status": "ACTION_REQUIRED", "severity": "warning",
+                        "observation_window_days": int(HYGIENE_ACCESS_REVIEW_WINDOW.days),
+                        "evidence": {"created_at": row["created_at"], "expires_at": row["expires_at"]},
+                        "recommendation": "Review whether this grant still needs its current duration.",
+                    })
+                else:
+                    # Even some ACCESS_DECISION rows cannot prove complete per-rule
+                    # success/failure visibility for the entire review window.
+                    # Therefore never assert an unused rule without stronger evidence.
+                    findings.append({
+                        "kind": "access-usage-review", "resource_type": "access-rule",
+                        "resource_id": str(row["id"]), "label": str(row["name"]),
+                        "plane": plane, "evidence_quality": "UNKNOWN_EVIDENCE",
+                        "finding_status": "UNKNOWN_EVIDENCE", "severity": "info",
+                        "observation_window_days": int(HYGIENE_ACCESS_REVIEW_WINDOW.days),
+                        "evidence": {
+                            "access_decision_events": int(audit_row["n"] or 0) if audit_row else 0,
+                            "oldest_observed_at": audit_row["oldest"] if audit_row else None,
+                            "complete_per_rule_coverage": False,
+                        },
+                        "recommendation": "Retain the rule until sufficient usage evidence exists; do not infer unused access.",
+                    })
+        # A recorded Core orphan marker is evidence for operator review,
+        # never authority to delete an object or to infer unused access.
+        for row in self.conn.execute(
+            "SELECT id,name,type,origin,status,orphan_reason FROM objects "
+            "WHERE COALESCE(orphan_reason,'')<>'' OR status='orphaned' "
+            "ORDER BY id LIMIT 100"
+        ):
+            findings.append({
+                "kind": "orphan-object", "resource_type": "object",
+                "resource_id": str(row["id"]), "label": str(row["name"]),
+                "evidence_quality": "OBSERVED",
+                "finding_status": "ACTION_REQUIRED", "severity": "warning",
+                "observation_window_days": 0,
+                "evidence": {
+                    "orphan_reason_recorded": bool(row["orphan_reason"]),
+                    "object_type": str(row["type"]),
+                    "object_origin": str(row["origin"]),
+                    "object_status": str(row["status"]),
+                },
+                "recommendation": (
+                    "Review recorded orphan status and references before any "
+                    "manual cleanup; no automatic policy mutation is performed."
+                ),
+            })
+        # Service Account expiry is a credential lifecycle fact, not an
+        # entitlement review. Use only the existing optional account table;
+        # never materialize token hashes or expose display-once credentials.
+        account_table = self.conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='management_service_accounts'"
+        ).fetchone()
+        if account_table:
+            for row in self.conn.execute(
+                "SELECT id,name,expires_at FROM management_service_accounts "
+                "WHERE enabled=1 AND expires_at IS NOT NULL AND expires_at<>'' "
+                "ORDER BY expires_at ASC LIMIT 100"
+            ):
+                expiry = self._parse_attention_timestamp(str(row["expires_at"]))
+                if expiry is not None and expiry > current + HYGIENE_CREDENTIAL_EXPIRY_WINDOW:
+                    continue
+                invalid = expiry is None
+                findings.append({
+                    "kind": "service-account-expiry",
+                    "resource_type": "service-account",
+                    "resource_id": str(row["id"]),
+                    "label": str(row["name"]),
+                    "evidence_quality": "UNKNOWN_EVIDENCE" if invalid else "OBSERVED",
+                    "finding_status": "ACTION_REQUIRED",
+                    "severity": "warning",
+                    "observation_window_days": int(HYGIENE_CREDENTIAL_EXPIRY_WINDOW.days),
+                    "evidence": {
+                        "expires_at": row["expires_at"],
+                        "expiry_parse_valid": not invalid,
+                    },
+                    "recommendation": (
+                        "Review this Service Account expiry and rotate credentials "
+                        "if still needed; no automatic credential change is performed."
+                    ),
+                })
+        # Prioritize actionable evidence over UNKNOWN_EVIDENCE when the
+        # bounded response is full. Compute counts before truncation.
+        action_required = [
+            item for item in findings if item["finding_status"] == "ACTION_REQUIRED"
+        ]
+        advisory = [
+            item for item in findings if item["finding_status"] != "ACTION_REQUIRED"
+        ]
+        return {
+            "items": (action_required + advisory)[:200],
+            "count": len(findings),
+            "summary": {
+                "action_required": len(action_required),
+                "unknown_evidence": sum(
+                    item["evidence_quality"] == "UNKNOWN_EVIDENCE"
+                    for item in findings
+                ),
+            },
+            "authoritative": False, "read_only": True, "auto_mutation": False,
+            "generated_at": self._attention_utc_text(current),
+        }
+
+    def _webhook_delivery_attention(self) -> dict[str, int]:
+        """Read-only delivery degradation; absent optional tables are normal."""
+        table = self.conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='management_webhook_outbox'"
+        ).fetchone()
+        if not table:
+            return {"pending": 0, "failed": 0, "stale_lease": 0}
+        stale_before = self._attention_utc_text(
+            datetime.now(timezone.utc) - timedelta(seconds=90)
+        )
+        row = self.conn.execute(
+            "SELECT "
+            "COALESCE(SUM(CASE WHEN o.status='PENDING' THEN 1 ELSE 0 END),0) AS pending,"
+            "COALESCE(SUM(CASE WHEN o.status='FAILED' "
+            "AND o.last_error<>'webhook disabled' THEN 1 ELSE 0 END),0) AS failed,"
+            # Worker recovery considers a missing lease timestamp stale as
+            # well. Never hide a stranded SENDING delivery from Attention.
+            "COALESCE(SUM(CASE WHEN o.status='SENDING' "
+            "AND (o.last_attempt_at IS NULL "
+            "OR julianday(o.last_attempt_at) IS NULL "
+            "OR julianday(o.last_attempt_at)<julianday(?)) "
+            "THEN 1 ELSE 0 END),0) AS stale_lease "
+            "FROM management_webhook_outbox o JOIN management_webhooks w "
+            "ON w.id=o.webhook_id WHERE w.enabled=1",
+            (stale_before,),
+        ).fetchone()
+        return {
+            "pending": int(row["pending"] or 0),
+            "failed": int(row["failed"] or 0),
+            "stale_lease": int(row["stale_lease"] or 0),
+        }
+
     def attention_summary(self) -> dict[str, Any]:
         """Return bounded derived operator attention without becoming authority."""
         overview = self.overview_summary()
         hosts = overview.get("managed_hosts") or {}
+        admission_counts = {
+            key: int(hosts.get(key) or 0)
+            for key in ("pending_approval", "quarantined", "approved")
+        }
         jobs = overview.get("management_jobs") or {}
         version = self.version_drift()
         now = datetime.now(timezone.utc)
@@ -1340,10 +1549,23 @@ class ManagementQueryService:
         denies = self._deny_attention(now=now)
         temporary = self._temporary_access_attention(now=now)
         audit_spool = self._audit_spool_attention()
+        webhook_delivery = self._webhook_delivery_attention()
         system = self._system_readiness_attention()
         cutoffs = self.active_cutoff_summary()
+        hygiene = self.access_hygiene(now=now)
+        hygiene_counts = hygiene["summary"]
 
         items: list[dict[str, Any]] = []
+        for state, kind, label in (
+            ("pending_approval", "pending-host-approval", "Managed Hosts Pending Approval"),
+            ("quarantined", "quarantined-hosts", "Quarantined Managed Hosts"),
+        ):
+            count = admission_counts[state]
+            if count:
+                items.append({
+                    "kind": kind, "label": label, "count": count,
+                    "severity": "warning",
+                })
         for key, label, severity in (
             ("disconnected", "Disconnected Managed Hosts", "warning"),
             ("stale", "Stale Managed Hosts", "warning"),
@@ -1394,6 +1616,20 @@ class ManagementQueryService:
                 "count": int(temporary["expiring_count"]),
                 "severity": "warning",
             })
+        if webhook_delivery["failed"] or webhook_delivery["stale_lease"]:
+            items.append({
+                "kind": "webhook-delivery",
+                "label": "Signed Webhook Delivery Degraded",
+                "count": webhook_delivery["failed"] + webhook_delivery["stale_lease"],
+                "severity": "warning",
+            })
+        if webhook_delivery["pending"] >= 800:
+            items.append({
+                "kind": "webhook-backlog",
+                "label": "Signed Webhook Outbox Near Capacity",
+                "count": webhook_delivery["pending"],
+                "severity": "warning",
+            })
         if int(audit_spool.get("degraded_count") or 0):
             items.append({
                 "kind": "audit-spool",
@@ -1436,6 +1672,13 @@ class ManagementQueryService:
                 "count": int(jobs["failed_jobs"]),
                 "severity": "warning",
             })
+        if int(hygiene_counts["action_required"]):
+            items.append({
+                "kind": "access-hygiene-review",
+                "label": "Access Hygiene Review Needed",
+                "count": int(hygiene_counts["action_required"]),
+                "severity": "warning",
+            })
         if bool(jobs.get("saturated")):
             items.append({
                 "kind": "job-saturation",
@@ -1461,9 +1704,12 @@ class ManagementQueryService:
                 "denies": denies,
                 "temporary_access": temporary,
                 "audit_spool": audit_spool,
+                "webhook_delivery": webhook_delivery,
                 "system_readiness": system,
                 "cutoffs": cutoffs,
                 "jobs": dict(jobs),
+                "host_admission": admission_counts,
+                "access_hygiene": dict(hygiene_counts),
                 "version": {
                     "drift_count": int(version.get("drift_count") or 0),
                     "unknown_count": int(version.get("unknown_count") or 0),
@@ -1774,9 +2020,10 @@ class ManagementQueryService:
         """Read a bounded keyset page of management Jobs."""
         from drlink_v30_jobs import JOB_STATUSES
 
-        self._reconcile_management_job_deadlines()
         page_limit = _bounded_limit(limit)
         after = _decode_job_cursor(cursor)
+        # Invalid pagination must never trigger an incidental recovery write.
+        self._reconcile_management_job_deadlines()
         where: list[str] = []
         args: list[Any] = []
         status_text = str(status or "").strip().upper()

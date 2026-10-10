@@ -10,13 +10,17 @@ export FRP_CLIENT_TEST_ROOT="$TMP/root"
 . "$ROOT/lib/frp-client-common.sh"
 
 # SIP forbids writing /usr/bin on macOS; secure_path copy is Linux-only.
-if frp_client_upgrade_destinations | grep -q '^usr/bin/drlink:'; then
+# Capture the complete producer output before grep -q: a direct pipe can
+# close early and make its writer fail with SIGPIPE under set -o pipefail.
+darwin_destinations="$(frp_client_upgrade_destinations)"
+if grep -q '^usr/bin/drlink:' <<<"$darwin_destinations"; then
   echo "FAIL: Darwin upgrade destinations must not include usr/bin/drlink" >&2
   exit 1
 fi
 (
   export FRP_TEST_UNAME_S=Linux
-  if ! frp_client_upgrade_destinations | grep -q '^usr/bin/drlink:'; then
+  linux_destinations="$(frp_client_upgrade_destinations)"
+  if ! grep -q '^usr/bin/drlink:' <<<"$linux_destinations"; then
     echo "FAIL: Linux upgrade destinations must include usr/bin/drlink" >&2
     exit 1
   fi

@@ -33,6 +33,9 @@ reset_env
 export FRP_SERVER_SOURCED=1
 # shellcheck source=../install-server.sh
 . "$ROOT/install-server.sh"
+# This config regression has no interactive UX scope. Do not consume a real
+# operator TTY just because the CI/test runner was launched in a terminal.
+frp_has_tty() { return 1; }
 
 CFG="$FRP_SERVER_TEST_ROOT/etc/drlink/config.json"
 

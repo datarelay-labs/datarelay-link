@@ -44,6 +44,7 @@ CATALOG = _load_catalog()
 CONTROL_PLANE_SHOW = frozenset(
     {
         "status",
+        "access-hygiene",
         "network-objects",
         "network-object",
         "network-groups",
@@ -115,7 +116,7 @@ CONTROL_PLANE_MUTATE = frozenset(
     }
 )
 CONTROL_PLANE_TEST = frozenset(
-    {"remote-access", "internet-access", "internet", "ai-access", "configuration"}
+    {"remote-access", "internet-access", "internet", "ai-access", "configuration", "access-hygiene"}
 )
 CONTROL_PLANE_SYSTEM = frozenset(
     {
@@ -1165,7 +1166,9 @@ def _catalog_context_help(tokens, role, names=None, clients=None):
         ]
         return "\n".join(lines) + _context_client_list(names, clients)
     cmd = CATALOG.find(probe)
-    if cmd is None or not CATALOG.role_allows(cmd["roles"], role):
+    if cmd is not None and not CATALOG.role_allows(cmd["roles"], role):
+        return _ownership_error_message(tuple(cmd["path"]), cmd["roles"])
+    if cmd is None:
         nxt = _catalog_next_path_tokens(probe, role)
         if nxt:
             return _fmt_available([(tok, "") for tok in nxt])
@@ -3302,11 +3305,15 @@ def _match_create(tokens, role, names=None):
         return incomplete("Missing resource.", ["create <resource>"], avail)
     resource = tokens[1]
     if resource == "zero-touch":
+        if len(tokens) == 3 and tokens[2] == "pre-approved":
+            # The only positional opt-in. The backend still requires root,
+            # a real TTY and a second typed acknowledgement before issuance.
+            return {"status": "ok", "action": "create_zero_touch", "pre_approved": True}
         if len(tokens) > 2:
             return incomplete(
                 "Unexpected arguments.",
-                ["create zero-touch"],
-                tip="Prefer: set client   (or help clients)",
+                ["set enrollment zero-touch", "set enrollment zero-touch pre-approved"],
+                tip="Prefer: set enrollment zero-touch",
             )
         return {"status": "ok", "action": "create_zero_touch"}
     if resource == "enrollment":

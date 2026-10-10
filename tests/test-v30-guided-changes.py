@@ -63,6 +63,28 @@ class V30GuidedChangeTests(unittest.TestCase):
             self.assertEqual(result["revision"], before + 1)
             self.assertIsNotNone(service.plane.get_object("office"))
 
+    def test_service_port_rejects_lossy_numeric_inputs_without_change_plan(self):
+        with GuidedChangeService(self.tmp) as service:
+            before = service.plane.current_revision()
+            for invalid_port in (443.9, 443.0, True, "443.9", "4_4_3"):
+                with self.subTest(port=invalid_port):
+                    with self.assertRaises(ControlPlaneError):
+                        service.preview_guided_change(
+                            actor_id="web:operator",
+                            change_type="service-object",
+                            payload={"name": "protected-https", "type": "tcp", "port": invalid_port},
+                        )
+            self.assertEqual(service.plane.current_revision(), before)
+            self.assertIsNone(v24.get_service_object(service.plane, "protected-https"))
+            for valid_port in (443, "443"):
+                with self.subTest(valid_port=valid_port):
+                    kind, normalized = service._normalize(
+                        "service-object",
+                        {"name": "protected-https", "type": "tcp", "port": valid_port},
+                    )
+                    self.assertEqual(kind, "service-object")
+                    self.assertEqual(normalized["port"], 443)
+
     def test_stale_revision_fails_without_target_mutation(self):
         with GuidedChangeService(self.tmp) as service:
             preview = service.preview_guided_change(

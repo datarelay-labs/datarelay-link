@@ -95,7 +95,7 @@ function Get-FrpProjectVersion {
         }
     } catch { }
     # Packaged fallback must track canonical VERSION (do not hardcode stale releases).
-    return '2.4.0'
+    return '3.0.0'
 }
 
 function Get-FrpUpstreamVersion {
@@ -114,6 +114,7 @@ function Get-FrpWindowsAmd64Sha256 {
 
 function Get-FrpWindowsAmd64Url {
     $ver = Get-FrpUpstreamVersion
+    $project = Get-FrpProjectVersion
     if ($env:FRP_WINDOWS_DOWNLOAD_URL -and $env:FRP_WINDOWS_DOWNLOAD_URL.Trim().Length -gt 0) {
         $url = $env:FRP_WINDOWS_DOWNLOAD_URL.Trim()
         if ($url -match 'github\.com/fatedier' -or $url -match 'frp/releases/download') {
@@ -122,7 +123,7 @@ ERROR:
 Required qualified artifact is not available on this DRLink Server.
 
 Required:
-  Data Relay Link Agent 2.4.0
+  Data Relay Link Agent $project
   FRP $ver
   windows/amd64
 
@@ -164,7 +165,7 @@ ERROR:
 Required qualified artifact is not available on this DRLink Server.
 
 Required:
-  Data Relay Link Agent 2.4.0
+  Data Relay Link Agent $project
   FRP $ver
   windows/amd64
 

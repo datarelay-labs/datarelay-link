@@ -12,6 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 
+from drlink_automation_api import AutomationApi
 from drlink_control_db import ControlPlaneError
 from drlink_control_plane import ControlPlane
 from drlink_management_catalog import MANAGEMENT_PERMISSION_NAMES, PLUGIN_NO, management_tool
@@ -106,6 +107,10 @@ class V30ManagementAdapterTests(unittest.TestCase):
         web_names = set(self.web.capability_names(actor=self.actor))
         self.assertEqual(mcp_names, mcp_expected)
         self.assertEqual(web_names, ready)
+        self.assertNotIn(
+            "drlink_agent_update_rollout_start", web_names,
+            "Unqualified Agent Rollout Apply must not be advertised as ready",
+        )
         self.assertNotIn("drlink_guided_change_preview", mcp_names)
         self.assertIn("drlink_guided_change_preview", web_names)
         self.assertIn("drlink_diagnose_connection", ready)
@@ -173,6 +178,52 @@ class V30ManagementAdapterTests(unittest.TestCase):
                 actor=self.actor,
             )
 
+    def test_rollout_pause_resume_cancel_need_update_permission_not_only_job_run(self):
+        from drlink_v30_jobs import ManagementJobEngine
+
+        with ManagementJobEngine(self.tmp) as engine:
+            rollout = engine.enqueue_rollout(
+                targets=("host-a",), requested_by="admin",
+                artifact={"version":"3.0.0-rc.1","source_ref":"a"*40,"sha256":"b"*64},
+                wave_size=1,
+            )
+            ordinary = engine.enqueue(
+                targets=("host-a",), job_type="doctor", requested_by="operator",
+            )
+
+        limited = ManagementActor.authenticated(
+            "web:limited", {"management-job-run"}, role="Admin",
+        )
+        unauthorized_role = ManagementActor.authenticated(
+            "web:operator", {"management-job-run", "management-update"}, role="Operator",
+        )
+        authorized = ManagementActor.authenticated(
+            "web:admin", {"management-job-run", "management-update"}, role="Admin",
+        )
+        for actor in (limited, unauthorized_role):
+            with self.subTest(actor=actor.actor_id):
+                with self.assertRaises(ManagementAuthorizationError):
+                    self.web.rollout_control(
+                        rollout["id"], actor=actor, action="pause",
+                    )
+                with self.assertRaises(ManagementAuthorizationError):
+                    self.web.job_cancel(rollout["id"], actor=actor)
+
+        # Ordinary diagnostics remain cancellable by the original Operator.
+        self.assertEqual(
+            self.web.job_cancel(ordinary["id"], actor=limited)["status"], "CANCELLED"
+        )
+        paused = self.web.rollout_control(
+            rollout["id"], actor=authorized, action="pause",
+        )
+        self.assertTrue(paused["payload"]["operator_paused"])
+        resumed = self.web.rollout_control(
+            rollout["id"], actor=authorized, action="resume",
+        )
+        self.assertFalse(resumed["payload"]["operator_paused"])
+        cancelled = self.web.job_cancel(rollout["id"], actor=authorized)
+        self.assertEqual(cancelled["status"], "CANCELLED")
+
     def test_web_and_mcp_read_projection_return_same_core_semantics(self):
         args = {"resource_type": "managed-host", "query": "alpha", "limit": 10}
         via_mcp = self.mcp.call_tool(
@@ -217,6 +268,66 @@ class V30ManagementAdapterTests(unittest.TestCase):
         self.assertEqual(diagnosis_mcp, diagnosis_web)
         self.assertTrue(diagnosis_mcp["side_effect_free"])
         self.assertFalse(diagnosis_mcp["network_probe_performed"])
+
+    def test_service_account_can_preview_but_cannot_apply_temporary_access(self):
+        # Real Core rule state: the Automation projection may issue only an
+        # actor-scoped Change Plan. It cannot reuse Web/MCP apply authority.
+        plane = ControlPlane(self.tmp)
+        try:
+            revision_before = plane.current_revision()
+            rule_before = plane.conn.execute(
+                "SELECT expires_at FROM policy_rules WHERE plane='remote' "
+                "AND name='allow-ssh'"
+            ).fetchone()["expires_at"]
+        finally:
+            plane.close()
+        with AutomationApi(self.tmp) as automation:
+            limited = automation.accounts.create(
+                "ci-reader", ["management-read"]
+            )["credential"]
+            owner = automation.accounts.create(
+                "ci-temporary-owner", ["management-temporary-access"]
+            )
+            other = automation.accounts.create(
+                "ci-temporary-other", ["management-temporary-access"]
+            )
+            route = "/api/automation/v1/drlink_temporary_access_preview"
+            args = {
+                "plane": "remote", "rule": "allow-ssh",
+                "operation": "set", "expires_at": _future(),
+            }
+            with self.assertRaises(ControlPlaneError):
+                automation.invoke(route, limited, args)
+            preview = automation.invoke(route, owner["credential"], args)
+            self.assertTrue(preview["change_plan_id"].startswith("cp_"))
+            self.assertEqual(preview["expected_revision"], revision_before)
+            self.assertEqual(preview["resource_ref"], "allow-ssh")
+            with self.assertRaises(ControlPlaneError):
+                automation.invoke(
+                    "/api/automation/v1/drlink_temporary_access_apply",
+                    owner["credential"],
+                    {"change_plan_id": preview["change_plan_id"],
+                     "confirmation": "APPLY"},
+                )
+            with self.assertRaises(ControlPlaneError):
+                self.web.invoke(
+                    operation="drlink_temporary_access_apply",
+                    payload={"change_plan_id": preview["change_plan_id"],
+                             "confirmation": "APPLY"},
+                    actor=ManagementActor.authenticated(
+                        other["id"], {"management-temporary-access"}
+                    ),
+                )
+        plane = ControlPlane(self.tmp)
+        try:
+            self.assertEqual(plane.current_revision(), revision_before)
+            rule_after = plane.conn.execute(
+                "SELECT expires_at FROM policy_rules WHERE plane='remote' "
+                "AND name='allow-ssh'"
+            ).fetchone()["expires_at"]
+            self.assertEqual(rule_after, rule_before)
+        finally:
+            plane.close()
 
     def test_change_plan_can_cross_adapters_without_semantic_fork(self):
         expiry = _future()

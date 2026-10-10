@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -13,6 +14,7 @@ sys.path.insert(0, str(ROOT / "lib"))
 from drlink_control_db import open_control_db
 from drlink_control_plane import ControlPlane
 from drlink_management_catalog import MANAGEMENT_TOOLS
+from drlink_management_core import ManagementCoreService, implemented_management_tool_names
 from drlink_management_service import ManagementQueryService
 from drlink_v30_capability import CORE_CONTRACT_ONLY, CORE_READY, capability_parity_ledger
 from drlink_v30_jobs import ManagementJobEngine
@@ -68,11 +70,53 @@ class V30ManagementScalabilityTests(unittest.TestCase):
         by_name = {row["name"]: row for row in rows}
         self.assertEqual(by_name["drlink_inventory_list"]["core_status"], CORE_READY)
         self.assertEqual(by_name["drlink_temporary_access_apply"]["core_status"], CORE_READY)
-        self.assertEqual(by_name["drlink_diagnostic_job_start"]["core_status"], CORE_CONTRACT_ONLY)
+        registered = implemented_management_tool_names()
+        ready_names = {row["name"] for row in rows if row["core_status"] == CORE_READY}
+        self.assertEqual(ready_names, set(registered))
+        self.assertEqual(ledger["core_ready_count"], len(registered))
+        self.assertEqual(ledger["contract_only_count"], len(MANAGEMENT_TOOLS) - len(registered))
+        for name in (
+            "drlink_guided_change_preview", "drlink_guided_change_apply",
+            "drlink_remote_service_preview", "drlink_remote_service_apply",
+            "drlink_diagnostic_job_start",
+        ):
+            with self.subTest(name=name):
+                self.assertEqual(by_name[name]["core_status"], CORE_READY)
+                self.assertTrue(callable(getattr(ManagementCoreService, "_invoke_" + name, None)))
         self.assertEqual(
             by_name["drlink_diagnostic_job_start"]["plugin_target"],
             next(t.plugin_exposure for t in MANAGEMENT_TOOLS if t.name == "drlink_diagnostic_job_start"),
         )
+
+    def test_capability_inventory_uses_same_readiness_as_core_dispatch(self):
+        with ManagementQueryService(self.tmp) as query:
+            ledger = query.capability_inventory()
+        names = {row["name"] for row in ledger["capabilities"] if row["core_status"] == CORE_READY}
+        self.assertEqual(names, set(implemented_management_tool_names()))
+
+    def test_explicit_partial_registry_does_not_promote_contract_only_tools(self):
+        for ready in (set(), {"drlink_inventory_list"}):
+            with self.subTest(ready=ready):
+                ledger = capability_parity_ledger(ready_tool_names=ready)
+                self.assertEqual(ledger["core_ready_count"], len(ready))
+                self.assertEqual(ledger["contract_only_count"], len(MANAGEMENT_TOOLS) - len(ready))
+                for row in ledger["capabilities"]:
+                    self.assertEqual(row["core_status"], CORE_READY if row["name"] in ready else CORE_CONTRACT_ONLY)
+
+    def test_capability_inventory_import_order_is_safe(self):
+        for first in ("drlink_management_service", "drlink_management_core", "drlink_v30_capability"):
+            code = (
+                "import sys; sys.path.insert(0, sys.argv[1]); "
+                "__import__(sys.argv[2]); "
+                "from drlink_v30_capability import capability_parity_ledger; "
+                "from drlink_management_core import implemented_management_tool_names; "
+                "ledger = capability_parity_ledger(); "
+                "assert ledger['core_ready_count'] == len(implemented_management_tool_names())"
+            )
+            with self.subTest(first=first):
+                result = subprocess.run([sys.executable, "-c", code, str(ROOT / "lib"), first],
+                                        capture_output=True, text=True, timeout=15)
+                self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_capability_ledger_rejects_implementation_not_in_catalog(self):
         with self.assertRaises(ValueError):
@@ -123,6 +167,25 @@ class V30ManagementScalabilityTests(unittest.TestCase):
         versions = {(row["platform"], row["version"]): row["hosts"] for row in summary["agent_versions"]}
         self.assertEqual(versions[("linux", "3.0.0")], 1)
         self.assertEqual(versions[("win32", "unknown")], 1)
+
+    def test_overview_heartbeat_uses_utc_instants_and_treats_invalid_as_stale(self):
+        cases = (
+            ("fresh-negative-offset", "2026-10-03T21:59:45-04:00", 1, 0),
+            ("stale-positive-offset", "2026-10-04T15:00:00+14:00", 0, 1),
+            ("future-utc", "2026-10-04T02:00:10Z", 0, 1),
+            ("future-offset", "2026-10-04T15:01:00+13:00", 0, 1),
+            ("at-current-instant", "2026-10-04T02:00:00Z", 1, 0),
+            ("unparseable-heartbeat", "zz-not-a-timestamp", 0, 1),
+        )
+        for ident, heartbeat, connected, stale in cases:
+            with self.subTest(ident=ident):
+                self.conn.execute("DELETE FROM clients")
+                self._insert_client(ident, heartbeat=heartbeat)
+                self.conn.commit()
+                counts = overview_summary(self.conn, now=self.now)["managed_hosts"]
+                self.assertEqual(counts["total"], 1)
+                self.assertEqual(counts["connected"], connected)
+                self.assertEqual(counts["stale"], stale)
 
     def test_query_service_read_models_do_not_need_writer_slot(self):
         self._insert_client("host-a")

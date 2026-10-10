@@ -61,6 +61,13 @@ DESTINATION_META_KEYS = frozenset({
     "host", "ip", "port", "protocol", "service_id",
     "service_name", "observed_sni",
 })
+ACCESS_EVENT_KEYS = frozenset({
+    "schema_version", "category", "event_type", "occurred_at", "source",
+    "actor_type", "actor_id", "delegated_actor_id", "interface", "action",
+    "resource_type", "resource_id", "result", "reason_code", "correlation_id",
+    "request_id", "session_id", "matched_policy", "source_meta",
+    "destination_meta", "event_id", "source_sequence",
+})
 
 
 class AuditUnavailable(ControlPlaneError):
@@ -183,6 +190,16 @@ def _fsync_dir(path: Path) -> None:
         os.close(fd)
 
 
+def _write_all(fd: int, payload: bytes) -> None:
+    """Never acknowledge a durable write until every byte was accepted."""
+    remaining = memoryview(payload)
+    while remaining:
+        written = os.write(fd, remaining)
+        if written <= 0:
+            raise OSError("Durable audit spool write made no progress.")
+        remaining = remaining[written:]
+
+
 class DurableAuditSpool:
     """Bounded local durable transport journal for one enforcement source."""
 
@@ -226,16 +243,31 @@ class DurableAuditSpool:
     def _load_state_locked(self) -> dict[str, Any]:
         try:
             data = json.loads(self.state_path.read_text(encoding="utf-8"))
-            next_sequence = int(data.get("next_sequence") or 1)
-            if next_sequence < 1:
+            # An existing state file is authoritative. Missing, zero, or
+            # coerced sequence numbers could reuse a committed audit sequence.
+            next_sequence = data.get("next_sequence")
+            if type(next_sequence) is not int or next_sequence < 1:
                 raise ValueError("invalid sequence")
+            # A corrupt counter cannot be coerced to a seemingly healthy
+            # zero/positive value: it would hide lost audit evidence.
+            failures = data.get("enqueue_failures", 0)
+            dropped_denies = data.get("dropped_deny_count", 0)
+            if (
+                type(failures) is not int or failures < 0
+                or type(dropped_denies) is not int or dropped_denies < 0
+            ):
+                raise ValueError("invalid audit spool failure counters")
             return {
                 "next_sequence": next_sequence,
-                "enqueue_failures": int(data.get("enqueue_failures") or 0),
-                "dropped_deny_count": int(data.get("dropped_deny_count") or 0),
+                "enqueue_failures": failures,
+                "dropped_deny_count": dropped_denies,
                 "last_error_at": str(data.get("last_error_at") or ""),
             }
-        except FileNotFoundError:
+        except FileNotFoundError as exc:
+            # Only a genuinely fresh spool may begin at sequence 1. Losing
+            # authoritative state with queued events must not replay IDs.
+            if self.active_path.exists() or self.segments():
+                raise AuditUnavailable("Audit spool sequence state is missing.") from exc
             return {
                 "next_sequence": 1,
                 "enqueue_failures": 0,
@@ -248,14 +280,33 @@ class DurableAuditSpool:
     def _store_state_locked(self, state: dict[str, Any]) -> None:
         tmp = self.root / (".state.%s.tmp" % secrets.token_hex(6))
         payload = json.dumps(state, sort_keys=True, separators=(",", ":")) + "\n"
-        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         try:
-            os.write(fd, payload.encode("utf-8"))
+            fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except OSError as exc:
+            raise AuditUnavailable("Durable audit spool state open failed.") from exc
+        persisted = False
+        try:
+            _write_all(fd, payload.encode("utf-8"))
             os.fsync(fd)
+            persisted = True
+        except OSError as exc:
+            raise AuditUnavailable("Durable audit spool state write failed.") from exc
         finally:
             os.close(fd)
-        os.replace(tmp, self.state_path)
-        _fsync_dir(self.root)
+            if not persisted:
+                try:
+                    tmp.unlink(missing_ok=True)
+                except OSError:
+                    pass
+        try:
+            os.replace(tmp, self.state_path)
+            _fsync_dir(self.root)
+        except OSError as exc:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise AuditUnavailable("Durable audit spool state commit failed.") from exc
 
     def spool_bytes(self) -> int:
         total = 0
@@ -300,8 +351,6 @@ class DurableAuditSpool:
         try:
             state = self._load_state_locked()
             sequence = int(state["next_sequence"])
-            state["next_sequence"] = sequence + 1
-            self._store_state_locked(state)
 
             record = dict(event or {})
             if record.get("category") != ACCESS_DECISION:
@@ -322,13 +371,19 @@ class DurableAuditSpool:
             if self.spool_bytes() + len(line) > self.high_water_bytes:
                 raise AuditUnavailable("Audit spool high-water limit reached.")
 
+            # Reject an invalid envelope without consuming a durable sequence.
+            # Persist the next sequence before the append so a failed write or
+            # crash cannot reuse an already reserved event identity.
+            state["next_sequence"] = sequence + 1
+            self._store_state_locked(state)
+
             out = os.open(
                 str(self.active_path),
                 os.O_WRONLY | os.O_APPEND | os.O_CREAT,
                 0o600,
             )
             try:
-                os.write(out, line)
+                _write_all(out, line)
                 os.fsync(out)
             except Exception as exc:
                 raise AuditUnavailable("Durable audit spool append failed.") from exc
@@ -374,12 +429,12 @@ class DurableAuditSpool:
         size = self.spool_bytes()
         try:
             state = self._load_state_locked()
+            state_readable = True
         except Exception:
-            state = {
-                "enqueue_failures": 0,
-                "dropped_deny_count": 0,
-                "last_error_at": "",
-            }
+            # A corrupt or missing authoritative sequence state is not
+            # healthy, and its lost-event counters are UNKNOWN, never zero.
+            state = {}
+            state_readable = False
         return {
             "source": self.source,
             "spool_bytes": size,
@@ -387,28 +442,72 @@ class DurableAuditSpool:
             "high_water": size >= self.high_water_bytes,
             "segment_count": len(segments),
             "oldest_segment_age_seconds": oldest_age,
-            "enqueue_failures": int(state.get("enqueue_failures") or 0),
-            "dropped_deny_count": int(state.get("dropped_deny_count") or 0),
-            "last_error_at": str(state.get("last_error_at") or ""),
+            "state_status": "OK" if state_readable else "UNREADABLE",
+            "enqueue_failures": (
+                int(state.get("enqueue_failures") or 0) if state_readable else None
+            ),
+            "dropped_deny_count": (
+                int(state.get("dropped_deny_count") or 0) if state_readable else None
+            ),
+            "last_error_at": (
+                str(state.get("last_error_at") or "") if state_readable else None
+            ),
         }
 
 
 def validate_access_event(event: dict[str, Any]) -> None:
     if not isinstance(event, dict):
         raise AuditEventInvalid("Audit event must be an object.")
-    if int(event.get("schema_version") or 0) != AUDIT_SCHEMA_VERSION:
+    # Builder sanitization is not an authorization boundary: direct spool writers
+    # and imported JSONL must never persist unapproved secret-bearing fields.
+    if set(event) - ACCESS_EVENT_KEYS:
+        raise AuditEventInvalid("Audit event contains unapproved fields.")
+    for key, allowed in (
+        ("source_meta", SOURCE_META_KEYS),
+        ("destination_meta", DESTINATION_META_KEYS),
+    ):
+        metadata = event.get(key)
+        if metadata is None:
+            continue
+        if not isinstance(metadata, dict):
+            raise AuditEventInvalid("Audit metadata must be an object.")
+        if set(metadata) - allowed:
+            raise AuditEventInvalid("Audit metadata contains unapproved fields.")
+        if any(isinstance(value, (dict, list, tuple, bool)) for value in metadata.values()):
+            raise AuditEventInvalid("Audit metadata values must be scalar.")
+        # Builders normalize ports to an integer. Imported JSONL must not
+        # silently coerce strings or fractional evidence to a different port.
+        if (
+            key == "destination_meta"
+            and metadata.get("port") is not None
+            and type(metadata["port"]) is not int
+        ):
+            raise AuditEventInvalid("Audit destination port must be an integer.")
+    if (
+        type(event.get("schema_version")) is not int
+        or event["schema_version"] != AUDIT_SCHEMA_VERSION
+    ):
         raise AuditEventInvalid("Unsupported audit schema version.")
     if event.get("category") != ACCESS_DECISION:
         raise AuditEventInvalid("Unsupported audit category for access spool.")
     for key in ("event_id", "event_type", "occurred_at", "source"):
         if not _safe_text(event.get(key), limit=1024):
             raise AuditEventInvalid("Audit event missing required field: %s" % key)
-    try:
-        sequence = int(event.get("source_sequence"))
-    except (TypeError, ValueError) as exc:
-        raise AuditEventInvalid("Audit source_sequence is invalid.") from exc
-    if sequence < 1:
+    sequence = event.get("source_sequence")
+    if type(sequence) is not int or sequence < 1:
         raise AuditEventInvalid("Audit source_sequence is invalid.")
+    policies = event.get("matched_policy", [])
+    if (
+        not isinstance(policies, list)
+        or len(policies) > 32
+        or any(
+            not isinstance(name, str)
+            or not name.strip()
+            or len(name) > 256
+            for name in policies
+        )
+    ):
+        raise AuditEventInvalid("Audit matched_policy must be a bounded list of rule names.")
     if str(event.get("result") or "").upper() not in ("ALLOW", "DENY"):
         raise AuditEventInvalid("Audit result is invalid.")
     _safe_meta(event.get("source_meta") or {}, SOURCE_META_KEYS)
@@ -507,7 +606,15 @@ class AuditIngestor:
         same flock, copy pending spool state, then snapshot SQLite without an
         event moving from the spool into the database between those two copies.
         """
-        limit = max(1, min(int(max_segments), 32))
+        # Reject malformed batch size before sealing the active spool or
+        # advancing the ingestion checkpoint. Do not coerce booleans or floats.
+        if (
+            isinstance(max_segments, bool)
+            or not isinstance(max_segments, int)
+            or max_segments < 1
+        ):
+            raise ValueError("Audit ingest max_segments must be a positive integer.")
+        limit = min(max_segments, 32)
         inserted = 0
         deduplicated = 0
         last_sequence = None

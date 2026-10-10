@@ -112,6 +112,7 @@ def write_env(tmp, listen_port, public_host='127.0.0.1', extra_hosts=None, publi
         'registry_file': str(Path(tmp) / 'registry.json'),
         'enrollments_dir': str(Path(tmp) / 'enrollments'),
         'token_file': str(Path(tmp) / 'server_token'),
+        'control_plane_root': str(Path(tmp)),
     }
     Path(cfg['enrollments_dir']).mkdir(parents=True, exist_ok=True)
     Path(cfg['token_file']).write_text('test-frp-token-do-not-use\n')
@@ -374,6 +375,7 @@ def test_enroll_uses_public_control_port():
             'registry_file': str(tmp / 'registry.json'),
             'enrollments_dir': str(tmp / 'enrollments'),
             'token_file': str(tmp / 'token'),
+            'control_plane_root': str(tmp),
         }
         Path(cfg['enrollments_dir']).mkdir()
         Path(cfg['token_file']).write_text('test-frp-token-do-not-use\n')
@@ -408,6 +410,8 @@ def test_enroll_uses_public_control_port():
         code, result = alloc.enroll('aabbccddeeff0011', ts, sig, body)
         if code != 200:
             fail('enroll public port', result)
+        if not (tmp / 'var/lib/drlink/drlink.db').is_file():
+            fail('isolated public-port Core database was not created')
         if result.get('frp_server') != '203.0.113.10' or int(result.get('frp_server_port')) != 8443:
             fail('enroll returned listen port', result)
         if result.get('frp_transport') != 'tcp':
@@ -432,6 +436,7 @@ def test_enroll_single443_transport():
             'registry_file': str(tmp / 'registry.json'),
             'enrollments_dir': str(tmp / 'enrollments'),
             'token_file': str(tmp / 'token'),
+            'control_plane_root': str(tmp),
         }
         Path(cfg['enrollments_dir']).mkdir()
         Path(cfg['token_file']).write_text('test-frp-token-do-not-use\n')
@@ -466,6 +471,8 @@ def test_enroll_single443_transport():
         code, result = alloc.enroll('aabbccddeeff0011', ts, sig, body)
         if code != 200:
             fail('enroll single443', result)
+        if not (tmp / 'var/lib/drlink/drlink.db').is_file():
+            fail('isolated single443 Core database was not created')
         if result.get('frp_transport') != 'wss' or int(result.get('frp_server_port')) != 443:
             fail('enroll single443 transport', result)
         received = result.pop('response_hmac')

@@ -13,6 +13,7 @@ sys.path.insert(0, str(ROOT / "lib"))
 from drlink_control_db import ControlPlaneError
 from drlink_control_plane import ConcurrencyError, ControlPlane
 from drlink_management_change import ManagementChangeService
+from drlink_v30_cutoff import active_cutoffs, matching_cutoff
 import drlink_v24 as v24
 
 
@@ -284,6 +285,15 @@ class V30EmergencyCutoffTests(unittest.TestCase):
             )
         self.assertEqual(self.service.plane.current_revision(), rev)
         self.assertEqual(self._remote()["effective"], "ALLOW")
+
+    def test_unrecognized_cutoff_plane_fails_closed_on_read_paths(self):
+        # A new/typoed plane must never silently return no active cutoff.
+        for plane in ("unknown-plane", "", "remotee"):
+            with self.subTest(plane=plane):
+                with self.assertRaises(ControlPlaneError):
+                    active_cutoffs(self.service.plane.conn, plane)
+                with self.assertRaises(ControlPlaneError):
+                    matching_cutoff(self.service.plane.conn, plane)
 
     def test_invalid_scope_is_rejected(self):
         with self.assertRaises(ControlPlaneError):

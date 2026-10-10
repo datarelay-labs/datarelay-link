@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
@@ -291,6 +292,34 @@ class V30LiveAccessTests(unittest.TestCase):
         result = read_live_snapshot(path)
         self.assertEqual(result["fidelity"], FIDELITY_UNKNOWN)
         self.assertEqual(result["observations"], [])
+
+    def test_incoherent_producer_snapshot_does_not_claim_exact_visibility(self):
+        path = default_live_snapshot_path("internet-gateway", self.tmp)
+        valid = write_live_snapshot(
+            path, producer="internet-gateway", plane="internet",
+            sessions=[{"session_id": "known", "hostname": "example.com"}],
+        )
+        variants = (
+            ("wrong-count", {"active_count": 2}),
+            ("boolean-count", {"active_count": True}),
+            ("wrong-producer", {"producer": "fixed-tcp"}),
+            ("wrong-plane", {"plane": "remote"}),
+            ("bad-observation", {"observations": ["not-a-session"]}),
+            ("missing-update-time", {"updated_at": None}),
+            ("naive-update-time", {"updated_at": "2026-10-10T10:00:00"}),
+            ("boolean-schema", {"schema_version": True}),
+            ("invalid-pid", {"producer_pid": "not-a-pid"}),
+            ("zero-pid", {"producer_pid": 0}),
+        )
+        for name, changed in variants:
+            with self.subTest(name=name):
+                payload = dict(valid)
+                payload.update(changed)
+                path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+                result = read_live_snapshot(path)
+                self.assertEqual(result["fidelity"], FIDELITY_UNKNOWN)
+                self.assertEqual(result["observations"], [])
+                self.assertIsNone(result["active_count"])
 
 
 if __name__ == "__main__":

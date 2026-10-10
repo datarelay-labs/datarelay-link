@@ -154,6 +154,28 @@ class V30ManagementChangePlanTests(unittest.TestCase):
         self.assertEqual(result["revision"], before + 1)
         self.assertEqual(self._row_expiry("remote", "allow-ssh"), expiry)
 
+    def test_stored_temporary_access_plan_operation_mismatch_fails_closed(self):
+        preview = self.service.preview_temporary_access(
+            actor_id="web:admin",
+            plane="remote",
+            rule="allow-ssh",
+            operation="set",
+            expires_at=_future(),
+        )
+        self.service.plane.conn.execute(
+            "UPDATE management_change_plans SET operation='temporary-access.clear' "
+            "WHERE actor_id='web:admin'"
+        )
+        revision = self.service.plane.current_revision()
+        with self.assertRaises(ControlPlaneError):
+            self.service.apply_temporary_access(
+                actor_id="web:admin",
+                change_plan_id=preview["change_plan_id"],
+                confirmation="APPLY",
+            )
+        self.assertEqual(self.service.plane.current_revision(), revision)
+        self.assertIsNone(self._row_expiry("remote", "allow-ssh"))
+
     def test_replay_fails_closed(self):
         preview = self.service.preview_temporary_access(
             actor_id="web:admin",

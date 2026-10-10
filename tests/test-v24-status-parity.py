@@ -8,6 +8,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from contextlib import redirect_stdout
 from pathlib import Path
 
@@ -1266,8 +1267,14 @@ class AgentLifecycleWorkerTests(unittest.TestCase):
             finally:
                 os.environ.pop("DRLINK_TEST_RUNTIME_UNIT", None)
 
-    def test_worker_heartbeats_then_synchronizes_only_when_needed(self):
-        from unittest import mock
+    @mock.patch(
+        "drlink_agent_lifecycle.process_management_jobs_once",
+        return_value={"processed": 0, "failed": 0},
+    )
+    def test_worker_heartbeats_then_synchronizes_only_when_needed(self, job_claim):
+        # This unit scenario isolates heartbeat/Remote Service synchronization.
+        # Management Job RPC has an independent transport contract and must
+        # not make a real network request without a configured Server.
         import drlink_agent_lifecycle as lifecycle
 
         with tempfile.TemporaryDirectory(prefix="drlink-lifecycle-worker-") as tmp:
@@ -1325,6 +1332,15 @@ class AgentLifecycleWorkerTests(unittest.TestCase):
                 self.assertEqual(result["status"], "SYNCHRONIZED")
                 heartbeat.assert_called_once()
                 sync.assert_called_once()
+            self.assertEqual(job_claim.call_count, 3)
+
+    def test_management_claim_without_server_url_fails_closed(self):
+        import drlink_agent_lifecycle as lifecycle
+        from drlink_mgmt_sync import MgmtSyncError
+
+        with tempfile.TemporaryDirectory(prefix="drlink-job-no-server-") as tmp:
+            with self.assertRaisesRegex(MgmtSyncError, "No Server management URL"):
+                lifecycle.process_management_jobs_once(tmp)
 
     def test_paused_worker_does_not_touch_server(self):
         from unittest import mock

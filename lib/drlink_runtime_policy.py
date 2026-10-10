@@ -50,6 +50,7 @@ def _release_isolated_conn_lock() -> None:
 
 REASON_UNMAPPED_PROXY = "UNMAPPED_PROXY"
 REASON_SERVICE_DISABLED = "SERVICE_DISABLED"
+REASON_HOST_NOT_APPROVED = "HOST_ADMISSION_NOT_APPROVED"
 REASON_AUTHORIZATION_ERROR = "AUTHORIZATION_ERROR"
 REASON_POLICY_DENY = "POLICY_DENY"
 REASON_IMPLICIT_DENY = "IMPLICIT_DENY"
@@ -305,6 +306,22 @@ def authorize_remote(
     result["public_port"] = mapped.get("public_port")
     result["client_label"] = mapped.get("client_label") or None
 
+    # Admission is an independent, current Core-owned safety override:
+    # preserve published services/ports while rejecting NEW connections for
+    # pending/quarantined/revoked Hosts, even when existing policy says ALLOW.
+    try:
+        owner = plane.conn.execute(
+            "SELECT trust_status,admission_state FROM clients WHERE id=?",
+            (mapped["client_id"],),
+        ).fetchone()
+        if (owner is None or str(owner["trust_status"] or "") != "trusted"
+            or str(owner["admission_state"] or "") != "APPROVED"):
+            result["reason"] = REASON_HOST_NOT_APPROVED
+            return result
+    except Exception:
+        result["reason"] = REASON_AUTHORIZATION_ERROR
+        return result
+
     if not mapped.get("enabled", True):
         result["reason"] = REASON_SERVICE_DISABLED
         return result
@@ -546,6 +563,7 @@ def sync_enrolled_client(
     services: Optional[dict] = None,
     addresses: Optional[list] = None,
     connected: bool = True,
+    initial_admission_state: str = "APPROVED",
 ) -> dict:
     """Upsert Client + Managed Endpoint + Published Services after real enrollment.
 
@@ -569,6 +587,7 @@ def sync_enrolled_client(
         hostname=hostname or None,
         connected=connected,
         addresses=addresses or None,
+        initial_admission_state=initial_admission_state,
     )
 
     services = services or {}

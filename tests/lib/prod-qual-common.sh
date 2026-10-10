@@ -43,15 +43,34 @@ pq_ssh_confirm_yes() {
 pq_gate() {
   local name="$1" status="$2"
   local gates="${PROD_QUAL_GATES:-}"
-  # Replace prior value for the same key so retries cannot leave FAIL+PASS.
-  if [[ -n "$gates" && -f "$gates" ]]; then
-    local tmp="${gates}.tmp.$$"
-    # Gate writers may run concurrently during qualification. Use a writer-unique
-    # temporary path so one lane cannot rename another lane's scratch file.
-    grep -Ev "^${name}=" "$gates" >"$tmp" 2>/dev/null || true
-    mv "$tmp" "$gates"
+  # Serialize the entire read/replace operation. Writer-unique scratch paths
+  # alone do not prevent lost updates, and Bash subshells share $$.
+  if [[ -n "$gates" ]]; then
+    python3 - "$gates" "$name" "$status" <<'PYGATE' || return $?
+import fcntl, os, sys, tempfile
+from pathlib import Path
+path, name, status = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+if not name or not status or any(c in name + status for c in "\r\n="):
+    raise SystemExit("invalid qualification gate name/status")
+# Keep the lock inode stable across atomic replacement of the data file.
+with os.fdopen(os.open(str(path) + ".lock", os.O_CREAT | os.O_RDWR, 0o600), "a+") as lock:
+    fcntl.flock(lock, fcntl.LOCK_EX)
+    lines = path.read_text().splitlines() if path.exists() else []
+    lines = [line for line in lines if not line.startswith(name + "=")]
+    lines.append(name + "=" + status)
+    fd, tmp = tempfile.mkstemp(prefix=path.name + ".tmp.", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w") as out:
+            out.write("\n".join(lines) + "\n")
+            out.flush()
+            os.fsync(out.fileno())
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+PYGATE
   fi
-  printf '%s=%s\n' "$name" "$status" | tee -a "${gates:-/dev/null}"
+  printf '%s=%s\n' "$name" "$status"
   pq_note "GATE $name=$status"
   if [[ "$status" == "FAIL" || "$status" == "BLOCKED" ]]; then
     PROD_QUAL_FAILS=$((${PROD_QUAL_FAILS:-0} + 1))

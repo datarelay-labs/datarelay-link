@@ -185,6 +185,22 @@ class ManagementWebApiAdapter:
             confirmation=confirmation,
         )
 
+    def managed_host_admission_preview(
+        self, *, host: str, operation: str, actor: ManagementActor,
+    ) -> dict[str, Any]:
+        return self.core.managed_host_admission_preview(
+            host=host, operation=operation, actor=actor,
+        )
+
+    def managed_host_admission_apply(
+        self, *, change_plan_id: str, confirmation: str, actor: ManagementActor,
+    ) -> dict[str, Any]:
+        return self.core.managed_host_admission_apply(
+            change_plan_id=change_plan_id,
+            confirmation=confirmation,
+            actor=actor,
+        )
+
     def managed_host_lifecycle_preview(
         self,
         *,
@@ -345,6 +361,23 @@ class ManagementWebApiAdapter:
     def support_bundle_create(self, *, actor: ManagementActor) -> dict[str, Any]:
         return self.core.support_bundle_create(actor=actor)
 
+    def rollout_preview(
+        self, *, actor: ManagementActor, targets: list[str],
+        artifact: dict[str, Any], canary_targets: list[str] | None = None,
+        wave_size: int = 10, failure_threshold_percent: int = 0,
+    ) -> dict[str, Any]:
+        return self.core.rollout_preview(
+            actor=actor, targets=targets, artifact=artifact,
+            canary_targets=canary_targets,
+            wave_size=wave_size,
+            failure_threshold_percent=failure_threshold_percent,
+        )
+
+    def rollout_control(
+        self, job_id: str, *, actor: ManagementActor, action: str
+    ) -> dict[str, Any]:
+        return self.core.rollout_control(job_id, actor=actor, action=action)
+
     def job_cancel(self, job_id: str, *, actor: ManagementActor) -> dict[str, Any]:
         return self.core.job_cancel(job_id, actor=actor)
 
@@ -373,6 +406,7 @@ class ManagementWebApiAdapter:
         ttl_seconds: int | None = None,
         label: str = "",
         note: str = "",
+        pre_approved: bool = False,
     ) -> dict[str, Any]:
         return self.core.enrollment_issue_zero_touch(
             actor=actor,
@@ -380,4 +414,5 @@ class ManagementWebApiAdapter:
             ttl_seconds=ttl_seconds,
             label=label,
             note=note,
+            pre_approved=pre_approved,
         )

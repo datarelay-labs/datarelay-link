@@ -405,6 +405,23 @@ class ManagementChangeService:
             self._mark_plan(change_plan_id, "invalid", now=now)
             raise ControlPlaneError("Change Plan payload is invalid.") from exc
 
+        if not isinstance(payload, dict):
+            self._mark_plan(change_plan_id, "invalid", now=now)
+            raise ControlPlaneError("Change Plan payload is invalid.")
+        family = str(payload.get("plane") or "")
+        rule_name = str(payload.get("rule") or "")
+        action = str(payload.get("operation") or "")
+        if (
+            payload.get("kind") != "temporary-access"
+            or family not in ("remote", "internet", "ai")
+            or action not in ("set", "clear")
+            or str(row["operation"]) != "temporary-access.%s" % action
+            or str(row["resource_type"]) != "%s-access-rule" % family
+            or str(row["resource_ref"]) != rule_name
+        ):
+            self._mark_plan(change_plan_id, "invalid", now=now)
+            raise ControlPlaneError("Change Plan operation or resource does not match preview.")
+
         expected_revision = int(row["expected_revision"])
         if payload.get("no_change"):
             if self.plane.current_revision() != expected_revision:

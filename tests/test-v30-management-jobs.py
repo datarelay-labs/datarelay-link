@@ -9,6 +9,7 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
@@ -18,6 +19,9 @@ import drlink_control_cli as control_cli
 from drlink_management_service import ManagementQueryService
 from drlink_v30_jobs import (
     BoundedAgentRpcWorkerPool,
+    ADMITTED_JOB_TYPES,
+    MUTATING_AGENT_JOB_TYPES,
+    READ_ONLY_AGENT_JOB_TYPES,
     CANCELLED,
     FAILED,
     ManagementJobEngine,
@@ -63,6 +67,46 @@ class V30ManagementJobTests(unittest.TestCase):
         ai_count = self.engine.conn.execute("SELECT COUNT(*) FROM ai_jobs").fetchone()[0]
         self.assertEqual(ai_count, 0)
 
+    def test_naive_timestamp_cannot_schedule_or_claim_management_jobs(self):
+        from datetime import datetime as Datetime
+
+        naive = Datetime(2026, 10, 10, 12, 0, 0)
+        with self.assertRaises(ControlPlaneError):
+            self._enqueue(targets=("host-a",), now=naive)
+        self.assertEqual(
+            self.engine.conn.execute("SELECT COUNT(*) FROM management_jobs").fetchone()[0],
+            0,
+        )
+        job = self._enqueue(targets=("host-a",), now=self.now)
+        with self.assertRaises(ControlPlaneError):
+            self.engine.claim_targets(worker_id="worker-a", now=naive)
+        state = self.engine.get(job["id"])
+        self.assertEqual(state["status"], QUEUED)
+        self.assertEqual(state["targets"][0]["status"], QUEUED)
+
+    def test_engine_rejects_invalid_queue_configuration_before_db_open(self):
+        from drlink_v30_jobs import MAX_ACTIVE_JOBS
+
+        cases = (
+            ("max_active_jobs", 0), ("max_active_jobs", -1),
+            ("max_active_jobs", True), ("max_active_jobs", 1.5),
+            ("max_active_jobs", "8"),
+            ("max_active_jobs", MAX_ACTIVE_JOBS + 1),
+            ("max_targets", 0), ("max_targets", -1),
+            ("max_targets", False), ("max_targets", 2.5),
+            ("max_targets", "8"),
+            ("lease_seconds", 0), ("lease_seconds", -3),
+            ("lease_seconds", True), ("lease_seconds", 30.5),
+            ("lease_seconds", "60"),
+        )
+        for field, invalid in cases:
+            with self.subTest(field=field, value=repr(invalid)):
+                fresh = Path(tempfile.mkdtemp(prefix="drlink-job-invalid-"))
+                with self.assertRaises(ControlPlaneError):
+                    with ManagementJobEngine(str(fresh), **{field: invalid}):
+                        pass
+                self.assertEqual(list(fresh.rglob("*")), [])
+
     def test_existing_schema_v3_additively_gains_job_tables(self):
         legacy_root = tempfile.mkdtemp(prefix="drlink-v30-existing-schema-")
         conn = open_control_db(legacy_root)
@@ -86,11 +130,137 @@ class V30ManagementJobTests(unittest.TestCase):
         finally:
             upgraded.close()
 
+    def test_new_job_families_do_not_inherit_observational_admission(self):
+        self.assertEqual(READ_ONLY_AGENT_JOB_TYPES, {"doctor", "version-check"})
+        self.assertEqual(
+            MUTATING_AGENT_JOB_TYPES, ADMITTED_JOB_TYPES - READ_ONLY_AGENT_JOB_TYPES
+        )
+        self.assertIn("support-bundle", MUTATING_AGENT_JOB_TYPES)
+        self.assertIn("refresh", MUTATING_AGENT_JOB_TYPES)
+        self.assertNotIn("doctor", MUTATING_AGENT_JOB_TYPES)
+
     def test_only_admitted_safe_job_families_can_start(self):
         with self.assertRaises(ControlPlaneError):
             self._enqueue(job_type="bulk-delete")
         with self.assertRaises(ControlPlaneError):
             self._enqueue(job_type="restart-everything")
+
+    def test_managed_update_rollout_is_bounded_and_artifact_pinned(self):
+        from drlink_control_plane import ControlPlane
+        plane = ControlPlane(self.tmp)
+        try:
+            for host in ("host-a","host-b","host-c"):
+                plane.upsert_client(host, hostname=host)
+        finally:
+            plane.close()
+        digest = "a" * 64
+        job = self.engine.enqueue_rollout(
+            targets=("host-a", "host-b", "host-c"),
+            canary_targets=("host-a",),
+            requested_by="admin-a",
+            artifact={"version": "3.0.0-rc.1", "source_ref": "a" * 40, "sha256": digest},
+            wave_size=2,
+            failure_threshold_percent=25,
+            now=self.now,
+        )
+        self.assertEqual(job["job_type"], "agent-update-rollout")
+        self.assertEqual(job["payload"]["rollout_state"], "CANARY")
+        self.assertEqual(job["payload"]["canary_targets"], ["host-a"])
+        self.assertEqual(job["payload"]["artifact"]["sha256"], digest)
+        paused = self.engine.rollout_control(job["id"], action="pause")
+        self.assertTrue(paused["payload"]["operator_paused"])
+        self.assertEqual(paused["payload"]["rollout_state"], "PAUSED")
+        resumed = self.engine.rollout_control(job["id"], action="resume")
+        self.assertFalse(resumed["payload"]["operator_paused"])
+
+    def test_generic_job_api_cannot_bypass_rollout_artifact_and_canary_validation(self):
+        with self.assertRaisesRegex(ControlPlaneError, "Rollout"):
+            self.engine.enqueue(
+                job_type="agent-update-rollout", targets=("host-a",),
+                requested_by="admin-a",
+                payload={"artifact": {"source_ref": "main", "sha256": "not-verified"}},
+                now=self.now,
+            )
+        self.assertEqual(
+            self.engine.conn.execute("SELECT COUNT(*) FROM management_jobs").fetchone()[0],
+            0,
+        )
+
+    def test_managed_update_rollout_rejects_unsafe_scope(self):
+        artifact = {"version": "3.0.0", "source_ref": "b" * 40, "sha256": "c" * 64}
+        with self.assertRaises(ControlPlaneError):
+            self.engine.enqueue_rollout(
+                targets=("host-a",),
+                canary_targets=("host-b",),
+                requested_by="admin-a",
+                artifact=artifact,
+                now=self.now,
+            )
+        with self.assertRaises(ControlPlaneError):
+            self.engine.enqueue_rollout(
+                targets=("host-a",),
+                requested_by="admin-a",
+                artifact={"version": "3.0.0", "source_ref": "mutable-main", "sha256": "bad"},
+                now=self.now,
+            )
+
+    def test_admission_blocks_mutating_agent_jobs_without_blocking_diagnostics(self):
+        from drlink_control_plane import ControlPlane
+
+        plane = ControlPlane(self.tmp)
+        try:
+            for host, admission in (
+                ("pending-host", "PENDING_APPROVAL"),
+                ("quarantined-host", "QUARANTINED"),
+                ("approved-host", "APPROVED"),
+            ):
+                plane.upsert_client(host, hostname=host)
+                plane.conn.execute(
+                    "UPDATE clients SET admission_state=? WHERE id=?",
+                    (admission, host),
+                )
+            plane.conn.commit()
+        finally:
+            plane.close()
+
+        self.engine.max_active_jobs = 16  # This test deliberately covers 14 targets.
+        mutating_kinds = (
+            "refresh", "support-bundle", "remote-service-set", "remote-service-delete",
+        )
+        for target in ("pending-host", "quarantined-host", "approved-host"):
+            for kind in mutating_kinds:
+                self._enqueue(
+                    targets=(target,), job_type=kind, now=self.now,
+                    payload={"name": "ssh-access"},
+                )
+            if target != "approved-host":
+                self._enqueue(targets=(target,), job_type="doctor", now=self.now)
+
+        for target in ("pending-host", "quarantined-host"):
+            claims = self.engine.claim_targets_for_target(
+                target_id=target, worker_id="agent:" + target, limit=4,
+                now=self.now + timedelta(seconds=1),
+            )
+            self.assertEqual([item["job_type"] for item in claims], ["doctor"])
+            queued = self.engine.conn.execute(
+                "SELECT j.job_type,t.status FROM management_job_targets t "
+                "JOIN management_jobs j ON j.id=t.job_id WHERE t.target_id=?",
+                (target,),
+            ).fetchall()
+            self.assertEqual(
+                {row["job_type"]: row["status"] for row in queued
+                 if row["job_type"] in mutating_kinds},
+                {kind: QUEUED for kind in mutating_kinds},
+            )
+
+        approved_claims = self.engine.claim_targets_for_target(
+            target_id="approved-host", worker_id="agent:approved-host",
+            limit=4, now=self.now + timedelta(seconds=1),
+        )
+        self.assertEqual(
+            {item["job_type"] for item in approved_claims},
+            set(mutating_kinds),
+        )
 
     def test_queue_and_target_bounds_fail_closed(self):
         bounded = ManagementJobEngine(
@@ -358,6 +528,112 @@ class V30ManagementJobTests(unittest.TestCase):
         self.assertEqual(summary["queued_jobs"], 1)
         self.assertEqual(summary["queued_targets"], 1)
         self.assertTrue(summary["saturated"])
+
+    def test_worker_pool_rejects_coerced_or_unbounded_capacity(self):
+        cases = (
+            ("max_workers", 0), ("max_workers", -1),
+            ("max_workers", True), ("max_workers", 1.5),
+            ("max_workers", "2"), ("max_workers", 33),
+            ("max_pending", -1), ("max_pending", True),
+            ("max_pending", 1.5), ("max_pending", "2"),
+            ("max_pending", 97),
+        )
+        for key, invalid in cases:
+            with self.subTest(key=key, value=repr(invalid)):
+                with self.assertRaises(ControlPlaneError):
+                    with BoundedAgentRpcWorkerPool(**{key: invalid}):
+                        pass
+        with BoundedAgentRpcWorkerPool(max_workers=32, max_pending=96) as pool:
+            self.assertEqual(pool.capacity, 128)
+
+    def test_worker_pool_dispatch_rejects_invalid_limit_before_claim(self):
+        job = self._enqueue(targets=("host-a",), timeout_seconds=3600)
+        with BoundedAgentRpcWorkerPool(max_workers=1, max_pending=0) as pool:
+            for invalid in (0, -1, True, False, 1.5, "1", b"1"):
+                with self.subTest(limit=repr(invalid)):
+                    with self.assertRaises(ControlPlaneError):
+                        pool.dispatch_once(
+                            self.engine, lambda claim: {"ok": True},
+                            worker_id="bounded-worker", limit=invalid,
+                        )
+                    self.assertEqual(
+                        self.engine.get(job["id"])["targets"][0]["status"], QUEUED
+                    )
+            futures = pool.dispatch_once(
+                self.engine, lambda claim: {"ok": True},
+                worker_id="bounded-worker", limit=1,
+            )
+            self.assertEqual(len(futures), 1)
+            futures[0].result(timeout=2)
+            self.assertEqual(self.engine.get(job["id"])["status"], SUCCEEDED)
+
+    def test_worker_pool_submit_rejection_does_not_strand_claim_or_slot(self):
+        # An executor may shut down between claiming work and submit().
+        # The Job must fail closed rather than remaining RUNNING indefinitely.
+        job = self._enqueue(targets=("host-a",), timeout_seconds=3600)
+        pool = BoundedAgentRpcWorkerPool(max_workers=1, max_pending=0)
+        try:
+            with patch.object(pool._executor, "submit",
+                              side_effect=RuntimeError("executor unavailable")):
+                with self.assertRaises(ControlPlaneError):
+                    pool.dispatch_once(
+                        self.engine, lambda claim: {"ok": True},
+                        worker_id="failure-injection", limit=1,
+                    )
+            detail = self.engine.get(job["id"])
+            self.assertEqual(detail["status"], FAILED)
+            self.assertEqual(detail["targets"][0]["status"], FAILED)
+            self.assertIn("DISPATCH", detail["targets"][0]["error"])
+            self.assertTrue(pool._slots.acquire(blocking=False))
+            pool._slots.release()
+            self.assertEqual(
+                self.engine.conn.execute(
+                    "SELECT COUNT(*) FROM management_job_targets "
+                    "WHERE job_id=? AND status='RUNNING'", (job["id"],)
+                ).fetchone()[0], 0
+            )
+        finally:
+            pool.close()
+
+    def test_worker_pool_partial_submit_failure_preserves_inflight_work(self):
+        job = self._enqueue(
+            targets=("host-a", "host-b"), timeout_seconds=3600,
+        )
+        pool = BoundedAgentRpcWorkerPool(max_workers=1, max_pending=1)
+        submitted = []
+        original_submit = pool._executor.submit
+
+        def reject_second(*args, **kwargs):
+            if submitted:
+                raise RuntimeError("executor refused second target")
+            future = original_submit(*args, **kwargs)
+            submitted.append(future)
+            return future
+
+        try:
+            with patch.object(pool._executor, "submit", side_effect=reject_second):
+                with self.assertRaises(ControlPlaneError):
+                    pool.dispatch_once(
+                        self.engine, lambda claim: {"target": claim["target_id"]},
+                        worker_id="partial-submit", limit=2,
+                    )
+            submitted[0].result(timeout=5)
+            detail = self.engine.get(job["id"])
+            self.assertEqual(detail["status"], FAILED)
+            self.assertEqual(
+                sorted(item["status"] for item in detail["targets"]),
+                [FAILED, SUCCEEDED],
+            )
+            self.assertFalse(
+                any(item["status"] == RUNNING for item in detail["targets"])
+            )
+            self.assertEqual(
+                sum(pool._slots.acquire(blocking=False) for _ in range(2)), 2
+            )
+            pool._slots.release()
+            pool._slots.release()
+        finally:
+            pool.close()
 
     def test_worker_pool_backpressure_does_not_preclaim_unbounded_targets(self):
         job = self._enqueue(targets=("host-a", "host-b"), timeout_seconds=3600)

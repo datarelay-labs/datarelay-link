@@ -97,7 +97,9 @@ for setting in 'Restart=on-failure' 'MemoryMax=256M' 'TasksMax=128' 'LimitNOFILE
   }
 done
 
-if grep -Eq 'drlink[-_]web|usr/local/share/drlink-web' "$ROOT/lib/server-project-files.manifest"; then
+# Match the optional Web Management product names at token boundaries, not
+# the independent signed Webhook Core modules (drlink-webhook-*).
+if grep -Eq 'drlink[-_]web([._/[:space:]]|$)|usr/local/share/drlink-web' "$ROOT/lib/server-project-files.manifest"; then
   echo "FAIL base server project manifest depends on optional Web" >&2
   exit 1
 fi

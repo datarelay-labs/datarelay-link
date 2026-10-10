@@ -51,7 +51,7 @@ FORBIDDEN_PUBLIC_DOC_PATTERNS = [
     r"\bunset access-source\b",
     r"\bset service-access\b",
     r"\bunset service-access\b",
-    r"\btest access\b",
+    r"\btest access(?![-\w])",
     r"\bsudo drlink doctor\b",
     r"(?<!system )\bdrlink update engine\b",
     r"(?<!system )\bdrlink update product\b",
@@ -295,6 +295,14 @@ frpctl_audit_tail
         self.assertIn("def check_audit_log(", src)
         # Old primary recommendation wording should not remain as the only guidance.
         self.assertNotIn("'restart drlink-egress or inspect journalctl", src)
+
+    def test_obsolete_test_access_detection_is_exact_command_family(self):
+        obsolete = next(p for p in FORBIDDEN_PUBLIC_DOC_PATTERNS if p.startswith(r"\btest access"))
+        self.assertIsNotNone(re.search(obsolete, "test access"))
+        self.assertIsNotNone(re.search(obsolete, "test access legacy-target"))
+        self.assertIsNone(re.search(obsolete, "test access-hygiene"))
+        self.assertIsNone(re.search(obsolete, "test access-list"))
+        self.assertIsNone(re.search(obsolete, "test accessibility"))
 
     def test_public_doc_command_parity(self):
         failures = []

@@ -24,23 +24,30 @@ def _utc_text(value: datetime) -> str:
 def overview_summary(conn, *, now: datetime | None = None) -> dict[str, Any]:
     current = now or datetime.now(timezone.utc)
     stale_before = _utc_text(current - timedelta(seconds=AGENT_HEARTBEAT_SECONDS))
+    current_at = _utc_text(current)
 
     host = conn.execute(
         "SELECT COUNT(*) AS total,"
         "SUM(CASE WHEN agent_lifecycle_state='legacy' THEN 1 "
         "WHEN agent_lifecycle_state='connected' AND connected=1 "
-        "AND agent_heartbeat_at IS NOT NULL AND agent_heartbeat_at>=? THEN 1 ELSE 0 END) "
+        "AND julianday(agent_heartbeat_at)>=julianday(?) "
+        "AND julianday(agent_heartbeat_at)<=julianday(?) THEN 1 ELSE 0 END) "
         "AS connected,"
         "SUM(CASE WHEN agent_lifecycle_state='connected' AND connected=1 "
-        "AND (agent_heartbeat_at IS NULL OR agent_heartbeat_at<?) THEN 1 ELSE 0 END) AS stale,"
+        "AND (julianday(agent_heartbeat_at) IS NULL OR "
+        "julianday(agent_heartbeat_at)<julianday(?) OR "
+        "julianday(agent_heartbeat_at)>julianday(?)) THEN 1 ELSE 0 END) AS stale,"
         "SUM(CASE WHEN agent_lifecycle_state='disconnected' OR "
         "(agent_lifecycle_state<>'legacy' AND connected=0) THEN 1 ELSE 0 END) "
         "AS disconnected,"
         "SUM(CASE WHEN agent_lifecycle_state='legacy' THEN 1 ELSE 0 END) AS legacy,"
         "SUM(CASE WHEN agent_version IS NULL OR agent_version='' THEN 1 ELSE 0 END) "
-        "AS version_unknown "
+        "AS version_unknown,"
+        "SUM(CASE WHEN admission_state='PENDING_APPROVAL' THEN 1 ELSE 0 END) AS pending_approval,"
+        "SUM(CASE WHEN admission_state='QUARANTINED' THEN 1 ELSE 0 END) AS quarantined,"
+        "SUM(CASE WHEN admission_state='APPROVED' THEN 1 ELSE 0 END) AS approved "
         "FROM clients",
-        (stale_before, stale_before),
+        (stale_before, current_at, stale_before, current_at),
     ).fetchone()
 
     service = conn.execute(
@@ -95,6 +102,9 @@ def overview_summary(conn, *, now: datetime | None = None) -> dict[str, Any]:
             "disconnected": int(host["disconnected"] or 0),
             "legacy": int(host["legacy"] or 0),
             "version_unknown": int(host["version_unknown"] or 0),
+            "pending_approval": int(host["pending_approval"] or 0),
+            "quarantined": int(host["quarantined"] or 0),
+            "approved": int(host["approved"] or 0),
         },
         "remote_services": {
             "total": int(service["total"] or 0),

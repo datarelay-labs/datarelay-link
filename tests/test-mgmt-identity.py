@@ -59,9 +59,13 @@ class Env:
             'registry_file': str(self.registry),
             'enrollments_dir': str(self.enrollments),
             'token_file': str(self.token),
+            'control_plane_root': str(self.root),
         }, indent=2) + '\n')
         MOD.atomic_write_json(self.registry, MOD.empty_registry())
         self.allocator = MOD.Allocator(str(self.cfg))
+        # Never let isolated enrollment tests fall through to host Core state.
+        if MOD.RP is None or MOD.RP.root_from_cfg(json.loads(self.cfg.read_text())) != str(self.root):
+            raise AssertionError('management identity fixture Core root is not isolated')
         MOD.port_is_available = lambda port: True
         self.eid = 'abcdef0123456789'
         self.secret = 'enroll-secret-abcdef0123456789'

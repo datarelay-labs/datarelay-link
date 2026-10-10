@@ -189,6 +189,161 @@ class V30WebServiceTests(unittest.TestCase):
         validate_web_bind("127.0.0.1")
         validate_web_bind("::1")
 
+    def test_admin_webhook_test_delivery_is_csrf_guarded_and_audited(self):
+        from drlink_webhooks import WebhookStore
+        self.login()
+        status, _, created = self.request(
+            "POST", "/api/v1/webhooks",
+            {"name": "test-sink", "url": "https://hooks.example.org/events",
+             "event_classes": ["security.lifecycle"]},
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, created)
+        self.assertTrue(created["secret"])
+        identifier = created["id"]
+        status, _, _ = self.request(
+            "POST", "/api/v1/webhooks/test", {"webhook_id": identifier},
+        )
+        self.assertEqual(status, 403)
+        status, _, queued = self.request(
+            "POST", "/api/v1/webhooks/test", {"webhook_id": identifier},
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, queued)
+        self.assertEqual(queued["status"], "QUEUED")
+        self.assertNotIn(created["secret"], json.dumps(queued))
+        with WebhookStore(self.tmp) as store:
+            row = store.conn.execute(
+                "SELECT status FROM management_webhook_outbox WHERE event_id=?",
+                (queued["event_id"],),
+            ).fetchone()
+            self.assertEqual(row["status"], "PENDING")
+            audit = store.conn.execute(
+                "SELECT actor_id FROM audit_events WHERE "
+                "event_type='management_webhook.test_requested' AND entity_id=?",
+                (identifier,),
+            ).fetchone()
+            self.assertTrue(audit["actor_id"].startswith("web:wop_"))
+            self.assertNotIn(created["secret"], audit["actor_id"])
+        status, _, result = self.request(
+            "POST", "/api/v1/webhooks/disable", {"webhook_id": identifier},
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, result)
+        self.assertFalse(result["enabled"])
+        status, _, _ = self.request(
+            "POST", "/api/v1/webhooks/enable", {"webhook_id": identifier},
+        )
+        self.assertEqual(status, 403)
+        status, _, result = self.request(
+            "POST", "/api/v1/webhooks/enable", {"webhook_id": identifier},
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, result)
+        self.assertTrue(result["enabled"])
+        with WebhookStore(self.tmp) as store:
+            audit = store.conn.execute(
+                "SELECT actor_id FROM audit_events WHERE "
+                "event_type='management_webhook.enabled' AND entity_id=?",
+                (identifier,),
+            ).fetchone()
+            self.assertTrue(audit["actor_id"].startswith("web:wop_"))
+
+    def test_agent_rollout_preview_is_admin_csrf_guarded_and_does_not_enqueue(self):
+        self.login()
+        from drlink_v30_jobs import ManagementJobEngine
+        artifact = {
+            "version": "3.0.0-rc.1",
+            "source_ref": "a" * 40,
+            "sha256": "b" * 64,
+        }
+        request = {
+            "targets": ["host-a"], "artifact": artifact, "wave_size": 1,
+        }
+        with ManagementJobEngine(self.tmp) as engine:
+            before = engine.conn.execute(
+                "SELECT COUNT(*) FROM management_jobs"
+            ).fetchone()[0]
+        path = "/api/v1/jobs/agent-update-rollout/preview"
+        status, _, _ = self.request("POST", path, request)
+        self.assertEqual(status, 403)
+        status, _, preview = self.request(
+            "POST", path, request, headers={"X-CSRF-Token": self.csrf}
+        )
+        self.assertEqual(status, 200, preview)
+        self.assertTrue(preview["read_only"])
+        self.assertTrue(preview["eligible"])
+        self.assertFalse(preview["ready_to_apply"])
+        self.assertEqual(preview["artifact_qualification"], "NOT_VERIFIED")
+        self.assertFalse(preview["creates_job"])
+        self.assertEqual(preview["canary_targets"], ["host-a"])
+        self.assertEqual(preview["failure_threshold_percent"], 0)
+        self.assertEqual(preview["planned_batches"], [
+            {"phase": "CANARY", "batch": 1, "targets": ["host-a"]},
+        ])
+        self.assertTrue(preview["requires_fresh_validation_on_apply"])
+        with ManagementJobEngine(self.tmp) as engine:
+            after = engine.conn.execute(
+                "SELECT COUNT(*) FROM management_jobs"
+            ).fetchone()[0]
+        self.assertEqual(after, before)
+        # Preview is advisory. Until the canonical signed-Agent updater and
+        # rollback have been qualified, a direct POST must not enqueue work.
+        status, _, refused = self.request(
+            "POST", "/api/v1/jobs/agent-update-rollout", request,
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertNotEqual(status, 200, refused)
+        self.assertIn("error", refused)
+        with ManagementJobEngine(self.tmp) as engine:
+            self.assertEqual(
+                engine.conn.execute("SELECT COUNT(*) FROM management_jobs").fetchone()[0],
+                before,
+            )
+
+    def test_rollout_job_detail_reports_recovery_without_claiming_live_update(self):
+        self.login()
+        from drlink_v30_jobs import ManagementJobEngine, FAILED
+        artifact = {
+            "version": "3.0.0-rc.1",
+            "source_ref": "a" * 40,
+            "sha256": "b" * 64,
+        }
+        with ManagementJobEngine(self.tmp) as engine:
+            job = engine.enqueue_rollout(
+                targets=("host-a",), canary_targets=("host-a",),
+                artifact=artifact, requested_by="local-fixture",
+                wave_size=1,
+            )
+            claims = engine.claim_targets(worker_id="fixture-only", limit=1)
+            self.assertEqual(len(claims), 1)
+            engine.complete_target(
+                job_id=job["id"], target_id="host-a",
+                claim_token=claims[0]["claim_token"], status=FAILED,
+                error="SIMULATED_CANARY_FAILURE",
+            )
+        status, _, detail = self.request("GET", "/api/v1/jobs/" + job["id"])
+        self.assertEqual(status, 200, detail)
+        self.assertEqual(detail["job_type"], "agent-update-rollout")
+        progress = detail["rollout_progress"]
+        self.assertEqual(progress["phase"], "HALTED")
+        self.assertEqual(progress["halt_reason"], "CANARY_FAILED")
+        self.assertEqual(progress["update_outcome_qualification"], "NOT_VERIFIED")
+        self.assertFalse(progress["signed_agent_update_verified"])
+        self.assertFalse(progress["post_update_health_verified"])
+        self.assertFalse(progress["rollback_verified"])
+        self.assertTrue(progress["operator_reconciliation_required"])
+        self.assertIn("rollback", progress["recovery_guidance"])
+        self.assertNotIn("artifact", progress)
+        self.assertNotIn("source_ref", progress)
+        self.assertIn("SIMULATED_CANARY_FAILURE", detail["targets"][0]["error"])
+        # A deliberately simulated Job status is never proof of a signed
+        # Agent install and must not enable Web/public rollout Apply.
+        with ManagementJobEngine(self.tmp) as engine:
+            self.assertEqual(engine.claim_targets(
+                worker_id="following-wave", limit=1,
+            ), [])
+
     def test_auth_required_on_loopback_and_read_views(self):
         status, _, _ = self.request("GET", "/api/v1/overview")
         self.assertEqual(status, 401)
@@ -789,6 +944,78 @@ class V30WebServiceTests(unittest.TestCase):
         self.assertEqual(listed["count"], 1)
         self.assertEqual(listed["items"][0]["name"], "web-critical-ssh")
 
+    def test_host_admission_change_plan_web_csrf_and_typed_confirmation(self):
+        self.login()
+        plane = ControlPlane(self.tmp)
+        try:
+            before = plane.current_revision()
+            self.assertEqual(plane.require_client("host-a")["admission_state"], "APPROVED")
+        finally:
+            plane.close()
+        preview_path = "/api/v1/managed-hosts/admission/preview"
+        apply_path = "/api/v1/managed-hosts/admission/apply"
+
+        status, _, _ = self.request(
+            "POST", preview_path, {"host": "host-a", "operation": "quarantine"},
+        )
+        self.assertEqual(status, 403)  # CSRF is mandatory.
+        status, _, preview = self.request(
+            "POST", preview_path, {"host": "host-a", "operation": "quarantine"},
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, preview)
+        self.assertEqual(preview["confirmation_class"], "QUARANTINE")
+        self.assertFalse(preview["impact"]["access_broadened"])
+        self.assertIn("port reservations", preview["impact"]["kept"])
+        plane = ControlPlane(self.tmp)
+        try:
+            self.assertEqual(plane.current_revision(), before)
+        finally:
+            plane.close()
+
+        status, _, denied = self.request(
+            "POST", apply_path,
+            {"change_plan_id": preview["change_plan_id"], "confirmation": "APPROVE"},
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 400, denied)
+        status, _, applied = self.request(
+            "POST", apply_path,
+            {"change_plan_id": preview["change_plan_id"], "confirmation": "QUARANTINE"},
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, applied)
+        self.assertEqual(applied["revision"], before + 1)
+        plane = ControlPlane(self.tmp)
+        try:
+            row = plane.require_client("host-a")
+            self.assertEqual(row["admission_state"], "QUARANTINED")
+            self.assertEqual(row["trust_status"], "trusted")
+            self.assertEqual(int(row["connected"]), 1)
+        finally:
+            plane.close()
+
+        status, _, restore = self.request(
+            "POST", preview_path, {"host": "host-a", "operation": "approve"},
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, restore)
+        self.assertTrue(restore["impact"]["access_broadened"])
+        status, _, restored = self.request(
+            "POST", apply_path,
+            {"change_plan_id": restore["change_plan_id"], "confirmation": "APPROVE"},
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, restored)
+        self.assertEqual(restored["revision"], before + 2)
+        plane = ControlPlane(self.tmp)
+        try:
+            self.assertEqual(
+                plane.require_client("host-a")["admission_state"], "APPROVED"
+            )
+        finally:
+            plane.close()
+
     def test_managed_host_lifecycle_requires_admin_csrf_and_typed_confirmation(self):
         login = self.login()
         operator_id = login["operator"]["id"]
@@ -1003,10 +1230,25 @@ class V30WebServiceTests(unittest.TestCase):
         self.assertEqual(status, 200, issued)
         self.assertTrue(issued["display_once"])
         self.assertTrue(issued["command"])
+        self.assertIs(issued["pre_approved"], False)
+        status, _, approved = self.request(
+            "POST", "/api/v1/enrollments/zero-touch",
+            {**body, "label": "preapproved-web-agent", "pre_approved": True},
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, approved)
+        self.assertIs(approved["pre_approved"], True)
+        status, _, bad_type = self.request(
+            "POST", "/api/v1/enrollments/zero-touch",
+            {**body, "pre_approved": "true"},
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 400, bad_type)
         status, _, listing = self.request("GET", "/api/v1/enrollments?limit=10")
         self.assertEqual(status, 200, listing)
-        self.assertEqual(listing["total"], 1)
+        self.assertEqual(listing["total"], 2)
         serialized = json.dumps(listing)
+        self.assertNotIn(approved["command"], serialized)
         self.assertNotIn(issued["command"], serialized)
         self.assertNotIn("command", serialized.lower())
         self.assertNotIn("secret", serialized.lower())
@@ -1022,7 +1264,7 @@ class V30WebServiceTests(unittest.TestCase):
         self.assertNotIn(manual["enrollment_code"], manual["command"])
         status, _, listing = self.request("GET", "/api/v1/enrollments?limit=10")
         self.assertEqual(status, 200, listing)
-        self.assertEqual(listing["total"], 2)
+        self.assertEqual(listing["total"], 3)
         serialized = json.dumps(listing)
         self.assertNotIn(manual["enrollment_code"], serialized)
 

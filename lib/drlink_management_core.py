@@ -30,7 +30,9 @@ from drlink_management_service import (
 from drlink_management_guided import GuidedChangeService
 from drlink_management_enrollment import ManagementEnrollmentService
 from drlink_management_remote_service import ManagementRemoteServiceService
-from drlink_management_host_lifecycle import ManagedHostLifecycleService
+from drlink_management_host_lifecycle import (
+    ManagedHostLifecycleService, ManagedHostAdmissionService,
+)
 from drlink_policy_safety import PolicySafetyService
 import drlink_policy_safety as policy_safety
 from drlink_management_system import ManagementSystemService
@@ -53,6 +55,9 @@ IMPLEMENTED_GUIDED_CHANGE_TOOLS = frozenset(
 IMPLEMENTED_MANAGEMENT_JOB_TOOLS = frozenset(
     {
         "drlink_diagnostic_job_start",
+        # Rollout Apply remains a catalog contract until exact-HEAD Agent
+        # updater, signed artifact and rollback qualification are verified.
+        # Do not advertise a permanently fail-closed handler as implemented.
     }
 )
 
@@ -239,6 +244,11 @@ class ManagementCoreService:
         with ManagementQueryService(self.root) as service:
             return service.health()
 
+    def _invoke_drlink_access_hygiene(self, actor: ManagementActor, data: dict) -> dict:
+        del actor, data
+        with ManagementQueryService(self.root) as service:
+            return service.access_hygiene()
+
     def _invoke_drlink_diagnose_connection(
         self, actor: ManagementActor, data: dict
     ) -> dict:
@@ -304,7 +314,14 @@ class ManagementCoreService:
     def _invoke_drlink_job_get(self, actor: ManagementActor, data: dict) -> dict:
         del actor
         with ManagementQueryService(self.root) as service:
-            return service.job_get(data["job_id"])
+            detail = service.job_get(data["job_id"])
+            if detail.get("job_type") == "agent-update-rollout":
+                from drlink_v30_jobs import rollout_progress_for_query
+                detail["rollout_progress"] = rollout_progress_for_query(
+                    service.conn, detail["id"], detail["targets"],
+                    detail["target_count"],
+                )
+            return detail
 
     def _invoke_drlink_diagnostic_job_start(
         self, actor: ManagementActor, data: dict
@@ -362,6 +379,59 @@ class ManagementCoreService:
             },
         }
 
+    def rollout_preview(
+        self, *, actor: ManagementActor, targets: list[str],
+        artifact: dict[str, Any], canary_targets: list[str] | None = None,
+        wave_size: int = 10, failure_threshold_percent: int = 0,
+    ) -> dict[str, Any]:
+        """Read-only bounded preview; never grants update authority or starts work."""
+        from drlink_v30_jobs import ManagementJobEngine
+
+        self._require_web_role(actor, "Admin")
+        if "management-update" not in actor.permissions:
+            raise ManagementAuthorizationError(
+                "management-update is required to preview Agent rollouts."
+            )
+        with ManagementJobEngine(self.root) as engine:
+            return engine.preview_rollout(
+                targets=targets, requested_by=actor.actor_id,
+                artifact=artifact, canary_targets=canary_targets or (),
+                wave_size=wave_size,
+                failure_threshold_percent=failure_threshold_percent,
+            )
+
+    def _invoke_drlink_agent_update_rollout_start(
+        self, actor: ManagementActor, data: dict
+    ) -> dict:
+        # The 3.0 preview is intentionally NOT_VERIFIED. No public Apply is
+        # authorized until immutable artifact qualification and the canonical
+        # Agent updater/rollback have passed exact-HEAD real Agent acceptance.
+        # Do not allow a direct API invocation to bypass that safety gate.
+        self._require_web_role(actor, "Admin")
+        if "management-update" not in actor.permissions:
+            raise ManagementAuthorizationError(
+                "management-update is required for Managed Agent rollouts."
+            )
+        raise ControlPlaneError(
+            "Managed Agent rollout Apply is unavailable: artifact provenance, "
+            "Agent update and rollback are not qualified."
+        )
+        # No rollout Job may be created by this public API while unqualified.
+
+    def rollout_control(
+        self, job_id: str, *, actor: ManagementActor, action: str
+    ) -> dict[str, Any]:
+        """Require dedicated Admin authority for staged rollout control."""
+        self._require_web_role(actor, "Admin")
+        if "management-update" not in actor.permissions:
+            raise ManagementAuthorizationError(
+                "management-update is required to control Agent rollouts."
+            )
+        from drlink_v30_jobs import ManagementJobEngine
+
+        with ManagementJobEngine(self.root) as engine:
+            return engine.rollout_control(job_id, action=action)
+
     def job_cancel(
         self, job_id: str, *, actor: ManagementActor
     ) -> dict[str, Any]:
@@ -370,9 +440,16 @@ class ManagementCoreService:
             raise ManagementAuthorizationError(
                 "management-job-run is required to cancel Management Jobs."
             )
-        from drlink_v30_jobs import ManagementJobEngine
+        from drlink_v30_jobs import ManagementJobEngine, ROLLOUT_JOB_TYPE
 
         with ManagementJobEngine(self.root) as engine:
+            job = engine.get(job_id)
+            if job["job_type"] == ROLLOUT_JOB_TYPE:
+                self._require_web_role(actor, "Admin")
+                if "management-update" not in actor.permissions:
+                    raise ManagementAuthorizationError(
+                        "management-update is required to cancel Agent rollouts."
+                    )
             return engine.cancel(job_id)
 
     @staticmethod
@@ -522,6 +599,34 @@ class ManagementCoreService:
             )
         with GuidedChangeService(self.root) as service:
             return service.apply_fleet_metadata(
+                actor_id=actor.actor_id,
+                change_plan_id=change_plan_id,
+                confirmation=confirmation,
+            )
+
+    def managed_host_admission_preview(
+        self, *, host: str, operation: str, actor: ManagementActor,
+    ) -> dict[str, Any]:
+        self._require_web_role(actor, "Admin")
+        if "management-host-approve" not in actor.permissions:
+            raise ManagementAuthorizationError(
+                "management-host-approve is required to change Managed Host admission."
+            )
+        with ManagedHostAdmissionService(self.root) as service:
+            return service.preview(
+                actor_id=actor.actor_id, host=host, operation=operation,
+            )
+
+    def managed_host_admission_apply(
+        self, *, change_plan_id: str, confirmation: str, actor: ManagementActor,
+    ) -> dict[str, Any]:
+        self._require_web_role(actor, "Admin")
+        if "management-host-approve" not in actor.permissions:
+            raise ManagementAuthorizationError(
+                "management-host-approve is required to change Managed Host admission."
+            )
+        with ManagedHostAdmissionService(self.root) as service:
+            return service.apply(
                 actor_id=actor.actor_id,
                 change_plan_id=change_plan_id,
                 confirmation=confirmation,
@@ -878,16 +983,24 @@ class ManagementCoreService:
         ttl_seconds: Optional[int] = None,
         label: str = "",
         note: str = "",
+        pre_approved: bool = False,
     ) -> dict[str, Any]:
         self._require_web_role(actor, "Admin")
         if "management-config" not in actor.permissions:
             raise ManagementAuthorizationError("management-config is required for enrollment issuance.")
+        if type(pre_approved) is not bool:
+            raise ControlPlaneError("Pre-approve this enrollment must be boolean.")
+        if pre_approved and "management-host-approve" not in actor.permissions:
+            raise ManagementAuthorizationError(
+                "management-host-approve is required for pre-approved enrollment."
+            )
         return ManagementEnrollmentService(self.root).issue_zero_touch(
             platform=platform,
             ttl_seconds=ttl_seconds,
             label=label,
             note=note,
             actor_id=actor.actor_id,
+            pre_approved=pre_approved,
         )
 
     @staticmethod

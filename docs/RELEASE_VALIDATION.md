@@ -687,6 +687,22 @@ Nevertheless, lab/test transition migration may be implemented for engineering c
 
 Final supported upgrade claims are based on actual prior stable releases and explicit migration code/evidence.
 
+### 3.0 upgrade observation integrity
+
+The v3.0 qualification consumer validates retained observations in addition to gate
+labels. A legacy `final_status=PASS` record alone is not accepted as preservation proof.
+The record must bind `evidence_root` and SHA256 digests for the pre-upgrade,
+post-upgrade, and post-reboot state observations; prior/candidate runtime version output;
+and distinct before/after boot identities. The read-only validator is
+`tests/lib/v30_upgrade_observations.py` (`collect`, `compare`, `runtime`, `verify`).
+
+State observations contain allowlisted configuration counts and hashes, never credentials
+or raw host/policy values. Empty Managed Host or Remote Service inventories cannot prove
+Host/service preservation. Policy preservation requires a non-empty baseline. A
+prior-stable claim also requires a qualified stable baseline; a development v2.4 build
+must not be relabeled stable. Missing, changed, or incomplete observations block the
+upgrade release gate without blocking unrelated Core tests.
+
 ## 26. Multi-host matrix
 
 Final applicable matrix:

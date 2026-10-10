@@ -66,6 +66,81 @@ class V30WebEnrollmentTests(unittest.TestCase):
         self.assertNotIn("_short_handle", persisted)
         self.assertNotIn(result["command"], persisted)
 
+    def test_preapproved_zero_touch_requires_dedicated_admin_permission_and_audit(self):
+        core = ManagementCoreService(self.tmp)
+        admin = ManagementActor.authenticated(
+            "web:admin", permissions_for_role(ROLE_ADMIN), role=ROLE_ADMIN
+        )
+        limited = ManagementActor.authenticated(
+            "web:limited-admin", {"management-config"}, role=ROLE_ADMIN
+        )
+        operator = ManagementActor.authenticated(
+            "web:operator", permissions_for_role(ROLE_OPERATOR), role=ROLE_OPERATOR
+        )
+        with self.assertRaises(ManagementAuthorizationError):
+            core.enrollment_issue_zero_touch(
+                actor=limited, platform="linux", ttl_seconds=600, pre_approved=True
+            )
+        with self.assertRaises(ManagementAuthorizationError):
+            core.enrollment_issue_zero_touch(
+                actor=operator, platform="linux", ttl_seconds=600, pre_approved=True
+            )
+        self.assertEqual(self.service.list_enrollments()["total"], 0)
+        default = core.enrollment_issue_zero_touch(
+            actor=admin, platform="linux", ttl_seconds=600
+        )
+        authorized = core.enrollment_issue_zero_touch(
+            actor=admin, platform="linux", ttl_seconds=600,
+            pre_approved=True, label="approved-lab",
+        )
+        self.assertIs(default["pre_approved"], False)
+        self.assertIs(authorized["pre_approved"], True)
+        for item, expected in ((default, False), (authorized, True)):
+            ticket = Path(self.tmp, "var/lib/drlink/bootstrap", item["enrollment_id"]+".json")
+            stored = json.loads(ticket.read_text())
+            self.assertIs(stored["pre_approved"], expected)
+            self.assertEqual(stored["pre_approval_actor"], "web:admin" if expected else "")
+            enrollment = Path(self.tmp, "var/lib/drlink/enrollments", item["enrollment_record_id"]+".json")
+            self.assertIs(json.loads(enrollment.read_text())["pre_approved"], expected)
+        listing = self.service.list_enrollments()
+        by_id = {row["id"]: row for row in listing["items"]}
+        self.assertFalse(by_id[default["enrollment_id"]]["pre_approved"])
+        self.assertEqual(by_id[default["enrollment_id"]]["first_host_admission"], "PENDING_APPROVAL")
+        self.assertTrue(by_id[authorized["enrollment_id"]]["pre_approved"])
+        self.assertEqual(by_id[authorized["enrollment_id"]]["first_host_admission"], "APPROVED")
+        history = json.dumps(listing)
+        self.assertNotIn(authorized["command"], history)
+        log = Path(self.tmp, "var/log/drlink/audit.jsonl").read_text()
+        self.assertIn('"pre_approved":true', log.lower().replace(" ", ""))
+
+    def test_preapproval_pair_metadata_mismatch_is_not_accepted_as_valid(self):
+        from frp_enrollment_lifecycle import collect_logical_enrollments
+
+        issued = self.service.issue_zero_touch(
+            platform="linux", ttl_seconds=600, pre_approved=True,
+            actor_id="web:admin-fixture",
+        )
+        base = Path(self.tmp, "var/lib/drlink")
+        enrolled = base / "enrollments"
+        bootstrap = base / "bootstrap"
+        rows = collect_logical_enrollments(enrolled, bootstrap)
+        self.assertEqual(len(rows), 1)
+        self.assertIsNone(rows[0]["pair_error"])
+        enrolled_file = enrolled / (issued["enrollment_record_id"] + ".json")
+        original = json.loads(enrolled_file.read_text())
+        altered = dict(original)
+        altered["pre_approval_actor"] = "web:forged"
+        enrolled_file.write_text(json.dumps(altered) + "\n")
+        mismatched = collect_logical_enrollments(enrolled, bootstrap)
+        self.assertIn("preapproval actor", mismatched[0]["pair_error"])
+        history = self.service.list_enrollments()["items"][0]
+        self.assertIs(history["pre_approved"], False)
+        self.assertEqual(history["first_host_admission"], "INVALID_PAIR")
+        enrolled_file.write_text(json.dumps(original) + "\n")
+        self.assertIsNone(
+            collect_logical_enrollments(enrolled, bootstrap)[0]["pair_error"]
+        )
+
     def test_platform_guidance_uses_existing_authority_for_windows_and_macos(self):
         windows = self.service.issue_zero_touch(platform="windows", ttl_seconds=600)
         macos = self.service.issue_zero_touch(platform="macos", ttl_seconds=600)

@@ -156,6 +156,22 @@ grep -q 'DISPATCH frp-create-client --platform linux --one-line --ssh --ssh-user
   "$WORKDIR/zt-ssh.out" || fail "ssh only dispatch"
 pass "ZERO_TOUCH_SSH_GUIDED"
 
+# --- 3.0 optional pre-approval remains an explicit positional opt-in ---
+preapproved_match="$(frpctl_grammar_call match '{"tokens":["set","enrollment","zero-touch","pre-approved"],"role":"server"}')"
+echo "$preapproved_match" | grep -q '"pre_approved": true' \
+  || fail "pre-approved form must explicitly carry Admin intent"
+echo "$preapproved_match" | grep -q '"action": "create_zero_touch"' \
+  || fail "pre-approved form must preserve the canonical onboarding action"
+preapproved_agent="$(frpctl_grammar_call match '{"tokens":["set","enrollment","zero-touch","pre-approved"],"role":"agent"}')"
+echo "$preapproved_agent" | grep -q '"status": "role"' \
+  || fail "Agent must not issue Server preapproved enrollment"
+run_repl "$SERVER" "$WORKDIR/zt-preapproved.out" \
+  "set enrollment zero-touch pre-approved" 1 approved-lab "Explicit opt in" 1 aella 22 exit \
+  || fail "zero-touch preapproved guided"
+grep -q 'DISPATCH frp-create-client --platform linux --one-line --ssh --ssh-user aella --ssh-port 22 --pre-approved --client-name approved-lab --note Explicit opt in' \
+  "$WORKDIR/zt-preapproved.out" || fail "explicit preapproved Server CLI did not carry typed-approval intent"
+pass "ZERO_TOUCH_PREAPPROVAL_GUIDED_EXPLICIT"
+
 # --- Guided: macOS uses the real bash Zero-Touch path (same installer as Linux) ---
 run_repl "$SERVER" "$WORKDIR/zt-macos.out" \
   "set enrollment zero-touch" 3 office-mac "Mac lab" 1 aella 22 exit \

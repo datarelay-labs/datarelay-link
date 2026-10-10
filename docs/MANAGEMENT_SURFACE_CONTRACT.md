@@ -1,7 +1,7 @@
 # Data Relay Link 3.0 — Management Surface Contract
 
 > **Status:** Normative 3.0 design contract
-> **Applies to:** CLI, Optional Full Web Management, MCP/AI integration, and the optional `datarelay-link-plugin`
+> **Applies to:** CLI, Optional Full Web Management, Public Automation API, MCP/AI integration, and the optional `datarelay-link-plugin`
 > **Primary authority:** `PRODUCT_MASTER.md`, `DATA_RELAY_ROADMAP.md`
 > **Purpose:** Keep one management meaning across every surface without duplicating product logic.
 
@@ -14,13 +14,13 @@ Data Relay Link 3.0 exposes one Core management model through several surfaces:
                                 │
                     Core Management Service
                                 │
-       ┌────────────────────────┼────────────────────────┐
-       │                        │                        │
-       ▼                        ▼                        ▼
- complete local CLI       Web API adapter        Management MCP adapter
-                                 │                        │
-                                 ▼                        ▼
-                           Web Management          direct MCP clients
+       ┌──────────────────┬─────┴─────┬──────────────────┐
+       │                  │           │                  │
+       ▼                  ▼           ▼                  ▼
+ complete local CLI  Web API adapter  Public Automation  Management MCP
+                         │             API adapter         adapter
+                         ▼                 │                  │
+                   Web Management    Service Accounts     direct MCP clients
                                                         │
                                                         ▼
                                                optional Plugin relay
@@ -37,7 +37,7 @@ Agent ownership, recovery truth, or failure behavior.
 
 This contract does **not**:
 
-- turn the Web `/api/v1` namespace into a public automation API;
+- make the browser-internal Web `/api/v1` namespace itself the public automation contract; 3.0 uses a separate supported automation namespace/adapter;
 - make the optional Plugin/relay part of Core availability;
 - require ChatGPT, Web Management, or any external service for CLI/Core recovery;
 - make MCP a second policy or authorization engine;
@@ -66,7 +66,12 @@ The Core Management Service owns:
 - Agent RPC ownership and truthful offline results;
 - Temporary Access expiry evaluation;
 - Emergency New-Access Cutoff state;
-- bounded management Jobs.
+- bounded management Jobs, including staged Agent update rollout;
+- Managed Host approval/quarantine state;
+- Service Account authorization for the Public Automation API;
+- signed event-Webhook configuration/delivery health;
+- Access Hygiene derived recommendations;
+- optional lightweight JIT request state that only materializes Temporary Access.
 
 No adapter may reproduce these semantics independently.
 
@@ -79,8 +84,10 @@ Browser
   → Core Management Service
 ```
 
-The Web API is initially an internal first-party browser contract. A later public API
-decision may promote part of it, but Plugin/MCP must not depend on Web API stability.
+The Web API is an internal first-party browser contract and remains so in 3.0. Public
+automation is provided by a separate versioned Automation API adapter over the same Core
+Management Service. Plugin/MCP must not depend on either Web endpoint shapes or Automation
+API transport details.
 
 Web adds visualization, guided workflows, forms, rich diff/preview, graphs, Attention,
 and confirmation UX. It owns no alternate authoritative state.
@@ -123,12 +130,31 @@ The relay:
 
 The relay does **not**:
 
-- call the DRLink Web API as a management backend;
+- call the DRLink Web API or Public Automation API as a management backend;
 - invent management tools;
 - filter tools to create a second authorization policy;
 - cache DRLink authorization decisions;
 - convert an upstream DENY into ALLOW;
 - synthesize product state from relay-local data.
+
+### 3.5 Public Automation API is a separate supported adapter
+
+```text
+Service Account
+  → /api/automation/v1
+  → Public Automation API adapter
+  → Core Management Service
+```
+
+The Public Automation API exposes only a versioned allowlisted Core capability subset.
+It does not reuse browser cookies/CSRF/session state, does not depend on Web Management
+being installed, and does not expose internal Web endpoint shapes as a public contract.
+Service Account permissions are management permissions only; credentials are display-once,
+revocable/rotatable and optional-expiry, and every call retains service-account actor/audit
+attribution. Automation cannot bypass Change Plan, expected revision, confirmation/risk,
+Job, reference protection, or recovery exclusions.
+
+Service Account token possession does not imply target-OS AI permissions, MCP/Plugin identity binding, or recovery authority. Restore, operator/MFA recovery, and protected-secret export remain local CLI/Web authority.
 
 ## 4. Surface roles
 
@@ -141,7 +167,7 @@ The CLI remains:
 - available without Web or Plugin;
 - capable of expressing all authoritative 3.0 management state.
 
-A Web-only or Plugin-only authoritative operation is prohibited.
+A Web-only, Public-Automation-API-only, or Plugin-only authoritative operation is prohibited.
 
 ### 4.2 Web
 
@@ -149,7 +175,13 @@ Web is the complete graphical management surface for supported normal administra
 Where an operation is intentionally shell/recovery-only, Web records that classification
 in the capability parity ledger.
 
-### 4.3 Plugin/MCP
+### 4.3 Public Automation API
+
+The Public Automation API is the supported non-interactive management surface for scripts,
+CI/CD, and operator-owned integrations. It is narrower than full local recovery authority
+and uses scoped Service Accounts rather than human browser sessions or AI Identity.
+
+### 4.4 Plugin/MCP
 
 Plugin/MCP is a **bounded assisted-management surface**, not a second full admin console.
 
@@ -164,11 +196,20 @@ Its highest-value 3.0 uses are:
 - Emergency New-Access Cutoff preview and tightly authorized apply;
 - Job inspection and safe diagnostic operations.
 
-Recovery authority, operator-security administration, and other high-risk system lifecycle
-operations remain outside the default Plugin surface. DRL3-3 Web system status, redacted
-certificate status, certificate preflight, and backup validation are Core-owned OBSERVE/TEST
-operations and are not new Plugin tools. Backup validation reuses the canonical restore
-validator with zero authoritative mutation; restore itself remains `RECOVERY_AUTHORITY`.
+Recovery authority, operator-security administration, Managed Host admission mutation,
+Agent rollout start/resume/rollback, Service Account administration, webhook secret/config
+mutation, and other high-risk system lifecycle operations remain outside the default Plugin
+surface. DRL3-3 Web system status, redacted certificate status, certificate preflight, and
+backup validation are Core-owned OBSERVE/TEST operations and are not new Plugin tools.
+Backup validation reuses the canonical restore validator with zero authoritative mutation;
+restore itself remains `RECOVERY_AUTHORITY`.
+
+### 4.4 Automation API
+
+Automation API is the supported machine-to-machine management surface. It provides a
+subset of Core operations selected by explicit Service Account permissions and the public
+Automation API contract. It is never authenticated by Web cookies, never exposes display-
+once secrets after issuance, and never creates a second authorization or policy engine.
 
 ## 5. Management permission boundary
 
@@ -201,8 +242,17 @@ management-temporary-access
 management-emergency-cutoff
 management-job-observe
 management-job-run
+management-host-approve
+management-update
+management-webhook
+management-automation-admin
+management-access-request
 management-config
 management-recovery
+management-host-approve
+management-update
+management-automation-admin
+management-webhook
 ```
 
 These names are public 3.0 capability values. They are separate from target-OS permissions
@@ -225,7 +275,7 @@ Every Core management operation exposed through an adapter has one operation cla
 | RECOVERY_AUTHORITY | High-risk recovery/security authority | restore, uninstall, operator/MFA recovery administration | not exposed to Plugin in 3.0 |
 
 An operation's class is part of the Core capability catalog and must not differ between
-Web and MCP.
+CLI, Web, Public Automation API, and MCP.
 
 ## 7. Shared mutation protocol
 
@@ -246,7 +296,7 @@ intent
   → truthful result
 ```
 
-Web and MCP do not receive special bypasses.
+Web, Public Automation API, and MCP do not receive special bypasses.
 
 ### 7.1 Change Plan binding
 
@@ -308,6 +358,12 @@ NO          intentionally not exposed in 3.0
 | Active connection termination | COND | COND | NO | P2/conditional; not 3.0 GA blocker |
 | Job status/result | FULL | FULL | READ | bounded |
 | Safe diagnostic Job start | FULL | FULL | CONTROLLED | only approved job families |
+| Managed Host approval/quarantine | FULL | FULL | NO by default | dedicated management-host-approve; pre-approved enrollment supported |
+| Managed Update / staged rollout | FULL | FULL | NO | bounded Job; dedicated management-update; no arbitrary package execution |
+| Public Automation API / Service Accounts | FULL local administration | FULL administration/status | NO | separate adapter/credentials; management-automation-admin controls principal lifecycle |
+| Signed Event Webhook | FULL | FULL | READ status only | dedicated management-webhook for config; Plugin cannot receive signing secret |
+| Access Hygiene recommendations | FULL | FULL | READ | derived evidence; never auto-mutates |
+| Lightweight JIT request/approval | FULL if stretch ships | FULL if stretch ships | NO by default | P2 stretch; dedicated management-access-request; approval creates Temporary Access |
 | Broad/destructive fleet actions | NO | NO | NO | outside 3.0 |
 | ConfigurationBundle test/diff | FULL | FULL | READ | no secret distribution |
 | ConfigurationBundle apply | FULL | FULL | NO by default | may be separately designed later |
@@ -393,6 +449,195 @@ The Plugin must not:
 - receive protected payloads;
 - substitute relay-local logs for authoritative DRLink audit;
 - claim a root cause when Core reports UNKNOWN.
+
+### 9.5 Managed Host Approval / Quarantine
+
+CLI/Web own normal approval administration. A pending Host remains visible for review but
+is not a normal trusted target. Plugin may read bounded pending/approval status when
+`management-read` permits it, but approval mutation is not exposed by default. Pre-approved
+enrollment is created only through authorized local/admin automation and remains bound to
+the immutable enrollment/Host identity.
+
+### 9.6 Managed Update / Staged Rollout
+
+Rollout is a JOB-class operation with explicit target set, immutable artifact/provenance,
+canary/first wave, bounded concurrency, and failure-pause policy. CLI/Web can start and
+control the rollout with `management-update`; Plugin is limited to status/diagnosis in
+3.0. No adapter may turn rollout into arbitrary command/package execution.
+
+The read-only rollout preview may show a recent authenticated Agent lifecycle
+heartbeat from stored inventory. A recent report does not prove current network
+reachability, installed binary provenance, a qualified signed update artifact, or
+rollback readiness. Neither matching version strings nor heartbeat freshness
+may enable Apply; staged rollout remains unavailable until the signed Agent
+updater, post-update health checks, and rollback are qualified on the exact
+candidate.
+
+Rollout recovery must not interpret an expired Worker lease, server restart,
+or missed Job deadline as an Agent update success. Those failures halt further
+waves and preserve the failure reason in durable Job state. An already HALTED
+rollout or a cancelled rollout with an in-flight target cannot be resumed by
+changing its pause flag: the operator must inspect the uncertain Agent outcome
+and use a new, independently qualified Change Plan. This rule does not certify
+that canonical signed Agent update or rollback execution is implemented.
+
+The internal Linux Agent release preflight accepts only a detached ECDSA P-256
+signature over the exact Server-local qualified manifest bytes, verified with
+a separate caller-pinned release public key (never the Agent enrollment key or
+a key embedded in the manifest). Before any update is eligible for execution,
+the signed manifest must bind one unique Linux Agent installer entry, a full
+immutable Git SHA, release version/channel, SHA-256 and actual downloaded file
+size and digest to the requested rollout target. A PASS label or HTTPS
+transport without the independent release signature is insufficient. An
+installed-runtime preflight also checks the persisted source/version/bundle
+identity and critical Agent module hashes; it must not be reported as a live
+health check, update completion, or rollback verification.
+
+This cryptographic validation is an internal prerequisite only. Distribution
+of the trusted release verification key, signed artifact publication, an
+Agent-owned updater execution/health/rollback path, and real Host qualification
+are still required before changing the public fail-closed Apply gate. No
+production signing key is generated or stored by this preliminary component;
+Windows/macOS platform-specific qualification remains separate. The internal
+read-only verifier `python3 lib/drlink_v30_agent_artifact.py --help` accepts
+manifest, detached signature, pinned release public key, Agent bundle, exact
+source HEAD, version, digest and channel; it never installs or rolls back files
+and is not a public `drlink` command.
+
+The Server-side **offline signed candidate stage** builds on the existing
+qualified artifact manifest and `SHA256SUMS`, without changing the ordinary
+v2.4 update behavior. The release owner signs the **exact manifest bytes**
+outside the Server; the offline stage only accepts this pre-existing detached
+signature, the independently installed ECDSA P-256 release verification public
+key, and its operator-pinned SHA-256 public-key fingerprint. The stage verifies
+all existing Server-local artifact hashes plus exact Agent SHA/version/channel
+and writes a fresh **unpublished** candidate tree containing
+`agent/manifest.sig`. The stage rejects extra unlisted Agent and FRP
+distribution files that could otherwise be reachable through
+`/artifacts/agent/` or `/artifacts/frp/`. This sidecar is addressable at
+`/artifacts/agent/manifest.sig` only **after** a separately approved publish
+copies the reviewed distribution to the Server. No private release-signing key
+may appear in the repository, Agent payload, Server distribution or stage;
+the enrollment/machine identity key never serves as a signing root. Never
+infer the trusted release key from bytes downloaded with the candidate.
+
+The internal `lib/drlink_v30_signed_distribution.py` APIs
+`stage_signed_candidate` and `verify_signed_server_tree` are offline
+tools and have no effect on installed Server artifact directories, HTTP
+publication, update authority or Agent lifecycle. Staged file contents,
+release-key fingerprint, signing provenance, protected key rotation, the
+release-controlled publish step, Agent-owned updater execution, and real
+health/rollback must all pass separate qualification before staged rollout
+Apply becomes available. This feature does not grant permission to publish
+artifacts or provision keys.
+
+The Agent-side read-only network preflight is
+`lib/drlink_v30_agent_artifact_transport.py`. Only the canonical enrolled
+Server HTTPS origin and persisted enrollment CA may be supplied by its
+future Agent lifecycle caller; the Server/Job payload cannot select a new
+download origin or signing key. The module fetches exactly
+`/artifacts/manifest.json`, `/artifacts/agent/manifest.sig`, and
+`/artifacts/agent/bootstrap-client.sh` with bounded TLS-verified GETs.
+Redirects, missing signatures, untrusted TLS certificates, key-fingerprint
+mismatches, wrong immutable target identities and altered bundle bytes fail
+closed. The independent pinned release public key and its expected
+fingerprint are installed outside the downloaded artifacts; neither can be
+selected from Server-supplied metadata. Successful read-only verification
+does **not** persist/download an executable Agent updater, install software,
+assert health, or authorize the next rollout wave. The verified candidate
+must be re-bound at the authorized Agent-side Apply boundary, followed by
+actual runtime/health and rollback qualification.
+
+An optional **Agent-owned private signed-candidate stage** is implemented by
+`stage_enrolled_server_candidate` in
+`lib/drlink_v30_agent_artifact_transport.py`. It uses the same one-time
+CA-authenticated HTTPS fetch and pinned signer/source/artifact verification
+as the read-only preflight, and writes the *exact verified downloaded bytes*
+to a caller-selected, pre-existing private (0700) staging parent. Each
+new candidate directory and its `agent/` directory are private (0700);
+manifest, detached signature and Agent bundle files are mode 0600.
+The stage does not include an installer invocation, a shell command, a
+service restart, a rollback mutation, or a public API operation. The
+candidate path is returned only after both cryptographic checks pass.
+Failures discard the new candidate, while existing staged candidates are
+left unchanged. A private per-Agent staging parent accepts at most three
+pending signed candidate directories; a nonblocking local directory lock
+serializes slot reservation across Agent workers. When the limit is reached
+the new request fails before downloading files. Existing candidates are never
+automatically removed, because an interrupted update might still require
+operator recovery and immutable provenance inspection.
+
+An installer must never trust the path or its receipt alone: immediately
+before any separately authorized update, it must call
+`verify_staged_enrolled_candidate` with an independently configured release
+public key, pinned key fingerprint, expected immutable target SHA/version/
+channel, and the private candidate directory. The recheck rejects modified
+files, unexpected entries, permissive modes and symlinked directories/files.
+Staging, its receipt, or this recheck still cannot set
+`update_completed`, `post_update_health_verified` or
+`rollback_verified`; future real updater and health/rollback validation
+are separate release gates.
+
+### 9.6.1 Linux Agent persisted signed-update trust
+
+The internal Linux-only module `drlink_v30_agent_local_trust.py` resolves
+update trust from the **existing local Agent enrollment**, not from a remote
+Management Job, Web request, environment override or downloaded manifest:
+
+- enrolled Agent identity: `/etc/frp/client-state.json`, identity key,
+  public key and MAC under `/etc/frp/`;
+- persisted management CA: `/etc/drlink/allocator-ca.crt`;
+- independently provisioned release verification public key:
+  `/etc/drlink/agent-release-verification.pub`;
+- independently pinned release-key DER SHA-256:
+  `/etc/drlink/agent-release-verification.sha256`;
+- private candidate parent:
+  `/var/lib/drlink/signed-agent-candidates/`, pre-existing and mode 0700.
+
+The resolver never provisions or rotates a release signer, trusts a remote
+key/fingerprint or writes enrollment state. File existence alone is
+insufficient: reject missing/malformed enrollment identity, invalid local
+key/fingerprint pairing, unsafe ownership/modes or untrusted HTTPS origins.
+A pre-migration WSS Agent holding the historical allocator :6099 endpoint
+may use the previously enrolled `frp_server_port` as the HTTPS public
+frontend port, matching the canonical Client update rule; absent/ambiguous
+public port fails closed rather than contacting a private legacy backend.
+`DRLINK_MGMT_URL` and `DRLINK_MGMT_INSECURE` must not influence this
+signed-update path. Production release-key installation/rotation remains
+subject to separate owner and trusted-boundary authorization; absence
+means the signed-update check is unavailable, not that the Agent should
+fall back to public GitHub, unsigned installers or another signer.
+
+The local-only `preflight_local_enrolled_agent_update`,
+`stage_local_enrolled_agent_update` and
+`reverify_local_staged_agent_update` functions bind the pre-existing
+cryptographic and HTTPS checks to those exact local paths. Staged
+candidate rechecks only accept children of this Agent's private
+candidate parent. None of these operations perform a software update,
+claim post-install health, or report rollback success. Public rollout
+Apply remains disabled until real Agent updater/health/rollback
+qualification, exact-source artifact/CI integrity and owner authority.
+
+### 9.7 Public Automation API / Service Accounts
+
+Automation clients authenticate as Service Accounts and receive only their configured
+management permissions. The adapter exposes a versioned allowlist of Core capabilities,
+uses the same Change Plan/expected-revision/risk classes, and never inherits browser or
+MCP authorization. Service Account lifecycle is Admin-only and fully audited.
+
+### 9.8 Signed Event Webhook / Access Hygiene
+
+Webhook configuration is local Admin authority. Delivery contains only versioned,
+secret-safe events with stable IDs and signatures; the Plugin may inspect health but never
+receives signing secrets. Access Hygiene is OBSERVE-only derived output with evidence
+quality and cannot trigger automatic lock/delete/policy mutation.
+
+### 9.9 Lightweight JIT request / approval — P2 stretch
+
+If shipped, requester and reviewer are distinct principals. One Admin Approve/Deny action
+may create the same Temporary Access grant already defined by Core. Multi-stage approval,
+self-approval, recurring entitlements, external workflow engines, and automatic renewal are
+outside the stretch contract. Plugin approval is disabled by default.
 
 ## 10. Web / Plugin experience relationship
 
@@ -481,6 +726,8 @@ drlink_emergency_cutoff_clear
 drlink_job_list
 drlink_job_get
 drlink_diagnostic_job_start
+drlink_access_hygiene
+drlink_agent_update_rollout_start
 ```
 
 Their required permission, operation class, Plugin exposure, input schema, and MCP
@@ -540,6 +787,21 @@ current management identity from authenticating again. Retirement requires typed
 and delegates to canonical `unset_managed_host`, including reference refusal and exact
 owned service/port cleanup impact. Both operations record the actual Web actor/interface;
 neither is added to Plugin/MCP.
+
+**DRL3-0 Managed Host admission** is separate from trust revoke and retirement.
+The first-party Web API routes /api/v1/managed-hosts/admission/preview and
+/api/v1/managed-hosts/admission/apply require local Web Admin **and** the
+dedicated management-host-approve permission; management-config alone is not
+sufficient. Core issues a 300-second actor/Server/revision-bound Change Plan.
+Approve/restore requires typed APPROVE; quarantine requires typed QUARANTINE.
+Approval restores normal Remote/Internet/AI policy evaluation rather than
+unconditional access. Quarantine denies new Host-bound authorization without
+revoking management identity, changing connectivity, deleting references,
+releasing services/ports or claiming to terminate established connections.
+Core activates revision-bound policy generations and rolls back failed
+activation; all applied admission transitions preserve audit attribution.
+The Web adapter delegates to Core; no admission mutation is exported as a
+Management MCP/Plugin tool or a public Automation API tool in 3.0.
 
 The DRL3-3 Draft Workspace follows the same authority boundary even though Draft CRUD is
 Web-only operational state rather than an MCP tool. Browser routes call the Web adapter,
@@ -634,6 +896,13 @@ HIGH_RISK_PLUGIN_DEFAULT_EXCLUSION=PASS
 STALE_CHANGE_PLAN_FAIL_CLOSED=PASS
 PER_CALL_AI_ACCESS_AUTHORIZATION=PASS
 CORE_WITHOUT_WEB_PLUGIN=PASS
+MANAGED_HOST_ADMISSION_CROSS_SURFACE=PASS
+STAGED_AGENT_UPDATE_AUTHORITY_BOUNDARY=PASS
+AUTOMATION_API_CORE_SEMANTIC_PARITY=PASS
+AUTOMATION_API_WEB_API_SEPARATION=PASS
+SERVICE_ACCOUNT_PERMISSION_ISOLATION=PASS
+SIGNED_WEBHOOK_SECRET_EXCLUSION_FROM_MCP=PASS
+ACCESS_HYGIENE_READ_ONLY_MCP_PARITY=PASS
 ```
 
 Exact Plugin acceptance remains separate from direct Core MCP acceptance. A passing direct

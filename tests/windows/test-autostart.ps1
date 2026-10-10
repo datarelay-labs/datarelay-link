@@ -15,8 +15,12 @@ try {
     Assert-FrpEqual 'DataRelayLinkClient' (Get-FrpAutostartTaskName) 'canonical Scheduled Task name'
     Assert-FrpEqual 'FRPAutoDeployClient' (Get-FrpAutostartLegacyTaskName) 'legacy Scheduled Task name'
     $env:FRP_AUTOSTART_TASK_NAME = $prevOverride
-    # Never collides with the E2E reverse-SSH scheduled task.
-    Assert-FrpTrue ($taskName -notmatch '(?i)reverse|ssh|e2e') 'task name does not look like the E2E reverse-SSH task'
+    # The stable product namespace must never impersonate the E2E reverse-SSH
+    # task. The isolated task's random 8-hex nonce may legitimately contain
+    # the substring 'e2e'; checking the full generated name is flaky (PS 5.1).
+    Assert-FrpTrue ('DataRelayLinkClient-Test-' -notmatch '(?i)reverse|ssh|e2e') 'product task namespace must not resemble reverse-SSH'
+    Assert-FrpTrue ($taskName -match '^DataRelayLinkClient-Test-[0-9a-f]{8}$') 'isolated task belongs to the product task namespace'
+    Assert-FrpTrue ('DataRelayLinkClient-Test-abce2e12' -match '^DataRelayLinkClient-Test-[0-9a-f]{8}$') 'random task nonce containing e2e remains valid'
     try { Uninstall-FrpAutostartTask -TaskName $taskName | Out-Null } catch { }
 
     # --- Low-level register/query/remove (marker backend on non-Windows) -----

@@ -377,6 +377,31 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
             raise ControlPlaneError("Usage: show managed-host <HOST>")
         client = plane.require_client(rest[1])
         view = rest[2] if len(rest) > 2 else "overview"
+        if view == "admission":
+            if len(rest) != 3:
+                raise ControlPlaneError("Usage: show managed-host <HOST> admission")
+            state = str(client["admission_state"] or "UNKNOWN")
+            trusted = str(client["trust_status"] or "UNKNOWN")
+            connectivity = plane.managed_host_connectivity(client)
+            eligible = state == "APPROVED" and trusted == "trusted"
+            sys.stdout.write(
+                "Managed Host Admission: %s\n"
+                "Admission state: %s\n"
+                "Management trust: %s\n"
+                "Connectivity: %s\n"
+                "Changed by: %s\n"
+                "Changed at: %s\n"
+                "New Host-bound access: %s\n"
+                "Admission does not revoke identity or release service ports.\n"
+                % (
+                    client["label"] or client["hostname"] or client["id"][:8],
+                    state, trusted, connectivity,
+                    client["admission_actor"] or "-",
+                    client["admission_changed_at"] or "-",
+                    "Normal policy applies" if eligible else "DENY until approved and trusted",
+                )
+            )
+            return 0
         if view == "remote-services":
             sys.stdout.write("%-18s %-14s %-10s %-24s %s\n" % ("NAME", "DESTINATION", "SERVICE", "ENDPOINT", "STATUS"))
             for s in plane.conn.execute(
@@ -472,7 +497,7 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
             raise ControlPlaneError(
                 v24.cli_error(
                     "Unknown Managed Host view '%s'." % view,
-                    expected="  remote-services\n  agent\n  addresses",
+                    expected="  remote-services\n  agent\n  addresses\n  admission",
                 )
             )
         connectivity = plane.managed_host_connectivity(client)
@@ -782,6 +807,61 @@ def handle_set(plane: ControlPlane, rest: list[str]) -> Optional[int]:
     res = rest[0]
     if _legacy_backend_resource(res):
         return None
+    if res == "managed-host" and len(rest) >= 3 and rest[2] == "admission":
+        _require_server(plane, "Managed Hosts")
+        if len(rest) != 4 or rest[3] not in ("approved", "quarantined"):
+            raise ControlPlaneError(
+                "Usage: set managed-host <HOST> admission approved|quarantined"
+            )
+        from drlink_control_cli import _stdin_is_interactive
+        if not _stdin_is_interactive():
+            sys.stdout.write(
+                "ERROR: Host admission requires interactive typed confirmation.\n"
+                "Run locally as the authorized administrator.\n"
+                "No changes were applied.\n"
+            )
+            return 1
+        from drlink_management_host_lifecycle import ManagedHostAdmissionService
+
+        action = "approve" if rest[3] == "approved" else "quarantine"
+        required = action.upper()
+        with ManagedHostAdmissionService(plane.root) as service:
+            preview = service.preview(
+                actor_id="cli:local-admin", host=rest[1], operation=action,
+            )
+            impact = preview["impact"]
+            sys.stdout.write(
+                "Managed Host admission Change Plan\n"
+                "Host       : %s\n"
+                "Before     : %s\n"
+                "After      : %s\n"
+                "Remote Services retained: %s\n"
+                "Port reservations retained: %s\n"
+                "Warning    : %s\n"
+                "No Host identity, management trust, or policy references are removed.\n"
+                % (
+                    rest[1], impact["before"], impact["after"],
+                    impact["services_retained"], impact["port_reservations_retained"],
+                    impact["warning"],
+                )
+            )
+            try:
+                confirmation = input("Type %s to commit (or anything else to cancel): " % required)
+            except (EOFError, KeyboardInterrupt):
+                confirmation = ""
+            if confirmation.strip() != required:
+                sys.stdout.write("Cancelled.\nNo changes were applied.\n")
+                return 1
+            result = service.apply(
+                actor_id="cli:local-admin",
+                change_plan_id=preview["change_plan_id"],
+                confirmation=confirmation,
+            )
+        sys.stdout.write(
+            "Managed Host admission: %s -> %s (%s).\n"
+            % (rest[1], rest[3].upper(), result["status"])
+        )
+        return 0
     # Policy enable/disable without rule name
     if res in ("remote-access", "internet-access", "ai-access") and len(rest) == 2 and rest[1] in ("enabled", "disabled"):
         _require_server(plane, _policy_resource_label(res))

@@ -242,10 +242,17 @@ class GuidedChangeService(ManagementChangeService):
                 normalized["type"] = _text(
                     data.get("type"), field="Service Object type", max_len=32
                 ).lower()
-            if "port" not in data or isinstance(data.get("port"), bool):
+            port = data.get("port")
+            if "port" not in data or isinstance(port, bool):
                 raise ControlPlaneError("Service Object port is required.")
+            if isinstance(port, str):
+                port = port.strip()
+                if not port.isascii() or not port.isdecimal():
+                    raise ControlPlaneError("Service Object port must be an integer.")
+            elif not isinstance(port, int):
+                raise ControlPlaneError("Service Object port must be an integer.")
             try:
-                normalized["port"] = int(data["port"])
+                normalized["port"] = int(port)
             except (TypeError, ValueError) as exc:
                 raise ControlPlaneError("Service Object port must be an integer.") from exc
         elif kind == "service-group":

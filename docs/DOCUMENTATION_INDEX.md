@@ -37,7 +37,9 @@ External copies, Project/chat attachments, exported snapshots, and same-named do
 | Internal control-plane/schema history | `CONTROL_PLANE_ARCHITECTURE.md` |
 | Optional Full Web Management design | `WEB_MANAGEMENT.md` |
 | Modern SaaS Web UX / DR Control visual parity | `WEB_SAAS_UX_SYSTEM.md` |
-| 3.0 CLI/Web/MCP/Plugin management-surface contract | `MANAGEMENT_SURFACE_CONTRACT.md` |
+| 3.0 CLI/Web/Public Automation API/MCP/Plugin management-surface contract | `MANAGEMENT_SURFACE_CONTRACT.md` |
+| 3.0 Service Accounts, Public Automation API and signed Webhooks — current implementation/operations | `AUTOMATION_WEBHOOKS_3_0.md` |
+| 3.0 competitive scope expansion / cross-surface acceptance | `COMPETITIVE_EXPANSION_3_0.md` |
 
 ## Operator lifecycle documents
 
@@ -107,7 +109,11 @@ BLACKLIST / WHITELIST
 ConfigurationBundle
 
 Optional Web Management 3.0
-Management Core shared by CLI / Web / MCP projections
+Management Core shared by CLI / Web / Automation API / MCP projections
+Managed Host admission / quarantine
+Bounded staged Agent updates
+Scoped Service Accounts + signed webhook notifications
+Access Hygiene recommendations
 ```
 
 The 3.0 CLI keeps the v2.4 action-first public grammar as its baseline while adding the

@@ -1078,6 +1078,7 @@ def to_internal(tokens):
     rest = list(work[len(path) :])
 
     CONTROL_PLANE_RES = {
+        "access-hygiene",
         "objects",
         "object",
         "object-groups",
@@ -1661,8 +1662,11 @@ def domain_help(topic, role):
             "  show managed-host <HOST> remote-services\n"
             "  show managed-host <HOST> agent\n"
             "  show managed-host <HOST> addresses\n"
+            "  show managed-host <HOST> admission\n"
+            "  set managed-host <HOST> admission approved|quarantined   (interactive typed confirmation)\n"
             "  set enrollment\n"
             "  set enrollment zero-touch\n"
+            "  set enrollment zero-touch pre-approved  (root + typed confirmation)\n"
             "  unset managed-host <HOST>\n\n"
         )
     if topic in ("network-object", "network-objects"):
@@ -1803,12 +1807,12 @@ def domain_help(topic, role):
             "  system support-bundle",
             "  system update product",
             "  system update engine",
-            "  system update check-engine",
             "  system uninstall",
         ]
         if server:
             lines.extend(
                 [
+                    "  system update check-engine",
                     "  system backup",
                     "  system backup validate <PATH>",
                     "  system restore <PATH>",

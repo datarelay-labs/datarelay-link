@@ -148,6 +148,46 @@ class BackupRestoreEgressLogTests(unittest.TestCase):
         self.assertNotIn("var/log/drlink/egress/connections.jsonl", rels)
         self.assertNotIn("var/log/drlink/egress-conn.jsonl", rels)
 
+    def test_webhook_secret_key_is_restorable_with_ciphertext_database(self):
+        """An actual disposable archive must preserve usable HMAC key custody."""
+        from drlink_webhooks import WebhookStore
+        (self.tree / "etc/drlink/version").write_text(
+            "PROJECT_VERSION=3.0.0\n", encoding="utf-8"
+        )
+        with WebhookStore(str(self.tree)) as hook_store:
+            created = hook_store.create(
+                "ops", "https://hooks.example.net/events", ["attention"]
+            )
+            webhook_id, clear_secret = created["id"], created["secret"]
+            key_path = hook_store.key_file
+            self.assertEqual(key_path.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(hook_store.signing_secret(webhook_id), clear_secret)
+
+        archive_path = self.tree / "hooks-coherent.tar.gz"
+        BACKUP.create_backup(self.tree, archive_path, secure_parent=False)
+        import tarfile
+        with tarfile.open(archive_path, "r:gz") as archive:
+            names = {m.name for m in archive.getmembers()}
+            self.assertIn("payload/var/lib/drlink/webhook-signing.key", names)
+            self.assertIn("payload/var/lib/drlink/drlink.db", names)
+
+        # Simulate lost local key. Encrypted SQLite alone cannot become an
+        # unsafe plaintext fallback and must deny until archive restore.
+        key_path.unlink()
+        with WebhookStore(str(self.tree)) as hook_store:
+            with self.assertRaises(Exception):
+                hook_store.signing_secret(webhook_id)
+
+        extracted = Path(self.tmp.name) / "webhook-extracted"
+        RESTORE.extract_and_validate(archive_path, extracted)
+        RESTORE.apply_payload(self.tree, extracted, allow_hook=False)
+        with WebhookStore(str(self.tree)) as hook_store:
+            self.assertEqual(hook_store.signing_secret(webhook_id), clear_secret)
+            self.assertEqual(hook_store.key_file.stat().st_mode & 0o777, 0o600)
+            self.assertNotIn(clear_secret.encode(), (
+                self.tree / "var/lib/drlink/drlink.db"
+            ).read_bytes())
+
     def test_restore_default_egress_log_path(self):
         self.assertEqual(
             RESTORE._STATE_PATHS.default_egress_conn_log_rel(),
