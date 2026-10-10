@@ -29,6 +29,60 @@ MACHINE = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 
 
 class BootstrapCatalogConvergenceTests(unittest.TestCase):
+    def test_F001_F007_same_proxy_config_metadata_delta_does_not_restart_frpc(self):
+        """A harmless Agent-state projection change must not flap live proxies.
+
+        Real runtime readiness is still mandatory; only the deterministic
+        fixture simulates an already verified running proxy generation.
+        """
+        state_path = Path(self.agent_tmp) / 'etc/frp/client-state.json'
+        state = json.loads(state_path.read_text(encoding='utf-8'))
+        state['frp_server_port'] = 443
+        state_path.write_text(json.dumps(state), encoding='utf-8')
+        (state_path.parent / 'frpc.toml').write_text(
+            'serverAddr = "203.0.113.10"\nauth.token = "fixture-token"\n',
+            encoding='utf-8',
+        )
+        agent = ControlPlane(self.agent_tmp)
+        self.addCleanup(agent.close)
+        v24.project_enrolled_services_into_agent_catalog(agent, root=self.agent_tmp)
+        with mock.patch.object(V24R, 'runtime_should_apply', return_value=True), \
+                mock.patch.object(V24R, '_restart_frpc') as restart:
+            first = V24R.apply_agent_runtime(agent, root=self.agent_tmp)
+            self.assertTrue(first['ok'], first)
+            self.assertEqual(restart.call_count, 1)
+            toml_before = (state_path.parent / 'frpc.toml').read_bytes()
+            state = json.loads(state_path.read_text(encoding='utf-8'))
+            self.assertIn('rs-ssh', state['services'])
+            state['services']['rs-ssh']['obsolete_metadata'] = 'old-projection'
+            state_path.write_text(json.dumps(state), encoding='utf-8')
+            restart.reset_mock()
+            second = V24R.apply_agent_runtime(agent, root=self.agent_tmp)
+            self.assertTrue(second['ok'], second)
+            self.assertTrue(second.get('no_change'), second)
+            self.assertTrue(second.get('metadata_updated'), second)
+            restart.assert_not_called()
+            self.assertEqual((state_path.parent / 'frpc.toml').read_bytes(), toml_before)
+            corrected = json.loads(state_path.read_text(encoding='utf-8'))
+            self.assertNotIn('obsolete_metadata', corrected['services']['rs-ssh'])
+            self.assertEqual(corrected['services']['rs-ssh']['remote_port'], 6000)
+
+            # Safe fast path must NOT hide a missing runtime generation or
+            # suppress an explicitly requested runtime force-reapply.
+            restart.reset_mock()
+            with mock.patch.object(V24R, '_current_runtime_ready', return_value=False):
+                unverified = V24R.apply_agent_runtime(agent, root=self.agent_tmp)
+            self.assertTrue(unverified['ok'], unverified)
+            self.assertFalse(unverified.get('no_change'), unverified)
+            self.assertEqual(restart.call_count, 1)
+            restart.reset_mock()
+            forced = V24R.apply_agent_runtime(
+                agent, root=self.agent_tmp, force_reapply=True
+            )
+            self.assertTrue(forced['ok'], forced)
+            self.assertFalse(forced.get('no_change'), forced)
+            self.assertEqual(restart.call_count, 1)
+
     def test_repeated_runtime_projection_preserves_seed_target_and_origin(self):
         state_path = Path(self.agent_tmp) / 'etc/frp/client-state.json'
         state = json.loads(state_path.read_text())

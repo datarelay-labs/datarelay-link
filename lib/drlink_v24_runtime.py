@@ -570,12 +570,26 @@ def apply_agent_runtime(
         ):
             raise ControlPlaneError("invalid generated runtime config (injected fault)")
 
-        if (not force_reapply and toml_text == backup_toml and state == new_state
+        # Updating Agent metadata does not require restarting every live FRP
+        # proxy when the complete rendered TOML and the verified live proxy
+        # generation are unchanged. A previous state-only comparison caused
+        # unnecessary full restarts during synchronization and interrupted
+        # otherwise unrelated public Remote Services.
+        #
+        # Real hosts must still pass _current_runtime_ready (current systemd
+        # InvocationID plus proxy successes in this connection epoch). Merely
+        # observing client-state on disk never proves runtime HEALTHY.
+        if (not force_reapply and toml_text == backup_toml
                 and _current_runtime_ready(root, host_id, desired)):
+            metadata_updated = state != new_state
+            if metadata_updated:
+                artifacts_written = True
+                _atomic_write_json(prev_state_path, new_state)
             if names is None:
                 mark_runtime_status(plane_db, ok=True)
-            return {'ok': True, 'no_change': True, 'applied': [], 'removed': [],
-                    'error': '', 'generation': 0, 'host_id': host_id, 'toml': str(prev_toml)}
+            return {'ok': True, 'no_change': True, 'metadata_updated': metadata_updated,
+                    'applied': [], 'removed': [], 'error': '', 'generation': 0,
+                    'host_id': host_id, 'toml': str(prev_toml)}
 
         real_runtime = not root or str(root).rstrip('/') in ('', '/')
         cursor = _runtime_log_cursor() if real_runtime else None
