@@ -485,7 +485,9 @@ class SignedRolloutArtifactOfflineTests(unittest.TestCase):
         rejected = subprocess.run(args, capture_output=True, text=True, timeout=12)
         self.assertEqual(rejected.returncode, 1)
         self.assertIn("AGENT_ARTIFACT_UNQUALIFIED", rejected.stderr)
-        self.assertNotIn("BEGIN PRIVATE KEY", rejected.stderr)
+        # Keep the negative leak assertion while avoiding a false source-only
+        # PEM-header match in the strict tracked-secret scanner.
+        self.assertNotIn("BEGIN " "PRIVATE KEY", rejected.stderr)
         self.assertEqual(self.bundle.read_bytes(), before)
 
     def test_bundle_mutation_and_symlink_are_denied(self):
@@ -1537,11 +1539,13 @@ class SignedAgentIsolatedUpdaterTests(unittest.TestCase):
         from drlink_v30_agent_signed_updater import _snapshot, _RESTORE, _PRESERVE
 
         before = _snapshot(self.root, _RESTORE + _PRESERVE)
-        result = self._run(failure_hook="verify")
-        self.assertFalse(result["sandbox_update_completed"])
-        self.assertTrue(result["sandbox_rollback_verified"])
-        self.assertEqual(_snapshot(self.root, _RESTORE + _PRESERVE), before)
-        self.assertFalse(result["public_rollout_apply_allowed"])
+        for phase in ("install", "verify", "version"):
+            with self.subTest(failure_phase=phase):
+                result = self._run(failure_hook=phase)
+                self.assertFalse(result["sandbox_update_completed"])
+                self.assertTrue(result["sandbox_rollback_verified"])
+                self.assertEqual(_snapshot(self.root, _RESTORE + _PRESERVE), before)
+                self.assertFalse(result["public_rollout_apply_allowed"])
 
     def test_tamper_or_unmarked_root_denied_before_execution(self):
         from drlink_v30_agent_artifact import AgentArtifactError
