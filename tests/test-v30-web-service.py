@@ -9,6 +9,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -128,6 +129,101 @@ class V30WebServiceTests(unittest.TestCase):
         self.csrf = payload["csrf_token"]
         self.assertNotIn("session_token", json.dumps(payload))
         return payload
+
+    def test_pf11b_connectivity_queries_are_singleflight_and_30s_cached(self):
+        # A valid admin session must not turn each page reload into a
+        # proliferation of DNS resolver children / OS status commands.
+        self.login()
+        target = "/api/v1/system/connectivity"
+        report = {
+            "status": "unknown", "read_only": True,
+            "findings": [], "authoritative_mutation": False,
+        }
+        calls = []
+        def fake_collection(root):
+            calls.append(root)
+            time.sleep(.12)
+            return dict(report)
+        results = []
+        with mock.patch(
+            "drlink_web_service.collect_link_connectivity",
+            side_effect=fake_collection,
+        ) as collection:
+            threads = [
+                threading.Thread(
+                    target=lambda: results.append(self.request("GET", target)[0]),
+                    daemon=True,
+                )
+                for _ in range(4)
+            ]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=8)
+            self.assertEqual(sorted(results), [200] * 4, results)
+            collection.assert_called_once_with(self.tmp)
+            self.assertEqual(calls, [self.tmp])
+            # Expired snapshots are not promoted to a current PASS report.
+            self.server.app._connectivity_snapshot = (
+                time.monotonic() - 31, dict(report)
+            )
+            self.assertEqual(self.request("GET", target)[0], 200)
+            self.assertEqual(collection.call_count, 2)
+
+    def test_pf11b_admin_only_connectivity_is_redacted_and_no_fixture_host_probe(self):
+        endpoint = "/api/v1/system/connectivity"
+        self.assertEqual(self.request("GET", endpoint)[0], 401)
+        self.login()
+        import drlink_mcp_tls as native_tls
+        from unittest import mock
+        plane = ControlPlane(self.tmp)
+        try:
+            state = native_tls.default_state()
+            state["hostname"] = "mcp.example.test"
+            state["mode"] = native_tls.MODE_PRIVATE_CA
+            native_tls.save_state(plane, state)
+        finally:
+            plane.close()
+        with mock.patch(
+            "drlink_web_connectivity._probe_dns",
+            side_effect=AssertionError("synthetic Web must not probe real DNS"),
+        ) as dns, mock.patch(
+            "drlink_web_connectivity._probe_ntp",
+            side_effect=AssertionError("synthetic Web must not run host commands"),
+        ) as ntp:
+            code, _, report = self.request("GET", endpoint)
+            self.assertEqual(code, 200, report)
+            self.assertEqual(report["status"], "unknown")
+            self.assertEqual(
+                [row["area"] for row in report["findings"]],
+                ["dns", "ntp", "proxy", "trusted_ca", "certificate"],
+            )
+            self.assertFalse(report["all_required_checks_verified"])
+            self.assertTrue(report["read_only"])
+            self.assertFalse(report["authoritative_mutation"])
+            self.assertFalse(report["proxy_and_ca_trust_verified"])
+            encoded = json.dumps(report)
+            self.assertNotIn("mcp.example.test", encoded)
+            self.assertNotIn("http://", encoded)
+            self.assertNotIn("private_key", encoded)
+            dns.assert_not_called()
+            ntp.assert_not_called()
+        with WebAuthService(self.tmp) as auth:
+            auth.create_operator_local(
+                username="viewer", role="Read Only", password="ReaderPass1",
+            )
+        response, headers, _ = self.request(
+            "POST", "/api/v1/auth/login/start",
+            {"username": "viewer", "password": "ReaderPass1"},
+        )
+        self.assertEqual(response, 200)
+        self.cookie = headers["set-cookie"].split(";", 1)[0]
+        with mock.patch(
+            "drlink_web_service.collect_link_connectivity",
+            side_effect=AssertionError("non-admin must not run probes"),
+        ) as forbidden:
+            self.assertEqual(self.request("GET", endpoint)[0], 403)
+            forbidden.assert_not_called()
 
     def test_admin_management_ingress_status_is_read_only_and_role_guarded(self):
         # The shared Web ACL must be inspectable by a genuine current Admin

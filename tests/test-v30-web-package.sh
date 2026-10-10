@@ -38,6 +38,7 @@ for f in \
   /usr/local/lib/drlink/datarelay_onprem_security-0.10.0.dev0-py3-none-any.whl \
   /usr/local/lib/drlink/drlink_web_service.py \
   /usr/local/lib/drlink/drlink_web_management_policy.py \
+  /usr/local/lib/drlink/drlink_web_connectivity.py \
   /usr/local/lib/drlink/drlink-web.py \
   /usr/local/share/drlink-web/index.html \
   /usr/local/share/drlink-web/app.js \
@@ -53,11 +54,17 @@ done
 
 # The new private policy loader must be importable from actual temporary-root
 # optional Web package bytes, not accidentally from the source checkout.
-PYTHONPATH="$TMP/usr/local/lib/drlink" python3 - "$TMP/usr/local/lib/drlink" <<'PY'
+# The optional Web overlay requires the preinstalled Core product. The
+# synthetic temp-root fixture uses read-only checkout Core imports while
+# ensuring the Web module and pinned wheel themselves load from installed bytes.
+PYTHONPATH="$TMP/usr/local/lib/drlink:$ROOT/lib" python3 - "$TMP/usr/local/lib/drlink" <<'PY'
 import pathlib
 import sys
 import drlink_web_management_policy as loader
 from drlink_foundation_security import FOUNDATION_VERSION
+import drlink_web_connectivity as connectivity
+assert callable(connectivity.collect_link_connectivity)
+assert pathlib.Path(connectivity.__file__).resolve().parent == pathlib.Path(sys.argv[1]).resolve()
 assert pathlib.Path(loader.__file__).resolve().parent == pathlib.Path(sys.argv[1]).resolve()
 assert FOUNDATION_VERSION == "0.10.0.dev0"
 assert callable(loader.load_management_ingress)
@@ -135,6 +142,7 @@ DRLINK_WEB_INSTALL_ROOT="$TMP" "$ROOT/uninstall-web.sh" >/tmp/drlink-web-uninsta
 [[ ! -e "$TMP/etc/systemd/system/drlink-web.service" ]] || { echo "FAIL Web service survived uninstall" >&2; exit 1; }
 [[ ! -e "$TMP/usr/local/lib/drlink/drlink_foundation_security.py" ]] || { echo "FAIL Foundation bootstrap survived uninstall" >&2; exit 1; }
 [[ ! -e "$TMP/usr/local/lib/drlink/drlink_web_management_policy.py" ]] || { echo "FAIL Web ingress policy parser survived uninstall" >&2; exit 1; }
+[[ ! -e "$TMP/usr/local/lib/drlink/drlink_web_connectivity.py" ]] || { echo "FAIL optional Web PF11B connectivity module survived uninstall" >&2; exit 1; }
 [[ ! -e "$TMP/usr/local/lib/drlink/datarelay_onprem_security-0.10.0.dev0-py3-none-any.whl" ]] || { echo "FAIL pinned Foundation wheel survived uninstall" >&2; exit 1; }
 [[ ! -e "$TMP/usr/local/share/drlink-web" ]] || { echo "FAIL Web static assets survived uninstall" >&2; exit 1; }
 [[ -f "$TMP/var/lib/drlink/drlink.db" ]] || { echo "FAIL Web uninstall removed Core DB" >&2; exit 1; }

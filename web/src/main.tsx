@@ -823,6 +823,47 @@ function ManagementIngressReadOnly({operator}:{operator:any}){
   </section>;
 }
 
+function LinkConnectivityReadOnly({operator}:{operator:any}){
+  const [report,setReport]=useState<any>(null);
+  const [error,setError]=useState("");
+  useEffect(()=>{
+    if(operator.role!=="Admin")return;
+    let mounted=true;
+    api("/api/v1/system/connectivity").then(result=>{
+      if(mounted){setReport(result);setError("")}
+    }).catch((e:any)=>{
+      if(mounted){setReport(null);setError(e.message||"Evidence unavailable")}
+    });
+    return()=>{mounted=false};
+  },[operator.role]);
+  if(operator.role!=="Admin")return null;
+  const overall=String(report?.status||"UNKNOWN").toUpperCase();
+  const labels:Record<string,string>={
+    dns:"DNS resolution",ntp:"NTP / clock",
+    proxy:"Outbound proxy",trusted_ca:"Enterprise CA",
+    certificate:"TLS certificate",
+  };
+  const findings:any[]=Array.isArray(report?.findings)?report.findings:[];
+  return <section className="card dr-health-section" data-testid="drlink-link-connectivity" aria-label="Connectivity health">
+    <div className="dr-section-head"><div>
+      <p className="dr-eyebrow">Administration · Operations</p>
+      <h3>Connectivity health</h3>
+      <p className="muted">Product-owned, read-only evidence using the pinned Foundation PF-11B contract.</p>
+    </div><span className="dr-state"><i/>{overall}</span></div>
+    {error&&<p className="muted" role="status">Evidence unavailable: {error}. This is not a verified healthy state.</p>}
+    <div className="dr-health-plane-list">{Object.keys(labels).map(area=>{
+      const finding=findings.find(item=>item.area===area);
+      return <div className="dr-health-plane" key={area}>
+        <span className={finding?.severity==="pass"?"dr-severity-dot":"dr-severity-dot warning"}/>
+        <div><strong>{labels[area]}</strong><small>{finding?.code||"Evidence unavailable"}</small></div>
+        <span className="dr-state"><i/>{String(finding?.severity||"UNKNOWN").toUpperCase()}</span>
+      </div>;
+    })}</div>
+    <p className="muted">Clock offset must be measured; time synchronization alone is not NTP PASS. TLS expiry does not prove certificate-chain trust.</p>
+    <p className="muted">No raw destination, proxy secret, enterprise CA material or keys are displayed. This is read-only: no network settings, certificate renewal, NTP adjustment or trust changes.</p>
+  </section>;
+}
+
 function SystemPanel({data,operator}:{data:any,operator:any}){
   const [backupPath,setBackupPath]=useState("/var/lib/drlink/backups/");
   const [renewConfirmation,setRenewConfirmation]=useState(""),[restoreConfirmation,setRestoreConfirmation]=useState("");
@@ -1570,7 +1611,7 @@ function View({active,operator,onNavigate}:{active:string,operator:any,onNavigat
   if(active==="search")return <div><div className="toolbar"><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search resources and policy"/><button className="primary" onClick={()=>api("/api/v1/search?q="+encodeURIComponent(query)+"&limit=50").then(setData).catch((e:any)=>setError(e.message))}>Search</button></div>{data&&<Table items={(data.items||[]).map((x:any)=>({type:x.resource_type,id:x.id,name:x.name}))}/>}</div>;
   if(active==="overview"&&data)return <CommandCenter data={data} operator={operator} onNavigate={onNavigate}/>;
   if(active==="versions"&&data)return <><div className="grid"><Metric label="Server version" value={data.server_version}/><Metric label="Drift" value={data.drift_count}/><Metric label="Unknown" value={data.unknown_count}/></div><Table items={data.hosts||[]}/></>;
-  if(active==="system"&&data)return <><LinkFoundationAdministration operator={operator} onNavigate={onNavigate}/><ManagementIngressReadOnly operator={operator}/><SystemPanel data={data} operator={operator}/></>;
+  if(active==="system"&&data)return <><LinkFoundationAdministration operator={operator} onNavigate={onNavigate}/><ManagementIngressReadOnly operator={operator}/><LinkConnectivityReadOnly operator={operator}/><SystemPanel data={data} operator={operator}/></>;
   if(active==="objects"&&data)return <><ObjectsWorkspace data={data} onNavigate={onNavigate}/>{operator.role!=="Read Only"&&<GuidedObjectPanel/>}</>;
   if(active==="hosts"&&data)return <><ResourceWorkspace kind="host" items={data.items||[]} operator={operator} onNavigate={onNavigate}/>{operator.role!=="Read Only"&&<ManagedHostMetadataPanel/>}{operator.role==="Admin"&&<ManagedHostAdmissionPanel/>}{operator.role==="Admin"&&<ManagedHostLifecyclePanel/>}</>;
   if(active==="services"&&data)return <><ResourceWorkspace kind="service" items={data.items||[]} operator={operator} onNavigate={onNavigate}/>{operator.role!=="Read Only"&&<RemoteServicePanel/>}</>;

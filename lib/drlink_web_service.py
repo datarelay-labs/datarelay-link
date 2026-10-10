@@ -9,6 +9,8 @@ import mimetypes
 import os
 import ssl
 import threading
+import time
+from copy import deepcopy
 from http import cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -22,6 +24,7 @@ from drlink_foundation_security import (
 )
 from drlink_management_core import ManagementActor
 from drlink_management_service import ManagementQueryService
+from drlink_web_connectivity import collect_link_connectivity
 from drlink_web_management_policy import load_management_ingress
 from drlink_management_web_adapter import ManagementWebApiAdapter
 from drlink_web_auth import ROLE_ADMIN, WebAuthService, WebMfaEnrollmentChallenge, WebMfaLoginChallenge, WebPrincipal
@@ -32,6 +35,7 @@ SESSION_COOKIE = "drlink_session"
 MAX_REQUEST_BYTES = 64 * 1024
 WEB_API_PREFIX = "/api/v1"
 ADMIN_WEB_INGRESS_STATUS_PATH = "/api/v1/admin/management-ingress/status"
+ADMIN_CONNECTIVITY_STATUS_PATH = "/api/v1/system/connectivity"
 
 CSP = (
     "default-src 'self'; "
@@ -117,6 +121,10 @@ class WebApplication:
         self._trusted_proxy_cidrs = tuple(
             foundation_canonical_network(cidr) for cidr in trusted_proxy_cidrs
         )
+        # Single-flight, short-lived read-only probe evidence. An Admin-only
+        # status GET must not spawn unbounded DNS/time subprocesses.
+        self._connectivity_lock = threading.Lock()
+        self._connectivity_snapshot: tuple[float, dict[str, Any]] | None = None
         self.auth = WebAuthService(root)
         self.adapter = ManagementWebApiAdapter(root)
         self._restore_lock = threading.RLock()
@@ -146,6 +154,17 @@ class WebApplication:
             trusted_proxy_cidrs=self._trusted_proxy_cidrs,
             now=now,
         )
+
+    def connectivity_status(self) -> dict[str, Any]:
+        """One 30-second product snapshot at a time; never cache exceptions."""
+        with self._connectivity_lock:
+            now = time.monotonic()
+            cached = self._connectivity_snapshot
+            if cached is not None and 0 <= now - cached[0] < 30:
+                return deepcopy(cached[1])
+            observed = collect_link_connectivity(self.root)
+            self._connectivity_snapshot = (time.monotonic(), observed)
+            return deepcopy(observed)
 
     def management_ingress_status(self) -> dict[str, Any]:
         """Actual startup policy status only; no raw CIDRs or secrets."""
@@ -362,6 +381,10 @@ class WebApplication:
         principal: WebPrincipal,
     ) -> dict[str, Any]:
         actor = self._actor(principal)
+        if path == ADMIN_CONNECTIVITY_STATUS_PATH:
+            if principal.role != ROLE_ADMIN or "management-diagnose" not in actor.permissions:
+                raise ControlPlaneError("Administrator diagnosis permission required.")
+            return self.connectivity_status()
         if path == ADMIN_WEB_INGRESS_STATUS_PATH:
             if principal.role != ROLE_ADMIN:
                 raise ControlPlaneError("Administrator role required.")
@@ -1178,7 +1201,9 @@ class DrlinkWebHandler(BaseHTTPRequestHandler):
             if principal is None:
                 self._error(401, "authentication required")
                 return
-            if parsed.path == ADMIN_WEB_INGRESS_STATUS_PATH and principal.role != ROLE_ADMIN:
+            if parsed.path in (
+                ADMIN_WEB_INGRESS_STATUS_PATH, ADMIN_CONNECTIVITY_STATUS_PATH,
+            ) and principal.role != ROLE_ADMIN:
                 self._error(403, "Administrator role required.")
                 return
             try:

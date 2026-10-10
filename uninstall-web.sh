@@ -14,6 +14,7 @@ rm -f \
   "$(dst /usr/local/lib/drlink/drlink-web.py)" \
   "$(dst /usr/local/lib/drlink/drlink_web_service.py)" \
   "$(dst /usr/local/lib/drlink/drlink_web_management_policy.py)" \
+  "$(dst /usr/local/lib/drlink/drlink_web_connectivity.py)" \
   "$(dst /usr/local/lib/drlink/drlink_web_auth.py)" \
   "$(dst /usr/local/lib/drlink/drlink_foundation_security.py)" \
   "$(dst /usr/local/lib/drlink/datarelay_onprem_security-0.10.0.dev0-py3-none-any.whl)" \
