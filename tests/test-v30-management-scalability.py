@@ -172,6 +172,9 @@ class V30ManagementScalabilityTests(unittest.TestCase):
         cases = (
             ("fresh-negative-offset", "2026-10-03T21:59:45-04:00", 1, 0),
             ("stale-positive-offset", "2026-10-04T15:00:00+14:00", 0, 1),
+            ("future-utc", "2026-10-04T02:00:10Z", 0, 1),
+            ("future-offset", "2026-10-04T15:01:00+13:00", 0, 1),
+            ("at-current-instant", "2026-10-04T02:00:00Z", 1, 0),
             ("unparseable-heartbeat", "zz-not-a-timestamp", 0, 1),
         )
         for ident, heartbeat, connected, stale in cases:

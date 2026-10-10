@@ -120,6 +120,12 @@ class V30ManagementQueryServiceTests(unittest.TestCase):
         with self.assertRaises(ControlPlaneError):
             self.service.list_inventory("managed-host", limit=0)
 
+    def test_limit_rejects_boolean_fractional_and_text_coercion(self):
+        for raw in (True, False, 1.5, "10", b"10"):
+            with self.subTest(limit=repr(raw)):
+                with self.assertRaises(ControlPlaneError):
+                    self.service.list_inventory("managed-host", limit=raw)
+
     def test_get_inventory_supports_id_and_name(self):
         by_id = self.service.get_inventory("managed-host", "client-a")
         by_name = self.service.get_inventory("managed-host", "alpha")

@@ -174,10 +174,9 @@ def supported_inventory_types() -> tuple[str, ...]:
 def _bounded_limit(value: Optional[int]) -> int:
     if value is None:
         return DEFAULT_PAGE_SIZE
-    try:
-        limit = int(value)
-    except (TypeError, ValueError) as exc:
-        raise ControlPlaneError("Management query limit must be an integer.") from exc
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ControlPlaneError("Management query limit must be an integer.")
+    limit = value
     if limit < 1:
         raise ControlPlaneError("Management query limit must be at least 1.")
     return min(limit, MAX_PAGE_SIZE)
