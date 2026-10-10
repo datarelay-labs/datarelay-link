@@ -279,6 +279,9 @@ python3 tests/test-v30-remote-service-management.py
 python3 tests/test-v30-emergency-cutoff.py
 python3 tests/test-v30-management-jobs.py
 python3 tests/test-v30-management-job-transport.py
+python3 tests/test-v30-agent-http-framing.py
+python3 tests/test-v30-agent-origin-authority.py
+python3 tests/test-v30-contract-freeze.py
 python3 tests/test-v30-rollout-waves.py
 python3 tests/test-v30-host-admission-runtime.py
 python3 tests/test-v30-internet-admission-runtime.py
