@@ -387,12 +387,12 @@ class DurableAuditSpool:
         size = self.spool_bytes()
         try:
             state = self._load_state_locked()
+            state_readable = True
         except Exception:
-            state = {
-                "enqueue_failures": 0,
-                "dropped_deny_count": 0,
-                "last_error_at": "",
-            }
+            # A corrupt or missing authoritative sequence state is not
+            # healthy, and its lost-event counters are UNKNOWN, never zero.
+            state = {}
+            state_readable = False
         return {
             "source": self.source,
             "spool_bytes": size,
@@ -400,9 +400,16 @@ class DurableAuditSpool:
             "high_water": size >= self.high_water_bytes,
             "segment_count": len(segments),
             "oldest_segment_age_seconds": oldest_age,
-            "enqueue_failures": int(state.get("enqueue_failures") or 0),
-            "dropped_deny_count": int(state.get("dropped_deny_count") or 0),
-            "last_error_at": str(state.get("last_error_at") or ""),
+            "state_status": "OK" if state_readable else "UNREADABLE",
+            "enqueue_failures": (
+                int(state.get("enqueue_failures") or 0) if state_readable else None
+            ),
+            "dropped_deny_count": (
+                int(state.get("dropped_deny_count") or 0) if state_readable else None
+            ),
+            "last_error_at": (
+                str(state.get("last_error_at") or "") if state_readable else None
+            ),
         }
 
 

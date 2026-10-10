@@ -1276,7 +1276,8 @@ class ManagementQueryService:
             one["plane"] = plane
             health.append(one)
             unhealthy = bool(
-                one.get("high_water")
+                one.get("state_status") != "OK"
+                or one.get("high_water")
                 or int(one.get("enqueue_failures") or 0) > 0
                 or int(one.get("dropped_deny_count") or 0) > 0
                 or (

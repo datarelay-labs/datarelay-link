@@ -557,6 +557,49 @@ class V30ManagementQueryServiceTests(unittest.TestCase):
         )
         self.assertEqual(state_path.read_bytes(), before)
 
+    def test_attention_reports_missing_or_corrupt_spool_sequence_as_critical(self):
+        from drlink_v30_audit import (
+            DurableAuditSpool,
+            build_access_decision_event,
+            default_access_spool_root,
+        )
+
+        spool = DurableAuditSpool(
+            default_access_spool_root("remote", self.tmp), "remote-access"
+        )
+        spool.enqueue(build_access_decision_event(
+            source="remote-access",
+            event_type="remote.access.decision",
+            result="ALLOW",
+        ))
+        before_events = spool.active_path.read_bytes()
+        for invalid in (None, b'{"next_sequence":0}\n'):
+            with self.subTest(state=repr(invalid)):
+                if invalid is None:
+                    spool.state_path.unlink(missing_ok=True)
+                else:
+                    spool.state_path.write_bytes(invalid)
+                attention = self.service.attention_summary()
+                self.assertEqual(
+                    attention["signals"]["audit_spool"]["degraded_count"], 1
+                )
+                item = next(
+                    row for row in attention["items"] if row["kind"] == "audit-spool"
+                )
+                self.assertEqual(item["severity"], "critical")
+                remote = next(
+                    row for row in attention["signals"]["audit_spool"]["items"]
+                    if row["source"] == "remote-access"
+                )
+                self.assertEqual(remote["state_status"], "UNREADABLE")
+                self.assertIsNone(remote["enqueue_failures"])
+                self.assertIsNone(remote["dropped_deny_count"])
+                self.assertEqual(spool.active_path.read_bytes(), before_events)
+                if invalid is None:
+                    self.assertFalse(spool.state_path.exists())
+                else:
+                    self.assertEqual(spool.state_path.read_bytes(), invalid)
+
     def test_management_job_target_resolution_is_bounded_and_stable(self):
         one = self.service.resolve_management_job_targets(
             resource_type="managed-host",
