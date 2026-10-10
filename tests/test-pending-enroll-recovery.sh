@@ -109,6 +109,9 @@ pki = root / 'pki'
     'enrollments_dir': str(root / 'enrollments'),
     'bootstrap_dir': str(root / 'bootstrap'),
     'token_file': str(root / 'server_token'),
+    # Keep the real HTTPS allocator's SQLite authority inside this test root.
+    # Without this, a resumed enrollment can reach the host /var/lib/drlink.
+    'control_plane_root': str(root),
     'client_installer_url': 'https://raw.githubusercontent.com/datarelay-labs/datarelay-link/main/dist/bootstrap-client.sh',
     'allocator_public_url': 'https://127.0.0.1:%s/enroll' % port,
 }, indent=2) + '\n')
@@ -229,6 +232,7 @@ if ! run_client "$T1_TREE" "" "$T1_MACHINE" "$WORKDIR/t1-b.out"; then
   cat "$WORKDIR/t1-b.out" "$WORKDIR/t1-b.err" >&2
   fail "resume from redeemed phase did not succeed"
 fi
+[[ -f "$ALLOC_ROOT/var/lib/drlink/drlink.db" ]] || fail "allocator Core DB escaped disposable test root"
 grep -qi 'resuming from local crash-safe recovery state' "$WORKDIR/t1-b.out" "$WORKDIR/t1-b.err" \
   || fail "resume did not announce recovery"
 if grep -q bootstrap_redeem "$WORKDIR/t1-b.out.hook"; then
