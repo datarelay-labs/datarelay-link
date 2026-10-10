@@ -22,6 +22,7 @@ from drlink_foundation_security import (
 )
 from drlink_management_core import ManagementActor
 from drlink_management_service import ManagementQueryService
+from drlink_web_config_history import compare_product_revisions
 from drlink_web_management_policy import load_management_ingress
 from drlink_management_web_adapter import ManagementWebApiAdapter
 from drlink_web_auth import ROLE_ADMIN, WebAuthService, WebMfaEnrollmentChallenge, WebMfaLoginChallenge, WebPrincipal
@@ -32,6 +33,7 @@ SESSION_COOKIE = "drlink_session"
 MAX_REQUEST_BYTES = 64 * 1024
 WEB_API_PREFIX = "/api/v1"
 ADMIN_WEB_INGRESS_STATUS_PATH = "/api/v1/admin/management-ingress/status"
+ADMIN_CONFIG_HISTORY_PATH = "/api/v1/system/configuration/history"
 
 CSP = (
     "default-src 'self'; "
@@ -362,6 +364,18 @@ class WebApplication:
         principal: WebPrincipal,
     ) -> dict[str, Any]:
         actor = self._actor(principal)
+        if path == ADMIN_CONFIG_HISTORY_PATH:
+            if principal.role != ROLE_ADMIN or "management-diagnose" not in actor.permissions:
+                raise ControlPlaneError("Administrator diagnosis permission required.")
+            if set(query) != {"from_revision", "to_revision"} or any(
+                len(query[name]) != 1 for name in ("from_revision", "to_revision")
+            ):
+                raise ControlPlaneError("Two explicit revision numbers are required.")
+            return compare_product_revisions(
+                self.root,
+                query["from_revision"][0],
+                query["to_revision"][0],
+            )
         if path == ADMIN_WEB_INGRESS_STATUS_PATH:
             if principal.role != ROLE_ADMIN:
                 raise ControlPlaneError("Administrator role required.")
@@ -1178,7 +1192,9 @@ class DrlinkWebHandler(BaseHTTPRequestHandler):
             if principal is None:
                 self._error(401, "authentication required")
                 return
-            if parsed.path == ADMIN_WEB_INGRESS_STATUS_PATH and principal.role != ROLE_ADMIN:
+            if parsed.path in (
+                ADMIN_WEB_INGRESS_STATUS_PATH, ADMIN_CONFIG_HISTORY_PATH,
+            ) and principal.role != ROLE_ADMIN:
                 self._error(403, "Administrator role required.")
                 return
             try:

@@ -9,6 +9,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -128,6 +129,85 @@ class V30WebServiceTests(unittest.TestCase):
         self.csrf = payload["csrf_token"]
         self.assertNotIn("session_token", json.dumps(payload))
         return payload
+
+    def test_pf12a_admin_only_config_history_is_count_only_and_never_rolls_back(self):
+        endpoint = "/api/v1/system/configuration/history?from_revision=201&to_revision=202"
+        self.assertEqual(self.request("GET", endpoint)[0], 401)
+        self.login()
+
+        def fake_bundle(revision, network_objects):
+            return json.dumps({"configurationBundle": {
+                "context": "server", "sourceRevision": revision,
+                "networkObjects": [
+                    {"name": "api-key-secret-%d" % i,
+                     "value": "192.0.2.%d" % (i + 15), "type": "ip"}
+                    for i in range(network_objects)
+                ],
+                "remoteAccess": {
+                    "mode": "whitelist",
+                    "rules": [{"enabled": True, "name": "SECRET.JWT.TOKEN"}],
+                },
+            }})
+        plane = ControlPlane(self.tmp)
+        try:
+            for revision, quantity in ((201, 1), (202, 2)):
+                plane.conn.execute(
+                    "INSERT INTO config_revisions("
+                    "revision,actor,command,created_at,summary) VALUES (?,?,?,?,?)",
+                    (revision, "secret.operator@example.test", "api-key", "2026-10-10T00:00:00Z",
+                     "token=TOPSECRET"),
+                )
+                plane.conn.execute(
+                    "INSERT INTO revision_snapshots(revision,snapshot_json) VALUES (?,?)",
+                    (revision, json.dumps({
+                        "snapshot_format": "drlink-revision-configuration-v1",
+                        "configuration_bundle": fake_bundle(revision, quantity),
+                    })),
+                )
+            plane.conn.commit()
+        finally:
+            plane.close()
+
+        code, headers, report = self.request("GET", endpoint)
+        self.assertEqual(code, 200, report)
+        self.assertNotIn("set-cookie", headers)
+        self.assertEqual(report["from_revision"], 201)
+        self.assertEqual(report["to_revision"], 202)
+        self.assertEqual(report["counts"]["from"]["network_objects"], 1)
+        self.assertEqual(report["counts"]["to"]["network_objects"], 2)
+        self.assertFalse(report["semantic_equivalence_proven"])
+        self.assertFalse(report["rollback_preview"]["may_submit_to_product_authority"])
+        self.assertFalse(report["authoritative_mutation"])
+        for forbidden in (
+            "192.0.2.", "TOPSECRET", "JWT.TOKEN", "secret.operator",
+            "configurationBundle", "api-key-secret", "token=",
+        ):
+            self.assertNotIn(forbidden, json.dumps(report))
+        for invalid in (
+            "/api/v1/system/configuration/history?from_revision=0&to_revision=201",
+            "/api/v1/system/configuration/history?from_revision=201&to_revision=201",
+            "/api/v1/system/configuration/history?from_revision=201%3BDROP&to_revision=202",
+            "/api/v1/system/configuration/history?from_revision=201&from_revision=200&to_revision=202",
+            "/api/v1/system/configuration/history?from_revision=201&to_revision=202&raw=1",
+        ):
+            with self.subTest(invalid=invalid):
+                self.assertEqual(self.request("GET", invalid)[0], 400)
+        with WebAuthService(self.tmp) as auth:
+            auth.create_operator_local(
+                username="history-reader", role="Read Only", password="ReaderPass1",
+            )
+        code, h, _ = self.request(
+            "POST", "/api/v1/auth/login/start",
+            {"username": "history-reader", "password": "ReaderPass1"},
+        )
+        self.assertEqual(code, 200)
+        self.cookie = h["set-cookie"].split(";", 1)[0]
+        with mock.patch(
+            "drlink_web_service.compare_product_revisions",
+            side_effect=AssertionError("no non-admin history read"),
+        ) as guarded:
+            self.assertEqual(self.request("GET", endpoint)[0], 403)
+            guarded.assert_not_called()
 
     def test_admin_management_ingress_status_is_read_only_and_role_guarded(self):
         # The shared Web ACL must be inspectable by a genuine current Admin
