@@ -11,6 +11,14 @@
 
 The official `docs/FULL_USER_E2E_SCENARIOS.md` is the required 4,283-line full user contract at baseline. Its scope, actual CLI/persona-led testing, negative cases and two complete same-HEAD PASS gates must **NOT** be weakened. Historical executions also failed: Codex 2026-10-07 had FAIL12/PARTIAL67; Codex 2026-10-08 had repeated runs with up to 106 environment-blocked cases; 2026-10-10 ChatGPT c06 ledger PARTIAL101 and no AI mirrors; latest 2026-10-10 Codex 116-ID ledger **PASS0, FAIL3, PARTIAL71, BLOCKED_TOOLING21, BLOCKED_ENVIRONMENT7, FAIL_PRECONDITION3, N/A11**. Latest frozen report: **105/105 applicable AI-assisted mirrors unexecuted**, prospective persona/process proof missing, old Server state persisted because cleanroom uninstall was review-denied, 3,601-second load has significant errors and no qualified numeric SLO, MCP public trusted TLS and owner OAuth absent. A failed gate is not proof 116 features are broken, and a historical/other-HEAD test success is not current PASS.
 
+## P0 owner-ordered prerequisite sequence before those lab packages
+
+**Immediate first:** CHATGPT_CHAT directly fixes/dispositions the frozen Codex E2E actionable findings F001/F004/F005/F006/F007/D001, with source-specific focused safety/negative regressions. F005/D001 have source checkpoint `d2b5fde7`; F004/F006 `631bed6b`. They remain awaiting live exact-HEAD acceptance. **F001 and F007 remain open pending proven root cause/continuity fix; do not mark solved because a synthetic test or status display passed.** Preserve all 30 original findings and unchanged reports; do not treat B/E permission and AI-prerequisite blocks as product bugs.
+
+**Next:** CHATGPT_CHAT repairs the method/procedure in `docs/E2E_EXECUTION_PROCEDURE.md` and its canonical reference, including first-time user/AI isolation, prospective evidence, dynamic command inventory, 3600s stable soak vs separate chaos/stress, no leaked passwords, artifact/source pinning and persistent non-`/tmp` evidence. Focused deterministic fix tests are not new E2E or CLI acceptance runs.
+
+**Only after those two gates:** execute the LAB-P0-01..05 readiness work packages below, seek legitimate approvals and attest GO on owned disposable hosts. A current NOT_READY result forbids the next Codex acceptance run. Codex remains TEST-ONLY; no duplicate Codex session, premature soak, CLI FCS, merge or release.
+
 ## P0 work packages (implement in priority order; keep independent actionable work moving)
 
 ### LAB-P0-01 — Dedicated, reversible, authorized test estate

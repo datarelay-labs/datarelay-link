@@ -13,6 +13,7 @@
 > **Release validation:** docs/RELEASE_VALIDATION.md
 > **Release checklist:** docs/RELEASE_CHECKLIST.md
 > **Status:** Normative living document
+> **Current owner-ordered preparation gate (2026-10-10):** Before any new Codex FULL_USER_E2E or CLI Feature/Scenario acceptance run, CHATGPT_CHAT first repairs/dispositions findings from the frozen Codex E2E, then updates and validates the test method/procedure in `docs/E2E_EXECUTION_PROCEDURE.md`, then proves a separate authorized lab ready. The auditor still reads **this entire canonical document**; an acting persona must not read the procedure/contract or use source/test oracle to choose actions. No skipped scenario, independent AI mirror, real traffic, 3,600s soak, or two same-HEAD release PASS is waived. Codex is TEST-ONLY by the explicit current owner order; only CHATGPT_CHAT edits product code. This gate is not a new test executor, alternate E2E contract or permission override; previously denied security effects remain binding.
 
 
 ### Continuous execution and finding accumulation
