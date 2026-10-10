@@ -387,8 +387,15 @@ class WebhookStore:
 
     def prune_history(self, max_completed: int = 5000, retention_days: int = 30) -> int:
         """Bound delivered/failed history without touching pending or leased events."""
-        ceiling = max(10, min(int(max_completed), 5000))
-        age_days = max(1, min(int(retention_days), 90))
+        # This deletes completed records. Reject malformed maintenance bounds
+        # before entering a write transaction; never silently coerce 0, bool,
+        # a fraction or a string into an unexpected retention policy.
+        if type(max_completed) is not int or max_completed < 1:
+            raise ControlPlaneError("Webhook history limit must be a positive integer.")
+        if type(retention_days) is not int or retention_days < 1:
+            raise ControlPlaneError("Webhook retention days must be a positive integer.")
+        ceiling = max(10, min(max_completed, 5000))
+        age_days = min(retention_days, 90)
         cutoff = (datetime.now(timezone.utc) - timedelta(days=age_days)).replace(
             microsecond=0
         ).isoformat().replace("+00:00", "Z")

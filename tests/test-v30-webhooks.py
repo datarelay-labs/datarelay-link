@@ -179,6 +179,40 @@ class WebhookTests(unittest.TestCase):
                 "SELECT COUNT(*) FROM management_webhook_outbox WHERE status='DELIVERED'"
             ).fetchone()[0], 10)
 
+    def test_invalid_retention_limits_never_prune_completed_events(self):
+        # Invalid maintenance inputs must not silently fall back to a lower
+        # retention bound and delete otherwise recoverable delivery history.
+        with tempfile.TemporaryDirectory(prefix="drlink-wh-retention-bound-") as root:
+            with WebhookStore(root) as store:
+                hook = store.create(
+                    "bounded-history", "https://hooks.example.org/events", ["attention"]
+                )
+                for sequence in range(12):
+                    event = store.enqueue(
+                        hook["id"], "attention", {"sequence": sequence}
+                    )
+                    claim = store.claim_due()[0]
+                    self.assertTrue(store.record_attempt(
+                        event["event_id"], lease_token=claim["lease_token"],
+                        delivered=True,
+                    ))
+                def total():
+                    return store.conn.execute(
+                        "SELECT COUNT(*) FROM management_webhook_outbox"
+                    ).fetchone()[0]
+
+                self.assertEqual(total(), 12)
+                invalid = (0, -1, False, True, 1.5, "10", None)
+                for key in ("max_completed", "retention_days"):
+                    for value in invalid:
+                        with self.subTest(key=key, value=value):
+                            with self.assertRaises(ControlPlaneError):
+                                store.prune_history(**{key: value})
+                            self.assertEqual(total(), 12)
+                # Legitimate bounded maintenance remains functional.
+                self.assertEqual(store.prune_history(max_completed=10), 2)
+                self.assertEqual(total(), 10)
+
     def test_reenabled_hook_does_not_alert_on_intentionally_discarded_queue(self):
         from drlink_management_service import ManagementQueryService
         with tempfile.TemporaryDirectory(prefix="drlink-wh-reenable-attention-") as root:
