@@ -9,11 +9,12 @@ import React from "react";
 import {renderToStaticMarkup} from "react-dom/server";
 
 const root=dirname(dirname(fileURLToPath(import.meta.url)));
-let scratch,setup,service,policy;
+let scratch,setup,service,policy,impact;
 before(async()=>{
  scratch=mkdtempSync(join(root,"node_modules",".uxb-connection-"));
  for(const [name,entry] of [
   ["setup","uxb-setup.tsx"],["service","uxb-remote-service.tsx"],["policy","p0-access-policy.tsx"],
+  ["impact","uxb-impact-evidence.ts"],
  ]){
   const out=join(scratch,name+".mjs");
   await build({entryPoints:[join(root,"src",entry)],outfile:out,
@@ -23,6 +24,7 @@ before(async()=>{
  setup=await import(pathToFileURL(join(scratch,"setup.mjs")).href);
  service=await import(pathToFileURL(join(scratch,"service.mjs")).href);
  policy=await import(pathToFileURL(join(scratch,"policy.mjs")).href);
+ impact=await import(pathToFileURL(join(scratch,"impact.mjs")).href);
 });
 after(()=>{if(scratch)rmSync(scratch,{recursive:true,force:true})});
 
@@ -82,6 +84,29 @@ test("Guided policy exposes contextual Core explanation without automatic Apply 
  const source=readFileSync(join(root,"src","uxb-setup.tsx"),"utf8");
  assert.match(source,/onNavigate=\{navigateFromSetup\}/);
  assert.match(source,/id==="access"\?reviewContext:context/);
+});
+test("Policy impact controls render UNKNOWN for missing flags, counts and references",()=>{
+ for(const [value,want] of [[true,"YES"],[false,"NO"],[null,"UNKNOWN"],
+   [0,"UNKNOWN"],["false","UNKNOWN"],[undefined,"UNKNOWN"]]){
+   assert.equal(impact.observedCoreFlag(value),want);
+ }
+ assert.equal(impact.observedCoreCount(0),0);
+ assert.equal(impact.observedCoreCount(3),3);
+ for(const invalid of [undefined,null,-1,NaN,"0",Infinity,1.2]){
+   assert.equal(impact.observedCoreCount(invalid),"UNKNOWN");
+ }
+ assert.equal(impact.observedCoreNames(null),"UNKNOWN");
+ assert.equal(impact.observedCoreNames(""),"UNKNOWN");
+ assert.equal(impact.observedCoreNames([]),"none reported");
+ assert.equal(impact.observedCoreNames(["rule-1","rule-2"]),"rule-1, rule-2");
+ assert.equal(impact.observedCoreNames(["",123]),"UNKNOWN");
+ assert.match(impact.observedCoreNames(Array.from({length:11},(_,i)=>"rule-"+i)),/first 8 of 11/);
+ const main=readFileSync(join(root,"src","main.tsx"),"utf8");
+ assert.match(main,/observedCoreFlag\(blast.access_broadened\)/);
+ assert.match(main,/observedCoreFlag\(limits.truncated\)/);
+ assert.match(main,/observedCoreCount\(limits.newly_blocked_total\)/);
+ assert.match(main,/observedCoreNames\(blast.affected_rules\)/);
+ assert.match(main,/Missing impact fields are UNKNOWN/);
 });
 test("Access → Draft → Guided Policy navigation keeps bounded intent as read-only reference",()=>{
  const src=readFileSync(join(root,"src","main.tsx"),"utf8");

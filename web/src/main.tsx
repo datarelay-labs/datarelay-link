@@ -4,6 +4,7 @@ import {QRCodeSVG} from "qrcode.react";
 import {AdministrationHub,type AdministrationHubTask} from "@datarelay-labs/foundation";
 import {createLinkFoundationAdministrationTasks} from "./foundation-administration";
 import {backupToolReadiness} from "./foundation-administration";
+import {observedCoreFlag,observedCoreCount,observedCoreNames} from "./uxb-impact-evidence";
 import {AccessEvidenceExplorer,GuidedPolicyJourney,coreFlowKey,coreCutoffKey,visibleCoreEvidence,resolveCompletePolicyMatch,type AccessPlane} from "./p0-access-policy";
 import {EnrollmentOnboarding} from "./p0-enrollment";
 import {navGroups,groupFor,labelFor,pageDescriptions,visibleRoute,navMatches,setupContextForObjectFamily} from "./uxb-navigation";
@@ -293,30 +294,39 @@ function BlastRadiusView({preview}:{preview:any}){
   const regression=preview?.policy_regression;
   if(!blast&&!overlay&&!regression)return null;
   const limits=blast?.limits||{};
-  const changes=(blast?.decision_changes||[]).map((x:any)=>({
-    plane:x.flow?.plane||"",
-    source:x.flow?.source||"",
-    destination:x.flow?.destination||"",
-    selector:x.flow?.service||x.flow?.permission||"",
-    current:x.current,
-    proposed:x.proposed,
+  const changes=(Array.isArray(blast?.decision_changes)?blast.decision_changes:[])
+    .filter((x:any)=>x&&typeof x==="object").slice(0,100).map((x:any)=>({
+    plane:x.flow?.plane||"UNKNOWN",
+    source:x.flow?.source||"UNKNOWN",
+    destination:x.flow?.destination||"UNKNOWN",
+    selector:x.flow?.service||x.flow?.permission||"UNKNOWN",
+    current:x.current??"UNKNOWN",
+    proposed:x.proposed??"UNKNOWN",
   }));
+  const unknowns=Array.isArray(blast?.unknowns)?blast.unknowns:[];
+  const overlayLimits=overlay?.limits||{};
   return <div className="card">
     <h4>Blast Radius / Draft Graph Overlay</h4>
     <div className="muted">Core-computed policy/inventory facts only. Unknowns are explicit; this is not network-topology discovery.</div>
     {blast&&<div className="grid">
-      <Metric label="Broadens access" value={blast.access_broadened?"YES":"NO"}/>
-      <Metric label="Narrows access" value={blast.access_narrowed?"YES":"NO"}/>
-      <Metric label="Newly reachable" value={limits.newly_reachable_total??(blast.newly_reachable||[]).length}/>
-      <Metric label="Newly blocked" value={limits.newly_blocked_total??(blast.newly_blocked||[]).length}/>
-      <Metric label="Truncated" value={limits.truncated?"YES":"NO"}/>
+      <Metric label="Broadens access" value={observedCoreFlag(blast.access_broadened)}/>
+      <Metric label="Narrows access" value={observedCoreFlag(blast.access_narrowed)}/>
+      <Metric label="Newly reachable" value={observedCoreCount(limits.newly_reachable_total)}/>
+      <Metric label="Newly blocked" value={observedCoreCount(limits.newly_blocked_total)}/>
+      <Metric label="Truncated" value={observedCoreFlag(limits.truncated)}/>
     </div>}
-    {limits.truncated&&<div className="warning-box">Blast Radius is bounded/truncated: {(limits.truncated_by||[]).join(", ")||"limit reached"}. Review the limit metadata before Apply.</div>}
-    {regression&&<div className={regression.ok?"notice":"warning-box"}>Required Policy Tests: {regression.passed}/{regression.count} pass · failures {regression.required_failed}</div>}
-    {blast&&<div className="muted">Affected rules: {(blast.affected_rules||[]).join(", ")||"none"} · Managed Hosts: {(blast.affected_managed_hosts||[]).join(", ")||"none"} · Remote Services: {(blast.affected_remote_services||[]).join(", ")||"none"}</div>}
-    {changes.length>0&&<Table items={changes}/>}
-    {overlay&&<div className="muted">Graph edges · added {limits.references_added_total??(overlay.added_edge_ids||[]).length} · removed {limits.references_removed_total??(overlay.removed_edge_ids||[]).length} · unchanged {(overlay.unchanged_edge_ids||[]).length}</div>}
-    {(blast?.unknowns||[]).length>0&&<div className="warning-box">Unknown / not deterministically modeled: {(blast.unknowns||[]).slice(0,10).join(" · ")}</div>}
+    {blast&&(typeof blast.access_broadened!=="boolean"||typeof blast.access_narrowed!=="boolean"
+      ||typeof limits.truncated!=="boolean")&&<div className="warning-box" role="status">
+      Missing impact fields are UNKNOWN, never proof of no access change. Review exact Core evidence before Apply.
+    </div>}
+    {limits.truncated===true&&<div className="warning-box">Blast Radius is bounded/truncated: {observedCoreNames(limits.truncated_by)}. Review the limit metadata before Apply.</div>}
+    {regression&&<div className={regression.ok===true?"notice":"warning-box"}>Required Policy Tests: {observedCoreCount(regression.passed)}/{observedCoreCount(regression.count)} pass · failures {observedCoreCount(regression.required_failed)}</div>}
+    {blast&&<div className="muted">Affected rules: {observedCoreNames(blast.affected_rules)} · Managed Hosts: {observedCoreNames(blast.affected_managed_hosts)} · Remote Services: {observedCoreNames(blast.affected_remote_services)}</div>}
+    {changes.length>0&&<><p className="muted">Current → proposed Core policy decisions; these are modeled changes, not observed network sessions.</p><Table items={changes}/></>}
+    {overlay&&<div className="muted">Graph references · added {observedCoreCount(overlayLimits.references_added_total)}
+      · removed {observedCoreCount(overlayLimits.references_removed_total)}
+      · unchanged returned {Array.isArray(overlay.unchanged_edge_ids)?overlay.unchanged_edge_ids.length:"UNKNOWN"} (bounded view)</div>}
+    {unknowns.length>0&&<div className="warning-box">Unknown / not deterministically modeled: {observedCoreNames(unknowns)}</div>}
   </div>;
 }
 
