@@ -265,6 +265,24 @@ class V30AuditIngestorTests(unittest.TestCase):
             },
         )
 
+    def test_invalid_ingest_batch_limit_never_seals_or_mutates_audit(self):
+        self.spool.enqueue(self._event("ALLOW", "invalid-limit"))
+        before_active = self.spool.active_path.read_bytes()
+        before_state = self.spool.state_path.read_bytes()
+        for invalid in (0, -1, True, False, 1.5, "1", b"1", None):
+            with self.subTest(limit=repr(invalid)):
+                with self.assertRaises(ValueError):
+                    self.ingestor.ingest(max_segments=invalid)
+                self.assertEqual(self.spool.active_path.read_bytes(), before_active)
+                self.assertEqual(self.spool.state_path.read_bytes(), before_state)
+                self.assertEqual(self.spool.segments(), [])
+                self.assertEqual(
+                    self.plane.conn.execute(
+                        "SELECT COUNT(*) FROM audit_events WHERE category='ACCESS_DECISION'"
+                    ).fetchone()[0], 0
+                )
+        self.assertEqual(self.ingestor.ingest(max_segments=1)["inserted"], 1)
+
     def test_ingest_is_bounded_checkpointed_and_queryable(self):
         first = self.spool.enqueue(self._event("ALLOW", "corr-1"))
         second = self.spool.enqueue(self._event("DENY", "corr-2"))

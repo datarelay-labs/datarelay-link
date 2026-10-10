@@ -531,7 +531,15 @@ class AuditIngestor:
         same flock, copy pending spool state, then snapshot SQLite without an
         event moving from the spool into the database between those two copies.
         """
-        limit = max(1, min(int(max_segments), 32))
+        # Reject malformed batch size before sealing the active spool or
+        # advancing the ingestion checkpoint. Do not coerce booleans or floats.
+        if (
+            isinstance(max_segments, bool)
+            or not isinstance(max_segments, int)
+            or max_segments < 1
+        ):
+            raise ValueError("Audit ingest max_segments must be a positive integer.")
+        limit = min(max_segments, 32)
         inserted = 0
         deduplicated = 0
         last_sequence = None
