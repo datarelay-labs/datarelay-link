@@ -20,6 +20,8 @@ import {hostInventoryFacts,hostVisibleIdentity} from "./uxb-host-detail";
 import {serviceStateLabel,serviceDetailSections} from "./uxb-service-detail";
 import {serviceVisibleIdentity} from "./uxb-service-detail";
 import {filterObservedServices} from "./uxb-service-search";
+import {operatorAccountState,operatorMfaState,operatorMfaAction,operatorLastLogin} from "./uxb-users-state";
+import {operatorUserLabel} from "./uxb-users-state";
 import {filterObservedHosts} from "./uxb-host-search";
 import {FirstConnectionSetup,connectionReviewContext,type SetupDraft} from "./uxb-setup";
 
@@ -1753,9 +1755,19 @@ function UsersPanel({operator}:{operator:any}){
   return <>{error&&<div className="error" role="alert">{error}</div>}<div className="card">
     <h3>Web Users</h3>
     <form className="toolbar" onSubmit={createUser}><input value={newUsername} onChange={e=>setNewUsername(e.target.value)} placeholder="Username" autoComplete="off"/><input type="password" value={newPassword} onChange={e=>setNewPassword(e.target.value)} placeholder="Initial password" autoComplete="new-password"/><select value={newRole} onChange={e=>setNewRole(e.target.value)}><option>Read Only</option><option>Operator</option><option>Admin</option></select><button className="primary" type="submit" disabled={busy==="create"||!newUsername||!newPassword}>{busy==="create"?"Creating…":"Create user"}</button></form>
-    <div className="muted">MFA is disabled by default. Enable it per user. Enabling MFA revokes that user's active sessions; on the next password sign-in the user completes TOTP setup and receives recovery codes directly.</div>
+    <div className="muted">MFA is disabled by default. Enable it per user. Enabling MFA revokes that user's active sessions; on the next password sign-in the user completes TOTP setup and receives recovery codes directly. Missing or inconsistent Core MFA flags remain UNKNOWN and cannot trigger an unverified state toggle.</div>
     <table><thead><tr><th>User</th><th>Role</th><th>Status</th><th>MFA</th><th>Last login</th><th>Action</th></tr></thead><tbody>
-      {(data.items||[]).map((x:any)=>{const mfa=x.mfa_required?(x.mfa_enrolled?"Enabled":"Setup pending"):"Disabled";return <tr key={x.id}><td>{x.username}{x.recovery_admin?" · recovery admin":""}</td><td>{x.role}</td><td>{x.enabled?"Enabled":"Disabled"}</td><td>{mfa}</td><td>{x.last_login_at||"-"}</td><td><button className={x.mfa_required?"secondary":"primary"} disabled={busy===x.id} onClick={()=>setMfa(x.id,!x.mfa_required)}>{x.mfa_required?"Disable MFA":"Enable MFA"}</button></td></tr>})}
+      {(data.items||[]).map((x:any)=>{
+        const mfaChange=operatorMfaAction(x);
+        return <tr key={x.id}><td>{operatorUserLabel(x)}{x.recovery_admin===true?" · recovery admin":""}</td>
+          <td>{["Admin","Operator","Read Only"].includes(x.role)?x.role:"UNKNOWN"}</td>
+          <td>{operatorAccountState(x)}</td><td>{operatorMfaState(x)}</td><td>{operatorLastLogin(x)}</td>
+          <td><button type="button" className={mfaChange.required===false?"secondary":"primary"}
+            disabled={busy===x.id||mfaChange.required===null}
+            aria-label={mfaChange.label+" for "+operatorUserLabel(x)}
+            onClick={()=>{if(mfaChange.required!==null)void setMfa(x.id,mfaChange.required)}}>
+            {mfaChange.label}</button></td></tr>;
+      })}
     </tbody></table>
   </div></>;
 }
