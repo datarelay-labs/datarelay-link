@@ -2060,69 +2060,69 @@ frpctl_zt_run_services() {
 
 frpctl_guided_zero_touch_linux() {
   local choice
-  echo
-  echo "How do you want to configure this Managed Host?"
-  echo
-  echo "1) SSH only"
-  echo "2) Choose Remote Services"
-  echo "3) Back"
-  echo
-  choice="$(frpctl_read "Select: " "")" || return 1
-  case "$choice" in
-    1) _FRP_ZT_PLATFORM=linux; frpctl_zt_run_ssh ;;
-    2) _FRP_ZT_PLATFORM=linux; frpctl_zt_run_services ;;
-    3|"") return 0 ;;
-    *)
-      frpctl_menu_selection_error 1 3 "$choice"
-      return 1
-      ;;
-  esac
+  # An invalid selector must not discard the already-entered Managed Host draft.
+  while true; do
+    echo
+    echo "How do you want to configure this Managed Host?"
+    echo
+    echo "1) SSH only"
+    echo "2) Choose Remote Services"
+    echo "3) Back"
+    echo
+    choice="$(frpctl_read "Select: " "")" || return 1
+    case "$choice" in
+      1) _FRP_ZT_PLATFORM=linux; frpctl_zt_run_ssh; return $? ;;
+      2) _FRP_ZT_PLATFORM=linux; frpctl_zt_run_services; return $? ;;
+      3|"") return 0 ;;
+      *) frpctl_menu_selection_error 1 3 "$choice" ;;
+    esac
+  done
 }
 
 frpctl_guided_zero_touch_windows() {
   local choice
-  echo
-  echo "How do you want to configure this Managed Host?"
-  echo
-  echo "1) RDP only"
-  echo "2) SSH only"
-  echo "3) Choose Remote Services"
-  echo "4) Back"
-  echo
-  choice="$(frpctl_read "Select: " "")" || return 1
-  case "$choice" in
-    1) frpctl_zt_run_rdp ;;
-    2) _FRP_ZT_PLATFORM=windows; frpctl_zt_run_ssh ;;
-    3) _FRP_ZT_PLATFORM=windows; frpctl_zt_run_services ;;
-    4|"") return 0 ;;
-    *)
-      frpctl_menu_selection_error 1 4 "$choice"
-      return 1
-      ;;
-  esac
+  # An invalid selector must not discard the already-entered Managed Host draft.
+  while true; do
+    echo
+    echo "How do you want to configure this Managed Host?"
+    echo
+    echo "1) RDP only"
+    echo "2) SSH only"
+    echo "3) Choose Remote Services"
+    echo "4) Back"
+    echo
+    choice="$(frpctl_read "Select: " "")" || return 1
+    case "$choice" in
+      1) frpctl_zt_run_rdp; return $? ;;
+      2) _FRP_ZT_PLATFORM=windows; frpctl_zt_run_ssh; return $? ;;
+      3) _FRP_ZT_PLATFORM=windows; frpctl_zt_run_services; return $? ;;
+      4|"") return 0 ;;
+      *) frpctl_menu_selection_error 1 4 "$choice" ;;
+    esac
+  done
 }
 
 frpctl_guided_zero_touch_macos() {
   # macOS uses the same bash Zero-Touch installer as Linux; bootstrap detects Darwin
   # and installs launchd. Do not add a dead menu entry — this is the real path.
   local choice
-  echo
-  echo "How do you want to configure this Managed Host?"
-  echo
-  echo "1) SSH only"
-  echo "2) Choose Remote Services"
-  echo "3) Back"
-  echo
-  choice="$(frpctl_read "Select: " "")" || return 1
-  case "$choice" in
-    1) _FRP_ZT_PLATFORM=linux; frpctl_zt_run_ssh ;;
-    2) _FRP_ZT_PLATFORM=linux; frpctl_zt_run_services ;;
-    3|"") return 0 ;;
-    *)
-      frpctl_menu_selection_error 1 3 "$choice"
-      return 1
-      ;;
-  esac
+  # An invalid selector must not discard the already-entered Managed Host draft.
+  while true; do
+    echo
+    echo "How do you want to configure this Managed Host?"
+    echo
+    echo "1) SSH only"
+    echo "2) Choose Remote Services"
+    echo "3) Back"
+    echo
+    choice="$(frpctl_read "Select: " "")" || return 1
+    case "$choice" in
+      1) _FRP_ZT_PLATFORM=linux; frpctl_zt_run_ssh; return $? ;;
+      2) _FRP_ZT_PLATFORM=linux; frpctl_zt_run_services; return $? ;;
+      3|"") return 0 ;;
+      *) frpctl_menu_selection_error 1 3 "$choice" ;;
+    esac
+  done
 }
 
 frpctl_guided_zero_touch() {

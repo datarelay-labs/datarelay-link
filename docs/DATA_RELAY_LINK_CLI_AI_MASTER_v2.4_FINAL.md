@@ -2298,8 +2298,14 @@ system apply configuration <FILE|->
 system diagnostics
 system support-bundle
 system version
+system history
+system clear
 system uninstall
 ```
+
+`system history` shows the current interactive CLI session's non-secret command history.
+`system clear` clears the interactive terminal display. Neither changes product
+configuration.
 
 `system uninstall` of the active product role must exit the interactive REPL
 cleanly after successful removal (no further backend invocation on the deleted
@@ -2531,6 +2537,8 @@ test configuration <FILE|->
 ```text
 system status
 system version
+system history
+system clear
 system diagnostics
 system audit
 
@@ -2566,6 +2574,11 @@ system update check-engine
 system support-bundle
 system uninstall
 ```
+
+`system history` displays only the current interactive CLI session's non-secret
+command history; `system clear` clears the terminal screen. These navigation
+commands are available on both Server and Agent Host and do not mutate product
+state.
 
 `system status` is the detailed Server read-only status and settings view. It includes current public/bootstrap hostnames and Linux/macOS/Windows Agent installer sources, with explicit automatic/default fallback text. `show status` remains the role-aware summary.
 
