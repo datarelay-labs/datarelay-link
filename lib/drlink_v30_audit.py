@@ -238,10 +238,19 @@ class DurableAuditSpool:
             next_sequence = data.get("next_sequence")
             if type(next_sequence) is not int or next_sequence < 1:
                 raise ValueError("invalid sequence")
+            # A corrupt counter cannot be coerced to a seemingly healthy
+            # zero/positive value: it would hide lost audit evidence.
+            failures = data.get("enqueue_failures", 0)
+            dropped_denies = data.get("dropped_deny_count", 0)
+            if (
+                type(failures) is not int or failures < 0
+                or type(dropped_denies) is not int or dropped_denies < 0
+            ):
+                raise ValueError("invalid audit spool failure counters")
             return {
                 "next_sequence": next_sequence,
-                "enqueue_failures": int(data.get("enqueue_failures") or 0),
-                "dropped_deny_count": int(data.get("dropped_deny_count") or 0),
+                "enqueue_failures": failures,
+                "dropped_deny_count": dropped_denies,
                 "last_error_at": str(data.get("last_error_at") or ""),
             }
         except FileNotFoundError as exc:

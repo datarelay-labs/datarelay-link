@@ -600,6 +600,45 @@ class V30ManagementQueryServiceTests(unittest.TestCase):
                 else:
                     self.assertEqual(spool.state_path.read_bytes(), invalid)
 
+    def test_invalid_spool_failure_counters_do_not_hide_critical_attention(self):
+        from drlink_v30_audit import (
+            AuditUnavailable, DurableAuditSpool, build_access_decision_event,
+            default_access_spool_root,
+        )
+
+        spool = DurableAuditSpool(
+            default_access_spool_root("remote", self.tmp), "remote-access",
+        )
+        event = build_access_decision_event(
+            source="remote-access", event_type="remote.access.decision",
+            result="ALLOW",
+        )
+        spool.enqueue(event)
+        state = json.loads(spool.state_path.read_text(encoding="utf-8"))
+        original_events = spool.active_path.read_bytes()
+        for counter in ("enqueue_failures", "dropped_deny_count"):
+            for invalid in (-1, True, 1.5, "3", None):
+                with self.subTest(counter=counter, invalid=repr(invalid)):
+                    invalid_state = dict(state)
+                    invalid_state[counter] = invalid
+                    spool.state_path.write_text(
+                        json.dumps(invalid_state) + "\n", encoding="utf-8",
+                    )
+                    before = spool.state_path.read_bytes()
+                    attention = self.service.attention_summary()
+                    source = next(
+                        row for row in attention["signals"]["audit_spool"]["items"]
+                        if row["source"] == "remote-access"
+                    )
+                    self.assertEqual(source["state_status"], "UNREADABLE")
+                    self.assertGreaterEqual(
+                        attention["signals"]["audit_spool"]["degraded_count"], 1,
+                    )
+                    with self.assertRaises(AuditUnavailable):
+                        spool.enqueue(event)
+                    self.assertEqual(spool.state_path.read_bytes(), before)
+                    self.assertEqual(spool.active_path.read_bytes(), original_events)
+
     def test_management_job_target_resolution_is_bounded_and_stable(self):
         one = self.service.resolve_management_job_targets(
             resource_type="managed-host",
