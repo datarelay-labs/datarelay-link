@@ -45,7 +45,9 @@ function observedText(row:ObservedHost,key:string):string|null {
 function errorResult(items:ObservedHost[],error:string):ObservedHostSearch {
   return {items,applied:false,scope:"loaded-only",error,warning:null,unknownCount:0};
 }
-export function filterObservedHosts(source:unknown,query:unknown):ObservedHostSearch {
+export function filterObservedHosts(
+  source:unknown,query:unknown,admission:unknown="all"
+):ObservedHostSearch {
   if(!Array.isArray(source))return errorResult([],"Core Host inventory was not observed. Retry before searching.");
   // Core Host records must carry an observed stable identity and display name.
   // A partially corrupted page cannot be silently converted to an empty,
@@ -59,6 +61,13 @@ export function filterObservedHosts(source:unknown,query:unknown):ObservedHostSe
     return errorResult([],"Core Host inventory contained only invalid Host records. Search not applied.");
   if(typeof query!=="string"||query.length>120||CONTROL.test(query))
     return errorResult(items,"Invalid Host search expression. Use at most 120 plain-text characters.");
+  // The separate Saved View / UI approval picker must share this same
+  // loaded-only evidence check. Otherwise no-text approval filtering turns
+  // unknown Core state into a misleading confirmed zero.
+  if(admission!=="all"&&(
+    typeof admission!=="string"||
+    !CORE_STATE_VALUES.admission_state.has(admission.toLowerCase())
+  ))return errorResult(items,"Invalid Host admission state. Search not applied.");
   const tokens=query.trim()?query.trim().split(/\s+/):[];
   const filters:{field:string|null,term:string}[]=[];
   for(const token of tokens){
@@ -89,6 +98,8 @@ export function filterObservedHosts(source:unknown,query:unknown):ObservedHostSe
       filters.push({field:null,term:token.toLowerCase()});
     }
   }
+  if(admission!=="all")
+    filters.push({field:"admission_state",term:(admission as string).toLowerCase()});
   const requiredFields=new Set(filters.filter(f=>f.field).map(f=>f.field as string));
   const hasFreeText=filters.some(f=>f.field===null);
   // Invalid page entries were not valid search candidates; count and disclose

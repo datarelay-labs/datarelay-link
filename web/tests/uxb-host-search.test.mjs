@@ -134,6 +134,30 @@ test("Unrecognized Core trust/admission states are UNKNOWN, never a confirmed no
   }
 });
 
+test("Saved admission picker flags missing Core approval evidence without false zero",()=>{
+  const hosts=[
+    {id:"approved",name:"Approved Node",admission_state:"APPROVED",trust_status:"trusted"},
+    {id:"missing",name:"No State Node",trust_status:"trusted"},
+    {id:"invalid",name:"Unrecognized Node",admission_state:"NOT_A_STATE",trust_status:"trusted"}
+  ];
+  const selected=filterObservedHosts(hosts,"","APPROVED");
+  assert.equal(selected.applied,true);
+  assert.deepEqual(selected.items.map(x=>x.id),["approved"]);
+  assert.equal(selected.unknownCount,2);
+  assert.match(selected.warning,/UNKNOWN|incomplete/i);
+  const noConfirmed=filterObservedHosts(hosts.slice(1),"","APPROVED");
+  assert.equal(noConfirmed.items.length,0);
+  assert.equal(noConfirmed.unknownCount,2);
+  assert.match(noConfirmed.warning,/UNKNOWN|incomplete/i);
+  const legacy=filterObservedHosts(hosts,"");
+  assert.equal(legacy.items.length,3);
+  assert.equal(legacy.unknownCount,0);
+  const bad=filterObservedHosts(hosts,"","UNSUPPORTED");
+  assert.equal(bad.applied,false);
+  assert.deepEqual(bad.items,hosts);
+  assert.match(bad.error,/invalid|not available|unsupported/i);
+});
+
 test("Missing OS/trust fields are UNKNOWN, not evidence of no host or false zero",()=>{
   const os=search("os:freebsd");
   assert.equal(os.applied,true);

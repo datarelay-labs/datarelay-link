@@ -1197,7 +1197,11 @@ class V30WebSaasUxContractTests(unittest.TestCase):
             'return errorResult(items,',
         ):
             self.assertIn(marker, typed, marker)
-        self.assertIn('filterObservedHosts(loaded,filter)', SOURCE)
+        # The picker and typed text must share one evidence-aware Core
+        # projection, never a later blind admission comparison that can
+        # falsely report "no matching resources" for UNKNOWN Core states.
+        self.assertIn('filterObservedHosts(loaded,filter,admissionFilter)', SOURCE)
+        self.assertNotIn('.filter((item:any)=>!isHost||admissionFilter==="all"', SOURCE)
         self.assertIn('Typed Host search not applied:', SOURCE)
         self.assertIn('hostSearch?.warning', SOURCE)
         self.assertIn('!hostSearch?.error', SOURCE)

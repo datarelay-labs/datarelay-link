@@ -1580,11 +1580,10 @@ function ResourceWorkspace({kind,data,operator,onNavigate,api,initialFilter="",i
   }
   // Typed Host search is expressly limited to already authorized/loaded Core
   // inventory pages. Core currently supports name-only server-side query.
-  const hostSearch=isHost?filterObservedHosts(loaded,filter):null;
+  const hostSearch=isHost?filterObservedHosts(loaded,filter,admissionFilter):null;
   const q=filter.trim().toLowerCase();
   const rows=(isHost?(hostSearch?.items||loaded):loaded
     .filter((item:any)=>!q||Object.values(item).some(value=>String(value??"").toLowerCase().includes(q))))
-    .filter((item:any)=>!isHost||admissionFilter==="all"||item.admission_state===admissionFilter)
     .sort((a:any,b:any)=>isHost?
       (a.admission_state==="PENDING_APPROVAL"?-1:a.admission_state==="QUARANTINED"?0:1)
       -(b.admission_state==="PENDING_APPROVAL"?-1:b.admission_state==="QUARANTINED"?0:1):0);
