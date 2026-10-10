@@ -7,12 +7,12 @@ import {dirname,join} from "node:path";
 import {fileURLToPath,pathToFileURL} from "node:url";
 const root=dirname(dirname(fileURLToPath(import.meta.url)));
 const scratch=mkdtempSync(join(root,"node_modules",".pfci-host-detail-"));
-let hostDetailSections;
+let hostDetailSections,hostConnectionState;
 try{
  const outfile=join(scratch,"projection.mjs");
  await build({entryPoints:[join(root,"src","uxb-host-detail.ts")],outfile,
   bundle:true,platform:"node",format:"esm",logLevel:"silent"});
- ({hostDetailSections}=await import(pathToFileURL(outfile).href));
+ ({hostDetailSections,hostConnectionState}=await import(pathToFileURL(outfile).href));
 }finally{rmSync(scratch,{recursive:true,force:true})}
 const flatten=v=>hostDetailSections(v).flatMap(x=>x.fields.map(y=>y.label+": "+y.value)).join(" | ");
 
@@ -28,6 +28,21 @@ test("Three ordered task-specific groups with bounded safe host facts",()=>{
  assert.ok(fields.some(x=>x.label==="Connection"&&x.value==="Disconnected"));
  assert.ok(fields.some(x=>x.label==="Host ID"&&x.value==="host-22"));
  assert.ok(fields.some(x=>x.label==="Agent version"&&x.value==="3.0.0"));
+});
+
+test("Host list and drawer must use one evidence-qualified tri-state Core connection fact",()=>{
+  for(const [raw,expected] of [
+    [true,"Connected"],[1,"Connected"],
+    [false,"Disconnected"],[0,"Disconnected"],
+    [null,"UNKNOWN"],[undefined,"UNKNOWN"],
+    ["true","UNKNOWN"],["false","UNKNOWN"],[2,"UNKNOWN"],
+  ]){
+    const row={id:"host-a",connected:raw,status:"active",
+      agent_lifecycle_state:"connected"};
+    assert.equal(hostConnectionState(row),expected);
+    const detail=flatten(row);
+    assert.ok(detail.includes("Connection: "+expected),String(raw));
+  }
 });
 
 test("SQLite numeric 0/1 connection state does not become UNKNOWN",()=>{

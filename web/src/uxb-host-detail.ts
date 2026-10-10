@@ -24,11 +24,18 @@ function admission(data:HostFields):string{
   if(data.admission_state==="QUARANTINED")return "Quarantined";
   return "UNKNOWN";
 }
-function connectivity(data:HostFields):string{
+function connectivity(data:HostFields):"Connected"|"Disconnected"|"UNKNOWN"{
   // The authoritative SQLite inventory projection may serialize BOOL as 1/0.
   if(data.connected===true||data.connected===1)return "Connected";
   if(data.connected===false||data.connected===0)return "Disconnected";
   return "UNKNOWN";
+}
+// Shared status semantics for both the Host inventory table and detail drawer.
+// A lifecycle string or arbitrary truthy value is NOT a live connection fact.
+export function hostConnectionState(value:unknown):"Connected"|"Disconnected"|"UNKNOWN"{
+  const data:HostFields=value!==null&&typeof value==="object"&&!Array.isArray(value)
+    ?value as HostFields:{};
+  return connectivity(data);
 }
 export function hostDetailSections(value:unknown):HostDetailSection[]{
   const data:HostFields=value!==null&&typeof value==="object"&&!Array.isArray(value)
@@ -41,7 +48,7 @@ export function hostDetailSections(value:unknown):HostDetailSection[]{
     {label:"Management trust",value:safeText(data,"trust_status")||"UNKNOWN"},
   ];
   const connection:HostDetailField[]=[
-    {label:"Connection",value:connectivity(data)},
+    {label:"Connection",value:hostConnectionState(data)},
     ...TEXT_FIELDS["Connectivity & Version"].map(([label,key])=>({
       label,value:safeText(data,key)
     })).filter((row):row is HostDetailField=>row.value!==null),
