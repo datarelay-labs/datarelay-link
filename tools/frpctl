@@ -2260,6 +2260,27 @@ frpctl_guided_bulk_enrollment() {
     *) echo "ERROR: select 1-3. No enrollments were issued." >&2; return 2 ;;
   esac
   lifetime="$(frpctl_read "Lifetime [1h; maximum 24h]: " "1h")" || return 1
+  # Fail before Review for invalid lifetimes. The backend must not be relied on
+  # to reject bad values after the operator has already confirmed issuance.
+  local ttl_number ttl_unit ttl_max
+  ttl_max=0
+  if [[ "$lifetime" =~ ^([0-9]{1,9})([sSmMhHdD]?)$ ]]; then
+    ttl_number=$((10#${BASH_REMATCH[1]}))
+    ttl_unit="${BASH_REMATCH[2],,}"
+    case "$ttl_unit" in
+      ""|s) ttl_max=86400 ;;
+      m) ttl_max=1440 ;;
+      h) ttl_max=24 ;;
+      d) ttl_max=1 ;;
+    esac
+  else
+    ttl_number=0
+  fi
+  if (( ttl_number < 1 || ttl_number > ttl_max )); then
+    echo "ERROR: Lifetime must be between 1 second and 24h (e.g. 30m, 1h, 1d). No enrollments were issued." >&2
+    echo "Retry: drlink set enrollment bulk" >&2
+    return 2
+  fi
   args+=(--ttl "$lifetime")
   echo
   echo "Review"

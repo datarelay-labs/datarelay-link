@@ -500,6 +500,56 @@ class CliFeatureScenarioRemediation(unittest.TestCase):
         self.assertNotIn("frp-enroll-bulk", text)
         self.assertFalse((Path(self.tmp) / "var/lib/drlink/bootstrap").exists())
 
+    def test_public_bulk_invalid_ttl_rejected_before_review(self):
+        """Enforce the exact public 24h bound before accepting the operator's review."""
+        for ttl, valid in (
+            ("25h", False), ("86401", False), ("2d", False), ("0", False),
+            ("24h", True), ("1d", True),
+        ):
+            with self.subTest(ttl=ttl):
+                master, slave = pty.openpty()
+                proc = subprocess.Popen(
+                    ["bash", str(ROOT / "tools/drlink"), "set", "enrollment", "bulk"],
+                    stdin=slave, stdout=slave, stderr=slave,
+                    env=dict(os.environ, FRP_CTL_TEST_ROOT=self.tmp,
+                             FRP_CTL_BIN_DIR=str(ROOT / "tools")),
+                )
+                os.close(slave)
+                output = bytearray()
+                try:
+                    command = "1\\n2\\nreview-node\\n\\n\\n" + ttl + "\\n"
+                    if valid:
+                        command += "n\\n"
+                    os.write(master, command.encode().replace(b"\\n", b"\n"))
+                    deadline = time.monotonic() + 25
+                    while time.monotonic() < deadline:
+                        if select.select([master], [], [], 0.2)[0]:
+                            try:
+                                data = os.read(master, 65536)
+                            except OSError:
+                                break
+                            if not data:
+                                break
+                            output.extend(data)
+                        if proc.poll() is not None:
+                            break
+                    proc.wait(timeout=max(1, deadline - time.monotonic()))
+                finally:
+                    if proc.poll() is None:
+                        proc.kill()
+                        proc.wait()
+                    os.close(master)
+                text = output.decode("utf-8", "replace")
+                self.assertEqual(proc.returncode, 0 if valid else 2, text)
+                if valid:
+                    self.assertIn("Review", text)
+                    self.assertIn("Cancelled.", text)
+                else:
+                    self.assertIn("Lifetime must be between 1 second and 24h", text)
+                    self.assertNotIn("Review", text)
+                self.assertNotIn("frp-enroll-bulk", text)
+                self.assertFalse((Path(self.tmp) / "var/lib/drlink/bootstrap").exists())
+
     def test_public_help_allows_early_pipeline_close_without_traceback(self):
         root = Path(self.tmp)
         (root / "etc/drlink/config.json").unlink()

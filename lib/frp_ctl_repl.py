@@ -284,6 +284,7 @@ _MUTATING_PUBLIC_PREFIXES = (
     ("set", "service"),
     ("unset", "service"),
     ("system", "restore"),
+    ("system", "rollback"),
     ("system", "import"),
     ("system", "backup"),
     ("system", "cleanup"),
@@ -346,8 +347,11 @@ def _refresh_editor_inventory(editor, frpctl_bin):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             universal_newlines=True,
+            timeout=8,
         )
-    except OSError:
+    except (OSError, subprocess.TimeoutExpired):
+        # Completion is best-effort. Never trap the operator in a stale or
+        # unresponsive snapshot after the mutation itself has completed.
         return
     if proc.returncode != 0 or not (proc.stdout or "").strip():
         return

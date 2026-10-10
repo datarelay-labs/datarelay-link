@@ -233,6 +233,51 @@ class ReplLiveInventoryTests(unittest.TestCase):
                     self.assertEqual(REPL.run_repl("drlink", dict(source)), 0)
                 self.assertEqual(reads, [["ssh", "new-service"], ["ssh"]])
 
+    def test_server_rollback_reloads_completion_inventory(self):
+        """A rollback replaces object names, and Tab must use the restored revision."""
+        before = {"role": "server", "inventory": {"objects": ["stale-object"]}}
+        after = {"role": "server", "inventory": {"objects": ["restored-object"]}}
+        editors = []
+        steps = []
+
+        def user_input(_prompt):
+            editor = editors[0]
+            candidates = editor.grammar.completion_candidates(
+                "show network-object ", editor.role, editor.names, editor.services,
+                editor.local_services, **editor._completion_kwargs())
+            if not steps:
+                self.assertIn("stale-object", candidates)
+                steps.append("before")
+                return "system rollback revision123"
+            self.assertIn("restored-object", candidates)
+            self.assertNotIn("stale-object", candidates)
+            steps.append("after")
+            return "exit"
+
+        with patch.object(REPL.LineEditor, "bind", lambda editor: editors.append(editor)), \
+             patch.object(REPL, "readline", None), \
+             patch.object(REPL, "_run_backend", return_value=SimpleNamespace(returncode=0)) as backend, \
+             patch.object(REPL.subprocess, "run", return_value=SimpleNamespace(
+                 returncode=0, stdout=json.dumps(after))) as refresh, \
+             patch("builtins.input", side_effect=user_input):
+            self.assertEqual(REPL.run_repl("drlink", before), 0)
+        backend.assert_called_once()
+        refresh.assert_called_once()
+        self.assertEqual(steps, ["before", "after"])
+
+    def test_inventory_refresh_timeout_keeps_repl_usable(self):
+        """A slow completion snapshot must not lock the operator out of the REPL."""
+        with patch.object(REPL.LineEditor, "bind", return_value=True), \
+             patch.object(REPL, "readline", None), \
+             patch.object(REPL, "_run_backend", return_value=SimpleNamespace(returncode=0)) as backend, \
+             patch.object(REPL.subprocess, "run", side_effect=REPL.subprocess.TimeoutExpired(
+                 cmd=["drlink", "--print-grammar-payload"], timeout=8)) as refresh, \
+             patch("builtins.input", side_effect=["system rollback revision123", "exit"]):
+            self.assertEqual(REPL.run_repl("drlink", {"role": "server"}), 0)
+        backend.assert_called_once()
+        refresh.assert_called_once()
+        self.assertEqual(refresh.call_args.kwargs["timeout"], 8)
+
     def test_failed_remote_service_command_does_not_reload_inventory(self):
         with patch.object(REPL.LineEditor, "bind", return_value=True), \
              patch.object(REPL, "readline", None), \
