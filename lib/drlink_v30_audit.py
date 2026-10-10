@@ -280,7 +280,10 @@ class DurableAuditSpool:
     def _store_state_locked(self, state: dict[str, Any]) -> None:
         tmp = self.root / (".state.%s.tmp" % secrets.token_hex(6))
         payload = json.dumps(state, sort_keys=True, separators=(",", ":")) + "\n"
-        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except OSError as exc:
+            raise AuditUnavailable("Durable audit spool state open failed.") from exc
         persisted = False
         try:
             _write_all(fd, payload.encode("utf-8"))
@@ -295,8 +298,15 @@ class DurableAuditSpool:
                     tmp.unlink(missing_ok=True)
                 except OSError:
                     pass
-        os.replace(tmp, self.state_path)
-        _fsync_dir(self.root)
+        try:
+            os.replace(tmp, self.state_path)
+            _fsync_dir(self.root)
+        except OSError as exc:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise AuditUnavailable("Durable audit spool state commit failed.") from exc
 
     def spool_bytes(self) -> int:
         total = 0

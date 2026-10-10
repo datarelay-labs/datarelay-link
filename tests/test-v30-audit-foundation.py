@@ -165,6 +165,62 @@ class V30AuditSpoolTests(unittest.TestCase):
         self.assertEqual(json.loads(lines[0])["event_id"], event["event_id"])
         self.assertEqual(json.loads(lines[0])["source_sequence"], 1)
 
+    def test_state_commit_failure_never_appends_or_leaks_uncommitted_state(self):
+        original_replace = os.replace
+        injected = []
+
+        def fail_state_commit(source, destination):
+            if str(destination) == str(self.spool.state_path):
+                injected.append(True)
+                raise OSError("state storage was unavailable")
+            return original_replace(source, destination)
+
+        with patch("drlink_v30_audit.os.replace", side_effect=fail_state_commit):
+            with self.assertRaises(AuditUnavailable):
+                self.spool.enqueue(self._event())
+        self.assertEqual(injected, [True])
+        self.assertFalse(self.spool.state_path.exists())
+        self.assertFalse(self.spool.active_path.exists())
+        self.assertEqual(list(self.spool.root.glob(".state.*.tmp")), [])
+
+    def test_failed_state_replacement_preserves_previous_event_and_sequence(self):
+        first = self.spool.enqueue(self._event())
+        before_state = self.spool.state_path.read_bytes()
+        before_active = self.spool.active_path.read_bytes()
+        original_replace = os.replace
+
+        def reject_state_replace(source, destination):
+            if str(destination) == str(self.spool.state_path):
+                raise OSError("state commit interrupted")
+            return original_replace(source, destination)
+
+        with patch("drlink_v30_audit.os.replace", side_effect=reject_state_replace):
+            with self.assertRaises(AuditUnavailable):
+                self.spool.enqueue(self._event(result="DENY"))
+        self.assertEqual(self.spool.state_path.read_bytes(), before_state)
+        self.assertEqual(self.spool.active_path.read_bytes(), before_active)
+        self.assertEqual(list(self.spool.root.glob(".state.*.tmp")), [])
+        second = self.spool.enqueue(self._event(result="DENY"))
+        self.assertEqual(second["source_sequence"], first["source_sequence"] + 1)
+
+    def test_state_open_failure_never_appends_or_leaks_credentials(self):
+        original_open = os.open
+        injected = []
+
+        def fail_state_open(path, flags, *args, **kwargs):
+            if Path(path).name.startswith(".state."):
+                injected.append(True)
+                raise OSError("state file could not be created")
+            return original_open(path, flags, *args, **kwargs)
+
+        with patch("drlink_v30_audit.os.open", side_effect=fail_state_open):
+            with self.assertRaises(AuditUnavailable):
+                self.spool.enqueue(self._event())
+        self.assertEqual(injected, [True])
+        self.assertFalse(self.spool.state_path.exists())
+        self.assertFalse(self.spool.active_path.exists())
+        self.assertEqual(list(self.spool.root.glob(".state.*.tmp")), [])
+
     def test_zero_progress_state_write_never_commits_or_appends(self):
         original_write = os.write
         injected = []
