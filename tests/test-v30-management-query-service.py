@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import base64
+import json
 import os
 import sys
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
@@ -107,6 +110,52 @@ class V30ManagementQueryServiceTests(unittest.TestCase):
     def test_invalid_cursor_fails_closed(self):
         with self.assertRaises(ControlPlaneError):
             self.service.list_inventory("managed-host", cursor="not-a-real-cursor")
+
+    def test_cursor_shapes_are_fail_closed_across_read_surfaces(self):
+        invalid = base64.urlsafe_b64encode(json.dumps([]).encode()).decode().rstrip("=")
+        methods = (
+            ("inventory", lambda c: self.service.list_inventory("managed-host", cursor=c)),
+            ("audit", lambda c: self.service.audit_query(cursor=c)),
+            ("jobs", lambda c: self.service.job_list(cursor=c)),
+            ("live", lambda c: self.service.live_access(plane="remote", cursor=c)),
+            ("revisions", lambda c: self.service.revision_list(cursor=c)),
+        )
+        for name, invoke in methods:
+            with self.subTest(surface=name, case="non-object"):
+                with self.assertRaises(ControlPlaneError):
+                    invoke(invalid)
+            with self.subTest(surface=name, case="oversized-before-base64"):
+                with patch("drlink_management_service.base64.urlsafe_b64decode") as decode:
+                    with self.assertRaises(ControlPlaneError):
+                        invoke("A" * 8192)
+                    decode.assert_not_called()
+
+    def test_invalid_job_cursor_is_rejected_before_deadline_reconciliation(self):
+        with patch.object(self.service, "_reconcile_management_job_deadlines") as reconcile:
+            with self.assertRaises(ControlPlaneError):
+                self.service.job_list(cursor="not-a-valid-cursor")
+            reconcile.assert_not_called()
+
+    def test_numeric_cursor_keys_reject_bool_or_text_and_non_string_inputs(self):
+        def encoded(payload):
+            return base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
+
+        for row_id in (True, False, "1", 1.5, None):
+            with self.subTest(surface="audit", row_id=repr(row_id)):
+                with self.assertRaises(ControlPlaneError):
+                    self.service.audit_query(cursor=encoded({
+                        "v": 1, "resource": "audit", "time": "2026-10-10T00:00:00Z",
+                        "id": row_id,
+                    }))
+            with self.subTest(surface="revision", row_id=repr(row_id)):
+                with self.assertRaises(ControlPlaneError):
+                    self.service.revision_list(cursor=encoded({
+                        "v": 1, "resource": "revision", "revision": row_id,
+                    }))
+        for invalid in (True, 0, b"abc", [], {}):
+            with self.subTest(case="invalid-cursor-input-type", input=repr(invalid)):
+                with self.assertRaises(ControlPlaneError):
+                    self.service.list_inventory("managed-host", cursor=invalid)
 
     def test_limit_defaults_caps_and_rejects_zero(self):
         self.assertEqual(

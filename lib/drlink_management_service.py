@@ -196,17 +196,36 @@ def _encode_cursor(resource_type: str, name_key: str, resource_id: str) -> str:
     return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
 
-def _decode_cursor(
-    cursor: Optional[str], resource_type: str
-) -> Optional[tuple[str, str]]:
-    if cursor is None or not str(cursor).strip():
+MAX_CURSOR_LENGTH = 4096
+
+
+def _cursor_payload(cursor: Optional[str], *, message: str) -> Optional[dict[str, Any]]:
+    """Reject malformed/oversized client cursors before decoding or SQL reads."""
+    if cursor is None:
         return None
-    text = str(cursor).strip()
+    if not isinstance(cursor, str):
+        raise ControlPlaneError(message)
+    text = cursor.strip()
+    if not text:
+        return None
+    if len(text) > MAX_CURSOR_LENGTH:
+        raise ControlPlaneError(message)
     try:
         padded = text + "=" * (-len(text) % 4)
         payload = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")))
     except Exception as exc:
-        raise ControlPlaneError("Invalid management query cursor.") from exc
+        raise ControlPlaneError(message) from exc
+    if not isinstance(payload, dict):
+        raise ControlPlaneError(message)
+    return payload
+
+
+def _decode_cursor(
+    cursor: Optional[str], resource_type: str
+) -> Optional[tuple[str, str]]:
+    payload = _cursor_payload(cursor, message="Invalid management query cursor.")
+    if payload is None:
+        return None
     if (
         payload.get("v") != _CURSOR_VERSION
         or payload.get("resource") != resource_type
@@ -232,19 +251,15 @@ def _encode_audit_cursor(occurred_at: str, row_id: int) -> str:
 
 
 def _decode_audit_cursor(cursor: Optional[str]) -> Optional[tuple[str, int]]:
-    if cursor is None or not str(cursor).strip():
+    payload = _cursor_payload(cursor, message="Invalid audit query cursor.")
+    if payload is None:
         return None
-    text = str(cursor).strip()
-    try:
-        padded = text + "=" * (-len(text) % 4)
-        payload = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")))
-        row_id = int(payload.get("id"))
-    except Exception as exc:
-        raise ControlPlaneError("Invalid audit query cursor.") from exc
+    row_id = payload.get("id")
     if (
         payload.get("v") != _CURSOR_VERSION
         or payload.get("resource") != "audit"
         or not isinstance(payload.get("time"), str)
+        or type(row_id) is not int
         or row_id < 1
     ):
         raise ControlPlaneError("Audit query cursor is invalid.")
@@ -266,14 +281,9 @@ def _encode_job_cursor(created_at: str, job_id: str) -> str:
 
 
 def _decode_job_cursor(cursor: Optional[str]) -> Optional[tuple[str, str]]:
-    if cursor is None or not str(cursor).strip():
+    payload = _cursor_payload(cursor, message="Invalid management Job cursor.")
+    if payload is None:
         return None
-    text = str(cursor).strip()
-    try:
-        padded = text + "=" * (-len(text) % 4)
-        payload = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")))
-    except Exception as exc:
-        raise ControlPlaneError("Invalid management Job cursor.") from exc
     if (
         payload.get("v") != _CURSOR_VERSION
         or payload.get("resource") != "management-job"
@@ -311,14 +321,9 @@ def _encode_live_cursor(plane: str, started_at: str, observation_id: str) -> str
 def _decode_live_cursor(
     cursor: Optional[str], plane: str
 ) -> Optional[tuple[str, str]]:
-    if cursor is None or not str(cursor).strip():
+    payload = _cursor_payload(cursor, message="Invalid live-access cursor.")
+    if payload is None:
         return None
-    text = str(cursor).strip()
-    try:
-        padded = text + "=" * (-len(text) % 4)
-        payload = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")))
-    except Exception as exc:
-        raise ControlPlaneError("Invalid live-access cursor.") from exc
     if (
         payload.get("v") != _CURSOR_VERSION
         or payload.get("resource") != "live:%s" % plane
@@ -512,16 +517,17 @@ class ManagementQueryService:
         """Return descending configuration revisions with bounded keyset pagination."""
         page_limit = _bounded_limit(limit)
         before: Optional[int] = None
-        if cursor:
-            text = str(cursor).strip()
-            try:
-                padded = text + "=" * (-len(text) % 4)
-                payload = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")))
-                if payload.get("v") != _CURSOR_VERSION or payload.get("resource") != "revision":
-                    raise ValueError("cursor mismatch")
-                before = int(payload["revision"])
-            except Exception as exc:
-                raise ControlPlaneError("Invalid revision cursor.") from exc
+        payload = _cursor_payload(cursor, message="Invalid revision cursor.")
+        if payload is not None:
+            revision = payload.get("revision")
+            if (
+                payload.get("v") != _CURSOR_VERSION
+                or payload.get("resource") != "revision"
+                or type(revision) is not int
+                or revision < 1
+            ):
+                raise ControlPlaneError("Invalid revision cursor.")
+            before = revision
         where = " WHERE revision < ?" if before is not None else ""
         args: list[Any] = [before] if before is not None else []
         args.append(page_limit + 1)
@@ -2013,9 +2019,10 @@ class ManagementQueryService:
         """Read a bounded keyset page of management Jobs."""
         from drlink_v30_jobs import JOB_STATUSES
 
-        self._reconcile_management_job_deadlines()
         page_limit = _bounded_limit(limit)
         after = _decode_job_cursor(cursor)
+        # Invalid pagination must never trigger an incidental recovery write.
+        self._reconcile_management_job_deadlines()
         where: list[str] = []
         args: list[Any] = []
         status_text = str(status or "").strip().upper()
