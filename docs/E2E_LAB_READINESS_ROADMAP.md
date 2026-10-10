@@ -34,6 +34,8 @@ The official `docs/FULL_USER_E2E_SCENARIOS.md` is the required 4,283-line full u
 
 **Acceptance:** `ALL_REACHABLE_ASSIGNED_HOSTS_CLEAN=PASS`, unexplained state/port/legacy PID zero, snapshot/restore identifiers documented, no denied effect retried, each assigned role has a disposable ownership record.
 
+**Windows native read-only inventory fix:** the assigned existing Windows SSH route now checks the official `%ProgramData%\drlink\tools\drlink.cmd` install path, installed system version Source HEAD, stale FRP processes, registered product services, and scheduled tasks without changing Windows or opening a new management route. Task enumeration failure is NOT_READY; an unavailable localhost:2223 reverse SSH route remains NOT_READY. No Windows live qualification is claimed until the actual assigned host becomes reachable and the authorized native probe succeeds.
+
 ### LAB-P0-02 — Preflight validation and candidate integrity
 
 - Implement a deterministic **read-only** `PREFLIGHT_STATUS.json` and human checklist against `AGENTS.md`, `.engineering/project.yaml`, the entire canonical Full User E2E contract, official public `drlink` version/status, OS facts, usable SSH+TTY, TCP routes, time sync, mount/disk/RAM/swap capacity and correct native platform assignment.

@@ -34,7 +34,43 @@ UNIX_READ_ONLY = (
     'for unit in drlink-client.service drlink-server.service; do '
     'printf "UNIT_%s=" "$unit"; systemctl is-active "$unit" 2>/dev/null || true; done'
 )
-WINDOWS_READ_ONLY = 'hostname & ver & where drlink'
+# Use the official native Windows installation path in docs/WINDOWS_CLIENT.md.
+# A product CLI may not be on PATH, so a where lookup alone is insufficient.
+# Read-only over the assigned existing Windows SSH alias; never install,
+# extract, reset, change tunnels/credentials, or retry prior denied effects.
+WINDOWS_READ_ONLY = (
+    'powershell.exe -NoProfile -NonInteractive -Command "'
+    "$ErrorActionPreference='Stop'; "
+    "Write-Output ('HOST=' + $env:COMPUTERNAME); "
+    "Write-Output 'ID=windows'; "
+    "Write-Output ('VERSION_ID=' + [System.Environment]::OSVersion.Version.ToString()); "
+    "$root=Join-Path $env:ProgramData 'drlink'; "
+    "$cli=Join-Path $root 'tools\\drlink.cmd'; "
+    "if (Test-Path -LiteralPath $cli -PathType Leaf) { "
+    "Write-Output 'DRLINK_INSTALLED=YES'; "
+    "& $cli system version; "
+    "if ($LASTEXITCODE -ne 0) { "
+    "Write-Output ('DRLINK_VERSION_FAILED_RC=' + $LASTEXITCODE) } "
+    "} else { Write-Output 'DRLINK_INSTALLED=NO' }; "
+    "if (Test-Path -LiteralPath $root) { "
+    "Write-Output ('STATE_PATH_PRESENT=' + $root) }; "
+    "$processes=Get-Process -Name frpc -ErrorAction SilentlyContinue; "
+    "if ($null -ne $processes) { "
+    "Write-Output 'UNIT_windows-frpc-process=active' "
+    "} else { Write-Output 'UNIT_windows-frpc-process=inactive' }; "
+    "$productService=Get-Service -Name 'drlink*','frpc*' "
+    "-ErrorAction SilentlyContinue; "
+    "if ($null -ne $productService) { "
+    "Write-Output 'UNIT_windows-product-service=registered' }; "
+    "try { "
+    "$scheduled=Get-ScheduledTask -ErrorAction Stop | "
+    "Where-Object { $_.TaskName -match 'drlink|frpc' }; "
+    "if ($null -ne $scheduled) { "
+    "Write-Output 'STATE_PATH_PRESENT=windows-product-scheduled-task' } "
+    "} catch { Write-Output 'READ_ONLY_PROBE_ERROR=WINDOWS_SCHEDULED_TASK_QUERY_FAILED' }"
+    '"'
+)
+
 
 
 def utc_now() -> str:
@@ -71,6 +107,7 @@ def classify_host(host: dict, result: subprocess.CompletedProcess, expected_sour
                "required": bool(host.get("required", True)), "host": None, "os_id": None,
                "os_version": None, "installed": "UNKNOWN", "source_head": None,
                "service_units": {}, "state_paths": [],
+               "version_probe_failed": False, "probe_failed": False,
                "status": "NOT_READY", "reason": ""}
     if result.returncode != 0:
         summary["reason"] = "Existing approved management SSH route unreachable or version probe failed"
@@ -93,16 +130,24 @@ def classify_host(host: dict, result: subprocess.CompletedProcess, expected_sour
             candidate = line.split(":", 1)[1].strip()
             if SOURCE_RE.fullmatch(candidate):
                 summary["source_head"] = candidate
+        elif line.startswith("DRLINK_VERSION_FAILED_RC="):
+            summary["version_probe_failed"] = True
+        elif line.startswith("READ_ONLY_PROBE_ERROR="):
+            summary["probe_failed"] = True
         elif line.startswith("STATE_PATH_PRESENT="):
             summary["state_paths"].append(line.split("=", 1)[1])
         elif line.startswith("UNIT_") and "=" in line:
             k, v = line.split("=", 1)
             summary["service_units"][k] = v
-    if alias == "frp-e2e-windows":
-        # Real native version and clean-state verification are mandatory:
-        # a management SSH reply alone cannot satisfy either requirement.
-        summary["installed"] = "UNKNOWN"
-        summary["reason"] = "Native Windows installed Source HEAD / clean-state cannot be verified"
+    if alias == "frp-e2e-windows" and summary["os_id"] != "windows":
+        summary["status"] = "NOT_READY"
+        summary["reason"] = "Windows native OS identity unverified by read-only probe"
+    elif summary["probe_failed"]:
+        summary["status"] = "NOT_READY"
+        summary["reason"] = "Native product service/task enumeration failed"
+    elif summary["version_probe_failed"]:
+        summary["status"] = "NOT_READY"
+        summary["reason"] = "Installed CLI system version failed; Source HEAD unverified"
     elif summary["installed"] == "YES":
         match = summary["source_head"] == expected_source
         if phase == "INSTALLED_CANDIDATE" and match:
@@ -112,7 +157,10 @@ def classify_host(host: dict, result: subprocess.CompletedProcess, expected_sour
             summary["reason"] = ("STALE_INSTALLED_SOURCE_HEAD" if not match
                                  else "PREINSTALL_CLEANROOM_REQUIRES_NO_PRODUCT")
     elif summary["installed"] == "NO":
-        live_units = [n for n,v in summary["service_units"].items() if v == "active"]
+        live_units = [
+            name for name, value in summary["service_units"].items()
+            if value in ("active", "registered")
+        ]
         if summary["state_paths"] or live_units:
             summary["reason"] = "RESIDUAL_STATE_OR_ACTIVE_UNITS"
         elif phase == "PREINSTALL_CLEANROOM":

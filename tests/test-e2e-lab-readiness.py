@@ -68,6 +68,87 @@ class LabReadinessSupportingTests(unittest.TestCase):
         self.assertEqual(row["ssh_error_class"], "CONNECTION_REFUSED")
         self.assertEqual(row["status"], "NOT_READY")
 
+    def test_windows_preinstall_native_cleanroom_can_be_proven_read_only(self):
+        result = subprocess.CompletedProcess(
+            [], 0,
+            "HOST=WIN-E2E\nID=windows\nVERSION_ID=10.0.19045\n"
+            "DRLINK_INSTALLED=NO\nUNIT_windows-frpc-process=inactive\n", "",
+        )
+        row = lab.classify_host(
+            host("frp-e2e-windows", "native-agent"), result, HASH_A
+        )
+        self.assertEqual(row["status"], "PASS")
+        self.assertEqual(row["installed"], "NO")
+        self.assertEqual(row["os_id"], "windows")
+        self.assertEqual(row["host"], "WIN-E2E")
+
+    def test_windows_installed_content_requires_exact_source_head(self):
+        body = ("HOST=WIN-E2E\nID=windows\nVERSION_ID=10.0.19045\n"
+                "DRLINK_INSTALLED=YES\nSource HEAD: " + HASH_A + "\n"
+                "UNIT_windows-frpc-process=active\n")
+        row = lab.classify_host(
+            host("frp-e2e-windows", "native-agent"),
+            subprocess.CompletedProcess([], 0, body, ""),
+            HASH_A, "INSTALLED_CANDIDATE",
+        )
+        self.assertEqual(row["status"], "PASS")
+        row = lab.classify_host(
+            host("frp-e2e-windows", "native-agent"),
+            subprocess.CompletedProcess([], 0, body, ""),
+            HASH_B, "INSTALLED_CANDIDATE",
+        )
+        self.assertEqual(row["status"], "NOT_READY")
+        self.assertEqual(row["reason"], "STALE_INSTALLED_SOURCE_HEAD")
+
+    def test_windows_stale_state_active_process_and_version_failure_block(self):
+        clean = ("HOST=WIN-E2E\nID=windows\nVERSION_ID=10.0.19045\n"
+                 "DRLINK_INSTALLED=NO\nUNIT_windows-frpc-process=inactive\n")
+        for changed in (
+            clean + "STATE_PATH_PRESENT=C:\\ProgramData\\drlink\n",
+            clean.replace("=inactive", "=active"),
+            clean.replace("ID=windows", "ID=linux"),
+            clean.replace("DRLINK_INSTALLED=NO", "DRLINK_INSTALLED=YES"),
+            clean + "DRLINK_VERSION_FAILED_RC=1\n",
+            clean + "READ_ONLY_PROBE_ERROR=WINDOWS_SCHEDULED_TASK_QUERY_FAILED\n",
+            clean + "UNIT_windows-product-service=registered\n",
+            clean + "STATE_PATH_PRESENT=windows-product-scheduled-task\n",
+        ):
+            with self.subTest(changed=changed[-78:]):
+                row = lab.classify_host(
+                    host("frp-e2e-windows", "native-agent"),
+                    subprocess.CompletedProcess([], 0, changed, ""),
+                    HASH_A,
+                )
+                self.assertEqual(row["status"], "NOT_READY", row)
+
+    def test_windows_assigned_read_only_probe_uses_documented_install_path(self):
+        from unittest import mock
+        output = ("HOST=WIN-E2E\nID=windows\nVERSION_ID=10.0.19045\n"
+                  "DRLINK_INSTALLED=NO\nUNIT_windows-frpc-process=inactive\n")
+        with mock.patch.object(
+            lab.subprocess, "run",
+            return_value=subprocess.CompletedProcess([], 0, output, ""),
+        ) as runner:
+            row = lab.collect_host(host("frp-e2e-windows", "native-agent"),
+                                   HASH_A)
+        self.assertEqual(row["status"], "PASS")
+        args, kwargs = runner.call_args
+        self.assertEqual(args[0][0], "ssh")
+        self.assertIn("BatchMode=yes", args[0])
+        self.assertIn("StrictHostKeyChecking=yes", args[0])
+        self.assertIn("frp-e2e-windows", args[0])
+        command = args[0][-1]
+        self.assertIn("powershell.exe -NoProfile -NonInteractive", command)
+        self.assertIn("tools\\drlink.cmd", command)
+        self.assertIn("& $cli system version", command)
+        self.assertIn("Get-Process -Name frpc", command)
+        self.assertIn("Get-Service -Name", command)
+        self.assertIn("Get-ScheduledTask -ErrorAction Stop", command)
+        for forbidden in ("install-client", "system uninstall",
+                          "system update", "Set-Item", "Remove-Item",
+                          "New-NetFirewallRule"):
+            self.assertNotIn(forbidden, command)
+
     def test_run_evidence_uses_immutable_run_scoped_directory(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp) / "durable"
