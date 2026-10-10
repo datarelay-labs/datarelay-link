@@ -62,6 +62,7 @@ test('Managed Host and Remote Service pagination accepts only matching observed 
       {...page,items:[{id:''}]},
       {...page,items:[{id:17}]},
       {...page,items:Array.from({length:101},(_,i)=>({id:String(i)}))},
+      {...page,items:[],next_cursor:'unearned-next-page'},
       {...page,next_cursor:cursor},
       {...page,items:null},
       {error:'Core unreachable'},

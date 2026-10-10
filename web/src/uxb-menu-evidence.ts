@@ -75,7 +75,10 @@ export function requireObservedInventoryContinuation(
   const expected=route==="hosts"?"managed-host":"remote-service";
   if(page.resource_type!==expected||page.limit!==limit
     ||!Number.isSafeInteger(limit)||limit<1
-    ||page.items.length>limit||page.next_cursor===requestedCursor
+    // Keyset Core cannot produce an empty page with another next cursor.
+    // Treat a broken continuation as UNKNOWN rather than looping "Load more".
+    ||page.items.length>limit||(page.items.length===0&&isPartialCorePage(page))
+    ||page.next_cursor===requestedCursor
     ||page.items.some((item:any)=>typeof item.id!=="string"||!item.id))
     throw new Error("Core inventory page does not match the requested "+expected+
       " resource type, size or cursor. State is UNKNOWN.");
