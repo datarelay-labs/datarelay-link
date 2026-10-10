@@ -306,6 +306,14 @@ class ManagementWebApiAdapter:
     def backup_validate(self, path: str, *, actor: ManagementActor) -> dict[str, Any]:
         return self.core.backup_validate(path, actor=actor)
 
+    def backup_integrity(
+        self, path: str, *, expected_sha256: str | None = None,
+        actor: ManagementActor,
+    ) -> dict[str, Any]:
+        return self.core.backup_integrity(
+            path, expected_sha256=expected_sha256, actor=actor,
+        )
+
     def backup_create(self, *, actor: ManagementActor) -> dict[str, Any]:
         return self.core.backup_create(actor=actor)
 

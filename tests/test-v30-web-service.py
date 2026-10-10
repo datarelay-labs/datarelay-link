@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import hashlib
 import http.client
 import json
 import os
@@ -9,6 +10,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -1971,6 +1973,99 @@ class V30WebServiceTests(unittest.TestCase):
         self.assertEqual(status, 200, recovered)
         self.assertEqual(recovered["count"], 0)
         self.assertEqual(recovered["items"], [])
+
+    def test_backup_integrity_api_requires_admin_csrf_and_real_bytes(self):
+        content = b"isolated archive fixture - no customer data"
+        location = Path(self.tmp) / "var/lib/drlink/backups"
+        location.mkdir(parents=True, exist_ok=True)
+        archive = location / "read-only-sample.tar.gz"
+        archive.write_bytes(content)
+        path = "/var/lib/drlink/backups/read-only-sample.tar.gz"
+        expected = hashlib.sha256(content).hexdigest()
+        endpoint = "/api/v1/system/backup/integrity"
+        payload = {"path": path, "expected_sha256": expected}
+
+        unauth, _, _ = self.request("POST", endpoint, payload)
+        self.assertEqual(unauth, 403)
+        self.login()
+        no_csrf, _, _ = self.request("POST", endpoint, payload)
+        self.assertEqual(no_csrf, 403)
+        good, headers, report = self.request(
+            "POST", endpoint, payload,
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(good, 200, report)
+        self.assertNotIn("set-cookie", headers)
+        self.assertEqual(report["artifact_bytes"], len(content))
+        self.assertEqual(report["sha256_observed"], expected)
+        self.assertTrue(report["matches_caller_supplied_sha256"])
+        for field in ("restore_ready", "encryption_verified",
+                      "isolated_restore_drill_verified",
+                      "expected_digest_authenticated", "authoritative_mutation"):
+            self.assertFalse(report[field])
+        self.assertEqual(archive.read_bytes(), content)
+
+        mismatch, _, wrong = self.request(
+            "POST", endpoint,
+            {"path": path, "expected_sha256": "0" * 64},
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(mismatch, 200, wrong)
+        self.assertFalse(wrong["matches_caller_supplied_sha256"])
+
+        alias = location / "alias.tar.gz"
+        alias.symlink_to(archive)
+        denied, _, details = self.request(
+            "POST", endpoint,
+            {"path": "/var/lib/drlink/backups/alias.tar.gz"},
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(denied, 400, details)
+        self.assertNotIn("sha256_observed", details)
+
+        with WebAuthService(self.tmp) as auth:
+            auth.create_operator_local(
+                username="reader", role="Read Only", password="ReaderPass1",
+            )
+        status, headers, login = self.request(
+            "POST", "/api/v1/auth/login/start",
+            {"username": "reader", "password": "ReaderPass1"},
+        )
+        self.assertEqual(status, 200, login)
+        self.cookie = headers["set-cookie"].split(";", 1)[0]
+        self.csrf = login["csrf_token"]
+        with mock.patch(
+            "drlink_management_system.ManagementSystemService.backup_integrity",
+            side_effect=AssertionError("non-admin cannot touch archive"),
+        ) as blocked:
+            denied, _, response = self.request(
+                "POST", endpoint, payload,
+                headers={"X-CSRF-Token": self.csrf},
+            )
+            self.assertEqual(denied, 403, response)
+            blocked.assert_not_called()
+
+    def test_backup_validation_rejects_symlinked_archive_over_authenticated_http(self):
+        # The Web credential/CSRF boundary must not weaken product-native
+        # backup ownership: a symlink alias never reaches frp-restore CLI.
+        self.login()
+        storage = Path(self.tmp) / "var/lib/drlink/backups"
+        storage.mkdir(parents=True, exist_ok=True)
+        (storage / "original.tar.gz").write_bytes(b"synthetic-only-archive")
+        (storage / "alias.tar.gz").symlink_to(storage / "original.tar.gz")
+        with mock.patch("drlink_management_system.subprocess.run") as run:
+            status, _, body = self.request(
+                "POST", "/api/v1/system/backup/validate",
+                {"path": "/var/lib/drlink/backups/alias.tar.gz"},
+                headers={"X-CSRF-Token": self.csrf},
+            )
+            self.assertEqual(status, 400, body)
+            self.assertIn("symlink", body["error"].lower())
+            run.assert_not_called()
+        self.assertEqual(
+            (storage / "original.tar.gz").read_bytes(),
+            b"synthetic-only-archive",
+        )
 
     def test_system_status_certificate_preflight_and_backup_validate(self):
         self.login()

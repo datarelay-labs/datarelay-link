@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import secrets
+import stat
 import subprocess
 import sys
 import tempfile
@@ -25,6 +26,12 @@ from drlink_control_plane import ControlPlane
 from frp_version_identity import identity_from_kv, read_version_file
 
 _MAX_TOOL_OUTPUT = 16 * 1024
+# An authenticated Web read-only observation is not a bulk backup download.
+# Larger archives require a separately qualified native/offline integrity job.
+# Web reads stay capped: native offline observation is a distinct, never-routed entry.
+MAX_BACKUP_OBSERVE_BYTES = 128 * 1024 * 1024
+MAX_BACKUP_OFFLINE_OBSERVE_BYTES = 2 * 1024 * 1024 * 1024
+_BACKUP_OBSERVE_CHUNK_BYTES = 128 * 1024
 AUDIT_RETENTION_CONTROL_DAYS_DEFAULT = 365
 AUDIT_RETENTION_ACCESS_DAYS_DEFAULT = 90
 AUDIT_RETENTION_MAX_EVENTS_DEFAULT = 500_000
@@ -415,17 +422,57 @@ class ManagementSystemService:
                 "Web backup validation is limited to /var/lib/drlink/backups/."
             )
         relative = requested[len(canonical_prefix) :]
-        if not relative or relative in (".", ".."):
-            raise ControlPlaneError("A backup archive file is required.")
-        backup_root = (self.root_path / "var/lib/drlink/backups").resolve()
-        candidate = (backup_root / relative).resolve()
+        # Do not silently normalize parent segments, duplicate separators,
+        # trailing slashes or escaped control characters into another archive.
+        # The canonical CLI validator receives only one unambiguous source.
+        segments = relative.split("/")
+        if not relative or any(
+            segment in ("", ".", "..") for segment in segments
+        ):
+            raise ControlPlaneError(
+                "A canonical archive under /var/lib/drlink/backups/ is required."
+            )
+        if len(relative) > 1024 or any(
+            ch in relative for ch in ("\\", "\x00", "\r", "\n")
+        ):
+            raise ControlPlaneError("Invalid backup archive path.")
+
+        # The old resolve()-only check treated a symlinked backup root as the
+        # authoritative root and allowed symlinks pointing to *other* files
+        # inside the backup directory. Require each path component to be
+        # product-owned and never resolve a symlink to establish authority.
+        candidate = self.root_path
+        if candidate.is_symlink():
+            raise ControlPlaneError("Backup path must not contain a symlink.")
+        for part in ("var", "lib", "drlink", "backups", *segments):
+            candidate = candidate / part
+            if candidate.is_symlink():
+                raise ControlPlaneError("Backup path must not contain a symlink.")
+        backup_root = self.root_path / "var/lib/drlink/backups"
+        # A hard link could alias an unrelated same-filesystem inode, while
+        # a directory/FIFO/socket is not a backup archive at all. A missing
+        # path remains eligible for the canonical validator's invalid result.
         try:
-            candidate.relative_to(backup_root)
-        except ValueError as exc:
+            details = candidate.lstat()
+        except FileNotFoundError:
+            details = None
+        except OSError as exc:
+            raise ControlPlaneError("Unable to inspect backup archive.") from exc
+        if details is not None and (
+            not stat.S_ISREG(details.st_mode) or details.st_nlink != 1
+        ):
+            raise ControlPlaneError(
+                "Backup archive must be a regular single-link file."
+            )
+        try:
+            canonical_root = backup_root.resolve()
+            canonical_candidate = candidate.resolve()
+            canonical_candidate.relative_to(canonical_root)
+        except (ValueError, OSError, RuntimeError) as exc:
             raise ControlPlaneError(
                 "Backup path must remain under /var/lib/drlink/backups/."
             ) from exc
-        return requested, candidate
+        return requested, canonical_candidate
 
     def backup_validate(self, path: str) -> dict[str, Any]:
         requested, target = self._backup_target(path)
@@ -454,6 +501,115 @@ class ManagementSystemService:
             "returncode": int(proc.returncode),
             "output": output,
             "error": error,
+            "authoritative_mutation": False,
+        }
+
+    def backup_integrity(
+        self, path: str, *, expected_sha256: str | None = None,
+    ) -> dict[str, Any]:
+        """Admin Web-only 128 MiB read-only observation; no bulk Web override."""
+        return self._observe_backup_integrity(
+            path, expected_sha256=expected_sha256,
+            size_limit=MAX_BACKUP_OBSERVE_BYTES,
+        )
+
+    def backup_integrity_offline(
+        self, path: str, *, expected_sha256: str | None = None,
+    ) -> dict[str, Any]:
+        """Native offline-only 2 GiB observation; never routed to Web/API.
+
+        This cannot authorize restore, authenticate a supplied checksum, or
+        prove encryption, provenance or successful isolated recovery.
+        """
+        return self._observe_backup_integrity(
+            path, expected_sha256=expected_sha256,
+            size_limit=MAX_BACKUP_OFFLINE_OBSERVE_BYTES,
+        )
+
+    def _observe_backup_integrity(
+        self, path: str, *, expected_sha256: str | None,
+        size_limit: int,
+    ) -> dict[str, Any]:
+        """Read real bytes from one no-follow descriptor with a strict cap.
+
+        Caller-supplied SHA256 is NOT publisher proof. Each component is
+        opened under its parent directory FD without following symlinks.
+        Metadata is checked before and after hashing; the opened FD is never
+        used to trigger a restore or copy out its contents.
+        """
+        if expected_sha256 is not None and (
+            type(expected_sha256) is not str
+            or len(expected_sha256) != 64
+            or any(ch not in "0123456789abcdef" for ch in expected_sha256)
+        ):
+            raise ControlPlaneError("Expected SHA256 must be 64 lowercase hex digits.")
+        requested, _ = self._backup_target(path)
+        if not all(hasattr(os, flag) for flag in ("O_NOFOLLOW", "O_DIRECTORY")):
+            raise ControlPlaneError("Secure backup source inspection is unavailable.")
+
+        dir_flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_DIRECTORY
+        dir_flags |= getattr(os, "O_CLOEXEC", 0)
+        file_flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+        file_flags |= getattr(os, "O_CLOEXEC", 0)
+        archive_name = requested.removeprefix("/var/lib/drlink/backups/")
+        parts = archive_name.split("/")
+        opened: list[int] = []
+        try:
+            opened.append(os.open(self.root_path, dir_flags))
+            for component in ("var", "lib", "drlink", "backups", *parts[:-1]):
+                opened.append(os.open(component, dir_flags, dir_fd=opened[-1]))
+            opened.append(os.open(parts[-1], file_flags, dir_fd=opened[-1]))
+            archive_fd = opened[-1]
+            before = os.fstat(archive_fd)
+            if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
+                raise ControlPlaneError("Backup archive must be a regular single-link file.")
+            if not 0 < before.st_size <= size_limit:
+                raise ControlPlaneError("Backup archive size exceeds read-only observation limit.")
+            checksum = hashlib.sha256()
+            observed = 0
+            while observed < before.st_size:
+                chunk = os.read(
+                    archive_fd,
+                    min(_BACKUP_OBSERVE_CHUNK_BYTES, before.st_size - observed),
+                )
+                if not chunk:
+                    raise ControlPlaneError("Backup archive changed during observation.")
+                observed += len(chunk)
+                checksum.update(chunk)
+            # Refuse both truncation and expansion during the read window.
+            if os.read(archive_fd, 1):
+                raise ControlPlaneError("Backup archive changed during observation.")
+            after = os.fstat(archive_fd)
+            stable = (
+                before.st_dev, before.st_ino, before.st_nlink, before.st_size,
+                before.st_mtime_ns, before.st_ctime_ns,
+            ) == (
+                after.st_dev, after.st_ino, after.st_nlink, after.st_size,
+                after.st_mtime_ns, after.st_ctime_ns,
+            )
+            if not stable or observed != before.st_size:
+                raise ControlPlaneError("Backup archive changed during observation.")
+        except OSError as exc:
+            raise ControlPlaneError(
+                "Backup archive unavailable for read-only integrity observation."
+            ) from exc
+        finally:
+            for fd in reversed(opened):
+                os.close(fd)
+        digest = checksum.hexdigest()
+        return {
+            "path": requested,
+            "artifact_bytes": observed,
+            "sha256_observed": digest,
+            "matches_caller_supplied_sha256": (
+                secrets.compare_digest(digest, expected_sha256)
+                if expected_sha256 is not None else None
+            ),
+            "expected_digest_authenticated": False,
+            "encryption_verified": False,
+            "isolated_restore_drill_verified": False,
+            "restore_ready": False,
+            "read_only": True,
             "authoritative_mutation": False,
         }
 

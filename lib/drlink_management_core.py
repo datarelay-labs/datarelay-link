@@ -833,6 +833,19 @@ class ManagementCoreService:
         self._require_web_role(actor, "Admin", "Operator", "Read Only")
         return ManagementSystemService(self.root).backup_validate(path)
 
+    def backup_integrity(
+        self, path: str, *, expected_sha256: str | None = None,
+        actor: ManagementActor,
+    ) -> dict[str, Any]:
+        self._require_web_role(actor, "Admin")
+        if "management-diagnose" not in actor.permissions:
+            raise ManagementAuthorizationError(
+                "management-diagnose is required for archive observation."
+            )
+        return ManagementSystemService(self.root).backup_integrity(
+            path, expected_sha256=expected_sha256,
+        )
+
     def backup_create(self, *, actor: ManagementActor) -> dict[str, Any]:
         self._require_web_role(actor, "Admin")
         if "management-config" not in actor.permissions:

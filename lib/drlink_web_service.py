@@ -949,6 +949,12 @@ class WebApplication:
                 str(body.get("path") or ""),
                 actor=actor,
             )
+        if path == "/api/v1/system/backup/integrity":
+            return self.adapter.backup_integrity(
+                str(body.get("path") or ""),
+                expected_sha256=body.get("expected_sha256"),
+                actor=actor,
+            )
         if path == "/api/v1/system/backup/create":
             return self.adapter.backup_create(actor=actor)
         if path == "/api/v1/system/restore":
@@ -1315,6 +1321,12 @@ class DrlinkWebHandler(BaseHTTPRequestHandler):
         principal = self._principal(csrf=True)
         if principal is None:
             self._error(403, "authenticated session and CSRF token required")
+            return
+        if (
+            parsed.path == "/api/v1/system/backup/integrity"
+            and principal.role != ROLE_ADMIN
+        ):
+            self._error(403, "Administrator role required.")
             return
         try:
             body = self._body_json()
