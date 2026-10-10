@@ -42,6 +42,8 @@ MAX_JOB_TIMEOUT_SECONDS = 3600
 DEFAULT_LEASE_SECONDS = 60
 MAX_ACTIVE_JOBS = 128
 MAX_JOB_TARGETS = 100
+MAX_AGENT_RPC_WORKERS = 32
+MAX_AGENT_RPC_PENDING = MAX_ACTIVE_JOBS - MAX_AGENT_RPC_WORKERS
 MAX_CLAIM_BATCH = 32
 
 
@@ -1263,8 +1265,19 @@ class BoundedAgentRpcWorkerPool:
     """Bound ThreadPoolExecutor's otherwise-unbounded pending-work queue."""
 
     def __init__(self, *, max_workers: int = 8, max_pending: int = 16):
-        self.max_workers = max(1, int(max_workers))
-        self.max_pending = max(0, int(max_pending))
+        # Reject unbounded or coerced concurrency before allocating the pool.
+        if type(max_workers) is not int or not 1 <= max_workers <= MAX_AGENT_RPC_WORKERS:
+            raise ControlPlaneError(
+                "Agent RPC max_workers must be an integer between 1 and %d."
+                % MAX_AGENT_RPC_WORKERS
+            )
+        if type(max_pending) is not int or not 0 <= max_pending <= MAX_AGENT_RPC_PENDING:
+            raise ControlPlaneError(
+                "Agent RPC max_pending must be an integer between 0 and %d."
+                % MAX_AGENT_RPC_PENDING
+            )
+        self.max_workers = max_workers
+        self.max_pending = max_pending
         self.capacity = self.max_workers + self.max_pending
         self._slots = threading.BoundedSemaphore(self.capacity)
         self._executor = ThreadPoolExecutor(
@@ -1334,10 +1347,10 @@ class BoundedAgentRpcWorkerPool:
     ) -> list[Future]:
         if self._closed:
             raise ControlPlaneError("Agent RPC worker pool is closed.")
-        wanted = min(
-            self.capacity,
-            max(1, int(limit if limit is not None else self.max_workers)),
-        )
+        requested = self.max_workers if limit is None else limit
+        if type(requested) is not int or requested < 1:
+            raise ControlPlaneError("Agent RPC dispatch limit must be a positive integer.")
+        wanted = min(self.capacity, requested)
         reserved = 0
         for _ in range(wanted):
             if not self._slots.acquire(blocking=False):

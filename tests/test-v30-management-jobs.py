@@ -511,6 +511,44 @@ class V30ManagementJobTests(unittest.TestCase):
         self.assertEqual(summary["queued_targets"], 1)
         self.assertTrue(summary["saturated"])
 
+    def test_worker_pool_rejects_coerced_or_unbounded_capacity(self):
+        cases = (
+            ("max_workers", 0), ("max_workers", -1),
+            ("max_workers", True), ("max_workers", 1.5),
+            ("max_workers", "2"), ("max_workers", 33),
+            ("max_pending", -1), ("max_pending", True),
+            ("max_pending", 1.5), ("max_pending", "2"),
+            ("max_pending", 97),
+        )
+        for key, invalid in cases:
+            with self.subTest(key=key, value=repr(invalid)):
+                with self.assertRaises(ControlPlaneError):
+                    with BoundedAgentRpcWorkerPool(**{key: invalid}):
+                        pass
+        with BoundedAgentRpcWorkerPool(max_workers=32, max_pending=96) as pool:
+            self.assertEqual(pool.capacity, 128)
+
+    def test_worker_pool_dispatch_rejects_invalid_limit_before_claim(self):
+        job = self._enqueue(targets=("host-a",), timeout_seconds=3600)
+        with BoundedAgentRpcWorkerPool(max_workers=1, max_pending=0) as pool:
+            for invalid in (0, -1, True, False, 1.5, "1", b"1"):
+                with self.subTest(limit=repr(invalid)):
+                    with self.assertRaises(ControlPlaneError):
+                        pool.dispatch_once(
+                            self.engine, lambda claim: {"ok": True},
+                            worker_id="bounded-worker", limit=invalid,
+                        )
+                    self.assertEqual(
+                        self.engine.get(job["id"])["targets"][0]["status"], QUEUED
+                    )
+            futures = pool.dispatch_once(
+                self.engine, lambda claim: {"ok": True},
+                worker_id="bounded-worker", limit=1,
+            )
+            self.assertEqual(len(futures), 1)
+            futures[0].result(timeout=2)
+            self.assertEqual(self.engine.get(job["id"])["status"], SUCCEEDED)
+
     def test_worker_pool_backpressure_does_not_preclaim_unbounded_targets(self):
         job = self._enqueue(targets=("host-a", "host-b"), timeout_seconds=3600)
         entered = threading.Event()
