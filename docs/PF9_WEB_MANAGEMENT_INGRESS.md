@@ -178,3 +178,26 @@ Neither GET nor any other route creates, edits, saves or applies a
 source allowlist, host SSH firewall rule, recovery timer, or credentials.
 This is a product-native read path, not a declaration of a completed
 Administrative settings UI or a host-safe rollout.
+
+## Administrator System page: read-only policy visibility
+
+The current Link Web System page shows a compact **Management access status**
+section to a logged-in `Admin` only, using the existing same-origin
+`GET /api/v1/admin/management-ingress/status` endpoint. It uses existing
+Foundation Administration context and existing Web card design rather than
+adding a competing navigation root or security-policy editor.
+
+The section distinguishes `Enabled for Web`, `Disabled (not enforced)`,
+and `Unavailable`. It presents only configured source/proxy **counts** and
+a policy revision, never raw CIDRs, tokens or policy file contents. When the
+endpoint fails or its evidence is absent, the component shows **Unavailable**
+instead of an optimistic healthy state. Explicit explanatory text says that
+host SSH filtering and apply/edit actions are **Not available**. Operators
+and Read Only users do not mount or fetch the Admin-only component;
+the server independently enforces authentic current Admin authorization.
+
+Source and deterministic bundle regression is
+`python3 tests/test-v30-web-management-ingress-ui.py -q` and the native Web
+production `npm run build`. This evidence is **not a human-driven browser
+screenshot or Full User E2E**. No installed runtime/preview refresh or
+live management policy change was carried out by this UI source slice.
