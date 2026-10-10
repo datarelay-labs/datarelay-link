@@ -72,8 +72,15 @@ def _isolated_root(root: str | Path) -> Path:
     # binaries, transaction metadata). A test root must have NO filesystem
     # links capable of redirecting those writes outside its private tree.
     for path in selected.rglob("*"):
-        if path.is_symlink():
+        info = path.lstat()
+        if stat.S_ISLNK(info.st_mode):
             _deny("isolated Agent root contains a symlinked update path")
+        if stat.S_ISREG(info.st_mode) and info.st_nlink != 1:
+            # Hardlinked files also escape a private sandbox's write boundary:
+            # modifying this inode could mutate another path outside the root.
+            _deny("isolated Agent root contains an unsafe hardlink")
+        if not (stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode)):
+            _deny("isolated Agent root contains an unsafe special file")
     return selected
 
 

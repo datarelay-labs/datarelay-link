@@ -45,6 +45,38 @@ def write_identity(root: Path, machine_id: str, hostname: str):
     return pub.read_text(encoding="utf-8"), mac
 
 
+class V30SignedAgentSandboxBoundaryTests(unittest.TestCase):
+    def test_marked_sandbox_rejects_hardlinks_to_external_state(self):
+        from drlink_v30_agent_artifact import AgentArtifactError
+        from drlink_v30_agent_signed_updater import (
+            SANDBOX_MARKER, _MARKER_BYTES, _isolated_root,
+        )
+
+        with tempfile.TemporaryDirectory(prefix="drlink-signed-private-") as inside:
+            with tempfile.TemporaryDirectory(prefix="drlink-signed-outside-") as outside:
+                sandbox = Path(inside)
+                marker = sandbox / SANDBOX_MARKER
+                marker.write_bytes(_MARKER_BYTES)
+                marker.chmod(0o600)
+                self.assertEqual(_isolated_root(sandbox), sandbox)
+                outer_file = Path(outside) / "state.txt"
+                outer_file.write_bytes(b"external-state-untouched\n")
+                link = sandbox / "state-link.txt"
+                os.link(outer_file, link)
+                self.assertEqual(outer_file.stat().st_nlink, 2)
+                with self.assertRaisesRegex(AgentArtifactError, "hardlink|unsafe"):
+                    _isolated_root(sandbox)
+                self.assertEqual(outer_file.read_bytes(), b"external-state-untouched\n")
+                link.unlink()
+                if hasattr(os, "mkfifo"):
+                    fifo = sandbox / "unsafe-special-file"
+                    os.mkfifo(fifo, 0o600)
+                    with self.assertRaisesRegex(AgentArtifactError, "unsafe"):
+                        _isolated_root(sandbox)
+                    fifo.unlink()
+                self.assertEqual(_isolated_root(sandbox), sandbox)
+
+
 class V30ManagementJobTransportTests(unittest.TestCase):
     def setUp(self):
         self.server_tmp = tempfile.mkdtemp(prefix="drlink-v30-job-srv-")
