@@ -1,7 +1,7 @@
 // UXB-06F: supplementary contract evidence only; not a logged-in browser/User E2E.
 import assert from 'node:assert/strict';
 import {before,after,test} from 'node:test';
-import {mkdtempSync,rmSync} from 'node:fs';
+import {mkdtempSync,rmSync,readFileSync} from 'node:fs';
 import {dirname,join} from 'node:path';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {build} from 'esbuild';
@@ -38,6 +38,21 @@ test('structurally required non-item Core pages remain UNKNOWN without evidence'
     assert.equal(menu.requireObservedMenuPayload(route,valid),valid);
     assert.throws(()=>menu.requireObservedMenuPayload(route,broken),/Core|UNKNOWN/);
   }
+});
+test('Policy list and details never mislabel missing Core status or expiry as Disabled/Never',()=>{
+  for(const value of [true,1])assert.equal(menu.policyStateLabel(value),"Enabled");
+  for(const value of [false,0])assert.equal(menu.policyStateLabel(value),"Disabled");
+  for(const value of [null,undefined,"false",2,-1,[],{}])
+    assert.equal(menu.policyStateLabel(value),"UNKNOWN");
+  assert.equal(menu.policyExpiryLabel({expires_at:null}),"Never");
+  assert.equal(menu.policyExpiryLabel({expires_at:"2030-01-01T00:00:00Z"}),"2030-01-01T00:00:00Z");
+  for(const item of [{},{expires_at:undefined},{expires_at:""},{expires_at:0},
+    {expires_at:"X".repeat(300)},null])
+    assert.equal(menu.policyExpiryLabel(item),"UNKNOWN");
+  const source=readFileSync(join(root,"src","main.tsx"),"utf8");
+  assert.match(source,/policyStateLabel\(item.enabled\)/);
+  assert.match(source,/policyStateLabel\(selected.enabled\)/);
+  assert.match(source,/policyExpiryLabel\(item\)/);
 });
 test('Core pagination is visible and local filters never imply a complete list',()=>{
   for(const response of [null,undefined,{items:[]},{items:[],next_cursor:null},

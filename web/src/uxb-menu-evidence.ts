@@ -22,6 +22,26 @@ export function isPartialCorePage(payload:any):boolean{
   return typeof payload?.next_cursor==="string"&&payload.next_cursor.length>0;
 }
 
+/** SQLite policy rows carry enabled=0/1, but a missing or malformed field
+ * is not evidence of Disabled. This is presentation only; Core is authority.
+ */
+export function policyStateLabel(value:unknown):"Enabled"|"Disabled"|"UNKNOWN"{
+  if(value===true||value===1)return "Enabled";
+  if(value===false||value===0)return "Disabled";
+  return "UNKNOWN";
+}
+/** An explicit Core NULL expiry means no expiry; an absent/invalid field
+ * means the Web has no reliable expiry evidence.
+ */
+export function policyExpiryLabel(item:unknown):string{
+  if(!item||typeof item!=="object"||Array.isArray(item))return "UNKNOWN";
+  const row=item as Record<string,unknown>;
+  if(!Object.prototype.hasOwnProperty.call(row,"expires_at"))return "UNKNOWN";
+  if(row.expires_at===null)return "Never";
+  return typeof row.expires_at==="string"&&!!row.expires_at.trim()
+    &&row.expires_at.length<=160?row.expires_at:"UNKNOWN";
+}
+
 /** Keyset page navigation only uses observed opaque Core cursors. The UI may
  * navigate backwards using previous request cursors; it never guesses a total. */
 export type MenuPagePosition={cursor:string,history:string[]};
