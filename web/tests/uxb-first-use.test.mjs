@@ -1,7 +1,7 @@
 // DRL3-7B UXB-01/02 offline deterministic contract, not browser/user E2E.
 import assert from "node:assert/strict";
 import {before,after,test} from "node:test";
-import {mkdtempSync,rmSync} from "node:fs";
+import {mkdtempSync,rmSync,readFileSync} from "node:fs";
 import {dirname,join} from "node:path";
 import {fileURLToPath,pathToFileURL} from "node:url";
 import {build} from "esbuild";
@@ -104,6 +104,20 @@ test("Home welcome requires confirmed empty Core across Hosts, Services and ever
  assert.equal(home.showFreshHomeWelcome({...empty,overview:{...empty.overview,
   policies:{ai:{total:0},remote:{enabled:0}}}},"ready"),false);
  assert.equal(home.showFreshHomeWelcome(null,"ready"),false);
+});
+test("Pending Host attention links to the existing admission-filtered Host inventory without approval",()=>{
+ const data={overview:{managed_hosts:{total:10,pending_approval:3},
+    remote_services:{total:0,enabled:0},policies:{ai:{total:0,enabled:0}}}};
+ for(const role of ["Admin","Operator","Read Only"]){
+   const html=renderToStaticMarkup(React.createElement(home.FirstUseHome,{
+     data,operator:{role},api:async()=>{throw new Error("SSR must not call Core")}}));
+   assert.match(html,/3 Host\(s\) await Admin approval/);
+   assert.match(html,/Review pending Hosts/);
+   assert.match(html,/more pages may be needed/);
+   assert.doesNotMatch(html,/Click here to approve|Approvals completed/);
+ }
+ const source=readFileSync(join(root,"src","uxb-home.tsx"),"utf8");
+ assert.match(source,/onNavigate\?\.\("hosts","connections",\{savedAdmission:"PENDING_APPROVAL"\}\)/);
 });
 test("Home next action never skips UNKNOWN or unapproved Agent prerequisites",()=>{
  const ready="Configured · verify",unknown="Unknown",todo="Not started",verify="Needs verification";

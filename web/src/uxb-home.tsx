@@ -180,9 +180,15 @@ export function FirstUseHome({data,operator,api,onNavigate}:{
         </li>;
       })}
     </ol>
-    {typeof pending==="number"&&pending>0&&<p className="notice">
-      {pending} Host(s) await Admin approval according to the Core overview or completed inventory.
-      Connected does not mean approved.</p>}
+    {typeof pending==="number"&&pending>0&&<div className="notice" role="status">
+      <strong>{pending} Host(s) await Admin approval.</strong>
+      <p>Core overview or complete inventory evidence · Connected does not mean approved.</p>
+      <button type="button" className="secondary"
+        onClick={()=>onNavigate?.("hosts","connections",{savedAdmission:"PENDING_APPROVAL"})}>
+        Review pending Hosts →
+      </button>
+      <small>Opens only the already authorized Host inventory; more pages may be needed.</small>
+    </div>}
     {pending==="UNKNOWN"&&loadState==="ready"&&<p className="muted" role="status">
       Pending Host approvals: UNKNOWN · Review Servers &amp; Agents to inspect missing Core evidence.</p>}
     <div className="dr-uxb-home-next"><div><strong>Suggested next action</strong><small>{next.title}</small></div>
