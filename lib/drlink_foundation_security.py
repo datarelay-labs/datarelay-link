@@ -37,6 +37,13 @@ _WHEEL_PATH = str(_WHEEL)
 if _WHEEL_PATH not in sys.path:
     sys.path.insert(0, _WHEEL_PATH)
 from datarelay_onprem_security import (  # noqa: E402
+    ArtifactKind as FoundationArtifactKind,
+    ArtifactProof as FoundationArtifactProof,
+    InstalledProduct as FoundationInstalledProduct,
+    OfflineArtifact as FoundationOfflineArtifact,
+    UpgradeEvidence as FoundationUpgradeEvidence,
+    preview_offline_upgrade as foundation_preview_offline_upgrade,
+    verify_stream_sha256 as foundation_verify_stream_sha256,
     AllowEntry as FoundationAllowEntry,
     Decision as FoundationIngressDecision,
     ManagementPolicy as FoundationManagementPolicy,
@@ -58,6 +65,13 @@ __all__ = [
     "FOUNDATION_SOURCE_HEAD",
     "FOUNDATION_VERSION",
     "FOUNDATION_WHEEL_SHA256",
+    "FoundationArtifactKind",
+    "FoundationArtifactProof",
+    "FoundationInstalledProduct",
+    "FoundationOfflineArtifact",
+    "FoundationUpgradeEvidence",
+    "foundation_preview_offline_upgrade",
+    "foundation_verify_stream_sha256",
     "FoundationAllowEntry",
     "FoundationIngressDecision",
     "FoundationManagementPolicy",

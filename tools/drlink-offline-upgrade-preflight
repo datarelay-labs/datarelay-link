@@ -1,0 +1,50 @@
+#!/usr/bin/env python3
+"""Read-only DRLink offline release byte check. Never invokes an updater."""
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+from drlink_offline_upgrade_preflight import (  # noqa: E402
+    OfflinePreflightError,
+    preflight_offline_release,
+)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Check a local offline artifact; never installs or authenticates a publisher."
+    )
+    parser.add_argument("--root", default="/", help="Read-only DRLink installation root")
+    parser.add_argument("--artifact", required=True, help="Absolute local archive path")
+    parser.add_argument("--manifest", required=True, help="Absolute local JSON manifest path")
+    parser.add_argument(
+        "--manifest-sha256", required=True,
+        help="Separately supplied exact manifest SHA256 (checksum only, not publisher trust)",
+    )
+    args = parser.parse_args(argv)
+    try:
+        report = preflight_offline_release(
+            root=args.root,
+            artifact_path=args.artifact,
+            manifest_path=args.manifest,
+            expected_manifest_sha256=args.manifest_sha256,
+        )
+    except (OfflinePreflightError, ValueError) as exc:
+        report = {
+            "status": "BLOCKED", "reason": str(exc),
+            "upgrade_authorized": False, "read_only": True,
+            "authoritative_mutation": False,
+        }
+        print(json.dumps(report, sort_keys=True))
+        return 3
+    print(json.dumps(report, sort_keys=True))
+    # Integrity-only output is always blocked until a separate signed installer gate.
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
