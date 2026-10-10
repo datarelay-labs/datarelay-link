@@ -130,10 +130,20 @@ def delivery_tick(root: Optional[str] = None, *, limit: int = MAX_TICK) -> dict[
     return result
 
 
+def _positive_limit(raw: str) -> int:
+    try:
+        parsed = int(raw)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("limit must be a positive integer") from exc
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("limit must be a positive integer")
+    return parsed
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="DRLink bounded signed Webhook delivery tick")
     parser.add_argument("--root")
-    parser.add_argument("--limit", type=int, default=MAX_TICK)
+    parser.add_argument("--limit", type=_positive_limit, default=MAX_TICK)
     args = parser.parse_args(argv)
     result = delivery_tick(args.root, limit=args.limit)
     print("Webhook delivery: claimed=%d delivered=%d failed=%d" % (

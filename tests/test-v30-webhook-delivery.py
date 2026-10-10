@@ -257,6 +257,22 @@ class WebhookDeliveryTests(unittest.TestCase):
             self.assertGreater(row["next_attempt_at"], event["timestamp"])
             self.assertEqual(store.claim_due(), [])  # no retry storm
 
+    def test_worker_cli_rejects_invalid_limit_before_running_delivery(self):
+        import contextlib
+        import io
+        from drlink_webhook_delivery import main
+        for invalid in ("0", "-1", "not-an-integer"):
+            with self.subTest(limit=invalid):
+                errors = io.StringIO()
+                with patch("drlink_webhook_delivery.delivery_tick",
+                           side_effect=AssertionError("must not send")), \
+                     contextlib.redirect_stderr(errors), \
+                     self.assertRaises(SystemExit) as raised:
+                    main(["--root", self.root, "--limit", invalid])
+                self.assertEqual(raised.exception.code, 2)
+                self.assertIn("limit", errors.getvalue().lower())
+                self.assertNotIn("Traceback", errors.getvalue())
+
     def test_nonpositive_or_nonnumeric_tick_limit_does_not_claim_or_send(self):
         hook, event = self._event()
         with patch("drlink_webhook_delivery.send_signed_event",
