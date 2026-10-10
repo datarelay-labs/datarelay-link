@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
@@ -125,6 +126,80 @@ class V30AuditSpoolTests(unittest.TestCase):
             destination_meta={"service_id": "svc-1", "port": 22, "protocol": "tcp"},
             **kwargs,
         )
+
+    def test_partial_state_write_is_completed_before_event_persistence(self):
+        original_write = os.write
+        shortened = []
+
+        def partial_state_write(fd, data):
+            path = os.readlink("/proc/self/fd/%d" % fd)
+            if ".state." in path and not shortened:
+                shortened.append(True)
+                return original_write(fd, data[:7])
+            return original_write(fd, data)
+
+        with patch("drlink_v30_audit.os.write", side_effect=partial_state_write):
+            event = self.spool.enqueue(self._event())
+        self.assertEqual(shortened, [True])
+        state = json.loads(self.spool.state_path.read_text(encoding="utf-8"))
+        self.assertEqual(state["next_sequence"], event["source_sequence"] + 1)
+        recorded = json.loads(self.spool.active_path.read_text(encoding="utf-8"))
+        self.assertEqual(recorded["event_id"], event["event_id"])
+
+    def test_partial_event_write_is_completed_before_enqueue_success(self):
+        original_write = os.write
+        shortened = []
+
+        def partial_event_write(fd, data):
+            path = os.readlink("/proc/self/fd/%d" % fd)
+            if path.endswith("/active.jsonl") and not shortened:
+                shortened.append(True)
+                return original_write(fd, data[:13])
+            return original_write(fd, data)
+
+        with patch("drlink_v30_audit.os.write", side_effect=partial_event_write):
+            event = self.spool.enqueue(self._event())
+        self.assertEqual(shortened, [True])
+        lines = self.spool.active_path.read_bytes().splitlines()
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(json.loads(lines[0])["event_id"], event["event_id"])
+        self.assertEqual(json.loads(lines[0])["source_sequence"], 1)
+
+    def test_zero_progress_state_write_never_commits_or_appends(self):
+        original_write = os.write
+        injected = []
+
+        def zero_state_write(fd, data):
+            path = os.readlink("/proc/self/fd/%d" % fd)
+            if ".state." in path and not injected:
+                injected.append(True)
+                return 0
+            return original_write(fd, data)
+
+        with patch("drlink_v30_audit.os.write", side_effect=zero_state_write):
+            with self.assertRaises(AuditUnavailable):
+                self.spool.enqueue(self._event())
+        self.assertEqual(injected, [True])
+        self.assertFalse(self.spool.state_path.exists())
+        self.assertFalse(self.spool.active_path.exists())
+        self.assertEqual(list(self.spool.root.glob(".state.*.tmp")), [])
+
+    def test_zero_progress_event_write_fails_closed(self):
+        original_write = os.write
+        injected = []
+
+        def zero_event_write(fd, data):
+            path = os.readlink("/proc/self/fd/%d" % fd)
+            if path.endswith("/active.jsonl") and not injected:
+                injected.append(True)
+                return 0
+            return original_write(fd, data)
+
+        with patch("drlink_v30_audit.os.write", side_effect=zero_event_write):
+            with self.assertRaises(AuditUnavailable):
+                self.spool.enqueue(self._event())
+        self.assertEqual(injected, [True])
+        self.assertEqual(self.spool.active_path.read_bytes(), b"")
 
     def test_sequence_is_durable_across_spool_instances(self):
         one = self.spool.enqueue(self._event())

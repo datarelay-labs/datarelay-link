@@ -190,6 +190,16 @@ def _fsync_dir(path: Path) -> None:
         os.close(fd)
 
 
+def _write_all(fd: int, payload: bytes) -> None:
+    """Never acknowledge a durable write until every byte was accepted."""
+    remaining = memoryview(payload)
+    while remaining:
+        written = os.write(fd, remaining)
+        if written <= 0:
+            raise OSError("Durable audit spool write made no progress.")
+        remaining = remaining[written:]
+
+
 class DurableAuditSpool:
     """Bounded local durable transport journal for one enforcement source."""
 
@@ -271,11 +281,20 @@ class DurableAuditSpool:
         tmp = self.root / (".state.%s.tmp" % secrets.token_hex(6))
         payload = json.dumps(state, sort_keys=True, separators=(",", ":")) + "\n"
         fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        persisted = False
         try:
-            os.write(fd, payload.encode("utf-8"))
+            _write_all(fd, payload.encode("utf-8"))
             os.fsync(fd)
+            persisted = True
+        except OSError as exc:
+            raise AuditUnavailable("Durable audit spool state write failed.") from exc
         finally:
             os.close(fd)
+            if not persisted:
+                try:
+                    tmp.unlink(missing_ok=True)
+                except OSError:
+                    pass
         os.replace(tmp, self.state_path)
         _fsync_dir(self.root)
 
@@ -354,7 +373,7 @@ class DurableAuditSpool:
                 0o600,
             )
             try:
-                os.write(out, line)
+                _write_all(out, line)
                 os.fsync(out)
             except Exception as exc:
                 raise AuditUnavailable("Durable audit spool append failed.") from exc
