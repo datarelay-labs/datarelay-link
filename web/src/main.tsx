@@ -3,7 +3,7 @@ import {createRoot} from "react-dom/client";
 import {QRCodeSVG} from "qrcode.react";
 import {AdministrationHub,type AdministrationHubTask} from "@datarelay-labs/foundation";
 import {createLinkFoundationAdministrationTasks} from "./foundation-administration";
-import {AccessEvidenceExplorer,GuidedPolicyJourney,coreFlowKey,coreCutoffKey,visibleCoreEvidence,type AccessPlane} from "./p0-access-policy";
+import {AccessEvidenceExplorer,GuidedPolicyJourney,coreFlowKey,coreCutoffKey,visibleCoreEvidence,resolveCompletePolicyMatch,type AccessPlane} from "./p0-access-policy";
 import {EnrollmentOnboarding} from "./p0-enrollment";
 import {navGroups,groupFor,labelFor,pageDescriptions,visibleRoute,navMatches,setupContextForObjectFamily} from "./uxb-navigation";
 import {FirstUseHome,isFreshInstallation,observedRecentFeed,observedNumber,accessPlaneCount,coreHealthState,type RecentFeed} from "./uxb-home";
@@ -851,7 +851,7 @@ function AccessOperations({operator,onNavigate,context}:{operator:any,onNavigate
     </section>
     <AccessEvidenceExplorer api={api} plane={plane as AccessPlane} source={source} destination={destination} selector={selector}
       onSelect={flow=>{diagnosisGeneration.current+=1;setSource(flow.source);setDestination(flow.destination);setSelector(flow.selector);setDiagnosisEvidence(null);setDiagnosisBusy(false)}}
-      onNavigate={(id,group)=>onNavigate?.(id,group,context)}/>
+      onNavigate={(id,group,detail)=>onNavigate?.(id,group,detail??context)}/>
     <div className="card">
       <div className="dr-section-head"><div><p className="dr-eyebrow">Policy Simulator</p><h3>Connection Diagnosis</h3></div></div>
       <div className="muted">Side-effect-free Core correlation. No browser-triggered DNS or target probe is launched; missing evidence stays UNKNOWN.</div>
@@ -1484,8 +1484,12 @@ function ObjectsWorkspace({data,onNavigate,context,api}:{data:any,onNavigate?:(i
   </div>;
 }
 
-function PolicyWorkspace({data,operator,onNavigate,api}:{data:any,operator:any,onNavigate?:(id:string,groupId?:string,context?:any)=>void,api:(path:string)=>Promise<any>}){
-  const [plane,setPlane]=useState("all"),[filter,setFilter]=useState(""),[selected,setSelected]=useState<any>(null);
+function PolicyWorkspace({data,operator,onNavigate,api,context}:{data:any,operator:any,onNavigate?:(id:string,groupId?:string,context?:any)=>void,api:(path:string)=>Promise<any>,context?:any}){
+  const focusPlane=["remote","internet","ai"].includes(context?.focusPolicy?.plane)
+    ?String(context.focusPolicy.plane) as AccessPlane:null;
+  const focusName=typeof context?.focusPolicy?.name==="string"&&context.focusPolicy.name.length<=160
+    ?context.focusPolicy.name:"";
+  const [plane,setPlane]=useState<string>(focusPlane||"all"),[filter,setFilter]=useState(focusName),[selected,setSelected]=useState<any>(null);
   const [additional,setAdditional]=useState<any[]>([]);
   const [nextByPlane,setNextByPlane]=useState<Record<string,string|null>>(data.next_cursor_by_plane||{});
   const [exhausted,setExhausted]=useState<string[]>([]);
@@ -1525,12 +1529,24 @@ function PolicyWorkspace({data,operator,onNavigate,api}:{data:any,operator:any,o
   const limitedPlanes=(Array.isArray(data.possibly_truncated_planes)?data.possibly_truncated_planes:[])
     .filter((kind:string)=>!exhausted.includes(kind));
   const selectedMayBeLimited=limitedPlanes.some((kind:string)=>plane==="all"||plane===kind);
+  const focusComplete=!!focusPlane&&!limitedPlanes.includes(focusPlane)&&!nextByPlane[focusPlane];
+  const focusedPolicy=focusPlane&&focusName?resolveCompletePolicyMatch(
+    [...(data.items||[]),...additional],focusPlane,focusName,focusComplete):null;
   const rows=[...(data.items||[]),...additional].filter((item:any)=>
     (plane==="all"||item.plane===plane)&&(!q||Object.values(item).some(v=>String(v??"").toLowerCase().includes(q))));
   const tabs=[["all","All"],["remote","Remote"],["internet","Internet"],["ai","AI"]];
   return <div className="dr-resource-workspace">
     <section className="dr-page-intro"><div><p className="dr-eyebrow">Access</p><h2>Policies</h2><p className="muted">One policy workspace with separate Remote, Internet and AI security semantics.</p></div><div className="dr-page-actions"><button className="secondary" onClick={()=>onNavigate?.("access","access")}>Test & explain access</button>{operator.role!=="Read Only"&&<button className="primary" onClick={()=>onNavigate?.("drafts","access")}>Draft change</button>}</div></section>
     <div className="dr-access-tabs" role="tablist" aria-label="Policy plane">{tabs.map(([id,label])=><button key={id} role="tab" aria-selected={plane===id} className={plane===id?"active":""} onClick={()=>setPlane(id)}>{label}</button>)}</div>
+    {focusPlane&&focusName&&plane===focusPlane&&<section className="card dr-uxb-context" role="status">
+      <strong>Rule requested from a fresh Core access trace: {focusName}</strong>
+      <p>Trace rule names are not policy IDs. A detail link is available only when the entire
+        {focusPlane.toUpperCase()} Core policy list proves exactly one matching name and identifier.</p>
+      {focusedPolicy?<button type="button" className="primary" onClick={()=>setSelected(focusedPolicy)}>
+        Open verified policy detail →</button>:
+        <p className="muted">{focusComplete?"Exact rule identity is missing or ambiguous in Core policy inventory.":
+          "Policy inventory is incomplete. Load remaining Core pages before resolving this rule."}</p>}
+    </section>}
     <section className="card dr-list-card"><div className="dr-list-toolbar"><div><strong>{rows.length}</strong><span>policy rules</span></div><label className="dr-filter-field"><WorkspaceIcon kind="search"/><input value={filter} onChange={e=>setFilter(e.target.value)} placeholder="Filter policies…"/>{filter&&<button onClick={()=>setFilter("")} aria-label="Clear filter">×</button>}</label></div>
       {(partial||selectedMayBeLimited)&&<p className="dr-uxb-catalog-page-notice" role="status">Core policy list may be incomplete · {limitedPlanes.length?limitedPlanes.map((kind:string)=>kind.toUpperCase()).join(", ")+" reached the per-plane 100-rule API limit.": "Additional rules exist beyond the loaded page."} Filters inspect only loaded rules. Use Search to find a specific policy.</p>}
       {pageError&&<p className="warning-box" role="alert">Core policy page unavailable: {pageError}. Existing rows remain visible; retry Load more.</p>}
@@ -1939,7 +1955,7 @@ function View({active,operator,onNavigate,context,setupDraft,onSetupDraftChange}
   if(active==="objects"&&data)return <><ObjectsWorkspace data={data} onNavigate={onNavigate} context={context} api={api}/>{operator.role!=="Read Only"&&<GuidedObjectPanel/>}</>;
   if(active==="hosts"&&data)return <><ResourceWorkspace kind="host" data={data} operator={operator} onNavigate={onNavigate} api={api} initialFilter={String(context?.savedFilter||"").slice(0,120)} initialAdmission={context?.savedAdmission}/>{operator.role!=="Read Only"&&<ManagedHostMetadataPanel/>}{operator.role==="Admin"&&<ManagedHostAdmissionPanel/>}{operator.role==="Admin"&&<ManagedHostLifecyclePanel/>}</>;
   if(active==="services"&&data)return <><ResourceWorkspace kind="service" data={data} operator={operator} onNavigate={onNavigate} api={api} initialFilter={String(context?.savedFilter||"").slice(0,120)}/>{operator.role!=="Read Only"&&<RemoteServiceEditor api={api}/>}</>;
-  if(active==="policies"&&data)return <><PolicyWorkspace data={data} operator={operator} onNavigate={onNavigate} api={api}/>{operator.role!=="Read Only"&&<GuidedPolicyJourney api={api} onNavigate={onNavigate}/>}<PolicySafetyPanel operator={operator}/>{operator.role!=="Read Only"&&<><GuidedPolicySettingsPanel/><TemporaryAccessPanel/></>}</>;
+  if(active==="policies"&&data)return <><PolicyWorkspace data={data} operator={operator} onNavigate={onNavigate} api={api} context={context}/>{operator.role!=="Read Only"&&<GuidedPolicyJourney api={api} onNavigate={onNavigate}/>}<PolicySafetyPanel operator={operator}/>{operator.role!=="Read Only"&&<><GuidedPolicySettingsPanel/><TemporaryAccessPanel/></>}</>;
   if(active==="doctor"&&data)return <CoreDoctorWorkspace data={data} onNavigate={onNavigate}/>;
   if(active==="health"&&data)return <HealthWorkspace data={data} onNavigate={onNavigate}/>;
   if(active==="revisions"&&data)return <RevisionHistory initial={data} api={api}/>;

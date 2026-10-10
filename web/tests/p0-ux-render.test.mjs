@@ -39,6 +39,48 @@ test("Policy decisions are fail-closed for missing and unrecognized Core values"
   assert.equal(access.explainTrace(null).decision,"UNKNOWN");
 });
 
+test("NetBird/Twingate-inspired focus only uses complete same-plane Core modeled flows",()=>{
+ const row={plane:"remote",input:{plane:"remote",source:" corp ",destination:" app ",service:"ssh"},
+   decision:"ALLOW",rules:["ssh-allow","ssh-allow","other"]};
+ const focus=access.modeledPathEvidence(row,"remote");
+ assert.equal(focus.decision,"ALLOW");
+ assert.deepEqual(focus.flow,{source:"corp",destination:"app",selector:"ssh",path:""});
+ assert.equal(focus.key,access.coreFlowKey("remote","corp","app","ssh"));
+ assert.deepEqual(focus.ruleReferences,["ssh-allow","other"]);
+ assert.equal(focus.ruleReferencesLimited,false);
+ assert.equal(access.modeledPathEvidence({...row,rules:Array.from({length:9},(_,i)=>"rule-"+i)},"remote").ruleReferencesLimited,true);
+ assert.equal(access.modeledPathEvidence(row,"internet"),null);
+ assert.equal(access.modeledPathEvidence({...row,input:{...row.input,source:""}},"remote"),null);
+ assert.equal(access.modeledPathEvidence({...row,input:{...row.input,service:null}},"remote"),null);
+ assert.equal(access.modeledPathEvidence({...row,input:{...row.input,source:"X".repeat(161)}},"remote"),null);
+ assert.equal(access.modeledPathEvidence({...row,decision:"Maybe",rules:["allow-ssh"]},"remote").decision,"UNKNOWN");
+ assert.deepEqual(access.modeledPathEvidence({plane:"ai",input:{
+   plane:"ai",source:"bot",destination:"file",permission:"read",path:"/doc"},rules:[]},"ai").flow,
+   {source:"bot",destination:"file",selector:"read",path:"/doc"});
+ assert.equal(access.modeledPathEvidence({input:{source:"bot",destination:"file",permission:"read",path:"a".repeat(513)}},"ai"),null);
+ assert.equal(access.modeledPathEvidence(null,"remote"),null);
+ assert.equal(access.modeledPathEvidence({input:null},"remote"),null);
+});
+
+test("Matched rule name never becomes an exact-policy ID unless a complete unique Core page proves it",()=>{
+ const rows=[
+   {plane:"remote",name:"allow-ssh",id:"policy-123"},
+   {plane:"internet",name:"allow-ssh",id:"policy-999"},
+   {plane:"remote",name:"allow-web",id:"policy-456"},
+ ];
+ assert.equal(access.resolveCompletePolicyMatch(rows,"remote","allow-ssh",true)?.id,"policy-123");
+ assert.equal(access.resolveCompletePolicyMatch(rows,"internet","allow-ssh",true)?.id,"policy-999");
+ assert.equal(access.resolveCompletePolicyMatch(rows,"remote","allow-ssh",false),null);
+ assert.equal(access.resolveCompletePolicyMatch([...rows,{plane:"remote",name:"allow-ssh",id:"another"}],
+   "remote","allow-ssh",true),null);
+ assert.equal(access.resolveCompletePolicyMatch(rows,"remote","ALLOW-SSH",true),null);
+ assert.equal(access.resolveCompletePolicyMatch(rows,"ai","allow-ssh",true),null);
+ assert.equal(access.resolveCompletePolicyMatch([{plane:"remote",name:"allow-ssh",id:""}],
+   "remote","allow-ssh",true),null);
+ assert.equal(access.resolveCompletePolicyMatch(null,"remote","allow-ssh",true),null);
+ assert.equal(access.resolveCompletePolicyMatch(rows,"remote","",true),null);
+});
+
 test("Core decision evidence can only be shown for the exact current flow and AI path",()=>{
  const old=access.coreFlowKey("remote","source-a","app-b","ssh-tcp22");
  assert.equal(old,access.coreFlowKey("remote"," source-a "," app-b "," ssh-tcp22 "));
