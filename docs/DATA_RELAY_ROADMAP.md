@@ -1,6 +1,7 @@
 # Data Relay Link Roadmap
 
-> **Role:** Forward-looking product roadmap and implementation ordering
+> **Current consolidated 3.0 execution schedule:** [GitHub #184](https://github.com/datarelay-labs/datarelay-link/issues/184), `WEB_USER_JOURNEY_UX_ROADMAP.md` B1–B5. It replaces the earlier dated UXB/L-CI task order; do not restart completed steps.
+> **Role:** Product generations, scope constraints and historical acceptance requirements. This document's older milestone statuses are not the active Work Packet queue.
 > **Product authority:** `PRODUCT_MASTER.md`
 > **Version authority:** `VERSION_POLICY.md`
 > **3.0 Web/management design:** `WEB_MANAGEMENT.md`
