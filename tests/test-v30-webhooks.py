@@ -199,6 +199,40 @@ class WebhookTests(unittest.TestCase):
                 # Intentionally discarded jobs are terminal but not transport failures.
                 self.assertEqual(service._webhook_delivery_attention()["failed"], 0)
 
+    def test_missing_or_invalid_delivery_lease_is_observed_and_recovered(self):
+        # A crashed/legacy SENDING record with no valid timestamp is stale.
+        # Attention and the worker must agree; recovery preserves the stable
+        # event ID and rejects the previous owner's delayed ACK.
+        from drlink_management_service import ManagementQueryService
+        for last_attempt in (None, "not-a-time"):
+            with self.subTest(last_attempt=last_attempt):
+                with tempfile.TemporaryDirectory(prefix="drlink-wh-stale-lease-") as root:
+                    with WebhookStore(root) as store:
+                        sink = store.create(
+                            "stalled", "https://hooks.example.org/events", ["attention"]
+                        )
+                        event = store.enqueue(sink["id"], "attention", {"kind": "stalled"})
+                        initial = store.claim_due()[0]
+                        store.conn.execute(
+                            "UPDATE management_webhook_outbox SET last_attempt_at=? "
+                            "WHERE event_id=?", (last_attempt, event["event_id"]),
+                        )
+                    with ManagementQueryService(root) as service:
+                        status = service._webhook_delivery_attention()
+                        self.assertEqual(status["stale_lease"], 1)
+                        self.assertEqual(status["failed"], 0)
+                    with WebhookStore(root) as recovered:
+                        new_claim = recovered.claim_due()
+                        self.assertEqual(len(new_claim), 1)
+                        self.assertEqual(new_claim[0]["event_id"], event["event_id"])
+                        self.assertNotEqual(
+                            new_claim[0]["lease_token"], initial["lease_token"]
+                        )
+                        self.assertFalse(recovered.record_attempt(
+                            event["event_id"], lease_token=initial["lease_token"],
+                            delivered=True,
+                        ))
+
     def test_attention_surfaces_delivery_failure_without_mutating_policy(self):
         from drlink_management_service import ManagementQueryService
         root = tempfile.mkdtemp(prefix="drlink-wh-health-")

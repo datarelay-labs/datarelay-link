@@ -1506,8 +1506,13 @@ class ManagementQueryService:
             "COALESCE(SUM(CASE WHEN o.status='PENDING' THEN 1 ELSE 0 END),0) AS pending,"
             "COALESCE(SUM(CASE WHEN o.status='FAILED' "
             "AND o.last_error<>'webhook disabled' THEN 1 ELSE 0 END),0) AS failed,"
+            # Worker recovery considers a missing lease timestamp stale as
+            # well. Never hide a stranded SENDING delivery from Attention.
             "COALESCE(SUM(CASE WHEN o.status='SENDING' "
-            "AND o.last_attempt_at<? THEN 1 ELSE 0 END),0) AS stale_lease "
+            "AND (o.last_attempt_at IS NULL "
+            "OR julianday(o.last_attempt_at) IS NULL "
+            "OR julianday(o.last_attempt_at)<julianday(?)) "
+            "THEN 1 ELSE 0 END),0) AS stale_lease "
             "FROM management_webhook_outbox o JOIN management_webhooks w "
             "ON w.id=o.webhook_id WHERE w.enabled=1",
             (stale_before,),

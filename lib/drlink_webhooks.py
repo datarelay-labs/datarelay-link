@@ -437,10 +437,14 @@ class WebhookStore:
         self.conn.execute("BEGIN IMMEDIATE")
         try:
             # Reclaim an interrupted worker, preserving the same stable event id.
+            # Corrupt/missing timestamps must not strand a SENDING event.
+            # Compare actual instants so UTC offsets cannot evade recovery.
             self.conn.execute(
                 "UPDATE management_webhook_outbox SET status='PENDING',lease_token='' "
                 "WHERE status='SENDING' "
-                "AND (last_attempt_at IS NULL OR last_attempt_at<?)", (stale,),
+                "AND (last_attempt_at IS NULL "
+                "OR julianday(last_attempt_at) IS NULL "
+                "OR julianday(last_attempt_at)<julianday(?))", (stale,),
             )
             rows = self.conn.execute(
                 "SELECT o.event_id,o.webhook_id,o.payload_json,o.attempts,w.url "
