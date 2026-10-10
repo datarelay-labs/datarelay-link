@@ -710,8 +710,13 @@ if [[ "$manual_preflight_rc" -eq 0 ]]; then
   cat "$WORKDIR/manual-preflight.out" "$WORKDIR/manual-preflight.err" >&2
   fail "used manual Enrollment Code preflight unexpectedly succeeded"
 fi
-grep -q 'PREFLIGHT_USED_REJECTED' "$WORKDIR/manual-preflight.err" \
-  || fail "manual enrollment preflight was not executed"
+if ! grep -q 'PREFLIGHT_USED_REJECTED' "$WORKDIR/manual-preflight.err"; then
+  # Preserve the actual fail-closed reason in distro CI (e.g. missing source
+  # provenance) instead of collapsing it into a misleading preflight label.
+  echo "Manual enrollment stopped before preflight (diagnostic):" >&2
+  tail -n 25 "$WORKDIR/manual-preflight.err" >&2
+  fail "manual enrollment preflight was not executed"
+fi
 if grep -q 'COLLECT_SERVICES_CALLED' "$WORKDIR/manual-preflight.out"; then
   fail "service wizard ran before used-code preflight rejection"
 fi

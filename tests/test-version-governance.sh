@@ -134,16 +134,22 @@ tail = lint[pos + len(full_marker):].splitlines()
 if not tail or tail[0].strip() != "if: github.event_name != 'pull_request'":
     raise SystemExit("lint.yml full suite must be gated off ordinary PRs")
 
-portability = "  portability-containers:\n    if: github.event_name != 'pull_request'\n"
+portability = "  portability-containers:\n    if: github.event_name != 'pull_request' || github.base_ref == 'feature/v2.4.0-final-product-closure'\n"
 if portability not in lint:
     raise SystemExit("lint.yml portability-containers must be gated off PR")
 
+# Explicit v2.4 integration PR is an owner-requested full functional gate.
+# Keep the ordinary PR fast-path and cost containment unchanged.
+v24_job = "  full-functional-v24:\n    if: github.event_name == 'pull_request' && github.base_ref == 'feature/v2.4.0-final-product-closure'\n"
+if v24_job not in lint or "run: bash tests/run-all.sh" not in lint:
+    raise SystemExit("lint.yml missing scoped full functional v2.4 PR gate")
+
 macos = Path(".github/workflows/macos-client.yml").read_text(encoding="utf-8")
-if "  apple-silicon:\n    if: github.event_name != 'pull_request'\n" not in macos:
+if "  apple-silicon:\n    if: github.event_name != 'pull_request' || github.base_ref == 'feature/v2.4.0-final-product-closure'\n" not in macos:
     raise SystemExit("macOS Apple Silicon qualification must be gated off ordinary PRs")
 windows = Path(".github/workflows/windows-client.yml").read_text(encoding="utf-8")
 for job in ("windows-powershell51", "windows-pwsh7"):
-    if f"  {job}:\n    if: github.event_name != 'pull_request'\n" not in windows:
+    if f"  {job}:\n    if: github.event_name != 'pull_request' || github.base_ref == 'feature/v2.4.0-final-product-closure'\n" not in windows:
         raise SystemExit(f"{job} qualification must be gated off ordinary PRs")
 if "  linux-pwsh-cross:\n" not in windows:
     raise SystemExit("Linux pwsh cross-language PR feedback must remain available")
