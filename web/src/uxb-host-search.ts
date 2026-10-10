@@ -16,6 +16,13 @@ const FREE_FIELDS=["id","name","hostname","status","trust_status",
   "admission_state","agent_platform","agent_version"] as const;
 const MISSING_REQUIRES_CORE=new Set(["tag","group","ip"]);
 const EXACT_FIELDS=new Set(["status","trust_status","admission_state","connected"]);
+// This is the actual Core clients trust enum (trusted/revoked) and the
+// SQLite-enforced admission enum. Unknown/new values are incomplete Core
+// evidence, never confirmed filter nonmatches or actionable authorization.
+const CORE_STATE_VALUES:Record<string,ReadonlySet<string>>={
+  trust_status:new Set(["trusted","revoked"]),
+  admission_state:new Set(["pending_approval","approved","quarantined"]),
+};
 const CONTROL=/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/;
 
 function observedText(row:ObservedHost,key:string):string|null {
@@ -25,7 +32,12 @@ function observedText(row:ObservedHost,key:string):string|null {
     if(raw===false||raw===0)return "disconnected";
     return null;
   }
-  if(typeof raw==="string")return raw.trim()?raw.toLowerCase():null;
+  if(typeof raw==="string"){
+    const value=raw.trim().toLowerCase();
+    if(!value)return null;
+    const recognized=CORE_STATE_VALUES[key];
+    return recognized&&!recognized.has(value)?null:value;
+  }
   // A DB NULL, unrecognized object or absent Agent version cannot
   // be interpreted as a confirmed nonmatch without an evidence caveat.
   return null;
@@ -63,6 +75,10 @@ export function filterObservedHosts(source:unknown,query:unknown):ObservedHostSe
       if(!term||term.length>120)
         return errorResult(items,"A typed Host filter needs a nonempty bounded value. Search not applied.");
       const field=FIELDS[fieldName];
+      // A typed request for an impossible Core enum cannot legitimately
+      // produce "no hosts found" or drive a saved-view claim.
+      if(CORE_STATE_VALUES[field]&&!CORE_STATE_VALUES[field].has(term))
+        return errorResult(items,"Unsupported Core Host state for "+fieldName+". Search not applied.");
       if(field==="connected"){
         if(["1","true","yes","connected"].includes(term))term="connected";
         else if(["0","false","no","disconnected"].includes(term))term="disconnected";

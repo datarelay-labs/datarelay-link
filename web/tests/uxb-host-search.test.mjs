@@ -115,6 +115,25 @@ test("Malformed Core Host rows cannot silently become an empty valid search",()=
   assert.equal(empty.warning,null);
   assert.equal(empty.unknownCount,0);
 });
+test("Unrecognized Core trust/admission states are UNKNOWN, never a confirmed no-match",()=>{
+  const observed=[{id:"odd",name:"Unknown status Host",hostname:"node.local",
+    status:"connected",trust_status:"UNEXPECTED_TRUST",admission_state:"NOT_A_STATE",
+    agent_platform:"linux",agent_version:"3.0"}];
+  for(const query of ["trust:trusted","admission:approved","no-match"]){
+    const result=filterObservedHosts(observed,query);
+    assert.equal(result.applied,true,query);
+    assert.deepEqual(result.items,[],query);
+    assert.equal(result.unknownCount,1,query);
+    assert.match(result.warning,/UNKNOWN|incomplete/i,query);
+  }
+  for(const query of ["trust:UNEXPECTED_TRUST","admission:NOT_A_STATE"]){
+    const result=filterObservedHosts(observed,query);
+    assert.equal(result.applied,false,query);
+    assert.match(result.error,/not available|invalid|unsupported/i,query);
+    assert.deepEqual(result.items,observed);
+  }
+});
+
 test("Missing OS/trust fields are UNKNOWN, not evidence of no host or false zero",()=>{
   const os=search("os:freebsd");
   assert.equal(os.applied,true);
