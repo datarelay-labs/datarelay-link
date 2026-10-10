@@ -825,6 +825,7 @@ function ManagementIngressReadOnly({operator}:{operator:any}){
 
 function SystemPanel({data,operator}:{data:any,operator:any}){
   const [backupPath,setBackupPath]=useState("/var/lib/drlink/backups/");
+  const [integrity,setIntegrity]=useState<any>(null);
   const [renewConfirmation,setRenewConfirmation]=useState(""),[restoreConfirmation,setRestoreConfirmation]=useState("");
   const [certMode,setCertMode]=useState(String(data.certificate?.mode||"AUTO_ACME").toLowerCase().replaceAll("_","-"));
   const [certHostname,setCertHostname]=useState(data.certificate?.hostname||""),[certEmail,setCertEmail]=useState(data.certificate?.contact_email||""),[acmeEnv,setAcmeEnv]=useState(String(data.certificate?.acme_environment||"PRODUCTION").toLowerCase());
@@ -842,6 +843,7 @@ function SystemPanel({data,operator}:{data:any,operator:any}){
   async function refreshProductUpdate(){if(!updateResult?.job_id)return;setError("");try{setUpdateResult(await api("/api/v1/system/update/product/status?job_id="+encodeURIComponent(updateResult.job_id)))}catch(e:any){setError(e.message||String(e))}}
   async function updateEngine(){setError("");setUpdateResult(null);try{setUpdateResult(await api("/api/v1/system/update/engine",{method:"POST",body:JSON.stringify({confirmation:engineUpdateConfirmation})}));setEngineUpdateConfirmation("")}catch(e:any){setError(e.message||String(e))}}
   async function validateBackup(){setError("");setRestoreConfirmation("");try{setValidation(await api("/api/v1/system/backup/validate",{method:"POST",body:JSON.stringify({path:backupPath})}))}catch(e:any){setValidation(null);setError(e.message||String(e))}}
+  async function inspectBackupIntegrity(){setError("");setIntegrity(null);try{setIntegrity(await api("/api/v1/system/backup/integrity",{method:"POST",body:JSON.stringify({path:backupPath})}))}catch(e:any){setError(e.message||String(e))}}
   async function restoreBackup(){setError("");try{await api("/api/v1/system/restore",{method:"POST",body:JSON.stringify({path:backupPath,confirmation:restoreConfirmation})});window.location.reload()}catch(e:any){setError(e.message||String(e))}}
   async function createBackup(){setError("");setBackupArtifact(null);try{setBackupArtifact(await api("/api/v1/system/backup/create",{method:"POST",body:"{}"}))}catch(e:any){setError(e.message||String(e))}}
   async function createSupportBundle(){setError("");setSupportArtifact(null);try{setSupportArtifact(await api("/api/v1/system/support-bundle",{method:"POST",body:"{}"}))}catch(e:any){setError(e.message||String(e))}}
@@ -906,8 +908,11 @@ function SystemPanel({data,operator}:{data:any,operator:any}){
       {backupArtifact&&<pre className="plan">{JSON.stringify(backupArtifact,null,2)}</pre>}
       <h4>Validate Existing Backup</h4>
       <div className="muted">Validation is read-only and uses the same disaster-recovery validator as CLI restore preflight.</div>
-      <div className="toolbar"><input value={backupPath} onChange={e=>{setBackupPath(e.target.value);setValidation(null);setRestoreConfirmation("")}} placeholder="/var/lib/drlink/backups/server-backup-....tar.gz"/><button className="secondary" onClick={validateBackup} disabled={!backupPath}>Validate Backup</button></div>
+      <div className="toolbar"><input value={backupPath} onChange={e=>{setBackupPath(e.target.value);setValidation(null);setIntegrity(null);setRestoreConfirmation("")}} placeholder="/var/lib/drlink/backups/server-backup-....tar.gz"/><button className="secondary" onClick={validateBackup} disabled={!backupPath}>Validate Backup</button></div>
       {validation&&<pre className="plan">{JSON.stringify(validation,null,2)}</pre>}
+      <div className="muted">Observed SHA256 is not publisher authentication, not proof of encrypted backup and not proof of an isolated restore drill. This read-only Web observation has a maximum 128 MiB archive size.</div>
+      {operator.role==="Admin"&&<button className="secondary" onClick={inspectBackupIntegrity} disabled={!backupPath}>Observe archive SHA256</button>}
+      {integrity&&<pre className="plan">{JSON.stringify(integrity,null,2)}</pre>}
       {operator.role==="Admin"&&validation?.valid&&<div className="warning-box"><strong>Restore replaces persistent Data Relay Link state.</strong><div>Canonical restore revalidates the archive, creates a pre-restore snapshot, rolls back on failure when possible, and revokes all Web sessions after success.</div><div className="toolbar"><input value={restoreConfirmation} onChange={e=>setRestoreConfirmation(e.target.value)} placeholder="Type RESTORE"/><button className="danger" onClick={restoreBackup} disabled={restoreConfirmation!=="RESTORE"}>Restore Validated Backup</button></div></div>}
     </div>
     <div className="card">

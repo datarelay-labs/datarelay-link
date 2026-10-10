@@ -26,6 +26,10 @@ from drlink_control_plane import ControlPlane
 from frp_version_identity import identity_from_kv, read_version_file
 
 _MAX_TOOL_OUTPUT = 16 * 1024
+# An authenticated Web read-only observation is not a bulk backup download.
+# Larger archives require a separately qualified native/offline integrity job.
+MAX_BACKUP_OBSERVE_BYTES = 128 * 1024 * 1024
+_BACKUP_OBSERVE_CHUNK_BYTES = 128 * 1024
 AUDIT_RETENTION_CONTROL_DAYS_DEFAULT = 365
 AUDIT_RETENTION_ACCESS_DAYS_DEFAULT = 90
 AUDIT_RETENTION_MAX_EVENTS_DEFAULT = 500_000
@@ -495,6 +499,92 @@ class ManagementSystemService:
             "returncode": int(proc.returncode),
             "output": output,
             "error": error,
+            "authoritative_mutation": False,
+        }
+
+    def backup_integrity(
+        self, path: str, *, expected_sha256: str | None = None,
+    ) -> dict[str, Any]:
+        """Observe real archive bytes without making a restore readiness claim.
+
+        Caller-supplied SHA256 is NOT publisher proof. Each component is
+        opened under its parent directory FD without following symlinks.
+        Metadata is checked before and after hashing; the opened FD is never
+        used to trigger a restore or copy out its contents.
+        """
+        if expected_sha256 is not None and (
+            type(expected_sha256) is not str
+            or len(expected_sha256) != 64
+            or any(ch not in "0123456789abcdef" for ch in expected_sha256)
+        ):
+            raise ControlPlaneError("Expected SHA256 must be 64 lowercase hex digits.")
+        requested, _ = self._backup_target(path)
+        if not all(hasattr(os, flag) for flag in ("O_NOFOLLOW", "O_DIRECTORY")):
+            raise ControlPlaneError("Secure backup source inspection is unavailable.")
+
+        dir_flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_DIRECTORY
+        dir_flags |= getattr(os, "O_CLOEXEC", 0)
+        file_flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+        file_flags |= getattr(os, "O_CLOEXEC", 0)
+        archive_name = requested.removeprefix("/var/lib/drlink/backups/")
+        parts = archive_name.split("/")
+        opened: list[int] = []
+        try:
+            opened.append(os.open(self.root_path, dir_flags))
+            for component in ("var", "lib", "drlink", "backups", *parts[:-1]):
+                opened.append(os.open(component, dir_flags, dir_fd=opened[-1]))
+            opened.append(os.open(parts[-1], file_flags, dir_fd=opened[-1]))
+            archive_fd = opened[-1]
+            before = os.fstat(archive_fd)
+            if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
+                raise ControlPlaneError("Backup archive must be a regular single-link file.")
+            if not 0 < before.st_size <= MAX_BACKUP_OBSERVE_BYTES:
+                raise ControlPlaneError("Backup archive size exceeds read-only observation limit.")
+            checksum = hashlib.sha256()
+            observed = 0
+            while observed < before.st_size:
+                chunk = os.read(
+                    archive_fd,
+                    min(_BACKUP_OBSERVE_CHUNK_BYTES, before.st_size - observed),
+                )
+                if not chunk:
+                    raise ControlPlaneError("Backup archive changed during observation.")
+                observed += len(chunk)
+                checksum.update(chunk)
+            # Refuse both truncation and expansion during the read window.
+            if os.read(archive_fd, 1):
+                raise ControlPlaneError("Backup archive changed during observation.")
+            after = os.fstat(archive_fd)
+            stable = (
+                before.st_dev, before.st_ino, before.st_nlink, before.st_size,
+                before.st_mtime_ns, before.st_ctime_ns,
+            ) == (
+                after.st_dev, after.st_ino, after.st_nlink, after.st_size,
+                after.st_mtime_ns, after.st_ctime_ns,
+            )
+            if not stable or observed != before.st_size:
+                raise ControlPlaneError("Backup archive changed during observation.")
+        except OSError as exc:
+            raise ControlPlaneError(
+                "Backup archive unavailable for read-only integrity observation."
+            ) from exc
+        finally:
+            for fd in reversed(opened):
+                os.close(fd)
+        digest = checksum.hexdigest()
+        return {
+            "path": requested,
+            "artifact_bytes": observed,
+            "sha256_observed": digest,
+            "matches_caller_supplied_sha256": (
+                secrets.compare_digest(digest, expected_sha256)
+                if expected_sha256 is not None else None
+            ),
+            "expected_digest_authenticated": False,
+            "encryption_verified": False,
+            "isolated_restore_drill_verified": False,
+            "restore_ready": False,
+            "read_only": True,
             "authoritative_mutation": False,
         }
 

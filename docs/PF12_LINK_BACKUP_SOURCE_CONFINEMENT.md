@@ -79,3 +79,60 @@ shared Foundation contract. No evidence is invented in this adapter.
 No production, customer, active host backup/restore, credential, SSH,
 firewall, service restart, permission change or protected Client/Core
 test bypass occurred in this source branch.
+
+## B5 native real-byte integrity observation (2026-10-10 follow-on)
+
+Link now implements a narrowly bounded **read-only** product-owned archive
+inspection. A current Admin may explicitly request
+`POST /api/v1/system/backup/integrity` with a canonical
+`{"path":"/var/lib/drlink/backups/<archive>.tar.gz"}` and optional
+`expected_sha256` (exactly 64 lowercase hexadecimal characters).
+The existing full Web session and anti-CSRF requirements apply; non-admin
+Web roles receive HTTP 403 without reaching the filesystem. There is no
+public/anonymously accessible archive inspection endpoint.
+
+The native Link filesystem adapter opens the caller-selected archive
+through a chain of directory file descriptors with `O_NOFOLLOW`, final
+`O_NONBLOCK`, and checks that the file is regular and has exactly one
+hard link. It streams a maximum of **128 MiB** in 128 KiB chunks from
+one opened archive descriptor, computes SHA256 over those actual bytes,
+and verifies stable file identity, size and modification/change metadata
+before returning a result. It rejects missing, oversized, aliased and
+concurrently modified sources, including a symlink swap after the
+earlier path preflight. No file content is returned.
+
+The response includes `artifact_bytes`, `sha256_observed`, optional
+`matches_caller_supplied_sha256`, `read_only=true`, and
+`authoritative_mutation=false`. It **always** reports:
+`expected_digest_authenticated=false`, `encryption_verified=false`,
+`isolated_restore_drill_verified=false`, and `restore_ready=false`.
+A caller-supplied matching checksum is a byte comparison, not a verified
+publisher signature, trusted backup provenance, encryption evidence,
+canonical `frp-restore --validate` success or release authorization.
+
+The existing Administration → System → Backup page shows a separate
+Admin-only **Observe archive SHA256** button. It does not alter the
+authoritative Validate Backup result or enable the destructive Restore
+button. An archive-path edit clears both prior validation and integrity
+results. The UI identifies the 128 MiB Web limit and warns that the
+result is neither publisher authentication, encryption evidence, nor
+an isolated restore drill.
+
+**Remaining limitations:** This Web read is resource-bounded but a true
+end-to-end operational backup may be larger; qualified bulk/offline
+integrity inspection is a separate product-owner operation. An open FD
+protects byte observation from a final-component symlink race, but it
+does not prove the separately invoked native restore CLI will consume
+the same immutable inode. Final FD-based handoff and filesystem owner
+enforcement, trusted backup creation, encryption key custody, verified
+restore-in-disposable-lab, backup freshness/schedule, offline console
+recovery, fail-safe rollback, direct user/browser E2E and release gates
+must still be completed. All tests use synthetic files under a
+temporary test root; no real installed archive or service was read.
+
+Focused native tests:
+`tests/test-v30-web-backup-byte-integrity.py`,
+`V30WebServiceTests.test_backup_integrity_api_requires_admin_csrf_and_real_bytes`,
+and `tests/test-v30-web-backup-byte-integrity-ui.py`.
+The existing PF-12 path confinement, Web auth, lifecycle and source/bundle
+regressions remain applicable.

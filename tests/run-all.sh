@@ -34,7 +34,7 @@ python3 -m py_compile tests/test-allocator.py tests/test-chatgpt-owner-acceptanc
 
 python3 -m py_compile lib/drlink_management_catalog.py lib/drlink_management_service.py lib/drlink_management_change.py lib/drlink_management_drafts.py lib/drlink_management_guided.py lib/drlink_management_enrollment.py lib/drlink_management_remote_service.py lib/drlink_management_host_lifecycle.py lib/drlink_policy_safety.py lib/drlink_management_system.py lib/drlink_management_core.py lib/drlink_management_mcp_adapter.py lib/drlink_management_web_adapter.py lib/drlink_service_accounts.py lib/drlink_automation_api.py lib/drlink_automation_server.py lib/drlink_webhooks.py lib/drlink_webhook_delivery.py lib/drlink_web_auth.py lib/drlink_web_service.py server/drlink-web.py scripts/build-web-bundle.py tests/test-v30-web-auth.py tests/test-v30-web-mfa-policy.py tests/test-v30-web-saas-ux.py tests/test-v30-web-service.py tests/test-v30-web-bundle.py lib/drlink_v30_temporal.py lib/drlink_v30_cutoff.py lib/drlink_v30_audit.py lib/drlink_v30_live.py lib/drlink_v30_jobs.py lib/drlink_v30_capability.py lib/drlink_v30_readmodels.py tests/test-v30-management-foundation.py tests/test-v30-management-query-service.py tests/test-v30-management-change-plan.py tests/test-v30-emergency-cutoff.py tests/test-v30-management-jobs.py tests/test-v30-management-scalability.py tests/test-v30-management-adapters.py tests/test-v30-management-system.py tests/test-v30-managed-host-lifecycle.py tests/test-v30-policy-safety.py tests/test-v30-guided-changes.py tests/test-v30-management-mixed-load.py tests/test-v30-additive-management-schema.py tests/test-v30-audit-foundation.py tests/test-v30-audit-runtime-failclosed.py tests/test-v30-audit-worker.py tests/test-v30-audit-convergence.py tests/test-v30-ai-audit-convergence.py tests/test-v30-live-access.py tests/test-v30-audit-query.py tests/test-v30-temporary-access.py
 
-python3 -m py_compile tests/test-v30-web-backup-path-confinement.py tests/test-v30-web-backup-readiness-ui.py
+python3 -m py_compile tests/test-v30-web-backup-path-confinement.py tests/test-v30-web-backup-readiness-ui.py tests/test-v30-web-backup-byte-integrity.py tests/test-v30-web-backup-byte-integrity-ui.py
 
 echo "=== tests ==="
 ./tests/test-server-migration.sh
@@ -290,6 +290,7 @@ python3 tests/test-v30-additive-management-schema.py
 python3 tests/test-v30-management-adapters.py
 python3 tests/test-v30-management-system.py
 python3 tests/test-v30-web-backup-path-confinement.py
+python3 tests/test-v30-web-backup-byte-integrity.py
 python3 tests/test-v30-product-update.py
 python3 tests/test-v30-managed-host-lifecycle.py
 python3 tests/test-v30-managed-host-admission-schema.py
@@ -306,6 +307,7 @@ python3 tests/test-v30-web-mfa-policy.py
 python3 tests/test-v30-web-saas-ux.py
 python3 tests/test-v30-web-service.py
 python3 tests/test-v30-web-backup-readiness-ui.py
+python3 tests/test-v30-web-backup-byte-integrity-ui.py
 python3 tests/test-v30-web-drafts.py
 python3 tests/test-v30-web-bundle.py
 python3 tests/test-v30-service-accounts.py
