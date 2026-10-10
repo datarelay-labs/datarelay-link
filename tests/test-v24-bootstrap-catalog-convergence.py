@@ -83,6 +83,23 @@ class BootstrapCatalogConvergenceTests(unittest.TestCase):
             self.assertFalse(forced.get('no_change'), forced)
             self.assertEqual(restart.call_count, 1)
 
+            # The same valid generation on an explicit synchronize is also
+            # not a license to flap unrelated proxies or claim DEGRADED.
+            restart.reset_mock()
+            with (mock.patch.object(v24, 'detect_server_reachable', return_value=True),
+                  mock.patch.object(mgmt, 'use_live_mgmt_path', return_value=False)):
+                synchronized = v24.synchronize_agent_remote_services(
+                    agent, root=self.agent_tmp
+                )
+            self.assertEqual(synchronized['status'], 'SYNCHRONIZED', synchronized)
+            restart.assert_not_called()
+            row = agent.conn.execute(
+                "SELECT status, runtime_verified FROM agent_remote_services "
+                "WHERE name='ssh'"
+            ).fetchone()
+            self.assertEqual(row['status'], 'HEALTHY')
+            self.assertEqual(int(row['runtime_verified']), 1)
+
     def test_repeated_runtime_projection_preserves_seed_target_and_origin(self):
         state_path = Path(self.agent_tmp) / 'etc/frp/client-state.json'
         state = json.loads(state_path.read_text())

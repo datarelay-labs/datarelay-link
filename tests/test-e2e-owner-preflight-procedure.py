@@ -52,6 +52,16 @@ class E2EProcedureGuard(unittest.TestCase):
         absent = [p for p in required if p not in text]
         self.assertEqual(absent, [], absent)
 
+    def test_open_runtime_continuity_findings_are_not_prematurely_closed(self):
+        decision = (ROOT / "docs" / "F001_F007_RUNTIME_CONTINUITY_REMEDIATION.md"
+                    ).read_text(encoding="utf-8")
+        self.assertIn("F001=PARTIALLY_MITIGATED", decision)
+        self.assertIn("F007=PARTIALLY_MITIGATED_FOR_METADATA_ONLY", decision)
+        self.assertIn("DOES NOT close F001 or F007", decision)
+        self.assertIn("PASS1=0", decision)
+        self.assertIn("PASS2=0", decision)
+        self.assertIn("RELEASE=HOLD", decision)
+
     def test_both_documents_require_prospective_isolation_and_lifetime_evidence(self):
         for token in ("natural-language mission", "prospective", "server", "baseline"):
             self.assertIn(token.lower(), self.procedure.lower())
