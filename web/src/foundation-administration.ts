@@ -9,15 +9,19 @@ import {createStandardAdministrationTasks} from "@datarelay-labs/foundation";
  */
 export function createLinkFoundationAdministrationTasks(role:string){
   const admin=role==="Admin";
+  // Only recognized, authenticated Link Web roles may see management read
+  // surfaces. Unknown/unset role strings cannot inherit implicit View access.
+  const authenticated=admin||role==="Operator"||role==="Read Only";
+  const readAccess=authenticated?"view":"none";
   const unavailable={availability:"unavailable",access:"view"} as const;
   return createStandardAdministrationTasks({
     "core.https":{
       // The standard task includes Web listener/redirect configuration, which
       // Link does not implement. This only links to MCP TLS certificate status.
       availability:"read_only",
-      access:"view",
+      access:readAccess,
       notes:"MCP TLS certificate status only. Shared Web HTTPS listener and redirect configuration is not available in Link.",
-      target:{kind:"action",actionId:"link.certificate"}
+      ...(authenticated?{target:{kind:"action" as const,actionId:"link.certificate"}}:{})
     },
     "core.users":{
       // Supported on this product, but only Admin can see/manage Web users.
@@ -29,15 +33,31 @@ export function createLinkFoundationAdministrationTasks(role:string){
     "core.password":unavailable,
     "core.timezone":unavailable,
     "core.network":unavailable,
-    "core.retention":unavailable,
-    "core.backup-import":unavailable,
+    "core.retention":{
+      // Only Audit retention is implemented. A general per-product data
+      // cleanup scheduler is not available; native Core owns any policy edit
+      // or deletion, independently guarded by Admin-only permissions.
+      availability:"read_only",
+      access:readAccess,
+      notes:"Audit retention status only; general data retention scheduler is unavailable. Admin policy changes and cleanup are separately Core-authorized.",
+      ...(authenticated?{target:{kind:"action" as const,actionId:"link.retention"}}:{})
+    },
+    "core.backup-import":{
+      // Link provides Core-owned backup validation, not the generic shared
+      // configuration import editor. A restore remains Admin-only, separately
+      // confirmed and authorized by Core; this shortcut never enables it.
+      availability:"read_only",
+      access:readAccess,
+      notes:"Native backup archive validation only; generic configuration import is unavailable. Restore requires separate Admin authorization and confirmation.",
+      ...(authenticated?{target:{kind:"action" as const,actionId:"link.backup"}}:{})
+    },
     "core.audit":{
-      availability:"read_only",access:"view",
-      target:{kind:"action",actionId:"link.audit"}
+      availability:"read_only",access:readAccess,
+      ...(authenticated?{target:{kind:"action" as const,actionId:"link.audit"}}:{})
     },
     "core.health":{
-      availability:"read_only",access:"view",
-      target:{kind:"action",actionId:"link.health"}
+      availability:"read_only",access:readAccess,
+      ...(authenticated?{target:{kind:"action" as const,actionId:"link.health"}}:{})
     }
   });
 }
