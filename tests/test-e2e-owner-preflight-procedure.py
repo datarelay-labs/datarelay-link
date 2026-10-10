@@ -458,5 +458,61 @@ class CodexActorDispatchSafeguards(unittest.TestCase):
             self.assertIn("mcp_tool_call", bad["forbidden_ai_tool_types"])
 
 
+class Canonical116E2EInventoryTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0, str(ROOT / "tools"))
+        import generate_full_user_e2e_inventory as generator
+        cls.generator = generator
+        cls.source = CANONICAL.read_text(encoding="utf-8")
+
+    def test_original_116_scenarios_preserved_without_duplicate_subheadings(self):
+        rows = self.generator.parse_scenarios(self.source)
+        self.assertEqual(len(rows), 116)
+        self.assertEqual(rows[0]["SCENARIO_ID"], "U-001")
+        self.assertEqual(rows[-1]["SCENARIO_ID"], "X-010")
+        self.assertEqual(len({row["SCENARIO_ID"] for row in rows}), 116)
+        self.assertEqual(sum(row["SCENARIO_ID"] == "U-006" for row in rows), 1)
+        counts = {key: sum(row["ROLE_GROUP"] == key for row in rows)
+                  for key in self.generator.EXPECTED_COUNTS}
+        self.assertEqual(counts, self.generator.EXPECTED_COUNTS)
+        self.assertIn("MANDATORY", rows[0]["HEADING"])
+        self.assertIn("CONDITIONAL", rows[-1]["HEADING"])
+
+    def test_canonical_missing_or_duplicate_scenario_cannot_be_qualified(self):
+        original = self.source
+        self.assertIn("## U-001 —", original)
+        with self.assertRaisesRegex(ValueError, "Duplicate"):
+            self.generator.parse_scenarios(original.replace(
+                "## U-001 —", "## U-002 —", 1
+            ))
+        with self.assertRaisesRegex(ValueError, "exactly 116"):
+            self.generator.parse_scenarios(original.replace(
+                "## U-001 —", "### U-001 —", 1
+            ))
+
+    def test_persistent_run_inventory_is_once_only_and_not_a_user_pass(self):
+        with tempfile.TemporaryDirectory(dir=Path.home()) as directory:
+            root = Path(directory) / "owned-run"
+            root.mkdir(mode=0o700)
+            out = self.generator.write_inventory(
+                root=root, content=self.source, repo_head="a" * 40,
+            )
+            with out.open(encoding="utf-8") as stream:
+                rows = list(csv.DictReader(stream, delimiter="\t"))
+            self.assertEqual(len(rows), 116)
+            manifest = json.loads(
+                (out.parent / "scenario-inventory-source.json").read_text()
+            )
+            self.assertFalse(manifest["actual_codex_persona_test_completed"])
+            self.assertIn("NOT_ACTUAL_E2E", manifest["evidence_kind"])
+            self.assertEqual(manifest["scenario_count"], 116)
+            self.assertEqual(out.stat().st_mode & 0o077, 0)
+            with self.assertRaises(FileExistsError):
+                self.generator.write_inventory(
+                    root=root, content=self.source, repo_head="a" * 40,
+                )
+
+
 if __name__ == "__main__":
     unittest.main()

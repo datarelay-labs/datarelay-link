@@ -68,6 +68,8 @@ The official `docs/FULL_USER_E2E_SCENARIOS.md` is the required 4,283-line full u
 
 **Acceptance:** baseline and fault timelines correlate with commands and remote effects; soak success has no unexplained restart, unbounded leak, integrity/error or policy fault; high-load failures and unrelated path failures dispositioned separately.
 
+**Paired Full E2E 116-ID ledger precondition:** `tools/generate_full_user_e2e_inventory.py` freezes exactly the 116 canonical headings (13 U, 15 O, 20 A, 20 S, 15 C, 24 P, 9 X) and requirement tags with source SHA/HEAD in a private RUN_ID; it rejects a missing, duplicate or extra ID. Every applicable ID must later have an actual Codex Direct User plus separate AI-supported User/AI Adviser evidence. Inventory creation alone never qualifies a feature, scenario or release.
+
 ### LAB-P0-05 — Native qualification, repeatability and release gate
 
 - Test the actual assigned native Windows/Rocky hosts only when approved; Docker/mocked runner output cannot qualify native/full-user behavior. Preserve binding Windows extraction, Rocky bootstrap and transfer denials.
