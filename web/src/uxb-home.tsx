@@ -48,9 +48,38 @@ export function showFreshHomeWelcome(data:any,inventoryState:"loading"|"ready"|"
   return inventoryState==="ready"&&isFreshInstallation(data);
 }
 
+/** A bounded inventory page is not an exhaustive approval queue.
+ * Only an explicit terminal cursor proves full inventory pagination.
+ */
+export function hostInventoryPageComplete(payload:any):boolean|null{
+  if(!Array.isArray(payload?.items))return null;
+  if(payload.next_cursor===null)return true;
+  if(typeof payload.next_cursor==="string"&&payload.next_cursor.length>0)return false;
+  return null;
+}
+
+/** The derived Core overview covers all Hosts; a first inventory page does not.
+ * If neither a valid summary nor a complete page exists, never announce zero.
+ */
+export function observedApprovalQueueCount(
+  data:any,inventory:any[]|null,inventoryComplete:boolean
+):number|"UNKNOWN"{
+  const hosts=data?.overview?.managed_hosts;
+  const pending=hosts?.pending_approval;
+  const total=hosts?.total;
+  if(Number.isSafeInteger(pending)&&pending>=0&&
+    (!Number.isSafeInteger(total)||(total>=0&&pending<=total)))return pending;
+  // Even a cursor-complete role-scoped list is not proof of the full fleet
+  // when Core's separately observed overall Host total is larger.
+  if(inventoryComplete&&Array.isArray(inventory)
+    &&(!Number.isSafeInteger(total)||total===inventory.length))
+    return inventory.filter(host=>host?.admission_state==="PENDING_APPROVAL").length;
+  return "UNKNOWN";
+}
+
 /** UXB-02: Core-observed evidence only. A saved policy is not a verified connection. */
 export type TaskState="Not started"|"Needs approval"|"Configured · verify"|"Needs verification"|"Unknown"|"Attention";
-export function firstConnectionStates(data:any,inventory:any[]|null):TaskState[]{
+export function firstConnectionStates(data:any,inventory:any[]|null,inventoryComplete:boolean|null=true):TaskState[]{
   const hosts=data?.overview?.managed_hosts||{};
   const services=data?.overview?.remote_services||{};
   const remote=data?.overview?.policies?.remote||{};
@@ -61,13 +90,14 @@ export function firstConnectionStates(data:any,inventory:any[]|null):TaskState[]
   // An observed empty policy map means no rules, not an unavailable Core.
   const ruleEnabled=typeof remote.enabled==="number"?remote.enabled
     :data?.overview?.policies&&typeof data.overview.policies==="object"?0:null;
-  const pending=inventory?.filter(host=>host.admission_state==="PENDING_APPROVAL").length||0;
+  const pending=observedApprovalQueueCount(data,inventory,inventoryComplete===true);
   const verifiedHost=inventory?.some(host=>host.admission_state==="APPROVED"
     &&String(host.trust_status||"").toLowerCase()==="trusted"
     &&(host.connected===true||host.connected===1));
-  const agent:TaskState = inventory===null?"Unknown":pending>0?"Needs approval"
+  const agent:TaskState = inventory===null?"Unknown"
+    :typeof pending==="number"&&pending>0?"Needs approval"
     :hostCount===0?"Not started":verifiedHost?"Configured · verify"
-    :hostCount===null?"Unknown":"Needs verification";
+    :hostCount===null||pending==="UNKNOWN"?"Unknown":"Needs verification";
   const service:TaskState=serviceCount===null||serviceEnabled===null?"Unknown"
     :serviceCount===0?"Not started":serviceEnabled>0?"Configured · verify":"Needs verification";
   const rule:TaskState=ruleEnabled===null?"Unknown":ruleEnabled>0?"Configured · verify":"Not started";
@@ -81,11 +111,34 @@ const steps=[
   {title:"Test and explain the connection",description:"A saved ALLOW is not proof of target reachability. Ask Core for the decision.",route:"access",group:"access",action:"Test a connection"},
 ] as const;
 
+/** A missing/denied/unverified prerequisite must never be skipped in the
+ * suggested task merely because a later count happens to be zero.
+ * Read Only users receive inspect actions, never edit/issue prompts.
+ */
+export function nextFirstConnectionAction(states:TaskState[],role:string){
+  const host=states[1]||"Unknown";
+  if(host==="Unknown"||host==="Needs approval"||host==="Needs verification")
+    return {title:host==="Needs approval"?"Review pending Agent approvals":"Verify Managed Host readiness",
+      route:"hosts",group:"connections",action:"Inspect Servers & Agents"};
+  if(host==="Not started")return role==="Admin"?steps[1]:{
+    title:"Check available Managed Hosts",route:"hosts",group:"connections",action:"Inspect Servers & Agents"};
+  const service=states[2]||"Unknown";
+  if(service!=="Configured · verify")
+    return {title:"Review the published services",route:"services",group:"connections",
+      action:role==="Read Only"?"Review published services":"Publish or inspect one service"};
+  const rule=states[3]||"Unknown";
+  if(rule!=="Configured · verify")
+    return {title:"Review the access rules",route:"policies",group:"access",
+      action:role==="Read Only"?"Inspect access rules":"Set or inspect access rules"};
+  return steps[4];
+}
+
 export function FirstUseHome({data,operator,api,onNavigate}:{
   data:any,operator:any,api:(path:string)=>Promise<any>,
   onNavigate?:(id:string,groupId?:string,context?:any)=>void
 }){
   const [inventory,setInventory]=useState<any[]|null>(null);
+  const [inventoryComplete,setInventoryComplete]=useState<boolean|null>(null);
   const [loadState,setLoadState]=useState<"loading"|"ready"|"error">("loading");
   const [error,setError]=useState("");
   useEffect(()=>{
@@ -93,24 +146,28 @@ export function FirstUseHome({data,operator,api,onNavigate}:{
     api("/api/v1/inventory?resource_type=managed-host&limit=100")
       .then(payload=>{if(!active)return;
         if(!Array.isArray(payload?.items))throw new Error("Core inventory response missing items");
-        setInventory(payload.items);setLoadState("ready");
+        setInventory(payload.items);setInventoryComplete(hostInventoryPageComplete(payload));setLoadState("ready");
       })
-      .catch(err=>{if(active){setInventory(null);setLoadState("error");setError(String(err?.message||err))}});
+      .catch(err=>{if(active){setInventory(null);setInventoryComplete(null);setLoadState("error");setError(String(err?.message||err))}});
     return()=>{active=false};
   },[api]);
-  const stage=firstConnectionStates(data,inventory);
+  const stage=firstConnectionStates(data,inventory,inventoryComplete);
   const newInstall=showFreshHomeWelcome(data,loadState);
-  const pending=inventory?.filter(host=>host.admission_state==="PENDING_APPROVAL").length||0;
+  const pending=observedApprovalQueueCount(data,inventory,inventoryComplete===true);
   const cards=steps.map((item,i)=>({...item,status:stage[i]}));
-  const next=operator?.role==="Admin"?
-    cards.find((x,i)=>i>0 && (x.status==="Not started"||x.status==="Needs approval"||x.status==="Needs verification"))||cards[4]:
-    cards.find((x,i)=>i>0&&x.status==="Needs verification")||cards[4];
+  const next=nextFirstConnectionAction(stage,String(operator?.role||"Read Only"));
   return <section className="card dr-uxb-home" data-testid="uxb-first-connection">
     <div className="dr-section-head"><div><p className="dr-eyebrow">Get started · Core-observed progress</p>
       <h2>{newInstall?"Your first protected connection starts here":"What would you like to do next?"}</h2>
       <p className="muted">Five steps from adding one server to explaining an access decision. No setup status is stored in your browser.</p>
     </div><button className="primary" onClick={()=>onNavigate?.("setup","connections")}>Open guided setup →</button></div>
     {loadState==="error"&&<p className="warning-box" role="alert">Managed Host inventory unavailable ({error}). Agent readiness is UNKNOWN, not healthy.</p>}
+    {loadState==="ready"&&inventoryComplete!==true&&<p className="warning-box" role="status">
+      Managed Host inventory {inventoryComplete===false?"is paginated":"completeness is UNKNOWN"}:
+      only {inventory?.length??"UNKNOWN"} loaded Host records are available on this page.
+      Approval counts come from the full Core overview when valid; unloaded Hosts may still require attention.
+      Open Servers &amp; Agents to load additional pages.
+    </p>}
     <ol className="dr-uxb-task-list">
       {cards.map((item,i)=>{
         const limited=operator?.role!=="Admin"&&item.route==="enrollments";
@@ -123,7 +180,17 @@ export function FirstUseHome({data,operator,api,onNavigate}:{
         </li>;
       })}
     </ol>
-    {pending>0&&<p className="notice">{pending} Host(s) await Admin approval. Connected does not mean approved.</p>}
+    {typeof pending==="number"&&pending>0&&<div className="notice" role="status">
+      <strong>{pending} Host(s) await Admin approval.</strong>
+      <p>Core overview or complete inventory evidence · Connected does not mean approved.</p>
+      <button type="button" className="secondary"
+        onClick={()=>onNavigate?.("hosts","connections",{savedAdmission:"PENDING_APPROVAL"})}>
+        Review pending Hosts →
+      </button>
+      <small>Opens only the already authorized Host inventory; more pages may be needed.</small>
+    </div>}
+    {pending==="UNKNOWN"&&loadState==="ready"&&<p className="muted" role="status">
+      Pending Host approvals: UNKNOWN · Review Servers &amp; Agents to inspect missing Core evidence.</p>}
     <div className="dr-uxb-home-next"><div><strong>Suggested next action</strong><small>{next.title}</small></div>
       <button className="primary" disabled={operator?.role!=="Admin"&&next.route==="enrollments"} onClick={()=>onNavigate?.(next.route,next.group)}>{next.action} →</button></div>
     <div className="dr-uxb-access-choices" role="group" aria-label="Start by choosing an access direction">

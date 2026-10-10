@@ -2,7 +2,7 @@
 // These checks never substitute for Chromium/mobile User E2E or Core authorization.
 import assert from "node:assert/strict";
 import {after, before, test} from "node:test";
-import {mkdtempSync, rmSync} from "node:fs";
+import {mkdtempSync, readFileSync, rmSync} from "node:fs";
 import {dirname, join} from "node:path";
 import {fileURLToPath, pathToFileURL} from "node:url";
 import {build} from "esbuild";
@@ -16,7 +16,7 @@ import {
 
 const webRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 let scratch;
-let createLinkFoundationAdministrationTasks;
+let createLinkFoundationAdministrationTasks,backupToolReadiness;
 before(async () => {
   // Transpile the actual product projection without a browser or new packages.
   // Emit below ignored node_modules so the pinned Foundation package resolves.
@@ -27,7 +27,7 @@ before(async () => {
     outfile, bundle: true, platform: "node", format: "esm",
     external: ["@datarelay-labs/foundation"], logLevel: "silent",
   });
-  ({createLinkFoundationAdministrationTasks} = await import(
+  ({createLinkFoundationAdministrationTasks,backupToolReadiness} = await import(
     pathToFileURL(outfile).href
   ));
 });
@@ -88,19 +88,70 @@ for (const role of ["Admin", "Operator", "Read Only"]) {
     assert.equal((html.match(/data-group-id="/g) || []).length, 4);
     for (const id of groupIds)
       assert.ok(html.includes('data-group-id="' + id + '"'), id);
-    for (const label of ["HTTPS", "Audit", "System Health"])
+    for (const label of ["HTTPS", "Audit", "System Health", "Retention"])
       assert.ok(html.includes('aria-label="View ' + label + '"'), label);
-    assert.equal((html.match(/aria-label="View /g) || []).length, 3);
+    assert.ok(html.includes('aria-label="View Backup &amp; Import"'));
+    assert.equal((html.match(/aria-label="View /g) || []).length, 5);
     assert.match(html, /MCP TLS certificate status only/);
     assert.match(html, /Shared Web HTTPS listener and redirect configuration is not available/);
-    for (const id of [
-      "core.password", "core.timezone", "core.network",
-      "core.retention", "core.backup-import",
-    ]) {
+    for (const id of ["core.password", "core.timezone", "core.network"]) {
       const task = tasks.find(t => t.id === id);
       assert.equal(task.availability, "unavailable", id);
       assert.equal(task.target, undefined, id);
     }
-    assert.equal(tasks.filter(t => t.availability === "read_only").length, 3);
+    const retention = tasks.find(t => t.id === "core.retention");
+    assert.equal(retention.availability, "read_only");
+    assert.equal(retention.access, "view");
+    assert.deepEqual(retention.target, {kind:"action", actionId:"link.retention"});
+    assert.match(retention.notes, /general data retention scheduler is unavailable/);
+    const backup = tasks.find(t => t.id === "core.backup-import");
+    assert.equal(backup.availability, "read_only");
+    assert.equal(backup.access, "view");
+    assert.deepEqual(backup.target, {kind:"action", actionId:"link.backup"});
+    assert.match(backup.notes, /generic configuration import is unavailable/);
+    assert.equal(tasks.filter(t => t.availability === "read_only").length, 5);
   });
 }
+
+test("unrecognized Web roles cannot acquire read-only Administration targets", () => {
+  for (const role of ["", "Unknown", "Administrator", "admin", "anonymous"]) {
+    const tasks = projection(role);
+    assert.deepEqual(
+      tasks.filter(t => effectiveAdministrationAvailability(t) !== "unavailable"),
+      [], "Unexpected role " + JSON.stringify(role) + " must not see any action"
+    );
+    assert.doesNotMatch(markup(role), /aria-label="(?:View|Manage) /);
+    assert.equal(tasks.filter(t => t.target).length, 0);
+  }
+});
+
+test("native Link retention and backup shortcuts resolve to existing guarded panels", () => {
+  const source = readFileSync(join(webRoot, "src", "main.tsx"), "utf8");
+  const section = source.split("function LinkFoundationAdministration(", 2)[1]
+    ?.split("function SystemPanel(", 1)[0];
+  assert.ok(section, "Link Administration must have an actual dispatch handler");
+  assert.match(section, /case "link\.retention":onNavigate\?\.\("audit","observability"\);break;/);
+  assert.match(section, /case "link\.backup":/);
+  assert.match(section, /getElementById\("drlink-backup-status"\)/);
+  assert.match(source, /id="drlink-backup-status"/);
+  assert.match(source, /api\("\/api\/v1\/audit\/retention"\)/);
+  assert.match(source, /api\("\/api\/v1\/system\/backup\/validate"/);
+  // Neither shortcut is permission to create a backup or apply a restore.
+  assert.match(source, /operator\.role==="Admin"&&<button className="primary" onClick=\{createBackup\}/);
+  assert.match(source, /operator\.role==="Admin"&&validation\?\.valid/);
+});
+
+test("Core backup tool status distinguishes explicit unavailable from missing evidence",()=>{
+  assert.equal(backupToolReadiness({create_available:true,validate_available:true}),"AVAILABLE");
+  assert.equal(backupToolReadiness({create_available:true,validate_available:false}),"UNAVAILABLE");
+  assert.equal(backupToolReadiness({create_available:false,validate_available:true}),"UNAVAILABLE");
+  for(const incomplete of [null,{},[],{create_available:true},
+    {create_available:false,validate_available:null},
+    {create_available:1,validate_available:true},
+    {create_available:"true",validate_available:false}]){
+    assert.equal(backupToolReadiness(incomplete),"UNKNOWN");
+  }
+  const source=readFileSync(join(webRoot,"src","main.tsx"),"utf8");
+  assert.match(source,/Metric label="Backup tools" value=\{backupToolReadiness\(backup\)\}/);
+  assert.match(source,/does not verify an actual protected archive or a successful restore/);
+});

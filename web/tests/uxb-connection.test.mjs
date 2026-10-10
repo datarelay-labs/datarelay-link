@@ -9,11 +9,12 @@ import React from "react";
 import {renderToStaticMarkup} from "react-dom/server";
 
 const root=dirname(dirname(fileURLToPath(import.meta.url)));
-let scratch,setup,service,policy;
+let scratch,setup,service,policy,impact;
 before(async()=>{
  scratch=mkdtempSync(join(root,"node_modules",".uxb-connection-"));
  for(const [name,entry] of [
   ["setup","uxb-setup.tsx"],["service","uxb-remote-service.tsx"],["policy","p0-access-policy.tsx"],
+  ["impact","uxb-impact-evidence.ts"],
  ]){
   const out=join(scratch,name+".mjs");
   await build({entryPoints:[join(root,"src",entry)],outfile:out,
@@ -23,6 +24,7 @@ before(async()=>{
  setup=await import(pathToFileURL(join(scratch,"setup.mjs")).href);
  service=await import(pathToFileURL(join(scratch,"service.mjs")).href);
  policy=await import(pathToFileURL(join(scratch,"policy.mjs")).href);
+ impact=await import(pathToFileURL(join(scratch,"impact.mjs")).href);
 });
 after(()=>{if(scratch)rmSync(scratch,{recursive:true,force:true})});
 
@@ -44,6 +46,99 @@ test("separate Remote, Internet and AI first-use journeys preserve security sema
  assert.equal(setup.firstUseStages.ai.some(x=>x.includes("Remote Service")),false);
 });
 
+test("Guided Policy to Access Workspace preserves only complete bounded non-secret flow intent",()=>{
+ const full=setup.connectionReviewContext("internet"," office "," archive "," https-443 ");
+ assert.deepEqual(full,{plane:"internet",source:"office",destination:"archive",selector:"https-443"});
+ assert.deepEqual(setup.connectionReviewContext("ai"," bot "," repo "," read "),{
+   plane:"ai",source:"bot",destination:"repo",selector:"read"});
+ for(const fields of [["","dst","svc"],["src","","svc"],["src","dst",""],
+   ["src\nsecret","dst","svc"],["src","dst","a".repeat(161)],[null,"dst","svc"]]){
+   assert.deepEqual(setup.connectionReviewContext("remote",...fields),{plane:"remote"});
+ }
+ assert.deepEqual(setup.connectionReviewContext("remote","one","two","three"),{
+   plane:"remote",source:"one",destination:"two",selector:"three"});
+});
+test("Guided policy exposes contextual Core explanation without automatic Apply or saved credentials",()=>{
+ for(const role of ["Admin","Operator","Read Only"]){
+   const html=renderToStaticMarkup(React.createElement(setup.FirstConnectionSetup,{
+     api:async()=>{throw new Error("SSR cannot contact Core")},operator:{role},
+     initialDraft:{plane:"internet",step:3,source:"source-a",destination:"target-b",selector:"https-443"},
+   }));
+   assert.match(html,/Test &amp; explain selected access/);
+   assert.match(html,/navigation only/);
+   assert.doesNotMatch(html,/Core applied rule change at revision/);
+   assert.match(html,/source-a/);
+   if(role==="Read Only")assert.match(html,/Your role is read-only/);
+ }
+ const incomplete=renderToStaticMarkup(React.createElement(setup.FirstConnectionSetup,{
+   api:async()=>{throw new Error("SSR cannot contact Core")},operator:{role:"Operator"},
+   initialDraft:{plane:"ai",step:3,source:"bot-a",destination:"",selector:"read"},
+ }));
+ assert.match(incomplete,/incomplete/);
+ const review=renderToStaticMarkup(React.createElement(setup.FirstConnectionSetup,{
+   api:async()=>{throw new Error("SSR cannot contact Core")},operator:{role:"Admin"},
+   initialDraft:{plane:"ai",step:4,source:"bot-a",destination:"resource-b",selector:"read"},
+ }));
+ assert.match(review,/Review selected flow in Guided Policy/);
+ assert.match(review,/Returning to rule definition starts a fresh Core Preview/);
+ const source=readFileSync(join(root,"src","uxb-setup.tsx"),"utf8");
+ assert.match(source,/onNavigate=\{navigateFromSetup\}/);
+ assert.match(source,/id==="access"\?reviewContext:context/);
+});
+test("Policy impact controls render UNKNOWN for missing flags, counts and references",()=>{
+ for(const [value,want] of [[true,"YES"],[false,"NO"],[null,"UNKNOWN"],
+   [0,"UNKNOWN"],["false","UNKNOWN"],[undefined,"UNKNOWN"]]){
+   assert.equal(impact.observedCoreFlag(value),want);
+ }
+ assert.equal(impact.observedCoreCount(0),0);
+ assert.equal(impact.observedCoreCount(3),3);
+ for(const invalid of [undefined,null,-1,NaN,"0",Infinity,1.2]){
+   assert.equal(impact.observedCoreCount(invalid),"UNKNOWN");
+ }
+ assert.equal(impact.observedCoreNames(null),"UNKNOWN");
+ assert.equal(impact.observedCoreNames(""),"UNKNOWN");
+ assert.equal(impact.observedCoreNames([]),"none reported");
+ assert.equal(impact.observedCoreNames(["rule-1","rule-2"]),"rule-1, rule-2");
+ assert.equal(impact.observedCoreNames(["",123]),"UNKNOWN");
+ assert.match(impact.observedCoreNames(Array.from({length:11},(_,i)=>"rule-"+i)),/first 8 of 11/);
+ const main=readFileSync(join(root,"src","main.tsx"),"utf8");
+ assert.match(main,/observedCoreFlag\(blast.access_broadened\)/);
+ assert.match(main,/observedCoreFlag\(limits.truncated\)/);
+ assert.match(main,/observedCoreCount\(limits.newly_blocked_total\)/);
+ assert.match(main,/observedCoreNames\(blast.affected_rules\)/);
+ assert.match(main,/Missing impact fields are UNKNOWN/);
+});
+test("Access → Draft → Guided Policy navigation keeps bounded intent as read-only reference",()=>{
+ const src=readFileSync(join(root,"src","main.tsx"),"utf8");
+ const access=src.split("function AccessOperations(",2)[1]?.split("function AuditExplorer(",1)[0]||"";
+ const draftRef=src.split("function DraftWorkflowReference(",2)[1]?.split("function DraftWorkspace(){",1)[0]||"";
+ const policy=src.split("function PolicyWorkspace(",2)[1]?.split("function ResourceWorkspace(",1)[0]||"";
+ const view=src.split("function View(",2)[1]?.split("function WorkspaceIcon(",1)[0]||"";
+ assert.match(access,/const flowContext=connectionReviewContext\(plane as AccessPlane,source,destination,selector\)/);
+ assert.match(access,/onNavigate\?\.\("drafts","access",flowContext\)/);
+ assert.match(access,/onNavigate\?\.\("policies","access",flowContext\)/);
+ assert.match(draftRef,/connectionReviewContext\(plane,context\?\.source,context\?\.destination,context\?\.selector\)/);
+ assert.match(draftRef,/reference only/);
+ assert.match(draftRef,/not added to ConfigurationBundle/);
+ assert.match(draftRef,/not carry a Change Plan or approval/);
+ assert.match(draftRef,/onNavigate\?\.\("policies","access",selected\)/);
+ assert.match(draftRef,/onNavigate\?\.\("access","access",selected\)/);
+ assert.match(policy,/onNavigate\?\.\("drafts","access",carriedFlow\|\|undefined\)/);
+ assert.match(policy,/not an approved rule/);
+ assert.match(view,/DraftWorkflowReference context=\{context\} onNavigate=\{onNavigate\}/);
+ assert.match(view,/initialPlane=\{selectedPlane\} initialFlow=\{"source" in initialFlow\?initialFlow:undefined\}/);
+ const coreDraft=src.split("function DraftWorkspace(){",2)[1]?.split("function BlastRadiusView(",1)[0]||"";
+ assert.match(coreDraft,/if\(!draftId\|\|!preview\?\.change_plan_id\|\|confirmation!=="APPLY"\)return;/);
+ assert.match(coreDraft,/onChange=\{e=>changeBundle\(e.target.value\)\}/);
+ for(const unsafe of ["connectionReviewContext","setBundle(context","autoApply","/api/v1/policy/direct-apply"])
+   assert.ok(!coreDraft.includes(unsafe),unsafe);
+});
+test("Only an explicit, complete recognized-plane selection can be reused for navigation",()=>{
+ const s=setup.connectionReviewContext("remote","  net-a  "," server-b ","ssh");
+ assert.deepEqual(s,{plane:"remote",source:"net-a",destination:"server-b",selector:"ssh"});
+ assert.deepEqual(setup.connectionReviewContext("ai","identity","object",""),{plane:"ai"});
+ assert.deepEqual(setup.connectionReviewContext("internet","id","target","service\ninvalid"),{plane:"internet"});
+});
 test("Explicitly switching owning Agent invalidates prior service and policy choices",()=>{
  const saved={
   plane:"remote",step:2,selectedHost:"host-a",serviceName:"ssh-on-a",

@@ -413,7 +413,10 @@ class V30WebSaasUxContractTests(unittest.TestCase):
             'originType:isHost?"managed-host":"remote-service"',
             'Why can / cannot connect?', 'Why allowed / denied?',
             'initialPlane=["remote","internet","ai"]',
-            'setResource]=useState(String(context?.originId||""))',
+            'setResource]=useState(investigation.resource)',
+            'const investigation=auditInvestigation(context);',
+            'onNavigate?.(investigation.returnTarget.id,investigation.returnTarget.group,investigation.returnTarget.context)',
+            'matchObservedAuditReturn(loaded,initialInspectId)',
         ):
             self.assertIn(marker, SOURCE)
         # UXB-05 keeps Foundation administration visible but hides privileged
@@ -444,7 +447,12 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         https = ADMIN_SOURCE.split('"core.https":{', 1)[1].split('    },', 1)[0]
         users = ADMIN_SOURCE.split('"core.users":{', 1)[1].split('    },', 1)[0]
         self.assertIn('availability:"read_only"', https)
-        self.assertIn('access:"view"', https)
+        # Recognized Web roles may view the read-only status. Unknown roles
+        # must receive no actionable targets, even when capability exists.
+        self.assertIn('const authenticated=admin||role==="Operator"||role==="Read Only"', ADMIN_SOURCE)
+        self.assertIn('const readAccess=authenticated?"view":"none"', ADMIN_SOURCE)
+        self.assertIn('access:readAccess', https)
+        self.assertIn('...(authenticated?{target:', https)
         self.assertIn('MCP TLS certificate status only', https)
         self.assertIn('Shared Web HTTPS listener and redirect configuration', https)
         self.assertIn('actionId:"link.certificate"', https)
@@ -454,13 +462,26 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn('actionId:"link.users"', users)
         self.assertIn('if(admin)onNavigate?.("users","administration")', component)
         self.assertIn('showUnavailable onOpen={openTask}', component)
-        for name in (
-            "core.password", "core.timezone", "core.network",
-            "core.retention", "core.backup-import"
-        ):
+        for name in ("core.password", "core.timezone", "core.network"):
             self.assertIn(f'"{name}":unavailable', ADMIN_SOURCE)
-        for name in ("core.audit", "core.health"):
+        for name, action in (("core.retention", "link.retention"),
+                             ("core.backup-import", "link.backup")):
             self.assertIn(f'"{name}":{{', ADMIN_SOURCE)
+            task = ADMIN_SOURCE.split(f'"{name}":{{', 1)[1].split('    },', 1)[0]
+            self.assertIn('availability:"read_only"', task)
+            self.assertIn('access:readAccess', task)
+            self.assertIn(f'actionId:"{action}"', task)
+            self.assertIn('...(authenticated?{target:', task)
+        for name in ("core.audit", "core.health"):
+            task = ADMIN_SOURCE.split(f'"{name}":{{', 1)[1].split('    }', 1)[0]
+            self.assertIn('access:readAccess', task)
+            self.assertIn('...(authenticated?{target:', task)
+        self.assertIn('case "link.retention":onNavigate?.("audit","observability");break;', component)
+        self.assertIn('case "link.backup":', component)
+        self.assertIn('getElementById("drlink-backup-status")', component)
+        self.assertIn('id="drlink-backup-status"', SOURCE)
+        self.assertIn('api("/api/v1/audit/retention")', SOURCE)
+        self.assertIn('api("/api/v1/system/backup/validate"', SOURCE)
 
     def test_managed_host_admission_is_visible_separately_from_connection(self):
         # An admission filter alone is not enough; the selected state must be
@@ -1097,7 +1118,7 @@ class V30WebSaasUxContractTests(unittest.TestCase):
 
     def test_saved_views_can_open_explicit_non_security_resource_filters(self):
         saved=(ROOT / "web/src/uxb-saved-views.tsx").read_text(encoding="utf-8")
-        self.assertIn('import {SavedViewsWorkspace,saveDraftForResource} from "./uxb-saved-views"', SOURCE)
+        self.assertIn('import {SavedViewsWorkspace,saveDraftForResource,isSavedAdmission,type HostAdmission} from "./uxb-saved-views"', SOURCE)
         self.assertIn('if(active==="views"&&data)return <SavedViewsWorkspace data={data} api={api} onNavigate={onNavigate}', SOURCE)
         self.assertIn('initialFilter={String(context?.savedFilter||"").slice(0,120)}', SOURCE)
         self.assertIn('useEffect(()=>{setFilter(initialFilter)},[kind,initialFilter]);', SOURCE)
@@ -1105,8 +1126,8 @@ class V30WebSaasUxContractTests(unittest.TestCase):
             'export function readSavedView(value:unknown)',
             'payload.resource_type==="managed-host"',
             'payload.resource_type==="remote-service"',
-            'onNavigate?.(parsed.route,"connections",{savedFilter:parsed.filter})',
-            'payload:{resource_type:target,filter:filter.trim()}',
+            'onNavigate?.(parsed.route,"connections",{savedFilter:parsed.filter,savedAdmission:parsed.admission||"all"})',
+            'payload:currentDraft',
             'Legacy/unsupported view; save a new named target',
             'private display preferences, never access policies',
             'does not fetch missing inventory pages',
@@ -1121,9 +1142,45 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn('const prepared=readSavedView({payload:initialDraft});', saved)
         self.assertIn('onNavigate?.("views","activity",{savedViewDraft:savedDraft})', SOURCE)
         self.assertIn('initialDraft={context?.savedViewDraft}', SOURCE)
-        self.assertIn('Save this filter →', SOURCE)
+        self.assertIn('Save this view →', SOURCE)
         self.assertIn('maxLength={120}', SOURCE)
         self.assertIn('Pre-filled from', saved)
+
+    def test_saved_view_optional_host_admission_without_security_policy_mutation(self):
+        saved=(ROOT / "web/src/uxb-saved-views.tsx").read_text(encoding="utf-8")
+        self.assertIn('export type HostAdmission="all"|"PENDING_APPROVAL"|"APPROVED"|"QUARANTINED"', saved)
+        self.assertIn('export function isSavedAdmission(value:unknown)', saved)
+        self.assertIn('const currentDraft=saveDraftForResource(', saved)
+        self.assertIn('payload:currentDraft', saved)
+        self.assertIn('Filter Managed Host admission', saved)
+        self.assertIn('setAdmission("all")', saved)
+        self.assertIn('savedAdmission:parsed.admission||"all"', saved)
+        self.assertIn('initialAdmission={context?.savedAdmission}', SOURCE)
+        self.assertIn('isSavedAdmission(initialAdmission)', SOURCE)
+        self.assertIn('isHost?admissionFilter:"all"', SOURCE)
+        self.assertIn('Save this view →', SOURCE)
+        self.assertNotIn('Host admission selection is not included.', SOURCE)
+        self.assertNotIn('method:"PUT"', saved)
+
+    def test_managed_host_detail_allowlist_and_operator_groups(self):
+        helper=(ROOT / "web/src/uxb-host-detail.ts").read_text(encoding="utf-8")
+        stylesheet=(ROOT / "web/dist/styles.css").read_text(encoding="utf-8")
+        self.assertIn('hostDetailSections(selected).map(', SOURCE)
+        self.assertIn('className="dr-host-detail-section"', SOURCE)
+        self.assertIn('import {hostDetailSections,hostConnectionState} from "./uxb-host-detail"', SOURCE)
+        self.assertIn('hostConnectionState(item)==="Connected"', SOURCE)
+        self.assertIn('hostConnectionState(selected)==="Connected"', SOURCE)
+        self.assertIn('isHost?hostConnectionState(selected)', SOURCE)
+        self.assertNotIn('item.connected?"Connected":item.agent_lifecycle_state', SOURCE)
+        self.assertIn(".dr-host-detail-section", stylesheet)
+        self.assertIn("Trust & Admission", helper)
+        self.assertIn("Connectivity & Version", helper)
+        self.assertIn("admission_state", helper)
+        self.assertIn("connected===false||data.connected===0", helper)
+        self.assertNotIn("Object.entries", helper)
+        self.assertIn("tests/uxb-host-detail.test.mjs", PACKAGE)
+        self.assertIn("Recent activity", SOURCE)
+        self.assertIn("Why can / cannot connect?", SOURCE)
 
     def test_saved_view_name_replacement_requires_explicit_review(self):
         saved=(ROOT / "web/src/uxb-saved-views.tsx").read_text(encoding="utf-8")
@@ -1135,7 +1192,7 @@ class V30WebSaasUxContractTests(unittest.TestCase):
             'setConfirmReplace(false);',
             "Replace existing saved filter",
             "checked={confirmReplace}",
-            "disabled={busy||!name.trim()||!filter.trim()||!!(duplicate&&!confirmReplace)||incompleteNames&&!confirmReplace}",
+            "disabled={busy||!name.trim()||!currentDraft||!!(duplicate&&!confirmReplace)||incompleteNames&&!confirmReplace}",
             "if(incompleteNames&&!confirmReplace)return;",
             'setName(e.target.value);setConfirmReplace(false);',
             'setFilter(e.target.value);setConfirmReplace(false)',
@@ -1143,6 +1200,36 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         ):
             self.assertIn(marker,saved,marker)
         self.assertNotIn('method:"PUT"',saved)
+
+    def test_typed_host_search_uses_only_observed_core_fields_and_pages(self):
+        typed = (ROOT / "web/src/uxb-host-search.ts").read_text(encoding="utf-8")
+        core = (ROOT / "lib/drlink_management_service.py").read_text(encoding="utf-8")
+        # Product-owned Core query is display-name-only; the new helper must
+        # never imply tag/group/ip or privilege-expanding global search.
+        self.assertIn('"managed-host": {', core)
+        self.assertIn('"c.agent_platform AS agent_platform', core)
+        self.assertIn('where_parts.append("LOWER(%s) LIKE ?" % name_expr)', core)
+        for marker in (
+            'export function filterObservedHosts(',
+            '"name","hostname"',  # Only allowlisted, not arbitrary metadata.
+            'tag","group","ip',
+            'scope:"loaded-only"',
+            'UNKNOWN requested field values',
+            'return errorResult(items,',
+        ):
+            self.assertIn(marker, typed, marker)
+        # The picker and typed text must share one evidence-aware Core
+        # projection, never a later blind admission comparison that can
+        # falsely report "no matching resources" for UNKNOWN Core states.
+        self.assertIn('filterObservedHosts(loaded,filter,admissionFilter)', SOURCE)
+        self.assertNotIn('.filter((item:any)=>!isHost||admissionFilter==="all"', SOURCE)
+        self.assertIn('Typed Host search not applied:', SOURCE)
+        self.assertIn('hostSearch?.warning', SOURCE)
+        self.assertIn('!hostSearch?.error', SOURCE)
+        self.assertIn('Partial Core inventory', SOURCE)
+        self.assertIn('requireObservedInventoryContinuation', SOURCE)
+        self.assertIn('tests/uxb-host-search.test.mjs', PACKAGE)
+        self.assertNotIn('MISSING_CORE_TAG_QUERY_ENGINE', typed)
 
     def test_normative_ux_doc_binds_control_reference_and_competitive_sources(self):
         for required in (

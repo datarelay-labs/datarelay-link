@@ -84,3 +84,40 @@ test("Saved Views prefill only an explicit canonical resource-filter draft; name
  assert.match(html,/disabled=""/);
  assert.doesNotMatch(render([],{resource_type:"access-rule",filter:"allow"}),/Pre-filled from/);
 });
+
+test("Host Saved Views may intentionally preserve an admission filter even with no text",()=>{
+ const saved={payload:{resource_type:"managed-host",filter:"",admission:"PENDING_APPROVAL"}};
+ assert.deepEqual(readSavedView(saved),{route:"hosts",filter:"",admission:"PENDING_APPROVAL"});
+ assert.deepEqual(saveDraftForResource("host","","PENDING_APPROVAL"),{
+  resource_type:"managed-host",filter:"",admission:"PENDING_APPROVAL"
+ });
+ assert.deepEqual(saveDraftForResource("host"," node ","QUARANTINED"),{
+  resource_type:"managed-host",filter:"node",admission:"QUARANTINED"
+ });
+ assert.deepEqual(saveDraftForResource("host"," node ","all"),{
+  resource_type:"managed-host",filter:"node"
+ });
+ const html=render([saved],saved.payload);
+ assert.match(html,/Pre-filled from.*Servers &amp; Agents/);
+ assert.match(html,/Filter Managed Host admission/);
+ assert.match(html,/Pending approval/);
+ assert.match(html,/Saved admission state/);
+});
+test("Fail closed for unknown admission and misplaced service admission",()=>{
+ for(const invalid of ["", "NONE", "pending", "PENDING", "PENDING_APPROVAL ", null, 5, {}, true]){
+  assert.equal(readSavedView({payload:{
+   resource_type:"managed-host",filter:"offline",admission:invalid
+  }}),null);
+  assert.equal(saveDraftForResource("host","offline",invalid),null);
+ }
+ assert.equal(readSavedView({payload:{
+  resource_type:"remote-service",filter:"ssh",admission:"QUARANTINED"
+ }}),null);
+ assert.equal(saveDraftForResource("service","ssh","QUARANTINED"),null);
+ assert.deepEqual(readSavedView({payload:{
+  resource_type:"managed-host",filter:"offline"
+ }}),{route:"hosts",filter:"offline"});
+ assert.equal(readSavedView({payload:{
+  resource_type:"managed-host",filter:"",admission:"all"
+ }}),null);
+});

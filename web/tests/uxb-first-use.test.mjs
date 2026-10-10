@@ -1,7 +1,7 @@
 // DRL3-7B UXB-01/02 offline deterministic contract, not browser/user E2E.
 import assert from "node:assert/strict";
 import {before,after,test} from "node:test";
-import {mkdtempSync,rmSync} from "node:fs";
+import {mkdtempSync,rmSync,readFileSync} from "node:fs";
 import {dirname,join} from "node:path";
 import {fileURLToPath,pathToFileURL} from "node:url";
 import {build} from "esbuild";
@@ -104,6 +104,57 @@ test("Home welcome requires confirmed empty Core across Hosts, Services and ever
  assert.equal(home.showFreshHomeWelcome({...empty,overview:{...empty.overview,
   policies:{ai:{total:0},remote:{enabled:0}}}},"ready"),false);
  assert.equal(home.showFreshHomeWelcome(null,"ready"),false);
+});
+test("Pending Host attention links to the existing admission-filtered Host inventory without approval",()=>{
+ const data={overview:{managed_hosts:{total:10,pending_approval:3},
+    remote_services:{total:0,enabled:0},policies:{ai:{total:0,enabled:0}}}};
+ for(const role of ["Admin","Operator","Read Only"]){
+   const html=renderToStaticMarkup(React.createElement(home.FirstUseHome,{
+     data,operator:{role},api:async()=>{throw new Error("SSR must not call Core")}}));
+   assert.match(html,/3 Host\(s\) await Admin approval/);
+   assert.match(html,/Review pending Hosts/);
+   assert.match(html,/more pages may be needed/);
+   assert.doesNotMatch(html,/Click here to approve|Approvals completed/);
+ }
+ const source=readFileSync(join(root,"src","uxb-home.tsx"),"utf8");
+ assert.match(source,/onNavigate\?\.\("hosts","connections",\{savedAdmission:"PENDING_APPROVAL"\}\)/);
+});
+test("Home next action never skips UNKNOWN or unapproved Agent prerequisites",()=>{
+ const ready="Configured · verify",unknown="Unknown",todo="Not started",verify="Needs verification";
+ assert.equal(home.nextFirstConnectionAction([ready,unknown,todo,todo,verify],"Admin").route,"hosts");
+ assert.equal(home.nextFirstConnectionAction([ready,unknown,todo,todo,verify],"Read Only").route,"hosts");
+ assert.equal(home.nextFirstConnectionAction([ready,"Needs approval",todo,todo,verify],"Admin").route,"hosts");
+ assert.equal(home.nextFirstConnectionAction([ready,todo,todo,todo,verify],"Admin").route,"enrollments");
+ assert.equal(home.nextFirstConnectionAction([ready,todo,todo,todo,verify],"Operator").route,"hosts");
+ assert.equal(home.nextFirstConnectionAction([ready,verify,todo,todo,verify],"Admin").route,"hosts");
+ assert.equal(home.nextFirstConnectionAction([ready,ready,todo,todo,verify],"Admin").route,"services");
+ const readOnlySvc=home.nextFirstConnectionAction([ready,ready,todo,todo,verify],"Read Only");
+ assert.equal(readOnlySvc.route,"services");
+ assert.match(readOnlySvc.action,/Review|Inspect/);
+ assert.equal(home.nextFirstConnectionAction([ready,ready,ready,todo,verify],"Read Only").route,"policies");
+ assert.equal(home.nextFirstConnectionAction([ready,ready,ready,ready,verify],"Admin").route,"access");
+});
+test("Approval queue prioritizes the complete Core overview over an incomplete 100-Host page",()=>{
+ const data={overview:{managed_hosts:{total:130,pending_approval:7,approved:120},
+   remote_services:{total:2,enabled:1},policies:{ai:{total:0,enabled:0}}}};
+ const loaded=Array.from({length:100},(_,i)=>({id:"host-"+i,
+   admission_state:"APPROVED",trust_status:"untrusted",connected:false}));
+ assert.equal(home.observedApprovalQueueCount(data,loaded,false),7);
+ assert.equal(home.firstConnectionStates(data,loaded,false)[1],"Needs approval");
+ assert.equal(home.observedApprovalQueueCount({overview:{managed_hosts:{pending_approval:0}}},loaded,false),0);
+ assert.equal(home.observedApprovalQueueCount(null,loaded,false),"UNKNOWN");
+ assert.equal(home.observedApprovalQueueCount(null,loaded,true),0);
+ assert.equal(home.observedApprovalQueueCount({overview:{managed_hosts:{total:130}}},loaded,true),"UNKNOWN");
+ assert.equal(home.observedApprovalQueueCount({overview:{managed_hosts:{total:100}}},loaded,true),0);
+ assert.equal(home.observedApprovalQueueCount({overview:{managed_hosts:{pending_approval:-1}}},loaded,false),"UNKNOWN");
+ assert.equal(home.observedApprovalQueueCount({overview:{managed_hosts:{pending_approval:"7"}}},loaded,false),"UNKNOWN");
+ assert.equal(home.firstConnectionStates({overview:{managed_hosts:{total:130},
+   remote_services:{total:0,enabled:0},policies:{ai:{total:0,enabled:0}}}},loaded,false)[1],"Unknown");
+ assert.equal(home.observedApprovalQueueCount(null,null,true),"UNKNOWN");
+ assert.equal(home.hostInventoryPageComplete({items:[],next_cursor:null}),true);
+ assert.equal(home.hostInventoryPageComplete({items:loaded,next_cursor:"cursor-101"}),false);
+ assert.equal(home.hostInventoryPageComplete({items:loaded}),null);
+ assert.equal(home.hostInventoryPageComplete({items:null,next_cursor:null}),null);
 });
 test("first-use states are fail-closed without trustworthy evidence",()=>{
  assert.deepEqual(home.firstConnectionStates(null,null),[

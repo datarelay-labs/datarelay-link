@@ -2,7 +2,7 @@ import React, {useEffect, useRef, useState} from "react";
 import {CoreChoiceField,useCoreCatalog,type CoreCatalog} from "./uxb-core-choices";
 
 export type LinkApi = (path:string, init?:RequestInit)=>Promise<Record<string,any>>;
-type Navigate = (id:string,groupId?:string)=>void;
+type Navigate = (id:string,groupId?:string,context?:any)=>void;
 export type AccessPlane = "remote"|"internet"|"ai";
 type SelectedFlow = {source:string,destination:string,selector:string,path?:string};
 
@@ -44,6 +44,43 @@ export function canApplyGuidedRule(preview:any,tests:any,acknowledgedUnknowns:bo
   return true;
 }
 
+/** A modeled Core graph path is evidence, not live connectivity or the final
+ * governing rule. Reject incomplete/cross-plane rows rather than guessing.
+ */
+export function modeledPathEvidence(row:unknown,plane:AccessPlane){
+  if(!row||typeof row!=="object"||Array.isArray(row))return null;
+  const value=row as Record<string,any>,input=value.input;
+  if(!input||typeof input!=="object"||Array.isArray(input))return null;
+  if((value.plane!=null&&value.plane!==plane)||(input.plane!=null&&input.plane!==plane))return null;
+  const source=input.source,destination=input.destination,selector=plane==="ai"?input.permission:input.service;
+  if([source,destination,selector].some(x=>typeof x!=="string"||!x.trim()||x.length>160))return null;
+  const path=plane==="ai"?(typeof input.path==="string"?input.path:""):"";
+  if(path.length>512)return null;
+  const rawRules=Array.isArray(value.rules)?value.rules:[];
+  const validRules=rawRules.filter(
+    (x:unknown):x is string=>typeof x==="string"&&!!x.trim()&&x.length<=160
+  );
+  const distinctRules=[...new Set(validRules)];
+  const ruleReferences=distinctRules.slice(0,8);
+  return {
+    key:coreFlowKey(plane,source,destination,selector,path),
+    flow:{source:source.trim(),destination:destination.trim(),selector:selector.trim(),path:path.trim()},
+    decision:reliableDecision(value.decision),
+    ruleReferences,
+    ruleReferencesLimited:distinctRules.length>8||validRules.length!==rawRules.length,
+  };
+}
+
+/** Rule names in a Core trace are not IDs. Resolve only against a complete,
+ * same-plane Core policy inventory, with exactly one exact-name match.
+ */
+export function resolveCompletePolicyMatch(items:unknown,plane:AccessPlane,name:unknown,complete:boolean){
+  if(!complete||typeof name!=="string"||!name.trim()||name.length>160||!Array.isArray(items))return null;
+  const matches=items.filter((item:any)=>item&&typeof item==="object"&&!Array.isArray(item)
+    &&item.plane===plane&&item.name===name&&typeof item.id==="string"&&!!item.id.trim());
+  return matches.length===1?matches[0]:null;
+}
+
 export function AccessEvidenceExplorer({api,plane,source,destination,selector,onSelect,onNavigate}:{
   api:LinkApi,plane:AccessPlane,source:string,destination:string,selector:string,
   onSelect:(flow:SelectedFlow)=>void,onNavigate?:Navigate
@@ -52,17 +89,18 @@ export function AccessEvidenceExplorer({api,plane,source,destination,selector,on
   const [traceEvidence,setTraceEvidence]=useState<{key:string,value:any}|null>(null);
   const [graphBusy,setGraphBusy]=useState(false),[traceBusy,setTraceBusy]=useState(false);
   const [error,setError]=useState(""),[path,setPath]=useState("");
+  const [selectedPath,setSelectedPath]=useState<ReturnType<typeof modeledPathEvidence>>(null);
   const graphRequest=useRef(0),traceRequest=useRef(0);
   const currentTraceKey=coreFlowKey(plane,source,destination,selector,path);
   const visibleTrace=visibleCoreEvidence(traceEvidence,currentTraceKey);
   const visibleGraph=visibleCoreEvidence(graphEvidence,plane);
-  useEffect(()=>{graphRequest.current+=1;setGraphEvidence(null);setError("");setGraphBusy(false)},[plane]);
+  useEffect(()=>{graphRequest.current+=1;setGraphEvidence(null);setSelectedPath(null);setError("");setGraphBusy(false)},[plane]);
   useEffect(()=>{traceRequest.current+=1;setTraceEvidence(null);setTraceBusy(false);setError("")},[plane,source,destination,selector,path]);
   useEffect(()=>()=>{graphRequest.current+=1;traceRequest.current+=1},[]);
   const ready=!!(source.trim()&&destination.trim()&&selector.trim());
   async function loadGraph(){
     const token=++graphRequest.current;
-    setGraphEvidence(null);setGraphBusy(true);setError("");
+    setGraphEvidence(null);setSelectedPath(null);setGraphBusy(true);setError("");
     try{
       const next=await api("/api/v1/policy/graph?plane="+encodeURIComponent(plane));
       if(graphRequest.current===token)setGraphEvidence({key:plane,value:next});
@@ -83,7 +121,10 @@ export function AccessEvidenceExplorer({api,plane,source,destination,selector,on
     }catch(e:any){if(traceRequest.current===token)setError("Core decision unavailable: "+String(e.message||e))}
     finally{if(traceRequest.current===token)setTraceBusy(false)}
   }
-  const observed=explainTrace(visibleTrace),paths=Array.isArray(visibleGraph?.paths)?visibleGraph.paths.slice(0,16):[];
+  const observed=explainTrace(visibleTrace);
+  const allPaths=Array.isArray(visibleGraph?.paths)?visibleGraph.paths:[];
+  const paths=allPaths.slice(0,16).map((raw:any)=>modeledPathEvidence(raw,plane));
+  const focus=selectedPath?.key===currentTraceKey&&visibleGraph?selectedPath:null;
   const limits=visibleGraph?.limits||{};
   return <section className="card dr-p0-section" aria-label="Effective access explanation" data-testid="p0-access-explain">
     <div className="dr-section-head"><div><p className="dr-eyebrow">Effective Access · Core evidence</p>
@@ -93,23 +134,48 @@ export function AccessEvidenceExplorer({api,plane,source,destination,selector,on
     {error&&<div className="error" role="alert">{error}</div>}
     {visibleGraph&&<>
       <div className="dr-p0-facts"><span>Modeled flows: {limits.path_count??visibleGraph.paths?.length??"UNKNOWN"}</span>
-        <span>Core graph: {limits.truncated?"TRUNCATED":"bounded snapshot"}</span>
+        <span>Core graph: {limits.truncated===true?"TRUNCATED":limits.truncated===false?"bounded snapshot":"UNKNOWN scope"}</span>
         <span>Topology discovery: {visibleGraph.network_topology?"present":"not performed"}</span></div>
-      {limits.truncated&&<p className="warning-box">Only bounded graph paths are shown. Absent paths are not proof of DENY.</p>}
+      {(limits.truncated!==false||allPaths.length>16)&&<p className="warning-box">
+        {allPaths.length>16?"Only the first 16 modeled paths are displayed. ":""}
+        {limits.truncated===true?"Core graph is truncated. ":limits.truncated!==false?"Core graph completeness is UNKNOWN. ":""}
+        Absent paths are not proof of DENY.
+      </p>}
       {paths.length? <div className="dr-p0-paths" aria-label="Core modeled paths">
-        {paths.map((row:any,i:number)=>{
-          const input=row.input||{},select=plane==="ai"?input.permission:input.service;
-          const decision=reliableDecision(row.decision);
-          return <button type="button" className="dr-p0-path" key={i} onClick={()=>{
-            onSelect({source:String(input.source||""),destination:String(input.destination||""),selector:String(select||""),path:String(input.path||"")});
-            setPath(String(input.path||""));
-          }}>
-            <strong>{input.source||"Unknown source"} <span aria-hidden="true">→</span> {input.destination||"Unknown destination"}</strong>
-            <small>{select||"unspecified selector"} · {(row.rules||[]).length?row.rules.join(", "):"no matched rule listed"}</small>
-            <span className={"dr-p0-result "+decision.toLowerCase()}>{decision}</span>
-          </button>;
-        })}</div>:<p className="muted">No modeled paths returned. This does not prove an access decision.</p>}
+        {paths.map((row,i)=>row?
+          <button type="button" className="dr-p0-path" key={i}
+            aria-pressed={focus?.key===row.key}
+            onClick={()=>{
+              setSelectedPath(row);
+              onSelect(row.flow);
+              setPath(row.flow.path);
+            }}>
+            <strong>{row.flow.source} <span aria-hidden="true">→</span> {row.flow.destination}</strong>
+            <small>{row.flow.selector} · {row.ruleReferences.length?row.ruleReferences.join(", "):"policy references UNKNOWN"}</small>
+            <span className={"dr-p0-result "+row.decision.toLowerCase()}>{row.decision}</span>
+          </button>:
+          <div className="dr-p0-path" key={i} role="status">Core modeled path {i+1}: UNKNOWN · incomplete or mismatched input</div>
+        )}</div>:<p className="muted">No modeled paths returned. This does not prove an access decision.</p>}
     </>}
+    {focus&&<section className="dr-p0-evidence dr-p0-focused" aria-label="Focused Core-modeled access path" role="region">
+      <h4>Focused access path · Core model</h4>
+      <div className="dr-p0-route" aria-label="Source, policy references and destination">
+        <div><small>Source object / group</small><strong>{focus.flow.source}</strong></div>
+        <span aria-hidden="true">→</span>
+        <div><small>Policy references · not governing proof</small>
+          <strong>{focus.ruleReferences.length?focus.ruleReferences.join(", "):"UNKNOWN"}</strong></div>
+        <span aria-hidden="true">→</span>
+        <div><small>Destination object / group</small><strong>{focus.flow.destination}</strong></div>
+      </div>
+      <div className="dr-p0-facts"><span>Selector: {focus.flow.selector}</span>
+        <span>Modeled decision: {focus.decision}</span>
+        <span>Live reachability: NOT VERIFIED</span></div>
+      {focus.ruleReferencesLimited&&<p className="warning-box">Policy references were bounded. This list may be incomplete.</p>}
+      <p className="muted">These are modeled policy references, not confirmed governing rules. Run the fresh Core trace below before interpreting why access is allowed or denied.</p>
+      <button type="button" className="secondary" disabled={!ready||traceBusy} onClick={explain}>
+        {traceBusy?"Checking Core…":"Explain focused path with Core →"}
+      </button>
+    </section>}
     {plane==="ai"&&<label className="dr-field"><span>Optional AI request path</span><input value={path} onChange={e=>setPath(e.target.value)} placeholder="/resource/path"/></label>}
     <div className="dr-p0-actions"><button className="primary" onClick={explain} disabled={!ready||traceBusy}>{traceBusy?"Checking…":"Explain selected access"}</button>
       <button className="secondary" onClick={()=>onNavigate?.("policies","access")}>View policies</button>
@@ -125,6 +191,14 @@ export function AccessEvidenceExplorer({api,plane,source,destination,selector,on
       </div>
       <p>{observed.reason}</p>
       <p className="muted">Matched rules: {observed.rules.length?observed.rules.join(", "):"none reported"} · Mode: {visibleTrace.policy?.mode||"UNKNOWN"} · Enforcement: {visibleTrace.policy?.enforcement||"UNKNOWN"}</p>
+      {observed.rules.length>0&&<div className="dr-p0-actions" aria-label="Find Core-traced policy rule">
+        {observed.rules.filter(rule=>rule.length<=160).map(rule=><button key={rule} type="button" className="secondary"
+          onClick={()=>onNavigate?.("policies","access",{focusPolicy:{plane,name:rule},
+            source:source.trim(),destination:destination.trim(),selector:selector.trim()})}>
+          Find traced rule · {rule} →
+        </button>)}
+        <p className="muted">The policy list verifies an exact single rule identity before opening details. A trace name alone is not a policy ID.</p>
+      </div>}
       {visibleTrace.mixed&&<p className="warning-box">Mixed group membership outcomes; inspect individual member results before acting.</p>}
       <details><summary>Advanced · exact Core trace</summary><pre className="plan">{JSON.stringify(visibleTrace,null,2)}</pre></details>
     </div>}
