@@ -307,7 +307,10 @@ class WebhookStore:
 
     def rotate_secret(self, webhook_id: str, *, actor_id: str = "local-admin") -> dict[str, str]:
         secret = "drlink_wh_" + secrets.token_urlsafe(32)
-        sealed = self._cipher(create=True).encrypt(secret.encode()).decode()
+        # Rotation never creates a key: an existing, active webhook already
+        # has protected ciphertext. Missing key material must fail closed,
+        # including when a caller supplies a nonexistent webhook ID.
+        sealed = self._cipher().encrypt(secret.encode()).decode()
         self.conn.execute("BEGIN IMMEDIATE")
         try:
             updated = self.conn.execute(

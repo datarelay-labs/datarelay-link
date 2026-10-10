@@ -7,6 +7,16 @@ from drlink_control_db import ControlPlaneError
 from drlink_webhooks import WebhookStore, validate_webhook_url
 
 class WebhookTests(unittest.TestCase):
+    def test_missing_hook_secret_rotation_never_provisions_an_encryption_key(self):
+        # Invalid rotation must not mutate protected key state, including in
+        # an otherwise unconfigured optional-Webhooks installation.
+        with tempfile.TemporaryDirectory(prefix="drlink-wh-rotate-missing-") as root:
+            with WebhookStore(root) as store:
+                self.assertFalse(store.key_file.exists())
+                with self.assertRaises(ControlPlaneError):
+                    store.rotate_secret("wh_not_registered")
+                self.assertFalse(store.key_file.exists())
+
     def test_explicit_test_delivery_is_audited_atomically_and_bounded(self):
         from unittest.mock import patch
         with tempfile.TemporaryDirectory(prefix="drlink-wh-test-event-") as root:
