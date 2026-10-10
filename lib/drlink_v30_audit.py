@@ -233,8 +233,10 @@ class DurableAuditSpool:
     def _load_state_locked(self) -> dict[str, Any]:
         try:
             data = json.loads(self.state_path.read_text(encoding="utf-8"))
-            next_sequence = int(data.get("next_sequence") or 1)
-            if next_sequence < 1:
+            # An existing state file is authoritative. Missing, zero, or
+            # coerced sequence numbers could reuse a committed audit sequence.
+            next_sequence = data.get("next_sequence")
+            if type(next_sequence) is not int or next_sequence < 1:
                 raise ValueError("invalid sequence")
             return {
                 "next_sequence": next_sequence,
@@ -242,7 +244,11 @@ class DurableAuditSpool:
                 "dropped_deny_count": int(data.get("dropped_deny_count") or 0),
                 "last_error_at": str(data.get("last_error_at") or ""),
             }
-        except FileNotFoundError:
+        except FileNotFoundError as exc:
+            # Only a genuinely fresh spool may begin at sequence 1. Losing
+            # authoritative state with queued events must not replay IDs.
+            if self.active_path.exists() or self.segments():
+                raise AuditUnavailable("Audit spool sequence state is missing.") from exc
             return {
                 "next_sequence": 1,
                 "enqueue_failures": 0,

@@ -139,6 +139,38 @@ class V30AuditSpoolTests(unittest.TestCase):
         self.assertEqual(two["source_sequence"], 2)
         self.assertNotEqual(one["event_id"], two["event_id"])
 
+    def test_corrupt_sequence_state_fails_closed_without_reusing_sequence(self):
+        first = self.spool.enqueue(self._event())
+        self.assertEqual(first["source_sequence"], 1)
+        state = json.loads(self.spool.state_path.read_text(encoding="utf-8"))
+        before = self.spool.active_path.read_bytes()
+        for invalid in (0, -1, True, False, 2.9, "2", None, "MISSING"):
+            with self.subTest(next_sequence=repr(invalid)):
+                corrupted = dict(state)
+                if invalid == "MISSING":
+                    corrupted.pop("next_sequence")
+                else:
+                    corrupted["next_sequence"] = invalid
+                self.spool.state_path.write_text(
+                    json.dumps(corrupted) + "\n", encoding="utf-8"
+                )
+                with self.assertRaises(AuditUnavailable):
+                    self.spool.enqueue(self._event())
+                self.assertEqual(self.spool.active_path.read_bytes(), before)
+                self.assertEqual(self.spool.segments(), [])
+        self.spool.state_path.write_text(json.dumps(state) + "\n", encoding="utf-8")
+        second = self.spool.enqueue(self._event(result="DENY"))
+        self.assertEqual(second["source_sequence"], 2)
+
+    def test_missing_sequence_state_with_pending_spool_fails_closed(self):
+        self.spool.enqueue(self._event())
+        before = self.spool.active_path.read_bytes()
+        self.spool.state_path.unlink()
+        with self.assertRaises(AuditUnavailable):
+            self.spool.enqueue(self._event(result="DENY"))
+        self.assertEqual(self.spool.active_path.read_bytes(), before)
+        self.assertFalse(self.spool.state_path.exists())
+
     def test_secret_like_metadata_is_not_serialized(self):
         event = build_access_decision_event(
             source="remote-access",
@@ -324,6 +356,11 @@ class V30AuditIngestorTests(unittest.TestCase):
         self.assertEqual(checkpoint, 2)
 
     def test_invalid_segment_is_retained_and_not_checkpointed(self):
+        # A durable producer has sequence state even when a segment is corrupt.
+        self.spool.state_path.write_text(
+            json.dumps({"next_sequence": 2, "enqueue_failures": 0, "dropped_deny_count": 0}) + "\n",
+            encoding="utf-8",
+        )
         bad = self.spool.root / "segment-00000000000000000001-bad.jsonl"
         bad.write_text("{not-json}\n", encoding="utf-8")
         with self.assertRaises(AuditEventInvalid):
