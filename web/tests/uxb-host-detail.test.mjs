@@ -2,17 +2,17 @@
 import assert from "node:assert/strict";
 import {test} from "node:test";
 import {build} from "esbuild";
-import {mkdtempSync,rmSync} from "node:fs";
+import {mkdtempSync,rmSync,readFileSync} from "node:fs";
 import {dirname,join} from "node:path";
 import {fileURLToPath,pathToFileURL} from "node:url";
 const root=dirname(dirname(fileURLToPath(import.meta.url)));
 const scratch=mkdtempSync(join(root,"node_modules",".pfci-host-detail-"));
-let hostDetailSections,hostConnectionState;
+let hostDetailSections,hostConnectionState,hostInventoryFacts;
 try{
  const outfile=join(scratch,"projection.mjs");
  await build({entryPoints:[join(root,"src","uxb-host-detail.ts")],outfile,
   bundle:true,platform:"node",format:"esm",logLevel:"silent"});
- ({hostDetailSections,hostConnectionState}=await import(pathToFileURL(outfile).href));
+ ({hostDetailSections,hostConnectionState,hostInventoryFacts}=await import(pathToFileURL(outfile).href));
 }finally{rmSync(scratch,{recursive:true,force:true})}
 const flatten=v=>hostDetailSections(v).flatMap(x=>x.fields.map(y=>y.label+": "+y.value)).join(" | ");
 
@@ -86,4 +86,43 @@ test("Control text sanitized, bounded, with safe explicit field names only",()=>
  assert.ok(!JSON.stringify(fields).includes("\u202e"));
  assert.ok(!JSON.stringify(fields).includes("\u0000"));
  assert.ok(!JSON.stringify(fields).includes("\n"));
+});
+
+test("Host table Trust, platform, version and Core last activity fail closed on missing facts",()=>{
+ const actual=hostInventoryFacts({
+   id:"agent-1",trust_status:"trusted",agent_platform:"linux",
+   agent_version:"3.0.1",agent_heartbeat_at:"2026-10-11T00:01:00Z",
+   last_seen:"2026-10-10T23:58:00Z",
+ });
+ assert.deepEqual(actual,{trust:"Trusted",platform:"linux",version:"3.0.1",
+   lastActivity:"2026-10-10T23:58:00Z"});
+ for(const [trust,expected] of [
+   ["trusted","Trusted"],["revoked","Revoked"],["untrusted","Untrusted"],
+   [null,"UNKNOWN"],["legacy_tRUSTED","UNKNOWN"],[42,"UNKNOWN"]
+ ]){
+   assert.equal(hostInventoryFacts({trust_status:trust}).trust,expected,JSON.stringify(trust));
+ }
+ const noActivity=hostInventoryFacts({
+   agent_heartbeat_at:"2026-10-11T00:01:00Z",connected:1,
+   agent_platform:0,agent_version:"",trust_status:null
+ });
+ assert.equal(noActivity.lastActivity,"UNKNOWN");
+ assert.equal(noActivity.platform,"UNKNOWN");
+ assert.equal(noActivity.version,"UNKNOWN");
+ assert.equal(noActivity.trust,"UNKNOWN");
+ assert.match(flatten({trust_status:null}),/Management trust: UNKNOWN/);
+ const weird=hostInventoryFacts({
+   agent_platform:"linux\nINJECTED",agent_version:"x".repeat(400),
+   last_seen:{nested:"secret"},trust_status:"trusted",
+ });
+ assert.doesNotMatch(JSON.stringify(weird),/\n/);
+ assert.ok(weird.version.length<=140);
+});
+
+test("Host table never conflates Agent heartbeat with Core last-activity evidence",()=>{
+ const source=readFileSync(join(root,"src","main.tsx"),"utf8");
+ const resource=source.split("function ResourceWorkspace(",2)[1]?.split("function UsersPanel(",1)[0]||"";
+ assert.match(resource,/hostInventoryFacts\(item\)\.trust/);
+ assert.match(resource,/hostInventoryFacts\(item\)\.lastActivity/);
+ assert.doesNotMatch(resource,/item\.agent_heartbeat_at\|\|item\.last_seen/);
 });

@@ -32,6 +32,26 @@ function connectivity(data:HostFields):"Connected"|"Disconnected"|"UNKNOWN"{
 }
 // Shared status semantics for both the Host inventory table and detail drawer.
 // A lifecycle string or arbitrary truthy value is NOT a live connection fact.
+/** A Host list row distinguishes observed Core facts from missing evidence.
+ * agent_heartbeat_at is connectivity telemetry, never an alias for last_seen.
+ */
+export function hostInventoryFacts(value:unknown):{
+  trust:"Trusted"|"Revoked"|"Untrusted"|"UNKNOWN";
+  platform:string;version:string;lastActivity:string;
+}{
+  const data:HostFields=value!==null&&typeof value==="object"&&!Array.isArray(value)
+    ?value as HostFields:{};
+  const trust=data.trust_status==="trusted"?"Trusted"
+    :data.trust_status==="revoked"?"Revoked"
+    :data.trust_status==="untrusted"?"Untrusted":"UNKNOWN";
+  const observedString=(key:string):string=>
+    typeof data[key]==="string" ? (safeText(data,key)||"UNKNOWN") : "UNKNOWN";
+  return {
+    trust,platform:observedString("agent_platform"),
+    version:observedString("agent_version"),
+    lastActivity:observedString("last_seen"),
+  };
+}
 export function hostConnectionState(value:unknown):"Connected"|"Disconnected"|"UNKNOWN"{
   const data:HostFields=value!==null&&typeof value==="object"&&!Array.isArray(value)
     ?value as HostFields:{};
@@ -45,7 +65,7 @@ export function hostDetailSections(value:unknown):HostDetailSection[]{
     .filter((row):row is HostDetailField=>row.value!==null);
   const trust:HostDetailField[]=[
     {label:"Admission",value:admission(data)},
-    {label:"Management trust",value:safeText(data,"trust_status")||"UNKNOWN"},
+    {label:"Management trust",value:hostInventoryFacts(data).trust},
   ];
   const connection:HostDetailField[]=[
     {label:"Connection",value:hostConnectionState(data)},
