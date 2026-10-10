@@ -7,6 +7,56 @@ from drlink_control_db import ControlPlaneError
 from drlink_webhooks import WebhookStore, validate_webhook_url
 
 class WebhookTests(unittest.TestCase):
+    def test_webhook_subscription_capacity_never_creates_invisible_sinks(self):
+        # The Web UI inventory exposes at most 200 subscriptions. A 201st
+        # active sink would receive security events while being impossible to
+        # manage through the normal integration inventory.
+        with tempfile.TemporaryDirectory(prefix="drlink-wh-capacity-") as root:
+            with WebhookStore(root) as store:
+                fixture_now = "2026-10-10T00:00:00Z"
+                store.conn.executemany(
+                    "INSERT INTO management_webhooks("
+                    "id,name,url,event_classes,secret_hash,created_at,updated_at) "
+                    "VALUES (?,?,?,?,?,?,?)",
+                    [
+                        (f"wh_{index:024x}", f"sink-{index:03d}",
+                         "https://hooks.example.org/events", "attention",
+                         "fixture-hash", fixture_now, fixture_now)
+                        for index in range(200)
+                    ],
+                )
+                self.assertEqual(len(store.list_webhooks()["items"]), 200)
+                self.assertFalse(store.key_file.exists())
+                audits_before = store.conn.execute(
+                    "SELECT COUNT(*) FROM audit_events"
+                ).fetchone()[0]
+                with self.assertRaises(ControlPlaneError):
+                    store.create(
+                        "hidden-sink", "https://hooks.example.org/events",
+                        ["attention"],
+                    )
+                self.assertEqual(store.conn.execute(
+                    "SELECT COUNT(*) FROM management_webhooks"
+                ).fetchone()[0], 200)
+                self.assertEqual(store.conn.execute(
+                    "SELECT COUNT(*) FROM audit_events"
+                ).fetchone()[0], audits_before)
+                self.assertFalse(store.key_file.exists())
+                # The boundary is not off by one: a reopened slot is usable
+                # and the newly created hook remains in the 200-row inventory.
+                store.conn.execute(
+                    "DELETE FROM management_webhooks WHERE id=?", (f"wh_{0:024x}",)
+                )
+                accepted = store.create(
+                    "last-visible", "https://hooks.example.org/events",
+                    ["attention"],
+                )
+                self.assertEqual(len(store.list_webhooks()["items"]), 200)
+                self.assertIn(accepted["id"], {
+                    item["id"] for item in store.list_webhooks()["items"]
+                })
+                self.assertTrue(store.key_file.exists())
+
     def test_missing_hook_secret_rotation_never_provisions_an_encryption_key(self):
         # Invalid rotation must not mutate protected key state, including in
         # an otherwise unconfigured optional-Webhooks installation.

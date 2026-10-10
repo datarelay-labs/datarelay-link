@@ -24,6 +24,9 @@ from drlink_control_db import ControlPlaneError, db_path, open_control_db
 
 MAX_OUTBOX = 1000
 MAX_ATTEMPTS = 5
+# The normal Web integration inventory is bounded to this many subscriptions.
+# Reject additional sinks before they become invisible but still deliverable.
+MAX_WEBHOOK_SUBSCRIPTIONS = 200
 ALLOWED_EVENTS = frozenset({"attention", "security.lifecycle", "policy.change", "managed_host.lifecycle"})
 PRIVATE_KEYS = frozenset({
     "password", "secret", "token", "credential", "credentials", "private_key",
@@ -178,12 +181,20 @@ class WebhookStore:
         classes = sorted({str(x).strip().lower() for x in event_classes})
         if not label or len(label) > 128 or not classes or any(x not in ALLOWED_EVENTS for x in classes):
             raise ControlPlaneError("Webhook name and selected event classes are required.")
-        wid = "wh_" + secrets.token_hex(12)
-        secret = "drlink_wh_" + secrets.token_urlsafe(32)
-        sealed = self._cipher(create=True).encrypt(secret.encode()).decode()
-        now = _now()
         self.conn.execute("BEGIN IMMEDIATE")
         try:
+            # Admission and insertion share a write transaction, so concurrent
+            # Admin requests cannot exceed what the UI can enumerate.
+            count = int(self.conn.execute(
+                "SELECT COUNT(*) FROM management_webhooks"
+            ).fetchone()[0])
+            if count >= MAX_WEBHOOK_SUBSCRIPTIONS:
+                raise ControlPlaneError("Webhook subscription capacity has been reached.")
+            # Do not provision signing key material for an overflow rejection.
+            wid = "wh_" + secrets.token_hex(12)
+            secret = "drlink_wh_" + secrets.token_urlsafe(32)
+            sealed = self._cipher(create=True).encrypt(secret.encode()).decode()
+            now = _now()
             self.conn.execute(
                 "INSERT INTO management_webhooks(id,name,url,event_classes,secret_hash,"
                 "secret_ciphertext,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)",
@@ -196,7 +207,8 @@ class WebhookStore:
             )
             self.conn.execute("COMMIT")
         except Exception:
-            self.conn.execute("ROLLBACK")
+            if self.conn.in_transaction:
+                self.conn.execute("ROLLBACK")
             raise
         return {"id": wid, "secret": secret, "url": endpoint, "event_classes": classes}
 
@@ -215,7 +227,8 @@ class WebhookStore:
     def list_webhooks(self) -> dict[str, Any]:
         rows = self.conn.execute(
             "SELECT id,name,url,event_classes,enabled,created_at,updated_at "
-            "FROM management_webhooks ORDER BY name LIMIT 200"
+            "FROM management_webhooks ORDER BY name LIMIT ?",
+            (MAX_WEBHOOK_SUBSCRIPTIONS,),
         ).fetchall()
         items = []
         for row in rows:

@@ -92,6 +92,14 @@ classes: `attention`, `security.lifecycle`, `policy.change`,
 - `POST /api/v1/webhooks/rotate`: replace signing secret.
 - `POST /api/v1/webhooks/disable`: stop the subscription and fail queued work.
 
+The administration inventory and creation boundary admit at most **200 named
+subscriptions**, including disabled records. Overflow creates no additional
+delivery sink, signing material, or audit receipt; the limit prevents a webhook
+from receiving events while being invisible in the bounded Web inventory.
+Disabled subscriptions remain in the inventory and count toward the limit;
+this development contract does not silently delete their records or authorize
+a new destructive removal operation.
+
 The signing secret is encrypted in SQLite with a separate private Fernet key at
 `/var/lib/drlink/webhook-signing.key` (mode 0600); the key is included as
 an optional protected file in the canonical backup/restore state-path contract.
