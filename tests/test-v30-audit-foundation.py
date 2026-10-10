@@ -164,6 +164,22 @@ class V30AuditSpoolTests(unittest.TestCase):
         self.assertNotIn("secret body", text)
         self.assertNotIn("?secret=1", text)
 
+    def test_spool_rejects_unapproved_event_fields_before_durability(self):
+        # Direct callers and imported segments must follow the same secret-safe envelope.
+        cases = (
+            {"source_meta": {"ip": "198.51.100.10", "credential": "hidden-token"}},
+            {"destination_meta": {"port": 22, "authorization": "hidden-token"}},
+            {"raw_payload": "hidden-token"},
+        )
+        for extra in cases:
+            with self.subTest(extra=tuple(extra)):
+                event = self._event()
+                event.update(extra)
+                previous_bytes = self.spool.spool_bytes()
+                with self.assertRaises(AuditEventInvalid):
+                    self.spool.enqueue(event)
+                self.assertEqual(self.spool.spool_bytes(), previous_bytes)
+
     def test_spool_seals_active_segment(self):
         self.spool.enqueue(self._event())
         segment = self.spool.seal_active()

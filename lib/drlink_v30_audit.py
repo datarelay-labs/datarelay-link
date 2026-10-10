@@ -61,6 +61,13 @@ DESTINATION_META_KEYS = frozenset({
     "host", "ip", "port", "protocol", "service_id",
     "service_name", "observed_sni",
 })
+ACCESS_EVENT_KEYS = frozenset({
+    "schema_version", "category", "event_type", "occurred_at", "source",
+    "actor_type", "actor_id", "delegated_actor_id", "interface", "action",
+    "resource_type", "resource_id", "result", "reason_code", "correlation_id",
+    "request_id", "session_id", "matched_policy", "source_meta",
+    "destination_meta", "event_id", "source_sequence",
+})
 
 
 class AuditUnavailable(ControlPlaneError):
@@ -396,6 +403,23 @@ class DurableAuditSpool:
 def validate_access_event(event: dict[str, Any]) -> None:
     if not isinstance(event, dict):
         raise AuditEventInvalid("Audit event must be an object.")
+    # Builder sanitization is not an authorization boundary: direct spool writers
+    # and imported JSONL must never persist unapproved secret-bearing fields.
+    if set(event) - ACCESS_EVENT_KEYS:
+        raise AuditEventInvalid("Audit event contains unapproved fields.")
+    for key, allowed in (
+        ("source_meta", SOURCE_META_KEYS),
+        ("destination_meta", DESTINATION_META_KEYS),
+    ):
+        metadata = event.get(key)
+        if metadata is None:
+            continue
+        if not isinstance(metadata, dict):
+            raise AuditEventInvalid("Audit metadata must be an object.")
+        if set(metadata) - allowed:
+            raise AuditEventInvalid("Audit metadata contains unapproved fields.")
+        if any(isinstance(value, (dict, list, tuple, bool)) for value in metadata.values()):
+            raise AuditEventInvalid("Audit metadata values must be scalar.")
     if int(event.get("schema_version") or 0) != AUDIT_SCHEMA_VERSION:
         raise AuditEventInvalid("Unsupported audit schema version.")
     if event.get("category") != ACCESS_DECISION:

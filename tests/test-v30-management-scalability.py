@@ -168,6 +168,22 @@ class V30ManagementScalabilityTests(unittest.TestCase):
         self.assertEqual(versions[("linux", "3.0.0")], 1)
         self.assertEqual(versions[("win32", "unknown")], 1)
 
+    def test_overview_heartbeat_uses_utc_instants_and_treats_invalid_as_stale(self):
+        cases = (
+            ("fresh-negative-offset", "2026-10-03T21:59:45-04:00", 1, 0),
+            ("stale-positive-offset", "2026-10-04T15:00:00+14:00", 0, 1),
+            ("unparseable-heartbeat", "zz-not-a-timestamp", 0, 1),
+        )
+        for ident, heartbeat, connected, stale in cases:
+            with self.subTest(ident=ident):
+                self.conn.execute("DELETE FROM clients")
+                self._insert_client(ident, heartbeat=heartbeat)
+                self.conn.commit()
+                counts = overview_summary(self.conn, now=self.now)["managed_hosts"]
+                self.assertEqual(counts["total"], 1)
+                self.assertEqual(counts["connected"], connected)
+                self.assertEqual(counts["stale"], stale)
+
     def test_query_service_read_models_do_not_need_writer_slot(self):
         self._insert_client("host-a")
         self.conn.commit()
