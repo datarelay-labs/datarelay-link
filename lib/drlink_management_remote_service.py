@@ -143,6 +143,21 @@ class ManagementRemoteServiceService(ManagementChangeService):
         except Exception as exc:
             self._mark_plan(change_plan_id, "invalid")
             raise ControlPlaneError("Remote Service Change Plan payload is invalid.") from exc
+        # A persisted plan must remain bound to the previewed operation and
+        # target. Never infer a destructive delete from an unknown payload op.
+        if (
+            not isinstance(payload, dict)
+            or payload.get("kind") != "remote-service"
+            or payload.get("operation") != operation.split(".", 1)[1]
+            or not isinstance(payload.get("owner_id"), str)
+            or not isinstance(payload.get("name"), str)
+            or not payload["owner_id"]
+            or not payload["name"]
+            or str(row["resource_ref"])
+            != "%s:%s" % (payload["owner_id"], payload["name"])
+        ):
+            self._mark_plan(change_plan_id, "invalid")
+            raise ControlPlaneError("Remote Service Change Plan binding is invalid.")
 
         expected_revision = int(row["expected_revision"])
         current_revision = int(self.plane.current_revision())

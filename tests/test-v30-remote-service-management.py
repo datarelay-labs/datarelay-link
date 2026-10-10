@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -168,6 +169,48 @@ class V30RemoteServiceManagementTests(unittest.TestCase):
         engine = ManagementJobEngine(self.tmp)
         try:
             self.assertEqual(engine.get(queued["job_id"])["job_type"], "remote-service-delete")
+        finally:
+            engine.close()
+
+    def test_change_plan_payload_cannot_change_approved_operation_or_target(self):
+        service = ManagementRemoteServiceService(self.tmp)
+        try:
+            for field, changed_value in (
+                ("operation", "delete"),
+                ("name", "unapproved-target"),
+            ):
+                with self.subTest(field=field):
+                    preview = service.preview(
+                        actor_id="web:operator",
+                        owner="host-a",
+                        name="ssh-access",
+                        operation="set",
+                        destination="this-host",
+                        service="ssh",
+                        enabled=True,
+                    )
+                    plan = service.plane.conn.execute(
+                        "SELECT token_hash,payload_json FROM management_change_plans "
+                        "WHERE operation='remote-service.set' AND status='pending' "
+                        "ORDER BY created_at DESC,rowid DESC LIMIT 1"
+                    ).fetchone()
+                    payload = json.loads(str(plan["payload_json"]))
+                    payload[field] = changed_value
+                    service.plane.conn.execute(
+                        "UPDATE management_change_plans SET payload_json=? WHERE token_hash=?",
+                        (json.dumps(payload), str(plan["token_hash"])),
+                    )
+                    with self.assertRaisesRegex(ControlPlaneError, "binding"):
+                        service.apply(
+                            actor_id="web:operator",
+                            change_plan_id=preview["change_plan_id"],
+                            confirmation="APPLY",
+                        )
+        finally:
+            service.close()
+        engine = ManagementJobEngine(self.tmp)
+        try:
+            self.assertEqual(engine.summary()["active_jobs"], 0)
         finally:
             engine.close()
 
