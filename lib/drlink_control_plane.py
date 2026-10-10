@@ -1165,6 +1165,14 @@ class ControlPlane:
                 (obj["id"],),
             )
         ]
+        # A stale explicit precondition must fail even when the requested
+        # value happens to match the latest value (no-op is not acceptance).
+        if expected_row_version is not None and int(obj["row_version"]) != int(expected_row_version):
+            raise ConcurrencyError(
+                "Object changed while you were editing it.\n"
+                "No changes were applied.\n"
+                "Review current state and retry."
+            )
         if current == [normalized]:
             return {
                 "entity": {"type": "object", "id": obj["id"], "name": obj["name"]},

@@ -1693,6 +1693,11 @@ def domain_help(topic, role):
             "  set network-group <NAME> members a,b,c\n"
             "  show network-group <NAME> references\n"
             "  unset network-object <NAME>\n"
+            "\nConcurrent administrator edits:\n"
+            "  Read configuration revision from show network-object <NAME>.\n"
+            "  To reject a stale update from a shell, use:\n"
+            "  sudo env DRLINK_EXPECTED_REVISION=<REV> drlink set network-object <NAME> value <VALUE>\n"
+            "  A revision mismatch reports REVISION_CONFLICT; no change is made.\n"
         )
     if topic in ("service-object", "service-objects"):
         if not server:

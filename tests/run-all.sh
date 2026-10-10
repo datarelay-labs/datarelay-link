@@ -261,6 +261,7 @@ python3 tests/test-v24-manual-e2e-findings.py
 python3 tests/test-v24-cli-workflow-semantic-parity.py
 python3 tests/test-v24-revision-rollback.py
 python3 tests/test-v24-direct-revision-guard.py
+python3 tests/test-v24-admin-concurrency-ux.py
 python3 tests/test-v24-ai-access-reference-integrity.py
 python3 tests/test-v24-ai-path-scope-public-parity.py
 python3 tests/test-v24-group-policy-test-false-assurance.py

@@ -234,8 +234,9 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         payload = dict(obj)
         values = payload.get("values") or plane._object_values(payload["id"])
         sys.stdout.write(
-            "Network Object: %s\nType : %s\nValue: %s\n"
-            % (payload["name"], v24.display_network_type(payload["type"]), values[0] if values else "-")
+            "Network Object: %s\nType : %s\nValue: %s\nConfiguration revision: %d\n"
+            % (payload["name"], v24.display_network_type(payload["type"]),
+               values[0] if values else "-", plane.current_revision())
         )
         return 0
     if res in ("network-groups",):

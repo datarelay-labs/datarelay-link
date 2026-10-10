@@ -2587,8 +2587,11 @@ def set_network_object(
             impact = referenced_selector_mutation_security_impact(
                 plane_db, kind="network-object", name=name, value=value
             )
+            # Capture the version before confirmation and runtime preparation.
+            # Two writers that reviewed the same object cannot both overwrite it.
             result = plane_db.replace_object_value(
-                name, value, confirm=confirm, impact=impact
+                name, value, confirm=confirm, impact=impact,
+                expected_row_version=int(existing["row_version"]),
             )
             out = {"operation": "update", "name": name}
             if isinstance(result, dict) and "revision" in result:

@@ -510,6 +510,16 @@ stdin terminator:
 
 Server Bundle and Agent Bundle are independently atomic within their current CLI context. Cross-context distributed atomicity is not provided.
 
+An exported Bundle carries `sourceRevision`. If the revision is outdated, `test configuration` and `system diff configuration` report `WARNING: STALE_CONFIGURATION_REVISION` with the base/current values. A syntactically valid Bundle is **not** necessarily safe to apply; a stale snapshot is rejected by the authoritative apply transaction. Re-export and review the new state rather than applying an old copy.
+
+For two administrators editing the same Network Object, first read the current `Configuration revision` from `show network-object <NAME>` and bind the proposed mutation using the existing public one-shot guard:
+
+```bash
+sudo env DRLINK_EXPECTED_REVISION=42 drlink set network-object branch-dns value 198.51.100.20
+```
+
+A concurrent change causes `REVISION_CONFLICT` and applies nothing. Without that explicit user-reviewed revision, independently prepared sequential edits can still overwrite one another; the internal per-object guard additionally rejects overlapping stale writes. Use a freshly read revision for each intentional edit.
+
 ## 15. Wrong-context errors
 
 Server-only policy/Object mutation on an Agent Host must say the command belongs on the DRLink Server.
