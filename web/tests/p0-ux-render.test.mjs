@@ -248,3 +248,54 @@ test("UX-3 Host admission evidence is private to the exact current operator ID a
  assert.match(src,/if\(!admin\|\|!matchingHostScope\|\|!selectedHost/);
  assert.match(src,/if\(!admin\|\|!matchingHostScope\|\|!selectedHost\|\|!scopedPreview\?\.change_plan_id/);
 });
+
+test("UX-3 Admin approval requires one exact Core Host/operation/revision Change Plan",()=>{
+ const impact={kind:"managed-host-admission",before:"PENDING_APPROVAL",after:"APPROVED",
+  requires_confirmation:true,destructive:false,access_broadened:true,access_narrowed:false,
+  kept:["Host identity","policy references"],warning:"Approval enables normal policies"};
+ const plan={change_plan_id:"cp_"+"a".repeat(32),operation_class:"CHANGE",
+  operation:"managed-host-admission.approve",admission_operation:"approve",
+  resource_type:"managed-host",resource_ref:"host-a",expected_revision:12,
+  confirmation_class:"APPROVE",valid_until:"2032-05-22T12:00:00Z",
+  no_change:false,preview:{id:"host-a",before:"PENDING_APPROVAL",after:"APPROVED"},
+  impact};
+ const good=enroll.observedHostAdmissionApprovalPlan(plan,"host-a");
+ assert.equal(good?.change_plan_id,plan.change_plan_id);
+ assert.equal(good?.confirmation_class,"APPROVE");
+ assert.equal(good?.expected_revision,12);
+ assert.equal(good?.preview.id,"host-a");
+ assert.equal(good?.impact.after,"APPROVED");
+ assert.doesNotMatch(JSON.stringify(good),/PRIVATE_TOKEN/);
+ for(const bad of [
+  null,{},[],{...plan,change_plan_id:"evil"},
+  {...plan,resource_ref:"host-b"},{...plan,resource_type:"remote-service"},
+  {...plan,operation:"managed-host-admission.quarantine"},
+  {...plan,admission_operation:"quarantine"},
+  {...plan,confirmation_class:"DELETE"},
+  {...plan,expected_revision:-1},{...plan,no_change:true},
+  {...plan,valid_until:"2020-01-01T00:00:00Z"},
+  {...plan,preview:{...plan.preview,id:"host-b"}},
+  {...plan,preview:{...plan.preview,after:"QUARANTINED"}},
+  {...plan,impact:{...impact,destructive:true}},
+  {...plan,impact:{...impact,access_broadened:false}},
+  {...plan,impact:{...impact,warning:{secret:"PRIVATE_TOKEN"}}}
+ ])assert.equal(enroll.observedHostAdmissionApprovalPlan(bad,"host-a"),null);
+});
+test("UX-3 API 200 is not proof of applied Host approval without exact Core acknowledgement",()=>{
+ assert.deepEqual(enroll.observedHostAdmissionApplyResult({
+  status:"APPLIED",admission_operation:"approve",revision:13,
+  result:{private:{secret:"PRIVATE_TOKEN"}}},12),{revision:13});
+ for(const bad of [
+  null,{},[],{status:"APPLIED",admission_operation:"approve"},
+  {status:"APPLIED",admission_operation:"quarantine",revision:13},
+  {status:"NO_CHANGE",admission_operation:"approve",revision:12},
+  {status:"APPLIED",admission_operation:"approve",revision:12},
+  {status:"APPLIED",admission_operation:"approve",revision:"13"},
+  {status:"APPLIED",admission_operation:"approve",revision:1.5}
+ ])assert.equal(enroll.observedHostAdmissionApplyResult(bad,12),null);
+ const src=readFileSync(join(webRoot,"src","p0-enrollment.tsx"),"utf8");
+ assert.match(src,/const observed=observedHostAdmissionApprovalPlan\(result,selectedHost\)/);
+ assert.match(src,/const applied=observedHostAdmissionApplyResult\(result,scopedPreview.expected_revision\)/);
+ assert.match(src,/if\(!applied\)throw new Error\("Core admission apply result is unverified/);
+ assert.doesNotMatch(src,/Core admission review applied at revision "\+String\(result\.revision/);
+});

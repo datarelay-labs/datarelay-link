@@ -204,6 +204,72 @@ export function issuedEnrollmentForCurrentIntent(
  return item as ObservedIssuedEnrollment;
 }
 
+/** UX-3: an HTTP 200 alone does not make a Host admission request safe to
+ * approve. Validate the exact current Host, approved target, confirmation,
+ * revision and non-destructive Core Change Plan, projecting only safe fields.
+ * The Core remains the final authorization/CSRF/revision authority.
+ */
+export function observedHostAdmissionApprovalPlan(input:unknown,hostId:unknown){
+ if(!input||typeof input!=="object"||Array.isArray(input)
+   ||typeof hostId!=="string"
+   ||!/^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,159}$/.test(hostId))return null;
+ const plan=input as Record<string,any>;
+ const summary=plan.preview,impact=plan.impact;
+ if(typeof plan.change_plan_id!=="string"
+   ||!/^cp_[A-Za-z0-9_-]{16,128}$/.test(plan.change_plan_id)
+   ||plan.operation_class!=="CHANGE"
+   ||plan.operation!=="managed-host-admission.approve"
+   ||plan.admission_operation!=="approve"
+   ||plan.resource_type!=="managed-host"||plan.resource_ref!==hostId
+   ||!Number.isSafeInteger(plan.expected_revision)||plan.expected_revision<0
+   ||plan.confirmation_class!=="APPROVE"
+   ||!isObservedAbsoluteTime(plan.valid_until)
+   ||Date.parse(plan.valid_until)<=Date.now()
+   ||plan.no_change!==false
+   ||!summary||typeof summary!=="object"||Array.isArray(summary)
+   ||!impact||typeof impact!=="object"||Array.isArray(impact)
+   ||summary.id!==hostId||summary.after!=="APPROVED"
+   ||!["PENDING_APPROVAL","QUARANTINED"].includes(summary.before)
+   ||impact.kind!=="managed-host-admission"
+   ||impact.before!==summary.before||impact.after!=="APPROVED"
+   ||impact.requires_confirmation!==true||impact.destructive!==false
+   ||impact.access_broadened!==true||impact.access_narrowed!==false
+   ||typeof impact.warning!=="string"||!impact.warning.trim()
+   ||impact.warning.length>160||BAD_ENROLLMENT_TEXT.test(impact.warning)
+   ||!Array.isArray(impact.kept)||impact.kept.length>10
+   ||impact.kept.some((x:any)=>typeof x!=="string"||!x.trim()
+     ||x.length>80||BAD_ENROLLMENT_TEXT.test(x)))
+   return null;
+ return {
+   change_plan_id:plan.change_plan_id as string,
+   expected_revision:plan.expected_revision as number,
+   confirmation_class:"APPROVE" as const,
+   valid_until:plan.valid_until as string,
+   preview:{id:hostId,before:summary.before as string,after:"APPROVED" as const},
+   impact:{
+     kind:"managed-host-admission" as const,
+     before:summary.before as string,after:"APPROVED" as const,
+     access_broadened:true as const,destructive:false as const,
+     warning:impact.warning as string,kept:impact.kept as string[]
+   }
+ };
+}
+/** A revision-confirmed Core acknowledgement is distinct from an HTTP 200
+ * carrying malformed or no-change data. Do not silently advance enrollment.
+ */
+export function observedHostAdmissionApplyResult(
+ input:unknown,expectedRevision:unknown
+):{revision:number}|null{
+ if(!input||typeof input!=="object"||Array.isArray(input)
+   ||!Number.isSafeInteger(expectedRevision)||Number(expectedRevision)<0)
+   return null;
+ const data=input as Record<string,unknown>;
+ if(data.status!=="APPLIED"||data.admission_operation!=="approve"
+   ||!Number.isSafeInteger(data.revision)
+   ||Number(data.revision)<=Number(expectedRevision))return null;
+ return {revision:data.revision as number};
+}
+
 /** Admission, trust, connection and policy are independent Core concepts.
  * Do not stringify arbitrary nested Core state or trust an unverified time.
  */
@@ -337,7 +403,9 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate,onBus
         method:"POST",body:JSON.stringify({host:selectedHost,operation:"approve"}),
       });
       if(generation!==approvalGeneration.current)return;
-      setPreview(result);
+      const observed=observedHostAdmissionApprovalPlan(result,selectedHost);
+      if(!observed)throw new Error("Core admission Preview is unverified; no approval is available. Refresh Host state before retrying.");
+      setPreview(observed);
     }catch(e:any){if(generation===approvalGeneration.current)setError(String(e.message||e))}
     finally{if(generation===approvalGeneration.current)setBusy(false)}
   }
@@ -349,7 +417,9 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate,onBus
       const result=await api("/api/v1/managed-hosts/admission/apply",{
         method:"POST",body:JSON.stringify({change_plan_id:scopedPreview.change_plan_id,confirmation:confirm}),
       });
-      setMessage("Core admission review applied at revision "+String(result.revision??"UNKNOWN"));
+      const applied=observedHostAdmissionApplyResult(result,scopedPreview.expected_revision);
+      if(!applied)throw new Error("Core admission apply result is unverified; refresh Host inventory before deciding whether to retry.");
+      setMessage("Core admission review applied at revision "+applied.revision);
       setPreview(null);setConfirm("");refresh();setStep(4);
     }catch(e:any){setError("Approval not confirmed: "+String(e.message||e))}
     finally{setBusy(false)}
