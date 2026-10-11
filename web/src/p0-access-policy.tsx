@@ -1,5 +1,6 @@
 import React, {useEffect, useRef, useState} from "react";
 import {CoreChoiceField,useCoreCatalog,type CoreCatalog} from "./uxb-core-choices";
+import {isObservedAbsoluteTime} from "./uxb-integrations-state";
 
 export type LinkApi = (path:string, init?:RequestInit)=>Promise<Record<string,any>>;
 type Navigate = (id:string,groupId?:string,context?:any)=>void;
@@ -63,12 +64,31 @@ export function coreCutoffKey(plane:string,scopeKind:string,scopeRef:string,oper
   return JSON.stringify([plane,scopeKind,scopeRef.trim(),operation,reason.trim()]);
 }
 
-export function canApplyGuidedRule(preview:any,tests:any,acknowledgedUnknowns:boolean):boolean {
-  if(!preview?.change_plan_id||preview.no_change||tests?.ok!==true||Number(tests.required_failed??1)!==0)return false;
-  if(preview.policy_regression && (preview.policy_regression.ok!==true || Number(preview.policy_regression.required_failed??1)!==0))return false;
-  if(preview.blast_radius?.limits?.truncated)return false;
-  if((preview.blast_radius?.unknowns||[]).length && !acknowledgedUnknowns)return false;
-  return true;
+export function canApplyGuidedRule(
+ preview:any,tests:any,acknowledgedUnknowns:boolean,now:number=Date.now()
+):boolean{
+ const object=(value:unknown):value is Record<string,any>=>
+   !!value&&typeof value==="object"&&!Array.isArray(value);
+ if(!object(preview)||!object(tests)||!Number.isFinite(now)
+   ||typeof preview.change_plan_id!=="string"
+   ||!/^cp_[A-Za-z0-9_-]{16,128}$/.test(preview.change_plan_id)
+   ||preview.operation_class!=="CHANGE"
+   ||!["remote-access-rule","internet-access-rule","ai-access-rule"].includes(preview.change_type)
+   ||preview.resource_type!==preview.change_type
+   ||!["set","delete"].some(op=>preview.operation==="guided."+preview.change_type+"."+op)
+   ||!trustedCoreTraceText(preview.resource_ref)
+   ||preview.confirmation_class!=="APPLY"||preview.no_change!==false
+   ||!Number.isSafeInteger(preview.expected_revision)||preview.expected_revision<0
+   ||!isObservedAbsoluteTime(preview.valid_until)
+   ||Date.parse(preview.valid_until)<=now
+   ||tests.ok!==true||tests.required_failed!==0)return false;
+ const regression=preview.policy_regression,blast=preview.blast_radius;
+ if(!object(regression)||regression.ok!==true||regression.required_failed!==0
+   ||!object(blast)||!object(blast.limits)||blast.limits.truncated!==false
+   ||!Array.isArray(blast.unknowns)||blast.unknowns.length>128
+   ||blast.unknowns.some((item:unknown)=>!trustedCoreTraceText(item,512)))return false;
+ if(blast.unknowns.length>0&&acknowledgedUnknowns!==true)return false;
+ return true;
 }
 
 /** Guided policy HTTP success is not an Apply acknowledgement. Match the
@@ -419,6 +439,19 @@ export function GuidedPolicyJourney({api,onNavigate,initialPlane="remote",locked
   const catalog=useCoreCatalog(api,resourceCatalog);
   useEffect(()=>{onBusyChange?.(busy)},[busy]);
   useEffect(()=>()=>{onBusyChange?.(false)},[]);
+  useEffect(()=>{
+    if(!preview||busy)return;
+    const expires=Date.parse(preview.valid_until);
+    const delay=expires-Date.now();
+    if(!Number.isFinite(delay)||delay>2147483647)return;
+    const timer=setTimeout(()=>{
+      if(Date.now()>=expires){
+        setPreview(null);setTests(null);setConfirmation("");setAcknowledge(false);
+        setPhase(1);setError("Core Change Plan expired. Request a fresh Preview and policy tests.");
+      }
+    },Math.max(0,delay));
+    return()=>clearTimeout(timer);
+  },[preview?.change_plan_id,preview?.valid_until,busy]);
   function invalidate(){
     seq.current+=1;setPreview(null);setTests(null);setConfirmation("");setAcknowledge(false);
     setPhase(1);setMessage("");setError("");
@@ -449,6 +482,12 @@ export function GuidedPolicyJourney({api,onNavigate,initialPlane="remote",locked
       const result=await api("/api/v1/guided/preview",{method:"POST",
         body:JSON.stringify({change_type:plane+"-access-rule",payload})});
       if(seq.current!==token)return;
+      const kind=plane+"-access-rule";
+      if(result?.change_type!==kind||result?.resource_type!==kind
+        ||result?.operation!=="guided."+kind+"."+operation
+        ||!isObservedAbsoluteTime(result?.valid_until)
+        ||Date.parse(result.valid_until)<=Date.now())
+        throw new Error("Core Preview does not confirm the exact requested policy action and current plan expiry.");
       setPreview(result);setPhase(2);
     }catch(e:any){if(seq.current===token)setError("Preview failed: "+String(e.message||e))}
     finally{if(seq.current===token)setBusy(false)}
@@ -465,10 +504,21 @@ export function GuidedPolicyJourney({api,onNavigate,initialPlane="remote",locked
     finally{if(seq.current===token)setBusy(false)}
   }
   const unknowns=Array.isArray(preview?.blast_radius?.unknowns)?preview.blast_radius.unknowns:[];
-  const safe=canApplyGuidedRule(preview,tests,acknowledge);
-  const requiredWord=String(preview?.confirmation_class||"APPLY");
+  const safe=canApplyGuidedRule(preview,tests,acknowledge)
+    &&preview?.change_type===plane+"-access-rule"
+    &&preview?.operation==="guided."+plane+"-access-rule."+operation;
+  const requiredWord=preview?.confirmation_class==="APPLY"?"APPLY":"UNVERIFIED";
   async function apply(){
-    if(!safe||confirmation!==requiredWord||busy)return;
+    if(busy||confirmation!==requiredWord
+      ||preview?.change_type!==plane+"-access-rule"
+      ||preview?.operation!=="guided."+plane+"-access-rule."+operation)return;
+    // Re-evaluate expiry and Core proof at click time; stale render state is
+    // never sufficient to send a side-effecting Apply request.
+    if(!canApplyGuidedRule(preview,tests,acknowledge)){
+      setPreview(null);setTests(null);setConfirmation("");setAcknowledge(false);setPhase(1);
+      setError("Core Change Plan is expired or incomplete. Request a fresh Preview and policy tests.");
+      return;
+    }
     const token=seq.current;
     setBusy(true);setError("");
     try{

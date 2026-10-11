@@ -111,7 +111,13 @@ test("Emergency cutoff review scope cannot be reused for another plane, selector
     access.coreCutoffKey("ai","plane","","apply","")),null);
 });
 test("Guided Apply remains locked without exact plan and independent required-test PASS",()=>{
-  const preview={change_plan_id:"cp_123",no_change:false,blast_radius:{limits:{truncated:false},unknowns:[]}};
+  const preview={change_plan_id:"cp_"+"a".repeat(32),operation_class:"CHANGE",
+    operation:"guided.remote-access-rule.set",change_type:"remote-access-rule",
+    resource_type:"remote-access-rule",resource_ref:"allow-ssh",
+    confirmation_class:"APPLY",expected_revision:5,no_change:false,
+    valid_until:"2032-01-01T00:00:00Z",
+    policy_regression:{ok:true,required_failed:0},
+    blast_radius:{limits:{truncated:false},unknowns:[]}};
   const ok={ok:true,required_failed:0,count:1,passed:1};
   assert.equal(access.canApplyGuidedRule(null,ok,true),false);
   assert.equal(access.canApplyGuidedRule(preview,null,true),false);
@@ -121,8 +127,8 @@ test("Guided Apply remains locked without exact plan and independent required-te
   assert.equal(access.canApplyGuidedRule({...preview,change_plan_id:""},ok,true),false);
   assert.equal(access.canApplyGuidedRule({...preview,blast_radius:{limits:{truncated:true}}},ok,true),false);
   assert.equal(access.canApplyGuidedRule({...preview,policy_regression:{ok:false,required_failed:1}},ok,true),false);
-  assert.equal(access.canApplyGuidedRule({...preview,blast_radius:{unknowns:["unmodeled"]}},ok,false),false);
-  assert.equal(access.canApplyGuidedRule({...preview,blast_radius:{unknowns:["unmodeled"]}},ok,true),true);
+  assert.equal(access.canApplyGuidedRule({...preview,blast_radius:{limits:{truncated:false},unknowns:["unmodeled"]}},ok,false),false);
+  assert.equal(access.canApplyGuidedRule({...preview,blast_radius:{limits:{truncated:false},unknowns:["unmodeled"]}},ok,true),true);
   assert.equal(access.canApplyGuidedRule(preview,ok,false),true);
 });
 
@@ -560,4 +566,37 @@ test("UX-2 Guided Policy Apply must have exact Core plan, rule and advanced revi
  assert.match(src,/if\(!confirmed\)throw new Error\(/);
  assert.match(src,/setMessage\("Core applied rule change at revision "\+confirmed.revision\)/);
  assert.match(src,/Inspect Core Change History before retrying/);
+});
+
+test("UX-2 Guided Policy cannot Apply malformed, expired or incomplete Core Preview and test proof",()=>{
+ const now=Date.parse("2030-12-31T23:59:59Z");
+ const plan={change_plan_id:"cp_"+"a".repeat(32),operation_class:"CHANGE",
+   operation:"guided.remote-access-rule.set",
+   change_type:"remote-access-rule",resource_type:"remote-access-rule",resource_ref:"allow-ssh",
+   confirmation_class:"APPLY",no_change:false,expected_revision:30,
+   valid_until:"2031-01-01T00:00:00Z",blast_radius:{limits:{truncated:false},unknowns:[]},
+   policy_regression:{ok:true,required_failed:0}};
+ const tests={ok:true,required_failed:0};
+ assert.equal(access.canApplyGuidedRule(plan,tests,false,now),true);
+ assert.equal(access.canApplyGuidedRule(plan,tests,true,Date.parse(plan.valid_until)),false);
+ for(const invalid of [
+   {...plan,change_plan_id:{secret:"INVALID"}},{...plan,confirmation_class:"DELETE"},
+   {...plan,no_change:"false"},{...plan,operation_class:"TEST"},
+   {...plan,change_type:"internet-access-rule"},
+   {...plan,expected_revision:-1},{...plan,expected_revision:"30"},
+   {...plan,valid_until:"yesterday"},{...plan,resource_ref:{"id":"allow-ssh"}},
+   {...plan,blast_radius:{limits:{truncated:"false"},unknowns:[]}},
+   {...plan,blast_radius:{limits:{truncated:false},unknowns:{secret:1}}},
+   {...plan,blast_radius:null},
+   {...plan,policy_regression:{ok:true,required_failed:"0"}}
+ ])assert.equal(access.canApplyGuidedRule(invalid,tests,true,now),false,JSON.stringify(invalid));
+ for(const invalid of [
+   {ok:true,required_failed:"0"},{ok:true,required_failed:null},
+   {ok:true,required_failed:-1},{ok:1,required_failed:0},
+   {ok:true,required_failed:NaN}
+ ])assert.equal(access.canApplyGuidedRule(plan,invalid,true,now),false,JSON.stringify(invalid));
+ const src=readFileSync(join(webRoot,"src","p0-access-policy.tsx"),"utf8");
+ assert.match(src,/if\(!canApplyGuidedRule\(preview,tests,acknowledge\)\)\{/);
+ assert.match(src,/Core Change Plan expired\. Request a fresh Preview and policy tests\./);
+ assert.match(src,/if\(result\?\.change_type!==kind\|\|result\?\.resource_type!==kind/);
 });
