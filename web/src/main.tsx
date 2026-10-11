@@ -29,6 +29,7 @@ import {auditUtcPresetRange} from "./uxb-audit-presets";
 import {filterObservedPoliciesByStatus} from "./uxb-policy-status-filter";
 import {serviceAccountOperationalStatus,serviceAccountExpiry,serviceAccountPermissions,webhookStatus,webhookDeliverySummary} from "./uxb-integrations-state";
 import {filterObservedHosts} from "./uxb-host-search";
+import {sortLoadedHosts,isHostSortMode,type HostSortMode} from "./uxb-host-sort";
 import {filterLoadedHostConnections,type HostConnectionFilter} from "./uxb-host-connection-filter";
 import {hostDisplayFilterResetAvailable} from "./uxb-host-filter-reset";
 import {FirstConnectionSetup,connectionReviewContext,type SetupDraft} from "./uxb-setup";
@@ -2010,6 +2011,8 @@ function ResourceWorkspace({kind,data,operator,onNavigate,api,initialFilter="",i
   useEffect(()=>{setAdmissionFilter(isHost&&isSavedAdmission(initialAdmission)?initialAdmission:"all")},[isHost,initialAdmission]);
   const [connectionFilter,setConnectionFilter]=useState<HostConnectionFilter>("all");
   useEffect(()=>{setConnectionFilter("all")},[kind]);
+  const [hostSort,setHostSort]=useState<HostSortMode>("review");
+  useEffect(()=>{setHostSort("review")},[kind]);
   const [serviceTypeFilter,setServiceTypeFilter]=useState<ServiceTypeFacet>("all");
   const [serviceConfigFilter,setServiceConfigFilter]=useState<ServiceConfigFacet>("all");
   useEffect(()=>{setServiceTypeFilter("all");setServiceConfigFilter("all")},[kind]);
@@ -2064,10 +2067,7 @@ function ResourceWorkspace({kind,data,operator,onNavigate,api,initialFilter="",i
   const serviceSearch=isHost?null:filterObservedServices(loaded,filter);
   const serviceFacets=isHost?null:filterLoadedServiceFacets(serviceSearch?.items||[],serviceTypeFilter,serviceConfigFilter);
   const serviceQuickFiltersActive=serviceTypeFilter!=="all"||serviceConfigFilter!=="all";
-  const rows=(isHost?(hostConnection?.items||[]):(serviceFacets?.items||[]))
-    .sort((a:any,b:any)=>isHost?
-      (a.admission_state==="PENDING_APPROVAL"?-1:a.admission_state==="QUARANTINED"?0:1)
-      -(b.admission_state==="PENDING_APPROVAL"?-1:b.admission_state==="QUARANTINED"?0:1):0);
+  const rows=isHost?sortLoadedHosts(hostConnection?.items||[],hostSort):(serviceFacets?.items||[]);
   const heading=isHost?"Managed Hosts":"Remote Services";
   const description=isHost?"Agent inventory, trust, connectivity, platform and version in one resource workspace.":"Published services, owning hosts, ports and release state with contextual access actions.";
   const savedDraft=(!hostSearch?.error&&!serviceSearch?.error)
@@ -2091,6 +2091,19 @@ function ResourceWorkspace({kind,data,operator,onNavigate,api,initialFilter="",i
         <label className="dr-filter-field"><WorkspaceIcon kind="search"/><input value={filter} maxLength={120} aria-label={isHost?"Filter Managed Hosts":"Filter Remote Services"}
           onChange={e=>setFilter(e.target.value)}
           placeholder={isHost?"Filter hosts (name:, host:, os:, admission:)…":"Filter services (name:, host:, port:, state:)…"}/>{filter&&<button onClick={()=>setFilter("")} aria-label="Clear filter">×</button>}</label></div>
+      {isHost&&<div className="dr-form-actions" role="group" aria-label="Host display order">
+        <label className="dr-field"><span>Sort loaded Hosts</span>
+          <select aria-label="Sort loaded Hosts" value={hostSort}
+            style={{maxWidth:"100%",minWidth:0}}
+            onChange={e=>setHostSort(isHostSortMode(e.target.value)?e.target.value:"review")}>
+            <option value="review">Review priority (default)</option>
+            <option value="name_asc">Host name A–Z</option>
+            <option value="name_desc">Host name Z–A</option>
+          </select>
+        </label>
+        <p className="muted">Host sorting changes only loaded rows; no Core or Saved View update.
+          Review priority preserves pending approval before quarantined and other Hosts.</p>
+      </div>}
       {isHost&&hostFiltersActive&&<button type="button" className="secondary"
         onClick={clearHostDisplayFilters}>Clear Host filters</button>}
       {isHost&&<p className="muted">Clear Host filters restores only the three local display choices. Existing loaded Core inventory and Saved Views remain unchanged.</p>}
@@ -2139,7 +2152,7 @@ function ResourceWorkspace({kind,data,operator,onNavigate,api,initialFilter="",i
       {!isHost&&serviceSearch?.warning&&<p className="dr-uxb-catalog-page-notice" role="status">UNKNOWN coverage · {serviceSearch.warning}</p>}
       {savedDraft&&<div className="toolbar"><button type="button" className="secondary"
         onClick={()=>onNavigate?.("views","activity",{savedViewDraft:savedDraft})}>Save this view →</button>
-        <span className="muted">Saves the visible text filter and optional Host admission selection as a private display preference after you name it. {isHost?"Connection quick filter is not saved.":"Service quick facets are not saved."} Unloaded Core inventory pages are not included.</span></div>}
+        <span className="muted">Saves the visible text filter and optional Host admission selection as a private display preference after you name it. {isHost?"Connection quick filter is not saved. Host sort is not saved.":"Service quick facets are not saved."} Unloaded Core inventory pages are not included.</span></div>}
       {partial&&<p className="dr-uxb-catalog-page-notice" role="status">Partial Core inventory · more {isHost?"Managed Hosts":"Remote Services"} exist beyond the loaded pages. Filters check loaded rows only. Load more to inspect additional Core records.</p>}
       {moreError&&<p className="warning-box" role="alert">UNKNOWN · Next Core inventory page unavailable: {moreError} Existing observed resources remain visible.</p>}
       <div className="toolbar" role="status">
