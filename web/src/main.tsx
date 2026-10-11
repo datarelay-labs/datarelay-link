@@ -8,6 +8,7 @@ import {observedCoreFlag,observedCoreCount,observedCoreNames} from "./uxb-impact
 import {AccessEvidenceExplorer,GuidedPolicyJourney,coreFlowKey,coreCutoffKey,visibleCoreEvidence,resolveCompletePolicyMatch,observedHostInspectContext,type AccessPlane} from "./p0-access-policy";
 import {EnrollmentOnboarding} from "./p0-enrollment";
 import {navGroups,groupFor,labelFor,pageDescriptions,visibleRoute,navMatches,setupContextForObjectFamily} from "./uxb-navigation";
+import {START_PAGE_OPTIONS,startPageKeyForOperator,readPreferredStartPage,writePreferredStartPage} from "./uxb-start-page";
 import {FirstUseHome,observedBoundedCountPair,observedHomeAttention,isFreshInstallation,observedRecentFeed,observedNumber,accessPlaneCount,coreHealthState,type RecentFeed} from "./uxb-home";
 import {requireObservedMenuPayload,guidedChangePreviewMatchesIntent,requireObservedGuidedChangeApplyReceipt,temporaryAccessPreviewMatchesIntent,observedHostAdmissionPlanForAction,requireObservedHostAdmissionReceipt,requireObservedTemporaryAccessApplyForPlan,requireObservedEmergencyCutoffApplyForPlan,observedEmergencyCutoffPreviewForIntent,requireObservedCutoffInventory,requireObservedLiveAccessView,requireObservedDiagnosisView,requireObservedInventoryContinuation,requireObservedObjectContinuation,requireObservedAuditRetention,auditRetentionRunPermitted,requireObservedAccessHygiene,hygieneInspectTarget,requireObservedJobStart,requireObservedFleetApply,requireObservedFleetPreview,requireObservedFleetApplyForPreview,requireObservedAuditExport,requireObservedRolloutPreview,requireObservedInventoryExport,requireObservedJobDetail,requireObservedJobCancellation,isPartialCorePage,selectMenuPage,combineObservedPolicyPlanes,policyStateLabel,policyExpiryLabel,type MenuPagePosition} from "./uxb-menu-evidence";
 import {RemoteServiceEditor} from "./uxb-remote-service";
@@ -2670,8 +2671,14 @@ function GlobalSearch({open,onClose,onNavigate,operator,returnFocusRef}:{
   </div>;
 }
 
+function readBrowserStartingPage(operator:any){
+  try{return readPreferredStartPage(operator,window.localStorage)}
+  catch{return "overview"}
+}
 function Shell({operator,onLogout}:{operator:any,onLogout:()=>void}){
-  const [active,setActive]=useState("overview");
+  const [active,setActive]=useState(()=>readBrowserStartingPage(operator));
+  const [preferredStartPage,setPreferredStartPage]=useState(()=>readBrowserStartingPage(operator));
+  const [startingPageNotice,setStartingPageNotice]=useState("");
   const [collapsed,setCollapsed]=useState(()=>{try{return localStorage.getItem("drlink_web_sidebar_collapsed")==="1"}catch{return false}});
   const [dark,setDark]=useState(()=>{try{return localStorage.getItem("drlink_web_theme")==="dark"}catch{return false}});
   const [refreshNonce,setRefreshNonce]=useState(0);
@@ -2684,6 +2691,24 @@ function Shell({operator,onLogout}:{operator:any,onLogout:()=>void}){
   const [setupDraft,setSetupDraft]=useState<SetupDraft|null>(null);
   const activeGroup=groupFor(active);
   const [expanded,setExpanded]=useState<Record<string,boolean>>(()=>Object.fromEntries(navGroups.map(group=>[group.id,group.id===activeGroup||group.id==="connections"])));
+  useEffect(()=>{
+    const route=readBrowserStartingPage(operator);
+    setActive(route);setPreferredStartPage(route);setStartingPageNotice("");
+    setNavigationContext(null);
+    const group=groupFor(route);
+    if(group)setExpanded(prev=>({...prev,[group]:true}));
+  },[operator.id,operator.role]);
+
+  function chooseStartingPage(route:string){
+    let saved=false;
+    try{saved=writePreferredStartPage(operator,route,window.localStorage)}catch{}
+    if(saved){
+      setPreferredStartPage(route);
+      setStartingPageNotice("Starting page saved for this browser and current role. Applies on next sign-in or reload.");
+    }else{
+      setStartingPageNotice("Starting page preference not saved. The last valid browser setting, if any, is unchanged; Home is the safe fallback.");
+    }
+  }
 
   useEffect(()=>{
     document.documentElement.setAttribute("data-dr-theme",dark?"dark":"light");
@@ -2782,6 +2807,25 @@ function Shell({operator,onLogout}:{operator:any,onLogout:()=>void}){
           <div className="dr-uxb-title"><h1>{title}</h1><span className={coreHealthy==="attention"||coreHealthy==="unknown"?"dr-health-pill attention":"dr-health-pill"}><i/>{healthText}</span></div>
           <p>{pageDescriptions[active]||"Core-backed management workspace"}</p></div></div>
         <div className="dr-topbar-actions">
+          <details className="dr-start-page-settings" role="group" aria-label="Starting page preference">
+            <summary title="Starting page"><WorkspaceIcon kind="overview"/><span>Starting page</span></summary>
+            <div className="dr-start-page-settings-panel">
+              <strong>Starting page</strong>
+              <label className="dr-field"><span>Open this page on next sign-in</span>
+                <select aria-label="Preferred starting page" value={preferredStartPage}
+                  disabled={!startPageKeyForOperator(operator)}
+                  onChange={e=>chooseStartingPage(e.target.value)}>
+                  {START_PAGE_OPTIONS.filter(item=>visibleRoute(item.id,operator.role)).map(item=>
+                    <option key={item.id} value={item.id}>{item.label}</option>)}
+                </select>
+              </label>
+              <p className="muted">Applies on next sign-in or reload. Core permissions do not change.
+                Browser-only setting for this operator and role.</p>
+              {!startPageKeyForOperator(operator)&&<p role="alert">No verified operator ID;
+                preference unavailable.</p>}
+              {startingPageNotice&&<p role="status" aria-live="polite">{startingPageNotice}</p>}
+            </div>
+          </details>
           <button className="dr-search-trigger" onClick={e=>openSearch(e.currentTarget)}><WorkspaceIcon kind="search"/><span>Search</span><kbd>⌘K</kbd></button>
           <button className="dr-icon-button" onClick={()=>setRefreshNonce(x=>x+1)} title="Refresh"><WorkspaceIcon kind="refresh"/></button>
           <button className="dr-icon-button" onClick={()=>setDark(!dark)} title="Toggle theme"><WorkspaceIcon kind={dark?"sun":"moon"}/></button>
