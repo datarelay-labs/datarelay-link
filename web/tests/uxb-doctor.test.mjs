@@ -128,3 +128,27 @@ test("UX-4 Doctor last activation is a real Core absolute timestamp or UNKNOWN",
  assert.equal(validatedDoctorEvidence(data([{id:"runtime.ai",status:"PASS",
   message:"Not configured",activated_at:null}])).checks[0].activated_at,"Not observed");
 });
+
+test("Core Doctor runtime severity cannot contradict its observed canonical state",()=>{
+ const cases=[
+  ["PASS","Runtime generation status: failed"],
+  ["PASS","Runtime generation status: unknown"],
+  ["ATTENTION","Runtime generation status: active"],
+  ["ATTENTION","Runtime generation status: not_configured"],
+  ["PASS","Everything looks healthy"],
+ ];
+ for(const [status,message] of cases){
+  const input=data([{id:"runtime.remote",plane:"remote",status,message}]);
+  const observed=validatedDoctorEvidence(input);
+  assert.equal(observed.passCount,0,message);
+  assert.equal(observed.attentionCount,0,message);
+  assert.equal(observed.unknownCount,1,message);
+  assert.match(render(input),/UNKNOWN checks<\/strong><p>1/);
+ }
+ const pass=validatedDoctorEvidence(data([{id:"runtime.remote",status:"PASS",
+  message:"Runtime generation status: active"}]));
+ const attention=validatedDoctorEvidence(data([{id:"runtime.remote",status:"ATTENTION",
+  message:"Runtime generation status: failed"}]));
+ assert.equal(pass.passCount,1);
+ assert.equal(attention.attentionCount,1);
+});

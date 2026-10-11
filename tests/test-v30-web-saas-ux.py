@@ -1108,8 +1108,9 @@ class V30WebSaasUxContractTests(unittest.TestCase):
             'report.read_only!==true||report.side_effect_free!==true',
             '||!Array.isArray(report.checks)',
             'const message=doctorText(row.message,"UNKNOWN · Core reason unavailable")',
-            'const status=(message!=="UNKNOWN · Core reason unavailable")?row.status:null;',
-            'observedState:status==="PASS"?"PASS":status==="ATTENTION"?"ATTENTION":"UNKNOWN"',
+            'const runtime=/^Runtime generation status: ([a-z][a-z0-9_]*)$/.exec(message);',
+            'const expected=runtime?["active","not_configured"].includes(runtime[1])?"PASS":"ATTENTION":null;',
+            'const observedState=expected!==null&&row.status===expected?expected:"UNKNOWN";',
             'new Set((report.checks as any[]).map(row=>row.id)).size!==report.checks.length',
 
             'No runtime generation checks were observed',

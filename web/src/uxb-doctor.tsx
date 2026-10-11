@@ -30,7 +30,11 @@ export function validatedDoctorEvidence(payload:unknown){
     throw new Error("Core Doctor evidence is incomplete or not certified read-only. State is UNKNOWN.");
   const checks=(report.checks as any[]).map(row=>{
     const message=doctorText(row.message,"UNKNOWN · Core reason unavailable");
-    const status=(message!=="UNKNOWN · Core reason unavailable")?row.status:null;
+    // Canonical Core Doctor derives PASS only from active/not_configured.
+    // A contradictory status+reason pair must not manufacture healthy checks.
+    const runtime=/^Runtime generation status: ([a-z][a-z0-9_]*)$/.exec(message);
+    const expected=runtime?["active","not_configured"].includes(runtime[1])?"PASS":"ATTENTION":null;
+    const observedState=expected!==null&&row.status===expected?expected:"UNKNOWN";
     return {
       id:row.id,
       plane:doctorText(row.plane,row.id),
@@ -41,7 +45,7 @@ export function validatedDoctorEvidence(payload:unknown){
       generation:doctorCount(row.generation),
       activated_at:row.activated_at===null||row.activated_at===undefined||row.activated_at===""
         ?"Not observed":isObservedAbsoluteTime(row.activated_at)?row.activated_at:"UNKNOWN",
-      observedState:status==="PASS"?"PASS":status==="ATTENTION"?"ATTENTION":"UNKNOWN",
+      observedState,
     };
   });
   const attention=report.attention as Record<string,unknown>;
