@@ -83,3 +83,27 @@ test("Invalid duplicate or unbounded Doctor identifiers cannot fabricate distinc
   assert.throws(()=>validatedDoctorEvidence(bad),/Core|UNKNOWN/);
  }
 });
+
+test("Unverifiable Doctor evidence renders a nonfatal UNKNOWN fallback and Health navigation",()=>{
+ for(const bad of [
+   null,
+   {...data(),read_only:false},
+   {...data(),checks:[null]},
+   {...data(),checks:[{id:"runtime.remote",status:"PASS"},{id:"runtime.remote",status:"PASS"}]},
+ ]){
+  const html=render(bad);
+  assert.match(html,/Core Doctor/);
+  assert.match(html,/UNKNOWN/);
+  assert.match(html,/Core Doctor evidence could not be validated/);
+  assert.match(html,/System Health/);
+  assert.doesNotMatch(html,/PASS checks|No runtime generation checks were observed|SECRET_DOCTOR/);
+ }
+ // Malformed optional row evidence is allowed only as explicitly UNKNOWN,
+ // while a structurally invalid response uses the whole-page fallback.
+ const optional=render(data([{id:"runtime.remote",status:"PASS",
+  message:{credential:"SECRET_DOCTOR"}}]));
+ assert.match(optional,/UNKNOWN checks<\/strong><p>1/);
+ assert.match(optional,/UNKNOWN · Core reason unavailable/);
+ assert.doesNotMatch(optional,/SECRET_DOCTOR/);
+ assert.throws(()=>validatedDoctorEvidence(null),/Core|UNKNOWN/);
+});

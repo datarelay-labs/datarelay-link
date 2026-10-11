@@ -14,7 +14,7 @@ function observedDisplay(value:unknown,missing="UNKNOWN"):string{
   return value.trim();
 }
 export function observedVersionState(server:unknown,agent:unknown):VersionState{
-  const good=(x:unknown)=>typeof x==="string"&&!!x.trim()&&x.trim().toLowerCase()!=="unknown";
+  const good=(x:unknown)=>validCoreText(x)&&!!x.trim()&&x.trim().toLowerCase()!=="unknown";
   if(!good(server)||!good(agent))return "UNKNOWN";
   return (server as string).trim()===(agent as string).trim()?"SAME":"DIFFERENT";
 }
@@ -57,9 +57,22 @@ export function validatedVersionInventory(payload:unknown){
 export function AgentVersionDrift({data,onNavigate}:{
   data:unknown,onNavigate?:(id:string,group?:string)=>void
 }){
-  const inventory=validatedVersionInventory(data);
   const [filter,setFilter]=useState("all");
   const [query,setQuery]=useState("");
+  // A syntactically successful Core HTTP response can still contradict its
+  // bounded Host inventory. Render UNKNOWN rather than crash the Web shell.
+  // Hooks stay unconditional when a later refresh changes validity.
+  let inventory:ReturnType<typeof validatedVersionInventory>|null=null;
+  try{inventory=validatedVersionInventory(data)}catch{ /* no untrusted Core error to UI */ }
+  if(!inventory)return <section className="dr-resource-workspace"
+      aria-label="Agent version drift">
+    <header className="dr-page-intro"><div>
+      <p className="dr-eyebrow">Activity &amp; Health · Advanced</p>
+      <h2>Agent version drift</h2></div></header>
+    <p className="warning-box" role="alert">UNKNOWN · Core Agent version inventory could not be validated. No Agent count, version comparison, fleet health or successful upgrade was observed.</p>
+    <button className="secondary" type="button"
+      onClick={()=>onNavigate?.("hosts","connections")}>View Servers &amp; Agents →</button>
+  </section>;
   const same=inventory.hosts.filter(row=>row.comparison==="SAME").length;
   const different=inventory.hosts.filter(row=>row.comparison==="DIFFERENT").length;
   const unknown=inventory.hosts.filter(row=>row.comparison==="UNKNOWN").length;

@@ -106,3 +106,37 @@ test("Core version summary cannot contradict the bounded observed Host rows",()=
   page("3.0.0",[a("same","3.0.0"),a("same","2.4.0")])
  ])assert.throws(()=>validatedVersionInventory(broken),/Core|UNKNOWN/);
 });
+
+test("Malformed Core version snapshots render a nonfatal UNKNOWN workspace instead of crashing the shell",()=>{
+ const known=page("3.0.0",[a("host-1","3.0.0")]);
+ for(const bad of [
+  null,
+  {server_version:"3.0.0",hosts:[],limit:200},
+  {...known,drift_count:3},
+  page("3.0.0",[a("dup","3.0.0"),a("dup","2.4.0")]),
+  {...known,hosts:[{id:"host-1",version:{credential:"SECRET_KEY"}}]},
+ ]){
+  const html=render(bad);
+  assert.match(html,/Agent version drift/);
+  assert.match(html,/UNKNOWN/);
+  assert.match(html,/Core Agent version inventory could not be validated/);
+  assert.match(html,/View Servers &amp; Agents/);
+  assert.doesNotMatch(html,/No managed Agents|0 observed Agent records|SECRET_KEY/);
+ }
+ // Explicitly malformed data must continue failing as an authoritative
+ // projection: only the read-only component catches it for display.
+ assert.throws(()=>validatedVersionInventory(null),/UNKNOWN/);
+});
+
+test("Direct version comparison never treats bidi/control or unbounded labels as evidence",()=>{
+ for(const invalid of [
+   ["3.0.0\u202e","3.0.0"],
+   ["3.0.0","3.0.0\n"],
+   ["3.0.0","3.0.0\u2066"],
+   ["3.0.0".repeat(34),"3.0.0".repeat(34)],
+ ]){
+   assert.equal(observedVersionState(...invalid),"UNKNOWN",invalid.join(" vs "));
+ }
+ assert.equal(observedVersionState("3.0.0","3.0.0"),"SAME");
+ assert.equal(observedVersionState("3.0.0","2.4.0"),"DIFFERENT");
+});

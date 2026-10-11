@@ -58,8 +58,23 @@ export function validatedDoctorEvidence(payload:unknown){
 export function CoreDoctorWorkspace({data,onNavigate}:{
  data:unknown,onNavigate?:(id:string,group?:string)=>void
 }){
-  const evidence=validatedDoctorEvidence(data);
   const [filter,setFilter]=useState("all"),[query,setQuery]=useState("");
+  // Fail closed on inconsistent Core data without taking down other UI tasks.
+  // Unconditional hooks preserve React's ordering across Core refreshes.
+  let evidence:ReturnType<typeof validatedDoctorEvidence>|null=null;
+  try{evidence=validatedDoctorEvidence(data)}catch{ /* no untrusted Core exception to UI */ }
+  if(!evidence)return <section className="dr-resource-workspace" aria-label="Core Doctor">
+    <header className="dr-page-intro"><div>
+      <p className="dr-eyebrow">Activity &amp; Health · Troubleshooting</p>
+      <h2>Core Doctor</h2></div></header>
+    <p className="warning-box" role="alert">UNKNOWN · Core Doctor evidence could not be validated. No runtime checks, policy health or absence of errors was confirmed.</p>
+    <div className="dr-page-actions">
+      <button className="secondary" type="button"
+        onClick={()=>onNavigate?.("health","activity")}>System Health →</button>
+      <button className="secondary" type="button"
+        onClick={()=>onNavigate?.("jobs","activity")}>Management Jobs →</button>
+    </div>
+  </section>;
   const visible=evidence.checks.filter(row=>(filter==="all"||row.observedState===filter)
     &&(!query.trim()||[row.id,row.plane,row.message,row.error].some(v=>
       String(v??"").toLowerCase().includes(query.trim().toLowerCase()))));
