@@ -24,6 +24,7 @@ import {operatorAccountState,operatorMfaState,operatorMfaAction,operatorLastLogi
 import {operatorUserLabel} from "./uxb-users-state";
 import {auditInvestigation,matchObservedAuditReturn,matchObservedPolicyReturn,recentAuditInvestigation,observedAuditEventDetails,observedAuditAppliedFilters,type ObservedAuditEventDetail} from "./uxb-audit-context";
 import {auditUtcPresetRange} from "./uxb-audit-presets";
+import {filterObservedPoliciesByStatus} from "./uxb-policy-status-filter";
 import {serviceAccountOperationalStatus,serviceAccountExpiry,serviceAccountPermissions,webhookStatus,webhookDeliverySummary} from "./uxb-integrations-state";
 import {filterObservedHosts} from "./uxb-host-search";
 import {FirstConnectionSetup,connectionReviewContext,type SetupDraft} from "./uxb-setup";
@@ -1867,6 +1868,7 @@ function PolicyWorkspace({data,operator,onNavigate,api,context}:{data:any,operat
   const inspectPolicyId=typeof context?.inspectPolicyId==="string"&&context.inspectPolicyId.length<=160
     ?context.inspectPolicyId:"";
   const [plane,setPlane]=useState<string>(focusPlane||carriedPlane||"all"),[filter,setFilter]=useState(focusName||inspectPolicyId),[selected,setSelected]=useState<any>(null);
+  const [statusFilter,setStatusFilter]=useState<"all"|"enabled"|"disabled"|"unknown">("all");
   const [additional,setAdditional]=useState<any[]>([]);
   const [nextByPlane,setNextByPlane]=useState<Record<string,string|null>>(data.next_cursor_by_plane||{});
   const [exhausted,setExhausted]=useState<string[]>([]);
@@ -1916,8 +1918,8 @@ function PolicyWorkspace({data,operator,onNavigate,api,context}:{data:any,operat
   const focusComplete=!!focusPlane&&!limitedPlanes.includes(focusPlane)&&!nextByPlane[focusPlane];
   const focusedPolicy=focusPlane&&focusName?resolveCompletePolicyMatch(
     [...(data.items||[]),...additional],focusPlane,focusName,focusComplete):null;
-  const rows=[...(data.items||[]),...additional].filter((item:any)=>
-    (plane==="all"||item.plane===plane)&&(!q||Object.values(item).some(v=>String(v??"").toLowerCase().includes(q))));
+  const rows=filterObservedPoliciesByStatus<any>([...(data.items||[]),...additional].filter((item:any)=>
+    (plane==="all"||item.plane===plane)&&(!q||Object.values(item).some(v=>String(v??"").toLowerCase().includes(q)))),statusFilter);
   const tabs=[["all","All"],["remote","Remote"],["internet","Internet"],["ai","AI"]];
   return <div className="dr-resource-workspace">
     <section className="dr-page-intro"><div><p className="dr-eyebrow">Access</p><h2>Policies</h2><p className="muted">One policy workspace with separate Remote, Internet and AI security semantics.</p></div><div className="dr-page-actions"><button className="secondary" onClick={()=>onNavigate?.("access","access",carriedFlow||undefined)}>Test & explain access</button>{operator.role!=="Read Only"&&<button className="primary" onClick={()=>onNavigate?.("drafts","access",carriedFlow||undefined)}>Draft change</button>}</div></section>
@@ -1946,6 +1948,14 @@ function PolicyWorkspace({data,operator,onNavigate,api,context}:{data:any,operat
           "Policy inventory is incomplete. Load remaining Core pages before resolving this rule."}</p>}
     </section>}
     <section className="card dr-list-card"><div className="dr-list-toolbar"><div><strong>{rows.length}</strong><span>policy rules</span></div><label className="dr-filter-field"><WorkspaceIcon kind="search"/><input value={filter} onChange={e=>setFilter(e.target.value)} placeholder="Filter policies…"/>{filter&&<button onClick={()=>setFilter("")} aria-label="Clear filter">×</button>}</label></div>
+      <div className="dr-form-actions" role="group" aria-label="Filter loaded policy state">
+        <span className="muted">State of loaded Core rules · UNKNOWN is not Disabled</span>
+        {(["all","enabled","disabled","unknown"] as const).map(status=><button
+          key={status} type="button" className={statusFilter===status?"primary":"secondary"}
+          aria-pressed={statusFilter===status} onClick={()=>setStatusFilter(status)}>
+          {status==="all"?"All states":status==="enabled"?"Enabled":status==="disabled"?"Disabled":"UNKNOWN"}
+        </button>)}
+      </div>
       {(partial||selectedMayBeLimited)&&<p className="dr-uxb-catalog-page-notice" role="status">Core policy list may be incomplete · {limitedPlanes.length?limitedPlanes.map((kind:string)=>kind.toUpperCase()).join(", ")+" reached the per-plane 100-rule API limit.": "Additional rules exist beyond the loaded page."} Filters inspect only loaded rules. Use Search to find a specific policy.</p>}
       {pageError&&<p className="warning-box" role="alert">Core policy page unavailable: {pageError}. Existing rows remain visible; retry Load more.</p>}
       {Object.entries(nextByPlane).filter(([kind,cursor])=>!!cursor&&(plane==="all"||plane===kind)).map(([kind])=>
