@@ -1639,6 +1639,7 @@ def root_command_overview(role, detailed=False):
         lines.extend(
             [
                 "  help system",
+                "  help configuration",
                 "  help workflows",
                 "  help commands",
                 "",
@@ -1654,6 +1655,22 @@ def domain_help(topic, role):
     """Conceptual help for product domains (v2.4 public nouns)."""
     topic = str(topic or "").strip().lower()
     client, server = role_parts(role)
+    if topic == "configuration":
+        context = "server" if server else "agent"
+        sections = ("networkObjects, networkGroups, serviceObjects, serviceGroups, permissionObjects, "
+                    "permissionGroups, remoteAccess, internetAccess, aiAccess" if server else "remoteServices")
+        return (
+            "ConfigurationBundle\n===================\n\n"
+            "Start with system export configuration <FILE> for this host's redacted format.\n"
+            "Minimal no-change YAML (no apiVersion or kind fields):\n"
+            "configurationBundle:\n  context: " + context + "\n\n"
+            "Allowed sections: " + sections + ". Unsupported or wrong-role sections are rejected.\n"
+            "Sections and objects omitted from a bundle remain unchanged; state: absent explicitly deletes an object.\n"
+            "An identical bundle produces NO CHANGE. Dependencies are validated before atomic apply on this host.\n"
+            + ("Optional sourceRevision is the Server base revision; a stale value rejects apply without changes.\n" if server else "")
+            + "Validate with test configuration <FILE>, inspect system diff configuration <FILE>, then review system apply configuration <FILE>.\n"
+            "Use '-' for stdin; in the interactive CLI finish the YAML with a line containing :end.\n"
+        )
     if topic in ("managed-host", "managed-hosts"):
         if not server:
             return "Managed Hosts help is available on a Data Relay Link server.\n"
@@ -1767,6 +1784,7 @@ def domain_help(topic, role):
             "Internet Access\n"
             "===============\n\n"
             "WHITELIST-only, deny-by-default authorization for outbound access.\n"
+            "Supports TCP, HTTP and HTTPS CONNECT; UDP Service Objects and Service Groups containing UDP are rejected.\n"
             "Managed Host may be used as a source; Managed Host destination is rejected.\n\n"
             "Guided path:\n"
             "  menu → Internet Access\n\n"
@@ -2449,7 +2467,7 @@ NAVIGATION_TREE = {
     ),
     "server.system.backup": (
         ("server_bak_create", "Create backup", "", "command", "system backup"),
-        ("server_bak_restore", "Restore backup", "", "workflow", "restore_backup"),
+        ("server_bak_restore", "Restore backup", "First validate read-only: system backup validate <PATH>", "workflow", "restore_backup"),
         ("back", "Back", "", "back", None),
     ),
     "server.system.updates": (

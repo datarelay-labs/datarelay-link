@@ -1093,11 +1093,13 @@ frpctl_nav_dispatch_command() {
 
 frpctl_nav_prompt_id() {
   local prompt="$1"
+  local allow_cancel="${2:-false}"
   local value=""
   value="$(frpctl_read "$prompt" "")" || return 1
   value="${value#"${value%%[![:space:]]*}"}"
   value="${value%"${value##*[![:space:]]}"}"
   if [[ -z "$value" ]]; then
+    [[ "$allow_cancel" == true ]] && return 0
     echo "ERROR: value is required" >&2
     return 1
   fi
@@ -1259,7 +1261,8 @@ frpctl_nav_workflow() {
     manage_client) frpctl_manage_clients ;;
     manage_host)
       frpctl_dispatch show managed-hosts || return $?
-      id="$(frpctl_nav_prompt_id "Managed Host name (empty cancels): ")" || return 1
+      id="$(frpctl_nav_prompt_id "Managed Host name (empty cancels): " true)" || return 1
+      if [[ -z "$id" ]]; then echo "Cancelled."; return 0; fi
       frpctl_dispatch show managed-host "$id" || return $?
       echo "Group membership: set managed-host $id group <GROUP>"
       while true; do
@@ -1287,7 +1290,8 @@ frpctl_nav_workflow() {
       ;;
     manage_remote_service)
       frpctl_dispatch show remote-services || return $?
-      id="$(frpctl_nav_prompt_id "Remote Service name (empty cancels): ")" || return 1
+      id="$(frpctl_nav_prompt_id "Remote Service name (empty cancels): " true)" || return 1
+      if [[ -z "$id" ]]; then echo "Cancelled."; return 0; fi
       frpctl_dispatch show remote-service "$id" || return $?
       echo "1) Edit destination, Service Object or enabled state (review before apply)"
       echo "2) Delete (interactive confirmation required)"

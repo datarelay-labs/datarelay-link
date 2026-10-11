@@ -415,7 +415,7 @@
     "roles": "server",
     "category": "Onboarding",
     "summary": "Create enrollment codes in bulk",
-    "detail": "Bulk issuance from a count or a CSV file.",
+    "detail": "Open the reviewed count/CSV issuance wizard (at most 10 codes; at most 10 active unused codes). CSV is UTF-8 with header label,ssh_user,note, for example agent-a,operator,lab. A blank ssh_user is management-only; label and note may be blank. Default lifetime is 1 hour, maximum 24 hours. Review before issuance and keep the one-time codes private.",
     "examples": [
       "set enrollment bulk"
     ],
@@ -744,7 +744,7 @@
     "roles": "server",
     "category": "System",
     "summary": "Create a server disaster-recovery backup",
-    "detail": "Creates the supported v2.4 Server DR archive (identity/PKI/config + canonical drlink.db).",
+    "detail": "Creates the supported v2.4 Server DR archive (identity/PKI/config + canonical drlink.db). Backups contain private identity and PKI material: restrict access and store securely. Validate the archive with system backup validate <PATH> before planning a restore.",
     "examples": [
       "system backup",
       "system backup /var/lib/drlink/backups/b.tar.gz"
@@ -804,7 +804,7 @@
     "roles": "server",
     "category": "System",
     "summary": "Restore from a backup archive",
-    "detail": "Same-version restore only unless a migration exists. Shows a product-owned preflight and requires interactive y/N confirmation before mutation; non-interactive restore fails closed. Creates a pre-restore snapshot, replaces server state, and restarts services with automatic rollback on failure.",
+    "detail": "Same-version restore only unless a migration exists. Shows a product-owned preflight and requires interactive y/N confirmation before mutation; non-interactive restore fails closed. Creates a pre-restore snapshot, replaces server state, and restarts services with automatic rollback on failure. First run system backup validate <PATH> (read-only). After restore inspect show status and system diagnostic. If restore or rollback fails, preserve the archive and error evidence before further recovery.",
     "examples": [
       "system restore /var/lib/drlink/backups/b.tar.gz"
     ],
@@ -1891,7 +1891,7 @@
     "roles": "server",
     "category": "Internet Access",
     "summary": "Explain Internet Access authorization",
-    "detail": "Explain Internet Access authorization without changing configuration.\nSyntax: test internet-access source <SOURCE> destination <DESTINATION> service <SERVICE>\nSource selects an existing Network Object or Network Group name, not literal IP/CIDR values. Destination selects an existing Network Object or Network Group name, or a literal IP address. Managed Hosts are Network Objects.\nService selects an existing Service Object or Service Group name, not a protocol:port literal.\nDiscover selectors with show network-objects, show network-groups, show service-objects, and show service-groups.\nExample names must already exist. If inventories are empty, inspect help network-objects and help service-objects for prerequisites before testing.\nInternet Access also accepts a literal destination hostname. Internet Access is WHITELIST-only; Managed Host destination is rejected, including through a Network Group.",
+    "detail": "Explain Internet Access authorization without changing configuration.\nSyntax: test internet-access source <SOURCE> destination <DESTINATION> service <SERVICE>\nSource selects an existing Network Object or Network Group name, not literal IP/CIDR values. Destination selects an existing Network Object or Network Group name, or a literal IP address. Managed Hosts are Network Objects.\nService selects an existing Service Object or Service Group name, not a protocol:port literal.\nDiscover selectors with show network-objects, show network-groups, show service-objects, and show service-groups.\nExample names must already exist. If inventories are empty, inspect help network-objects and help service-objects for prerequisites before testing.\nInternet Access also accepts a literal destination hostname. Internet Access is WHITELIST-only; Managed Host destination is rejected, including through a Network Group. Transport supports TCP, HTTP and HTTPS CONNECT only; UDP Service Objects and Service Groups containing UDP are rejected.",
     "examples": [
       "test internet-access source ubuntu-prod destination github service https"
     ],
@@ -2228,7 +2228,7 @@
     "roles": "any",
     "category": "System",
     "summary": "Export redacted ConfigurationBundle",
-    "detail": "Export configuration owned by this host role as a redacted ConfigurationBundle YAML suitable for review and AI-assisted editing. Secrets are never exported.",
+    "detail": "Export configuration owned by this host role as a redacted ConfigurationBundle YAML suitable for review and AI-assisted editing. Secrets are never exported. See help configuration for role-specific YAML, omission/deletion semantics and sourceRevision conflict handling.",
     "examples": [
       "system export configuration drlink.yaml"
     ],
@@ -2256,7 +2256,7 @@
     "roles": "any",
     "category": "System",
     "summary": "Validate a ConfigurationBundle without mutation",
-    "detail": "Parse, validate role context and dependencies, and show the Change Plan for a ConfigurationBundle. Supports file path or '-' for stdin.",
+    "detail": "Parse, validate role context and dependencies, and show the Change Plan for a ConfigurationBundle. Supports file path or '-' for stdin. See help configuration for role-specific YAML, omission/deletion semantics and sourceRevision conflict handling.",
     "examples": [
       "test configuration drlink.yaml",
       "test configuration -"
@@ -2287,7 +2287,7 @@
     "roles": "any",
     "category": "System",
     "summary": "Diff a ConfigurationBundle",
-    "detail": "Show the Change Plan and security impact for a ConfigurationBundle without mutation. Supports file path or '-' for stdin.",
+    "detail": "Show the Change Plan and security impact for a ConfigurationBundle without mutation. Supports file path or '-' for stdin. See help configuration for role-specific YAML, omission/deletion semantics and sourceRevision conflict handling.",
     "examples": [
       "system diff configuration drlink.yaml",
       "system diff configuration -"
@@ -2318,7 +2318,7 @@
     "roles": "any",
     "category": "System",
     "summary": "Apply a ConfigurationBundle",
-    "detail": "Validate, test, diff, confirm, and atomically apply a ConfigurationBundle through the shared Change Plan engine. Supports file path or '-' for stdin. Does not issue Zero-Touch tickets.",
+    "detail": "Validate, test, diff, confirm, and atomically apply a ConfigurationBundle through the shared Change Plan engine. Supports file path or '-' for stdin. Does not issue Zero-Touch tickets. See help configuration for role-specific YAML, omission/deletion semantics and sourceRevision conflict handling.",
     "examples": [
       "system apply configuration drlink.yaml",
       "system apply configuration -"
@@ -2473,7 +2473,7 @@
     "roles": "server",
     "category": "System",
     "summary": "Issue and activate the configured MCP certificate",
-    "detail": "Issue and activate a certificate for the configured MCP TLS mode. The previous valid certificate is retained on failed activation.",
+    "detail": "Issue and activate a certificate for the configured MCP TLS mode. The previous valid certificate is retained on failed activation. The explicit command authorizes certificate activation and required service changes; no additional confirmation is used. Activation may interrupt MCP connections. Afterwards inspect system certificate status and system diagnostic.",
     "examples": [
       "system certificate issue"
     ],
@@ -2497,7 +2497,7 @@
     "roles": "server",
     "category": "System",
     "summary": "Import and activate an MCP certificate",
-    "detail": "Import matching certificate/key material and activate it after validation.",
+    "detail": "Import matching certificate/key material and activate it after validation. The explicit command authorizes certificate activation and required service changes; no additional confirmation is used. Activation may interrupt MCP connections. Afterwards inspect system certificate status and system diagnostic.",
     "examples": [
       "system certificate import <CERT> <KEY> [CHAIN]"
     ],
@@ -2537,7 +2537,7 @@
     "roles": "server",
     "category": "System",
     "summary": "Renew and activate the MCP certificate when due",
-    "detail": "Renew the configured MCP certificate when due and retain the previous valid certificate on failed renewal.",
+    "detail": "Renew the configured MCP certificate when due and retain the previous valid certificate on failed renewal. The explicit command authorizes certificate activation and required service changes; no additional confirmation is used. Activation may interrupt MCP connections. Afterwards inspect system certificate status and system diagnostic.",
     "examples": [
       "system certificate renew"
     ],
@@ -2797,7 +2797,7 @@
     "roles": "server",
     "category": "Network Objects",
     "summary": "Delete a Network Object",
-    "detail": "Delete a Network Object",
+    "detail": "Delete a Network Object. Inspect show network-object <NAME> references first. Reference validation runs before confirmation; a blocked deletion lists references and makes no change. Replace or remove dependent policy/member references, including disabled rules, then retry. Confirmed deletion is irreversible.",
     "examples": [
       "unset network-object <OBJECT>"
     ],
@@ -2826,7 +2826,7 @@
     "roles": "server",
     "category": "Network Objects",
     "summary": "Delete a Network Group",
-    "detail": "Delete a Network Group",
+    "detail": "Delete a Network Group. Inspect show network-group <NAME> references first. Reference validation runs before confirmation; a blocked deletion lists references and makes no change. Replace or remove dependent policy/member references, including disabled rules, then retry. Confirmed deletion is irreversible.",
     "examples": [
       "unset network-group <GROUP>"
     ],
@@ -3042,7 +3042,7 @@
     "roles": "server",
     "category": "Service Objects",
     "summary": "Delete a Service Object",
-    "detail": "Delete a Service Object",
+    "detail": "Delete a Service Object. Inspect show service-object <NAME> references first. Reference validation runs before confirmation; a blocked deletion lists references and makes no change. Replace or remove dependent policy/member references, including disabled rules, then retry. Confirmed deletion is irreversible.",
     "examples": [
       "unset service-object <SERVICE>"
     ],
@@ -3070,7 +3070,7 @@
     "roles": "server",
     "category": "Service Objects",
     "summary": "Delete a Service Group",
-    "detail": "Delete a Service Group",
+    "detail": "Delete a Service Group. Inspect show service-group <NAME> references first. Reference validation runs before confirmation; a blocked deletion lists references and makes no change. Replace or remove dependent policy/member references, including disabled rules, then retry. Confirmed deletion is irreversible.",
     "examples": [
       "unset service-group <GROUP>"
     ],
@@ -3425,7 +3425,7 @@
     "roles": "server",
     "category": "Managed Hosts",
     "summary": "Remove a Managed Host or remove its Managed Host Group membership",
-    "detail": "Bare unset managed-host <HOST> performs reference-safe Managed Host retirement. unset managed-host <HOST> group <GROUP> removes only that Managed Host Group membership; identity, Remote Services, and public ports are unchanged. Managed Host Groups are distinct from Network Groups.",
+    "detail": "Bare unset managed-host <HOST> performs reference-safe Managed Host retirement. unset managed-host <HOST> group <GROUP> removes only that Managed Host Group membership; identity, Remote Services, and public ports are unchanged. Managed Host Groups are distinct from Network Groups. Before confirmation, retirement checks policy references and refuses with no change while references remain. Inspect show managed-host <HOST> and its references first. Retirement removes Server trust and inventory plus owned Agent Remote Service endpoint reservations; it is irreversible. Re-enrollment establishes new trust rather than undoing retirement. Group membership removal uses the separate group form.",
     "examples": [
       "unset managed-host ubuntu-prod",
       "unset managed-host ubuntu-prod group edge"

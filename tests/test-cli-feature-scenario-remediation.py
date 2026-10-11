@@ -33,6 +33,106 @@ import frp_cli_catalog as catalog
 
 
 class CliFeatureScenarioRemediation(unittest.TestCase):
+    def test_public_managed_host_menu_empty_cancel_preserves_revision(self):
+        revision = self.plane.current_revision()
+        master, slave = pty.openpty()
+        proc = subprocess.Popen(
+            ["bash", str(ROOT / "tools/drlink"), "menu"],
+            stdin=slave, stdout=slave, stderr=slave,
+            env=dict(os.environ, FRP_CTL_TEST_ROOT=self.tmp, FRP_CTL_BIN_DIR=str(ROOT / "tools")),
+        )
+        os.close(slave)
+        output = bytearray()
+        sent_cancel = False
+        sent_exit = False
+        try:
+            os.write(master, b"1\n3\n")
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                if select.select([master], [], [], 0.2)[0]:
+                    try:
+                        output.extend(os.read(master, 65536))
+                    except OSError:
+                        break
+                    if b"Managed Host name (empty cancels):" in output and not sent_cancel:
+                        os.write(master, b"   \n")
+                        sent_cancel = True
+                    if b"Cancelled." in output and not sent_exit:
+                        os.write(master, b"5\n9\n")
+                        sent_exit = True
+                if proc.poll() is not None:
+                    break
+            proc.wait(timeout=max(1, deadline - time.monotonic()))
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+            os.close(master)
+        text = output.decode("utf-8", "replace")
+        self.assertTrue(sent_cancel and sent_exit, text)
+        self.assertEqual(proc.returncode, 0, text)
+        self.assertNotIn("ERROR", text)
+        self.assertEqual(self.plane.current_revision(), revision)
+
+    def test_read_only_manage_workflows_accept_empty_cancel_without_required_error(self):
+        for workflow in ("manage_host", "manage_remote_service"):
+            for value in ("", "   "):
+                with self.subTest(workflow=workflow, value=value):
+                    script = '''source "$1"
+frpctl_read() { local value; read -r value; printf '%s' "$value"; }
+frpctl_dispatch() { printf 'DISPATCH'; printf ' <%s>' "$@"; printf '\\n'; }
+frpctl_nav_workflow "$2"
+'''
+                    proc = subprocess.run(["bash", "-c", script, "regression", str(ROOT / "tools/frpctl"), workflow],
+                                          env=dict(os.environ, FRP_CTL_SOURCED="1"), input=value + "\n",
+                                          text=True, capture_output=True)
+                    self.assertEqual(proc.returncode, 0, proc.stderr)
+                    self.assertIn("Cancelled.", proc.stdout)
+                    self.assertNotIn("ERROR", proc.stderr)
+                    self.assertEqual(proc.stdout.count("DISPATCH"), 1)
+
+    def test_required_menu_identifier_still_rejects_empty_input(self):
+        script = '''source "$1"
+frpctl_read() { printf '   '; }
+frpctl_nav_prompt_id 'Name: '
+'''
+        proc = subprocess.run(["bash", "-c", script, "regression", str(ROOT / "tools/frpctl")],
+                              env=dict(os.environ, FRP_CTL_SOURCED="1"), text=True, capture_output=True)
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("value is required", proc.stderr)
+
+    def test_fcs_public_help_explains_safe_workflow_prerequisites(self):
+        from drlink_v24_bundle import parse_v24_bundle
+        rows = {tuple(r["path"]): r for r in catalog.COMMANDS}
+        bulk = rows[("set", "enrollment", "bulk")]["detail"]
+        for phrase in ("label,ssh_user,note", "10", "24", "management-only"):
+            self.assertIn(phrase, bulk)
+        for resource in ("network-object", "network-group", "service-object", "service-group"):
+            detail = rows[("unset", resource)]["detail"]
+            self.assertIn("references", detail)
+            self.assertIn("no change", detail)
+        retirement = rows[("unset", "managed-host")]["detail"]
+        for phrase in ("trust", "inventory", "reservations", "irreversible"):
+            self.assertIn(phrase, retirement)
+        internet = grammar.help_text(["internet-access"], "server")
+        for phrase in ("TCP", "CONNECT", "UDP"):
+            self.assertIn(phrase, internet)
+        for role in ("server", "client"):
+            bundle = grammar.help_text(["configuration"], role)
+            self.assertIn("configurationBundle:", bundle)
+            self.assertIn("context:", bundle)
+            self.assertIn("omitted", bundle)
+            example = bundle.split("configurationBundle:\n", 1)[1].split("\n\n", 1)[0]
+            parsed = parse_v24_bundle("configurationBundle:\n" + example + "\n")
+            self.assertEqual(parsed["context"], "server" if role == "server" else "agent")
+        self.assertIn("sourceRevision", grammar.help_text(["configuration"], "server"))
+        backup = rows[("system", "backup")]["detail"]
+        self.assertIn("private", backup)
+        restore_menu = next(r for r in catalog.NAVIGATION_TREE["server.system.backup"] if r[0] == "server_bak_restore")
+        self.assertIn("system backup validate", restore_menu[2])
+        for action in ("issue", "import", "renew"):
+            self.assertIn("no additional confirmation", rows[("system", "certificate", action)]["detail"])
+
     def test_policy_explain_help_identifies_named_selectors_and_empty_state_recovery(self):
         for resource in ("remote-access", "internet-access"):
             for focus in (["test", resource], ["test", resource, "source"]):

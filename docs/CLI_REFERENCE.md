@@ -103,6 +103,12 @@ show ai-access-log permission <PERMISSION>
 
 ## 3. Server set commands
 
+`set enrollment bulk` opens a reviewed count/CSV wizard, with at most 10 codes
+per batch and 10 active unused codes. UTF-8 CSV uses the header
+`label,ssh_user,note`; for example `agent-a,operator,lab`. Label and note may be
+blank; blank `ssh_user` selects management-only enrollment. The default lifetime
+is 1 hour and the maximum is 24 hours. Keep issued one-time codes private.
+
 ```text
 set enrollment zero-touch
 set enrollment manual
@@ -283,6 +289,17 @@ unset mcp-tls purge
 
 Referenced Objects/Groups/Identities/Managed Hosts are protected from deletion until references are removed.
 
+Inspect `show network-object <NAME> references`, `show network-group <NAME> references`,
+`show service-object <NAME> references`, or `show service-group <NAME> references`
+before deletion. Reference validation precedes confirmation; a blocked deletion
+lists dependencies and applies no change. Replace or remove policy/member
+references, including disabled Rules, before retrying. Confirmed deletion is irreversible.
+
+Bare Managed Host retirement removes Server trust, inventory and the owned Agent
+Remote Service endpoint reservations after reference checks and confirmation.
+Inspect `show managed-host <HOST> references` first. Re-enrollment establishes new
+trust rather than undoing retirement.
+
 For Permission dependencies, inspect `show ai-access` and `show ai-access <RULE>`; inspect `show permission-groups` and `show permission-group <GROUP>` for Object membership. A blocked `unset permission-object <PERMISSION>` or `unset permission-group <GROUP>` lists the references before confirmation and applies no changes. Review each referencing Rule with `set ai-access <RULE>` to choose a replacement permission, or explicitly remove that Rule with `unset ai-access <RULE>`. Use `set permission-group <GROUP>` to review membership without the Object being retired. Disabling a Rule retains its reference. Review access impact and the required confirmations, then retry deletion only when all references have been removed. No Permission `references` subcommand is required.
 
 `unset enrollment <ENROLLMENT>`, `unset network-object`, `unset network-group`, `unset service-object`, `unset service-group`, `unset permission-object`, `unset permission-group`, and `unset ai-identity` are destructive lifecycle operations and require explicit `y/N` confirmation after existence/reference validation. Default is No and cancellation applies no change. These are normal `y_n` flows rather than TTY-only flows, so controlled automation may provide `y`/`yes` on stdin; there is no public hidden environment-variable or `--yes` bypass for these commands. Policy Rule deletion uses effect-aware `conditional_y_n`: confirmation is required when the calculated change broadens or materially narrows access, while full `unset <plane>-access policy` reset always requires explicit confirmation.
@@ -345,6 +362,10 @@ system uninstall
 ```
 
 Restore validates the archive before offering live replacement confirmation.
+Backups contain private identity and PKI material; restrict access and store them
+securely. Run the read-only `system backup validate <FILE>` before restore.
+After restore inspect `show status` and `system diagnostic`. Preserve the archive
+and error evidence if restore or rollback fails before attempting further recovery.
 After replacement, backup-time host presence and proxy health require fresh
 Agent verification; reconnect reconciliation reapplies the Agent runtime while
 preserving its identity and allocated endpoints.
@@ -356,6 +377,11 @@ verification. A heartbeat alone never establishes service health.
 
 `system certificate status` is the single public MCP TLS/certificate status surface. Configure TLS intent with `set mcp-tls ...`; there is no separate MCP TLS status read command.
 
+The explicit `system certificate issue`, `import` or `renew` command authorizes
+activation and required service changes without another confirmation prompt.
+Activation may interrupt MCP connections. Inspect `system certificate status`
+and `system diagnostic` afterward.
+
 ## 9. Managed Host as Network Object
 
 Registered Managed Hosts appear in `show network-objects` with type `Managed Host`.
@@ -363,6 +389,9 @@ Registered Managed Hosts appear in `show network-objects` with type `Managed Hos
 Managed Host lifecycle is never performed through `set/unset network-object`.
 
 Internet Access source may use a Managed Host. Because the egress proxy is agentless, that selector is proven only when the observed proxy peer IP matches an eligible active address for the Managed Host. Internet Access is WHITELIST-only, so an unprovable or NAT-translated Managed Host source does not match and is denied. Behind NAT, prefer an IP/CIDR selector for the proxy-visible source. Internet Access destination may not use a Managed Host, directly or through a Network Group.
+
+Internet Access supports TCP, HTTP and HTTPS CONNECT. UDP Service Objects and
+Service Groups containing UDP are rejected.
 
 Policy Rule and referenced Network/Service/Permission Object or Group edits
 calculate security impact before mutation. A y/N confirmation is required for
@@ -494,6 +523,22 @@ Automation / Custom AI binds through OAuth Client Credentials verification.
 Authentication is distinct from AI Access authorization.
 
 ## 14. ConfigurationBundle
+
+`help configuration` explains the role-specific YAML. Start with an export for
+the current host's format. A minimal Server bundle produces no changes:
+
+```yaml
+configurationBundle:
+  context: server
+```
+
+An Agent uses `context: agent`. There are no `apiVersion` or `kind` fields.
+Server sections are `networkObjects`, `networkGroups`, `serviceObjects`,
+`serviceGroups`, `permissionObjects`, `permissionGroups`, `remoteAccess`,
+`internetAccess` and `aiAccess`; the Agent section is `remoteServices`.
+Unsupported or wrong-role sections are rejected. Omitted sections and objects
+remain unchanged; `state: absent` explicitly deletes an object. Identical content
+produces `NO CHANGE`.
 
 ```text
 test configuration <FILE|->
