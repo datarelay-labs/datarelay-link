@@ -24,6 +24,22 @@ class E2EProcedureGuard(unittest.TestCase):
         cls.procedure = PROCEDURE.read_text(encoding="utf-8")
         cls.roadmap = ROADMAP.read_text(encoding="utf-8")
 
+    def test_owner_assigned_dual_server_e2e_boundaries(self):
+        for doc in (self.canonical, self.procedure, self.roadmap):
+            self.assertIn("MCP_DNS_SERVER", doc)
+            self.assertIn("FUNCTION_PERFORMANCE_SERVER", doc)
+        for doc in (self.procedure, self.roadmap):
+            self.assertIn("B014", doc)
+        self.assertIn("OCI/cloud ingress allow rule", self.canonical)
+        self.assertIn("single443", self.canonical)
+        self.assertIn("116-ID FULL_USER_E2E", self.canonical)
+        self.assertIn("60s/300s/3600s", self.procedure)
+        # Concrete owner-private endpoint/SSH mapping belongs to the run inventory,
+        # not to the public canonical test contract or generic lab procedure.
+        for doc in (self.canonical, self.procedure, self.roadmap):
+            self.assertNotIn("remote.xdr.ooo", doc)
+            self.assertNotIn("221.139.249.113", doc)
+
     def test_canonical_points_to_owner_fix_first_procedure(self):
         self.assertIn("Current owner-ordered preparation gate", self.canonical)
         self.assertIn("docs/E2E_EXECUTION_PROCEDURE.md", self.canonical)

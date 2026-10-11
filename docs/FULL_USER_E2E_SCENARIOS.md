@@ -778,6 +778,16 @@ Any qualifying product/dependency/generated-artifact change resets the release p
 
 Use disposable or explicitly designated test systems for destructive scenarios.
 
+### 5.0 Independently assigned two-Server test roles
+
+Where the owner assigns **two distinct DRLink Server environments**, freeze both roles in the **private per-RUN_ID lab host inventory before testing**:
+
+- **MCP_DNS_SERVER:** owns the public DNS hostname and authoritative public HTTPS/TLS, single443 /mcp, OAuth discovery/consent, AI Identity/AI Access and MCP-related security/user/performance cases (including U-007, U-011, A-006, C-006, P-011 and applicable X scenarios). Verify external DNS A/AAAA/CNAME, **guest listener and actual public HTTP/HTTPS response**, trusted certificate and OAuth independently on this Server. An OCI/cloud ingress allow rule is **not** evidence that a process listens on TCP/80 or serves trusted TLS on TCP/443.
+- **FUNCTION_PERFORMANCE_SERVER:** owns all remaining ordinary DRLink Remote Access/Internet Access, public CLI, Server/Agent lifecycle, native OS, real application traffic, full concurrency, performance, faults and 3,600-second soak. Its SSH management route and FRP/public product ports are a **different test surface** from MCP_DNS_SERVER. It may legitimately use TCP/443 for FRP control in direct mode; never mistake that listener for the MCP HTTPS frontend.
+- Name/DNS propagation scenarios must assess the **correct owner of each endpoint**. For an actual cross-Server integration, record both independently observed endpoints and permitted network path; do not assume the two Server databases, identities, public DNS or policies are shared.
+- Record MCP_DNS_SERVER, MCP_PUBLIC_FQDN, MCP_DNS_RESOLVED_IP, MCP_DEPLOYMENT_MODE, MCP_INSTALLED_SOURCE_HEAD, FUNCTION_PERFORMANCE_SERVER, FUNCTION_INSTALLED_SOURCE_HEAD and separate external HTTP/TLS/OAuth and data-path evidence. Each participating product runtime must satisfy the pinned current candidate Source HEAD (or remain NOT_READY); one Server's pass never fills the other Server's evidence.
+- Keep the **actual hostnames/IPs, SSH ports, cloud firewall screenshots, snapshot IDs and management routes only in the untracked owner-private test inventory**, not in this canonical contract. A missing MCP frontend blocks only its dependent lanes while independent functional-preparation work continues. It never promotes the overall 116-ID FULL_USER_E2E to PASS or removes the two same-HEAD/dual-role gates.
+
 Minimum full topology:
 
 ~~~text
