@@ -28,6 +28,7 @@ import {filterObservedPoliciesByStatus} from "./uxb-policy-status-filter";
 import {serviceAccountOperationalStatus,serviceAccountExpiry,serviceAccountPermissions,webhookStatus,webhookDeliverySummary} from "./uxb-integrations-state";
 import {filterObservedHosts} from "./uxb-host-search";
 import {filterLoadedHostConnections,type HostConnectionFilter} from "./uxb-host-connection-filter";
+import {hostDisplayFilterResetAvailable} from "./uxb-host-filter-reset";
 import {FirstConnectionSetup,connectionReviewContext,type SetupDraft} from "./uxb-setup";
 
 type Json = Record<string, any>;
@@ -2064,6 +2065,12 @@ function ResourceWorkspace({kind,data,operator,onNavigate,api,initialFilter="",i
   const description=isHost?"Agent inventory, trust, connectivity, platform and version in one resource workspace.":"Published services, owning hosts, ports and release state with contextual access actions.";
   const savedDraft=(!hostSearch?.error&&!serviceSearch?.error)
     ?saveDraftForResource(kind,filter,isHost?admissionFilter:"all"):null;
+  const hostFiltersActive=isHost&&hostDisplayFilterResetAvailable(filter,admissionFilter,connectionFilter);
+  function clearHostDisplayFilters(){
+    setFilter("");
+    setAdmissionFilter("all");
+    setConnectionFilter("all");
+  }
   return <div className="dr-resource-workspace">
     <section className="dr-page-intro"><div><p className="dr-eyebrow">Connections</p><h2>{heading}</h2><p className="muted">{description}</p></div><div className="dr-page-actions">{isHost&&operator.role==="Admin"&&<button className="primary" onClick={()=>onNavigate?.("enrollments","infrastructure")}>Connect Agent</button>}<button className="secondary" onClick={()=>onNavigate?.("access","access")}>Access workspace</button></div></section>
     <section className="card dr-list-card">
@@ -2077,6 +2084,9 @@ function ResourceWorkspace({kind,data,operator,onNavigate,api,initialFilter="",i
         <label className="dr-filter-field"><WorkspaceIcon kind="search"/><input value={filter} maxLength={120} aria-label={isHost?"Filter Managed Hosts":"Filter Remote Services"}
           onChange={e=>setFilter(e.target.value)}
           placeholder={isHost?"Filter hosts (name:, host:, os:, admission:)…":"Filter services (name:, host:, port:, state:)…"}/>{filter&&<button onClick={()=>setFilter("")} aria-label="Clear filter">×</button>}</label></div>
+      {isHost&&hostFiltersActive&&<button type="button" className="secondary"
+        onClick={clearHostDisplayFilters}>Clear Host filters</button>}
+      {isHost&&<p className="muted">Clear Host filters restores only the three local display choices. Existing loaded Core inventory and Saved Views remain unchanged.</p>}
       {isHost&&<div className="dr-form-actions" role="group" aria-label="Filter loaded Host connection state">
         <span className="muted">Connection state of loaded Core Hosts · not proof of live reachability</span>
         {(["all","connected","disconnected","unknown"] as const).map(status=><button
