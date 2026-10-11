@@ -2,7 +2,7 @@
 // Does not run the previous platform-denied browser installer or live logins.
 import assert from "node:assert/strict";
 import {before,after,test} from "node:test";
-import {mkdtempSync,rmSync} from "node:fs";
+import {mkdtempSync,rmSync,readFileSync} from "node:fs";
 import {dirname,join} from "node:path";
 import {fileURLToPath,pathToFileURL} from "node:url";
 import {build} from "esbuild";
@@ -186,3 +186,42 @@ for(const [role,allowed] of [["Admin",true],["Operator",false],["Read Only",fals
     else assert.match(html,/<button[^>]*disabled=""[^>]*>Issue enrollment →<\/button>/);
   });
 }
+
+test("UX-3 display-once enrollment ticket is scoped to exact operator and unchanged issuance intent",()=>{
+ const intent={
+  operatorId:"admin-a",role:"Admin",mode:"zero-touch",platform:"linux",
+  ttl:"3600",label:"branch-a",note:"onboarding",preApproved:false
+ };
+ const original=enroll.enrollmentIssuanceIntent(intent);
+ const evidence={mode:"zero-touch",platform:"linux",command:"safe test command",
+  expires_at:"2026-10-11T09:00:00Z",pre_approved:false,
+  enrollment_code:"",next_step:"install"};
+ assert.deepEqual(enroll.issuedEnrollmentForCurrentIntent({
+  intent:original,evidence},original),evidence);
+ for(const changes of [
+  {operatorId:"admin-b"},{role:"Read Only"},{role:"Operator"},
+  {mode:"manual"},{platform:"macos"},{ttl:"1200"},{label:"branch-b"},
+  {note:"another ticket"},{preApproved:true}
+ ]){
+  assert.equal(enroll.issuedEnrollmentForCurrentIntent({
+   intent:original,evidence},enroll.enrollmentIssuanceIntent({...intent,...changes})),null,
+   JSON.stringify(changes));
+ }
+ for(const invalid of [null,{},[],{intent:original,evidence:null},
+  {intent:"another",evidence},{intent:original,evidence:{token:"DO_NOT_SHOW"}}]){
+  assert.equal(enroll.issuedEnrollmentForCurrentIntent(invalid,original),null);
+ }
+});
+test("UX-3 onboarding source does not retain or display old ticket when issue inputs/actor change",()=>{
+ const src=readFileSync(join(webRoot,"src","p0-enrollment.tsx"),"utf8");
+ assert.match(src,/const visibleIssued=issuedEnrollmentForCurrentIntent\(issued,issuedIntent\)/);
+ assert.match(src,/setIssued\(\{intent:requestedIntent,evidence:observed\}\)/);
+ assert.match(src,/if\(currentIssueIntent\.current!==requestedIntent\)/);
+ assert.match(src,/setIssued\(null\).*setMode/);
+ assert.match(src,/setIssued\(null\).*setPlatform/);
+ assert.match(src,/disabled=\{busy\}[^>]*onChange=\{e=>\{setIssued\(null\);setCopyStatus\(""\);setTtl/);
+ assert.match(src,/disabled=\{busy\}[^>]*onChange=\{e=>\{setIssued\(null\);setCopyStatus\(""\);setLabel/);
+ assert.match(src,/disabled=\{busy\}[^>]*onChange=\{e=>\{setIssued\(null\);setCopyStatus\(""\);setNote/);
+ assert.match(src,/disabled=\{busy\}[^>]*onChange=\{e=>\{setIssued\(null\);setCopyStatus\(""\);setPreApproved/);
+ assert.match(src,/\{visibleIssued\?<div className="warning-box">/);
+});

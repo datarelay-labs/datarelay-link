@@ -511,7 +511,7 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn('const [preApproved,setPreApproved]=useState(false)', P0_ENROLL_SOURCE)
         self.assertIn('mode==="zero-touch"?{pre_approved:preApproved}:{}', P0_ENROLL_SOURCE)
         self.assertIn('admin&&mode==="zero-touch"', P0_ENROLL_SOURCE)
-        self.assertIn('setPreApproved(false);setIssued(null)', P0_ENROLL_SOURCE)
+        self.assertIn('setIssued(null);setCopyStatus("");setMode(e.target.value);setPreApproved(false)', P0_ENROLL_SOURCE)
         self.assertIn('Pre-approve first Host from this ticket', P0_ENROLL_SOURCE)
         self.assertIn('data={data} operator={operator} onNavigate={onNavigate} refresh=', SOURCE)
 

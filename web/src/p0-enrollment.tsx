@@ -148,6 +148,47 @@ export function observedIssuedEnrollment(
  };
 }
 
+/** A display-once ticket belongs to one exact requested UI intent and Web
+ * operator, never merely to a role or a previously selected Agent platform.
+ * These inputs are reference text only, not authorization/secret storage.
+ */
+export type EnrollmentIssuanceIntent={
+ operatorId:unknown,role:unknown,mode:unknown,platform:unknown,
+ ttl:unknown,label:unknown,note:unknown,preApproved:unknown
+};
+export function enrollmentIssuanceIntent(data:EnrollmentIssuanceIntent):string{
+ if(typeof data.operatorId!=="string"||!data.operatorId.trim()
+   ||typeof data.role!=="string"||data.role!=="Admin"
+   ||typeof data.mode!=="string"||!["manual","zero-touch"].includes(data.mode)
+   ||typeof data.platform!=="string"||!["linux","macos","windows"].includes(data.platform)
+   ||typeof data.ttl!=="string"||typeof data.label!=="string"
+   ||typeof data.note!=="string"||typeof data.preApproved!=="boolean")return "";
+ return JSON.stringify([data.operatorId,data.role,data.mode,data.platform,
+   data.ttl,data.label,data.note,data.preApproved]);
+}
+export function issuedEnrollmentForCurrentIntent(
+ input:unknown,intent:unknown
+):ObservedIssuedEnrollment|null{
+ if(!intent||typeof intent!=="string"
+   ||!input||typeof input!=="object"||Array.isArray(input))return null;
+ const state=input as Record<string,unknown>;
+ const evidence=state.evidence;
+ if(state.intent!==intent||!evidence||typeof evidence!=="object"
+   ||Array.isArray(evidence))return null;
+ const item=evidence as Record<string,unknown>;
+ if(typeof item.mode!=="string"||!["zero-touch","manual"].includes(item.mode)
+   ||typeof item.platform!=="string"||!["linux","macos","windows"].includes(item.platform)
+   ||typeof item.command!=="string"||!item.command.trim()||item.command.length>65536
+   ||BAD_COMMAND_TEXT.test(item.command)
+   ||!isObservedAbsoluteTime(item.expires_at)
+   ||typeof item.pre_approved!=="boolean"
+   ||typeof item.enrollment_code!=="string"
+   ||typeof item.next_step!=="string"
+   ||BAD_ENROLLMENT_TEXT.test(item.next_step))
+   return null;
+ return item as ObservedIssuedEnrollment;
+}
+
 /** Admission, trust, connection and policy are independent Core concepts.
  * Do not stringify arbitrary nested Core state or trust an unverified time.
  */
@@ -203,6 +244,12 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate,onBus
   const readiness=hostReadiness(selected);
   const required=String(preview?.confirmation_class||"APPROVE");
   const history=observedEnrollmentHistory(data);
+  const issuedIntent=enrollmentIssuanceIntent({
+    operatorId:operator?.id,role:operator?.role,mode,platform,ttl,label,note,preApproved
+  });
+  const currentIssueIntent=useRef(issuedIntent);
+  currentIssueIntent.current=issuedIntent;
+  const visibleIssued=issuedEnrollmentForCurrentIntent(issued,issuedIntent);
   useEffect(()=>{if(step>=3)void refreshHosts()},[step]);
   async function refreshHosts(){
     approvalGeneration.current+=1;
@@ -237,6 +284,8 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate,onBus
   }
   async function issue(){
     if(!admin||busy)return;
+    const requestedIntent=issuedIntent;
+    if(!requestedIntent){setError("Authenticated Admin identity is unavailable. Re-login before issuing an enrollment.");return;}
     setCopyStatus("");setError("");setMessage("");setIssued(null);setBusy(true);
     try{
       const result=await api(mode==="manual"?"/api/v1/enrollments/manual":"/api/v1/enrollments/zero-touch",{
@@ -245,7 +294,11 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate,onBus
       });
       const observed=observedIssuedEnrollment(result,mode,platform);
       if(!observed)throw new Error("Core returned invalid enrollment evidence. The ticket may exist; inspect enrollment history before retrying.");
-      setIssued(observed);refresh();setStep(2);
+      if(currentIssueIntent.current!==requestedIntent){
+        setError("Enrollment form or account changed while issuing. Inspect Core enrollment history before retrying.");
+        return;
+      }
+      setIssued({intent:requestedIntent,evidence:observed});refresh();setStep(2);
     }catch(e:any){setError(String(e.message||e))}
     finally{setBusy(false)}
   }
@@ -289,29 +342,29 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate,onBus
       {step===1&&<div className="dr-p0-stage">
         <h3>1. Issue an enrollment invitation</h3>
         <div className="dr-p0-form">
-          <label className="dr-field"><span>Enrollment mode</span><select value={mode} onChange={e=>{setMode(e.target.value);setPreApproved(false);setIssued(null);setTtl(e.target.value==="manual"?"600":"3600");if(e.target.value==="manual"&&platform==="windows")setPlatform("linux")}}><option value="zero-touch">Zero-Touch (recommended)</option><option value="manual">Manual (interactive credential)</option></select></label>
-          <label className="dr-field"><span>Agent platform</span><select value={platform} onChange={e=>setPlatform(e.target.value)}><option value="linux">Linux</option><option value="macos">macOS</option>{mode!=="manual"&&<option value="windows">Windows</option>}</select></label>
-          <label className="dr-field"><span>Invitation TTL (seconds)</span><input value={ttl} onChange={e=>setTtl(e.target.value)} placeholder={mode==="manual"?"60–2592000":"60–86400"}/></label>
-          <label className="dr-field"><span>Host label</span><input value={label} onChange={e=>setLabel(e.target.value)} placeholder="e.g. branch-gateway"/></label>
-          <label className="dr-field"><span>Optional note</span><input value={note} onChange={e=>setNote(e.target.value)} placeholder="Operator context"/></label>
+          <label className="dr-field"><span>Enrollment mode</span><select value={mode} disabled={busy} onChange={e=>{setIssued(null);setCopyStatus("");setMode(e.target.value);setPreApproved(false);setTtl(e.target.value==="manual"?"600":"3600");if(e.target.value==="manual"&&platform==="windows")setPlatform("linux")}}><option value="zero-touch">Zero-Touch (recommended)</option><option value="manual">Manual (interactive credential)</option></select></label>
+          <label className="dr-field"><span>Agent platform</span><select value={platform} disabled={busy} onChange={e=>{setIssued(null);setCopyStatus("");setPlatform(e.target.value)}}><option value="linux">Linux</option><option value="macos">macOS</option>{mode!=="manual"&&<option value="windows">Windows</option>}</select></label>
+          <label className="dr-field"><span>Invitation TTL (seconds)</span><input value={ttl} disabled={busy} onChange={e=>{setIssued(null);setCopyStatus("");setTtl(e.target.value)}} placeholder={mode==="manual"?"60–2592000":"60–86400"}/></label>
+          <label className="dr-field"><span>Host label</span><input value={label} disabled={busy} onChange={e=>{setIssued(null);setCopyStatus("");setLabel(e.target.value)}} placeholder="e.g. branch-gateway"/></label>
+          <label className="dr-field"><span>Optional note</span><input value={note} disabled={busy} onChange={e=>{setIssued(null);setCopyStatus("");setNote(e.target.value)}} placeholder="Operator context"/></label>
         </div>
-        {admin&&mode==="zero-touch"&&<label className="dr-p0-check"><input type="checkbox" checked={preApproved} onChange={e=>setPreApproved(e.target.checked)}/><span>Pre-approve first Host from this ticket (explicit Admin action)</span></label>}
+        {admin&&mode==="zero-touch"&&<label className="dr-p0-check"><input type="checkbox" checked={preApproved} disabled={busy} onChange={e=>{setIssued(null);setCopyStatus("");setPreApproved(e.target.checked)}}/><span>Pre-approve first Host from this ticket (explicit Admin action)</span></label>}
         <p className="muted">Pending Approval is the default, regardless of agent connection status. Credentials are display-once and must not be saved to browser storage.</p>
         <button className="primary" disabled={!admin||busy} onClick={issue}>{busy?"Issuing…":"Issue enrollment →"}</button>
       </div>}
       {step===2&&<div className="dr-p0-stage">
         <h3>2. Install the Agent and join</h3>
-        {issued?<div className="warning-box">
-          <p><strong>Display-once credential · expires {issued.expires_at||"UNKNOWN"}</strong></p>
-          <p>First Host admission: {issued.pre_approved?"Pre-approved by explicit Admin choice":"Pending Approval"}</p>
-          {issued.enrollment_code&&<><p>Enrollment code</p><pre className="plan">{issued.enrollment_code}</pre>
-            <button type="button" className="secondary" onClick={()=>copyIssued("Enrollment code",issued.enrollment_code)}>Copy enrollment code</button>
+        {visibleIssued?<div className="warning-box">
+          <p><strong>Display-once credential · expires {visibleIssued.expires_at||"UNKNOWN"}</strong></p>
+          <p>First Host admission: {visibleIssued.pre_approved?"Pre-approved by explicit Admin choice":"Pending Approval"}</p>
+          {visibleIssued.enrollment_code&&<><p>Enrollment code</p><pre className="plan">{visibleIssued.enrollment_code}</pre>
+            <button type="button" className="secondary" onClick={()=>copyIssued("Enrollment code",visibleIssued.enrollment_code)}>Copy enrollment code</button>
           </>}
-          <p>Canonical install command</p><pre className="plan">{issued.command||"No install command issued"}</pre>
-          {issued.command&&<button type="button" className="secondary" onClick={()=>copyIssued("Install command",issued.command)}>Copy install command</button>}
+          <p>Canonical install command</p><pre className="plan">{visibleIssued.command||"No install command issued"}</pre>
+          {visibleIssued.command&&<button type="button" className="secondary" onClick={()=>copyIssued("Install command",visibleIssued.command)}>Copy install command</button>}
           {copyStatus&&<p className="notice" role="status">{copyStatus}</p>}
           <p className="muted">Copy only when you intend to install this Agent. Paste secrets only into the intended trusted machine and clear sensitive clipboard content afterward.</p>
-          <p>{issued.next_step}</p>
+          <p>{visibleIssued.next_step}</p>
         </div>:<p className="muted">No invitation issued during this session. Return to Step 1 to create one, or continue to inspect a previously enrolled Host.</p>}
         <button className="primary" onClick={()=>setStep(3)}>Next: inspect Host admission →</button>
       </div>}

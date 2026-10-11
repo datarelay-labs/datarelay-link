@@ -718,7 +718,8 @@ test("UX-3 issuing malformed Core credential evidence never advances onboarding 
  const source=readFileSync(join(root,"src","p0-enrollment.tsx"),"utf8");
  assert.match(source,/const observed=observedIssuedEnrollment\(result,mode,platform\)/);
  assert.match(source,/if\(!observed\)throw new Error\("Core returned invalid enrollment evidence/);
- assert.match(source,/setIssued\(observed\);refresh\(\);setStep\(2\)/);
+ assert.match(source,/if\(currentIssueIntent\.current!==requestedIntent\)/);
+ assert.match(source,/setIssued\(\{intent:requestedIntent,evidence:observed\}\);refresh\(\);setStep\(2\)/);
  assert.doesNotMatch(source,/setIssued\(result\);refresh\(\);setStep\(2\)/);
  const parsed=enrollment.observedIssuedEnrollment({
   mode:"zero-touch",platform:"windows",state:"pending",display_once:true,
