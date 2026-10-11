@@ -99,6 +99,33 @@ export function modeledPathEvidence(row:unknown,plane:AccessPlane){
   };
 }
 
+/** A successful HTTP response is not proof of the requested policy graph.
+ * Only the canonical read-only Core graph scope, plane, revision and exact
+ * bounded path totals can become a UI snapshot. Never expose nested nodes.
+ */
+export function observedCoreGraphSnapshot(input:unknown,plane:AccessPlane):{
+ revision:number,paths:unknown[],limits:{path_count:number,truncated:boolean},network_topology:false
+}|null{
+ if(!input||typeof input!=="object"||Array.isArray(input)
+   ||!["remote","internet","ai"].includes(plane))return null;
+ const row=input as Record<string,unknown>,limits=row.limits;
+ if(row.scope!=="policy-and-inventory"
+   ||!Array.isArray(row.planes)||row.planes.length!==1||row.planes[0]!==plane
+   ||row.network_topology!==false
+   ||!Number.isSafeInteger(row.revision)||Number(row.revision)<0
+   ||!Array.isArray(row.paths)||row.paths.length>400
+   ||!limits||typeof limits!=="object"||Array.isArray(limits))return null;
+ const bounds=limits as Record<string,unknown>;
+ if(!Number.isSafeInteger(bounds.max_paths)||Number(bounds.max_paths)<1
+   ||Number(bounds.max_paths)>400||row.paths.length>Number(bounds.max_paths)
+   ||!Number.isSafeInteger(bounds.path_count)||Number(bounds.path_count)!==row.paths.length
+   ||typeof bounds.truncated!=="boolean"
+   ||row.paths.some(path=>modeledPathEvidence(path,plane)===null))return null;
+ return {revision:row.revision as number,paths:row.paths,
+   limits:{path_count:bounds.path_count as number,truncated:bounds.truncated as boolean},
+   network_topology:false};
+}
+
 /** Rule names in a Core trace are not IDs. Resolve only against a complete,
  * same-plane Core policy inventory, with exactly one exact-name match.
  */
@@ -219,7 +246,9 @@ export function AccessEvidenceExplorer({api,plane,source,destination,selector,on
     setGraphEvidence(null);setSelectedPath(null);setGraphBusy(true);setError("");
     try{
       const next=await api("/api/v1/policy/graph?plane="+encodeURIComponent(plane));
-      if(graphRequest.current===token)setGraphEvidence({key:plane,value:next});
+      const validated=observedCoreGraphSnapshot(next,plane);
+      if(!validated)throw new Error("Core graph plane, scope or bounded totals are unverified.");
+      if(graphRequest.current===token)setGraphEvidence({key:plane,value:validated});
     }catch(e:any){if(graphRequest.current===token)setError("Core graph unavailable: "+String(e.message||e))}
     finally{if(graphRequest.current===token)setGraphBusy(false)}
   }
@@ -249,7 +278,8 @@ export function AccessEvidenceExplorer({api,plane,source,destination,selector,on
     </div><button className="secondary" onClick={loadGraph} disabled={graphBusy}>{graphBusy?"Loading…":"Load modeled paths"}</button></div>
     {error&&<div className="error" role="alert">{error}</div>}
     {visibleGraph&&<>
-      <div className="dr-p0-facts"><span>Modeled flows: {limits.path_count??visibleGraph.paths?.length??"UNKNOWN"}</span>
+      <div className="dr-p0-facts"><span>Modeled flows: {limits.path_count}</span>
+        <span>Core revision: {visibleGraph.revision}</span>
         <span>Core graph: {limits.truncated===true?"TRUNCATED":limits.truncated===false?"bounded snapshot":"UNKNOWN scope"}</span>
         <span>Topology discovery: {visibleGraph.network_topology?"present":"not performed"}</span></div>
       {(limits.truncated!==false||allPaths.length>16)&&<p className="warning-box">

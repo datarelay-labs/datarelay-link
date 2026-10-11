@@ -508,3 +508,29 @@ test("UX-1 Core trace route and modeled path never present nested/bidi source as
  assert.match(src,/observed\.rulesQualified/);
  assert.match(src,/visibleTrace\.mixed===true/);
 });
+
+test("UX-1 Core graph must match exact requested plane and bounded authoritative counts",()=>{
+ const row={plane:"remote",input:{plane:"remote",source:"branch",destination:"app",service:"ssh"}};
+ const valid={revision:22,scope:"policy-and-inventory",planes:["remote"],
+   network_topology:false,paths:[row],nodes:[{secret:"SECRET_GRAPH_FIELD"}],
+   limits:{path_count:1,max_paths:400,truncated:false}};
+ const observed=access.observedCoreGraphSnapshot(valid,"remote");
+ assert.deepEqual(observed,{revision:22,paths:[row],
+   limits:{path_count:1,truncated:false},network_topology:false});
+ assert.doesNotMatch(JSON.stringify(observed),/SECRET_GRAPH_FIELD/);
+ for(const broken of [null,{},[],{...valid,planes:["internet"]},
+   {...valid,planes:["remote","internet"]},{...valid,planes:[]},
+   {...valid,revision:-1},{...valid,revision:"22"},
+   {...valid,scope:"network-topology"},{...valid,network_topology:"false"},
+   {...valid,limits:{...valid.limits,path_count:0}},
+   {...valid,limits:{...valid.limits,max_paths:401}},
+   {...valid,limits:{...valid.limits,truncated:"false"}},
+   {...valid,limits:{...valid.limits,path_count:"1"}},
+   {...valid,paths:[...valid.paths,valid.paths[0]]},
+   {...valid,paths:null}
+ ])assert.equal(access.observedCoreGraphSnapshot(broken,"remote"),null,JSON.stringify(broken));
+ const src=readFileSync(join(webRoot,"src","p0-access-policy.tsx"),"utf8");
+ assert.match(src,/const validated=observedCoreGraphSnapshot\(next,plane\)/);
+ assert.match(src,/if\(!validated\)throw new Error\(/);
+ assert.match(src,/setGraphEvidence\(\{key:plane,value:validated\}\)/);
+});
