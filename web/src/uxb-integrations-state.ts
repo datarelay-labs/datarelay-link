@@ -26,7 +26,8 @@ export function webhookStatus(value:unknown):"Enabled"|"Disabled"|"UNKNOWN"{
  * Date.parse alone silently normalizes impossible dates such as February 31.
  * Preserve Core's absolute timestamp only after strict calendar/offset proof.
  */
-function validAbsoluteExpiry(text:string):boolean{
+export function isObservedAbsoluteTime(text:unknown):text is string{
+ if(typeof text!=="string"||text.length>80||BANNED.test(text))return false;
  const m=/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}:\d{2})$/.exec(text);
  if(!m)return false;
  const year=Number(m[1]),month=Number(m[2]),day=Number(m[3]);
@@ -44,8 +45,7 @@ export function serviceAccountExpiry(value:unknown):string{
  if(!Object.prototype.hasOwnProperty.call(data,"expires_at"))return "UNKNOWN";
  const v=data.expires_at;
  if(v===null||v==="")return "No expiry";
- if(typeof v!=="string"||v.length>80||BANNED.test(v)||!validAbsoluteExpiry(v))
-   return "UNKNOWN";
+ if(!isObservedAbsoluteTime(v))return "UNKNOWN";
  return v;
 }
 export function serviceAccountPermissions(value:unknown):string{

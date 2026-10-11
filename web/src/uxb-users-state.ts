@@ -1,6 +1,7 @@
 /** Read-only UI projection of Core-backed Web operator flags.
  * This module does not change MFA/session/permission behavior.
  */
+import {isObservedAbsoluteTime} from "./uxb-integrations-state";
 type User=Record<string,unknown>;
 const BANNED=/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g;
 function row(value:unknown):User{
@@ -52,7 +53,5 @@ export function operatorLastLogin(value:unknown):string{
  const user=row(value);
  if(Object.prototype.hasOwnProperty.call(user,"last_login_at")&&user.last_login_at===null)
    return "Never";
- if(typeof user.last_login_at!=="string")return "UNKNOWN";
- const cleaned=user.last_login_at.replace(BANNED," ").trim();
- return cleaned?cleaned.slice(0,140):"UNKNOWN";
+ return isObservedAbsoluteTime(user.last_login_at)?user.last_login_at:"UNKNOWN";
 }

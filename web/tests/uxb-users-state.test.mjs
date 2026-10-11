@@ -89,3 +89,21 @@ test("Real UsersPanel is wired fail-closed without changing Core MFA endpoints",
  assert.match(section,/api\("\/api\/v1\/operators\/"\+encodeURIComponent\(id\)\+"\/mfa"/);
  assert.doesNotMatch(section,/onClick=\{\(\)=>setMfa\(x.id,!x.mfa_required\)\}/);
 });
+
+test("Last-login timestamp accepts only an observed calendar-valid absolute Core time",()=>{
+ for(const valid of [
+  "2026-10-11T00:11:00Z",
+  "2028-02-29T00:11:00Z",
+  "2026-10-11T09:11:00+09:00"
+ ])assert.equal(view.operatorLastLogin({last_login_at:valid}),valid);
+ for(const invalid of [
+  "2026-02-31T00:11:00Z",
+  "2026-02-29T00:11:00Z",
+  "2026-10-11T00:11:00",
+  "yesterday",
+  "2026-10-11T00:11:00+24:00",
+  "2026-10-11T00:11:00Z suffix",
+  "2026-10-11T00:11:00\u202eZ"
+ ])assert.equal(view.operatorLastLogin({last_login_at:invalid}),"UNKNOWN",invalid);
+ assert.equal(view.operatorLastLogin({last_login_at:null}),"Never");
+});
