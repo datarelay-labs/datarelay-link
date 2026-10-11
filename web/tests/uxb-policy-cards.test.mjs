@@ -42,7 +42,10 @@ test("G-21 AI policy card uses exact public Core AI identity, never guesses allo
  assert.deepEqual(info,{
   id:"policy-ai",title:"AI staging",plane:"AI",
   status:"Enabled",expiryStatus:"Never",expiryAt:"Never",
-  facts:[{label:"Source identity",value:"bot-3"},{label:"Expires",value:"Never"}]
+  facts:[{label:"Source identity",value:"bot-3"},
+   {label:"Destination reference",value:"permission-group · repo-1"},
+   {label:"Permission reference",value:"UNKNOWN"},
+   {label:"Expires",value:"Never"}]
  });
  assert.doesNotMatch(JSON.stringify(info),/PRIVATE_KEY|SECRET|authentication/);
 });

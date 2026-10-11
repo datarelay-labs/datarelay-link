@@ -26,12 +26,24 @@ export function observedPolicyCardSummary(row:unknown,asOf:unknown):ObservedPoli
     kind==="expired"?"Expired":kind==="later"?"Later":
     kind==="never"?"Never":"UNKNOWN";
   const expiryAt=policyExpiryLabel(item);
+  // G-25: explicit AI Core references, not effective authorization assertions.
+  // Both kind and ID must already be safe fixed-whitelist scalars; otherwise
+  // the entire pair is UNKNOWN. No imported NetBird implementation.
+  const reference=(kind:string,value:string):string=>
+    kind==="UNKNOWN"||value==="UNKNOWN"?"UNKNOWN":kind+" · "+value;
+  const aiReferences=item.plane==="ai"?[
+    {label:"Destination reference",
+     value:reference(get("Destination kind"),get("Destination ID"))},
+    {label:"Permission reference",
+     value:reference(get("Permission kind"),get("Permission ID"))}
+  ]:[];
   return {
     id,title:name==="UNKNOWN"?id:name,plane:PLANES[item.plane],
     status,expiryStatus,expiryAt,
     facts:[
       {label:item.plane==="ai"?"Source identity":"Action",
        value:get(item.plane==="ai"?"Source identity":"Action")},
+      ...aiReferences,
       {label:"Expires",value:expiryAt}
     ]
   };
