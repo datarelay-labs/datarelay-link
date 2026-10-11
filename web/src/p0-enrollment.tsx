@@ -148,6 +148,31 @@ export function observedIssuedEnrollment(
  };
 }
 
+/** A display-once response can be structurally valid yet contradict what
+ * the Admin explicitly selected. Never treat a changed TTL or pre-approval
+ * flag as evidence of the requested enrollment. Core remains authoritative.
+ */
+export function issuedEnrollmentMatchesRequestedOptions(
+ input:unknown,request:unknown
+):boolean{
+ if(!input||typeof input!=="object"||Array.isArray(input)
+   ||!request||typeof request!=="object"||Array.isArray(request))return false;
+ const row=input as Record<string,unknown>,expected=request as Record<string,unknown>;
+ const mode=expected.mode,ttl=expected.ttl;
+ if(!["zero-touch","manual"].includes(String(mode))
+   ||!["linux","macos","windows"].includes(String(expected.platform))
+   ||mode==="manual"&&expected.platform==="windows"
+   ||typeof ttl!=="string"||!/^[0-9]+$/.test(ttl.trim())
+   ||!Number.isSafeInteger(Number(ttl))
+   ||typeof expected.preApproved!=="boolean")return false;
+ return row.mode===mode&&row.platform===expected.platform
+   &&typeof row.ttl_seconds==="number"&&Number.isSafeInteger(row.ttl_seconds)
+   &&row.ttl_seconds===Number(ttl)
+   &&(mode==="zero-touch"?row.pre_approved===expected.preApproved
+      :expected.preApproved===false
+        &&(row.pre_approved===undefined||row.pre_approved===false));
+}
+
 /** UX-3: a Core Host inventory and its approval preview are private to the
  * exact current operator, including two different users with the same role.
  * Web remains a read-only projection until Core approves the actual Change Plan.
@@ -446,6 +471,8 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate,onBus
       });
       const observed=observedIssuedEnrollment(result,mode,platform);
       if(!observed)throw new Error("Core returned invalid enrollment evidence. The ticket may exist; inspect enrollment history before retrying.");
+      if(!issuedEnrollmentMatchesRequestedOptions(result,{mode,platform,ttl,preApproved}))
+        throw new Error("Core enrollment TTL or first-Host pre-approval contradicts the requested intent. The ticket may exist; inspect Core enrollment history before retrying.");
       if(currentIssueIntent.current!==requestedIntent){
         setError("Enrollment form or account changed while issuing. Inspect Core enrollment history before retrying.");
         return;

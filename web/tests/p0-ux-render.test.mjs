@@ -348,3 +348,30 @@ test("UX-3 enrollment forms fail early for Core-invalid ticket intent without is
  assert.match(src,/disabled=\{!admin\|\|busy\|\|!!issueProblem\}/);
  assert.match(src,/The ticket may exist; inspect Core enrollment history before retrying/);
 });
+
+test("UX-3 display-once Core issuance cannot silently alter Admin pre-approval or TTL",()=>{
+ const request={mode:"zero-touch",platform:"linux",ttl:"3600",preApproved:false};
+ const zero={mode:"zero-touch",platform:"linux",state:"pending",
+  ttl_seconds:3600,pre_approved:false,display_once:true,management_only:true};
+ assert.equal(enroll.issuedEnrollmentMatchesRequestedOptions(zero,request),true);
+ for(const mismatch of [
+  {...zero,pre_approved:true},
+  {...zero,ttl_seconds:600},
+  {...zero,ttl_seconds:"3600"},
+  {...zero,platform:"windows"},
+  {...zero,mode:"manual"},
+  {...zero,ttl_seconds:3600.5},
+  null,{},[]
+ ])assert.equal(enroll.issuedEnrollmentMatchesRequestedOptions(mismatch,request),false,
+   JSON.stringify(mismatch));
+ assert.equal(enroll.issuedEnrollmentMatchesRequestedOptions({...zero,pre_approved:true},
+   {...request,preApproved:true}),true);
+ const manual={...zero,mode:"manual",platform:"macos",ttl_seconds:600,pre_approved:false};
+ assert.equal(enroll.issuedEnrollmentMatchesRequestedOptions(manual,
+   {mode:"manual",platform:"macos",ttl:"600",preApproved:false}),true);
+ assert.equal(enroll.issuedEnrollmentMatchesRequestedOptions({...manual,pre_approved:true},
+   {mode:"manual",platform:"macos",ttl:"600",preApproved:false}),false);
+ const src=readFileSync(join(webRoot,"src","p0-enrollment.tsx"),"utf8");
+ assert.match(src,/issuedEnrollmentMatchesRequestedOptions\(result,\{mode,platform,ttl,preApproved\}\)/);
+ assert.match(src,/The ticket may exist; inspect Core enrollment history before retrying/);
+});
