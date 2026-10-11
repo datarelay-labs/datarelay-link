@@ -52,6 +52,22 @@ export function serviceAccountExpiry(value:unknown):string{
  if(!isObservedAbsoluteTime(v))return "UNKNOWN";
  return v;
 }
+/** An enabled flag is not an active credential when Core's expiry has
+ * already passed. This projection never rotates/revokes credentials itself.
+ * Missing or malformed expiry is UNKNOWN, not silently "Active".
+ */
+export function serviceAccountOperationalStatus(
+ value:unknown,at:number=Date.now()
+):"Active"|"Expired"|"Revoked"|"UNKNOWN"{
+ const base=serviceAccountStatus(value);
+ if(base!=="Active")return base;
+ const account=row(value);
+ if(!Object.prototype.hasOwnProperty.call(account,"expires_at"))return "UNKNOWN";
+ const expiry=account.expires_at;
+ if(expiry===null||expiry==="")return "Active";
+ if(!isObservedAbsoluteTime(expiry)||!Number.isFinite(at))return "UNKNOWN";
+ return Date.parse(expiry)<=at?"Expired":"Active";
+}
 export function serviceAccountPermissions(value:unknown):string{
  const perms=row(value).permissions;
  if(!Array.isArray(perms))return "UNKNOWN";

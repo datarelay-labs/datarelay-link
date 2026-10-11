@@ -23,7 +23,7 @@ import {filterObservedServices} from "./uxb-service-search";
 import {operatorAccountState,operatorMfaState,operatorMfaAction,operatorLastLogin} from "./uxb-users-state";
 import {operatorUserLabel} from "./uxb-users-state";
 import {auditInvestigation,matchObservedAuditReturn,matchObservedPolicyReturn} from "./uxb-audit-context";
-import {serviceAccountStatus,serviceAccountExpiry,serviceAccountPermissions,webhookStatus,webhookDeliverySummary} from "./uxb-integrations-state";
+import {serviceAccountOperationalStatus,serviceAccountExpiry,serviceAccountPermissions,webhookStatus,webhookDeliverySummary} from "./uxb-integrations-state";
 import {filterObservedHosts} from "./uxb-host-search";
 import {FirstConnectionSetup,connectionReviewContext,type SetupDraft} from "./uxb-setup";
 
@@ -1892,8 +1892,20 @@ function IntegrationsPanel(){
         <div className="toolbar">{allowedPermissions.map(p=><label key={p}><input type="checkbox" checked={permissions.includes(p)} onChange={e=>setPermissions(a=>e.target.checked?[...a,p]:a.filter(x=>x!==p))}/>{p}</label>)}</div>
         <button className="primary" disabled={busy||!accountName||!permissions.length} type="submit">Create Service Account</button>
       </form>
-      <table><thead><tr><th>Account</th><th>Permissions</th><th>Expires</th><th>Status</th><th>Actions</th></tr></thead><tbody>{accounts.map(a=><tr key={a.id}><td>{a.name}</td><td>{serviceAccountPermissions(a)}</td><td>{serviceAccountExpiry(a)}</td>
-    <td>{serviceAccountStatus(a)}</td><td>{serviceAccountStatus(a)==="Active"&&<><button className="secondary" disabled={busy} onClick={()=>mutate("/api/v1/service-accounts/rotate",{account_id:a.id},"Rotated Service Account token")}>Rotate</button><button className="danger" disabled={busy} onClick={()=>{if(window.confirm("Revoke this Service Account now?"))mutate("/api/v1/service-accounts/revoke",{account_id:a.id})}}>Revoke</button></>}</td></tr>)}</tbody></table>
+      <table><thead><tr><th>Account</th><th>Permissions</th><th>Expires</th><th>Status</th><th>Actions</th></tr></thead><tbody>{accounts.map(a=>{
+        const accountState=serviceAccountOperationalStatus(a);
+        return <tr key={a.id}><td>{a.name}</td><td>{serviceAccountPermissions(a)}</td><td>{serviceAccountExpiry(a)}</td>
+          <td>{accountState}</td><td>
+            {accountState==="Active"&&<button className="secondary" disabled={busy} onClick={()=>{
+              if(serviceAccountOperationalStatus(a)!=="Active"){
+                setError("Service Account expiry has changed; refresh inventory before rotating.");return;
+              }
+              mutate("/api/v1/service-accounts/rotate",{account_id:a.id},"Rotated Service Account token");
+            }}>Rotate</button>}
+            {(accountState==="Active"||accountState==="Expired")&&
+              <button className="danger" disabled={busy} onClick={()=>{if(window.confirm("Revoke this Service Account now?"))mutate("/api/v1/service-accounts/revoke",{account_id:a.id})}}>Revoke</button>}
+          </td></tr>;
+      })}</tbody></table>
     </section>
     <section className="card"><h3>Signed Event Webhooks</h3><p className="muted">HTTPS only, certificate-verified and DNS-pinned. Failed deliveries use bounded retries; event delivery never controls access enforcement.</p>
       <form className="toolbar" onSubmit={createWebhook}><input value={hookName} onChange={e=>setHookName(e.target.value)} placeholder="Endpoint name" required/><input value={hookUrl} onChange={e=>setHookUrl(e.target.value)} placeholder="https://hooks.example.com/events" required type="url"/><select value={hookEvent} onChange={e=>setHookEvent(e.target.value)}><option value="attention">Attention</option><option value="security.lifecycle">Security lifecycle</option><option value="policy.change">Policy change</option><option value="managed_host.lifecycle">Managed Host lifecycle</option></select><button className="primary" disabled={busy||!hookName||!hookUrl} type="submit">Add webhook</button></form>

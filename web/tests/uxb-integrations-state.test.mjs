@@ -62,11 +62,12 @@ test("Webhook delivery counts show only bounded known statuses; absent isn't zer
 test("IntegrationsPanel renders qualified statuses and guards actions against unknown Core flags",()=>{
  const main=readFileSync(join(root,"src","main.tsx"),"utf8");
  const source=main.split("function IntegrationsPanel(",2)[1]?.split("function CommandCenter(",1)[0]||"";
- for(const f of ["serviceAccountStatus(a)","serviceAccountExpiry(a)","serviceAccountPermissions(a)",
+ for(const f of ["serviceAccountOperationalStatus(a)","serviceAccountExpiry(a)","serviceAccountPermissions(a)",
     "webhookStatus(h)","webhookDeliverySummary(h)"]){
    assert.ok(source.includes(f),f);
  }
- assert.match(source,/serviceAccountStatus\(a\)==="Active"&&/);
+ assert.match(source,/accountState==="Active"&&/);
+ assert.match(source,/accountState==="Active"\|\|accountState==="Expired"/);
  assert.match(source,/webhookStatus\(h\)==="Enabled"&&/);
  assert.doesNotMatch(source,/a.enabled\?"Active":"Revoked"/);
  assert.doesNotMatch(source,/h.enabled\?"Enabled":"Disabled"/);
@@ -112,4 +113,26 @@ test("Core absolute-time evidence rejects impossible civil timezone offsets",()=
  }
  for(const valid of ["2026-10-11T10:30:00+14:00","2026-10-11T10:30:00-12:00"])
   assert.equal(projection.isObservedAbsoluteTime(valid),true,valid);
+});
+
+test("Expired enabled Service Accounts are not Active or rotatable; revocation stays available",()=>{
+ const at=Date.parse("2030-01-01T00:00:00Z");
+ for(const [item,status] of [
+  [{enabled:true,expires_at:"2029-12-31T23:59:59Z"},"Expired"],
+  [{enabled:true,expires_at:"2030-01-01T00:00:00Z"},"Expired"],
+  [{enabled:true,expires_at:"2030-01-01T00:00:01Z"},"Active"],
+  [{enabled:true,expires_at:""},"Active"],
+  [{enabled:true,expires_at:null},"Active"],
+  [{enabled:true},"UNKNOWN"],
+  [{enabled:true,expires_at:"tomorrow"},"UNKNOWN"],
+  [{enabled:false,expires_at:"2029-12-31T23:59:59Z"},"Revoked"],
+  [{enabled:"true",expires_at:"2030-01-01T00:00:01Z"},"UNKNOWN"]
+ ])assert.equal(projection.serviceAccountOperationalStatus(item,at),status,JSON.stringify(item));
+ const main=readFileSync(join(root,"src","main.tsx"),"utf8");
+ const panel=main.split("function IntegrationsPanel(",2)[1]?.split("function CommandCenter(",1)[0]||"";
+ assert.match(main,/serviceAccountOperationalStatus/);
+ assert.match(panel,/const accountState=serviceAccountOperationalStatus\(a\)/);
+ assert.match(panel,/accountState==="Active"/);
+ assert.match(panel,/accountState==="Active"\|\|accountState==="Expired"/);
+ assert.doesNotMatch(panel,/serviceAccountStatus\(a\)==="Active"&&<><button/);
 });
