@@ -316,3 +316,8 @@
 .dr-resource-card-fact>strong{font-size:12px;font-weight:500;color:var(--dr-text-secondary);overflow-wrap:anywhere}
 .dr-resource-card-action{justify-self:start;font-size:12px;font-weight:600;color:var(--dr-text-secondary)}
 @media(max-width:560px){.dr-resource-cards{grid-template-columns:minmax(0,1fr);padding:10px}.dr-resource-card{min-height:0}}
+
+/* G-26: read-only AI Core references in the existing horizontally scrollable Policy Table. */
+.dr-policy-ai-mapping{display:grid;gap:3px;min-width:140px;max-width:228px;overflow-wrap:anywhere;font-size:11px;line-height:1.45}
+.dr-policy-ai-mapping>span{color:var(--dr-text-muted)}
+.dr-policy-ai-mapping strong{color:var(--dr-text-secondary);font-weight:600;overflow-wrap:anywhere}
