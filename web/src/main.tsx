@@ -1881,7 +1881,8 @@ function PolicyWorkspace({data,operator,onNavigate,api,context}:{data:any,operat
     ?context.focusPolicy.name:"";
   const inspectPolicyId=typeof context?.inspectPolicyId==="string"&&context.inspectPolicyId.length<=160
     ?context.inspectPolicyId:"";
-  const [plane,setPlane]=useState<string>(focusPlane||carriedPlane||"all"),[filter,setFilter]=useState(focusName||inspectPolicyId),[selected,setSelected]=useState<any>(null);
+  const savedPolicyDraft=saveDraftForResource("policy",context?.savedFilter,context?.savedPolicyPlane||"all");
+  const [plane,setPlane]=useState<string>(focusPlane||carriedPlane||savedPolicyDraft?.plane||"all"),[filter,setFilter]=useState(focusName||inspectPolicyId||savedPolicyDraft?.filter||""),[selected,setSelected]=useState<any>(null);
   const [statusFilter,setStatusFilter]=useState<"all"|"enabled"|"disabled"|"unknown">("all");
   const [expiryFilter,setExpiryFilter]=useState<PolicyExpiryChoice>("all");
   const [expiryObservedAt,setExpiryObservedAt]=useState(()=>Date.now());
@@ -1941,6 +1942,7 @@ function PolicyWorkspace({data,operator,onNavigate,api,context}:{data:any,operat
   const policyStatusRows=filterObservedPoliciesByStatus<any>(safePolicySearch.items,statusFilter);
   const expiryCounts=observedPolicyExpiryCounts(policyStatusRows,expiryObservedAt);
   const rows=sortLoadedPolicies<any>(filterObservedPoliciesByExpiry<any>(policyStatusRows,expiryFilter,expiryObservedAt),policySort);
+  const currentSaveDraft=saveDraftForResource("policy",filter,plane);
   const policyFilterChips=activePolicyFilterChips(plane,filter,statusFilter,expiryFilter,policySort);
   function removePolicyFilterChip(id:PolicyFilterChipId){
     if(id==="plane")setPlane("all");
@@ -1997,7 +1999,12 @@ function PolicyWorkspace({data,operator,onNavigate,api,context}:{data:any,operat
           aria-pressed={policyView==="table"} onClick={()=>setPolicyView("table")}>Table</button>
         <button type="button" className={policyView==="cards"?"primary":"secondary"}
           aria-pressed={policyView==="cards"} onClick={()=>setPolicyView("cards")}>Cards</button>
+        {currentSaveDraft&&<button type="button" className="secondary"
+          onClick={()=>onNavigate?.("views","activity",{savedViewDraft:currentSaveDraft})}>
+          Save this Policy filter →</button>}
       </div>
+      {currentSaveDraft&&<p className="muted">Saved filter includes only local text and plane.
+        It never stores policy approval, Core precedence, expiry, state, sort or unloaded rules.</p>}
       <div className="dr-form-actions" role="group" aria-label="Policy display ordering">
         <label>Sort loaded policies
           <select aria-label="Sort loaded Policies" value={policySort}
