@@ -273,3 +273,9 @@
 .dr-host-detail-section>div{display:grid;grid-template-columns:145px minmax(0,1fr);gap:12px;border-bottom:1px solid var(--dr-border-divider);padding:8px 0}
 .dr-host-detail-section>div strong{overflow-wrap:anywhere}
 @media(max-width:480px){.dr-host-detail-section>div{grid-template-columns:minmax(0,1fr);gap:3px}}
+/* Competitive UX-4/7: Core observation evidence never overflows narrow task-first Home. */
+.dr-uxb-evidence-strip{display:flex;align-items:center;flex-wrap:wrap;gap:8px;min-width:0;margin:0 0 14px;padding:10px 12px;border:1px solid var(--dr-border-default);border-radius:8px;background:var(--dr-surface-section)}
+.dr-uxb-evidence-strip>strong{font-size:12px}
+.dr-uxb-evidence-strip>span,.dr-uxb-evidence-strip>small{min-width:0;overflow-wrap:anywhere}
+.dr-uxb-evidence-strip>button{margin-left:auto;min-height:40px}
+@media(max-width:560px){.dr-uxb-evidence-strip{display:grid;grid-template-columns:minmax(0,1fr);gap:5px}.dr-uxb-evidence-strip>button{width:100%;margin-left:0}}

@@ -16,3 +16,15 @@ test('context stays a reusable DRLink-owned style, with existing narrow workspac
   assert.match(css,/\.dr-uxb-context strong\{font-size:/);
   assert.match(css,/@media\(max-width:560px\)\{[^\n]*\.dr-workspace\{padding:12px\}/);
 });
+
+test('UX-7 Core evidence summary stays readable and touch-accessible at 320/375px source breakpoints',()=>{
+ const base=[...css.matchAll(/^\.dr-uxb-evidence-strip\{([^}]*)\}/gm)].at(-1)?.[1]||'';
+ assert.match(base,/\bflex-wrap:wrap\b/);
+ assert.match(base,/\bmin-width:0\b/);
+ const text=css.match(/^\.dr-uxb-evidence-strip>span,\.dr-uxb-evidence-strip>small\{([^}]*)\}/m)?.[1]||'';
+ assert.match(text,/\boverflow-wrap:anywhere\b/);
+ const btn=css.match(/^\.dr-uxb-evidence-strip>button\{([^}]*)\}/m)?.[1]||'';
+ assert.match(btn,/\bmin-height:40px\b/);
+ assert.match(css,/@media\(max-width:560px\)\{\.dr-uxb-evidence-strip\{display:grid;grid-template-columns:minmax\(0,1fr\)/);
+ assert.match(css,/\.dr-uxb-evidence-strip>button\{width:100%;margin-left:0\}\}/);
+});
