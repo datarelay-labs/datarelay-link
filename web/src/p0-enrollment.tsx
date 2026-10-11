@@ -4,6 +4,52 @@ import type {LinkApi} from "./p0-access-policy";
 type Navigate=(id:string,groupId?:string)=>void;
 export const enrollmentSteps=["Issue enrollment","Install / join","Review & approve","Verify connectivity"] as const;
 
+/** UX-3: Core's list_enrollments returns at most 50 recently observed rows
+ * and a fleet total. A malformed snapshot must not look like zero tickets or
+ * expose arbitrary nested allocator credentials in this read-only history.
+ */
+export type ObservedEnrollmentRow={
+ id:string,label:string,type:string,state:string,admission:string,remaining:string
+};
+export type ObservedEnrollmentHistory={
+ status:"ready"|"UNKNOWN",items:ObservedEnrollmentRow[],total:number|null,partial:boolean
+};
+const BAD_ENROLLMENT_TEXT=/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/;
+function historyText(value:unknown):string{
+ return typeof value==="string"&&value.trim().length>0
+   &&value.length<=160&&!BAD_ENROLLMENT_TEXT.test(value)?value.trim():"UNKNOWN";
+}
+export function observedEnrollmentHistory(data:unknown):ObservedEnrollmentHistory{
+ const unknown:ObservedEnrollmentHistory={status:"UNKNOWN",items:[],total:null,partial:false};
+ if(!data||typeof data!=="object"||Array.isArray(data))return unknown;
+ const page=data as Record<string,unknown>;
+ if(!Array.isArray(page.items)||page.items.length>50)return unknown;
+ const total=page.total===undefined?null:page.total;
+ if(total!==null&&(!Number.isSafeInteger(total)||Number(total)<page.items.length))
+   return unknown;
+ if(page.items.length===0&&total!==null&&Number(total)>0)return unknown;
+ const seen=new Set<string>();
+ const items:ObservedEnrollmentRow[]=[];
+ for(const raw of page.items){
+   if(!raw||typeof raw!=="object"||Array.isArray(raw))return unknown;
+   const row=raw as Record<string,unknown>;
+   const id=historyText(row.id);
+   if(id==="UNKNOWN"||seen.has(id))return unknown;
+   seen.add(id);
+   const label=row.label===undefined||row.label===""?id:historyText(row.label);
+   const admission=["PENDING_APPROVAL","APPROVED","INVALID_PAIR"].includes(
+     typeof row.first_host_admission==="string"?row.first_host_admission:""
+   )?row.first_host_admission as string:"UNKNOWN";
+   const remaining=typeof row.remaining_seconds==="number"
+     &&Number.isSafeInteger(row.remaining_seconds)&&row.remaining_seconds>=0
+     ?row.remaining_seconds+" seconds":"UNKNOWN";
+   items.push({id,label,type:historyText(row.type),state:historyText(row.state),
+     admission,remaining});
+ }
+ return {status:"ready",items,total:total as number|null,
+   partial:total!==null?Number(total)>items.length:items.length>=50};
+}
+
 /** Admission, trust, connection and policy are independent Core concepts. */
 export function hostReadiness(host:any){
   if(!host)return {admission:"UNKNOWN",trust:"UNKNOWN",connection:"UNKNOWN",observedAt:"No observation",policy:"NOT VERIFIED"};
@@ -44,6 +90,7 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate,onBus
   const selected=hosts?.find(h=>String(h.id)===selectedHost)||null;
   const readiness=hostReadiness(selected);
   const required=String(preview?.confirmation_class||"APPROVE");
+  const history=observedEnrollmentHistory(data);
   useEffect(()=>{if(step>=3)void refreshHosts()},[step]);
   async function refreshHosts(){
     approvalGeneration.current+=1;
@@ -182,11 +229,15 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate,onBus
     </div>
     <div className="card"><h3>Enrollment history · Core</h3>
       <div className="dr-p0-table"><table><thead><tr><th>Ticket</th><th>Type</th><th>State</th><th>First-Host admission</th><th>Time remaining</th></tr></thead>
-        <tbody>{(data?.items||[]).map((item:any)=><tr key={item.id}><td>{item.label||item.id}</td><td>{item.type}</td><td>{item.state||"UNKNOWN"}</td>
-          <td>{item.first_host_admission||"UNKNOWN"}</td><td>{item.remaining_seconds??"UNKNOWN"} seconds</td></tr>)}</tbody>
+        <tbody>{history.items.map(item=><tr key={item.id}><td>{item.label} · {item.id}</td>
+          <td>{item.type}</td><td>{item.state}</td>
+          <td>{item.admission}</td><td>{item.remaining}</td></tr>)}</tbody>
       </table></div>
-      {data===null?<p className="warning-box" role="status">Enrollment history: UNKNOWN — Core has not returned authoritative records. Refresh observed state before interpreting history.</p>:
-        !(data?.items||[]).length&&<p className="muted">No enrollment history reported.</p>}
+      {history.status==="UNKNOWN"
+        ?<p className="warning-box" role="status">Enrollment history: UNKNOWN — Core list is missing, malformed, or incomplete. Refresh the authorized enrollment inventory; an empty list was not confirmed.</p>
+        :history.items.length===0
+          ?<p className="muted">No enrollment history reported.</p>
+          :history.partial&&<p className="muted" role="status">Showing first {history.items.length} of {history.total??"at least 50"} observed enrollments. More records may exist outside this bounded Core page.</p>}
     </div>
   </section>;
 }

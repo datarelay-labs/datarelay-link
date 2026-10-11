@@ -9,12 +9,12 @@ import React from "react";
 import {renderToStaticMarkup} from "react-dom/server";
 
 const root=dirname(dirname(fileURLToPath(import.meta.url)));
-let scratch,setup,service,policy,impact;
+let scratch,setup,service,policy,impact,enrollment;
 before(async()=>{
  scratch=mkdtempSync(join(root,"node_modules",".uxb-connection-"));
  for(const [name,entry] of [
   ["setup","uxb-setup.tsx"],["service","uxb-remote-service.tsx"],["policy","p0-access-policy.tsx"],
-  ["impact","uxb-impact-evidence.ts"],
+  ["impact","uxb-impact-evidence.ts"],["enrollment","p0-enrollment.tsx"],
  ]){
   const out=join(scratch,name+".mjs");
   await build({entryPoints:[join(root,"src",entry)],outfile:out,
@@ -25,6 +25,7 @@ before(async()=>{
  service=await import(pathToFileURL(join(scratch,"service.mjs")).href);
  policy=await import(pathToFileURL(join(scratch,"policy.mjs")).href);
  impact=await import(pathToFileURL(join(scratch,"impact.mjs")).href);
+ enrollment=await import(pathToFileURL(join(scratch,"enrollment.mjs")).href);
 });
 after(()=>{if(scratch)rmSync(scratch,{recursive:true,force:true})});
 
@@ -528,4 +529,71 @@ test("UX-8 malformed or control-tainted Core Job status/ID is UNKNOWN, not succe
   assert.doesNotMatch(JSON.stringify(view),/PRIVATE_|yesterday|\u202e/);
  }
  assert.equal(service.remoteServiceJobEvidence({job_id:"job-42",status:"SUCCEEDED",target_count:0}).status,"SUCCEEDED");
+});
+
+test("UX-3 enrollment history shows UNKNOWN for malformed Core pages, not falsely empty",()=>{
+ const render=data=>renderToStaticMarkup(React.createElement(enrollment.EnrollmentOnboarding,{
+  api:async()=>{throw Error("SSR cannot read Core")},data,refresh:()=>{},
+  operator:{id:"reader-1",role:"Read Only"}
+ }));
+ const empty=render({items:[],total:0});
+ assert.match(empty,/No enrollment history reported/);
+ assert.doesNotMatch(empty,/Enrollment history: UNKNOWN/);
+ for(const invalid of [
+  null,undefined,{}, {items:null},{items:"not-an-array"},
+  {items:[null]}, {items:[12]}, {items:[{id:""}]},
+  {items:[{id:{secret:"PRIVATE_TICKET"}}]},
+  {items:[{id:"ticket-1"}],total:0},
+  {items:Array.from({length:51},(_,i)=>({id:"ticket-"+i}))}
+ ]){
+  const out=render(invalid);
+  assert.match(out,/Enrollment history: UNKNOWN/);
+  assert.doesNotMatch(out,/No enrollment history reported|PRIVATE_TICKET/);
+ }
+});
+test("UX-3 enrollment history redacts malformed nested labels and bounded time evidence",()=>{
+ const payload={total:3,items:[
+  {id:"ticket-1",type:"zero-touch",state:"ACTIVE",label:" 서울지점 ",
+   first_host_admission:"PENDING_APPROVAL",remaining_seconds:120,
+   credential:{private_key:"PRIVATE_KEY"}},
+  {id:"ticket-2",type:"manual",state:"PENDING",label:{secret:"PRIVATE_LABEL"},
+   first_host_admission:{secret:"PRIVATE_APPROVAL"},remaining_seconds:"0"},
+ ]};
+ const projected=enrollment.observedEnrollmentHistory(payload);
+ assert.equal(projected.status,"ready");
+ assert.equal(projected.total,3);
+ assert.equal(projected.partial,true);
+ assert.equal(projected.items.length,2);
+ assert.equal(projected.items[0].label,"서울지점");
+ assert.equal(projected.items[0].remaining,"120 seconds");
+ assert.equal(projected.items[1].label,"UNKNOWN");
+ assert.equal(projected.items[1].admission,"UNKNOWN");
+ assert.equal(projected.items[1].remaining,"UNKNOWN");
+ assert.doesNotMatch(JSON.stringify(projected),/PRIVATE_/);
+ const html=renderToStaticMarkup(React.createElement(enrollment.EnrollmentOnboarding,{
+  api:async()=>{throw Error("SSR cannot fetch")},data:payload,refresh:()=>{},
+  operator:{role:"Operator"}
+ }));
+ assert.match(html,/Showing first 2 of 3 observed enrollments/);
+ assert.match(html,/120 seconds/);
+ assert.match(html,/UNKNOWN/);
+ assert.doesNotMatch(html,/PRIVATE_KEY|PRIVATE_LABEL|PRIVATE_APPROVAL|UNKNOWN seconds/);
+});
+test("UX-3 ticket identity and status reject control/bidi without echoing unsafe Core detail",()=>{
+ const base={items:[{id:"ticket-1",label:"alias",type:"manual",state:"ACTIVE",
+  first_host_admission:"PENDING_APPROVAL",remaining_seconds:0}]};
+ assert.equal(enrollment.observedEnrollmentHistory(base).items[0].remaining,"0 seconds");
+ for(const bad of ["ticket\u202e", "ticket\u0085","t\nsecret","A".repeat(161)]){
+  const input={items:[{...base.items[0],id:bad}]};
+  assert.equal(enrollment.observedEnrollmentHistory(input).status,"UNKNOWN");
+ }
+ for(const bad of ["ACTIVE\u2066", {secret:"PRIVATE_STATUS"}, "B".repeat(161)]){
+  const input={items:[{...base.items[0],state:bad}]};
+  const safe=enrollment.observedEnrollmentHistory(input);
+  assert.equal(safe.items[0].state,"UNKNOWN");
+  assert.doesNotMatch(JSON.stringify(safe),/PRIVATE_|\u2066/);
+ }
+ const source=readFileSync(join(root,"src","p0-enrollment.tsx"),"utf8");
+ assert.match(source,/const history=observedEnrollmentHistory\(data\)/);
+ assert.doesNotMatch(source,/\(data\?\.items\|\|\[\]\)\.map/);
 });
