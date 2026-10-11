@@ -406,3 +406,45 @@ test("UX-3 late Host admission Apply cannot show old actor, Host or Change Plan 
  assert.match(src,/const scopedMessage=onboardingHostSnapshotMatchesActor\(messageScope,operator\)[\s\S]*?&&messageScope\?\.hostId===visibleSelectedHost\?message:""/);
  assert.match(src,/\{scopedMessage&&<p className="notice" role="status">\{scopedMessage\}<\/p>\}/);
 });
+
+test("UI-02 Remote Service to owning Host shows only exact Core IDs from two typed inventory pages",()=>{
+ const hosts={resource_type:"managed-host",limit:100,next_cursor:null,items:[
+   {id:"host-a",name:"Branch Gateway",secret:"DO_NOT_EXPOSE"},
+   {id:"host-b",name:"Office Gateway"}
+ ]};
+ const services={resource_type:"remote-service",limit:100,next_cursor:null,items:[
+   {id:"service-ssh",name:"SSH",managed_host_id:"host-a",managed_host:"spoofed name"},
+   {id:"service-web",name:"Web",managed_host_id:"host-b"},
+   {id:"service-unresolved",name:"Unknown owner",managed_host:"Branch Gateway"}
+ ]};
+ const proof=access.observedPublicationOwnership(services,hosts);
+ assert.deepEqual(proof?.edges,[
+   {serviceId:"service-ssh",serviceName:"SSH",hostId:"host-a",hostName:"Branch Gateway"},
+   {serviceId:"service-web",serviceName:"Web",hostId:"host-b",hostName:"Office Gateway"}
+ ]);
+ assert.equal(proof?.unresolved,1);
+ assert.equal(proof?.partial,false);
+ assert.doesNotMatch(JSON.stringify(proof),/DO_NOT_EXPOSE|spoofed/);
+ assert.equal(access.observedPublicationOwnership(
+   {...services,next_cursor:"cursor"},hosts)?.partial,true);
+ assert.equal(access.observedPublicationOwnership(
+   services,{...hosts,next_cursor:"cursor"})?.partial,true);
+ for(const wrong of [null,{},[],{...services,resource_type:"managed-host"},
+   {...services,limit:200},{...services,next_cursor:23},
+   {...services,items:[services.items[0],services.items[0]]}]){
+   assert.equal(access.observedPublicationOwnership(wrong,hosts),null);
+ }
+ assert.equal(access.observedPublicationOwnership(services,
+   {...hosts,items:[hosts.items[0],hosts.items[0]]}),null);
+});
+test("UI-02 renders role-scoped Core publication ownership separately from policy graph",()=>{
+ const src=readFileSync(join(webRoot,"src","p0-access-policy.tsx"),"utf8");
+ const main=readFileSync(join(webRoot,"src","main.tsx"),"utf8");
+ assert.match(src,/resource_type=remote-service&limit=100/);
+ assert.match(src,/resource_type=managed-host&limit=100/);
+ assert.match(src,/Load published ownership/);
+ assert.match(src,/Observed publication relationship/);
+ assert.match(src,/Observed Service.*owning Host/);
+ assert.match(main,/onInspectHost=\{hostId=>onNavigate\?\.\("hosts","infrastructure",\{inspectResourceId:hostId,savedFilter:hostId\}\)\}/);
+ assert.doesNotMatch(src,/network_topology===true&&.*managed_host_id/);
+});

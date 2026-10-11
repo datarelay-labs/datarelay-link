@@ -902,7 +902,8 @@ function AccessOperations({operator,onNavigate,context}:{operator:any,onNavigate
     </section>
     <AccessEvidenceExplorer api={api} plane={plane as AccessPlane} source={source} destination={destination} selector={selector}
       onSelect={flow=>{diagnosisGeneration.current+=1;setSource(flow.source);setDestination(flow.destination);setSelector(flow.selector);setDiagnosisEvidence(null);setDiagnosisBusy(false)}}
-      onNavigate={(id,group,detail)=>onNavigate?.(id,group,detail??context)}/>
+      onInspectHost={hostId=>onNavigate?.("hosts","infrastructure",{inspectResourceId:hostId,savedFilter:hostId})}
+      actor={operator} onNavigate={(id,group,detail)=>onNavigate?.(id,group,detail??context)}/>
     <div className="card">
       <div className="dr-section-head"><div><p className="dr-eyebrow">Policy Simulator</p><h3>Connection Diagnosis</h3></div></div>
       <div className="muted">Side-effect-free Core correlation. No browser-triggered DNS or target probe is launched; missing evidence stays UNKNOWN.</div>

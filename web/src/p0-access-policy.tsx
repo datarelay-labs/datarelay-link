@@ -81,9 +81,54 @@ export function resolveCompletePolicyMatch(items:unknown,plane:AccessPlane,name:
   return matches.length===1?matches[0]:null;
 }
 
-export function AccessEvidenceExplorer({api,plane,source,destination,selector,onSelect,onNavigate}:{
+
+/** UI-02 is a read-only publication relationship, distinct from policy
+ * source/destination modeled paths or a live network topology. Project only
+ * exact service.client_id -> managed-host.id Core inventory references.
+ */
+export type ObservedPublicationEdge={serviceId:string,serviceName:string,hostId:string,hostName:string};
+export function observedPublicationOwnership(services:unknown,hosts:unknown):{
+ edges:ObservedPublicationEdge[],unresolved:number,partial:boolean,limited:boolean
+}|null{
+ const isRecord=(x:unknown):x is Record<string,unknown>=>!!x&&typeof x==="object"&&!Array.isArray(x);
+ const cleanId=(x:unknown):x is string=>typeof x==="string"&&/^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,159}$/.test(x);
+ const cleanLabel=(x:unknown,fallback:string):string=>typeof x==="string"
+   &&!!x.trim()&&x.length<=160&&!/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/.test(x)?x.trim():fallback;
+ function typedPage(value:unknown,type:string):{items:Record<string,unknown>[],partial:boolean}|null{
+   if(!isRecord(value)||value.resource_type!==type||!Array.isArray(value.items)
+     ||!Number.isSafeInteger(value.limit)||Number(value.limit)<1||Number(value.limit)>100
+     ||value.items.length>Number(value.limit)
+     ||value.next_cursor!==null&&!(typeof value.next_cursor==="string"
+       &&!!value.next_cursor&&value.next_cursor.length<=1024
+       &&!/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/.test(value.next_cursor)))
+       return null;
+   if(value.items.some(x=>!isRecord(x)||!cleanId(x.id)))return null;
+   const items=value.items as Record<string,unknown>[];
+   if(new Set(items.map(x=>x.id)).size!==items.length)return null;
+   return {items,partial:value.next_cursor!==null};
+ }
+ const svc=typedPage(services,"remote-service"),h=typedPage(hosts,"managed-host");
+ if(!svc||!h)return null;
+ const hostMap=new Map(h.items.map(x=>[x.id as string,x]));
+ const edges:ObservedPublicationEdge[]=[];
+ let unresolved=0;
+ for(const item of svc.items){
+   const hostId=item.managed_host_id;
+   const host=cleanId(hostId)?hostMap.get(hostId):undefined;
+   if(!host){unresolved++;continue;}
+   edges.push({serviceId:item.id as string,
+     serviceName:cleanLabel(item.name,item.id as string),
+     hostId:host.id as string,
+     hostName:cleanLabel(host.name,host.id as string)});
+ }
+ return {edges:edges.slice(0,16),unresolved,
+   partial:svc.partial||h.partial,limited:edges.length>16};
+}
+
+export function AccessEvidenceExplorer({api,plane,source,destination,selector,onSelect,onNavigate,onInspectHost,actor}:{
   api:LinkApi,plane:AccessPlane,source:string,destination:string,selector:string,
-  onSelect:(flow:SelectedFlow)=>void,onNavigate?:Navigate
+  onSelect:(flow:SelectedFlow)=>void,onNavigate?:Navigate,
+  onInspectHost?:(hostId:string)=>void,actor?:{id?:unknown,role?:unknown}
 }){
   const [graphEvidence,setGraphEvidence]=useState<{key:string,value:any}|null>(null);
   const [traceEvidence,setTraceEvidence]=useState<{key:string,value:any}|null>(null);
@@ -91,13 +136,44 @@ export function AccessEvidenceExplorer({api,plane,source,destination,selector,on
   const [error,setError]=useState(""),[path,setPath]=useState("");
   const [selectedPath,setSelectedPath]=useState<ReturnType<typeof modeledPathEvidence>>(null);
   const graphRequest=useRef(0),traceRequest=useRef(0);
+  const publicationRequest=useRef(0);
+  const [publication,setPublication]=useState<{scope:string,value:NonNullable<ReturnType<typeof observedPublicationOwnership>>}|null>(null);
+  const [publicationBusy,setPublicationBusy]=useState(false),[publicationError,setPublicationError]=useState("");
+  const actorScope=JSON.stringify([actor?.id,actor?.role]);
+  const currentActorScope=useRef(actorScope);
+  currentActorScope.current=actorScope;
+  const visiblePublication=plane==="remote"&&publication?.scope===actorScope?publication.value:null;
   const currentTraceKey=coreFlowKey(plane,source,destination,selector,path);
   const visibleTrace=visibleCoreEvidence(traceEvidence,currentTraceKey);
   const visibleGraph=visibleCoreEvidence(graphEvidence,plane);
   useEffect(()=>{graphRequest.current+=1;setGraphEvidence(null);setSelectedPath(null);setError("");setGraphBusy(false)},[plane]);
   useEffect(()=>{traceRequest.current+=1;setTraceEvidence(null);setTraceBusy(false);setError("")},[plane,source,destination,selector,path]);
-  useEffect(()=>()=>{graphRequest.current+=1;traceRequest.current+=1},[]);
+  useEffect(()=>()=>{graphRequest.current+=1;traceRequest.current+=1;publicationRequest.current+=1},[]);
+  useEffect(()=>{
+    publicationRequest.current+=1;
+    setPublication(null);setPublicationError("");setPublicationBusy(false);
+  },[plane,actorScope]);
   const ready=!!(source.trim()&&destination.trim()&&selector.trim());
+  async function loadOwnership(){
+    if(plane!=="remote"||publicationBusy
+      ||typeof actor?.id!=="string"||!actor.id.trim()
+      ||!["Admin","Operator","Read Only"].includes(String(actor?.role)))return;
+    const generation=++publicationRequest.current,requestScope=actorScope;
+    setPublication(null);setPublicationBusy(true);setPublicationError("");
+    try{
+      const [services,hosts]=await Promise.all([
+        api("/api/v1/inventory?resource_type=remote-service&limit=100"),
+        api("/api/v1/inventory?resource_type=managed-host&limit=100")
+      ]);
+      if(generation!==publicationRequest.current||requestScope!==currentActorScope.current)return;
+      const proof=observedPublicationOwnership(services,hosts);
+      if(!proof)throw new Error("Core publication inventory response is unverified");
+      setPublication({scope:requestScope,value:proof});
+    }catch(e:any){
+      if(generation===publicationRequest.current&&requestScope===currentActorScope.current)
+        setPublicationError("Core ownership evidence unavailable: "+String(e?.message||e));
+    }finally{if(generation===publicationRequest.current)setPublicationBusy(false)}
+  }
   async function loadGraph(){
     const token=++graphRequest.current;
     setGraphEvidence(null);setSelectedPath(null);setGraphBusy(true);setError("");
@@ -157,6 +233,30 @@ export function AccessEvidenceExplorer({api,plane,source,destination,selector,on
           <div className="dr-p0-path" key={i} role="status">Core modeled path {i+1}: UNKNOWN · incomplete or mismatched input</div>
         )}</div>:<p className="muted">No modeled paths returned. This does not prove an access decision.</p>}
     </>}
+    {plane==="remote"&&<section className="dr-p0-evidence" role="region" aria-label="Observed Service to owning Host">
+      <h4>Observed Service → owning Host</h4>
+      <p className="muted">Read-only Core publication identity; this is separate from modeled policy flow, live connectivity and network topology.</p>
+      <button className="secondary" type="button" onClick={loadOwnership}
+        disabled={publicationBusy||!actor?.id||!["Admin","Operator","Read Only"].includes(String(actor?.role))}>
+        {publicationBusy?"Reading Core ownership…":"Load published ownership"}</button>
+      {publicationError&&<p className="warning-box" role="alert">{publicationError}</p>}
+      {visiblePublication&&<>
+        <p role="status">Observed publication relationship: {visiblePublication.edges.length} verified links in the loaded pages.</p>
+        {(visiblePublication.partial||visiblePublication.limited||visiblePublication.unresolved>0)&&
+          <p className="warning-box" role="status">Partial / UNKNOWN ownership scope. {visiblePublication.unresolved} loaded services have no verified owner in the observed Host page.
+            {visiblePublication.partial?" Additional Core pages exist.":""}
+            {visiblePublication.limited?" Only the first 16 links are displayed.":""}
+            A missing link never proves that a Service has no owning Host.</p>}
+        {visiblePublication.edges.length?<div className="dr-p0-paths" aria-label="Verified Core publication edges">
+          {visiblePublication.edges.map(edge=><div className="dr-p0-path" key={edge.serviceId}>
+            <strong>{edge.serviceName} <span aria-hidden="true">→</span> {edge.hostName}</strong>
+            <small>Exact Core Service {edge.serviceId} → Host {edge.hostId}</small>
+            <button type="button" className="secondary" disabled={!onInspectHost}
+              onClick={()=>onInspectHost?.(edge.hostId)}>Inspect owning Host →</button>
+          </div>)}
+        </div>:<p className="muted">No exact publication links confirmed in this bounded Core page; ownership outside the observed rows remains UNKNOWN.</p>}
+      </>}
+    </section>}
     {focus&&<section className="dr-p0-evidence dr-p0-focused" aria-label="Focused Core-modeled access path" role="region">
       <h4>Focused access path · Core model</h4>
       <div className="dr-p0-route" aria-label="Source, policy references and destination">
