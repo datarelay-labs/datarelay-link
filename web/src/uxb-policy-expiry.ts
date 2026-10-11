@@ -17,6 +17,10 @@ const EXPIRY=new Set(["all","expired","due24h","later","never","unknown"]);
 const DAY=24*60*60*1000;
 const BAD=/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/;
 const TEXT_KEYS=["id","name","description","plane","action"] as const;
+// G-27: search ONLY AI references already visible through the G-25 Core
+// allowlist. Never search arbitrary Core metadata, tokens or nested objects.
+const AI_SEARCH_FIELDS=new Set(["Source identity","Destination kind","Destination ID",
+ "Permission kind","Permission ID"]);
 const isRow=(row:unknown):row is Record<string,unknown>=>
   row!==null&&typeof row==="object"&&!Array.isArray(row);
 const validTime=(at:unknown):at is number=>
@@ -70,9 +74,14 @@ export function filterObservedPolicySearch(input:unknown,query:unknown):VisibleP
   if(!normalized)return {items:valid,scope:"loaded-only",loadedCount:valid.length,error:null};
   const items=valid.filter(row=>{
     const observed=TEXT_KEYS.map(key=>safeText(row[key],key==="description"?240:160));
+    // The existing G-25 projector validates exact Core policy ID and returns
+    // only finite public scalars. AI references from other planes never count.
+    const aiVisible=row.plane==="ai"?observedPolicyDetailFields(row)
+      .filter(field=>AI_SEARCH_FIELDS.has(field.label)&&field.value!=="UNKNOWN")
+      .map(field=>safeText(field.value,160)):[];
     const expiry=policyExpiryLabel(row);
     const state=policyStateLabel(row.enabled);
-    return [...observed,
+    return [...observed,...aiVisible,
       expiry==="UNKNOWN"?null:expiry.toLowerCase(),
       state==="UNKNOWN"?null:state.toLowerCase()
     ].some(value=>value?.includes(normalized)??false);

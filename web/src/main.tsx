@@ -1990,7 +1990,7 @@ function PolicyWorkspace({data,operator,onNavigate,api,context}:{data:any,operat
           "Policy inventory is incomplete. Load remaining Core pages before resolving this rule."}</p>}
     </section>}
     <section className="card dr-list-card"><div className="dr-list-toolbar"><div><strong>{rows.length}</strong><span>policy rules</span></div><label className="dr-filter-field"><WorkspaceIcon kind="search"/><input value={filter} maxLength={120} aria-label="Search visible policy fields"
-        onChange={e=>setFilter(e.target.value)} placeholder="Filter policies (name, ID, action)…"/>{filter&&<button onClick={()=>setFilter("")} aria-label="Clear filter">×</button>}</label></div>
+        onChange={e=>setFilter(e.target.value)} placeholder="Filter policies (name, ID, AI refs)…"/>{filter&&<button onClick={()=>setFilter("")} aria-label="Clear filter">×</button>}</label></div>
       <div className="dr-form-actions" role="group" aria-label="Policy inventory view">
         <span className="muted">Read-only presentation of the currently loaded Core policies</span>
         <button type="button" className={policyView==="table"?"primary":"secondary"}
