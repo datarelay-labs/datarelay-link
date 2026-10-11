@@ -773,3 +773,50 @@ test("UI-06 adjacent Temporary Access Preview is scoped to exact rule, action an
  assert.match(panel,/const actionable=temporaryAccessPreviewMatchesIntent\(preview,currentRequest\.current\)/);
  assert.match(panel,/Apply outcome UNKNOWN/);
 });
+
+test("UI-03 Managed Host admission must verify exact Core Host, action, impact and Apply receipt",()=>{
+ const current=Date.parse("2034-01-01T00:00:00Z");
+ const base={change_plan_id:"cp_"+"a".repeat(24),operation_class:"CHANGE",
+   operation:"managed-host-admission.quarantine",admission_operation:"quarantine",
+   resource_type:"managed-host",resource_ref:"host-a",expected_revision:17,
+   confirmation_class:"QUARANTINE",no_change:false,
+   valid_until:"2035-01-01T00:00:00Z",
+   preview:{id:"host-a",before:"APPROVED",after:"QUARANTINED"},
+   impact:{kind:"managed-host-admission",before:"APPROVED",after:"QUARANTINED",
+     destructive:false,requires_confirmation:true,access_broadened:false,
+     access_narrowed:true,warning:"Quarantine prevents new access.",
+     kept:["Host identity"],internal:{secret:"DO_NOT_EXPOSE"}}};
+ const plan=menu.observedHostAdmissionPlanForAction(base,"host-a","quarantine",current);
+ assert.equal(plan?.change_plan_id,base.change_plan_id);
+ assert.equal(plan?.preview.id,"host-a");
+ assert.doesNotMatch(JSON.stringify(plan),/DO_NOT_EXPOSE/);
+ const receipt={status:"APPLIED",admission_operation:"quarantine",revision:18};
+ assert.deepEqual(menu.requireObservedHostAdmissionReceipt(receipt,plan,"quarantine"),{revision:18});
+ const approve={...base,operation:"managed-host-admission.approve",
+   admission_operation:"approve",confirmation_class:"APPROVE",
+   preview:{...base.preview,after:"APPROVED",before:"QUARANTINED"},
+   impact:{...base.impact,before:"QUARANTINED",after:"APPROVED",
+     access_broadened:true,access_narrowed:false}};
+ assert.equal(menu.observedHostAdmissionPlanForAction(approve,"host-a","approve",current)?.confirmation_class,"APPROVE");
+ for(const bad of [null,{},[],{...base,resource_ref:"host-b"},
+   {...base,operation:"managed-host-admission.approve"},
+   {...base,confirmation_class:"APPROVE"},
+   {...base,preview:{...base.preview,id:"host-b"}},
+   {...base,impact:{...base.impact,destructive:true}},
+   {...base,impact:{...base.impact,access_narrowed:false}},
+   {...base,impact:{...base.impact,warning:"bad\u202e"}},
+   {...base,no_change:true},{...base,valid_until:"invalid"},
+   {...base,expected_revision:"17"}])
+  assert.equal(menu.observedHostAdmissionPlanForAction(bad,"host-a","quarantine",current),null,JSON.stringify(bad));
+ assert.equal(menu.observedHostAdmissionPlanForAction(base,"host-b","quarantine",current),null);
+ for(const wrong of [null,{},[],{...receipt,status:"NO_CHANGE"},
+   {...receipt,admission_operation:"approve"},{...receipt,revision:17},
+   {...receipt,revision:"18"}])
+  assert.throws(()=>menu.requireObservedHostAdmissionReceipt(wrong,plan,"quarantine"),/UNKNOWN|Core/);
+ const main=readFileSync(join(root,"src","main.tsx"),"utf8");
+ const panel=main.split("function ManagedHostAdmissionPanel(){")[1]?.split("function ManagedHostLifecyclePanel(",1)[0]||"";
+ assert.match(panel,/observedHostAdmissionPlanForAction\(result,requestHost,requestOperation\)/);
+ assert.match(panel,/requireObservedHostAdmissionReceipt\(result,reviewedPlan,operation\)/);
+ assert.match(panel,/Core Admission Apply outcome UNKNOWN/);
+ assert.match(panel,/previewGeneration\.current/);
+});

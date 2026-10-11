@@ -113,6 +113,77 @@ export function requireObservedGuidedChangeApplyReceipt(
  return {revision:receipt.revision as number};
 }
 
+/** Legacy Host approval/quarantine UI must verify a specific, immutable
+ * Core Host ID, reviewed admission transition, and non-destructive impact.
+ * This does not grant Web permission; the Core Admin/ACL gate remains sole
+ * authority and the new enrollment journey is unchanged.
+ */
+export function observedHostAdmissionPlanForAction(
+ input:unknown,hostId:unknown,action:unknown,now:number=Date.now()
+):any|null{
+ const obj=(v:unknown):v is Record<string,any>=>!!v&&typeof v==="object"&&!Array.isArray(v);
+ const safe=(v:unknown,max=160):v is string=>typeof v==="string"&&!!v.trim()
+   &&v.length<=max&&!/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/.test(v);
+ if(!obj(input)||typeof hostId!=="string"
+   ||!/^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,159}$/.test(hostId)
+   ||!["approve","quarantine"].includes(String(action))||!Number.isFinite(now))return null;
+ const plan=input,summary=plan.preview,impact=plan.impact,
+   target=action==="approve"?"APPROVED":"QUARANTINED";
+ const from=action==="approve"?["PENDING_APPROVAL","QUARANTINED"]:
+   ["PENDING_APPROVAL","APPROVED"];
+ if(!obj(summary)||!obj(impact)||typeof plan.change_plan_id!=="string"
+   ||!/^cp_[A-Za-z0-9_-]{16,128}$/.test(plan.change_plan_id)
+   ||plan.operation_class!=="CHANGE"
+   ||plan.operation!=="managed-host-admission."+action
+   ||plan.admission_operation!==action
+   ||plan.resource_type!=="managed-host"||plan.resource_ref!==hostId
+   ||!Number.isSafeInteger(plan.expected_revision)||plan.expected_revision<0
+   ||plan.confirmation_class!==String(action).toUpperCase()
+   ||plan.no_change!==false||!isObservedAbsoluteTime(plan.valid_until)
+   ||Date.parse(plan.valid_until)<=now
+   ||summary.id!==hostId||summary.after!==target||!from.includes(summary.before)
+   ||impact.kind!=="managed-host-admission"
+   ||impact.before!==summary.before||impact.after!==target
+   ||impact.requires_confirmation!==true||impact.destructive!==false
+   ||impact.access_broadened!==(action==="approve")
+   ||impact.access_narrowed!==(action==="quarantine")
+   ||!safe(impact.warning)
+   ||!Array.isArray(impact.kept)||impact.kept.length>10
+   ||impact.kept.some((item:unknown)=>!safe(item,80)))return null;
+ return {change_plan_id:plan.change_plan_id,operation_class:"CHANGE",
+   operation:plan.operation,admission_operation:action,
+   resource_type:"managed-host",resource_ref:hostId,
+   expected_revision:plan.expected_revision,
+   confirmation_class:plan.confirmation_class,
+   no_change:false,valid_until:plan.valid_until,
+   preview:{id:hostId,before:summary.before,after:target},
+   impact:{kind:"managed-host-admission",before:summary.before,after:target,
+     requires_confirmation:true,destructive:false,
+     access_broadened:action==="approve",access_narrowed:action==="quarantine",
+     warning:impact.warning,kept:impact.kept.slice()}};
+}
+
+/** The Core Admission Apply receipt must advance the exact reviewed plan.
+ * A malformed or ambiguous HTTP 200 is not evidence of a state transition.
+ */
+export function requireObservedHostAdmissionReceipt(
+ input:unknown,plan:unknown,action:unknown
+):{revision:number}{
+ const fail=():never=>{throw new Error(
+   "UNKNOWN · Core Host admission Apply receipt is unverified. Inspect Host inventory and Change History before retrying."
+ )};
+ if(!input||typeof input!=="object"||Array.isArray(input)
+   ||!plan||typeof plan!=="object"||Array.isArray(plan)
+   ||typeof action!=="string")return fail();
+ const proof=input as Record<string,unknown>,preview=plan as Record<string,any>;
+ if(!observedHostAdmissionPlanForAction(preview,preview.resource_ref,action,
+     Date.parse(preview.valid_until)-1)
+   ||proof.status!=="APPLIED"||proof.admission_operation!==action
+   ||!Number.isSafeInteger(proof.revision)
+   ||Number(proof.revision)<=Number(preview.expected_revision))return fail();
+ return {revision:proof.revision as number};
+}
+
 /** Same-actor Temporary Access is NOT a reviewer workflow. Its preview
  * must match the operator's exact Core rule, action and canonical expiry.
  * Read-only Web preflight does not grant access or override Core safety.

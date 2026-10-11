@@ -9,7 +9,7 @@ import {AccessEvidenceExplorer,GuidedPolicyJourney,coreFlowKey,coreCutoffKey,vis
 import {EnrollmentOnboarding} from "./p0-enrollment";
 import {navGroups,groupFor,labelFor,pageDescriptions,visibleRoute,navMatches,setupContextForObjectFamily} from "./uxb-navigation";
 import {FirstUseHome,observedBoundedCountPair,observedHomeAttention,isFreshInstallation,observedRecentFeed,observedNumber,accessPlaneCount,coreHealthState,type RecentFeed} from "./uxb-home";
-import {requireObservedMenuPayload,guidedChangePreviewMatchesIntent,requireObservedGuidedChangeApplyReceipt,temporaryAccessPreviewMatchesIntent,requireObservedTemporaryAccessApplyForPlan,requireObservedEmergencyCutoffApplyForPlan,observedEmergencyCutoffPreviewForIntent,requireObservedCutoffInventory,requireObservedLiveAccessView,requireObservedDiagnosisView,requireObservedInventoryContinuation,requireObservedObjectContinuation,requireObservedAuditRetention,auditRetentionRunPermitted,requireObservedAccessHygiene,hygieneInspectTarget,requireObservedJobStart,requireObservedFleetApply,requireObservedFleetPreview,requireObservedFleetApplyForPreview,requireObservedAuditExport,requireObservedRolloutPreview,requireObservedInventoryExport,requireObservedJobDetail,requireObservedJobCancellation,isPartialCorePage,selectMenuPage,combineObservedPolicyPlanes,policyStateLabel,policyExpiryLabel,type MenuPagePosition} from "./uxb-menu-evidence";
+import {requireObservedMenuPayload,guidedChangePreviewMatchesIntent,requireObservedGuidedChangeApplyReceipt,temporaryAccessPreviewMatchesIntent,observedHostAdmissionPlanForAction,requireObservedHostAdmissionReceipt,requireObservedTemporaryAccessApplyForPlan,requireObservedEmergencyCutoffApplyForPlan,observedEmergencyCutoffPreviewForIntent,requireObservedCutoffInventory,requireObservedLiveAccessView,requireObservedDiagnosisView,requireObservedInventoryContinuation,requireObservedObjectContinuation,requireObservedAuditRetention,auditRetentionRunPermitted,requireObservedAccessHygiene,hygieneInspectTarget,requireObservedJobStart,requireObservedFleetApply,requireObservedFleetPreview,requireObservedFleetApplyForPreview,requireObservedAuditExport,requireObservedRolloutPreview,requireObservedInventoryExport,requireObservedJobDetail,requireObservedJobCancellation,isPartialCorePage,selectMenuPage,combineObservedPolicyPlanes,policyStateLabel,policyExpiryLabel,type MenuPagePosition} from "./uxb-menu-evidence";
 import {RemoteServiceEditor} from "./uxb-remote-service";
 import {RevisionHistory} from "./uxb-revisions";
 import {AgentVersionDrift} from "./uxb-versions";
@@ -437,43 +437,92 @@ function ManagedHostMetadataPanel(){
 function ManagedHostAdmissionPanel(){
   const [host,setHost]=useState(""),[operation,setOperation]=useState("quarantine");
   const [preview,setPreview]=useState<any>(null),[confirmation,setConfirmation]=useState("");
-  const [message,setMessage]=useState(""),[error,setError]=useState("");
+  const [message,setMessage]=useState(""),[error,setError]=useState(""),[busy,setBusy]=useState(false);
+  const previewGeneration=useRef(0);
+  useEffect(()=>()=>{previewGeneration.current+=1},[]);
+  useEffect(()=>{
+    if(!preview||busy)return;
+    const delay=Date.parse(preview.valid_until)-Date.now();
+    if(!Number.isFinite(delay)||delay>2147483647)return;
+    const timer=setTimeout(()=>{
+      if(Date.now()>=Date.parse(preview.valid_until)){
+        previewGeneration.current+=1;setPreview(null);setConfirmation("");
+        setError("Core Host admission Change Plan expired. Request a fresh Preview.");
+      }
+    },Math.max(0,delay));
+    return()=>clearTimeout(timer);
+  },[preview?.change_plan_id,preview?.valid_until,busy]);
+  function resetAdmission(){previewGeneration.current+=1;setPreview(null);setConfirmation("");setMessage("")}
   async function doPreview(){
-    setError("");setMessage("");
+    if(busy||!host.trim())return;
+    const token=++previewGeneration.current,requestHost=host.trim(),requestOperation=operation;
+    setError("");setMessage("");setPreview(null);setConfirmation("");setBusy(true);
     try{
       const result=await api("/api/v1/managed-hosts/admission/preview",{
-        method:"POST",body:JSON.stringify({host,operation}),
+        method:"POST",body:JSON.stringify({host:requestHost,operation:requestOperation}),
       });
-      setPreview(result);setConfirmation("");
-    }catch(e:any){setPreview(null);setError(e.message||String(e))}
+      if(token!==previewGeneration.current)return;
+      if(result?.no_change===true){
+        setMessage("Core reports NO_CHANGE; no admission Apply is required.");
+        return;
+      }
+      const valid=observedHostAdmissionPlanForAction(result,requestHost,requestOperation);
+      if(!valid)throw new Error("Core Host admission plan does not confirm the exact Host ID or requested transition.");
+      setPreview(valid);setConfirmation("");
+    }catch(e:any){if(token===previewGeneration.current)
+      setError("Host admission Preview unverified: "+String(e.message||e))}
+    finally{if(token===previewGeneration.current)setBusy(false)}
   }
   async function doApply(){
-    setError("");setMessage("");
+    if(busy||!preview||confirmation!==operation.toUpperCase())return;
+    const reviewedPlan=preview;
+    if(!observedHostAdmissionPlanForAction(reviewedPlan,host.trim(),operation)){
+      resetAdmission();
+      setError("Core Host admission Change Plan expired or changed; obtain a fresh Preview.");
+      return;
+    }
+    const token=++previewGeneration.current;
+    setError("");setMessage("");setBusy(true);
     try{
       const result=await api("/api/v1/managed-hosts/admission/apply",{
-        method:"POST",body:JSON.stringify({change_plan_id:preview?.change_plan_id||"",confirmation}),
+        method:"POST",body:JSON.stringify({change_plan_id:reviewedPlan.change_plan_id,confirmation}),
       });
-      setMessage("Host admission "+(operation==="approve"?"approved":"quarantined")+" at revision "+result.revision+". Reload Managed Hosts to view the new state.");
+      if(token!==previewGeneration.current)return;
+      const confirmed=requireObservedHostAdmissionReceipt(result,reviewedPlan,operation);
+      setMessage("Core Host admission "+(operation==="approve"?"approved":"quarantined")+
+        " at revision "+confirmed.revision+". Reload Managed Hosts to verify exact state.");
       setPreview(null);setConfirmation("");
-    }catch(e:any){setError(e.message||String(e))}
+    }catch(e:any){if(token===previewGeneration.current){
+      // An unknown response may follow a committed Core revision. Never
+      // reuse this one-shot plan without checking current Host inventory.
+      setPreview(null);setConfirmation("");setMessage("");
+      setError("Core Admission Apply outcome UNKNOWN. Inspect Host inventory and Change History before retrying. "+String(e.message||e));
+    }}finally{if(token===previewGeneration.current)setBusy(false)}
   }
-  const required=preview?.confirmation_class||"";
+  const currentActionable=observedHostAdmissionPlanForAction(preview,host.trim(),operation);
+  const required=operation.toUpperCase();
   return <div className="card">
     <h3>Managed Host Approval / Quarantine</h3>
-    <p className="muted">Admission is separate from connection and management trust. Quarantine denies new Host access; active connections are not terminated. Identity, policy references, services and public ports are preserved. Approval restores normal policy evaluation, not unconditional access.</p>
-    {error&&<div className="error">{error}</div>}{message&&<div className="notice">{message}</div>}
+    <p className="muted">Admission is separate from connection and management trust. Quarantine denies new Host access; active connections are not terminated. Identity, policy references, services and public ports are preserved. Approval restores normal policy evaluation, not unconditional access. Use the exact Core Host ID from Managed Hosts.</p>
+    {error&&<div className="error" role="alert">{error}</div>}
+    {message&&<div className="notice" role="status">{message}</div>}
     <div className="toolbar">
-      <input value={host} onChange={e=>{setHost(e.target.value);setPreview(null)}} placeholder="Managed Host ID/name"/>
-      <select aria-label="Admission action" value={operation} onChange={e=>{setOperation(e.target.value);setPreview(null);setConfirmation("")}}>
+      <input value={host} disabled={busy} onChange={e=>{resetAdmission();setHost(e.target.value)}} placeholder="Exact Core Managed Host ID"/>
+      <select aria-label="Admission action" disabled={busy} value={operation} onChange={e=>{resetAdmission();setOperation(e.target.value)}}>
         <option value="quarantine">Quarantine new access</option>
         <option value="approve">Approve / restore access</option>
       </select>
-      <button className="secondary" disabled={!host.trim()} onClick={doPreview}>Preview Admission Impact</button>
+      <button className="secondary" disabled={busy||!host.trim()} onClick={doPreview}>Preview Admission Impact</button>
     </div>
     {preview&&<div className="warning-box">
       <pre className="plan">{JSON.stringify({preview:preview.preview,impact:preview.impact,valid_until:preview.valid_until},null,2)}</pre>
-      <label className="apply-label">Type {required} to continue<input value={confirmation} onChange={e=>setConfirmation(e.target.value)} placeholder={required}/></label>
-      <button className={operation==="quarantine"?"danger":"primary"} disabled={confirmation!==required} onClick={doApply}>{operation==="quarantine"?"Quarantine Managed Host":"Approve Managed Host"}</button>
+      <label className="apply-label">Type {required} to continue
+        <input value={confirmation} disabled={busy||!currentActionable}
+          onChange={e=>setConfirmation(e.target.value)} placeholder={required}/></label>
+      <button className={operation==="quarantine"?"danger":"primary"} type="button"
+        disabled={busy||!currentActionable||confirmation!==required}
+        onClick={doApply}>{operation==="quarantine"?"Quarantine Managed Host":"Approve Managed Host"}</button>
+      {!currentActionable&&<p role="status" className="muted">Core admission Preview expired or unverified. Request a new Preview.</p>}
     </div>}
   </div>;
 }
