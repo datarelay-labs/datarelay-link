@@ -322,3 +322,29 @@ test("UX-3 uncertain Apply must retire the old plan rather than invite a blind r
  const apply=src.split("  async function applyApproval(){")[1].split("  return <section")[0];
  assert.match(apply,/catch\(e:any\)\{[\s\S]*?setPreview\(null\);setConfirm\(""\);[\s\S]*?refresh Host inventory before deciding whether to retry/);
 });
+
+test("UX-3 enrollment forms fail early for Core-invalid ticket intent without issuing",()=>{
+ for(const fields of [
+  ["zero-touch","linux","60","",""],
+  ["zero-touch","windows","86400","branch-gateway","note"],
+  ["manual","macos","2592000","manual-host","operator context"]
+ ])assert.equal(enroll.enrollmentIssuePreflight(...fields),null,JSON.stringify(fields));
+ for(const [fields,reason] of [
+  [["zero-touch","linux","0","",""],"TTL"],
+  [["zero-touch","linux","86401","",""],"TTL"],
+  [["manual","linux","2592001","",""],"TTL"],
+  [["manual","windows","600","",""],"platform"],
+  [["zero-touch","linux","1e3","",""],"TTL"],
+  [["zero-touch","linux","60.0","",""],"TTL"],
+  [["zero-touch","linux","not a number","",""],"TTL"],
+  [["zero-touch","linux","120","A".repeat(129),""],"label"],
+  [["zero-touch","linux","120","","N".repeat(1025)],"note"],
+  [["zero-touch","linux","120","host\nspoof",""],"label"],
+  [["zero-touch","linux","120","host\u202eadmin",""],"label"]
+ ])assert.match(enroll.enrollmentIssuePreflight(...fields),new RegExp(reason,"i"),JSON.stringify(fields));
+ const src=readFileSync(join(webRoot,"src","p0-enrollment.tsx"),"utf8");
+ assert.match(src,/const issueProblem=enrollmentIssuePreflight\(mode,platform,ttl,label,note\)/);
+ assert.match(src,/if\(issueProblem\)\{setError\(issueProblem\);return;\}/);
+ assert.match(src,/disabled=\{!admin\|\|busy\|\|!!issueProblem\}/);
+ assert.match(src,/The ticket may exist; inspect Core enrollment history before retrying/);
+});

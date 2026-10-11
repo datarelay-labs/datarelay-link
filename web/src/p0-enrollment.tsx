@@ -163,6 +163,29 @@ export function onboardingHostSnapshotMatchesActor(scope:unknown,current:unknown
    &&scope.id===id&&scope.role===role;
 }
 
+/** Mirror the existing Core enrollment input limits for an immediate, safe
+ * user-facing explanation. The Core still owns validation and issuance.
+ */
+export function enrollmentIssuePreflight(
+ mode:unknown,platform:unknown,ttl:unknown,label:unknown,note:unknown
+):string|null{
+ if(mode!=="zero-touch"&&mode!=="manual")return "Choose a supported enrollment mode.";
+ if(!["linux","macos","windows"].includes(String(platform))
+   ||mode==="manual"&&platform==="windows")
+   return "Unsupported Agent platform for the selected enrollment mode.";
+ const max=mode==="manual"?2592000:86400;
+ if(typeof ttl!=="string"||!/^[0-9]+$/.test(ttl.trim())
+   ||!Number.isSafeInteger(Number(ttl.trim()))||Number(ttl.trim())<60
+   ||Number(ttl.trim())>max)
+   return "Invitation TTL must be a whole number from 60 to "+max+" seconds.";
+ const invalid=/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/;
+ if(typeof label!=="string"||label.trim().length>128||invalid.test(label))
+   return "Host label must be at most 128 characters without control text.";
+ if(typeof note!=="string"||note.trim().length>1024||invalid.test(note))
+   return "Optional note must be at most 1024 characters without control text.";
+ return null;
+}
+
 /** A display-once ticket belongs to one exact requested UI intent and Web
  * operator, never merely to a role or a previously selected Agent platform.
  * These inputs are reference text only, not authorization/secret storage.
@@ -342,6 +365,7 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate,onBus
   const approvalGeneration=useRef(0);
   const inventoryGeneration=useRef(0);
   const admin=operator?.role==="Admin";
+  const issueProblem=enrollmentIssuePreflight(mode,platform,ttl,label,note);
   const matchingHostScope=onboardingHostSnapshotMatchesActor(hostsScope,operator);
   const visibleHosts=matchingHostScope?hosts:null;
   const visibleHostComplete=matchingHostScope?hostsComplete:null;
@@ -411,6 +435,7 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate,onBus
   }
   async function issue(){
     if(!admin||busy)return;
+    if(issueProblem){setError(issueProblem);return;}
     const requestedIntent=issuedIntent;
     if(!requestedIntent){setError("Authenticated Admin identity is unavailable. Re-login before issuing an enrollment.");return;}
     setCopyStatus("");setError("");setMessage("");setIssued(null);setBusy(true);
@@ -426,7 +451,14 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate,onBus
         return;
       }
       setIssued({intent:requestedIntent,evidence:observed});refresh();setStep(2);
-    }catch(e:any){setError(String(e.message||e))}
+    }catch(e:any){
+      const stale=currentIssueIntent.current!==requestedIntent;
+      // Transport failure may occur AFTER Core created the one-use ticket.
+      // Show no previous actor's error details and never auto-issue again.
+      setError((stale?"Enrollment form or account changed. ":"Enrollment request outcome UNKNOWN. ")
+        +"The ticket may exist; inspect Core enrollment history before retrying."
+        +(stale?"":" "+String(e?.message||e)));
+    }
     finally{setBusy(false)}
   }
   async function previewApproval(){
@@ -493,7 +525,8 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate,onBus
         </div>
         {admin&&mode==="zero-touch"&&<label className="dr-p0-check"><input type="checkbox" checked={preApproved} disabled={busy} onChange={e=>{setIssued(null);setCopyStatus("");setPreApproved(e.target.checked)}}/><span>Pre-approve first Host from this ticket (explicit Admin action)</span></label>}
         <p className="muted">Pending Approval is the default, regardless of agent connection status. Credentials are display-once and must not be saved to browser storage.</p>
-        <button className="primary" disabled={!admin||busy} onClick={issue}>{busy?"Issuing…":"Issue enrollment →"}</button>
+        {issueProblem&&<p className="warning-box" role="alert">{issueProblem}</p>}
+        <button className="primary" disabled={!admin||busy||!!issueProblem} onClick={issue}>{busy?"Issuing…":"Issue enrollment →"}</button>
       </div>}
       {step===2&&<div className="dr-p0-stage">
         <h3>2. Install the Agent and join</h3>
