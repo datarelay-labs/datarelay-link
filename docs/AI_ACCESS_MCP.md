@@ -216,8 +216,18 @@ restored together on failure. Clearing MCP TLS intent removes its SNI route;
 purging secrets happens only after that route has been removed and reloaded.
 The distinct control hostname retains its private-CA certificate and WSS route.
 HTTP-01 is enabled only for AUTO_ACME; an imported certificate does not require
-a new listener on port 80. These checks qualify local certificate activation;
-real MCP host interoperability remains a separate user gate.
+a new listener on port 80. On **first** AUTO_ACME issuance there is not yet
+an active public MCP certificate: the issuer must first stage a challenge-only
+HTTP/80 nginx route for the configured hostname, while preserving the existing
+FRP/WSS HTTPS/443 configuration. The challenge listener is prepared only within
+the authorized issuance lifecycle, and the exact previous frontend bytes and
+listener state are restored if ACME issuance fails. Therefore HTTP/80 being
+closed before the first issuance request is **not by itself** proof that the OCI
+Security List is closed; cloud ingress policy, actual challenge listener and
+external ACME reachability need separate evidence. No private CA, -k/skip-verify
+or successful unit fixture substitutes for a real publicly trusted certificate.
+These checks qualify local certificate activation; real MCP host interoperability
+remains a separate user gate.
 
 Do not claim ChatGPT, Claude, Cursor, or another MCP host as supported solely from protocol conformance.
 

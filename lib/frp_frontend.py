@@ -226,6 +226,7 @@ def render_nginx_conf(
     mcp_tls_key='',
     acme_webroot='',
     acme_http_port=80,
+    acme_http_hostname='',
 ):
     host = _require_host(public_host, 'public_host')
     frontend_port = _require_port(frontend_port, 'frontend_port')
@@ -246,6 +247,9 @@ def render_nginx_conf(
     mcp_key = str(mcp_tls_key or '').strip()
     webroot = str(acme_webroot or '').strip()
     http_port = int(acme_http_port or 80)
+    challenge_host = str(acme_http_hostname or '').strip()
+    if challenge_host:
+        challenge_host = _require_host(challenge_host, 'acme_http_hostname')
     if mcp_host:
         mcp_host = _require_host(mcp_host, 'mcp_tls_hostname')
     if mcp_cert:
@@ -284,7 +288,7 @@ def render_nginx_conf(
             return 404;
         }
     }
-''' % (http_port, mcp_host or host, webroot)
+''' % (http_port, challenge_host or mcp_host or host, webroot)
 
     public_mcp_server = ''
     if public_mcp and mcp_host != host:

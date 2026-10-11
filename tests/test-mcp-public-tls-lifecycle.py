@@ -1032,6 +1032,142 @@ spec:
         for banned in ("private_key", "account_key", "key_pem", "privkey"):
             self.assertNotIn(banned, meta)
 
+    def test_auto_acme_first_issue_publishes_http01_before_any_public_cert(self):
+        """First public ACME issuance must expose challenge with no active leaf."""
+        import frp_frontend as frontend
+        base = Path(self.tmp)
+        hostname = 'mcp.example.test'
+        config = {'deployment_mode': 'single443', 'public_host': '203.0.113.10',
+                  'frp_control_public_port': 443,
+                  'frp_control_listen_port': 7000, 'allocator_listen_port': 6099}
+        (base / 'etc/drlink/config.json').write_text(json.dumps(config))
+        conf = base / 'etc/drlink/frontend.conf'
+        before = frontend.render_nginx_conf(
+            public_host='203.0.113.10', frontend_port=443,
+            allocator_listen_port=6099, control_listen_port=7000,
+            ca_cert=str(base / 'etc/drlink/pki/ca.crt'),
+            server_cert=str(base / 'etc/drlink/pki/server.crt'),
+            server_key=str(base / 'etc/drlink/pki/server.key'),
+        )
+        conf.write_text(before)
+        dispatch(['set', 'mcp-tls', 'hostname', hostname], root=self.tmp)
+        dispatch(['set', 'mcp-tls', 'mode', 'auto-acme'], root=self.tmp)
+        self.assertFalse((mcp_tls.active_dir(self.tmp) / 'meta.json').exists())
+        observed = []
+
+        def inspect_pending_challenge(*_args, **_kwargs):
+            config_text = conf.read_text()
+            observed.append(config_text)
+            self.assertIn('listen 80;', config_text)
+            self.assertIn('server_name ' + hostname + ';', config_text)
+            self.assertIn('/.well-known/acme-challenge/', config_text)
+            self.assertIn('location = "/~!frp"', config_text)
+            self.assertNotIn('ssl_certificate /var/lib/drlink/tls/mcp/active/fullchain.pem;', config_text)
+            raise mcp_tls.McpTlsError('mock ACME unavailable', failure_class='ACME_UNAVAILABLE')
+
+        good_dns = {'hostname': hostname, 'resolves': True, 'addresses': ['192.0.2.1'],
+                    'challenge_port_80_open': False, 'ok': True,
+                    'warnings': ['challenge not yet served'], 'errors': []}
+        with (mock.patch.object(mcp_tls, 'preflight_hostname', return_value=good_dns),
+              mock.patch.object(mcp_tls, 'issue_acme_certificate', side_effect=inspect_pending_challenge),
+              mock.patch.object(mcp_tls, 'reload_frontend') as reload_mock,
+              mock.patch.object(mcp_tls.shutil, 'which', return_value='/usr/sbin/nginx'),
+              mock.patch.object(mcp_tls.subprocess, 'run',
+                                return_value=subprocess.CompletedProcess([], 0, '', ''))):
+            with self.assertRaises(mcp_tls.McpTlsError) as ctx:
+                mcp_tls.issue_and_activate(self.plane, self.tmp, reload=True)
+        self.assertEqual(ctx.exception.failure_class, 'ACME_UNAVAILABLE')
+        self.assertEqual(len(observed), 1)
+        self.assertEqual(conf.read_text(), before)
+        self.assertGreaterEqual(reload_mock.call_count, 2)
+        self.assertFalse((mcp_tls.active_dir(self.tmp) / 'meta.json').exists())
+
+    def test_pre_acme_renewal_preserves_existing_sni_and_rollback(self):
+        """Challenge-only port 80 must not replace a working HTTPS identity."""
+        import frp_frontend as frontend
+        base = Path(self.tmp)
+        existing_host = 'mcp.old.example.test'
+        upcoming_host = 'mcp.renewed.example.test'
+        (base / 'etc/drlink/config.json').write_text(json.dumps({
+            'deployment_mode': 'single443', 'public_host': '203.0.113.10',
+            'frp_control_public_port': 443, 'frp_control_listen_port': 7000,
+            'allocator_listen_port': 6099}))
+        conf = base / 'etc/drlink/frontend.conf'
+        conf.write_text(frontend.render_nginx_conf(
+            public_host='203.0.113.10', frontend_port=443,
+            allocator_listen_port=6099, control_listen_port=7000,
+            ca_cert=str(base / 'etc/drlink/pki/ca.crt'),
+            server_cert=str(base / 'etc/drlink/pki/server.crt'),
+            server_key=str(base / 'etc/drlink/pki/server.key')))
+        dispatch(['set', 'mcp-tls', 'hostname', existing_host], root=self.tmp)
+        dispatch(['set', 'mcp-tls', 'mode', 'auto-acme'], root=self.tmp)
+        cert, key = _synth_leaf(existing_host, days=90)
+        meta = mcp_tls.validate_cert_key_pair(cert, key, hostname=existing_host)
+        meta.update({'mode': mcp_tls.MODE_AUTO_ACME, 'hostname': existing_host,
+                     'fullchain_pem': cert, 'key_pem': key})
+        with (mock.patch.object(mcp_tls.shutil, 'which', return_value='/usr/sbin/nginx'),
+              mock.patch.object(mcp_tls.subprocess, 'run',
+                                return_value=subprocess.CompletedProcess([], 0, '', ''))):
+            mcp_tls.activate_material(self.plane, self.tmp, meta, reload=False)
+            old = conf.read_bytes()
+            snapshot = mcp_tls.prepare_acme_http01_frontend(
+                self.tmp, upcoming_host, reload=False)
+            during = conf.read_text()
+            self.assertIn('server_name ' + existing_host + ';', during)
+            self.assertIn('server_name ' + upcoming_host + ';', during)
+            self.assertIn('listen 80;', during)
+            self.assertIn('location = "/~!frp"', during)
+            self.assertIn('ssl_certificate ' +
+                          str(mcp_tls.active_dir(self.tmp) / 'fullchain.pem'), during)
+            mcp_tls.restore_acme_http01_frontend(self.tmp, snapshot, reload=False)
+        self.assertEqual(old, conf.read_bytes())
+        self.assertEqual(mcp_tls.status_view(self.plane, self.tmp)['certificate'],
+                         mcp_tls.STATUS_VALID)
+
+    def test_pre_acme_rejects_orphaned_active_tls_material(self):
+        """Missing active metadata must fail closed, never drop an old SNI."""
+        base = Path(self.tmp)
+        config = base / 'etc/drlink/config.json'
+        config.write_text(json.dumps({'deployment_mode': 'single443', 'public_host': '203.0.113.10'}))
+        frontend = base / 'etc/drlink/frontend.conf'
+        frontend.write_text('PROTECTED_PRIOR_NGINX_CONF')
+        active = mcp_tls.active_dir(self.tmp)
+        active.mkdir(parents=True, exist_ok=True)
+        (active / 'fullchain.pem').write_text('ORPHANED_CERT_METADATA_MISSING')
+        with self.assertRaises(mcp_tls.McpTlsError) as ctx:
+            mcp_tls.prepare_acme_http01_frontend(
+                self.tmp, 'mcp.example.test', reload=False)
+        self.assertEqual(ctx.exception.failure_class, 'PROXY_CONFIG_INVALID')
+        self.assertEqual(frontend.read_text(), 'PROTECTED_PRIOR_NGINX_CONF')
+
+    def test_pre_acme_frontend_reload_error_restores_configuration(self):
+        """HTTP/80 route setup failure must not leave a half-active listener."""
+        import frp_frontend as frontend
+        base = Path(self.tmp)
+        (base / 'etc/drlink/config.json').write_text(json.dumps({
+            'deployment_mode': 'single443', 'public_host': '203.0.113.10',
+            'frp_control_public_port': 443, 'frp_control_listen_port': 7000,
+            'allocator_listen_port': 6099}))
+        conf = base / 'etc/drlink/frontend.conf'
+        initial = frontend.render_nginx_conf(
+            public_host='203.0.113.10', frontend_port=443,
+            allocator_listen_port=6099, control_listen_port=7000,
+            ca_cert=str(base / 'etc/drlink/pki/ca.crt'),
+            server_cert=str(base / 'etc/drlink/pki/server.crt'),
+            server_key=str(base / 'etc/drlink/pki/server.key'))
+        conf.write_text(initial)
+        with (mock.patch.object(mcp_tls.shutil, 'which', return_value='/usr/sbin/nginx'),
+              mock.patch.object(mcp_tls.subprocess, 'run',
+                                return_value=subprocess.CompletedProcess([], 0, '', '')),
+              mock.patch.object(mcp_tls, 'reload_frontend',
+                                side_effect=[mcp_tls.McpTlsError('reload refused',
+                                               failure_class='PROXY_RELOAD_FAILED'), None]) as do_reload):
+            with self.assertRaises(mcp_tls.McpTlsError):
+                mcp_tls.prepare_acme_http01_frontend(
+                    self.tmp, 'mcp.example.test', reload=True)
+        self.assertEqual(conf.read_text(), initial)
+        self.assertEqual(do_reload.call_count, 2)
+
     def test_frontend_sni_keeps_private_ca_for_frp(self):
         import frp_frontend as fe
 
