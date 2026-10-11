@@ -138,7 +138,7 @@ test("Returning to resource uses existing authorized loaded row, not server-side
 test("Audit context is source-only, Core audit resource filter and pagination remain intact",()=>{
  const main=readFileSync(join(root,"src","main.tsx"),"utf8");
  const audit=main.split("function AuditExplorer(",2)[1]?.split("function AgentRolloutPreviewPanel(",1)[0]||"";
- assert.match(main,/import \{auditInvestigation,matchObservedAuditReturn,matchObservedPolicyReturn,recentAuditInvestigation\} from "\.\/uxb-audit-context"/);
+ assert.match(main,/import \{auditInvestigation,matchObservedAuditReturn,matchObservedPolicyReturn,recentAuditInvestigation,observedAuditEventDetails,observedAuditAppliedFilters/);
  assert.match(main,/if\(active==="audit"\)return <AuditExplorer operator=\{operator\} context=\{context\} onNavigate=\{onNavigate\}\/>/);
  assert.match(audit,/auditInvestigation\(context\)/);
  assert.match(audit,/setResource\(.*\.resource\)/);
@@ -242,4 +242,59 @@ test("UX-5 Recent Activity never guesses a Host/Service link from malformed Core
  assert.equal(partial.auditCategory,"");
  assert.equal(partial.auditResult,"");
  assert.doesNotMatch(JSON.stringify(partial),/PRIVATE|unsafe/);
+});
+
+test("CUI-007 StrongDM-inspired Audit detail is exact, bounded Core event evidence only",()=>{
+ const raw={event_id:"evt-08",row_id:8,occurred_at:"2030-01-02T03:04:05Z",
+   category:"ACCESS_DECISION",event_type:"remote.access.decision",
+   actor_id:"web:operator-a",resource_type:"managed-host",resource_id:"host-11",
+   result:"DENY",reason_code:"POLICY_DENY",correlation_id:"corr-11",
+   revision_before:12,revision_after:13,
+   matched_policy:[{secret:"POLICY_SECRET"}],
+   source_meta:{secret:"SOURCE_SECRET"},session_id:"session-private",
+   before_summary:"UNSAFE",raw_bytes:"DO_NOT_LEAK"};
+ const evidence=context.observedAuditEventDetails(raw);
+ assert.deepEqual(evidence,{
+  eventId:"evt-08",occurredAt:"2030-01-02T03:04:05Z",
+  category:"ACCESS_DECISION",eventType:"remote.access.decision",
+  actor:"web:operator-a",resourceType:"managed-host",resourceId:"host-11",
+  result:"DENY",reason:"POLICY_DENY",correlation:"corr-11",
+  revisionBefore:"12",revisionAfter:"13"
+ });
+ assert.doesNotMatch(JSON.stringify(evidence),/POLICY_SECRET|SOURCE_SECRET|session-private|UNSAFE|DO_NOT_LEAK/);
+ const legacy=context.observedAuditEventDetails({...raw,event_id:null,row_id:17});
+ assert.equal(legacy?.eventId,"legacy:17");
+ for(const invalid of [null,{},[],{...raw,occurred_at:"2030-02-30T00:00:00Z"},
+   {...raw,event_id:{secret:"x"}},{...raw,actor_id:{secret:"x"}},
+   {...raw,reason_code:"x\u202e"},{...raw,category:"UNKNOWN_CATEGORY"},
+   {...raw,resource_id:"../../../etc/secret"},{...raw,result:["ALLOW"]},
+   {...raw,revision_before:-1}])
+   assert.equal(context.observedAuditEventDetails(invalid),null,JSON.stringify(invalid));
+ assert.equal(context.observedAuditEventDetails({...raw,actor_id:null})?.actor,"UNKNOWN");
+ assert.equal(context.observedAuditEventDetails({...raw,resource_id:null})?.resourceId,"UNKNOWN");
+});
+test("CUI-007 current Audit query scope is explicit and rejects mutated/duplicate filter evidence",()=>{
+ const input="limit=50&start=2030-01-01T00%3A00%3A00Z&actor=admin-a&result=deny";
+ assert.deepEqual(context.observedAuditAppliedFilters(input),[
+   {label:"Start UTC",value:"2030-01-01T00:00:00Z"},
+   {label:"Actor",value:"admin-a"},{label:"Result",value:"deny"}
+ ]);
+ assert.deepEqual(context.observedAuditAppliedFilters("limit=50"),[]);
+ for(const invalid of [null,{},"","limit=100","limit=50&actor=x&actor=y",
+   "limit=50&token=secret","limit=50&start=bogus","limit=50&actor=x\u202e"])
+   assert.equal(context.observedAuditAppliedFilters(invalid),null,JSON.stringify(invalid));
+});
+test("CUI-007 Audit row Inspect links to exactly selected loaded Core record and queried scope",()=>{
+ const main=readFileSync(join(root,"src","main.tsx"),"utf8");
+ const table=main.split("function Table(")[1]?.split("function Metric(",1)[0]||"";
+ const audit=main.split("function AuditExplorer(")[1]?.split("function AgentRolloutPreviewPanel(",1)[0]||"";
+ assert.match(table,/onInspect\?:\(item:any,index:number\)=>void/);
+ assert.match(table,/onClick=\{\(\)=>onInspect\(item,i\)\}/);
+ assert.match(audit,/const \[selectedAuditEvent,setSelectedAuditEvent\]=useState</);
+ assert.match(audit,/setSelectedAuditEvent\(null\);setError\(""\);setData\(null\)/);
+ assert.match(audit,/observedAuditEventDetails\(data\?\.items\?\.\[index\]\)/);
+ assert.match(audit,/observedAuditAppliedFilters\(auditFilterKey\)/);
+ assert.match(audit,/aria-label="Observed Core Audit event detail"/);
+ assert.match(audit,/Audit event detail belongs to the loaded Core page and applied filters only/);
+ assert.match(audit,/auditFiltersEdited\?null:/);
 });

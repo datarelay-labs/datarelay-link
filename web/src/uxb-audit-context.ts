@@ -109,3 +109,77 @@ export function matchObservedPolicyReturn(
  });
  return matches.length===1?record(matches[0]):null;
 }
+
+
+/** CUI-007 — original, bounded Event Details for one authorized loaded Core
+ * Audit row. NEVER send back nested actor/session/source/destination payloads,
+ * matched-policy blobs, before/after summaries or event secret metadata.
+ */
+export type ObservedAuditEventDetail={
+ eventId:string,occurredAt:string,category:string,eventType:string,actor:string,
+ resourceType:string,resourceId:string,result:string,reason:string,
+ correlation:string,revisionBefore:string,revisionAfter:string
+};
+export function observedAuditEventDetails(input:unknown):ObservedAuditEventDetail|null{
+ if(!input||typeof input!=="object"||Array.isArray(input))return null;
+ const entry=input as Record<string,unknown>;
+ const clean=(value:unknown,max=160):value is string=>
+   typeof value==="string"&&value.length>0&&value.length<=max
+   &&!(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/.test(value));
+ const scalar=(value:unknown,max=160):string|null=>
+   value===null||value===undefined||value===""?"UNKNOWN":
+   clean(value,max)?value.trim():null;
+ const id=entry.event_id===null||entry.event_id===undefined
+   ?Number.isSafeInteger(entry.row_id)&&Number(entry.row_id)>=0
+      ?"legacy:"+entry.row_id:null
+   :safeIdentifier(entry.event_id);
+ if(!id||!isObservedAbsoluteTime(entry.occurred_at)
+   ||typeof entry.category!=="string"||!CATEGORY.has(entry.category)
+   ||!clean(entry.event_type,160)||!clean(entry.result,64))return null;
+ const actor=scalar(entry.actor_id),resourceType=scalar(entry.resource_type),
+   resourceId=entry.resource_id===null||entry.resource_id===undefined
+     ?"UNKNOWN":safeIdentifier(entry.resource_id),
+   reason=scalar(entry.reason_code),correlation=scalar(entry.correlation_id);
+ if(!actor||!resourceType||!resourceId||!reason||!correlation
+   ||!clean(resourceType,160))return null;
+ const rev=(value:unknown):string|null=>
+   value===null||value===undefined?"UNKNOWN":
+   Number.isSafeInteger(value)&&Number(value)>=0?String(value):null;
+ const before=rev(entry.revision_before),after=rev(entry.revision_after);
+ if(before===null||after===null)return null;
+ return {eventId:id,occurredAt:entry.occurred_at,category:entry.category,
+   eventType:entry.event_type.trim(),actor,resourceType,resourceId,
+   result:entry.result.trim(),reason,correlation,
+   revisionBefore:before,revisionAfter:after};
+}
+
+/** Show the filters of the successfully loaded Core query — never present
+ * edited-but-unsent input as the provenance for already rendered audit rows.
+ * The input is the exact prior safe URLSearchParams query, no secret URL.
+ */
+export function observedAuditAppliedFilters(input:unknown):{
+ label:string,value:string
+}[]|null{
+ if(typeof input!=="string"||!input||input.length>2048)return null;
+ const query=new URLSearchParams(input);
+ const names=["start","end","category","event_type","actor","resource","result","correlation_id"];
+ const keys=new Set([...names,"limit"]);
+ for(const [key] of query){
+   if(!keys.has(key)||query.getAll(key).length!==1)return null;
+ }
+ if(query.get("limit")!=="50")return null;
+ const clean=(v:string):boolean=>v.length>0&&v.length<=160
+   &&!(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/.test(v));
+ const labels=["Start UTC","End UTC","Category","Event type","Actor","Resource","Result","Correlation ID"];
+ const rows:{label:string,value:string}[]=[];
+ for(let i=0;i<names.length;i++){
+   const raw=query.get(names[i]);if(raw===null)continue;
+   if(!clean(raw)||((names[i]==="start"||names[i]==="end")
+      &&!isObservedAbsoluteTime(raw)))return null;
+   if(names[i]==="category"&&!CATEGORY.has(raw))return null;
+   rows.push({label:labels[i],value:raw});
+ }
+ const first=query.get("start"),last=query.get("end");
+ if(first&&last&&Date.parse(first)>Date.parse(last))return null;
+ return rows;
+}

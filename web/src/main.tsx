@@ -22,7 +22,7 @@ import {serviceVisibleIdentity} from "./uxb-service-detail";
 import {filterObservedServices} from "./uxb-service-search";
 import {operatorAccountState,operatorMfaState,operatorMfaAction,operatorLastLogin} from "./uxb-users-state";
 import {operatorUserLabel} from "./uxb-users-state";
-import {auditInvestigation,matchObservedAuditReturn,matchObservedPolicyReturn,recentAuditInvestigation} from "./uxb-audit-context";
+import {auditInvestigation,matchObservedAuditReturn,matchObservedPolicyReturn,recentAuditInvestigation,observedAuditEventDetails,observedAuditAppliedFilters,type ObservedAuditEventDetail} from "./uxb-audit-context";
 import {serviceAccountOperationalStatus,serviceAccountExpiry,serviceAccountPermissions,webhookStatus,webhookDeliverySummary} from "./uxb-integrations-state";
 import {filterObservedHosts} from "./uxb-host-search";
 import {FirstConnectionSetup,connectionReviewContext,type SetupDraft} from "./uxb-setup";
@@ -52,11 +52,21 @@ function useEscapeClose(enabled:boolean,onClose:()=>void){
   },[enabled,onClose]);
 }
 
-function Table({items}:{items:any[]}){
+function Table({items,onInspect,canInspect}:{
+  items:any[],onInspect?:(item:any,index:number)=>void,
+  canInspect?:(item:any,index:number)=>boolean
+}){
   if(!items?.length)return <div className="empty">No results</div>;
   const keys=Object.keys(items[0]).filter(k=>typeof items[0][k]!=="object").slice(0,9);
-  return <table><thead><tr>{keys.map(k=><th key={k}>{k}</th>)}</tr></thead><tbody>
-    {items.map((item,i)=><tr key={item.id||i}>{keys.map(k=><td key={k}>{item[k]===null?"":String(item[k]??"")}</td>)}</tr>)}
+  return <table><thead><tr>{keys.map(k=><th key={k}>{k}</th>)}
+    {onInspect&&<th scope="col">Evidence</th>}</tr></thead><tbody>
+    {items.map((item,i)=><tr key={item.id||i}>
+      {keys.map(k=><td key={k}>{item[k]===null?"":String(item[k]??"")}</td>)}
+      {onInspect&&<td><button type="button" className="secondary"
+        disabled={!!canInspect&&!canInspect(item,i)}
+        aria-label={"Inspect event "+String(item.event_id||i)}
+        onClick={()=>onInspect(item,i)}>Inspect event →</button></td>}
+    </tr>)}
   </tbody></table>;
 }
 function Metric({label,value}:{label:string,value:any}){return <div className="card"><div className="muted">{label}</div><div className="metric">{String(value??"UNKNOWN")}</div></div>}
@@ -1190,6 +1200,7 @@ function AuditExplorer({operator,context,onNavigate}:{operator:any,context?:any,
   const [retentionConfirmation,setRetentionConfirmation]=useState("");
   const [auditPage,setAuditPage]=useState<MenuPagePosition>({cursor:"",history:[]});
   const [auditFilterKey,setAuditFilterKey]=useState<string|null>(null);
+  const [selectedAuditEvent,setSelectedAuditEvent]=useState<{scope:string,event:ObservedAuditEventDetail}|null>(null);
   const investigation=auditInvestigation(context);
   const [start,setStart]=useState(investigation.start),[end,setEnd]=useState(investigation.end),
     [category,setCategory]=useState(investigation.category),[eventType,setEventType]=useState(""),
@@ -1209,7 +1220,7 @@ function AuditExplorer({operator,context,onNavigate}:{operator:any,context?:any,
   }
   async function load(position:MenuPagePosition={cursor:"",history:[]}){
     const epoch=++auditReadEpoch.current;
-    setError("");setData(null);setAuditState("loading");
+    setSelectedAuditEvent(null);setError("");setData(null);setAuditState("loading");
     const q=filterParams();
     const filterKey=q.toString();
     try{
@@ -1289,6 +1300,11 @@ function AuditExplorer({operator,context,onNavigate}:{operator:any,context?:any,
   );
   const retentionRunAllowed=auditRetentionRunPermitted(retention,retentionDraft,retentionState,retentionWriteBusy,retentionConfirmation);
   const auditFiltersEdited=auditState==="ready"&&auditFilterKey!==filterParams().toString();
+  const appliedFilters=observedAuditAppliedFilters(auditFilterKey);
+  const selectedAuditScope=JSON.stringify([auditFilterKey,auditPage.cursor]);
+  const scopedDetail=auditFiltersEdited?null:
+    auditState==="ready"&&selectedAuditEvent?.scope===selectedAuditScope
+      ?selectedAuditEvent.event:null;
   const rows=(data?.items||[]).map((x:any)=>({
     event_id:x.event_id||("legacy:"+x.row_id),
     occurred_at:x.occurred_at,
@@ -1346,9 +1362,45 @@ function AuditExplorer({operator,context,onNavigate}:{operator:any,context?:any,
       </div>
       <div className="dr-form-actions"><button className="primary" onClick={()=>load()}>Search audit</button><button className="secondary" onClick={()=>{auditReadEpoch.current+=1;setData(null);setAuditState("idle");setAuditPage({cursor:"",history:[]});setAuditFilterKey(null);setError("");setStart("");setEnd("");setCategory("");setEventType("");setActor("");setResource("");setResult("");setCorrelation("")}}>Clear filters</button></div>
       {auditFiltersEdited&&<p className="dr-uxb-catalog-page-notice" role="status">Filters changed since the loaded Audit page. Select Search audit to apply them; results below still belong to the previous search.</p>}
-      <div className="dr-audit-table">{auditState==="ready"?<Table items={rows}/>:
+      {auditState==="ready"&&<section className="dr-uxb-context" aria-label="Loaded Core Audit query scope" role="status">
+        <strong>Applied Core Audit filters · loaded page {auditPage.history.length+1}</strong>
+        <p className="muted">These filters describe the already loaded Core page, not edited but unsubmitted search fields. Retention and other pages remain outside this evidence.</p>
+        {appliedFilters===null?<p className="warning-box">Applied Core filter scope UNKNOWN; event inspection unavailable.</p>:
+          appliedFilters.length===0?<p className="muted">All categories in the permitted retained Core window · no additional query filters.</p>:
+          <div className="dr-p0-facts">{appliedFilters.map(item=>
+            <span key={item.label}>{item.label}: {item.value}</span>)}</div>}
+      </section>}
+      <div className="dr-audit-table">{auditState==="ready"?<Table items={rows}
+        onInspect={(_,index)=>{
+          if(auditFiltersEdited||appliedFilters===null)return;
+          const proof=observedAuditEventDetails(data?.items?.[index]);
+          if(proof)setSelectedAuditEvent({scope:selectedAuditScope,event:proof});
+        }}
+        canInspect={(_,index)=>!auditFiltersEdited&&appliedFilters!==null
+          &&!!observedAuditEventDetails(data?.items?.[index])}/>:
         <p role="status" className="warning-box">{auditState==="loading"?"Loading Activity log from Core…":auditState==="idle"?"Filters cleared. Select Search audit to load current Core records.":"UNKNOWN · Core Audit inventory unavailable. No empty history was confirmed. Retry with Search audit."}</p>}
       </div>
+      {scopedDetail&&appliedFilters!==null&&<section className="card dr-audit-evidence"
+        role="region" aria-label="Observed Core Audit event detail">
+        <div className="dr-section-head"><div>
+          <h4>Event details · {scopedDetail.eventId}</h4>
+          <p className="muted">Audit event detail belongs to the loaded Core page and applied filters only.
+            This read-only evidence is not a session recording, live authorization or complete history.</p>
+        </div><button type="button" className="secondary" onClick={()=>setSelectedAuditEvent(null)}>
+          Close details</button></div>
+        <div className="dr-p0-facts">
+          <span>Occurred: {scopedDetail.occurredAt}</span>
+          <span>Category: {scopedDetail.category}</span>
+          <span>Event: {scopedDetail.eventType}</span>
+          <span>Actor: {scopedDetail.actor}</span>
+          <span>Resource: {scopedDetail.resourceType}:{scopedDetail.resourceId}</span>
+          <span>Result: {scopedDetail.result}</span>
+          <span>Reason: {scopedDetail.reason}</span>
+          <span>Correlation: {scopedDetail.correlation}</span>
+          <span>Revision: {scopedDetail.revisionBefore} → {scopedDetail.revisionAfter}</span>
+        </div>
+        <p className="muted">Nested Core event metadata, policy payloads, session identifiers and secrets are not included.</p>
+      </section>}
       {auditState==="ready"&&!auditFiltersEdited&&(auditPage.history.length>0||isPartialCorePage(data))&&
       <div className="dr-form-actions" role="group" aria-label="Audit pagination">
         <span className="muted">Page {auditPage.history.length+1} · current Core query</span>
