@@ -1,4 +1,5 @@
 import React,{useEffect,useState} from "react";
+import {isObservedAbsoluteTime} from "./uxb-integrations-state";
 
 /** UXE-09: a resolved HTTP call with malformed Core entries is not an
  * acknowledged activity feed; keep presentation bounded and non-secret. */
@@ -59,6 +60,25 @@ export function hasObservedCoreOverview(data:any):boolean{
     &&!!policies&&typeof policies==="object"&&!Array.isArray(policies)
     &&Object.keys(policies).length>0
     &&Object.values(policies).every(row=>validPart(row));
+}
+
+/** UX-4 · Twingate/NetBird-inspired evidence scope and observation time.
+ * Derived Core counts span the fleet, unlike the role-scoped first Host page.
+ * A valid timestamp establishes only when Core generated the projection: it
+ * never proves runtime liveness or actual successful network access.
+ */
+export type CoreOverviewEvidence={
+ status:"observed"|"UNKNOWN",scope:string,observedAt:string
+};
+export function observedCoreOverviewEvidence(data:unknown):CoreOverviewEvidence{
+ const unknown:CoreOverviewEvidence={status:"UNKNOWN",scope:"UNKNOWN",observedAt:"UNKNOWN"};
+ if(!hasObservedCoreOverview(data))return unknown;
+ const projection=(data as any).overview;
+ if(projection.state_class!=="DERIVED"||projection.authoritative!==false
+   ||projection.rebuildable!==true)return unknown;
+ const at=isObservedAbsoluteTime(projection.generated_at)?projection.generated_at:"UNKNOWN";
+ return {status:at==="UNKNOWN"?"UNKNOWN":"observed",
+   scope:"Fleet-wide derived Core counts",observedAt:at};
 }
 
 /** Task-first Home is shown only when actual Core counts establish an empty
@@ -238,11 +258,21 @@ export function FirstUseHome({data,operator,api,onNavigate}:{
   const pending=observedApprovalQueueCount(data,scopedInventory,scopedComplete===true);
   const cards=steps.map((item,i)=>({...item,status:stage[i]}));
   const next=nextFirstConnectionAction(stage,String(operator?.role||"Read Only"));
+  const evidence=observedCoreOverviewEvidence(data);
   return <section className="card dr-uxb-home" data-testid="uxb-first-connection">
     <div className="dr-section-head"><div><p className="dr-eyebrow">Get started · Core-observed progress</p>
       <h2>{newInstall?"Your first protected connection starts here":"What would you like to do next?"}</h2>
       <p className="muted">Five steps from adding one server to explaining an access decision. No setup status is stored in your browser.</p>
     </div><button className="primary" onClick={()=>onNavigate?.("setup","connections")}>Open guided setup →</button></div>
+    <div className="toolbar dr-uxb-evidence-strip" role="status" aria-label="Core overview observation">
+      <strong>Core overview {evidence.status==="observed"?"evidence":"UNKNOWN"}</strong>
+      <span className="muted">{evidence.scope}</span>
+      <span className="muted">{evidence.observedAt!=="UNKNOWN"
+        ?"Observed at "+evidence.observedAt:"Observation timestamp unavailable"}</span>
+      <small className="muted">Not proof of live connectivity or policy reachability.</small>
+      <button type="button" className="secondary"
+        onClick={()=>onNavigate?.("health","activity")}>Inspect System Health →</button>
+    </div>
     {scopedLoadState==="error"&&<p className="warning-box" role="alert">Managed Host inventory unavailable ({error}). Agent readiness is UNKNOWN, not healthy.</p>}
     {scopedLoadState==="ready"&&scopedComplete!==true&&<p className="warning-box" role="status">
       Managed Host inventory {scopedComplete===false?"is paginated":"completeness is UNKNOWN"}:

@@ -331,3 +331,51 @@ test("Host inventory evidence must remain private to its exact current Web opera
  assert.match(src,/const scopedInventory=matchingActor\?inventory:null/);
  assert.match(src,/\},\[api,operator\?\.id,operator\?\.role\]\)/);
 });
+
+test("Competitor UX-4 Home evidence shows Core derived scope and observed time, not invented freshness",()=>{
+ const overview={schema_version:1,state_class:"DERIVED",authoritative:false,rebuildable:true,
+  generated_at:"2026-10-11T03:10:11Z",
+  managed_hosts:{total:3,pending_approval:1},remote_services:{total:1,enabled:1},
+  policies:{ai:{total:0,enabled:0},remote:{total:1,enabled:1}}};
+ assert.deepEqual(home.observedCoreOverviewEvidence({overview}),{
+  status:"observed",scope:"Fleet-wide derived Core counts",
+  observedAt:"2026-10-11T03:10:11Z"});
+ const html=renderToStaticMarkup(React.createElement(home.FirstUseHome,{
+  data:{overview},operator:{id:"reader-a",role:"Read Only"},
+  api:async()=>{throw new Error("SSR must not call Core")}}));
+ assert.match(html,/Core overview evidence/);
+ assert.match(html,/Fleet-wide derived Core counts/);
+ assert.match(html,/2026-10-11T03:10:11Z/);
+ assert.match(html,/Not proof of live connectivity/);
+ assert.match(html,/Inspect System Health/);
+ assert.doesNotMatch(html,/All systems healthy|Live access verified/);
+});
+test("UX-4 invalid or missing Core provenance/timestamps are UNKNOWN, never a healthy-looking timestamp",()=>{
+ const base={schema_version:1,state_class:"DERIVED",authoritative:false,rebuildable:true,
+  generated_at:"2026-10-11T03:10:11Z",
+  managed_hosts:{total:0},remote_services:{total:0,enabled:0},
+  policies:{ai:{total:0,enabled:0}}};
+ for(const partial of [
+  null,{overview:{}},
+  {overview:{...base,state_class:"AUTHORITATIVE"}},
+  {overview:{...base,authoritative:true}},
+  {overview:{...base,rebuildable:false}},
+  {overview:{...base,managed_hosts:{total:-1}}},
+ ]){
+  assert.deepEqual(home.observedCoreOverviewEvidence(partial),{
+   status:"UNKNOWN",scope:"UNKNOWN",observedAt:"UNKNOWN"});
+ }
+ for(const bad of [null,{}, "yesterday","2026-02-30T00:00:00Z","2026-10-11\nspoof",
+   "2026-10-11T03:10:11Z\u202e",42]){
+  const evidence=home.observedCoreOverviewEvidence({overview:{...base,generated_at:bad}});
+  assert.equal(evidence.scope,"Fleet-wide derived Core counts");
+  assert.equal(evidence.observedAt,"UNKNOWN");
+  assert.equal(evidence.status,"UNKNOWN");
+  const html=renderToStaticMarkup(React.createElement(home.FirstUseHome,{
+   data:{overview:{...base,generated_at:bad}},
+   operator:{id:"admin-a",role:"Admin"},api:async()=>Promise.resolve({items:[]})}));
+  assert.match(html,/Core overview UNKNOWN/);
+  assert.match(html,/Observation timestamp unavailable/);
+  assert.doesNotMatch(html,/spoof|\[object Object\]/);
+ }
+});
