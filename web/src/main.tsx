@@ -32,6 +32,7 @@ import {filterObservedHosts} from "./uxb-host-search";
 import {sortLoadedHosts,isHostSortMode,type HostSortMode} from "./uxb-host-sort";
 import {filterLoadedHostConnections,type HostConnectionFilter} from "./uxb-host-connection-filter";
 import {hostDisplayFilterResetAvailable} from "./uxb-host-filter-reset";
+import {activeHostFilterChips,type HostFilterChipId} from "./uxb-host-filter-chips";
 import {FirstConnectionSetup,connectionReviewContext,type SetupDraft} from "./uxb-setup";
 
 type Json = Record<string, any>;
@@ -2073,10 +2074,17 @@ function ResourceWorkspace({kind,data,operator,onNavigate,api,initialFilter="",i
   const savedDraft=(!hostSearch?.error&&!serviceSearch?.error)
     ?saveDraftForResource(kind,filter,isHost?admissionFilter:"all"):null;
   const hostFiltersActive=isHost&&hostDisplayFilterResetAvailable(filter,admissionFilter,connectionFilter);
+  const hostFilterChips=isHost?activeHostFilterChips(filter,admissionFilter,connectionFilter,hostSort):[];
   function clearHostDisplayFilters(){
     setFilter("");
     setAdmissionFilter("all");
     setConnectionFilter("all");
+  }
+  function removeHostFilterChip(id:HostFilterChipId){
+    if(id==="search"){setFilter("");return}
+    if(id==="admission"){setAdmissionFilter("all");return}
+    if(id==="connection"){setConnectionFilter("all");return}
+    if(id==="sort"){setHostSort("review");return}
   }
   return <div className="dr-resource-workspace">
     <section className="dr-page-intro"><div><p className="dr-eyebrow">Connections</p><h2>{heading}</h2><p className="muted">{description}</p></div><div className="dr-page-actions">{isHost&&operator.role==="Admin"&&<button className="primary" onClick={()=>onNavigate?.("enrollments","infrastructure")}>Connect Agent</button>}<button className="secondary" onClick={()=>onNavigate?.("access","access")}>Access workspace</button></div></section>
@@ -2113,6 +2121,15 @@ function ResourceWorkspace({kind,data,operator,onNavigate,api,initialFilter="",i
           key={status} type="button" className={connectionFilter===status?"primary":"secondary"}
           aria-pressed={connectionFilter===status} onClick={()=>setConnectionFilter(status)}>
           {status==="all"?"All connections":status==="connected"?"Connected":status==="disconnected"?"Disconnected":"UNKNOWN"}
+        </button>)}
+      </div>}
+      {isHost&&hostFilterChips.length>0&&<div className="dr-form-actions" role="group"
+        aria-label="Active Host display filters">
+        <span className="muted">Applied display conditions · chip values do not disclose search text</span>
+        {hostFilterChips.map(entry=><button key={entry.id} type="button"
+          className="secondary" aria-label={"Remove "+entry.label+" filter"}
+          onClick={()=>removeHostFilterChip(entry.id)}>
+          {entry.label}: {entry.value} <span aria-hidden="true">×</span>
         </button>)}
       </div>}
       {isHost&&connectionFilter!=="all"&&!!hostConnection?.unknownCount&&<p className="dr-uxb-catalog-page-notice" role="status">{hostConnection.unknownCount} loaded Host record(s) have UNKNOWN connectivity or invalid identity; UNKNOWN connectivity means absence cannot be confirmed. The current quick filter checks loaded authorized rows only.</p>}
