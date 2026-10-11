@@ -971,7 +971,7 @@ function AuditExplorer({operator,context,onNavigate}:{operator:any,context?:any,
   const [auditPage,setAuditPage]=useState<MenuPagePosition>({cursor:"",history:[]});
   const [auditFilterKey,setAuditFilterKey]=useState<string|null>(null);
   const investigation=auditInvestigation(context);
-  const [start,setStart]=useState(""),[end,setEnd]=useState(""),
+  const [start,setStart]=useState(investigation.start),[end,setEnd]=useState(investigation.end),
     [category,setCategory]=useState(investigation.category),[eventType,setEventType]=useState(""),
     [actor,setActor]=useState(investigation.actor),[resource,setResource]=useState(investigation.resource),
     [result,setResult]=useState(investigation.result),[correlation,setCorrelation]=useState("");
@@ -1085,13 +1085,17 @@ function AuditExplorer({operator,context,onNavigate}:{operator:any,context?:any,
     {investigation.returnTarget&&<section className="card dr-uxb-context" role="note"
       aria-label="Selected resource audit investigation">
       <strong>Investigating {investigation.originType}: {investigation.resource}</strong>
+      {(investigation.start||investigation.end)&&<p className="muted">
+        Selected Audit time window · start {investigation.start||"unbounded"} ·
+        end {investigation.end||"unbounded"} (timezone-qualified Core timestamps).
+      </p>}
       <p>Core audit resource ID filter = <code>{investigation.resource}</code>. This selects the
         entity ID in the authorized Core Audit read, not a proven type-unique resource,
         current policy decision or live connection. Verify event type, actor and result
         in each returned row; no result does not prove absence beyond the retained scope.</p>
       <div className="toolbar">
         <button type="button" className="secondary"
-          onClick={()=>{setResource(investigation.resource);
+          onClick={()=>{setResource(investigation.resource);setStart(investigation.start);setEnd(investigation.end);
             setActor(investigation.actor);setCategory(investigation.category);setResult(investigation.result)}}>
           Restore original Audit filters →</button>
         <button type="button" className="secondary"

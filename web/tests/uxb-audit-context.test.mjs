@@ -152,3 +152,45 @@ test("Audit context is source-only, Core audit resource filter and pagination re
  assert.match(audit,/auditFiltersEdited/);
  assert.match(audit,/Retry with Search audit/);
 });
+
+test("UX-5 selected entity carries a strictly observed UTC-bounded Audit time window",()=>{
+ const ctx=context.auditInvestigation({
+  originType:"remote-service",originId:"svc-12",auditActor:"operator-3",
+  auditCategory:"ACCESS_DECISION",auditResult:"deny",
+  auditStart:"2026-10-10T00:00:00Z",auditEnd:"2026-10-11T00:00:00Z"
+ });
+ assert.equal(ctx.resource,"svc-12");
+ assert.equal(ctx.start,"2026-10-10T00:00:00Z");
+ assert.equal(ctx.end,"2026-10-11T00:00:00Z");
+ assert.equal(ctx.actor,"operator-3");
+ assert.deepEqual(ctx.returnTarget?.context,{savedFilter:"id:svc-12",inspectResourceId:"svc-12"});
+ const source=readFileSync(join(root,"src","main.tsx"),"utf8");
+ const audit=source.split("function AuditExplorer(",2)[1]?.split("function AgentRolloutPreviewPanel(",1)[0]||"";
+ assert.match(audit,/\[start,setStart\]=useState\(investigation\.start\)/);
+ assert.match(audit,/\[end,setEnd\]=useState\(investigation\.end\)/);
+ assert.match(audit,/setStart\(investigation\.start\);setEnd\(investigation\.end\)/);
+});
+test("UX-5 malformed, spoofed or reversed Core Audit times cannot become investigation filters",()=>{
+ const base={originType:"managed-host",originId:"host-a",
+   auditStart:"2026-10-10T00:00:00Z",auditEnd:"2026-10-11T00:00:00Z"};
+ for(const extra of [
+  {auditStart:"2026-02-30T00:00:00Z"},
+  {auditStart:"last week"},
+  {auditStart:"2026-10-10T00:00:00Z\nsecret"},
+  {auditEnd:"2026-10-11T00:00:00Z\u202e"},
+  {auditStart:3},
+  {auditStart:"2026-10-13T00:00:00Z"}
+ ]){
+  const row=context.auditInvestigation({...base,...extra});
+  assert.equal(row.start,"",JSON.stringify(extra));
+  assert.equal(row.end,"",JSON.stringify(extra));
+  assert.equal(row.returnTarget?.id,"hosts");
+ }
+ const open=context.auditInvestigation({originType:"managed-host",originId:"host-a",
+  auditStart:"2026-10-10T00:00:00Z"});
+ assert.equal(open.start,"2026-10-10T00:00:00Z");
+ assert.equal(open.end,"");
+ const noEntity=context.auditInvestigation({auditStart:base.auditStart,auditEnd:base.auditEnd});
+ assert.equal(noEntity.start,"");
+ assert.equal(noEntity.end,"");
+});

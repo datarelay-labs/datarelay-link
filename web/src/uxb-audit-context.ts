@@ -2,6 +2,8 @@
  * an exact entity ID: it does NOT prove entity type, policy authority, reachability
  * or full retention coverage. Never pass arbitrary search/URL/secrets into context.
  */
+import {isObservedAbsoluteTime} from "./uxb-integrations-state";
+
 export type AuditOriginType="managed-host"|"remote-service"|"access-rule";
 export type AuditReturnTarget={
  id:"hosts"|"services"|"policies",group:"connections"|"access",
@@ -9,7 +11,7 @@ export type AuditReturnTarget={
 };
 export type AuditInvestigation={
  originType:AuditOriginType|null,resource:string,actor:string,category:string,result:string,
- returnTarget:AuditReturnTarget|null
+ start:string,end:string,returnTarget:AuditReturnTarget|null
 };
 const ID=/^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,159}$/;
 const CATEGORY=new Set(["CONTROL","ACCESS_DECISION","SECURITY_LIFECYCLE"]);
@@ -28,8 +30,20 @@ export function auditInvestigation(input:unknown):AuditInvestigation{
    ["managed-host","remote-service","access-rule"].includes(ctx.originType)
    ?ctx.originType as AuditOriginType:null;
  const resource=originType?safeIdentifier(ctx.originId):"";
- if(!resource)return {originType:null,resource:"",actor:"",category:"",result:"",returnTarget:null};
+ if(!resource)return {originType:null,resource:"",actor:"",category:"",result:"",
+   start:"",end:"",returnTarget:null};
  const actor=safeIdentifier(ctx.auditActor);
+ // A corrupted or reversed prefilled Core Audit window is not a search.
+ // Preserve only explicit, timezone-qualified, ordered user context; an
+ // otherwise valid entity/actor return remains available without that window.
+ const parseBound=(value:unknown):string|null=>
+   value===null||value===undefined||value===""?""
+   :isObservedAbsoluteTime(value)?value:null;
+ const first=parseBound(ctx.auditStart),last=parseBound(ctx.auditEnd);
+ const validWindow=first!==null&&last!==null&&
+   (!first||!last||Date.parse(first)<=Date.parse(last));
+ const start=validWindow?first!:"";
+ const end=validWindow?last!:"";
  const category=typeof ctx.auditCategory==="string"&&CATEGORY.has(ctx.auditCategory)
    ?ctx.auditCategory:"";
  const result=typeof ctx.auditResult==="string"&&RESULTS.has(ctx.auditResult)
@@ -41,7 +55,7 @@ export function auditInvestigation(input:unknown):AuditInvestigation{
   :originType==="remote-service"
     ?{id:"services",group:"connections",context:{savedFilter:"id:"+resource,inspectResourceId:resource}}
     :{id:"policies",group:"access",context:plane?{plane,inspectPolicyId:resource}:undefined};
- return {originType,resource,actor,category,result,returnTarget};
+ return {originType,resource,actor,category,result,start,end,returnTarget};
 }
 
 
