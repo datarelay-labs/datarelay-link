@@ -29,6 +29,7 @@ import {operatorUserLabel} from "./uxb-users-state";
 import {auditInvestigation,matchObservedAuditReturn,matchObservedPolicyReturn,recentAuditInvestigation,observedAuditEventDetails,observedAuditAppliedFilters,type ObservedAuditEventDetail} from "./uxb-audit-context";
 import {auditUtcPresetRange} from "./uxb-audit-presets";
 import {filterObservedPoliciesByStatus} from "./uxb-policy-status-filter";
+import {sortLoadedPolicies,isPolicySortMode,type PolicySortMode} from "./uxb-policy-sort";
 import {observedPolicyExpiryState,filterObservedPoliciesByExpiry,observedPolicyExpiryCounts,filterObservedPolicySearch,observedPolicyDetailFields,type PolicyExpiryChoice} from "./uxb-policy-expiry";
 import {observedPolicyCardSummary} from "./uxb-policy-cards";
 import {policyAuditInvestigationTarget} from "./uxb-policy-audit-action";
@@ -1883,6 +1884,7 @@ function PolicyWorkspace({data,operator,onNavigate,api,context}:{data:any,operat
   const [expiryFilter,setExpiryFilter]=useState<PolicyExpiryChoice>("all");
   const [expiryObservedAt,setExpiryObservedAt]=useState(()=>Date.now());
   const [policyView,setPolicyView]=useState<"table"|"cards">("table");
+  const [policySort,setPolicySort]=useState<PolicySortMode>("core");
   const [additional,setAdditional]=useState<any[]>([]);
   const [nextByPlane,setNextByPlane]=useState<Record<string,string|null>>(data.next_cursor_by_plane||{});
   const [exhausted,setExhausted]=useState<string[]>([]);
@@ -1936,7 +1938,7 @@ function PolicyWorkspace({data,operator,onNavigate,api,context}:{data:any,operat
   const safePolicySearch=filterObservedPolicySearch(loadedPlanePolicies,filter);
   const policyStatusRows=filterObservedPoliciesByStatus<any>(safePolicySearch.items,statusFilter);
   const expiryCounts=observedPolicyExpiryCounts(policyStatusRows,expiryObservedAt);
-  const rows=filterObservedPoliciesByExpiry<any>(policyStatusRows,expiryFilter,expiryObservedAt);
+  const rows=sortLoadedPolicies<any>(filterObservedPoliciesByExpiry<any>(policyStatusRows,expiryFilter,expiryObservedAt),policySort);
   function reviewPolicyAudit(row:unknown){
     const target=policyAuditInvestigationTarget(row);
     if(!target)return;
@@ -1978,6 +1980,19 @@ function PolicyWorkspace({data,operator,onNavigate,api,context}:{data:any,operat
           aria-pressed={policyView==="table"} onClick={()=>setPolicyView("table")}>Table</button>
         <button type="button" className={policyView==="cards"?"primary":"secondary"}
           aria-pressed={policyView==="cards"} onClick={()=>setPolicyView("cards")}>Cards</button>
+      </div>
+      <div className="dr-form-actions" role="group" aria-label="Policy display ordering">
+        <label>Sort loaded policies
+          <select aria-label="Sort loaded Policies" value={policySort}
+            onChange={e=>setPolicySort(isPolicySortMode(e.target.value)?e.target.value:"core")}>
+            <option value="core">Core order (default)</option>
+            <option value="name_asc">Policy name A–Z</option>
+            <option value="name_desc">Policy name Z–A</option>
+          </select>
+        </label>
+        <span className="muted">Policy ordering is display-only for loaded Core rows.
+          Core rule evaluation/precedence and Saved Views remain unchanged.
+          This is not a global sort across unloaded Core pages.</span>
       </div>
       <div className="dr-form-actions" role="group" aria-label="Filter loaded policy state">
         <span className="muted">State of loaded Core rules · UNKNOWN is not Disabled</span>
