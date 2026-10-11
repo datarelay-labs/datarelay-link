@@ -1939,7 +1939,7 @@ function PolicyWorkspace({data,operator,onNavigate,api,context}:{data:any,operat
         Review the explicit Core Preview and required tests below before any change.</p>
     </section>}
     {inspectPolicyId&&<section className="card dr-uxb-context" role="status">
-      <strong>Returning from Activity log to previously selected Core policy ID: {inspectPolicyId}</strong>
+      <strong>Selected Core policy ID from Search or Activity: {inspectPolicyId}</strong>
       <p>Only an exact same-plane item already in the authorized loaded Core policy inventory
         can reopen its detail. If this rule is not loaded, the ID remains a filter;
         use the existing Load more controls for that plane. This is not a new Core lookup
