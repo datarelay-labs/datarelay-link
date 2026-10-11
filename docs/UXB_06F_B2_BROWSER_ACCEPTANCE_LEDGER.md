@@ -7,6 +7,37 @@ inventory: the tester must independently discover and traverse the **actual**
 browser at the **installed candidate HEAD**, without using a scripted/SSR run as
 a substitute.
 
+## 0. Owner-selected DRLink 3.0 test target (2026-10-11 KST)
+
+**This target selection supersedes historical DRLink 3.0 test-server references, but
+does not supersede any release, access, production, safety or Browser/E2E gate.**
+
+| Purpose | Authoritative target / observed fact | Status |
+| --- | --- | --- |
+| Source development, Node/Python tests, detached worktrees | `dev-drlink` (development host) | Separate from any installed product test server |
+| **Future DRLink 3.0 installed Server/Agent/Browser E2E test target** | **`mcp.link.datarelay.run` / `15.164.238.140`** | **SELECTED, NOT YET QUALIFIED FOR 3.0** |
+| Prior host `remote.xdr.ooo` (observed IPv4 `129.225.184.60`) | **Excluded from all future 3.0 test execution**; owner plans separate 3.0 data cleanup | DO NOT connect, deploy, delete or use it as a 3.0 fallback |
+| New-target SSH access | Existing `mcp-link` alias on `dev-drlink` resolves to `mcp.link.datarelay.run` | Read-only SSH discovery succeeded; this does not prove Browser/MCP/Server availability |
+| New-target installed version at observation | `/etc/drlink/version`: `PROJECT_VERSION=2.4.0` | **NOT a 3.0 installed candidate** |
+| New-target observed services | `drlink-client`, `drlink-ai-agent`, `drlink-lifecycle` active; `drlink-server`, `drlink-web`, `drlink-allocator` inactive | Browser/3-role E2E **BLOCKED** until separately authorized qualified 3.0 Server/Agent/Web target |
+| New-target TCP/HTTPS | TCP/443 listening; local HTTPS root read returned HTTP 404 | Not evidence of working DRLink 3.0 Web or MCP |
+| DNS observation on `dev-drlink` | New FQDN resolved to `15.164.238.140` | DNS mapping observed, not a deployment or certificate approval |
+
+**Safety/continuity:** No service restart, install, uninstall, migration, production
+change, credential/ACL modification or deletion is approved by this target change.
+Do not overwrite the existing 2.4.0 installation. The existing Browser/preview
+and Client-fixture tool denials remain binding. Before any real 3.0 test, independently
+confirm the **installed** Server/Agent/Web build identity matches the immutable
+candidate HEAD, that an explicitly permitted isolated preview and authenticated
+Admin/Operator/Read Only roles exist, and that all prior safety holds are legitimately
+resolved. Until then, source/localhost fixtures are supplemental only and **0/N real
+Browser cases** remain verified.
+
+The legacy `remote.xdr.ooo` values in existing v2.4 source tests and example
+URLs are **fixtures**, not permission to use that host for v3 tests. Do not mass-edit
+or execute those legacy references against a live server. Destructive cleanup of
+the previous host is a distinct owner-controlled operation, not part of this update.
+
 ## 1. Entry facts observed on 2026-10-10 (preflight only)
 
 | Requirement | Observed fact / evidence | Disposition |
