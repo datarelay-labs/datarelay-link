@@ -7,8 +7,8 @@
 > phases as C-UX-A→B→C→D. UI-06 (single-reviewer time-bounded access request)
 > is owner-required but requires an actual canonical Core request/decision
 > contract; it is not implicitly implemented by Temporary Access alone.
-> UI-02 exact Service→owning Host source edit remains explicitly platform-held,
-> and actual 3-role/320px/375px Browser E2E remains not verified.
+> UI-02 Core-observed Remote Service→owning Host source was implemented in existing
+> Draft PR #206 at `192677cf`; it is still unqualified by real 3-role/320px/375px Browser E2E.
 > This is **a priority/status pointer, never a separate implementation queue**.
 > Product authority: `PRODUCT_MASTER.md`, `WEB_MANAGEMENT.md`, `MANAGEMENT_SURFACE_CONTRACT.md`, `DATA_RELAY_ROADMAP.md`, `WEB_SAAS_UX_SYSTEM.md`. DRLink Core/CLI retains authorization authority; Web is optional, SQLite is the one Core datastore, Remote / Internet / AI remain separate security planes.
 > Link Product Foundation B2–B6 coordinator [#207](https://github.com/datarelay-labs/datarelay-link/issues/207) now points to the same issue. Foundation's separate cross-product [#87](https://github.com/datarelay-labs/datarelay-product-foundation/issues/87) is **not** a second Link implementation queue.
@@ -33,12 +33,22 @@ Do not reimplement already source-delivered L-CI saved filter/detail/typed searc
 - Read-only stacked PR integration found real overlapping files: #206 sits on #183; #193 Foundation source shares #183 but overlaps `web/src/main.tsx`, `web/package.json`, compiled assets and UX tests. Core #168 head `96246f91` and Web source share older `153e3dd4` and have additional source/generated-bundle conflicts. **No auto-merge or tree overwrite**; reconcile conflict-by-conflict on an independently authorized coherent candidate and rerun its native/real-user qualification.
 - Both parent #183 and child #206 Linux native CI have independently failed with `allocator rejected enrollment: enrollment could not be committed to Core` after dual-role restore. This predates the Typed Host Search/Host status fixes. Previous denied Client test and browser/preview routes are not rerouted; integrated R2, genuine 3-role acceptance and 100-Host page completeness remain OPEN.
 
+## UI-06 single-reviewer Temporary Access — design gate (PROPOSED, not implemented)
+
+- **Owner-required goal:** one requester asks for time-bounded access to an existing, explicitly identified WHITELIST rule; **one different, Core-authorized reviewer** approves or denies, with trustworthy expiration and audit. Do not treat current single-actor `drlink_temporary_access_preview/apply` as this workflow.
+- **Non-goals:** no second Web authorization authority, generic workflow engine, automatic approval, new credential issuance, shared-secret review links, second datastore, network-wide grant, or cross-plane implicit permission.
+- **Candidate Core contract, pending owner/security approval:** a durable request ID bound to exact requester identity, access plane, immutable target rule identity, purpose, requested expiry, state and revision; a Core-derived reviewer authorization decision (never a caller-selected reviewer role), distinct reviewer identity, one atomic decision, actual applied Core Change Plan and an explicit denial/expiry/cancellation state. API names and persistence schema are **not yet authorized public contracts**.
+- **Trust and lifecycle:** Core is sole policy authority. Enforce no self-review, fail-closed unknown roles, CSRF/session binding, replay/idempotency, compare-and-swap revision, bounded clock/TTL and exact target matching. Requester cannot apply a grant. Approval requires current Core policy-safety tests and a short-lived, actor-bound one-shot Change Plan; approval is not proof of effective network reachability.
+- **State and operations:** use the existing Core SQLite authority with transactional and crash-safe request/decision/audit writes; record safe actor, target, decision, issue/decision/expiry timestamps and outcome without secrets. Define migration, backup/restore, expiration worker or query-time fail-closed semantics, observability and rollback **before** altering persistent schema or privileges.
+- **Required RED→GREEN evidence before Web integration:** requester allowed/denied; authorized single reviewer vs self/unknown/unprivileged; concurrent double decision; stale revision; expired request or plan; exact existing WHITELIST-only rule and plane; retry/replay; mandatory regression failure; applied/denied audit; no grant after deny/expiry; restoring state does not resurrect grants. Run real Admin/Operator/Read Only Browser desktop/375/320px/keyboard and two actual users on the same installed HEAD before release.
+- **Execution gate:** design and authorization/persistence changes need explicit owner security acceptance. Until then, the Web must present UI-06 as unavailable, **not** reuse single-actor Temporary Access to simulate reviewer approval. Keep one roadmap #184, ACTIVE packet #182 and Draft PR #206.
+
 ## Protected worktrees, denial boundaries and release policy
 
 - **Web parent:** `pf5b-foundation-web` (#182/#183) has existing platform-denied uncommitted `tests/test-frp-client.sh`. Preserve unchanged, unstaged, unexecuted. Parent/child Linux native lint fails at `allocator rejected enrollment: enrollment could not be committed to Core`; no CI bypass or alternative test route.
 - **Core 3.0:** `v300-drl3-0` (#135/#168) has existing platform-denied uncommitted `tests/test-v30-webhook-delivery.py`. Preserve unchanged, unstaged, unexecuted.
 - **B5:** #198/#199 remains an explicit protected generated bootstrap packaging safety hold. No rerun/rebuild/revert/merge of denied target via any tool/host.
-- **#206 child branch:** `pfci-saved-admission` is an isolated source candidate stacked on Web parent #183; do not auto-merge, rebase or overwrite the parent/Core worktrees.
+- **#206 child branch:** isolated source changes are fast-forward committed through `2f4e1b00`, including the previously dirty Host Search pair. This is still an OPEN/DRAFT Web source candidate stacked on parent #183; do not auto-merge or overwrite the parent/Core/B5 worktrees.
 - Real policy activation, SSH/firewall, signer/public key pin, installed Web preview/restart, irreversible restore, production/release and permissions require separate explicit authority and recovery. A proposed roadmap never waives a denial.
 
 ## UXE-01..12 authentic user acceptance inventory — ALL NOT VERIFIED
