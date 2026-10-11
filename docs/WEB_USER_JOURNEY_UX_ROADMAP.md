@@ -2,6 +2,10 @@
 
 > **ONE CURRENT EXECUTION ROADMAP:** [GitHub Issue #184 — DataRelay Link 3.0 R1–R7](https://github.com/datarelay-labs/datarelay-link/issues/184).
 > This file is a **repository-local index, not an additional task queue**. The old UXB-00..06, UXB-06F, L-CI-0..4 and B1–B5 per-feature execution lists are **superseded** as roadmaps by #184. Their historical code, tests, source investigations, review evidence and mandatory acceptance contracts are retained in Git history and the named canonical documents; **do not delete/reimplement verified completed functionality**.
+> **Latest owner priority, 2026-10-11 (supersedes old implementation-first text below):**
+> **P0-1 FIRST: analyze actual competitor UI screens and user click paths**, with dated official images/videos, exact provenance, role/empty/error/focus behavior when observable, current DRLink gap and license. Consider/use REA (Ghidra/Hopper/MCP) **only when needed and actually available/authorized/licensed**; never copy proprietary assets/code or claim REA used if not.
+> **P0-2 SECOND: select Adopt/Adapt/Reject gaps from that evidence, then directly implement approved, source-original DRLink UI changes**, RED→GREEN test/build on the current branch and update existing PR #206. Repeat analysis → selection/application; source-only test is not installed Browser/User E2E.
+> Evidence & current G-01 initial selection: `docs/COMPETITOR_UI_SCREEN_EVIDENCE_2026-10-11.md`. Single canonical schedule remains GitHub Issue #184 and ACTIVE Work Packet #182; no duplicate roadmap.
 > **Owner P0 override (2026-10-11):** The existing single GitHub #184 now schedules
 > **ALL applicable competitor-informed UX-1..8 and UI-01..06** ahead of unrelated
 > phases as C-UX-A→B→C→D. UI-06 (single-reviewer time-bounded access request)
