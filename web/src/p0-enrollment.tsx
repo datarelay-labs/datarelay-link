@@ -148,6 +148,17 @@ export function observedIssuedEnrollment(
  };
 }
 
+/** Show/copy the one-time Agent credential only while Core's absolute
+ * expiry remains in the future. A stale browser tab is not evidence of a
+ * still-usable enrollment ticket; no automatic re-issuance is allowed.
+ */
+export function currentIssuedCredentialIsUsable(input:unknown,at:number=Date.now()):boolean{
+ if(!input||typeof input!=="object"||Array.isArray(input)
+   ||!Number.isFinite(at))return false;
+ const expires=(input as Record<string,unknown>).expires_at;
+ return isObservedAbsoluteTime(expires)&&Date.parse(expires)>at;
+}
+
 /** A display-once response can be structurally valid yet contradict what
  * the Admin explicitly selected. Never treat a changed TTL or pre-approval
  * flag as evidence of the requested enrollment. Core remains authoritative.
@@ -407,6 +418,27 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate,onBus
   const currentIssueIntent=useRef(issuedIntent);
   currentIssueIntent.current=issuedIntent;
   const visibleIssued=issuedEnrollmentForCurrentIntent(issued,issuedIntent);
+  const shownIssued=visibleIssued&&currentIssuedCredentialIsUsable(visibleIssued)?visibleIssued:null;
+  useEffect(()=>{
+    if(!visibleIssued)return;
+    const expiry=Date.parse(visibleIssued.expires_at);
+    if(!Number.isFinite(expiry))return;
+    let cancelled=false;
+    let timer:ReturnType<typeof setTimeout>|undefined;
+    const expire=()=>{
+      if(cancelled)return;
+      const remaining=expiry-Date.now();
+      if(remaining>0){
+        timer=setTimeout(expire,Math.min(remaining,2147483647));
+      }else{
+        setIssued(current=>current===issued?null:current);
+        setCopyStatus("");
+        setError("Issued Agent enrollment credential expired. Inspect Core enrollment history before issuing another invitation.");
+      }
+    };
+    expire();
+    return()=>{cancelled=true;if(timer!==undefined)clearTimeout(timer)};
+  },[issued,issuedIntent]);
   useEffect(()=>{
     if(step>=3)void refreshHosts();
     return()=>{inventoryGeneration.current+=1;approvalGeneration.current+=1;};
@@ -447,6 +479,11 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate,onBus
     }finally{if(generation===inventoryGeneration.current)setFetchBusy(false)}
   }
   async function copyIssued(label:string,value:string){
+    if(!currentIssuedCredentialIsUsable(visibleIssued)){
+      setIssued(null);setCopyStatus("");
+      setError("Issued Agent enrollment credential expired. Inspect Core enrollment history before issuing another invitation.");
+      return;
+    }
     setCopyStatus("");
     if(!value)return;
     try{
@@ -557,18 +594,18 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate,onBus
       </div>}
       {step===2&&<div className="dr-p0-stage">
         <h3>2. Install the Agent and join</h3>
-        {visibleIssued?<div className="warning-box">
-          <p><strong>Display-once credential · expires {visibleIssued.expires_at||"UNKNOWN"}</strong></p>
-          <p>First Host admission: {visibleIssued.pre_approved?"Pre-approved by explicit Admin choice":"Pending Approval"}</p>
-          {visibleIssued.enrollment_code&&<><p>Enrollment code</p><pre className="plan">{visibleIssued.enrollment_code}</pre>
-            <button type="button" className="secondary" onClick={()=>copyIssued("Enrollment code",visibleIssued.enrollment_code)}>Copy enrollment code</button>
+        {shownIssued?<div className="warning-box">
+          <p><strong>Display-once credential · expires {shownIssued.expires_at||"UNKNOWN"}</strong></p>
+          <p>First Host admission: {shownIssued.pre_approved?"Pre-approved by explicit Admin choice":"Pending Approval"}</p>
+          {shownIssued.enrollment_code&&<><p>Enrollment code</p><pre className="plan">{shownIssued.enrollment_code}</pre>
+            <button type="button" className="secondary" onClick={()=>copyIssued("Enrollment code",shownIssued.enrollment_code)}>Copy enrollment code</button>
           </>}
-          <p>Canonical install command</p><pre className="plan">{visibleIssued.command||"No install command issued"}</pre>
-          {visibleIssued.command&&<button type="button" className="secondary" onClick={()=>copyIssued("Install command",visibleIssued.command)}>Copy install command</button>}
+          <p>Canonical install command</p><pre className="plan">{shownIssued.command||"No install command issued"}</pre>
+          {shownIssued.command&&<button type="button" className="secondary" onClick={()=>copyIssued("Install command",shownIssued.command)}>Copy install command</button>}
           {copyStatus&&<p className="notice" role="status">{copyStatus}</p>}
           <p className="muted">Copy only when you intend to install this Agent. Paste secrets only into the intended trusted machine and clear sensitive clipboard content afterward.</p>
-          <p>{visibleIssued.next_step}</p>
-        </div>:<p className="muted">No invitation issued during this session. Return to Step 1 to create one, or continue to inspect a previously enrolled Host.</p>}
+          <p>{shownIssued.next_step}</p>
+        </div>:<p className="muted">No currently valid invitation from this session. Return to Step 1 to create one, or continue to inspect an enrolled Host.</p>}
         <button className="primary" onClick={()=>setStep(3)}>Next: inspect Host admission →</button>
       </div>}
       {step>=3&&<div className="dr-p0-stage">

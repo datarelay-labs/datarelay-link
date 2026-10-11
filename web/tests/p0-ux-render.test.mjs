@@ -223,7 +223,7 @@ test("UX-3 onboarding source does not retain or display old ticket when issue in
  assert.match(src,/disabled=\{busy\}[^>]*onChange=\{e=>\{setIssued\(null\);setCopyStatus\(""\);setLabel/);
  assert.match(src,/disabled=\{busy\}[^>]*onChange=\{e=>\{setIssued\(null\);setCopyStatus\(""\);setNote/);
  assert.match(src,/disabled=\{busy\}[^>]*onChange=\{e=>\{setIssued\(null\);setCopyStatus\(""\);setPreApproved/);
- assert.match(src,/\{visibleIssued\?<div className="warning-box">/);
+ assert.match(src,/\{shownIssued\?<div className="warning-box">/);
 });
 
 test("UX-3 Host admission evidence is private to the exact current operator ID and Web role",()=>{
@@ -374,4 +374,18 @@ test("UX-3 display-once Core issuance cannot silently alter Admin pre-approval o
  const src=readFileSync(join(webRoot,"src","p0-enrollment.tsx"),"utf8");
  assert.match(src,/issuedEnrollmentMatchesRequestedOptions\(result,\{mode,platform,ttl,preApproved\}\)/);
  assert.match(src,/The ticket may exist; inspect Core enrollment history before retrying/);
+});
+
+test("UX-3 display-once Agent instructions are not copyable after Core expiry",()=>{
+ const valid={mode:"manual",platform:"linux",expires_at:"2032-01-01T00:00:00Z",
+  command:"SAFE_SAMPLE",enrollment_code:"",pre_approved:false,next_step:"Install"};
+ assert.equal(enroll.currentIssuedCredentialIsUsable(valid,Date.parse("2031-12-31T23:59:59Z")),true);
+ assert.equal(enroll.currentIssuedCredentialIsUsable(valid,Date.parse(valid.expires_at)),false);
+ assert.equal(enroll.currentIssuedCredentialIsUsable({...valid,expires_at:"invalid"},Date.now()),false);
+ assert.equal(enroll.currentIssuedCredentialIsUsable(null,Date.now()),false);
+ const src=readFileSync(join(webRoot,"src","p0-enrollment.tsx"),"utf8");
+ assert.match(src,/const shownIssued=visibleIssued&&currentIssuedCredentialIsUsable\(visibleIssued\)\?visibleIssued:null/);
+ assert.match(src,/if\(!currentIssuedCredentialIsUsable\(visibleIssued\)\)/);
+ assert.match(src,/setIssued\(null\);setCopyStatus\(""\)/);
+ assert.match(src,/\{shownIssued\?<div className="warning-box">/);
 });
