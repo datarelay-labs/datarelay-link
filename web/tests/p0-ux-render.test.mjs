@@ -628,3 +628,38 @@ test("UX-2 Guided Preview and Apply must bind to the exact requested rule name",
  assert.match(src,/&&preview\?\.resource_ref===name\.trim\(\)/);
  assert.match(src,/preview\?\.resource_ref!==name\.trim\(\)/);
 });
+
+test("UX-1 Core policy trace must prove the exact requested flow before any ALLOW display",()=>{
+ const trace={plane:"remote",
+   normalized_input:{plane:"remote",source:"branch",destination:"app",service:"ssh"},
+   final:{result:"ALLOW",reason:"Core enabled matching rule",hidden:{secret:"PRIVATE"}},
+   policy:{mode:"WHITELIST",enforcement:"ENABLED",matched_rules:["ssh-allow"],
+     internal:{secret:"DO_NOT_EXPOSE"}},
+   mixed:false,member_results:[{secret:"NEVER_SHOW"}]};
+ const valid=access.observedCoreTraceForFlow(trace,"remote","branch","app","ssh","");
+ assert.equal(valid?.final.result,"ALLOW");
+ assert.equal(valid?.final.reason,"Core enabled matching rule");
+ assert.equal(valid?.normalized_input.service,"ssh");
+ assert.deepEqual(valid?.policy.matched_rules,["ssh-allow"]);
+ assert.doesNotMatch(JSON.stringify(valid),/PRIVATE|DO_NOT_EXPOSE|NEVER_SHOW/);
+ const ai={...trace,plane:"ai",normalized_input:{plane:"ai",source:"bot",destination:"document",
+   permission:"read",path:"/reports"}};
+ assert.equal(access.observedCoreTraceForFlow(ai,"ai","bot","document","read","/reports")?.plane,"ai");
+ assert.equal(access.observedCoreTraceForFlow(ai,"ai","bot","document","read","/other"),null);
+ for(const invalid of [null,{},[],{...trace,plane:"internet"},
+   {...trace,normalized_input:{...trace.normalized_input,source:"other"}},
+   {...trace,normalized_input:{...trace.normalized_input,destination:"other"}},
+   {...trace,normalized_input:{...trace.normalized_input,service:"http"}},
+   {...trace,final:{...trace.final,result:["ALLOW"]}},
+   {...trace,final:{...trace.final,result:"PERMIT"}},
+   {...trace,final:{...trace.final,reason:"bad\u202espoof"}},
+   {...trace,policy:{...trace.policy,matched_rules:["ssh-allow",{"secret":"x"}]}},
+   {...trace,policy:{...trace.policy,mode:["WHITELIST"]}},
+   {...trace,mixed:"false"}])
+   assert.equal(access.observedCoreTraceForFlow(invalid,"remote","branch","app","ssh",""),null,
+     JSON.stringify(invalid));
+ const src=readFileSync(join(webRoot,"src","p0-access-policy.tsx"),"utf8");
+ assert.match(src,/const qualified=observedCoreTraceForFlow\(next,plane,source\.trim\(\),destination\.trim\(\),selector\.trim\(\),path\.trim\(\)\)/);
+ assert.match(src,/if\(!qualified\)throw new Error\(/);
+ assert.match(src,/setTraceEvidence\(\{key:requestKey,value:qualified\}\)/);
+});

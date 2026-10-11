@@ -29,6 +29,53 @@ export function observedTraceRouteValue(value:unknown,fallback:unknown):string{
   return trustedCoreTraceText(value)?value.trim():"UNKNOWN";
 }
 
+/** A Core policy trace must confirm the exact submitted selector and plane.
+ * This is a bounded read-only projection: never display arbitrary nested Core
+ * data (audit, group members, secrets) as a governing access explanation.
+ */
+export function observedCoreTraceForFlow(
+ payload:unknown,plane:AccessPlane,source:unknown,destination:unknown,
+ selector:unknown,path:unknown
+):{
+ plane:AccessPlane,normalized_input:Record<string,string>,
+ policy:{mode:string,enforcement:string,matched_rules:string[]},
+ final:{result:"ALLOW"|"DENY"|"UNKNOWN",reason:string},mixed:boolean
+}|null{
+ const record=(v:unknown):v is Record<string,unknown>=>
+   !!v&&typeof v==="object"&&!Array.isArray(v);
+ if(!record(payload)||!record(payload.normalized_input)
+   ||!record(payload.policy)||!record(payload.final)
+   ||!["remote","internet","ai"].includes(plane)
+   ||![source,destination,selector].every(x=>trustedCoreTraceText(x))
+   ||typeof path!=="string"||path.length>512||UNSAFE_CORE_TRACE.test(path))return null;
+ const current=payload.normalized_input,policy=payload.policy,final=payload.final;
+ if(payload.plane!==plane||current.plane!==plane
+   ||current.source!==source||current.destination!==destination
+   ||(plane==="ai"?current.permission:current.service)!==selector
+   ||(plane==="ai"?String(current.path??"")!==path:current.path!==undefined)
+   ||!["ALLOW","DENY","UNKNOWN"].includes(String(final.result))
+   ||typeof final.result!=="string"
+   ||!trustedCoreTraceText(final.reason,240)
+   ||(policy.mode!==undefined&&policy.mode!==null&&!trustedCoreTraceText(policy.mode,80))
+   ||(policy.enforcement!==undefined&&policy.enforcement!==null
+      &&!trustedCoreTraceText(policy.enforcement,80))
+   ||!Array.isArray(policy.matched_rules)||policy.matched_rules.length>20
+   ||policy.matched_rules.some(rule=>!trustedCoreTraceText(rule))
+   ||typeof payload.mixed!=="boolean")return null;
+ const input:Record<string,string>={plane,source,destination};
+ if(plane==="ai"){
+   input.permission=selector as string;
+   if(path)input.path=path;
+ }else input.service=selector as string;
+ return {plane,normalized_input:input,
+   policy:{mode:typeof policy.mode==="string"?policy.mode:"UNKNOWN",
+     enforcement:typeof policy.enforcement==="string"?policy.enforcement:"UNKNOWN",
+     matched_rules:[...new Set(policy.matched_rules as string[])]},
+   final:{result:final.result as "ALLOW"|"DENY"|"UNKNOWN",
+     reason:(final.reason as string).trim()},
+   mixed:payload.mixed};
+}
+
 /** The browser must never authorize based on policy simulation or stale views.
  * Incomplete/tainted matched-rule evidence cannot become "none reported".
  */
@@ -329,7 +376,9 @@ export function AccessEvidenceExplorer({api,plane,source,destination,selector,on
     else body.service=selector.trim();
     try{
       const next=await api("/api/v1/policy/trace",{method:"POST",body:JSON.stringify(body)});
-      if(traceRequest.current===token)setTraceEvidence({key:requestKey,value:next});
+      const qualified=observedCoreTraceForFlow(next,plane,source.trim(),destination.trim(),selector.trim(),path.trim());
+      if(!qualified)throw new Error("Core policy trace is missing exact requested flow evidence.");
+      if(traceRequest.current===token)setTraceEvidence({key:requestKey,value:qualified});
     }catch(e:any){if(traceRequest.current===token)setError("Core decision unavailable: "+String(e.message||e))}
     finally{if(traceRequest.current===token)setTraceBusy(false)}
   }
