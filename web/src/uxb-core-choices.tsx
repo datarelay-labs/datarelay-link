@@ -46,11 +46,19 @@ function validCoreNamePage(page:any,type:string):boolean{
         &&page.next_cursor.length<=1024));
 }
 export function coreSelectorOptions(catalog:CoreCatalog|null,plane:AccessPlane,field:SelectorField){
-  const types=kinds[plane][field];
-  if(!catalog?.resources||types.some(type=>!validCoreNamePage(catalog.resources[type],type)))
+  const types=kinds[plane]?.[field];
+  if(!types||!catalog?.resources||types.some(type=>!validCoreNamePage(catalog.resources[type],type)))
     return {status:"unknown" as const,names:[] as string[],truncated:false};
-  const names=[...new Set(types.flatMap(type=>catalog.resources[type].items||[])
-    .map(row=>String(row.name).trim()))].sort((a,b)=>a.localeCompare(b));
+  const observed=types.flatMap(type=>catalog.resources[type].items||[])
+    .map(row=>(row.name as string).trim());
+  // This field accepts an untyped Core name, not a (kind,id) pair.
+  // Deduplicating a same-name Object and Group would falsely imply a unique
+  // selectable identity. Keep it UNKNOWN until the operator disambiguates
+  // through the authoritative Resources & Groups view.
+  const normalized=observed.map(name=>name.toLowerCase());
+  if(new Set(normalized).size!==normalized.length)
+    return {status:"unknown" as const,names:[] as string[],truncated:false};
+  const names=observed.sort((a,b)=>a.localeCompare(b));
   return {
     status:(names.length?"available":"empty") as "available"|"empty",
     names,truncated:types.some(type=>!!catalog.resources[type]?.next_cursor),
@@ -62,9 +70,13 @@ export function coreSelectorOptions(catalog:CoreCatalog|null,plane:AccessPlane,f
 export async function searchCoreSelectorCatalog(
   api:LinkApi,plane:AccessPlane,field:SelectorField,query:string
 ):Promise<CoreCatalog>{
+  const types=kinds[plane]?.[field];
+  if(!types)throw new Error("Invalid Core selector plane or resource field.");
+  if(typeof query!=="string")throw new Error("Enter a valid text query for a Core name.");
   const needle=query.trim();
   if(needle.length<2||needle.length>128)throw new Error("Enter at least two and at most 128 characters to find a Core name.");
-  const pages=await Promise.all(kinds[plane][field].map(async type=>{
+  if(BAD_CORE_NAME.test(needle))throw new Error("Core search query contains unsupported control or direction-changing characters.");
+  const pages=await Promise.all(types.map(async type=>{
     const url="/api/v1/inventory?resource_type="+encodeURIComponent(type)
       +"&q="+encodeURIComponent(needle)+"&limit=50";
     const page=await api(url);

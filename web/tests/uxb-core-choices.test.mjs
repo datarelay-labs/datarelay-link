@@ -81,8 +81,8 @@ test("Partial, invalid and failing Core search never invents an available resour
    choices.searchCoreSelectorCatalog(async path=>path.includes("service-object")
      ?{items:[{name:"ssh"}]}:Promise.reject(new Error("Core unavailable")),"remote","selector","ssh"),/Core unavailable/
  );
- const limited=await choices.searchCoreSelectorCatalog(async()=>({
-   items:[{name:"ssh-tcp22"}],next_cursor:"more"
+ const limited=await choices.searchCoreSelectorCatalog(async path=>({
+   items:[{name:path.includes("service-object")?"ssh-tcp22":"ssh-group"}],next_cursor:"more"
  }),"remote","selector","ssh");
  assert.equal(choices.coreSelectorOptions(limited,"remote","selector").truncated,true);
 });
@@ -149,4 +149,33 @@ test("Invalid bounded Core name page is UNKNOWN, not confirmed empty; search ref
    choices.searchCoreSelectorCatalog(async()=>page,"ai","source","safe"),/Core.*(invalid|malformed|bounded|resource)/i
   );
  }
+});
+
+test("UX-8 ambiguous same-name Core choices across resource types cannot be misrepresented as unique",()=>{
+ const sameAcrossTypes={resources:{...fixture.resources,
+  "network-object":{items:[{id:"net-a",name:"office"}]},
+  "network-group":{items:[{id:"group-b",name:"office"}]}}};
+ assert.deepEqual(choices.coreSelectorOptions(sameAcrossTypes,"remote","source"),
+   {status:"unknown",names:[],truncated:false});
+ const differentCase={resources:{...fixture.resources,
+  "network-object":{items:[{id:"net-a",name:"office"}]},
+  "network-group":{items:[{id:"group-b",name:"OFFICE"}]}}};
+ assert.equal(choices.coreSelectorOptions(differentCase,"internet","destination").status,"unknown");
+ const sameType={resources:{...fixture.resources,
+  "service-object":{items:[{id:"svc-a",name:"ssh"},{id:"svc-b",name:"ssh"}]}}};
+ assert.equal(choices.coreSelectorOptions(sameType,"remote","selector").status,"unknown");
+ const html=renderToStaticMarkup(React.createElement(choices.CoreChoiceField,{
+  catalog:sameAcrossTypes,plane:"remote",field:"source",value:"office",onChoose:()=>{}
+ }));
+ assert.match(html,/Core inventory UNKNOWN/);
+ assert.doesNotMatch(html,/<option value="office"/);
+});
+test("UX-8 Core name search rejects bidi/invisible controls and invalid plane before Core call",async()=>{
+ const calls=[];
+ const api=async path=>{calls.push(path);return {items:[]}};
+ for(const query of ["test\u202e", "ab\u2066cd", "ssh\nport", "rule\u0085filter", 123, null]){
+  await assert.rejects(choices.searchCoreSelectorCatalog(api,"remote","source",query),/query|name|invalid|text|character/i);
+ }
+ await assert.rejects(choices.searchCoreSelectorCatalog(api,"unknown-plane","source","office"),/resource|plane|invalid/i);
+ assert.equal(calls.length,0);
 });
