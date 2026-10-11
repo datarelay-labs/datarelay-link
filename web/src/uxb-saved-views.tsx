@@ -1,5 +1,6 @@
 import React,{useState} from "react";
 import {isObservedAbsoluteTime} from "./uxb-integrations-state";
+import {sortLoadedSavedViews,isSavedViewSortMode,type SavedViewSortMode} from "./uxb-saved-views-sort";
 
 /** Private filter metadata is not Core authorization evidence; reject
  * control/bidi spoofing and avoid rendering arbitrary nested values. */
@@ -124,6 +125,7 @@ export function SavedViewsWorkspace({data,api,onNavigate,refresh,initialDraft}:{
       prepared.route==="services"?"all":prepared.plane):null;
   const [name,setName]=useState(""),[filter,setFilter]=useState(safeDraft?.filter||"");
   const [listQuery,setListQuery]=useState("");
+  const [listSort,setListSort]=useState<SavedViewSortMode>("core");
   const [target,setTarget]=useState<StoredViewTarget>(safeDraft?.resource_type||"managed-host");
   const [admission,setAdmission]=useState<HostAdmission>(
     safeDraft?.resource_type==="managed-host"?safeDraft.admission||"all":"all");
@@ -140,6 +142,7 @@ export function SavedViewsWorkspace({data,api,onNavigate,refresh,initialDraft}:{
     &&data.items.every((row:any)=>row!==null&&typeof row==="object"&&!Array.isArray(row));
   const rows=observedList?data.items:[];
   const visibleRows=filterObservedSavedViewList(rows,listQuery);
+  const sortedVisibleRows=sortLoadedSavedViews(visibleRows.items,listSort);
   // Never let a local display filter hide an existing name collision.
   const duplicate=conflictingSavedViewName(rows,name);
   // Core currently returns at most 100 views, so an unobserved collision is possible.
@@ -222,13 +225,23 @@ export function SavedViewsWorkspace({data,api,onNavigate,refresh,initialDraft}:{
           onChange={e=>setListQuery(e.target.value)} placeholder="Search saved view names…"/></label>
         {listQuery&&<button type="button" className="secondary"
           onClick={()=>setListQuery("")}>Clear saved filter search</button>}
+        <label>Sort loaded saved filters
+          <select aria-label="Sort loaded private saved filters" value={listSort}
+            onChange={e=>setListSort(isSavedViewSortMode(e.target.value)?e.target.value:"core")}>
+            <option value="core">Core order (default)</option>
+            <option value="updated_desc">Recently updated</option>
+            <option value="updated_asc">Oldest updated</option>
+          </select>
+        </label>
         <span className="muted">Only names in the loaded private list are searched.
-          This does not query other users or fetch missing Core pages.</span>
+          This does not query other users or fetch missing Core pages.
+          Sorting only rearranges loaded operator-private views.
+          Missing/invalid Core updated timestamps remain UNKNOWN and sort last.</span>
       </div>
       {visibleRows.error&&<p role="alert" className="warning-box">{visibleRows.error}</p>}
       {rows.length?visibleRows.items.length?<div className="dr-table-scroll"><table className="dr-resource-table">
         <thead><tr><th>View</th><th>Resources</th><th>Filter</th><th>Updated</th><th>Action</th></tr></thead>
-        <tbody>{visibleRows.items.map((item:any,i:number)=>{
+        <tbody>{sortedVisibleRows.map((item:any,i:number)=>{
           const parsed=readSavedView(item);
           const safeId=visibleViewText(item?.id,160);
           const safeName=visibleViewText(item?.name)||safeId||"Unnamed view";

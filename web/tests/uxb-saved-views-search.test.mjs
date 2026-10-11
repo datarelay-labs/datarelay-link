@@ -74,7 +74,8 @@ test("G-30 accessible local search doesn't change private collision or 100-row c
  assert.match(src,/const visibleRows=filterObservedSavedViewList\(rows,listQuery\)/);
  assert.match(src,/const duplicate=conflictingSavedViewName\(rows,name\)/);
  assert.match(src,/const incompleteNames=rows\.length>=100/);
- assert.match(src,/visibleRows\.items\.map\(\(item:any,i:number\)=>/);
+ assert.match(src,/const sortedVisibleRows=sortLoadedSavedViews\(visibleRows\.items,listSort\)/);
+ assert.match(src,/sortedVisibleRows\.map\(\(item:any,i:number\)=>/);
  assert.match(src,/No matching loaded saved filters/);
  assert.match(src,/No saved views yet/);
  assert.match(src,/aria-label="Find my saved filters"/);
