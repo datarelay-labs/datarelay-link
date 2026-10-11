@@ -71,6 +71,29 @@ export function canApplyGuidedRule(preview:any,tests:any,acknowledgedUnknowns:bo
   return true;
 }
 
+/** Guided policy HTTP success is not an Apply acknowledgement. Match the
+ * one-shot Core Change Plan's exact access plane/rule/type and require an
+ * observed strictly advanced numeric revision before displaying success.
+ */
+export function observedGuidedPolicyApplyReceipt(result:unknown,plan:unknown,plane:AccessPlane):{revision:number}|null{
+ if(!result||typeof result!=="object"||Array.isArray(result)
+   ||!plan||typeof plan!=="object"||Array.isArray(plan)
+   ||!["remote","internet","ai"].includes(plane))return null;
+ const proof=result as Record<string,unknown>,review=plan as Record<string,unknown>;
+ const kind=plane+"-access-rule";
+ if(typeof review.change_plan_id!=="string"
+   ||!/^cp_[A-Za-z0-9_-]{16,128}$/.test(review.change_plan_id)
+   ||review.change_type!==kind||review.resource_type!==kind
+   ||!trustedCoreTraceText(review.resource_ref)
+   ||review.confirmation_class!=="APPLY"||review.no_change!==false
+   ||!Number.isSafeInteger(review.expected_revision)||Number(review.expected_revision)<0
+   ||proof.status!=="APPLIED"||proof.change_type!==kind||proof.resource_type!==kind
+   ||proof.resource_ref!==review.resource_ref
+   ||!Number.isSafeInteger(proof.revision)
+   ||Number(proof.revision)<=Number(review.expected_revision))return null;
+ return {revision:proof.revision as number};
+}
+
 /** A modeled Core graph path is evidence, not live connectivity or the final
  * governing rule. Reject incomplete/cross-plane rows rather than guessing.
  */
@@ -453,9 +476,16 @@ export function GuidedPolicyJourney({api,onNavigate,initialPlane="remote",locked
         change_plan_id:preview.change_plan_id,confirmation,
       })});
       if(seq.current!==token)return;
-      setMessage("Core applied rule change at revision "+String(result.revision??"UNKNOWN"));
+      const confirmed=observedGuidedPolicyApplyReceipt(result,preview,plane);
+      if(!confirmed)throw new Error("Core did not confirm the reviewed Change Plan, rule or advanced revision.");
+      setMessage("Core applied rule change at revision "+confirmed.revision);
       setPreview(null);setTests(null);setConfirmation("");setAcknowledge(false);setPhase(1);
-    }catch(e:any){if(seq.current===token)setError("Apply was not confirmed: "+String(e.message||e))}
+    }catch(e:any){if(seq.current===token){
+      // A transport error or unverified receipt may follow a committed Core
+      // change; never invite a blind second Apply with the old one-shot plan.
+      setPreview(null);setTests(null);setConfirmation("");setAcknowledge(false);setPhase(1);
+      setError("Apply outcome UNKNOWN. Inspect Core Change History before retrying. "+String(e.message||e));
+    }}
     finally{if(seq.current===token)setBusy(false)}
   }
   return <section className="card dr-p0-section" data-testid="p0-guided-policy">

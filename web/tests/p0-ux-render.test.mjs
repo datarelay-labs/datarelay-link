@@ -534,3 +534,30 @@ test("UX-1 Core graph must match exact requested plane and bounded authoritative
  assert.match(src,/if\(!validated\)throw new Error\(/);
  assert.match(src,/setGraphEvidence\(\{key:plane,value:validated\}\)/);
 });
+
+test("UX-2 Guided Policy Apply must have exact Core plan, rule and advanced revision receipt",()=>{
+ const plan={change_plan_id:"cp_"+"a".repeat(32),change_type:"remote-access-rule",
+  resource_type:"remote-access-rule",resource_ref:"allow-ssh",
+  confirmation_class:"APPLY",expected_revision:30,no_change:false};
+ const receipt={status:"APPLIED",change_type:"remote-access-rule",
+   resource_type:"remote-access-rule",resource_ref:"allow-ssh",revision:31};
+ assert.deepEqual(access.observedGuidedPolicyApplyReceipt(receipt,plan,"remote"),{revision:31});
+ for(const bad of [null,{},[],{...receipt,status:"NO_CHANGE"},
+  {...receipt,status:"QUEUED"},{...receipt,revision:30},
+  {...receipt,revision:"31"},{...receipt,revision:NaN},
+  {...receipt,change_type:"ai-access-rule"},
+  {...receipt,resource_type:"ai-access-rule"},
+  {...receipt,resource_ref:"other-rule"}
+ ])assert.equal(access.observedGuidedPolicyApplyReceipt(bad,plan,"remote"),null,JSON.stringify(bad));
+ for(const invalid of [
+  {...plan,expected_revision:-1},{...plan,expected_revision:"30"},
+  {...plan,change_plan_id:"not-a-change-plan"},{...plan,confirmation_class:"DELETE"},
+  {...plan,no_change:true},{...plan,resource_ref:"other\u202erule"}
+ ])assert.equal(access.observedGuidedPolicyApplyReceipt(receipt,invalid,"remote"),null,JSON.stringify(invalid));
+ assert.equal(access.observedGuidedPolicyApplyReceipt(receipt,plan,"ai"),null);
+ const src=readFileSync(join(webRoot,"src","p0-access-policy.tsx"),"utf8");
+ assert.match(src,/const confirmed=observedGuidedPolicyApplyReceipt\(result,preview,plane\)/);
+ assert.match(src,/if\(!confirmed\)throw new Error\(/);
+ assert.match(src,/setMessage\("Core applied rule change at revision "\+confirmed.revision\)/);
+ assert.match(src,/Inspect Core Change History before retrying/);
+});
