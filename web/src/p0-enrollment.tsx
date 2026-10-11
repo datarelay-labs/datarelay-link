@@ -1,5 +1,6 @@
 import React,{useEffect,useRef,useState} from "react";
 import type {LinkApi} from "./p0-access-policy";
+import {isObservedAbsoluteTime} from "./uxb-integrations-state";
 
 type Navigate=(id:string,groupId?:string)=>void;
 export const enrollmentSteps=["Issue enrollment","Install / join","Review & approve","Verify connectivity"] as const;
@@ -50,15 +51,27 @@ export function observedEnrollmentHistory(data:unknown):ObservedEnrollmentHistor
    partial:total!==null?Number(total)>items.length:items.length>=50};
 }
 
-/** Admission, trust, connection and policy are independent Core concepts. */
-export function hostReadiness(host:any){
-  if(!host)return {admission:"UNKNOWN",trust:"UNKNOWN",connection:"UNKNOWN",observedAt:"No observation",policy:"NOT VERIFIED"};
-  const admission=String(host.admission_state||"UNKNOWN").toUpperCase();
-  const trust=String(host.trust_status||"UNKNOWN").toUpperCase();
-  const connection=host.connected===true||host.connected===1?"CONNECTED"
-    :host.connected===false||host.connected===0?"NOT CONNECTED":"UNKNOWN";
-  return {admission,trust,connection,
-    observedAt:String(host.agent_heartbeat_at||host.last_seen||"No observation"),policy:"NOT VERIFIED"};
+/** Admission, trust, connection and policy are independent Core concepts.
+ * Do not stringify arbitrary nested Core state or trust an unverified time.
+ */
+export function hostReadiness(host:unknown){
+  const unknown={admission:"UNKNOWN",trust:"UNKNOWN",connection:"UNKNOWN",
+    observedAt:"No observation",policy:"NOT VERIFIED"};
+  if(!host||typeof host!=="object"||Array.isArray(host))return unknown;
+  const row=host as Record<string,unknown>;
+  const admission=typeof row.admission_state==="string"&&
+    ["PENDING_APPROVAL","APPROVED","QUARANTINED"].includes(row.admission_state)
+    ?row.admission_state:"UNKNOWN";
+  const rawTrust=typeof row.trust_status==="string"
+    &&row.trust_status.length<=40&&!BAD_ENROLLMENT_TEXT.test(row.trust_status)
+    ?row.trust_status.toUpperCase():"UNKNOWN";
+  const trust=["TRUSTED","UNTRUSTED","REVOKED","PENDING"].includes(rawTrust)
+    ?rawTrust:"UNKNOWN";
+  const connection=row.connected===true||row.connected===1?"CONNECTED"
+    :row.connected===false||row.connected===0?"NOT CONNECTED":"UNKNOWN";
+  const observedAt=isObservedAbsoluteTime(row.agent_heartbeat_at)?row.agent_heartbeat_at
+    :isObservedAbsoluteTime(row.last_seen)?row.last_seen:"UNKNOWN";
+  return {admission,trust,connection,observedAt,policy:"NOT VERIFIED"};
 }
 export function hostReadinessLabel(host:any):string {
   const s=hostReadiness(host);

@@ -597,3 +597,41 @@ test("UX-3 ticket identity and status reject control/bidi without echoing unsafe
  assert.match(source,/const history=observedEnrollmentHistory\(data\)/);
  assert.doesNotMatch(source,/\(data\?\.items\|\|\[\]\)\.map/);
 });
+
+test("UX-3 Host readiness refuses nested or spoofed Core admission/trust as verified",()=>{
+ for(const bad of [
+  {admission_state:{toString(){throw Error("MUST_NOT_COERCE")}},
+   trust_status:{secret:"PRIVATE_TRUST"},connected:"true",
+   agent_heartbeat_at:{secret:"PRIVATE_TIME"}},
+  {admission_state:"APPROVED\u202e",trust_status:"trusted",connected:true},
+  {admission_state:"APPROVED",trust_status:"trusted\u2066",connected:true},
+  {admission_state:"APPROVED",trust_status:"trusted",connected:"true"},
+  {admission_state:"APPROVED",trust_status:"trusted",connected:2},
+  []
+ ]){
+  const view=enrollment.hostReadiness(bad);
+  assert.ok(view);
+  assert.equal(view.policy,"NOT VERIFIED");
+  assert.doesNotMatch(JSON.stringify(view),/PRIVATE_|\u202e|\u2066|\[object Object\]/);
+  assert.notEqual(enrollment.hostReadinessLabel(bad),"CONNECTED · APPROVED · TRUSTED");
+ }
+ assert.equal(enrollment.hostReadiness({admission_state:"APPROVED",connected:true,
+  trust_status:{toString(){throw Error("PRIVATE_MUST_NOT_COERCE")}}}).trust,"UNKNOWN");
+});
+test("UX-4 Agent last observation uses only verifiable absolute Core times",()=>{
+ const valid={admission_state:"APPROVED",trust_status:"trusted",connected:1,
+  agent_heartbeat_at:"2026-10-11T03:10:11Z",last_seen:"2026-09-18T10:10:00Z"};
+ const fresh=enrollment.hostReadiness(valid);
+ assert.equal(fresh.admission,"APPROVED");
+ assert.equal(fresh.trust,"TRUSTED");
+ assert.equal(fresh.connection,"CONNECTED");
+ assert.equal(fresh.observedAt,"2026-10-11T03:10:11Z");
+ for(const invalid of [{secret:"PRIVATE_TIMESTAMP"},"2026-02-30T00:00:00Z",
+   "2026-10-11\u202eT03:10:11Z","yesterday",false]){
+  const result=enrollment.hostReadiness({...valid,agent_heartbeat_at:invalid,last_seen:null});
+  assert.equal(result.observedAt,"UNKNOWN");
+  assert.doesNotMatch(JSON.stringify(result),/PRIVATE_|yesterday|\u202e|\[object Object\]/);
+ }
+ assert.equal(enrollment.hostReadiness({...valid,agent_heartbeat_at:null}).observedAt,
+  "2026-09-18T10:10:00Z");
+});
