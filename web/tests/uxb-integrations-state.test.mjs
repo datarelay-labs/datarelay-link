@@ -99,3 +99,17 @@ test("Service Account expiry requires a real timezone-bound calendar instant, ne
   assert.equal(projection.serviceAccountExpiry({expires_at:bad}),"UNKNOWN",bad);
  }
 });
+
+test("Core absolute-time evidence rejects impossible civil timezone offsets",()=>{
+ for(const raw of [
+  "2026-10-11T10:30:00+14:01",
+  "2026-10-11T10:30:00+15:00",
+  "2026-10-11T10:30:00-16:00",
+  "2026-10-11T10:30:00+23:59"
+ ]){
+  assert.equal(projection.isObservedAbsoluteTime(raw),false,raw);
+  assert.equal(projection.serviceAccountExpiry({expires_at:raw}),"UNKNOWN",raw);
+ }
+ for(const valid of ["2026-10-11T10:30:00+14:00","2026-10-11T10:30:00-12:00"])
+  assert.equal(projection.isObservedAbsoluteTime(valid),true,valid);
+});

@@ -37,7 +37,11 @@ export function isObservedAbsoluteTime(text:unknown):text is string{
  if(year<1||month<1||month>12||day<1||day>days[month-1]||
    hours>23||minutes>59||seconds>59)return false;
  const offset=m[8];
- if(offset!=="Z"&&(Number(offset.slice(1,3))>23||Number(offset.slice(4,6))>59))return false;
+ if(offset!=="Z"){
+  const hours=Number(offset.slice(1,3)),minutes=Number(offset.slice(4,6));
+  // Date.parse accepts impossible UTC offsets; Core observation time must not.
+  if(hours>14||minutes>59||(hours===14&&minutes!==0))return false;
+ }
  return Number.isFinite(Date.parse(text));
 }
 export function serviceAccountExpiry(value:unknown):string{
