@@ -24,7 +24,8 @@ function record(input:unknown):Record<string,unknown>{
 }
 export function auditInvestigation(input:unknown):AuditInvestigation{
  const ctx=record(input);
- const originType=["managed-host","remote-service","access-rule"].includes(String(ctx.originType))
+ const originType=typeof ctx.originType==="string"&&
+   ["managed-host","remote-service","access-rule"].includes(ctx.originType)
    ?ctx.originType as AuditOriginType:null;
  const resource=originType?safeIdentifier(ctx.originId):"";
  if(!resource)return {originType:null,resource:"",actor:"",category:"",result:"",returnTarget:null};

@@ -92,6 +92,8 @@ test("Invalid context never pre-filters or pretends exact matching evidence",()=
   {originType:"remote-service",originId:"x".repeat(180)},
   {originType:"access-rule",originId:"../../etc/passwd"},
   {originType:"web-user",originId:"admin"},
+  {originType:Object.create(null),originId:"host-1"},
+  {originType:{toString(){throw new Error("untrusted context must not run code")}},originId:"host-1"},
   {originType:"managed-host",originId:{secret:"hidden"}},
   {originType:"managed-host",originId:"host🟩"},
  ]){
