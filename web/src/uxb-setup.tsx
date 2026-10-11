@@ -96,6 +96,31 @@ export function reconcileHostBoundDraft(draft?:SetupDraft|null):SetupDraft{
   return draft;
 }
 
+/** UX-3/8: an in-memory resumed draft is navigation state, not a Core
+ * capability or grant. Reject non-string/bidi/oversized values before using
+ * them in controlled inputs or selecting a former Agent; never stringify
+ * arbitrary nested values or retain prior mutation/credential evidence.
+ */
+export function safeResumedSetupDraft(input:unknown):SetupDraft{
+ const original=input!==null&&typeof input==="object"&&!Array.isArray(input)
+   ?input as Record<string,any>:{};
+ const plane:AccessPlane=original.plane==="internet"||original.plane==="ai"
+   ?original.plane:"remote";
+ const step=Number.isSafeInteger(original.step)&&original.step>=1
+   &&original.step<=4?original.step:1;
+ const name=(value:unknown):string=>safeSetupName(value)?value.trim():"";
+ const raw=original.service!==null&&typeof original.service==="object"
+   &&!Array.isArray(original.service)?original.service as Record<string,unknown>:{};
+ const draft:SetupDraft={
+   plane,step,selectedHost:name(original.selectedHost),
+   serviceName:name(original.serviceName),source:name(original.source),
+   destination:name(original.destination),selector:name(original.selector),
+   service:{owner:name(raw.owner),name:name(raw.name),service:name(raw.service),
+     destination:name(raw.destination)||"this-host"}
+ };
+ return reconcileHostBoundDraft(draft);
+}
+
 export function firstConnectionGuidance(
   plane:AccessPlane,step:number,state:{
     hosts:any[]|null,selectedHost:string,source:string,destination:string,
@@ -148,7 +173,7 @@ export function FirstConnectionSetup({api,operator,onNavigate,initialDraft,onDra
   api:LinkApi,operator:any,onNavigate?:Navigate,initialDraft?:SetupDraft|null,
   onDraftChange?:(draft:SetupDraft)=>void,
 }){
-  const restoredDraft=reconcileHostBoundDraft(initialDraft);
+  const restoredDraft=safeResumedSetupDraft(initialDraft);
   const [plane,setPlane]=useState<AccessPlane>(restoredDraft.plane||"remote");
   const [step,setStep]=useState(Math.min(4,Math.max(1,restoredDraft.step||1)));
   const [hosts,setHosts]=useState<any[]|null>(null),[services,setServices]=useState<any[]|null>(null);

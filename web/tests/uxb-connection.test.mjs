@@ -459,3 +459,44 @@ test("UX-8 Service readiness must not confuse string false, null or partial Core
  assert.match(source,/observedRemoteServiceReadiness\(service\.enabled\)/);
  assert.doesNotMatch(source,/String\(service\.enabled\?/);
 });
+
+test("UX-3 invalid resumed setup draft must not crash UI or revive unsafe intent",()=>{
+ for(const initialDraft of [
+  {plane:"unknown-plane",step:"not-a-step",selectedHost:7,source:{secret:"PRIVATE_TOKEN"},
+   service:{owner:{secret:"PRIVATE_OWNER"},name:42}},
+  {plane:"remote",step:Infinity,source:"origin\u202e",destination:"DB서비스",selector:"ssh"},
+  {plane:"ai",step:-1,source:"bot",destination:"object",selector:"read"},
+  {plane:"internet",step:99,source:"source-a",destination:"target-b",selector:"service-a"},
+  {plane:{toString(){throw Error("must not stringify untrusted plane")}},step:3},
+ ]){
+  const html=renderToStaticMarkup(React.createElement(setup.FirstConnectionSetup,{
+   api:async()=>{throw Error("SSR must not fetch Core")},operator:{id:"viewer-a",role:"Read Only"},
+   initialDraft,
+  }));
+  assert.match(html,/data-testid="uxb-connection-setup"/);
+  assert.match(html,/Current stage [1-4] of 4/);
+  assert.doesNotMatch(html,/PRIVATE_TOKEN|PRIVATE_OWNER|origin\u202e|\[object Object\]|undefined/);
+ }
+ const defaults=setup.safeResumedSetupDraft({plane:"wrong",step:"4",
+   selectedHost:{id:"host-a"},source:"ssh\u2066"});
+ assert.equal(defaults.plane,"remote");
+ assert.equal(defaults.step,1);
+ assert.equal(defaults.selectedHost,"");
+ assert.equal(defaults.source,"");
+});
+test("UX-3 valid non-secret in-session user draft is restored exactly with owning Host guard",()=>{
+ const original={plane:"remote",step:3,selectedHost:"host-a",serviceName:"admin-ssh",
+  source:" 서울지점 ",destination:"database-a",selector:"ssh-22",
+  service:{owner:"host-a",name:"admin-ssh",service:"ssh-22",destination:"this-host"}};
+ const safe=setup.safeResumedSetupDraft(original);
+ assert.equal(safe.plane,"remote");
+ assert.equal(safe.step,3);
+ assert.equal(safe.selectedHost,"host-a");
+ assert.equal(safe.source,"서울지점");
+ assert.deepEqual(safe.service,original.service);
+ assert.deepEqual(setup.safeResumedSetupDraft({...original,service:{...original.service,owner:"other-host"}}).service,
+   {owner:"host-a",name:"",service:"",destination:"this-host"});
+ assert.equal(setup.safeResumedSetupDraft(null).step,1);
+ const source=readFileSync(join(root,"src","uxb-setup.tsx"),"utf8");
+ assert.match(source,/const restoredDraft=safeResumedSetupDraft\(initialDraft\)/);
+});

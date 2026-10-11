@@ -303,7 +303,10 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn('if(planeRef.current==="remote")chooseRemoteHost("");', SETUP_SOURCE)
         self.assertIn("selectedHostRef.current=\"\";", SETUP_SOURCE)
         self.assertIn("planeRef.current=value;", SETUP_SOURCE)
-        self.assertIn("const restoredDraft=reconcileHostBoundDraft(initialDraft);", SETUP_SOURCE)
+        self.assertIn("const restoredDraft=safeResumedSetupDraft(initialDraft);", SETUP_SOURCE)
+        self.assertIn("return reconcileHostBoundDraft(draft);", SETUP_SOURCE)
+        self.assertIn("Number.isSafeInteger(original.step)", SETUP_SOURCE)
+        self.assertIn("!SETUP_UNSAFE_TEXT.test(v)", SETUP_SOURCE)
         self.assertIn("const [serviceDraft,setServiceDraft]=useState(restoredDraft.service||", SETUP_SOURCE)
         self.assertIn("const [selectedHost,setSelectedHost]=useState(restoredDraft.selectedHost||", SETUP_SOURCE)
 
