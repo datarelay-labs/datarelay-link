@@ -199,6 +199,26 @@ export function onboardingHostSnapshotMatchesActor(scope:unknown,current:unknown
    &&scope.id===id&&scope.role===role;
 }
 
+/** A late Core admission Apply acknowledgement must belong to the current
+ * authenticated Admin, selected Host and exact preview Change Plan. This
+ * governs only display of the response; Core owns authorization and commit.
+ */
+export function onboardingAdmissionApplyMatchesContext(
+ requested:unknown,current:unknown
+):boolean{
+ if(!requested||typeof requested!=="object"||Array.isArray(requested)
+   ||!current||typeof current!=="object"||Array.isArray(current))return false;
+ const first=requested as Record<string,unknown>,last=current as Record<string,unknown>;
+ return first.role==="Admin"&&last.role==="Admin"
+   &&onboardingHostSnapshotMatchesActor(first,last)
+   &&typeof first.hostId==="string"
+   &&/^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,159}$/.test(first.hostId)
+   &&first.hostId===last.hostId
+   &&typeof first.planId==="string"
+   &&/^cp_[A-Za-z0-9_-]{16,128}$/.test(first.planId)
+   &&first.planId===last.planId;
+}
+
 /** Mirror the existing Core enrollment input limits for an immediate, safe
  * user-facing explanation. The Core still owns validation and issuance.
  */
@@ -398,6 +418,7 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate,onBus
   const [error,setError]=useState(""),[inventoryError,setInventoryError]=useState("");
   const [copyStatus,setCopyStatus]=useState("");
   const [preview,setPreview]=useState<any>(null),[confirm,setConfirm]=useState(""),[message,setMessage]=useState("");
+  const [messageScope,setMessageScope]=useState<{id:unknown,role:unknown,hostId:string}|null>(null);
   const approvalGeneration=useRef(0);
   const inventoryGeneration=useRef(0);
   const admin=operator?.role==="Admin";
@@ -408,6 +429,12 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate,onBus
   const visibleSelectedHost=matchingHostScope?selectedHost:"";
   const selected=visibleHosts?.find(h=>String(h.id)===visibleSelectedHost)||null;
   const scopedPreview=matchingHostScope?preview:null;
+  const currentApplyContext=useRef({id:operator?.id,role:operator?.role,
+    hostId:visibleSelectedHost,planId:scopedPreview?.change_plan_id});
+  currentApplyContext.current={id:operator?.id,role:operator?.role,
+    hostId:visibleSelectedHost,planId:scopedPreview?.change_plan_id};
+  const scopedMessage=onboardingHostSnapshotMatchesActor(messageScope,operator)
+    &&messageScope?.hostId===visibleSelectedHost?message:"";
   const approvalActionable=currentHostAdmissionApprovalIsActionable(scopedPreview,visibleSelectedHost);
   const readiness=hostReadiness(selected);
   const required=String(scopedPreview?.confirmation_class||"APPROVE");
@@ -549,16 +576,21 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate,onBus
       setError("Core approval Preview expired. Refresh Host inventory and request a new plan.");
       return;
     }
-    setBusy(true);setError("");
+    const generation=++approvalGeneration.current;
+    const requestedContext=currentApplyContext.current;
+    setBusy(true);setError("");setMessage("");setMessageScope(null);
     try{
       const result=await api("/api/v1/managed-hosts/admission/apply",{
         method:"POST",body:JSON.stringify({change_plan_id:scopedPreview.change_plan_id,confirmation:confirm}),
       });
+      if(generation!==approvalGeneration.current||!onboardingAdmissionApplyMatchesContext(requestedContext,currentApplyContext.current))return;
       const applied=observedHostAdmissionApplyResult(result,scopedPreview.expected_revision);
       if(!applied)throw new Error("Core admission apply result is unverified; refresh Host inventory before deciding whether to retry.");
+      setMessageScope({id:operator?.id,role:operator?.role,hostId:selectedHost});
       setMessage("Core admission review applied at revision "+applied.revision);
       setPreview(null);setConfirm("");refresh();setStep(4);
     }catch(e:any){
+      if(generation!==approvalGeneration.current||!onboardingAdmissionApplyMatchesContext(requestedContext,currentApplyContext.current))return;
       // A timeout or malformed acknowledgement can follow a committed Core
       // change. Retire the one-shot plan: never offer a blind second Apply.
       setPreview(null);setConfirm("");
@@ -577,7 +609,7 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate,onBus
             <span>{i+1}</span>{name}</button></li>
       )}</ol>
       {error&&<p className="error" role="alert">{error}</p>}
-      {message&&<p className="notice" role="status">{message}</p>}
+      {scopedMessage&&<p className="notice" role="status">{scopedMessage}</p>}
       {step===1&&<div className="dr-p0-stage">
         <h3>1. Issue an enrollment invitation</h3>
         <div className="dr-p0-form">

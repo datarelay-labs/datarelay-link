@@ -389,3 +389,20 @@ test("UX-3 display-once Agent instructions are not copyable after Core expiry",(
  assert.match(src,/setIssued\(null\);setCopyStatus\(""\)/);
  assert.match(src,/\{shownIssued\?<div className="warning-box">/);
 });
+
+test("UX-3 late Host admission Apply cannot show old actor, Host or Change Plan success",()=>{
+ const request={id:"admin-a",role:"Admin",hostId:"host-a",planId:"cp_"+ "a".repeat(24)};
+ assert.equal(enroll.onboardingAdmissionApplyMatchesContext(request,{...request}),true);
+ for(const changed of [
+  {...request,id:"admin-b"},{...request,role:"Operator"},
+  {...request,role:"Read Only"},{...request,hostId:"host-b"},
+  {...request,planId:"cp_"+"b".repeat(24)},
+  null,{},[]
+ ])assert.equal(enroll.onboardingAdmissionApplyMatchesContext(request,changed),false,
+   JSON.stringify(changed));
+ const src=readFileSync(join(webRoot,"src","p0-enrollment.tsx"),"utf8");
+ assert.match(src,/const currentApplyContext=useRef\(/);
+ assert.match(src,/if\(generation!==approvalGeneration\.current\|\|!onboardingAdmissionApplyMatchesContext\(requestedContext,currentApplyContext\.current\)\)return;/);
+ assert.match(src,/const scopedMessage=onboardingHostSnapshotMatchesActor\(messageScope,operator\)[\s\S]*?&&messageScope\?\.hostId===visibleSelectedHost\?message:""/);
+ assert.match(src,/\{scopedMessage&&<p className="notice" role="status">\{scopedMessage\}<\/p>\}/);
+});
