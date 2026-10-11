@@ -299,3 +299,26 @@ test("UX-3 API 200 is not proof of applied Host approval without exact Core ackn
  assert.match(src,/if\(!applied\)throw new Error\("Core admission apply result is unverified/);
  assert.doesNotMatch(src,/Core admission review applied at revision "\+String\(result\.revision/);
 });
+
+
+test("UX-3 approval plan expires after preview and cannot be applied from an idle tab",()=>{
+ const plan={change_plan_id:"cp_"+"b".repeat(32),valid_until:"2032-01-01T00:00:00Z",
+  preview:{id:"host-a",before:"PENDING_APPROVAL",after:"APPROVED"},expected_revision:9};
+ assert.equal(enroll.currentHostAdmissionApprovalIsActionable(plan,"host-a",Date.parse("2031-12-31T23:59:59Z")),true);
+ assert.equal(enroll.currentHostAdmissionApprovalIsActionable(plan,"host-a",Date.parse(plan.valid_until)),false);
+ for(const invalid of [null,{},[],{...plan,valid_until:"invalid"},
+  {...plan,preview:{id:"host-b"}},{...plan,expected_revision:-1}]){
+  assert.equal(enroll.currentHostAdmissionApprovalIsActionable(invalid,"host-a",Date.parse("2031-01-01T00:00:00Z")),false);
+ }
+ const src=readFileSync(join(webRoot,"src","p0-enrollment.tsx"),"utf8");
+ assert.match(src,/const approvalActionable=currentHostAdmissionApprovalIsActionable\(scopedPreview,visibleSelectedHost\)/);
+ assert.match(src,/\|\|!approvalActionable\|\|confirm!==required/);
+ assert.match(src,/if\(!currentHostAdmissionApprovalIsActionable\(scopedPreview,selectedHost\)\)\{/);
+ assert.match(src,/disabled=\{!admin\|\|!matchingHostScope\|\|!approvalActionable\|\|confirm!==required\|\|busy\}/);
+});
+
+test("UX-3 uncertain Apply must retire the old plan rather than invite a blind retry",()=>{
+ const src=readFileSync(join(webRoot,"src","p0-enrollment.tsx"),"utf8");
+ const apply=src.split("  async function applyApproval(){")[1].split("  return <section")[0];
+ assert.match(apply,/catch\(e:any\)\{[\s\S]*?setPreview\(null\);setConfirm\(""\);[\s\S]*?refresh Host inventory before deciding whether to retry/);
+});

@@ -270,6 +270,26 @@ export function observedHostAdmissionApplyResult(
  return {revision:data.revision as number};
 }
 
+/** A previously valid Core Change Plan may expire while the operator's tab
+ * is idle. Neither a stale Host nor a stale revision can authorize Apply.
+ * The Core remains authoritative and will revalidate the plan on request.
+ */
+export function currentHostAdmissionApprovalIsActionable(
+ plan:unknown,hostId:unknown,at:number=Date.now()
+):boolean{
+ if(!plan||typeof plan!=="object"||Array.isArray(plan)
+   ||typeof hostId!=="string"||!Number.isFinite(at))return false;
+ const row=plan as Record<string,unknown>;
+ const preview=row.preview;
+ return typeof row.change_plan_id==="string"
+   &&/^cp_[A-Za-z0-9_-]{16,128}$/.test(row.change_plan_id)
+   &&Number.isSafeInteger(row.expected_revision)&&Number(row.expected_revision)>=0
+   &&!!preview&&typeof preview==="object"&&!Array.isArray(preview)
+   &&(preview as Record<string,unknown>).id===hostId
+   &&isObservedAbsoluteTime(row.valid_until)
+   &&Date.parse(row.valid_until)>at;
+}
+
 /** Admission, trust, connection and policy are independent Core concepts.
  * Do not stringify arbitrary nested Core state or trust an unverified time.
  */
@@ -328,6 +348,7 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate,onBus
   const visibleSelectedHost=matchingHostScope?selectedHost:"";
   const selected=visibleHosts?.find(h=>String(h.id)===visibleSelectedHost)||null;
   const scopedPreview=matchingHostScope?preview:null;
+  const approvalActionable=currentHostAdmissionApprovalIsActionable(scopedPreview,visibleSelectedHost);
   const readiness=hostReadiness(selected);
   const required=String(scopedPreview?.confirmation_class||"APPROVE");
   const history=observedEnrollmentHistory(data);
@@ -341,6 +362,20 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate,onBus
     if(step>=3)void refreshHosts();
     return()=>{inventoryGeneration.current+=1;approvalGeneration.current+=1;};
   },[step,operator?.id,operator?.role]);
+  useEffect(()=>{
+    // Expire idle approval UI as well as validating again at click time.
+    if(!scopedPreview||!matchingHostScope)return;
+    const deadline=Date.parse(scopedPreview.valid_until);
+    const delay=deadline-Date.now();
+    if(!Number.isFinite(delay)||delay>2147483647)return;
+    const timer=setTimeout(()=>{
+      if(Date.now()>=deadline){
+        setPreview(null);setConfirm("");
+        setError("Core approval Preview expired. Refresh Host inventory before requesting a new approval plan.");
+      }
+    },Math.max(0,delay));
+    return()=>clearTimeout(timer);
+  },[scopedPreview?.change_plan_id,scopedPreview?.valid_until,matchingHostScope,visibleSelectedHost]);
   async function refreshHosts(){
     approvalGeneration.current+=1;
     const generation=++inventoryGeneration.current;
@@ -411,7 +446,13 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate,onBus
   }
   async function applyApproval(){
     if(!admin||!matchingHostScope||!selectedHost||!scopedPreview?.change_plan_id
-      ||confirm!==required||busy)return;
+      ||!approvalActionable||confirm!==required||busy)return;
+    // Recheck at the instant of the click: render-time state can be stale.
+    if(!currentHostAdmissionApprovalIsActionable(scopedPreview,selectedHost)){
+      setPreview(null);setConfirm("");
+      setError("Core approval Preview expired. Refresh Host inventory and request a new plan.");
+      return;
+    }
     setBusy(true);setError("");
     try{
       const result=await api("/api/v1/managed-hosts/admission/apply",{
@@ -421,7 +462,12 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate,onBus
       if(!applied)throw new Error("Core admission apply result is unverified; refresh Host inventory before deciding whether to retry.");
       setMessage("Core admission review applied at revision "+applied.revision);
       setPreview(null);setConfirm("");refresh();setStep(4);
-    }catch(e:any){setError("Approval not confirmed: "+String(e.message||e))}
+    }catch(e:any){
+      // A timeout or malformed acknowledgement can follow a committed Core
+      // change. Retire the one-shot plan: never offer a blind second Apply.
+      setPreview(null);setConfirm("");
+      setError("Approval not confirmed; refresh Host inventory before deciding whether to retry. "+String(e.message||e));
+    }
     finally{setBusy(false)}
   }
   return <section className="dr-p0-onboarding" data-testid="p0-enrollment-journey">
@@ -495,7 +541,7 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate,onBus
             <p>Authoritative Core plan · valid until {scopedPreview.valid_until||"UNKNOWN"}</p>
             <details><summary>Review exact approval impact</summary><pre className="plan">{JSON.stringify({preview:scopedPreview.preview,impact:scopedPreview.impact},null,2)}</pre></details>
             <label className="dr-field"><span>Type {required} to approve</span><input value={confirm} onChange={e=>setConfirm(e.target.value)} placeholder={required}/></label>
-            <button className="danger" disabled={!admin||!matchingHostScope||!scopedPreview.change_plan_id||confirm!==required||busy} onClick={applyApproval}>Approve through Core</button>
+            <button className="danger" disabled={!admin||!matchingHostScope||!approvalActionable||confirm!==required||busy} onClick={applyApproval}>Approve through Core</button>
           </div>}
         </>}
         {step===4&&<>
