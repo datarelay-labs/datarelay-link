@@ -140,3 +140,24 @@ test("Direct version comparison never treats bidi/control or unbounded labels as
  assert.equal(observedVersionState("3.0.0","3.0.0"),"SAME");
  assert.equal(observedVersionState("3.0.0","2.4.0"),"DIFFERENT");
 });
+
+test("Known Server summary counts must exactly match Core's observed bounded Agent rows",()=>{
+ const valid=page("3.0.0",[
+  a("matching","3.0.0"),a("different","2.4.0",{drift:true}),
+  a("unreported","unknown",{unknown:true})
+ ]);
+ assert.equal(validatedVersionInventory(valid).hosts.length,3);
+ for(const broken of [
+  {...valid,drift_count:0},
+  {...valid,drift_count:2},
+  {...valid,unknown_count:0},
+  {...valid,unknown_count:2},
+  page("3.0.0",[a("unreported","unknown")]),
+  page("3.0.0",[a("outdated","2.4.0")])
+ ]){
+  assert.throws(()=>validatedVersionInventory(broken),/UNKNOWN|Core/);
+  const html=render(broken);
+  assert.match(html,/Core Agent version inventory could not be validated/);
+  assert.doesNotMatch(html,/Different versions<\/strong><p>0|No managed Agents/);
+ }
+});

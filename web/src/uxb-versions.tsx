@@ -47,9 +47,16 @@ export function validatedVersionInventory(payload:unknown){
     heartbeat:observedDisplay(host.heartbeat,"Not observed"),
     comparison:observedVersionState(data.server_version,host.version),
   }));
+  const hasKnownServer=observedVersionState(data.server_version,data.server_version)!=="UNKNOWN";
+  // Core derives both aggregates from this same limited Host snapshot.
+  // With an observed Server version, a missing/underreported drift or unknown
+  // count is as misleading as one exceeding the page bound.
+  if(hasKnownServer&&(hosts.filter(host=>host.comparison==="DIFFERENT").length!==data.drift_count
+    ||hosts.filter(host=>host.comparison==="UNKNOWN").length!==data.unknown_count))
+    throw new Error("Core Agent version summary contradicts observed rows. State is UNKNOWN.");
   return {
     serverVersion:data.server_version as string,hosts,limit:data.limit as number,
-    hasKnownServer:observedVersionState(data.server_version,data.server_version)!=="UNKNOWN",
+    hasKnownServer,
     maybeTruncated:hosts.length>=Number(data.limit),
   };
 }
