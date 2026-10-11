@@ -9,7 +9,7 @@ import {AccessEvidenceExplorer,GuidedPolicyJourney,coreFlowKey,coreCutoffKey,vis
 import {EnrollmentOnboarding} from "./p0-enrollment";
 import {navGroups,groupFor,labelFor,pageDescriptions,visibleRoute,navMatches,setupContextForObjectFamily} from "./uxb-navigation";
 import {FirstUseHome,observedBoundedCountPair,observedHomeAttention,isFreshInstallation,observedRecentFeed,observedNumber,accessPlaneCount,coreHealthState,type RecentFeed} from "./uxb-home";
-import {requireObservedMenuPayload,requireObservedTemporaryAccessApplyForPlan,requireObservedInventoryContinuation,requireObservedObjectContinuation,requireObservedAuditRetention,auditRetentionRunPermitted,requireObservedAccessHygiene,hygieneInspectTarget,requireObservedJobStart,requireObservedFleetApply,requireObservedFleetPreview,requireObservedFleetApplyForPreview,requireObservedAuditExport,requireObservedRolloutPreview,requireObservedInventoryExport,requireObservedJobDetail,requireObservedJobCancellation,isPartialCorePage,selectMenuPage,combineObservedPolicyPlanes,policyStateLabel,policyExpiryLabel,type MenuPagePosition} from "./uxb-menu-evidence";
+import {requireObservedMenuPayload,requireObservedTemporaryAccessApplyForPlan,requireObservedEmergencyCutoffApplyForPlan,requireObservedInventoryContinuation,requireObservedObjectContinuation,requireObservedAuditRetention,auditRetentionRunPermitted,requireObservedAccessHygiene,hygieneInspectTarget,requireObservedJobStart,requireObservedFleetApply,requireObservedFleetPreview,requireObservedFleetApplyForPreview,requireObservedAuditExport,requireObservedRolloutPreview,requireObservedInventoryExport,requireObservedJobDetail,requireObservedJobCancellation,isPartialCorePage,selectMenuPage,combineObservedPolicyPlanes,policyStateLabel,policyExpiryLabel,type MenuPagePosition} from "./uxb-menu-evidence";
 import {RemoteServiceEditor} from "./uxb-remote-service";
 import {RevisionHistory} from "./uxb-revisions";
 import {AgentVersionDrift} from "./uxb-versions";
@@ -890,11 +890,18 @@ function AccessOperations({operator,onNavigate,context}:{operator:any,onNavigate
         confirmation:cutoffConfirm,
       })});
       if(cutoffPlanGeneration.current!==token)return;
-      setCutoffMessage((cutoffOperation==="clear"?"Cutoff cleared":"Cutoff applied")+" at revision "+String(result.revision??"UNKNOWN")+"; existing sessions terminated: "+String(result.active_sessions_terminated??"UNKNOWN"));
+      const confirmed=requireObservedEmergencyCutoffApplyForPlan(result,currentCutoffPreview,plane,cutoffOperation);
+      setCutoffMessage((cutoffOperation==="clear"?"Cutoff cleared":"Cutoff applied")+" at revision "+confirmed.revision+
+        "; existing sessions terminated: "+confirmed.active_sessions_terminated);
       setCutoffPreview(null);setCutoffConfirm("");
       await loadLive();
       await loadCutoffs();
-    }catch(e:any){if(cutoffPlanGeneration.current===token)setError(e.message||String(e))}
+    }catch(e:any){if(cutoffPlanGeneration.current===token){
+      // An indeterminate HTTP outcome may have committed a one-shot Core
+      // incident plan. Require fresh inventory/preview rather than repeat.
+      setCutoffPreview(null);setCutoffConfirm("");setCutoffMessage("");
+      setError("Cutoff outcome UNKNOWN. Inspect Core cutoff inventory and Change History before any retry. "+String(e.message||e));
+    }}
     finally{if(cutoffPlanGeneration.current===token)setCutoffBusy(false)}
   }
   const layers=(matchingDiagnosis?.layers||[]).map((x:any)=>({layer:x.layer,status:x.status,summary:x.summary}));

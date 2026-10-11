@@ -77,6 +77,48 @@ export function requireObservedTemporaryAccessApplyForPlan(
  return {revision:row.revision as number};
 }
 
+/** Emergency cutoff is a Core-only, one-shot incident Change Plan. A
+ * syntactically successful HTTP response cannot confirm the desired access
+ * state unless the exact plan, scope, operation and revision are acknowledged.
+ */
+export function requireObservedEmergencyCutoffApplyForPlan(
+ input:unknown,plan:unknown,plane:unknown,action:unknown
+):{revision:number,active_sessions_terminated:false}{
+ const unknown=():never=>{throw new Error(
+   "UNKNOWN · Core Emergency Cutoff Apply receipt is unverified. Inspect Core cutoff inventory and Change History before any retry."
+ )};
+ const obj=(v:unknown):v is Record<string,unknown>=>
+   !!v&&typeof v==="object"&&!Array.isArray(v);
+ if(!obj(input)||!obj(plan)||!["remote","internet","ai"].includes(String(plane))
+   ||!["apply","clear"].includes(String(action)))return unknown();
+ const receipt=input,review=plan,operation="emergency-cutoff."+action;
+ const validScope=plane==="remote"?["plane","remote-service"]
+   :plane==="internet"?["plane","managed-host"]:["plane","ai-identity"];
+ const ident=review.scope_ref;
+ if(typeof review.change_plan_id!=="string"
+   ||!/^cp_[A-Za-z0-9_-]{16,128}$/.test(review.change_plan_id)
+   ||review.operation_class!=="INCIDENT_CHANGE"
+   ||review.resource_type!=="emergency-cutoff"||review.operation!==operation
+   ||typeof review.scope_kind!=="string"||!validScope.includes(review.scope_kind)
+   ||typeof ident!=="string"||ident.length>160
+   ||/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/.test(ident)
+   ||(review.scope_kind==="plane"?ident!=="":!ident)
+   ||review.resource_ref!==(review.scope_kind==="plane"?plane:review.scope_kind+":"+ident)
+   ||review.desired_active!==(action==="apply")
+   ||review.no_change!==false
+   ||review.confirmation_class!=="CONFIRM CUTOFF"
+   ||!Number.isSafeInteger(review.expected_revision)||Number(review.expected_revision)<0
+   ||!isObservedAbsoluteTime(review.valid_until)
+   ||Date.parse(review.valid_until)<=Date.now())return unknown();
+ if(receipt.status!=="APPLIED"||receipt.operation!==operation
+   ||receipt.plane!==plane||receipt.scope_kind!==review.scope_kind
+   ||receipt.scope_ref!==ident||receipt.active!==(action==="apply")
+   ||receipt.active_sessions_terminated!==false
+   ||!Number.isSafeInteger(receipt.revision)
+   ||Number(receipt.revision)<=Number(review.expected_revision))return unknown();
+ return {revision:receipt.revision as number,active_sessions_terminated:false};
+}
+
 /** Keyset page navigation only uses observed opaque Core cursors. The UI may
  * navigate backwards using previous request cursors; it never guesses a total. */
 export type MenuPagePosition={cursor:string,history:string[]};

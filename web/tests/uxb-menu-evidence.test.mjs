@@ -467,3 +467,45 @@ test("P0 Temporary Access UI never claims applied from HTTP 200 without exact Co
  assert.match(panel,/setPreview\(null\);setConfirmation\(""\);/);
  assert.match(panel,/not a requester\/reviewer approval/);
 });
+
+test("UX-8 Emergency Cutoff Apply requires exact Core plan and verified status, not HTTP 200",()=>{
+ const preview={change_plan_id:"cp_"+"a".repeat(32),operation_class:"INCIDENT_CHANGE",
+   resource_type:"emergency-cutoff",operation:"emergency-cutoff.apply",
+   resource_ref:"remote-service:service-1",scope_kind:"remote-service",
+   scope_ref:"service-1",desired_active:true,confirmation_class:"CONFIRM CUTOFF",
+   no_change:false,expected_revision:12,valid_until:"2032-01-01T00:00:00Z"};
+ const ack={status:"APPLIED",revision:13,operation:"emergency-cutoff.apply",
+   plane:"remote",scope_kind:"remote-service",scope_ref:"service-1",
+   active:true,active_sessions_terminated:false};
+ assert.deepEqual(menu.requireObservedEmergencyCutoffApplyForPlan(ack,preview,"remote","apply"),
+   {revision:13,active_sessions_terminated:false});
+ for(const [plane,kind,ref] of [["remote","plane",""],
+   ["internet","managed-host","host-1"],["ai","ai-identity","bot-1"]]){
+   const resource=kind==="plane"?plane:kind+":"+ref;
+   const p={...preview,resource_ref:resource,scope_kind:kind,scope_ref:ref};
+   const a={...ack,plane,scope_kind:kind,scope_ref:ref};
+   assert.deepEqual(menu.requireObservedEmergencyCutoffApplyForPlan(a,p,plane,"apply"),
+     {revision:13,active_sessions_terminated:false});
+ }
+ const clearPreview={...preview,operation:"emergency-cutoff.clear",desired_active:false};
+ const clearReceipt={...ack,operation:"emergency-cutoff.clear",active:false};
+ assert.deepEqual(menu.requireObservedEmergencyCutoffApplyForPlan(clearReceipt,
+   clearPreview,"remote","clear"),{revision:13,active_sessions_terminated:false});
+ for(const bad of [null,{},[],{...ack,status:"NO_CHANGE"},
+   {...ack,revision:12},{...ack,revision:"13"},{...ack,plane:"ai"},
+   {...ack,scope_ref:"service-2"},{...ack,scope_kind:"plane"},
+   {...ack,active:false},{...ack,active_sessions_terminated:true},
+   {...ack,operation:"emergency-cutoff.clear"}])
+   assert.throws(()=>menu.requireObservedEmergencyCutoffApplyForPlan(bad,preview,"remote","apply"),
+     /UNKNOWN|Core/,JSON.stringify(bad));
+ for(const bad of [{...preview,no_change:true},{...preview,expected_revision:"12"},
+   {...preview,confirmation_class:"APPLY"},{...preview,change_plan_id:""},
+   {...preview,operation_class:"CHANGE"},{...preview,resource_ref:"remote-service:other"},
+   {...preview,scope_kind:"managed-host"},{...preview,valid_until:"invalid"}])
+   assert.throws(()=>menu.requireObservedEmergencyCutoffApplyForPlan(ack,bad,"remote","apply"),/UNKNOWN|Core/);
+ const src=readFileSync(join(root,"src","main.tsx"),"utf8");
+ assert.match(src,/requireObservedEmergencyCutoffApplyForPlan\(result,currentCutoffPreview,plane,cutoffOperation\)/);
+ assert.match(src,/setCutoffMessage\(\(cutoffOperation==="clear"\?"Cutoff cleared":"Cutoff applied"\)\+" at revision "\+confirmed\.revision/);
+ assert.match(src,/setCutoffPreview\(null\);setCutoffConfirm\(""\)/);
+ assert.match(src,/Inspect Core cutoff inventory and Change History before any retry/);
+});
