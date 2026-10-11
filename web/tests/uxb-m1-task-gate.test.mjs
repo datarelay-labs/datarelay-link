@@ -9,11 +9,11 @@ import React from "react";
 import {renderToStaticMarkup} from "react-dom/server";
 
 const root=dirname(dirname(fileURLToPath(import.meta.url)));
-let temp,nav,doctor,views;
+let temp,nav,doctor,views,revisions;
 before(async()=>{
  temp=mkdtempSync(join(root,"node_modules",".drlink-m1-task-gate-"));
  for(const [id,file] of [
-  ["nav","uxb-navigation.ts"],["doctor","uxb-doctor.tsx"],["views","uxb-saved-views.tsx"]
+  ["nav","uxb-navigation.ts"],["doctor","uxb-doctor.tsx"],["views","uxb-saved-views.tsx"],["revisions","uxb-revisions.tsx"]
  ]){
   const outfile=join(temp,id+".mjs");
   await build({entryPoints:[join(root,"src",file)],outfile,
@@ -23,6 +23,7 @@ before(async()=>{
  nav=await import(pathToFileURL(join(temp,"nav.mjs")).href);
  doctor=await import(pathToFileURL(join(temp,"doctor.mjs")).href);
  views=await import(pathToFileURL(join(temp,"views.mjs")).href);
+ revisions=await import(pathToFileURL(join(temp,"revisions.mjs")).href);
 });
 after(()=>{if(temp)rmSync(temp,{recursive:true,force:true})});
 
@@ -34,6 +35,7 @@ test("M1 Activity & Health task routes remain discoverable for all three declare
   assert.ok(nav.navMatches("saved views",role).some(x=>x.id==="views"),role);
   assert.ok(nav.navMatches("agent version drift",role).some(x=>x.id==="versions"),role);
   assert.ok(nav.navMatches("audit",role).some(x=>x.id==="audit"),role);
+  assert.ok(nav.navMatches("change history",role).some(x=>x.id==="revisions"),role);
   assert.equal(nav.visibleRoute("users",role),role==="Admin",role);
   assert.equal(nav.visibleRoute("integrations",role),role==="Admin",role);
   assert.equal(nav.visibleRoute("drafts",role),role!=="Read Only",role);
@@ -57,6 +59,15 @@ test("M1 Doctor to Health/Jobs and private Saved View workflows retain truthful 
   assert.ok(viewsHtml.includes(marker),marker);
  }
  assert.doesNotMatch(viewsHtml,/Connection granted|Policy authorized/);
+ const revisionHtml=renderToStaticMarkup(React.createElement(revisions.RevisionHistory,{
+  initial:{resource_type:"revision",limit:100,next_cursor:null,items:[
+   {revision:5,actor:"operator-1",command:"set policy",summary:"Narrow access",created_at:"2026-10-11T01:00:00Z"}
+  ]},api:async()=>{throw Error("SSR must not fetch Core")}
+ }));
+ assert.match(revisionHtml,/Change History/);
+ assert.match(revisionHtml,/Narrow access/);
+ assert.match(revisionHtml,/not live connection status/);
+ assert.doesNotMatch(revisionHtml,/No configuration revisions/);
 });
 test("M1 optional Web wiring and narrow-screen table scrolling are source evidence, not Browser acceptance",()=>{
  const source=readFileSync(join(root,"src","main.tsx"),"utf8");
