@@ -342,6 +342,8 @@ def classify_mcp_server(host: dict, result: subprocess.CompletedProcess, expecte
         summary["reason"] = "MCP_SERVER_SINGLE443_NOT_VERIFIED"
     elif summary["mcp_public_url"] != "https://" + host["public_hostname"] + "/mcp":
         summary["reason"] = "MCP_SERVER_PUBLIC_ENDPOINT_HOSTNAME_MISMATCH"
+    elif summary["tls_mode"] not in ("AUTO_ACME", "USER_CERTIFICATE"):
+        summary["reason"] = "MCP_SERVER_PUBLIC_TLS_MODE_NOT_CLOUD_COMPATIBLE"
     elif summary["certificate_probe_failed"] or summary["certificate"] != "VALID":
         summary["reason"] = "MCP_SERVER_PUBLIC_CERTIFICATE_ABSENT_OR_INVALID"
     elif summary["doctor_nonpass"] or not summary["doctor_certificate_pass"]:

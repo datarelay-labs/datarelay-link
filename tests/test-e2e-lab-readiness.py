@@ -209,6 +209,7 @@ class LabReadinessSupportingTests(unittest.TestCase):
         self.assertEqual(observed["certificate"], "VALID")
         for changed in (reply.replace("ID=ubuntu", "ID=rocky"),
                         reply.replace(HASH_A, HASH_B),
+                        reply.replace("AUTO_ACME", "PRIVATE_CA"),
                         reply.replace("single443", "direct"),
                         reply.replace("  VALID", "  ABSENT"),
                         reply.replace("mcp.example.test/mcp", "wrong.example.test/mcp"),
