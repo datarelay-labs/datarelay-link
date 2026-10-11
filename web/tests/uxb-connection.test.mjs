@@ -389,7 +389,7 @@ test("Host approval needs explicit selection and missing enrollment evidence is 
  assert.match(setupSource,/if\(currentHost&&\!list\.some/);
  assert.match(setupSource,/chooseRemoteHost\(e\.target\.value\)/);
  assert.match(setupSource,/setServiceDraft\(prev=>\(\{\.\.\.prev,owner:""\}\)\)/);
- assert.match(enrollSource,/setSelectedHost\(value=>value&&items\.some/);
+ assert.match(enrollSource,/setSelectedHost\(value=>value&&observed\.items\.some/);
  assert.match(enrollSource,/Select an observed Managed Host/);
 });
 
@@ -634,4 +634,48 @@ test("UX-4 Agent last observation uses only verifiable absolute Core times",()=>
  }
  assert.equal(enrollment.hostReadiness({...valid,agent_heartbeat_at:null}).observedAt,
   "2026-09-18T10:10:00Z");
+});
+
+test("UX-3 onboarding chooses only unique bounded Host inventory, not arbitrary Core data",()=>{
+ const host={id:"machine-a",name:" 서울-1 ",admission_state:"PENDING_APPROVAL",
+  trust_status:"untrusted",connected:0,last_seen:"2026-10-11T03:10:11Z",
+  private_token:"PRIVATE_TOKEN",credential:{secret:"PRIVATE_CREDENTIAL"}};
+ const page={resource_type:"managed-host",items:[host],limit:100,next_cursor:null};
+ const valid=enrollment.observedEnrollmentHostPage(page);
+ assert.equal(valid?.complete,true);
+ assert.deepEqual(valid?.items,[{id:"machine-a",name:"서울-1",
+  admission_state:"PENDING_APPROVAL",trust_status:"untrusted",
+  connected:0,last_seen:"2026-10-11T03:10:11Z"}]);
+ assert.doesNotMatch(JSON.stringify(valid),/PRIVATE_/);
+ assert.equal(enrollment.observedEnrollmentHostPage({...page,next_cursor:"opaque-2"})?.complete,false);
+ assert.equal(enrollment.observedEnrollmentHostPage({...page,next_cursor:undefined})?.complete,null);
+ for(const invalid of [
+  null,{},{items:null},{items:"text"},{...page,resource_type:"remote-service"},
+  {...page,items:[null]},{...page,items:[{...host,id:{secret:"PRIVATE"}}]},
+  {...page,items:[{...host,id:"machine\u202e-a"}]},
+  {...page,items:[host,host]},{...page,items:[{...host,admission_state:"INVALID"}]},
+  {...page,items:Array.from({length:101},(_,i)=>({...host,id:"machine-"+i}))},
+  {...page,limit:101},{...page,next_cursor:{secret:"PRIVATE_CURSOR"}},
+ ]){
+  const observed=enrollment.observedEnrollmentHostPage(invalid);
+  assert.equal(observed,null,JSON.stringify(invalid)?.slice(0,70));
+ }
+});
+test("UX-3 enrollment Host options tolerate malformed display labels without leaking Core fields",()=>{
+ const page={resource_type:"managed-host",next_cursor:"continued",
+  items:[{id:"host-a",name:{secret:"PRIVATE_HOSTNAME"},label:"oops\u2066",
+   admission_state:"APPROVED",trust_status:{secret:"PRIVATE_TRUST"},
+   connected:"true",agent_heartbeat_at:{secret:"PRIVATE_TIME"}}]};
+ const observed=enrollment.observedEnrollmentHostPage(page);
+ assert.equal(observed?.items[0]?.name,"host-a");
+ assert.equal(observed?.items[0]?.connected,null);
+ assert.equal(observed?.items[0]?.trust_status,"UNKNOWN");
+ assert.equal(observed?.items[0]?.agent_heartbeat_at,undefined);
+ assert.doesNotMatch(JSON.stringify(observed),/PRIVATE_|\u2066/);
+ const src=readFileSync(join(root,"src","p0-enrollment.tsx"),"utf8");
+ assert.match(src,/const observed=observedEnrollmentHostPage\(result\)/);
+ assert.match(src,/setHosts\(observed\.items\)/);
+ assert.match(src,/setHostsComplete\(observed\.complete\)/);
+ assert.doesNotMatch(src,/setHosts\(result\.items\)/);
+ assert.match(src,/Other Hosts may exist beyond this Core page/);
 });

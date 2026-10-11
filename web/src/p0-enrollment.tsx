@@ -51,6 +51,59 @@ export function observedEnrollmentHistory(data:unknown):ObservedEnrollmentHistor
    partial:total!==null?Number(total)>items.length:items.length>=50};
 }
 
+/** UX-3: the first Core managed-host page is role-scoped and bounded.
+ * Never select a spoofed/duplicate identity, interpret a foreign-resource
+ * response as a Host, or show a nested arbitrary label or credential.
+ */
+export type ObservedEnrollmentHost={
+ id:string,name:string,admission_state:string,trust_status:string,
+ connected:boolean|number|null,agent_heartbeat_at?:string,last_seen?:string
+};
+export function observedEnrollmentHostPage(input:unknown):{
+ items:ObservedEnrollmentHost[],complete:boolean|null
+}|null{
+ if(!input||typeof input!=="object"||Array.isArray(input))return null;
+ const page=input as Record<string,unknown>;
+ if(page.resource_type!==undefined&&page.resource_type!=="managed-host"
+   ||!Array.isArray(page.items)||page.items.length>100
+   ||page.limit!==undefined&&(!Number.isSafeInteger(page.limit)
+     ||Number(page.limit)<1||Number(page.limit)>100)
+   ||page.next_cursor!==undefined&&page.next_cursor!==null
+     &&(typeof page.next_cursor!=="string"||!page.next_cursor
+       ||page.next_cursor.length>1024||BAD_ENROLLMENT_TEXT.test(page.next_cursor)))
+   return null;
+ const observed:ObservedEnrollmentHost[]=[];
+ const seen=new Set<string>();
+ for(const raw of page.items){
+   if(!raw||typeof raw!=="object"||Array.isArray(raw))return null;
+   const row=raw as Record<string,unknown>;
+   if(typeof row.id!=="string"
+     ||!/^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,159}$/.test(row.id)
+     ||seen.has(row.id)
+     ||!["PENDING_APPROVAL","APPROVED","QUARANTINED"].includes(
+       typeof row.admission_state==="string"?row.admission_state:""))
+     return null;
+   seen.add(row.id);
+   const name=historyText(row.name)!=="UNKNOWN"?historyText(row.name)
+     :historyText(row.label)!=="UNKNOWN"?historyText(row.label):row.id;
+   const connected=[true,false,1,0].includes(row.connected as any)
+     ?row.connected as boolean|number:null;
+   const trust_status=historyText(row.trust_status);
+   const host:ObservedEnrollmentHost={
+     id:row.id,name,admission_state:row.admission_state as string,
+     trust_status,connected
+   };
+   if(isObservedAbsoluteTime(row.agent_heartbeat_at))
+     host.agent_heartbeat_at=row.agent_heartbeat_at;
+   if(isObservedAbsoluteTime(row.last_seen))
+     host.last_seen=row.last_seen;
+   observed.push(host);
+ }
+ const complete=page.next_cursor===null?true
+   :typeof page.next_cursor==="string"?false:null;
+ return {items:observed,complete};
+}
+
 /** Admission, trust, connection and policy are independent Core concepts.
  * Do not stringify arbitrary nested Core state or trust an unverified time.
  */
@@ -91,7 +144,8 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate,onBus
   const [step,setStep]=useState(1),[mode,setMode]=useState("zero-touch"),[platform,setPlatform]=useState("linux");
   const [ttl,setTtl]=useState("3600"),[label,setLabel]=useState(""),[note,setNote]=useState("");
   const [preApproved,setPreApproved]=useState(false),[issued,setIssued]=useState<any>(null);
-  const [hosts,setHosts]=useState<any[]|null>(null),[selectedHost,setSelectedHost]=useState("");
+  const [hosts,setHosts]=useState<ObservedEnrollmentHost[]|null>(null),[selectedHost,setSelectedHost]=useState("");
+  const [hostsComplete,setHostsComplete]=useState<boolean|null>(null);
   const [fetchBusy,setFetchBusy]=useState(false),[busy,setBusy]=useState(false);
   useEffect(()=>{onBusyChange?.(busy)},[busy]);
   useEffect(()=>()=>{onBusyChange?.(false)},[]);
@@ -99,6 +153,7 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate,onBus
   const [copyStatus,setCopyStatus]=useState("");
   const [preview,setPreview]=useState<any>(null),[confirm,setConfirm]=useState(""),[message,setMessage]=useState("");
   const approvalGeneration=useRef(0);
+  const inventoryGeneration=useRef(0);
   const admin=operator?.role==="Admin";
   const selected=hosts?.find(h=>String(h.id)===selectedHost)||null;
   const readiness=hostReadiness(selected);
@@ -107,16 +162,22 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate,onBus
   useEffect(()=>{if(step>=3)void refreshHosts()},[step]);
   async function refreshHosts(){
     approvalGeneration.current+=1;
+    const generation=++inventoryGeneration.current;
     setFetchBusy(true);setInventoryError("");setPreview(null);setConfirm("");
     try{
       const result=await api("/api/v1/inventory?resource_type=managed-host&limit=100");
-      if(!Array.isArray(result?.items))throw new Error("Managed Host inventory response incomplete");
-      const items=result.items;
-      setHosts(items);
-      // Explicit selection is required; never approve a different first Host.
-      setSelectedHost(value=>value&&items.some((h:any)=>String(h.id)===value)?value:"");
-    }catch(e:any){setHosts(null);setSelectedHost("");setInventoryError(String(e.message||e))}
-    finally{setFetchBusy(false)}
+      if(generation!==inventoryGeneration.current)return;
+      const observed=observedEnrollmentHostPage(result);
+      if(!observed)throw new Error("Managed Host inventory response incomplete or malformed");
+      setHosts(observed.items);setHostsComplete(observed.complete);
+      // Explicit selection is required; never approve another observed Host.
+      setSelectedHost(value=>value&&observed.items.some(h=>h.id===value)?value:"");
+    }catch(e:any){
+      if(generation===inventoryGeneration.current){
+        setHosts(null);setHostsComplete(null);setSelectedHost("");
+        setInventoryError(String(e?.message||e));
+      }
+    }finally{if(generation===inventoryGeneration.current)setFetchBusy(false)}
   }
   async function copyIssued(label:string,value:string){
     setCopyStatus("");
@@ -213,11 +274,19 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate,onBus
           <p className="muted">Current data comes from the canonical Managed Host inventory, not from the enrollment ticket.</p>
         </div><button className="secondary" onClick={refreshHosts} disabled={busy||fetchBusy}>{fetchBusy?"Refreshing…":"Refresh inventory"}</button></div>
         {inventoryError&&<p className="error" role="alert">Inventory unavailable: {inventoryError}</p>}
+        {hosts!==null&&hostsComplete!==true&&<p className="muted" role="status">
+          Other Hosts may exist beyond this Core page. Loaded entries are not proof
+          of a full fleet inventory; use Servers &amp; Agents for additional pages.
+        </p>}
         <label className="dr-field"><span>Managed Host</span><select value={selectedHost} disabled={busy||fetchBusy} onChange={e=>{approvalGeneration.current+=1;setSelectedHost(e.target.value);setPreview(null);setConfirm("")}}>
-          {!selectedHost&&<option value="">{hosts===null?"Host inventory: UNKNOWN":hosts.length?"Select an observed Managed Host":"No observed Hosts"}</option>}
+          {!selectedHost&&<option value="">{hosts===null?"Host inventory: UNKNOWN":hosts.length?"Select an observed Managed Host"
+          :hostsComplete===true?"No observed Hosts":"No Hosts observed on this Core page"}</option>}
           {(hosts||[]).map(h=><option value={String(h.id)} key={h.id}>{h.name||h.label||h.id} · {h.id}</option>)}
         </select></label>
-        <p className="dr-p0-status">{selected?hostReadinessLabel(selected):hosts===null?"HOST INVENTORY UNKNOWN":(hosts.length?"NO HOST SELECTED · select the intended Host":"NO HOST OBSERVED · enrollment may still be pending")}</p>
+        <p className="dr-p0-status">{selected?hostReadinessLabel(selected):hosts===null?"HOST INVENTORY UNKNOWN"
+          :hosts.length?"NO HOST SELECTED · select the intended Host"
+          :hostsComplete===true?"NO HOST OBSERVED · enrollment may still be pending"
+          :"NO HOST IN LOADED PAGE · CHECK OTHER CORE PAGES"}</p>
         <div className="dr-p0-counters">
           <span>Admission: {readiness.admission}</span><span>Trust: {readiness.trust}</span>
           <span>Connection: {readiness.connection}</span><span>Last observation: {readiness.observedAt}</span>
