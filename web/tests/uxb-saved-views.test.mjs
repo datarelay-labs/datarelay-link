@@ -121,3 +121,30 @@ test("Fail closed for unknown admission and misplaced service admission",()=>{
   resource_type:"managed-host",filter:"",admission:"all"
  }}),null);
 });
+
+test("Malformed saved-view display metadata cannot crash the private list or reveal arbitrary Core fields",()=>{
+ const source=[{id:"view-1",name:{secret:"PRIVATE_NAME"},
+  updated_at:{token:"PRIVATE_UPDATED"},payload:{resource_type:"managed-host",filter:"offline"},
+  private_key:"PRIVATE_KEY"}];
+ const html=render(source);
+ assert.match(html,/UNKNOWN|Unnamed view/);
+ assert.match(html,/Open saved filter/);
+ assert.doesNotMatch(html,/PRIVATE_|\[object Object\]/);
+});
+test("Saved filter drafts and recalled filters reject bidi/control-text impersonation",()=>{
+ for(const bad of ["ssh\u202e", "host\nspoof", "server\u2066", "\u0000hidden"]){
+  assert.equal(saveDraftForResource("host",bad),null);
+  assert.equal(readSavedView({payload:{resource_type:"managed-host",filter:bad}}),null);
+  assert.equal(readSavedView({payload:{resource_type:"remote-service",filter:bad}}),null);
+ }
+});
+test("Saved-view update timestamp must be trusted absolute Core time or visibly UNKNOWN",()=>{
+ const good={id:"v1",name:"Good",updated_at:"2026-10-11T00:01:02Z",
+  payload:{resource_type:"managed-host",filter:"offline"}};
+ assert.match(render([good]),/2026-10-11T00:01:02Z/);
+ for(const bad of ["2026-02-31T00:00:00Z","yesterday","2026-10-11T00:00:00",42,{credential:"PRIVATE"}]){
+  const html=render([{...good,updated_at:bad}]);
+  assert.match(html,/UNKNOWN/);
+  assert.doesNotMatch(html,/PRIVATE|\[object Object\]/);
+ }
+});

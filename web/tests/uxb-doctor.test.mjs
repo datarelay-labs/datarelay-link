@@ -59,3 +59,27 @@ test("Unknown attention count remains UNKNOWN instead of an invented zero",()=>{
  const html=render({...data(),attention:{}});
  assert.match(html,/Other Core attention<\/strong><p>UNKNOWN/);
 });
+
+test("Malformed optional Doctor facts stay UNKNOWN without React crashes or nested-data disclosure",()=>{
+ const raw=data([{
+  id:"runtime.remote",plane:{internal:"PRIVATE_PLANE"},status:"PASS",
+  message:{credential:"PRIVATE_MESSAGE"},error:{secret:"PRIVATE_ERROR"},
+  db_revision:{internal:"PRIVATE_REVISION"},generation:[42],
+  activated_at:{token:"PRIVATE_DATE"},unused_metadata:"PRIVATE_UNUSED"
+ }]);
+ const html=render(raw);
+ assert.match(html,/UNKNOWN checks<\/strong><p>1/);
+ assert.match(html,/UNKNOWN · Core reason unavailable/);
+ assert.match(html,/UNKNOWN/);
+ assert.doesNotMatch(html,/PRIVATE_|\[object Object\]/);
+});
+test("Invalid duplicate or unbounded Doctor identifiers cannot fabricate distinct checks",()=>{
+ for(const bad of [
+  data([{id:"runtime.remote",status:"PASS"},{id:"runtime.remote",status:"PASS"}]),
+  data([{id:"runtime.\u202e",status:"PASS"}]),
+  data([{id:"a".repeat(170),status:"PASS"}]),
+  data(Array.from({length:33},(_,i)=>({id:"runtime."+i,status:"PASS"})))
+ ]){
+  assert.throws(()=>validatedDoctorEvidence(bad),/Core|UNKNOWN/);
+ }
+});

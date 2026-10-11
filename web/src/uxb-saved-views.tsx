@@ -1,5 +1,14 @@
 import React,{useState} from "react";
+import {isObservedAbsoluteTime} from "./uxb-integrations-state";
 
+/** Private filter metadata is not Core authorization evidence; reject
+ * control/bidi spoofing and avoid rendering arbitrary nested values. */
+const UNSAFE_VIEW_TEXT=/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/;
+function visibleViewText(value:unknown,max=80):string{
+  if(typeof value!=="string"||value.length>max||UNSAFE_VIEW_TEXT.test(value))
+    return "";
+  return value.trim();
+}
 export type StoredViewTarget="managed-host"|"remote-service";
 export type HostAdmission="all"|"PENDING_APPROVAL"|"APPROVED"|"QUARANTINED";
 export function isSavedAdmission(value:unknown):value is HostAdmission{
@@ -19,7 +28,8 @@ export function conflictingSavedViewName(items:unknown,name:unknown):string|null
 }
 // A saved view is a personal display preference, never an access rule.
 export function saveDraftForResource(kind:unknown,filter:unknown,admission:unknown="all"):SavedFilterDraft|null{
-  if((kind!=="host"&&kind!=="service")||typeof filter!=="string")return null;
+  if((kind!=="host"&&kind!=="service")||typeof filter!=="string"
+    ||UNSAFE_VIEW_TEXT.test(filter))return null;
   if(!isSavedAdmission(admission)||(kind==="service"&&admission!=="all"))return null;
   const text=filter.trim();
   if(text.length>120||(!text&&admission==="all"))return null;
@@ -32,7 +42,8 @@ export function readSavedView(value:unknown):{route:"hosts"|"services",filter:st
   if(!value||typeof value!=="object"||Array.isArray(value))return null;
   const payload=(value as any).payload;
   if(!payload||typeof payload!=="object"||Array.isArray(payload))return null;
-  if(typeof payload.filter!=="string"||payload.filter.length>120)return null;
+  if(typeof payload.filter!=="string"||payload.filter.length>120
+    ||UNSAFE_VIEW_TEXT.test(payload.filter))return null;
   if(payload.resource_type==="managed-host"){
     if(payload.admission!==undefined&&!isSavedAdmission(payload.admission))return null;
     if(!payload.filter.trim()&&(payload.admission===undefined||payload.admission==="all"))return null;
@@ -114,9 +125,12 @@ export function SavedViewsWorkspace({data,api,onNavigate,refresh,initialDraft}:{
         <thead><tr><th>View</th><th>Resources</th><th>Filter</th><th>Updated</th><th>Action</th></tr></thead>
         <tbody>{rows.map((item:any,i:number)=>{
           const parsed=readSavedView(item);
-          return <tr key={item.id||i}><td><strong>{item.name||item.id||"Unnamed view"}</strong></td>
+          const safeId=visibleViewText(item?.id,160);
+          const safeName=visibleViewText(item?.name)||safeId||"Unnamed view";
+          const updated=isObservedAbsoluteTime(item?.updated_at)?item.updated_at:"UNKNOWN";
+          return <tr key={safeId||i}><td><strong>{safeName}</strong></td>
             <td>{parsed?(parsed.route==="hosts"?"Servers & Agents":"Published Services"):"Target unspecified"}</td>
-            <td>{parsed?(parsed.filter||"No text")+(parsed.admission?" · "+parsed.admission.replaceAll("_"," "):""):"Not specified"}</td><td>{item.updated_at||"UNKNOWN"}</td>
+            <td>{parsed?(parsed.filter||"No text")+(parsed.admission?" · "+parsed.admission.replaceAll("_"," "):""):"Not specified"}</td><td>{updated}</td>
             <td>{parsed?<button type="button" className="secondary"
               onClick={()=>onNavigate?.(parsed.route,"connections",{savedFilter:parsed.filter,savedAdmission:parsed.admission||"all"})}>
               Open saved filter →</button>:<span className="muted">

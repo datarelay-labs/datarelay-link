@@ -1,5 +1,18 @@
 import React,{useState} from "react";
 
+/** A successful Core HTTP read does not make nested UI values renderable.
+ * Keep only bounded scalar evidence. An invalid reason cannot establish PASS.
+ */
+const DOCTOR_ID=/^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,159}$/;
+const DOCTOR_BAD=/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/;
+function doctorText(value:unknown,fallback="UNKNOWN"):string{
+  if(typeof value!=="string"||value.length>240||DOCTOR_BAD.test(value))
+    return fallback;
+  return value.trim()||fallback;
+}
+function doctorCount(value:unknown):number|string{
+  return typeof value==="number"&&Number.isSafeInteger(value)&&value>=0?value:"UNKNOWN";
+}
 /** The Core Doctor is a read-only snapshot. Missing checks do not prove health. */
 export function validatedDoctorEvidence(payload:unknown){
   if(!payload||typeof payload!=="object"||Array.isArray(payload))
@@ -9,14 +22,27 @@ export function validatedDoctorEvidence(payload:unknown){
     ||!Array.isArray(report.checks)
     ||!report.health||typeof report.health!=="object"||Array.isArray(report.health)
     ||!report.attention||typeof report.attention!=="object"||Array.isArray(report.attention)
+    ||report.checks.length>32
     ||report.checks.some((row:any)=>!row||typeof row!=="object"||Array.isArray(row)
-      ||typeof row.id!=="string"||!row.id))
+      ||typeof row.id!=="string"||!DOCTOR_ID.test(row.id))
+    ||new Set((report.checks as any[]).map(row=>row.id)).size!==report.checks.length)
     throw new Error("Core Doctor evidence is incomplete or not certified read-only. State is UNKNOWN.");
-  const checks=(report.checks as any[]).map(row=>({
-    ...row,
-    observedState:row.status==="PASS"?"PASS":
-      row.status==="ATTENTION"?"ATTENTION":"UNKNOWN",
-  }));
+  const checks=(report.checks as any[]).map(row=>{
+    const message=doctorText(row.message,"UNKNOWN · Core reason unavailable");
+    const status=(message!=="UNKNOWN · Core reason unavailable")?row.status:null;
+    return {
+      id:row.id,
+      plane:doctorText(row.plane,row.id),
+      message,
+      error:row.error===null||row.error===undefined||row.error===""
+        ?"":doctorText(row.error,"UNKNOWN · Core error unavailable"),
+      db_revision:doctorCount(row.db_revision),
+      generation:doctorCount(row.generation),
+      activated_at:row.activated_at===null||row.activated_at===undefined||row.activated_at===""
+        ?"Not observed":doctorText(row.activated_at),
+      observedState:status==="PASS"?"PASS":status==="ATTENTION"?"ATTENTION":"UNKNOWN",
+    };
+  });
   const attention=report.attention as Record<string,unknown>;
   return {
     checks,
