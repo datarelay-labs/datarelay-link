@@ -30,7 +30,7 @@ export function connectionReviewContext(plane:AccessPlane,source:unknown,destina
   const family=plane==="internet"||plane==="ai"?plane:"remote";
   const values=[source,destination,selector];
   if(values.some(value=>typeof value!=="string"||!value.trim()||value.length>160
-    ||/[\x00-\x1f\x7f]/.test(value)))return {plane:family};
+    ||/[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/.test(value)))return {plane:family};
   return {plane:family,source:(source as string).trim(),
     destination:(destination as string).trim(),selector:(selector as string).trim()};
 }

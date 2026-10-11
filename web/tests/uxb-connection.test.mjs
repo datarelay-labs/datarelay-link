@@ -406,3 +406,16 @@ test("Core impact lists reject direction-changing or control text instead of rep
  }
  assert.equal(impact.observedCoreNames(["rule-1","rule-2"]),"rule-1, rule-2");
 });
+
+test("UX-8 cross-page context rejects bidi/C1 spoofing while retaining legitimate Unicode names",()=>{
+ for(const bad of ["ssh\u202e","policy\u2066name","src\u0085spoof","dst\u007fhidden","\u202aprefix","\u2069tail"]){
+  assert.deepEqual(setup.connectionReviewContext("remote",bad,"destination","ssh"),{plane:"remote"});
+  assert.deepEqual(setup.connectionReviewContext("internet","source",bad,"https"),{plane:"internet"});
+  assert.deepEqual(setup.connectionReviewContext("ai","bot","object",bad),{plane:"ai"});
+ }
+ assert.deepEqual(setup.connectionReviewContext("remote"," 서울-지점 "," DB서비스 "," SSH-22 "),{
+  plane:"remote",source:"서울-지점",destination:"DB서비스",selector:"SSH-22"});
+ const input=["src","dest","ssh"];
+ assert.deepEqual(setup.connectionReviewContext("remote",...input),{
+  plane:"remote",source:"src",destination:"dest",selector:"ssh"});
+});

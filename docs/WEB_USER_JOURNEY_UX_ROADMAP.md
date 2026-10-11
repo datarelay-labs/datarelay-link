@@ -2,6 +2,14 @@
 
 > **ONE CURRENT EXECUTION ROADMAP:** [GitHub Issue #184 — DataRelay Link 3.0 R1–R7](https://github.com/datarelay-labs/datarelay-link/issues/184).
 > This file is a **repository-local index, not an additional task queue**. The old UXB-00..06, UXB-06F, L-CI-0..4 and B1–B5 per-feature execution lists are **superseded** as roadmaps by #184. Their historical code, tests, source investigations, review evidence and mandatory acceptance contracts are retained in Git history and the named canonical documents; **do not delete/reimplement verified completed functionality**.
+> **Owner P0 override (2026-10-11):** The existing single GitHub #184 now schedules
+> **ALL applicable competitor-informed UX-1..8 and UI-01..06** ahead of unrelated
+> phases as C-UX-A→B→C→D. UI-06 (single-reviewer time-bounded access request)
+> is owner-required but requires an actual canonical Core request/decision
+> contract; it is not implicitly implemented by Temporary Access alone.
+> UI-02 exact Service→owning Host source edit remains explicitly platform-held,
+> and actual 3-role/320px/375px Browser E2E remains not verified.
+> This is **a priority/status pointer, never a separate implementation queue**.
 > Product authority: `PRODUCT_MASTER.md`, `WEB_MANAGEMENT.md`, `MANAGEMENT_SURFACE_CONTRACT.md`, `DATA_RELAY_ROADMAP.md`, `WEB_SAAS_UX_SYSTEM.md`. DRLink Core/CLI retains authorization authority; Web is optional, SQLite is the one Core datastore, Remote / Internet / AI remain separate security planes.
 > Link Product Foundation B2–B6 coordinator [#207](https://github.com/datarelay-labs/datarelay-link/issues/207) now points to the same issue. Foundation's separate cross-product [#87](https://github.com/datarelay-labs/datarelay-product-foundation/issues/87) is **not** a second Link implementation queue.
 
