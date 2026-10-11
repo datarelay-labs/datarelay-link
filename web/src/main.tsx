@@ -30,6 +30,7 @@ import {auditInvestigation,matchObservedAuditReturn,matchObservedPolicyReturn,re
 import {auditUtcPresetRange} from "./uxb-audit-presets";
 import {filterObservedPoliciesByStatus} from "./uxb-policy-status-filter";
 import {sortLoadedPolicies,isPolicySortMode,type PolicySortMode} from "./uxb-policy-sort";
+import {activePolicyFilterChips,type PolicyFilterChipId} from "./uxb-policy-filter-chips";
 import {observedPolicyExpiryState,filterObservedPoliciesByExpiry,observedPolicyExpiryCounts,filterObservedPolicySearch,observedPolicyDetailFields,type PolicyExpiryChoice} from "./uxb-policy-expiry";
 import {observedPolicyCardSummary} from "./uxb-policy-cards";
 import {policyAuditInvestigationTarget} from "./uxb-policy-audit-action";
@@ -1939,6 +1940,21 @@ function PolicyWorkspace({data,operator,onNavigate,api,context}:{data:any,operat
   const policyStatusRows=filterObservedPoliciesByStatus<any>(safePolicySearch.items,statusFilter);
   const expiryCounts=observedPolicyExpiryCounts(policyStatusRows,expiryObservedAt);
   const rows=sortLoadedPolicies<any>(filterObservedPoliciesByExpiry<any>(policyStatusRows,expiryFilter,expiryObservedAt),policySort);
+  const policyFilterChips=activePolicyFilterChips(plane,filter,statusFilter,expiryFilter,policySort);
+  function removePolicyFilterChip(id:PolicyFilterChipId){
+    if(id==="plane")setPlane("all");
+    else if(id==="search")setFilter("");
+    else if(id==="status")setStatusFilter("all");
+    else if(id==="expiry")setExpiryFilter("all");
+    else if(id==="sort")setPolicySort("core");
+  }
+  function clearPolicyDisplayFilters(){
+    setPlane("all");
+    setFilter("");
+    setStatusFilter("all");
+    setExpiryFilter("all");
+    setPolicySort("core");
+  }
   function reviewPolicyAudit(row:unknown){
     const target=policyAuditInvestigationTarget(row);
     if(!target)return;
@@ -1994,6 +2010,18 @@ function PolicyWorkspace({data,operator,onNavigate,api,context}:{data:any,operat
           Core rule evaluation/precedence and Saved Views remain unchanged.
           This is not a global sort across unloaded Core pages.</span>
       </div>
+      {policyFilterChips.length>0&&<div className="dr-form-actions" role="group" aria-label="Active Policy display filters">
+        {policyFilterChips.map(entry=><button
+          key={entry.id} type="button" className="secondary"
+          aria-label={"Remove "+entry.label+" filter"}
+          onClick={()=>removePolicyFilterChip(entry.id)}>
+          {entry.label}: {entry.value} ×
+        </button>)}
+        <button type="button" className="secondary"
+          onClick={clearPolicyDisplayFilters}>Clear Policy display filters</button>
+        <span className="muted">Search text is never displayed in these chips.
+          Clears only browser-local choices; Core policies and Saved Views are unchanged.</span>
+      </div>}
       <div className="dr-form-actions" role="group" aria-label="Filter loaded policy state">
         <span className="muted">State of loaded Core rules · UNKNOWN is not Disabled</span>
         {(["all","enabled","disabled","unknown"] as const).map(status=><button
