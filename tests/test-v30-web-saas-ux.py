@@ -222,7 +222,10 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn("const activeCutoffs=visibleCoreEvidence(", operations)
         self.assertIn("const token=++cutoffGeneration.current;", operations)
         self.assertIn("if(cutoffGeneration.current!==token)return;", operations)
-        self.assertIn("setCutoffEvidence({key:plane,value:result})", operations)
+        self.assertIn("const verified=requireObservedCutoffInventory(result,plane);", operations)
+        self.assertIn("setCutoffEvidence({key:plane,value:verified})", operations)
+        self.assertIn("export function requireObservedCutoffInventory(",
+                      (ROOT / "web/src/uxb-menu-evidence.ts").read_text(encoding="utf-8"))
         self.assertIn("Cutoff evidence: UNKNOWN", operations)
         self.assertIn("export function coreCutoffKey(", access)
         self.assertIn("const cutoffPlanGeneration=useRef(0);", operations)

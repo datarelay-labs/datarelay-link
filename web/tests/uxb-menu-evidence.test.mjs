@@ -621,3 +621,39 @@ test("UX-8 Emergency Cutoff Preview must match selected Core scope and expire be
  assert.match(rootPath,/const currentCutoffActionable=observedEmergencyCutoffPreviewForIntent\(/);
  assert.match(rootPath,/Cutoff Preview expired or unverified/);
 });
+
+test("UX-8 Active Emergency Cutoffs require exact Core plane, counts and bounded observations",()=>{
+ const item={id:"cut_"+ "a".repeat(20),plane:"remote",
+   scope_kind:"remote-service",scope_ref:"service-a",
+   reason:"emergency control",row_version:2,updated_at:"2030-06-01T12:00:00Z",
+   nested_secret:{value:"DO_NOT_EXPOSE"}};
+ const response={items:[item],count:1,returned:1,plane:"remote",active:true,
+   limit:200,truncated:false};
+ const got=menu.requireObservedCutoffInventory(response,"remote");
+ assert.deepEqual(got,{...response,items:[{
+   id:item.id,plane:item.plane,scope_kind:item.scope_kind,
+   scope_ref:item.scope_ref,reason:item.reason,row_version:2,updated_at:item.updated_at}]});
+ assert.doesNotMatch(JSON.stringify(got),/DO_NOT_EXPOSE/);
+ const empty={items:[],count:0,returned:0,plane:"ai",active:false,
+   limit:200,truncated:false};
+ assert.deepEqual(menu.requireObservedCutoffInventory(empty,"ai"),empty);
+ const partial={...response,items:[item],count:201,truncated:true};
+ assert.equal(menu.requireObservedCutoffInventory(partial,"remote").truncated,true);
+ for(const invalid of [null,{},[],{...response,plane:"ai"},
+   {...response,count:0},{...response,returned:0},{...response,returned:"1"},
+   {...response,limit:201},{...response,truncated:true},
+   {...response,active:false},{...response,count:-1},
+   {...response,items:[item,item]},
+   {...response,items:[{...item,plane:"internet"}]},
+   {...response,items:[{...item,scope_kind:"managed-host"}]},
+   {...response,items:[{...item,scope_ref:"other\u202ehost"}]},
+   {...response,items:[{...item,reason:"bad\u202esequence"}]},
+   {...response,items:[{...item,updated_at:"invalid"}]},
+   {...response,items:[{...item,row_version:"2"}]},
+   {...response,items:[{...item,id:{secret:"DO_NOT_EXPOSE"}}]}
+ ])assert.throws(()=>menu.requireObservedCutoffInventory(invalid,"remote"),
+    /UNKNOWN|Core/,JSON.stringify(invalid));
+ const src=readFileSync(join(root,"src","main.tsx"),"utf8");
+ assert.match(src,/const verified=requireObservedCutoffInventory\(result,plane\)/);
+ assert.match(src,/setCutoffEvidence\(\{key:plane,value:verified\}\)/);
+});

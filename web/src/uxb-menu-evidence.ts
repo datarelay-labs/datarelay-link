@@ -77,6 +77,60 @@ export function requireObservedTemporaryAccessApplyForPlan(
  return {revision:row.revision as number};
 }
 
+/** Cutoff inventory is an authoritative bounded Core read, not an
+ * arbitrary list or an empty-success HTTP response. Reject cross-plane
+ * snapshots and inconsistent totals before rendering active overrides.
+ */
+export function requireObservedCutoffInventory(input:unknown,plane:unknown):{
+ items:{id:string,plane:string,scope_kind:string,scope_ref:string,
+   reason:string,row_version:number,updated_at:string}[],
+ count:number,returned:number,plane:string,active:boolean,limit:200,truncated:boolean
+}{
+ const fail=():never=>{throw new Error(
+   "UNKNOWN · Core Emergency Cutoff inventory is incomplete, inconsistent or from another plane."
+ )};
+ const record=(v:unknown):v is Record<string,unknown>=>
+   !!v&&typeof v==="object"&&!Array.isArray(v);
+ const invalid=/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/;
+ const text=(v:unknown,max:number,allowEmpty=false):v is string=>
+   typeof v==="string"&&v.length<=max&&!invalid.test(v)
+   &&(allowEmpty||!!v.trim());
+ if(!record(input)||typeof plane!=="string"
+   ||!["remote","internet","ai"].includes(plane)
+   ||input.plane!==plane||!Array.isArray(input.items)
+   ||input.limit!==200||input.items.length>200
+   ||!Number.isSafeInteger(input.count)||Number(input.count)<0
+   ||input.returned!==input.items.length
+   ||Number(input.count)<input.items.length
+   ||input.active!==(Number(input.count)>0)
+   ||input.truncated!==(Number(input.count)>input.items.length))return fail();
+ const kinds=plane==="remote"?["plane","remote-service"]:
+   plane==="internet"?["plane","managed-host"]:["plane","ai-identity"];
+ const items:{id:string,plane:string,scope_kind:string,scope_ref:string,
+   reason:string,row_version:number,updated_at:string}[]=[];
+ const ids=new Set<string>(),refs=new Set<string>();
+ for(const value of input.items){
+   if(!record(value)||!text(value.id,160)
+     ||value.plane!==plane||typeof value.scope_kind!=="string"
+     ||!kinds.includes(value.scope_kind)
+     ||!text(value.scope_ref,160,true)
+     ||(value.scope_kind==="plane"?value.scope_ref!=="":!value.scope_ref)
+     ||!text(value.reason,500,true)
+     ||!Number.isSafeInteger(value.row_version)||Number(value.row_version)<1
+     ||!isObservedAbsoluteTime(value.updated_at))return fail();
+   const key=value.scope_kind+":"+value.scope_ref;
+   if(ids.has(value.id)||refs.has(key))return fail();
+   ids.add(value.id);refs.add(key);
+   items.push({
+     id:value.id,plane,scope_kind:value.scope_kind,scope_ref:value.scope_ref,
+     reason:value.reason,row_version:value.row_version as number,
+     updated_at:value.updated_at as string
+   });
+ }
+ return {items,count:input.count as number,returned:items.length,plane,
+   active:input.active as boolean,limit:200,truncated:input.truncated as boolean};
+}
+
 /** Read-only, bounded projection of the exact Core incident preview.
  * Core may resolve a typed Service/Host alias to its canonical ID; require
  * either that immutable ID or the canonical display name to match the

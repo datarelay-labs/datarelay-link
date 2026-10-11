@@ -9,7 +9,7 @@ import {AccessEvidenceExplorer,GuidedPolicyJourney,coreFlowKey,coreCutoffKey,vis
 import {EnrollmentOnboarding} from "./p0-enrollment";
 import {navGroups,groupFor,labelFor,pageDescriptions,visibleRoute,navMatches,setupContextForObjectFamily} from "./uxb-navigation";
 import {FirstUseHome,observedBoundedCountPair,observedHomeAttention,isFreshInstallation,observedRecentFeed,observedNumber,accessPlaneCount,coreHealthState,type RecentFeed} from "./uxb-home";
-import {requireObservedMenuPayload,requireObservedTemporaryAccessApplyForPlan,requireObservedEmergencyCutoffApplyForPlan,observedEmergencyCutoffPreviewForIntent,requireObservedLiveAccessView,requireObservedDiagnosisView,requireObservedInventoryContinuation,requireObservedObjectContinuation,requireObservedAuditRetention,auditRetentionRunPermitted,requireObservedAccessHygiene,hygieneInspectTarget,requireObservedJobStart,requireObservedFleetApply,requireObservedFleetPreview,requireObservedFleetApplyForPreview,requireObservedAuditExport,requireObservedRolloutPreview,requireObservedInventoryExport,requireObservedJobDetail,requireObservedJobCancellation,isPartialCorePage,selectMenuPage,combineObservedPolicyPlanes,policyStateLabel,policyExpiryLabel,type MenuPagePosition} from "./uxb-menu-evidence";
+import {requireObservedMenuPayload,requireObservedTemporaryAccessApplyForPlan,requireObservedEmergencyCutoffApplyForPlan,observedEmergencyCutoffPreviewForIntent,requireObservedCutoffInventory,requireObservedLiveAccessView,requireObservedDiagnosisView,requireObservedInventoryContinuation,requireObservedObjectContinuation,requireObservedAuditRetention,auditRetentionRunPermitted,requireObservedAccessHygiene,hygieneInspectTarget,requireObservedJobStart,requireObservedFleetApply,requireObservedFleetPreview,requireObservedFleetApplyForPreview,requireObservedAuditExport,requireObservedRolloutPreview,requireObservedInventoryExport,requireObservedJobDetail,requireObservedJobCancellation,isPartialCorePage,selectMenuPage,combineObservedPolicyPlanes,policyStateLabel,policyExpiryLabel,type MenuPagePosition} from "./uxb-menu-evidence";
 import {RemoteServiceEditor} from "./uxb-remote-service";
 import {RevisionHistory} from "./uxb-revisions";
 import {AgentVersionDrift} from "./uxb-versions";
@@ -840,8 +840,8 @@ function AccessOperations({operator,onNavigate,context}:{operator:any,onNavigate
     try{
       const result=await api("/api/v1/emergency-cutoffs?plane="+encodeURIComponent(plane));
       if(cutoffGeneration.current!==token)return;
-      if(!Array.isArray(result?.items))throw new Error("Core cutoff inventory response incomplete");
-      setCutoffEvidence({key:plane,value:result});
+      const verified=requireObservedCutoffInventory(result,plane);
+      setCutoffEvidence({key:plane,value:verified});
     }catch(e:any){if(cutoffGeneration.current===token)setError("Core cutoff state unavailable: "+String(e.message||e))}
   }
   useEffect(()=>{void loadCutoffs();return()=>{cutoffGeneration.current+=1}},[plane]);
