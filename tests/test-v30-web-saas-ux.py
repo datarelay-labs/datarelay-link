@@ -730,7 +730,7 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         )
         self.assertLess(
             dialog.index('navigatingRef.current=true;'),
-            dialog.index('onNavigate(id,group);'),
+            dialog.index('onNavigate(id,group,context);'),
         )
         self.assertIn('id="drlink-main-content"', SOURCE)
         self.assertIn('tabIndex={-1}', SOURCE)

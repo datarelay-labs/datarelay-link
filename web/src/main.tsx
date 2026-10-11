@@ -21,6 +21,7 @@ import {hostInventoryFacts,hostVisibleIdentity} from "./uxb-host-detail";
 import {serviceStateLabel,serviceDetailSections,sshConnectionTemplate} from "./uxb-service-detail";
 import {serviceVisibleIdentity} from "./uxb-service-detail";
 import {filterObservedServices} from "./uxb-service-search";
+import {projectObservedGlobalSearchResults} from "./uxb-global-search-target";
 import {filterLoadedServiceFacets,type ServiceTypeFacet,type ServiceConfigFacet} from "./uxb-service-facets";
 import {operatorAccountState,operatorMfaState,operatorMfaAction,operatorLastLogin} from "./uxb-users-state";
 import {operatorUserLabel} from "./uxb-users-state";
@@ -2135,6 +2136,11 @@ function ResourceWorkspace({kind,data,operator,onNavigate,api,initialFilter="",i
       {isHost&&connectionFilter!=="all"&&!!hostConnection?.unknownCount&&<p className="dr-uxb-catalog-page-notice" role="status">{hostConnection.unknownCount} loaded Host record(s) have UNKNOWN connectivity or invalid identity; UNKNOWN connectivity means absence cannot be confirmed. The current quick filter checks loaded authorized rows only.</p>}
       {isHost&&hostSearch?.error&&<p className="warning-box" role="alert">Typed Host search not applied: {hostSearch.error} Displaying only previously loaded Core records, still scoped by admission and connection state.</p>}
       {isHost&&hostSearch?.warning&&<p className="dr-uxb-catalog-page-notice" role="status">{hostSearch.warning}</p>}
+      {(kind==="host"||kind==="service")&&initialInspectId&&<p className="dr-uxb-catalog-page-notice" role="status">
+        Exact resource details open only if one currently loaded Core inventory item matches the selected ID.
+        If the selected result is not on this page, use the existing Load more controls to inspect additional authorized Core pages.
+        The search hit alone is not permission to fetch a resource by ID or proof of its current availability.
+      </p>}
       {!isHost&&<p className="muted" role="note">Service search only checks loaded authorized Core pages.
         Use name:, host:, port:, state: or type: to filter observed Service fields; a plain word checks
         safe visible Service fields. Use Load more Remote Services to inspect additional Core pages.
@@ -2592,10 +2598,15 @@ function WorkspaceIcon({kind}:{kind:string}){
 }
 
 function GlobalSearch({open,onClose,onNavigate,operator,returnFocusRef}:{
-  open:boolean,onClose:()=>void,onNavigate:(id:string,groupId?:string)=>void,
+  open:boolean,onClose:()=>void,onNavigate:(id:string,groupId?:string,context?:any)=>void,
   operator:any,returnFocusRef:React.RefObject<HTMLElement|null>
 }){
-  const [query,setQuery]=useState(""),[results,setResults]=useState<any[]>([]),[busy,setBusy]=useState(false),[error,setError]=useState("");
+  const [query,setQuery]=useState("");
+  const [results,setResults]=useState<NonNullable<ReturnType<typeof projectObservedGlobalSearchResults>>["items"]>([]);
+  const [searchStatus,setSearchStatus]=useState<"idle"|"loading"|"ready"|"unknown">("idle");
+  const [rejectedCount,setRejectedCount]=useState(0);
+  const [returnedCount,setReturnedCount]=useState(0);
+  const [busy,setBusy]=useState(false),[error,setError]=useState("");
   const requestGeneration=useRef(0);
   const dialogRef=useRef<HTMLElement|null>(null);
   const navigatingRef=useRef(false);
@@ -2605,10 +2616,12 @@ function GlobalSearch({open,onClose,onNavigate,operator,returnFocusRef}:{
     // Old Core resource results must never follow a newer query.
     requestGeneration.current+=1;
     setQuery(value);setResults([]);setError("");setBusy(false);
+    setSearchStatus("idle");setRejectedCount(0);setReturnedCount(0);
   }
   useEffect(()=>{if(!open){
     requestGeneration.current+=1;
     setQuery("");setResults([]);setError("");setBusy(false);
+    setSearchStatus("idle");setRejectedCount(0);setReturnedCount(0);
   }},[open]);
   useEffect(()=>{
     if(!open)return;
@@ -2649,36 +2662,33 @@ function GlobalSearch({open,onClose,onNavigate,operator,returnFocusRef}:{
   },[open,returnFocusRef]);
   const localMatches=navMatches(query,operator.role);
   if(!open)return null;
-  function targetFor(type:string):[string,string]{
-    const value=String(type||"").toLowerCase();
-    if(value.includes("managed-host"))return ["hosts","infrastructure"];
-    if(value.includes("remote-service"))return ["services","infrastructure"];
-    if(value.includes("policy")||value.includes("access"))return ["policies","access"];
-    if(value.includes("job"))return ["jobs","operations"];
-    if(value.includes("audit"))return ["audit","observability"];
-    return ["objects","infrastructure"];
-  }
   async function search(e?:React.FormEvent){
     e?.preventDefault();
     const q=query.trim();
     const generation=++requestGeneration.current;
-    if(!q){setResults([]);return}
-    setBusy(true);setError("");setResults([]);
+    if(!q){setResults([]);setSearchStatus("idle");setRejectedCount(0);setReturnedCount(0);return}
+    setBusy(true);setError("");setResults([]);setSearchStatus("loading");
+    setRejectedCount(0);setReturnedCount(0);
     try{
       const data=await api("/api/v1/search?q="+encodeURIComponent(q)+"&limit=20");
       if(requestGeneration.current!==generation)return;
       if(!Array.isArray(data?.items))throw new Error("Core search response missing resource items");
-      setResults(data.items);
-    }catch(err:any){if(requestGeneration.current===generation)setError(err.message||String(err))}
+      const projection=projectObservedGlobalSearchResults(data.items);
+      if(!projection)throw new Error("Core search response missing or exceeding bounded resource items.");
+      setResults(projection.items);setRejectedCount(projection.invalidCount);
+      setReturnedCount(projection.totalCount);setSearchStatus("ready");
+    }catch(err:any){if(requestGeneration.current===generation){
+      setError(err.message||String(err));setSearchStatus("unknown");
+    }}
     finally{if(requestGeneration.current===generation)setBusy(false)}
   }
-  function go(id:string,group?:string){
+  function go(id:string,group?:string,context?:any){
     if(!visibleRoute(id,operator.role)){
       setError("Your role cannot open this page.");
       return;
     }
     navigatingRef.current=true;
-    onNavigate(id,group);
+    onNavigate(id,group,context);
     onClose();
   }
   return <div className="dr-command-overlay" role="presentation" onMouseDown={e=>{if(e.currentTarget===e.target)onClose()}}>
@@ -2693,9 +2703,25 @@ function GlobalSearch({open,onClose,onNavigate,operator,returnFocusRef}:{
           <button onClick={()=>go("doctor","observability")}><WorkspaceIcon kind="observability"/><span><strong>Troubleshoot</strong><small>Open bounded Doctor checks</small></span></button>
         </div></>}
         {query.trim()&&<><div className="dr-command-results-head"><p className="dr-command-label">Pages and tasks · old names also work</p><button className="dr-text-action" onClick={()=>search()} disabled={busy}>{busy?"Searching…":"Search resources"}</button></div>
-        <p className="dr-command-label" role="status" aria-live="polite">{busy?"Searching Core resources…":results.length?results.length+" Core matches returned":""}</p>
+        <p className="dr-command-label" role="status" aria-live="polite">{busy?"Searching Core resources…":searchStatus==="ready"?results.length+" safe results from "+returnedCount+" bounded Core search hits":""}</p>
+        {searchStatus==="ready"&&results.length===0&&rejectedCount===0&&<p role="status" className="dr-command-empty">No matching Core resources in the returned search page. Other Core pages and retained resources remain UNKNOWN.</p>}
+        {searchStatus==="ready"&&rejectedCount>0&&<p role="status" className="warning-box">{rejectedCount} malformed/unsafe Core search hits omitted. Do not interpret missing results as absent resources.</p>}
+        {searchStatus==="unknown"&&<p role="status" className="warning-box">Core resource search UNKNOWN. No valid result page confirmed; retry explicitly.</p>}
         {localMatches.length>0&&<div className="dr-command-results" aria-label="Page and task matches">{localMatches.map(item=><button key={"nav:"+item.id} onClick={()=>go(item.id,item.group)}><span className="dr-search-kind">Page</span><span><strong>{item.label}</strong><small>{item.description}</small></span><span aria-hidden="true">→</span></button>)}</div>}
-        {!busy&&!results.length&&!localMatches.length&&<div className="dr-command-empty">No local page matches. Press Enter to search Core resources.</div>}<div className="dr-command-results" role="group" aria-label="Core resource matches" aria-busy={busy}>{results.map((item:any,i:number)=>{const [id,group]=targetFor(item.resource_type);return <button key={item.id||i} onClick={()=>go(id,group)}><span className="dr-search-kind">{item.resource_type||"resource"}</span><span><strong>{item.name||item.id}</strong><small>{item.id||""}</small></span><span aria-hidden="true">→</span></button>})}</div></>}
+        {searchStatus==="idle"&&!busy&&!localMatches.length&&<div className="dr-command-empty">No local page matches. Press Enter to search Core resources.</div>}
+        <p className="muted">Search hits are bounded Core inventory evidence, not authorization. An exact detail opens only when the destination's freshly authorized loaded Core page verifies one matching ID.</p>
+        <div className="dr-command-results" role="group" aria-label="Core resource matches" aria-busy={busy}>{results.map(item=>
+          <button key={item.resourceType+":"+item.id} type="button"
+            disabled={!item.destination}
+            aria-label={"Open Core search result "+item.name}
+            onClick={()=>{if(item.destination)go(item.destination.id,item.destination.group,item.destination.context||undefined)}}>
+            <span className="dr-search-kind">{item.resourceType}</span>
+            <span><strong>{item.name}</strong><small>{item.id}</small></span>
+            <span>{item.destination?.exact?"Inspect loaded Core detail →":
+              item.destination?"Browse Core catalog · exact detail not verified →":
+              "No supported detail view"}</span>
+          </button>
+        )}</div></>}
       </div>
       <footer className="dr-command-footer"><span><kbd>Enter</kbd> search</span><span><kbd>Esc</kbd> close</span><span>Security state is never stored in browser preferences.</span></footer>
     </section>
@@ -2862,7 +2888,7 @@ function Shell({operator,onLogout}:{operator:any,onLogout:()=>void}){
           <button className="dr-icon-button" onClick={()=>setDark(!dark)} title="Toggle theme"><WorkspaceIcon kind={dark?"sun":"moon"}/></button>
         </div>
       </header>
-      <main id="drlink-main-content" className="content dr-workspace" tabIndex={-1}><div className="dr-content-frame"><View key={active+":"+refreshNonce+":"+(navigationContext?.originId||"")} active={active} operator={operator} onNavigate={activate} context={navigationContext} setupDraft={setupDraft} onSetupDraftChange={setSetupDraft}/></div></main>
+      <main id="drlink-main-content" className="content dr-workspace" tabIndex={-1}><div className="dr-content-frame"><View key={active+":"+refreshNonce+":"+(navigationContext?.originId||navigationContext?.searchResultKey||"")} active={active} operator={operator} onNavigate={activate} context={navigationContext} setupDraft={setupDraft} onSetupDraftChange={setSetupDraft}/></div></main>
     </div>
     <GlobalSearch open={searchOpen} onClose={()=>setSearchOpen(false)} onNavigate={activate} operator={operator} returnFocusRef={searchReturnFocusRef}/>
   </div>;
