@@ -73,6 +73,21 @@ test("Unsupported tag/group/ip facets never silently filter into an empty result
     assert.match(result.error,/unsupported|not available|does not expose/i);
   }
 });
+test("Invalid typed search cannot silently discard a separately selected admission filter",()=>{
+  const observed=[...rows,{id:"host-unknown",name:"Unclassified Host"}];
+  const rejected=filterObservedHosts(observed,"tag:prod","APPROVED");
+  assert.equal(rejected.applied,false);
+  assert.match(rejected.error,/not available|does not expose/i);
+  // The independent saved admission preference still narrows the loaded
+  // Core records to confirmed matches, even if typed text is rejected.
+  assert.deepEqual(rejected.items.map(host=>host.id),["host-a"]);
+  assert.equal(rejected.unknownCount,1);
+  assert.match(rejected.warning,/UNKNOWN|incomplete/i);
+  const invalidApproval=filterObservedHosts(observed,"name:Edge","NOT_A_STATE");
+  assert.equal(invalidApproval.applied,false);
+  assert.deepEqual(invalidApproval.items,observed);
+});
+
 test("Malformed queries never claim a successful search or fleet-wide completeness",()=>{
   for(const query of ["os:","hostname:","os:linux tag:sre","x".repeat(121),null,3]){
     const result=search(query);

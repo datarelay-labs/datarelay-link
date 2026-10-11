@@ -57,17 +57,36 @@ export function filterObservedHosts(
     typeof item.id==="string"&&!!item.id.trim()&&
     typeof item.name==="string"&&!!item.name.trim());
   const invalidCount=source.length-items.length;
+  // An invalid typed expression does not cancel the separate, already
+  // selected Saved Host admission picker. Keep that scoped preference only
+  // when Core has an authoritative enum; otherwise show unfiltered data with
+  // an explicit error. Missing state remains UNKNOWN, never a negative match.
+  function rejectTypedSearch(reason:string):ObservedHostSearch{
+    const selected=typeof admission==="string"?admission.toLowerCase():"";
+    if(selected==="all"||!CORE_STATE_VALUES.admission_state.has(selected))
+      return errorResult(items,reason);
+    const scoped=items.filter(row=>observedText(row,"admission_state")===selected);
+    const missing=invalidCount+items.filter(row=>
+      observedText(row,"admission_state")===null).length;
+    return {
+      items:scoped,applied:false,scope:"loaded-only",error:reason,
+      warning:missing
+        ?missing+" loaded Core Host record(s) have UNKNOWN admission evidence; state filtering cannot prove absence."
+        :null,
+      unknownCount:missing,
+    };
+  }
   if(invalidCount&&!items.length)
     return errorResult([],"Core Host inventory contained only invalid Host records. Search not applied.");
   if(typeof query!=="string"||query.length>120||CONTROL.test(query))
-    return errorResult(items,"Invalid Host search expression. Use at most 120 plain-text characters.");
+    return rejectTypedSearch("Invalid Host search expression. Use at most 120 plain-text characters.");
   // The separate Saved View / UI approval picker must share this same
   // loaded-only evidence check. Otherwise no-text approval filtering turns
   // unknown Core state into a misleading confirmed zero.
   if(admission!=="all"&&(
     typeof admission!=="string"||
     !CORE_STATE_VALUES.admission_state.has(admission.toLowerCase())
-  ))return errorResult(items,"Invalid Host admission state. Search not applied.");
+  ))return rejectTypedSearch("Invalid Host admission state. Search not applied.");
   const tokens=query.trim()?query.trim().split(/\s+/):[];
   const filters:{field:string|null,term:string}[]=[];
   for(const token of tokens){
@@ -78,20 +97,20 @@ export function filterObservedHosts(
         const reason=MISSING_REQUIRES_CORE.has(fieldName)
           ?"Core does not expose this field in the Managed Host inventory projection."
           :"Unsupported Host search facet.";
-        return errorResult(items,fieldName.slice(0,24)+": not available. "+reason+" Search not applied.");
+        return rejectTypedSearch(fieldName.slice(0,24)+": not available. "+reason+" Search not applied.");
       }
       let term=token.slice(separator+1).toLowerCase();
       if(!term||term.length>120)
-        return errorResult(items,"A typed Host filter needs a nonempty bounded value. Search not applied.");
+        return rejectTypedSearch("A typed Host filter needs a nonempty bounded value. Search not applied.");
       const field=FIELDS[fieldName];
       // A typed request for an impossible Core enum cannot legitimately
       // produce "no hosts found" or drive a saved-view claim.
       if(CORE_STATE_VALUES[field]&&!CORE_STATE_VALUES[field].has(term))
-        return errorResult(items,"Unsupported Core Host state for "+fieldName+". Search not applied.");
+        return rejectTypedSearch("Unsupported Core Host state for "+fieldName+". Search not applied.");
       if(field==="connected"){
         if(["1","true","yes","connected"].includes(term))term="connected";
         else if(["0","false","no","disconnected"].includes(term))term="disconnected";
-        else return errorResult(items,"Connection state must be connected/disconnected (true/false). Search not applied.");
+        else return rejectTypedSearch("Connection state must be connected/disconnected (true/false). Search not applied.");
       }
       filters.push({field,term});
     }else{
