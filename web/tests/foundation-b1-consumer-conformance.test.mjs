@@ -96,7 +96,7 @@ test("retention task exposes only existing Audit retention, not a global data sc
   const source=readFileSync(join(webRoot,"src","main.tsx"),"utf8");
   assert.ok(source.includes('if(active==="audit")return <AuditExplorer'));
   assert.ok(source.includes('api("/api/v1/audit/retention")'));
-  assert.ok(source.includes('case "link.retention":onNavigate?.("audit","observability");break;'));
+  assert.ok(source.includes('case "link.retention":onNavigate?.("audit","activity");break;'));
   assert.ok(source.includes('operator.role==="Admin"&&<div className="dr-retention-config">'));
   for(const role of ["Admin","Operator","Read Only"]){
     const task=createTasks(role).find(item=>item.id==="core.retention");

@@ -645,15 +645,16 @@ function LinkFoundationAdministration({
       case "link.users":
         if(admin)onNavigate?.("users","administration");
         break;
-      case "link.audit":onNavigate?.("audit","observability");break;
-      case "link.retention":onNavigate?.("audit","observability");break;
-      case "link.health":onNavigate?.("health","observability");break;
+      case "link.audit":onNavigate?.("audit","activity");break;
+      case "link.retention":onNavigate?.("audit","activity");break;
+      case "link.health":onNavigate?.("health","activity");break;
       case "link.backup":
         // Navigate only to the existing native Core validator. Create and
         // restore remain separately restricted and confirmed by Link Core.
         const backupAdvanced=document.getElementById("drlink-core-advanced") as HTMLDetailsElement|null;
         if(backupAdvanced)backupAdvanced.open=true;
         document.getElementById("drlink-backup-status")?.scrollIntoView({block:"start"});
+        document.getElementById("drlink-backup-status")?.focus();
         break;
       case "link.certificate":
         // The shared read-only certificate shortcut reveals the distinct
@@ -661,6 +662,7 @@ function LinkFoundationAdministration({
         const advanced=document.getElementById("drlink-core-advanced") as HTMLDetailsElement|null;
         if(advanced)advanced.open=true;
         document.getElementById("drlink-certificate-status")?.scrollIntoView({block:"start"});
+        document.getElementById("drlink-certificate-status")?.focus();
         break;
     }
   }
@@ -721,7 +723,7 @@ function SystemPanel({data,operator}:{data:any,operator:any}){
       {updateResult?.job_id&&<button className="secondary" onClick={refreshProductUpdate}>Refresh Product Update Status</button>}
       {updateResult&&<pre className="plan">{JSON.stringify(updateResult,null,2)}</pre>}
     </div>
-    <div className="card" id="drlink-certificate-status">
+    <div className="card" id="drlink-certificate-status" tabIndex={-1}>
       <h3>Certificate Status</h3>
       <Table items={[{mode:certificate.mode,hostname:certificate.hostname,certificate:certificate.certificate,issuer:certificate.issuer,expires:certificate.expires,days_remaining:certificate.days_remaining,auto_renewal:certificate.auto_renewal}]}/>
       <button className="secondary" onClick={runPreflight}>Run Certificate Preflight</button>
@@ -748,7 +750,7 @@ function SystemPanel({data,operator}:{data:any,operator:any}){
       {certAction&&<pre className="plan">{JSON.stringify(certAction,null,2)}</pre>}
       {renewal&&<pre className="plan">{JSON.stringify(renewal,null,2)}</pre>}
     </div>
-    <div className="card" id="drlink-backup-status">
+    <div className="card" id="drlink-backup-status" tabIndex={-1}>
       <h3>Backup</h3>
       <div className="muted">Backup archives are protected server-side artifacts containing secrets. Web never downloads or displays their contents.</div>
       {operator.role==="Admin"&&<button className="primary" onClick={createBackup} disabled={!backup.create_available}>Create Protected Backup</button>}
@@ -2033,6 +2035,19 @@ function AccessHygienePanel({data,onRefresh,onNavigate,operator}:{data:any,onRef
 }
 
 function SystemAdministrationWorkspace({data,operator,onNavigate}:{data:any,operator:any,onNavigate?:(id:string,groupId?:string)=>void}){
+  const [advancedOpen,setAdvancedOpen]=useState(false);
+  // Do not leave keyboard focus on a distant guide button after disclosure.
+  // Both this guide and the existing Foundation read-only shortcuts reveal
+  // the same Core-owned panel without enabling any privileged operation.
+  function revealAdvancedControls(){
+    const advanced=document.getElementById("drlink-core-advanced") as HTMLDetailsElement|null;
+    if(advanced){
+      advanced.open=true;
+      setAdvancedOpen(true);
+      advanced.scrollIntoView({block:"start"});
+      advanced?.querySelector<HTMLElement>("summary")?.focus();
+    }
+  }
   return <div className="dr-uxb-system">
     <LinkFoundationAdministration operator={operator} onNavigate={onNavigate}/>
     <section className="card dr-uxb-admin-guide" aria-label="System administration guidance">
@@ -2043,10 +2058,14 @@ function SystemAdministrationWorkspace({data,operator,onNavigate}:{data:any,oper
         <div><strong>Admin-only changes</strong><p>Users & MFA, integration credentials and approved configuration changes require role checks. Read Only users cannot perform mutations.</p>
           {operator.role==="Admin"?<button className="secondary" onClick={()=>onNavigate?.("users","administration")}>Users & MFA →</button>:<span className="dr-uxb-role-hint">Admin role required</span>}</div>
         <div><strong>Advanced · confirm before applying</strong><p>Core-owned MCP TLS certificates, product updates, backup and restore are sensitive operations. Web HTTPS listener settings are not implemented here.</p>
-          <button className="secondary" onClick={()=>{const advanced=document.getElementById("drlink-core-advanced") as HTMLDetailsElement|null;if(advanced){advanced.open=true;advanced.scrollIntoView({block:"start"})}}}>Review advanced controls →</button></div>
+          <button type="button" className="secondary" aria-controls="drlink-core-advanced"
+            aria-expanded={advancedOpen} onClick={revealAdvancedControls}>
+            Review advanced controls →
+          </button></div>
       </div>
     </section>
-    <details id="drlink-core-advanced" className="dr-uxb-advanced-panel">
+    <details id="drlink-core-advanced" className="dr-uxb-advanced-panel"
+      onToggle={e=>setAdvancedOpen(e.currentTarget.open)}>
       <summary>Advanced Core operations · certificates, update, backup and recovery</summary>
       <p className="muted">Sensitive changes remain Core-authoritative and role/confirmation guarded. This is not the shared Web HTTPS listener management screen.</p>
       <SystemPanel data={data} operator={operator}/>

@@ -476,7 +476,7 @@ class V30WebSaasUxContractTests(unittest.TestCase):
             task = ADMIN_SOURCE.split(f'"{name}":{{', 1)[1].split('    }', 1)[0]
             self.assertIn('access:readAccess', task)
             self.assertIn('...(authenticated?{target:', task)
-        self.assertIn('case "link.retention":onNavigate?.("audit","observability");break;', component)
+        self.assertIn('case "link.retention":onNavigate?.("audit","activity");break;', component)
         self.assertIn('case "link.backup":', component)
         self.assertIn('getElementById("drlink-backup-status")', component)
         self.assertIn('id="drlink-backup-status"', SOURCE)

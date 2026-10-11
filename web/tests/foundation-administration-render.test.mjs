@@ -130,7 +130,7 @@ test("native Link retention and backup shortcuts resolve to existing guarded pan
   const section = source.split("function LinkFoundationAdministration(", 2)[1]
     ?.split("function SystemPanel(", 1)[0];
   assert.ok(section, "Link Administration must have an actual dispatch handler");
-  assert.match(section, /case "link\.retention":onNavigate\?\.\("audit","observability"\);break;/);
+  assert.match(section, /case "link\.retention":onNavigate\?\.\("audit","activity"\);break;/);
   assert.match(section, /case "link\.backup":/);
   assert.match(section, /getElementById\("drlink-backup-status"\)/);
   assert.match(source, /id="drlink-backup-status"/);
@@ -154,4 +154,29 @@ test("Core backup tool status distinguishes explicit unavailable from missing ev
   const source=readFileSync(join(webRoot,"src","main.tsx"),"utf8");
   assert.match(source,/Metric label="Backup tools" value=\{backupToolReadiness\(backup\)\}/);
   assert.match(source,/does not verify an actual protected archive or a successful restore/);
+});
+
+test("UX-6 Advanced Core disclosure has an explicit keyboard-readable controller and stable focus",()=>{
+ const source=readFileSync(join(webRoot,"src","main.tsx"),"utf8");
+ const section=source.split("function SystemAdministrationWorkspace(",2)[1]
+   ?.split("function View(",1)[0]||"";
+ assert.match(section,/aria-controls="drlink-core-advanced"/);
+ assert.match(section,/aria-expanded=\{advancedOpen\}/);
+ assert.match(section,/onToggle=\{e=>setAdvancedOpen\(e.currentTarget.open\)\}/);
+ assert.match(section,/advanced\?\.querySelector<HTMLElement>\("summary"\)\?\.focus\(\)/);
+ assert.match(section,/<details id="drlink-core-advanced"/);
+ assert.match(section,/<SystemPanel data=\{data\} operator=\{operator\}\/>/);
+ assert.doesNotMatch(section,/onClick=\{()=>\{const advanced=document\.getElementById/);
+});
+
+test("UX-6 read-only Foundation shortcuts focus the exact revealed Core certificate/backup section",()=>{
+ const source=readFileSync(join(webRoot,"src","main.tsx"),"utf8");
+ const dispatch=source.split("function LinkFoundationAdministration(",2)[1]
+   ?.split("function SystemPanel(",1)[0]||"";
+ assert.match(dispatch,/document\.getElementById\("drlink-backup-status"\)\?\.focus\(\)/);
+ assert.match(dispatch,/document\.getElementById\("drlink-certificate-status"\)\?\.focus\(\)/);
+ assert.match(source,/id="drlink-backup-status" tabIndex=\{-1\}/);
+ assert.match(source,/id="drlink-certificate-status" tabIndex=\{-1\}/);
+ assert.match(dispatch,/onNavigate\?\.\("audit","activity"\)/);
+ assert.match(dispatch,/onNavigate\?\.\("health","activity"\)/);
 });
