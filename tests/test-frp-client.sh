@@ -4,6 +4,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORKDIR="$(mktemp -d)"
+# All fixture Core and audit state must remain in this disposable test root.
+export FRP_AUDIT_LOG="$WORKDIR/audit.jsonl"
 ALLOC_PID=""
 # shellcheck source=lib/frp-test-procs.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/frp-test-procs.sh"
@@ -94,6 +96,7 @@ pki = root / 'pki'
     'tls_server_cert': str(pki / 'server.crt'),
     'tls_server_key': str(pki / 'server.key'),
     'registry_file': str(root / 'registry.json'),
+    'control_plane_root': str(root),  # Never open /var/lib/drlink on the host.
     'enrollments_dir': str(root / 'enrollments'),
     'token_file': str(root / 'server_token'),
 }, indent=2) + '\n')
@@ -123,6 +126,12 @@ export FRP_CLIENT_SOURCED=1
 # shellcheck source=../install-client.sh
 . "$ROOT/install-client.sh"
 frp_client_main >"$WORKDIR/install.out"
+python3 - "$ALLOC_ROOT" <<'PY' || fail "enrolled Core DB escaped disposable root"
+from pathlib import Path
+import sys
+root = Path(sys.argv[1])
+assert len(list(root.rglob("drlink.db"))) == 1, "fixture-local Core DB missing"
+PY
 
 STATE="$TREE/etc/frp/client-state.json"
 [[ -f "$STATE" ]] || fail "client-state.json missing after install"
