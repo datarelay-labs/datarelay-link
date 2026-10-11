@@ -30,6 +30,15 @@ export function validatedVersionInventory(payload:unknown){
     ||data.hosts.some((x:any)=>!x||typeof x!=="object"||Array.isArray(x)
       ||!validCoreText(x.id)||!x.id.trim()||!validCoreText(x.version)))
     throw new Error("Core Agent version inventory has missing or malformed evidence. State is UNKNOWN.");
+  // The Core read model derives both counts from these same bounded rows.
+  // Contradictory counts, duplicated identities or a drift count without a
+  // known Server cannot support a healthy/empty version comparison.
+  const ids=(data.hosts as any[]).map(host=>host.id as string);
+  if(new Set(ids).size!==ids.length
+    ||Number(data.drift_count)+Number(data.unknown_count)>ids.length
+    ||(observedVersionState(data.server_version,data.server_version)==="UNKNOWN" &&
+      Number(data.drift_count)!==0))
+    throw new Error("Core Agent version summary contradicts observed rows. State is UNKNOWN.");
   const hosts=(data.hosts as any[]).map(host=>({
     id:host.id,version:host.version,
     name:observedDisplay(host.name,host.id),

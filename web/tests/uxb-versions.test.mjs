@@ -89,3 +89,20 @@ test("Unsafe Unicode and unbounded optional version-inventory labels are UNKNOWN
  assert.doesNotMatch(html,/A{100}/);
  assert.match(html,/UNKNOWN/);
 });
+
+test("Core version summary cannot contradict the bounded observed Host rows",()=>{
+ const valid=page("3.0.0",[
+  a("host-a","3.0.0"),a("host-b","2.4.0",{drift:true}),
+  a("host-c","unknown",{unknown:true})
+ ]);
+ assert.equal(validatedVersionInventory(valid).hosts.length,3);
+ for(const broken of [
+  {...valid,drift_count:4},
+  {...valid,unknown_count:4},
+  {...valid,drift_count:2,unknown_count:2},
+  {...page("3.0.0",[]),drift_count:1},
+  {...page("3.0.0",[]),unknown_count:1},
+  {...page("unknown",[a("host-a","3.0.0")]),drift_count:1},
+  page("3.0.0",[a("same","3.0.0"),a("same","2.4.0")])
+ ])assert.throws(()=>validatedVersionInventory(broken),/Core|UNKNOWN/);
+});
