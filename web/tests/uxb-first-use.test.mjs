@@ -496,3 +496,19 @@ test("UX-4 Home Command Center renders fleet and policy counts only from validat
  assert.doesNotMatch(command,/\{observed\(h\.connected\)\} connected/);
  assert.doesNotMatch(command,/\{observed\(row\.value\.enabled\)\} enabled/);
 });
+
+test("UX-5 Recent Activity sanitized projection retains Core IDs only as read-only navigation evidence",()=>{
+ const item={event_id:"evt-1",resource_type:"remote-service",resource_id:"svc-a",
+  actor_id:"operator-a",occurred_at:"2026-10-11T11:21:37Z",result:"deny"};
+ const result=home.observedRecentFeed({status:"fulfilled",value:{items:[item]}});
+ assert.equal(result.status,"ready");
+ assert.equal(result.items[0].resource_type,"remote-service");
+ assert.equal(result.items[0].resource_id,"svc-a");
+ assert.equal(result.items[0].occurred_at,"2026-10-11T11:21:37Z");
+ for(const bad of ["svc\u202e-a",{secret:"PRIVATE"},null]){
+  const res=home.observedRecentFeed({status:"fulfilled",value:{
+   items:[{...item,resource_id:bad}]}});
+  assert.ok(["UNKNOWN",undefined].includes(res.items[0].resource_id));
+  assert.doesNotMatch(JSON.stringify(res),/PRIVATE/);
+ }
+});

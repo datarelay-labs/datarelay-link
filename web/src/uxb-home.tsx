@@ -6,7 +6,8 @@ import {isObservedAbsoluteTime} from "./uxb-integrations-state";
 export type RecentFeed={status:"loading"|"ready"|"unknown",items:any[]};
 const CORE_TEXT_BAD=/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/;
 const FEED_FIELDS=["event_id","id","event_type","action","operation","actor_id",
-  "actor","occurred_at","timestamp","result","category","summary","message","created_at"] as const;
+  "actor","resource_type","resource_id","occurred_at","timestamp","result","category",
+  "summary","message","created_at"] as const;
 const FEED_TIME_FIELDS=new Set(["occurred_at","timestamp","created_at"]);
 const safeCount=(value:unknown):value is number=>
   typeof value==="number"&&Number.isSafeInteger(value)&&value>=0;

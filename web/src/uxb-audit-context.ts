@@ -59,6 +59,29 @@ export function auditInvestigation(input:unknown):AuditInvestigation{
 }
 
 
+/** UX-5: the Home recent-activity list may open a narrowly scoped
+ * read-only Core Audit investigation only when the Core event itself carries
+ * an exact supported resource type, validated ID and absolute observation
+ * instant. Missing/untrusted data falls back to the unfiltered Audit page.
+ * This NEVER infers policy reachability, a new permission or a host edge.
+ */
+export function recentAuditInvestigation(input:unknown):Record<string,string>|null{
+ const entry=record(input);
+ const type=entry.resource_type;
+ const id=safeIdentifier(entry.resource_id);
+ const occurredAt=entry.occurred_at;
+ if(typeof type!=="string"||
+   !["managed-host","remote-service","access-rule"].includes(type)||
+   !id||!isObservedAbsoluteTime(occurredAt))return null;
+ return {originType:type,originId:id,
+   auditActor:safeIdentifier(entry.actor_id),
+   auditCategory:typeof entry.category==="string"&&CATEGORY.has(entry.category)
+     ?entry.category:"",
+   auditResult:typeof entry.result==="string"&&RESULTS.has(entry.result)
+     ?entry.result:"",
+   auditStart:occurredAt,auditEnd:occurredAt};
+}
+
 /** A resource detail may reopen only from the currently authorized/loaded Core
  * inventory page(s). Never fetch the resource by ID or search an unbounded fleet.
  */

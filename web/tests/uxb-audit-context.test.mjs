@@ -138,7 +138,7 @@ test("Returning to resource uses existing authorized loaded row, not server-side
 test("Audit context is source-only, Core audit resource filter and pagination remain intact",()=>{
  const main=readFileSync(join(root,"src","main.tsx"),"utf8");
  const audit=main.split("function AuditExplorer(",2)[1]?.split("function AgentRolloutPreviewPanel(",1)[0]||"";
- assert.match(main,/import \{auditInvestigation,matchObservedAuditReturn,matchObservedPolicyReturn\} from "\.\/uxb-audit-context"/);
+ assert.match(main,/import \{auditInvestigation,matchObservedAuditReturn,matchObservedPolicyReturn,recentAuditInvestigation\} from "\.\/uxb-audit-context"/);
  assert.match(main,/if\(active==="audit"\)return <AuditExplorer operator=\{operator\} context=\{context\} onNavigate=\{onNavigate\}\/>/);
  assert.match(audit,/auditInvestigation\(context\)/);
  assert.match(audit,/setResource\(.*\.resource\)/);
@@ -193,4 +193,53 @@ test("UX-5 malformed, spoofed or reversed Core Audit times cannot become investi
  const noEntity=context.auditInvestigation({auditStart:base.auditStart,auditEnd:base.auditEnd});
  assert.equal(noEntity.start,"");
  assert.equal(noEntity.end,"");
+});
+
+test("UX-5 selected Recent Activity event navigates to an exact Core Audit entity/time investigation",()=>{
+ const event={
+  event_id:"evt-44",resource_type:"remote-service",resource_id:"svc-22",
+  actor_id:"operator-7",occurred_at:"2026-10-11T11:21:37.123456Z",
+  category:"ACCESS_DECISION",result:"deny"
+ };
+ const carried=context.recentAuditInvestigation(event);
+ assert.deepEqual(carried,{
+  originType:"remote-service",originId:"svc-22",auditActor:"operator-7",
+  auditCategory:"ACCESS_DECISION",auditResult:"deny",
+  auditStart:"2026-10-11T11:21:37.123456Z",
+  auditEnd:"2026-10-11T11:21:37.123456Z"
+ });
+ const parsed=context.auditInvestigation(carried);
+ assert.equal(parsed.resource,"svc-22");
+ assert.equal(parsed.actor,"operator-7");
+ assert.equal(parsed.start,event.occurred_at);
+ assert.equal(parsed.end,event.occurred_at);
+ assert.deepEqual(parsed.returnTarget?.context,{
+  savedFilter:"id:svc-22",inspectResourceId:"svc-22"});
+ const source=readFileSync(join(root,"src","main.tsx"),"utf8");
+ const command=source.split("function CommandCenter(",2)[1]?.split("function AccessHygienePanel(",1)[0]||"";
+ assert.match(command,/onNavigate\?\.\("audit","activity",recentAuditInvestigation\(item\)\|\|undefined\)/);
+ // The separate "Open audit" header action deliberately remains an unfiltered
+ // generic Audit route; only observed event rows carry exact Core context.
+});
+test("UX-5 Recent Activity never guesses a Host/Service link from malformed Core event evidence",()=>{
+ const original={resource_type:"managed-host",resource_id:"host-a",
+  occurred_at:"2026-10-11T11:21:37Z",actor_id:"actor-a"};
+ assert.equal(context.recentAuditInvestigation(original)?.originId,"host-a");
+ for(const wrong of [
+  {...original,resource_type:"unknown"},
+  {...original,resource_id:"host\nsecret"},
+  {...original,resource_id:"../host-a"},
+  {...original,resource_id:{secret:"PRIVATE"}},
+  {...original,occurred_at:"yesterday"},
+  {...original,occurred_at:"2026-02-30T00:00:00Z"},
+  {...original,occurred_at:null},
+  {...original,occurred_at:"2026-10-11T11:21:37Z\u202e"}
+ ])assert.equal(context.recentAuditInvestigation(wrong),null);
+ const partial=context.recentAuditInvestigation({
+  ...original,actor_id:"actor\nunsafe",category:"NOT_A_CORE_CATEGORY",result:"ALLOW"
+ });
+ assert.equal(partial.auditActor,"");
+ assert.equal(partial.auditCategory,"");
+ assert.equal(partial.auditResult,"");
+ assert.doesNotMatch(JSON.stringify(partial),/PRIVATE|unsafe/);
 });
