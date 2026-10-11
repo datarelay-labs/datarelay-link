@@ -15,13 +15,13 @@ does not supersede any release, access, production, safety or Browser/E2E gate.*
 | Purpose | Authoritative target / observed fact | Status |
 | --- | --- | --- |
 | Source development, Node/Python tests, detached worktrees | `dev-drlink` (development host) | Separate from any installed product test server |
-| **Future DRLink 3.0 installed Server/Agent/Browser E2E test target** | **`mcp.link.datarelay.run` / `15.164.238.140`** | **SELECTED, NOT YET QUALIFIED FOR 3.0** |
-| Prior host `remote.xdr.ooo` (observed IPv4 `129.225.184.60`) | **Excluded from all future 3.0 test execution**; owner plans separate 3.0 data cleanup | DO NOT connect, deploy, delete or use it as a 3.0 fallback |
+| **Future DRLink 3.0 installed Server/Agent/Browser E2E test target** | **`mcp.link.datarelay.run`** | **SELECTED, NOT YET QUALIFIED FOR 3.0** |
+| Prior host `remote.xdr.ooo` | **Excluded from all future 3.0 test execution**; owner plans separate 3.0 data cleanup | DO NOT connect, deploy, delete or use it as a 3.0 fallback |
 | New-target SSH access | Existing `mcp-link` alias on `dev-drlink` resolves to `mcp.link.datarelay.run` | Read-only SSH discovery succeeded; this does not prove Browser/MCP/Server availability |
 | New-target installed version at observation | `/etc/drlink/version`: `PROJECT_VERSION=2.4.0` | **NOT a 3.0 installed candidate** |
 | New-target observed services | `drlink-client`, `drlink-ai-agent`, `drlink-lifecycle` active; `drlink-server`, `drlink-web`, `drlink-allocator` inactive | Browser/3-role E2E **BLOCKED** until separately authorized qualified 3.0 Server/Agent/Web target |
 | New-target TCP/HTTPS | TCP/443 listening; local HTTPS root read returned HTTP 404 | Not evidence of working DRLink 3.0 Web or MCP |
-| DNS observation on `dev-drlink` | New FQDN resolved to `15.164.238.140` | DNS mapping observed, not a deployment or certificate approval |
+| DNS observation on `dev-drlink` | New FQDN resolved to the owner-provided new test host address | DNS mapping observed, not a deployment or certificate approval |
 
 **Safety/continuity:** No service restart, install, uninstall, migration, production
 change, credential/ACL modification or deletion is approved by this target change.
