@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "version": "0.1.0-pf5b.1",
-  "source_head": "010ee18426a8f5b1959e39ea45e469d6ffc30e05",
+  "version": "0.1.0-pf8.4",
+  "source_head": "8726549f80f85b79d94e91a87324d2523e27ddbb",
   "registry": {
     "scope": "@datarelay-labs",
     "url": "https://npm.pkg.github.com",
@@ -11,63 +11,63 @@
     {
       "name": "@datarelay-labs/tokens",
       "path": "tokens",
-      "sha256": "d7522296070f76bc21437e9b1e00fc872fa69c2abde45737b54739487efa0d9d",
-      "archive_sha256": "ba61432aead20afd2ecb3f4d0f9d01afc227645de762f0ad384fd20f203eec34"
+      "sha256": "edb2bf534fce22fc66774745def377c250697e94157fbd44d2462705269d4740",
+      "archive_sha256": "9f294056c3cc9e08036411b1235363c3515bfb196c6f649f87bbf2048cc69b48"
     },
     {
       "name": "@datarelay-labs/icons",
       "path": "icons",
-      "sha256": "13fd24a4bfc8e81ef19c9bf432c6bc75fe5b4b0c0fad078f4a43b8a123933ade",
-      "archive_sha256": "1fafdc489a06e4b4a3b6c88106baf8d5cc1a37f511762bd7f4a8207e5e47cf73"
+      "sha256": "8d2270ab87b121f7775f22e4ada627548877cae0abae7b1f8efb417c92bbd48d",
+      "archive_sha256": "9191774102afb9d439ec847965988643de62138096baa13704ba63eb017210ac"
     },
     {
       "name": "@datarelay-labs/ui",
       "path": "ui",
-      "sha256": "d98b700c78638dc7ebc22d41bef834b97cbe37195195ee9cae69299727e5fc23",
-      "archive_sha256": "b778c96b961e82375b646af10a9a50cbd206a57e2f5974312879fa09339772f3"
+      "sha256": "af6cf6c65ff053fcd3c7fb7c0386a3db5c3eb969cdd10c90181d65ed211e87e4",
+      "archive_sha256": "1fa12ebf73801a185988f2f955fa4ad828600abcf849c9e79af25fc205e143ab"
     },
     {
       "name": "@datarelay-labs/product-shell",
       "path": "product-shell",
-      "sha256": "50cc6c0dc775830e31eaa9359466d62f7c3ef406c5e7f09db649e1a273efb604",
-      "archive_sha256": "1df67204dd5448911b24f531df3c0815e816aa052586259f50fc6eb58cf17b54"
+      "sha256": "9f6fdbc39478a90da2a55ae0d1eda1fcf0ded62c9cfbde79a3d50874ebbe3e04",
+      "archive_sha256": "83fda0a60e572daa24e46193fd87daa0fbee7fed8506ada626f7d2b71fa8d363"
     },
     {
       "name": "@datarelay-labs/auth-ui",
       "path": "auth-ui",
-      "sha256": "6eb6f418ab44ae032ea748acde2185358d79fadae058bf084a84cb694a4ee780",
-      "archive_sha256": "90d1bd5c22b39cf164323f0da878162f5c984dc4893c57263d165633c7287a1b"
+      "sha256": "5bdcc46874bfcb36f68b3d7b6a7a93128b73c909446243f5d4204b28fb883ef9",
+      "archive_sha256": "c6a2ba1257fc365a213648986c2ff2695bcdd099dc2733c41ce4a74cf694b803"
     },
     {
       "name": "@datarelay-labs/system-contracts",
       "path": "system-contracts",
-      "sha256": "ce693274b5229255429ad05f6b902464ff9ac29fcc44615b88533f6f29d486a0",
-      "archive_sha256": "9c7c520349c122556fa21437071f5e2287254b3aa05b297bae9ca419d1385d00"
+      "sha256": "da4f8f9e4ddb1bebe0913d376e791fa02b79c774bb8cdc6d6be7cc14fb64d0b5",
+      "archive_sha256": "ab2bd2220cea4471f1e0ccc2ea314138cfc244b6c47bc0be99f79cf1d1a5c997"
     },
     {
       "name": "@datarelay-labs/system-admin-ui",
       "path": "system-admin-ui",
-      "sha256": "e28963e84e4636d3eb8d93efd358fca011b5bf2722965904fe7f3128e6ebf5d8",
-      "archive_sha256": "26ae75250bd2f5e91c2dd51774f8952fc2551105b0c6339c3c3051a52155b02d"
+      "sha256": "526ba9f3b5aacc109143f2b527006f3fe9dcf1e33af88c7d9d3acb2c0028bacd",
+      "archive_sha256": "8d3263882be2234a89e89d0486e47ec7e743f5b2f23479b087101004a51ef679"
     },
     {
       "name": "@datarelay-labs/testkit",
       "path": "testkit",
-      "sha256": "ea263d5cc1ff4d00067397713da21da3ba8b1f66042bad115c65b788294434dc",
-      "archive_sha256": "5af612c95c65cb8c9ed56a2f2fd4e79804f79f3a387983b6fc8e43988b893777"
+      "sha256": "c58509046ab35df477db504046da0e9ff9200742bc7e615c62cab27d40fd8648",
+      "archive_sha256": "325d2d9371ba9fe5ebd00a092d45040abca1c66ecd45192168802e33331b863c"
     },
     {
       "name": "@datarelay-labs/foundation",
       "path": "foundation",
-      "sha256": "44e5a6d4b3c0574215326d920e6ed8a4d289f4d949c9e0c2acf56bc005e3eda9",
-      "archive_sha256": "e5163a1fc20b579d0abdc104f6d92390de4d9fe7a3dee286e4db298b2cb49525"
+      "sha256": "27e96e3769281e4fe78962d16533c636e630c3f2fdc1b1423638d3a0a8e89339",
+      "archive_sha256": "08972afac198fdcfd1dcd9d95d8ac5b7824c4f38658a9ddf3508a4698e47b1c4"
     },
     {
       "name": "@datarelay-labs/foundation-cli",
       "path": "foundation-cli",
-      "sha256": "279fe1026a1090f7e9254c33bfaf8be9f04933f87a4b36ba25e7cb8b87e4c843",
-      "archive_sha256": "3077f8ed400091fad7462128688d8e86f0bc9c168ff566f755247bd21fc65efa"
+      "sha256": "120ad665a6540de223e2a3f03a2775c1136b3a77b12b287834e01131251aa6e1",
+      "archive_sha256": "e6be81ae87329945298087bd332bd04c04cc3fb05a68062b16149925986c45fb"
     }
   ],
-  "commit": "010ee18426a8f5b1959e39ea45e469d6ffc30e05"
+  "commit": "8726549f80f85b79d94e91a87324d2523e27ddbb"
 }

@@ -444,7 +444,10 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         https = ADMIN_SOURCE.split('"core.https":{', 1)[1].split('    },', 1)[0]
         users = ADMIN_SOURCE.split('"core.users":{', 1)[1].split('    },', 1)[0]
         self.assertIn('availability:"read_only"', https)
-        self.assertIn('access:"view"', https)
+        self.assertIn('const authenticated=admin||role==="Operator"||role==="Read Only"', ADMIN_SOURCE)
+        self.assertIn('const readAccess=authenticated?"view":"none"', ADMIN_SOURCE)
+        self.assertIn('access:readAccess', https)
+        self.assertIn('...(authenticated?{target:', https)
         self.assertIn('MCP TLS certificate status only', https)
         self.assertIn('Shared Web HTTPS listener and redirect configuration', https)
         self.assertIn('actionId:"link.certificate"', https)
@@ -454,13 +457,36 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn('actionId:"link.users"', users)
         self.assertIn('if(admin)onNavigate?.("users","administration")', component)
         self.assertIn('showUnavailable onOpen={openTask}', component)
-        for name in (
-            "core.password", "core.timezone", "core.network",
-            "core.retention", "core.backup-import"
-        ):
+        for name in ("core.password", "core.timezone", "core.network"):
             self.assertIn(f'"{name}":unavailable', ADMIN_SOURCE)
+        retention = ADMIN_SOURCE.split('"core.retention":{', 1)[1].split('    },', 1)[0]
+        self.assertIn('availability:"read_only"', retention)
+        self.assertIn('access:readAccess', retention)
+        self.assertIn('Audit retention status only', retention)
+        self.assertIn('general data retention scheduler is unavailable', retention)
+        self.assertIn('actionId:"link.retention"', retention)
+        self.assertIn('case "link.retention":onNavigate?.("audit","observability");break;', component)
+        self.assertIn('operator.role==="Admin"&&<div className="dr-retention-config">', SOURCE)
+        self.assertIn('api("/api/v1/audit/retention")', SOURCE)
+        backup = ADMIN_SOURCE.split('"core.backup-import":{', 1)[1].split('    },', 1)[0]
+        self.assertIn('availability:"read_only"', backup)
+        self.assertIn('access:readAccess', backup)
+        self.assertIn('generic configuration import is unavailable', backup)
+        self.assertIn('actionId:"link.backup"', backup)
+        self.assertIn('case "link.backup":', component)
+        self.assertIn('getElementById("drlink-backup-status")', component)
+        self.assertIn('id="drlink-backup-status"', SOURCE)
+        self.assertIn('onClick={validateBackup}', SOURCE)
+        self.assertIn('operator.role==="Admin"&&validation?.valid', SOURCE)
         for name in ("core.audit", "core.health"):
             self.assertIn(f'"{name}":{{', ADMIN_SOURCE)
+            self.assertIn(
+                f'"{name}":{{\n      availability:"read_only",access:readAccess',
+                ADMIN_SOURCE,
+            )
+        # An unrecognized role must not inherit any incidental View target.
+        self.assertIn('...(authenticated?{target:{kind:"action" as const,actionId:"link.audit"}}:{})', ADMIN_SOURCE)
+        self.assertIn('...(authenticated?{target:{kind:"action" as const,actionId:"link.health"}}:{})', ADMIN_SOURCE)
 
     def test_managed_host_admission_is_visible_separately_from_connection(self):
         # An admission filter alone is not enough; the selected state must be

@@ -192,7 +192,16 @@ class V30WebBundleTests(unittest.TestCase):
         self.assertIn("data-relay-link-web/web/src/p0-enrollment.tsx", names)
         for name in ("uxb-navigation.ts", "uxb-home.tsx", "uxb-remote-service.tsx", "uxb-setup.tsx", "uxb-core-choices.tsx"):
             self.assertIn("data-relay-link-web/web/src/" + name, names)
-        self.assertIn("data-relay-link-web/web/.foundation/packs/datarelay-labs-foundation-0.1.0-pf5b.1.tgz", names)
+        # Bind archive coverage to the committed immutable package lock.
+        # All ten pinned Foundation packages must ship, not just one stale
+        # hard-coded release filename.
+        foundation_lock = json.loads((ROOT / "web/foundation.lock.json").read_text())
+        self.assertEqual(len(foundation_lock["packages"]), 10)
+        for package in foundation_lock["packages"]:
+            filename = "datarelay-labs-%s-%s.tgz" % (
+                package["path"], foundation_lock["version"]
+            )
+            self.assertIn("data-relay-link-web/web/.foundation/packs/" + filename, names)
         self.assertNotIn("data-relay-link-web/var/lib/drlink/drlink.db", names)
 
 if __name__ == "__main__":
