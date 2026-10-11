@@ -188,6 +188,21 @@ export function nextFirstConnectionAction(states:TaskState[],role:string){
   return steps[4];
 }
 
+/** Previously fetched Host evidence cannot be reused across Web sessions,
+ * including two different operators holding the same nominal role.
+ * This is UI display isolation; the authenticated Core owns authorization.
+ */
+export function homeInventoryMatchesActor(loadedFor:unknown,current:unknown):boolean{
+  const obj=(v:unknown):v is Record<string,unknown>=>
+    !!v&&typeof v==="object"&&!Array.isArray(v);
+  if(!obj(loadedFor)||!obj(current))return false;
+  const id=current.id,role=current.role;
+  return typeof id==="string"&&!!id.trim()&&id.length<=160
+    &&!CORE_TEXT_BAD.test(id)
+    &&["Admin","Operator","Read Only"].includes(String(role))
+    &&loadedFor.id===id&&loadedFor.role===role;
+}
+
 export function FirstUseHome({data,operator,api,onNavigate}:{
   data:any,operator:any,api:(path:string)=>Promise<any>,
   onNavigate?:(id:string,groupId?:string,context?:any)=>void
@@ -196,22 +211,31 @@ export function FirstUseHome({data,operator,api,onNavigate}:{
   const [inventoryComplete,setInventoryComplete]=useState<boolean|null>(null);
   const [loadState,setLoadState]=useState<"loading"|"ready"|"error">("loading");
   const [error,setError]=useState("");
+  const [loadedFor,setLoadedFor]=useState<{id:string,role:string}|null>(null);
   useEffect(()=>{
     let active=true;
-    // A different Web role must never reuse the previous role's Host snapshot.
+    // A different actor or Web role must never reuse the previous Host page.
+    setLoadedFor(null);
     setInventory(null);setInventoryComplete(null);setLoadState("loading");setError("");
     api("/api/v1/inventory?resource_type=managed-host&limit=100")
       .then(payload=>{if(!active)return;
         const observed=observedHomeHostPage(payload);
         if(!observed)throw new Error("Core inventory response missing or malformed items");
-        setInventory(observed.items);setInventoryComplete(observed.complete);setLoadState("ready");
+        setInventory(observed.items);setInventoryComplete(observed.complete);
+        setLoadedFor({id:operator?.id,role:operator?.role});
+        setLoadState("ready");
       })
-      .catch(err=>{if(active){setInventory(null);setInventoryComplete(null);setLoadState("error");setError(String(err?.message||err))}});
+      .catch(err=>{if(active){setLoadedFor({id:operator?.id,role:operator?.role});setInventory(null);setInventoryComplete(null);setLoadState("error");setError(String(err?.message||err))}});
     return()=>{active=false};
-  },[api,operator?.role]);
-  const stage=firstConnectionStates(data,inventory,inventoryComplete);
-  const newInstall=showFreshHomeWelcome(data,loadState);
-  const pending=observedApprovalQueueCount(data,inventory,inventoryComplete===true);
+  },[api,operator?.id,operator?.role]);
+  // Gate render synchronously, before passive useEffect cleanup on actor swap.
+  const matchingActor=homeInventoryMatchesActor(loadedFor,operator);
+  const scopedInventory=matchingActor?inventory:null;
+  const scopedComplete=matchingActor?inventoryComplete:null;
+  const scopedLoadState=matchingActor?loadState:"loading";
+  const stage=firstConnectionStates(data,scopedInventory,scopedComplete);
+  const newInstall=showFreshHomeWelcome(data,scopedLoadState);
+  const pending=observedApprovalQueueCount(data,scopedInventory,scopedComplete===true);
   const cards=steps.map((item,i)=>({...item,status:stage[i]}));
   const next=nextFirstConnectionAction(stage,String(operator?.role||"Read Only"));
   return <section className="card dr-uxb-home" data-testid="uxb-first-connection">
@@ -219,10 +243,10 @@ export function FirstUseHome({data,operator,api,onNavigate}:{
       <h2>{newInstall?"Your first protected connection starts here":"What would you like to do next?"}</h2>
       <p className="muted">Five steps from adding one server to explaining an access decision. No setup status is stored in your browser.</p>
     </div><button className="primary" onClick={()=>onNavigate?.("setup","connections")}>Open guided setup →</button></div>
-    {loadState==="error"&&<p className="warning-box" role="alert">Managed Host inventory unavailable ({error}). Agent readiness is UNKNOWN, not healthy.</p>}
-    {loadState==="ready"&&inventoryComplete!==true&&<p className="warning-box" role="status">
-      Managed Host inventory {inventoryComplete===false?"is paginated":"completeness is UNKNOWN"}:
-      only {inventory?.length??"UNKNOWN"} loaded Host records are available on this page.
+    {scopedLoadState==="error"&&<p className="warning-box" role="alert">Managed Host inventory unavailable ({error}). Agent readiness is UNKNOWN, not healthy.</p>}
+    {scopedLoadState==="ready"&&scopedComplete!==true&&<p className="warning-box" role="status">
+      Managed Host inventory {scopedComplete===false?"is paginated":"completeness is UNKNOWN"}:
+      only {scopedInventory?.length??"UNKNOWN"} loaded Host records are available on this page.
       Approval counts come from the full Core overview when valid; unloaded Hosts may still require attention.
       Open Servers &amp; Agents to load additional pages.
     </p>}
@@ -232,7 +256,7 @@ export function FirstUseHome({data,operator,api,onNavigate}:{
         return <li key={item.title} className={i===4?"dr-uxb-last-step":""}>
           <span className="dr-uxb-step-count">{i+1}</span>
           <div><strong>{item.title}</strong><p>{item.description}</p>
-            <small className={item.status==="Unknown"?"dr-uxb-status unknown":"dr-uxb-status"}>{i===0&&item.status!=="Unknown"?"Core overview received · check Health for details":loadState==="loading"&&i===1?"Checking Core inventory…":item.status}</small></div>
+            <small className={item.status==="Unknown"?"dr-uxb-status unknown":"dr-uxb-status"}>{i===0&&item.status!=="Unknown"?"Core overview received · check Health for details":scopedLoadState==="loading"&&i===1?"Checking Core inventory…":item.status}</small></div>
           {limited?<span className="dr-uxb-role-hint">Admin required to issue an Agent ticket</span>:
           <button className="secondary" onClick={()=>onNavigate?.(item.route,item.group)}>{item.action} →</button>}
         </li>;
@@ -247,7 +271,7 @@ export function FirstUseHome({data,operator,api,onNavigate}:{
       </button>
       <small>Opens only the already authorized Host inventory; more pages may be needed.</small>
     </div>}
-    {pending==="UNKNOWN"&&loadState==="ready"&&<p className="muted" role="status">
+    {pending==="UNKNOWN"&&scopedLoadState==="ready"&&<p className="muted" role="status">
       Pending Host approvals: UNKNOWN · Review Servers &amp; Agents to inspect missing Core evidence.</p>}
     <div className="dr-uxb-home-next"><div><strong>Suggested next action</strong><small>{next.title}</small></div>
       <button className="primary" disabled={operator?.role!=="Admin"&&next.route==="enrollments"} onClick={()=>onNavigate?.(next.route,next.group)}>{next.action} →</button></div>

@@ -309,6 +309,25 @@ test("FirstUseHome must fail closed before accepting malformed role-scoped Host 
  const source=readFileSync(join(root,"src","uxb-home.tsx"),"utf8");
  assert.match(source,/const observed=observedHomeHostPage\(payload\)/);
  assert.match(source,/if\(!observed\)throw new Error\("Core inventory response missing or malformed items"\)/);
- assert.match(source,/\},\[api,operator\?\.role\]\)/);
+ assert.match(source,/\},\[api,operator\?\.id,operator\?\.role\]\)/);
  assert.match(source,/setInventory\(null\);setInventoryComplete\(null\);setLoadState\("loading"\)/);
+});
+
+test("Host inventory evidence must remain private to its exact current Web operator and role",()=>{
+ const actor={id:"web-operator-a",role:"Admin"};
+ const scope={id:"web-operator-a",role:"Admin"};
+ assert.equal(home.homeInventoryMatchesActor(scope,actor),true);
+ for(const other of [
+  {id:"web-operator-b",role:"Admin"},
+  {id:"web-operator-a",role:"Operator"},
+  {id:"web-operator-a",role:"Read Only"},
+  {id:"",role:"Admin"},
+  {id:"web-operator-a",role:"Unknown"}
+ ])assert.equal(home.homeInventoryMatchesActor(scope,other),false,JSON.stringify(other));
+ assert.equal(home.homeInventoryMatchesActor(null,actor),false);
+ assert.equal(home.homeInventoryMatchesActor({id:"web-operator-a",role:"Admin"},null),false);
+ const src=readFileSync(join(root,"src","uxb-home.tsx"),"utf8");
+ assert.match(src,/const matchingActor=homeInventoryMatchesActor\(loadedFor,operator\)/);
+ assert.match(src,/const scopedInventory=matchingActor\?inventory:null/);
+ assert.match(src,/\},\[api,operator\?\.id,operator\?\.role\]\)/);
 });
