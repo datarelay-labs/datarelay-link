@@ -31,6 +31,7 @@ import {auditUtcPresetRange} from "./uxb-audit-presets";
 import {filterObservedPoliciesByStatus} from "./uxb-policy-status-filter";
 import {observedPolicyExpiryState,filterObservedPoliciesByExpiry,observedPolicyExpiryCounts,filterObservedPolicySearch,observedPolicyDetailFields,type PolicyExpiryChoice} from "./uxb-policy-expiry";
 import {observedPolicyCardSummary} from "./uxb-policy-cards";
+import {policyAuditInvestigationTarget} from "./uxb-policy-audit-action";
 import {serviceAccountOperationalStatus,serviceAccountExpiry,serviceAccountPermissions,webhookStatus,webhookDeliverySummary} from "./uxb-integrations-state";
 import {filterObservedHosts} from "./uxb-host-search";
 import {sortLoadedHosts,isHostSortMode,type HostSortMode} from "./uxb-host-sort";
@@ -1936,6 +1937,12 @@ function PolicyWorkspace({data,operator,onNavigate,api,context}:{data:any,operat
   const policyStatusRows=filterObservedPoliciesByStatus<any>(safePolicySearch.items,statusFilter);
   const expiryCounts=observedPolicyExpiryCounts(policyStatusRows,expiryObservedAt);
   const rows=filterObservedPoliciesByExpiry<any>(policyStatusRows,expiryFilter,expiryObservedAt);
+  function reviewPolicyAudit(row:unknown){
+    const target=policyAuditInvestigationTarget(row);
+    if(!target)return;
+    setSelected(null);
+    onNavigate?.("audit","activity",target);
+  }
   const tabs=[["all","All"],["remote","Remote"],["internet","Internet"],["ai","AI"]];
   return <div className="dr-resource-workspace">
     <section className="dr-page-intro"><div><p className="dr-eyebrow">Access</p><h2>Policies</h2><p className="muted">One policy workspace with separate Remote, Internet and AI security semantics.</p></div><div className="dr-page-actions"><button className="secondary" onClick={()=>onNavigate?.("access","access",carriedFlow||undefined)}>Test & explain access</button>{operator.role!=="Read Only"&&<button className="primary" onClick={()=>onNavigate?.("drafts","access",carriedFlow||undefined)}>Draft change</button>}</div></section>
@@ -2025,11 +2032,22 @@ function PolicyWorkspace({data,operator,onNavigate,api,context}:{data:any,operat
                 </span>)}</span>
               <span className="dr-resource-card-action">Inspect Core policy detail →</span>
             </button>
+            <button type="button" className="secondary dr-policy-audit-shortcut"
+              disabled={!policyAuditInvestigationTarget(item)}
+              aria-label={"Review related Audit for "+info.title}
+              onClick={event=>{event.stopPropagation();reviewPolicyAudit(item)}}>Review related Audit →</button>
           </div>:<div role="listitem" key={"unverified:"+index} className="dr-resource-card-item">
             <p className="warning-box" role="status">UNKNOWN · Core policy card facts could not be verified. Switch to Table to inspect loaded data without guessing.</p>
           </div>;
         })}
-      </div>:<div className="dr-table-scroll"><table className="dr-resource-table"><thead><tr><th>Policy</th><th>Plane</th><th>Action</th><th>State</th><th>Expires</th><th>Description</th></tr></thead><tbody>{rows.map((item:any)=><tr key={(item.plane||"policy")+":"+item.id} tabIndex={0} onClick={()=>setSelected(item)} onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();setSelected(item)}}}><td><strong>{item.name||item.id}</strong><small>{item.id}</small></td><td>{item.plane||"—"}</td><td>{item.action||"—"}</td><td><span className={policyStateLabel(item.enabled)==="Enabled"?"dr-state active":"dr-state"}><i/>{policyStateLabel(item.enabled)}</span></td><td><span className={observedPolicyExpiryState(item,expiryObservedAt)==="expired"?"badge warning":"badge"}>{observedPolicyExpiryState(item,expiryObservedAt)==="due24h"?"Due within 24h":observedPolicyExpiryState(item,expiryObservedAt)==="unknown"?"UNKNOWN":observedPolicyExpiryState(item,expiryObservedAt)==="never"?"Never":observedPolicyExpiryState(item,expiryObservedAt)==="later"?"Later":"Expired"}</span><small>{policyExpiryLabel(item)}</small></td><td>{item.description||"—"}</td></tr>)}</tbody></table></div>}
+      </div>:<div className="dr-table-scroll"><table className="dr-resource-table"><thead><tr><th>Policy</th><th>Plane</th><th>Action</th><th>State</th><th>Expires</th><th>Description</th><th>Investigation</th></tr></thead><tbody>{rows.map((item:any)=><tr key={(item.plane||"policy")+":"+item.id} tabIndex={0} onClick={()=>setSelected(item)} onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();setSelected(item)}}}><td><strong>{item.name||item.id}</strong><small>{item.id}</small></td><td>{item.plane||"—"}</td><td>{item.action||"—"}</td><td><span className={policyStateLabel(item.enabled)==="Enabled"?"dr-state active":"dr-state"}><i/>{policyStateLabel(item.enabled)}</span></td><td><span className={observedPolicyExpiryState(item,expiryObservedAt)==="expired"?"badge warning":"badge"}>{observedPolicyExpiryState(item,expiryObservedAt)==="due24h"?"Due within 24h":observedPolicyExpiryState(item,expiryObservedAt)==="unknown"?"UNKNOWN":observedPolicyExpiryState(item,expiryObservedAt)==="never"?"Never":observedPolicyExpiryState(item,expiryObservedAt)==="later"?"Later":"Expired"}</span><small>{policyExpiryLabel(item)}</small></td><td>{item.description||"—"}</td>
+          <td><button type="button" className="secondary dr-policy-audit-shortcut"
+            disabled={!policyAuditInvestigationTarget(item)}
+            aria-label={"Review related Audit for "+(policyAuditInvestigationTarget(item)?.originId||"unverified policy")}
+            onKeyDown={event=>event.stopPropagation()}
+            onClick={event=>{event.stopPropagation();reviewPolicyAudit(item)}}>
+            Review related Audit →
+          </button></td></tr>)}</tbody></table></div>}
     </section>
     {selected&&<div className="dr-drawer-backdrop" onMouseDown={e=>{if(e.currentTarget===e.target)setSelected(null)}}><aside className="dr-detail-drawer" role="dialog" aria-modal="true" aria-label="Policy detail" tabIndex={-1} autoFocus><header><div><p className="dr-eyebrow">{selected.plane||"Policy"} access</p><h2>{selected.name||selected.id}</h2><p>{selected.id}</p></div><button className="dr-icon-button" onClick={()=>setSelected(null)} aria-label="Close detail">×</button></header><div className="dr-drawer-status"><span className={policyStateLabel(selected.enabled)==="Enabled"?"dr-state active":"dr-state"}><i/>{policyStateLabel(selected.enabled)}</span></div><div className="dr-detail-fields">{observedPolicyDetailFields(selected).map(field=><div key={field.label}><span>{field.label}</span><strong>{field.value}</strong></div>)}</div><footer><button className="secondary" onClick={()=>{const target={originId:String(selected.id||selected.name||""),originType:"access-rule",plane:selected.plane};setSelected(null);onNavigate?.("audit","activity",target)}}>Recent activity</button><button className="primary" onClick={()=>{const target={originId:String(selected.id||selected.name||""),originType:"access-rule",plane:selected.plane||"remote",source:String(selected.source||""),destination:String(selected.destination||""),selector:String(selected.plane==="ai"?selected.permission||"":selected.service||"")};setSelected(null);onNavigate?.("access","access",target)}}>Why allowed / denied?</button></footer></aside></div>}
   </div>;
