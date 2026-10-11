@@ -500,3 +500,32 @@ test("UX-3 valid non-secret in-session user draft is restored exactly with ownin
  const source=readFileSync(join(root,"src","uxb-setup.tsx"),"utf8");
  assert.match(source,/const restoredDraft=safeResumedSetupDraft\(initialDraft\)/);
 });
+
+test("UX-8 Remote Service Job detail shows only bounded safe status evidence, never Core arbitrary payload",()=>{
+ const raw={id:"job-42",status:"RUNNING",target_count:3,
+  updated_at:"2026-10-11T04:12:00Z",last_error:"none",
+  access_token:"PRIVATE_TOKEN",credential:{private_key:"PRIVATE_KEY"},
+  payload:{secret:"PRIVATE_PAYLOAD"},targets:[{result:{secret:"PRIVATE_RESULT"}}]};
+ const safe=service.remoteServiceJobEvidence(raw);
+ assert.deepEqual(safe,{job_id:"job-42",status:"RUNNING",target_count:3,
+  updated_at:"2026-10-11T04:12:00Z",last_error:"none"});
+ assert.doesNotMatch(JSON.stringify(safe),/PRIVATE_/);
+ const source=readFileSync(join(root,"src","uxb-remote-service.tsx"),"utf8");
+ assert.match(source,/const visibleJob=remoteServiceJobEvidence\(job\)/);
+ assert.match(source,/JSON\.stringify\(visibleJob,null,2\)/);
+ assert.doesNotMatch(source,/JSON\.stringify\(job,null,2\)/);
+});
+test("UX-8 malformed or control-tainted Core Job status/ID is UNKNOWN, not success",()=>{
+ for(const bad of [
+  null,[],{}, {job_id:{secret:"PRIVATE_ID"},status:"SUCCEEDED"},
+  {job_id:"job\u202eSUCCESS",status:"SUCCEEDED"},
+  {job_id:"job-42",status:{secret:"PRIVATE_STATUS"},target_count:"0"},
+  {job_id:"job-42",status:"DONE",target_count:-1,updated_at:"yesterday"}
+ ]){
+  const view=service.remoteServiceJobEvidence(bad);
+  assert.ok(["UNKNOWN","job-42"].includes(view.job_id));
+  assert.equal(view.status,"UNKNOWN",JSON.stringify(bad));
+  assert.doesNotMatch(JSON.stringify(view),/PRIVATE_|yesterday|\u202e/);
+ }
+ assert.equal(service.remoteServiceJobEvidence({job_id:"job-42",status:"SUCCEEDED",target_count:0}).status,"SUCCEEDED");
+});

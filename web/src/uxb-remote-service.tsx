@@ -1,6 +1,7 @@
 import React,{useEffect,useRef,useState} from "react";
 import type {LinkApi} from "./p0-access-policy";
 import {CoreChoiceField,useCoreCatalog,type CoreCatalog} from "./uxb-core-choices";
+import {isObservedAbsoluteTime} from "./uxb-integrations-state";
 
 /** Queue results use job_id; canonical Core job details use id. Never lose the
  * queued identity or present a different job as evidence for this service. */
@@ -9,6 +10,33 @@ export function mergeRemoteServiceJob(queued:any,detail:any){
   const observed=String(detail?.job_id||detail?.id||"");
   if(!requested||observed!==requested)throw new Error("Core returned a different Agent job identity.");
   return {...detail,job_id:requested};
+}
+
+/** UX-8: a Core Job may include privileged payload, claim and target result
+ * fields. Only narrowly approved read-only metadata belongs in Service UX.
+ * Unsupported status and untrusted values never become false job SUCCESS.
+ */
+const JOB_BAD_TEXT=/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/;
+const JOB_STATUSES=new Set(["QUEUED","RUNNING","SUCCEEDED","FAILED","CANCELLED"]);
+export function remoteServiceJobEvidence(input:unknown){
+ const data=input!==null&&typeof input==="object"&&!Array.isArray(input)
+   ?input as Record<string,unknown>:{};
+ const rawId=data.job_id??data.id;
+ const jobId=typeof rawId==="string"&&/^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,159}$/.test(rawId)
+   ?rawId:"UNKNOWN";
+ const rawStatus=data.job_status??data.status;
+ const status=jobId!=="UNKNOWN"&&typeof rawStatus==="string"
+   &&JOB_STATUSES.has(rawStatus)?rawStatus:"UNKNOWN";
+ const count=data.target_count;
+ const lastError=data.last_error;
+ return {
+   job_id:jobId,
+   status,
+   target_count:typeof count==="number"&&Number.isSafeInteger(count)&&count>=0?count:"UNKNOWN",
+   updated_at:isObservedAbsoluteTime(data.updated_at)?data.updated_at:"UNKNOWN",
+   last_error:typeof lastError==="string"&&lastError.length<=160
+     &&!JOB_BAD_TEXT.test(lastError)?lastError:"UNKNOWN",
+ };
 }
 
 /** UXB-03: one canonical Remote Service editor used from both Services and Setup. */
@@ -32,6 +60,7 @@ export function RemoteServiceEditor({api,ownerHint="",onSelection,initialSelecti
   const lastOwnerHint=useRef(ownerHint);
   const requestGeneration=useRef(0);
   const catalog=useCoreCatalog(api,resourceCatalog);
+  const visibleJob=remoteServiceJobEvidence(job);
   useEffect(()=>{onBusyChange?.(busy)},[busy]);
   useEffect(()=>()=>{onBusyChange?.(false)},[]);
   useEffect(()=>{
@@ -125,10 +154,12 @@ export function RemoteServiceEditor({api,ownerHint="",onSelection,initialSelecti
       <button className="danger" disabled={busy||!preview.change_plan_id||confirmation!==required} onClick={doApply}>Queue authenticated Agent job</button>
     </div>}
     {job&&<div className="notice" role="status">
-      <strong>Agent job: {job.job_id||job.id||"UNKNOWN"}</strong>
-      <p>Status: {job.job_status||job.status||"QUEUED / NOT VERIFIED"}. Service publication and target reachability must be verified separately.</p>
-      <button className="secondary" disabled={busy||!job.job_id} onClick={refreshJob}>Refresh actual job status</button>
-      <details><summary>Advanced job details</summary><pre className="plan">{JSON.stringify(job,null,2)}</pre></details>
+      <strong>Agent job: {visibleJob.job_id}</strong>
+      <p>Status: {visibleJob.status}. Service publication and target reachability must be verified separately.</p>
+      <button className="secondary" disabled={busy||!job.job_id||visibleJob.job_id==="UNKNOWN"} onClick={refreshJob}>Refresh actual job status</button>
+      <details><summary>Bounded Core job evidence</summary><pre className="plan">{JSON.stringify(visibleJob,null,2)}</pre>
+        <p className="muted">Unrestricted Agent payloads, credentials and job results are not displayed in this workspace. Check authenticated Jobs for permitted diagnostic details.</p>
+      </details>
     </div>}
   </section>;
 }
