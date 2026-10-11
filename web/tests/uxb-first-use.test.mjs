@@ -162,7 +162,7 @@ test("first-use states are fail-closed without trustworthy evidence",()=>{
  const blank={overview:{managed_hosts:{total:0},remote_services:{total:0,enabled:0},policies:{remote:{total:0,enabled:0}}}};
  assert.deepEqual(home.firstConnectionStates(blank,[]),[
   "Configured · verify","Not started","Not started","Not started","Needs verification"]);
- const partial={overview:{managed_hosts:{total:1},remote_services:{total:1,enabled:1},policies:{remote:{enabled:2}}}};
+ const partial={overview:{managed_hosts:{total:1},remote_services:{total:1,enabled:1},policies:{remote:{total:2,enabled:2}}}};
  const waiting=home.firstConnectionStates(partial,[{admission_state:"PENDING_APPROVAL",connected:true,trust_status:"trusted"}]);
  assert.equal(waiting[1],"Needs approval");
  assert.equal(waiting[2],"Configured · verify");
@@ -235,4 +235,60 @@ test("Home SSR has useful actions, no fake connection claims or credential URLs"
   assert.match(html,/>Open guided setup →<\/button>/);
   assert.doesNotMatch(html,/<button[^>]*disabled=""[^>]*>Open guided setup →<\/button>/);
  }
+});
+
+test("M1 Home rejects impossible Core counts and inconsistent step completion",()=>{
+ for(const bad of [-1,1.5,NaN,Infinity,Number.MAX_SAFE_INTEGER+1,"0",null]){
+  assert.equal(home.observedNumber(bad),"UNKNOWN",String(bad));
+ }
+ const good={overview:{managed_hosts:{total:2},remote_services:{total:1,enabled:1},
+  policies:{ai:{total:0,enabled:0},remote:{total:1,enabled:1}}}};
+ assert.equal(home.hasObservedCoreOverview(good),true);
+ for(const invalid of [
+  {...good,overview:{...good.overview,managed_hosts:{total:-1}}},
+  {...good,overview:{...good.overview,managed_hosts:{total:2,pending_approval:-1}}},
+  {...good,overview:{...good.overview,managed_hosts:{total:2,pending_approval:3}}},
+  {...good,overview:{...good.overview,remote_services:{total:1,enabled:2}}},
+  {...good,overview:{...good.overview,policies:{ai:{total:0,enabled:-1}}}},
+  {...good,overview:{...good.overview,policies:{remote:{total:0,enabled:5}}}},
+ ]){
+  assert.equal(home.hasObservedCoreOverview(invalid),false);
+  assert.equal(home.firstConnectionStates(invalid,[])[0],"Unknown");
+ }
+ const partial={overview:{...good.overview,policies:{remote:{enabled:1},ai:{total:0,enabled:0}}}};
+ assert.equal(home.firstConnectionStates(partial,[])[3],"Unknown");
+});
+test("Home Host page cannot claim complete approval queue from invalid/unknown admission",()=>{
+ for(const bad of [
+  {items:[null],next_cursor:null},
+  {items:[{id:"host-1"}],next_cursor:null},
+  {items:[{admission_state:"INVALID"}],next_cursor:null},
+  {items:Array.from({length:101},(_,i)=>({id:"h"+i,admission_state:"APPROVED"})),next_cursor:null},
+  {items:[],next_cursor:""}
+ ]){
+  assert.equal(home.hostInventoryPageComplete(bad),null);
+ }
+ assert.equal(home.observedApprovalQueueCount(null,[{admission_state:"UNKNOWN"}],true),"UNKNOWN");
+ assert.equal(home.observedApprovalQueueCount(null,[{admission_state:"APPROVED"}],true),0);
+});
+test("Recent Core Home feed cannot present malformed events as empty or render nested secrets",()=>{
+ for(const rows of [[null],[{}],[{event_id:"evt\u202e"}],Array.from({length:7},(_,i)=>({event_id:"evt-"+i}))]){
+  assert.deepEqual(home.observedRecentFeed({status:"fulfilled",value:{items:rows}}),
+   {status:"unknown",items:[]});
+ }
+ const result=home.observedRecentFeed({status:"fulfilled",value:{items:[
+  {event_id:"evt-1",event_type:"read",result:"allow",
+   actor_id:{secret:"PRIVATE_ACTOR"},category:"ACCESS",
+   unused:{key:"PRIVATE_KEY"}}
+ ]}});
+ assert.equal(result.status,"ready");
+ assert.equal(result.items[0].event_id,"evt-1");
+ assert.equal(result.items[0].actor_id,"UNKNOWN");
+ assert.doesNotMatch(JSON.stringify(result),/PRIVATE_/);
+ const revision=home.observedRecentFeed({status:"fulfilled",value:{items:[
+  {revision:12,actor:"operator-a",summary:"Narrow SSH access",
+   created_at:"2026-10-11T00:11:00Z"}
+ ]}});
+ assert.equal(revision.status,"ready");
+ assert.equal(revision.items[0].revision,12);
 });

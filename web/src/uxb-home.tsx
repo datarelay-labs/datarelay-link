@@ -1,14 +1,38 @@
 import React,{useEffect,useState} from "react";
 
-/** UXE-09: only an acknowledged Core list is empty; loading/failure is unknown. */
+/** UXE-09: a resolved HTTP call with malformed Core entries is not an
+ * acknowledged activity feed; keep presentation bounded and non-secret. */
 export type RecentFeed={status:"loading"|"ready"|"unknown",items:any[]};
+const CORE_TEXT_BAD=/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/;
+const FEED_FIELDS=["event_id","id","event_type","action","operation","actor_id",
+  "actor","occurred_at","timestamp","result","category","summary","message","created_at"] as const;
+const safeCount=(value:unknown):value is number=>
+  typeof value==="number"&&Number.isSafeInteger(value)&&value>=0;
+const safeFeedText=(value:unknown):value is string=>
+  typeof value==="string"&&value.length>0&&value.length<=160&&!CORE_TEXT_BAD.test(value);
 export function observedRecentFeed(result:PromiseSettledResult<any>):RecentFeed{
-  if(result.status==="fulfilled"&&Array.isArray(result.value?.items))
-    return {status:"ready",items:result.value.items};
-  return {status:"unknown",items:[]};
+  const unknown:RecentFeed={status:"unknown",items:[]};
+  if(result.status!=="fulfilled"||!Array.isArray(result.value?.items)
+    ||result.value.items.length>6)return unknown;
+  const observed=[];
+  for(const item of result.value.items){
+    if(!item||typeof item!=="object"||Array.isArray(item)
+      ||![item.event_id,item.id].some(safeFeedText)
+        &&![item.row_id,item.revision].some(safeCount))return unknown;
+    const view:Record<string,string|number>={};
+    for(const key of FEED_FIELDS){
+      const value=item[key];
+      if(value===null||value===undefined)continue;
+      view[key]=safeFeedText(value)?value:"UNKNOWN";
+    }
+    if(safeCount(item.revision))view.revision=item.revision;
+    if(safeCount(item.row_id))view.id=view.id||String(item.row_id);
+    observed.push(view);
+  }
+  return {status:"ready",items:observed};
 }
 export function observedNumber(value:unknown):number|"UNKNOWN"{
-  return typeof value==="number"&&Number.isFinite(value)?value:"UNKNOWN";
+  return safeCount(value)?value:"UNKNOWN";
 }
 export function coreHealthState(data:any):"Healthy"|"Attention"|"UNKNOWN"{
   if(typeof data?.db_healthy!=="boolean"||typeof data?.mismatch!=="boolean")return "UNKNOWN";
@@ -27,10 +51,14 @@ export function accessPlaneCount(data:any):number|null{
 export function hasObservedCoreOverview(data:any):boolean{
   const overview=data?.overview;
   const hosts=overview?.managed_hosts,services=overview?.remote_services,policies=overview?.policies;
-  return typeof hosts?.total==="number"&&typeof services?.total==="number"
+  const validPart=(part:any):boolean=>safeCount(part?.total)
+    &&(part?.enabled===undefined||(safeCount(part.enabled)&&part.enabled<=part.total));
+  return validPart(hosts)&&validPart(services)
+    &&(hosts?.pending_approval===undefined||(safeCount(hosts.pending_approval)
+      &&hosts.pending_approval<=hosts.total))
     &&!!policies&&typeof policies==="object"&&!Array.isArray(policies)
     &&Object.keys(policies).length>0
-    &&Object.values(policies).every((row:any)=>typeof row?.total==="number");
+    &&Object.values(policies).every(row=>validPart(row));
 }
 
 /** Task-first Home is shown only when actual Core counts establish an empty
@@ -52,7 +80,11 @@ export function showFreshHomeWelcome(data:any,inventoryState:"loading"|"ready"|"
  * Only an explicit terminal cursor proves full inventory pagination.
  */
 export function hostInventoryPageComplete(payload:any):boolean|null{
-  if(!Array.isArray(payload?.items))return null;
+  if(!Array.isArray(payload?.items)||payload.items.length>100
+    ||payload.items.some((row:any)=>!row||typeof row!=="object"
+      ||Array.isArray(row)
+      ||!["PENDING_APPROVAL","APPROVED","QUARANTINED"].includes(row.admission_state)))
+    return null;
   if(payload.next_cursor===null)return true;
   if(typeof payload.next_cursor==="string"&&payload.next_cursor.length>0)return false;
   return null;
@@ -72,8 +104,10 @@ export function observedApprovalQueueCount(
   // Even a cursor-complete role-scoped list is not proof of the full fleet
   // when Core's separately observed overall Host total is larger.
   if(inventoryComplete&&Array.isArray(inventory)
-    &&(!Number.isSafeInteger(total)||total===inventory.length))
-    return inventory.filter(host=>host?.admission_state==="PENDING_APPROVAL").length;
+    &&(!safeCount(total)||total===inventory.length)
+    &&inventory.every(host=>host&&typeof host==="object"
+      &&["PENDING_APPROVAL","APPROVED","QUARANTINED"].includes(host.admission_state)))
+    return inventory.filter(host=>host.admission_state==="PENDING_APPROVAL").length;
   return "UNKNOWN";
 }
 
@@ -83,13 +117,17 @@ export function firstConnectionStates(data:any,inventory:any[]|null,inventoryCom
   const hosts=data?.overview?.managed_hosts||{};
   const services=data?.overview?.remote_services||{};
   const remote=data?.overview?.policies?.remote||{};
-  const hostCount=typeof hosts.total==="number"?hosts.total:null;
-  const serviceCount=typeof services.total==="number"?services.total:null;
-  const serviceEnabled=typeof services.enabled==="number"?services.enabled:null;
+  const hostCount=safeCount(hosts.total)?hosts.total:null;
+  const serviceCount=safeCount(services.total)?services.total:null;
+  const serviceEnabled=safeCount(services.enabled)
+    &&serviceCount!==null&&services.enabled<=serviceCount?services.enabled:null;
   // The canonical overview omits Remote/Internet families with zero rules.
   // An observed empty policy map means no rules, not an unavailable Core.
-  const ruleEnabled=typeof remote.enabled==="number"?remote.enabled
-    :data?.overview?.policies&&typeof data.overview.policies==="object"?0:null;
+  const policies=data?.overview?.policies;
+  const policyRows=policies&&typeof policies==="object"&&!Array.isArray(policies)?policies:null;
+  const ruleEnabled=policyRows&&!Object.prototype.hasOwnProperty.call(policyRows,"remote")?0
+    :safeCount(remote.total)&&safeCount(remote.enabled)&&remote.enabled<=remote.total
+      ?remote.enabled:null;
   const pending=observedApprovalQueueCount(data,inventory,inventoryComplete===true);
   const verifiedHost=inventory?.some(host=>host.admission_state==="APPROVED"
     &&String(host.trust_status||"").toLowerCase()==="trusted"
