@@ -8,7 +8,7 @@ import {observedCoreFlag,observedCoreCount,observedCoreNames} from "./uxb-impact
 import {AccessEvidenceExplorer,GuidedPolicyJourney,coreFlowKey,coreCutoffKey,visibleCoreEvidence,resolveCompletePolicyMatch,type AccessPlane} from "./p0-access-policy";
 import {EnrollmentOnboarding} from "./p0-enrollment";
 import {navGroups,groupFor,labelFor,pageDescriptions,visibleRoute,navMatches,setupContextForObjectFamily} from "./uxb-navigation";
-import {FirstUseHome,isFreshInstallation,observedRecentFeed,observedNumber,accessPlaneCount,coreHealthState,type RecentFeed} from "./uxb-home";
+import {FirstUseHome,observedHomeAttention,isFreshInstallation,observedRecentFeed,observedNumber,accessPlaneCount,coreHealthState,type RecentFeed} from "./uxb-home";
 import {requireObservedMenuPayload,requireObservedInventoryContinuation,requireObservedObjectContinuation,requireObservedAuditRetention,auditRetentionRunPermitted,requireObservedAccessHygiene,hygieneInspectTarget,requireObservedJobStart,requireObservedFleetApply,requireObservedFleetPreview,requireObservedFleetApplyForPreview,requireObservedAuditExport,requireObservedRolloutPreview,requireObservedInventoryExport,requireObservedJobDetail,requireObservedJobCancellation,isPartialCorePage,selectMenuPage,combineObservedPolicyPlanes,policyStateLabel,policyExpiryLabel,type MenuPagePosition} from "./uxb-menu-evidence";
 import {RemoteServiceEditor} from "./uxb-remote-service";
 import {RevisionHistory} from "./uxb-revisions";
@@ -1918,7 +1918,8 @@ function CommandCenter({data,operator,onNavigate}:{data:any,operator:any,onNavig
     return()=>{cancelled=true};
   },[]);
   const h=data.overview?.managed_hosts||{},svc=data.overview?.remote_services||{},j=data.overview?.management_jobs||{},pol=data.overview?.policies||{};
-  const attention=Array.isArray(data.attention?.items)?data.attention.items:null;
+  const attentionState=observedHomeAttention(data,operator.role);
+  const attention=attentionState?.items??null;
   const observed=observedNumber;
   const policyRows=[
     {label:"Remote Access",key:"remote",value:pol.remote||{}},
@@ -1942,7 +1943,10 @@ function CommandCenter({data,operator,onNavigate}:{data:any,operator:any,onNavig
     <FirstUseHome data={data} operator={operator} api={api} onNavigate={onNavigate}/>
     <section className="dr-kpi-strip"><div><span>Managed Hosts</span><strong>{observed(h.total)}</strong><small>{observed(h.connected)} connected</small></div><div><span>Remote Services</span><strong>{observed(svc.total)}</strong><small>{observed(svc.enabled)} enabled</small></div><div><span>Active Jobs</span><strong>{observed(j.active_jobs)}</strong><small>{observed(j.failed_jobs)} failed</small></div><div><span>Needs Attention</span><strong>{attention?attention.length:"UNKNOWN"}</strong><small>{!attention?"Core attention evidence unavailable":attention.some((x:any)=>x.severity==="critical")?"Critical item present":"Current findings"}</small></div></section>
     <div className="dr-overview-columns">
-      <section className="card dr-attention-card"><div className="dr-section-head"><div><p className="dr-eyebrow">Posture</p><h3>Needs Attention</h3></div><button className="dr-text-action" onClick={()=>onNavigate?.("doctor","observability")}>Troubleshoot →</button></div>{!attention?<div className="dr-compact-empty">UNKNOWN · Core attention evidence unavailable. Check System Health.</div>:attention.length?<div className="dr-attention-list">{attention.slice(0,8).map((x:any)=><div className="dr-attention-row" key={x.kind}><span className={"dr-severity-dot "+x.severity}/><span><strong>{x.label}</strong><small>{x.count} affected</small></span><span className={"badge "+x.severity}>{x.severity}</span></div>)}</div>:<div className="dr-good-state"><span className="dr-good-mark">✓</span><div><strong>No current attention items</strong><p>Core-derived checks are not reporting operator action.</p></div></div>}</section>
+      <section className="card dr-attention-card"><div className="dr-section-head"><div><p className="dr-eyebrow">Posture</p><h3>Needs Attention</h3></div><button className="dr-text-action" onClick={()=>onNavigate?.("doctor","observability")}>Troubleshoot →</button></div>{!attention?<div className="dr-compact-empty">UNKNOWN · Core attention evidence unavailable. Check System Health.</div>:attention.length?<div className="dr-attention-list">{attention.slice(0,8).map((x:any)=><div className="dr-attention-row" key={x.kind}><span className={"dr-severity-dot "+x.severity}/><span><strong>{x.label}</strong><small>{x.count} affected</small></span><span className={"badge "+x.severity}>{x.severity}</span></div>)}</div>:<div className="dr-good-state"><span className="dr-good-mark">✓</span><div><strong>No current attention items</strong><p>
+    Core observed no Attention items at {attentionState?.observedAt||"UNKNOWN"}.
+    This is derived evidence, not a live health or access guarantee.
+  </p></div></div>}</section>
       <section className="card dr-access-card"><div className="dr-section-head"><div><p className="dr-eyebrow">Access</p><h3>Policy Coverage</h3></div><button className="dr-text-action" onClick={()=>onNavigate?.("access","access")}>Open workspace →</button></div><div className="dr-access-posture">{policyRows.map(row=><button key={row.key} onClick={()=>onNavigate?.("policies","access")}><span className="dr-access-icon"><WorkspaceIcon kind="access"/></span><span><strong>{row.label}</strong><small>{observed(row.value.enabled)} enabled of {observed(row.value.total)}</small></span><b>{observed(row.value.enabled)}</b></button>)}</div></section>
     </div>
     <div className="dr-overview-columns">

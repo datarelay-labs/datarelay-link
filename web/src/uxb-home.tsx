@@ -7,6 +7,7 @@ export type RecentFeed={status:"loading"|"ready"|"unknown",items:any[]};
 const CORE_TEXT_BAD=/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/;
 const FEED_FIELDS=["event_id","id","event_type","action","operation","actor_id",
   "actor","occurred_at","timestamp","result","category","summary","message","created_at"] as const;
+const FEED_TIME_FIELDS=new Set(["occurred_at","timestamp","created_at"]);
 const safeCount=(value:unknown):value is number=>
   typeof value==="number"&&Number.isSafeInteger(value)&&value>=0;
 const safeFeedText=(value:unknown):value is string=>
@@ -24,7 +25,11 @@ export function observedRecentFeed(result:PromiseSettledResult<any>):RecentFeed{
     for(const key of FEED_FIELDS){
       const value=item[key];
       if(value===null||value===undefined)continue;
-      view[key]=safeFeedText(value)?value:"UNKNOWN";
+      // Never display arbitrary relative or impossible dates as observed
+      // Core event times. The read-only preview retains the row itself.
+      view[key]=FEED_TIME_FIELDS.has(key)
+        ?isObservedAbsoluteTime(value)?value:"UNKNOWN"
+        :safeFeedText(value)?value:"UNKNOWN";
     }
     if(safeCount(item.revision))view.revision=item.revision;
     if(safeCount(item.row_id))view.id=view.id||String(item.row_id);

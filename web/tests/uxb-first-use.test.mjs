@@ -431,3 +431,38 @@ test("UX-4 malformed or stale-looking attention cannot claim zero problems or ex
  assert.match(none,/Core attention UNKNOWN/);
  assert.doesNotMatch(none,/No current attention items|PRIVATE/);
 });
+
+test("UX-4 Command Center uses the same validated Core attention snapshot as Home",()=>{
+ const src=readFileSync(join(root,"src","main.tsx"),"utf8");
+ const command=src.split("function CommandCenter(",2)[1]?.split("function AccessHygienePanel(",1)[0]||"";
+ assert.match(src,/import \{FirstUseHome,.*observedHomeAttention/);
+ assert.match(command,/const attentionState=observedHomeAttention\(data,operator.role\)/);
+ assert.match(command,/const attention=attentionState\?\.items\?\?null/);
+ assert.doesNotMatch(command,/Array\.isArray\(data\.attention\?\.items\)\?data\.attention\.items:null/);
+ assert.match(command,/Core observed no Attention items at \{attentionState\?\.observedAt\|\|"UNKNOWN"\}/);
+ assert.match(command,/UNKNOWN · Core attention evidence unavailable/);
+ assert.match(command,/No current attention items/);
+});
+test("UX-8 recent Audit and revision time labels reject impossible dates or fabricated relative times",()=>{
+ const audit={status:"fulfilled",value:{items:[{
+  event_id:"audit-a",occurred_at:"2026-02-31T11:22:33Z",
+  timestamp:"yesterday",actor_id:"operator-1",category:"CONTROL"
+ }]}};
+ const a=home.observedRecentFeed(audit);
+ assert.equal(a.status,"ready");
+ assert.equal(a.items[0].occurred_at,"UNKNOWN");
+ assert.equal(a.items[0].timestamp,"UNKNOWN");
+ const revision={status:"fulfilled",value:{items:[{
+  revision:7,actor:"operator-1",created_at:"2026-10-11T13:22:33+09:00",
+  summary:"Policy updated"
+ }]}};
+ assert.equal(home.observedRecentFeed(revision).items[0].created_at,
+  "2026-10-11T13:22:33+09:00");
+ for(const input of ["2026-10-11\nspoof","2026-10-11T13:22:33Z\u202e",42,{secret:"NO_SHOW"}]){
+  const safe=home.observedRecentFeed({status:"fulfilled",value:{items:[
+   {revision:7,actor:"operator-1",created_at:input}
+  ]}});
+  assert.equal(safe.items[0].created_at,"UNKNOWN");
+  assert.doesNotMatch(JSON.stringify(safe),/NO_SHOW|spoof/);
+ }
+});
