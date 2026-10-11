@@ -9,6 +9,30 @@ function visibleViewText(value:unknown,max=80):string{
     return "";
   return value.trim();
 }
+/** G-30: search ONLY currently loaded operator-private names. The complete
+ * loaded list stays authoritative for duplicate-name and 100-row safety.
+ * Never inspect private filter payload, credentials or other users' views.
+ */
+export type VisibleSavedViewList={
+ items:Record<string,unknown>[],loadedCount:number,
+ scope:"loaded-only",error:string|null
+};
+export function filterObservedSavedViewList(input:unknown,query:unknown):VisibleSavedViewList{
+ const empty=(error:string|null):VisibleSavedViewList=>({
+   items:[],loadedCount:0,scope:"loaded-only",error
+ });
+ if(!Array.isArray(input))return empty("Private saved view inventory unavailable.");
+ const valid=input.filter((row):row is Record<string,unknown>=>
+   row!==null&&typeof row==="object"&&!Array.isArray(row));
+ if(typeof query!=="string"||query.length>80||UNSAFE_VIEW_TEXT.test(query))
+   return {...empty("Invalid saved filter search. Use at most 80 printable characters."),
+     loadedCount:valid.length};
+ const search=query.trim().toLowerCase();
+ return {items:search?valid.filter(row=>{
+   const name=visibleViewText(row.name);
+   return !!name&&name.toLowerCase().includes(search);
+ }):[...valid],loadedCount:valid.length,scope:"loaded-only",error:null};
+}
 /** Match the Core's max-80-character name bound, but refuse invisible
  * controls and bidi overrides before they can spoof a private replace prompt.
  */
@@ -99,6 +123,7 @@ export function SavedViewsWorkspace({data,api,onNavigate,refresh,initialDraft}:{
     prepared.filter,prepared.route==="hosts"?prepared.admission||"all":
       prepared.route==="services"?"all":prepared.plane):null;
   const [name,setName]=useState(""),[filter,setFilter]=useState(safeDraft?.filter||"");
+  const [listQuery,setListQuery]=useState("");
   const [target,setTarget]=useState<StoredViewTarget>(safeDraft?.resource_type||"managed-host");
   const [admission,setAdmission]=useState<HostAdmission>(
     safeDraft?.resource_type==="managed-host"?safeDraft.admission||"all":"all");
@@ -114,6 +139,8 @@ export function SavedViewsWorkspace({data,api,onNavigate,refresh,initialDraft}:{
   const observedList=Array.isArray(data?.items)&&data.items.length<=100
     &&data.items.every((row:any)=>row!==null&&typeof row==="object"&&!Array.isArray(row));
   const rows=observedList?data.items:[];
+  const visibleRows=filterObservedSavedViewList(rows,listQuery);
+  // Never let a local display filter hide an existing name collision.
   const duplicate=conflictingSavedViewName(rows,name);
   // Core currently returns at most 100 views, so an unobserved collision is possible.
   const incompleteNames=rows.length>=100;
@@ -189,9 +216,19 @@ export function SavedViewsWorkspace({data,api,onNavigate,refresh,initialDraft}:{
       </form>
     </section>
     <section className="card dr-list-card"><h3>My saved filters</h3>
-      {rows.length?<div className="dr-table-scroll"><table className="dr-resource-table">
+      <div className="dr-form-actions" role="search" aria-label="Private saved filter name search">
+        <label>Find my saved filters <input aria-label="Find my saved filters"
+          value={listQuery} maxLength={80}
+          onChange={e=>setListQuery(e.target.value)} placeholder="Search saved view names…"/></label>
+        {listQuery&&<button type="button" className="secondary"
+          onClick={()=>setListQuery("")}>Clear saved filter search</button>}
+        <span className="muted">Only names in the loaded private list are searched.
+          This does not query other users or fetch missing Core pages.</span>
+      </div>
+      {visibleRows.error&&<p role="alert" className="warning-box">{visibleRows.error}</p>}
+      {rows.length?visibleRows.items.length?<div className="dr-table-scroll"><table className="dr-resource-table">
         <thead><tr><th>View</th><th>Resources</th><th>Filter</th><th>Updated</th><th>Action</th></tr></thead>
-        <tbody>{rows.map((item:any,i:number)=>{
+        <tbody>{visibleRows.items.map((item:any,i:number)=>{
           const parsed=readSavedView(item);
           const safeId=visibleViewText(item?.id,160);
           const safeName=visibleViewText(item?.name)||safeId||"Unnamed view";
@@ -209,7 +246,7 @@ export function SavedViewsWorkspace({data,api,onNavigate,refresh,initialDraft}:{
               Legacy/unsupported view; save a new named target</span>}</td>
           </tr>;
         })}</tbody>
-      </table></div>:<p className="dr-empty-state">No saved views yet. Save a named filter for an observed resource list.</p>}
+      </table></div>:<p className="dr-empty-state">No matching loaded saved filters. Clear search to review the observed private list; other Core pages may not be loaded.</p>:<p className="dr-empty-state">No saved views yet. Save a named filter for an observed resource list.</p>}
       <p className="muted">A saved view only changes the visible text filter, optional Host admission display or selected Policy plane. It does not fetch missing inventory pages, permit a connection or create a Core configuration revision.</p>
     </section>
   </div>;
