@@ -61,7 +61,8 @@ test("G-31 native sort is local to already filtered private rows; full collision
  const src=readFileSync(join(root,"src","uxb-saved-views.tsx"),"utf8");
  assert.match(src,/import \{sortLoadedSavedViews,isSavedViewSortMode,type SavedViewSortMode\} from "\.\/uxb-saved-views-sort"/);
  assert.match(src,/const \[listSort,setListSort\]=useState<SavedViewSortMode>\("core"\)/);
- assert.match(src,/const sortedVisibleRows=sortLoadedSavedViews\(visibleRows\.items,listSort\)/);
+ assert.match(src,/const typedVisibleRows=filterLoadedSavedViewsByType\(visibleRows\.items,targetFacet\)/);
+ assert.match(src,/const sortedVisibleRows=sortLoadedSavedViews\(typedVisibleRows,listSort\)/);
  assert.match(src,/const duplicate=conflictingSavedViewName\(rows,name\)/);
  assert.match(src,/const incompleteNames=rows\.length>=100/);
  assert.match(src,/sortedVisibleRows\.map\(\(item:any,i:number\)=>/);

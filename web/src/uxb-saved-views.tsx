@@ -114,6 +114,28 @@ export function readSavedView(value:unknown):
   return null;
 }
 
+/** G-32: original local-only target facet over Core-loaded private views.
+ * Canonical readSavedView is the sole authority for each saved target;
+ * missing or unknown old schemas remain visible as Unsupported.
+ */
+export type SavedViewTargetFilter="all"|"hosts"|"services"|"policies"|"unsupported";
+export function isSavedViewTargetFilter(value:unknown):value is SavedViewTargetFilter{
+ return value==="all"||value==="hosts"||value==="services"||
+   value==="policies"||value==="unsupported";
+}
+export function filterLoadedSavedViewsByType(
+ input:unknown,choice:unknown
+):Record<string,unknown>[]{
+ if(!Array.isArray(input)||input.length>100||!isSavedViewTargetFilter(choice)
+   ||input.some(row=>!row||typeof row!=="object"||Array.isArray(row)))return [];
+ const loaded=[...input] as Record<string,unknown>[];
+ if(choice==="all")return loaded;
+ return loaded.filter(row=>{
+   const observed=readSavedView(row);
+   return choice==="unsupported"?observed===null:observed?.route===choice;
+ });
+}
+
 export function SavedViewsWorkspace({data,api,onNavigate,refresh,initialDraft}:{
   data:any,api:(path:string,init?:RequestInit)=>Promise<any>,initialDraft?:unknown,
   onNavigate?:(id:string,group?:string,context?:any)=>void,refresh:()=>void
@@ -126,6 +148,7 @@ export function SavedViewsWorkspace({data,api,onNavigate,refresh,initialDraft}:{
   const [name,setName]=useState(""),[filter,setFilter]=useState(safeDraft?.filter||"");
   const [listQuery,setListQuery]=useState("");
   const [listSort,setListSort]=useState<SavedViewSortMode>("core");
+  const [targetFacet,setTargetFacet]=useState<SavedViewTargetFilter>("all");
   const [target,setTarget]=useState<StoredViewTarget>(safeDraft?.resource_type||"managed-host");
   const [admission,setAdmission]=useState<HostAdmission>(
     safeDraft?.resource_type==="managed-host"?safeDraft.admission||"all":"all");
@@ -142,7 +165,8 @@ export function SavedViewsWorkspace({data,api,onNavigate,refresh,initialDraft}:{
     &&data.items.every((row:any)=>row!==null&&typeof row==="object"&&!Array.isArray(row));
   const rows=observedList?data.items:[];
   const visibleRows=filterObservedSavedViewList(rows,listQuery);
-  const sortedVisibleRows=sortLoadedSavedViews(visibleRows.items,listSort);
+  const typedVisibleRows=filterLoadedSavedViewsByType(visibleRows.items,targetFacet);
+  const sortedVisibleRows=sortLoadedSavedViews(typedVisibleRows,listSort);
   // Never let a local display filter hide an existing name collision.
   const duplicate=conflictingSavedViewName(rows,name);
   // Core currently returns at most 100 views, so an unobserved collision is possible.
@@ -225,6 +249,16 @@ export function SavedViewsWorkspace({data,api,onNavigate,refresh,initialDraft}:{
           onChange={e=>setListQuery(e.target.value)} placeholder="Search saved view names…"/></label>
         {listQuery&&<button type="button" className="secondary"
           onClick={()=>setListQuery("")}>Clear saved filter search</button>}
+        <label>Saved view resource type
+          <select aria-label="Filter loaded saved view resource type" value={targetFacet}
+            onChange={e=>setTargetFacet(isSavedViewTargetFilter(e.target.value)?e.target.value:"all")}>
+            <option value="all">All types</option>
+            <option value="hosts">Hosts</option>
+            <option value="services">Services</option>
+            <option value="policies">Policies</option>
+            <option value="unsupported">Unsupported</option>
+          </select>
+        </label>
         <label>Sort loaded saved filters
           <select aria-label="Sort loaded private saved filters" value={listSort}
             onChange={e=>setListSort(isSavedViewSortMode(e.target.value)?e.target.value:"core")}>
@@ -236,10 +270,11 @@ export function SavedViewsWorkspace({data,api,onNavigate,refresh,initialDraft}:{
         <span className="muted">Only names in the loaded private list are searched.
           This does not query other users or fetch missing Core pages.
           Sorting only rearranges loaded operator-private views.
+          Legacy/unsupported views are listed separately, not silently discarded.
           Missing/invalid Core updated timestamps remain UNKNOWN and sort last.</span>
       </div>
       {visibleRows.error&&<p role="alert" className="warning-box">{visibleRows.error}</p>}
-      {rows.length?visibleRows.items.length?<div className="dr-table-scroll"><table className="dr-resource-table">
+      {rows.length?sortedVisibleRows.length?<div className="dr-table-scroll"><table className="dr-resource-table">
         <thead><tr><th>View</th><th>Resources</th><th>Filter</th><th>Updated</th><th>Action</th></tr></thead>
         <tbody>{sortedVisibleRows.map((item:any,i:number)=>{
           const parsed=readSavedView(item);
