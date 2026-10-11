@@ -125,6 +125,18 @@ export function observedPublicationOwnership(services:unknown,hosts:unknown):{
    partial:svc.partial||h.partial,limited:edges.length>16};
 }
 
+/** UI-02: preserve the exact observed Host ID when routing to the existing
+ * loaded-only Host detail. A colon in a Core ID must not be read as a search
+ * facet, and IDs longer than the UI's 120-char search input are not truncated.
+ */
+export function observedHostInspectContext(hostId:unknown):{
+ inspectResourceId:string,savedFilter:string
+}|null{
+ if(typeof hostId!=="string"||
+    !/^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,159}$/.test(hostId))return null;
+ return {inspectResourceId:hostId,savedFilter:hostId.length<=117?"id:"+hostId:""};
+}
+
 export function AccessEvidenceExplorer({api,plane,source,destination,selector,onSelect,onNavigate,onInspectHost,actor}:{
   api:LinkApi,plane:AccessPlane,source:string,destination:string,selector:string,
   onSelect:(flow:SelectedFlow)=>void,onNavigate?:Navigate,

@@ -5,7 +5,7 @@ import {AdministrationHub,type AdministrationHubTask} from "@datarelay-labs/foun
 import {createLinkFoundationAdministrationTasks} from "./foundation-administration";
 import {backupToolReadiness} from "./foundation-administration";
 import {observedCoreFlag,observedCoreCount,observedCoreNames} from "./uxb-impact-evidence";
-import {AccessEvidenceExplorer,GuidedPolicyJourney,coreFlowKey,coreCutoffKey,visibleCoreEvidence,resolveCompletePolicyMatch,type AccessPlane} from "./p0-access-policy";
+import {AccessEvidenceExplorer,GuidedPolicyJourney,coreFlowKey,coreCutoffKey,visibleCoreEvidence,resolveCompletePolicyMatch,observedHostInspectContext,type AccessPlane} from "./p0-access-policy";
 import {EnrollmentOnboarding} from "./p0-enrollment";
 import {navGroups,groupFor,labelFor,pageDescriptions,visibleRoute,navMatches,setupContextForObjectFamily} from "./uxb-navigation";
 import {FirstUseHome,observedBoundedCountPair,observedHomeAttention,isFreshInstallation,observedRecentFeed,observedNumber,accessPlaneCount,coreHealthState,type RecentFeed} from "./uxb-home";
@@ -917,7 +917,7 @@ function AccessOperations({operator,onNavigate,context}:{operator:any,onNavigate
     </section>
     <AccessEvidenceExplorer api={api} plane={plane as AccessPlane} source={source} destination={destination} selector={selector}
       onSelect={flow=>{diagnosisGeneration.current+=1;setSource(flow.source);setDestination(flow.destination);setSelector(flow.selector);setDiagnosisEvidence(null);setDiagnosisBusy(false)}}
-      onInspectHost={hostId=>onNavigate?.("hosts","infrastructure",{inspectResourceId:hostId,savedFilter:hostId})}
+      onInspectHost={hostId=>{const target=observedHostInspectContext(hostId);if(target)onNavigate?.("hosts","infrastructure",target)}}
       actor={operator} onNavigate={(id,group,detail)=>onNavigate?.(id,group,detail??context)}/>
     <div className="card">
       <div className="dr-section-head"><div><p className="dr-eyebrow">Policy Simulator</p><h3>Connection Diagnosis</h3></div></div>

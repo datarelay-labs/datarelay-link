@@ -445,6 +445,26 @@ test("UI-02 renders role-scoped Core publication ownership separately from polic
  assert.match(src,/Load published ownership/);
  assert.match(src,/Observed publication relationship/);
  assert.match(src,/Observed Service.*owning Host/);
- assert.match(main,/onInspectHost=\{hostId=>onNavigate\?\.\("hosts","infrastructure",\{inspectResourceId:hostId,savedFilter:hostId\}\)\}/);
+ assert.match(main,/onInspectHost=\{hostId=>\{const target=observedHostInspectContext\(hostId\)/);
  assert.doesNotMatch(src,/network_topology===true&&.*managed_host_id/);
+});
+
+test("UI-02 Host inspect link preserves canonical colon/long Core IDs without typed-search ambiguity",()=>{
+ const short="host:branch-17";
+ assert.deepEqual(access.observedHostInspectContext(short),{
+   inspectResourceId:short,savedFilter:"id:"+short
+ });
+ const bounded="h".repeat(117),long="h".repeat(160);
+ assert.deepEqual(access.observedHostInspectContext(bounded),{
+   inspectResourceId:bounded,savedFilter:"id:"+bounded
+ });
+ assert.deepEqual(access.observedHostInspectContext(long),{
+   inspectResourceId:long,savedFilter:""
+ });
+ for(const bad of [null,{},[],"","x".repeat(161),"host broken","host\u202e",":leading"])
+   assert.equal(access.observedHostInspectContext(bad),null);
+ const main=readFileSync(join(webRoot,"src","main.tsx"),"utf8");
+ assert.match(main,/onInspectHost=\{hostId=>\{const target=observedHostInspectContext\(hostId\)/);
+ assert.match(main,/onNavigate\?\.\("hosts","infrastructure",target\)/);
+ assert.doesNotMatch(main,/savedFilter:hostId\}/);
 });
