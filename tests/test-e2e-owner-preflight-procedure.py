@@ -30,9 +30,19 @@ class E2EProcedureGuard(unittest.TestCase):
             self.assertIn("FUNCTION_PERFORMANCE_SERVER", doc)
         for doc in (self.procedure, self.roadmap):
             self.assertIn("B014", doc)
-        self.assertIn("OCI/cloud ingress allow rule", self.canonical)
+        # Each check runs on exactly the owner-designated function or MCP/DNS Server.
+        self.assertIn("MCP_DNS_SERVER — MCP and DNS/hostname tests only", self.canonical)
+        self.assertIn("FUNCTION_PERFORMANCE_SERVER — every other test", self.canonical)
+        self.assertIn("Mixed-scope scenarios", self.canonical)
+        self.assertIn("only MCP and DNS/public-hostname tests", self.procedure)
+        self.assertIn("every remaining", self.procedure)
+        self.assertIn("MCP + DNS/public-hostname tests only", self.roadmap)
+        self.assertIn("everything else", self.roadmap)
+        self.assertIn("does not create a new VM-detection", self.canonical)
+        self.assertIn("No new VM-kind", self.procedure)
+        self.assertIn("not a new VM guest/snapshot/restore/host-provisioning prerequisite", self.roadmap)
         self.assertIn("single443", self.canonical)
-        self.assertIn("116-ID FULL_USER_E2E", self.canonical)
+        self.assertIn("116 scenarios", self.canonical)
         self.assertIn("60s/300s/3600s", self.procedure)
         # Concrete owner-private endpoint/SSH mapping belongs to the run inventory,
         # not to the public canonical test contract or generic lab procedure.
