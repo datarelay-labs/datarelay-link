@@ -3,6 +3,16 @@ import React,{useState} from "react";
 /** A version mismatch is not proof of stale binaries, an active Agent or a
  * successful update. Unknown Server version makes *all* comparisons unknown. */
 export type VersionState="SAME"|"DIFFERENT"|"UNKNOWN";
+const UNSAFE_TEXT=/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/;
+const validCoreText=(value:unknown):value is string=>
+  typeof value==="string"&&value.length<=160&&!UNSAFE_TEXT.test(value);
+/** Core inventory metadata is untrusted UI input: only known, bounded strings
+ * may become React children or searchable display fields. */
+function observedDisplay(value:unknown,missing="UNKNOWN"):string{
+  if(value===null||value===undefined||value==="")return missing;
+  if(!validCoreText(value)||!value.trim())return "UNKNOWN";
+  return value.trim();
+}
 export function observedVersionState(server:unknown,agent:unknown):VersionState{
   const good=(x:unknown)=>typeof x==="string"&&!!x.trim()&&x.trim().toLowerCase()!=="unknown";
   if(!good(server)||!good(agent))return "UNKNOWN";
@@ -12,16 +22,21 @@ export function validatedVersionInventory(payload:unknown){
   if(!payload||typeof payload!=="object"||Array.isArray(payload))
     throw new Error("Core Agent version inventory is unavailable. State is UNKNOWN.");
   const data=payload as Record<string,unknown>;
-  if(typeof data.server_version!=="string"||!Array.isArray(data.hosts)
+  if(!validCoreText(data.server_version)||!Array.isArray(data.hosts)
     ||!Number.isSafeInteger(data.limit)||Number(data.limit)<1
     ||data.hosts.length>Number(data.limit)
     ||!Number.isSafeInteger(data.drift_count)||Number(data.drift_count)<0
     ||!Number.isSafeInteger(data.unknown_count)||Number(data.unknown_count)<0
     ||data.hosts.some((x:any)=>!x||typeof x!=="object"||Array.isArray(x)
-      ||typeof x.id!=="string"||!x.id||typeof x.version!=="string"))
+      ||!validCoreText(x.id)||!x.id.trim()||!validCoreText(x.version)))
     throw new Error("Core Agent version inventory has missing or malformed evidence. State is UNKNOWN.");
   const hosts=(data.hosts as any[]).map(host=>({
-    ...host,comparison:observedVersionState(data.server_version,host.version),
+    id:host.id,version:host.version,
+    name:observedDisplay(host.name,host.id),
+    platform:observedDisplay(host.platform),
+    lifecycle:observedDisplay(host.lifecycle),
+    heartbeat:observedDisplay(host.heartbeat,"Not observed"),
+    comparison:observedVersionState(data.server_version,host.version),
   }));
   return {
     serverVersion:data.server_version as string,hosts,limit:data.limit as number,

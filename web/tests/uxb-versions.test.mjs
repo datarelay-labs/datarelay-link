@@ -68,3 +68,24 @@ test("Malformed version inventory cannot masquerade as healthy empty",()=>{
    {...page("3.0.0",[a("one","3.0.0")]),hosts:[a("", "3.0.0")]}
  ])assert.throws(()=>validatedVersionInventory(bad),/Core|UNKNOWN/);
 });
+
+test("Malformed optional Core Agent labels cannot crash or leak into version-drift UI",()=>{
+ const data=page("3.0.0",[a("host-1","3.0.0",{
+   name:{secret:"SENSITIVE-NAME"},platform:{secret:"SENSITIVE-PLATFORM"},
+   lifecycle:["SENSITIVE-STATUS"],heartbeat:{private_key:"SENSITIVE-HEARTBEAT"}
+ })]);
+ const html=render(data);
+ assert.match(html,/host-1/);
+ assert.match(html,/UNKNOWN/);
+ assert.doesNotMatch(html,/SENSITIVE/);
+});
+test("Unsafe Unicode and unbounded optional version-inventory labels are UNKNOWN",()=>{
+ const data=page("3.0.0",[a("host-2","3.0.0",{
+   name:"label\u202eoverride",platform:"A".repeat(500),
+   lifecycle:"bad\nstatus",heartbeat:null
+ })]);
+ const html=render(data);
+ assert.doesNotMatch(html,/\u202e|bad\nstatus/);
+ assert.doesNotMatch(html,/A{100}/);
+ assert.match(html,/UNKNOWN/);
+});
