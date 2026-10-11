@@ -74,3 +74,28 @@ test("IntegrationsPanel renders qualified statuses and guards actions against un
  assert.match(source,/requireObservedMenuPayload\("service-accounts",a\)/);
  assert.match(source,/requireObservedMenuPayload\("webhooks",w\)/);
 });
+
+test("Service Account expiry requires a real timezone-bound calendar instant, never Date.parse rollover",()=>{
+ for(const good of [
+  "2028-02-29T23:59:59Z",
+  "2028-02-29T23:59:59.123456+00:00",
+  "2026-11-01T12:30:00+09:00",
+  "2026-12-31T23:59:59-04:00"
+ ]){
+  assert.equal(projection.serviceAccountExpiry({expires_at:good}),good);
+ }
+ for(const bad of [
+  "2026-02-29T12:30:00Z",
+  "2026-02-31T12:30:00Z",
+  "2026-04-31T12:30:00Z",
+  "2026-00-15T12:30:00Z",
+  "2026-11-01T12:30:00",
+  "2026-11-01T12:30:00+24:00",
+  "2026-11-01T12:30:00+09:61",
+  "2026-11-01T12:30:60Z",
+  "2026-11-01T12:30:00Z trailing",
+  "0000-01-01T00:00:00Z"
+ ]){
+  assert.equal(projection.serviceAccountExpiry({expires_at:bad}),"UNKNOWN",bad);
+ }
+});

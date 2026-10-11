@@ -22,13 +22,29 @@ export function webhookStatus(value:unknown):"Enabled"|"Disabled"|"UNKNOWN"{
  const v=knownBool(row(value).enabled);
  return v===true?"Enabled":v===false?"Disabled":"UNKNOWN";
 }
+/** Service Account expiry is an observed instant, never a browser-local guess.
+ * Date.parse alone silently normalizes impossible dates such as February 31.
+ * Preserve Core's absolute timestamp only after strict calendar/offset proof.
+ */
+function validAbsoluteExpiry(text:string):boolean{
+ const m=/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}:\d{2})$/.exec(text);
+ if(!m)return false;
+ const year=Number(m[1]),month=Number(m[2]),day=Number(m[3]);
+ const hours=Number(m[4]),minutes=Number(m[5]),seconds=Number(m[6]);
+ const leap=year%4===0&&(year%100!==0||year%400===0);
+ const days=[31,leap?29:28,31,30,31,30,31,31,30,31,30,31];
+ if(year<1||month<1||month>12||day<1||day>days[month-1]||
+   hours>23||minutes>59||seconds>59)return false;
+ const offset=m[8];
+ if(offset!=="Z"&&(Number(offset.slice(1,3))>23||Number(offset.slice(4,6))>59))return false;
+ return Number.isFinite(Date.parse(text));
+}
 export function serviceAccountExpiry(value:unknown):string{
  const data=row(value);
  if(!Object.prototype.hasOwnProperty.call(data,"expires_at"))return "UNKNOWN";
  const v=data.expires_at;
  if(v===null||v==="")return "No expiry";
- if(typeof v!=="string"||v.length>80||BANNED.test(v)
-  ||! /^\d{4}-\d\d-\d\dT\d\d:\d\d/.test(v) || !Number.isFinite(Date.parse(v)))
+ if(typeof v!=="string"||v.length>80||BANNED.test(v)||!validAbsoluteExpiry(v))
    return "UNKNOWN";
  return v;
 }
