@@ -23,6 +23,7 @@ import {filterObservedServices} from "./uxb-service-search";
 import {operatorAccountState,operatorMfaState,operatorMfaAction,operatorLastLogin} from "./uxb-users-state";
 import {operatorUserLabel} from "./uxb-users-state";
 import {auditInvestigation,matchObservedAuditReturn,matchObservedPolicyReturn,recentAuditInvestigation,observedAuditEventDetails,observedAuditAppliedFilters,type ObservedAuditEventDetail} from "./uxb-audit-context";
+import {auditUtcPresetRange} from "./uxb-audit-presets";
 import {serviceAccountOperationalStatus,serviceAccountExpiry,serviceAccountPermissions,webhookStatus,webhookDeliverySummary} from "./uxb-integrations-state";
 import {filterObservedHosts} from "./uxb-host-search";
 import {FirstConnectionSetup,connectionReviewContext,type SetupDraft} from "./uxb-setup";
@@ -1200,6 +1201,7 @@ function AuditExplorer({operator,context,onNavigate}:{operator:any,context?:any,
   const [retentionConfirmation,setRetentionConfirmation]=useState("");
   const [auditPage,setAuditPage]=useState<MenuPagePosition>({cursor:"",history:[]});
   const [auditFilterKey,setAuditFilterKey]=useState<string|null>(null);
+  const [auditPresetError,setAuditPresetError]=useState("");
   const [selectedAuditEvent,setSelectedAuditEvent]=useState<{scope:string,event:ObservedAuditEventDetail}|null>(null);
   const investigation=auditInvestigation(context);
   const [start,setStart]=useState(investigation.start),[end,setEnd]=useState(investigation.end),
@@ -1212,6 +1214,13 @@ function AuditExplorer({operator,context,onNavigate}:{operator:any,context?:any,
     const q=new URLSearchParams({limit:"50"});
     for(const [key,value] of [["start",start],["end",end],["category",category],["event_type",eventType],["actor",actor],["resource",resource],["result",result],["correlation_id",correlation]] as string[][]){if(value.trim())q.set(key,value.trim())}
     return q;
+  }
+  function chooseAuditUtcPreset(hours:number){
+    const range=auditUtcPresetRange(hours,Date.now());
+    if(!range){setAuditPresetError("UTC time shortcut unavailable. Enter a valid Start UTC and End UTC instead.");return;}
+    setAuditPresetError("");
+    setStart(range.start);setEnd(range.end);
+    // Inputs only: the existing Search audit action alone sends the Core query.
   }
   function exportFilters(){
     const out:any={};
@@ -1350,6 +1359,14 @@ function AuditExplorer({operator,context,onNavigate}:{operator:any,context?:any,
       <p className="muted">Audit filters are applied to observed Core events; an empty page is not proof
         of no historical activity outside the selected filters or retained Core window.
         Resource filters match the entity ID only; verify the event resource type before attribution.</p>
+      <div className="dr-form-actions dr-audit-preset-actions" role="group" aria-label="Audit UTC time range shortcuts">
+        <span className="muted">Set a UTC window · Search audit to apply</span>
+        <button type="button" className="secondary" onClick={()=>chooseAuditUtcPreset(1)}>Last 1h</button>
+        <button type="button" className="secondary" onClick={()=>chooseAuditUtcPreset(3)}>Last 3h</button>
+        <button type="button" className="secondary" onClick={()=>chooseAuditUtcPreset(24)}>Last 24h</button>
+        <button type="button" className="secondary" onClick={()=>chooseAuditUtcPreset(168)}>Last 7d</button>
+      </div>
+      {auditPresetError&&<p role="alert" className="warning-box">{auditPresetError}</p>}
       <div className="dr-audit-filter-grid">
         <label className="dr-field"><span>Start UTC</span><input value={start} onChange={e=>setStart(e.target.value)} placeholder="YYYY-MM-DDTHH:MM:SSZ"/></label>
         <label className="dr-field"><span>End UTC</span><input value={end} onChange={e=>setEnd(e.target.value)} placeholder="YYYY-MM-DDTHH:MM:SSZ"/></label>
