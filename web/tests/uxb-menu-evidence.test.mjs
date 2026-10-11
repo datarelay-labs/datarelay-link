@@ -434,3 +434,36 @@ test('partial Objects inventory remains available for its existing explicit UNKN
     assert.equal(menu.requireObservedMenuPayload('objects',response),response);
   }
 });
+
+test("P0 Temporary Access UI never claims applied from HTTP 200 without exact Core Change Plan receipt",()=>{
+ const plan={change_plan_id:"cp_"+"a".repeat(24),operation:"temporary-access.set",
+  resource_type:"remote-access-rule",resource_ref:"ssh-prod",expected_revision:12,
+  valid_until:"2035-01-01T00:00:00Z",confirmation_class:"APPLY",
+  desired_expires_at:"2034-01-01T00:00:00Z",no_change:false};
+ const good={status:"APPLIED",operation:plan.operation,resource_type:plan.resource_type,
+  resource_ref:plan.resource_ref,expires_at:plan.desired_expires_at,revision:13};
+ assert.deepEqual(menu.requireObservedTemporaryAccessApplyForPlan(good,plan),{revision:13});
+ for(const wrong of [
+  null,{},[],{...good,status:"NO_CHANGE"},{...good,status:"PENDING"},
+  {...good,revision:12},{...good,revision:"13"},{...good,revision:13.5},
+  {...good,operation:"temporary-access.clear"},
+  {...good,resource_type:"ai-access-rule"},
+  {...good,resource_ref:"other-rule"},
+  {...good,expires_at:null}
+ ])assert.throws(()=>menu.requireObservedTemporaryAccessApplyForPlan(wrong,plan),
+   /UNKNOWN|Core|unverified/,JSON.stringify(wrong));
+ for(const bad of [
+  {...plan,no_change:true},
+  {...plan,confirmation_class:"DELETE"},
+  {...plan,valid_until:"2020-01-01T00:00:00Z"},
+  {...plan,expected_revision:undefined},
+  {...plan,resource_type:"managed-host"},
+  {...plan,change_plan_id:"untrusted"}
+ ])assert.throws(()=>menu.requireObservedTemporaryAccessApplyForPlan(good,bad),
+   /UNKNOWN|Core|unverified/,JSON.stringify(bad));
+ const source=readFileSync(join(root,"src","main.tsx"),"utf8");
+ const panel=source.split("function TemporaryAccessPanel(){")[1]?.split("function PolicySafetyPanel(",1)[0]||"";
+ assert.match(panel,/requireObservedTemporaryAccessApplyForPlan\(result,reviewedPlan\)/);
+ assert.match(panel,/setPreview\(null\);setConfirmation\(""\);/);
+ assert.match(panel,/not a requester\/reviewer approval/);
+});

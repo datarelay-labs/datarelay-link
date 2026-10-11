@@ -1,3 +1,5 @@
+import {isObservedAbsoluteTime} from "./uxb-integrations-state";
+
 /** UXB-06F: a successful HTTP response is not automatically a valid, empty Core page.
  * Each listed menu must receive its canonical collection before showing "No results".
  * This changes Web presentation only; the Server/Core remains the authority. */
@@ -40,6 +42,39 @@ export function policyExpiryLabel(item:unknown):string{
   if(row.expires_at===null)return "Never";
   return typeof row.expires_at==="string"&&!!row.expires_at.trim()
     &&row.expires_at.length<=160?row.expires_at:"UNKNOWN";
+}
+
+/** UI-06 distinction: existing Temporary Access is a *same-actor* Core
+ * policy-expiry Change Plan, NOT a requester/reviewer access request.
+ * Return only a revision proven against that exact approved plan.
+ */
+export function requireObservedTemporaryAccessApplyForPlan(
+ input:unknown,plan:unknown
+):{revision:number}{
+ const error=()=>{throw new Error("UNKNOWN · Core Temporary Access Apply receipt is unverified. Inspect the policy and Change History before any retry.");};
+ const record=(x:unknown):x is Record<string,unknown>=>
+   !!x&&typeof x==="object"&&!Array.isArray(x);
+ if(!record(input)||!record(plan))return error();
+ const row=input,preview=plan;
+ const operation=preview.operation,resourceType=preview.resource_type;
+ if(typeof preview.change_plan_id!=="string"||!/^cp_[A-Za-z0-9_-]{16,128}$/.test(preview.change_plan_id)
+   ||!["temporary-access.set","temporary-access.clear"].includes(String(operation))
+   ||!["remote-access-rule","internet-access-rule","ai-access-rule"].includes(String(resourceType))
+   ||typeof preview.resource_ref!=="string"||!preview.resource_ref.trim()
+   ||preview.resource_ref.length>160
+   ||!Number.isSafeInteger(preview.expected_revision)||Number(preview.expected_revision)<0
+   ||preview.no_change!==false||preview.confirmation_class!=="APPLY"
+   ||!isObservedAbsoluteTime(preview.valid_until)
+   ||Date.parse(preview.valid_until)<=Date.now()
+   ||operation==="temporary-access.set"&&
+      !isObservedAbsoluteTime(preview.desired_expires_at)
+   ||operation==="temporary-access.clear"&&preview.desired_expires_at!==null)return error();
+ if(row.status!=="APPLIED"||row.operation!==operation||row.resource_type!==resourceType
+   ||row.resource_ref!==preview.resource_ref
+   ||row.expires_at!==preview.desired_expires_at
+   ||!Number.isSafeInteger(row.revision)
+   ||Number(row.revision)<=Number(preview.expected_revision))return error();
+ return {revision:row.revision as number};
 }
 
 /** Keyset page navigation only uses observed opaque Core cursors. The UI may

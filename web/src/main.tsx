@@ -9,7 +9,7 @@ import {AccessEvidenceExplorer,GuidedPolicyJourney,coreFlowKey,coreCutoffKey,vis
 import {EnrollmentOnboarding} from "./p0-enrollment";
 import {navGroups,groupFor,labelFor,pageDescriptions,visibleRoute,navMatches,setupContextForObjectFamily} from "./uxb-navigation";
 import {FirstUseHome,observedBoundedCountPair,observedHomeAttention,isFreshInstallation,observedRecentFeed,observedNumber,accessPlaneCount,coreHealthState,type RecentFeed} from "./uxb-home";
-import {requireObservedMenuPayload,requireObservedInventoryContinuation,requireObservedObjectContinuation,requireObservedAuditRetention,auditRetentionRunPermitted,requireObservedAccessHygiene,hygieneInspectTarget,requireObservedJobStart,requireObservedFleetApply,requireObservedFleetPreview,requireObservedFleetApplyForPreview,requireObservedAuditExport,requireObservedRolloutPreview,requireObservedInventoryExport,requireObservedJobDetail,requireObservedJobCancellation,isPartialCorePage,selectMenuPage,combineObservedPolicyPlanes,policyStateLabel,policyExpiryLabel,type MenuPagePosition} from "./uxb-menu-evidence";
+import {requireObservedMenuPayload,requireObservedTemporaryAccessApplyForPlan,requireObservedInventoryContinuation,requireObservedObjectContinuation,requireObservedAuditRetention,auditRetentionRunPermitted,requireObservedAccessHygiene,hygieneInspectTarget,requireObservedJobStart,requireObservedFleetApply,requireObservedFleetPreview,requireObservedFleetApplyForPreview,requireObservedAuditExport,requireObservedRolloutPreview,requireObservedInventoryExport,requireObservedJobDetail,requireObservedJobCancellation,isPartialCorePage,selectMenuPage,combineObservedPolicyPlanes,policyStateLabel,policyExpiryLabel,type MenuPagePosition} from "./uxb-menu-evidence";
 import {RemoteServiceEditor} from "./uxb-remote-service";
 import {RevisionHistory} from "./uxb-revisions";
 import {AgentVersionDrift} from "./uxb-versions";
@@ -462,6 +462,7 @@ function GuidedPolicySettingsPanel(){
 function TemporaryAccessPanel(){
   const [plane,setPlane]=useState("remote"),[rule,setRule]=useState(""),[operation,setOperation]=useState("set"),[expiresAt,setExpiresAt]=useState("");
   const [preview,setPreview]=useState<any>(null),[confirmation,setConfirmation]=useState(""),[message,setMessage]=useState(""),[error,setError]=useState("");
+  const [busy,setBusy]=useState(false);
   function resetChangePlan(){setPreview(null);setConfirmation("");setMessage("")}
   async function doPreview(){
     setError("");setMessage("");resetChangePlan();
@@ -473,22 +474,36 @@ function TemporaryAccessPanel(){
     }catch(e:any){setError(e.message||String(e))}
   }
   async function doApply(){
-    setError("");setMessage("");
+    if(busy||confirmation!=="APPLY")return;
+    const reviewedPlan=preview;
+    if(!reviewedPlan?.change_plan_id||reviewedPlan.no_change!==false
+      ||!Number.isFinite(Date.parse(reviewedPlan.valid_until))
+      ||Date.parse(reviewedPlan.valid_until)<=Date.now()){
+      resetChangePlan();
+      setError("Core Temporary Access plan is missing, unchanged or expired. Preview current Core policy before retrying.");
+      return;
+    }
+    setError("");setMessage("");setBusy(true);
     try{
-      const result=await api("/api/v1/temporary-access/apply",{method:"POST",body:JSON.stringify({change_plan_id:preview?.change_plan_id||"",confirmation})});
-      setMessage("Temporary Access applied at revision "+result.revision);setPreview(null);setConfirmation("");
-    }catch(e:any){setError(e.message||String(e))}
+      const result=await api("/api/v1/temporary-access/apply",{method:"POST",body:JSON.stringify({change_plan_id:reviewedPlan.change_plan_id,confirmation})});
+      const applied=requireObservedTemporaryAccessApplyForPlan(result,reviewedPlan);
+      setMessage("Core Temporary Access confirmed APPLIED at revision "+applied.revision+". This does not prove live reachability.");
+      setPreview(null);setConfirmation("");
+    }catch(e:any){
+      resetChangePlan();
+      setError("Core Apply outcome UNKNOWN. Inspect policy and Change History before requesting a new plan. "+String(e?.message||e));
+    }finally{setBusy(false)}
   }
   return <div className="card">
     <h3>Temporary Access</h3>
-    <div className="muted">Set, change, or clear server-authoritative expiry on an existing WHITELIST grant.</div>
+    <div className="muted">Set, change, or clear server-authoritative expiry on an existing WHITELIST grant. This is a direct actor-bound Core Change Plan, not a requester/reviewer approval.</div>
     {error&&<div className="error">{error}</div>}{message&&<div className="notice">{message}</div>}
     <div className="toolbar">
-      <select value={plane} onChange={e=>{resetChangePlan();setPlane(e.target.value)}}><option value="remote">Remote</option><option value="internet">Internet</option><option value="ai">AI</option></select>
-      <input value={rule} onChange={e=>{resetChangePlan();setRule(e.target.value)}} placeholder="Rule name"/>
-      <select value={operation} onChange={e=>{resetChangePlan();setOperation(e.target.value)}}><option value="set">Set / change expiry</option><option value="clear">Clear expiry</option></select>
-      {operation==="set"&&<input value={expiresAt} onChange={e=>{resetChangePlan();setExpiresAt(e.target.value)}} placeholder="2030-01-01T00:00:00Z"/>}
-      <button className="primary" onClick={doPreview} disabled={!rule||operation==="set"&&!expiresAt}>Preview</button>
+      <select value={plane} disabled={busy} onChange={e=>{resetChangePlan();setPlane(e.target.value)}}><option value="remote">Remote</option><option value="internet">Internet</option><option value="ai">AI</option></select>
+      <input value={rule} disabled={busy} onChange={e=>{resetChangePlan();setRule(e.target.value)}} placeholder="Rule name"/>
+      <select value={operation} disabled={busy} onChange={e=>{resetChangePlan();setOperation(e.target.value)}}><option value="set">Set / change expiry</option><option value="clear">Clear expiry</option></select>
+      {operation==="set"&&<input value={expiresAt} disabled={busy} onChange={e=>{resetChangePlan();setExpiresAt(e.target.value)}} placeholder="2030-01-01T00:00:00Z"/>}
+      <button className="primary" onClick={doPreview} disabled={busy||!rule||operation==="set"&&!expiresAt}>Preview</button>
     </div>
     {preview&&<div className="card">
       <div><strong>Current:</strong> {preview.current_expires_at||"none"}</div>
@@ -496,7 +511,7 @@ function TemporaryAccessPanel(){
       <div><strong>Valid until:</strong> {preview.valid_until}</div>
       <BlastRadiusView preview={preview}/>
       <label className="apply-label">Type APPLY to commit<input value={confirmation} onChange={e=>setConfirmation(e.target.value)} placeholder="APPLY"/></label>
-      <button className="danger" onClick={doApply} disabled={confirmation!=="APPLY"}>Apply Temporary Access</button>
+      <button className="danger" onClick={doApply} disabled={busy||confirmation!=="APPLY"||preview.no_change!==false||Date.parse(preview.valid_until)<=Date.now()}>Apply Temporary Access</button>
     </div>}
   </div>;
 }
