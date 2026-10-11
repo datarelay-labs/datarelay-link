@@ -167,6 +167,100 @@ class LabReadinessSupportingTests(unittest.TestCase):
                 (destination / "PREFLIGHT_STATUS.json").read_text()
             )["status"], "NOT_READY")
 
+    def test_two_server_manifest_rejects_unapproved_mcp_alias_and_hostname(self):
+        manifest = {"hosts": [host()], "mcp_server": {
+            "ssh_alias": "frp-release-server", "role": "mcp-server",
+            "public_hostname": "mcp.example.test", "required": True}}
+        self.assertEqual(lab.verify_manifest(manifest), [])
+        split = {"roles_distinct": True, "MCP_DNS_SERVER": "mcp.example.test",
+                 "FUNCTION_PERFORMANCE_SERVER": "198.51.100.2"}
+        missing = {"hosts": [host()], "two_server_assignment": split}
+        self.assertTrue(lab.verify_manifest(missing), "Cannot omit MCP Server from a split lab")
+        manifest["two_server_assignment"] = split
+        self.assertEqual(lab.verify_manifest(manifest), [])
+        wrong_fqdn = json.loads(json.dumps(manifest))
+        wrong_fqdn["two_server_assignment"]["MCP_DNS_SERVER"] = "another.example.test"
+        self.assertTrue(lab.verify_manifest(wrong_fqdn))
+        for alias in ("frp-e2e-server", "frp-e2e-linux114", "unknown",
+                      "frp-release-server; rm -rf /"):
+            bad = json.loads(json.dumps(manifest))
+            bad["mcp_server"]["ssh_alias"] = alias
+            self.assertTrue(lab.verify_manifest(bad), alias)
+        for hostname in ("", "localhost", "*.example.test",
+                         "mcp.example.test; command", "127.0.0.1"):
+            bad = json.loads(json.dumps(manifest))
+            bad["mcp_server"]["public_hostname"] = hostname
+            self.assertTrue(lab.verify_manifest(bad), hostname)
+
+    def test_mcp_read_only_host_needs_exact_content_single443_and_valid_cert(self):
+        reply = ("MCP_HOST=test-mcp\nID=ubuntu\nVERSION_ID=24.04\nMCP_INSTALLED=YES\n"
+                 "Source HEAD: " + HASH_A + "\n"
+                 "MCP_CERT_STATUS_BEGIN\nURL:\n  https://mcp.example.test/mcp\n"
+                 "TLS mode:\n  AUTO_ACME\n"
+                 "Certificate:\n  VALID\n"
+                 "MCP_DOCTOR_BEGIN\nDeployment mode : single443\n"
+                 "mcp_tls_certificate     PASS — active certificate valid\n")
+        entry = {"ssh_alias": "frp-release-server", "role": "mcp-server",
+                 "public_hostname": "mcp.example.test", "expected_os_id": "ubuntu", "required": True}
+        observed = lab.classify_mcp_server(
+            entry, subprocess.CompletedProcess([], 0, reply, ""), HASH_A,
+            "INSTALLED_CANDIDATE")
+        self.assertEqual(observed["status"], "PASS", observed)
+        self.assertEqual(observed["certificate"], "VALID")
+        for changed in (reply.replace("ID=ubuntu", "ID=rocky"),
+                        reply.replace(HASH_A, HASH_B),
+                        reply.replace("single443", "direct"),
+                        reply.replace("  VALID", "  ABSENT"),
+                        reply.replace("mcp.example.test/mcp", "wrong.example.test/mcp"),
+                        reply.replace("mcp_tls_certificate     PASS", "mcp_tls_certificate     FAIL"),
+                        reply + "MCP_CERT_PROBE_FAILED=YES"):
+            row = lab.classify_mcp_server(
+                entry, subprocess.CompletedProcess([], 0, changed, ""), HASH_A,
+                "INSTALLED_CANDIDATE")
+            self.assertEqual(row["status"], "NOT_READY", row)
+
+    def test_mcp_read_only_route_and_separate_go_gate(self):
+        from unittest import mock
+        entry = {"ssh_alias": "frp-release-server", "role": "mcp-server",
+                 "public_hostname": "mcp.example.test", "required": True}
+        reply = ("MCP_HOST=test\nMCP_INSTALLED=YES\nSource HEAD: " +
+                 HASH_A + "\nMCP_CERT_STATUS_BEGIN\nURL:\n"
+                 " https://mcp.example.test/mcp\nTLS mode:\n AUTO_ACME\n"
+                 "Certificate:\n VALID\nMCP_DOCTOR_BEGIN\n"
+                 "Deployment mode : single443\n"
+                 "mcp_tls_certificate PASS — active certificate valid\n")
+        with mock.patch.object(
+            lab.subprocess, "run",
+            return_value=subprocess.CompletedProcess([], 0, reply, "")) as run:
+            result = lab.collect_mcp_server(entry, HASH_A, "INSTALLED_CANDIDATE")
+        self.assertEqual(result["status"], "PASS", result)
+        argv = run.call_args.args[0]
+        self.assertIn("frp-release-server", argv)
+        self.assertIn("StrictHostKeyChecking=yes", argv)
+        self.assertIn("system certificate status", argv[-1])
+        self.assertNotIn("system certificate preflight", argv[-1])
+        self.assertNotIn("system certificate issue", argv[-1])
+        self.assertNotIn("system uninstall", argv[-1])
+        base = {"expected_provenance_head": HASH_A,
+                "approvals": {"dedicated_disposable_lab": True,
+                              "server_cleanup_B014_resolved": True,
+                              "protected_backup_verified": True,
+                              "qualified_immutable_bundle": True,
+                              "trusted_mcp_tls_verified": False,
+                              "actual_owner_oauth_ui_accepted": True,
+                              "separate_ai_personas_ready": True,
+                              "prospective_process_registry_ready": True,
+                              "native_platform_security_denials_resolved": True}}
+        function = {"ssh_alias": "frp-e2e-server", "required": True,
+                    "status": "PASS", "reason": "match"}
+        outcome = lab.evaluate(base, [function, result], HASH_A)
+        self.assertEqual(outcome["status"], "NOT_READY")
+        self.assertIn("MCP_PUBLIC_TLS", outcome["not_ready_gate_ids"])
+        self.assertNotIn("HOST_FRP_RELEASE_SERVER", outcome["not_ready_gate_ids"])
+        broken = dict(result, status="NOT_READY", reason="certificate ABSENT")
+        outcome = lab.evaluate(base, [function, broken], HASH_A)
+        self.assertIn("HOST_FRP_RELEASE_SERVER", outcome["not_ready_gate_ids"])
+
     def test_approval_gates_are_explicit_and_never_inferred(self):
         names = ["dedicated_disposable_lab", "server_cleanup_B014_resolved",
                  "protected_backup_verified", "qualified_immutable_bundle",

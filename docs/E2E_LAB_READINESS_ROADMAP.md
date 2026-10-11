@@ -49,6 +49,23 @@ The official `docs/FULL_USER_E2E_SCENARIOS.md` is the required 4,283-line full u
 
 **Implemented support tooling (post-reboot):** `tools/e2e_lab_readiness.py` with isolated regression `tests/test-e2e-lab-readiness.py` performs approved-alias, read-only host/Source HEAD and ownership-precondition inventory. Provide a private lab-ownership JSON manifest through `--manifest` and durable `--output-dir`; it writes `PREFLIGHT_STATUS.json` and `CLEANROOM_LEDGER.tsv` outside `/tmp`, with exit code 3 when `NOT_READY`. The script cannot approve its own host permissions or override denied effects. Native Windows is not qualified from management reachability alone. This is supporting preflight, **not** a persona test or product readiness PASS.
 
+**Seven-role, two-Server installed-candidate gate:** When the private owner
+manifest declares `two_server_assignment.roles_distinct=true`, it MUST also
+contain the separate required `mcp_server` object with owner-authorized SSH
+alias `frp-release-server`, `role=mcp-server`, and `public_hostname` exactly
+matching the separately frozen MCP DNS hostname. The read-only collector uses
+only `system version`, `system certificate status` and `system diagnostics mcp`.
+It checks the installed MCP Server's exact Source HEAD, `single443` deployment,
+canonical public MCP URL and **locally valid active** certificate independently
+of the other six functional/native roles. Historical single-Server manifests
+remain supported only when no two-Server assignment was declared. The existing
+`MCP_PUBLIC_TLS` gate still requires separately verified **public CA trust and
+real external ingress**; local certificate status PASS is never a substitute for
+that evidence or for real ChatGPT owner-side OAuth. An absent, self-signed or
+unverified certificate leaves GO as NOT_READY. This preflight does not run
+`system certificate preflight` or `system certificate issue`, and cannot
+lift previously denied certificate, B014, Windows or Rocky effects.
+
 **Owner-selected Codex dual-role method:** `docs/CODEX_DUAL_ROLE_TEST_PROTOCOL.md` now defines a Codex auditor and three independent Codex actor contexts (Direct User, AI-assisted User, AI Adviser) within ONE locked RUN_ID. Each applicable feature/FCS and Full User E2E scenario uses the same goal and starting state; first advice is preserved, public-CLI use is observed and paired ledgers are validated. No outside model or ChatGPT test executor is substituted. **Method documented/testable, actor execution NOT YET VERIFIED; preflight remains NOT_READY.**
 
 ### LAB-P0-03 — Prospective first-time user/AI role isolation

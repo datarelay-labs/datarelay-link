@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import hashlib
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -23,6 +24,8 @@ ALLOWED_ALIASES = frozenset({
 })
 EXCLUDED_ALIASES = frozenset({"frp-e2e-linux114", "frp-e2e-macos"})
 SOURCE_RE = re.compile(r"^[0-9a-f]{40}$")
+MCP_SERVER_ALIAS = "frp-release-server"
+MCP_FQDN_LABEL = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 UNIX_READ_ONLY = (
     'printf "HOST="; hostname; '
     'sed -n -E "/^(ID|VERSION_ID)=/p" /etc/os-release; '
@@ -73,6 +76,42 @@ WINDOWS_READ_ONLY = (
 
 
 
+# Named MCP host is independent of the functional FRP Server. Public read-only
+# commands only; intentionally excludes previously denied certificate preflight,
+# certificate issuance, credential, cleanup, install, and OAuth mutations.
+MCP_READ_ONLY = (
+    'printf "MCP_HOST="; hostname; '
+    'sed -n -E "/^(ID|VERSION_ID)=/p" /etc/os-release; '
+    'if command -v drlink >/dev/null 2>&1; then '
+    'echo MCP_INSTALLED=YES; '
+    'sudo -n drlink system version || echo MCP_VERSION_PROBE_FAILED=YES; '
+    'echo MCP_CERT_STATUS_BEGIN; '
+    'sudo -n drlink system certificate status || echo MCP_CERT_PROBE_FAILED=YES; '
+    'echo MCP_DOCTOR_BEGIN; '
+    'sudo -n drlink system diagnostics mcp || echo MCP_DIAGNOSTICS_NOT_PASS=YES; '
+    'else echo MCP_INSTALLED=NO; fi'
+)
+
+
+def valid_mcp_hostname(hostname: str) -> bool:
+    """Reject unsafe/ambiguous MCP hostnames from private operator manifests."""
+    if not isinstance(hostname, str):
+        return False
+    if hostname != hostname.strip() or len(hostname) > 253:
+        return False
+    hostname = hostname.lower()
+    try:
+        ipaddress.ip_address(hostname)
+        return False
+    except ValueError:
+        pass
+    labels = hostname.split(".")
+    return len(labels) >= 2 and all(MCP_FQDN_LABEL.fullmatch(label) for label in labels) and (
+        hostname not in ("localhost", "localhost.localdomain")
+        and labels[-1] not in ("local", "internal", "localhost", "lan", "home")
+    )
+
+
 def utc_now() -> str:
     return dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
 
@@ -93,6 +132,25 @@ def verify_manifest(manifest: dict) -> list[dict]:
             errors.append({"id": "HOST_CONFIG", "status": "NOT_READY", "reason": "Invalid role for " + alias})
     if "frp-e2e-server" not in names:
         errors.append({"id": "HOST_CONFIG", "status": "NOT_READY", "reason": "Missing assigned E2E Server"})
+    # Optional for historical 6-host preflight manifests; mandatory when present
+    # for the owner's new distinct MCP + function test topology.
+    split = manifest.get("two_server_assignment")
+    split_assigned = isinstance(split, dict) and split.get("roles_distinct") is True
+    if split_assigned and "mcp_server" not in manifest:
+        errors.append({"id": "MCP_HOST_CONFIG", "status": "NOT_READY",
+                       "reason": "Two-Server lab manifest must separately identify the MCP Server"})
+    if "mcp_server" in manifest:
+        mcp = manifest["mcp_server"]
+        if not isinstance(mcp, dict) or (
+            mcp.get("ssh_alias") != MCP_SERVER_ALIAS or
+            mcp.get("role") != "mcp-server" or
+            mcp.get("required") is not True or
+            not valid_mcp_hostname(mcp.get("public_hostname")) or
+            MCP_SERVER_ALIAS in names or
+            (split_assigned and mcp.get("public_hostname") != split.get("MCP_DNS_SERVER"))
+        ):
+            errors.append({"id": "MCP_HOST_CONFIG", "status": "NOT_READY",
+                           "reason": "MCP Server must use the separately assigned owner SSH alias, public FQDN and mandatory role"})
     return errors
 
 
@@ -193,6 +251,127 @@ def collect_host(host: dict, expected_source: str,
     return classify_host(host, result, expected_source, phase)
 
 
+def classify_mcp_server(host: dict, result: subprocess.CompletedProcess, expected_source: str,
+                        phase: str = "INSTALLED_CANDIDATE") -> dict:
+    """Classify only the separately authorized MCP runtime's public read-only facts.
+
+    This NEVER proves external public-CA trust or owner-side OAuth acceptance;
+    those remain independent explicit GO gates in the owner manifest.
+    """
+    out = (result.stdout or "")[:16000]
+    summary = {
+        "ssh_alias": host["ssh_alias"], "role": "mcp-server",
+        "required": bool(host.get("required", True)), "ssh_rc": result.returncode,
+        "host": None, "os_id": None, "os_version": None,
+        "installed": "UNKNOWN", "source_head": None,
+        "mcp_hostname": host["public_hostname"], "mcp_public_url": "",
+        "deployment_mode": "", "tls_mode": "", "certificate": "",
+        "doctor_certificate_pass": False, "version_probe_failed": False,
+        "certificate_probe_failed": False, "doctor_nonpass": False,
+        "status": "NOT_READY", "reason": "MCP runtime/source/TLS state not qualified",
+    }
+    if result.returncode != 0:
+        summary["reason"] = "Owner-approved MCP management route unreachable"
+        summary["ssh_error_class"] = (
+            "CONNECTION_REFUSED" if "Connection refused" in (result.stderr or "")[:800]
+            else "AUTH_OR_TRANSPORT_FAILURE"
+        )
+        return summary
+    pending = None
+    section = ""
+    for original in out.splitlines():
+        line = original.strip().strip("\r")
+        if line == "MCP_CERT_STATUS_BEGIN":
+            section, pending = "cert", None
+            continue
+        if line == "MCP_DOCTOR_BEGIN":
+            section, pending = "doctor", None
+            continue
+        if pending == "url":
+            if line:
+                summary["mcp_public_url"] = line
+                pending = None
+                continue
+        elif pending == "mode":
+            if line:
+                summary["tls_mode"] = line
+                pending = None
+                continue
+        elif pending == "certificate":
+            if line:
+                summary["certificate"] = line
+                pending = None
+                continue
+        if line.startswith("MCP_HOST="):
+            summary["host"] = line.partition("=")[2][:200]
+        elif line.startswith("ID="):
+            summary["os_id"] = line.partition("=")[2].strip('"')
+        elif line.startswith("VERSION_ID="):
+            summary["os_version"] = line.partition("=")[2].strip('"')
+        elif line == "MCP_INSTALLED=YES":
+            summary["installed"] = "YES"
+        elif line == "MCP_INSTALLED=NO":
+            summary["installed"] = "NO"
+        elif line.startswith("Source HEAD:"):
+            value = line.partition(":")[2].strip()
+            if SOURCE_RE.fullmatch(value):
+                summary["source_head"] = value
+        elif line == "MCP_VERSION_PROBE_FAILED=YES":
+            summary["version_probe_failed"] = True
+        elif line == "MCP_CERT_PROBE_FAILED=YES":
+            summary["certificate_probe_failed"] = True
+        elif line == "MCP_DIAGNOSTICS_NOT_PASS=YES":
+            summary["doctor_nonpass"] = True
+        elif line == "URL:" and section == "cert":
+            pending = "url"
+        elif line == "TLS mode:" and section == "cert":
+            pending = "mode"
+        elif line == "Certificate:" and section == "cert":
+            pending = "certificate"
+        elif line.startswith("Deployment mode") and ":" in line and section == "doctor":
+            summary["deployment_mode"] = line.partition(":")[2].strip()
+        elif section == "doctor" and re.match(r"^mcp_tls_certificate\s+PASS\b", line):
+            summary["doctor_certificate_pass"] = True
+    if phase != "INSTALLED_CANDIDATE":
+        summary["reason"] = "MCP Server preinstall has no independent cleanroom/ownership proof"
+    elif summary["installed"] != "YES":
+        summary["reason"] = "MCP Server public CLI not installed or not observable"
+    elif summary["version_probe_failed"] or summary["source_head"] != expected_source:
+        summary["reason"] = "MCP_SERVER_STALE_OR_UNKNOWN_INSTALLED_SOURCE_HEAD"
+    elif summary["deployment_mode"] != "single443":
+        summary["reason"] = "MCP_SERVER_SINGLE443_NOT_VERIFIED"
+    elif summary["mcp_public_url"] != "https://" + host["public_hostname"] + "/mcp":
+        summary["reason"] = "MCP_SERVER_PUBLIC_ENDPOINT_HOSTNAME_MISMATCH"
+    elif summary["certificate_probe_failed"] or summary["certificate"] != "VALID":
+        summary["reason"] = "MCP_SERVER_PUBLIC_CERTIFICATE_ABSENT_OR_INVALID"
+    elif summary["doctor_nonpass"] or not summary["doctor_certificate_pass"]:
+        summary["reason"] = "MCP_SERVER_PUBLIC_CERTIFICATE_DOCTOR_NOT_PASS"
+    else:
+        summary["status"] = "PASS"
+        summary["reason"] = "MCP installed source, single443 and local certificate valid; separate external trusted-TLS/OAuth proof still mandatory"
+    if host.get("expected_os_id") and summary["os_id"] != host["expected_os_id"]:
+        summary["status"] = "NOT_READY"
+        summary["reason"] = "MCP_SERVER_UNEXPECTED_NATIVE_OS_IDENTITY"
+    return summary
+
+
+def collect_mcp_server(host: dict, expected_source: str,
+                       phase: str = "INSTALLED_CANDIDATE", timeout: int = 15) -> dict:
+    """Never accept an arbitrary host or invoke a credential/certificate mutation."""
+    if host.get("ssh_alias") != MCP_SERVER_ALIAS or not valid_mcp_hostname(host.get("public_hostname")):
+        raise ValueError("MCP Server must use the assigned owner alias and public hostname")
+    argv = ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
+            "-o", "ConnectTimeout=5", MCP_SERVER_ALIAS, MCP_READ_ONLY]
+    try:
+        result = subprocess.run(argv, text=True, capture_output=True,
+                                timeout=timeout, check=False)
+    except subprocess.TimeoutExpired:
+        result = subprocess.CompletedProcess(argv, 124, "", "READ_ONLY_SSH_TIMEOUT")
+    except OSError:
+        result = subprocess.CompletedProcess(argv, 127, "", "READ_ONLY_SSH_UNAVAILABLE")
+    return classify_mcp_server(host, result, expected_source, phase)
+
+
 def evaluate(manifest: dict, hosts: list[dict], repo_head: str) -> dict:
     checks = []
     approvals = manifest.get("approvals") or {}
@@ -280,6 +459,10 @@ def main() -> int:
               file=sys.stderr)
         return 2
     hosts = [collect_host(h, expected, phase) for h in manifest["hosts"]]
+    # The owner's independent MCP/DNS test Server must be checked separately
+    # from the six functional/native E2E hosts. Historical manifests remain valid.
+    if "mcp_server" in manifest:
+        hosts.append(collect_mcp_server(manifest["mcp_server"], expected, phase))
     report = evaluate(manifest, hosts, head)
     report.update({"run_id": "lab-readiness-" + dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
                    + "-" + str(os.getpid()), "utc": utc_now(),
