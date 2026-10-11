@@ -95,7 +95,7 @@ test("Host table Trust, platform, version and Core last activity fail closed on 
    last_seen:"2026-10-10T23:58:00Z",
  });
  assert.deepEqual(actual,{trust:"Trusted",platform:"linux",version:"3.0.1",
-   lastActivity:"2026-10-10T23:58:00Z"});
+   lastActivity:"2026-10-10T23:58:00Z",lastHeartbeat:"2026-10-11T00:01:00Z"});
  for(const [trust,expected] of [
    ["trusted","Trusted"],["revoked","Revoked"],["untrusted","Untrusted"],
    [null,"UNKNOWN"],["legacy_tRUSTED","UNKNOWN"],[42,"UNKNOWN"]

@@ -1,4 +1,5 @@
 /** Host-only view projection. Never render arbitrary Core object keys, auth tokens or credentials. */
+import {isObservedAbsoluteTime} from "./uxb-integrations-state";
 export type HostDetailField={label:string,value:string};
 export type HostDetailSection={title:string,fields:HostDetailField[]};
 type HostFields=Record<string,unknown>;
@@ -47,7 +48,7 @@ export function hostVisibleIdentity(value:unknown):{primary:string,secondary:str
 }
 export function hostInventoryFacts(value:unknown):{
   trust:"Trusted"|"Revoked"|"Untrusted"|"UNKNOWN";
-  platform:string;version:string;lastActivity:string;
+  platform:string;version:string;lastActivity:string;lastHeartbeat:string;
 }{
   const data:HostFields=value!==null&&typeof value==="object"&&!Array.isArray(value)
     ?value as HostFields:{};
@@ -60,6 +61,8 @@ export function hostInventoryFacts(value:unknown):{
     trust,platform:observedString("agent_platform"),
     version:observedString("agent_version"),
     lastActivity:observedString("last_seen"),
+    lastHeartbeat:isObservedAbsoluteTime(data.agent_heartbeat_at)
+      ?data.agent_heartbeat_at:"UNKNOWN",
   };
 }
 export function hostConnectionState(value:unknown):"Connected"|"Disconnected"|"UNKNOWN"{
@@ -80,7 +83,8 @@ export function hostDetailSections(value:unknown):HostDetailSection[]{
   const connection:HostDetailField[]=[
     {label:"Connection",value:hostConnectionState(data)},
     ...TEXT_FIELDS["Connectivity & Version"].map(([label,key])=>({
-      label,value:safeText(data,key)
+      label,value:key==="agent_heartbeat_at"
+        ?hostInventoryFacts(data).lastHeartbeat:safeText(data,key)
     })).filter((row):row is HostDetailField=>row.value!==null),
   ];
   return [
