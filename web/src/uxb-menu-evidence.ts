@@ -141,6 +141,7 @@ export function requireObservedAccessHygiene(payload:unknown):any{
 /** Only true, role-appropriate workspaces offer an Inspect action.
  * Unrecognized resource kinds must not show a clickable no-op. */
 export function hygieneInspectTarget(type:unknown,role:unknown):{route:string,group:string}|null{
+  if(!["Admin","Operator","Read Only"].includes(String(role)))return null;
   if(type==="service-account"&&role!=="Admin")return null;
   const destinations:Record<string,{route:string,group:string}>={
     "managed-host":{route:"hosts",group:"connections"},

@@ -221,6 +221,11 @@ test('Access Hygiene inspect has only meaningful authorized destinations',()=>{
   assert.equal(menu.hygieneInspectTarget('service-account','Read Only'),null);
   assert.equal(menu.hygieneInspectTarget('unsupported','Admin'),null);
   assert.equal(menu.hygieneInspectTarget(null,'Admin'),null);
+  // Navigation hints must fail closed when the Web session role is missing or unrecognized.
+  for(const role of [null,undefined,'Guest','admin','UNKNOWN',{},'']){
+    for(const type of ['managed-host','object','access-rule','service-account'])
+      assert.equal(menu.hygieneInspectTarget(type,role),null,`${type}/${String(role)}`);
+  }
 });
 test('A diagnostic Job response cannot fabricate an accepted zero-target Queue from incomplete Core data',()=>{
   const valid={job:{id:'mjob_123',job_type:'doctor',status:'QUEUED',target_count:2},
