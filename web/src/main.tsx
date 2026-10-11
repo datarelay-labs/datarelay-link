@@ -9,7 +9,7 @@ import {AccessEvidenceExplorer,GuidedPolicyJourney,coreFlowKey,coreCutoffKey,vis
 import {EnrollmentOnboarding} from "./p0-enrollment";
 import {navGroups,groupFor,labelFor,pageDescriptions,visibleRoute,navMatches,setupContextForObjectFamily} from "./uxb-navigation";
 import {FirstUseHome,observedBoundedCountPair,observedHomeAttention,isFreshInstallation,observedRecentFeed,observedNumber,accessPlaneCount,coreHealthState,type RecentFeed} from "./uxb-home";
-import {requireObservedMenuPayload,requireObservedTemporaryAccessApplyForPlan,requireObservedEmergencyCutoffApplyForPlan,observedEmergencyCutoffPreviewForIntent,requireObservedCutoffInventory,requireObservedLiveAccessView,requireObservedDiagnosisView,requireObservedInventoryContinuation,requireObservedObjectContinuation,requireObservedAuditRetention,auditRetentionRunPermitted,requireObservedAccessHygiene,hygieneInspectTarget,requireObservedJobStart,requireObservedFleetApply,requireObservedFleetPreview,requireObservedFleetApplyForPreview,requireObservedAuditExport,requireObservedRolloutPreview,requireObservedInventoryExport,requireObservedJobDetail,requireObservedJobCancellation,isPartialCorePage,selectMenuPage,combineObservedPolicyPlanes,policyStateLabel,policyExpiryLabel,type MenuPagePosition} from "./uxb-menu-evidence";
+import {requireObservedMenuPayload,guidedChangePreviewMatchesIntent,requireObservedGuidedChangeApplyReceipt,requireObservedTemporaryAccessApplyForPlan,requireObservedEmergencyCutoffApplyForPlan,observedEmergencyCutoffPreviewForIntent,requireObservedCutoffInventory,requireObservedLiveAccessView,requireObservedDiagnosisView,requireObservedInventoryContinuation,requireObservedObjectContinuation,requireObservedAuditRetention,auditRetentionRunPermitted,requireObservedAccessHygiene,hygieneInspectTarget,requireObservedJobStart,requireObservedFleetApply,requireObservedFleetPreview,requireObservedFleetApplyForPreview,requireObservedAuditExport,requireObservedRolloutPreview,requireObservedInventoryExport,requireObservedJobDetail,requireObservedJobCancellation,isPartialCorePage,selectMenuPage,combineObservedPolicyPlanes,policyStateLabel,policyExpiryLabel,type MenuPagePosition} from "./uxb-menu-evidence";
 import {RemoteServiceEditor} from "./uxb-remote-service";
 import {RevisionHistory} from "./uxb-revisions";
 import {AgentVersionDrift} from "./uxb-versions";
@@ -339,10 +339,86 @@ function BlastRadiusView({preview}:{preview:any}){
 }
 
 function GuidedApplyPanel({title,build}:{title:string,build:()=>any}){
-  const [preview,setPreview]=useState<any>(null),[confirmation,setConfirmation]=useState(""),[message,setMessage]=useState(""),[error,setError]=useState("");
-  async function doPreview(){setError("");setMessage("");try{const req=build();const result=await api("/api/v1/guided/preview",{method:"POST",body:JSON.stringify(req)});setPreview(result);setConfirmation("")}catch(e:any){setError(e.message||String(e))}}
-  async function doApply(){setError("");try{const result=await api("/api/v1/guided/apply",{method:"POST",body:JSON.stringify({change_plan_id:preview?.change_plan_id||"",confirmation})});setMessage("Applied at revision "+result.revision);setPreview(null);setConfirmation("")}catch(e:any){setError(e.message||String(e))}}
-  return <div className="card"><h3>{title}</h3>{error&&<div className="error">{error}</div>}{message&&<div className="notice">{message}</div>}<button className="primary" onClick={doPreview}>Preview</button>{preview&&<div className="card"><pre className="plan">{JSON.stringify({change_type:preview.change_type,preview:preview.preview,impact:preview.impact,valid_until:preview.valid_until},null,2)}</pre><BlastRadiusView preview={preview}/><label className="apply-label">Type APPLY to commit<input value={confirmation} onChange={e=>setConfirmation(e.target.value)} placeholder="APPLY"/></label><button className="danger" onClick={doApply} disabled={confirmation!=="APPLY"}>Apply</button></div>}</div>;
+  const [preview,setPreview]=useState<any>(null),[confirmation,setConfirmation]=useState("");
+  const [message,setMessage]=useState(""),[error,setError]=useState(""),[busy,setBusy]=useState(false);
+  const activeRequest=useRef<any>(null),generation=useRef(0);
+  useEffect(()=>()=>{generation.current+=1},[]);
+  useEffect(()=>{
+    if(!preview||busy)return;
+    const delay=Date.parse(preview.valid_until)-Date.now();
+    if(!Number.isFinite(delay)||delay>2147483647)return;
+    const timeout=setTimeout(()=>{
+      if(Date.now()>=Date.parse(preview.valid_until)){
+        generation.current+=1;activeRequest.current=null;
+        setPreview(null);setConfirmation("");
+        setError("Core Change Plan expired; request a fresh Preview before any Apply.");
+      }
+    },Math.max(0,delay));
+    return()=>clearTimeout(timeout);
+  },[preview?.change_plan_id,preview?.valid_until,busy]);
+  async function doPreview(){
+    if(busy)return;
+    const token=++generation.current,req=build();
+    activeRequest.current=null;setPreview(null);setConfirmation("");
+    setError("");setMessage("");setBusy(true);
+    try{
+      const result=await api("/api/v1/guided/preview",{method:"POST",body:JSON.stringify(req)});
+      if(token!==generation.current)return;
+      if(result?.no_change===true){
+        setMessage("Core reports NO_CHANGE; no Apply is required.");
+        return;
+      }
+      if(!guidedChangePreviewMatchesIntent(result,req))
+        throw new Error("Core Change Plan does not match the requested type, target, action or expiry.");
+      activeRequest.current=req;setPreview(result);setConfirmation("");
+    }catch(e:any){if(token===generation.current)setError("Preview unverified: "+String(e.message||e))}
+    finally{if(token===generation.current)setBusy(false)}
+  }
+  async function doApply(){
+    if(busy||confirmation!=="APPLY"||!preview)return;
+    const reviewedPlan=preview,reviewedRequest=activeRequest.current;
+    if(!guidedChangePreviewMatchesIntent(reviewedPlan,reviewedRequest)
+      ||JSON.stringify(reviewedRequest)!==JSON.stringify(build())){
+      activeRequest.current=null;setPreview(null);setConfirmation("");
+      setError("Core Change Plan expired or changed; obtain a fresh Preview.");
+      return;
+    }
+    const token=++generation.current;
+    setError("");setMessage("");setBusy(true);
+    try{
+      const result=await api("/api/v1/guided/apply",{method:"POST",
+        body:JSON.stringify({change_plan_id:reviewedPlan.change_plan_id,confirmation})});
+      if(token!==generation.current)return;
+      const confirmed=requireObservedGuidedChangeApplyReceipt(result,reviewedPlan,reviewedRequest);
+      setMessage("Core change applied at revision "+confirmed.revision+". Review Change History for actual state.");
+      activeRequest.current=null;setPreview(null);setConfirmation("");
+    }catch(e:any){
+      if(token===generation.current){
+        // An ambiguous response can follow a committed Core mutation. Never
+        // allow blind reapplication of this one-shot actor-bound Change Plan.
+        activeRequest.current=null;setPreview(null);setConfirmation("");
+        setError("Apply outcome UNKNOWN. Inspect Core Change History before retrying. "+String(e.message||e));
+      }
+    }finally{if(token===generation.current)setBusy(false)}
+  }
+  const actionable=guidedChangePreviewMatchesIntent(preview,activeRequest.current);
+  return <div className="card"><h3>{title}</h3>
+    {error&&<div className="error" role="alert">{error}</div>}
+    {message&&<div className="notice" role="status">{message}</div>}
+    <button className="primary" type="button" disabled={busy} onClick={doPreview}>
+      {busy?"Checking Core…":"Preview"}</button>
+    {preview&&<div className="card">
+      <pre className="plan">{JSON.stringify({change_type:preview.change_type,preview:preview.preview,
+        impact:preview.impact,valid_until:preview.valid_until},null,2)}</pre>
+      <BlastRadiusView preview={preview}/>
+      <label className="apply-label">Type APPLY to commit
+        <input value={confirmation} onChange={e=>setConfirmation(e.target.value)}
+          placeholder="APPLY" disabled={busy||!actionable}/></label>
+      <button className="danger" type="button" onClick={doApply}
+        disabled={busy||confirmation!=="APPLY"||!actionable}>Apply</button>
+      {!actionable&&<p className="muted">Change Plan UNKNOWN or expired; create a new Core Preview.</p>}
+    </div>}
+  </div>;
 }
 
 function ManagedHostMetadataPanel(){

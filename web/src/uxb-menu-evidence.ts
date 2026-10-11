@@ -44,6 +44,75 @@ export function policyExpiryLabel(item:unknown):string{
   return row.expires_at;
 }
 
+/** Legacy guided Object, Host and Policy panels must not interpret an
+ * HTTP 200 as permission to apply an arbitrary or expired Core Change Plan.
+ * Core still performs the actual actor-bound authorization and mutation.
+ */
+export function guidedChangePreviewMatchesIntent(
+ input:unknown,request:unknown,now:number=Date.now()
+):boolean{
+ const obj=(v:unknown):v is Record<string,any>=>!!v&&typeof v==="object"&&!Array.isArray(v);
+ const safe=(v:unknown,max=160):v is string=>typeof v==="string"
+   &&v.length<=max&&!/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/.test(v);
+ if(!obj(input)||!obj(request)||!obj(request.payload)||!Number.isFinite(now))return false;
+ const reviewed=input,kind=request.change_type,payload=request.payload;
+ const supported=new Set(["managed-host-metadata","network-object","network-group",
+   "service-object","service-group","permission-object","permission-group",
+   "remote-access-rule","internet-access-rule","ai-access-rule",
+   "remote-access-policy","internet-access-policy","ai-access-policy"]);
+ const operation=payload.operation??"set";
+ if(typeof kind!=="string"||!supported.has(kind)
+   ||!["set","delete","set-enforcement","reset"].includes(operation)
+   ||typeof reviewed.change_plan_id!=="string"
+   ||!/^cp_[A-Za-z0-9_-]{16,128}$/.test(reviewed.change_plan_id)
+   ||reviewed.operation_class!=="CHANGE"
+   ||reviewed.operation!=="guided."+kind+"."+operation
+   ||reviewed.resource_type!==kind||reviewed.change_type!==kind
+   ||!safe(reviewed.resource_ref)
+   ||reviewed.confirmation_class!=="APPLY"
+   ||reviewed.no_change!==false
+   ||!Number.isSafeInteger(reviewed.expected_revision)||reviewed.expected_revision<0
+   ||!isObservedAbsoluteTime(reviewed.valid_until)
+   ||Date.parse(reviewed.valid_until)<=now)return false;
+ const intended=payload.name??payload.host;
+ if(intended!==undefined){
+   if(typeof intended!=="string"||!intended.trim()
+     ||!safe(intended)||reviewed.resource_ref!==intended.trim())return false;
+ }else if(kind.endsWith("-access-policy")){
+   if(!["",kind.split("-")[0]].includes(reviewed.resource_ref))return false;
+ }else return false;
+ const regression=reviewed.policy_regression;
+ if(regression!==undefined&&regression!==null
+   &&(!obj(regression)||regression.ok!==true||regression.required_failed!==0))return false;
+ const blast=reviewed.blast_radius;
+ if(blast!==undefined&&blast!==null
+   &&(!obj(blast)||!obj(blast.limits)||blast.limits.truncated!==false
+     ||!Array.isArray(blast.unknowns)||blast.unknowns.length!==0))return false;
+ return true;
+}
+
+/** An Apply acknowledgement must prove the exact Core-reviewed target,
+ * type and advanced revision; an ambiguous outcome requires fresh inventory.
+ */
+export function requireObservedGuidedChangeApplyReceipt(
+ input:unknown,preview:unknown,request:unknown
+):{revision:number}{
+ const fail=():never=>{throw new Error("UNKNOWN · Core guided Apply receipt is unverified; inspect Change History before retrying.");};
+ if(!input||typeof input!=="object"||Array.isArray(input)
+   ||!preview||typeof preview!=="object"||Array.isArray(preview)
+   ||!request||typeof request!=="object"||Array.isArray(request))return fail();
+ const receipt=input as Record<string,unknown>,plan=preview as Record<string,any>,
+   req=request as Record<string,any>;
+ if(!guidedChangePreviewMatchesIntent(plan,req,Date.parse(plan.valid_until)-1)
+   ||receipt.status!=="APPLIED"
+   ||receipt.change_type!==req.change_type
+   ||receipt.resource_type!==plan.resource_type
+   ||receipt.resource_ref!==plan.resource_ref
+   ||!Number.isSafeInteger(receipt.revision)
+   ||Number(receipt.revision)<=Number(plan.expected_revision))return fail();
+ return {revision:receipt.revision as number};
+}
+
 /** UI-06 distinction: existing Temporary Access is a *same-actor* Core
  * policy-expiry Change Plan, NOT a requester/reviewer access request.
  * Return only a revision proven against that exact approved plan.

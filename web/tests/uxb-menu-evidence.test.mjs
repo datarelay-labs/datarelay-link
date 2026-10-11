@@ -673,3 +673,61 @@ test("UX-8 Policy expiry does not display impossible calendar timestamps as obse
  const src=readFileSync(join(root,"src","uxb-menu-evidence.ts"),"utf8");
  assert.match(src,/if\(!isObservedAbsoluteTime\(row\.expires_at\)\)return "UNKNOWN"/);
 });
+
+test("UX-2 generic Guided Change applies only a current exact Core Change Plan and matching receipt",()=>{
+ const req={change_type:"service-object",payload:{operation:"set",name:"https",type:"tcp",port:443}};
+ const preview={change_plan_id:"cp_"+"a".repeat(24),operation_class:"CHANGE",
+   operation:"guided.service-object.set",resource_type:"service-object",
+   resource_ref:"https",change_type:"service-object",expected_revision:15,
+   confirmation_class:"APPLY",valid_until:"2035-01-01T00:00:00Z",no_change:false};
+ const now=Date.parse("2034-01-01T00:00:00Z");
+ assert.equal(menu.guidedChangePreviewMatchesIntent(preview,req,now),true);
+ const receipt={status:"APPLIED",change_type:"service-object",
+   resource_type:"service-object",resource_ref:"https",revision:16};
+ assert.deepEqual(menu.requireObservedGuidedChangeApplyReceipt(receipt,preview,req),
+   {revision:16});
+ for(const wrong of [null,{},[],{...preview,no_change:true},
+   {...preview,change_plan_id:"wrong"},{...preview,resource_ref:"ssh"},
+   {...preview,change_type:"network-object"},{...preview,operation:"guided.service-object.delete"},
+   {...preview,operation_class:"INCIDENT_CHANGE"},
+   {...preview,confirmation_class:"CONFIRM CUTOFF"},
+   {...preview,expected_revision:"15"},{...preview,valid_until:"bogus"},
+   {...preview,policy_regression:{ok:true,required_failed:1}},
+   {...preview,blast_radius:{limits:{truncated:true}}}
+ ])assert.equal(menu.guidedChangePreviewMatchesIntent(wrong,req,now),false,
+   JSON.stringify(wrong));
+ assert.equal(menu.guidedChangePreviewMatchesIntent(preview,req,
+   Date.parse(preview.valid_until)),false);
+ assert.equal(menu.guidedChangePreviewMatchesIntent(preview,
+   {...req,payload:{...req.payload,name:"other"}},now),false);
+ for(const bad of [null,{},[],{...receipt,status:"NO_CHANGE"},
+   {...receipt,revision:15},{...receipt,revision:"16"},
+   {...receipt,change_type:"network-object"},{...receipt,resource_ref:"ssh"},
+   {...receipt,resource_type:"network-object"}])
+  assert.throws(()=>menu.requireObservedGuidedChangeApplyReceipt(bad,preview,req),
+    /UNKNOWN|Core|unverified/,JSON.stringify(bad));
+});
+test("UX-2 generic Guided Change supports the existing Host and policy scopes, never a false Apply",()=>{
+ const at=Date.parse("2034-01-01T00:00:00Z");
+ const base={change_plan_id:"cp_"+"a".repeat(24),operation_class:"CHANGE",
+   expected_revision:13,confirmation_class:"APPLY",
+   valid_until:"2035-01-01T00:00:00Z",no_change:false};
+ const hostReq={change_type:"managed-host-metadata",
+   payload:{operation:"set",host:"host-a",description:"office"}};
+ assert.equal(menu.guidedChangePreviewMatchesIntent({...base,change_type:"managed-host-metadata",
+   resource_type:"managed-host-metadata",resource_ref:"host-a",
+   operation:"guided.managed-host-metadata.set"},hostReq,at),true);
+ const policyReq={change_type:"remote-access-policy",
+   payload:{operation:"set-enforcement",enabled:false}};
+ for(const ref of ["", "remote"])assert.equal(menu.guidedChangePreviewMatchesIntent(
+   {...base,change_type:"remote-access-policy",resource_type:"remote-access-policy",
+     resource_ref:ref,operation:"guided.remote-access-policy.set-enforcement"},
+   policyReq,at),true);
+ const src=readFileSync(join(root,"src","main.tsx"),"utf8");
+ const panel=src.split("function GuidedApplyPanel(")[1]?.split("function ManagedHostMetadataPanel(",1)[0]||"";
+ assert.match(panel,/guidedChangePreviewMatchesIntent\(result,req\)/);
+ assert.match(panel,/requireObservedGuidedChangeApplyReceipt\(result,reviewedPlan,reviewedRequest\)/);
+ assert.match(panel,/Apply outcome UNKNOWN/);
+ assert.match(panel,/setPreview\(null\);setConfirmation\(""\)/);
+ assert.match(panel,/disabled=\{busy\|\|confirmation!=="APPLY"/);
+});
