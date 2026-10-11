@@ -113,6 +113,52 @@ export function requireObservedGuidedChangeApplyReceipt(
  return {revision:receipt.revision as number};
 }
 
+/** Same-actor Temporary Access is NOT a reviewer workflow. Its preview
+ * must match the operator's exact Core rule, action and canonical expiry.
+ * Read-only Web preflight does not grant access or override Core safety.
+ */
+export function temporaryAccessPreviewMatchesIntent(
+ input:unknown,request:unknown,at:number=Date.now()
+):boolean{
+ const obj=(v:unknown):v is Record<string,any>=>!!v&&typeof v==="object"&&!Array.isArray(v);
+ const safe=(v:unknown,max=160):v is string=>typeof v==="string"&&!!v.trim()
+   &&v.length<=max&&!/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/.test(v);
+ if(!obj(input)||!obj(request)||!Number.isFinite(at))return false;
+ const preview=input,req=request,plane=req.plane,action=req.operation;
+ if(!["remote","internet","ai"].includes(plane)
+   ||!["set","clear"].includes(action)
+   ||!safe(req.rule)||typeof req.expires_at!=="string"
+   ||typeof preview.change_plan_id!=="string"
+   ||!/^cp_[A-Za-z0-9_-]{16,128}$/.test(preview.change_plan_id)
+   ||preview.operation_class!=="CHANGE"
+   ||preview.operation!=="temporary-access."+action
+   ||preview.resource_type!==plane+"-access-rule"
+   ||preview.resource_ref!==req.rule.trim()
+   ||!Number.isSafeInteger(preview.expected_revision)||preview.expected_revision<0
+   ||preview.confirmation_class!=="APPLY"||preview.no_change!==false
+   ||!isObservedAbsoluteTime(preview.valid_until)
+   ||Date.parse(preview.valid_until)<=at
+   ||(preview.current_expires_at!==null
+     &&!isObservedAbsoluteTime(preview.current_expires_at)))return false;
+ if(action==="clear"){
+   if(preview.desired_expires_at!==null||req.expires_at.trim()!=="")return false;
+ }else{
+   if(!isObservedAbsoluteTime(req.expires_at)
+     ||!isObservedAbsoluteTime(preview.desired_expires_at)
+     ||Date.parse(preview.desired_expires_at)<=at
+     ||Math.floor(Date.parse(preview.desired_expires_at)/1000)
+       !==Math.floor(Date.parse(req.expires_at)/1000))return false;
+ }
+ const regression=preview.policy_regression;
+ if(regression!=null&&(!obj(regression)||regression.ok!==true
+   ||regression.required_failed!==0))return false;
+ const blast=preview.blast_radius;
+ if(blast!=null&&(!obj(blast)||!obj(blast.limits)
+   ||blast.limits.truncated!==false
+   ||!Array.isArray(blast.unknowns)||blast.unknowns.length!==0))return false;
+ return true;
+}
+
 /** UI-06 distinction: existing Temporary Access is a *same-actor* Core
  * policy-expiry Change Plan, NOT a requester/reviewer access request.
  * Return only a revision proven against that exact approved plan.

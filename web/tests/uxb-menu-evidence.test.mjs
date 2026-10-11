@@ -731,3 +731,45 @@ test("UX-2 generic Guided Change supports the existing Host and policy scopes, n
  assert.match(panel,/setPreview\(null\);setConfirmation\(""\)/);
  assert.match(panel,/disabled=\{busy\|\|confirmation!=="APPLY"/);
 });
+
+test("UI-06 adjacent Temporary Access Preview is scoped to exact rule, action and canonical expiry",()=>{
+ const now=Date.parse("2033-01-01T00:00:00Z");
+ const req={plane:"remote",rule:" ssh-prod ",operation:"set",
+   expires_at:"2034-01-01T09:00:00+09:00"};
+ const plan={change_plan_id:"cp_"+"a".repeat(24),operation_class:"CHANGE",
+   operation:"temporary-access.set",resource_type:"remote-access-rule",
+   resource_ref:"ssh-prod",expected_revision:18,confirmation_class:"APPLY",
+   valid_until:"2035-01-01T00:00:00Z",desired_expires_at:"2034-01-01T00:00:00Z",
+   current_expires_at:null,no_change:false,
+   policy_regression:{ok:true,required_failed:0},
+   blast_radius:{limits:{truncated:false},unknowns:[]}};
+ assert.equal(menu.temporaryAccessPreviewMatchesIntent(plan,req,now),true);
+ assert.equal(menu.temporaryAccessPreviewMatchesIntent({...plan,operation:"temporary-access.clear"},
+   {...req,operation:"clear",expires_at:""},now),false);
+ const cleared={...plan,operation:"temporary-access.clear",desired_expires_at:null};
+ assert.equal(menu.temporaryAccessPreviewMatchesIntent(cleared,
+   {...req,operation:"clear",expires_at:""},now),true);
+ for(const invalid of [null,{},[],{...plan,resource_ref:"other"},
+   {...plan,resource_type:"ai-access-rule"},
+   {...plan,operation:"temporary-access.clear"},
+   {...plan,desired_expires_at:"2034-01-02T00:00:00Z"},
+   {...plan,desired_expires_at:null},{...plan,no_change:true},
+   {...plan,change_plan_id:"invalid"},
+   {...plan,confirmation_class:"APPROVE"},
+   {...plan,expected_revision:"18"},
+   {...plan,valid_until:"expired"},
+   {...plan,policy_regression:{ok:false,required_failed:1}},
+   {...plan,blast_radius:{limits:{truncated:true}}}
+ ])assert.equal(menu.temporaryAccessPreviewMatchesIntent(invalid,req,now),false,JSON.stringify(invalid));
+ assert.equal(menu.temporaryAccessPreviewMatchesIntent(plan,req,
+   Date.parse(plan.valid_until)),false);
+ assert.equal(menu.temporaryAccessPreviewMatchesIntent(plan,{...req,rule:"other"},now),false);
+ const src=readFileSync(join(root,"src","main.tsx"),"utf8");
+ const panel=src.split("function TemporaryAccessPanel(){")[1]?.split("function PolicySafetyPanel(",1)[0]||"";
+ assert.match(panel,/const token=\+\+previewGeneration\.current/);
+ assert.match(panel,/temporaryAccessPreviewMatchesIntent\(result,request\)/);
+ assert.match(panel,/if\(token!==previewGeneration\.current\)return;/);
+ assert.match(panel,/resetChangePlan\(\);setExpiresAt\(e\.target\.value\)/);
+ assert.match(panel,/const actionable=temporaryAccessPreviewMatchesIntent\(preview,currentRequest\.current\)/);
+ assert.match(panel,/Apply outcome UNKNOWN/);
+});

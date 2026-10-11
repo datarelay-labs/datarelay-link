@@ -9,7 +9,7 @@ import {AccessEvidenceExplorer,GuidedPolicyJourney,coreFlowKey,coreCutoffKey,vis
 import {EnrollmentOnboarding} from "./p0-enrollment";
 import {navGroups,groupFor,labelFor,pageDescriptions,visibleRoute,navMatches,setupContextForObjectFamily} from "./uxb-navigation";
 import {FirstUseHome,observedBoundedCountPair,observedHomeAttention,isFreshInstallation,observedRecentFeed,observedNumber,accessPlaneCount,coreHealthState,type RecentFeed} from "./uxb-home";
-import {requireObservedMenuPayload,guidedChangePreviewMatchesIntent,requireObservedGuidedChangeApplyReceipt,requireObservedTemporaryAccessApplyForPlan,requireObservedEmergencyCutoffApplyForPlan,observedEmergencyCutoffPreviewForIntent,requireObservedCutoffInventory,requireObservedLiveAccessView,requireObservedDiagnosisView,requireObservedInventoryContinuation,requireObservedObjectContinuation,requireObservedAuditRetention,auditRetentionRunPermitted,requireObservedAccessHygiene,hygieneInspectTarget,requireObservedJobStart,requireObservedFleetApply,requireObservedFleetPreview,requireObservedFleetApplyForPreview,requireObservedAuditExport,requireObservedRolloutPreview,requireObservedInventoryExport,requireObservedJobDetail,requireObservedJobCancellation,isPartialCorePage,selectMenuPage,combineObservedPolicyPlanes,policyStateLabel,policyExpiryLabel,type MenuPagePosition} from "./uxb-menu-evidence";
+import {requireObservedMenuPayload,guidedChangePreviewMatchesIntent,requireObservedGuidedChangeApplyReceipt,temporaryAccessPreviewMatchesIntent,requireObservedTemporaryAccessApplyForPlan,requireObservedEmergencyCutoffApplyForPlan,observedEmergencyCutoffPreviewForIntent,requireObservedCutoffInventory,requireObservedLiveAccessView,requireObservedDiagnosisView,requireObservedInventoryContinuation,requireObservedObjectContinuation,requireObservedAuditRetention,auditRetentionRunPermitted,requireObservedAccessHygiene,hygieneInspectTarget,requireObservedJobStart,requireObservedFleetApply,requireObservedFleetPreview,requireObservedFleetApplyForPreview,requireObservedAuditExport,requireObservedRolloutPreview,requireObservedInventoryExport,requireObservedJobDetail,requireObservedJobCancellation,isPartialCorePage,selectMenuPage,combineObservedPolicyPlanes,policyStateLabel,policyExpiryLabel,type MenuPagePosition} from "./uxb-menu-evidence";
 import {RemoteServiceEditor} from "./uxb-remote-service";
 import {RevisionHistory} from "./uxb-revisions";
 import {AgentVersionDrift} from "./uxb-versions";
@@ -539,37 +539,75 @@ function TemporaryAccessPanel(){
   const [plane,setPlane]=useState("remote"),[rule,setRule]=useState(""),[operation,setOperation]=useState("set"),[expiresAt,setExpiresAt]=useState("");
   const [preview,setPreview]=useState<any>(null),[confirmation,setConfirmation]=useState(""),[message,setMessage]=useState(""),[error,setError]=useState("");
   const [busy,setBusy]=useState(false);
-  function resetChangePlan(){setPreview(null);setConfirmation("");setMessage("")}
-  async function doPreview(){
-    setError("");setMessage("");resetChangePlan();
-    try{
-      const body:any={plane,rule,operation};
-      if(operation==="set")body.expires_at=expiresAt;
-      const result=await api("/api/v1/temporary-access/preview",{method:"POST",body:JSON.stringify(body)});
-      setPreview(result);setConfirmation("");
-    }catch(e:any){setError(e.message||String(e))}
+  const currentRequest=useRef<any>(null),previewGeneration=useRef(0);
+  useEffect(()=>()=>{previewGeneration.current+=1},[]);
+  useEffect(()=>{
+    if(!preview||busy)return;
+    const delay=Date.parse(preview.valid_until)-Date.now();
+    if(!Number.isFinite(delay)||delay>2147483647)return;
+    const timer=setTimeout(()=>{
+      if(Date.now()>=Date.parse(preview.valid_until)){
+        previewGeneration.current+=1;currentRequest.current=null;
+        setPreview(null);setConfirmation("");
+        setError("Core Temporary Access plan expired. Request a fresh Preview.");
+      }
+    },Math.max(0,delay));
+    return()=>clearTimeout(timer);
+  },[preview?.change_plan_id,preview?.valid_until,busy]);
+  function resetChangePlan(){
+    previewGeneration.current+=1;currentRequest.current=null;
+    setPreview(null);setConfirmation("");setMessage("");
   }
-  async function doApply(){
-    if(busy||confirmation!=="APPLY")return;
-    const reviewedPlan=preview;
-    if(!reviewedPlan?.change_plan_id||reviewedPlan.no_change!==false
-      ||!Number.isFinite(Date.parse(reviewedPlan.valid_until))
-      ||Date.parse(reviewedPlan.valid_until)<=Date.now()){
-      resetChangePlan();
-      setError("Core Temporary Access plan is missing, unchanged or expired. Preview current Core policy before retrying.");
-      return;
-    }
+  async function doPreview(){
+    if(busy)return;
+    const token=++previewGeneration.current;
+    const request={plane,rule,operation,expires_at:operation==="set"?expiresAt:""};
+    currentRequest.current=null;setPreview(null);setConfirmation("");
     setError("");setMessage("");setBusy(true);
     try{
-      const result=await api("/api/v1/temporary-access/apply",{method:"POST",body:JSON.stringify({change_plan_id:reviewedPlan.change_plan_id,confirmation})});
-      const applied=requireObservedTemporaryAccessApplyForPlan(result,reviewedPlan);
-      setMessage("Core Temporary Access confirmed APPLIED at revision "+applied.revision+". This does not prove live reachability.");
-      setPreview(null);setConfirmation("");
-    }catch(e:any){
-      resetChangePlan();
-      setError("Core Apply outcome UNKNOWN. Inspect policy and Change History before requesting a new plan. "+String(e?.message||e));
-    }finally{setBusy(false)}
+      const result=await api("/api/v1/temporary-access/preview",{
+        method:"POST",body:JSON.stringify(request)});
+      if(token!==previewGeneration.current)return;
+      if(result?.no_change===true){
+        setMessage("Core reports NO_CHANGE; no Temporary Access Apply is required.");
+        return;
+      }
+      if(!temporaryAccessPreviewMatchesIntent(result,request))
+        throw new Error("Core Temporary Access Preview does not match the selected rule, action or expiry.");
+      currentRequest.current=request;setPreview(result);setConfirmation("");
+    }catch(e:any){if(token===previewGeneration.current)
+      setError("Temporary Access Preview unverified: "+String(e.message||e))}
+    finally{if(token===previewGeneration.current)setBusy(false)}
   }
+  async function doApply(){
+    if(busy||confirmation!=="APPLY"||!preview)return;
+    const reviewedPlan=preview,reviewedRequest=currentRequest.current;
+    const intended={plane,rule,operation,expires_at:operation==="set"?expiresAt:""};
+    if(!temporaryAccessPreviewMatchesIntent(reviewedPlan,reviewedRequest)
+      ||JSON.stringify(reviewedRequest)!==JSON.stringify(intended)){
+      resetChangePlan();
+      setError("Core Temporary Access plan is missing, changed or expired. Preview current Core policy before retrying.");
+      return;
+    }
+    const token=++previewGeneration.current;
+    setError("");setMessage("");setBusy(true);
+    try{
+      const result=await api("/api/v1/temporary-access/apply",{method:"POST",
+        body:JSON.stringify({change_plan_id:reviewedPlan.change_plan_id,confirmation})});
+      if(token!==previewGeneration.current)return;
+      const applied=requireObservedTemporaryAccessApplyForPlan(result,reviewedPlan);
+      setMessage("Core Temporary Access confirmed APPLIED at revision "+applied.revision+
+        ". This does not prove live reachability.");
+      currentRequest.current=null;setPreview(null);setConfirmation("");
+    }catch(e:any){
+      if(token===previewGeneration.current){
+        // The old one-shot plan may already be committed on an unknown reply.
+        currentRequest.current=null;setPreview(null);setConfirmation("");
+        setError("Core Apply outcome UNKNOWN. Inspect policy and Change History before requesting a new plan. "+String(e?.message||e));
+      }
+    }finally{if(token===previewGeneration.current)setBusy(false)}
+  }
+  const actionable=temporaryAccessPreviewMatchesIntent(preview,currentRequest.current);
   return <div className="card">
     <h3>Temporary Access</h3>
     <div className="muted">Set, change, or clear server-authoritative expiry on an existing WHITELIST grant. This is a direct actor-bound Core Change Plan, not a requester/reviewer approval.</div>
@@ -586,8 +624,9 @@ function TemporaryAccessPanel(){
       <div><strong>Desired:</strong> {preview.desired_expires_at||"none"}</div>
       <div><strong>Valid until:</strong> {preview.valid_until}</div>
       <BlastRadiusView preview={preview}/>
-      <label className="apply-label">Type APPLY to commit<input value={confirmation} onChange={e=>setConfirmation(e.target.value)} placeholder="APPLY"/></label>
-      <button className="danger" onClick={doApply} disabled={busy||confirmation!=="APPLY"||preview.no_change!==false||Date.parse(preview.valid_until)<=Date.now()}>Apply Temporary Access</button>
+      <label className="apply-label">Type APPLY to commit<input value={confirmation} onChange={e=>setConfirmation(e.target.value)} placeholder="APPLY" disabled={busy||!actionable}/></label>
+      <button className="danger" onClick={doApply} disabled={busy||confirmation!=="APPLY"||!actionable}>Apply Temporary Access</button>
+      {!actionable&&<p role="status" className="muted">Reviewed Core Change Plan expired or changed. Request a fresh Preview.</p>}
     </div>}
   </div>;
 }
