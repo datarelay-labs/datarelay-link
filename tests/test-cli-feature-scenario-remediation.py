@@ -132,6 +132,11 @@ frpctl_nav_prompt_id 'Name: '
         self.assertIn("system backup validate", restore_menu[2])
         for action in ("issue", "import", "renew"):
             self.assertIn("no additional confirmation", rows[("system", "certificate", action)]["detail"])
+        for path in (("system", "restore"), ("system", "certificate", "issue"),
+                     ("system", "certificate", "import"), ("system", "certificate", "renew")):
+            self.assertIn("system diagnostics", rows[path]["detail"])
+            self.assertNotIn("system diagnostic.", rows[path]["detail"])
+        self.assertEqual(grammar.match(["system", "diagnostics"], "server")["status"], "ok")
 
     def test_policy_explain_help_identifies_named_selectors_and_empty_state_recovery(self):
         for resource in ("remote-access", "internet-access"):

@@ -364,7 +364,7 @@ system uninstall
 Restore validates the archive before offering live replacement confirmation.
 Backups contain private identity and PKI material; restrict access and store them
 securely. Run the read-only `system backup validate <FILE>` before restore.
-After restore inspect `show status` and `system diagnostic`. Preserve the archive
+After restore inspect `show status` and `system diagnostics`. Preserve the archive
 and error evidence if restore or rollback fails before attempting further recovery.
 After replacement, backup-time host presence and proxy health require fresh
 Agent verification; reconnect reconciliation reapplies the Agent runtime while
@@ -380,7 +380,7 @@ verification. A heartbeat alone never establishes service health.
 The explicit `system certificate issue`, `import` or `renew` command authorizes
 activation and required service changes without another confirmation prompt.
 Activation may interrupt MCP connections. Inspect `system certificate status`
-and `system diagnostic` afterward.
+and `system diagnostics` afterward.
 
 ## 9. Managed Host as Network Object
 

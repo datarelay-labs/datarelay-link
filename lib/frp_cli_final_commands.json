@@ -804,7 +804,7 @@
     "roles": "server",
     "category": "System",
     "summary": "Restore from a backup archive",
-    "detail": "Same-version restore only unless a migration exists. Shows a product-owned preflight and requires interactive y/N confirmation before mutation; non-interactive restore fails closed. Creates a pre-restore snapshot, replaces server state, and restarts services with automatic rollback on failure. First run system backup validate <PATH> (read-only). After restore inspect show status and system diagnostic. If restore or rollback fails, preserve the archive and error evidence before further recovery.",
+    "detail": "Same-version restore only unless a migration exists. Shows a product-owned preflight and requires interactive y/N confirmation before mutation; non-interactive restore fails closed. Creates a pre-restore snapshot, replaces server state, and restarts services with automatic rollback on failure. First run system backup validate <PATH> (read-only). After restore inspect show status and system diagnostics. If restore or rollback fails, preserve the archive and error evidence before further recovery.",
     "examples": [
       "system restore /var/lib/drlink/backups/b.tar.gz"
     ],
@@ -2473,7 +2473,7 @@
     "roles": "server",
     "category": "System",
     "summary": "Issue and activate the configured MCP certificate",
-    "detail": "Issue and activate a certificate for the configured MCP TLS mode. The previous valid certificate is retained on failed activation. The explicit command authorizes certificate activation and required service changes; no additional confirmation is used. Activation may interrupt MCP connections. Afterwards inspect system certificate status and system diagnostic.",
+    "detail": "Issue and activate a certificate for the configured MCP TLS mode. The previous valid certificate is retained on failed activation. The explicit command authorizes certificate activation and required service changes; no additional confirmation is used. Activation may interrupt MCP connections. Afterwards inspect system certificate status and system diagnostics.",
     "examples": [
       "system certificate issue"
     ],
@@ -2497,7 +2497,7 @@
     "roles": "server",
     "category": "System",
     "summary": "Import and activate an MCP certificate",
-    "detail": "Import matching certificate/key material and activate it after validation. The explicit command authorizes certificate activation and required service changes; no additional confirmation is used. Activation may interrupt MCP connections. Afterwards inspect system certificate status and system diagnostic.",
+    "detail": "Import matching certificate/key material and activate it after validation. The explicit command authorizes certificate activation and required service changes; no additional confirmation is used. Activation may interrupt MCP connections. Afterwards inspect system certificate status and system diagnostics.",
     "examples": [
       "system certificate import <CERT> <KEY> [CHAIN]"
     ],
@@ -2537,7 +2537,7 @@
     "roles": "server",
     "category": "System",
     "summary": "Renew and activate the MCP certificate when due",
-    "detail": "Renew the configured MCP certificate when due and retain the previous valid certificate on failed renewal. The explicit command authorizes certificate activation and required service changes; no additional confirmation is used. Activation may interrupt MCP connections. Afterwards inspect system certificate status and system diagnostic.",
+    "detail": "Renew the configured MCP certificate when due and retain the previous valid certificate on failed renewal. The explicit command authorizes certificate activation and required service changes; no additional confirmation is used. Activation may interrupt MCP connections. Afterwards inspect system certificate status and system diagnostics.",
     "examples": [
       "system certificate renew"
     ],
