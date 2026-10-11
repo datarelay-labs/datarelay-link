@@ -140,7 +140,7 @@
 .dr-uxb-flow-buttons{display:flex;gap:8px;flex-wrap:wrap}
 .dr-uxb-evidence-strip{display:flex;gap:8px;flex-wrap:wrap}
 .dr-uxb-evidence-strip span{padding:7px 10px;border:1px solid var(--dr-border-default);background:var(--dr-surface-section);border-radius:7px;font-size:11px;color:var(--dr-text-secondary)}
-.dr-uxb-context{background:var(--dr-surface-section);border:1px solid var(--dr-border-default);border-left:3px solid var(--dr-action-primary);padding:14px 16px;border-radius:8px}
+.dr-uxb-context{min-width:0;overflow-wrap:anywhere;background:var(--dr-surface-section);border:1px solid var(--dr-border-default);border-left:3px solid var(--dr-action-primary);padding:14px 16px;border-radius:8px}
 .dr-uxb-context strong{font-size:13px;font-weight:600}
 .dr-uxb-context p{margin:5px 0 0;color:var(--dr-text-secondary);font-size:12px}
 .dr-uxb-choice,.dr-uxb-service{display:grid;gap:13px;padding:20px}
