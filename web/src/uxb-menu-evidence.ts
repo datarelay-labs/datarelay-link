@@ -40,8 +40,8 @@ export function policyExpiryLabel(item:unknown):string{
   const row=item as Record<string,unknown>;
   if(!Object.prototype.hasOwnProperty.call(row,"expires_at"))return "UNKNOWN";
   if(row.expires_at===null)return "Never";
-  return typeof row.expires_at==="string"&&!!row.expires_at.trim()
-    &&row.expires_at.length<=160?row.expires_at:"UNKNOWN";
+  if(!isObservedAbsoluteTime(row.expires_at))return "UNKNOWN";
+  return row.expires_at;
 }
 
 /** UI-06 distinction: existing Temporary Access is a *same-actor* Core

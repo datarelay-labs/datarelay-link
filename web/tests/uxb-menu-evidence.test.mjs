@@ -657,3 +657,19 @@ test("UX-8 Active Emergency Cutoffs require exact Core plane, counts and bounded
  assert.match(src,/const verified=requireObservedCutoffInventory\(result,plane\)/);
  assert.match(src,/setCutoffEvidence\(\{key:plane,value:verified\}\)/);
 });
+
+test("UX-8 Policy expiry does not display impossible calendar timestamps as observed",()=>{
+ const valid=["2030-01-01T00:00:00Z","2028-02-29T23:59:59+09:00",
+   "2019-01-01T12:30:00-05:00"];
+ for(const date of valid)assert.equal(menu.policyExpiryLabel({expires_at:date}),date);
+ const invalid=["2030-02-30T00:00:00Z","2030-13-01T00:00:00Z",
+   "2030-01-01T25:00:00Z","2030-01-01T00:00:00+14:01",
+   "2030-01-01T00:00:00+15:00","2030-01-01",
+   "2030-01-01T00:00:00Z\u202e","not-a-time","12345"];
+ for(const date of invalid)assert.equal(menu.policyExpiryLabel({expires_at:date}),
+   "UNKNOWN",date);
+ assert.equal(menu.policyExpiryLabel({expires_at:null}),"Never");
+ assert.equal(menu.policyExpiryLabel({}),"UNKNOWN");
+ const src=readFileSync(join(root,"src","uxb-menu-evidence.ts"),"utf8");
+ assert.match(src,/if\(!isObservedAbsoluteTime\(row\.expires_at\)\)return "UNKNOWN"/);
+});
