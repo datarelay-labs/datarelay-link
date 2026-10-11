@@ -77,6 +77,79 @@ export function requireObservedTemporaryAccessApplyForPlan(
  return {revision:row.revision as number};
 }
 
+/** Read-only, bounded projection of the exact Core incident preview.
+ * Core may resolve a typed Service/Host alias to its canonical ID; require
+ * either that immutable ID or the canonical display name to match the
+ * request, never an arbitrary unrelated resource.
+ */
+export type ObservedEmergencyCutoffPreview={
+ change_plan_id:string,valid_until:string,operation_class:"INCIDENT_CHANGE",
+ resource_type:"emergency-cutoff",resource_ref:string,
+ operation:"emergency-cutoff.apply"|"emergency-cutoff.clear",
+ confirmation_class:"CONFIRM CUTOFF",expected_revision:number,
+ scope_kind:string,scope_ref:string,scope_display:string,
+ currently_active:boolean,desired_active:boolean,
+ active_sessions_terminated:false,no_change:false,
+ impact:{requires_confirmation:true,access_broadened:boolean,
+   access_narrowed:boolean,warning:string}
+};
+export function observedEmergencyCutoffPreviewForIntent(
+ input:unknown,plane:unknown,kind:unknown,selector:unknown,action:unknown,
+ now:number=Date.now()
+):ObservedEmergencyCutoffPreview|null{
+ const record=(v:unknown):v is Record<string,unknown>=>
+   !!v&&typeof v==="object"&&!Array.isArray(v);
+ const safe=(v:unknown,max=160):v is string=>
+   typeof v==="string"&&!!v.trim()&&v.length<=max
+     &&!/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/.test(v);
+ if(!record(input)||typeof plane!=="string"
+   ||!["remote","internet","ai"].includes(plane)
+   ||typeof kind!=="string"||typeof selector!=="string"
+   ||!["apply","clear"].includes(String(action))||!Number.isFinite(now))return null;
+ const allowed=plane==="remote"?["plane","remote-service"]:
+   plane==="internet"?["plane","managed-host"]:["plane","ai-identity"];
+ if(!allowed.includes(kind))return null;
+ const data=input,ref=data.scope_ref,display=data.scope_display,
+   impact=data.impact,operation="emergency-cutoff."+action;
+ if(typeof data.change_plan_id!=="string"
+   ||!/^cp_[A-Za-z0-9_-]{16,128}$/.test(data.change_plan_id)
+   ||data.operation_class!=="INCIDENT_CHANGE"
+   ||data.resource_type!=="emergency-cutoff"
+   ||data.operation!==operation||data.scope_kind!==kind
+   ||typeof ref!=="string"||ref.length>160
+   ||/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/.test(ref)
+   ||(kind==="plane"?ref!==""||selector.trim()!=="":!safe(ref))
+   ||!safe(display)
+   ||(kind!=="plane"&&![ref.toLowerCase(),display.toLowerCase()]
+     .includes(selector.trim().toLowerCase()))
+   ||data.resource_ref!==(kind==="plane"?plane:kind+":"+ref)
+   ||data.desired_active!==(action==="apply")
+   ||typeof data.currently_active!=="boolean"
+   ||data.active_sessions_terminated!==false||data.no_change!==false
+   ||data.confirmation_class!=="CONFIRM CUTOFF"
+   ||!Number.isSafeInteger(data.expected_revision)||Number(data.expected_revision)<0
+   ||!isObservedAbsoluteTime(data.valid_until)
+   ||Date.parse(data.valid_until)<=now
+   ||!record(impact)||impact.requires_confirmation!==true
+   ||impact.access_broadened!==(action==="clear")
+   ||impact.access_narrowed!==(action==="apply")
+   ||!safe(impact.warning,512))return null;
+ return {
+   change_plan_id:data.change_plan_id,valid_until:data.valid_until as string,
+   operation_class:"INCIDENT_CHANGE",resource_type:"emergency-cutoff",
+   resource_ref:data.resource_ref as string,operation:operation as ObservedEmergencyCutoffPreview["operation"],
+   confirmation_class:"CONFIRM CUTOFF",expected_revision:data.expected_revision as number,
+   scope_kind:kind,scope_ref:ref,scope_display:display,
+   currently_active:data.currently_active as boolean,
+   desired_active:data.desired_active as boolean,
+   active_sessions_terminated:false,no_change:false,
+   impact:{requires_confirmation:true,
+     access_broadened:impact.access_broadened as boolean,
+     access_narrowed:impact.access_narrowed as boolean,
+     warning:(impact.warning as string).trim()}
+ };
+}
+
 /** Emergency cutoff is a Core-only, one-shot incident Change Plan. A
  * syntactically successful HTTP response cannot confirm the desired access
  * state unless the exact plan, scope, operation and revision are acknowledged.

@@ -579,3 +579,45 @@ test("UX-8 Connection Diagnosis only displays consistent same-flow Core layer ev
  assert.match(src,/const valid=requireObservedDiagnosisView\(result,plane,source\.trim\(\),destination\.trim\(\),selector\.trim\(\)\)/);
  assert.match(src,/setDiagnosisEvidence\(\{key:requestKey,value:valid\}\)/);
 });
+
+test("UX-8 Emergency Cutoff Preview must match selected Core scope and expire before Apply",()=>{
+ const now=Date.parse("2031-01-01T00:00:00Z");
+ const preview={change_plan_id:"cp_"+"a".repeat(32),operation_class:"INCIDENT_CHANGE",
+   operation:"emergency-cutoff.apply",resource_type:"emergency-cutoff",
+   resource_ref:"remote-service:service-1",expected_revision:12,
+   valid_until:"2032-01-01T00:00:00Z",confirmation_class:"CONFIRM CUTOFF",
+   scope_kind:"remote-service",scope_ref:"service-1",scope_display:"My Service",
+   currently_active:false,desired_active:true,active_sessions_terminated:false,
+   no_change:false,impact:{requires_confirmation:true,access_broadened:false,
+     access_narrowed:true,warning:"This will block new sessions",
+     private_context:{secret:"LEAKED_CONTEXT"}}};
+ const expected={...preview,impact:{requires_confirmation:true,
+   access_broadened:false,access_narrowed:true,
+   warning:"This will block new sessions"}};
+ assert.deepEqual(menu.observedEmergencyCutoffPreviewForIntent(
+   preview,"remote","remote-service","My Service","apply",now),expected);
+ assert.deepEqual(menu.observedEmergencyCutoffPreviewForIntent(
+   preview,"remote","remote-service","service-1","apply",now),expected);
+ assert.doesNotMatch(JSON.stringify(expected),/LEAKED_CONTEXT/);
+ for(const bad of [null,{},[],{...preview,operation:"emergency-cutoff.clear"},
+   {...preview,operation_class:"CHANGE"},{...preview,resource_ref:"remote-service:other"},
+   {...preview,scope_ref:"other"},{...preview,scope_kind:"plane"},
+   {...preview,scope_display:"other"},{...preview,desired_active:false},
+   {...preview,active_sessions_terminated:true},{...preview,no_change:true},
+   {...preview,valid_until:"invalid"},{...preview,expected_revision:"12"},
+   {...preview,impact:{...preview.impact,requires_confirmation:"true"}},
+   {...preview,impact:{...preview.impact,access_narrowed:"true"}},
+   {...preview,change_plan_id:"invalid"},{...preview,confirmation_class:"APPLY"}
+ ])assert.equal(menu.observedEmergencyCutoffPreviewForIntent(
+   bad,"remote","remote-service","My Service","apply",now),null,JSON.stringify(bad));
+ assert.equal(menu.observedEmergencyCutoffPreviewForIntent(
+   preview,"remote","remote-service","My Service","apply",
+   Date.parse(preview.valid_until)),null);
+ assert.equal(menu.observedEmergencyCutoffPreviewForIntent(
+   preview,"ai","ai-identity","My Service","apply",now),null);
+ const rootPath=readFileSync(join(root,"src","main.tsx"),"utf8");
+ assert.match(rootPath,/const verified=observedEmergencyCutoffPreviewForIntent\(result,plane,scopeKind,scopeRef,cutoffOperation\)/);
+ assert.match(rootPath,/setCutoffPreview\(\{key:requestKey,value:verified\}\)/);
+ assert.match(rootPath,/const currentCutoffActionable=observedEmergencyCutoffPreviewForIntent\(/);
+ assert.match(rootPath,/Cutoff Preview expired or unverified/);
+});

@@ -9,7 +9,7 @@ import {AccessEvidenceExplorer,GuidedPolicyJourney,coreFlowKey,coreCutoffKey,vis
 import {EnrollmentOnboarding} from "./p0-enrollment";
 import {navGroups,groupFor,labelFor,pageDescriptions,visibleRoute,navMatches,setupContextForObjectFamily} from "./uxb-navigation";
 import {FirstUseHome,observedBoundedCountPair,observedHomeAttention,isFreshInstallation,observedRecentFeed,observedNumber,accessPlaneCount,coreHealthState,type RecentFeed} from "./uxb-home";
-import {requireObservedMenuPayload,requireObservedTemporaryAccessApplyForPlan,requireObservedEmergencyCutoffApplyForPlan,requireObservedLiveAccessView,requireObservedDiagnosisView,requireObservedInventoryContinuation,requireObservedObjectContinuation,requireObservedAuditRetention,auditRetentionRunPermitted,requireObservedAccessHygiene,hygieneInspectTarget,requireObservedJobStart,requireObservedFleetApply,requireObservedFleetPreview,requireObservedFleetApplyForPreview,requireObservedAuditExport,requireObservedRolloutPreview,requireObservedInventoryExport,requireObservedJobDetail,requireObservedJobCancellation,isPartialCorePage,selectMenuPage,combineObservedPolicyPlanes,policyStateLabel,policyExpiryLabel,type MenuPagePosition} from "./uxb-menu-evidence";
+import {requireObservedMenuPayload,requireObservedTemporaryAccessApplyForPlan,requireObservedEmergencyCutoffApplyForPlan,observedEmergencyCutoffPreviewForIntent,requireObservedLiveAccessView,requireObservedDiagnosisView,requireObservedInventoryContinuation,requireObservedObjectContinuation,requireObservedAuditRetention,auditRetentionRunPermitted,requireObservedAccessHygiene,hygieneInspectTarget,requireObservedJobStart,requireObservedFleetApply,requireObservedFleetPreview,requireObservedFleetApplyForPreview,requireObservedAuditExport,requireObservedRolloutPreview,requireObservedInventoryExport,requireObservedJobDetail,requireObservedJobCancellation,isPartialCorePage,selectMenuPage,combineObservedPolicyPlanes,policyStateLabel,policyExpiryLabel,type MenuPagePosition} from "./uxb-menu-evidence";
 import {RemoteServiceEditor} from "./uxb-remote-service";
 import {RevisionHistory} from "./uxb-revisions";
 import {AgentVersionDrift} from "./uxb-versions";
@@ -808,7 +808,23 @@ function AccessOperations({operator,onNavigate,context}:{operator:any,onNavigate
   const cutoffPlanGeneration=useRef(0);
   const currentCutoffKey=coreCutoffKey(plane,scopeKind,scopeRef,cutoffOperation,reason);
   const currentCutoffPreview=visibleCoreEvidence(cutoffPreview,currentCutoffKey);
+  const currentCutoffActionable=observedEmergencyCutoffPreviewForIntent(
+    currentCutoffPreview,plane,scopeKind,scopeRef,cutoffOperation);
   useEffect(()=>()=>{cutoffPlanGeneration.current+=1},[]);
+  useEffect(()=>{
+    if(!currentCutoffPreview)return;
+    const expires=Date.parse(currentCutoffPreview.valid_until);
+    const delay=expires-Date.now();
+    if(!Number.isFinite(delay)||delay>2147483647)return;
+    const timer=setTimeout(()=>{
+      if(Date.now()>=expires){
+        cutoffPlanGeneration.current+=1;
+        setCutoffPreview(null);setCutoffConfirm("");
+        setError("Cutoff Preview expired or unverified. Read fresh Core state and request a new Preview.");
+      }
+    },Math.max(0,delay));
+    return()=>clearTimeout(timer);
+  },[currentCutoffPreview?.change_plan_id,currentCutoffPreview?.valid_until,currentCutoffKey]);
   const scopeOptions:Record<string,string[]>={remote:["plane","remote-service"],internet:["plane","managed-host"],ai:["plane","ai-identity"]};
   function invalidateCutoff(){cutoffPlanGeneration.current+=1;setCutoffPreview(null);setCutoffConfirm("");setCutoffMessage("")}
   function changeDiagnosisFlow(field:"source"|"destination"|"selector",value:string){
@@ -876,13 +892,23 @@ function AccessOperations({operator,onNavigate,context}:{operator:any,onNavigate
       if(scopeKind!=="plane")body.scope_ref=scopeRef.trim();
       const result=await api("/api/v1/emergency-cutoff/preview",{method:"POST",body:JSON.stringify(body)});
       if(cutoffPlanGeneration.current!==token)return;
-      if(!result?.change_plan_id)throw new Error("Core cutoff preview returned no Change Plan ID");
-      setCutoffPreview({key:requestKey,value:result});
+      const verified=observedEmergencyCutoffPreviewForIntent(result,plane,scopeKind,scopeRef,cutoffOperation);
+      if(!verified)throw new Error("Cutoff Preview expired or unverified. No approval is available.");
+      setCutoffPreview({key:requestKey,value:verified});
     }catch(e:any){if(cutoffPlanGeneration.current===token){setCutoffPreview(null);setError(e.message||String(e))}}
     finally{if(cutoffPlanGeneration.current===token)setCutoffBusy(false)}
   }
   async function applyCutoff(){
     if(cutoffBusy||cutoffConfirm!=="CONFIRM CUTOFF"||!currentCutoffPreview?.change_plan_id)return;
+    // Revalidate the exact Core Preview at click time; idle tabs can expire.
+    const latest=observedEmergencyCutoffPreviewForIntent(
+      currentCutoffPreview,plane,scopeKind,scopeRef,cutoffOperation);
+    if(!latest){
+      cutoffPlanGeneration.current+=1;
+      setCutoffPreview(null);setCutoffConfirm("");
+      setError("Cutoff Preview expired or unverified. Read fresh Core state and request a new Preview.");
+      return;
+    }
     const token=++cutoffPlanGeneration.current;
     setError("");setCutoffBusy(true);
     try{
@@ -982,7 +1008,7 @@ function AccessOperations({operator,onNavigate,context}:{operator:any,onNavigate
       {currentCutoffPreview&&<>
         <pre className="plan">{JSON.stringify({scope_kind:currentCutoffPreview.scope_kind,scope_ref:currentCutoffPreview.scope_ref,scope_display:currentCutoffPreview.scope_display,currently_active:currentCutoffPreview.currently_active,desired_active:currentCutoffPreview.desired_active,impact:currentCutoffPreview.impact,active_sessions_terminated:currentCutoffPreview.active_sessions_terminated},null,2)}</pre>
         <label className="apply-label">Type CONFIRM CUTOFF<input value={cutoffConfirm} disabled={cutoffBusy} onChange={e=>setCutoffConfirm(e.target.value)} placeholder="CONFIRM CUTOFF"/></label>
-        <button className="danger" onClick={applyCutoff} disabled={cutoffBusy||cutoffConfirm!=="CONFIRM CUTOFF"||!currentCutoffPreview?.change_plan_id}>{cutoffOperation==="clear"?"Clear Cutoff":"Apply Cutoff"}</button>
+        <button className="danger" onClick={applyCutoff} disabled={cutoffBusy||cutoffConfirm!=="CONFIRM CUTOFF"||!currentCutoffActionable}>{cutoffOperation==="clear"?"Clear Cutoff":"Apply Cutoff"}</button>
       </>}
     </div>}
   </div>;
