@@ -119,6 +119,71 @@ export function requireObservedEmergencyCutoffApplyForPlan(
  return {revision:receipt.revision as number,active_sessions_terminated:false};
 }
 
+/** Project the official Core live-access read model only from same-plane,
+ * bounded observation pages. Never use arbitrary producer metadata as a Web
+ * table column; unknown fidelity never becomes a confirmed zero count.
+ */
+export function requireObservedLiveAccessView(
+ payload:unknown,plane:unknown,requestedResource:unknown
+):{
+ plane:string,fidelity:"UNKNOWN"|"EXACT_PER_CONNECTION",
+ active_count:number|null,observations:Record<string,string>[],reason:string,partial:boolean
+}{
+ const fail=():never=>{throw new Error(
+   "UNKNOWN · Core Live Access evidence is incomplete or does not match the requested plane. Refresh Core observations before interpreting connectivity."
+ )};
+ const record=(v:unknown):v is Record<string,unknown>=>
+   !!v&&typeof v==="object"&&!Array.isArray(v);
+ const safe=(v:unknown,max=160):v is string=>
+   typeof v==="string"&&v.length<=max
+   &&!/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/.test(v);
+ if(!record(payload)||!["remote","internet","ai"].includes(String(plane))
+   ||!safe(requestedResource,160))return fail();
+ const row=payload,fidelity=row.fidelity;
+ const actualResource=row.resource;
+ if(row.plane!==plane
+   ||!(actualResource===requestedResource||
+     requestedResource===""&&(actualResource===null||actualResource===""))
+   ||row.resource_type!==null
+   ||!Number.isSafeInteger(row.limit)||row.limit!==50
+   ||!Array.isArray(row.observations)||row.observations.length>50
+   ||!(row.next_cursor===null||(safe(row.next_cursor,1024)&&!!row.next_cursor))
+   ||!safe(row.reason,512)
+   ||!["UNKNOWN","EXACT_PER_CONNECTION"].includes(String(fidelity)))return fail();
+ if(fidelity==="UNKNOWN"){
+   if(row.active_count!==null||row.observations.length!==0||!!row.next_cursor
+     ||!row.reason)return fail();
+   return {plane:plane as string,fidelity:"UNKNOWN",active_count:null,
+     observations:[],reason:row.reason as string,partial:false};
+ }
+ if(plane==="remote"
+   ||!Number.isSafeInteger(row.active_count)
+   ||Number(row.active_count)<row.observations.length
+   ||Number(row.active_count)<0)return fail();
+ const allowed=plane==="ai"
+   ?["observation_kind","observation_id","job_id","status","capability",
+       "ai_identity","managed_host_id","endpoint","started_at","updated_at"]
+   :["observation_kind","observation_id","session_id","connection_id",
+       "hostname","relay_name","profile_id","source_ip","started_at"];
+ const kind=plane==="ai"?"AI_JOB":"NETWORK_SESSION";
+ const observations:Record<string,string>[]=[];
+ for(const raw of row.observations){
+   if(!record(raw)||raw.observation_kind!==kind
+     ||!safe(raw.observation_id)||!raw.observation_id)return fail();
+   const item:Record<string,string>={};
+   for(const field of allowed){
+     const value=raw[field];
+     if(value===undefined||value===null)continue;
+     if(!safe(value,160))return fail();
+     item[field]=value;
+   }
+   observations.push(item);
+ }
+ return {plane:plane as string,fidelity:"EXACT_PER_CONNECTION",
+   active_count:row.active_count as number,observations,
+   reason:row.reason as string,partial:row.next_cursor!==null};
+}
+
 /** Keyset page navigation only uses observed opaque Core cursors. The UI may
  * navigate backwards using previous request cursors; it never guesses a total. */
 export type MenuPagePosition={cursor:string,history:string[]};

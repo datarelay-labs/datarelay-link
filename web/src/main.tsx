@@ -9,7 +9,7 @@ import {AccessEvidenceExplorer,GuidedPolicyJourney,coreFlowKey,coreCutoffKey,vis
 import {EnrollmentOnboarding} from "./p0-enrollment";
 import {navGroups,groupFor,labelFor,pageDescriptions,visibleRoute,navMatches,setupContextForObjectFamily} from "./uxb-navigation";
 import {FirstUseHome,observedBoundedCountPair,observedHomeAttention,isFreshInstallation,observedRecentFeed,observedNumber,accessPlaneCount,coreHealthState,type RecentFeed} from "./uxb-home";
-import {requireObservedMenuPayload,requireObservedTemporaryAccessApplyForPlan,requireObservedEmergencyCutoffApplyForPlan,requireObservedInventoryContinuation,requireObservedObjectContinuation,requireObservedAuditRetention,auditRetentionRunPermitted,requireObservedAccessHygiene,hygieneInspectTarget,requireObservedJobStart,requireObservedFleetApply,requireObservedFleetPreview,requireObservedFleetApplyForPreview,requireObservedAuditExport,requireObservedRolloutPreview,requireObservedInventoryExport,requireObservedJobDetail,requireObservedJobCancellation,isPartialCorePage,selectMenuPage,combineObservedPolicyPlanes,policyStateLabel,policyExpiryLabel,type MenuPagePosition} from "./uxb-menu-evidence";
+import {requireObservedMenuPayload,requireObservedTemporaryAccessApplyForPlan,requireObservedEmergencyCutoffApplyForPlan,requireObservedLiveAccessView,requireObservedInventoryContinuation,requireObservedObjectContinuation,requireObservedAuditRetention,auditRetentionRunPermitted,requireObservedAccessHygiene,hygieneInspectTarget,requireObservedJobStart,requireObservedFleetApply,requireObservedFleetPreview,requireObservedFleetApplyForPreview,requireObservedAuditExport,requireObservedRolloutPreview,requireObservedInventoryExport,requireObservedJobDetail,requireObservedJobCancellation,isPartialCorePage,selectMenuPage,combineObservedPolicyPlanes,policyStateLabel,policyExpiryLabel,type MenuPagePosition} from "./uxb-menu-evidence";
 import {RemoteServiceEditor} from "./uxb-remote-service";
 import {RevisionHistory} from "./uxb-revisions";
 import {AgentVersionDrift} from "./uxb-versions";
@@ -860,7 +860,8 @@ function AccessOperations({operator,onNavigate,context}:{operator:any,onNavigate
       if(liveResource.trim())q.set("resource",liveResource.trim());
       const result=await api("/api/v1/live-access?"+q.toString());
       if(liveGeneration.current!==token)return;
-      setLiveEvidence({key:requestKey,value:result});
+      const valid=requireObservedLiveAccessView(result,plane,liveResource.trim());
+      setLiveEvidence({key:requestKey,value:valid});
     }catch(e:any){if(liveGeneration.current===token)setError(e.message||String(e))}
     finally{if(liveGeneration.current===token)setLiveBusy(false)}
   }
@@ -952,6 +953,9 @@ function AccessOperations({operator,onNavigate,context}:{operator:any,onNavigate
       {matchingLive&&<>
         <div className="grid"><Metric label="Fidelity" value={matchingLive.fidelity}/><Metric label="Active count" value={matchingLive.active_count??"UNKNOWN"}/><Metric label="Returned" value={(matchingLive.observations||[]).length}/></div>
         {matchingLive.reason&&<div className="warning-box">{matchingLive.reason}</div>}
+        {matchingLive.partial&&<p className="dr-uxb-catalog-page-notice" role="status">
+          Partial Core live-access page · other observed sessions may exist beyond this snapshot.
+          A local no-match does not prove zero active access.</p>}
         <Table items={matchingLive.observations||[]}/>
       </>}
       {!matchingLive&&!liveBusy&&<p className="muted" role="status">Live access: UNKNOWN until Core returns current evidence for this plane and optional filter.</p>}

@@ -509,3 +509,43 @@ test("UX-8 Emergency Cutoff Apply requires exact Core plan and verified status, 
  assert.match(src,/setCutoffPreview\(null\);setCutoffConfirm\(""\)/);
  assert.match(src,/Inspect Core cutoff inventory and Change History before any retry/);
 });
+
+test("UX-8 Live Access never presents malformed Core counts or unauthorized session metadata",()=>{
+ const core={plane:"ai",resource:null,resource_type:null,fidelity:"EXACT_PER_CONNECTION",
+   active_count:2,limit:50,next_cursor:null,reason:"",
+   observations:[{observation_kind:"AI_JOB",observation_id:"job-a",
+     job_id:"job-a",status:"RUNNING",ai_identity:"bot-a",
+     started_at:"2026-10-11T01:00:00Z",private_token:"SECRET_LIVE_TOKEN"}]};
+ const safe=menu.requireObservedLiveAccessView(core,"ai","");
+ assert.equal(safe.fidelity,"EXACT_PER_CONNECTION");
+ assert.equal(safe.active_count,2);
+ assert.equal(safe.observations.length,1);
+ assert.equal(safe.partial,false);
+ assert.equal(menu.requireObservedLiveAccessView({...core,next_cursor:"cursor-1"},
+   "ai","").partial,true);
+ assert.doesNotMatch(JSON.stringify(safe),/SECRET_LIVE_TOKEN/);
+ const unknown=menu.requireObservedLiveAccessView({plane:"remote",resource:null,
+   resource_type:null,fidelity:"UNKNOWN",active_count:null,limit:50,
+   next_cursor:null,reason:"official FRP cannot prove active lifecycle",observations:[]},
+   "remote","");
+ assert.equal(unknown.fidelity,"UNKNOWN");
+ assert.equal(unknown.active_count,null);
+ assert.deepEqual(unknown.observations,[]);
+ for(const invalid of [null,[],{},
+   {...core,plane:"remote"},{...core,fidelity:"UNKNOWN"},
+   {...core,active_count:undefined},{...core,active_count:"2"},
+   {...core,active_count:0},{...core,limit:500},
+   {...core,observations:[null]},{...core,observations:{secret:"hidden"}},
+   {...core,observations:[{observation_kind:"AI_JOB",observation_id:"job-a\u202e"}]},
+   {...core,observations:[{observation_kind:"NETWORK_SESSION",observation_id:"job-a"}]},
+   {...core,next_cursor:{key:"cursor"}}
+ ])assert.throws(()=>menu.requireObservedLiveAccessView(invalid,"ai",""),
+    /UNKNOWN|Core/,JSON.stringify(invalid));
+ assert.throws(()=>menu.requireObservedLiveAccessView(core,"internet",""),/UNKNOWN|Core/);
+ assert.throws(()=>menu.requireObservedLiveAccessView({...core,resource:"old"},
+   "ai","current"),/UNKNOWN|Core/);
+ const src=readFileSync(join(root,"src","main.tsx"),"utf8");
+ assert.match(src,/const valid=requireObservedLiveAccessView\(result,plane,liveResource\.trim\(\)\)/);
+ assert.match(src,/setLiveEvidence\(\{key:requestKey,value:valid\}\)/);
+ assert.match(src,/matchingLive\.partial&&<p className="dr-uxb-catalog-page-notice"/);
+});
