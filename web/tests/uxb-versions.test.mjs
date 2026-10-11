@@ -161,3 +161,21 @@ test("Known Server summary counts must exactly match Core's observed bounded Age
   assert.doesNotMatch(html,/Different versions<\/strong><p>0|No managed Agents/);
  }
 });
+
+test("UX-4 Agent version rows never present a malformed heartbeat as an observed instant",()=>{
+ const known=page("3.0.0",[a("agent-a","3.0.0")]);
+ assert.equal(validatedVersionInventory(known).hosts[0].heartbeat,"2026-10-09T07:00:00Z");
+ for(const bad of [
+  "yesterday","2026-02-30T00:00:00Z",
+  "2026-10-11T03:10:11Z\u202e",42,{secret:"PRIVATE_HEARTBEAT"}
+ ]){
+  const payload=page("3.0.0",[a("agent-a","3.0.0",{heartbeat:bad})]);
+  assert.equal(validatedVersionInventory(payload).hosts[0].heartbeat,"UNKNOWN");
+  const html=render(payload);
+  assert.match(html,/UNKNOWN/);
+  assert.doesNotMatch(html,/yesterday|PRIVATE_HEARTBEAT|\u202e|\[object Object\]/);
+ }
+ assert.equal(validatedVersionInventory(page("3.0.0",[
+  a("agent-a","3.0.0",{heartbeat:null})
+ ])).hosts[0].heartbeat,"Not observed");
+});

@@ -107,3 +107,24 @@ test("Unverifiable Doctor evidence renders a nonfatal UNKNOWN fallback and Healt
  assert.doesNotMatch(optional,/SECRET_DOCTOR/);
  assert.throws(()=>validatedDoctorEvidence(null),/Core|UNKNOWN/);
 });
+
+test("UX-4 Doctor last activation is a real Core absolute timestamp or UNKNOWN",()=>{
+ const present=data([{id:"runtime.remote",status:"PASS",
+  message:"Runtime generation status: active",
+  activated_at:"2026-10-11T03:10:11Z"}]);
+ assert.equal(validatedDoctorEvidence(present).checks[0].activated_at,"2026-10-11T03:10:11Z");
+ for(const bad of [
+  "yesterday","2026-02-30T00:00:00Z","2026-10-11\u202eT03:10:11Z",
+  1234,{secret:"PRIVATE_ACTIVATION"}
+ ]){
+  const payload=data([{id:"runtime.remote",status:"PASS",
+   message:"Runtime generation status: active",activated_at:bad}]);
+  const safe=validatedDoctorEvidence(payload);
+  assert.equal(safe.checks[0].activated_at,"UNKNOWN");
+  const html=render(payload);
+  assert.match(html,/UNKNOWN/);
+  assert.doesNotMatch(html,/yesterday|PRIVATE_ACTIVATION|\u202e|\[object Object\]/);
+ }
+ assert.equal(validatedDoctorEvidence(data([{id:"runtime.ai",status:"PASS",
+  message:"Not configured",activated_at:null}])).checks[0].activated_at,"Not observed");
+});

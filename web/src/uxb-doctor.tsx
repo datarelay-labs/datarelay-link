@@ -1,4 +1,5 @@
 import React,{useState} from "react";
+import {isObservedAbsoluteTime} from "./uxb-integrations-state";
 
 /** A successful Core HTTP read does not make nested UI values renderable.
  * Keep only bounded scalar evidence. An invalid reason cannot establish PASS.
@@ -39,7 +40,7 @@ export function validatedDoctorEvidence(payload:unknown){
       db_revision:doctorCount(row.db_revision),
       generation:doctorCount(row.generation),
       activated_at:row.activated_at===null||row.activated_at===undefined||row.activated_at===""
-        ?"Not observed":doctorText(row.activated_at),
+        ?"Not observed":isObservedAbsoluteTime(row.activated_at)?row.activated_at:"UNKNOWN",
       observedState:status==="PASS"?"PASS":status==="ATTENTION"?"ATTENTION":"UNKNOWN",
     };
   });

@@ -1,4 +1,5 @@
 import React,{useState} from "react";
+import {isObservedAbsoluteTime} from "./uxb-integrations-state";
 
 /** A version mismatch is not proof of stale binaries, an active Agent or a
  * successful update. Unknown Server version makes *all* comparisons unknown. */
@@ -44,7 +45,8 @@ export function validatedVersionInventory(payload:unknown){
     name:observedDisplay(host.name,host.id),
     platform:observedDisplay(host.platform),
     lifecycle:observedDisplay(host.lifecycle),
-    heartbeat:observedDisplay(host.heartbeat,"Not observed"),
+    heartbeat:host.heartbeat===null||host.heartbeat===undefined||host.heartbeat===""
+      ?"Not observed":isObservedAbsoluteTime(host.heartbeat)?host.heartbeat:"UNKNOWN",
     comparison:observedVersionState(data.server_version,host.version),
   }));
   const hasKnownServer=observedVersionState(data.server_version,data.server_version)!=="UNKNOWN";
