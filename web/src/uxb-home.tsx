@@ -90,6 +90,23 @@ export function hostInventoryPageComplete(payload:any):boolean|null{
   return null;
 }
 
+/** Only role-scoped, identified and bounded Core Host rows may drive Home
+ * Agent readiness. A malformed collection is UNKNOWN, not an empty inventory.
+ */
+export function observedHomeHostPage(payload:unknown):{
+  items:any[],complete:boolean|null
+}|null{
+  if(!payload||typeof payload!=="object"||Array.isArray(payload))return null;
+  const page=payload as Record<string,any>;
+  if(!Array.isArray(page.items)||page.items.length>100
+    ||page.items.some((row:any)=>!row||typeof row!=="object"||Array.isArray(row)
+      ||typeof row.id!=="string"||!row.id.trim()||row.id.length>160
+      ||CORE_TEXT_BAD.test(row.id)
+      ||!["PENDING_APPROVAL","APPROVED","QUARANTINED"].includes(row.admission_state)))
+    return null;
+  return {items:page.items,complete:hostInventoryPageComplete(page)};
+}
+
 /** The derived Core overview covers all Hosts; a first inventory page does not.
  * If neither a valid summary nor a complete page exists, never announce zero.
  */
@@ -181,14 +198,17 @@ export function FirstUseHome({data,operator,api,onNavigate}:{
   const [error,setError]=useState("");
   useEffect(()=>{
     let active=true;
+    // A different Web role must never reuse the previous role's Host snapshot.
+    setInventory(null);setInventoryComplete(null);setLoadState("loading");setError("");
     api("/api/v1/inventory?resource_type=managed-host&limit=100")
       .then(payload=>{if(!active)return;
-        if(!Array.isArray(payload?.items))throw new Error("Core inventory response missing items");
-        setInventory(payload.items);setInventoryComplete(hostInventoryPageComplete(payload));setLoadState("ready");
+        const observed=observedHomeHostPage(payload);
+        if(!observed)throw new Error("Core inventory response missing or malformed items");
+        setInventory(observed.items);setInventoryComplete(observed.complete);setLoadState("ready");
       })
       .catch(err=>{if(active){setInventory(null);setInventoryComplete(null);setLoadState("error");setError(String(err?.message||err))}});
     return()=>{active=false};
-  },[api]);
+  },[api,operator?.role]);
   const stage=firstConnectionStates(data,inventory,inventoryComplete);
   const newInstall=showFreshHomeWelcome(data,loadState);
   const pending=observedApprovalQueueCount(data,inventory,inventoryComplete===true);

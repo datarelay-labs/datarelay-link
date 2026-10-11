@@ -292,3 +292,23 @@ test("Recent Core Home feed cannot present malformed events as empty or render n
  assert.equal(revision.status,"ready");
  assert.equal(revision.items[0].revision,12);
 });
+
+test("FirstUseHome must fail closed before accepting malformed role-scoped Host inventory",()=>{
+ const valid={items:[{id:"host-a",admission_state:"APPROVED",trust_status:"trusted",connected:true}],next_cursor:null};
+ assert.deepEqual(home.observedHomeHostPage(valid),{items:valid.items,complete:true});
+ assert.deepEqual(home.observedHomeHostPage({...valid,next_cursor:"opaque"}),{items:valid.items,complete:false});
+ for(const invalid of [
+  null,{items:null},{items:[null],next_cursor:null},
+  {items:[{id:"host-a"}],next_cursor:null},
+  {items:[{id:"host-a",admission_state:"INVALID"}],next_cursor:null},
+  {items:[{id:{secret:"private"},admission_state:"APPROVED"}],next_cursor:null},
+  {items:Array.from({length:101},(_,i)=>({id:"host-"+i,admission_state:"APPROVED"})),next_cursor:null}
+ ]){
+  assert.equal(home.observedHomeHostPage(invalid),null);
+ }
+ const source=readFileSync(join(root,"src","uxb-home.tsx"),"utf8");
+ assert.match(source,/const observed=observedHomeHostPage\(payload\)/);
+ assert.match(source,/if\(!observed\)throw new Error\("Core inventory response missing or malformed items"\)/);
+ assert.match(source,/\},\[api,operator\?\.role\]\)/);
+ assert.match(source,/setInventory\(null\);setInventoryComplete\(null\);setLoadState\("loading"\)/);
+});
