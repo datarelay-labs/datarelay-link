@@ -1195,7 +1195,7 @@ class V30WebSaasUxContractTests(unittest.TestCase):
             'setConfirmReplace(false);',
             "Replace existing saved filter",
             "checked={confirmReplace}",
-            "disabled={busy||!name.trim()||!currentDraft||!!(duplicate&&!confirmReplace)||incompleteNames&&!confirmReplace}",
+            "disabled={busy||!validSavedViewName(name)||!currentDraft||!!(duplicate&&!confirmReplace)||incompleteNames&&!confirmReplace}",
             "if(incompleteNames&&!confirmReplace)return;",
             'setName(e.target.value);setConfirmReplace(false);',
             'setFilter(e.target.value);setConfirmReplace(false)',

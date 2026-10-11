@@ -9,6 +9,13 @@ function visibleViewText(value:unknown,max=80):string{
     return "";
   return value.trim();
 }
+/** Match the Core's max-80-character name bound, but refuse invisible
+ * controls and bidi overrides before they can spoof a private replace prompt.
+ */
+export function validSavedViewName(value:unknown):value is string{
+ return typeof value==="string"&&value.length<=80
+  &&!!value.trim()&&!UNSAFE_VIEW_TEXT.test(value);
+}
 export type StoredViewTarget="managed-host"|"remote-service";
 export type HostAdmission="all"|"PENDING_APPROVAL"|"APPROVED"|"QUARANTINED";
 export function isSavedAdmission(value:unknown):value is HostAdmission{
@@ -19,10 +26,10 @@ export type SavedFilterDraft={
 };
 // Match SQLite's ASCII NOCASE behavior for per-operator saved view names.
 export function conflictingSavedViewName(items:unknown,name:unknown):string|null{
-  if(!Array.isArray(items)||typeof name!=="string"||!name.trim())return null;
+  if(!Array.isArray(items)||!validSavedViewName(name))return null;
   const asciiFold=(text:string)=>text.replace(/[A-Z]/g,ch=>ch.toLowerCase());
   const requested=asciiFold(name.trim());
-  const existing=items.find((item:any)=>typeof item?.name==="string"
+  const existing=items.find((item:any)=>validSavedViewName(item?.name)
     &&asciiFold(item.name)===requested);
   return existing?.name||null;
 }
@@ -69,13 +76,28 @@ export function SavedViewsWorkspace({data,api,onNavigate,refresh,initialDraft}:{
   const currentDraft=saveDraftForResource(target==="managed-host"?"host":"service",filter,admission);
   const [busy,setBusy]=useState(false),[error,setError]=useState(""),[notice,setNotice]=useState("");
   const [confirmReplace,setConfirmReplace]=useState(false);
-  const rows=Array.isArray(data?.items)?data.items:[];
+  // Missing/malformed Core inventory is not a confirmed empty private list.
+  // Core currently bounds the first operator-private page to 100 rows.
+  const observedList=Array.isArray(data?.items)&&data.items.length<=100
+    &&data.items.every((row:any)=>row!==null&&typeof row==="object"&&!Array.isArray(row));
+  const rows=observedList?data.items:[];
   const duplicate=conflictingSavedViewName(rows,name);
   // Core currently returns at most 100 views, so an unobserved collision is possible.
   const incompleteNames=rows.length>=100;
+  // All React hooks above are unconditional across Core success/error refreshes.
+  if(!observedList)return <div className="dr-resource-workspace">
+    <header className="dr-page-intro"><div>
+      <p className="dr-eyebrow">Activity &amp; Health · Preferences</p>
+      <h2>Saved Views</h2>
+    </div></header>
+    <p className="warning-box" role="alert">UNKNOWN · Private saved filters were not verified. Neither an empty list nor the absence of existing names was confirmed. Saving is unavailable until the Core list can be read.</p>
+    <button type="button" className="secondary" onClick={refresh}>
+      Refresh saved filters
+    </button>
+  </div>;
   async function save(e:React.FormEvent){
     e.preventDefault();
-    if(busy||!name.trim()||!currentDraft)return;
+    if(busy||!validSavedViewName(name)||!currentDraft)return;
     if(duplicate&&!confirmReplace)return;
     if(incompleteNames&&!confirmReplace)return;
     setError("");setNotice("");setBusy(true);
@@ -92,6 +114,9 @@ export function SavedViewsWorkspace({data,api,onNavigate,refresh,initialDraft}:{
       <h2>Saved Views</h2><p className="muted">Reuse a named filter for observed Hosts or Remote Services. These are private display preferences, never access policies.</p></div></header>
     {error&&<p role="alert" className="warning-box">{error}</p>}
     {notice&&<p role="status" className="muted">{notice}</p>}
+    {!!name&&!validSavedViewName(name)&&<p className="warning-box" role="alert">
+      Enter a printable Saved View name of at most 80 characters, without control or direction-changing characters.
+    </p>}
     <section className="card dr-list-card"><h3>Save a resource filter</h3>
       {safeDraft&&<p role="status" className="muted">Pre-filled from {safeDraft.resource_type==="managed-host"?"Servers & Agents":"Published Services"}. Saved admission state: {safeDraft.admission?safeDraft.admission.replaceAll("_"," "):"All"}. Give this view a name and explicitly save it. Unloaded Core pages are not included.</p>}
       <form onSubmit={save}>
@@ -108,7 +133,7 @@ export function SavedViewsWorkspace({data,api,onNavigate,refresh,initialDraft}:{
             <option value="APPROVED">Approved</option>
             <option value="QUARANTINED">Quarantined</option>
           </select></label>}
-          <button type="submit" className="primary" disabled={busy||!name.trim()||!currentDraft||!!(duplicate&&!confirmReplace)||incompleteNames&&!confirmReplace}>
+          <button type="submit" className="primary" disabled={busy||!validSavedViewName(name)||!currentDraft||!!(duplicate&&!confirmReplace)||incompleteNames&&!confirmReplace}>
             {busy?"Saving…":duplicate?"Replace filter":"Save filter"}</button>
         </div>
         {!!name.trim()&&(duplicate||incompleteNames)&&<label className="warning-box">

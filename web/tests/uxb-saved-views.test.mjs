@@ -8,14 +8,14 @@ import {build} from "esbuild";
 import React from "react";
 import {renderToStaticMarkup} from "react-dom/server";
 const root=dirname(dirname(fileURLToPath(import.meta.url)));
-let scratch,SavedViewsWorkspace,readSavedView,saveDraftForResource,conflictingSavedViewName;
+let scratch,SavedViewsWorkspace,readSavedView,saveDraftForResource,conflictingSavedViewName,validSavedViewName;
 before(async()=>{
  scratch=mkdtempSync(join(root,"node_modules",".uxb-saved-views-"));
  const outfile=join(scratch,"views.mjs");
  await build({entryPoints:[join(root,"src","uxb-saved-views.tsx")],outfile,
   bundle:true,platform:"node",format:"esm",jsx:"automatic",
   external:["react","react/jsx-runtime"],logLevel:"silent"});
- ({SavedViewsWorkspace,readSavedView,saveDraftForResource,conflictingSavedViewName}=await import(pathToFileURL(outfile).href));
+ ({SavedViewsWorkspace,readSavedView,saveDraftForResource,conflictingSavedViewName,validSavedViewName}=await import(pathToFileURL(outfile).href));
 });
 after(()=>{if(scratch)rmSync(scratch,{recursive:true,force:true})});
 const render=(items,initialDraft=null)=>renderToStaticMarkup(React.createElement(SavedViewsWorkspace,{
@@ -147,4 +147,33 @@ test("Saved-view update timestamp must be trusted absolute Core time or visibly 
   assert.match(html,/UNKNOWN/);
   assert.doesNotMatch(html,/PRIVATE|\[object Object\]/);
  }
+});
+
+test("Missing or malformed Saved Views inventory shows UNKNOWN, never confirmed empty or editable form",()=>{
+ const renderRaw=data=>renderToStaticMarkup(React.createElement(SavedViewsWorkspace,{
+  data,api:async()=>{throw Error("SSR must not fetch Core")},
+  refresh:()=>{throw Error("SSR must not reload Core")}
+ }));
+ for(const malformed of [null,undefined,{}, {items:null}, {items:"not-an-array"},
+   {items:[null]}, {items:[12]}, {items:Array.from({length:101},()=>({}))}]){
+  const html=renderRaw(malformed);
+  assert.match(html,/Saved Views/);
+  assert.match(html,/UNKNOWN · Private saved filters were not verified/);
+  assert.match(html,/Refresh saved filters/);
+  assert.doesNotMatch(html,/No saved views yet|Save a resource filter|My saved filters/);
+ }
+ const confirmed=renderRaw({items:[]});
+ assert.match(confirmed,/No saved views yet/);
+ assert.match(confirmed,/Save a resource filter/);
+});
+
+test("Private view names must be printable and bounded before user-authorized replacement",()=>{
+ assert.equal(validSavedViewName("Offline hosts"),true);
+ assert.equal(validSavedViewName(" 한국어 필터 "),true);
+ for(const invalid of [null,0,"","  ","X".repeat(81),"spoof\nreplace",
+     "admin\u202e.txt","unsafe\u2066name","invisible\u0000name"]){
+  assert.equal(validSavedViewName(invalid),false,String(invalid));
+ }
+ assert.equal(conflictingSavedViewName([{name:"admin\u202e.txt"}],"admin\u202e.txt"),null);
+ assert.equal(conflictingSavedViewName([{name:"Offline hosts"}]," offline HOSTS "),"Offline hosts");
 });
