@@ -33,6 +33,44 @@ import frp_cli_catalog as catalog
 
 
 class CliFeatureScenarioRemediation(unittest.TestCase):
+    def test_policy_explain_help_identifies_named_selectors_and_empty_state_recovery(self):
+        for resource in ("remote-access", "internet-access"):
+            for focus in (["test", resource], ["test", resource, "source"]):
+                with self.subTest(focus=focus):
+                    result = grammar.match(focus + ["?"], "server")
+                    self.assertEqual(result["action"], "context_help")
+                    text = result["message"]
+                    self.assertIn("source <SOURCE> destination <DESTINATION> service <SERVICE>", text)
+                    for phrase in ("Network Object", "Network Group", "Service Object", "Service Group",
+                                   "show network-objects", "show network-groups", "show service-objects",
+                                   "show service-groups", "help network-objects", "help service-objects"):
+                        self.assertIn(phrase, text)
+                    self.assertIn("not literal IP/CIDR", text)
+                    self.assertIn("or a literal IP address", text)
+                    self.assertIn("Example names must already exist", text)
+                    self.assertIn("without changing configuration", text)
+        internet_help = grammar.match(["test", "internet-access", "?"], "server")["message"]
+        self.assertIn("Managed Host destination is rejected", internet_help)
+        self.assertIn("literal destination hostname", internet_help)
+
+    def test_server_root_help_discovers_remote_service_owner_guidance(self):
+        for role in ("server", "client", "both"):
+            root_help = catalog.root_command_overview(role, detailed=True)
+            self.assertEqual(root_help.count("help remote-services"), 1)
+        server_help = grammar.help_text(["remote-services"], "server")
+        self.assertIn("owned by Agent Hosts", server_help)
+        self.assertIn("show managed-host <HOST> remote-services", server_help)
+
+    def test_version_help_describes_checksum_as_optional(self):
+        from frp_version_identity import format_show_version
+        text = grammar.help_text(["system", "version"], "server")
+        self.assertIn("when available", text)
+        args = dict(display_identity="2.4.0-dev+g1234567", channel="development",
+                    source_head="1" * 40, frp_version="0.71.0", role="DRLink Server")
+        self.assertNotIn("Bundle SHA256:", format_show_version(**args))
+        self.assertIn("Bundle SHA256: " + "a" * 64,
+                      format_show_version(**args, bundle_sha256="a" * 64))
+
     def test_noncanonical_show_recovery_identifies_replacement_owner(self):
         replacements = {
             "backups": ("system backup", "DRLink Server"),

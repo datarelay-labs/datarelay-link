@@ -667,7 +667,7 @@
     "roles": "any",
     "category": "System",
     "summary": "Show Data Relay Link and Relay Engine versions",
-    "detail": "Project version, release channel, source ref, FRP version, and the installed bundle checksum.",
+    "detail": "Project version, release channel, source ref, FRP version, and the installed bundle checksum when available.",
     "examples": [
       "system version"
     ],
@@ -1868,7 +1868,7 @@
     "roles": "server",
     "category": "Remote Access",
     "summary": "Explain Remote Access authorization",
-    "detail": "Explain Remote Access authorization",
+    "detail": "Explain Remote Access authorization without changing configuration.\nSyntax: test remote-access source <SOURCE> destination <DESTINATION> service <SERVICE>\nSource selects an existing Network Object or Network Group name, not literal IP/CIDR values. Destination selects an existing Network Object or Network Group name, or a literal IP address. Managed Hosts are Network Objects.\nService selects an existing Service Object or Service Group name, not a protocol:port literal.\nDiscover selectors with show network-objects, show network-groups, show service-objects, and show service-groups.\nExample names must already exist. If inventories are empty, inspect help network-objects and help service-objects for prerequisites before testing.\nAuthorization does not create connectivity or guarantee a running Remote Service.",
     "examples": [
       "test remote-access source partner-office destination ubuntu-prod service ssh"
     ],
@@ -1891,7 +1891,7 @@
     "roles": "server",
     "category": "Internet Access",
     "summary": "Explain Internet Access authorization",
-    "detail": "Explain Internet Access authorization",
+    "detail": "Explain Internet Access authorization without changing configuration.\nSyntax: test internet-access source <SOURCE> destination <DESTINATION> service <SERVICE>\nSource selects an existing Network Object or Network Group name, not literal IP/CIDR values. Destination selects an existing Network Object or Network Group name, or a literal IP address. Managed Hosts are Network Objects.\nService selects an existing Service Object or Service Group name, not a protocol:port literal.\nDiscover selectors with show network-objects, show network-groups, show service-objects, and show service-groups.\nExample names must already exist. If inventories are empty, inspect help network-objects and help service-objects for prerequisites before testing.\nInternet Access also accepts a literal destination hostname. Internet Access is WHITELIST-only; Managed Host destination is rejected, including through a Network Group.",
     "examples": [
       "test internet-access source ubuntu-prod destination github service https"
     ],

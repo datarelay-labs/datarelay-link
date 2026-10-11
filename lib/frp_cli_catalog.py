@@ -1634,8 +1634,8 @@ def root_command_overview(role, detailed=False):
                     "  help ai-access",
                 ]
             )
-        if client or not server:
-            lines.append("  help remote-services")
+        # Server operators also need the Agent ownership/inspection guidance.
+        lines.append("  help remote-services")
         lines.extend(
             [
                 "  help system",
