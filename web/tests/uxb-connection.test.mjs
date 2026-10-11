@@ -260,9 +260,9 @@ test("Core-backed policy suggestions are optional; no implicit change is queued"
    initialFlow:{source:"source-office",destination:"destination-app",selector:"ssh-tcp22"}
  }));
  assert.match(html,/Choose who, where and what/);
- assert.match(html,/Rule you are preparing/);
+ assert.match(html,/Prepared SET/);
  assert.match(html,/Advanced · review or enter exact Core names manually/);
- assert.match(html,/This is an unverified draft/);
+ assert.match(html,/Not submitted to Core until a fresh Preview, required tests and explicit Apply/);
  assert.match(html,/source-office/);
  assert.match(html,/ssh-tcp22/);
  assert.match(html,/Core validates the change/);

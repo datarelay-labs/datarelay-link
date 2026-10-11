@@ -541,6 +541,47 @@ export function AccessEvidenceExplorer({api,plane,source,destination,selector,on
   </section>;
 }
 
+/** CUI-002 — original, display-only prepared rule-change summary.
+ * The Tailscale editor's public screenshots show complete rule intent before
+ * save. Link always delegates preview/tests/apply to its own Core authority.
+ * No copied vendor syntax, assets or frontend mutation behavior.
+ */
+export function preparedGuidedPolicyChange(input:unknown):{
+ action:"SET"|"DELETE",plane:AccessPlane,rule:string,effect:string,
+ source:string,destination:string,selector:string,expiry:string,enabled:string,
+ aiPaths:string[],pathsLimited:boolean
+}|null{
+ if(!input||typeof input!=="object"||Array.isArray(input))return null;
+ const v=input as Record<string,unknown>;
+ if(!["remote","internet","ai"].includes(String(v.plane))
+   ||!["set","delete"].includes(String(v.operation)))return null;
+ const action=v.operation==="set"?"SET":"DELETE";
+ const label=(raw:unknown,max=160):string=>{
+   if(raw===undefined||raw===null||raw==="")return "NOT SPECIFIED";
+   return trustedCoreTraceText(raw,max)?raw.trim():"INVALID / NOT VERIFIED";
+ };
+ const plane=v.plane as AccessPlane,rule=label(v.name,128);
+ if(action==="DELETE"){
+   return {action,plane,rule,effect:"Remove existing rule · Core Preview and explicit Apply required",
+     source:"NOT APPLICABLE",destination:"NOT APPLICABLE",selector:"NOT APPLICABLE",
+     expiry:"NOT APPLICABLE",enabled:"NOT APPLICABLE",aiPaths:[],pathsLimited:false};
+ }
+ const expiry=v.expiresAt===undefined||v.expiresAt===null||v.expiresAt===""
+   ?"No expiry specified":isObservedAbsoluteTime(v.expiresAt)
+   ?v.expiresAt:"INVALID / NOT VERIFIED";
+ const rawPaths=plane==="ai"&&typeof v.paths==="string"
+   ?v.paths.split(",").map(x=>x.trim()).filter(Boolean):[];
+ const bounded=rawPaths.filter(x=>trustedCoreTraceText(x,512));
+ return {action,plane,rule,
+   effect:v.mode==="whitelist"?"Allow matching access":
+     v.mode==="blacklist"?"Deny matching access":"UNKNOWN / NOT VERIFIED",
+   source:label(v.source),destination:label(v.destination),selector:label(v.selector,128),
+   expiry:expiry as string,
+   enabled:v.enabled===true?"Enabled":v.enabled===false?"Disabled":"UNKNOWN",
+   aiPaths:bounded.slice(0,8),
+   pathsLimited:rawPaths.length>8||bounded.length!==rawPaths.length};
+}
+
 export function GuidedPolicyJourney({api,onNavigate,initialPlane="remote",lockedPlane=false,initialFlow,onFlowChange,resourceCatalog,onBusyChange}: {
   api:LinkApi,onNavigate?:Navigate,initialPlane?:AccessPlane,lockedPlane?:boolean,
   resourceCatalog?:CoreCatalog|null,
@@ -586,6 +627,7 @@ export function GuidedPolicyJourney({api,onNavigate,initialPlane="remote",locked
     invalidate();
   }
   const ready=!!name.trim()&&(operation==="delete"||!!(source.trim()&&destination.trim()&&selector.trim()));
+  const prepared=preparedGuidedPolicyChange({plane,operation,name,mode,source,destination,selector,enabled,expiresAt,paths});
   async function review(){
     if(!ready||busy)return;
     const token=++seq.current;
@@ -687,11 +729,6 @@ export function GuidedPolicyJourney({api,onNavigate,initialPlane="remote",locked
       {operation==="set"&&<>
         <label className="dr-field"><span>Policy mode</span><select value={mode} onChange={e=>change(setMode,e.target.value)}>
           <option value="whitelist">Whitelist · grant matching access</option><option value="blacklist">Blacklist · deny matching access</option></select></label>
-        <div className="dr-uxb-rule-summary" role="status">
-          <strong>Rule you are preparing · {mode==="whitelist"?"Allow matching access":"Deny matching access"}</strong>
-          <p>{source||"Choose a source"} <span aria-hidden="true">→</span> {destination||"Choose a destination"} · {selector||("Choose a "+(plane==="ai"?"permission":"service"))}</p>
-          <small>This is an unverified draft. No access is granted or denied until Core preview, tests and confirmed Apply.</small>
-        </div>
         <details className="dr-uxb-manual-fields">
           <summary>Advanced · review or enter exact Core names manually</summary>
           <div className="dr-uxb-form">
@@ -706,6 +743,26 @@ export function GuidedPolicyJourney({api,onNavigate,initialPlane="remote",locked
       </>}
       <label className="dr-field dr-p0-purpose"><span>Review purpose (screen only)</span><input value={purpose} onChange={e=>change(setPurpose,e.target.value)} placeholder="Optional rationale for this review"/><small>Not submitted to Core or stored as a policy audit reason.</small></label>
     </fieldset>
+    {prepared&&<section className="dr-uxb-rule-summary" role="status" aria-label="Prepared rule change · not applied">
+      <strong>Prepared {prepared.action} · {prepared.rule}</strong>
+      <p>{prepared.effect} · {prepared.plane} policy plane</p>
+      {prepared.action==="SET"?<>
+        <p>{prepared.source} <span aria-hidden="true">→</span> {prepared.destination} · {prepared.selector}</p>
+        <p>Status: {prepared.enabled} · Expiry: {prepared.expiry}</p>
+        {prepared.plane==="ai"&&<p>
+          AI path limits: {prepared.aiPaths.length?prepared.aiPaths.join(", "):"NOT SPECIFIED"}
+          {prepared.pathsLimited?" · additional or invalid path values require Core review":""}
+        </p>}
+        {prepared.expiry==="INVALID / NOT VERIFIED"&&<p className="warning-box">
+          Expiry is not a trustworthy ISO 8601 timestamp. Core may reject this draft.
+        </p>}
+      </>:<p className="warning-box">
+        Deletion is proposed for this exact rule name only. No access change has happened.
+        Core must calculate impact and require explicit confirmation.
+      </p>}
+      <small>Not submitted to Core until a fresh Preview, required tests and explicit Apply;
+        this is an editable screen-only summary, not a governing or live-access decision.</small>
+    </section>}
     <div className="dr-p0-actions"><button className="primary" disabled={!ready||busy} onClick={review}>{busy&&phase<3?"Preparing…":"1. Preview Core impact"}</button>
       {preview&&<button className="secondary" disabled={busy} onClick={()=>{setPhase(2);setConfirmation("")}}>Review current plan</button>}</div>
     {preview&&<div className="dr-p0-review">

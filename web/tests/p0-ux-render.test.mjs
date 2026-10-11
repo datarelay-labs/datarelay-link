@@ -715,3 +715,45 @@ test("CUI-001 focus UI reads all loaded Core-modeled rows and explicitly warns w
  assert.match(source,/paths\.map\(\(\{index,evidence:row\}\)/);
  assert.doesNotMatch(source,/allPaths\.slice\(0,16\)/);
 });
+
+test("CUI-002 Tailscale-inspired prepared policy overview includes every relevant current rule attribute",()=>{
+ const set={plane:"remote",operation:"set",name:"allow-prod",mode:"whitelist",
+   source:"corp",destination:"prod-app",selector:"ssh",expiresAt:"2035-01-01T00:00:00Z",
+   enabled:false,paths:"",purpose:"reason"};
+ const good=access.preparedGuidedPolicyChange(set);
+ assert.deepEqual(good,{
+   action:"SET",plane:"remote",rule:"allow-prod",
+   effect:"Allow matching access",source:"corp",destination:"prod-app",selector:"ssh",
+   expiry:"2035-01-01T00:00:00Z",enabled:"Disabled",aiPaths:[],pathsLimited:false
+ });
+ const deleteView=access.preparedGuidedPolicyChange({...set,operation:"delete",name:"obsolete-access"});
+ assert.deepEqual(deleteView,{
+   action:"DELETE",plane:"remote",rule:"obsolete-access",
+   effect:"Remove existing rule · Core Preview and explicit Apply required",
+   source:"NOT APPLICABLE",destination:"NOT APPLICABLE",selector:"NOT APPLICABLE",
+   expiry:"NOT APPLICABLE",enabled:"NOT APPLICABLE",aiPaths:[],pathsLimited:false
+ });
+ const invalidExpiry=access.preparedGuidedPolicyChange({...set,expiresAt:"2035-02-30T00:00:00Z"});
+ assert.equal(invalidExpiry.expiry,"INVALID / NOT VERIFIED");
+ assert.equal(access.preparedGuidedPolicyChange({...set,source:"spoof\u202e"}).source,"INVALID / NOT VERIFIED");
+ const ai=access.preparedGuidedPolicyChange({...set,plane:"ai",mode:"blacklist",
+   enabled:true,paths:"/reports, /readme"});
+ assert.equal(ai.effect,"Deny matching access");
+ assert.equal(ai.enabled,"Enabled");
+ assert.deepEqual(ai.aiPaths,["/reports","/readme"]);
+ assert.equal(ai.selector,"ssh");
+ assert.equal(access.preparedGuidedPolicyChange({...set,operation:"update"}),null);
+ assert.equal(access.preparedGuidedPolicyChange(null),null);
+ assert.doesNotMatch(JSON.stringify(good),/reason/);
+});
+test("CUI-002 guided form displays a complete draft review for both SET and DELETE before Core Preview",()=>{
+ const src=readFileSync(join(webRoot,"src","p0-access-policy.tsx"),"utf8");
+ assert.match(src,/const prepared=preparedGuidedPolicyChange\(\{/);
+ assert.match(src,/aria-label="Prepared rule change · not applied"/);
+ assert.match(src,/Prepared \{prepared\.action\} · \{prepared\.rule\}/);
+ assert.match(src,/Status: \{prepared\.enabled\}/);
+ assert.match(src,/Expiry: \{prepared\.expiry\}/);
+ assert.match(src,/AI path limits: \{prepared\.aiPaths/);
+ assert.match(src,/Not submitted to Core until a fresh Preview, required tests and explicit Apply/);
+ assert.doesNotMatch(src,/This is an unverified draft\. No access is granted or denied until Core preview/);
+});
