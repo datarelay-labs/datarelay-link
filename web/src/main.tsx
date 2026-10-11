@@ -17,7 +17,7 @@ import {CoreDoctorWorkspace} from "./uxb-doctor";
 import {SavedViewsWorkspace,saveDraftForResource,isSavedAdmission,type HostAdmission} from "./uxb-saved-views";
 import {hostDetailSections,hostConnectionState} from "./uxb-host-detail";
 import {hostInventoryFacts,hostVisibleIdentity} from "./uxb-host-detail";
-import {serviceStateLabel,serviceDetailSections} from "./uxb-service-detail";
+import {serviceStateLabel,serviceDetailSections,sshConnectionTemplate} from "./uxb-service-detail";
 import {serviceVisibleIdentity} from "./uxb-service-detail";
 import {filterObservedServices} from "./uxb-service-search";
 import {operatorAccountState,operatorMfaState,operatorMfaAction,operatorLastLogin} from "./uxb-users-state";
@@ -1967,6 +1967,34 @@ function PolicyWorkspace({data,operator,onNavigate,api,context}:{data:any,operat
   </div>;
 }
 
+function ServiceSshConnectHint({service}:{service:unknown}){
+  const template=sshConnectionTemplate(service);
+  const [copyResult,setCopyResult]=useState("");
+  if(!template)return null;
+  async function copyTemplate(){
+    setCopyResult("");
+    try{
+      if(typeof navigator==="undefined"||typeof navigator.clipboard?.writeText!=="function")
+        throw new Error("Clipboard unavailable");
+      await navigator.clipboard.writeText(template);
+      setCopyResult("Template copied. Replace USERNAME and PUBLIC_SERVER_HOST with verified values before use.");
+    }catch{
+      setCopyResult("Clipboard unavailable. Select the template text and copy it manually.");
+    }
+  }
+  return <section className="dr-host-detail-section" role="region" aria-label="SSH connection template">
+    <h3>SSH connection template · not verified</h3>
+    <p className="muted">Replace USERNAME and PUBLIC_SERVER_HOST with the actual SSH account
+      and separately verified Data Relay Link public server hostname or IP. This is a syntax
+      example using the Core-observed reserved public port, not proof of reachability,
+      enabled access policy, active Agent or successful SSH login.</p>
+    <pre className="plan" style={{overflowWrap:"anywhere",whiteSpace:"pre-wrap"}}>{template}</pre>
+    <div className="dr-form-actions"><button type="button" className="secondary"
+      onClick={()=>copyTemplate()}>Copy SSH template</button></div>
+    {copyResult&&<p className="muted" role="status">{copyResult}</p>}
+  </section>;
+}
+
 function ResourceWorkspace({kind,data,operator,onNavigate,api,initialFilter="",initialAdmission="all",initialInspectId}:{
   kind:"host"|"service",data:any,operator:any,onNavigate?:(id:string,groupId?:string,context?:any)=>void,
   api:(path:string)=>Promise<any>,initialFilter?:string,initialAdmission?:unknown,initialInspectId?:unknown
@@ -2079,7 +2107,7 @@ function ResourceWorkspace({kind,data,operator,onNavigate,api,initialFilter="",i
     </section>
     {selected&&<div className="dr-drawer-backdrop" onMouseDown={e=>{if(e.currentTarget===e.target)setSelected(null)}}><aside className="dr-detail-drawer" role="dialog" aria-modal="true" aria-label={heading+" detail"} tabIndex={-1} autoFocus><header><div><p className="dr-eyebrow">{isHost?"Managed Host":"Remote Service"}</p><h2>{isHost?hostVisibleIdentity(selected).primary:serviceVisibleIdentity(selected).primary}</h2><p>{isHost?hostVisibleIdentity(selected).secondary:serviceVisibleIdentity(selected).secondary}</p></div><button className="dr-icon-button" onClick={()=>setSelected(null)} aria-label="Close detail">×</button></header><div className="dr-drawer-status"><span className={(isHost?hostConnectionState(selected)==="Connected":serviceStateLabel(selected)==="Enabled")?"dr-state active":"dr-state"}><i/>{isHost?hostConnectionState(selected):serviceStateLabel(selected)}</span>{isHost&&<span className={selected.admission_state==="APPROVED"?"dr-state active":"dr-state"}>{selected.admission_state==="PENDING_APPROVAL"?"Pending approval":selected.admission_state==="QUARANTINED"?"Quarantined":selected.admission_state==="APPROVED"?"Approved":"Unknown admission"}</span>}</div><div className="dr-detail-fields">{isHost?hostDetailSections(selected).map(section=><section key={section.title} className="dr-host-detail-section"><h3>{section.title}</h3>{section.fields.map(field=><div key={field.label}><span>{field.label}</span><strong>{field.value}</strong></div>)}</section>):serviceDetailSections(selected).map(section=><section key={section.title} className="dr-host-detail-section">
   <h3>{section.title}</h3>{section.fields.map(field=><div key={field.label}>
-    <span>{field.label}</span><strong>{field.value}</strong></div>)}</section>)}</div><footer><button className="secondary" onClick={()=>{const target={originType:isHost?"managed-host":"remote-service",originId:String(selected.id||"")};setSelected(null);onNavigate?.("audit","activity",target)}}>Recent activity</button><button className="primary" onClick={()=>{const target={originType:isHost?"managed-host":"remote-service",originId:String(selected.id||""),plane:"remote"};setSelected(null);onNavigate?.("access","access",target)}}>Why can / cannot connect?</button></footer></aside></div>}
+    <span>{field.label}</span><strong>{field.value}</strong></div>)}</section>)}</div>{!isHost&&<ServiceSshConnectHint key={String(selected.id||"")} service={selected}/>}<footer><button className="secondary" onClick={()=>{const target={originType:isHost?"managed-host":"remote-service",originId:String(selected.id||"")};setSelected(null);onNavigate?.("audit","activity",target)}}>Recent activity</button><button className="primary" onClick={()=>{const target={originType:isHost?"managed-host":"remote-service",originId:String(selected.id||""),plane:"remote"};setSelected(null);onNavigate?.("access","access",target)}}>Why can / cannot connect?</button></footer></aside></div>}
   </div>;
 }
 

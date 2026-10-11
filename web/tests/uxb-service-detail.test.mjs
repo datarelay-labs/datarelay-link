@@ -8,12 +8,12 @@ import {fileURLToPath,pathToFileURL} from "node:url";
 
 const root=dirname(dirname(fileURLToPath(import.meta.url)));
 const scratch=mkdtempSync(join(root,"node_modules",".pfci-service-detail-"));
-let serviceStateLabel,serviceDetailSections,serviceVisibleIdentity;
+let serviceStateLabel,serviceDetailSections,serviceVisibleIdentity,sshConnectionTemplate;
 try{
  const output=join(scratch,"projection.mjs");
  await build({entryPoints:[join(root,"src","uxb-service-detail.ts")],outfile:output,
   bundle:true,platform:"node",format:"esm",logLevel:"silent"});
- ({serviceStateLabel,serviceDetailSections,serviceVisibleIdentity}=await import(pathToFileURL(output).href));
+ ({serviceStateLabel,serviceDetailSections,serviceVisibleIdentity,sshConnectionTemplate}=await import(pathToFileURL(output).href));
 }finally{rmSync(scratch,{recursive:true,force:true})}
 const flatten=value=>serviceDetailSections(value).flatMap(s=>s.fields).map(f=>f.label+": "+f.value).join(" | ");
 
@@ -86,7 +86,7 @@ test("Remote Service drawer never renders unapproved arbitrary/secret fields or 
 test("Actual Web inventory list and drawer use the same safe status and detail projection",()=>{
  const source=readFileSync(join(root,"src","main.tsx"),"utf8");
  const resource=source.split("function ResourceWorkspace(",2)[1]?.split("function UsersPanel(",1)[0]||"";
- assert.match(source,/import \{serviceStateLabel,serviceDetailSections\} from "\.\/uxb-service-detail"/);
+ assert.match(source,/import \{serviceStateLabel,serviceDetailSections,sshConnectionTemplate\} from "\.\/uxb-service-detail"/);
  assert.match(resource,/serviceStateLabel\(item\)/);
  assert.match(resource,/serviceStateLabel\(selected\)/);
  assert.match(resource,/serviceDetailSections\(selected\)\.map/);
@@ -105,4 +105,39 @@ test("Remote Service list and drawer headings never display unbounded control te
  assert.match(section,/serviceVisibleIdentity\(item\)\.primary/);
  assert.match(section,/serviceVisibleIdentity\(selected\)\.primary/);
  assert.match(section,/Enabled means configuration is selected/);
+});
+
+
+test("G-10 Core-confirmed SSH public port yields only a placeholder command template",()=>{
+ const ssh={service_type:"ssh",public_port:6000,enabled:true,released:false,
+  target_host:"10.10.1.11",managed_host:"internal.test",password:"secret"};
+ assert.equal(sshConnectionTemplate(ssh),"ssh -p 6000 USERNAME@PUBLIC_SERVER_HOST");
+ assert.equal(sshConnectionTemplate({...ssh,public_port:1}),"ssh -p 1 USERNAME@PUBLIC_SERVER_HOST");
+ assert.equal(sshConnectionTemplate({...ssh,public_port:65535}),"ssh -p 65535 USERNAME@PUBLIC_SERVER_HOST");
+ assert.doesNotMatch(sshConnectionTemplate(ssh),/10\.10\.1\.11|internal\.test|secret/);
+});
+test("G-10 never invents commands for unknown type, invalid port or non-enabled service",()=>{
+ const base={service_type:"ssh",public_port:6000,enabled:true,released:false};
+ for(const invalid of [null,{},[],
+  {...base,service_type:"tcp"},{...base,service_type:"SSH "},{...base,service_type:{bad:1}},
+  {...base,public_port:0},{...base,public_port:65536},{...base,public_port:"6000"},
+  {...base,public_port:1.5},{...base,public_port:NaN},{...base,public_port:Infinity},
+  {...base,released:true},{...base,released:null},{...base,released:"false"},
+  {...base,enabled:false},{...base,enabled:0},{...base,enabled:null},{...base,enabled:"true"}])
+  assert.equal(sshConnectionTemplate(invalid),null,JSON.stringify(invalid));
+});
+test("G-10 read-only template and explicit clipboard result use native action without Core/credential mutation",()=>{
+ const src=readFileSync(join(root,"src","main.tsx"),"utf8");
+ const hint=src.split("function ServiceSshConnectHint(",2)[1]?.split("function ResourceWorkspace(",1)[0]||"";
+ const resource=src.split("function ResourceWorkspace(",2)[1]?.split("function UsersPanel(",1)[0]||"";
+ assert.match(src,/import \{serviceStateLabel,serviceDetailSections,sshConnectionTemplate\} from "\.\/uxb-service-detail"/);
+ assert.match(resource,/!isHost&&<ServiceSshConnectHint.*?service=\{selected\}/);
+ assert.match(hint,/sshConnectionTemplate\(service\)/);
+ assert.match(hint,/aria-label="SSH connection template"/);
+ assert.match(hint,/USERNAME and PUBLIC_SERVER_HOST/);
+ assert.match(hint,/navigator\.clipboard\.writeText\(template\)/);
+ assert.match(hint,/Clipboard unavailable/);
+ assert.match(hint,/type="button"/);
+ assert.doesNotMatch(hint,/\b(?:api|fetch|load|apply|eval)\s*\(/);
+ assert.match(hint,/overflowWrap:"anywhere"/);
 });

@@ -23,6 +23,16 @@ export function serviceStateLabel(value:unknown):"Released"|"Enabled"|"Disabled"
  if(released!==false||enabled===null)return "UNKNOWN";
  return enabled?"Enabled":"Disabled";
 }
+/** A connect *template*, not a verified public hostname or current access grant.
+ * Public server hostname/SSH account are not authoritative Service inventory fields.
+ */
+export function sshConnectionTemplate(value:unknown):string|null{
+ const data=object(value);
+ if(data.service_type!=="ssh"||serviceStateLabel(data)!=="Enabled")return null;
+ const port=data.public_port;
+ if(typeof port!=="number"||!Number.isSafeInteger(port)||port<1||port>65535)return null;
+ return "ssh -p "+String(port)+" USERNAME@PUBLIC_SERVER_HOST";
+}
 function safeValue(data:ServiceFields,key:string):string{
  const raw=data[key];
  if(key==="target_port"||key==="public_port"){
