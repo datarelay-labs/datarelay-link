@@ -927,6 +927,46 @@ The current configured estate is sufficient by contract: do not stop a run or as
 
 ### 5.3 Mandatory pre-run clean-room state gate
 
+**Owner-authorized destructive TEST HOST scope (2026-10-11):** Every host
+explicitly assigned in the current owner-private E2E host inventory is a
+**disposable test host**. The owner accepts complete loss of DRLink test state,
+temporary test data, service interruption, failed installs, reboots and even
+a host becoming unusable as outcomes of legitimate test operations. **Do not
+pause to ask for another owner approval merely because one of those test hosts
+or its test product state could be damaged.** This applies only to the named,
+assigned test hosts: unrelated production, other-project VMs, excluded hosts,
+shared management infrastructure and historical immutable test evidence are
+not part of that authorization.
+
+**Mandatory execution order on each assigned test host:**
+
+1. Record only the minimum pre-clean identity, previous installation state
+   and any existing explicitly protected test evidence.
+2. **Clean the prior test installation, enrollment, product state, previous
+   RUN_ID targets/load services and stale test artifacts before testing.**
+   Use supported public cleanup/uninstall for the role where permitted;
+   observe the actual result rather than assuming that cleanup succeeded.
+3. Verify the clean host has no active previous-run product process, service
+   unit, endpoint, reservation or disposable test listener. Preserve the
+   management route required to reach the test host.
+4. Install and attest the frozen candidate for that host's designated role,
+   then start its assigned real CLI, functional, error/recovery and load/Soak
+   scenarios. Repeat **clean → install → test → diagnose → fix → clean →
+   retest** as required until testable bugs are resolved; a broken host is
+   a test result, not a reason to avoid testing.
+5. If a **specific cleanup effect** is denied by an actual tool/platform
+   security control, **do not disguise, reroute or retry that denied effect**
+   under another command/tool/host. Mark only the dependent host or criterion
+   BLOCKED and continue independently clean and authorized test lanes.
+   Test-host disposability alone cannot override a security-tool denial.
+
+No new VM certification, extra snapshot, snapshot-restore or extra host
+requirement is created by this authorization. Existing operation-specific
+rollback/backup requirements for scenarios that actually test restore remain.
+The owner's two-Server split is unchanged: only MCP/DNS/hostname criteria
+on MCP_DNS_SERVER; **all other** tests, including normal installation and
+long Soak, on FUNCTION_PERFORMANCE_SERVER.
+
 Before any FULL_USER_E2E product workflow begins, prepare every assigned test host so results cannot be contaminated by a previous run. **Historical product state, stale test services, cached endpoints, prior enrollment state, leftover load generators, or old temporary artifacts must never be accepted as the starting state of a new Full User E2E.**
 
 The cleanup step happens after host reachability discovery but before fresh Server/Agent installation, enrollment, command-discovery personas, baseline traffic, or performance measurement.

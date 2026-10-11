@@ -50,6 +50,33 @@ class E2EProcedureGuard(unittest.TestCase):
             self.assertNotIn("remote.xdr.ooo", doc)
             self.assertNotIn("221.139.249.113", doc)
 
+    def test_disposable_test_host_authorization_and_pretest_cleanup(self):
+        # Owner approval covers assigned test hosts, not unrelated machines.
+        self.assertIn("Owner-authorized destructive TEST HOST scope", self.canonical)
+        self.assertIn("disposable test host", self.canonical)
+        self.assertIn("No new VM certification", self.canonical)
+        self.assertIn("Mandatory execution order on each assigned test host", self.canonical)
+        self.assertIn("Clean the prior test installation", self.canonical)
+        self.assertIn("clean → install → test", self.canonical)
+        self.assertIn("specific cleanup effect", self.canonical)
+        self.assertIn("do not disguise, reroute or retry", self.canonical)
+        self.assertIn("Owner's destructive test-host authorization", self.procedure)
+        self.assertIn("disposable test machines", self.procedure)
+        self.assertIn("Before the first product operation", self.procedure)
+        self.assertIn("clean the prior E2E product/runtime state", self.procedure)
+        self.assertIn("without waiting for extra owner approval", self.procedure)
+        self.assertIn("Owner decision — every assigned test host may be destroyed", self.roadmap)
+        self.assertIn("verify it is", self.roadmap)
+        self.assertIn("never retry such an effect under an alternate executor", self.roadmap)
+        protocol = (ROOT / "docs" / "CODEX_DUAL_ROLE_TEST_PROTOCOL.md").read_text()
+        self.assertIn("Owner-approved disposable test host execution", protocol)
+        self.assertIn("first establish and verify a clean prior-run state", protocol)
+        self.assertIn("specific previous tool/platform", protocol)
+        # All three portable documents must not leak the live private host map.
+        for doc in (self.canonical, self.procedure, self.roadmap, protocol):
+            self.assertNotIn("221.139.249.113", doc)
+            self.assertNotIn("remote.xdr.ooo", doc)
+
     def test_canonical_points_to_owner_fix_first_procedure(self):
         self.assertIn("Current owner-ordered preparation gate", self.canonical)
         self.assertIn("docs/E2E_EXECUTION_PROCEDURE.md", self.canonical)

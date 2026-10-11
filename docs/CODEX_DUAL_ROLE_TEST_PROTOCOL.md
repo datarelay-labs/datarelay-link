@@ -10,6 +10,23 @@
 - **CLI FCS is strictly runtime NON-DESTRUCTIVE:** public `drlink` help/menu/Tab/status/show/read-only tests may be executed; mutating command grammar, confirmation, risk and recovery are inspected, never applied on assigned product state. **Full User E2E is a separate future test**, using authorized real operations/traffic only after legitimate lab GO; same Direct/AI pairing applies.
 - Codex is **TEST ONLY**: no product/doc/test-source modification, commit, push, CI source fix, merge, tag, release, host replacement, or bypassing a prior tool/safety denial. ChatGPT Chat owns remediation.
 
+### Owner-approved disposable test host execution
+
+The full E2E test estate listed in the owner-private host map is
+**disposable by explicit owner direction (2026-10-11)**. Codex TEST-ONLY
+must not stop simply because ordinary installation, full functional
+testing, restart, recovery, 3,600-second Soak or cleanroom experiments
+could leave the assigned test VM unusable. For an authorized test lane,
+first establish and verify a clean prior-run state, then install/pin the
+candidate and perform the real scenario; a failed operation produces a
+recorded test finding followed by cleanup and retest. No new owner
+approval, extra VM or mandatory snapshot should be demanded solely due
+to possible test-host damage. Keep the strict 2-Server routing and
+independent actor evidence. Preserve unrelated hosts, source/CI and
+immutable evidence; never work around a **specific previous tool/platform
+safety denial**. If an effect remains denied, block only that dependent
+criterion and continue unaffected legitimate testing.
+
 ## 2. One Codex test owner, three knowledge-separated Codex actor contexts
 
 The parent **CODEX_AUDITOR** reads the canonical contract and has the 15/116 coverage oracle. It starts **fresh Codex threads**, under ONE locked RUN_ID, for each applicable FCS/feature or E2E scenario pair:

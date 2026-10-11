@@ -27,6 +27,23 @@ The official `docs/FULL_USER_E2E_SCENARIOS.md` is the required 4,283-line full u
 
 ### LAB-P0-01 — Dedicated, reversible, authorized test estate
 
+**Owner decision — every assigned test host may be destroyed (2026-10-11):**
+The current owner-private E2E test-host roster is **explicitly disposable**.
+No additional owner confirmation is necessary for expected loss of
+test data, service availability, reboot, failed installs or complete
+failure of an assigned test host **within its test scope**. Begin each
+host's test sequence by removing prior-run DRLink test state and leftover
+test-only helpers with the supported authorized cleanup, **verify it is
+clean**, install the frozen candidate, then execute the real assigned
+tests. When a test breaks the disposable host, record it, recover/clean
+using an available legitimate method, and retest. Do not substitute
+planning, VM-kind certification, or a new blanket snapshot approval
+for doing the tests. Exclude non-test hosts, other projects, unrelated
+management paths and immutable historical evidence. Previous
+OpenAI/tool/platform refusals for particular effects remain binding:
+**never retry such an effect under an alternate executor or command**.
+Only that host/lane is blocked; independent authorized tests continue.
+
 **Owner-assigned two-Server test routing:** `MCP_DNS_SERVER` handles **MCP + DNS/public-hostname tests only** (public TLS/OAuth and relevant AI/MCP, hostname resolution, public/bootstrap-hostname and fallback behavior). `FUNCTION_PERFORMANCE_SERVER` handles **everything else**: normal CLI, Server/Agent installation, enrollment, Remote Access, Internet Access, other security/function tests, errors and recovery, concurrency, throughput, 60s/300s/3600s Soak and F001/F007 continuity. For a mixed canonical scenario, send each individual criterion to the matching Server; no default requirement to rerun the entire scenario on both. Record the actual endpoints in the **owner-private** run inventory. This is a **routing decision**, not a new VM guest/snapshot/restore/host-provisioning prerequisite. Existing operation-specific authorization and prior B014/Windows/Rocky/certificate security denials still apply. Public cloud security rules permitting TCP/80 and TCP/443 do not themselves prove a valid public MCP certificate.
 
 - Prepare an **owner-approved disposable** v2.4 Server, two independent supported Agent Hosts plus authorized native platform routes, separate target and load roles where available; keep management/OOB SSH distinct from product ports.

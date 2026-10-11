@@ -28,6 +28,24 @@
 
 ### R2 — Procedure and readiness gate: make failures attributable
 
+**Owner's destructive test-host authorization — execute, do not reapprove:** All
+hosts enumerated in the current owner-private DRLink E2E roster are
+**disposable test machines**. The owner accepts data loss, product/service
+interruption, reboot, broken configurations and unsuccessful installation
+on these machines during tests; stop asking for repeated permission just
+because a test VM might fail. **Before the first product operation on each
+host, clean the prior E2E product/runtime state, previous RUN_ID data and
+test-only helper services, then verify a clean start.** Reinstall the
+qualified candidate and immediately perform the scenario's actual steps.
+On discovered defects, collect evidence and cycle through cleanup,
+reinstallation and retest without waiting for extra owner approval.
+Keep SSH/OOB management access and unrelated environments/evidence outside
+the cleanup boundary. A previously **platform-denied specific effect**
+(including B014 uninstall or native blocked operations) is not made
+permissible by this statement: do not retry it through a different tool
+or host; classify just the dependent lane BLOCKED and continue runnable
+independent lanes. No new mandatory VM-type/snapshot/restore gate.
+
 **Two-Server test routing — owner-fixed:** Run **only MCP and DNS/public-hostname tests** on `MCP_DNS_SERVER` (including public MCP TLS/HTTPS, OAuth, AI/MCP, DNS resolution, hostname propagation and fallback). Run **every remaining** installation, functional, CLI, Remote Access, Internet Access, native Agent, failure/recovery, concurrency, performance, 60s/300s/3600s Soak and F001/F007 test on `FUNCTION_PERFORMANCE_SERVER`. A mixed scenario is divided by its **individual test criterion**, not duplicated wholesale on both Servers; preserve its single canonical ID and real coverage evidence. Freeze the actual two addresses in the owner-private host map. No new VM-kind, VM snapshot, additional machine or snapshot/restore prerequisite arises merely from this server assignment. Existing explicit safety denials (B014, certificate preflight, native Windows/Rocky effects) remain binding for the specific operations previously denied; they cannot be rerouted. Missing MCP public trust blocks MCP/DNS-dependent checks only, not an independent functionality or Soak test. The functional Server's FRP control port is not proof of an MCP HTTPS endpoint.
 
 1. **Auditor first reads every line of the entire current canonical E2E contract**. Auditor maintains oracle and full coverage ledger; acting user/operator/admin/responder/maintainer never receives source, auditor answer keys, internal test scripts, private DB, the contract or CLI Master as operating instructions.
