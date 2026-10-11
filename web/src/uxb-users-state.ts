@@ -34,7 +34,7 @@ export function operatorMfaAction(value:unknown):{
  const user=row(value);
  const id=user.id, role=user.role, status=operatorMfaState(user);
  if(typeof id!=="string"||!id.trim()||id.length>160||
-  /[\u0000-\u001f\u007f-\u009f]/.test(id)||
+  /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/.test(id)||
   !["Admin","Operator","Read Only"].includes(String(role))||status==="UNKNOWN")
    return {required:null,label:"MFA status UNKNOWN"};
  const required=observedBool(user.mfa_required);

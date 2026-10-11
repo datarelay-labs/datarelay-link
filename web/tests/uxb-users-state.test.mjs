@@ -47,6 +47,9 @@ test("MFA action is disabled without complete, valid Core row identity",()=>{
    {...base,mfa_required:false,mfa_enrolled:true},
    {...base,mfa_required:false,mfa_enrolled:null},
    {...base,id:"",mfa_required:false,mfa_enrolled:false},
+   {...base,id:"user-1\u202eadmin",mfa_required:false,mfa_enrolled:false},
+   {...base,id:"user-1\u2066admin",mfa_required:false,mfa_enrolled:false},
+   {...base,id:"user-1\u202dadmin",mfa_required:false,mfa_enrolled:false},
    {...base,role:"UNTRUSTED",mfa_required:false,mfa_enrolled:false},
    null,
  ]){
