@@ -549,3 +549,33 @@ test("UX-8 Live Access never presents malformed Core counts or unauthorized sess
  assert.match(src,/setLiveEvidence\(\{key:requestKey,value:valid\}\)/);
  assert.match(src,/matchingLive\.partial&&<p className="dr-uxb-catalog-page-notice"/);
 });
+
+test("UX-8 Connection Diagnosis only displays consistent same-flow Core layer evidence",()=>{
+ const core={plane:"remote",input:{source:"src",destination:"dst",service:"ssh",
+    permission:"",path:""},side_effect_free:true,network_probe_performed:false,
+   overall:"UNKNOWN",next_action:"Collect evidence",
+   policy_trace:{private_secret:"DO_NOT_EXPOSE"},
+   layers:[{layer:"policy",status:"HEALTHY",summary:"Core ALLOW",evidence:{private:"PRIVATE"}},
+     {layer:"runtime",status:"UNKNOWN",summary:"No runtime observation"}]};
+ const safe=menu.requireObservedDiagnosisView(core,"remote","src","dst","ssh");
+ assert.equal(safe.overall,"UNKNOWN");
+ assert.equal(safe.layers.length,2);
+ assert.deepEqual(safe.layers[0],{layer:"policy",status:"HEALTHY",summary:"Core ALLOW"});
+ assert.doesNotMatch(JSON.stringify(safe),/DO_NOT_EXPOSE|PRIVATE/);
+ for(const invalid of [null,{},[],
+   {...core,plane:"ai"},{...core,network_probe_performed:true},
+   {...core,side_effect_free:"true"},{...core,overall:"HEALTHY"},
+   {...core,layers:[]},{...core,layers:[null]},
+   {...core,layers:[...core.layers,core.layers[0]]},
+   {...core,layers:[{layer:"policy",status:["HEALTHY"],summary:"Core ALLOW"}]},
+   {...core,layers:[{layer:"policy",status:"HEALTHY",summary:{secret:"bad"}}]},
+   {...core,layers:[{layer:"policy",status:"HEALTHY",summary:"spoof\u202e"}]},
+   {...core,next_action:{private_key:"secret"}},
+   {...core,input:{...core.input,service:"other"}}
+ ])assert.throws(()=>menu.requireObservedDiagnosisView(invalid,"remote","src","dst","ssh"),
+   /UNKNOWN|Core/,JSON.stringify(invalid));
+ assert.throws(()=>menu.requireObservedDiagnosisView(core,"remote","src","dst","other"),/UNKNOWN|Core/);
+ const src=readFileSync(join(root,"src","main.tsx"),"utf8");
+ assert.match(src,/const valid=requireObservedDiagnosisView\(result,plane,source\.trim\(\),destination\.trim\(\),selector\.trim\(\)\)/);
+ assert.match(src,/setDiagnosisEvidence\(\{key:requestKey,value:valid\}\)/);
+});

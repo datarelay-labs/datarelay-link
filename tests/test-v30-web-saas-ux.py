@@ -212,7 +212,10 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn("const matchingLive=visibleCoreEvidence(", operations)
         self.assertIn("if(diagnosisGeneration.current!==token)return;", operations)
         self.assertIn("diagnosisGeneration.current+=1;", operations)
-        self.assertIn('setDiagnosisEvidence({key:requestKey,value:result})', operations)
+        self.assertIn('const valid=requireObservedDiagnosisView(result,plane,source.trim(),destination.trim(),selector.trim());', operations)
+        self.assertIn('setDiagnosisEvidence({key:requestKey,value:valid})', operations)
+        self.assertIn('export function requireObservedDiagnosisView(',
+                      (ROOT / 'web/src/uxb-menu-evidence.ts').read_text(encoding='utf-8'))
         self.assertIn("if(liveGeneration.current!==token)return;", operations)
         self.assertIn("Live access: UNKNOWN", operations)
         self.assertIn("const cutoffGeneration=useRef(0);", operations)

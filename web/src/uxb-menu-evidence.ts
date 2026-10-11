@@ -184,6 +184,55 @@ export function requireObservedLiveAccessView(
    reason:row.reason as string,partial:row.next_cursor!==null};
 }
 
+/** A Core diagnosis response is descriptive evidence, never a probe or
+ * authorization decision. Strip nested policy traces and enforce the actual
+ * requested selectors and coherent layer severity before rendering.
+ */
+export function requireObservedDiagnosisView(
+ payload:unknown,plane:unknown,source:unknown,destination:unknown,selector:unknown
+):{
+ overall:"HEALTHY"|"FAILED"|"UNKNOWN",network_probe_performed:false,
+ next_action:string,layers:{layer:string,status:string,summary:string}[]
+}{
+ const fail=():never=>{throw new Error(
+   "UNKNOWN · Core Connection Diagnosis response has unverified fields, mismatched flow or inconsistent health evidence."
+ )};
+ const obj=(v:unknown):v is Record<string,unknown>=>
+   !!v&&typeof v==="object"&&!Array.isArray(v);
+ const safe=(v:unknown,max=240):v is string=>
+   typeof v==="string"&&!!v.trim()&&v.length<=max
+     &&!/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/.test(v);
+ if(!obj(payload)||!obj(payload.input)||!Array.isArray(payload.layers)
+   ||!["remote","internet","ai"].includes(String(plane))
+   ||![source,destination,selector].every(v=>safe(v,160)))return fail();
+ const input=payload.input;
+ if(payload.plane!==plane||payload.side_effect_free!==true
+   ||payload.network_probe_performed!==false
+   ||input.source!==source||input.destination!==destination
+   ||(plane==="ai"?input.permission:input.service)!==selector
+   ||!["HEALTHY","FAILED","UNKNOWN"].includes(String(payload.overall))
+   ||!safe(payload.next_action,240)
+   ||payload.layers.length===0||payload.layers.length>16)return fail();
+ const known=new Set(["input","policy","managed_host","remote_service","runtime",
+   "dns","target_reachability","emergency_cutoff","recent_activity"]);
+ const statuses=new Set(["HEALTHY","FAILED","UNKNOWN","N_A"]);
+ const layers:{layer:string,status:string,summary:string}[]=[];
+ const observed=new Set<string>();
+ for(const raw of payload.layers){
+   if(!obj(raw)||!safe(raw.layer,64)||!known.has(raw.layer)
+     ||observed.has(raw.layer)||!statuses.has(String(raw.status))
+     ||!safe(raw.summary,512))return fail();
+   observed.add(raw.layer as string);
+   layers.push({layer:raw.layer as string,status:raw.status as string,
+     summary:(raw.summary as string).trim()});
+ }
+ const derived=layers.some(x=>x.status==="FAILED")?"FAILED":
+   layers.some(x=>x.status==="UNKNOWN")?"UNKNOWN":"HEALTHY";
+ if(derived!==payload.overall)return fail();
+ return {overall:derived,network_probe_performed:false,
+   next_action:(payload.next_action as string).trim(),layers};
+}
+
 /** Keyset page navigation only uses observed opaque Core cursors. The UI may
  * navigate backwards using previous request cursors; it never guesses a total. */
 export type MenuPagePosition={cursor:string,history:string[]};

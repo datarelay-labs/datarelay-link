@@ -9,7 +9,7 @@ import {AccessEvidenceExplorer,GuidedPolicyJourney,coreFlowKey,coreCutoffKey,vis
 import {EnrollmentOnboarding} from "./p0-enrollment";
 import {navGroups,groupFor,labelFor,pageDescriptions,visibleRoute,navMatches,setupContextForObjectFamily} from "./uxb-navigation";
 import {FirstUseHome,observedBoundedCountPair,observedHomeAttention,isFreshInstallation,observedRecentFeed,observedNumber,accessPlaneCount,coreHealthState,type RecentFeed} from "./uxb-home";
-import {requireObservedMenuPayload,requireObservedTemporaryAccessApplyForPlan,requireObservedEmergencyCutoffApplyForPlan,requireObservedLiveAccessView,requireObservedInventoryContinuation,requireObservedObjectContinuation,requireObservedAuditRetention,auditRetentionRunPermitted,requireObservedAccessHygiene,hygieneInspectTarget,requireObservedJobStart,requireObservedFleetApply,requireObservedFleetPreview,requireObservedFleetApplyForPreview,requireObservedAuditExport,requireObservedRolloutPreview,requireObservedInventoryExport,requireObservedJobDetail,requireObservedJobCancellation,isPartialCorePage,selectMenuPage,combineObservedPolicyPlanes,policyStateLabel,policyExpiryLabel,type MenuPagePosition} from "./uxb-menu-evidence";
+import {requireObservedMenuPayload,requireObservedTemporaryAccessApplyForPlan,requireObservedEmergencyCutoffApplyForPlan,requireObservedLiveAccessView,requireObservedDiagnosisView,requireObservedInventoryContinuation,requireObservedObjectContinuation,requireObservedAuditRetention,auditRetentionRunPermitted,requireObservedAccessHygiene,hygieneInspectTarget,requireObservedJobStart,requireObservedFleetApply,requireObservedFleetPreview,requireObservedFleetApplyForPreview,requireObservedAuditExport,requireObservedRolloutPreview,requireObservedInventoryExport,requireObservedJobDetail,requireObservedJobCancellation,isPartialCorePage,selectMenuPage,combineObservedPolicyPlanes,policyStateLabel,policyExpiryLabel,type MenuPagePosition} from "./uxb-menu-evidence";
 import {RemoteServiceEditor} from "./uxb-remote-service";
 import {RevisionHistory} from "./uxb-revisions";
 import {AgentVersionDrift} from "./uxb-versions";
@@ -846,7 +846,8 @@ function AccessOperations({operator,onNavigate,context}:{operator:any,onNavigate
       if(plane==="ai")body.permission=selector.trim();else body.service=selector.trim();
       const result=await api("/api/v1/diagnose",{method:"POST",body:JSON.stringify(body)});
       if(diagnosisGeneration.current!==token)return;
-      setDiagnosisEvidence({key:requestKey,value:result});
+      const valid=requireObservedDiagnosisView(result,plane,source.trim(),destination.trim(),selector.trim());
+      setDiagnosisEvidence({key:requestKey,value:valid});
     }catch(e:any){if(diagnosisGeneration.current===token)setError(e.message||String(e))}
     finally{if(diagnosisGeneration.current===token)setDiagnosisBusy(false)}
   }
