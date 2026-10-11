@@ -40,6 +40,22 @@ export function observedRecentFeed(result:PromiseSettledResult<any>):RecentFeed{
 export function observedNumber(value:unknown):number|"UNKNOWN"{
   return safeCount(value)?value:"UNKNOWN";
 }
+/** UX-4: a valid count for one Core projection never authorizes a
+ * contradictory active/connected subset. Keep an independently observed
+ * total when the subset is missing, but show no reassuring false count.
+ */
+export function observedBoundedCountPair(
+ data:unknown,key:"connected"|"enabled"
+):{total:number|"UNKNOWN",subset:number|"UNKNOWN"}{
+ if(!data||typeof data!=="object"||Array.isArray(data))
+   return {total:"UNKNOWN",subset:"UNKNOWN"};
+ const row=data as Record<string,unknown>;
+ const total=observedNumber(row.total);
+ const part=observedNumber(row[key]);
+ return {total,subset:typeof total==="number"&&typeof part==="number"
+   &&part<=total?part:"UNKNOWN"};
+}
+
 export function coreHealthState(data:any):"Healthy"|"Attention"|"UNKNOWN"{
   if(typeof data?.db_healthy!=="boolean"||typeof data?.mismatch!=="boolean")return "UNKNOWN";
   return data.db_healthy&&!data.mismatch?"Healthy":"Attention";

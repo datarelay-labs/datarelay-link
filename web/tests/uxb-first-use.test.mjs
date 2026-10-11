@@ -466,3 +466,33 @@ test("UX-8 recent Audit and revision time labels reject impossible dates or fabr
   assert.doesNotMatch(JSON.stringify(safe),/NO_SHOW|spoof/);
  }
 });
+
+test("UX-4 Core coverage counters reject enabled/connected totals that cannot coexist",()=>{
+ for(const [value,key,want] of [
+  [{total:4,connected:3},"connected",{total:4,subset:3}],
+  [{total:0,connected:0},"connected",{total:0,subset:0}],
+  [{total:2,enabled:1},"enabled",{total:2,subset:1}],
+  [{total:2,enabled:4},"enabled",{total:2,subset:"UNKNOWN"}],
+  [{total:2,connected:-1},"connected",{total:2,subset:"UNKNOWN"}],
+  [{total:2,connected:"2"},"connected",{total:2,subset:"UNKNOWN"}],
+  [{total:4},"connected",{total:4,subset:"UNKNOWN"}],
+  [{total:0,enabled:1},"enabled",{total:0,subset:"UNKNOWN"}],
+  [{total:-1,enabled:0},"enabled",{total:"UNKNOWN",subset:"UNKNOWN"}],
+  [{total:"1",enabled:1},"enabled",{total:"UNKNOWN",subset:"UNKNOWN"}],
+  [null,"connected",{total:"UNKNOWN",subset:"UNKNOWN"}],
+  [[], "enabled",{total:"UNKNOWN",subset:"UNKNOWN"}]
+ ])assert.deepEqual(home.observedBoundedCountPair(value,key),want,JSON.stringify(value));
+});
+test("UX-4 Home Command Center renders fleet and policy counts only from validated Core coverage",()=>{
+ const src=readFileSync(join(root,"src","main.tsx"),"utf8");
+ const command=src.split("function CommandCenter(",2)[1]?.split("function AccessHygienePanel(",1)[0]||"";
+ assert.match(src,/import \{FirstUseHome,.*observedBoundedCountPair/);
+ assert.match(command,/const hostCounts=observedBoundedCountPair\(h,"connected"\)/);
+ assert.match(command,/const serviceCounts=observedBoundedCountPair\(svc,"enabled"\)/);
+ assert.match(command,/value:observedBoundedCountPair\(pol.remote,"enabled"\)/);
+ assert.match(command,/\{hostCounts\.subset\} connected/);
+ assert.match(command,/\{serviceCounts\.subset\} enabled/);
+ assert.match(command,/\{row\.value\.subset\} enabled of \{row\.value\.total\}/);
+ assert.doesNotMatch(command,/\{observed\(h\.connected\)\} connected/);
+ assert.doesNotMatch(command,/\{observed\(row\.value\.enabled\)\} enabled/);
+});

@@ -8,7 +8,7 @@ import {observedCoreFlag,observedCoreCount,observedCoreNames} from "./uxb-impact
 import {AccessEvidenceExplorer,GuidedPolicyJourney,coreFlowKey,coreCutoffKey,visibleCoreEvidence,resolveCompletePolicyMatch,type AccessPlane} from "./p0-access-policy";
 import {EnrollmentOnboarding} from "./p0-enrollment";
 import {navGroups,groupFor,labelFor,pageDescriptions,visibleRoute,navMatches,setupContextForObjectFamily} from "./uxb-navigation";
-import {FirstUseHome,observedHomeAttention,isFreshInstallation,observedRecentFeed,observedNumber,accessPlaneCount,coreHealthState,type RecentFeed} from "./uxb-home";
+import {FirstUseHome,observedBoundedCountPair,observedHomeAttention,isFreshInstallation,observedRecentFeed,observedNumber,accessPlaneCount,coreHealthState,type RecentFeed} from "./uxb-home";
 import {requireObservedMenuPayload,requireObservedInventoryContinuation,requireObservedObjectContinuation,requireObservedAuditRetention,auditRetentionRunPermitted,requireObservedAccessHygiene,hygieneInspectTarget,requireObservedJobStart,requireObservedFleetApply,requireObservedFleetPreview,requireObservedFleetApplyForPreview,requireObservedAuditExport,requireObservedRolloutPreview,requireObservedInventoryExport,requireObservedJobDetail,requireObservedJobCancellation,isPartialCorePage,selectMenuPage,combineObservedPolicyPlanes,policyStateLabel,policyExpiryLabel,type MenuPagePosition} from "./uxb-menu-evidence";
 import {RemoteServiceEditor} from "./uxb-remote-service";
 import {RevisionHistory} from "./uxb-revisions";
@@ -1918,13 +1918,15 @@ function CommandCenter({data,operator,onNavigate}:{data:any,operator:any,onNavig
     return()=>{cancelled=true};
   },[]);
   const h=data.overview?.managed_hosts||{},svc=data.overview?.remote_services||{},j=data.overview?.management_jobs||{},pol=data.overview?.policies||{};
+  const hostCounts=observedBoundedCountPair(h,"connected");
+  const serviceCounts=observedBoundedCountPair(svc,"enabled");
   const attentionState=observedHomeAttention(data,operator.role);
   const attention=attentionState?.items??null;
   const observed=observedNumber;
   const policyRows=[
-    {label:"Remote Access",key:"remote",value:pol.remote||{}},
-    {label:"Internet Access",key:"internet",value:pol.internet||{}},
-    {label:"AI Access",key:"ai",value:pol.ai||{}},
+    {label:"Remote Access",key:"remote",value:observedBoundedCountPair(pol.remote,"enabled")},
+    {label:"Internet Access",key:"internet",value:observedBoundedCountPair(pol.internet,"enabled")},
+    {label:"AI Access",key:"ai",value:observedBoundedCountPair(pol.ai,"enabled")},
   ];
   if(isFreshInstallation(data))return <div className="dr-command-center dr-uxb-first-install" data-testid="uxb-fresh-home">
     <section className="dr-hero-row"><div><p className="dr-eyebrow">Welcome · First connection</p>
@@ -1941,13 +1943,13 @@ function CommandCenter({data,operator,onNavigate}:{data:any,operator:any,onNavig
   return <div className="dr-command-center">
     <section className="dr-hero-row"><div><p className="dr-eyebrow">Welcome · Data Relay Link</p><h2>Connect one service. Control who can use it.</h2><p className="muted">Start with the steps below, or inspect the existing Core status and activity.</p></div><div className="dr-hero-actions">{operator.role==="Admin"&&<button className="primary" onClick={()=>onNavigate?.("setup","connections")}>Set up a connection →</button>}<button className="secondary" onClick={()=>onNavigate?.("access","access")}>Test access</button></div></section>
     <FirstUseHome data={data} operator={operator} api={api} onNavigate={onNavigate}/>
-    <section className="dr-kpi-strip"><div><span>Managed Hosts</span><strong>{observed(h.total)}</strong><small>{observed(h.connected)} connected</small></div><div><span>Remote Services</span><strong>{observed(svc.total)}</strong><small>{observed(svc.enabled)} enabled</small></div><div><span>Active Jobs</span><strong>{observed(j.active_jobs)}</strong><small>{observed(j.failed_jobs)} failed</small></div><div><span>Needs Attention</span><strong>{attention?attention.length:"UNKNOWN"}</strong><small>{!attention?"Core attention evidence unavailable":attention.some((x:any)=>x.severity==="critical")?"Critical item present":"Current findings"}</small></div></section>
+    <section className="dr-kpi-strip"><div><span>Managed Hosts</span><strong>{hostCounts.total}</strong><small>{hostCounts.subset} connected</small></div><div><span>Remote Services</span><strong>{serviceCounts.total}</strong><small>{serviceCounts.subset} enabled</small></div><div><span>Active Jobs</span><strong>{observed(j.active_jobs)}</strong><small>{observed(j.failed_jobs)} failed</small></div><div><span>Needs Attention</span><strong>{attention?attention.length:"UNKNOWN"}</strong><small>{!attention?"Core attention evidence unavailable":attention.some((x:any)=>x.severity==="critical")?"Critical item present":"Current findings"}</small></div></section>
     <div className="dr-overview-columns">
       <section className="card dr-attention-card"><div className="dr-section-head"><div><p className="dr-eyebrow">Posture</p><h3>Needs Attention</h3></div><button className="dr-text-action" onClick={()=>onNavigate?.("doctor","observability")}>Troubleshoot →</button></div>{!attention?<div className="dr-compact-empty">UNKNOWN · Core attention evidence unavailable. Check System Health.</div>:attention.length?<div className="dr-attention-list">{attention.slice(0,8).map((x:any)=><div className="dr-attention-row" key={x.kind}><span className={"dr-severity-dot "+x.severity}/><span><strong>{x.label}</strong><small>{x.count} affected</small></span><span className={"badge "+x.severity}>{x.severity}</span></div>)}</div>:<div className="dr-good-state"><span className="dr-good-mark">✓</span><div><strong>No current attention items</strong><p>
     Core observed no Attention items at {attentionState?.observedAt||"UNKNOWN"}.
     This is derived evidence, not a live health or access guarantee.
   </p></div></div>}</section>
-      <section className="card dr-access-card"><div className="dr-section-head"><div><p className="dr-eyebrow">Access</p><h3>Policy Coverage</h3></div><button className="dr-text-action" onClick={()=>onNavigate?.("access","access")}>Open workspace →</button></div><div className="dr-access-posture">{policyRows.map(row=><button key={row.key} onClick={()=>onNavigate?.("policies","access")}><span className="dr-access-icon"><WorkspaceIcon kind="access"/></span><span><strong>{row.label}</strong><small>{observed(row.value.enabled)} enabled of {observed(row.value.total)}</small></span><b>{observed(row.value.enabled)}</b></button>)}</div></section>
+      <section className="card dr-access-card"><div className="dr-section-head"><div><p className="dr-eyebrow">Access</p><h3>Policy Coverage</h3></div><button className="dr-text-action" onClick={()=>onNavigate?.("access","access")}>Open workspace →</button></div><div className="dr-access-posture">{policyRows.map(row=><button key={row.key} onClick={()=>onNavigate?.("policies","access")}><span className="dr-access-icon"><WorkspaceIcon kind="access"/></span><span><strong>{row.label}</strong><small>{row.value.subset} enabled of {row.value.total}</small></span><b>{row.value.subset}</b></button>)}</div></section>
     </div>
     <div className="dr-overview-columns">
       <section className="card"><div className="dr-section-head"><div><p className="dr-eyebrow">Activity</p><h3>Recent Activity</h3></div><button className="dr-text-action" onClick={()=>onNavigate?.("audit","observability")}>Open audit →</button></div>{activity.status!=="ready"?<div className="dr-compact-empty" role="status">{activity.status==="loading"?"Loading recent activity…":"UNKNOWN · Recent Activity unavailable. Open Audit to retry."}</div>:activity.items.length?<div className="dr-activity-list">{activity.items.map((item:any,i:number)=><button key={item.event_id||item.id||i} onClick={()=>onNavigate?.("audit","observability")}><span className={item.result==="deny"||item.result==="failed"?"dr-activity-mark warning":"dr-activity-mark"}/><span><strong>{item.event_type||item.action||item.operation||"Activity"}</strong><small>{item.actor_id||item.actor||"system"} · {item.occurred_at||item.timestamp||""}</small></span><span>{item.result||item.category||""}</span></button>)}</div>:<div className="dr-compact-empty">No retained recent activity.</div>}</section>
