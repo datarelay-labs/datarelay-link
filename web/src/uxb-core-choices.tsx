@@ -29,12 +29,28 @@ const labels:Record<AccessPlane,Record<SelectorField,string>>={
   ai:{source:"AI Identity",destination:"AI destination Network Object / Group",selector:"Permission Object / Group"},
 };
 
+/** One Core page is at most 50 public names. Malformed/unsafe metadata
+ * is an UNKNOWN source, never proof that no matching objects exist.
+ */
+const BAD_CORE_NAME=/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/;
+const validCoreName=(name:unknown):name is string=>
+  typeof name==="string"&&name.length<=160&&!!name.trim()&&!BAD_CORE_NAME.test(name);
+function validCoreNamePage(page:any,type:string):boolean{
+  return !!page&&typeof page==="object"&&!Array.isArray(page)
+    &&(page.resource_type===undefined||page.resource_type===type)
+    &&Array.isArray(page.items)&&page.items.length<=50
+    &&page.items.every((row:any)=>row&&typeof row==="object"&&!Array.isArray(row)
+      &&validCoreName(row.name))
+    &&(page.next_cursor===undefined||page.next_cursor===null
+      ||(typeof page.next_cursor==="string"&&page.next_cursor.length>0
+        &&page.next_cursor.length<=1024));
+}
 export function coreSelectorOptions(catalog:CoreCatalog|null,plane:AccessPlane,field:SelectorField){
   const types=kinds[plane][field];
-  if(!catalog?.resources||types.some(type=>!Array.isArray(catalog.resources[type]?.items)))
+  if(!catalog?.resources||types.some(type=>!validCoreNamePage(catalog.resources[type],type)))
     return {status:"unknown" as const,names:[] as string[],truncated:false};
   const names=[...new Set(types.flatMap(type=>catalog.resources[type].items||[])
-    .map(row=>typeof row?.name==="string"?row.name.trim():"").filter(Boolean))].sort((a,b)=>a.localeCompare(b));
+    .map(row=>String(row.name).trim()))].sort((a,b)=>a.localeCompare(b));
   return {
     status:(names.length?"available":"empty") as "available"|"empty",
     names,truncated:types.some(type=>!!catalog.resources[type]?.next_cursor),
@@ -53,6 +69,8 @@ export async function searchCoreSelectorCatalog(
       +"&q="+encodeURIComponent(needle)+"&limit=50";
     const page=await api(url);
     if(!Array.isArray(page?.items))throw new Error(type+" Core search response missing items.");
+    if(!validCoreNamePage(page,type))
+      throw new Error(type+" Core search response invalid or unbounded; state is UNKNOWN.");
     return [type,{items:page.items,next_cursor:page.next_cursor??null}] as const;
   }));
   return {resources:Object.fromEntries(pages)};

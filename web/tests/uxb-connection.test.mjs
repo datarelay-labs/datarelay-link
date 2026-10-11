@@ -399,3 +399,10 @@ test("no browser-local credentials or unapproved backend policy engine",()=>{
   assert.equal(src.includes(forbidden),false,forbidden);
  }
 });
+
+test("Core impact lists reject direction-changing or control text instead of reporting spoofed affected rules",()=>{
+ for(const unsafe of ["allow\u202eDeny","rule-1\nALLOW","\u2066private\u2069","\u0000hidden"]){
+  assert.equal(impact.observedCoreNames(["trusted",unsafe]),"UNKNOWN",unsafe);
+ }
+ assert.equal(impact.observedCoreNames(["rule-1","rule-2"]),"rule-1, rule-2");
+});

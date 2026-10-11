@@ -119,3 +119,34 @@ test("Operator chooses a Core selector deliberately, never an implicit allow",()
  }));
  assert.match(locked,/<select[^>]*disabled=""/);
 });
+
+test("Untrusted Core names never become a selectable spoofed policy suggestion",()=>{
+ for(const invalid of ["ssh\u202eallow","ssh\nallow","ssh\u2066allow","x".repeat(161)]){
+  const malformed={resources:{...fixture.resources,
+   "service-object":{items:[{name:invalid}]}}};
+  const options=choices.coreSelectorOptions(malformed,"remote","selector");
+  assert.deepEqual(options,{status:"unknown",names:[],truncated:false});
+  const html=renderToStaticMarkup(React.createElement(choices.CoreChoiceField,{
+   catalog:malformed,plane:"remote",field:"selector",value:"",onChoose:()=>{}
+  }));
+  assert.match(html,/Core inventory UNKNOWN/);
+  assert.doesNotMatch(html,/No configured options/);
+  assert.ok(!html.includes(invalid),"untrusted name exposed in select");
+ }
+});
+test("Invalid bounded Core name page is UNKNOWN, not confirmed empty; search refuses contradictory page",async()=>{
+ const malformed={resources:{...fixture.resources,
+   "ai-identity":{items:[{id:"bad",name:""}]}}};
+ assert.equal(choices.coreSelectorOptions(malformed,"ai","source").status,"unknown");
+ const tooMany=Array.from({length:51},(_,i)=>({name:"identity-"+i}));
+ assert.equal(choices.coreSelectorOptions({resources:{"ai-identity":{items:tooMany}}},"ai","source").status,"unknown");
+ for(const page of [
+  {items:tooMany,next_cursor:null},
+  {items:[{name:"safe"}],next_cursor:{opaque:"PRIVATE"}},
+  {items:[{name:"safe"}],resource_type:"network-object"}
+ ]){
+  await assert.rejects(
+   choices.searchCoreSelectorCatalog(async()=>page,"ai","source","safe"),/Core.*(invalid|malformed|bounded|resource)/i
+  );
+ }
+});
