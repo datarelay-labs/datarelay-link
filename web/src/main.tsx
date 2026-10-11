@@ -20,6 +20,7 @@ import {hostDetailSections,hostConnectionState} from "./uxb-host-detail";
 import {hostInventoryFacts,hostVisibleIdentity} from "./uxb-host-detail";
 import {serviceStateLabel,serviceDetailSections,sshConnectionTemplate} from "./uxb-service-detail";
 import {serviceVisibleIdentity} from "./uxb-service-detail";
+import {resourceCardSummary} from "./uxb-resource-cards";
 import {filterObservedServices} from "./uxb-service-search";
 import {projectObservedGlobalSearchResults} from "./uxb-global-search-target";
 import {filterLoadedServiceFacets,type ServiceTypeFacet,type ServiceConfigFacet} from "./uxb-service-facets";
@@ -2015,6 +2016,8 @@ function ResourceWorkspace({kind,data,operator,onNavigate,api,initialFilter="",i
   useEffect(()=>{setConnectionFilter("all")},[kind]);
   const [hostSort,setHostSort]=useState<HostSortMode>("review");
   useEffect(()=>{setHostSort("review")},[kind]);
+  const [inventoryView,setInventoryView]=useState<"table"|"cards">("table");
+  useEffect(()=>{setInventoryView("table")},[kind]);
   const [serviceTypeFilter,setServiceTypeFilter]=useState<ServiceTypeFacet>("all");
   const [serviceConfigFilter,setServiceConfigFilter]=useState<ServiceConfigFacet>("all");
   useEffect(()=>{setServiceTypeFilter("all");setServiceConfigFilter("all")},[kind]);
@@ -2100,6 +2103,13 @@ function ResourceWorkspace({kind,data,operator,onNavigate,api,initialFilter="",i
         <label className="dr-filter-field"><WorkspaceIcon kind="search"/><input value={filter} maxLength={120} aria-label={isHost?"Filter Managed Hosts":"Filter Remote Services"}
           onChange={e=>setFilter(e.target.value)}
           placeholder={isHost?"Filter hosts (name:, host:, os:, admission:)…":"Filter services (name:, host:, port:, state:)…"}/>{filter&&<button onClick={()=>setFilter("")} aria-label="Clear filter">×</button>}</label></div>
+      <div className="dr-form-actions" role="group" aria-label="Inventory view">
+        <span className="muted">Presentation of currently loaded Core rows only · no new Core request</span>
+        <button type="button" className={inventoryView==="table"?"primary":"secondary"}
+          aria-pressed={inventoryView==="table"} onClick={()=>setInventoryView("table")}>Table</button>
+        <button type="button" className={inventoryView==="cards"?"primary":"secondary"}
+          aria-pressed={inventoryView==="cards"} onClick={()=>setInventoryView("cards")}>Cards</button>
+      </div>
       {isHost&&<div className="dr-form-actions" role="group" aria-label="Host display order">
         <label className="dr-field"><span>Sort loaded Hosts</span>
           <select aria-label="Sort loaded Hosts" value={hostSort}
@@ -2190,6 +2200,23 @@ function ResourceWorkspace({kind,data,operator,onNavigate,api,initialFilter="",i
         Last activity is Core last_seen, not Agent heartbeat. Missing or malformed telemetry stays UNKNOWN.
         Use the Host details for admission, trust, connection and lifecycle evidence.</p>}
       {!rows.length?<div className="dr-empty-state"><span className="dr-empty-icon"><WorkspaceIcon kind="infrastructure"/></span><strong>{hostSearch?.error||serviceSearch?.error?"Search not applied":isHost&&!!hostSearch?.unknownCount&&!!filter?"No confirmed match in observed Hosts":!isHost&&!!serviceSearch?.unknownCount&&!!filter?"No confirmed match in observed Services":!isHost&&serviceQuickFiltersActive?"No matching Service type/configuration in loaded Core rows":isHost&&connectionFilter!=="all"?"No match in loaded Host connection states":partial?"No match in loaded resources":filter?"No matching resources":"No resources yet"}</strong><p>{hostSearch?.error||serviceSearch?.error?"Correct the unsupported filter; only observed Core resources are shown.":isHost&&!!hostSearch?.unknownCount&&!!filter?"Some loaded Hosts have UNKNOWN values; no-match does not prove absence.":!isHost&&!!serviceSearch?.unknownCount&&!!filter?"Some loaded Services have UNKNOWN requested fields; no-match does not prove their absence.":!isHost&&serviceQuickFiltersActive?"Only loaded Core Service configuration and type were filtered; UNKNOWN or unloaded Service rows can still exist. This does not prove no authorized or live connection.":isHost&&connectionFilter!=="all"?"Only loaded Core Host connectivity is filtered; UNKNOWN values or unloaded Hosts may remain. This is not a fleet-wide absence or live access verdict.":partial?"Other resources may exist beyond this Core page. Use Search to find them.":filter?"Try a different filter.":isHost?"Connect an Agent to populate managed inventory.":"Publish a Remote Service from a managed host."}</p>{!filter&&isHost&&operator.role==="Admin"&&<button className="primary" onClick={()=>onNavigate?.("enrollments","infrastructure")}>Connect Agent</button>}</div>:
+      inventoryView==="cards"?<div className="dr-resource-cards" role="list" aria-label={heading+" cards"}>
+        {rows.map((item:any)=>{
+          const info=resourceCardSummary(kind,item);
+          return info?<div role="listitem" key={String(item.id)} className="dr-resource-card-item">
+            <button type="button" className="dr-resource-card"
+              aria-label={"Inspect "+heading+" "+info.title} onClick={()=>setSelected(item)}>
+              <span className="dr-resource-card-head"><strong>{info.title}</strong><small>{info.subtitle}</small></span>
+              <span className={info.status==="Connected"||info.status==="Enabled"?"dr-state active":"dr-state"}><i/>{info.status}</span>
+              <span className="dr-resource-card-facts">{info.facts.map(entry=>
+                <span key={entry.label} className="dr-resource-card-fact">
+                  <span>{entry.label}</span><strong>{entry.value}</strong>
+                </span>)}</span>
+              <span className="dr-resource-card-action">Inspect loaded Core detail →</span>
+            </button>
+          </div>:null;
+        })}
+      </div>:
       <div className="dr-table-scroll"><table className="dr-resource-table"><thead><tr>{isHost?<><th>Host</th><th>Admission</th><th>Connection</th><th>Trust</th><th>Platform</th><th>Version</th><th>Agent heartbeat</th><th>Last activity</th></>:<><th>Service</th><th>Managed host</th><th>Type</th><th>Public port</th><th>Target</th><th>State</th></>}</tr></thead><tbody>{rows.map((item:any)=><tr key={item.id} tabIndex={0} onClick={()=>setSelected(item)} onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();setSelected(item)}}}>{isHost?<><td><strong>{hostVisibleIdentity(item).primary}</strong><small>{hostVisibleIdentity(item).secondary}</small>
   <button type="button" className="dr-text-action"
     aria-label={"Inspect Managed Host "+hostVisibleIdentity(item).primary}

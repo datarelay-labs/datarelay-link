@@ -300,3 +300,19 @@
 .dr-start-page-settings-panel p{margin:0;font-size:11px;line-height:1.45}
 @media(max-width:850px){.dr-start-page-settings>summary span{display:none}}
 @media(max-width:560px){.dr-start-page-settings-panel{width:calc(100vw - 76px);max-width:calc(100vw - 20px)}}
+
+/* M1-A G-19: original loaded-Core inventory cards; compact mobile option. */
+.dr-resource-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:12px;padding:16px}
+.dr-resource-card-item{min-width:0}
+.dr-resource-card{display:grid;align-content:start;gap:12px;width:100%;min-width:0;min-height:170px;padding:14px;border:1px solid var(--dr-border-default);border-radius:var(--dr-radius-card);background:var(--dr-surface-card);color:var(--dr-text-primary);text-align:left;cursor:pointer;overflow-wrap:anywhere}
+.dr-resource-card:hover{background:var(--dr-surface-hover);border-color:var(--dr-border-strong)}
+.dr-resource-card:focus-visible{outline:2px solid var(--dr-focus-ring);outline-offset:2px}
+.dr-resource-card-head{display:grid;gap:4px;min-width:0}
+.dr-resource-card-head strong{font-size:14px;overflow-wrap:anywhere}
+.dr-resource-card-head small{font-size:11px;color:var(--dr-text-muted);overflow-wrap:anywhere}
+.dr-resource-card-facts{display:grid;gap:7px;min-width:0}
+.dr-resource-card-fact{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px;min-width:0;font-size:12px}
+.dr-resource-card-fact>span{color:var(--dr-text-muted)}
+.dr-resource-card-fact>strong{font-size:12px;font-weight:500;color:var(--dr-text-secondary);overflow-wrap:anywhere}
+.dr-resource-card-action{justify-self:start;font-size:12px;font-weight:600;color:var(--dr-text-secondary)}
+@media(max-width:560px){.dr-resource-cards{grid-template-columns:minmax(0,1fr);padding:10px}.dr-resource-card{min-height:0}}
