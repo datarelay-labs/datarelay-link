@@ -24,7 +24,8 @@ export function validatedVersionInventory(payload:unknown){
     throw new Error("Core Agent version inventory is unavailable. State is UNKNOWN.");
   const data=payload as Record<string,unknown>;
   if(!validCoreText(data.server_version)||!Array.isArray(data.hosts)
-    ||!Number.isSafeInteger(data.limit)||Number(data.limit)<1
+    // Canonical Core version_drift() LIMIT 200; larger reported bounds hide truncation.
+    ||!Number.isSafeInteger(data.limit)||Number(data.limit)<1||Number(data.limit)>200
     ||data.hosts.length>Number(data.limit)
     ||!Number.isSafeInteger(data.drift_count)||Number(data.drift_count)<0
     ||!Number.isSafeInteger(data.unknown_count)||Number(data.unknown_count)<0

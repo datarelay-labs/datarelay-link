@@ -65,6 +65,8 @@ test("Malformed version inventory cannot masquerade as healthy empty",()=>{
  for(const bad of [null,[],{}, {hosts:[],server_version:"3.0.0",limit:200},
    {...page("3.0.0",[]),hosts:[null]},page("3.0.0",[a("one","3.0.0")],0),
    {...page("3.0.0",[a("one","3.0.0")]),drift_count:-1},
+   page("3.0.0",[],201),
+   page("3.0.0",[],Number.MAX_SAFE_INTEGER),
    {...page("3.0.0",[a("one","3.0.0")]),hosts:[a("", "3.0.0")]}
  ])assert.throws(()=>validatedVersionInventory(bad),/Core|UNKNOWN/);
 });
