@@ -27,6 +27,7 @@ import {auditUtcPresetRange} from "./uxb-audit-presets";
 import {filterObservedPoliciesByStatus} from "./uxb-policy-status-filter";
 import {serviceAccountOperationalStatus,serviceAccountExpiry,serviceAccountPermissions,webhookStatus,webhookDeliverySummary} from "./uxb-integrations-state";
 import {filterObservedHosts} from "./uxb-host-search";
+import {filterLoadedHostConnections,type HostConnectionFilter} from "./uxb-host-connection-filter";
 import {FirstConnectionSetup,connectionReviewContext,type SetupDraft} from "./uxb-setup";
 
 type Json = Record<string, any>;
@@ -2004,6 +2005,8 @@ function ResourceWorkspace({kind,data,operator,onNavigate,api,initialFilter="",i
   useEffect(()=>{setFilter(initialFilter)},[kind,initialFilter]);
   const [admissionFilter,setAdmissionFilter]=useState<HostAdmission>(isHost&&isSavedAdmission(initialAdmission)?initialAdmission:"all");
   useEffect(()=>{setAdmissionFilter(isHost&&isSavedAdmission(initialAdmission)?initialAdmission:"all")},[isHost,initialAdmission]);
+  const [connectionFilter,setConnectionFilter]=useState<HostConnectionFilter>("all");
+  useEffect(()=>{setConnectionFilter("all")},[kind]);
   const [loaded,setLoaded]=useState<any[]>(data.items||[]);
   const [cursor,setCursor]=useState<string|null>(isPartialCorePage(data)?data.next_cursor:null);
   const [moreBusy,setMoreBusy]=useState(false),[moreError,setMoreError]=useState("");
@@ -2051,8 +2054,9 @@ function ResourceWorkspace({kind,data,operator,onNavigate,api,initialFilter="",i
   // Typed Host search is expressly limited to already authorized/loaded Core
   // inventory pages. Core currently supports name-only server-side query.
   const hostSearch=isHost?filterObservedHosts(loaded,filter,admissionFilter):null;
+  const hostConnection=isHost?filterLoadedHostConnections(hostSearch?.items||[],connectionFilter):null;
   const serviceSearch=isHost?null:filterObservedServices(loaded,filter);
-  const rows=(isHost?(hostSearch?.items||loaded):(serviceSearch?.items||loaded))
+  const rows=(isHost?(hostConnection?.items||[]):(serviceSearch?.items||loaded))
     .sort((a:any,b:any)=>isHost?
       (a.admission_state==="PENDING_APPROVAL"?-1:a.admission_state==="QUARANTINED"?0:1)
       -(b.admission_state==="PENDING_APPROVAL"?-1:b.admission_state==="QUARANTINED"?0:1):0);
@@ -2073,7 +2077,16 @@ function ResourceWorkspace({kind,data,operator,onNavigate,api,initialFilter="",i
         <label className="dr-filter-field"><WorkspaceIcon kind="search"/><input value={filter} maxLength={120} aria-label={isHost?"Filter Managed Hosts":"Filter Remote Services"}
           onChange={e=>setFilter(e.target.value)}
           placeholder={isHost?"Filter hosts (name:, host:, os:, admission:)…":"Filter services (name:, host:, port:, state:)…"}/>{filter&&<button onClick={()=>setFilter("")} aria-label="Clear filter">×</button>}</label></div>
-      {isHost&&hostSearch?.error&&<p className="warning-box" role="alert">Typed Host search not applied: {hostSearch.error} Displaying only previously loaded Core records, still scoped by admission state.</p>}
+      {isHost&&<div className="dr-form-actions" role="group" aria-label="Filter loaded Host connection state">
+        <span className="muted">Connection state of loaded Core Hosts · not proof of live reachability</span>
+        {(["all","connected","disconnected","unknown"] as const).map(status=><button
+          key={status} type="button" className={connectionFilter===status?"primary":"secondary"}
+          aria-pressed={connectionFilter===status} onClick={()=>setConnectionFilter(status)}>
+          {status==="all"?"All connections":status==="connected"?"Connected":status==="disconnected"?"Disconnected":"UNKNOWN"}
+        </button>)}
+      </div>}
+      {isHost&&connectionFilter!=="all"&&!!hostConnection?.unknownCount&&<p className="dr-uxb-catalog-page-notice" role="status">{hostConnection.unknownCount} loaded Host record(s) have UNKNOWN connectivity or invalid identity; UNKNOWN connectivity means absence cannot be confirmed. The current quick filter checks loaded authorized rows only.</p>}
+      {isHost&&hostSearch?.error&&<p className="warning-box" role="alert">Typed Host search not applied: {hostSearch.error} Displaying only previously loaded Core records, still scoped by admission and connection state.</p>}
       {isHost&&hostSearch?.warning&&<p className="dr-uxb-catalog-page-notice" role="status">{hostSearch.warning}</p>}
       {!isHost&&<p className="muted" role="note">Service search only checks loaded authorized Core pages.
         Use name:, host:, port:, state: or type: to filter observed Service fields; a plain word checks
@@ -2083,7 +2096,7 @@ function ResourceWorkspace({kind,data,operator,onNavigate,api,initialFilter="",i
       {!isHost&&serviceSearch?.warning&&<p className="dr-uxb-catalog-page-notice" role="status">UNKNOWN coverage · {serviceSearch.warning}</p>}
       {savedDraft&&<div className="toolbar"><button type="button" className="secondary"
         onClick={()=>onNavigate?.("views","activity",{savedViewDraft:savedDraft})}>Save this view →</button>
-        <span className="muted">Saves the visible text filter and optional Host admission selection as a private display preference after you name it. Unloaded Core inventory pages are not included.</span></div>}
+        <span className="muted">Saves the visible text filter and optional Host admission selection as a private display preference after you name it. Connection quick filter is not saved. Unloaded Core inventory pages are not included.</span></div>}
       {partial&&<p className="dr-uxb-catalog-page-notice" role="status">Partial Core inventory · more {isHost?"Managed Hosts":"Remote Services"} exist beyond the loaded pages. Filters check loaded rows only. Load more to inspect additional Core records.</p>}
       {moreError&&<p className="warning-box" role="alert">UNKNOWN · Next Core inventory page unavailable: {moreError} Existing observed resources remain visible.</p>}
       <div className="toolbar" role="status">
@@ -2096,7 +2109,7 @@ function ResourceWorkspace({kind,data,operator,onNavigate,api,initialFilter="",i
       {isHost&&<p className="muted">Host table: Last activity is the Core last_seen observation, not the Agent heartbeat.
         Unrecognized or missing trust, platform, version and activity facts remain UNKNOWN.
         View a Host for its separate heartbeat, approval and connection evidence.</p>}
-      {!rows.length?<div className="dr-empty-state"><span className="dr-empty-icon"><WorkspaceIcon kind="infrastructure"/></span><strong>{hostSearch?.error||serviceSearch?.error?"Search not applied":isHost&&!!hostSearch?.unknownCount&&!!filter?"No confirmed match in observed Hosts":!isHost&&!!serviceSearch?.unknownCount&&!!filter?"No confirmed match in observed Services":partial?"No match in loaded resources":filter?"No matching resources":"No resources yet"}</strong><p>{hostSearch?.error||serviceSearch?.error?"Correct the unsupported filter; only observed Core resources are shown.":isHost&&!!hostSearch?.unknownCount&&!!filter?"Some loaded Hosts have UNKNOWN values; no-match does not prove absence.":!isHost&&!!serviceSearch?.unknownCount&&!!filter?"Some loaded Services have UNKNOWN requested fields; no-match does not prove their absence.":partial?"Other resources may exist beyond this Core page. Use Search to find them.":filter?"Try a different filter.":isHost?"Connect an Agent to populate managed inventory.":"Publish a Remote Service from a managed host."}</p>{!filter&&isHost&&operator.role==="Admin"&&<button className="primary" onClick={()=>onNavigate?.("enrollments","infrastructure")}>Connect Agent</button>}</div>:
+      {!rows.length?<div className="dr-empty-state"><span className="dr-empty-icon"><WorkspaceIcon kind="infrastructure"/></span><strong>{hostSearch?.error||serviceSearch?.error?"Search not applied":isHost&&!!hostSearch?.unknownCount&&!!filter?"No confirmed match in observed Hosts":!isHost&&!!serviceSearch?.unknownCount&&!!filter?"No confirmed match in observed Services":isHost&&connectionFilter!=="all"?"No match in loaded Host connection states":partial?"No match in loaded resources":filter?"No matching resources":"No resources yet"}</strong><p>{hostSearch?.error||serviceSearch?.error?"Correct the unsupported filter; only observed Core resources are shown.":isHost&&!!hostSearch?.unknownCount&&!!filter?"Some loaded Hosts have UNKNOWN values; no-match does not prove absence.":!isHost&&!!serviceSearch?.unknownCount&&!!filter?"Some loaded Services have UNKNOWN requested fields; no-match does not prove their absence.":isHost&&connectionFilter!=="all"?"Only loaded Core Host connectivity is filtered; UNKNOWN values or unloaded Hosts may remain. This is not a fleet-wide absence or live access verdict.":partial?"Other resources may exist beyond this Core page. Use Search to find them.":filter?"Try a different filter.":isHost?"Connect an Agent to populate managed inventory.":"Publish a Remote Service from a managed host."}</p>{!filter&&isHost&&operator.role==="Admin"&&<button className="primary" onClick={()=>onNavigate?.("enrollments","infrastructure")}>Connect Agent</button>}</div>:
       <div className="dr-table-scroll"><table className="dr-resource-table"><thead><tr>{isHost?<><th>Host</th><th>Admission</th><th>Connection</th><th>Trust</th><th>Platform</th><th>Version</th><th>Last activity</th></>:<><th>Service</th><th>Managed host</th><th>Type</th><th>Public port</th><th>Target</th><th>State</th></>}</tr></thead><tbody>{rows.map((item:any)=><tr key={item.id} tabIndex={0} onClick={()=>setSelected(item)} onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();setSelected(item)}}}>{isHost?<><td><strong>{hostVisibleIdentity(item).primary}</strong><small>{hostVisibleIdentity(item).secondary}</small>
   <button type="button" className="dr-text-action"
     aria-label={"Inspect Managed Host "+hostVisibleIdentity(item).primary}
