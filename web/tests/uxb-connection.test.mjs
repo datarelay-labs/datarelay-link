@@ -419,3 +419,43 @@ test("UX-8 cross-page context rejects bidi/C1 spoofing while retaining legitimat
  assert.deepEqual(setup.connectionReviewContext("remote",...input),{
   plane:"remote",source:"src",destination:"dest",selector:"ssh"});
 });
+
+test("UX-3/Core wizard refuses malformed or cross-type first-page Host and Service inventory",()=>{
+ const validHosts={resource_type:"managed-host",limit:100,next_cursor:null,
+  items:[{id:"host-a",name:"서울 서버",admission_state:"APPROVED",connected:1}]};
+ const validServices={resource_type:"remote-service",limit:100,next_cursor:null,
+  items:[{id:"service-a",name:"관리 SSH",managed_host_id:"host-a",enabled:1}]};
+ assert.deepEqual(setup.observedSetupInventory(validHosts,"managed-host"),validHosts.items);
+ assert.deepEqual(setup.observedSetupInventory(validServices,"remote-service"),validServices.items);
+ assert.deepEqual(setup.observedSetupInventory({items:[]},"managed-host"),[]);
+ for(const bad of [
+  null,{}, {items:"not-an-array"}, {items:[null]},{items:[42]},
+  {items:[{id:null}]},{items:[{id:{secret:"DO_NOT_RENDER"}}]},
+  {items:[{id:"host-a"},{id:"host-a"}]},
+  {items:[{id:"host\u202e-a"}]},
+  {items:[{id:"host-a",name:{secret:"DO_NOT_RENDER"}}]},
+  {items:Array.from({length:101},(_,i)=>({id:"host-"+i}))},
+  {resource_type:"remote-service",items:[{id:"host-a"}]},
+  {items:[{id:"host-a"}],next_cursor:""},
+  {items:[{id:"host-a"}],next_cursor:42},
+ ]){
+  assert.equal(setup.observedSetupInventory(bad,"managed-host"),null,JSON.stringify(bad)?.slice(0,100));
+ }
+ assert.equal(setup.observedSetupInventory(validServices,"managed-host"),null);
+ assert.equal(setup.observedSetupInventory(validHosts,"remote-service"),null);
+ const source=readFileSync(join(root,"src","uxb-setup.tsx"),"utf8");
+ assert.match(source,/observedSetupInventory\(r\[0\]\.value,"managed-host"\)/);
+ assert.match(source,/observedSetupInventory\(r\[1\]\.value,"remote-service"\)/);
+});
+
+test("UX-8 Service readiness must not confuse string false, null or partial Core data with enabled",()=>{
+ for(const [v,want] of [
+  [true,"CONFIGURED · VERIFY JOB"],[1,"CONFIGURED · VERIFY JOB"],
+  [false,"DISABLED · VERIFY JOB"],[0,"DISABLED · VERIFY JOB"],
+  ["false","UNKNOWN"],["0","UNKNOWN"],[null,"UNKNOWN"],
+  [undefined,"UNKNOWN"],[-1,"UNKNOWN"],[{},"UNKNOWN"]
+ ])assert.equal(setup.observedRemoteServiceReadiness(v),want);
+ const source=readFileSync(join(root,"src","uxb-setup.tsx"),"utf8");
+ assert.match(source,/observedRemoteServiceReadiness\(service\.enabled\)/);
+ assert.doesNotMatch(source,/String\(service\.enabled\?/);
+});

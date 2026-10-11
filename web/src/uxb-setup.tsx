@@ -35,6 +35,47 @@ export function connectionReviewContext(plane:AccessPlane,source:unknown,destina
     destination:(destination as string).trim(),selector:(selector as string).trim()};
 }
 
+/** UX-3/8: the bounded, role-authorized Core inventory must be structurally
+ * observed before the wizard offers a selectable owner or published service.
+ * A malformed, cross-resource or spoofed page is UNKNOWN, never empty.
+ */
+const SETUP_UNSAFE_TEXT=/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/;
+const safeSetupName=(v:unknown):v is string=>
+  typeof v==="string"&&!!v.trim()&&v.length<=160&&!SETUP_UNSAFE_TEXT.test(v);
+export function observedSetupInventory(
+ input:unknown,kind:"managed-host"|"remote-service"
+):any[]|null{
+ if(!input||typeof input!=="object"||Array.isArray(input))return null;
+ const page=input as Record<string,any>;
+ if(page.resource_type!==undefined&&page.resource_type!==kind)return null;
+ if(!Array.isArray(page.items)||page.items.length>100
+   ||(page.limit!==undefined
+     &&(!Number.isSafeInteger(page.limit)||page.limit<1||page.limit>100))
+   ||(page.next_cursor!==undefined&&page.next_cursor!==null
+     &&(typeof page.next_cursor!=="string"||!page.next_cursor
+       ||page.next_cursor.length>1024||SETUP_UNSAFE_TEXT.test(page.next_cursor))))
+   return null;
+ const seen=new Set<string>();
+ for(const row of page.items){
+   if(!row||typeof row!=="object"||Array.isArray(row)
+     ||!safeSetupName(row.id)||seen.has(row.id)
+     ||["name","label"].some(key=>row[key]!==undefined&&row[key]!==null
+       &&(typeof row[key]!=="string"||row[key].length>160
+         ||SETUP_UNSAFE_TEXT.test(row[key]))))return null;
+   seen.add(row.id);
+ }
+ return page.items;
+}
+/** A SQLite 0/1 or real boolean is the only observed service enablement;
+ * untyped Core strings/objects cannot announce a published service as ready.
+ */
+export function observedRemoteServiceReadiness(value:unknown):
+  "CONFIGURED · VERIFY JOB"|"DISABLED · VERIFY JOB"|"UNKNOWN"{
+ if(value===true||value===1)return "CONFIGURED · VERIFY JOB";
+ if(value===false||value===0)return "DISABLED · VERIFY JOB";
+ return "UNKNOWN";
+}
+
 /** Only a deliberate owner change resets a resumed, non-secret first-use draft.
  * It does not touch the Core: old preview/confirmation belongs to the editor. */
 export function retargetRemoteHost(draft:SetupDraft,hostId:string):SetupDraft{
@@ -165,8 +206,10 @@ export function FirstConnectionSetup({api,operator,onNavigate,initialDraft,onDra
     ]);
     // An older Core snapshot cannot override a newer completed refresh.
     if(refreshGeneration.current!==generation)return;
-    if(r[0].status==="fulfilled"&&Array.isArray(r[0].value?.items)){
-      const list=r[0].value.items;setHosts(list);
+    const observedHosts=r[0].status==="fulfilled"
+      ?observedSetupInventory(r[0].value,"managed-host"):null;
+    if(observedHosts!==null){
+      const list=observedHosts;setHosts(list);
       // Do not silently switch the owning Agent to the first list entry.
       // Also discard the retained editor owner when its formerly selected
       // Agent vanishes; a remounted editor must not revive that old target.
@@ -181,8 +224,9 @@ export function FirstConnectionSetup({api,operator,onNavigate,initialDraft,onDra
       }
     }else{setHosts(null);setError("Managed Host inventory unavailable; prerequisite state is UNKNOWN.");
       if(planeRef.current==="remote"&&selectedHostRef.current)chooseRemoteHost("");}
-    if(r[1].status==="fulfilled"&&Array.isArray(r[1].value?.items))setServices(r[1].value.items);
-    else setServices(null);
+    const observedServices=r[1].status==="fulfilled"
+      ?observedSetupInventory(r[1].value,"remote-service"):null;
+    setServices(observedServices); // UNKNOWN on malformed/cross-type Core page.
     if(r[2].status==="fulfilled"&&Array.isArray(r[2].value?.items))setEnrollments(r[2].value);
     else setEnrollments(null); // UNKNOWN, never a fabricated empty enrollment list.
     if(r[3].status==="fulfilled"&&r[3].value?.resources&&typeof r[3].value.resources==="object")
@@ -236,7 +280,7 @@ export function FirstConnectionSetup({api,operator,onNavigate,initialDraft,onDra
       {error&&<p className="warning-box" role="alert">{error}</p>}
       {plane==="remote"&&<div className="dr-uxb-evidence-strip">
         <span>Agent: {selected?hostReadinessLabel(selected):hosts===null?"UNKNOWN":"NO HOST SELECTED"}</span>
-        <span>Remote Service: {service?String(service.enabled?"CONFIGURED · VERIFY JOB":"DISABLED · VERIFY JOB"):services===null?"UNKNOWN":"NOT SELECTED"}</span>
+        <span>Remote Service: {service?observedRemoteServiceReadiness(service.enabled):services===null?"UNKNOWN":"NOT SELECTED"}</span>
         <span>Core policy reachability: NOT VERIFIED</span>
       </div>}
     </section>
