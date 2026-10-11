@@ -208,6 +208,70 @@ export function nextFirstConnectionAction(states:TaskState[],role:string){
   return steps[4];
 }
 
+/** UX-4 · Core-driven, read-only task links for bounded Attention items.
+ * An unknown/malformed snapshot is not an empty/no-problems observation.
+ * Routes navigate into already authorized workspaces, not mutation endpoints.
+ */
+export type HomeAttentionItem={
+ kind:string,label:string,count:number,severity:"info"|"warning"|"critical",
+ route:string,group:string,action:string
+};
+export type HomeAttentionState={items:HomeAttentionItem[],observedAt:string};
+const ATTENTION_ROUTES:Record<string,[string,string,string]>={
+ "pending-host-approval":["hosts","connections","Inspect Hosts"],
+ "quarantined-hosts":["hosts","connections","Inspect Hosts"],
+ disconnected:["hosts","connections","Inspect Hosts"],
+ stale:["hosts","connections","Inspect Hosts"],
+ version_unknown:["versions","activity","Inspect Agent Versions"],
+ "degraded-remote-services":["services","connections","Inspect Services"],
+ "runtime-mismatch":["health","activity","Inspect System Health"],
+ "repeated-policy-denies":["audit","activity","Inspect Audit"],
+ "version-drift":["versions","activity","Inspect Agent Versions"],
+ "temporary-access-clock":["policies","access","Inspect Access Rules"],
+ "temporary-access-expiring":["policies","access","Inspect Access Rules"],
+ "audit-spool":["audit","activity","Inspect Audit"],
+ "certificate-readiness":["health","activity","Inspect System Health"],
+ "backup-readiness":["health","activity","Inspect System Health"],
+ "update-readiness":["health","activity","Inspect System Health"],
+ "system-readiness":["health","activity","Inspect System Health"],
+ "failed-jobs":["jobs","activity","Inspect Jobs"],
+ "job-saturation":["jobs","activity","Inspect Jobs"],
+ "access-hygiene-review":["doctor","activity","Troubleshoot"],
+ "emergency-cutoff":["access","access","Inspect Access"],
+};
+export function observedHomeAttention(data:unknown,role:unknown):HomeAttentionState|null{
+ const source=data as any;
+ const attention=source?.attention;
+ if(!attention||typeof attention!=="object"||Array.isArray(attention)
+   ||attention.authoritative!==false
+   ||!isObservedAbsoluteTime(attention.generated_at)
+   ||!Array.isArray(attention.items)||attention.items.length>32
+   ||!safeCount(attention.count)||attention.count!==attention.items.length)return null;
+ const seen=new Set<string>();
+ const rows:HomeAttentionItem[]=[];
+ for(const item of attention.items){
+   if(!item||typeof item!=="object"||Array.isArray(item)
+     ||typeof item.kind!=="string"||!/^([a-z][a-z0-9-]{0,63})$/.test(item.kind)
+     ||seen.has(item.kind)||typeof item.label!=="string"
+     ||!item.label.trim()||item.label.length>160||CORE_TEXT_BAD.test(item.label)
+     ||!safeCount(item.count)||!["info","warning","critical"].includes(item.severity))
+     return null;
+   seen.add(item.kind);
+   // Only Admin may navigate to integrations. For every other actor, a
+   // visible notification is diagnosis-only, not an admin invitation.
+   const route=["webhook-delivery","webhook-backlog"].includes(item.kind)
+     ?role==="Admin"
+       ?["integrations","administration","Inspect Integrations"]
+       :["health","activity","Inspect System Health"]
+     :Object.prototype.hasOwnProperty.call(ATTENTION_ROUTES,item.kind)
+       ?ATTENTION_ROUTES[item.kind]
+       :["doctor","activity","Troubleshoot"];
+   rows.push({kind:item.kind,label:item.label,count:item.count,
+     severity:item.severity,route:route[0],group:route[1],action:route[2]});
+ }
+ return {items:rows,observedAt:attention.generated_at};
+}
+
 /** Previously fetched Host evidence cannot be reused across Web sessions,
  * including two different operators holding the same nominal role.
  * This is UI display isolation; the authenticated Core owns authorization.
@@ -259,6 +323,7 @@ export function FirstUseHome({data,operator,api,onNavigate}:{
   const cards=steps.map((item,i)=>({...item,status:stage[i]}));
   const next=nextFirstConnectionAction(stage,String(operator?.role||"Read Only"));
   const evidence=observedCoreOverviewEvidence(data);
+  const attention=observedHomeAttention(data,operator?.role);
   return <section className="card dr-uxb-home" data-testid="uxb-first-connection">
     <div className="dr-section-head"><div><p className="dr-eyebrow">Get started · Core-observed progress</p>
       <h2>{newInstall?"Your first protected connection starts here":"What would you like to do next?"}</h2>
@@ -273,6 +338,29 @@ export function FirstUseHome({data,operator,api,onNavigate}:{
       <button type="button" className="secondary"
         onClick={()=>onNavigate?.("health","activity")}>Inspect System Health →</button>
     </div>
+    {attention===null?<p className="muted" role="status">
+      Core attention UNKNOWN · Core did not provide a validated Attention snapshot.
+      Open System Health before interpreting an empty Attention list.
+    </p>:attention.items.length>0&&<section className="dr-uxb-attention-summary" aria-label="Core attention investigation">
+      <div className="dr-section-head">
+        <div><h3>Investigate Core attention</h3><p className="muted">
+          Core attention observed at {attention.observedAt} · Derived observations, not a live connection test.</p></div>
+        <button type="button" className="secondary" onClick={()=>onNavigate?.("doctor","activity")}>
+          Troubleshoot all →
+        </button>
+      </div>
+      <ul className="dr-uxb-attention-list">{attention.items.slice(0,4).map(item=>
+        <li key={item.kind}>
+          <div><strong>{item.label}</strong><small>{item.count} affected · {item.severity}</small></div>
+          <button type="button" className="secondary" onClick={()=>onNavigate?.(item.route,item.group)}>
+            {item.action} →
+          </button>
+        </li>
+      )}</ul>
+      {attention.items.length>4&&<p className="muted">
+        Showing first 4 of {attention.items.length} Core attention categories. Troubleshoot for the rest.
+      </p>}
+    </section>}
     {scopedLoadState==="error"&&<p className="warning-box" role="alert">Managed Host inventory unavailable ({error}). Agent readiness is UNKNOWN, not healthy.</p>}
     {scopedLoadState==="ready"&&scopedComplete!==true&&<p className="warning-box" role="status">
       Managed Host inventory {scopedComplete===false?"is paginated":"completeness is UNKNOWN"}:

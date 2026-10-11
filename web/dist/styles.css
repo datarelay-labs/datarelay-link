@@ -279,3 +279,11 @@
 .dr-uxb-evidence-strip>span,.dr-uxb-evidence-strip>small{min-width:0;overflow-wrap:anywhere}
 .dr-uxb-evidence-strip>button{margin-left:auto;min-height:40px}
 @media(max-width:560px){.dr-uxb-evidence-strip{display:grid;grid-template-columns:minmax(0,1fr);gap:5px}.dr-uxb-evidence-strip>button{width:100%;margin-left:0}}
+/* Competitive UX-4: bounded Core attention links, responsive without hiding status. */
+.dr-uxb-attention-summary{min-width:0;border:1px solid var(--dr-border-default);border-radius:8px;padding:12px;background:var(--dr-surface-section)}
+.dr-uxb-attention-list{list-style:none;display:grid;gap:7px;margin:0;padding:0}
+.dr-uxb-attention-list>li{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:12px;min-width:0;border-top:1px solid var(--dr-border-divider);padding:8px 0}
+.dr-uxb-attention-list>li strong{display:block;overflow-wrap:anywhere;font-size:13px}
+.dr-uxb-attention-list>li small{display:block;color:var(--dr-text-muted);font-size:11px}
+.dr-uxb-attention-list>li button{min-height:40px}
+@media(max-width:560px){.dr-uxb-attention-list>li{grid-template-columns:minmax(0,1fr);gap:7px}.dr-uxb-attention-list>li button{width:100%}}

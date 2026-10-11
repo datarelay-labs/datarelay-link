@@ -379,3 +379,55 @@ test("UX-4 invalid or missing Core provenance/timestamps are UNKNOWN, never a he
   assert.doesNotMatch(html,/spoof|\[object Object\]/);
  }
 });
+
+test("UX-4 Core attention items provide bounded task-specific read-only inspection routes",()=>{
+ const page={attention:{authoritative:false,count:4,generated_at:"2026-10-11T03:19:00Z",items:[
+  {kind:"pending-host-approval",label:"Managed Hosts Pending Approval",count:2,severity:"warning"},
+  {kind:"degraded-remote-services",label:"DEGRADED Remote Services",count:1,severity:"warning"},
+  {kind:"failed-jobs",label:"Failed Management Jobs",count:4,severity:"warning"},
+  {kind:"webhook-delivery",label:"Signed Webhook Delivery Degraded",count:1,severity:"warning"}
+ ]}};
+ const admin=home.observedHomeAttention(page,"Admin");
+ assert.equal(admin?.items.length,4);
+ assert.deepEqual(admin?.items.map(item=>[item.route,item.group]),[
+  ["hosts","connections"],["services","connections"],["jobs","activity"],["integrations","administration"]]);
+ assert.equal(admin?.observedAt,"2026-10-11T03:19:00Z");
+ const readonly=home.observedHomeAttention(page,"Read Only");
+ assert.equal(readonly.items[3].route,"health");
+ assert.equal(readonly.items[3].group,"activity");
+ const html=renderToStaticMarkup(React.createElement(home.FirstUseHome,{
+  data:{...page,overview:{managed_hosts:{total:2},remote_services:{total:1,enabled:1},policies:{ai:{total:0,enabled:0}}}},
+  operator:{id:"reader-a",role:"Read Only"},api:async()=>{throw Error("SSR may not read Core")}}));
+ assert.match(html,/Investigate Core attention/);
+ assert.match(html,/DEGRADED Remote Services/);
+ assert.match(html,/Failed Management Jobs/);
+ assert.match(html,/Inspect Services/);
+ assert.match(html,/Inspect Jobs/);
+ assert.match(html,/Core attention observed at/);
+ assert.doesNotMatch(html,/Inspect integrations|No current attention items/);
+});
+test("UX-4 malformed or stale-looking attention cannot claim zero problems or expose nested Core payloads",()=>{
+ const valid={attention:{authoritative:false,count:1,generated_at:"2026-10-11T00:00:00Z",
+  items:[{kind:"version-drift",label:"Agent Version Drift",count:1,severity:"warning"}]}};
+ for(const bad of [
+  null,{}, {attention:{items:[]}}, {attention:{...valid.attention,count:0}},
+  {attention:{...valid.attention,authoritative:true}},
+  {attention:{...valid.attention,generated_at:"yesterday"}},
+  {attention:{...valid.attention,items:[null]}},
+  {attention:{...valid.attention,items:[{kind:"version-drift",label:{secret:"PRIVATE"},count:1,severity:"warning"}]}},
+  {attention:{...valid.attention,items:[{kind:"version-drift",label:"Agent\u202e Drift",count:1,severity:"warning"}]}},
+  {attention:{...valid.attention,items:[{kind:"version-drift",label:"Agent Version Drift",count:-1,severity:"warning"}]}},
+  {attention:{...valid.attention,items:[{kind:"version-drift",label:"Agent Version Drift",count:1,severity:"unsafe"}]}}
+ ])assert.equal(home.observedHomeAttention(bad,"Read Only"),null);
+ const unexpected=home.observedHomeAttention({attention:{...valid.attention,
+  items:[{kind:"constructor",label:"New Core signal",count:1,severity:"info"}]}},"Read Only");
+ assert.equal(unexpected?.items[0].route,"doctor");
+ assert.equal(unexpected?.items[0].action,"Troubleshoot");
+ assert.equal(home.observedHomeAttention({attention:{authoritative:false,count:0,
+  generated_at:"2026-10-11T00:00:00Z",items:[]}},"Read Only")?.items.length,0);
+ const none=renderToStaticMarkup(React.createElement(home.FirstUseHome,{
+  data:null,operator:{id:"reader-a",role:"Read Only"},
+  api:async()=>{throw Error("SSR may not read Core")}}));
+ assert.match(none,/Core attention UNKNOWN/);
+ assert.doesNotMatch(none,/No current attention items|PRIVATE/);
+});

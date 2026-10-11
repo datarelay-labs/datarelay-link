@@ -28,3 +28,15 @@ test('UX-7 Core evidence summary stays readable and touch-accessible at 320/375p
  assert.match(css,/@media\(max-width:560px\)\{\.dr-uxb-evidence-strip\{display:grid;grid-template-columns:minmax\(0,1fr\)/);
  assert.match(css,/\.dr-uxb-evidence-strip>button\{width:100%;margin-left:0\}\}/);
 });
+
+test('UX-4 actionable Core attention rows wrap safely at 320px and remain keyboard accessible',()=>{
+ const row=css.match(/^\.dr-uxb-attention-list>li\{([^}]*)\}/m)?.[1]||'';
+ assert.match(row,/\bmin-width:0\b/);
+ assert.match(row,/\bgrid-template-columns:minmax\(0,1fr\) auto\b/);
+ const label=css.match(/^\.dr-uxb-attention-list>li strong\{([^}]*)\}/m)?.[1]||'';
+ assert.match(label,/\boverflow-wrap:anywhere\b/);
+ const action=css.match(/^\.dr-uxb-attention-list>li button\{([^}]*)\}/m)?.[1]||'';
+ assert.match(action,/\bmin-height:40px\b/);
+ assert.match(css,/@media\(max-width:560px\)\{\.dr-uxb-attention-list>li\{grid-template-columns:minmax\(0,1fr\)/);
+ assert.match(css,/\.dr-uxb-attention-list>li button\{width:100%\}\}/);
+});
