@@ -111,3 +111,10 @@ test("G-14 Shell uses role-safe preference only for start page, never automatic 
  assert.match(css,/\.dr-start-page-settings-panel\{[^}]*max-width:/);
  assert.match(css,/@media\(max-width:560px\)\{\.dr-start-page-settings-panel\{/);
 });
+
+test("G-14 authenticated actor/role swap remounts Shell before stale page presentation",()=>{
+ const src=readFileSync(join(root,"src","main.tsx"),"utf8");
+ const app=src.split("function App(",2)[1]?.split("createRoot(",1)[0]||"";
+ assert.match(app,/return <Shell key=\{String\(operator\.id\|\|""\)\+":"\+String\(operator\.role\|\|""\)\}/);
+ assert.match(app,/operator=\{operator\} onLogout=\{\(\)=>setOperator\(null\)\}/);
+});

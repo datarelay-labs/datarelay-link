@@ -2856,7 +2856,7 @@ function App(){
   },[]);
   if(operator===undefined)return <div className="login-wrap"><div className="muted">Loading…</div></div>;
   if(!operator)return <Login onLogin={setOperator}/>;
-  return <Shell operator={operator} onLogout={()=>setOperator(null)}/>;
+  return <Shell key={String(operator.id||"")+":"+String(operator.role||"")} operator={operator} onLogout={()=>setOperator(null)}/>;
 }
 
 createRoot(document.getElementById("app")!).render(<App/>);
