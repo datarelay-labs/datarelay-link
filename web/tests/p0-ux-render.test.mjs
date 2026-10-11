@@ -598,5 +598,33 @@ test("UX-2 Guided Policy cannot Apply malformed, expired or incomplete Core Prev
  const src=readFileSync(join(webRoot,"src","p0-access-policy.tsx"),"utf8");
  assert.match(src,/if\(!canApplyGuidedRule\(preview,tests,acknowledge\)\)\{/);
  assert.match(src,/Core Change Plan expired\. Request a fresh Preview and policy tests\./);
- assert.match(src,/if\(result\?\.change_type!==kind\|\|result\?\.resource_type!==kind/);
+ assert.match(src,/if\(!observedGuidedPreviewMatchesIntent\(result,plane,operation,payload\.name\)\)/);
+});
+
+test("UX-2 Guided Preview and Apply must bind to the exact requested rule name",()=>{
+ const base={change_plan_id:"cp_"+"x".repeat(32),operation_class:"CHANGE",
+   operation:"guided.remote-access-rule.set",change_type:"remote-access-rule",
+   resource_type:"remote-access-rule",resource_ref:"allow-dev",
+   confirmation_class:"APPLY",expected_revision:12,no_change:false,
+   valid_until:"2032-01-01T00:00:00Z"};
+ const at=Date.parse("2031-01-01T00:00:00Z");
+ assert.equal(access.observedGuidedPreviewMatchesIntent(base,"remote","set"," allow-dev ",at),true);
+ for(const bad of [
+   {...base,resource_ref:"allow-prod"},
+   {...base,resource_ref:{secret:"allow-dev"}},
+   {...base,resource_ref:"allow-dev\u202espoof"},
+   {...base,operation:"guided.remote-access-rule.delete"},
+   {...base,change_type:"internet-access-rule"},
+   {...base,valid_until:"invalid"},
+   {...base,confirmation_class:"DELETE"},
+   {...base,expected_revision:"12"}
+ ])assert.equal(access.observedGuidedPreviewMatchesIntent(bad,"remote","set","allow-dev",at),false,JSON.stringify(bad));
+ assert.equal(access.observedGuidedPreviewMatchesIntent(base,"remote","set","allow-prod",at),false);
+ assert.equal(access.observedGuidedPreviewMatchesIntent(base,"remote","set","allow-dev",
+   Date.parse(base.valid_until)),false);
+ assert.equal(access.observedGuidedPreviewMatchesIntent(null,"remote","set","allow-dev",at),false);
+ const src=readFileSync(join(webRoot,"src","p0-access-policy.tsx"),"utf8");
+ assert.match(src,/if\(!observedGuidedPreviewMatchesIntent\(result,plane,operation,payload\.name\)\)/);
+ assert.match(src,/&&preview\?\.resource_ref===name\.trim\(\)/);
+ assert.match(src,/preview\?\.resource_ref!==name\.trim\(\)/);
 });

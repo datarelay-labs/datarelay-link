@@ -91,6 +91,30 @@ export function canApplyGuidedRule(
  return true;
 }
 
+/** Preview belongs only to the exact requested rule and Core policy plane.
+ * Matching the preview itself during Apply cannot compensate for a Preview
+ * response that selected the wrong rule before the operator approved it.
+ */
+export function observedGuidedPreviewMatchesIntent(
+ input:unknown,plane:AccessPlane,operation:unknown,ruleName:unknown,now:number=Date.now()
+):boolean{
+ if(!input||typeof input!=="object"||Array.isArray(input)
+   ||!["remote","internet","ai"].includes(plane)
+   ||!["set","delete"].includes(String(operation))
+   ||!trustedCoreTraceText(ruleName,128)||!Number.isFinite(now))return false;
+ const plan=input as Record<string,unknown>,kind=plane+"-access-rule";
+ return typeof plan.change_plan_id==="string"
+   &&/^cp_[A-Za-z0-9_-]{16,128}$/.test(plan.change_plan_id)
+   &&plan.operation_class==="CHANGE"
+   &&plan.change_type===kind&&plan.resource_type===kind
+   &&plan.operation==="guided."+kind+"."+operation
+   &&plan.resource_ref===ruleName.trim()
+   &&plan.confirmation_class==="APPLY"
+   &&Number.isSafeInteger(plan.expected_revision)&&Number(plan.expected_revision)>=0
+   &&isObservedAbsoluteTime(plan.valid_until)
+   &&Date.parse(plan.valid_until)>now;
+}
+
 /** Guided policy HTTP success is not an Apply acknowledgement. Match the
  * one-shot Core Change Plan's exact access plane/rule/type and require an
  * observed strictly advanced numeric revision before displaying success.
@@ -482,12 +506,8 @@ export function GuidedPolicyJourney({api,onNavigate,initialPlane="remote",locked
       const result=await api("/api/v1/guided/preview",{method:"POST",
         body:JSON.stringify({change_type:plane+"-access-rule",payload})});
       if(seq.current!==token)return;
-      const kind=plane+"-access-rule";
-      if(result?.change_type!==kind||result?.resource_type!==kind
-        ||result?.operation!=="guided."+kind+"."+operation
-        ||!isObservedAbsoluteTime(result?.valid_until)
-        ||Date.parse(result.valid_until)<=Date.now())
-        throw new Error("Core Preview does not confirm the exact requested policy action and current plan expiry.");
+      if(!observedGuidedPreviewMatchesIntent(result,plane,operation,payload.name))
+        throw new Error("Core Preview does not confirm the exact requested rule, policy action and current plan expiry.");
       setPreview(result);setPhase(2);
     }catch(e:any){if(seq.current===token)setError("Preview failed: "+String(e.message||e))}
     finally{if(seq.current===token)setBusy(false)}
@@ -506,12 +526,14 @@ export function GuidedPolicyJourney({api,onNavigate,initialPlane="remote",locked
   const unknowns=Array.isArray(preview?.blast_radius?.unknowns)?preview.blast_radius.unknowns:[];
   const safe=canApplyGuidedRule(preview,tests,acknowledge)
     &&preview?.change_type===plane+"-access-rule"
-    &&preview?.operation==="guided."+plane+"-access-rule."+operation;
+    &&preview?.operation==="guided."+plane+"-access-rule."+operation
+    &&preview?.resource_ref===name.trim();
   const requiredWord=preview?.confirmation_class==="APPLY"?"APPLY":"UNVERIFIED";
   async function apply(){
     if(busy||confirmation!==requiredWord
       ||preview?.change_type!==plane+"-access-rule"
-      ||preview?.operation!=="guided."+plane+"-access-rule."+operation)return;
+      ||preview?.operation!=="guided."+plane+"-access-rule."+operation
+      ||preview?.resource_ref!==name.trim())return;
     // Re-evaluate expiry and Core proof at click time; stale render state is
     // never sufficient to send a side-effecting Apply request.
     if(!canApplyGuidedRule(preview,tests,acknowledge)){
