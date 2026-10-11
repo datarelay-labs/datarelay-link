@@ -35,7 +35,7 @@ test("Policy decisions are fail-closed for missing and unrecognized Core values"
     final:{result:"ALLOW",reason:"Rule matched"},
     policy:{matched_rules:["allow-dev"],mode:"WHITELIST"},
   });
-  assert.deepEqual(real,{decision:"ALLOW",reason:"Rule matched",rules:["allow-dev"]});
+  assert.deepEqual(real,{decision:"ALLOW",reason:"Rule matched",rules:["allow-dev"],rulesQualified:true});
   assert.equal(access.explainTrace(null).decision,"UNKNOWN");
 });
 
@@ -467,4 +467,44 @@ test("UI-02 Host inspect link preserves canonical colon/long Core IDs without ty
  assert.match(main,/onInspectHost=\{hostId=>\{const target=observedHostInspectContext\(hostId\)/);
  assert.match(main,/onNavigate\?\.\("hosts","infrastructure",target\)/);
  assert.doesNotMatch(main,/savedFilter:hostId\}/);
+});
+
+test("UX-1 Core trace cannot coerce arrays or nested evidence into an ALLOW or valid rule proof",()=>{
+ for(const bogus of [["ALLOW"],["DENY"],{result:"ALLOW"},true,1,["ALLOW","DENY"]])
+   assert.equal(access.reliableDecision(bogus),"UNKNOWN",JSON.stringify(bogus));
+ const trace={final:{result:["ALLOW"],reason:{private:"SECRET_CAUSE"}},
+   policy:{matched_rules:["allow-ssh",["fake-rule"],{id:"SECRET_RULE"},
+     "allow-ssh\u202e", "a".repeat(161), "allow-ssh"]}};
+ const projected=access.explainTrace(trace);
+ assert.equal(projected.decision,"UNKNOWN");
+ assert.equal(projected.reason,"Core did not provide a decision reason.");
+ assert.deepEqual(projected.rules,["allow-ssh"]);
+ assert.equal(projected.rulesQualified,false);
+ assert.doesNotMatch(JSON.stringify(projected),/SECRET_CAUSE|SECRET_RULE|\u202e/);
+ const good=access.explainTrace({final:{result:"DENY",reason:"No matching rule"},
+   policy:{matched_rules:[]}});
+ assert.equal(good.rulesQualified,true);
+ assert.equal(good.decision,"DENY");
+ assert.deepEqual(good.rules,[]);
+ assert.equal(access.explainTrace({final:{result:"ALLOW",reason:"ok"},
+   policy:{matched_rules:Array.from({length:300},(_,i)=>"rule-"+i)}}).rulesQualified,false);
+});
+test("UX-1 Core trace route and modeled path never present nested/bidi source as real evidence",()=>{
+ assert.equal(access.observedTraceRouteValue({secret:"SECRET"},"fallback"),"UNKNOWN");
+ assert.equal(access.observedTraceRouteValue(["host-a"],"fallback"),"UNKNOWN");
+ assert.equal(access.observedTraceRouteValue("host\u202espoof","fallback"),"UNKNOWN");
+ assert.equal(access.observedTraceRouteValue(undefined,"requested-host"),"requested-host");
+ assert.equal(access.observedTraceRouteValue("core-host","requested-host"),"core-host");
+ assert.equal(access.observedTraceRouteValue(undefined,"a".repeat(200)),"UNKNOWN");
+ const path={plane:"remote",input:{plane:"remote",source:"host-a",destination:"app",
+   service:"ssh"},decision:"ALLOW",rules:["rule-ok","spoof\u202e","rule-ok"]};
+ const projected=access.modeledPathEvidence(path,"remote");
+ assert.deepEqual(projected.ruleReferences,["rule-ok"]);
+ assert.equal(projected.ruleReferencesLimited,true);
+ assert.equal(access.modeledPathEvidence({...path,input:{...path.input,source:"host\u202espoof"}},"remote"),null);
+ assert.equal(access.modeledPathEvidence({...path,input:{...path.input,service:"ssh\u202espoof"}},"remote"),null);
+ const src=readFileSync(join(webRoot,"src","p0-access-policy.tsx"),"utf8");
+ assert.match(src,/observedTraceRouteValue\(visibleTrace\.normalized_input\?\.source,source\)/);
+ assert.match(src,/observed\.rulesQualified/);
+ assert.match(src,/visibleTrace\.mixed===true/);
 });

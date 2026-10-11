@@ -6,18 +6,45 @@ type Navigate = (id:string,groupId?:string,context?:any)=>void;
 export type AccessPlane = "remote"|"internet"|"ai";
 type SelectedFlow = {source:string,destination:string,selector:string,path?:string};
 
-export function reliableDecision(value:unknown):"ALLOW"|"DENY"|"UNKNOWN" {
-  const text=String(value??"").toUpperCase();
-  return text==="ALLOW"||text==="DENY"?text:"UNKNOWN";
+const UNSAFE_CORE_TRACE=/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/;
+function trustedCoreTraceText(value:unknown,max=160):value is string{
+  return typeof value==="string"&&!!value.trim()&&value.length<=max
+    &&!UNSAFE_CORE_TRACE.test(value);
 }
 
-/** The browser must never authorize based on policy simulation or stale views. */
-export function explainTrace(trace:any):{decision:"ALLOW"|"DENY"|"UNKNOWN",reason:string,rules:string[]} {
+export function reliableDecision(value:unknown):"ALLOW"|"DENY"|"UNKNOWN" {
+  // Array or nested JSON coercion (e.g. ["ALLOW"]) is not a Core verdict.
+  if(typeof value!=="string"||!trustedCoreTraceText(value,16))return "UNKNOWN";
+  const decision=value.toUpperCase();
+  return decision==="ALLOW"||decision==="DENY"?decision:"UNKNOWN";
+}
+
+/** Only a scalar, bounded Core route label may be presented as a decision
+ * endpoint. A missing optional value may fall back to the explicit user input;
+ * malformed Core evidence must instead remain UNKNOWN.
+ */
+export function observedTraceRouteValue(value:unknown,fallback:unknown):string{
+  if(value===undefined)return trustedCoreTraceText(fallback)?fallback.trim():"UNKNOWN";
+  return trustedCoreTraceText(value)?value.trim():"UNKNOWN";
+}
+
+/** The browser must never authorize based on policy simulation or stale views.
+ * Incomplete/tainted matched-rule evidence cannot become "none reported".
+ */
+export function explainTrace(trace:any):{
+ decision:"ALLOW"|"DENY"|"UNKNOWN",reason:string,rules:string[],rulesQualified:boolean
+}{
   const decision=reliableDecision(trace?.final?.result);
-  const reason=String(trace?.final?.reason||"Core did not provide a decision reason.");
-  const rules=Array.isArray(trace?.policy?.matched_rules)
-    ?trace.policy.matched_rules.map((item:any)=>String(item)).filter(Boolean).slice(0,20):[];
-  return {decision,reason,rules};
+  const reason=trustedCoreTraceText(trace?.final?.reason,240)
+    ?trace.final.reason.trim():"Core did not provide a decision reason.";
+  const raw=trace?.policy?.matched_rules;
+  const rows=Array.isArray(raw)&&raw.length<=128?raw:[];
+  const valid=rows.filter((item:unknown):item is string=>trustedCoreTraceText(item));
+  const distinct=[...new Set(valid.map(x=>x.trim()))];
+  const rules=distinct.slice(0,20);
+  const rulesQualified=Array.isArray(raw)&&raw.length<=20&&valid.length===raw.length
+    &&distinct.length<=20;
+  return {decision,reason,rules,rulesQualified};
 }
 
 /** Label displayed evidence by the exact user-supplied flow, not the currently
@@ -53,12 +80,13 @@ export function modeledPathEvidence(row:unknown,plane:AccessPlane){
   if(!input||typeof input!=="object"||Array.isArray(input))return null;
   if((value.plane!=null&&value.plane!==plane)||(input.plane!=null&&input.plane!==plane))return null;
   const source=input.source,destination=input.destination,selector=plane==="ai"?input.permission:input.service;
-  if([source,destination,selector].some(x=>typeof x!=="string"||!x.trim()||x.length>160))return null;
+  if([source,destination,selector].some(x=>!trustedCoreTraceText(x)))return null;
   const path=plane==="ai"?(typeof input.path==="string"?input.path:""):"";
-  if(path.length>512)return null;
+  if(path.length>512||UNSAFE_CORE_TRACE.test(path))return null;
   const rawRules=Array.isArray(value.rules)?value.rules:[];
-  const validRules=rawRules.filter(
-    (x:unknown):x is string=>typeof x==="string"&&!!x.trim()&&x.length<=160
+  const boundedRules=rawRules.slice(0,128);
+  const validRules=boundedRules.filter(
+    (x:unknown):x is string=>trustedCoreTraceText(x)
   );
   const distinctRules=[...new Set(validRules)];
   const ruleReferences=distinctRules.slice(0,8);
@@ -67,7 +95,7 @@ export function modeledPathEvidence(row:unknown,plane:AccessPlane){
     flow:{source:source.trim(),destination:destination.trim(),selector:selector.trim(),path:path.trim()},
     decision:reliableDecision(value.decision),
     ruleReferences,
-    ruleReferencesLimited:distinctRules.length>8||validRules.length!==rawRules.length,
+    ruleReferencesLimited:distinctRules.length>8||boundedRules.length!==rawRules.length||validRules.length!==boundedRules.length,
   };
 }
 
@@ -295,14 +323,15 @@ export function AccessEvidenceExplorer({api,plane,source,destination,selector,on
     {visibleTrace&&<div className="dr-p0-evidence">
       <div className="dr-p0-decision"><span>Effective policy decision</span><strong className={"dr-p0-result "+observed.decision.toLowerCase()}>{observed.decision}</strong></div>
       <div className="dr-p0-route" aria-label="Core decision route">
-        <div><small>Source</small><strong>{visibleTrace.normalized_input?.source||source}</strong></div>
+        <div><small>Source</small><strong>{observedTraceRouteValue(visibleTrace.normalized_input?.source,source)}</strong></div>
         <span aria-hidden="true">→</span>
         <div><small>Policy decision</small><strong>{observed.decision}</strong></div>
         <span aria-hidden="true">→</span>
-        <div><small>Destination</small><strong>{visibleTrace.normalized_input?.destination||destination}</strong></div>
+        <div><small>Destination</small><strong>{observedTraceRouteValue(visibleTrace.normalized_input?.destination,destination)}</strong></div>
       </div>
       <p>{observed.reason}</p>
-      <p className="muted">Matched rules: {observed.rules.length?observed.rules.join(", "):"none reported"} · Mode: {visibleTrace.policy?.mode||"UNKNOWN"} · Enforcement: {visibleTrace.policy?.enforcement||"UNKNOWN"}</p>
+      <p className="muted">Matched rules: {observed.rules.length?observed.rules.join(", "):observed.rulesQualified?"none reported":"UNKNOWN"} · Mode: {observedTraceRouteValue(visibleTrace.policy?.mode,undefined)} · Enforcement: {observedTraceRouteValue(visibleTrace.policy?.enforcement,undefined)}</p>
+      {!observed.rulesQualified&&<p className="warning-box" role="status">Core matched-rule references were missing, invalid or truncated. This does not prove no rule matched.</p>}
       {observed.rules.length>0&&<div className="dr-p0-actions" aria-label="Find Core-traced policy rule">
         {observed.rules.filter(rule=>rule.length<=160).map(rule=><button key={rule} type="button" className="secondary"
           onClick={()=>onNavigate?.("policies","access",{focusPolicy:{plane,name:rule},
@@ -311,7 +340,7 @@ export function AccessEvidenceExplorer({api,plane,source,destination,selector,on
         </button>)}
         <p className="muted">The policy list verifies an exact single rule identity before opening details. A trace name alone is not a policy ID.</p>
       </div>}
-      {visibleTrace.mixed&&<p className="warning-box">Mixed group membership outcomes; inspect individual member results before acting.</p>}
+      {visibleTrace.mixed===true&&<p className="warning-box">Mixed group membership outcomes; inspect individual member results before acting.</p>}
       <details><summary>Advanced · exact Core trace</summary><pre className="plan">{JSON.stringify(visibleTrace,null,2)}</pre></details>
     </div>}
     {!visibleTrace&&!traceBusy&&<p className="muted">Decision: UNKNOWN until a fresh Core decision trace succeeds.</p>}
