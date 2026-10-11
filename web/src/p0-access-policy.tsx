@@ -213,6 +213,37 @@ export function modeledPathEvidence(row:unknown,plane:AccessPlane){
   };
 }
 
+/** CUI-001 — Original DRLink focus semantics inspired by published
+ * NetBird/Twingate screen behavior (see competitor evidence ledger).
+ * Search only the already loaded Core-modeled policy paths; no new network
+ * request, authorization or implied live reachability.
+ */
+export function focusCoreModeledPaths(
+ input:unknown,plane:AccessPlane,filter:unknown
+):{
+ rows:{index:number,evidence:NonNullable<ReturnType<typeof modeledPathEvidence>>}[],
+ matching:number,loaded:number,unverifiable:number,limited:boolean,filtering:boolean
+}|null{
+ if(!Array.isArray(input)||input.length>400
+   ||!["remote","internet","ai"].includes(plane)
+   ||typeof filter!=="string"||filter.length>128
+   ||UNSAFE_CORE_TRACE.test(filter))return null;
+ const query=filter.trim().toLowerCase();
+ const found:{index:number,evidence:NonNullable<ReturnType<typeof modeledPathEvidence>>}[]=[];
+ let unverifiable=0;
+ input.forEach((raw,index)=>{
+   const evidence=modeledPathEvidence(raw,plane);
+   if(!evidence){unverifiable+=1;return;}
+   const terms=[evidence.flow.source,evidence.flow.destination,
+     evidence.flow.selector,...evidence.ruleReferences];
+   if(!query||terms.some(term=>term.toLowerCase().includes(query))){
+     found.push({index,evidence});
+   }
+ });
+ return {rows:found.slice(0,16),matching:found.length,
+   loaded:input.length,unverifiable,limited:found.length>16,filtering:query.length>0};
+}
+
 /** A successful HTTP response is not proof of the requested policy graph.
  * Only the canonical read-only Core graph scope, plane, revision and exact
  * bounded path totals can become a UI snapshot. Never expose nested nodes.
@@ -312,6 +343,7 @@ export function AccessEvidenceExplorer({api,plane,source,destination,selector,on
   onInspectHost?:(hostId:string)=>void,actor?:{id?:unknown,role?:unknown}
 }){
   const [graphEvidence,setGraphEvidence]=useState<{key:string,value:any}|null>(null);
+  const [graphFocus,setGraphFocus]=useState("");
   const [traceEvidence,setTraceEvidence]=useState<{key:string,value:any}|null>(null);
   const [graphBusy,setGraphBusy]=useState(false),[traceBusy,setTraceBusy]=useState(false);
   const [error,setError]=useState(""),[path,setPath]=useState("");
@@ -327,7 +359,7 @@ export function AccessEvidenceExplorer({api,plane,source,destination,selector,on
   const currentTraceKey=coreFlowKey(plane,source,destination,selector,path);
   const visibleTrace=visibleCoreEvidence(traceEvidence,currentTraceKey);
   const visibleGraph=visibleCoreEvidence(graphEvidence,plane);
-  useEffect(()=>{graphRequest.current+=1;setGraphEvidence(null);setSelectedPath(null);setError("");setGraphBusy(false)},[plane]);
+  useEffect(()=>{graphRequest.current+=1;setGraphEvidence(null);setSelectedPath(null);setGraphFocus("");setError("");setGraphBusy(false)},[plane]);
   useEffect(()=>{traceRequest.current+=1;setTraceEvidence(null);setTraceBusy(false);setError("")},[plane,source,destination,selector,path]);
   useEffect(()=>()=>{graphRequest.current+=1;traceRequest.current+=1;publicationRequest.current+=1},[]);
   useEffect(()=>{
@@ -384,7 +416,8 @@ export function AccessEvidenceExplorer({api,plane,source,destination,selector,on
   }
   const observed=explainTrace(visibleTrace);
   const allPaths=Array.isArray(visibleGraph?.paths)?visibleGraph.paths:[];
-  const paths=allPaths.slice(0,16).map((raw:any)=>modeledPathEvidence(raw,plane));
+  const scopedPaths=focusCoreModeledPaths(allPaths,plane,graphFocus);
+  const paths=scopedPaths?.rows||[];
   const focus=selectedPath?.key===currentTraceKey&&visibleGraph?selectedPath:null;
   const limits=visibleGraph?.limits||{};
   return <section className="card dr-p0-section" aria-label="Effective access explanation" data-testid="p0-access-explain">
@@ -398,14 +431,27 @@ export function AccessEvidenceExplorer({api,plane,source,destination,selector,on
         <span>Core revision: {visibleGraph.revision}</span>
         <span>Core graph: {limits.truncated===true?"TRUNCATED":limits.truncated===false?"bounded snapshot":"UNKNOWN scope"}</span>
         <span>Topology discovery: {visibleGraph.network_topology?"present":"not performed"}</span></div>
-      {(limits.truncated!==false||allPaths.length>16)&&<p className="warning-box">
-        {allPaths.length>16?"Only the first 16 modeled paths are displayed. ":""}
-        {limits.truncated===true?"Core graph is truncated. ":limits.truncated!==false?"Core graph completeness is UNKNOWN. ":""}
+      <label className="dr-field dr-p0-focus">
+        <span>Focus modeled paths · source, destination, service or policy reference</span>
+        <input type="search" aria-label="Focus modeled paths" maxLength={128}
+          value={graphFocus} onChange={e=>{setGraphFocus(e.target.value);setSelectedPath(null)}}
+          placeholder="Find a source, destination, service or policy within loaded Core paths"/>
+        <small>Search only the {allPaths.length} loaded Core-modeled paths. This is policy evidence, not a network connectivity probe.</small>
+      </label>
+      {scopedPaths?<p className="muted" role="status">
+        Matching loaded paths: {scopedPaths.matching} / {scopedPaths.loaded}
+        {scopedPaths.filtering?" · filtered by current focus":" · no focus filter"}
+        · showing {scopedPaths.rows.length}
+      </p>:<p className="warning-box" role="alert">Core modeled path focus input is invalid · UNKNOWN.</p>}
+      {(limits.truncated!==false||scopedPaths?.limited||!!scopedPaths?.unverifiable)&&<p className="warning-box" role="status">
+        {scopedPaths?.limited?"Only the first 16 matching loaded paths are displayed. ":""}
+        {limits.truncated===true?"Core graph is truncated; filtering excludes unreturned paths. ":limits.truncated!==false?"Core graph completeness is UNKNOWN. ":""}
+        {!!scopedPaths?.unverifiable?scopedPaths.unverifiable+" loaded paths are unverified. ":""}
         Absent paths are not proof of DENY.
       </p>}
-      {paths.length? <div className="dr-p0-paths" aria-label="Core modeled paths">
-        {paths.map((row,i)=>row?
-          <button type="button" className="dr-p0-path" key={i}
+      {paths.length?<div className="dr-p0-paths" aria-label="Core modeled paths">
+        {paths.map(({index,evidence:row})=>
+          <button type="button" className="dr-p0-path" key={index}
             aria-pressed={focus?.key===row.key}
             onClick={()=>{
               setSelectedPath(row);
@@ -415,9 +461,11 @@ export function AccessEvidenceExplorer({api,plane,source,destination,selector,on
             <strong>{row.flow.source} <span aria-hidden="true">→</span> {row.flow.destination}</strong>
             <small>{row.flow.selector} · {row.ruleReferences.length?row.ruleReferences.join(", "):"policy references UNKNOWN"}</small>
             <span className={"dr-p0-result "+row.decision.toLowerCase()}>{row.decision}</span>
-          </button>:
-          <div className="dr-p0-path" key={i} role="status">Core modeled path {i+1}: UNKNOWN · incomplete or mismatched input</div>
-        )}</div>:<p className="muted">No modeled paths returned. This does not prove an access decision.</p>}
+          </button>
+        )}</div>:<p className="muted" role="status">
+          {scopedPaths?.filtering?"No matching paths in the loaded Core snapshot. ":"No modeled paths returned. "}
+          This does not prove DENY or imply reachability outside the current Core snapshot.
+        </p>}
     </>}
     {plane==="remote"&&<section className="dr-p0-evidence" role="region" aria-label="Observed Service to owning Host">
       <h4>Observed Service → owning Host</h4>

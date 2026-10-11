@@ -663,3 +663,55 @@ test("UX-1 Core policy trace must prove the exact requested flow before any ALLO
  assert.match(src,/if\(!qualified\)throw new Error\(/);
  assert.match(src,/setTraceEvidence\(\{key:requestKey,value:qualified\}\)/);
 });
+
+test("CUI-001 NetBird/Twingate focus can find observed Core paths beyond first 16, without invented reachability",()=>{
+ const paths=Array.from({length:26},(_,i)=>({
+   plane:"remote",input:{plane:"remote",source:i===23?"BRANCH-23":"src-"+i,
+     destination:i===23?"Production DB":"target-"+i,service:i===23?"ssh":"http"},
+   decision:i===23?"ALLOW":"UNKNOWN",rules:[i===23?"rule-branch-23":"rule-"+i],
+   nested_private:{secret:"MUST_NOT_EXPOSE"}
+ }));
+ const all=access.focusCoreModeledPaths(paths,"remote","");
+ assert.equal(all.loaded,26);
+ assert.equal(all.matching,26);
+ assert.equal(all.rows.length,16);
+ assert.equal(all.limited,true);
+ assert.deepEqual(all.rows.map(r=>r.index),Array.from({length:16},(_,i)=>i));
+ assert.doesNotMatch(JSON.stringify(all),/MUST_NOT_EXPOSE/);
+ for(const term of ["branch-23","PRODUCTION","SSH","RULE-BRANCH-23"]){
+  const found=access.focusCoreModeledPaths(paths,"remote",term);
+  assert.equal(found.loaded,26);
+  assert.equal(found.matching,1,term);
+  assert.equal(found.limited,false);
+  assert.equal(found.rows[0].index,23);
+  assert.equal(found.rows[0].evidence.decision,"ALLOW");
+  assert.equal(found.rows[0].evidence.flow.source,"BRANCH-23");
+ }
+ const absent=access.focusCoreModeledPaths(paths,"remote","not-a-resource");
+ assert.equal(absent.matching,0);
+ assert.deepEqual(absent.rows,[]);
+ assert.equal(absent.loaded,26);
+ // An invalid Core row must not become a selectable modeled-policy path.
+ const invalid=access.focusCoreModeledPaths([...paths,{plane:"remote",input:{source:{secret:"bad"}}}],
+   "remote","bad");
+ assert.equal(invalid.matching,0);
+ assert.equal(invalid.unverifiable,1);
+ assert.deepEqual(invalid.rows,[]);
+ for(const invalidTerm of [null,{},[], "x".repeat(129),"invalid\u202e"]){
+  assert.equal(access.focusCoreModeledPaths(paths,"remote",invalidTerm),null);
+ }
+ assert.equal(access.focusCoreModeledPaths({}, "remote","ssh"),null);
+ assert.equal(access.focusCoreModeledPaths(paths,"other","ssh"),null);
+});
+test("CUI-001 focus UI reads all loaded Core-modeled rows and explicitly warns when only loaded scope is searched",()=>{
+ const source=readFileSync(join(webRoot,"src","p0-access-policy.tsx"),"utf8");
+ assert.match(source,/const \[graphFocus,setGraphFocus\]=useState\(""\)/);
+ assert.match(source,/const scopedPaths=focusCoreModeledPaths\(allPaths,plane,graphFocus\)/);
+ assert.match(source,/value=\{graphFocus\}/);
+ assert.match(source,/aria-label="Focus modeled paths"/);
+ assert.match(source,/Only the first 16 matching loaded paths are displayed/);
+ assert.match(source,/No matching paths in the loaded Core snapshot/);
+ assert.match(source,/Absent paths are not proof of DENY/);
+ assert.match(source,/paths\.map\(\(\{index,evidence:row\}\)/);
+ assert.doesNotMatch(source,/allPaths\.slice\(0,16\)/);
+});
