@@ -29,6 +29,7 @@ import {operatorUserLabel} from "./uxb-users-state";
 import {auditInvestigation,matchObservedAuditReturn,matchObservedPolicyReturn,recentAuditInvestigation,observedAuditEventDetails,observedAuditAppliedFilters,type ObservedAuditEventDetail} from "./uxb-audit-context";
 import {auditUtcPresetRange} from "./uxb-audit-presets";
 import {filterObservedPoliciesByStatus} from "./uxb-policy-status-filter";
+import {observedPolicyExpiryState,filterObservedPoliciesByExpiry,observedPolicyExpiryCounts,filterObservedPolicySearch,observedPolicyDetailFields,type PolicyExpiryChoice} from "./uxb-policy-expiry";
 import {serviceAccountOperationalStatus,serviceAccountExpiry,serviceAccountPermissions,webhookStatus,webhookDeliverySummary} from "./uxb-integrations-state";
 import {filterObservedHosts} from "./uxb-host-search";
 import {sortLoadedHosts,isHostSortMode,type HostSortMode} from "./uxb-host-sort";
@@ -1877,6 +1878,8 @@ function PolicyWorkspace({data,operator,onNavigate,api,context}:{data:any,operat
     ?context.inspectPolicyId:"";
   const [plane,setPlane]=useState<string>(focusPlane||carriedPlane||"all"),[filter,setFilter]=useState(focusName||inspectPolicyId),[selected,setSelected]=useState<any>(null);
   const [statusFilter,setStatusFilter]=useState<"all"|"enabled"|"disabled"|"unknown">("all");
+  const [expiryFilter,setExpiryFilter]=useState<PolicyExpiryChoice>("all");
+  const [expiryObservedAt,setExpiryObservedAt]=useState(()=>Date.now());
   const [additional,setAdditional]=useState<any[]>([]);
   const [nextByPlane,setNextByPlane]=useState<Record<string,string|null>>(data.next_cursor_by_plane||{});
   const [exhausted,setExhausted]=useState<string[]>([]);
@@ -1918,7 +1921,6 @@ function PolicyWorkspace({data,operator,onNavigate,api,context}:{data:any,operat
       if(generation===pageEpoch.current)setLoadingPlane("");
     }
   }
-  const q=filter.trim().toLowerCase();
   const partial=isPartialCorePage(data);
   const limitedPlanes=(Array.isArray(data.possibly_truncated_planes)?data.possibly_truncated_planes:[])
     .filter((kind:string)=>!exhausted.includes(kind));
@@ -1926,8 +1928,12 @@ function PolicyWorkspace({data,operator,onNavigate,api,context}:{data:any,operat
   const focusComplete=!!focusPlane&&!limitedPlanes.includes(focusPlane)&&!nextByPlane[focusPlane];
   const focusedPolicy=focusPlane&&focusName?resolveCompletePolicyMatch(
     [...(data.items||[]),...additional],focusPlane,focusName,focusComplete):null;
-  const rows=filterObservedPoliciesByStatus<any>([...(data.items||[]),...additional].filter((item:any)=>
-    (plane==="all"||item.plane===plane)&&(!q||Object.values(item).some(v=>String(v??"").toLowerCase().includes(q)))),statusFilter);
+  const loadedPlanePolicies=[...(data.items||[]),...additional].filter((item:any)=>
+    plane==="all"||item.plane===plane);
+  const safePolicySearch=filterObservedPolicySearch(loadedPlanePolicies,filter);
+  const policyStatusRows=filterObservedPoliciesByStatus<any>(safePolicySearch.items,statusFilter);
+  const expiryCounts=observedPolicyExpiryCounts(policyStatusRows,expiryObservedAt);
+  const rows=filterObservedPoliciesByExpiry<any>(policyStatusRows,expiryFilter,expiryObservedAt);
   const tabs=[["all","All"],["remote","Remote"],["internet","Internet"],["ai","AI"]];
   return <div className="dr-resource-workspace">
     <section className="dr-page-intro"><div><p className="dr-eyebrow">Access</p><h2>Policies</h2><p className="muted">One policy workspace with separate Remote, Internet and AI security semantics.</p></div><div className="dr-page-actions"><button className="secondary" onClick={()=>onNavigate?.("access","access",carriedFlow||undefined)}>Test & explain access</button>{operator.role!=="Read Only"&&<button className="primary" onClick={()=>onNavigate?.("drafts","access",carriedFlow||undefined)}>Draft change</button>}</div></section>
@@ -1955,7 +1961,8 @@ function PolicyWorkspace({data,operator,onNavigate,api,context}:{data:any,operat
         <p className="muted">{focusComplete?"Exact rule identity is missing or ambiguous in Core policy inventory.":
           "Policy inventory is incomplete. Load remaining Core pages before resolving this rule."}</p>}
     </section>}
-    <section className="card dr-list-card"><div className="dr-list-toolbar"><div><strong>{rows.length}</strong><span>policy rules</span></div><label className="dr-filter-field"><WorkspaceIcon kind="search"/><input value={filter} onChange={e=>setFilter(e.target.value)} placeholder="Filter policies…"/>{filter&&<button onClick={()=>setFilter("")} aria-label="Clear filter">×</button>}</label></div>
+    <section className="card dr-list-card"><div className="dr-list-toolbar"><div><strong>{rows.length}</strong><span>policy rules</span></div><label className="dr-filter-field"><WorkspaceIcon kind="search"/><input value={filter} maxLength={120} aria-label="Search visible policy fields"
+        onChange={e=>setFilter(e.target.value)} placeholder="Filter policies (name, ID, action)…"/>{filter&&<button onClick={()=>setFilter("")} aria-label="Clear filter">×</button>}</label></div>
       <div className="dr-form-actions" role="group" aria-label="Filter loaded policy state">
         <span className="muted">State of loaded Core rules · UNKNOWN is not Disabled</span>
         {(["all","enabled","disabled","unknown"] as const).map(status=><button
@@ -1964,14 +1971,38 @@ function PolicyWorkspace({data,operator,onNavigate,api,context}:{data:any,operat
           {status==="all"?"All states":status==="enabled"?"Enabled":status==="disabled"?"Disabled":"UNKNOWN"}
         </button>)}
       </div>
+      <div className="dr-form-actions" role="group" aria-label="Filter loaded policy expiry">
+        <span className="muted">Configured policy expiry · loaded Core rules only</span>
+        {(["all","expired","due24h","later","never","unknown"] as const).map(choice=><button
+          key={choice} type="button" className={expiryFilter===choice?"primary":"secondary"}
+          aria-pressed={expiryFilter===choice} onClick={()=>setExpiryFilter(choice)}>
+          {choice==="all"?"All expiry":choice==="expired"?"Expired":
+           choice==="due24h"?"Due within 24h":choice==="later"?"Later":
+           choice==="never"?"Never":"UNKNOWN"}
+        </button>)}
+      </div>
+      {safePolicySearch.error&&<p className="warning-box" role="alert">
+        Policy search not applied: {safePolicySearch.error} Only supported visible Core policy fields are searchable.
+      </p>}
+      <div className="dr-form-actions" role="group" aria-label="Policy expiry snapshot">
+        <span className="muted" role="status">
+          Loaded policy expiry only · {expiryCounts.loadedCount} already-loaded policies after plane, text and state filters
+          · Expired {expiryCounts.expired} · Due within 24h {expiryCounts.due24h}
+          · Later {expiryCounts.later} · Never {expiryCounts.never} · UNKNOWN {expiryCounts.unknown}
+          · as-of this browser {new Date(expiryObservedAt).toISOString()}
+          · not proof of live access, approval or policy enforcement
+        </span>
+        <button type="button" className="secondary"
+          onClick={()=>setExpiryObservedAt(Date.now())}>Re-evaluate local time</button>
+      </div>
       {(partial||selectedMayBeLimited)&&<p className="dr-uxb-catalog-page-notice" role="status">Core policy list may be incomplete · {limitedPlanes.length?limitedPlanes.map((kind:string)=>kind.toUpperCase()).join(", ")+" reached the per-plane 100-rule API limit.": "Additional rules exist beyond the loaded page."} Filters inspect only loaded rules. Use Search to find a specific policy.</p>}
       {pageError&&<p className="warning-box" role="alert">Core policy page unavailable: {pageError}. Existing rows remain visible; retry Load more.</p>}
       {Object.entries(nextByPlane).filter(([kind,cursor])=>!!cursor&&(plane==="all"||plane===kind)).map(([kind])=>
         <button key={kind} type="button" className="secondary" disabled={!!loadingPlane}
           onClick={()=>loadMore(kind)}>{loadingPlane===kind?"Loading "+kind+" rules…":"Load more "+kind+" rules →"}</button>)}
-      {!rows.length?<div className="dr-empty-state"><span className="dr-empty-icon"><WorkspaceIcon kind="access"/></span><strong>{partial||selectedMayBeLimited?"No match in loaded policy rules":"No matching policy rules"}</strong><p>{partial||selectedMayBeLimited?"Other rules may exist beyond the fetched Core policy pages. Use Search for a specific policy.":"Change the filter or use the guided policy controls below."}</p></div>:<div className="dr-table-scroll"><table className="dr-resource-table"><thead><tr><th>Policy</th><th>Plane</th><th>Action</th><th>State</th><th>Expires</th><th>Description</th></tr></thead><tbody>{rows.map((item:any)=><tr key={(item.plane||"policy")+":"+item.id} tabIndex={0} onClick={()=>setSelected(item)} onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();setSelected(item)}}}><td><strong>{item.name||item.id}</strong><small>{item.id}</small></td><td>{item.plane||"—"}</td><td>{item.action||"—"}</td><td><span className={policyStateLabel(item.enabled)==="Enabled"?"dr-state active":"dr-state"}><i/>{policyStateLabel(item.enabled)}</span></td><td>{policyExpiryLabel(item)}</td><td>{item.description||"—"}</td></tr>)}</tbody></table></div>}
+      {!rows.length?<div className="dr-empty-state"><span className="dr-empty-icon"><WorkspaceIcon kind="access"/></span><strong>{partial||selectedMayBeLimited?"No match in loaded policy rules":"No matching policy rules"}</strong><p>{partial||selectedMayBeLimited?"Other rules may exist beyond the fetched Core policy pages. Use Search for a specific policy.":"Change the filter or use the guided policy controls below."}</p></div>:<div className="dr-table-scroll"><table className="dr-resource-table"><thead><tr><th>Policy</th><th>Plane</th><th>Action</th><th>State</th><th>Expires</th><th>Description</th></tr></thead><tbody>{rows.map((item:any)=><tr key={(item.plane||"policy")+":"+item.id} tabIndex={0} onClick={()=>setSelected(item)} onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();setSelected(item)}}}><td><strong>{item.name||item.id}</strong><small>{item.id}</small></td><td>{item.plane||"—"}</td><td>{item.action||"—"}</td><td><span className={policyStateLabel(item.enabled)==="Enabled"?"dr-state active":"dr-state"}><i/>{policyStateLabel(item.enabled)}</span></td><td><span className={observedPolicyExpiryState(item,expiryObservedAt)==="expired"?"badge warning":"badge"}>{observedPolicyExpiryState(item,expiryObservedAt)==="due24h"?"Due within 24h":observedPolicyExpiryState(item,expiryObservedAt)==="unknown"?"UNKNOWN":observedPolicyExpiryState(item,expiryObservedAt)==="never"?"Never":observedPolicyExpiryState(item,expiryObservedAt)==="later"?"Later":"Expired"}</span><small>{policyExpiryLabel(item)}</small></td><td>{item.description||"—"}</td></tr>)}</tbody></table></div>}
     </section>
-    {selected&&<div className="dr-drawer-backdrop" onMouseDown={e=>{if(e.currentTarget===e.target)setSelected(null)}}><aside className="dr-detail-drawer" role="dialog" aria-modal="true" aria-label="Policy detail" tabIndex={-1} autoFocus><header><div><p className="dr-eyebrow">{selected.plane||"Policy"} access</p><h2>{selected.name||selected.id}</h2><p>{selected.id}</p></div><button className="dr-icon-button" onClick={()=>setSelected(null)} aria-label="Close detail">×</button></header><div className="dr-drawer-status"><span className={policyStateLabel(selected.enabled)==="Enabled"?"dr-state active":"dr-state"}><i/>{policyStateLabel(selected.enabled)}</span></div><div className="dr-detail-fields">{Object.entries(selected).filter(([,value])=>typeof value!=="object"&&value!==null&&value!=="").map(([key,value])=><div key={key}><span>{key.replaceAll("_"," ")}</span><strong>{String(value)}</strong></div>)}</div><footer><button className="secondary" onClick={()=>{const target={originId:String(selected.id||selected.name||""),originType:"access-rule",plane:selected.plane};setSelected(null);onNavigate?.("audit","activity",target)}}>Recent activity</button><button className="primary" onClick={()=>{const target={originId:String(selected.id||selected.name||""),originType:"access-rule",plane:selected.plane||"remote",source:String(selected.source||""),destination:String(selected.destination||""),selector:String(selected.plane==="ai"?selected.permission||"":selected.service||"")};setSelected(null);onNavigate?.("access","access",target)}}>Why allowed / denied?</button></footer></aside></div>}
+    {selected&&<div className="dr-drawer-backdrop" onMouseDown={e=>{if(e.currentTarget===e.target)setSelected(null)}}><aside className="dr-detail-drawer" role="dialog" aria-modal="true" aria-label="Policy detail" tabIndex={-1} autoFocus><header><div><p className="dr-eyebrow">{selected.plane||"Policy"} access</p><h2>{selected.name||selected.id}</h2><p>{selected.id}</p></div><button className="dr-icon-button" onClick={()=>setSelected(null)} aria-label="Close detail">×</button></header><div className="dr-drawer-status"><span className={policyStateLabel(selected.enabled)==="Enabled"?"dr-state active":"dr-state"}><i/>{policyStateLabel(selected.enabled)}</span></div><div className="dr-detail-fields">{observedPolicyDetailFields(selected).map(field=><div key={field.label}><span>{field.label}</span><strong>{field.value}</strong></div>)}</div><footer><button className="secondary" onClick={()=>{const target={originId:String(selected.id||selected.name||""),originType:"access-rule",plane:selected.plane};setSelected(null);onNavigate?.("audit","activity",target)}}>Recent activity</button><button className="primary" onClick={()=>{const target={originId:String(selected.id||selected.name||""),originType:"access-rule",plane:selected.plane||"remote",source:String(selected.source||""),destination:String(selected.destination||""),selector:String(selected.plane==="ai"?selected.permission||"":selected.service||"")};setSelected(null);onNavigate?.("access","access",target)}}>Why allowed / denied?</button></footer></aside></div>}
   </div>;
 }
 
