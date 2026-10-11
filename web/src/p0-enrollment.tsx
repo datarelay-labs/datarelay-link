@@ -104,6 +104,50 @@ export function observedEnrollmentHostPage(input:unknown):{
  return {items:observed,complete};
 }
 
+/** Core returns an explicit, display-once issuance response. Never advance
+ * onboarding or display/copy a malformed, nested or wrong-mode credential.
+ * A failed response could have created a ticket; users must inspect history
+ * rather than automatically repeating a potentially one-time operation.
+ */
+export type ObservedIssuedEnrollment={
+ mode:"zero-touch"|"manual",platform:string,expires_at:string,command:string,
+ enrollment_code:string,pre_approved:boolean,next_step:string
+};
+const BAD_COMMAND_TEXT=/[\u0000-\u0008\u000b-\u000c\u000e-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/;
+export function observedIssuedEnrollment(
+ input:unknown,mode:unknown,platform:unknown
+):ObservedIssuedEnrollment|null{
+ if(!input||typeof input!=="object"||Array.isArray(input)
+   ||typeof mode!=="string"||!["zero-touch","manual"].includes(mode)
+   ||typeof platform!=="string"||!["linux","macos","windows"].includes(platform))return null;
+ const row=input as Record<string,unknown>;
+ if(row.mode!==mode||row.platform!==platform||row.state!=="pending"
+   ||row.display_once!==true||row.management_only!==true
+   ||!isObservedAbsoluteTime(row.expires_at)
+   ||typeof row.ttl_seconds!=="number"||!Number.isSafeInteger(row.ttl_seconds)
+   ||row.ttl_seconds<=0
+   ||row.ttl_seconds>(mode==="manual"?30*86400:24*3600)
+   ||typeof row.command!=="string"||!row.command.trim()
+   ||row.command.length>65536||BAD_COMMAND_TEXT.test(row.command))
+   return null;
+ if(mode==="zero-touch"&&typeof row.pre_approved!=="boolean"
+   ||mode==="manual"&&row.pre_approved!==undefined&&row.pre_approved!==false)
+   return null;
+ const enrollment_code=mode==="manual"?row.enrollment_code:"";
+ if(mode==="manual"&&(typeof enrollment_code!=="string"
+   ||!/^[a-f0-9]{16}\.[a-f0-9]{64}$/.test(enrollment_code)))return null;
+ const next_step=historyText(row.next_step);
+ return {
+  mode:mode as "zero-touch"|"manual",
+  platform:platform as string,
+  expires_at:row.expires_at as string,
+  command:row.command as string,
+  enrollment_code:enrollment_code as string,
+  pre_approved:mode==="zero-touch"?row.pre_approved as boolean:false,
+  next_step:next_step==="UNKNOWN"?"Inspect Managed Hosts after installing the Agent.":next_step,
+ };
+}
+
 /** Admission, trust, connection and policy are independent Core concepts.
  * Do not stringify arbitrary nested Core state or trust an unverified time.
  */
@@ -199,7 +243,9 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate,onBus
         method:"POST",body:JSON.stringify({platform,ttl_seconds:ttl,label,note,
           ...(mode==="zero-touch"?{pre_approved:preApproved}:{})}),
       });
-      setIssued(result);refresh();setStep(2);
+      const observed=observedIssuedEnrollment(result,mode,platform);
+      if(!observed)throw new Error("Core returned invalid enrollment evidence. The ticket may exist; inspect enrollment history before retrying.");
+      setIssued(observed);refresh();setStep(2);
     }catch(e:any){setError(String(e.message||e))}
     finally{setBusy(false)}
   }

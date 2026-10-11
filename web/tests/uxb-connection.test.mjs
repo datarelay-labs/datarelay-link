@@ -679,3 +679,52 @@ test("UX-3 enrollment Host options tolerate malformed display labels without lea
  assert.doesNotMatch(src,/setHosts\(result\.items\)/);
  assert.match(src,/Other Hosts may exist beyond this Core page/);
 });
+
+test("UX-3 issued Agent instructions require authentic display-once Core evidence",()=>{
+ const valid={mode:"zero-touch",platform:"linux",state:"pending",
+  expires_at:"2026-10-11T06:00:00Z",ttl_seconds:3600,
+  command:"curl -f https://installer.example.invalid/agent | sh",
+  display_once:true,management_only:true,pre_approved:false,
+  next_step:"Run the command once on the selected Agent."};
+ const parsed=enrollment.observedIssuedEnrollment(valid,"zero-touch","linux");
+ assert.deepEqual(parsed,{
+  mode:"zero-touch",platform:"linux",expires_at:"2026-10-11T06:00:00Z",
+  command:valid.command,enrollment_code:"",pre_approved:false,
+  next_step:valid.next_step
+ });
+ assert.equal(enrollment.observedIssuedEnrollment({...valid,pre_approved:true},"zero-touch","linux")?.pre_approved,true);
+ const manual={...valid,mode:"manual",platform:"macos",ttl_seconds:600,
+  enrollment_code:"a".repeat(16)+"."+"b".repeat(64)};
+ const manualParsed=enrollment.observedIssuedEnrollment(manual,"manual","macos");
+ assert.equal(manualParsed?.enrollment_code,manual.enrollment_code);
+ assert.equal(manualParsed?.pre_approved,false);
+ for(const bad of [
+  null,{}, {...valid,mode:"manual"},{...valid,platform:"windows"},
+  {...valid,command:{secret:"PRIVATE_CMD"}},
+  {...valid,command:"curl -X GET\u202e hidden"},
+  {...valid,display_once:false},{...valid,management_only:false},
+  {...valid,pre_approved:"false"},{...valid,expires_at:"yesterday"},
+  {...valid,ttl_seconds:"3600"},{...valid,command:"x".repeat(70000)},
+  {...valid,state:"approved"},
+ ]){
+  assert.equal(enrollment.observedIssuedEnrollment(bad,"zero-touch","linux"),null);
+ }
+ assert.equal(enrollment.observedIssuedEnrollment({...manual,enrollment_code:"INVALID"},"manual","macos"),null);
+ const hostile={toString(){throw Error("PRIVATE_MODE_MUST_NOT_COERCE")}};
+ assert.equal(enrollment.observedIssuedEnrollment(valid,hostile,"linux"),null);
+ assert.equal(enrollment.observedIssuedEnrollment(valid,"zero-touch",hostile),null);
+});
+test("UX-3 issuing malformed Core credential evidence never advances onboarding to copy UI",()=>{
+ const source=readFileSync(join(root,"src","p0-enrollment.tsx"),"utf8");
+ assert.match(source,/const observed=observedIssuedEnrollment\(result,mode,platform\)/);
+ assert.match(source,/if\(!observed\)throw new Error\("Core returned invalid enrollment evidence/);
+ assert.match(source,/setIssued\(observed\);refresh\(\);setStep\(2\)/);
+ assert.doesNotMatch(source,/setIssued\(result\);refresh\(\);setStep\(2\)/);
+ const parsed=enrollment.observedIssuedEnrollment({
+  mode:"zero-touch",platform:"windows",state:"pending",display_once:true,
+  management_only:true,pre_approved:false,expires_at:"2026-10-11T06:00:00Z",
+  ttl_seconds:3600,command:"pwsh -Command example",next_step:{secret:"PRIVATE_NEXT"}
+ },"zero-touch","windows");
+ assert.equal(parsed?.next_step,"Inspect Managed Hosts after installing the Agent.");
+ assert.doesNotMatch(JSON.stringify(parsed),/PRIVATE_/);
+});
