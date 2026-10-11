@@ -225,3 +225,26 @@ test("UX-3 onboarding source does not retain or display old ticket when issue in
  assert.match(src,/disabled=\{busy\}[^>]*onChange=\{e=>\{setIssued\(null\);setCopyStatus\(""\);setPreApproved/);
  assert.match(src,/\{visibleIssued\?<div className="warning-box">/);
 });
+
+test("UX-3 Host admission evidence is private to the exact current operator ID and Web role",()=>{
+ const scope={id:"admin-a",role:"Admin"};
+ assert.equal(enroll.onboardingHostSnapshotMatchesActor(scope,{id:"admin-a",role:"Admin"}),true);
+ for(const changed of [
+  {id:"admin-b",role:"Admin"},{id:"admin-a",role:"Operator"},
+  {id:"admin-a",role:"Read Only"},null,{},[],{id:"",role:"Admin"},
+  {id:"admin-a",role:"admin"},{id:"admin-a",role:"UNKNOWN"}
+ ]){
+  assert.equal(enroll.onboardingHostSnapshotMatchesActor(scope,changed),false,
+   JSON.stringify(changed));
+ }
+ assert.equal(enroll.onboardingHostSnapshotMatchesActor(null,scope),false);
+ assert.equal(enroll.onboardingHostSnapshotMatchesActor({id:"admin-a",role:"Admin"},null),false);
+ const src=readFileSync(join(webRoot,"src","p0-enrollment.tsx"),"utf8");
+ assert.match(src,/const matchingHostScope=onboardingHostSnapshotMatchesActor\(hostsScope,operator\)/);
+ assert.match(src,/const visibleHosts=matchingHostScope\?hosts:null/);
+ assert.match(src,/const scopedPreview=matchingHostScope\?preview:null/);
+ assert.match(src,/setHostsScope\(\{id:operator\?\.id,role:operator\?\.role\}\)/);
+ assert.match(src,/\[step,operator\?\.id,operator\?\.role\]/);
+ assert.match(src,/if\(!admin\|\|!matchingHostScope\|\|!selectedHost/);
+ assert.match(src,/if\(!admin\|\|!matchingHostScope\|\|!selectedHost\|\|!scopedPreview\?\.change_plan_id/);
+});

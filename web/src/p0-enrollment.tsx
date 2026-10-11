@@ -148,6 +148,21 @@ export function observedIssuedEnrollment(
  };
 }
 
+/** UX-3: a Core Host inventory and its approval preview are private to the
+ * exact current operator, including two different users with the same role.
+ * Web remains a read-only projection until Core approves the actual Change Plan.
+ */
+export function onboardingHostSnapshotMatchesActor(scope:unknown,current:unknown):boolean{
+ const obj=(v:unknown):v is Record<string,unknown>=>
+   !!v&&typeof v==="object"&&!Array.isArray(v);
+ if(!obj(scope)||!obj(current))return false;
+ const id=current.id,role=current.role;
+ return typeof id==="string"&&!!id.trim()&&id.length<=160
+   &&!BAD_ENROLLMENT_TEXT.test(id)
+   &&["Admin","Operator","Read Only"].includes(String(role))
+   &&scope.id===id&&scope.role===role;
+}
+
 /** A display-once ticket belongs to one exact requested UI intent and Web
  * operator, never merely to a role or a previously selected Agent platform.
  * These inputs are reference text only, not authorization/secret storage.
@@ -230,6 +245,7 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate,onBus
   const [ttl,setTtl]=useState("3600"),[label,setLabel]=useState(""),[note,setNote]=useState("");
   const [preApproved,setPreApproved]=useState(false),[issued,setIssued]=useState<any>(null);
   const [hosts,setHosts]=useState<ObservedEnrollmentHost[]|null>(null),[selectedHost,setSelectedHost]=useState("");
+  const [hostsScope,setHostsScope]=useState<{id:unknown,role:unknown}|null>(null);
   const [hostsComplete,setHostsComplete]=useState<boolean|null>(null);
   const [fetchBusy,setFetchBusy]=useState(false),[busy,setBusy]=useState(false);
   useEffect(()=>{onBusyChange?.(busy)},[busy]);
@@ -240,9 +256,14 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate,onBus
   const approvalGeneration=useRef(0);
   const inventoryGeneration=useRef(0);
   const admin=operator?.role==="Admin";
-  const selected=hosts?.find(h=>String(h.id)===selectedHost)||null;
+  const matchingHostScope=onboardingHostSnapshotMatchesActor(hostsScope,operator);
+  const visibleHosts=matchingHostScope?hosts:null;
+  const visibleHostComplete=matchingHostScope?hostsComplete:null;
+  const visibleSelectedHost=matchingHostScope?selectedHost:"";
+  const selected=visibleHosts?.find(h=>String(h.id)===visibleSelectedHost)||null;
+  const scopedPreview=matchingHostScope?preview:null;
   const readiness=hostReadiness(selected);
-  const required=String(preview?.confirmation_class||"APPROVE");
+  const required=String(scopedPreview?.confirmation_class||"APPROVE");
   const history=observedEnrollmentHistory(data);
   const issuedIntent=enrollmentIssuanceIntent({
     operatorId:operator?.id,role:operator?.role,mode,platform,ttl,label,note,preApproved
@@ -250,22 +271,27 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate,onBus
   const currentIssueIntent=useRef(issuedIntent);
   currentIssueIntent.current=issuedIntent;
   const visibleIssued=issuedEnrollmentForCurrentIntent(issued,issuedIntent);
-  useEffect(()=>{if(step>=3)void refreshHosts()},[step]);
+  useEffect(()=>{
+    if(step>=3)void refreshHosts();
+    return()=>{inventoryGeneration.current+=1;approvalGeneration.current+=1;};
+  },[step,operator?.id,operator?.role]);
   async function refreshHosts(){
     approvalGeneration.current+=1;
     const generation=++inventoryGeneration.current;
     setFetchBusy(true);setInventoryError("");setPreview(null);setConfirm("");
+    setHostsScope(null);setHosts(null);setHostsComplete(null);
     try{
       const result=await api("/api/v1/inventory?resource_type=managed-host&limit=100");
       if(generation!==inventoryGeneration.current)return;
       const observed=observedEnrollmentHostPage(result);
       if(!observed)throw new Error("Managed Host inventory response incomplete or malformed");
       setHosts(observed.items);setHostsComplete(observed.complete);
+      setHostsScope({id:operator?.id,role:operator?.role});
       // Explicit selection is required; never approve another observed Host.
       setSelectedHost(value=>value&&observed.items.some(h=>h.id===value)?value:"");
     }catch(e:any){
       if(generation===inventoryGeneration.current){
-        setHosts(null);setHostsComplete(null);setSelectedHost("");
+        setHostsScope(null);setHosts(null);setHostsComplete(null);setSelectedHost("");
         setInventoryError(String(e?.message||e));
       }
     }finally{if(generation===inventoryGeneration.current)setFetchBusy(false)}
@@ -303,7 +329,7 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate,onBus
     finally{setBusy(false)}
   }
   async function previewApproval(){
-    if(!admin||!selectedHost||busy||fetchBusy)return;
+    if(!admin||!matchingHostScope||!selectedHost||!selected||busy||fetchBusy)return;
     const generation=++approvalGeneration.current;
     setBusy(true);setError("");setPreview(null);setConfirm("");
     try{
@@ -316,11 +342,12 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate,onBus
     finally{if(generation===approvalGeneration.current)setBusy(false)}
   }
   async function applyApproval(){
-    if(!admin||!selectedHost||!preview?.change_plan_id||confirm!==required||busy)return;
+    if(!admin||!matchingHostScope||!selectedHost||!scopedPreview?.change_plan_id
+      ||confirm!==required||busy)return;
     setBusy(true);setError("");
     try{
       const result=await api("/api/v1/managed-hosts/admission/apply",{
-        method:"POST",body:JSON.stringify({change_plan_id:preview.change_plan_id,confirmation:confirm}),
+        method:"POST",body:JSON.stringify({change_plan_id:scopedPreview.change_plan_id,confirmation:confirm}),
       });
       setMessage("Core admission review applied at revision "+String(result.revision??"UNKNOWN"));
       setPreview(null);setConfirm("");refresh();setStep(4);
@@ -373,18 +400,18 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate,onBus
           <p className="muted">Current data comes from the canonical Managed Host inventory, not from the enrollment ticket.</p>
         </div><button className="secondary" onClick={refreshHosts} disabled={busy||fetchBusy}>{fetchBusy?"Refreshing…":"Refresh inventory"}</button></div>
         {inventoryError&&<p className="error" role="alert">Inventory unavailable: {inventoryError}</p>}
-        {hosts!==null&&hostsComplete!==true&&<p className="muted" role="status">
+        {visibleHosts!==null&&visibleHostComplete!==true&&<p className="muted" role="status">
           Other Hosts may exist beyond this Core page. Loaded entries are not proof
           of a full fleet inventory; use Servers &amp; Agents for additional pages.
         </p>}
-        <label className="dr-field"><span>Managed Host</span><select value={selectedHost} disabled={busy||fetchBusy} onChange={e=>{approvalGeneration.current+=1;setSelectedHost(e.target.value);setPreview(null);setConfirm("")}}>
-          {!selectedHost&&<option value="">{hosts===null?"Host inventory: UNKNOWN":hosts.length?"Select an observed Managed Host"
-          :hostsComplete===true?"No observed Hosts":"No Hosts observed on this Core page"}</option>}
-          {(hosts||[]).map(h=><option value={String(h.id)} key={h.id}>{h.name||h.label||h.id} · {h.id}</option>)}
+        <label className="dr-field"><span>Managed Host</span><select value={visibleSelectedHost} disabled={busy||fetchBusy||!matchingHostScope} onChange={e=>{approvalGeneration.current+=1;setSelectedHost(e.target.value);setPreview(null);setConfirm("")}}>
+          {!visibleSelectedHost&&<option value="">{visibleHosts===null?"Host inventory: UNKNOWN":visibleHosts.length?"Select an observed Managed Host"
+          :visibleHostComplete===true?"No observed Hosts":"No Hosts observed on this Core page"}</option>}
+          {(visibleHosts||[]).map(h=><option value={String(h.id)} key={h.id}>{h.name||h.label||h.id} · {h.id}</option>)}
         </select></label>
-        <p className="dr-p0-status">{selected?hostReadinessLabel(selected):hosts===null?"HOST INVENTORY UNKNOWN"
-          :hosts.length?"NO HOST SELECTED · select the intended Host"
-          :hostsComplete===true?"NO HOST OBSERVED · enrollment may still be pending"
+        <p className="dr-p0-status">{selected?hostReadinessLabel(selected):visibleHosts===null?"HOST INVENTORY UNKNOWN"
+          :visibleHosts.length?"NO HOST SELECTED · select the intended Host"
+          :visibleHostComplete===true?"NO HOST OBSERVED · enrollment may still be pending"
           :"NO HOST IN LOADED PAGE · CHECK OTHER CORE PAGES"}</p>
         <div className="dr-p0-counters">
           <span>Admission: {readiness.admission}</span><span>Trust: {readiness.trust}</span>
@@ -393,12 +420,12 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate,onBus
         </div>
         {step===3&&<>
           <p className="muted">Approval restores normal Core policy evaluation; it does not establish trust or a reachable session. Quarantine remains available under Managed Hosts.</p>
-          <button className="secondary" disabled={!admin||!selectedHost||busy||fetchBusy} onClick={previewApproval}>Preview approval impact</button>
-          {preview&&<div className="dr-p0-review">
-            <p>Authoritative Core plan · valid until {preview.valid_until||"UNKNOWN"}</p>
-            <details><summary>Review exact approval impact</summary><pre className="plan">{JSON.stringify({preview:preview.preview,impact:preview.impact},null,2)}</pre></details>
+          <button className="secondary" disabled={!admin||!matchingHostScope||!selected||busy||fetchBusy} onClick={previewApproval}>Preview approval impact</button>
+          {scopedPreview&&<div className="dr-p0-review">
+            <p>Authoritative Core plan · valid until {scopedPreview.valid_until||"UNKNOWN"}</p>
+            <details><summary>Review exact approval impact</summary><pre className="plan">{JSON.stringify({preview:scopedPreview.preview,impact:scopedPreview.impact},null,2)}</pre></details>
             <label className="dr-field"><span>Type {required} to approve</span><input value={confirm} onChange={e=>setConfirm(e.target.value)} placeholder={required}/></label>
-            <button className="danger" disabled={!admin||!preview.change_plan_id||confirm!==required||busy} onClick={applyApproval}>Approve through Core</button>
+            <button className="danger" disabled={!admin||!matchingHostScope||!scopedPreview.change_plan_id||confirm!==required||busy} onClick={applyApproval}>Approve through Core</button>
           </div>}
         </>}
         {step===4&&<>
