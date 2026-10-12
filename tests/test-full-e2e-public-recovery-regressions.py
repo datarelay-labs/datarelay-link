@@ -104,9 +104,10 @@ frpctl_lib_candidate() { printf '%s/%s' "$LIB" "$1"; }
         import drlink_agent_lifecycle as lifecycle
         import drlink_control_plane as cp
         import drlink_v24 as v24
-        for force in (False,True):
-            with mock.patch.object(lifecycle,'load_lifecycle_intent',return_value='running'), mock.patch.object(lifecycle,'heartbeat_once',return_value={'reconcile_required':force}), mock.patch.object(lifecycle,'reconciliation_needed',return_value=True), mock.patch.object(cp,'ControlPlane') as plane, mock.patch.object(v24,'ensure_v2_schema'), mock.patch.object(v24,'synchronize_agent_remote_services',return_value={'status':'SYNCHRONIZED'}) as sync:
-                lifecycle.reconcile_once('/fixture')
-                sync.assert_called_once_with(plane.return_value,root='/fixture',force_runtime=force)
+        with tempfile.TemporaryDirectory() as tmp:
+            for force in (False,True):
+                with mock.patch.object(lifecycle,'load_lifecycle_intent',return_value='running'), mock.patch.object(lifecycle,'heartbeat_once',return_value={'reconcile_required':force}), mock.patch.object(lifecycle,'reconciliation_needed',return_value=True), mock.patch.object(cp,'ControlPlane') as plane, mock.patch.object(v24,'ensure_v2_schema'), mock.patch.object(v24,'synchronize_agent_remote_services',return_value={'status':'SYNCHRONIZED'}) as sync:
+                    lifecycle.reconcile_once(tmp)
+                    sync.assert_called_once_with(plane.return_value,root=tmp,force_runtime=force)
 
 if __name__ == '__main__':unittest.main()

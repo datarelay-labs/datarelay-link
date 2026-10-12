@@ -420,6 +420,7 @@ class LiveMgmtPathClosure(unittest.TestCase):
         mac_path.write_text(mac, encoding="utf-8")
         os.chmod(mac_path, 0o600)
         Path(self.agent_tmp, "etc/frp/frpc.toml").write_text("[common]\n", encoding="utf-8")
+        os.environ["FRP_DEPLOY_TEST_ROOT"] = self.agent_tmp
         os.environ["DRLINK_SKIP_ACTIVATION"] = "1"
         os.environ["DRLINK_CONFIRM"] = "yes"
         os.environ.pop("DRLINK_MGMT_TOKEN", None)
@@ -455,6 +456,7 @@ class LiveMgmtPathClosure(unittest.TestCase):
         self.server.close()
         self.agent.close()
         for k in (
+            "FRP_DEPLOY_TEST_ROOT",
             "DRLINK_SKIP_ACTIVATION",
             "DRLINK_CONFIRM",
             "DRLINK_MGMT_TOKEN",
