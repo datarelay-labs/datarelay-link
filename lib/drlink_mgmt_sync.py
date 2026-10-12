@@ -1564,7 +1564,10 @@ def server_complete_ai_job(plane, auth: MgmtAuthContext, body: dict) -> dict:
     job_id = str((body or {}).get("id") or "").strip()
     if not job_id:
         raise MgmtSyncError("AI job id is required")
-    result = (body or {}).get("result") or {}
+    # Missing result retains the legacy empty-object default, but an
+    # explicitly supplied null/array/primitive must not be coerced into a
+    # successful signed AI Job completion.
+    result = (body or {}).get("result", {})
     if not isinstance(result, dict):
         raise MgmtSyncError("AI job result must be an object")
     claim_token = (body or {}).get("claim_token")

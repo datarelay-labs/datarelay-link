@@ -287,6 +287,30 @@ class AiJobSafetyTests(unittest.TestCase):
             )
         self.assertEqual(self.plane.get_ai_job(job_id)["status"], "timeout")
 
+    def test_signed_ai_completion_rejects_explicit_nonobject_results(self):
+        job_id = self._enqueue_with_timeout(MACHINE_A, "read_file", 60)
+        claims = mgmt.claim_ai_jobs_on_server(root=self.agent_a_tmp, limit=1)["jobs"]
+        self.assertEqual([claim["id"] for claim in claims], [job_id])
+        claim = claims[0]
+        endpoint = self.mgmt_url + "/v1/ai-jobs/complete"
+        for invalid in (None, [], "", 0, False):
+            with self.subTest(result=invalid):
+                with self.assertRaises(mgmt.MgmtSyncError):
+                    mgmt._request_json(
+                        "POST", endpoint,
+                        {"id": job_id, "claim_token": claim["claim_token"],
+                         "attempt_id": claim["attempt_id"], "result": invalid},
+                        root=self.agent_a_tmp,
+                    )
+                self.assertEqual(self.plane.get_ai_job(job_id)["status"], "running")
+        accepted = mgmt.complete_ai_job_on_server(
+            root=self.agent_a_tmp, job_id=job_id,
+            claim_token=claim["claim_token"], attempt_id=claim["attempt_id"],
+            result={"ok": True},
+        )
+        self.assertTrue(accepted["ok"])
+        self.assertEqual(self.plane.get_ai_job(job_id)["status"], "done")
+
     def test_stale_attempt_rejection(self):
         job_id = self._enqueue_with_timeout(MACHINE_A, "read_file", 60)
         claimed = self.plane.claim_ai_jobs(MACHINE_A, limit=1)
