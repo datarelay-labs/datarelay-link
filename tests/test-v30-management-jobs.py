@@ -51,6 +51,24 @@ class V30ManagementJobTests(unittest.TestCase):
             **kwargs,
         )
 
+    def test_agent_invalid_claim_limit_never_contacts_core(self):
+        # A local caller cannot claim work from Core before its own bounded
+        # request has been validated. Even a signed Core claim changes leases.
+        from unittest.mock import patch
+        import drlink_agent_lifecycle as agent
+
+        for invalid in (0, -1, True, False, 1.5, "1", None):
+            with self.subTest(limit=invalid):
+                with patch(
+                    "drlink_mgmt_sync.claim_management_jobs_on_server",
+                    side_effect=AssertionError("Core must not receive an invalid claim"),
+                ) as claim:
+                    with self.assertRaisesRegex(
+                        ValueError, "Core Management Job claim response UNKNOWN"
+                    ):
+                        agent.process_management_jobs_once(root=self.tmp, limit=invalid)
+                    claim.assert_not_called()
+
     def test_schema_is_separate_from_ai_jobs(self):
         tables = {
             row[0]

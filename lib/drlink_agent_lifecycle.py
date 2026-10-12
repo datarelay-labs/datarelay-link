@@ -381,12 +381,18 @@ def process_management_jobs_once(root: Optional[str] = None, *, limit: int = 4) 
         complete_management_job_on_server,
     )
 
-    response = claim_management_jobs_on_server(root=root, limit=limit)
+    # A claim changes authoritative Core leases. Reject invalid local limits
+    # before sending any signed request, rather than silently coercing 0,
+    # booleans, floats or numeric strings to an executable batch.
+    invalid = "Core Management Job claim response UNKNOWN; inspect Core state before retrying."
+    if type(limit) is not int or limit < 1:
+        raise ValueError(invalid)
+    count = min(limit, 16)
+    response = claim_management_jobs_on_server(root=root, limit=count)
     # The signed server must provide an explicit bounded claim array. A
     # missing or malformed response is UNKNOWN, not a confirmed empty queue.
     # Validate the WHOLE batch before executing even one mutating Agent job:
     # duplicate entries must not run the same remote-service operation twice.
-    invalid = "Core Management Job claim response UNKNOWN; inspect Core state before retrying."
     # A signed Server reply is also bound to the exact locally-enrolled
     # machine. A wrong-host claim must not cause any Agent work, even if a
     # Server route or replayed response unexpectedly includes that target.
@@ -397,10 +403,6 @@ def process_management_jobs_once(root: Optional[str] = None, *, limit: int = 4) 
         or machine_id != machine_id.strip()
         or any(ord(ch) < 33 or ord(ch) > 126 for ch in machine_id)):
         raise ValueError(invalid)
-    try:
-        count = max(1, min(int(limit), 16))
-    except (TypeError, ValueError) as exc:
-        raise ValueError(invalid) from exc
     if not isinstance(response, dict) or not isinstance(response.get("jobs"), list):
         raise ValueError(invalid)
     jobs = response["jobs"]
