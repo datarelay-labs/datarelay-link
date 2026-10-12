@@ -5194,6 +5194,12 @@ class ControlPlane:
         return True
 
     def claim_ai_jobs(self, client_id: str, limit: int = 4) -> list[dict]:
+        # Direct Core users (including the internal Bridge) must not coerce
+        # invalid limits into a lease-changing operation. Keep the existing
+        # Bridge batch of 64 supported while bounding larger callers.
+        if type(limit) is not int or limit < 1:
+            raise ControlPlaneError("AI job claim limit must be a positive integer")
+        take = min(limit, 64)
         ensure_ai_jobs_safety_schema(self.conn)
         self.assert_ai_job_claimant(client_id)
         self.refresh_managed_host_liveness(client_id)
@@ -5201,7 +5207,6 @@ class ControlPlane:
         self._terminalize_expired_queued_ai_jobs(client_id=client_id, now=now)
         self._fail_closed_stale_running_ai_jobs(client_id=client_id, now=now)
         # Filter by target host before LIMIT so one busy host cannot starve another.
-        take = max(1, int(limit))
         rows = list(
             self.conn.execute(
                 "SELECT * FROM ai_jobs WHERE status = 'queued' AND client_id = ? "

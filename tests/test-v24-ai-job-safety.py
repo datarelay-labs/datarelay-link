@@ -287,6 +287,19 @@ class AiJobSafetyTests(unittest.TestCase):
             )
         self.assertEqual(self.plane.get_ai_job(job_id)["status"], "timeout")
 
+    def test_core_ai_claim_rejects_coerced_limits_without_leasing(self):
+        job_id = self._enqueue_with_timeout(MACHINE_A, "read_file", 60)
+        for invalid in (0, -1, True, False, 1.5, "2", None):
+            with self.subTest(limit=invalid):
+                with self.assertRaisesRegex(
+                    ControlPlaneError, "AI job claim limit must be a positive integer"
+                ):
+                    self.plane.claim_ai_jobs(MACHINE_A, limit=invalid)
+                self.assertEqual(self.plane.get_ai_job(job_id)["status"], "queued")
+        # Existing bridge backends legitimately request 64 at a time.
+        claims = self.plane.claim_ai_jobs(MACHINE_A, limit=64)
+        self.assertEqual([job["id"] for job in claims], [job_id])
+
     def test_signed_ai_completion_rejects_explicit_nonobject_results(self):
         job_id = self._enqueue_with_timeout(MACHINE_A, "read_file", 60)
         claims = mgmt.claim_ai_jobs_on_server(root=self.agent_a_tmp, limit=1)["jobs"]
