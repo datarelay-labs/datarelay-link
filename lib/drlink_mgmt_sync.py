@@ -1546,8 +1546,14 @@ def server_claim_ai_jobs(plane, auth: MgmtAuthContext, body: dict) -> dict:
     """Claim queued AI jobs for the authenticated Managed Host identity only."""
     machine_id = auth.machine_id
     _require_managed_host(plane, machine_id)
-    limit = int((body or {}).get("limit") or 4)
-    jobs = plane.claim_ai_jobs(machine_id, limit)
+    # Claiming AI Jobs consumes one-shot leases. Reject coerced or ambiguous
+    # signed limits before delegating to the Core state-changing claim.
+    if not isinstance(body, dict):
+        raise MgmtSyncError("AI Job claim request must be an object")
+    raw_limit = body.get("limit", 4)
+    if type(raw_limit) is not int or raw_limit <= 0:
+        raise MgmtSyncError("AI Job claim limit must be a positive integer")
+    jobs = plane.claim_ai_jobs(machine_id, min(raw_limit, 16))
     return {"jobs": jobs}
 
 

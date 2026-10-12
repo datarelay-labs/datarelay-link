@@ -89,6 +89,34 @@ class V30ManagementJobTransportTests(unittest.TestCase):
         for key in ("DRLINK_SKIP_ACTIVATION", "DRLINK_CONFIRM", "DRLINK_MGMT_URL"):
             os.environ.pop(key, None)
 
+    def test_signed_ai_claim_rejects_bad_limit_before_agent_job_claim(self):
+        from unittest import mock
+
+        endpoint = self.base + "/v1/ai-jobs/claim"
+        invalid = (0, -1, True, False, 1.5, "2", None, [])
+        with mock.patch.object(
+            self.server, "claim_ai_jobs",
+            side_effect=AssertionError("bad signed limit reached Core claim"),
+        ) as core_claim:
+            for value in invalid:
+                with self.subTest(limit=value):
+                    with self.assertRaises(mgmt.MgmtSyncError):
+                        mgmt._request_json(
+                            "POST", endpoint, {"limit": value}, root=self.agent_tmp
+                        )
+            core_claim.assert_not_called()
+
+        with mock.patch.object(
+            self.server, "claim_ai_jobs", return_value=[],
+        ) as core_claim:
+            for payload, expected in (({}, 4), ({"limit": 99}, 16), ({"limit": 2}, 2)):
+                with self.subTest(payload=payload):
+                    response = mgmt._request_json(
+                        "POST", endpoint, payload, root=self.agent_tmp
+                    )
+                    self.assertEqual(response, {"jobs": []})
+                    self.assertEqual(core_claim.call_args.args, (MACHINE_A, expected))
+
     def test_signed_agent_claim_skips_unqualified_rollout_but_keeps_doctor_available(self):
         engine = ManagementJobEngine(self.server_tmp)
         try:
