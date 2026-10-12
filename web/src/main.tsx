@@ -38,6 +38,7 @@ import {AiPolicyMappingCell} from "./uxb-policy-table-ai-mapping";
 import {observedPolicyTableDisplayCells} from "./uxb-policy-table-display";
 import {policyAuditInvestigationTarget} from "./uxb-policy-audit-action";
 import {serviceAccountOperationalStatus,serviceAccountExpiry,serviceAccountPermissions,webhookStatus,webhookDeliverySummary} from "./uxb-integrations-state";
+import {observedIntegrationWriteReceipt,integrationLocalExpiryToUtc} from "./uxb-integration-write-receipts";
 import {filterObservedHosts} from "./uxb-host-search";
 import {sortLoadedHosts,isHostSortMode,type HostSortMode} from "./uxb-host-sort";
 import {filterLoadedHostConnections,type HostConnectionFilter} from "./uxb-host-connection-filter";
@@ -2422,6 +2423,7 @@ function IntegrationsPanel(){
   const [accounts,setAccounts]=useState<any[]>([]),[hooks,setHooks]=useState<any[]>([]);
   const [inventoryState,setInventoryState]=useState<"loading"|"ready"|"unknown">("loading");
   const [error,setError]=useState(""),[busy,setBusy]=useState(false),[once,setOnce]=useState<any>(null);
+  const integrationMutationInFlight=useRef(false);
   const [accountName,setAccountName]=useState(""),[accountExpiry,setAccountExpiry]=useState("");
   const [permissions,setPermissions]=useState<string[]>(["management-read"]);
   const [hookName,setHookName]=useState(""),[hookUrl,setHookUrl]=useState("");
@@ -2441,22 +2443,46 @@ function IntegrationsPanel(){
     }
   }
   useEffect(()=>{refresh()},[]);
-  async function mutate(path:string,body:any,secretKind?:string){
-    setBusy(true);setError("");setOnce(null);
+  async function mutate(path:string,body:any):Promise<boolean>{
+    // A second write before the operator has secured a newly issued secret
+    // can irrecoverably hide that secret; block it before any Core POST.
+    if(integrationMutationInFlight.current||once){
+      setError("Store or dismiss the visible one-time secret before any further integration operation.");
+      return false;
+    }
+    integrationMutationInFlight.current=true;
+    setBusy(true);setError("");
     try{
       const result=await api(path,{method:"POST",body:JSON.stringify(body)});
-      if(secretKind)setOnce({kind:secretKind,secret:result.credential||result.secret,id:result.id||result.credential_id});
+      const receipt=observedIntegrationWriteReceipt(path,body,result);
+      if(!receipt)throw new Error("Unverified Core integration write receipt.");
+      if(receipt.status==="secret")setOnce({kind:receipt.kind,secret:receipt.secret,id:receipt.id});
       await refresh();
-    }catch(e:any){setError(e.message||String(e))}finally{setBusy(false)}
+      return true;
+    }catch(e:any){
+      // POST failures, transport loss and malformed success receipts can all
+      // follow a committed Core change; never recommend a blind retry.
+      setError("Core integration outcome UNKNOWN. Inspect the current Core inventory and Audit before retrying. Do not repeat a create or rotation without verifying the previous result.");
+      return false;
+    }finally{integrationMutationInFlight.current=false;setBusy(false)}
   }
   async function createAccount(e:React.FormEvent){
     e.preventDefault();if(!accountName||!permissions.length)return;
-    await mutate("/api/v1/service-accounts",{name:accountName,permissions,expires_at:accountExpiry?new Date(accountExpiry).toISOString():undefined},"Service Account token");
+    const expiry=integrationLocalExpiryToUtc(accountExpiry);
+    if(expiry===null){
+      setError("Invalid local expiry date or time. No Service Account request was sent.");
+      return;
+    }
+    const ok=await mutate("/api/v1/service-accounts",
+      {name:accountName,permissions,expires_at:expiry});
+    if(!ok)return;
     setAccountName("");setAccountExpiry("");
   }
   async function createWebhook(e:React.FormEvent){
     e.preventDefault();if(!hookName||!hookUrl)return;
-    await mutate("/api/v1/webhooks",{name:hookName,url:hookUrl,event_classes:[hookEvent]},"Webhook signing secret");
+    const ok=await mutate("/api/v1/webhooks",
+      {name:hookName,url:hookUrl,event_classes:[hookEvent]});
+    if(!ok)return;
     setHookName("");setHookUrl("");
   }
   return <div>
@@ -2473,27 +2499,27 @@ function IntegrationsPanel(){
       Missing or invalid permission, status and expiry evidence stays UNKNOWN; no account action appears from an unverified status.</p>
       <form onSubmit={createAccount}><div className="toolbar"><input value={accountName} onChange={e=>setAccountName(e.target.value)} placeholder="Account name" required/><input type="datetime-local" value={accountExpiry} onChange={e=>setAccountExpiry(e.target.value)} title="Optional token expiry"/></div>
         <div className="toolbar">{allowedPermissions.map(p=><label key={p}><input type="checkbox" checked={permissions.includes(p)} onChange={e=>setPermissions(a=>e.target.checked?[...a,p]:a.filter(x=>x!==p))}/>{p}</label>)}</div>
-        <button className="primary" disabled={busy||!accountName||!permissions.length} type="submit">Create Service Account</button>
+        <button className="primary" disabled={busy||!!once||!accountName||!permissions.length} type="submit">Create Service Account</button>
       </form>
       <table><thead><tr><th>Account</th><th>Permissions</th><th>Expires</th><th>Status</th><th>Actions</th></tr></thead><tbody>{accounts.map(a=>{
         const accountState=serviceAccountOperationalStatus(a);
         return <tr key={a.id}><td>{a.name}</td><td>{serviceAccountPermissions(a)}</td><td>{serviceAccountExpiry(a)}</td>
           <td>{accountState}</td><td>
-            {accountState==="Active"&&<button className="secondary" disabled={busy} onClick={()=>{
+            {accountState==="Active"&&<button type="button" className="secondary" disabled={busy||!!once} onClick={()=>{
               if(serviceAccountOperationalStatus(a)!=="Active"){
                 setError("Service Account expiry has changed; refresh inventory before rotating.");return;
               }
-              mutate("/api/v1/service-accounts/rotate",{account_id:a.id},"Rotated Service Account token");
+              void mutate("/api/v1/service-accounts/rotate",{account_id:a.id});
             }}>Rotate</button>}
             {(accountState==="Active"||accountState==="Expired")&&
-              <button className="danger" disabled={busy} onClick={()=>{if(window.confirm("Revoke this Service Account now?"))mutate("/api/v1/service-accounts/revoke",{account_id:a.id})}}>Revoke</button>}
+              <button type="button" className="danger" disabled={busy||!!once} onClick={()=>{if(window.confirm("Revoke this Service Account now?"))void mutate("/api/v1/service-accounts/revoke",{account_id:a.id})}}>Revoke</button>}
           </td></tr>;
       })}</tbody></table>
     </section>
     <section className="card"><h3>Signed Event Webhooks</h3><p className="muted">HTTPS only, certificate-verified and DNS-pinned. Failed deliveries use bounded retries; event delivery never controls access enforcement.</p>
-      <form className="toolbar" onSubmit={createWebhook}><input value={hookName} onChange={e=>setHookName(e.target.value)} placeholder="Endpoint name" required/><input value={hookUrl} onChange={e=>setHookUrl(e.target.value)} placeholder="https://hooks.example.com/events" required type="url"/><select value={hookEvent} onChange={e=>setHookEvent(e.target.value)}><option value="attention">Attention</option><option value="security.lifecycle">Security lifecycle</option><option value="policy.change">Policy change</option><option value="managed_host.lifecycle">Managed Host lifecycle</option></select><button className="primary" disabled={busy||!hookName||!hookUrl} type="submit">Add webhook</button></form>
+      <form className="toolbar" onSubmit={createWebhook}><input value={hookName} onChange={e=>setHookName(e.target.value)} placeholder="Endpoint name" required/><input value={hookUrl} onChange={e=>setHookUrl(e.target.value)} placeholder="https://hooks.example.com/events" required type="url"/><select value={hookEvent} onChange={e=>setHookEvent(e.target.value)}><option value="attention">Attention</option><option value="security.lifecycle">Security lifecycle</option><option value="policy.change">Policy change</option><option value="managed_host.lifecycle">Managed Host lifecycle</option></select><button className="primary" disabled={busy||!!once||!hookName||!hookUrl} type="submit">Add webhook</button></form>
       <table><thead><tr><th>Endpoint</th><th>URL</th><th>Events</th><th>Status</th><th>Delivery</th><th>Actions</th></tr></thead><tbody>{hooks.map(h=><tr key={h.id}><td>{h.name}</td><td>{h.url}</td><td>{(h.event_classes||[]).join(", ")}</td><td>{webhookStatus(h)}</td><td>{webhookDeliverySummary(h)}</td>
-    <td>{webhookStatus(h)==="Enabled"&&<><button className="secondary" disabled={busy} onClick={()=>mutate("/api/v1/webhooks/rotate",{webhook_id:h.id},"Rotated Webhook secret")}>Rotate</button><button className="danger" disabled={busy} onClick={()=>{if(window.confirm("Disable this webhook and fail queued deliveries?"))mutate("/api/v1/webhooks/disable",{webhook_id:h.id})}}>Disable</button></>}</td></tr>)}</tbody></table>
+    <td>{webhookStatus(h)==="Enabled"&&<><button type="button" className="secondary" disabled={busy||!!once} onClick={()=>void mutate("/api/v1/webhooks/rotate",{webhook_id:h.id})}>Rotate</button><button type="button" className="danger" disabled={busy||!!once} onClick={()=>{if(window.confirm("Disable this webhook and fail queued deliveries?"))void mutate("/api/v1/webhooks/disable",{webhook_id:h.id})}}>Disable</button></>}</td></tr>)}</tbody></table>
     </section>
     </>}
   </div>;
