@@ -287,6 +287,75 @@ class AiJobSafetyTests(unittest.TestCase):
             )
         self.assertEqual(self.plane.get_ai_job(job_id)["status"], "timeout")
 
+    def test_legacy_agent_http_never_accepts_ambiguous_claim_or_result(self):
+        # The optional bearer-Agent fallback is distinct from signed
+        # management auth, but cannot bypass the same Core state boundary.
+        from urllib.error import HTTPError
+        from urllib.request import Request, urlopen
+        from drlink_mcp_bridge import ThreadingHTTPServer, make_handler
+
+        token = self.plane.issue_agent_credential(MACHINE_A, rotate=True)
+        self.assertTrue(token)
+        server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(self.bridge))
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        endpoint = "http://127.0.0.1:%d/agent/v1/" % server.server_address[1]
+
+        def send(name, body):
+            request = Request(
+                endpoint + name,
+                data=json.dumps(body).encode("utf-8"),
+                headers={"Authorization": "Bearer " + token,
+                         "Content-Type": "application/json"},
+                method="POST",
+            )
+            try:
+                with urlopen(request, timeout=5) as response:
+                    return response.status, json.load(response)
+            except HTTPError as response:
+                return response.code, json.load(response)
+
+        try:
+            job_id = self._enqueue_with_timeout(MACHINE_A, "read_file", 60)
+            for invalid in (0, -1, True, False, 1.5, "2", None, []):
+                with self.subTest(claim_limit=invalid):
+                    status, _ = send("claim", {"limit": invalid})
+                    self.assertEqual(status, 400)
+                    self.assertEqual(
+                        self.plane.get_ai_job(job_id)["status"], "queued"
+                    )
+            status, response = send("claim", {"limit": 1})
+            self.assertEqual(status, 200)
+            self.assertEqual([j["id"] for j in response["jobs"]], [job_id])
+            claimed = response["jobs"][0]
+            for invalid in (None, [], "", 0, False):
+                with self.subTest(completion_result=invalid):
+                    status, _ = send(
+                        "complete", {"id": job_id,
+                                     "claim_token": claimed["claim_token"],
+                                     "attempt_id": claimed["attempt_id"],
+                                     "result": invalid},
+                    )
+                    self.assertEqual(status, 400)
+                    self.assertEqual(
+                        self.plane.get_ai_job(job_id)["status"], "running"
+                    )
+                    self.assertNotIn(job_id, self.bridge._job_results)
+            status, response = send(
+                "complete", {"id": job_id,
+                             "claim_token": claimed["claim_token"],
+                             "attempt_id": claimed["attempt_id"],
+                             "result": {"ok": True}},
+            )
+            self.assertEqual(status, 200)
+            self.assertTrue(response["ok"])
+            self.assertEqual(self.plane.get_ai_job(job_id)["status"], "done")
+            self.assertEqual(self.bridge._job_results[job_id], {"ok": True})
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
     def test_core_ai_claim_rejects_coerced_limits_without_leasing(self):
         job_id = self._enqueue_with_timeout(MACHINE_A, "read_file", 60)
         for invalid in (0, -1, True, False, 1.5, "2", None):
