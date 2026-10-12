@@ -765,6 +765,11 @@ class ManagementJobEngine:
     ) -> tuple[tuple[str, ...], dict[str, Any]]:
         """Validate one immutable request shape for both preview and apply."""
         target_ids = _normalize_targets(targets, max_targets=self.max_targets)
+        # Do not reinterpret string characters or mapping keys as canaries.
+        if canary_targets is None or isinstance(
+            canary_targets, (str, bytes, bytearray, Mapping)
+        ):
+            raise ControlPlaneError("Rollout canary targets must be a collection of IDs.")
         requested_canaries = tuple(canary_targets)
         canaries = (
             _normalize_targets(requested_canaries, max_targets=self.max_targets)
@@ -772,11 +777,11 @@ class ManagementJobEngine:
         )
         if set(canaries) - set(target_ids):
             raise ControlPlaneError("Rollout canary target is outside the explicit target set.")
-        try:
-            size = int(wave_size)
-            threshold = int(failure_threshold_percent)
-        except (TypeError, ValueError) as exc:
-            raise ControlPlaneError("Rollout wave size and failure threshold must be integers.") from exc
+        # A coerced bool, string or fraction must never alter a canary wave.
+        if type(wave_size) is not int or type(failure_threshold_percent) is not int:
+            raise ControlPlaneError("Rollout wave size and failure threshold must be integers.")
+        size = wave_size
+        threshold = failure_threshold_percent
         if size < 1 or size > min(MAX_ROLLOUT_WAVE_SIZE, self.max_targets):
             raise ControlPlaneError("Rollout wave size is outside the bounded 3.0 range.")
         if not canaries:
@@ -891,8 +896,12 @@ class ManagementJobEngine:
         Agent-owned and no SQLite transaction is held while an Agent updates.
         """
         target_ids = _normalize_targets(targets, max_targets=self.max_targets)
-        # Materialize a caller-provided iterator once; consuming it to check
-        # emptiness must not silently discard the actual canary selection.
+        # Preserve iterator-backed canaries while rejecting a mapping or
+        # scalar masquerading as an explicit list of Host identities.
+        if canary_targets is None or isinstance(
+            canary_targets, (str, bytes, bytearray, Mapping)
+        ):
+            raise ControlPlaneError("Rollout canary targets must be a collection of IDs.")
         requested_canaries = tuple(canary_targets)
         canaries = (
             _normalize_targets(requested_canaries, max_targets=self.max_targets)
@@ -901,11 +910,10 @@ class ManagementJobEngine:
         unknown = sorted(set(canaries) - set(target_ids))
         if unknown:
             raise ControlPlaneError("Rollout canary target is outside the explicit target set.")
-        try:
-            size = int(wave_size)
-            threshold = int(failure_threshold_percent)
-        except (TypeError, ValueError) as exc:
-            raise ControlPlaneError("Rollout wave size and failure threshold must be integers.") from exc
+        if type(wave_size) is not int or type(failure_threshold_percent) is not int:
+            raise ControlPlaneError("Rollout wave size and failure threshold must be integers.")
+        size = wave_size
+        threshold = failure_threshold_percent
         if size < 1 or size > min(MAX_ROLLOUT_WAVE_SIZE, self.max_targets):
             raise ControlPlaneError("Rollout wave size is outside the bounded 3.0 range.")
         # When no explicit canary is provided, treat the first bounded wave
