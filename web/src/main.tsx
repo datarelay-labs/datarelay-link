@@ -28,6 +28,7 @@ import {observedCoreHealthSnapshot,observedHealthPlaneCount} from "./uxb-health-
 import {observedCoreSystemStatus} from "./uxb-system-status";
 import {observedCoreCertificatePreflight} from "./uxb-certificate-preflight";
 import {observedCoreCertificateActionReceipt,observedCoreCertificateRenewalReceipt} from "./uxb-certificate-actions";
+import {observedCoreSupportBundleReceipt} from "./uxb-support-bundle";
 import {observedCoreJobDisplay,observedJobCancelAvailable} from "./uxb-jobs-display";
 import {observedRolloutPreviewDisplay} from "./uxb-rollout-display";
 import {filterLoadedServiceFacets,type ServiceTypeFacet,type ServiceConfigFacet} from "./uxb-service-facets";
@@ -909,6 +910,8 @@ function SystemPanel({data,operator}:{data:any,operator:any}){
   // across the four operations immediately, before React's next render.
   const certMutationInFlight=useRef(false);
   const [certMutationBusy,setCertMutationBusy]=useState(false);
+  const supportBundleInFlight=useRef(false);
+  const [supportBundleBusy,setSupportBundleBusy]=useState(false);
   async function runPreflight(){
     setError("");setPreflight(null);
     try{
@@ -980,7 +983,23 @@ function SystemPanel({data,operator}:{data:any,operator:any}){
   async function validateBackup(){setError("");setRestoreConfirmation("");try{setValidation(await api("/api/v1/system/backup/validate",{method:"POST",body:JSON.stringify({path:backupPath})}))}catch(e:any){setValidation(null);setError(e.message||String(e))}}
   async function restoreBackup(){setError("");try{await api("/api/v1/system/restore",{method:"POST",body:JSON.stringify({path:backupPath,confirmation:restoreConfirmation})});window.location.reload()}catch(e:any){setError(e.message||String(e))}}
   async function createBackup(){setError("");setBackupArtifact(null);try{setBackupArtifact(await api("/api/v1/system/backup/create",{method:"POST",body:"{}"}))}catch(e:any){setError(e.message||String(e))}}
-  async function createSupportBundle(){setError("");setSupportArtifact(null);try{setSupportArtifact(await api("/api/v1/system/support-bundle",{method:"POST",body:"{}"}))}catch(e:any){setError(e.message||String(e))}}
+  async function createSupportBundle(){
+    if(supportBundleInFlight.current||supportBundleBusy
+      ||operator.role==="Read Only"||support.create_available!==true)return;
+    supportBundleInFlight.current=true;setSupportBundleBusy(true);
+    setError("");setSupportArtifact(null);
+    try{
+      const raw=await api("/api/v1/system/support-bundle",{method:"POST",body:"{}"});
+      const observed=observedCoreSupportBundleReceipt(raw);
+      if(!observed)throw new Error("Core generated no verified bounded Support Bundle receipt.");
+      setSupportArtifact(observed);
+    }catch{
+      setSupportArtifact(null);
+      setError("Core Support Bundle outcome UNKNOWN. The artifact may already exist on the Server. Inspect authorized Core records before trying again.");
+    }finally{
+      supportBundleInFlight.current=false;setSupportBundleBusy(false);
+    }
+  }
   const identity=data.identity||{},certificate=data.certificate||{},backup=data.backup||{},support=data.support_bundle||{},update=data.update||{};
   return <>
     {error&&<div className="error">{error}</div>}
@@ -1055,7 +1074,7 @@ function SystemPanel({data,operator}:{data:any,operator:any}){
     <div className="card">
       <h3>Support Bundle</h3>
       <div className="muted">Creates a sanitized diagnostic archive in {support.directory||"/var/lib/drlink/support-bundles"}. Archive contents are not exposed through Web.</div>
-      {operator.role!=="Read Only"&&<button className="secondary" onClick={createSupportBundle} disabled={!support.create_available}>Create Sanitized Support Bundle</button>}
+      {operator.role!=="Read Only"&&<button className="secondary" onClick={createSupportBundle} disabled={supportBundleBusy||!support.create_available}>Create Sanitized Support Bundle</button>}
       {supportArtifact&&<pre className="plan">{JSON.stringify(supportArtifact,null,2)}</pre>}
     </div>
   </>;
