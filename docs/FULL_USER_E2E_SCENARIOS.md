@@ -67,7 +67,7 @@ A release-qualification request uses this full suite plus the exact-HEAD double-
 
 ### 1.1 User E2E execution ownership
 
-FULL_USER_E2E defaults to **ChatGPT** unless the owner selects a different authorized tester. For **Issue #165 the owner explicitly selects CODEX (TEST ONLY)** to act as both the Direct CLI User and the AI-assisted User, with a separate Codex AI Adviser under one auditor-owned RUN_ID. ChatGPT Chat alone implements product remediation. Cursor remains disabled.
+FULL_USER_E2E defaults to **ChatGPT** unless the owner selects a different authorized tester. For **Issue #165 the owner explicitly selects CODEX** to act as both the Direct CLI User and the AI-assisted User, with a separate Codex AI Adviser under one auditor-owned RUN_ID. The current explicit owner instruction selects the product implementer; for Issue #165 it also authorizes Codex to fix verified defects after freezing the run. Cursor remains disabled.
 
 This is an owner-selected tester identity rule (the current explicit owner overrides the repository default):
 
@@ -80,12 +80,12 @@ CURSOR_MAY_EXECUTE_FULL_USER_E2E=NO
 CURSOR_MAY_DECLARE_USER_E2E_PASS=NO
 ~~~
 
-FULL_USER_E2E never chooses or starts an implementation agent. Product remediation is a separate post-run Engineering workflow and must use the implementer authorized by the active Work Packet and `AGENTS.md`. The repository default is ChatGPT Chat; Cursor remains disabled unless the owner explicitly reactivates it for that Work Packet.
+FULL_USER_E2E never chooses or starts an implementation agent. Product remediation is a separate post-run Engineering workflow and must use the implementer selected by the current explicit owner instruction, then the fresh Work Packet and `AGENTS.md`. A historical TEST-ONLY or ChatGPT-only handoff does not override current owner authorization; Cursor remains disabled unless the owner explicitly reactivates it for that Work Packet.
 
 The required loop is:
 
 ~~~text
-OWNER_SELECTED_TEST_EXECUTOR (CODEX TEST ONLY for Issue #165)
+OWNER_SELECTED_TEST_EXECUTOR (CODEX for Issue #165)
 → pin exact candidate HEAD/build
 → execute FULL_USER_E2E to exhaustion
 → freeze evidence and final findings
@@ -93,7 +93,7 @@ OWNER_SELECTED_TEST_EXECUTOR (CODEX TEST ONLY for Issue #165)
 
 If implementation change is required after the run:
   Engineering workflow
-  → for Issue #165 use CHATGPT_CHAT as the only product implementation owner
+  → use the current owner-selected product implementer (Codex is authorized for Issue #165)
   → implement the bounded fix
   → run implementation-level deterministic tests
   → report exact branch/HEAD/evidence
@@ -1019,7 +1019,7 @@ DIRTY_SOURCE_USED_TO_BUILD_OR_INSTALL=NO
 CLEAN_STATE_RESULT=PASS|FAIL|BLOCKED_ENVIRONMENT
 ~~~
 
-Aggregate hard gate before the active User E2E begins:
+Per-host clean-room eligibility before that host participates in a dependent scenario; the aggregate below is a final complete-run qualification requirement, never a global start veto:
 
 ~~~text
 ALL_REACHABLE_ASSIGNED_HOSTS_CLEAN=PASS
@@ -1039,7 +1039,7 @@ Development-worktree dirtiness is **not** test-host contamination by itself and 
 
 If any assigned host fails this gate, clean/recover that host before using it. Do not silently continue and later interpret inherited state as a product PASS. If cleanup cannot be completed, mark only scenarios depending on that host `BLOCKED_ENVIRONMENT` and continue independent clean hosts.
 
-After this gate passes, create the new RUN_ID and all subsequent product/test state from scratch. Every enrollment, endpoint allocation, Object/Group/Rule, AI identity, certificate/config override, temporary target, load process, Bundle and evidence artifact used for PASS must be attributable to the current RUN_ID or an explicitly documented current-run prerequisite.
+Create a new RUN_ID and, after each participating host passes its applicable clean-room checks, create its subsequent product/test state from scratch. Every enrollment, endpoint allocation, Object/Group/Rule, AI identity, certificate/config override, temporary target, load process, Bundle and evidence artifact used for PASS must be attributable to the current RUN_ID or an explicitly documented current-run prerequisite.
 
 ### 5.4 Spawned-process and session registry / cleanup gate
 
@@ -4244,7 +4244,7 @@ The invariant for future User E2E requests is:
 
 ~~~text
 USER_E2E_REQUEST
--> Issue #165 owner override: Codex is test-only executor and final auditor for Direct + AI-assisted roles; ChatGPT implements fixes; Cursor remains disabled.
+-> Issue #165 owner override: Codex executes independent Direct + AI-assisted roles and final audit; the current owner-selected implementer fixes verified defects after evidence is frozen; Cursor remains disabled.
 -> locate this canonical document at docs/FULL_USER_E2E_SCENARIOS.md
 -> capture candidate/build identity only; do not perform a pre-run code review
 -> probe all configured test hosts, remove previous-run DRLink state/test services/load processes/temp artifacts, preserve only explicit management access infrastructure, and require the section 5.3 clean-room gate before fresh product activity
@@ -4334,10 +4334,10 @@ On a trigger, the minimum startup sequence is:
 5. Probe configured hosts in parallel.
 6. Classify every reachable configured host, assign every suitable host an intended Server/Agent/Relay/client/target/load-generator/recovery role, and record any unused reachable host with a concrete reason.
 7. Execute the section 5.3 clean-room gate on every assigned host: inventory old state, use supported product uninstall for fresh lanes when an immutable candidate artifact is available, stop previous E2E/load runtimes, remove disposable old artifacts and stale/broken product service-unit links, verify product listeners/state are gone, record the development worktree state, pin the installed candidate identity, never build/install from dirty source, and explicitly record preserved management-access infrastructure.
-8. Do not start product discovery or create PASS-eligible state until ALL_REACHABLE_ASSIGNED_HOSTS_CLEAN=PASS. Then create the new RUN_ID/current-run test state and open the section 5.4 process/session registry.
+8. Create the new RUN_ID and open the section 5.4 process/session registry. Start product discovery and PASS-eligible state only on participating hosts that passed their applicable section 5.3 checks; a failed or denied host blocks only dependent scenarios. ALL_REACHABLE_ASSIGNED_HOSTS_CLEAN remains a complete-run qualification requirement, not a global launch veto.
 9. On every freshly installed/assigned Server/Agent role, start public command discovery in parallel with drlink, ?, help, help commands, menu, Tab and visible wizard/error guidance.
 10. Build the runtime command/variant ledger and map discovered capabilities to realistic use-case lanes; section 14 is auditor-only omission detection.
-11. Before each lane, assign ChatGPT an explicit End User, Agent Operator, DRLink Administrator, Incident Responder, or Platform Maintainer persona plus a production-style mission; create RUN_ID-scoped namespaced resources and immediately start every independent use-case lane whose prerequisites are discovered.
+11. Before each lane, assign the owner-selected tester an explicit End User, Agent Operator, DRLink Administrator, Incident Responder, or Platform Maintainer persona plus a production-style mission; create RUN_ID-scoped namespaced resources and immediately start every independent use-case lane whose prerequisites are discovered.
 12. Run Direct CLI, guided/TTY, adversarial, multi-platform enrollment, real-traffic, AI-assisted mirror and performance lanes concurrently at maximum practical utilization of the currently configured hosts; never pause to request new test hosts. Progressively ramp performance toward the selected target or practical saturation boundary. Apply section 1.4.1 prerequisite, evidence-reuse, FAIL_PRECONDITION, and bounded performance-stop rules.
 13. Behave like a real operator who has not read the manual: pursue the mission, follow product output/next actions, copy/paste generated commands, make realistic mistakes from section 1.3.3, recover only from user-visible CLI/AI guidance or minimum test-host/test-state recovery, and continuously record terminology/clarity/cross-surface inconsistencies.
 14. Continue discovery and use-case execution together until no discovered/oracle command or behavior-changing public variant lacks disposition.
@@ -4345,7 +4345,7 @@ On a trigger, the minimum startup sequence is:
 16. If one lane is blocked by tooling/environment/management-path or fails a functional prerequisite, record only that lane as BLOCKED_TOOLING/BLOCKED_ENVIRONMENT/BLOCKED_MANAGEMENT_PATH/FAIL_PRECONDITION as applicable and continue every independent lane immediately.
 17. Do not inspect product source, test source, internal DB/state, or harness implementation during active discovery.
 18. Run mixed function-under-load, policy-mutation, restart/reconnect, outage, race and all-host scenarios continuously; execute P-024 collision rows while representative load is active, then execute P-023 maximum-topology mixed stress with multiple load processes/generators on the existing test hosts where available and verify post-saturation recovery without redundant saturation against already-failed functional paths.
-19. Finish command/use-case/AI-mirror/repetition/mistake/function-under-load disposition, process-registry cleanup and final reporting. Do not modify product code, rebuild the candidate, or start Cursor as part of this trigger. Any implementation/harness diagnosis is a separate post-run engineering action.
+19. Finish command/use-case/AI-mirror/repetition/mistake/function-under-load disposition, process-registry cleanup and final reporting. Acting user roles must not modify product code or rebuild the frozen candidate. Any implementation/harness diagnosis is a separate post-run engineering action performed by the current owner-authorized implementer after evidence is frozen; Cursor remains disabled.
 20. After the full executable run is exhausted and evidence/counters are frozen, update the active `[AI Work]` Issue once with the consolidated result. Do not perform intermediate per-finding Issue updates.
 ~~~
 

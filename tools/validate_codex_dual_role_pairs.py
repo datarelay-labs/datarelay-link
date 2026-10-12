@@ -19,6 +19,8 @@ UUID36 = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 OUTCOMES = {
     "PASS", "FAIL", "PARTIAL", "BLOCKED_TOOLING",
     "BLOCKED_ENVIRONMENT", "BLOCKED", "NOT_RUN", "NOT_APPLICABLE",
+    "FAIL_PRECONDITION", "BLOCKED_MANAGEMENT_PATH", "BLOCKED_TOOLING_TTY",
+    "INVALIDATED_BY_CONCURRENT_STATE", "NOT_RUN_BY_SCOPE",
 }
 FIELDS = (
     "PAIR_ID", "SCENARIO_ID", "FEATURE_ID", "ROLE",
@@ -148,7 +150,9 @@ def evaluate(
     seen_event_logs: dict[str, str] = {}
     present_scenarios: set[str] = set()
     present_features: set[str] = set()
-    fresult = {"PASS": 0, "FAIL": 0, "PARTIAL": 0, "BLOCKED": 0, "N_A": 0}
+    fresult = {"PASS": 0, "FAIL": 0, "PARTIAL": 0, "BLOCKED": 0, "N_A": 0,
+               "NOT_RUN": 0, "FAIL_PRECONDITION": 0,
+               "INVALIDATED_BY_CONCURRENT_STATE": 0}
     for number, row in enumerate(rows, 1):
         pair = str(row.get("PAIR_ID") or "").strip()
         prefix = f"row {number} pair {pair or '-'}"
@@ -180,8 +184,10 @@ def evaluate(
             fresult["N_A"] += 1
         elif final.startswith("BLOCKED"):
             fresult["BLOCKED"] += 1
+        elif final.startswith("NOT_RUN"):
+            fresult["NOT_RUN"] += 1
         else:
-            fresult["PARTIAL"] += 1
+            fresult[final] += 1
 
         if final != "PASS" and not str(row.get("BLOCK_REASON") or "").strip():
             problems.append(prefix + ": non-PASS disposition lacks reason")
@@ -194,18 +200,31 @@ def evaluate(
                 problems.append(prefix + ": N/A only when both lanes N/A")
             continue
 
-        for key in ("DIRECT_GOAL_SHA256", "AI_GOAL_SHA256",
-                    "DIRECT_BASELINE_SHA256", "AI_BASELINE_SHA256"):
-            if not HEX64.fullmatch(str(row.get(key) or "")):
-                problems.append(prefix + ": invalid " + key)
-        if row.get("DIRECT_GOAL_SHA256") != row.get("AI_GOAL_SHA256"):
-            problems.append(prefix + ": Direct/AI goals differ")
-        if row.get("DIRECT_BASELINE_SHA256") != row.get("AI_BASELINE_SHA256"):
-            problems.append(prefix + ": Direct/AI starting baselines differ")
-        for key in ("DIRECT_SOURCE_HEAD", "AI_SOURCE_HEAD"):
-            val = str(row.get(key) or "")
-            if not HEX40.fullmatch(val) or val != expected_head:
+        # An unfinished lane may have no candidate/baseline yet. Do not demand
+        # fabricated PASS metadata, but validate supplied values and every lane
+        # that actually claims PASS. Pair PASS keeps all strict receipt checks.
+        for lane, outcome in (("DIRECT", direct), ("AI", ai)):
+            required = outcome == "PASS" or final == "PASS"
+            for suffix in ("GOAL_SHA256", "BASELINE_SHA256"):
+                key = lane + "_" + suffix
+                value = str(row.get(key) or "")
+                if (required or value) and not HEX64.fullmatch(value):
+                    problems.append(prefix + ": invalid " + key)
+            key = lane + "_SOURCE_HEAD"
+            value = str(row.get(key) or "")
+            unfinished = outcome.startswith(("BLOCKED", "NOT_RUN")) or outcome in (
+                "FAIL_PRECONDITION", "INVALIDATED_BY_CONCURRENT_STATE",
+            )
+            if (required or value) and (
+                    not HEX40.fullmatch(value)
+                    or ((required or not unfinished) and value != expected_head)):
                 problems.append(prefix + ": installed Source HEAD mismatch " + key)
+        for suffix, label in (("GOAL_SHA256", "goals"),
+                              ("BASELINE_SHA256", "starting baselines")):
+            direct_value = row.get("DIRECT_" + suffix)
+            ai_value = row.get("AI_" + suffix)
+            if direct_value and ai_value and direct_value != ai_value:
+                problems.append(prefix + ": Direct/AI " + label + " differ")
 
         if final == "PASS":
             ids = [str(row.get(key) or "") for key in (

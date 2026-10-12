@@ -245,6 +245,66 @@ class CodexDualRoleEvidenceContractTests(unittest.TestCase):
             expected_head="a" * 40,
         )
 
+    def test_unfinished_rows_preserve_canonical_dispositions_without_pass_metadata(self):
+        statuses = {
+            "NOT_RUN": "NOT_RUN", "NOT_RUN_BY_SCOPE": "NOT_RUN",
+            "FAIL_PRECONDITION": "FAIL_PRECONDITION",
+            "BLOCKED_MANAGEMENT_PATH": "BLOCKED",
+            "BLOCKED_TOOLING_TTY": "BLOCKED",
+            "BLOCKED_ENVIRONMENT": "BLOCKED", "BLOCKED_TOOLING": "BLOCKED",
+            "INVALIDATED_BY_CONCURRENT_STATE": "INVALIDATED_BY_CONCURRENT_STATE",
+        }
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            good = self._fixture(root)
+            for status, bucket in statuses.items():
+                with self.subTest(status=status):
+                    rows = [dict(r) for r in good]
+                    row = rows[0]
+                    for key in self.validator.FIELDS:
+                        if key not in ("PAIR_ID", "SCENARIO_ID", "FEATURE_ID"):
+                            row[key] = ""
+                    row.update(DIRECT_RESULT=status, AI_RESULT=status,
+                               FINAL_RESULT=status, BLOCK_REASON="Observed prerequisite unavailable")
+                    report = self._check(rows, root)
+                    self.assertEqual(report["EVIDENCE_SCHEMA"], "PASS", report["ERRORS"])
+                    self.assertEqual(report["PAIR_RESULTS"][bucket], 1)
+                    self.assertEqual(report["PAIR_RESULTS"]["PARTIAL"], 0)
+                    self.assertFalse(report["ALL_PAIRS_STRUCTURALLY_PASS"])
+                    self.assertFalse(report["PRODUCT_E2E_PASS_PROVEN"])
+                    row["DIRECT_SOURCE_HEAD"] = "b" * 40
+                    row["AI_SOURCE_HEAD"] = "b" * 40
+                    observed = self._check(rows, root)
+                    self.assertEqual(observed["EVIDENCE_SCHEMA"], "PASS", observed["ERRORS"])
+                    self.assertFalse(observed["ALL_PAIRS_STRUCTURALLY_PASS"])
+                    row["FINAL_RESULT"] = "PASS"
+                    self.assertEqual(self._check(rows, root)["EVIDENCE_SCHEMA"], "FAIL")
+                    row["FINAL_RESULT"] = status
+                    for key in ("DIRECT_GOAL_SHA256", "AI_BASELINE_SHA256"):
+                        row[key] = "malformed"
+                        self.assertEqual(self._check(rows, root)["EVIDENCE_SCHEMA"], "FAIL")
+                        row[key] = ""
+                    row["BLOCK_REASON"] = ""
+                    self.assertEqual(self._check(rows, root)["EVIDENCE_SCHEMA"], "FAIL")
+
+    def test_pending_mirror_does_not_erase_completed_lane_metadata_checks(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            rows = self._fixture(root)
+            row = rows[0]
+            row.update(AI_RESULT="NOT_RUN", FINAL_RESULT="PARTIAL",
+                       BLOCK_REASON="AI mirror pending")
+            for key in ("AI_GOAL_SHA256", "AI_BASELINE_SHA256", "AI_SOURCE_HEAD"):
+                row[key] = ""
+            self.assertEqual(self._check(rows, root)["EVIDENCE_SCHEMA"], "PASS")
+            row["DIRECT_SOURCE_HEAD"] = ""
+            self.assertEqual(self._check(rows, root)["EVIDENCE_SCHEMA"], "FAIL")
+            row["DIRECT_SOURCE_HEAD"] = "a" * 40
+            row["AI_SOURCE_HEAD"] = "b" * 40
+            self.assertEqual(self._check(rows, root)["EVIDENCE_SCHEMA"], "PASS")
+            row["AI_SOURCE_HEAD"] = "malformed"
+            self.assertEqual(self._check(rows, root)["EVIDENCE_SCHEMA"], "FAIL")
+
     def test_codex_direct_and_ai_same_scenario_fixture_structure_passes(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
