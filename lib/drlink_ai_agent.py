@@ -284,6 +284,14 @@ class AgentLoop:
             raise ValueError(invalid)
         ids: set[str] = set()
         tokens: set[str] = set()
+        attempts: set[str] = set()
+        known_capabilities = frozenset({
+            "get_system_info", "list_processes", "read_file",
+            "write_file", "upload_file", "download_file", "exec",
+        })
+        safe_id_characters = frozenset(
+            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
+        )
         for job in jobs:
             if not isinstance(job, dict):
                 raise ValueError(invalid)
@@ -310,18 +318,30 @@ class AgentLoop:
                 raise ValueError(invalid) from None
             if parsed_deadline.tzinfo is None:
                 raise ValueError(invalid)
+            patterns = job.get("patterns")
+            timeout = job.get("timeout")
             if (
-                not isinstance(job_id, str) or not job_id
-                or not isinstance(claim_token, str) or not claim_token
-                or not isinstance(attempt_id, str) or not attempt_id
-                or job_id in ids or claim_token in tokens
-                or not isinstance(job.get("capability"), str)
+                not isinstance(job_id, str) or not 1 <= len(job_id) <= 160
+                or any(ch not in safe_id_characters for ch in job_id)
+                or not isinstance(claim_token, str) or not 1 <= len(claim_token) <= 128
+                or any(ch not in safe_id_characters for ch in claim_token)
+                or not isinstance(attempt_id, str) or not 1 <= len(attempt_id) <= 128
+                or any(ch not in safe_id_characters for ch in attempt_id)
+                or job_id in ids or claim_token in tokens or attempt_id in attempts
+                or job.get("capability") not in known_capabilities
                 or not isinstance(job.get("arguments"), dict)
-                or not isinstance(job.get("patterns"), list)
+                or not isinstance(patterns, list) or len(patterns) > 128
+                or any(
+                    not isinstance(pattern, str) or not pattern
+                    or len(pattern) > 4096 or "\x00" in pattern
+                    for pattern in patterns
+                )
+                or type(timeout) is not int or not 1 <= timeout <= 3600
             ):
                 raise ValueError(invalid)
             ids.add(job_id)
             tokens.add(claim_token)
+            attempts.add(attempt_id)
         return jobs
 
     def _complete(

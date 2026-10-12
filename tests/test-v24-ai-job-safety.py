@@ -369,8 +369,21 @@ class AiJobSafetyTests(unittest.TestCase):
             "patterns": [str(self.agent_a_root / "**")],
             "timeout": 5, "deadline_at": future,
         }
+        peer = {
+            **legitimate, "id": "ai-job-two",
+            "claim_token": "atk_test_two", "attempt_id": "att_test_two",
+        }
         invalid_batches = (
             {"jobs": [legitimate, dict(legitimate)]},
+            {"jobs": [legitimate, {**peer, "capability": "unknown-privileged"}]},
+            {"jobs": [legitimate, {**peer, "patterns": [{"secret": "path"}]}]},
+            {"jobs": [legitimate, {**peer, "timeout": True}]},
+            {"jobs": [legitimate, {**peer, "timeout": "5"}]},
+            {"jobs": [legitimate, {**peer, "timeout": 0}]},
+            {"jobs": [legitimate, {**peer, "timeout": 1.5}]},
+            {"jobs": [legitimate, {**peer, "timeout": 3601}]},
+            {"jobs": [legitimate, {**peer, "attempt_id": legitimate["attempt_id"]}]},
+            {"jobs": [legitimate, {**peer, "claim_token": "bad\\nline"}]},
             {"jobs": [legitimate, {"id": "malformed"}]},
             {"jobs": [legitimate] * 5},
             {"jobs": "not-a-list"},
