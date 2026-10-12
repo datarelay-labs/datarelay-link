@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "lib"))
 
 from drlink_ai_agent import AgentLoop  # noqa: E402
-from drlink_control_plane import ControlPlane  # noqa: E402
+from drlink_control_plane import ControlPlane, ControlPlaneError  # noqa: E402
 from drlink_mcp_bridge import MCPBridge  # noqa: E402
 import drlink_mgmt_sync as mgmt  # noqa: E402
 import drlink_v24 as v24  # noqa: E402
@@ -239,6 +239,50 @@ class RealManagedHostExecutorTests(unittest.TestCase):
         self.assertTrue(dest.is_file())
         self.assertEqual(dest.read_text(encoding="utf-8"), "from-mcp")
         self.assertFalse(server_shadow.exists())
+
+    def test_invalid_core_ai_job_enqueue_fails_before_queue_mutation(self):
+        # Source admission must not create Jobs that the strict claim reader
+        # can never lease to an Agent.
+        args = {
+            "principal_id": None,
+            "endpoint_object_id": "ep-a",
+            "client_id": MACHINE_A,
+            "capability": "read_file",
+            "arguments": {"path": str(self.agent_a_root / "AGENT_MARKER")},
+            "patterns": [str(self.agent_a_root) + "/**"],
+            "timeout": 60,
+        }
+        invalid_cases = (
+            {"arguments": []}, {"arguments": False},
+            {"patterns": "unbounded"},
+            {"patterns": [17]}, {"patterns": [""]},
+            {"patterns": ["bad" + chr(0) + "scope"]},
+            {"patterns": ["valid"] * 129},
+            {"timeout": 0}, {"timeout": -1}, {"timeout": True},
+            {"timeout": 1.5}, {"timeout": "5"}, {"timeout": 3601},
+            {"arguments": {"score": float("nan")}},
+        )
+        before = self.plane.conn.execute(
+            "SELECT COUNT(*) FROM ai_jobs"
+        ).fetchone()[0]
+        for bad in invalid_cases:
+            with self.subTest(case=str(bad)[:70]):
+                with self.assertRaises(ControlPlaneError):
+                    self.plane.enqueue_ai_job(**{**args, **bad})
+                count = self.plane.conn.execute(
+                    "SELECT COUNT(*) FROM ai_jobs"
+                ).fetchone()[0]
+                self.assertEqual(count, before)
+        # Preserve the explicit optional Core timeout default.
+        job_id = self.plane.enqueue_ai_job(
+            **{**args, "timeout": None, "patterns": tuple(args["patterns"])}
+        )
+        row = self.plane.conn.execute(
+            "SELECT payload_json FROM ai_jobs WHERE id=?", (job_id,)
+        ).fetchone()
+        payload = json.loads(row["payload_json"])
+        self.assertEqual(payload["timeout"], 30)
+        self.assertEqual(payload["patterns"], args["patterns"])
 
     def test_corrupt_core_ai_job_payload_never_consumes_agent_lease(self):
         # A queued Core AI Job is not authority to hand malformed fields to an

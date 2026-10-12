@@ -4960,21 +4960,44 @@ class ControlPlane:
         patterns: list[str],
         timeout: Optional[int],
     ) -> str:
+        # Fail before queue mutation: a malformed source request must not
+        # create a Job that the Agent/strict Core Claim can never execute.
+        if not isinstance(arguments, dict):
+            raise ControlPlaneError("AI Job arguments must be an object")
+        if patterns is not None and not isinstance(patterns, (list, tuple)):
+            raise ControlPlaneError("AI Job patterns must be an array")
+        selected_patterns = list(patterns) if patterns is not None else []
+        if len(selected_patterns) > 128 or any(
+            not isinstance(item, str) or not item
+            or len(item) > 4096 or "\x00" in item
+            for item in selected_patterns
+        ):
+            raise ControlPlaneError("AI Job patterns are invalid or unbounded")
+        if timeout is not None and (
+            type(timeout) is not int or not 1 <= timeout <= 3600
+        ):
+            raise ControlPlaneError("AI Job timeout must be an integer in 1..3600")
+        timeout_seconds = 30 if timeout is None else timeout
         ensure_ai_jobs_safety_schema(self.conn)
         self.assert_ai_job_claimant(client_id)
         job_id = _new_id("job")
         now = utc_now_iso()
-        timeout_seconds = int(timeout or 30)
         deadline_at = _ai_job_deadline_iso(
             now, timeout_seconds + AI_JOB_DISPATCH_GRACE_SECONDS
         )
         payload = {
             "client_id": client_id,
             "arguments": arguments,
-            "patterns": list(patterns or []),
+            "patterns": selected_patterns,
             "timeout": timeout_seconds,
             "deadline_at": deadline_at,
         }
+        try:
+            payload_json = json.dumps(payload, sort_keys=True, allow_nan=False)
+        except (TypeError, ValueError, RecursionError):
+            raise ControlPlaneError(
+                "AI Job payload is not valid finite JSON"
+            ) from None
         self.conn.execute(
             "INSERT INTO ai_jobs(id, principal_id, endpoint_object_id, capability, payload_json, "
             "status, result_json, created_at, updated_at, timeout_seconds, client_id, deadline_at, "
@@ -4985,7 +5008,7 @@ class ControlPlane:
                 principal_id,
                 endpoint_object_id,
                 capability,
-                json.dumps(payload, sort_keys=True),
+                payload_json,
                 now,
                 now,
                 timeout_seconds,
