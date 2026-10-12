@@ -331,6 +331,49 @@ class V30AgentCompletionAcknowledgementBoundaryTests(unittest.TestCase):
             "deadline_at": (instant+timedelta(minutes=10)).isoformat().replace("+00:00","Z"),
         }
 
+    def test_sequential_batch_rechecks_lease_before_each_agent_mutation(self):
+        from unittest import mock
+        from datetime import datetime, timedelta, timezone
+        from drlink_agent_lifecycle import process_management_jobs_once
+        baseline = datetime.now(timezone.utc).replace(microsecond=0)
+        lease = (baseline + timedelta(seconds=3)).isoformat().replace("+00:00", "Z")
+        first = {
+            "job_id": "mjob_" + "6" * 24,
+            "target_id": MACHINE_A,
+            "claim_token": "6" * 32,
+            "job_type": "remote-service-set",
+            "lease_expires_at": lease,
+            "deadline_at": self.claim_times["deadline_at"],
+        }
+        second = {**first, "job_id": "mjob_" + "7" * 24,
+                  "claim_token": "7" * 32}
+        def acknowledged(*, job_id, **kwargs):
+            return {"ok": True, "job": {
+                "id": job_id, "job_type": "remote-service-set",
+                "status": "SUCCEEDED",
+                "targets": [{"target_id": MACHINE_A, "status": "SUCCEEDED"}],
+            }}
+        with mock.patch("drlink_agent_lifecycle.datetime", wraps=datetime) as clock, mock.patch(
+            "drlink_mgmt_sync.claim_management_jobs_on_server",
+            return_value={"jobs": [first, second]},
+        ), mock.patch(
+            "drlink_agent_lifecycle._execute_management_job",
+            return_value={"operation": "remote-service-set", "status": "COMMITTED"},
+        ) as executed, mock.patch(
+            "drlink_mgmt_sync.complete_management_job_on_server",
+            side_effect=acknowledged,
+        ) as completed:
+            # Core's two claims are live at initial validation. By the time
+            # the second task would begin, the short lease has expired.
+            clock.now.side_effect = [
+                baseline, baseline, baseline + timedelta(seconds=5),
+            ]
+            with self.assertRaisesRegex(ValueError,"claim response UNKNOWN"):
+                process_management_jobs_once(root="/tmp/unused-agent-fixture")
+        self.assertEqual(executed.call_count,1)
+        self.assertEqual(completed.call_count,1)
+        self.assertEqual(completed.call_args.kwargs["job_id"], first["job_id"])
+
     def test_stale_or_unverified_core_claim_time_rejects_batch_before_any_agent_work(self):
         from unittest import mock
         from drlink_agent_lifecycle import process_management_jobs_once

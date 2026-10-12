@@ -382,6 +382,13 @@ def process_management_jobs_once(root: Optional[str] = None, *, limit: int = 4) 
     processed = 0
     failed = 0
     for claim in jobs:
+        # A prior Agent job in the same bounded batch may consume the next
+        # claim's entire lease. Validate again immediately before each Agent
+        # effect, not just once on receipt of the original signed batch.
+        current = datetime.now(timezone.utc)
+        if (not _unexpired_core_claim_time(claim["lease_expires_at"], current)
+            or not _unexpired_core_claim_time(claim["deadline_at"], current)):
+            raise ValueError(invalid)
         job_id = claim["job_id"]
         claim_token = claim["claim_token"]
         try:
