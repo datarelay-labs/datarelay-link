@@ -72,7 +72,7 @@ test("G-32 native target facet filters loaded names BEFORE local sort; collision
  assert.match(src,/const duplicate=conflictingSavedViewName\(rows,name\)/);
  assert.match(src,/const incompleteNames=rows\.length>=100/);
  assert.match(src,/aria-label="Filter loaded saved view resource type"/);
- assert.match(src,/onChange=\{e=>setTargetFacet\(isSavedViewTargetFilter\(e.target.value\)\?e.target.value:"all"\)\}/);
+ assert.ok(src.includes('onChange={e=>{setTargetFacet(isSavedViewTargetFilter(e.target.value)?e.target.value:"all");setPageIndex(0)}}'));
  for(const [value,label] of [["all","All types"],["hosts","Hosts"],["services","Services"],["policies","Policies"],["unsupported","Unsupported"]])
   assert.ok(src.includes('<option value="'+value+'">'+label+'</option>'),label);
  assert.match(src,/Legacy\/unsupported views are listed separately/);

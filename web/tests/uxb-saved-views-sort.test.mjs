@@ -65,9 +65,9 @@ test("G-31 native sort is local to already filtered private rows; full collision
  assert.match(src,/const sortedVisibleRows=sortLoadedSavedViews\(typedVisibleRows,listSort\)/);
  assert.match(src,/const duplicate=conflictingSavedViewName\(rows,name\)/);
  assert.match(src,/const incompleteNames=rows\.length>=100/);
- assert.match(src,/sortedVisibleRows\.map\(\(item:any,i:number\)=>/);
+ assert.match(src,/savedPage\.items\.map\(\(item:any,i:number\)=>/);
  assert.match(src,/aria-label="Sort loaded private saved filters"/);
- assert.match(src,/onChange=\{e=>setListSort\(isSavedViewSortMode\(e.target.value\)\?e.target.value:"core"\)\}/);
+ assert.ok(src.includes('onChange={e=>{setListSort(isSavedViewSortMode(e.target.value)?e.target.value:"core");setPageIndex(0)}}'));
  for(const [id,label] of [["core","Core order (default)"],["updated_desc","Recently updated"],["updated_asc","Oldest updated"]])
   assert.ok(src.includes('<option value="'+id+'">'+label+'</option>'),label);
  assert.match(src,/Sorting only rearranges loaded operator-private views/);

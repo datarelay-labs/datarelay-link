@@ -76,12 +76,12 @@ test("G-30 accessible local search doesn't change private collision or 100-row c
  assert.match(src,/const incompleteNames=rows\.length>=100/);
  assert.match(src,/const typedVisibleRows=filterLoadedSavedViewsByType\(visibleRows\.items,targetFacet\)/);
  assert.match(src,/const sortedVisibleRows=sortLoadedSavedViews\(typedVisibleRows,listSort\)/);
- assert.match(src,/sortedVisibleRows\.map\(\(item:any,i:number\)=>/);
+ assert.match(src,/savedPage\.items\.map\(\(item:any,i:number\)=>/);
  assert.match(src,/No matching loaded saved filters/);
  assert.match(src,/No saved views yet/);
  assert.match(src,/aria-label="Find my saved filters"/);
- assert.match(src,/onChange=\{e=>setListQuery\(e.target.value\)\}/);
- assert.match(src,/onClick=\{\(\)=>setListQuery\(""\)\}/);
+ assert.ok(src.includes('onChange={e=>{setListQuery(e.target.value);setPageIndex(0)}}'));
+ assert.ok(src.includes('onClick={()=>{setListQuery("");setPageIndex(0)}}'));
  assert.match(src,/Only names in the loaded private list/);
  assert.doesNotMatch(src,/\/api\/v1\/saved-views\?q=/);
  assert.match(src,/\/api\/v1\/saved-views/);

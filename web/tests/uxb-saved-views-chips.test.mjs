@@ -75,7 +75,7 @@ test("G-34 native chip buttons independently remove ONLY local search/type/sort 
  assert.match(src,/role="group" aria-label="Active Saved Views display filters"/);
  assert.match(src,/savedViewChips\.map\(chip=><button/);
  assert.match(src,/aria-label=\{"Remove "\+chip.label\+" filter"\}/);
- assert.ok(src.includes('onClick={()=>{if(chip.id==="search")setListQuery("");else if(chip.id==="type")setTargetFacet("all");else setListSort("core");listQueryInputRef.current?.focus()}}'));
+ assert.ok(src.includes('onClick={()=>{if(chip.id==="search")setListQuery("");else if(chip.id==="type")setTargetFacet("all");else setListSort("core");setPageIndex(0);listQueryInputRef.current?.focus()}}'));
  assert.match(src,/Reset Saved Views display filters/);
  assert.match(src,/const duplicate=conflictingSavedViewName\(rows,name\)/);
  assert.match(src,/const incompleteNames=rows\.length>=100/);

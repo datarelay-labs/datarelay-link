@@ -1,6 +1,7 @@
 import React,{useRef,useState} from "react";
 import {isObservedAbsoluteTime} from "./uxb-integrations-state";
 import {sortLoadedSavedViews,isSavedViewSortMode,type SavedViewSortMode} from "./uxb-saved-views-sort";
+import {paginateLoadedSavedViews} from "./uxb-saved-views-page";
 
 /** Private filter metadata is not Core authorization evidence; reject
  * control/bidi spoofing and avoid rendering arbitrary nested values. */
@@ -180,6 +181,7 @@ export function SavedViewsWorkspace({data,api,onNavigate,refresh,initialDraft}:{
       prepared.route==="services"?"all":prepared.plane):null;
   const [name,setName]=useState(""),[filter,setFilter]=useState(safeDraft?.filter||"");
   const [listQuery,setListQuery]=useState("");
+  const [pageIndex,setPageIndex]=useState(0);
   const listQueryInputRef=useRef<HTMLInputElement>(null);
   const [listSort,setListSort]=useState<SavedViewSortMode>("core");
   const [targetFacet,setTargetFacet]=useState<SavedViewTargetFilter>("all");
@@ -201,6 +203,7 @@ export function SavedViewsWorkspace({data,api,onNavigate,refresh,initialDraft}:{
   const visibleRows=filterObservedSavedViewList(rows,listQuery);
   const typedVisibleRows=filterLoadedSavedViewsByType(visibleRows.items,targetFacet);
   const sortedVisibleRows=sortLoadedSavedViews(typedVisibleRows,listSort);
+  const savedPage=paginateLoadedSavedViews(sortedVisibleRows,pageIndex);
   const displayResetAvailable=savedViewsDisplayResetAvailable(listQuery,targetFacet,listSort);
   const savedViewChips=activeSavedViewFilterChips(listQuery,targetFacet,listSort);
   // Never let a local display filter hide an existing name collision.
@@ -218,6 +221,7 @@ export function SavedViewsWorkspace({data,api,onNavigate,refresh,initialDraft}:{
       Refresh saved filters
     </button>
   </div>;
+  if(!savedPage)return <p className="warning-box" role="alert">UNKNOWN · Loaded private Saved Views could not be safely paginated.</p>;
   async function save(e:React.FormEvent){
     e.preventDefault();
     if(busy||!validSavedViewName(name)||!currentDraft)return;
@@ -282,22 +286,22 @@ export function SavedViewsWorkspace({data,api,onNavigate,refresh,initialDraft}:{
       <div className="dr-form-actions" role="search" aria-label="Private saved filter name search">
         <label>Find my saved filters <input aria-label="Find my saved filters"
           ref={listQueryInputRef} value={listQuery} maxLength={80}
-          onChange={e=>setListQuery(e.target.value)} placeholder="Search saved view names…"/></label>
+          onChange={e=>{setListQuery(e.target.value);setPageIndex(0)}} placeholder="Search saved view names…"/></label>
         {listQuery&&<button type="button" className="secondary"
-          onClick={()=>setListQuery("")}>Clear saved filter search</button>}
+          onClick={()=>{setListQuery("");setPageIndex(0)}}>Clear saved filter search</button>}
         {displayResetAvailable&&<button type="button" className="secondary"
-          onClick={()=>{setListQuery("");setTargetFacet("all");setListSort("core");listQueryInputRef.current?.focus()}}>
+          onClick={()=>{setListQuery("");setTargetFacet("all");setListSort("core");setPageIndex(0);listQueryInputRef.current?.focus()}}>
           Reset Saved Views display filters</button>}
         {savedViewChips.length>0&&<div className="dr-form-actions" role="group" aria-label="Active Saved Views display filters">
           {savedViewChips.map(chip=><button key={chip.id} type="button" className="secondary"
             aria-label={"Remove "+chip.label+" filter"}
-            onClick={()=>{if(chip.id==="search")setListQuery("");else if(chip.id==="type")setTargetFacet("all");else setListSort("core");listQueryInputRef.current?.focus()}}>
+            onClick={()=>{if(chip.id==="search")setListQuery("");else if(chip.id==="type")setTargetFacet("all");else setListSort("core");setPageIndex(0);listQueryInputRef.current?.focus()}}>
             {chip.label}: {chip.value} ×</button>)}
           <span className="muted">Name search chips never display the entered text.</span>
         </div>}
         <label>Saved view resource type
           <select aria-label="Filter loaded saved view resource type" value={targetFacet}
-            onChange={e=>setTargetFacet(isSavedViewTargetFilter(e.target.value)?e.target.value:"all")}>
+            onChange={e=>{setTargetFacet(isSavedViewTargetFilter(e.target.value)?e.target.value:"all");setPageIndex(0)}}>
             <option value="all">All types</option>
             <option value="hosts">Hosts</option>
             <option value="services">Services</option>
@@ -307,7 +311,7 @@ export function SavedViewsWorkspace({data,api,onNavigate,refresh,initialDraft}:{
         </label>
         <label>Sort loaded saved filters
           <select aria-label="Sort loaded private saved filters" value={listSort}
-            onChange={e=>setListSort(isSavedViewSortMode(e.target.value)?e.target.value:"core")}>
+            onChange={e=>{setListSort(isSavedViewSortMode(e.target.value)?e.target.value:"core");setPageIndex(0)}}>
             <option value="core">Core order (default)</option>
             <option value="updated_desc">Recently updated</option>
             <option value="updated_asc">Oldest updated</option>
@@ -320,9 +324,14 @@ export function SavedViewsWorkspace({data,api,onNavigate,refresh,initialDraft}:{
           Missing/invalid Core updated timestamps remain UNKNOWN and sort last.</span>
       </div>
       {visibleRows.error&&<p role="alert" className="warning-box">{visibleRows.error}</p>}
-      {rows.length?sortedVisibleRows.length?<div className="dr-table-scroll"><table className="dr-resource-table">
+      <p role="status" className="muted">
+        Showing {savedPage.from}–{savedPage.to} of {savedPage.total} matching loaded private views
+        · {rows.length} loaded private Core views · only the already loaded private views, not a Core global total.
+      </p>
+      {rows.length>=100&&<p role="status" className="muted">Core returned the first 100 private views; additional private views may exist beyond the loaded list.</p>}
+      {rows.length?sortedVisibleRows.length?<><div className="dr-table-scroll"><table className="dr-resource-table">
         <thead><tr><th>View</th><th>Resources</th><th>Filter</th><th>Updated</th><th>Action</th></tr></thead>
-        <tbody>{sortedVisibleRows.map((item:any,i:number)=>{
+        <tbody>{savedPage.items.map((item:any,i:number)=>{
           const parsed=readSavedView(item);
           const safeId=visibleViewText(item?.id,160);
           const safeName=visibleViewText(item?.name)||safeId||"Unnamed view";
@@ -340,7 +349,16 @@ export function SavedViewsWorkspace({data,api,onNavigate,refresh,initialDraft}:{
               Legacy/unsupported view; save a new named target</span>}</td>
           </tr>;
         })}</tbody>
-      </table></div>:<p className="dr-empty-state">No matching loaded saved filters. Clear search to review the observed private list; other Core pages may not be loaded.</p>:<p className="dr-empty-state">No saved views yet. Save a named filter for an observed resource list.</p>}
+      </table></div>
+        {savedPage.pageCount>1&&<div className="dr-form-actions" role="navigation" aria-label="Loaded private saved view pages">
+          <button type="button" className="secondary" aria-label="Previous saved view page"
+            disabled={savedPage.pageIndex===0}
+            onClick={()=>setPageIndex(Math.max(0,savedPage.pageIndex-1))}>Previous</button>
+          <span className="muted">Page {savedPage.pageIndex+1} of {savedPage.pageCount}</span>
+          <button type="button" className="secondary" aria-label="Next saved view page"
+            disabled={savedPage.pageIndex>=savedPage.pageCount-1}
+            onClick={()=>setPageIndex(Math.min(savedPage.pageCount-1,savedPage.pageIndex+1))}>Next</button>
+        </div>}</>:<p className="dr-empty-state">No matching loaded saved filters. Clear search to review the observed private list; other Core pages may not be loaded.</p>:<p className="dr-empty-state">No saved views yet. Save a named filter for an observed resource list.</p>}
       <p className="muted">A saved view only changes the visible text filter, optional Host admission display or selected Policy plane. It does not fetch missing inventory pages, permit a connection or create a Core configuration revision.</p>
     </section>
   </div>;

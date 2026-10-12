@@ -68,7 +68,7 @@ test("G-33 reset handler clears only three local controls and restores keyboard 
  assert.match(src,/const displayResetAvailable=savedViewsDisplayResetAvailable\(listQuery,targetFacet,listSort\)/);
  assert.match(src,/\{displayResetAvailable&&<button type="button" className="secondary"/);
  assert.match(src,/Reset Saved Views display filters<\/button>/);
- assert.match(src,/onClick=\{\(\)=>\{setListQuery\("".*?\);setTargetFacet\("all"\);setListSort\("core"\);listQueryInputRef\.current\?\.focus\(\)\}\}/);
+ assert.ok(src.includes('onClick={()=>{setListQuery("");setTargetFacet("all");setListSort("core");setPageIndex(0);listQueryInputRef.current?.focus()}}'));
  assert.match(src,/const listQueryInputRef=useRef<HTMLInputElement>\(null\)/);
  assert.match(src,/ref=\{listQueryInputRef\}/);
  assert.match(src,/const duplicate=conflictingSavedViewName\(rows,name\)/);
