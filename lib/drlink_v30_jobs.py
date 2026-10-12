@@ -564,6 +564,10 @@ class ManagementJobEngine:
                 if payload is None:
                     continue
                 kind = str(row["job_type"])
+                # A corrupted persisted Job family is not permission to
+                # dispatch arbitrary Agent RPCs or synthetic success claims.
+                if kind not in ADMITTED_JOB_TYPES:
+                    continue
                 if kind in MUTATING_AGENT_JOB_TYPES:
                     host = self.conn.execute(
                         "SELECT trust_status,admission_state,status FROM clients WHERE id=?",

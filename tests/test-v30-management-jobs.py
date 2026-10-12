@@ -266,6 +266,43 @@ class V30ManagementJobTests(unittest.TestCase):
         self.assertEqual([c["job_id"] for c in claims], [job["id"]])
         self.assertEqual(claims[0]["payload"], {"operation": "doctor"})
 
+    def test_corrupted_job_type_never_leases_unknown_operation(self):
+        # A stored type that bypasses normal enqueue validation cannot
+        # become an executable Agent job just because its payload is valid.
+        job = self._enqueue(
+            targets=("host-a",), job_type="doctor", payload={"operation": "doctor"}
+        )
+        for invalid_type in ("unregistered-rpc", "remote-service-set ", ""):
+            with self.subTest(kind=invalid_type):
+                self.engine.conn.execute(
+                    "UPDATE management_jobs SET job_type=? WHERE id=?",
+                    (invalid_type, job["id"]),
+                )
+                self.engine.conn.commit()
+                claims = self.engine.claim_targets_for_target(
+                    target_id="host-a", worker_id="agent:host-a", limit=1,
+                    now=self.now + timedelta(seconds=1),
+                )
+                self.assertEqual(claims, [])
+                target = self.engine.conn.execute(
+                    "SELECT status,attempt,claim_token FROM management_job_targets "
+                    "WHERE job_id=? AND target_id=?",
+                    (job["id"], "host-a"),
+                ).fetchone()
+                self.assertEqual(target["status"], QUEUED)
+                self.assertEqual(target["attempt"], 0)
+                self.assertFalse(target["claim_token"])
+        self.engine.conn.execute(
+            "UPDATE management_jobs SET job_type='doctor' WHERE id=?",
+            (job["id"],),
+        )
+        self.engine.conn.commit()
+        claims = self.engine.claim_targets_for_target(
+            target_id="host-a", worker_id="agent:host-a", limit=1,
+            now=self.now + timedelta(seconds=2),
+        )
+        self.assertEqual([c["job_type"] for c in claims], ["doctor"])
+
     def test_schema_is_separate_from_ai_jobs(self):
         tables = {
             row[0]
