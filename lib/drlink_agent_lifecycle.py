@@ -77,6 +77,19 @@ def disconnect_once(root: Optional[str] = None) -> dict:
     return report_agent_lifecycle_on_server(root=root, state="disconnected")
 
 
+def _public_agent_diagnostic(value: object) -> str:
+    """Expose diagnostic presence, never the free-form Agent-local message.
+
+    Native failures may quote private URLs, credentials, network topology or
+    configuration. Keep detailed text only in the Agent-local doctor/diagnostic
+    surface; Core Job history is a wider trust and audit boundary.
+    """
+    return (
+        "Check Agent-local diagnostics for details."
+        if isinstance(value, str) and value.strip() else ""
+    )
+
+
 def _execute_management_job(claim: dict, root: Optional[str] = None) -> dict:
     kind = str(claim.get("job_type") or "").strip().lower()
     payload = claim.get("payload") or {}
@@ -104,7 +117,7 @@ def _execute_management_job(claim: dict, root: Optional[str] = None) -> dict:
                     {
                         "id": str(check.get("id") or "")[:128],
                         "status": status,
-                        "message": str(check.get("message") or "")[:256],
+                        "message": _public_agent_diagnostic(check.get("message")),
                     }
                 )
         return {
@@ -215,7 +228,7 @@ def _execute_management_job(claim: dict, root: Optional[str] = None) -> dict:
                     affected.append(
                         {
                             "name": str(item.get("name") or "")[:128],
-                            "reason": str(item.get("reason") or "")[:256],
+                            "reason": _public_agent_diagnostic(item.get("reason")),
                         }
                     )
             return {
@@ -224,7 +237,9 @@ def _execute_management_job(claim: dict, root: Optional[str] = None) -> dict:
                 "updated": int((result or {}).get("updated") or 0),
                 "projected": int((result or {}).get("projected") or 0),
                 "affected": affected,
-                "runtime_error": str((result or {}).get("runtime_error") or "")[:512],
+                "runtime_error": _public_agent_diagnostic(
+                    (result or {}).get("runtime_error")
+                ),
             }
         if kind == "remote-service-set":
             name = str(payload.get("name") or "").strip()
@@ -248,7 +263,7 @@ def _execute_management_job(claim: dict, root: Optional[str] = None) -> dict:
                 "operation": "remote-service-set",
                 "name": name,
                 "runtime_status": str((view or {}).get("status") or "UNKNOWN"),
-                "reason": str((view or {}).get("reason") or ""),
+                "reason": _public_agent_diagnostic((view or {}).get("reason")),
                 "endpoint": (view or {}).get("endpoint"),
             }
         if kind == "remote-service-delete":

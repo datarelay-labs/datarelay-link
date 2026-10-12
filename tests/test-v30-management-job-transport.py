@@ -387,6 +387,59 @@ class V30ManagementJobTransportTests(unittest.TestCase):
             engine.close()
 
 
+    def test_agent_diagnostic_job_results_do_not_export_raw_private_messages(self):
+        from types import SimpleNamespace
+        from unittest import mock
+        from drlink_agent_lifecycle import _execute_management_job
+
+        secret = "Bearer fixture-only-diagnostic-private-token"
+        report = SimpleNamespace(
+            checks=[{"id": "pki", "status": "WARN",
+                     "message": "management token invalid: " + secret}],
+            overall=lambda: "WARN",
+        )
+        with mock.patch("frp_doctor.run_doctor", return_value=("", 1, report)):
+            doctor = _execute_management_job(
+                {"job_type": "doctor"}, root=self.agent_tmp
+            )
+        self.assertEqual(doctor["findings"][0]["id"], "pki")
+        self.assertEqual(doctor["findings"][0]["status"], "WARN")
+        self.assertNotIn(secret, json.dumps(doctor))
+
+        with mock.patch(
+            "drlink_v24.synchronize_agent_remote_services",
+            return_value={
+                "status": "DEGRADED", "updated": 0, "projected": 1,
+                "affected": [{"name": "ssh-access", "reason": "RPC error " + secret}],
+                "runtime_error": "connection failed with " + secret,
+            },
+        ):
+            refresh = _execute_management_job(
+                {"job_type": "refresh"}, root=self.agent_tmp
+            )
+        self.assertEqual(refresh["status"], "DEGRADED")
+        self.assertEqual(refresh["affected"][0]["name"], "ssh-access")
+        self.assertNotIn(secret, json.dumps(refresh))
+
+        with mock.patch(
+            "drlink_v24.set_remote_service_agent",
+            return_value={"view": {
+                "status": "DEGRADED", "reason": "secret relay URL " + secret,
+                "endpoint": "127.0.0.1:6022",
+            }},
+        ):
+            service = _execute_management_job({
+                "job_type": "remote-service-set",
+                "payload": {
+                    "name": "ssh-access", "destination": "this-host",
+                    "service": "ssh", "enabled": True,
+                },
+            }, root=self.agent_tmp)
+        self.assertEqual(service["name"], "ssh-access")
+        self.assertEqual(service["runtime_status"], "DEGRADED")
+        self.assertNotIn(secret, json.dumps(service))
+
+
 class V30AgentCompletionAcknowledgementBoundaryTests(unittest.TestCase):
     """A lost Core completion acknowledgement must NEVER cause a second,
     conflicting FAILED completion for an already executed Agent mutation.
