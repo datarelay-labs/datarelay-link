@@ -100,8 +100,8 @@ test("M1-A real Global Search Web wiring carries only projected context, guards 
  const global=src.split("function GlobalSearch(",2)[1]?.split("function Shell(",1)[0]||"";
  const shell=src.split("function Shell(",2)[1]?.split("function App(",1)[0]||"";
  const resource=src.split("function ResourceWorkspace(",2)[1]?.split("function UsersPanel(",1)[0]||"";
- assert.match(src,/import \{projectObservedGlobalSearchResults\} from "\.\/uxb-global-search-target"/);
- assert.match(global,/projectObservedGlobalSearchResults\(data\.items\)/);
+ assert.match(src,/import \{observedBoundedCoreSearchResponse\} from "\.\/uxb-global-search-target"/);
+ assert.match(global,/observedBoundedCoreSearchResponse\(data,q\)/);
  assert.match(global,/const \[searchStatus,setSearchStatus\]=useState/);
  assert.match(global,/setSearchStatus\("ready"\)/);
  assert.match(global,/searchStatus==="ready".*?No matching Core resources in the returned search page/s);
@@ -118,4 +118,26 @@ test("M1-A real Global Search Web wiring carries only projected context, guards 
  assert.match(resource,/Use Load more/);
  assert.match(resource,/matchObservedAuditReturn\(loaded,initialInspectId\)/);
  assert.match(src,/matchObservedPolicyReturn\(\[\.\.\.\(data\.items\|\|\[\]\),\.\.\.additional\],inspectPolicyId,carriedPlane\)/);
+});
+
+test("R2.2 M2 Core Search page is bound to the submitted query and exact 20-row contract",()=>{
+ const q="branch server";
+ const page={query:q,limit:20,items:[hit("managed-host","host-1")]};
+ const valid=projector.observedBoundedCoreSearchResponse(page,q);
+ assert.equal(valid?.scope,"bounded-core-search");
+ assert.deepEqual(valid?.items.map(entry=>entry.id),["host-1"]);
+ assert.deepEqual(projector.observedBoundedCoreSearchResponse({...page,items:[]},q)?.items,[]);
+ for(const bad of [
+   {items:[]}, {...page,query:"other server"},
+   {...page,query:null}, {...page,limit:50},
+   {...page,limit:"20"}, {...page,items:null},
+   {...page,items:Array.from({length:21},(_,i)=>hit("managed-host","host-"+i))},
+   {...page,items:[hit("managed-host","host-1"),hit("managed-host","host-1")]},
+ ])assert.equal(projector.observedBoundedCoreSearchResponse(bad,q),null);
+ for(const badQuery of ["", " branch server", "x".repeat(129), "branch\nserver"]){
+   assert.equal(projector.observedBoundedCoreSearchResponse(page,badQuery),null);
+ }
+ const source=readFileSync(join(root,"src","main.tsx"),"utf8");
+ const global=source.split("function GlobalSearch(",2)[1]?.split("function Shell(",1)[0]||"";
+ assert.ok(global.includes("observedBoundedCoreSearchResponse(data,q)"));
 });

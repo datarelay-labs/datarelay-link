@@ -38,6 +38,27 @@ export function observedRecentFeed(result:PromiseSettledResult<any>):RecentFeed{
   }
   return {status:"ready",items:observed};
 }
+/** R2.2/M2: the Home activity and revision feeds must originate from
+ * the right bounded Core page, not from an unrelated HTTP 200 or partial
+ * missing metadata response (which cannot prove an empty history). */
+export function observedCoreRecentFeed(
+  result:PromiseSettledResult<any>, expected:"audit-event"|"revision"
+):RecentFeed{
+  const unknown:RecentFeed={status:"unknown",items:[]};
+  if(result.status!=="fulfilled")return unknown;
+  const page=result.value;
+  if(!page||typeof page!=="object"||Array.isArray(page)
+    ||page.resource_type!==expected||page.limit!==6
+    ||!Array.isArray(page.items)||page.items.length>6
+    ||!Object.prototype.hasOwnProperty.call(page,"next_cursor")
+    ||(page.next_cursor!==null&&(
+      typeof page.next_cursor!=="string"
+      ||!(/^[A-Za-z0-9_-]{1,2048}$/.test(page.next_cursor))
+      ||page.items.length===0
+    )))return unknown;
+  return observedRecentFeed(result);
+}
+
 export function observedNumber(value:unknown):number|"UNKNOWN"{
   return safeCount(value)?value:"UNKNOWN";
 }

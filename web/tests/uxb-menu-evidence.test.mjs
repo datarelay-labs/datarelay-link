@@ -820,3 +820,49 @@ test("UI-03 Managed Host admission must verify exact Core Host, action, impact a
  assert.match(panel,/Core Admission Apply outcome UNKNOWN/);
  assert.match(panel,/previewGeneration\.current/);
 });
+
+test('R2.2 M2: initial Host/Service inventory observes Core family, 100-row bound and terminal cursor',()=>{
+  for(const [route,resource_type] of [['hosts','managed-host'],['services','remote-service']]){
+    const valid={resource_type,limit:100,items:[{id:'host-01'}],next_cursor:null};
+    assert.equal(menu.requireObservedBoundedCorePage(route,valid,'',100),valid);
+    const next={...valid,next_cursor:'next-Core-page'};
+    assert.equal(menu.requireObservedBoundedCorePage(route,next,'',100),next);
+    for(const broken of [
+      {items:[]}, {...valid,resource_type:'audit-event'},
+      {...valid,limit:50}, {...valid,limit:'100'},
+      {...valid,next_cursor:undefined},{...valid,next_cursor:''},
+      {...valid,next_cursor:'bad cursor'}, {...valid,next_cursor:42},
+      {...valid,items:Array.from({length:101},(_,i)=>({id:'h-'+i}))},
+      {...valid,items:[{id:'host-01'},{id:'host-01'}]},
+      {...valid,items:[{id:'bad\nidentifier'}]},
+      {...valid,items:[],next_cursor:'phantom'},
+    ])assert.throws(()=>menu.requireObservedBoundedCorePage(route,broken,'',100),/Core|UNKNOWN/);
+    assert.throws(()=>menu.requireObservedBoundedCorePage(route,next,'next-Core-page',100),/Core|UNKNOWN/);
+  }
+  const source=readFileSync(join(root,'src','main.tsx'),'utf8');
+  assert.match(source,/active==="hosts"\|\|active==="services".*requireObservedBoundedCorePage/s);
+  assert.match(source,/requireObservedInventoryContinuation\(route,await api\(path\),requestedCursor,100\)/);
+});
+
+test('R2.2 M2: Audit first-50 and keyset pages refuse mismatched/overlong/duplicated Core evidence',()=>{
+  const item={row_id:101,event_id:null,occurred_at:'2026-10-12T00:00:00Z'};
+  const valid={resource_type:'audit-event',limit:50,items:[item],next_cursor:null};
+  assert.equal(menu.requireObservedBoundedCorePage('audit',valid,'',50),valid);
+  const next={...valid,next_cursor:'opaque-Audit-2026'};
+  assert.equal(menu.requireObservedBoundedCorePage('audit',next,'',50),next);
+  for(const broken of [
+    {items:[]},{...valid,resource_type:'managed-host'},
+    {...valid,limit:100},{...valid,limit:'50'},
+    {...valid,next_cursor:undefined},{...valid,next_cursor:''},
+    {...valid,items:Array.from({length:51},(_,i)=>({...item,row_id:i+1}))},
+    {...valid,items:[item,item]},
+    {...valid,items:[{...item,row_id:'101'}]},
+    {...valid,items:[{...item,row_id:0}]},
+    {...valid,items:[{...item,event_id:123}]},
+    {...valid,items:[],next_cursor:'phantom'},
+    {...valid,next_cursor:'unsafe%20cursor'},
+  ])assert.throws(()=>menu.requireObservedBoundedCorePage('audit',broken,'',50),/Core|UNKNOWN/);
+  assert.throws(()=>menu.requireObservedBoundedCorePage('audit',next,'opaque-Audit-2026',50),/Core|UNKNOWN/);
+  const source=readFileSync(join(root,'src','main.tsx'),'utf8');
+  assert.ok(source.includes('requireObservedBoundedCorePage("audit",await api("/api/v1/audit?"'))
+});

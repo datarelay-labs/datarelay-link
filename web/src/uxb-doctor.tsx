@@ -34,7 +34,13 @@ export function validatedDoctorEvidence(payload:unknown){
     // A contradictory status+reason pair must not manufacture healthy checks.
     const runtime=/^Runtime generation status: ([a-z][a-z0-9_]*)$/.exec(message);
     const expected=runtime?["active","not_configured"].includes(runtime[1])?"PASS":"ATTENTION":null;
-    const observedState=expected!==null&&row.status===expected?expected:"UNKNOWN";
+    // Core doctor_summary() emits runtime.{plane} for remote/internet/ai.
+    // A conflicting or missing id↔plane pair cannot certify a healthy plane.
+    const canonicalPlane=typeof row.plane==="string"
+      &&["remote","internet","ai"].includes(row.plane)
+      &&row.id==="runtime."+row.plane;
+    const observedState=canonicalPlane&&expected!==null&&row.status===expected
+      ?expected:"UNKNOWN";
     return {
       id:row.id,
       plane:doctorText(row.plane,row.id),

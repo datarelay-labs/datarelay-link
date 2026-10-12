@@ -86,3 +86,30 @@ export function projectObservedGlobalSearchResults(input:unknown):
   }
   return {items,totalCount:input.length,invalidCount,scope:"bounded-core-search"};
 }
+
+
+/** R2.2/M2: Core global_search returns an echo of the submitted trimmed
+ * search and a first-20 row limit. Do not present a successful HTTP response
+ * for a different query or bound as today's authorized search evidence. */
+export function observedBoundedCoreSearchResponse(
+  payload:unknown,submittedQuery:string
+):ObservedGlobalSearchResult|null{
+  const page=record(payload);
+  if(!page||typeof submittedQuery!=="string"
+    ||!submittedQuery||submittedQuery.length>128
+    ||submittedQuery!==submittedQuery.trim()||CONTROL.test(submittedQuery)
+    ||page.query!==submittedQuery||page.limit!==20)return null;
+  const projection=projectObservedGlobalSearchResults(page.items);
+  if(!projection)return null;
+  const seen=new Set<string>();
+  for(const raw of page.items as unknown[]){
+    const item=record(raw);
+    if(!item||!safeId(item.id)
+      ||typeof item.resource_type!=="string"||!TYPE.test(item.resource_type))
+      continue; // Current projector counts malformed individual hits as invalid.
+    const key=item.resource_type+":"+item.id;
+    if(seen.has(key))return null;
+    seen.add(key);
+  }
+  return projection;
+}

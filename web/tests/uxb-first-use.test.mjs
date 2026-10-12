@@ -512,3 +512,28 @@ test("UX-5 Recent Activity sanitized projection retains Core IDs only as read-on
   assert.doesNotMatch(JSON.stringify(res),/PRIVATE/);
  }
 });
+
+test("R2.2 M2 Home Recent Activity and Revisions do not fabricate empty history from a mismatched Core family",()=>{
+ const fulfilled=value=>({status:"fulfilled",value});
+ const audit={resource_type:"audit-event",limit:6,items:[{event_id:"evt-1"}],next_cursor:null};
+ const revisions={resource_type:"revision",limit:6,items:[{revision:7}],next_cursor:null};
+ assert.equal(home.observedCoreRecentFeed(fulfilled(audit),"audit-event").status,"ready");
+ assert.equal(home.observedCoreRecentFeed(fulfilled(revisions),"revision").status,"ready");
+ assert.deepEqual(home.observedCoreRecentFeed(fulfilled({...audit,items:[]}),"audit-event"),
+   {status:"ready",items:[]});
+ for(const bad of [
+   {items:[]},{...audit,resource_type:"revision"},
+   {...audit,limit:50},{...audit,limit:"6"},
+   {...audit,items:[],next_cursor:"phantom"},
+   {...audit,next_cursor:undefined},
+   {...audit,items:Array.from({length:7},(_,i)=>({event_id:"evt-"+i}))},
+ ]){
+   assert.deepEqual(home.observedCoreRecentFeed(fulfilled(bad),"audit-event"),
+     {status:"unknown",items:[]},JSON.stringify(bad));
+ }
+ assert.deepEqual(home.observedCoreRecentFeed(fulfilled(audit),"revision"),
+   {status:"unknown",items:[]});
+ const source=readFileSync(join(root,"src","main.tsx"),"utf8");
+ assert.match(source,/setActivity\(observedCoreRecentFeed\(auditResult,"audit-event"\)\)/);
+ assert.match(source,/setChanges\(observedCoreRecentFeed\(revisionResult,"revision"\)\)/);
+});

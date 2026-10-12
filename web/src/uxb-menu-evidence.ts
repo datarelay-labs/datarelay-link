@@ -590,23 +590,52 @@ export function combineObservedPolicyPlanes(
   return {items,possibly_truncated_planes,next_cursor_by_plane};
 }
 
+/** R2.2/M2: the FIRST Core Host/Service/Audit page and each keyset page
+ * require the same authoritative family, bounded limit, terminal/opaque cursor,
+ * and unique Core identity evidence. A malformed HTTP 200 is UNKNOWN, never an
+ * empty inventory or trustworthy cursor. No new Core authority is granted. */
+export function requireObservedBoundedCorePage(
+  route:"hosts"|"services"|"audit",payload:unknown,requestedCursor:string,limit:number
+):any{
+  const fail=():never=>{throw new Error("Core "+route+" page identity, bounds or cursor are inconsistent. State is UNKNOWN.");};
+  const expected=route==="hosts"?"managed-host":route==="services"?"remote-service":"audit-event";
+  const expectedLimit=route==="audit"?50:100;
+  const validCursor=(cursor:unknown):cursor is string=>
+    typeof cursor==="string"&&/^[A-Za-z0-9_-]{1,2048}$/.test(cursor);
+  const validId=(id:unknown):id is string=>
+    typeof id==="string"&&/^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,159}$/.test(id);
+  const page=requireObservedMenuPayload(route,payload);
+  if(!Number.isSafeInteger(limit)||limit!==expectedLimit||page.resource_type!==expected
+    ||page.limit!==limit||!Array.isArray(page.items)||page.items.length>limit
+    ||typeof requestedCursor!=="string"
+    ||(requestedCursor!==""&&!validCursor(requestedCursor))
+    ||!Object.prototype.hasOwnProperty.call(page,"next_cursor")
+    ||(page.next_cursor!==null&&!validCursor(page.next_cursor))
+    ||(page.next_cursor!==null&&(page.next_cursor===requestedCursor||page.items.length===0)))
+    return fail();
+  const ids=new Set<string|number>();
+  for(const item of page.items){
+    let key:string|number;
+    if(route==="audit"){
+      if(!Number.isSafeInteger(item.row_id)||item.row_id<=0
+        ||(item.event_id!==null&&!validId(item.event_id)))return fail();
+      key=item.row_id;
+    }else{
+      if(!validId(item.id))return fail();
+      key=item.id;
+    }
+    if(ids.has(key))return fail();
+    ids.add(key);
+  }
+  return page;
+}
+
 /** Only observed Core pages of the requested resource family may extend a
  * loaded inventory. Never guess a next cursor or silently swap Host/Service. */
 export function requireObservedInventoryContinuation(
   route:"hosts"|"services",payload:unknown,requestedCursor:string,limit:number
 ):any{
-  const page=requireObservedMenuPayload(route,payload);
-  const expected=route==="hosts"?"managed-host":"remote-service";
-  if(page.resource_type!==expected||page.limit!==limit
-    ||!Number.isSafeInteger(limit)||limit<1
-    // Keyset Core cannot produce an empty page with another next cursor.
-    // Treat a broken continuation as UNKNOWN rather than looping "Load more".
-    ||page.items.length>limit||(page.items.length===0&&isPartialCorePage(page))
-    ||page.next_cursor===requestedCursor
-    ||page.items.some((item:any)=>typeof item.id!=="string"||!item.id))
-    throw new Error("Core inventory page does not match the requested "+expected+
-      " resource type, size or cursor. State is UNKNOWN.");
-  return page;
+  return requireObservedBoundedCorePage(route,payload,requestedCursor,limit);
 }
 
 /** Objects & Groups uses the same Core inventory keyset API for seven public

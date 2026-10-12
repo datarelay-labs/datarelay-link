@@ -173,8 +173,8 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn('function changeDiagnosisFlow(', operations)
 
     def test_uxb_home_and_health_do_not_misreport_missing_evidence_as_empty(self):
-        self.assertIn('setActivity(observedRecentFeed(auditResult))', SOURCE)
-        self.assertIn('setChanges(observedRecentFeed(revisionResult))', SOURCE)
+        self.assertIn('setActivity(observedCoreRecentFeed(auditResult,"audit-event"))', SOURCE)
+        self.assertIn('setChanges(observedCoreRecentFeed(revisionResult,"revision"))', SOURCE)
         self.assertIn('activity.status!=="ready"', SOURCE)
         self.assertIn('changes.status!=="ready"', SOURCE)
         self.assertIn('UNKNOWN · Recent Activity unavailable', SOURCE)
@@ -196,7 +196,10 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn('onChange={e=>changeQuery(e.target.value)}', search)
         self.assertIn("const generation=++requestGeneration.current;", search)
         self.assertIn("if(requestGeneration.current!==generation)return;", search)
-        self.assertIn('if(!Array.isArray(data?.items))throw new Error(', search)
+        self.assertIn('const projection=observedBoundedCoreSearchResponse(data,q);', search)
+        self.assertIn('if(!projection)throw new Error("Core Search query, first-20 limit', search)
+        self.assertIn('function observedBoundedCoreSearchResponse(',
+                      (ROOT / 'web/src/uxb-global-search-target.ts').read_text(encoding='utf-8'))
 
     def test_core_access_evidence_matches_current_flow_and_blocks_stale_response(self):
         access=P0_ACCESS_SOURCE
@@ -760,7 +763,12 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn('Partial Core inventory', SOURCE)
         self.assertIn('No match in loaded policy rules', SOURCE)
         self.assertIn('No match in loaded resources', SOURCE)
-        self.assertIn('setData(active==="hygiene"?requireObservedAccessHygiene(payload):requireObservedMenuPayload(active,payload))', SOURCE)
+        self.assertIn('active==="hosts"||active==="services"?requireObservedBoundedCorePage(active,payload,"",100)', SOURCE)
+        self.assertIn('requireObservedMenuPayload(active,payload)', SOURCE)
+        # Both initial pages and existing continuation must use the same
+        # stricter Core resource/limit/cursor validator, not raw HTTP 200.
+        self.assertIn('function requireObservedBoundedCorePage(', helper)
+        self.assertIn('return requireObservedBoundedCorePage(route,payload,requestedCursor,limit)', helper)
         self.assertIn('if(!current)return;', SOURCE)
         self.assertIn('return()=>{current=false}', SOURCE)
         self.assertIn('Core data unavailable · UNKNOWN', SOURCE)
@@ -817,7 +825,7 @@ class V30WebSaasUxContractTests(unittest.TestCase):
             'const auditReadEpoch=useRef(0);',
             'const epoch=++auditReadEpoch.current;',
             'setData(null);setAuditState("loading");',
-            'requireObservedMenuPayload("audit",await api("/api/v1/audit?"+q.toString()))',
+            'requireObservedBoundedCorePage("audit",await api("/api/v1/audit?"+q.toString()),position.cursor,50)',
             'if(epoch!==auditReadEpoch.current)return;',
             'setData(page);setAuditPage(position);setAuditFilterKey(filterKey);setAuditState("ready");',
             'setData(null);setAuditState("unknown");',
@@ -1129,7 +1137,10 @@ class V30WebSaasUxContractTests(unittest.TestCase):
             'const message=doctorText(row.message,"UNKNOWN · Core reason unavailable")',
             'const runtime=/^Runtime generation status: ([a-z][a-z0-9_]*)$/.exec(message);',
             'const expected=runtime?["active","not_configured"].includes(runtime[1])?"PASS":"ATTENTION":null;',
-            'const observedState=expected!==null&&row.status===expected?expected:"UNKNOWN";',
+            'const canonicalPlane=typeof row.plane==="string"',
+            '&&["remote","internet","ai"].includes(row.plane)',
+            '&&row.id==="runtime."+row.plane;',
+            'const observedState=canonicalPlane&&expected!==null&&row.status===expected',
             'new Set((report.checks as any[]).map(row=>row.id)).size!==report.checks.length',
 
             'No runtime generation checks were observed',

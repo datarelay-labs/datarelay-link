@@ -9,8 +9,8 @@ import {AccessEvidenceExplorer,GuidedPolicyJourney,coreFlowKey,coreCutoffKey,vis
 import {EnrollmentOnboarding} from "./p0-enrollment";
 import {navGroups,groupFor,labelFor,pageDescriptions,visibleRoute,navMatches,setupContextForObjectFamily} from "./uxb-navigation";
 import {START_PAGE_OPTIONS,startPageKeyForOperator,readPreferredStartPage,writePreferredStartPage} from "./uxb-start-page";
-import {FirstUseHome,observedCoreOverviewEvidence,observedBoundedCountPair,observedHomeAttention,isFreshInstallation,observedRecentFeed,observedNumber,accessPlaneCount,coreHealthState,type RecentFeed} from "./uxb-home";
-import {requireObservedMenuPayload,guidedChangePreviewMatchesIntent,requireObservedGuidedChangeApplyReceipt,temporaryAccessPreviewMatchesIntent,observedHostAdmissionPlanForAction,requireObservedHostAdmissionReceipt,requireObservedTemporaryAccessApplyForPlan,requireObservedEmergencyCutoffApplyForPlan,observedEmergencyCutoffPreviewForIntent,requireObservedCutoffInventory,requireObservedLiveAccessView,requireObservedDiagnosisView,requireObservedInventoryContinuation,requireObservedObjectContinuation,requireObservedAuditRetention,auditRetentionRunPermitted,requireObservedAccessHygiene,hygieneInspectTarget,requireObservedJobStart,requireObservedFleetApply,requireObservedFleetPreview,requireObservedFleetApplyForPreview,requireObservedAuditExport,requireObservedRolloutPreview,requireObservedInventoryExport,requireObservedJobDetail,requireObservedJobCancellation,isPartialCorePage,selectMenuPage,combineObservedPolicyPlanes,policyStateLabel,policyExpiryLabel,type MenuPagePosition} from "./uxb-menu-evidence";
+import {FirstUseHome,observedCoreOverviewEvidence,observedBoundedCountPair,observedHomeAttention,isFreshInstallation,observedCoreRecentFeed,observedNumber,accessPlaneCount,coreHealthState,type RecentFeed} from "./uxb-home";
+import {requireObservedMenuPayload,requireObservedBoundedCorePage,guidedChangePreviewMatchesIntent,requireObservedGuidedChangeApplyReceipt,temporaryAccessPreviewMatchesIntent,observedHostAdmissionPlanForAction,requireObservedHostAdmissionReceipt,requireObservedTemporaryAccessApplyForPlan,requireObservedEmergencyCutoffApplyForPlan,observedEmergencyCutoffPreviewForIntent,requireObservedCutoffInventory,requireObservedLiveAccessView,requireObservedDiagnosisView,requireObservedObjectContinuation,requireObservedAuditRetention,auditRetentionRunPermitted,requireObservedAccessHygiene,hygieneInspectTarget,requireObservedJobStart,requireObservedFleetApply,requireObservedFleetPreview,requireObservedFleetApplyForPreview,requireObservedAuditExport,requireObservedRolloutPreview,requireObservedInventoryExport,requireObservedJobDetail,requireObservedJobCancellation,isPartialCorePage,selectMenuPage,combineObservedPolicyPlanes,policyStateLabel,policyExpiryLabel,type MenuPagePosition} from "./uxb-menu-evidence";
 import {RemoteServiceEditor} from "./uxb-remote-service";
 import {RevisionHistory} from "./uxb-revisions";
 import {AgentVersionDrift} from "./uxb-versions";
@@ -22,7 +22,7 @@ import {serviceStateLabel,serviceDetailSections,sshConnectionTemplate} from "./u
 import {serviceVisibleIdentity} from "./uxb-service-detail";
 import {resourceCardSummary} from "./uxb-resource-cards";
 import {filterObservedServices} from "./uxb-service-search";
-import {projectObservedGlobalSearchResults} from "./uxb-global-search-target";
+import {observedBoundedCoreSearchResponse} from "./uxb-global-search-target";
 import {filterLoadedServiceFacets,type ServiceTypeFacet,type ServiceConfigFacet} from "./uxb-service-facets";
 import {operatorAccountState,operatorMfaState,operatorMfaAction,operatorLastLogin} from "./uxb-users-state";
 import {observedOperatorInventory,observedOperatorMfaReceipt,observedOperatorCreateReceipt} from "./uxb-users-state";
@@ -1254,7 +1254,7 @@ function AuditExplorer({operator,context,onNavigate}:{operator:any,context?:any,
     const filterKey=q.toString();
     try{
       if(position.cursor)q.set("cursor",position.cursor);
-      const page=requireObservedMenuPayload("audit",await api("/api/v1/audit?"+q.toString()));
+      const page=requireObservedBoundedCorePage("audit",await api("/api/v1/audit?"+q.toString()),position.cursor,50);
       if(epoch!==auditReadEpoch.current)return;
       setData(page);setAuditPage(position);setAuditFilterKey(filterKey);setAuditState("ready");
     }catch(e:any){
@@ -2569,8 +2569,8 @@ function CommandCenter({data,operator,onNavigate}:{data:any,operator:any,onNavig
     Promise.allSettled([api("/api/v1/audit?limit=6"),api("/api/v1/revisions?limit=6")]).then(results=>{
       if(cancelled)return;
       const [auditResult,revisionResult]=results;
-      setActivity(observedRecentFeed(auditResult));
-      setChanges(observedRecentFeed(revisionResult));
+      setActivity(observedCoreRecentFeed(auditResult,"audit-event"));
+      setChanges(observedCoreRecentFeed(revisionResult,"revision"));
     });
     return()=>{cancelled=true};
   },[]);
@@ -2789,7 +2789,9 @@ function View({active,operator,onNavigate,context,setupDraft,onSetupDraftChange}
       }).catch((e:any)=>{if(current)setError(e.message||String(e))});
     }else if(paths[active])api(paths[active]).then(payload=>{
       if(!current)return;
-      try{setData(active==="hygiene"?requireObservedAccessHygiene(payload):requireObservedMenuPayload(active,payload))}
+      try{setData(active==="hygiene"?requireObservedAccessHygiene(payload):
+        active==="hosts"||active==="services"?requireObservedBoundedCorePage(active,payload,"",100):
+        requireObservedMenuPayload(active,payload))}
       catch(e:any){setError(e.message||String(e))}
     }).catch((e:any)=>{if(current)setError(e.message||String(e))});
     return()=>{current=false};
@@ -2856,7 +2858,7 @@ function GlobalSearch({open,onClose,onNavigate,operator,returnFocusRef}:{
   operator:any,returnFocusRef:React.RefObject<HTMLElement|null>
 }){
   const [query,setQuery]=useState("");
-  const [results,setResults]=useState<NonNullable<ReturnType<typeof projectObservedGlobalSearchResults>>["items"]>([]);
+  const [results,setResults]=useState<NonNullable<ReturnType<typeof observedBoundedCoreSearchResponse>>["items"]>([]);
   const [searchStatus,setSearchStatus]=useState<"idle"|"loading"|"ready"|"unknown">("idle");
   const [rejectedCount,setRejectedCount]=useState(0);
   const [returnedCount,setReturnedCount]=useState(0);
@@ -2926,9 +2928,8 @@ function GlobalSearch({open,onClose,onNavigate,operator,returnFocusRef}:{
     try{
       const data=await api("/api/v1/search?q="+encodeURIComponent(q)+"&limit=20");
       if(requestGeneration.current!==generation)return;
-      if(!Array.isArray(data?.items))throw new Error("Core search response missing resource items");
-      const projection=projectObservedGlobalSearchResults(data.items);
-      if(!projection)throw new Error("Core search response missing or exceeding bounded resource items.");
+      const projection=observedBoundedCoreSearchResponse(data,q);
+      if(!projection)throw new Error("Core Search query, first-20 limit or resources are inconsistent. State is UNKNOWN.");
       setResults(projection.items);setRejectedCount(projection.invalidCount);
       setReturnedCount(projection.totalCount);setSearchStatus("ready");
     }catch(err:any){if(requestGeneration.current===generation){

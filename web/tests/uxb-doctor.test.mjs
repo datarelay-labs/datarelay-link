@@ -145,10 +145,27 @@ test("Core Doctor runtime severity cannot contradict its observed canonical stat
   assert.equal(observed.unknownCount,1,message);
   assert.match(render(input),/UNKNOWN checks<\/strong><p>1/);
  }
- const pass=validatedDoctorEvidence(data([{id:"runtime.remote",status:"PASS",
+ const pass=validatedDoctorEvidence(data([{id:"runtime.remote",plane:"remote",status:"PASS",
   message:"Runtime generation status: active"}]));
- const attention=validatedDoctorEvidence(data([{id:"runtime.remote",status:"ATTENTION",
+ const attention=validatedDoctorEvidence(data([{id:"runtime.remote",plane:"remote",status:"ATTENTION",
   message:"Runtime generation status: failed"}]));
  assert.equal(pass.passCount,1);
  assert.equal(attention.attentionCount,1);
+});
+
+test("R2.2 M2 Core Doctor observed runtime PASS requires canonical plane/identity match",()=>{
+ for(const check of [
+   {id:"runtime.remote",plane:"internet",status:"PASS",message:"Runtime generation status: active"},
+   {id:"runtime.ai",plane:"remote",status:"PASS",message:"Runtime generation status: active"},
+   {id:"runtime.unrecognized",plane:"unrecognized",status:"PASS",message:"Runtime generation status: active"},
+   {id:"runtime.remote",status:"PASS",message:"Runtime generation status: active"},
+   {id:"runtime.remote",plane:{secret:"PRIVATE"},status:"PASS",message:"Runtime generation status: active"},
+ ]){
+   const report=validatedDoctorEvidence(data([check]));
+   assert.equal(report.passCount,0,JSON.stringify(check));
+   assert.equal(report.unknownCount,1,JSON.stringify(check));
+   assert.match(render(data([check])),/UNKNOWN checks<\/strong><p>1/);
+ }
+ const healthy=data([{id:"runtime.remote",plane:"remote",status:"PASS",message:"Runtime generation status: active"}]);
+ assert.equal(validatedDoctorEvidence(healthy).passCount,1);
 });
