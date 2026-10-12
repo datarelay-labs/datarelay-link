@@ -313,6 +313,52 @@ class V30AgentCompletionAcknowledgementBoundaryTests(unittest.TestCase):
     Pure signed-RPC mock: no network, production Host or Agent effect.
     """
 
+    def test_malformed_or_duplicate_signed_claim_batch_is_unknown_before_any_agent_mutation(self):
+        from unittest import mock
+        from drlink_agent_lifecycle import process_management_jobs_once
+        valid = {
+            "job_id": "mjob_" + "f" * 24,
+            "claim_token": "opaque-once",
+            "job_type": "remote-service-delete",
+            "target_id": MACHINE_A,
+        }
+        cases = [
+            None, {}, {"jobs": None}, {"jobs": "unexpected"},
+            {"jobs": [{}]}, {"jobs": [None]},
+            {"jobs": [{**valid, "job_id": ""}]},
+            {"jobs": [{**valid, "target_id": ""}]},
+            {"jobs": [{**valid, "claim_token": ""}]},
+            {"jobs": [{**valid, "job_type": "agent-update-rollout"}]},
+            {"jobs": [{**valid, "job_type": "unknown-privileged"}]},
+            {"jobs": [{**valid, "job_type": {"secret": "private"}}]},
+            {"jobs": [{**valid, "claim_token": "opaque\nspoof"}]},
+            {"jobs": [{**valid, "claim_token": {"token": "private"}}]},
+            {"jobs": [valid] * 5},
+            {"jobs": [valid, valid]},
+            {"jobs": [valid, {**valid, "claim_token": "another-one"}]},
+        ]
+        for response in cases:
+            with self.subTest(response=str(response)[:120]), mock.patch(
+                "drlink_mgmt_sync.claim_management_jobs_on_server",
+                return_value=response,
+            ), mock.patch(
+                "drlink_agent_lifecycle._execute_management_job",
+                return_value={"operation": "remote-service-delete"},
+            ) as executed, mock.patch(
+                "drlink_mgmt_sync.complete_management_job_on_server",
+                return_value={"ok": True},
+            ) as completed:
+                with self.assertRaisesRegex(ValueError, "claim response UNKNOWN"):
+                    process_management_jobs_once(root="/tmp/unused-agent-fixture")
+                executed.assert_not_called()
+                completed.assert_not_called()
+        with mock.patch(
+            "drlink_mgmt_sync.claim_management_jobs_on_server",
+            return_value={"jobs": []},
+        ):
+            self.assertEqual(process_management_jobs_once(root="/tmp/unused-agent-fixture"),
+                             {"processed": 0, "failed": 0})
+
     def test_lost_success_ack_never_sends_second_failure_completion(self):
         from unittest import mock
         from drlink_agent_lifecycle import process_management_jobs_once

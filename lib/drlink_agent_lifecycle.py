@@ -307,20 +307,52 @@ def process_management_jobs_once(root: Optional[str] = None, *, limit: int = 4) 
     )
 
     response = claim_management_jobs_on_server(root=root, limit=limit)
-    jobs = response.get("jobs") if isinstance(response, dict) else None
-    if jobs is None:
-        jobs = []
-    if not isinstance(jobs, list):
-        raise ValueError("Management Job claim response is malformed")
+    # The signed server must provide an explicit bounded claim array. A
+    # missing or malformed response is UNKNOWN, not a confirmed empty queue.
+    # Validate the WHOLE batch before executing even one mutating Agent job:
+    # duplicate entries must not run the same remote-service operation twice.
+    invalid = "Core Management Job claim response UNKNOWN; inspect Core state before retrying."
+    try:
+        count = max(1, min(int(limit), 16))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(invalid) from exc
+    if not isinstance(response, dict) or not isinstance(response.get("jobs"), list):
+        raise ValueError(invalid)
+    jobs = response["jobs"]
+    if len(jobs) > count:
+        raise ValueError(invalid)
+    known = frozenset({
+        "doctor", "refresh", "version-check", "support-bundle",
+        "remote-service-set", "remote-service-delete",
+    })
+    seen: set[tuple[str, str]] = set()
+    tokens: set[str] = set()
+    for claim in jobs:
+        if not isinstance(claim, dict):
+            raise ValueError(invalid)
+        job_id, target_id, claim_token, kind = (
+            claim.get("job_id"), claim.get("target_id"),
+            claim.get("claim_token"), claim.get("job_type"),
+        )
+        if (not isinstance(job_id, str) or not job_id.startswith("mjob_")
+            or len(job_id) != 29 or any(c not in "0123456789abcdef" for c in job_id[5:])
+            or not isinstance(target_id, str) or not target_id or len(target_id) > 160
+            or not isinstance(claim_token, str) or not claim_token
+            or len(claim_token) > 128
+            or any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
+                   for ch in claim_token)
+            or not isinstance(kind, str) or kind not in known
+            or (claim.get("payload") is not None
+                and not isinstance(claim.get("payload"), dict))
+            or (job_id, target_id) in seen or claim_token in tokens):
+            raise ValueError(invalid)
+        seen.add((job_id, target_id))
+        tokens.add(claim_token)
     processed = 0
     failed = 0
     for claim in jobs:
-        if not isinstance(claim, dict):
-            continue
-        job_id = str(claim.get("job_id") or "")
-        claim_token = str(claim.get("claim_token") or "")
-        if not job_id or not claim_token:
-            continue
+        job_id = claim["job_id"]
+        claim_token = claim["claim_token"]
         try:
             result = _execute_management_job(claim, root=root)
         except Exception as exc:
