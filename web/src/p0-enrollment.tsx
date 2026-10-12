@@ -24,11 +24,15 @@ export function observedEnrollmentHistory(data:unknown):ObservedEnrollmentHistor
  const unknown:ObservedEnrollmentHistory={status:"UNKNOWN",items:[],total:null,partial:false};
  if(!data||typeof data!=="object"||Array.isArray(data))return unknown;
  const page=data as Record<string,unknown>;
- if(!Array.isArray(page.items)||page.items.length>50)return unknown;
- const total=page.total===undefined?null:page.total;
- if(total!==null&&(!Number.isSafeInteger(total)||Number(total)<page.items.length))
-   return unknown;
- if(page.items.length===0&&total!==null&&Number(total)>0)return unknown;
+ // Core ManagementEnrollmentService.list_enrollments always returns an
+ // integer fleet total. Missing/ambiguous total cannot prove an empty
+ // history, even when an HTTP success body happens to contain items: [].
+ if(!Array.isArray(page.items)||page.items.length>50
+   ||!Number.isSafeInteger(page.total)
+   ||Number(page.total)<page.items.length
+   ||Number(page.total)<0)return unknown;
+ const total=page.total as number;
+ if(page.items.length===0&&total>0)return unknown;
  const seen=new Set<string>();
  const items:ObservedEnrollmentRow[]=[];
  for(const raw of page.items){
@@ -47,8 +51,8 @@ export function observedEnrollmentHistory(data:unknown):ObservedEnrollmentHistor
    items.push({id,label,type:historyText(row.type),state:historyText(row.state),
      admission,remaining});
  }
- return {status:"ready",items,total:total as number|null,
-   partial:total!==null?Number(total)>items.length:items.length>=50};
+ return {status:"ready",items,total,
+   partial:total>items.length};
 }
 
 /** UX-3: the first Core managed-host page is role-scoped and bounded.
@@ -64,13 +68,16 @@ export function observedEnrollmentHostPage(input:unknown):{
 }|null{
  if(!input||typeof input!=="object"||Array.isArray(input))return null;
  const page=input as Record<string,unknown>;
- if(page.resource_type!==undefined&&page.resource_type!=="managed-host"
+ // This caller requests Core managed-host first 100. Both an inventory
+ // from another family and an items-only HTTP 200 are UNKNOWN, not an
+ // authoritative Host list to select for admission approval.
+ if(page.resource_type!=="managed-host"||page.limit!==100
    ||!Array.isArray(page.items)||page.items.length>100
-   ||page.limit!==undefined&&(!Number.isSafeInteger(page.limit)
-     ||Number(page.limit)<1||Number(page.limit)>100)
-   ||page.next_cursor!==undefined&&page.next_cursor!==null
-     &&(typeof page.next_cursor!=="string"||!page.next_cursor
-       ||page.next_cursor.length>1024||BAD_ENROLLMENT_TEXT.test(page.next_cursor)))
+   ||!Object.prototype.hasOwnProperty.call(page,"next_cursor")
+   ||page.next_cursor!==null
+     &&(typeof page.next_cursor!=="string"
+       ||!/^[A-Za-z0-9_-]{1,2048}$/.test(page.next_cursor)
+       ||page.items.length===0))
    return null;
  const observed:ObservedEnrollmentHost[]=[];
  const seen=new Set<string>();
@@ -421,6 +428,10 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate,onBus
   const [messageScope,setMessageScope]=useState<{id:unknown,role:unknown,hostId:string}|null>(null);
   const approvalGeneration=useRef(0);
   const inventoryGeneration=useRef(0);
+  // Core enrollment and admission Apply are non-idempotent operations.
+  // React busy state can render later than two consecutive click handlers.
+  const issueInFlight=useRef(false);
+  const admissionApplyInFlight=useRef(false);
   const admin=operator?.role==="Admin";
   const issueProblem=enrollmentIssuePreflight(mode,platform,ttl,label,note);
   const matchingHostScope=onboardingHostSnapshotMatchesActor(hostsScope,operator);
@@ -523,10 +534,11 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate,onBus
     }
   }
   async function issue(){
-    if(!admin||busy)return;
+    if(!admin||busy||issueInFlight.current)return;
     if(issueProblem){setError(issueProblem);return;}
     const requestedIntent=issuedIntent;
     if(!requestedIntent){setError("Authenticated Admin identity is unavailable. Re-login before issuing an enrollment.");return;}
+    issueInFlight.current=true;
     setCopyStatus("");setError("");setMessage("");setIssued(null);setBusy(true);
     try{
       const result=await api(mode==="manual"?"/api/v1/enrollments/manual":"/api/v1/enrollments/zero-touch",{
@@ -550,7 +562,7 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate,onBus
         +"The ticket may exist; inspect Core enrollment history before retrying."
         +(stale?"":" "+String(e?.message||e)));
     }
-    finally{setBusy(false)}
+    finally{issueInFlight.current=false;setBusy(false)}
   }
   async function previewApproval(){
     if(!admin||!matchingHostScope||!selectedHost||!selected||busy||fetchBusy)return;
@@ -569,13 +581,14 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate,onBus
   }
   async function applyApproval(){
     if(!admin||!matchingHostScope||!selectedHost||!scopedPreview?.change_plan_id
-      ||!approvalActionable||confirm!==required||busy)return;
+      ||!approvalActionable||confirm!==required||busy||admissionApplyInFlight.current)return;
     // Recheck at the instant of the click: render-time state can be stale.
     if(!currentHostAdmissionApprovalIsActionable(scopedPreview,selectedHost)){
       setPreview(null);setConfirm("");
       setError("Core approval Preview expired. Refresh Host inventory and request a new plan.");
       return;
     }
+    admissionApplyInFlight.current=true;
     const generation=++approvalGeneration.current;
     const requestedContext=currentApplyContext.current;
     setBusy(true);setError("");setMessage("");setMessageScope(null);
@@ -596,7 +609,7 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate,onBus
       setPreview(null);setConfirm("");
       setError("Approval not confirmed; refresh Host inventory before deciding whether to retry. "+String(e.message||e));
     }
-    finally{setBusy(false)}
+    finally{admissionApplyInFlight.current=false;setBusy(false)}
   }
   return <section className="dr-p0-onboarding" data-testid="p0-enrollment-journey">
     <div className="card dr-p0-section">

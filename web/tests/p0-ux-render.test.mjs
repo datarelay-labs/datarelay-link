@@ -165,7 +165,8 @@ test("Enrollment history distinguishes unavailable Core state from an observed e
  }));
  assert.match(render(null),/Enrollment history: UNKNOWN/);
  assert.doesNotMatch(render(null),/No enrollment history reported/);
- assert.match(render({items:[]}),/No enrollment history reported/);
+ assert.match(render({items:[],total:0}),/No enrollment history reported/);
+ assert.match(render({items:[]}),/Enrollment history: UNKNOWN/);
 });
 
 test("Host readiness preserves admission, trust, connection and policy as separate concepts",()=>{
@@ -756,4 +757,62 @@ test("CUI-002 guided form displays a complete draft review for both SET and DELE
  assert.match(src,/AI path limits: \{prepared\.aiPaths/);
  assert.match(src,/Not submitted to Core until a fresh Preview, required tests and explicit Apply/);
  assert.doesNotMatch(src,/This is an unverified draft\. No access is granted or denied until Core preview/);
+});
+
+test("R2.2/M2 Core onboarding Host first-100 must bind exact resource family, limit and cursor",()=>{
+ const item={id:"host-a",name:"Lab Agent",admission_state:"PENDING_APPROVAL",
+   trust_status:"trusted",connected:false,secret:"DO_NOT_COPY",row_version:19};
+ const page={resource_type:"managed-host",limit:100,next_cursor:null,items:[item]};
+ const good=enroll.observedEnrollmentHostPage(page);
+ assert.deepEqual(good,{items:[{id:"host-a",name:"Lab Agent",
+   admission_state:"PENDING_APPROVAL",trust_status:"trusted",connected:false}],
+   complete:true});
+ assert.doesNotMatch(JSON.stringify(good),/DO_NOT_COPY|row_version|secret/);
+ const opaque="eyJ2IjoxLCJyZXNvdXJjZSI6Im1hbmFnZWQtaG9zdCJ9";
+ assert.equal(enroll.observedEnrollmentHostPage({...page,next_cursor:opaque})?.complete,false);
+ for(const bad of [null,{},[],{items:[]},
+  {...page,resource_type:undefined},{...page,resource_type:"remote-service"},
+  {...page,resource_type:"management-job"},{...page,limit:undefined},
+  {...page,limit:50},{...page,limit:"100"},
+  {...page,next_cursor:undefined},{...page,next_cursor:""},
+  {...page,next_cursor:"bad cursor"},{...page,next_cursor:"../secret"},
+  {...page,next_cursor:12},{...page,items:[],next_cursor:opaque},
+  {...page,items:[item,item]},
+ ])assert.equal(enroll.observedEnrollmentHostPage(bad),null,JSON.stringify(bad)?.slice(0,105));
+ assert.deepEqual(enroll.observedEnrollmentHostPage({...page,items:[]})?.items,[]);
+});
+
+test("R2.2/M2 Core enrollment history requires observed fleet total before claiming zero tickets",()=>{
+ const item={id:"enr-a",label:"lab",type:"zero-touch",state:"pending",
+  first_host_admission:"PENDING_APPROVAL",remaining_seconds:300,
+  token:"DO_NOT_COPY"};
+ const observed=enroll.observedEnrollmentHistory({items:[item],total:1});
+ assert.equal(observed.status,"ready");
+ assert.equal(observed.total,1);
+ assert.equal(observed.partial,false);
+ assert.doesNotMatch(JSON.stringify(observed),/DO_NOT_COPY|token/);
+ const validEmpty=enroll.observedEnrollmentHistory({items:[],total:0});
+ assert.equal(validEmpty.status,"ready");
+ assert.deepEqual(validEmpty.items,[]);
+ for(const bad of [{items:[]},{items:[],total:null},{items:[],total:"0"},
+  {items:[],total:2},{items:[item],total:0},{items:[item],total:-1},
+  {items:[item],total:1.5},{items:[item,item],total:2}]){
+  assert.equal(enroll.observedEnrollmentHistory(bad).status,"UNKNOWN",JSON.stringify(bad).slice(0,80));
+ }
+});
+
+test("R3/R6 one-time enrollment issuance and Core admission Apply have synchronous non-idempotent request locks",()=>{
+ const src=readFileSync(join(webRoot,"src","p0-enrollment.tsx"),"utf8");
+ const issue=src.split("  async function issue(){",2)[1]?.split("  async function previewApproval(){",1)[0]||"";
+ const apply=src.split("  async function applyApproval(){",2)[1]?.split("  return <section className=\"dr-p0-onboarding\"",1)[0]||"";
+ assert.match(src,/const issueInFlight=useRef\(false\)/);
+ assert.match(src,/const admissionApplyInFlight=useRef\(false\)/);
+ assert.match(issue,/if\(!admin\|\|busy\|\|issueInFlight\.current\)return;/);
+ assert.match(issue,/issueInFlight\.current=true;/);
+ assert.match(issue,/finally\{issueInFlight\.current=false;setBusy\(false\)\}/);
+ assert.match(issue,/The ticket may exist; inspect Core enrollment history before retrying/);
+ assert.match(apply,/\|\|busy\|\|admissionApplyInFlight\.current\)return;/);
+ assert.match(apply,/admissionApplyInFlight\.current=true;/);
+ assert.match(apply,/finally\{admissionApplyInFlight\.current=false;setBusy\(false\)\}/);
+ assert.match(apply,/Core admission apply result is unverified/);
 });

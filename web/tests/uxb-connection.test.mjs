@@ -581,14 +581,14 @@ test("UX-3 enrollment history redacts malformed nested labels and bounded time e
 });
 test("UX-3 ticket identity and status reject control/bidi without echoing unsafe Core detail",()=>{
  const base={items:[{id:"ticket-1",label:"alias",type:"manual",state:"ACTIVE",
-  first_host_admission:"PENDING_APPROVAL",remaining_seconds:0}]};
+  first_host_admission:"PENDING_APPROVAL",remaining_seconds:0}],total:1};
  assert.equal(enrollment.observedEnrollmentHistory(base).items[0].remaining,"0 seconds");
  for(const bad of ["ticket\u202e", "ticket\u0085","t\nsecret","A".repeat(161)]){
-  const input={items:[{...base.items[0],id:bad}]};
+  const input={...base,items:[{...base.items[0],id:bad}]};
   assert.equal(enrollment.observedEnrollmentHistory(input).status,"UNKNOWN");
  }
  for(const bad of ["ACTIVE\u2066", {secret:"PRIVATE_STATUS"}, "B".repeat(161)]){
-  const input={items:[{...base.items[0],state:bad}]};
+  const input={...base,items:[{...base.items[0],state:bad}]};
   const safe=enrollment.observedEnrollmentHistory(input);
   assert.equal(safe.items[0].state,"UNKNOWN");
   assert.doesNotMatch(JSON.stringify(safe),/PRIVATE_|\u2066/);
@@ -648,7 +648,8 @@ test("UX-3 onboarding chooses only unique bounded Host inventory, not arbitrary 
   connected:0,last_seen:"2026-10-11T03:10:11Z"}]);
  assert.doesNotMatch(JSON.stringify(valid),/PRIVATE_/);
  assert.equal(enrollment.observedEnrollmentHostPage({...page,next_cursor:"opaque-2"})?.complete,false);
- assert.equal(enrollment.observedEnrollmentHostPage({...page,next_cursor:undefined})?.complete,null);
+ // Missing Core page completeness is now unknown and cannot admit a Host selection.
+ assert.equal(enrollment.observedEnrollmentHostPage({...page,next_cursor:undefined}),null);
  for(const invalid of [
   null,{},{items:null},{items:"text"},{...page,resource_type:"remote-service"},
   {...page,items:[null]},{...page,items:[{...host,id:{secret:"PRIVATE"}}]},
@@ -662,7 +663,7 @@ test("UX-3 onboarding chooses only unique bounded Host inventory, not arbitrary 
  }
 });
 test("UX-3 enrollment Host options tolerate malformed display labels without leaking Core fields",()=>{
- const page={resource_type:"managed-host",next_cursor:"continued",
+ const page={resource_type:"managed-host",limit:100,next_cursor:"continued",
   items:[{id:"host-a",name:{secret:"PRIVATE_HOSTNAME"},label:"oops\u2066",
    admission_state:"APPROVED",trust_status:{secret:"PRIVATE_TRUST"},
    connected:"true",agent_heartbeat_at:{secret:"PRIVATE_TIME"}}]};
