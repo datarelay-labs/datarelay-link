@@ -142,7 +142,10 @@ def evaluate(
 ) -> dict:
     problems: list[str] = []
     seen_pairs: set[str] = set()
-    actor_threads_in_other_pairs: dict[str, str] = {}
+    # Persistent Codex sessions may safely continue for multiple scenarios.
+    # Their role identity cannot change, and each scenario needs new receipts.
+    actor_thread_roles: dict[str, str] = {}
+    seen_event_logs: dict[str, str] = {}
     present_scenarios: set[str] = set()
     present_features: set[str] = set()
     fresult = {"PASS": 0, "FAIL": 0, "PARTIAL": 0, "BLOCKED": 0, "N_A": 0}
@@ -213,19 +216,25 @@ def evaluate(
                 problems.append(prefix + ": invalid Codex thread identifier format")
             if any(not ident for ident in ids) or len(set(ids)) != 4:
                 problems.append(prefix + ": missing/identical Codex actor contexts")
-            for ident in ids[1:]:
-                prior = actor_threads_in_other_pairs.get(ident)
-                if prior is not None and prior != pair:
-                    problems.append(prefix + ": Codex actor thread reused across pairs")
-                actor_threads_in_other_pairs[ident] = pair
             for role, field, thread in (
                 ("DIRECT_USER", "DIRECT_CODEX_EVENTS", ids[1]),
                 ("AI_OPERATOR", "AI_OPERATOR_CODEX_EVENTS", ids[2]),
                 ("AI_ADVISER", "AI_ADVISER_CODEX_EVENTS", ids[3]),
             ):
+                previous_role = actor_thread_roles.get(thread)
+                if previous_role is not None and previous_role != role:
+                    problems.append(prefix + ": Codex actor thread changed role")
+                actor_thread_roles[thread] = role
+                event_ref = str(row.get(field) or "")
+                event_path = evidence_file(evidence_root, event_ref)
+                if event_path is not None:
+                    resolved_path = str(event_path.resolve())
+                    prior_pair = seen_event_logs.get(resolved_path)
+                    if prior_pair is not None and prior_pair != pair:
+                        problems.append(prefix + ": actor event log reused across pairs")
+                    seen_event_logs[resolved_path] = pair
                 for issue in check_codex_actor_events(
-                    evidence_root, str(row.get(field) or ""), thread,
-                    role=role,
+                    evidence_root, event_ref, thread, role=role,
                 ):
                     problems.append(prefix + ": " + field + " " + issue)
             if not row.get("ROLE"):

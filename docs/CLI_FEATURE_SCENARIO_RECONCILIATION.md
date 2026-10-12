@@ -14,7 +14,7 @@ For this Work Packet, the explicit owner instruction controls executor selection
 
 The Codex auditor reads the complete canonical contract, but fresh **different Codex thread IDs** act as Direct User, AI-supported User, and AI Adviser, with no inherited auditor/source/test-answer context. These threads belong to **one locked audit RUN_ID**, not competing audits. AI Adviser sees only the goal and the AI user's already-observed public CLI output; its first answer is recorded unedited. Same starting environment and outcome are compared; `DIRECT_PASS` without a genuine AI mirror **is not PASS**. No external AI/model/service is required: all three actors are Codex. A role reset in one already-informed auditor context does not establish knowledge isolation.
 
-This owner override supersedes generic passages below that refer to ChatGPT as the acting test persona. It **does not** change the read-only FCS boundary, alter any security denial, authorize Full User E2E, permit Codex source edits, or relax mandatory feature/command coverage. Preflight readiness must be GO before a new Codex acceptance run.
+This owner override supersedes generic passages below that refer to ChatGPT as the acting test persona. It **does not** change the read-only FCS boundary, alter any security denial, authorize Full User E2E, permit Codex source edits, or relax mandatory feature/command coverage. Only per-operation authorization and actual prerequisites affect a runnable FCS check; global readiness GO is not a run-wide start prerequisite.
 
 ## 1. Exact execution trigger
 

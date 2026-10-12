@@ -1,116 +1,40 @@
-# Repository Engineering Rules
+# Data Relay Link — Working Rules
 
-This repository follows the canonical Engineering System:
-https://github.com/datarelay-labs/engineering-system
+Canonical standards: https://github.com/datarelay-labs/engineering-system
 
-## Context budget
+Read `AGENTS.md` and `.engineering/project.yaml` at task start. Only read
+`.engineering/tests.yaml` for relevant implementation tests and
+`.engineering/release.yaml` when working on release artifacts. Do not load
+other standards, histories, work packets or old test reports without a reason.
 
-Always read:
-1. `AGENTS.md`
-2. `.engineering/project.yaml`
+## Start work instead of processing paperwork
 
-Read only when relevant:
-- `.engineering/tests.yaml` for implementation/debugging/testing
-- `.engineering/release.yaml` for release/version/artifact work
-- one task-relevant Engineering System standard plus only the product/spec/ADR/runbook material required by the change
+- **Execution authority precedence:** explicit current owner request > ACTIVE Work Packet > execution profile > repository defaults.
+- **Execution profile authority:** `.engineering/execution-profile.yaml` selects the implementer (normally CHATGPT_CHAT). The owner can explicitly select Codex to execute E2E. No other runtime is assumed.
+- On `dev-drlink` resolve `/home/aella/datarelay-link-current`, not the historical default working directory. If a specific existing worktree/run was assigned, use it. Read the latest next action and actual Git/CI state **once**; continue the first unfinished task.
+- If a Codex E2E is running, **continue it**. Never interrupt, duplicate, repin HEAD or modify its worktree. Put independent fixes in a separate worktree. Keep one Issue #165 Work Packet, and update it only when a meaningful state changes.
+- Ordinary source edits, focused tests, git commits/push and Issue/PR updates **do not** require extra project-written approval forms, LAB_GO, phase-state files, repeated packet lint, coordinator signatures or unrelated release checks. Classify true external/environment blockers only.
+- Test only the affected change first. Run expensive CI/whole suites at suitable integration or release points, not on each small finding. Do not stop executable work to produce interim reports. Preserve others' modifications.
 
-Use the minimum sufficient context and reasoning. Expand only for a concrete blocker, failed check, or unresolved design question. Do not preload all standards, Wiki pages, archives, historical discussions, or old agent transcripts.
+## Public product and user tests
 
-When resuming, reconcile current owner intent, priority, dependencies and branch context; select eligible work and verify actual repository state before acting.
+- Actual installed `drlink help commands` and the tested HEAD define public CLI truth, then the current CLI Master/reference documents. Do not use an old FRP or other-repository copy as a command oracle.
+- `docs/FULL_USER_E2E_SCENARIOS.md` is the authoritative **116-ID** live user contract. An E2E request starts the independent runnable criteria immediately without a prerequisite FCS, global lab readiness or preliminary code audit.
+- `docs/CLI_FEATURE_SCENARIO_RECONCILIATION.md` is a separate read-only FCS audit. A CLI audit never authorizes product mutation.
+- Codex Direct User and AI-assisted User must remain **distinct roles** with actual public command/traffic receipts and authentic first advice. Under `docs/CODEX_DUAL_ROLE_TEST_PROTOCOL.md`, one isolated session per role can perform multiple scenarios with new per-scenario evidence. Never count a test wrapper or parser as an acting human-equivalent user.
+- Assigned disposable test hosts already have owner authorization within the recorded scope; do not repeatedly ask for permission. A genuine platform/tool denial, including B014, remains binding **for that exact effect**. Do not bypass it through a different executor, host or command. Continue unaffected scenarios.
+- Keep product security/fail-closed functionality, real negative tests, independent Direct/AI outcomes, exact Source HEAD, true 3,600-second soak and **two complete Full User E2E PASS runs on the same HEAD** before release. Do not turn a BLOCKED/NOT_RUN result into PASS.
 
-### Data Relay Link active-worktree resolution
+## Implementation and release
 
-On `dev-drlink`, the process current working directory is **not** authoritative for selecting the active Data Relay Link worktree. The historical main worktree `/home/aella/datarelay-link-dev` may be on an older branch and must not cause the agent to stop, re-plan, or search GitHub before a User E2E run.
+- Make small correct source fixes with deterministic RED→GREEN regression evidence. Do not edit a frozen E2E candidate. After a full E2E run, freeze findings, fix, and rerun on the new source as necessary.
+- Real production, outside-scope destructive effects, credentials/permission changes, merge, irreversible publication and release require their applicable separate authority. Source/CI success never grants it.
+- Never replace actual platform security decisions, expose secrets, discard immutable receipts, or claim qualified release without evidence.
 
-The machine-level active-worktree pointer is authoritative:
+## Direct audit triggers
 
-~~~text
-/home/aella/datarelay-link-current
-DATARELAY_LINK_CURRENT_WORKTREE=/home/aella/datarelay-link-current
-~~~
-
-For Data Relay Link work, especially any User E2E trigger:
-
-1. if `/home/aella/datarelay-link-current` resolves and contains `AGENTS.md`, `.engineering/project.yaml`, and the requested canonical document, immediately use that worktree;
-2. do not infer the target worktree from the initial shell cwd or from `/home/aella/datarelay-link-dev`;
-3. do not compare multiple historical worktrees or GitHub branches merely to decide where to start;
-4. do not stop to ask which worktree is current when the pointer resolves successfully;
-5. only perform fallback discovery when the pointer is missing, broken, or lacks the requested canonical file.
-
-For `FULL_USER_E2E`, resolve the canonical contract deterministically:
-
-~~~text
-CANONICAL_REPO=datarelay-labs/datarelay-link
-CANONICAL_PATH=docs/FULL_USER_E2E_SCENARIOS.md
-ACTIVE_WORKTREE=/home/aella/datarelay-link-current
-CANONICAL_CONTRACT=/home/aella/datarelay-link-current/docs/FULL_USER_E2E_SCENARIOS.md
-~~~
-
-If the active-worktree path exists, use it immediately. If it is absent, resolve the same path in the same GitHub repository/branch before any broader fallback. Do not wander through unrelated repositories or similarly named files.
-
-Requests such as `FULL_USER_E2E 수행해`, `Full User E2E`, `GitHub에서 FULL_USER_E2E 문서 찾아서 수행해`, and equivalent wording are immediate execution triggers. Once the canonical document resolves, read the entire current contract end-to-end before starting any E2E action, then execute that contract exactly. Do not invent a substitute checklist, skip to a convenient wrapper, or treat a script/harness/CI PASS as primary user evidence. Wrappers and automation are supporting execution/evidence only; ChatGPT must perform the contract's required persona-led public-surface actions itself.
-
-For FULL_USER_E2E, that document's `FULL_USER_E2E_SCOPE=PRODUCT_FUNCTIONAL_PERFORMANCE_OPERATIONAL` contract takes precedence over the generic implementation/change-classification rules below. A User E2E request is not an implementation task and must not be delayed by engineering-change classification, branch archaeology, broad GitHub search, source review, or release-qualification work unless the user explicitly requests those activities. Record findings during the run and continue all independent checks; do not update the active Work Packet for each intermediate finding. Update it once after the full executable run is exhausted and final evidence/counters are frozen.
-
-## CLI authority hard gate
-
-Current v2.4 public direct CLI grammar is action-first:
-
-~~~text
-drlink <ACTION> <RESOURCE> [TARGET] [VALUE]
-~~~
-
-Current top-level action families are `show`, `set`, `unset`, `test`, and `system`, plus `menu`, `help`, and `exit`.
-
-For current CLI truth, use this order only:
-1. exact candidate runtime `drlink help commands`;
-2. `docs/DATA_RELAY_LINK_CLI_AI_MASTER_v2.4_FINAL.md`;
-3. `docs/CLI_REFERENCE.md`;
-4. repository `docs/Data Relay Link CLI Information Architecture.md` for current guided-menu/UX structure only.
-
-Project/chat attachments, copied snapshots, archived docs, old screenshots, and same-named documents outside the active repository are **never CLI authority** unless they are explicitly proven to match the current repository HEAD. Pre-v2.4 snapshots that use the retired Clients/Services root model or retired client/create/revoke/release/top-level diagnostic command families must be ignored for product decisions, audits, and E2E expectations.
-
-If an external snapshot conflicts with the current runtime or repository SSOT, fail closed against the snapshot rather than reinterpreting the product.
-
-## Execution rules
-
-- **Next-chat bootstrap fast path:** on a repository-level continue/resume, perform one bounded authoritative Work Packet lookup. If no open ACTIVE packet exists, do not loop on orientation, history reconstruction, or repeated packet search. Reconcile the repository roadmap/release and actual Git/PR state once; when runnable work exists, create/reactivate exactly one truthful Work Packet and make measurable progress in the same turn. If nothing is runnable, report the concrete wait/terminal condition. `NO_ACTIVE_PACKET` is a scheduling input, not a blocker.
-- **Verified next-chat resume:** a successful durable handoff is not re-executed in the fresh chat. Re-read the authoritative Issue plus mutable repo/worktree/HEAD/profile facts once; if they still match, enter the persisted Next Action immediately without transcript reconstruction, unchanged packet rewrites, repeated lint/preflight, or plan-only orientation. Revalidate/rewrite only on an actual mutable-fact or owner-intent change.
-- **Product execution ownership / supervisor fallback:** the bound product repository context owns normal product implementation, testing, roadmap scheduling, and routine Issue/PR lifecycle. Engineering System is the control plane for shared policy, adoption, watchdog/re-entry, and systemic recovery; it must not become a shadow product coordinator while the product context is healthy. Create a new Work Packet only for a genuinely independent durable workstream, not for each finding or micro-step. If repeated plan-only/no-progress behavior, wrong-repository/runtime selection, stale coordination that does not self-heal, uncontrolled Issue proliferation, or repeated identical blockers show a systemic failure, repair canonical policy/tooling first when applicable, repair only the minimum adopted/product coordination state needed, verify the product context is runnable again, and return execution ownership to it. Never mutate an actively progressing owner-authorized worker dirty worktree or create a competing implementation lane merely to recover coordination.
-- **Execution profile authority:** `.engineering/execution-profile.yaml` selects the runtime; packets bind `EXECUTION_PROFILE` and `EXECUTION_PROFILE_REVISION`. Historical prose, memory and retired adapters do not select an implementer. A continue/resume instruction authorizes the selected runtime to implement, test, audit and perform ordinary authenticated Git/GitHub work directly; no additional magic phrase, alternate-runtime handoff or optional coordinator tool is required.
-- For ordinary authenticated GitHub Issue/PR coordination, re-read current packet intent and subject branch/HEAD before writing and reconcile stale or ambiguous outcomes. Ordinary repository work does not require `worker_adapter.py` or a trusted signer. Stronger trusted boundaries apply only to effect classes identified by the execution profile or stricter project policy: production, destructive, credential/permission change, irreversible publication and release authority. Follow `standards/SECURITY.md` for those effects.
-- **Execute useful work continuously.** Current explicit owner intent takes precedence over the ACTIVE Work Packet, execution profile and repository defaults. Verify repository, branch/HEAD and worktree once; continue the first unfinished action. Continue an existing authorized Codex E2E, never restart or duplicate it. Findings belong in current-run evidence, not new Work Packets or repeated GitHub updates. Packet lint and work-admission tools are optional coordination diagnostics, not prerequisites for an explicitly authorized running User E2E. Do not demand repeated owner approvals, re-read canonical documentation already consumed by the live run, redo broad surveys or duplicate CI. Continue independent safe work while other tasks execute; real denied operations block only dependent checks.
-- Classify the change and affected domains/contracts/security/operations.
-- Apply `standards/DESIGN.md` for material design-bearing changes.
-- Apply `standards/OPERATIONS.md` for production-impacting failures and preserve evidence before mutation.
-- Inspect affected implementation/tests, make the smallest correct change, and run the cheapest affected deterministic validation first.
-- Do not duplicate equivalent native/shared CI or run expensive downstream qualification after a blocking deterministic failure.
-- Add durable regression coverage for bugs when practical.
-- Never weaken validation or claim PASS from unexecuted, blocked, historical, or different-HEAD evidence.
-- Before merge or terminal completion, resolve every actionable review finding with revalidation or an evidence-backed disposition.
-- Preserve machine-observable wait state and continue independent authorized work; use a watcher when useful.
-- Repair missing or contradictory coordination context within current owner scope; otherwise block only the affected action with concrete evidence.
-
-For adoption or managed upgrades, follow `standards/ADOPTION.md`, preserve project-specific/stricter rules, and qualify the result deterministically.
-
-Tool-specific adapters may change syntax but must not weaken these rules.
-
-
-## Product audit execution shortcuts
-
-When the user explicitly requests an exhaustive Data Relay Link CLI or AI-assisted command audit, route directly to the canonical audit contract instead of improvising a new checklist:
-
-- `CLI, 기능, 시나리오의 연계성을 테스트 진행`, `CLI 기능 시나리오 연계성 테스트`, `GitHub에서 CLI_FEATURE_SCENARIO_RECONCILIATION 문서 찾아서 테스트 진행해`, or equivalent → deterministically resolve and execute `docs/CLI_FEATURE_SCENARIO_RECONCILIATION.md` immediately.
-- `CLI 전수 감사해줘`, `CLI 명령 전수 감사해줘`, or equivalent → execute `docs/CLI_EXHAUSTIVE_AUDIT.md`.
-- `AI 지원 명령 전수 감사해줘`, `AI지원 전수 감사해줘`, or equivalent → execute `docs/AI_ASSISTED_COMMAND_EXHAUSTIVE_AUDIT.md`.
-- `CLI 및 AI지원 명령을 전수 감사해줘`, `CLI와 AI 지원 명령 전수 감사`, or equivalent → execute **both** documents against the same candidate.
-
-These triggers mean execute the matching canonical audit using actual public Data Relay Link user actions and separately evidenced Direct/AI roles. CLI-only audits never authorize live mutations. Full User E2E does not require a completed FCS, another packet lint, or a global LAB_GO/phase-state check. Its canonical 116-ID contract, independent genuine roles, actual effects and Soak remain mandatory. Remediate verified defects after freezing a full run, rerun as required, and keep release acceptance separate. Scripts and CI are supplemental; never override platform denials.
-
-## Implementation and audit contract
-
-The implementation runtime is selected only by the current managed execution profile and the authoritative Work Packet. Provider/runtime names in prose are descriptive only and never create mutation authority.
-
-Before source mutation, use the owner-selected scope and current Git branch/HEAD and preserve others' work. Normal source fixes, deterministic testing and authenticated GitHub updates do not require project-specific repeated permission ceremonies. High-risk production/destructive, credential/permission, publication and release effects retain their real approval boundaries. A local preflight cannot grant or remove authority; actual tool/platform security decisions are binding.
-
-The runtime selected by the execution profile performs implementation, deterministic testing, and terminal audit. Terminal PASS requires current exact-HEAD evidence, required CI/review state, and disposition of actionable findings; self-report alone is never sufficient. HIGH/CRITICAL or production/security-sensitive work requires deeper machine evidence and any applicable human approval. An independent reviewer remains optional defense-in-depth/escalation, not a provider-specific default completion dependency.
+`CLI 기능 시나리오 연계성` → `docs/CLI_FEATURE_SCENARIO_RECONCILIATION.md`.
+`CLI 전수 감사` → `docs/CLI_EXHAUSTIVE_AUDIT.md`.
+`AI 지원 명령 전수 감사` → `docs/AI_ASSISTED_COMMAND_EXHAUSTIVE_AUDIT.md`.
+`Full User E2E` → `docs/FULL_USER_E2E_SCENARIOS.md`.
+Execute the selected contract rather than creating a new checklist.

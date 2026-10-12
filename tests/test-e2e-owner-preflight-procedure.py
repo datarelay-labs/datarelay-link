@@ -69,9 +69,9 @@ class E2EProcedureGuard(unittest.TestCase):
         self.assertIn("verify it is", self.roadmap)
         self.assertIn("never retry such an effect under an alternate executor", self.roadmap)
         protocol = (ROOT / "docs" / "CODEX_DUAL_ROLE_TEST_PROTOCOL.md").read_text()
-        self.assertIn("Owner-approved disposable test host execution", protocol)
-        self.assertIn("first establish and verify a clean prior-run state", protocol)
-        self.assertIn("specific previous tool/platform", protocol)
+        self.assertIn("disposable hosts", protocol)
+        self.assertIn("B014", protocol)
+        self.assertIn("denied", protocol)
         # All three portable documents must not leak the live private host map.
         for doc in (self.canonical, self.procedure, self.roadmap, protocol):
             self.assertNotIn("221.139.249.113", doc)
@@ -98,9 +98,9 @@ class E2EProcedureGuard(unittest.TestCase):
         required = (
             "FULL_USER_E2E_SCENARIOS.md",
             "116 scenario", "3,600-second soak",
-            "two same-HEAD PASS", "Codex FCS actor dispatch",
+            "two same-HEAD PASS", "Codex runs directly",
             "F001", "F004", "F005", "F006", "F007", "D001",
-            "No new full E2E", "Codex FCS",
+            "No new full E2E",
             "first AI answer", "AI_FIRST_ANSWERS.tsv",
             "PROCESS_REGISTRY.tsv", "CLEANROOM_LEDGER.tsv",
             "status",  # diagnostics and status reports remain explicit
@@ -124,6 +124,13 @@ class E2EProcedureGuard(unittest.TestCase):
         self.assertIn("two same-HEAD PASS", self.procedure)
         agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
         self.assertNotIn("Read and lint the selected packet", agents)
+
+    def test_obsolete_fcs_actor_launcher_is_not_required(self):
+        self.assertFalse((ROOT / "tools/codex_fcs_actor_dispatch.py").exists())
+        for path in ("docs/CODEX_DUAL_ROLE_TEST_PROTOCOL.md",
+                     "docs/E2E_EXECUTION_PROCEDURE.md"):
+            self.assertNotIn("codex_fcs_actor_dispatch.py",
+                             (ROOT / path).read_text(encoding="utf-8"))
 
     def test_protocol_uses_standard_review_not_old_global_veto(self):
         protocol = (ROOT / "docs" / "CODEX_DUAL_ROLE_TEST_PROTOCOL.md").read_text()
@@ -293,6 +300,52 @@ class CodexDualRoleEvidenceContractTests(unittest.TestCase):
             self.assertEqual(false_pass.returncode, 2)
             self.assertIn("FINAL PASS requires both", false_pass.stdout)
 
+    def test_long_lived_independent_roles_can_cover_multiple_scenarios(self):
+        """One honest User and one AI User can continue across scenarios."""
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            rows = self._fixture(root)
+            for row in rows[1:]:
+                for role, thread_key, event_key in (
+                    ("direct", "DIRECT_CODEX_THREAD", "DIRECT_CODEX_EVENTS"),
+                    ("ai-operator", "AI_OPERATOR_CODEX_THREAD", "AI_OPERATOR_CODEX_EVENTS"),
+                    ("ai-adviser", "AI_ADVISER_CODEX_THREAD", "AI_ADVISER_CODEX_EVENTS"),
+                ):
+                    shared_thread = rows[0][thread_key]
+                    row[thread_key] = shared_thread
+                    event_file = root / row[event_key]
+                    events = [json.loads(line) for line in event_file.read_text().splitlines()]
+                    events[0]["thread_id"] = shared_thread
+                    event_file.write_text(
+                        chr(10).join(json.dumps(event) for event in events) + chr(10)
+                    )
+            report = self._check(rows, root)
+            self.assertEqual(report["EVIDENCE_SCHEMA"], "PASS", report["ERRORS"])
+            self.assertFalse(report["PRODUCT_E2E_PASS_PROVEN"])
+
+    def test_reused_role_must_not_reuse_another_scenarios_transcript(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            rows = self._fixture(root)
+            rows[1]["DIRECT_CODEX_THREAD"] = rows[0]["DIRECT_CODEX_THREAD"]
+            rows[1]["DIRECT_CODEX_EVENTS"] = rows[0]["DIRECT_CODEX_EVENTS"]
+            result = self._check(rows, root)
+            self.assertEqual(result["EVIDENCE_SCHEMA"], "FAIL")
+            self.assertIn("actor event log reused", " | ".join(result["ERRORS"]))
+
+    def test_role_context_cannot_change_from_direct_to_ai(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            rows = self._fixture(root)
+            rows[1]["AI_OPERATOR_CODEX_THREAD"] = rows[0]["DIRECT_CODEX_THREAD"]
+            path = root / rows[1]["AI_OPERATOR_CODEX_EVENTS"]
+            events = [json.loads(line) for line in path.read_text().splitlines()]
+            events[0]["thread_id"] = rows[0]["DIRECT_CODEX_THREAD"]
+            path.write_text(chr(10).join(json.dumps(e) for e in events) + chr(10))
+            report = self._check(rows, root)
+            self.assertEqual(report["EVIDENCE_SCHEMA"], "FAIL")
+            self.assertIn("actor thread changed role", " | ".join(report["ERRORS"]))
+
     def test_bad_raw_codex_thread_receipts_are_not_counted_as_actors(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -362,20 +415,6 @@ class CodexDualRoleEvidenceContractTests(unittest.TestCase):
             self.assertEqual(report["EVIDENCE_SCHEMA"], "FAIL")
             self.assertIn("Codex AI Adviser used tools", " | ".join(report["ERRORS"]))
 
-    def test_new_codex_threads_must_not_be_reused_across_pairs(self):
-        with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp)
-            rows = self._fixture(root)
-            rows[1]["DIRECT_CODEX_THREAD"] = rows[0]["DIRECT_CODEX_THREAD"]
-            path = root / rows[1]["DIRECT_CODEX_EVENTS"]
-            event_log = [json.loads(line) for line in path.read_text().splitlines()]
-            event_log[0]["thread_id"] = rows[0]["DIRECT_CODEX_THREAD"]
-            path.write_text("\n".join(json.dumps(x) for x in event_log) + "\n")
-            result = self._check(rows, root)
-            self.assertIn("Codex actor thread reused across pairs",
-                          " | ".join(result["ERRORS"]))
-            self.assertEqual(result["EVIDENCE_SCHEMA"], "FAIL")
-
     def test_no_missing_fcs_or_feature_accepted(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -401,197 +440,8 @@ class CodexDualRoleEvidenceContractTests(unittest.TestCase):
         self.assertIn("AI-assisted user role for the SAME feature", fcs)
         self.assertIn("same business goal", plan)
         self.assertIn("different fresh", plan.lower())
-        self.assertIn("NOT_READY", plan)
-        self.assertIn("TEST ONLY", plan)
-
-
-class CodexActorDispatchSafeguards(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        sys.path.insert(0, str(ROOT / "tools"))
-        import codex_fcs_actor_dispatch as dispatcher
-        cls.dispatch = dispatcher
-
-    def fixture(self, root: Path):
-        base = root / "FCS-001-run"
-        base.mkdir(mode=0o700)
-        prompt = base / "ai-adviser-first-prompt.txt"
-        prompt.write_text(
-            "I am a new operator. My task is to discover the version. "
-            "This is a fixed synthetic fixture without any credential."
-        )
-        prompt.chmod(0o600)
-        lab = base / "PREFLIGHT_STATUS.json"
-        status = {
-            "status": "GO", "not_ready_gate_ids": [],
-            "lab_phase": "INSTALLED_CANDIDATE",
-            "repo_head": "a" * 40,
-            "candidate_source_head": "b" * 40,
-        }
-        lab.write_text(json.dumps(status))
-        lock = base / ".cli-feature-scenario.lock"
-        lock.write_text("RUN_ID=FCS-001-run\n")
-        owner = base / "owner-phase-state.json"
-        owner.write_text(json.dumps({
-            "phase": "CODEX_CLI_FEATURE_SCENARIO_ONLY",
-            "next_codex_test_authorized": True, "p0_go_status": "GO",
-            "latest_source_head": "a" * 40,
-        }))
-        return base, prompt, lab, lock, status
-
-    def test_codex_uses_ordinary_review_instead_of_forced_isolation(self):
-        argv = self.dispatch.build_codex_command(
-            "/usr/bin/codex", Path("/private/actor"),
-            Path("/private/actor/last-message.txt"), "DIRECT_USER")
-        self.assertEqual(argv[:3], ["/usr/bin/codex", "exec", "--approve-for-me"])
-        self.assertIn("--json", argv)
-        self.assertIn("--skip-git-repo-check", argv)
-        self.assertNotIn("--ignore-user-config", argv)
-        self.assertNotIn("--sandbox", argv)
-        self.assertEqual(argv[-1], "-")
-
-    def test_adviser_retains_stronger_tool_isolation(self):
-        argv = self.dispatch.build_codex_command(
-            "/usr/bin/codex", Path("/private/actor"),
-            Path("/private/actor/last-message.txt"), "AI_ADVISER")
-        self.assertIn("--ignore-user-config", argv)
-        self.assertIn("--sandbox", argv)
-        self.assertIn("read-only", argv)
-        self.assertNotIn("--approve-for-me", argv)
-
-    def test_unknown_ai_adviser_action_fails_closed(self):
-        with tempfile.TemporaryDirectory() as temp:
-            log = Path(temp) / "events.jsonl"
-            events = [
-                {"type": "thread.started", "thread_id": str(uuid.uuid4())},
-                {"type": "item.completed", "item": {"type": "unfamiliar_tool", "name": "x"}},
-                {"type": "turn.completed"},
-            ]
-            log.write_text("\n".join(json.dumps(e) for e in events) + "\n")
-            self.assertEqual(self.dispatch.extract_receipt(log, "AI_ADVISER")
-                             ["status"], "STRUCTURAL_FAIL")
-
-    def test_qualified_receipt_preflight_allows_plan_but_does_not_launch_model(self):
-        with tempfile.TemporaryDirectory(dir=Path.home()) as temp:
-            root, prompt, lab, lock, _ = self.fixture(Path(temp))
-            with mock.patch.object(
-                self.dispatch.subprocess, "check_output",
-                return_value="a" * 40 + "\n",
-            ):
-                ready = self.dispatch.validate_launch(
-                    run_root=root, run_id="FCS-001-run", pair_id="PAIR-001",
-                    role="AI_ADVISER", prompt_file=prompt,
-                    preflight_file=lab, lock_file=lock,
-                )
-            self.assertEqual(ready["source_head"], "b" * 40)
-            self.assertEqual(ready["repo_head"], "a" * 40)
-            self.assertEqual(ready["role"], "AI_ADVISER")
-            self.assertFalse(ready["target"].exists())
-
-    def test_global_not_ready_does_not_veto_readonly_fcs(self):
-        with tempfile.TemporaryDirectory(dir=Path.home()) as temp:
-            root, prompt, lab, lock, status = self.fixture(Path(temp))
-            status.update(status="NOT_READY",
-                          not_ready_gate_ids=["HOST_FRP_E2E_ROCKY8", "OWNER_OAUTH_UI"])
-            lab.write_text(json.dumps(status))
-            with mock.patch.object(self.dispatch.subprocess, "check_output",
-                                   return_value="a"*40+"\n"):
-                ready = self.dispatch.validate_launch(
-                    run_root=root, run_id="FCS-001-run", pair_id="PAIR-001",
-                    role="AI_ADVISER", prompt_file=prompt,
-                    preflight_file=lab, lock_file=lock)
-            self.assertEqual(ready["scope"], "NON_DESTRUCTIVE_FCS")
-            self.assertEqual(ready["global_lab_status"], "NOT_READY")
-            self.assertEqual(ready["excluded_global_gates"], status["not_ready_gate_ids"])
-            self.assertEqual(ready["source_head"], "b"*40)
-            self.assertFalse(ready["target"].exists())
-
-    def test_no_lab_report_requires_actual_observed_source_head(self):
-        with tempfile.TemporaryDirectory(dir=Path.home()) as temp:
-            root, prompt, lab, lock, _ = self.fixture(Path(temp))
-            args = dict(run_root=root, run_id="FCS-001-run", pair_id="PAIR-001",
-                        role="DIRECT_USER", prompt_file=prompt,
-                        preflight_file=None, lock_file=lock)
-            with mock.patch.object(self.dispatch.subprocess, "check_output",
-                                   return_value="a"*40+"\n"):
-                with self.assertRaisesRegex(ValueError, "Pinned installed Source HEAD"):
-                    self.dispatch.validate_launch(**args)
-                ready = self.dispatch.validate_launch(
-                    **args, installed_source_head="c"*40)
-            self.assertEqual(ready["source_head"], "c"*40)
-            self.assertEqual(ready["global_lab_status"], "NOT_PROVIDED")
-            self.assertEqual(ready["source_pin_origin"], "PUBLIC_OBSERVATION_DECLARED")
-
-    def test_lock_head_permission_and_duplicate_gates(self):
-        with tempfile.TemporaryDirectory(dir=Path.home()) as temp:
-            root, prompt, lab, lock, receipt = self.fixture(Path(temp))
-            args = dict(run_root=root, run_id="FCS-001-run",
-                        pair_id="PAIR-001", role="DIRECT_USER",
-                        prompt_file=prompt, preflight_file=lab,
-                        lock_file=lock)
-            with mock.patch.object(self.dispatch.subprocess, "check_output",
-                                   return_value="a" * 40 + "\n"), \
-                 mock.patch.object(self.dispatch, "REPO", ROOT):
-                self.assertEqual(self.dispatch.validate_launch(**args)["role"],
-                                 "DIRECT_USER")
-                lock.write_text("RUN_ID=FOREIGN-RUN\n")
-                with self.assertRaisesRegex(ValueError, "lock is not owned"):
-                    self.dispatch.validate_launch(**args)
-                lock.write_text("RUN_ID=FCS-001-run\n")
-                receipt["repo_head"] = "c" * 40
-                lab.write_text(json.dumps(receipt))
-                with self.assertRaisesRegex(ValueError, "repo HEAD"):
-                    self.dispatch.validate_launch(**args)
-                receipt["repo_head"] = "a" * 40
-                lab.write_text(json.dumps(receipt))
-                prompt.chmod(0o644)
-                with self.assertRaisesRegex(ValueError, "not private"):
-                    self.dispatch.validate_launch(**args)
-                prompt.chmod(0o600)
-                (root / "actors" / "PAIR-001" / "DIRECT_USER"
-                 ).mkdir(parents=True)
-                with self.assertRaises(FileExistsError):
-                    self.dispatch.validate_launch(**args)
-
-    def test_old_phase_state_is_not_a_global_fcs_veto(self):
-        with tempfile.TemporaryDirectory(dir=Path.home()) as temp:
-            root, prompt, lab, lock, status = self.fixture(Path(temp))
-            owner = root / "owner-phase-state.json"
-            owner.write_text(json.dumps({"phase": "NOT_READY",
-                "next_codex_test_authorized": False, "p0_go_status": "NOT_READY"}))
-            status.update(status="NOT_READY", not_ready_gate_ids=["MCP_PUBLIC_TLS"])
-            lab.write_text(json.dumps(status))
-            with mock.patch.object(self.dispatch.subprocess, "check_output",
-                                   return_value="a"*40+"\n"):
-                ready = self.dispatch.validate_launch(
-                    run_root=root, run_id="FCS-001-run", pair_id="PAIR-001",
-                    role="AI_ADVISER", prompt_file=prompt,
-                    preflight_file=lab, lock_file=lock)
-            self.assertEqual(ready["scope"], "NON_DESTRUCTIVE_FCS")
-            self.assertEqual(ready["global_lab_status"], "NOT_READY")
-
-    def test_actor_log_from_real_codex_jsonl_shape_is_audit_only(self):
-        with tempfile.TemporaryDirectory(dir=Path.home()) as temp:
-            root = Path(temp)
-            events = root / "events.jsonl"
-            thread_id = str(uuid.uuid4())
-            base = [
-                {"type": "thread.started", "thread_id": thread_id},
-                {"type": "turn.started"},
-                {"type": "item.completed", "item": {
-                    "type": "agent_message", "text": "fixture only"}},
-                {"type": "turn.completed"},
-            ]
-            events.write_text("\n".join(json.dumps(x) for x in base) + "\n")
-            a = self.dispatch.extract_receipt(events, "AI_ADVISER")
-            self.assertEqual(a["status"], "STRUCTURAL_PASS")
-            self.assertEqual(a["thread_id"], thread_id)
-            base.insert(-1, {"type": "item.started",
-                             "item": {"type": "mcp_tool_call", "name": "search"}})
-            events.write_text("\n".join(json.dumps(x) for x in base) + "\n")
-            bad = self.dispatch.extract_receipt(events, "AI_ADVISER")
-            self.assertEqual(bad["status"], "STRUCTURAL_FAIL")
-            self.assertIn("mcp_tool_call", bad["forbidden_ai_tool_types"])
+        self.assertIn("LAB_GO", plan)
+        self.assertIn("NON-DESTRUCTIVE", plan)
 
 
 class Canonical116E2EInventoryTests(unittest.TestCase):
