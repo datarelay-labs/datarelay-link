@@ -1673,6 +1673,20 @@ def _require_safe_signed_job_diagnostics(kind: str, result: dict) -> None:
                 )
             ):
                 raise MgmtSyncError(invalid)
+        # Match frp_doctor.Report.overall() and run_doctor()'s exit mapping.
+        # In particular, a signed "PASS" with failing checks is not health.
+        counts = result["counts"]
+        overall = result["overall"]
+        derived = (
+            "FAIL" if counts.get("FAIL", 0) else
+            "PASS_WITH_WARNINGS" if counts.get("WARN", 0) else "PASS"
+        )
+        expected_exit = 2 if overall == "ERROR" else 1 if overall == "FAIL" else 0
+        if (
+            (overall != "ERROR" and overall != derived)
+            or result["exit_code"] != expected_exit
+        ):
+            raise MgmtSyncError(invalid)
 
     if kind == "refresh":
         # A signed ACK without the native synchronized-state counters is
