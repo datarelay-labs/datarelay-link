@@ -556,6 +556,11 @@ class ManagementJobEngine:
             for row in rows:
                 if len(claimed) >= count:
                     break
+                # SQL TEXT ordering is not proof of an unexpired UTC deadline.
+                # Refuse malformed or noncanonical persisted timestamps before
+                # issuing a one-shot Agent lease.
+                if not _unexpired_claim_clock(row["deadline_at"], current_dt):
+                    continue
                 # Never lease a Job whose persisted intent is malformed,
                 # ambiguous, non-object, non-finite or outside the source
                 # storage bound. A corrupted record remains QUEUED and

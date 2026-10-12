@@ -303,6 +303,51 @@ class V30ManagementJobTests(unittest.TestCase):
         )
         self.assertEqual([c["job_type"] for c in claims], ["doctor"])
 
+    def test_corrupt_persisted_deadline_never_leases_core_target(self):
+        # A future-sorting SQLite TEXT deadline is not proof of a valid
+        # authoritative UTC deadline. Reject before allocating a claim token.
+        job = self._enqueue(targets=("host-a",), payload={"operation": "doctor"})
+        valid_deadline = job["deadline_at"]
+        suspicious_deadlines = (
+            "9999-99-99T99:99:99Z",
+            "zzzz",
+            "2100-01-01T00:00:00+00:00",
+            "2100-01-01T00:00:00.000Z",
+            "2100-01-01T00:00:00z",
+        )
+        for deadline in suspicious_deadlines:
+            with self.subTest(deadline=deadline):
+                self.engine.conn.execute(
+                    "UPDATE management_jobs SET deadline_at=? WHERE id=?",
+                    (deadline, job["id"]),
+                )
+                self.engine.conn.commit()
+                claims = self.engine.claim_targets_for_target(
+                    target_id="host-a", worker_id="agent:host-a", limit=1,
+                    now=self.now + timedelta(seconds=1),
+                )
+                self.assertEqual(claims, [])
+                row = self.engine.conn.execute(
+                    "SELECT status,attempt,claim_token,lease_expires_at "
+                    "FROM management_job_targets WHERE job_id=? AND target_id=?",
+                    (job["id"], "host-a"),
+                ).fetchone()
+                self.assertEqual(row["status"], QUEUED)
+                self.assertEqual(row["attempt"], 0)
+                self.assertFalse(row["claim_token"])
+                self.assertIsNone(row["lease_expires_at"])
+
+        self.engine.conn.execute(
+            "UPDATE management_jobs SET deadline_at=? WHERE id=?",
+            (valid_deadline, job["id"]),
+        )
+        self.engine.conn.commit()
+        claim = self.engine.claim_targets_for_target(
+            target_id="host-a", worker_id="agent:host-a", limit=1,
+            now=self.now + timedelta(seconds=2),
+        )
+        self.assertEqual([item["job_id"] for item in claim], [job["id"]])
+
     def test_schema_is_separate_from_ai_jobs(self):
         tables = {
             row[0]
