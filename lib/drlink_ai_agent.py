@@ -382,10 +382,19 @@ class AgentLoop:
                     patterns=job.get("patterns") or [],
                     timeout=job.get("timeout"),
                 )
-            except ControlPlaneError as exc:
-                result = {"result": "DENY", "error": str(exc)}
-            except Exception as exc:
-                result = {"result": "ERROR", "error": str(exc)}
+            except ControlPlaneError:
+                # A denied local operation may quote protected paths, tokens
+                # or raw input. Only a fixed result code crosses into Core.
+                result = {
+                    "result": "DENY",
+                    "error": "AI Agent operation denied; inspect Agent-local diagnostics.",
+                }
+            except Exception:
+                # Unexpected OS/tool exceptions are equally untrusted text.
+                result = {
+                    "result": "ERROR",
+                    "error": "AI Agent execution failed; inspect Agent-local diagnostics.",
+                }
             try:
                 self._complete(
                     job_id,

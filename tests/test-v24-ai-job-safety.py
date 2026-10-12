@@ -413,6 +413,38 @@ class AiJobSafetyTests(unittest.TestCase):
                     executed.assert_called_once()
                     completed.assert_called_once()
 
+    def test_ai_agent_exception_text_never_leaves_local_host(self):
+        # Local executor exceptions may contain paths, credentials or raw
+        # payloads. The Core completion must receive only fixed safe codes.
+        from datetime import datetime, timedelta, timezone
+        secret = "Bearer PRIVATE_AI_AGENT_TOKEN_DO_NOT_EXPORT"
+        future = (datetime.now(timezone.utc) + timedelta(minutes=2)).isoformat()
+        job = {
+            "id": "ai-exception-fixture", "claim_token": "atk_fixture",
+            "attempt_id": "att_fixture", "capability": "read_file",
+            "arguments": {}, "patterns": [],
+            "timeout": 5, "deadline_at": future,
+        }
+        loop = AgentLoop(agent_root=self.agent_a_tmp)
+        cases = (
+            (ControlPlaneError(secret), "DENY"),
+            (RuntimeError(secret), "ERROR"),
+        )
+        for thrown, status in cases:
+            with self.subTest(exception=type(thrown).__name__):
+                with mock.patch.object(loop, "_claim", return_value=[job]), mock.patch(
+                    "drlink_ai_agent.execute_local", side_effect=thrown
+                ), mock.patch.object(loop, "_complete") as completion:
+                    self.assertEqual(loop.run_once(), 1)
+                completion.assert_called_once()
+                args, kwargs = completion.call_args
+                self.assertEqual(args[0], job["id"])
+                self.assertEqual(args[1]["result"], status)
+                self.assertEqual(kwargs["claim_token"], job["claim_token"])
+                self.assertEqual(kwargs["attempt_id"], job["attempt_id"])
+                self.assertNotIn(secret, json.dumps(args[1]))
+                self.assertTrue(args[1].get("error"))
+
     def test_core_ai_claim_rejects_coerced_limits_without_leasing(self):
         job_id = self._enqueue_with_timeout(MACHINE_A, "read_file", 60)
         for invalid in (0, -1, True, False, 1.5, "2", None):
