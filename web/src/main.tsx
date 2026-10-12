@@ -27,6 +27,7 @@ import {filterLoadedServiceFacets,type ServiceTypeFacet,type ServiceConfigFacet}
 import {operatorAccountState,operatorMfaState,operatorMfaAction,operatorLastLogin} from "./uxb-users-state";
 import {operatorUserLabel} from "./uxb-users-state";
 import {auditInvestigation,matchObservedAuditReturn,matchObservedPolicyReturn,recentAuditInvestigation,observedAuditEventDetails,observedAuditAppliedFilters,type ObservedAuditEventDetail} from "./uxb-audit-context";
+import {observedAuditPageRefreshAvailable} from "./uxb-audit-refresh";
 import {auditUtcPresetRange} from "./uxb-audit-presets";
 import {filterObservedPoliciesByStatus} from "./uxb-policy-status-filter";
 import {sortLoadedPolicies,isPolicySortMode,type PolicySortMode} from "./uxb-policy-sort";
@@ -1325,6 +1326,7 @@ function AuditExplorer({operator,context,onNavigate}:{operator:any,context?:any,
   );
   const retentionRunAllowed=auditRetentionRunPermitted(retention,retentionDraft,retentionState,retentionWriteBusy,retentionConfirmation);
   const auditFiltersEdited=auditState==="ready"&&auditFilterKey!==filterParams().toString();
+  const auditRefreshAllowed=observedAuditPageRefreshAvailable(auditState,auditFilterKey,filterParams().toString(),auditPage);
   const appliedFilters=observedAuditAppliedFilters(auditFilterKey);
   const selectedAuditScope=JSON.stringify([auditFilterKey,auditPage.cursor]);
   const scopedDetail=auditFiltersEdited?null:
@@ -1393,7 +1395,12 @@ function AuditExplorer({operator,context,onNavigate}:{operator:any,context?:any,
         <label className="dr-field"><span>Result</span><input value={result} onChange={e=>setResult(e.target.value)} placeholder="success / deny"/></label>
         <label className="dr-field"><span>Correlation ID</span><input value={correlation} onChange={e=>setCorrelation(e.target.value)} placeholder="Correlation ID"/></label>
       </div>
-      <div className="dr-form-actions"><button className="primary" onClick={()=>load()}>Search audit</button><button className="secondary" onClick={()=>{auditReadEpoch.current+=1;setData(null);setAuditState("idle");setAuditPage({cursor:"",history:[]});setAuditFilterKey(null);setError("");setStart("");setEnd("");setCategory("");setEventType("");setActor("");setResource("");setResult("");setCorrelation("")}}>Clear filters</button></div>
+      <div className="dr-form-actions"><button className="primary" onClick={()=>load()}>Search audit</button>
+        <button type="button" className="secondary" disabled={!auditRefreshAllowed}
+          onClick={()=>{if(auditRefreshAllowed)load(auditPage)}}>
+          Refresh loaded Audit page →
+        </button><button className="secondary" onClick={()=>{auditReadEpoch.current+=1;setData(null);setAuditState("idle");setAuditPage({cursor:"",history:[]});setAuditFilterKey(null);setError("");setStart("");setEnd("");setCategory("");setEventType("");setActor("");setResource("");setResult("");setCorrelation("")}}>Clear filters</button></div>
+      <p className="muted">Refresh loaded Audit page re-reads only the already applied Core query at this keyset page. If input filters change, select Search audit before refreshing. This does not prove that the retained Core history is complete.</p>
       {auditFiltersEdited&&<p className="dr-uxb-catalog-page-notice" role="status">Filters changed since the loaded Audit page. Select Search audit to apply them; results below still belong to the previous search.</p>}
       {auditState==="ready"&&<section className="dr-uxb-context" aria-label="Loaded Core Audit query scope" role="status">
         <strong>Applied Core Audit filters · loaded page {auditPage.history.length+1}</strong>
