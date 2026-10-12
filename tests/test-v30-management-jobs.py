@@ -144,6 +144,31 @@ class V30ManagementJobTests(unittest.TestCase):
         self.assertEqual(self._enqueue(payload={})["status"], QUEUED)
         self.assertEqual(self._enqueue(payload=None)["status"], QUEUED)
 
+    def test_job_targets_reject_scalar_mapping_and_nontext_before_enqueue(self):
+        # A scalar hostname must not become one target per character, and a
+        # mapping must not silently turn keys into executable Host targets.
+        before = self.engine.conn.execute(
+            "SELECT COUNT(*) FROM management_jobs"
+        ).fetchone()[0]
+        malformed = (
+            "host-a", b"host-a", {"host-a": True}, None,
+            ["host-a", 12], ["host-a", True], ["host-a", {"id": "host-b"}],
+        )
+        for targets in malformed:
+            with self.subTest(targets=targets):
+                with self.assertRaisesRegex(
+                    ControlPlaneError, "Management Job target"
+                ):
+                    self._enqueue(targets=targets)
+                self.assertEqual(
+                    self.engine.conn.execute(
+                        "SELECT COUNT(*) FROM management_jobs"
+                    ).fetchone()[0],
+                    before,
+                )
+        job = self._enqueue(targets=("host-a", "host-b"))
+        self.assertEqual(job["target_count"], 2)
+
     def test_schema_is_separate_from_ai_jobs(self):
         tables = {
             row[0]

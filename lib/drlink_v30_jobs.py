@@ -96,9 +96,21 @@ def _bounded_text(value: Any, *, field: str, max_len: int = 256) -> str:
 
 
 def _normalize_targets(targets: Iterable[str], *, max_targets: int) -> tuple[str, ...]:
+    # Strings iterate individual characters and mappings iterate keys; neither
+    # represents an explicit collection of immutable Managed Host targets.
+    if targets is None or isinstance(targets, (str, bytes, bytearray, Mapping)):
+        raise ControlPlaneError("Management Job targets must be an iterable of text IDs.")
+    try:
+        iterator = iter(targets)
+    except TypeError as exc:
+        raise ControlPlaneError(
+            "Management Job targets must be an iterable of text IDs."
+        ) from exc
     seen: set[str] = set()
     ordered: list[str] = []
-    for raw in targets:
+    for raw in iterator:
+        if not isinstance(raw, str):
+            raise ControlPlaneError("Management Job target must be text.")
         target = _bounded_text(raw, field="Management Job target")
         if target in seen:
             continue
