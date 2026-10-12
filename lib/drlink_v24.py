@@ -5827,6 +5827,7 @@ def synchronize_agent_remote_services(plane_db, *, root: Optional[str] = None, f
     # A management failure must not wipe desired state, but it must not
     # report SYNCHRONIZED either.
     catalog_error = ""
+    reconciliation_error = ""
     try:
         if mgmt.use_live_mgmt_path(root or getattr(plane_db, "root", None)):
             sync_agent_catalog_from_server(plane_db, root=root)
@@ -5834,13 +5835,14 @@ def synchronize_agent_remote_services(plane_db, *, root: Optional[str] = None, f
         catalog_error = str(exc).strip()
 
     def _finish(result: dict) -> dict:
-        if not catalog_error:
+        error = catalog_error or reconciliation_error
+        if not error:
             return result
         out = dict(result)
         if str(out.get("status") or "").upper() == "SYNCHRONIZED":
             out["status"] = "DEGRADED"
         if not str(out.get("runtime_error") or "").strip():
-            out["runtime_error"] = catalog_error
+            out["runtime_error"] = error
         return out
 
     updated = 0
@@ -5933,6 +5935,7 @@ def synchronize_agent_remote_services(plane_db, *, root: Optional[str] = None, f
                 brief = msg
                 if msg.startswith("ERROR:\n"):
                     brief = msg[7:].split("\n\n")[0]
+                reconciliation_error = reconciliation_error or brief
                 plane_db.conn.execute(
                     "UPDATE agent_remote_services SET status = 'DEGRADED', runtime_verified = 0, "
                     "reason = ?, updated_at = ? "
@@ -6660,6 +6663,21 @@ def set_remote_service_agent(
             # Keep earlier batch effects; synchronize retries with fresh intent.
             effects = _agent_mgmt_effects(plane_db)
             effects[:] = [item for item in effects if item is not recorded_mgmt_effect]
+            current = plane_db.conn.execute(
+                "SELECT delete_pending FROM agent_remote_services WHERE name=? COLLATE NOCASE", (name,)
+            ).fetchone()
+            if current is None or current["delete_pending"]:
+                receipt = remote.get("publication")
+                if not receipt:
+                    raise ControlPlaneError("Stale publication cleanup lacks a Server receipt; recovery required")
+                try:
+                    cleaned = mgmt.delete_remote_service_on_server(
+                        root=root, name=name, expected_publication=receipt,
+                    )
+                    if cleaned.get("status") not in ("DELETED", "ABSENT", "SUPERSEDED"):
+                        raise RuntimeError("cleanup was not confirmed")
+                except Exception as exc:
+                    raise ControlPlaneError("Stale publication cleanup was not confirmed; recovery required") from exc
         return {"operation": "skipped", "skipped": True,
                 "reason": "Remote Service changed during synchronization"}
     except Exception as exc:

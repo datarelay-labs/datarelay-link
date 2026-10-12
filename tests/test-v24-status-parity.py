@@ -328,6 +328,257 @@ class CatalogUnavailableIntentRaceTests(unittest.TestCase):
         upsert.assert_not_called()
 
 
+class InProcessDeleteRaceTests(unittest.TestCase):
+    setUp = CatalogUnavailableIntentRaceTests.setUp
+    _row = CatalogUnavailableIntentRaceTests._row
+
+    def _delete_race(self, recreate=False, cleanup_fails=False):
+        from unittest import mock
+        from urllib.parse import urlparse
+        import drlink_v24_runtime as runtime
+        with tempfile.TemporaryDirectory(prefix="u005-authority-") as root:
+            server = ControlPlane(root)
+            self.addCleanup(server.close)
+            v24.ensure_v2_schema(server.conn)
+            server.upsert_client(MACHINE, label="agent-a", hostname="agent-a")
+            auth = mgmt.MgmtAuthContext(MACHINE, {}, "local-fixture", 1)
+            state_path = Path(self.root, "etc/frp/client-state.json")
+            state = json.loads(state_path.read_text())
+            state.update(frp_server="fixture.invalid", frp_server_port=443,
+                         host_id="agent-a", services={})
+            state_path.write_text(json.dumps(state))
+            Path(self.root, "etc/frp/frpc.toml").write_text(
+                'serverAddr = "fixture.invalid"\nserverPort = 443\n'
+                'auth.method = "token"\nauth.token = "fixture-only"\n'
+            )
+            for stype in ("fixed-tcp", "tcp"):
+                with self.subTest(type=stype, recreate=recreate):
+                    name = "u005-delete-" + stype
+                    service = name + "-object"
+                    v24.set_service_object(server, service, type=stype, port=28144, oneshot=True)
+                    armed = False
+                    deleted = []
+                    replays = []
+                    cleanup = []
+                    newer = []
+
+                    def public_set(plane, enabled):
+                        return real_set(
+                            plane, name, destination="this-host", service=service, enabled=enabled,
+                            oneshot=True, root=self.root, server_reachable=True,
+                        )
+
+                    def active_publication():
+                        row = server.conn.execute(
+                            "SELECT * FROM published_services WHERE client_id=? AND name=? AND released=0",
+                            (MACHINE, name),
+                        ).fetchone()
+                        return dict(row) if row else None
+
+                    def request(method, url, body=None, **kwargs):
+                        nonlocal armed
+                        path = urlparse(url).path
+                        if armed and method == "POST" and path == "/v1/remote-services" and body["name"] == name:
+                            armed = False  # Barrier after freshness guard, before simulated write.
+                            self.assertTrue(self.agent._batch_mode)
+                            self.assertFalse(self.agent.conn.in_transaction)
+                            v24.unset_remote_service_agent(self.operator, name, root=self.root,
+                                                          server_reachable=True)
+                            self.assertIsNone(self.agent.conn.execute(
+                                "SELECT 1 FROM agent_remote_services WHERE name=?", (name,)
+                            ).fetchone())
+                            self.assertIsNone(active_publication())
+                            self.assertEqual(server.conn.execute(
+                                "SELECT released FROM port_reservations WHERE public_port=?", (port,)
+                            ).fetchone()[0], 1)
+                            deleted.append(True)
+                        if method == "DELETE" and body and body.get("expected_publication"):
+                            if cleanup_fails:
+                                cleanup.append({"status": "FAILED"})
+                                raise mgmt.MgmtUnavailableError("local fixture cleanup failure")
+                            if recreate and not newer:
+                                # Recreate, then disable: same publication values/ID,
+                                # but a genuinely newer version than the stale write.
+                                public_set(self.operator, True)
+                                public_set(self.operator, False)
+                                newer.append(active_publication())
+                            before = active_publication()
+                        raw = json.dumps(body).encode() if body is not None else b""
+                        status, result = mgmt.handle_allocator_http(server, method, path, {}, raw)
+                        self.assertEqual(status, 200, result)
+                        if method == "DELETE" and body and body.get("expected_publication"):
+                            cleanup.append(result)
+                            if recreate:
+                                self.assertEqual(active_publication(), before)
+                        return result
+
+                    real_set = v24.set_remote_service_agent
+                    def replay(plane, svc_name, **kwargs):
+                        result = real_set(plane, svc_name, **kwargs)
+                        if svc_name == name:
+                            replays.append(result)
+                        return result
+
+                    with mock.patch.object(mgmt, "_request_json", side_effect=request), \
+                            mock.patch.object(mgmt, "resolve_mgmt_base_url", return_value="http://local-fixture"), \
+                            mock.patch.object(mgmt, "_authenticate_mgmt_api", return_value=auth), \
+                            mock.patch.object(mgmt, "_commit_auth_nonce"), \
+                            mock.patch.object(mgmt, "_with_response_mac", side_effect=lambda result, auth: result), \
+                            mock.patch.object(mgmt, "use_live_mgmt_path", return_value=True), \
+                            mock.patch.object(v24, "detect_server_reachable", return_value=True), \
+                            mock.patch.dict(os.environ, {"FRP_SKIP_SYSTEMD": "1"}), \
+                            mock.patch.object(runtime, "runtime_should_apply", return_value=True):
+                        port = public_set(self.agent, True)["view"]["endpoint_port"]
+                        public_set(self.agent, False)
+                        prior_effect = {"op": "update-rs", "name": "prior-batch"}
+                        v24._agent_mgmt_effects(self.agent).append(prior_effect)
+                        armed = True
+                        with mock.patch.object(v24, "set_remote_service_agent", side_effect=replay):
+                            result = v24.synchronize_agent_remote_services(self.agent, root=self.root)
+                    self.assertEqual(deleted, [True])
+                    self.assertTrue(any(item is prior_effect for item in v24._agent_mgmt_effects(self.agent)))
+                    if cleanup_fails:
+                        self.assertIsNotNone(active_publication())
+                        self.assertEqual(result["status"], "DEGRADED", result)
+                        self.assertIn("cleanup", result["runtime_error"])
+                    elif not recreate:
+                        self.assertIsNone(active_publication(), result)
+                        self.assertIsNone(self.agent.conn.execute(
+                            "SELECT 1 FROM agent_remote_services WHERE name=?", (name,)
+                        ).fetchone())
+                        self.assertEqual(server.conn.execute(
+                            "SELECT released FROM port_reservations WHERE public_port=?", (port,)
+                        ).fetchone()[0], 1)
+                    else:
+                        self.assertEqual(len(newer), 1)
+                        self.assertEqual(active_publication()["id"], newer[0]["id"])
+                        self.assertEqual(active_publication()["public_port"], port)
+                        self.assertEqual(server.conn.execute(
+                            "SELECT released FROM port_reservations WHERE public_port=?", (port,)
+                        ).fetchone()[0], 0)
+                        self.assertEqual(self._row(name)["endpoint_port"], port)
+                        self.assertEqual(cleanup[0]["status"], "SUPERSEDED")
+                    self.assertEqual(len(replays), 0 if cleanup_fails else 2, replays)
+                    if not cleanup_fails:
+                        self.assertTrue(replays[0].get("skipped"), replays)
+                    self.assertEqual(len(cleanup), 1, cleanup)
+                    proxy = runtime.remote_service_proxy_id(name)
+                    self.assertNotIn(proxy, runtime.load_client_state(self.root)["services"])
+                    self.assertNotIn('name = "agent-a-%s"' % proxy,
+                                     Path(self.root, "etc/frp/frpc.toml").read_text())
+
+    def test_U005_delete_before_stale_publication_write(self):
+        self._delete_race()
+
+    def test_U005_cleanup_preserves_newer_same_name_recreation(self):
+        self._delete_race(recreate=True)
+
+
+    def test_U005_unconfirmed_cleanup_does_not_report_synchronized(self):
+        self._delete_race(cleanup_fails=True)
+
+    def test_cleanup_compares_ownership_version_values_and_allocator_state(self):
+        from unittest import mock
+        with tempfile.TemporaryDirectory(prefix="u005-receipt-") as root:
+            server = ControlPlane(root)
+            self.addCleanup(server.close)
+            v24.ensure_v2_schema(server.conn)
+            server.upsert_client(MACHINE, label="agent-a", hostname="agent-a")
+            v24.set_service_object(server, "fixed", type="fixed-tcp", port=28144, oneshot=True)
+
+            class LocalAllocator:
+                port = None
+                releases = 0
+                def reserve_remote_service_endpoint(allocator, *args, **kwargs):
+                    self.assertTrue(server.conn.in_transaction)
+                    allocator.port = 6204
+                    return {"remote_port": 6204, "proxy_id": "rs-owned"}
+                def release_remote_service_endpoint(allocator, *args):
+                    self.assertTrue(server.conn.in_transaction)
+                    allocator.releases += 1
+                    port = allocator.port
+                    allocator.port = None
+                    return {"released_port": port}
+
+            allocator = LocalAllocator()
+            auth = mgmt.MgmtAuthContext(MACHINE, {}, "fixture", 1, allocator=allocator)
+            body = {"name": "owned", "destination": "this-host", "service": "fixed",
+                    "pool_class": "fixed-tcp", "enabled": True}
+            created = mgmt.server_upsert_remote_service(server, auth, body)
+            receipt = created["publication"]
+            revision = server.current_revision()
+            for field, value in (("id", "other-id"), ("row_version", receipt["row_version"] + 1),
+                                 ("target_port", 28145), ("public_port", 6205)):
+                with self.subTest(field=field):
+                    changed = dict(receipt, **{field: value})
+                    result = mgmt.server_delete_remote_service(server, auth, "owned", changed)
+                    self.assertEqual(result["status"], "SUPERSEDED")
+                    self.assertEqual(allocator.port, 6204)
+                    self.assertEqual(allocator.releases, 0)
+                    self.assertEqual(server.current_revision(), revision)
+            other = "b" * 32
+            server.upsert_client(other, label="agent-b", hostname="agent-b")
+            other_auth = mgmt.MgmtAuthContext(other, {}, "fixture-b", 1, allocator=allocator)
+            self.assertEqual(mgmt.server_delete_remote_service(
+                server, other_auth, "owned", receipt,
+            )["status"], "ABSENT")
+            self.assertEqual(allocator.releases, 0)
+            mgmt.server_delete_remote_service(server, auth, "owned")
+            self.assertIsNone(allocator.port)
+            body.update(enabled=False, preserve_endpoint_port=6204)
+            resurrected = mgmt.server_upsert_remote_service(server, auth, body)
+            self.assertIsNone(allocator.port)  # Disabled replay reserved no registry proxy.
+            self.assertEqual(mgmt.server_delete_remote_service(
+                server, auth, "owned", resurrected["publication"],
+            )["status"], "DELETED")
+            self.assertEqual(server.conn.execute(
+                "SELECT released FROM port_reservations WHERE public_port=6204"
+            ).fetchone()[0], 1)
+    def test_publication_allocator_lock_order_and_nested_helpers(self):
+        import importlib.util
+        import threading
+        from unittest import mock
+        spec = importlib.util.spec_from_file_location("u005_local_allocator", ROOT / "server/frp-port-allocator.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory(prefix="u005-lock-order-") as root:
+            base = Path(root)
+            registry = base / "var/lib/drlink/runtime/client-inventory.json"
+            registry.parent.mkdir(parents=True)
+            registry.write_text(json.dumps({"schema_version": 2, "reserved": [], "clients": {
+                MACHINE: {"hostname": "agent-a", "services": {}},
+            }}))
+            token = base / "fixture-token"
+            token.write_text("fixture-only")
+            (base / "enrollments").mkdir()
+            config = base / "config.json"
+            config.write_text(json.dumps({"port_start": 6000, "port_end": 6098,
+                "registry_file": str(registry), "token_file": str(token),
+                "enrollments_dir": str(base / "enrollments")}))
+            allocator = module.Allocator(str(config))
+            server = ControlPlane(root)
+            self.addCleanup(server.close)
+            v24.ensure_v2_schema(server.conn)
+            server.upsert_client(MACHINE, label="agent-a", hostname="agent-a")
+            v24.set_service_object(server, "fixed", type="fixed-tcp", port=28144, oneshot=True)
+            auth = mgmt.MgmtAuthContext(MACHINE, {}, "fixture", 1, allocator=allocator)
+            order = []
+            def trace(sql):
+                if sql.startswith("BEGIN"):
+                    order.append(getattr(allocator, "_remote_service_owner", None) == threading.get_ident())
+            server.conn.set_trace_callback(trace)
+            with mock.patch.object(module, "port_is_available", return_value=True):
+                response = mgmt.server_upsert_remote_service(server, auth, {
+                    "name": "owned", "destination": "this-host", "service": "fixed",
+                    "pool_class": "fixed-tcp", "enabled": True, "preserve_endpoint_port": 6204,
+                })
+                result = mgmt.server_delete_remote_service(server, auth, "owned", response["publication"])
+            self.assertEqual(result["status"], "DELETED")
+            self.assertEqual(order, [True, True])
+            self.assertIsNone(allocator._remote_service_owner)
+            self.assertNotIn("rs-owned", allocator.load_registry()["clients"][MACHINE]["services"])
+
+
 class StatusParityTests(unittest.TestCase):
     def setUp(self):
         self.server_tmp = tempfile.mkdtemp(prefix="drlink-status-srv-")
