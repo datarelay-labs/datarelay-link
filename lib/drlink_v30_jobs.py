@@ -391,14 +391,25 @@ class ManagementJobEngine:
             payload = json.loads(str(row["payload_json"] or "{}"))
             if not isinstance(payload, dict):
                 return False
-            canary_list = payload.get("canary_targets") or []
-            if not isinstance(canary_list, list) or any(
-                not isinstance(host, str) or not host for host in canary_list
+            # Only the exact validated Core rollout shape can authorize a
+            # staged Agent claim. Never silently upgrade corrupt/missing
+            # canaries to an unrestricted wave or coerce bool/float/string
+            # bounds from persisted state.
+            canary_list = payload.get("canary_targets")
+            if not isinstance(canary_list, list) or not canary_list or any(
+                not isinstance(host, str) or not host or host != host.strip()
+                for host in canary_list
+            ) or len(set(canary_list)) != len(canary_list):
+                return False
+            if payload.get("rollout_state") not in (
+                "CANARY", "WAVE", "PAUSED", "HALTED"
             ):
                 return False
+            wave_size = payload.get("wave_size")
+            threshold = payload.get("failure_threshold_percent")
+            if type(wave_size) is not int or type(threshold) is not int:
+                return False
             canaries = set(canary_list)
-            wave_size = int(payload["wave_size"])
-            threshold = int(payload["failure_threshold_percent"])
             if wave_size < 1 or wave_size > MAX_ROLLOUT_WAVE_SIZE or not 0 <= threshold <= 100:
                 raise ValueError("invalid scheduling bounds")
         except (TypeError, KeyError, ValueError, json.JSONDecodeError):

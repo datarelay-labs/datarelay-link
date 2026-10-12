@@ -82,6 +82,48 @@ class StagedRolloutSchedulingTests(unittest.TestCase):
         self.assertEqual(final["payload"]["rollout_state"], "WAVE")
         self.assertEqual({x["status"] for x in final["targets"]}, {SUCCEEDED})
 
+    def test_corrupt_persisted_rollout_bounds_never_admit_canary_claim(self):
+        import json
+
+        job = self._start()
+        original = dict(job["payload"])
+        unsafe = (
+            {"canary_targets": []},
+            {"canary_targets": False},
+            {"canary_targets": None},
+            {"canary_targets": ["z-canary", "z-canary"]},
+            {"wave_size": True},
+            {"wave_size": 1.5},
+            {"wave_size": "1"},
+            {"failure_threshold_percent": False},
+            {"failure_threshold_percent": "20"},
+            {"rollout_state": None},
+            {"rollout_state": "UNKNOWN"},
+        )
+        at = self.now.isoformat(timespec="seconds").replace("+00:00", "Z")
+        for patch in unsafe:
+            with self.subTest(patch=patch):
+                payload = {**original, **patch}
+                row = {
+                    "job_id": job["id"],
+                    "target_id": "z-canary",
+                    "payload_json": json.dumps(payload),
+                }
+                self.engine.conn.execute("SAVEPOINT invalid_rollout")
+                try:
+                    self.assertFalse(
+                        self.engine._rollout_claim_allowed_unlocked(
+                            row, now_text=at,
+                        )
+                    )
+                finally:
+                    self.engine.conn.execute("ROLLBACK TO invalid_rollout")
+                    self.engine.conn.execute("RELEASE invalid_rollout")
+        current = self.engine.get(job["id"])
+        self.assertTrue(all(
+            target["status"] == QUEUED for target in current["targets"]
+        ))
+
     def test_generic_rpc_worker_cannot_falsely_complete_unqualified_rollout(self):
         job = self._start()
         executed = []
