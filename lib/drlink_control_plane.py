@@ -5326,6 +5326,22 @@ class ControlPlane:
             provided_attempt = str(attempt_id or "")
             if expected_attempt and provided_attempt != expected_attempt:
                 raise ControlPlaneError("AI job attempt mismatch")
+        # A long-running Agent may finish after Core's deadline without any
+        # intervening claim or sweeper. A matching signed claim is not renewed
+        # execution authority: do not persist its late result as DONE.
+        if _ai_job_deadline_passed(row["deadline_at"]):
+            terminal = (
+                "recovery_required"
+                if str(row["capability"] or "") in AI_MUTATING_CAPABILITIES
+                else "expired"
+            )
+            self.conn.execute(
+                "UPDATE ai_jobs SET status=?, updated_at=? "
+                "WHERE id=? AND status='running' AND claim_token=?",
+                (terminal, utc_now_iso(), job_id, expected_token),
+            )
+            self.commit_if_autonomous()
+            raise ControlPlaneError("AI job deadline expired before completion")
         full = dict(result or {})
         self._store_ai_job_result_blob(job_id, full)
         safe = dict(full)

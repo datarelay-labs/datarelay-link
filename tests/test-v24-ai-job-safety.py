@@ -270,6 +270,36 @@ class AiJobSafetyTests(unittest.TestCase):
         self.assertEqual([j["id"] for j in claimed], [newer])
         self.assertEqual(self.plane.get_ai_job(old)["status"], "expired")
 
+    def test_core_rejects_late_completion_without_prior_sweeper(self):
+        # A running Job can expire while no claim/sweeper polls this Host.
+        # Late Agent success must not become DONE or persist result bytes.
+        for capability, expected_terminal in (
+            ("read_file", "expired"),
+            ("write_file", "recovery_required"),
+        ):
+            with self.subTest(capability=capability):
+                job_id = self._enqueue_with_timeout(MACHINE_A, capability, 60)
+                claims = self.plane.claim_ai_jobs(MACHINE_A, limit=1)
+                self.assertEqual([claim["id"] for claim in claims], [job_id])
+                claim = claims[0]
+                past = _ai_job_deadline_iso(utc_now_iso(), -5)
+                self.plane.conn.execute(
+                    "UPDATE ai_jobs SET deadline_at=? WHERE id=?",
+                    (past, job_id),
+                )
+                self.plane.commit_if_autonomous()
+                with self.assertRaises(ControlPlaneError):
+                    self.plane.complete_ai_job(
+                        job_id, MACHINE_A,
+                        {"result": "ALLOW", "secret_payload": "never-persist"},
+                        claim_token=claim["claim_token"],
+                        attempt_id=claim["attempt_id"],
+                    )
+                job = self.plane.get_ai_job(job_id)
+                self.assertEqual(job["status"], expected_terminal)
+                self.assertFalse(self.plane._ai_job_spool_path(job_id).exists())
+                self.assertFalse(job.get("result_json"))
+
     def test_late_completion_rejected_after_timeout(self):
         job_id = self._enqueue_with_timeout(MACHINE_A, "write_file", 60, path=str(self.agent_a_root / "x.txt"), content="a")
         claimed = self.plane.claim_ai_jobs(MACHINE_A, limit=1)
