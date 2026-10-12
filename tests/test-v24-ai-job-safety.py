@@ -426,6 +426,50 @@ class AiJobSafetyTests(unittest.TestCase):
                     executed.assert_called_once()
                     completed.assert_called_once()
 
+    def test_agent_exec_timeout_never_outlives_core_deadline(self):
+        # A verified signed claim may be queued for several seconds before
+        # local execution. Its original timeout cannot extend Core authority.
+        from datetime import datetime, timedelta, timezone
+        job = {
+            "id": "ai-exec-time-budget", "claim_token": "atk_budget",
+            "attempt_id": "att_budget", "capability": "exec",
+            "arguments": {"command": "echo test"}, "patterns": [],
+            "timeout": 60,
+            "deadline_at": (
+                datetime.now(timezone.utc) + timedelta(seconds=4)
+            ).isoformat(),
+        }
+        loop = AgentLoop(agent_root=self.agent_a_tmp)
+        with mock.patch.object(loop, "_claim", return_value=[job]), mock.patch(
+            "drlink_ai_agent.execute_local", return_value={"result": "ALLOW"},
+        ) as executed, mock.patch.object(loop, "_complete") as completed:
+            self.assertEqual(loop.run_once(), 1)
+        executed.assert_called_once()
+        budget = executed.call_args.kwargs["timeout"]
+        self.assertGreaterEqual(budget, 1)
+        self.assertLessEqual(budget, 3)
+        completed.assert_called_once()
+
+    def test_agent_refuses_new_execution_with_subsecond_core_deadline(self):
+        from datetime import datetime, timedelta, timezone
+        job = {
+            "id": "ai-exec-too-late", "claim_token": "atk_late",
+            "attempt_id": "att_late", "capability": "exec",
+            "arguments": {"command": "echo must-not-run"}, "patterns": [],
+            "timeout": 60,
+            "deadline_at": (
+                datetime.now(timezone.utc) + timedelta(milliseconds=350)
+            ).isoformat(),
+        }
+        loop = AgentLoop(agent_root=self.agent_a_tmp)
+        with mock.patch.object(loop, "_claim", return_value=[job]), mock.patch(
+            "drlink_ai_agent.execute_local",
+        ) as executed, mock.patch.object(loop, "_complete") as completed:
+            self.assertEqual(loop.run_once(), 1)
+        executed.assert_not_called()
+        completed.assert_called_once()
+        self.assertEqual(completed.call_args.args[1]["result"], "DENY")
+
     def test_ai_agent_exception_text_never_leaves_local_host(self):
         # Local executor exceptions may contain paths, credentials or raw
         # payloads. The Core completion must receive only fixed safe codes.

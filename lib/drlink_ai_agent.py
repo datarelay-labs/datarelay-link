@@ -38,6 +38,29 @@ def _deadline_passed(deadline_at: Optional[str]) -> bool:
         deadline = deadline.replace(tzinfo=timezone.utc)
     return now >= deadline
 
+
+def _remaining_core_deadline_seconds(deadline_at: Optional[str]) -> int:
+    """Whole execution seconds still authorized by the Core Job deadline.
+
+    The Agent's command timeout must never exceed the remaining Core
+    authority. Less than one full second cannot safely start a command.
+    """
+    if not isinstance(deadline_at, str) or not deadline_at:
+        return 0
+    try:
+        value = (
+            deadline_at[:-1] + "+00:00"
+            if deadline_at.endswith("Z") else deadline_at
+        )
+        deadline = datetime.fromisoformat(value)
+        if deadline.tzinfo is None:
+            return 0
+        remaining = (deadline - datetime.now(timezone.utc)).total_seconds()
+    except (TypeError, ValueError, OverflowError):
+        return 0
+    return max(0, int(remaining))
+
+
 MAX_STDOUT_BYTES = 64 * 1024
 MAX_STDERR_BYTES = 16 * 1024
 MAX_FILE_BYTES = 1024 * 1024
@@ -380,7 +403,10 @@ class AgentLoop:
             job_id = job.get("id")
             claim_token = job.get("claim_token")
             attempt_id = job.get("attempt_id")
-            if _deadline_passed(job.get("deadline_at")):
+            remaining_seconds = _remaining_core_deadline_seconds(
+                job.get("deadline_at")
+            )
+            if remaining_seconds < 1:
                 result = {
                     "result": "DENY",
                     "error": "job deadline expired before execution",
@@ -400,7 +426,7 @@ class AgentLoop:
                     job.get("capability") or "",
                     job.get("arguments") or {},
                     patterns=job.get("patterns") or [],
-                    timeout=job.get("timeout"),
+                    timeout=min(job["timeout"], remaining_seconds),
                 )
             except ControlPlaneError:
                 # A denied local operation may quote protected paths, tokens
