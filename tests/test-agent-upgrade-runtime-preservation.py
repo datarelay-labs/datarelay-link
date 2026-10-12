@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -77,6 +78,9 @@ class UpgradeRuntimePreservationTests(unittest.TestCase):
     def test_running_reconciliation_refuses_upgrade_before_mutation(self):
         self._exercise_upgrade(busy=True)
 
+    def test_continuous_worker_finishes_pass_then_defers_for_upgrade(self):
+        self._exercise_upgrade(continuous=True)
+
     def test_inner_lock_failure_is_not_reclassified_as_upgrade_deferral(self):
         sys.path.insert(0,str(REPO/'lib'))
         import drlink_agent_lifecycle as lifecycle
@@ -93,7 +97,7 @@ class UpgradeRuntimePreservationTests(unittest.TestCase):
             with ExclusiveFileLock(etc/'client-software-upgrade.lock',timeout=0):
                 pass
 
-    def _exercise_upgrade(self, inject=False, busy=False):
+    def _exercise_upgrade(self, inject=False, busy=False, continuous=False):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             etc = root / 'etc/frp'
@@ -157,7 +161,33 @@ class UpgradeRuntimePreservationTests(unittest.TestCase):
                 self.assertEqual(client.read_text(),'#!/bin/sh\necho old-client\n')
                 self.assertEqual({str(p):p.read_bytes() for p in files},before)
                 return
-            result=subprocess.run(command,env=env,capture_output=True,text=True)
+            if continuous:
+                # A real long-lived worker owns the barrier during a pass.
+                # Hold the pass until the installer actually observes its busy
+                # preservation lock, proving overlap without a timed release.
+                script = root/'continuous-worker.py'
+                script.write_text("import sys, pathlib, time\nsys.path.insert(0, sys.argv[1])\nimport drlink_agent_lifecycle as l\nroot=pathlib.Path(sys.argv[2])\ndef pass_once(_):\n (root/'pass-started').touch()\n while not (root/'finish-pass').exists(): time.sleep(.01)\n return {'status':'HEARTBEAT'}\nl._reconcile_once=pass_once\nl.worker(str(root))\n")
+                process=subprocess.Popen([sys.executable,str(script),str(REPO/'lib'),str(root)],env=env)
+                # Instrument only the installer's actual preservation flock:
+                # release the in-flight pass after its first busy result.
+                shim=root/'shim'; shim.mkdir()
+                python=shim/'python3'
+                python.write_text('#!'+sys.executable+'\nimport os, sys, pathlib, fcntl\nargs=sys.argv[1:]\nif len(args)==2 and args[0]=="-" and args[1].isdigit():\n code=sys.stdin.read()\n real=fcntl.flock\n def observed(fd, flags):\n  try: return real(fd, flags)\n  except BlockingIOError:\n   pathlib.Path('+repr(str(root/'finish-pass'))+').touch()\n   raise\n fcntl.flock=observed\n sys.argv=["-"]+args[1:]\n exec(compile(code,"<installer-preservation>","exec"))\nelse: os.execv('+repr(sys.executable)+', ['+repr(sys.executable)+']+args)\n')
+                python.chmod(0o755)
+                env['PATH']=str(shim)+os.pathsep+env['PATH']
+                try:
+                    deadline=time.monotonic()+10
+                    while not (root/'pass-started').exists() and time.monotonic()<deadline:
+                        time.sleep(.01)
+                    self.assertTrue((root/'pass-started').exists(),'worker did not enter reconciliation')
+                    result=subprocess.run(command,env=env,capture_output=True,text=True)
+                    self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+                    self.assertIsNone(process.poll(),'continuous worker must remain running')
+                finally:
+                    process.terminate()
+                    process.wait(timeout=10)
+            else:
+                result=subprocess.run(command,env=env,capture_output=True,text=True)
             if inject:
                 self.assertNotEqual(result.returncode,0,result.stdout+result.stderr)
                 self.assertIn('client-state.json changed during software upgrade',result.stderr)

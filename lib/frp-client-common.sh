@@ -6132,12 +6132,21 @@ frp_client_apply_upgrade() {
   exec {_FRP_CLIENT_UPGRADE_PRESERVATION_FD}>>"$preservation_lock"
   chmod 0600 "$preservation_lock"
   if ! python3 - "$_FRP_CLIENT_UPGRADE_PRESERVATION_FD" <<'PY'
-import fcntl, sys
-try:
-    fcntl.flock(int(sys.argv[1]), fcntl.LOCK_EX | fcntl.LOCK_NB)
-except BlockingIOError:
-    sys.stderr.write('ERROR: Agent lifecycle reconciliation is running; retry the software upgrade.\n')
-    raise SystemExit(1)
+import fcntl, sys, time
+# A persistent worker may already be inside a reconciliation pass. Wait for
+# that pass to release the barrier; process liveness is not quiescence.
+# Acquire before taking any protected-state snapshot, and fail closed if a
+# stuck pass does not finish within the bounded coordination window.
+deadline = time.monotonic() + 30
+while True:
+    try:
+        fcntl.flock(int(sys.argv[1]), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        break
+    except BlockingIOError:
+        if time.monotonic() >= deadline:
+            sys.stderr.write('ERROR: Agent lifecycle reconciliation is running; retry the software upgrade.\n')
+            raise SystemExit(1)
+        time.sleep(0.05)
 PY
   then
     return 1
