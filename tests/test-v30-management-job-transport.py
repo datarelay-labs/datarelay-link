@@ -114,6 +114,29 @@ class V30ManagementJobTransportTests(unittest.TestCase):
         finally:
             engine.close()
 
+    def test_signed_management_claim_rejects_nonpositive_or_coerced_limits(self):
+        engine = ManagementJobEngine(self.server_tmp)
+        try:
+            job = engine.enqueue(
+                job_type="doctor", targets=[MACHINE_A],
+                requested_by="web:admin",
+            )
+            for invalid in (0, -1, True, False, "1", 1.5, None, []):
+                with self.subTest(limit=invalid):
+                    with self.assertRaises(mgmt.MgmtSyncError):
+                        mgmt._request_json(
+                            "POST", self.base + "/v1/management-jobs/claim",
+                            {"limit": invalid}, root=self.agent_tmp,
+                        )
+                    # Invalid signed requests cannot acquire or mutate a Job.
+                    self.assertEqual(engine.get(job["id"])["status"], QUEUED)
+            response = mgmt.claim_management_jobs_on_server(
+                root=self.agent_tmp, limit=1,
+            )
+            self.assertEqual([x["job_id"] for x in response["jobs"]], [job["id"]])
+        finally:
+            engine.close()
+
     def test_agent_cannot_report_success_for_a_legacy_rollout_claim(self):
         engine = ManagementJobEngine(self.server_tmp)
         try:

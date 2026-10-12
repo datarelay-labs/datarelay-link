@@ -1579,10 +1579,15 @@ def server_claim_management_jobs(plane, auth: MgmtAuthContext, body: dict) -> di
 
     machine_id = auth.machine_id
     _require_managed_host(plane, machine_id)
-    try:
-        limit = max(1, min(int((body or {}).get("limit") or 4), 16))
-    except (TypeError, ValueError) as exc:
-        raise MgmtSyncError("Management Job claim limit must be an integer") from exc
+    # Signed requests must not coerce false/zero, fractional or string
+    # limits into a live claim; claiming mutates a Core Job lease. Preserve
+    # the omitted-field default and the existing upper safety cap.
+    if not isinstance(body, dict):
+        raise MgmtSyncError("Management Job claim request must be an object")
+    raw_limit = body.get("limit", 4)
+    if type(raw_limit) is not int or raw_limit <= 0:
+        raise MgmtSyncError("Management Job claim limit must be a positive integer")
+    limit = min(raw_limit, 16)
     engine = ManagementJobEngine(getattr(plane, "root", None))
     try:
         jobs = engine.claim_targets_for_target(
