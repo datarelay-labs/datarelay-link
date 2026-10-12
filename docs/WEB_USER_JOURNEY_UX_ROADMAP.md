@@ -1,5 +1,7 @@
 # DataRelay Link 3.0 — Unified R1–R7 Execution Roadmap
 
+> **2026-10-12 source status pointer:** [40-slot competitor UI adoption crosswalk](COMPETITOR_UI_APPLIED_MATRIX_2026-10-12.md) reconciles historical proposals against the current Draft PR #206. G01–G37 source findings are recorded, with only genuine UI-06 Core-backed independent reviewer still a security-design/authorization gate; real Browser E2E is deferred at owner request. The single execution roadmap remains GitHub Issue #184.
+
 > **ONE CURRENT EXECUTION ROADMAP:** [GitHub Issue #184 — DataRelay Link 3.0 R1–R7](https://github.com/datarelay-labs/datarelay-link/issues/184).
 > This file is a **repository-local index, not an additional task queue**. The old UXB-00..06, UXB-06F, L-CI-0..4 and B1–B5 per-feature execution lists are **superseded** as roadmaps by #184. Their historical code, tests, source investigations, review evidence and mandatory acceptance contracts are retained in Git history and the named canonical documents; **do not delete/reimplement verified completed functionality**.
 > **Latest owner priority, 2026-10-11 (supersedes old implementation-first text below):**
