@@ -290,6 +290,26 @@ class AgentLoop:
             job_id = job.get("id")
             claim_token = job.get("claim_token")
             attempt_id = job.get("attempt_id")
+            # Unknown, missing and timezone-naive deadlines must not be
+            # interpreted as unexpired permission to execute locally.
+            deadline_text = job.get("deadline_at")
+            if (
+                not isinstance(deadline_text, str)
+                or not deadline_text
+                or len(deadline_text) > 64
+                or deadline_text != deadline_text.strip()
+            ):
+                raise ValueError(invalid)
+            try:
+                canonical = (
+                    deadline_text[:-1] + "+00:00"
+                    if deadline_text.endswith("Z") else deadline_text
+                )
+                parsed_deadline = datetime.fromisoformat(canonical)
+            except (ValueError, OverflowError):
+                raise ValueError(invalid) from None
+            if parsed_deadline.tzinfo is None:
+                raise ValueError(invalid)
             if (
                 not isinstance(job_id, str) or not job_id
                 or not isinstance(claim_token, str) or not claim_token

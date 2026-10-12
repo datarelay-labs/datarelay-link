@@ -376,6 +376,12 @@ class AiJobSafetyTests(unittest.TestCase):
             {"jobs": "not-a-list"},
             {"jobs": None},
             {},
+            # Unknown or timezone-naive deadlines previously looked
+            # "not expired" and could authorize local mutating operations.
+            {"jobs": [{**legitimate, "deadline_at": None}]},
+            {"jobs": [{**legitimate, "deadline_at": "invalid"}]},
+            {"jobs": [{**legitimate, "deadline_at": "2099-01-01T00:00:00"}]},
+            {"jobs": [{**legitimate, "deadline_at": []}]},
         )
         modes = (
             (AgentLoop(agent_root=self.agent_a_tmp),
