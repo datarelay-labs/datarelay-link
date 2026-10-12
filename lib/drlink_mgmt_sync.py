@@ -1670,6 +1670,41 @@ def _require_safe_signed_job_diagnostics(kind: str, result: dict) -> None:
                 ):
                     raise MgmtSyncError(invalid)
 
+    if kind == "version-check":
+        # The native Agent always returns a complete bounded comparison.
+        # A signed bare operation or contradictory update flags are UNKNOWN.
+        limits = {
+            "project_version": 64,
+            "relay_engine_version": 64,
+            "release_channel": 40,
+            "source_ref": 256,
+            "source_head": 64,
+            "target_project_version": 64,
+            "target_relay_engine_version": 64,
+            "target_release_channel": 40,
+        }
+        if any(
+            type(result.get(key)) is not str
+            or not 1 <= len(result[key]) <= limit
+            or any(not 33 <= ord(char) <= 126 for char in result[key])
+            for key, limit in limits.items()
+        ):
+            raise MgmtSyncError(invalid)
+        for current, target, flag in (
+            ("project_version", "target_project_version", "product_update_available"),
+            ("relay_engine_version", "target_relay_engine_version",
+             "relay_engine_update_available"),
+        ):
+            reported = result.get(flag)
+            if reported is not None and type(reported) is not bool:
+                raise MgmtSyncError(invalid)
+            expected = (
+                None if "unknown" in (result[current], result[target])
+                else result[current] != result[target]
+            )
+            if reported is not expected:
+                raise MgmtSyncError(invalid)
+
     if kind == "support-bundle":
         # The Agent signs a receipt, not the archive itself. Persist SUCCESS
         # only with the complete, bounded native metadata, not a bare name.

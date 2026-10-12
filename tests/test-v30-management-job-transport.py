@@ -300,6 +300,18 @@ class V30ManagementJobTransportTests(unittest.TestCase):
                             "sanitized": True, "section_count": 3,
                             "skipped_count": 0, "role": "client",
                         })
+                    elif kind == "version-check":
+                        receipt.update({
+                            "project_version": "3.0.0",
+                            "relay_engine_version": "0.61.1",
+                            "release_channel": "development",
+                            "source_ref": "main", "source_head": "a" * 40,
+                            "target_project_version": "3.0.1",
+                            "target_relay_engine_version": "0.61.1",
+                            "target_release_channel": "development",
+                            "product_update_available": True,
+                            "relay_engine_update_available": False,
+                        })
                     reply = mgmt.complete_management_job_on_server(
                         root=self.agent_tmp, job_id=job["id"],
                         claim_token=claim["claim_token"], status="SUCCEEDED",
@@ -307,6 +319,74 @@ class V30ManagementJobTransportTests(unittest.TestCase):
                     )
                     self.assertIs(reply["ok"], True)
                     self.assertEqual(engine.get(job["id"])["status"], SUCCEEDED)
+        finally:
+            engine.close()
+
+    def test_version_check_success_requires_consistent_bounded_receipt(self):
+        # Native Agent emits a complete version comparison. A signed Host
+        # reporting just an operation name is not version evidence.
+        canonical = {
+            "operation": "version-check", "project_version": "3.0.0",
+            "relay_engine_version": "0.61.1", "release_channel": "development",
+            "source_ref": "main", "source_head": "a" * 40,
+            "target_project_version": "3.0.1",
+            "target_relay_engine_version": "0.61.1",
+            "target_release_channel": "development",
+            "product_update_available": True,
+            "relay_engine_update_available": False,
+        }
+        invalid = (
+            {"operation": "version-check"},
+            {key: value for key, value in canonical.items()
+             if key != "project_version"},
+            {**canonical, "project_version": ""},
+            {**canonical, "relay_engine_version": {}},
+            {**canonical, "source_ref": "a" * 400},
+            {**canonical, "source_head": "secret\ninjected"},
+            {**canonical, "release_channel": 3},
+            {**canonical, "target_project_version": "3.0\nsecret"},
+            {**canonical, "target_release_channel": ""},
+            {**canonical, "product_update_available": 1},
+            {**canonical, "relay_engine_update_available": "false"},
+            {**canonical, "product_update_available": False},
+            {**canonical, "relay_engine_update_available": True},
+            {**canonical, "project_version": "unknown",
+             "product_update_available": True},
+        )
+        engine = ManagementJobEngine(self.server_tmp)
+        try:
+            for result in invalid:
+                with self.subTest(result=str(result)[:80]):
+                    job = engine.enqueue(
+                        job_type="version-check", targets=[MACHINE_A],
+                        requested_by="web:admin",
+                    )
+                    claim = mgmt.claim_management_jobs_on_server(
+                        root=self.agent_tmp, limit=1,
+                    )["jobs"][0]
+                    self.assertEqual(claim["job_id"], job["id"])
+                    with self.assertRaises(mgmt.MgmtSyncError):
+                        mgmt._request_json(
+                            "POST", self.base + "/v1/management-jobs/complete",
+                            {"id": job["id"], "claim_token": claim["claim_token"],
+                             "status": "SUCCEEDED", "result": result},
+                            root=self.agent_tmp,
+                        )
+                    self.assertEqual(engine.get(job["id"])["status"], "RUNNING")
+            healthy = engine.enqueue(
+                job_type="version-check", targets=[MACHINE_A],
+                requested_by="web:admin",
+            )
+            claim = mgmt.claim_management_jobs_on_server(
+                root=self.agent_tmp, limit=1,
+            )["jobs"][0]
+            reply = mgmt.complete_management_job_on_server(
+                root=self.agent_tmp, job_id=healthy["id"],
+                claim_token=claim["claim_token"], status="SUCCEEDED",
+                result=canonical,
+            )
+            self.assertTrue(reply["ok"])
+            self.assertEqual(engine.get(healthy["id"])["status"], SUCCEEDED)
         finally:
             engine.close()
 
