@@ -123,7 +123,8 @@ class E2EProcedureGuard(unittest.TestCase):
         self.assertIn("116 scenario", self.procedure)
         self.assertIn("two same-HEAD PASS", self.procedure)
         agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
-        self.assertNotIn("Read and lint the selected packet", agents)
+        self.assertIn("## Data Relay Link E2E fast path", agents)
+        self.assertIn("packet-lint/work-admission tooling is diagnostic here", agents)
 
     def test_obsolete_fcs_actor_launcher_is_not_required(self):
         self.assertFalse((ROOT / "tools/codex_fcs_actor_dispatch.py").exists())
