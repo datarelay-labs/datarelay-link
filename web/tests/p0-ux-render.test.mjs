@@ -816,3 +816,21 @@ test("R3/R6 one-time enrollment issuance and Core admission Apply have synchrono
  assert.match(apply,/finally\{admissionApplyInFlight\.current=false;setBusy\(false\)\}/);
  assert.match(apply,/Core admission apply result is unverified/);
 });
+
+test("M2/R6 Guided Core Change Plan issuance and one-shot Apply block overlapping non-idempotent POSTs",()=>{
+ const src=readFileSync(join(webRoot,"src","p0-access-policy.tsx"),"utf8");
+ const guided=src.split("export function GuidedPolicyJourney(",2)[1]||"";
+ const review=guided.split("  async function review(){",2)[1]?.split("  async function verifyRequired(){",1)[0]||"";
+ const apply=guided.split("  async function apply(){",2)[1]?.split("  return <section className=",1)[0]||"";
+ assert.match(guided,/const previewInFlight=useRef\(false\)/);
+ assert.match(guided,/const applyInFlight=useRef\(false\)/);
+ assert.match(review,/if\(!ready\|\|busy\|\|previewInFlight\.current\)return;/);
+ assert.match(review,/previewInFlight\.current=true;/);
+ assert.match(review,/finally\{previewInFlight\.current=false;/);
+ assert.match(apply,/if\(applyInFlight\.current\)return;/);
+ assert.match(apply,/applyInFlight\.current=true;/);
+ assert.match(apply,/finally\{applyInFlight\.current=false;/);
+ assert.match(apply,/const confirmed=observedGuidedPolicyApplyReceipt\(result,preview,plane\)/);
+ assert.match(apply,/Apply outcome UNKNOWN. Inspect Core Change History before retrying/);
+ assert.doesNotMatch(apply,/catch\(e:any\).*setPreview\(preview\)/);
+});

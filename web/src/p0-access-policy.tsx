@@ -598,6 +598,11 @@ export function GuidedPolicyJourney({api,onNavigate,initialPlane="remote",locked
   const [confirmation,setConfirmation]=useState(""),[acknowledge,setAcknowledge]=useState(false);
   const [busy,setBusy]=useState(false),[error,setError]=useState(""),[message,setMessage]=useState("");
   const seq=useRef(0);
+  // Core Preview creates a persisted Change Plan; Apply can commit a policy
+  // revision before the browser receives its reply. Busy state alone cannot
+  // prevent a second click before React rerenders.
+  const previewInFlight=useRef(false);
+  const applyInFlight=useRef(false);
   const catalog=useCoreCatalog(api,resourceCatalog);
   useEffect(()=>{onBusyChange?.(busy)},[busy]);
   useEffect(()=>()=>{onBusyChange?.(false)},[]);
@@ -629,7 +634,8 @@ export function GuidedPolicyJourney({api,onNavigate,initialPlane="remote",locked
   const ready=!!name.trim()&&(operation==="delete"||!!(source.trim()&&destination.trim()&&selector.trim()));
   const prepared=preparedGuidedPolicyChange({plane,operation,name,mode,source,destination,selector,enabled,expiresAt,paths});
   async function review(){
-    if(!ready||busy)return;
+    if(!ready||busy||previewInFlight.current)return;
+    previewInFlight.current=true;
     const token=++seq.current;
     setBusy(true);setError("");setMessage("");setPreview(null);setTests(null);setConfirmation("");setAcknowledge(false);
     const payload:any={operation,name:name.trim()};
@@ -649,7 +655,7 @@ export function GuidedPolicyJourney({api,onNavigate,initialPlane="remote",locked
         throw new Error("Core Preview does not confirm the exact requested rule, policy action and current plan expiry.");
       setPreview(result);setPhase(2);
     }catch(e:any){if(seq.current===token)setError("Preview failed: "+String(e.message||e))}
-    finally{if(seq.current===token)setBusy(false)}
+    finally{previewInFlight.current=false;if(seq.current===token)setBusy(false)}
   }
   async function verifyRequired(){
     if(!preview?.change_plan_id||busy)return;
@@ -669,6 +675,7 @@ export function GuidedPolicyJourney({api,onNavigate,initialPlane="remote",locked
     &&preview?.resource_ref===name.trim();
   const requiredWord=preview?.confirmation_class==="APPLY"?"APPLY":"UNVERIFIED";
   async function apply(){
+    if(applyInFlight.current)return;
     if(busy||confirmation!==requiredWord
       ||preview?.change_type!==plane+"-access-rule"
       ||preview?.operation!=="guided."+plane+"-access-rule."+operation
@@ -680,6 +687,7 @@ export function GuidedPolicyJourney({api,onNavigate,initialPlane="remote",locked
       setError("Core Change Plan is expired or incomplete. Request a fresh Preview and policy tests.");
       return;
     }
+    applyInFlight.current=true;
     const token=seq.current;
     setBusy(true);setError("");
     try{
@@ -697,7 +705,7 @@ export function GuidedPolicyJourney({api,onNavigate,initialPlane="remote",locked
       setPreview(null);setTests(null);setConfirmation("");setAcknowledge(false);setPhase(1);
       setError("Apply outcome UNKNOWN. Inspect Core Change History before retrying. "+String(e.message||e));
     }}
-    finally{if(seq.current===token)setBusy(false)}
+    finally{applyInFlight.current=false;if(seq.current===token)setBusy(false)}
   }
   return <section className="card dr-p0-section" data-testid="p0-guided-policy">
     <div className="dr-section-head"><div><p className="dr-eyebrow">P0 · Guided policy workflow</p>
