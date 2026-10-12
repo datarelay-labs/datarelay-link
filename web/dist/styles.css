@@ -321,3 +321,10 @@
 .dr-policy-ai-mapping{display:grid;gap:3px;min-width:140px;max-width:228px;overflow-wrap:anywhere;font-size:11px;line-height:1.45}
 .dr-policy-ai-mapping>span{color:var(--dr-text-muted)}
 .dr-policy-ai-mapping strong{color:var(--dr-text-secondary);font-weight:600;overflow-wrap:anywhere}
+
+/* G-37: first-party, role-scoped read-only attention navigation. */
+.dr-attention-link{width:100%;min-height:44px;text-align:left;color:var(--dr-text-primary);background:transparent;border-left:0;border-right:0;border-bottom:0;cursor:pointer;font:inherit}
+.dr-attention-link:hover{background:var(--dr-surface-hover)}
+.dr-attention-link:focus-visible{outline:2px solid var(--dr-focus-ring);outline-offset:2px;border-radius:4px}
+.dr-home-evidence-scope{font-size:12px;line-height:1.45;margin-top:-9px;overflow-wrap:anywhere}
+.dr-kpi-strip .dr-text-action{text-align:left;justify-self:start;min-height:32px}
