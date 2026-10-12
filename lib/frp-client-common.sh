@@ -5930,7 +5930,13 @@ frp_client_apply_upgrade() {
 
   # Serialize against apply/sync/frp-update and other client mutations.
   frp_acquire_client_lock || return 1
-  _frp_client_upgrade_release_lock() { frp_release_client_lock; }
+  _frp_client_upgrade_release_lock() {
+    frp_release_client_lock
+    if [[ -n "${_FRP_CLIENT_UPGRADE_PRESERVATION_FD:-}" ]]; then
+      exec {_FRP_CLIENT_UPGRADE_PRESERVATION_FD}>&-
+      unset _FRP_CLIENT_UPGRADE_PRESERVATION_FD
+    fi
+  }
   # shellcheck disable=SC2064
   trap '_frp_client_upgrade_release_lock' RETURN
 
@@ -6116,6 +6122,25 @@ frp_client_apply_upgrade() {
   if [[ "$update_needed" == "0" ]]; then
     echo "Update                    : not needed"
     return 0
+  fi
+
+  # The freshly installed lifecycle worker can reconcile pending intent when
+  # its unit restarts. Exclude those writes throughout the protected snapshot
+  # window. Keep this lock inode: client-manage.lock is removed on release.
+  local preservation_lock
+  preservation_lock="$(frp_client_path /etc/frp/client-software-upgrade.lock)"
+  exec {_FRP_CLIENT_UPGRADE_PRESERVATION_FD}>>"$preservation_lock"
+  chmod 0600 "$preservation_lock"
+  if ! python3 - "$_FRP_CLIENT_UPGRADE_PRESERVATION_FD" <<'PY'
+import fcntl, sys
+try:
+    fcntl.flock(int(sys.argv[1]), fcntl.LOCK_EX | fcntl.LOCK_NB)
+except BlockingIOError:
+    sys.stderr.write('ERROR: Agent lifecycle reconciliation is running; retry the software upgrade.\n')
+    raise SystemExit(1)
+PY
+  then
+    return 1
   fi
 
   echo "Checking existing Agent state..."
