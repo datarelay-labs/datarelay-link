@@ -138,6 +138,18 @@ class E2EProcedureGuard(unittest.TestCase):
         self.assertNotIn("replace placeholders only after owner approval", protocol)
         self.assertNotIn("Fail-closed sanity check already performed", protocol)
 
+    def test_real_scenario_ledger_is_updated_during_the_run(self):
+        # Progress must be observable; old procedure delayed the 116-row
+        # ledger until the entire run, hiding two hours of genuine attempts.
+        self.assertIn("update the existing scenario-results.tsv row immediately",
+                      self.procedure)
+        self.assertIn("never leave a finished scenario as NOT_RUN", self.procedure)
+        self.assertIn("intermediate scenario-results.tsv", self.canonical)
+        self.assertIn("do not claim PASS without verified evidence", self.canonical)
+        protocol = (ROOT / "docs" / "CODEX_DUAL_ROLE_TEST_PROTOCOL.md").read_text()
+        self.assertIn("write its scenario-results.tsv disposition promptly", protocol)
+        self.assertIn("never use a checkpoint as final release PASS", protocol)
+
     def test_open_runtime_continuity_findings_are_not_prematurely_closed(self):
         decision = (ROOT / "docs" / "F001_F007_RUNTIME_CONTINUITY_REMEDIATION.md"
                     ).read_text(encoding="utf-8")

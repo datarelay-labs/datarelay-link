@@ -23,6 +23,10 @@ The AI Adviser may continue its own separate context across scenarios, receiving
 - Keep private scenario-scoped raw event receipts, authentic first AI response bytes, goal/baseline/source hashes, real commands/outcomes and `ledger/scenario-results.tsv` (exact 116 IDs) or `ledger/fcs-results.tsv` (15 IDs). Avoid new checklists, duplicated Work Packets, extra launcher frameworks and approval records.
 - `tools/validate_codex_dual_role_pairs.py` optionally checks **structure**: correct distinct role identities, separate per-scenario events, first AI reply bytes, goal/baseline/source equality, coverage and honest results. Its PASS **never constitutes actual user testing or product PASS**; the auditor checks authentic public effects and actor separation.
 
+## Immediate evidence checkpoint, no extra approval workflow
+
+When an actor completes one real scenario, **write its scenario-results.tsv disposition promptly** with observed Direct/AI outcomes and the authentic event paths. Never leave the complete 116-row ledger at NOT_RUN while real independent scenarios finish; the absence of required adviser or user evidence makes that scenario incomplete, not PASS. Maintain just the existing private ledgers and transcripts—no extra files/forms per scenario—and **never use a checkpoint as final release PASS**. The auditor freezes and verifies the same evidence only once after all safe runnable work is exhausted.
+
 ## What never changes
 
 Do not leak credentials, use oracle/source answers in acting-user contexts, fake a result, impersonate an actor with replay scripts or bypass platform denials. A genuine denied operation (including B014) blocks only that criterion; other real tests continue. Actual real traffic, negatives/recovery, platform qualification, 3,600-second soak and **two complete same-HEAD Full User E2E PASS** release gates remain required. Release stays HOLD until independently supported; no merge, tag, release or production deployment without separate owner authorization.

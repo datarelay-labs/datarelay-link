@@ -4185,6 +4185,17 @@ A clean `FULL_USER_E2E=PASS` also requires no unresolved product defect or actio
 
 ### 17.1 GitHub reporting — final only
 
+**Incremental local evidence:** Maintain the 116 existing canonical rows in the
+**intermediate scenario-results.tsv** throughout the run. As soon as a real
+scenario or role step is complete, record its observed status and evidence;
+do not leave completed work marked NOT_RUN until the final auditor pass.
+An unfinished/missing AI mirror stays PARTIAL/NOT_RUN/BLOCKED: **do not claim PASS without verified evidence**. Preserve separate actual Direct/AI
+logs and exact Source HEAD, and commit each private ledger update atomically.
+A local checkpoint is neither product PASS nor a GitHub Issue report; only
+the frozen final audit produces a release-gate verdict. Do not wait for every
+host or the one-hour soak to finish before recording independent results.
+
+
 Do not update the active `[AI Work]` Issue for each intermediate finding. Keep findings in the current RUN_ID evidence while continuing every independent scenario.
 
 After all executable scenarios, command/use-case/AI-mirror coverage, performance/concurrency lanes, recovery checks, and cleanup are exhausted and the final report is frozen, update the active `[AI Work]` Issue once with the consolidated result, evidence root, counters, blockers, and next remediation action if any.
