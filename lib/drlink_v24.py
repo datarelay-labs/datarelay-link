@@ -6170,6 +6170,12 @@ def set_remote_service_agent(
         except Exception:
             pass
 
+    # A catalog outage switches to offline queuing, but does not authorize
+    # replaying reconciliation intent over an operator edit committed during I/O.
+    if reconciliation_intent_changed():
+        return {"operation": "skipped", "skipped": True,
+                "reason": "Remote Service changed during synchronization"}
+
     # Resolve destination single-target
     dest_token = str(dest).strip()
     destination_client_id = None
@@ -6440,9 +6446,6 @@ def set_remote_service_agent(
         import drlink_mgmt_sync as mgmt
 
         live_mgmt = mgmt.use_live_mgmt_path(root)
-        if reconciliation_intent_changed():
-            return {"operation": "skipped", "skipped": True,
-                    "reason": "Remote Service changed during synchronization"}
         if live_mgmt:
             # Authoritative Server allocator — Agent must not mint online reservations.
             # Disabled services still upsert so immutable destination references remain
@@ -6548,7 +6551,16 @@ def set_remote_service_agent(
     now = utc_now_iso()
     client_for_pub = client
 
+    class StaleOfflineReconciliation(ControlPlaneError):
+        """Roll back stale offline replay without recording a no-op revision."""
+
     def write_all():
+        # _mutate holds BEGIN IMMEDIATE here on the autonomous path. The
+        # earlier catalog guard cannot cover an edit committed before BEGIN.
+        # Limit this rollback to offline reconciliation; operator edits and
+        # live Server-side compensation retain their existing semantics.
+        if not server_reachable and reconciliation_intent_changed():
+            raise StaleOfflineReconciliation("Remote Service changed during synchronization")
         # Nested helpers (set_published_service) also call _mutate; run them as batch
         # participants of this outer transaction.
         nested_prev = getattr(plane_db, "_batch_mode", False)
@@ -6619,6 +6631,9 @@ def set_remote_service_agent(
 
     try:
         result = plane_db._mutate("set remote-service %s" % name, "set remote service", write_all)
+    except StaleOfflineReconciliation:
+        return {"operation": "skipped", "skipped": True,
+                "reason": "Remote Service changed during synchronization"}
     except Exception as exc:
         # Server mutation already happened on the live path; compensate before re-raising.
         if live_mgmt and getattr(plane_db, "_agent_mgmt_side_effects", None):

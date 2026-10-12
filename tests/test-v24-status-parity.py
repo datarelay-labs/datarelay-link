@@ -47,6 +47,171 @@ def _write_identity(root: Path, machine_id: str, hostname: str):
     return key, pub.read_text(encoding="utf-8"), mac
 
 
+class CatalogUnavailableIntentRaceTests(unittest.TestCase):
+    """Catalog failure must not replay intent over a committed operator edit."""
+
+    def setUp(self):
+        from unittest import mock
+        self.tmp = tempfile.TemporaryDirectory(prefix="u005-unavailable-")
+        self.addCleanup(self.tmp.cleanup)
+        self.root = self.tmp.name
+        self.env = mock.patch.dict(os.environ, {"DRLINK_SKIP_ACTIVATION": "1"})
+        self.env.start()
+        self.addCleanup(self.env.stop)
+        frp = Path(self.root, "etc/frp")
+        frp.mkdir(parents=True)
+        (frp / "client-state.json").write_text(json.dumps({
+            "machine_id": MACHINE, "hostname": "agent-a", "services": {},
+        }))
+        self.agent = ControlPlane(self.root)
+        self.addCleanup(self.agent.close)
+        v24.ensure_v2_schema(self.agent.conn)
+        # A separate connection proves the user transaction has committed,
+        # rather than editing the synchronizer's transaction in place.
+        self.operator = ControlPlane(self.root)
+        self.addCleanup(self.operator.close)
+        v24.ensure_v2_schema(self.operator.conn)
+
+    def _seed_disabled(self, stype):
+        name = "u005-unavailable-" + stype
+        service = name + "-object"
+        v24.set_service_object(self.agent, service, type=stype, port=28144, oneshot=True)
+        v24.set_remote_service_agent(
+            self.agent, name, destination="this-host", service=service,
+            enabled=False, oneshot=True, root=self.root, server_reachable=False,
+        )
+        port = 6202 if stype == "fixed-tcp" else 6002
+        self.agent.conn.execute(
+            "UPDATE agent_remote_services SET endpoint_port=? WHERE name=?", (port, name)
+        )
+        self.agent.conn.commit()
+        return name, service, port
+
+    def _row(self, name):
+        return dict(self.agent.conn.execute(
+            "SELECT * FROM agent_remote_services WHERE name=?", (name,)
+        ).fetchone())
+
+    def test_U005_unavailable_catalog_cannot_replay_disabled_intent(self):
+        from unittest import mock
+        import drlink_v24_runtime as runtime
+        for stype in ("fixed-tcp", "tcp"):
+            with self.subTest(type=stype):
+                name, service, port = self._seed_disabled(stype)
+                committed = []
+
+                def unavailable_after_operator_commit(plane, server_plane=None, *, root=None):
+                    v24.set_remote_service_agent(
+                        self.operator, name, destination="this-host", service=service,
+                        enabled=True, oneshot=True, root=self.root, server_reachable=False,
+                    )
+                    committed.append(self._row(name))
+                    self.assertEqual(committed[-1]["enabled"], 1)
+                    self.assertEqual(committed[-1]["endpoint_port"], port)
+                    raise mgmt.MgmtUnavailableError("injected catalog backend outage")
+
+                with mock.patch.object(mgmt, "use_live_mgmt_path", return_value=True), \
+                        mock.patch.object(v24, "sync_agent_catalog_from_server",
+                                          side_effect=unavailable_after_operator_commit) as fetch, \
+                        mock.patch.object(mgmt, "upsert_remote_service_on_server") as upsert, \
+                        mock.patch.object(runtime, "apply_agent_runtime",
+                                          return_value={"ok": True, "skipped": True}) as apply:
+                    result = v24.set_remote_service_agent(
+                        self.agent, name, destination="this-host", service=service,
+                        enabled=False, oneshot=True, root=self.root,
+                        server_reachable=True, reconcile_existing=True,
+                    )
+                fetch.assert_called_once()
+                upsert.assert_not_called()
+                self.assertEqual(self._row(name)["enabled"], 1, self._row(name))
+                self.assertEqual(self._row(name), committed[0])
+                self.assertTrue(result.get("skipped"), result)
+                apply.assert_not_called()
+
+    def test_U005_operator_commit_before_begin_cannot_replay_disabled_intent(self):
+        from unittest import mock
+        import drlink_v24_runtime as runtime
+        for stype in ("fixed-tcp", "tcp"):
+            with self.subTest(type=stype):
+                name, service, port = self._seed_disabled(stype)
+                committed = []
+                original_mutate = self.agent._mutate
+
+                def commit_before_begin(command, summary, writer, **kwargs):
+                    self.assertFalse(self.agent.conn.in_transaction)
+                    v24.set_remote_service_agent(
+                        self.operator, name, destination="this-host", service=service,
+                        enabled=True, oneshot=True, root=self.root, server_reachable=False,
+                    )
+                    self.assertFalse(self.operator.conn.in_transaction)
+                    committed.append((self._row(name), self.agent.current_revision()))
+                    self.assertEqual(committed[-1][0]["enabled"], 1)
+                    self.assertEqual(committed[-1][0]["endpoint_port"], port)
+                    def write_under_lock():
+                        self.assertTrue(self.agent.conn.in_transaction)
+                        return writer()
+
+                    return original_mutate(command, summary, write_under_lock, **kwargs)
+
+                with mock.patch.object(mgmt, "use_live_mgmt_path", return_value=True), \
+                        mock.patch.object(v24, "sync_agent_catalog_from_server",
+                                          side_effect=mgmt.MgmtUnavailableError("backend outage")) as fetch, \
+                        mock.patch.object(self.agent, "_mutate", side_effect=commit_before_begin) as mutate, \
+                        mock.patch.object(mgmt, "upsert_remote_service_on_server") as upsert, \
+                        mock.patch.object(runtime, "apply_agent_runtime",
+                                          return_value={"ok": True, "skipped": True}) as apply:
+                    result = v24.set_remote_service_agent(
+                        self.agent, name, destination="this-host", service=service,
+                        enabled=False, oneshot=True, root=self.root,
+                        server_reachable=True, reconcile_existing=True,
+                    )
+                fetch.assert_called_once()
+                mutate.assert_called_once()
+                upsert.assert_not_called()
+                self.assertEqual(self._row(name)["enabled"], 1, self._row(name))
+                self.assertEqual(self._row(name), committed[0][0])
+                self.assertEqual(self.agent.current_revision(), committed[0][1])
+                self.assertFalse(self.agent.conn.in_transaction)
+                self.assertTrue(result.get("skipped"), result)
+                apply.assert_not_called()
+
+    def test_unavailable_catalog_without_edit_preserves_offline_queue(self):
+        from unittest import mock
+        name, service, port = self._seed_disabled("fixed-tcp")
+        with mock.patch.object(mgmt, "use_live_mgmt_path", return_value=True), \
+                mock.patch.object(v24, "sync_agent_catalog_from_server",
+                                  side_effect=mgmt.MgmtUnavailableError("backend outage")), \
+                mock.patch.object(mgmt, "upsert_remote_service_on_server") as upsert:
+            result = v24.set_remote_service_agent(
+                self.agent, name, destination="this-host", service=service,
+                enabled=True, oneshot=True, root=self.root, server_reachable=True,
+            )
+        self.assertFalse(result.get("skipped", False))
+        self.assertEqual((self._row(name)["enabled"], self._row(name)["endpoint_port"]), (1, port))
+        self.assertEqual(self._row(name)["status"], "DEGRADED")
+        self.assertIn("unreachable", self._row(name)["reason"])
+        upsert.assert_not_called()
+
+        # An ordinary explicit operator create still queues offline intent.
+        v24.set_service_object(self.agent, "offline-create-object", type="tcp",
+                               port=28145, oneshot=True)
+        with mock.patch.object(mgmt, "use_live_mgmt_path", return_value=True), \
+                mock.patch.object(v24, "sync_agent_catalog_from_server",
+                                  side_effect=mgmt.MgmtUnavailableError("backend outage")), \
+                mock.patch.object(mgmt, "upsert_remote_service_on_server") as upsert:
+            created = v24.set_remote_service_agent(
+                self.agent, "offline-create", destination="this-host",
+                service="offline-create-object", enabled=True, oneshot=True,
+                root=self.root, server_reachable=True,
+            )
+        self.assertFalse(created.get("skipped", False))
+        row = self._row("offline-create")
+        self.assertEqual((row["enabled"], row["status"], row["pending_allocation"]),
+                         (1, "DEGRADED", 1))
+        self.assertIsNone(row["endpoint_port"])
+        upsert.assert_not_called()
+
+
 class StatusParityTests(unittest.TestCase):
     def setUp(self):
         self.server_tmp = tempfile.mkdtemp(prefix="drlink-status-srv-")
