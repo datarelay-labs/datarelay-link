@@ -286,6 +286,41 @@ class V30ManagementJobTests(unittest.TestCase):
         result_by_target = {item["target_id"]: item["result"] for item in final["targets"]}
         self.assertEqual(result_by_target[first["target_id"]], {"doctor": "pass"})
 
+    def test_core_failed_job_never_persists_unverified_result_payload(self):
+        job = self._enqueue(targets=("host-a",), timeout_seconds=3600)
+        claim = self.engine.claim_targets(
+            worker_id="worker-result", limit=1, now=self.now + timedelta(seconds=1)
+        )[0]
+        secret = "Bearer fixture-only-failed-core-result"
+        final = self.engine.complete_target(
+            job_id=claim["job_id"], target_id=claim["target_id"],
+            claim_token=claim["claim_token"], status=FAILED,
+            result={"untrusted_credentials": secret}, error="AGENT_JOB_EXECUTION_FAILED",
+            now=self.now + timedelta(seconds=2),
+        )
+        self.assertEqual(final["status"], FAILED)
+        self.assertEqual(final["targets"][0]["result"], {})
+        self.assertNotIn(secret, str(final))
+        self.assertNotIn(secret, str(self.engine.get(job["id"])))
+
+    def test_core_cancelled_job_never_persists_unverified_result_payload(self):
+        job = self._enqueue(targets=("host-a",), timeout_seconds=3600)
+        claim = self.engine.claim_targets(
+            worker_id="worker-cancel-result", limit=1,
+            now=self.now + timedelta(seconds=1),
+        )[0]
+        self.engine.cancel(job["id"], now=self.now + timedelta(seconds=1))
+        secret = "Bearer fixture-only-cancelled-result"
+        final = self.engine.complete_target(
+            job_id=claim["job_id"], target_id=claim["target_id"],
+            claim_token=claim["claim_token"], status=CANCELLED,
+            result={"untrusted_credentials": secret}, error="CANCELLED_BEFORE_RPC",
+            now=self.now + timedelta(seconds=2),
+        )
+        self.assertEqual(final["status"], CANCELLED)
+        self.assertEqual(final["targets"][0]["result"], {})
+        self.assertNotIn(secret, str(self.engine.get(job["id"])))
+
     def test_target_filtered_claim_cannot_take_another_agent_job(self):
         self._enqueue(targets=("agent-a",), now=self.now)
         self._enqueue(targets=("agent-b",), now=self.now)
@@ -539,6 +574,169 @@ class V30ManagementJobTests(unittest.TestCase):
         finally:
             release.set()
             pool.close()
+
+    def test_worker_pool_submit_failure_returns_reserved_capacity(self):
+        from unittest import mock
+
+        job = self._enqueue(targets=("host-a",), timeout_seconds=3600)
+        with BoundedAgentRpcWorkerPool(max_workers=1, max_pending=0) as pool:
+            with mock.patch.object(
+                pool._executor, "submit", side_effect=RuntimeError("executor shut down")
+            ):
+                with self.assertRaisesRegex(RuntimeError, "executor shut down"):
+                    pool.dispatch_once(
+                        self.engine, lambda _claim: {"operation": "doctor"},
+                        worker_id="rpc-dispatcher", limit=1,
+                    )
+            # Core keeps the claimed Job until lease recovery; a rejected
+            # local executor must not permanently exhaust the worker slots.
+            self.assertTrue(
+                pool._slots.acquire(blocking=False),
+                "executor rejection leaked bounded RPC capacity",
+            )
+            pool._slots.release()
+        self.assertEqual(self.engine.get(job["id"])["targets"][0]["status"], RUNNING)
+
+    def test_worker_pool_partial_submit_failure_preserves_inflight_capacity(self):
+        from concurrent.futures import Future
+        from unittest import mock
+
+        job = self._enqueue(
+            targets=("host-a", "host-b"), timeout_seconds=3600
+        )
+        in_flight = Future()
+        attempts = []
+
+        def submit_one_then_reject(*args):
+            attempts.append(args)
+            if len(attempts) == 1:
+                return in_flight
+            raise RuntimeError("second executor slot rejected")
+
+        with BoundedAgentRpcWorkerPool(max_workers=2, max_pending=0) as pool:
+            with mock.patch.object(
+                pool._executor, "submit", side_effect=submit_one_then_reject
+            ):
+                with self.assertRaisesRegex(RuntimeError, "slot rejected"):
+                    pool.dispatch_once(
+                        self.engine, lambda _claim: {"operation": "doctor"},
+                        worker_id="rpc-partial", limit=2,
+                    )
+            self.assertEqual(len(attempts), 2)
+            # Only the unscheduled claim's slot is returned immediately.
+            self.assertTrue(pool._slots.acquire(blocking=False))
+            self.assertFalse(pool._slots.acquire(blocking=False))
+            pool._slots.release()
+            in_flight.set_result({"status": SUCCEEDED})
+            self.assertTrue(pool._slots.acquire(blocking=False))
+            self.assertTrue(pool._slots.acquire(blocking=False))
+            pool._slots.release()
+            pool._slots.release()
+        self.assertEqual(
+            [t["status"] for t in self.engine.get(job["id"])["targets"]],
+            [RUNNING, RUNNING],
+            "No invented worker completions for mock rejected submissions",
+        )
+
+    def test_generic_rpc_worker_never_recompletes_after_ambiguous_success_ack(self):
+        from unittest import mock
+
+        job = self._enqueue(targets=("host-a",), timeout_seconds=3600)
+        claim = self.engine.claim_targets(
+            worker_id="worker-once", limit=1, now=self.now + timedelta(seconds=1)
+        )[0]
+        commit = self.engine.complete_target
+        statuses = []
+
+        def committed_but_unacknowledged(**kwargs):
+            statuses.append(kwargs["status"])
+            reply = commit(**kwargs, now=self.now + timedelta(seconds=2))
+            if kwargs["status"] == SUCCEEDED:
+                # A transaction can commit before its response is lost.
+                raise TimeoutError("completion acknowledgement missing")
+            return reply
+
+        with BoundedAgentRpcWorkerPool(max_workers=1, max_pending=0) as pool, mock.patch.object(
+            self.engine, "complete_target", side_effect=committed_but_unacknowledged
+        ):
+            with self.assertRaisesRegex(TimeoutError, "acknowledgement missing"):
+                pool._run_claim(
+                    self.engine, claim, lambda _claim: {"operation": "doctor"}
+                )
+        self.assertEqual(statuses, [SUCCEEDED], "No contradictory FAILED completion")
+        self.assertEqual(self.engine.get(job["id"])["status"], SUCCEEDED)
+
+    def test_generic_rpc_worker_never_recompletes_after_ambiguous_cancel_ack(self):
+        from unittest import mock
+
+        job = self._enqueue(targets=("host-a",), timeout_seconds=3600)
+        claim = self.engine.claim_targets(
+            worker_id="worker-cancel-once", limit=1, now=self.now + timedelta(seconds=1)
+        )[0]
+        self.engine.cancel(job["id"], now=self.now + timedelta(seconds=1))
+        commit = self.engine.complete_target
+        statuses = []
+
+        def committed_but_unacknowledged(**kwargs):
+            statuses.append(kwargs["status"])
+            commit(**kwargs, now=self.now + timedelta(seconds=2))
+            raise TimeoutError("cancellation acknowledgement missing")
+
+        with BoundedAgentRpcWorkerPool(max_workers=1, max_pending=0) as pool, mock.patch.object(
+            self.engine, "complete_target", side_effect=committed_but_unacknowledged
+        ):
+            with self.assertRaisesRegex(TimeoutError, "acknowledgement missing"):
+                pool._run_claim(
+                    self.engine, claim, lambda _claim: self.fail(
+                        "cancelled claim must not run the handler"
+                    )
+                )
+        self.assertEqual(statuses, [CANCELLED], "No contradictory FAILED completion")
+        self.assertEqual(self.engine.get(job["id"])["status"], CANCELLED)
+
+    def test_generic_rpc_worker_hides_handler_secrets_when_failure_receipt_is_unknown(self):
+        from unittest import mock
+
+        job = self._enqueue(targets=("host-a",), timeout_seconds=3600)
+        claim = self.engine.claim_targets(
+            worker_id="worker-failure", limit=1, now=self.now + timedelta(seconds=1)
+        )[0]
+        secret = "Bearer fixture-only-handler-secret"
+
+        def private_handler(_claim):
+            raise ValueError("private job handler failed: " + secret)
+
+        with BoundedAgentRpcWorkerPool(max_workers=1, max_pending=0) as pool, mock.patch.object(
+            self.engine, "complete_target", side_effect=OSError("Core DB unavailable")
+        ) as completion:
+            with self.assertRaisesRegex(
+                ControlPlaneError, "completion receipt UNKNOWN"
+            ) as caught:
+                pool._run_claim(self.engine, claim, private_handler)
+        self.assertNotIn(secret, str(caught.exception))
+        self.assertEqual(completion.call_count, 1)
+        self.assertEqual(completion.call_args.kwargs["status"], FAILED)
+        self.assertEqual(self.engine.get(job["id"])["status"], RUNNING)
+
+    def test_generic_rpc_worker_never_persists_handler_exception_secrets(self):
+        job = self._enqueue(targets=("host-a",), timeout_seconds=3600)
+        secret = "Bearer test-only-core-worker-credential"
+
+        def failing_handler(_claim):
+            raise ValueError("remote target refused " + secret)
+
+        with BoundedAgentRpcWorkerPool(max_workers=1, max_pending=0) as pool:
+            futures = pool.dispatch_once(
+                self.engine, failing_handler, worker_id="rpc-worker", limit=1
+            )
+            self.assertEqual(len(futures), 1)
+            result = futures[0].result(timeout=3)
+
+        self.assertEqual(result["status"], FAILED)
+        self.assertEqual(result["targets"][0]["error"], "AGENT_JOB_EXECUTION_FAILED")
+        self.assertEqual(result["last_error"], "AGENT_JOB_EXECUTION_FAILED")
+        self.assertNotIn(secret, str(result))
+        self.assertNotIn(secret, str(self.engine.get(job["id"])))
 
 
 if __name__ == "__main__":

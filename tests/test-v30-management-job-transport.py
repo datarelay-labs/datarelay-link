@@ -139,6 +139,54 @@ class V30ManagementJobTransportTests(unittest.TestCase):
         finally:
             engine.close()
 
+    def test_core_signed_completion_never_persists_untrusted_agent_error_text(self):
+        engine = ManagementJobEngine(self.server_tmp)
+        secret = "Bearer fixture-only-untrusted-signed-completion"
+        try:
+            job = engine.enqueue(
+                job_type="doctor", targets=[MACHINE_A], requested_by="web:admin"
+            )
+            claims = mgmt.claim_management_jobs_on_server(root=self.agent_tmp, limit=1)
+            self.assertEqual(len(claims["jobs"]), 1)
+            claim = claims["jobs"][0]
+            self.assertEqual(claim["job_id"], job["id"])
+            mgmt.complete_management_job_on_server(
+                root=self.agent_tmp, job_id=claim["job_id"],
+                claim_token=claim["claim_token"], status="FAILED",
+                result={"untrusted_failure_payload": secret},
+                error="Untrusted exception: " + secret,
+            )
+            final = engine.get(job["id"])
+            self.assertEqual(final["status"], "FAILED")
+            self.assertEqual(final["targets"][0]["result"], {})
+            self.assertEqual(final["targets"][0]["error"],
+                             "AGENT_JOB_EXECUTION_FAILED")
+            self.assertEqual(final["last_error"], "AGENT_JOB_EXECUTION_FAILED")
+            self.assertNotIn(secret, json.dumps(final))
+        finally:
+            engine.close()
+
+    def test_core_ignores_untrusted_error_text_on_signed_success(self):
+        engine = ManagementJobEngine(self.server_tmp)
+        try:
+            job = engine.enqueue(
+                job_type="doctor", targets=[MACHINE_A], requested_by="web:admin"
+            )
+            claim = mgmt.claim_management_jobs_on_server(
+                root=self.agent_tmp, limit=1
+            )["jobs"][0]
+            mgmt.complete_management_job_on_server(
+                root=self.agent_tmp, job_id=claim["job_id"],
+                claim_token=claim["claim_token"], status="SUCCEEDED",
+                result={"operation": "doctor"}, error="Bearer untrusted-success-string",
+            )
+            final = engine.get(job["id"])
+            self.assertEqual(final["status"], "SUCCEEDED")
+            self.assertEqual(final["targets"][0]["error"], "")
+            self.assertNotIn("untrusted-success-string", json.dumps(final))
+        finally:
+            engine.close()
+
     def test_signed_agent_claim_is_target_bound_and_cross_target_completion_fails(self):
         engine = ManagementJobEngine(self.server_tmp)
         try:
@@ -256,6 +304,38 @@ class V30ManagementJobTransportTests(unittest.TestCase):
             self.assertTrue(artifact.is_file())
             self.assertNotIn("sections", support_result)
 
+        finally:
+            engine.close()
+
+    def test_signed_agent_failure_persists_only_safe_core_job_error(self):
+        from unittest import mock
+        engine = ManagementJobEngine(self.server_tmp)
+        secret = "Bearer fixture-only-signed-job-credential"
+        try:
+            job = engine.enqueue(
+                job_type="remote-service-set",
+                targets=[MACHINE_A],
+                requested_by="web:admin",
+                resource_type="remote-service",
+                resource_ref="ssh-access",
+                payload={"name": "ssh-access", "destination": "this-host",
+                         "service": "ssh", "enabled": True},
+            )
+            with mock.patch(
+                "drlink_agent_lifecycle._execute_management_job",
+                side_effect=ValueError("remote failure with " + secret),
+            ):
+                self.assertEqual(
+                    process_management_jobs_once(self.agent_tmp, limit=1),
+                    {"processed": 1, "failed": 1},
+                )
+            final = engine.get(job["id"])
+            self.assertEqual(final["status"], "FAILED")
+            self.assertEqual(final["targets"][0]["status"], "FAILED")
+            self.assertEqual(final["targets"][0]["error"],
+                             "AGENT_JOB_EXECUTION_FAILED")
+            self.assertEqual(final["last_error"], "AGENT_JOB_EXECUTION_FAILED")
+            self.assertNotIn(secret, json.dumps(final))
         finally:
             engine.close()
 
@@ -651,6 +731,38 @@ class V30AgentCompletionAcknowledgementBoundaryTests(unittest.TestCase):
         completion.assert_called_once()
         self.assertEqual(completion.call_args.kwargs["status"], "FAILED")
         self.assertEqual(completion.call_args.kwargs["result"], {})
+
+    def test_agent_failure_does_not_send_exception_secrets_to_core_job_history(self):
+        from unittest import mock
+        claim = {
+            "job_id": "mjob_" + "9" * 24,
+            "claim_token": "opaque-redaction-claim",
+            "job_type": "remote-service-set",
+            "target_id": MACHINE_A,
+            **self.claim_times,
+        }
+        secret = "Bearer secret-agent-credential-in-exception"
+        receipt = {"ok": True, "job": {
+            "id": claim["job_id"], "job_type": claim["job_type"],
+            "targets": [{"target_id": MACHINE_A, "status": "FAILED"}],
+        }}
+        with mock.patch(
+            "drlink_mgmt_sync.claim_management_jobs_on_server",
+            return_value={"jobs": [claim]},
+        ), mock.patch(
+            "drlink_agent_lifecycle._execute_management_job",
+            side_effect=ValueError("Unauthorized remote-service-set: " + secret),
+        ), mock.patch(
+            "drlink_mgmt_sync.complete_management_job_on_server",
+            return_value=receipt,
+        ) as completion:
+            self.assertEqual(process_management_jobs_once(root="/tmp/unused-agent-fixture"),
+                             {"processed": 1, "failed": 1})
+        completion.assert_called_once()
+        self.assertEqual(completion.call_args.kwargs["status"], "FAILED")
+        self.assertEqual(completion.call_args.kwargs["result"], {})
+        self.assertEqual(completion.call_args.kwargs["error"], "AGENT_JOB_EXECUTION_FAILED")
+        self.assertNotIn(secret, str(completion.call_args.kwargs))
 
 
 if __name__ == "__main__":

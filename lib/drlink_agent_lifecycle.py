@@ -393,9 +393,11 @@ def process_management_jobs_once(root: Optional[str] = None, *, limit: int = 4) 
         claim_token = claim["claim_token"]
         try:
             result = _execute_management_job(claim, root=root)
-        except Exception as exc:
+        except Exception:
             # Only an actual local Agent execution error may be reported as
             # FAILED. The Core still validates this authenticated claim.
+            # Handler exception text can include credentials or customer data;
+            # never persist it in signed Core Job history or expose it via Web.
             failed += 1
             receipt = complete_management_job_on_server(
                 root=root,
@@ -403,7 +405,7 @@ def process_management_jobs_once(root: Optional[str] = None, *, limit: int = 4) 
                 claim_token=claim_token,
                 status="FAILED",
                 result={},
-                error=str(exc)[:1024],
+                error="AGENT_JOB_EXECUTION_FAILED",
             )
             _require_core_management_completion_receipt(receipt, claim, "FAILED")
         else:

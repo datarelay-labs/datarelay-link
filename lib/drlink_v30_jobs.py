@@ -583,6 +583,11 @@ class ManagementJobEngine:
                 terminal = FAILED
                 result = {}
                 error = late_reason
+            if terminal != SUCCEEDED:
+                # Failed/cancelled work has no verified result payload. Keep
+                # untrusted partial diagnostics or credentials out of the
+                # authoritative Core Job history on every completion path.
+                result = {}
             updated = self.conn.execute(
                 "UPDATE management_job_targets SET status=?,finished_at=?,lease_expires_at=NULL,"
                 "updated_at=?,result_json=?,error=? "
@@ -1050,15 +1055,16 @@ class BoundedAgentRpcWorkerPool:
         claim: dict[str, Any],
         handler: Callable[[dict[str, Any]], Optional[dict[str, Any]]],
     ) -> dict[str, Any]:
+        if engine.is_cancel_requested(claim["job_id"]):
+            # An ambiguous CANCELLED receipt must not be re-reported FAILED.
+            return engine.complete_target(
+                job_id=claim["job_id"],
+                target_id=claim["target_id"],
+                claim_token=claim["claim_token"],
+                status=CANCELLED,
+                error="CANCELLED_BEFORE_RPC",
+            )
         try:
-            if engine.is_cancel_requested(claim["job_id"]):
-                return engine.complete_target(
-                    job_id=claim["job_id"],
-                    target_id=claim["target_id"],
-                    claim_token=claim["claim_token"],
-                    status=CANCELLED,
-                    error="CANCELLED_BEFORE_RPC",
-                )
             if claim.get("job_type") == ROLLOUT_JOB_TYPE:
                 # A generic callable does not prove signed artifact identity,
                 # post-update health or rollback. Never report rollout success
@@ -1066,25 +1072,39 @@ class BoundedAgentRpcWorkerPool:
                 raise ControlPlaneError(
                     "AGENT_UPDATER_NOT_QUALIFIED: signed Agent updater and rollback are required."
                 )
-            result = handler(dict(claim))
-            return engine.complete_target(
-                job_id=claim["job_id"],
-                target_id=claim["target_id"],
-                claim_token=claim["claim_token"],
-                status=SUCCEEDED,
-                result=dict(result or {}),
-            )
-        except Exception as exc:
+            result = dict(handler(dict(claim)) or {})
+        except Exception:
             try:
                 return engine.complete_target(
                     job_id=claim["job_id"],
                     target_id=claim["target_id"],
                     claim_token=claim["claim_token"],
                     status=FAILED,
-                    error=str(exc)[:1024],
+                    # Handler exception text can include secrets or payloads;
+                    # persist only fixed codes in Core's queryable Job history.
+                    # Preserve the explicit unqualified-rollout safety reason.
+                    error=(
+                        "AGENT_UPDATER_NOT_QUALIFIED"
+                        if claim.get("job_type") == ROLLOUT_JOB_TYPE
+                        else "AGENT_JOB_EXECUTION_FAILED"
+                    ),
                 )
             except Exception:
-                raise exc
+                # An unconfirmed Core failure receipt must never expose the
+                # handler's raw exception (possibly credentials) to a worker log.
+                # Core remains authoritative: do not guess at terminal status.
+                raise ControlPlaneError(
+                    "Management Job completion receipt UNKNOWN; inspect Core before retrying."
+                ) from None
+        # Completion acknowledgement can fail AFTER Core committed SUCCEEDED.
+        # Never send a contradictory FAILED completion for an executed handler.
+        return engine.complete_target(
+            job_id=claim["job_id"],
+            target_id=claim["target_id"],
+            claim_token=claim["claim_token"],
+            status=SUCCEEDED,
+            result=result,
+        )
 
     def dispatch_once(
         self,
@@ -1116,8 +1136,17 @@ class BoundedAgentRpcWorkerPool:
         for _ in range(reserved - len(claims)):
             self._slots.release()
         futures: list[Future] = []
-        for claim in claims:
-            future = self._executor.submit(self._run_claim, engine, claim, handler)
+        for index, claim in enumerate(claims):
+            try:
+                future = self._executor.submit(self._run_claim, engine, claim, handler)
+            except Exception:
+                # A concurrent shutdown/rejected submission must not leak
+                # reservations for work never accepted by the executor.
+                # Core retains the claimed targets for lease recovery; do not
+                # fabricate a completed Agent execution or release its claim.
+                for _ in range(len(claims) - index):
+                    self._slots.release()
+                raise
             future.add_done_callback(lambda _f: self._slots.release())
             futures.append(future)
         return futures

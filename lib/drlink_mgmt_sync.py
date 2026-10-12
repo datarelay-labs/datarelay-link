@@ -1605,13 +1605,20 @@ def server_complete_management_job(plane, auth: MgmtAuthContext, body: dict) -> 
     claim_token = str((body or {}).get("claim_token") or "").strip()
     status = str((body or {}).get("status") or "").strip().upper()
     result = (body or {}).get("result") or {}
-    error = str((body or {}).get("error") or "")[:1024]
     if not job_id or not claim_token:
         raise MgmtSyncError("Management Job id and claim token are required")
     if status not in (SUCCEEDED, FAILED):
         raise MgmtSyncError("Management Job completion status must be SUCCEEDED or FAILED")
     if not isinstance(result, dict):
         raise MgmtSyncError("Management Job result must be an object")
+    # Signed Agent requests authenticate the Host, not the safety of any
+    # free-form handler error text. Core owns the persisted diagnostic code.
+    # Ignore the incoming error field on both SUCCESS and FAILED completions.
+    error = "AGENT_JOB_EXECUTION_FAILED" if status == FAILED else ""
+    if status == FAILED:
+        # An unsuccessful signed Agent job has no verified result payload.
+        # Do not retain untrusted diagnostic, credential or partial data.
+        result = {}
     engine = ManagementJobEngine(getattr(plane, "root", None))
     try:
         if status == SUCCEEDED:
