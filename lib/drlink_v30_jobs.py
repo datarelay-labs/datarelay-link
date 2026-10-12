@@ -245,6 +245,10 @@ class ManagementJobEngine:
             )
         actor = _bounded_text(requested_by, field="Management Job actor")
         target_ids = _normalize_targets(targets, max_targets=self.max_targets)
+        # The authoritative Core queue must not silently turn a malformed
+        # caller payload into an empty object or persist an executable array.
+        if payload is not None and not isinstance(payload, dict):
+            raise ControlPlaneError("Management Job payload must be an object.")
         # Do not coerce boolean, fractional or string deadlines into a real
         # Job: a changed timeout can expire a queued operation unexpectedly.
         if type(timeout_seconds) is not int:

@@ -125,6 +125,25 @@ class V30ManagementJobTests(unittest.TestCase):
             len(self.engine.claim_targets(worker_id="worker-a", limit=1)), 1
         )
 
+    def test_enqueue_rejects_nonobject_payload_before_queue_mutation(self):
+        before = self.engine.conn.execute(
+            "SELECT COUNT(*) FROM management_jobs"
+        ).fetchone()[0]
+        for invalid in ([], ["not-an-object"], "invalid", False, 1.5):
+            with self.subTest(payload=invalid):
+                with self.assertRaisesRegex(
+                    ControlPlaneError, "Management Job payload must be an object"
+                ):
+                    self._enqueue(payload=invalid)
+                self.assertEqual(
+                    self.engine.conn.execute(
+                        "SELECT COUNT(*) FROM management_jobs"
+                    ).fetchone()[0],
+                    before,
+                )
+        self.assertEqual(self._enqueue(payload={})["status"], QUEUED)
+        self.assertEqual(self._enqueue(payload=None)["status"], QUEUED)
+
     def test_schema_is_separate_from_ai_jobs(self):
         tables = {
             row[0]
