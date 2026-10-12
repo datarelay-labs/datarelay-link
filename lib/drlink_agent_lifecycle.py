@@ -500,7 +500,20 @@ def reconcile_once(root: Optional[str] = None) -> dict:
     if load_lifecycle_intent(root) == "paused":
         return {"status": "PAUSED", "updated": 0}
     heartbeat = heartbeat_once(root)
-    force_sync = bool((heartbeat or {}).get("reconcile_required", False))
+    # The signed Server heartbeat must be a confirmed connected ACK before
+    # claiming any one-shot Management Job leases. Never coerce a string or
+    # integer into reconcile authority (bool("false") is True in Python).
+    if (
+        not isinstance(heartbeat, dict)
+        or heartbeat.get("ok") is not True
+        or heartbeat.get("state") != "connected"
+        or ("reconcile_required" in heartbeat
+            and type(heartbeat["reconcile_required"]) is not bool)
+    ):
+        raise ValueError(
+            "Agent heartbeat response UNKNOWN; no Management Jobs claimed."
+        )
+    force_sync = heartbeat.get("reconcile_required", False) is True
     jobs = process_management_jobs_once(root)
     from drlink_control_plane import ControlPlane
     from drlink_v24 import ensure_v2_schema, synchronize_agent_remote_services
