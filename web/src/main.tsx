@@ -39,6 +39,7 @@ import {observedPolicyTableDisplayCells} from "./uxb-policy-table-display";
 import {policyAuditInvestigationTarget} from "./uxb-policy-audit-action";
 import {serviceAccountOperationalStatus,serviceAccountExpiry,serviceAccountPermissions,webhookStatus,webhookDeliverySummary} from "./uxb-integrations-state";
 import {observedIntegrationWriteReceipt,integrationLocalExpiryToUtc} from "./uxb-integration-write-receipts";
+import {observedIntegrationInventory} from "./uxb-integrations-state";
 import {filterObservedHosts} from "./uxb-host-search";
 import {sortLoadedHosts,isHostSortMode,type HostSortMode} from "./uxb-host-sort";
 import {filterLoadedHostConnections,type HostConnectionFilter} from "./uxb-host-connection-filter";
@@ -2435,7 +2436,11 @@ function IntegrationsPanel(){
       const [a,w]=await Promise.all([api("/api/v1/service-accounts"),api("/api/v1/webhooks")]);
       const accountsPage=requireObservedMenuPayload("service-accounts",a);
       const hooksPage=requireObservedMenuPayload("webhooks",w);
-      setAccounts(accountsPage.items);setHooks(hooksPage.items);
+      const accountsObserved=observedIntegrationInventory("service-accounts",accountsPage.items);
+      const webhooksObserved=observedIntegrationInventory("webhooks",hooksPage.items);
+      if(!accountsObserved||!webhooksObserved)throw new Error(
+        "Core integration inventory returned unverified entries. No empty inventory is confirmed.");
+      setAccounts(accountsObserved);setHooks(webhooksObserved);
       setInventoryState("ready");
     }catch(e:any){
       setAccounts([]);setHooks([]);setInventoryState("unknown");
@@ -2495,6 +2500,11 @@ function IntegrationsPanel(){
       <p>{inventoryState==="loading"?"Reading authorized integration inventory…":error||"Core API inventory is unavailable. No empty list has been confirmed."}</p>
       {inventoryState==="unknown"&&<button type="button" className="secondary" onClick={refresh}>Retry integrations read →</button>}
     </section>:<>
+    {(accounts.length===200||hooks.length===200)&&<p role="status" className="dr-uxb-catalog-page-notice">
+      Integration inventory contains only the first 200 Core items per type.
+      Additional authorized private Service Accounts or Webhooks may exist beyond the loaded list.
+      No global total or absence of unobserved integrations is confirmed.
+    </p>}
     <section className="card"><h3>Service Accounts</h3><p className="muted">The public Automation API uses Bearer tokens, per-account rate limits and explicit read-only Core operations in this phase.
       Missing or invalid permission, status and expiry evidence stays UNKNOWN; no account action appears from an unverified status.</p>
       <form onSubmit={createAccount}><div className="toolbar"><input value={accountName} onChange={e=>setAccountName(e.target.value)} placeholder="Account name" required/><input type="datetime-local" value={accountExpiry} onChange={e=>setAccountExpiry(e.target.value)} title="Optional token expiry"/></div>

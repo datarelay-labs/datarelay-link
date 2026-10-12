@@ -86,3 +86,81 @@ export function webhookDeliverySummary(value:unknown):string{
  const presented=DELIVERY_STATUSES.filter(k=>k in counts);
  return presented.length?presented.map(k=>k+":"+counts[k]).join(" · "):"none reported";
 }
+
+
+/** M2 read-only Admin Integration inventory: Core currently returns up to
+ * 200 accounts/hooks without a pagination cursor. Only fixed validated public
+ * fields may reach JSX; a malformed list is UNKNOWN, never a confirmed zero.
+ * This is not an Admin privilege check; Core Web API enforces that boundary.
+ */
+const INTEGRATION_EVENTS=new Set([
+ "attention","security.lifecycle","policy.change","managed_host.lifecycle"
+]);
+const ACCOUNT_ID=/^msa_[0-9a-f]{24}$/,WEBHOOK_ID=/^wh_[0-9a-f]{24}$/;
+function validPublicName(value:unknown):value is string{
+ return typeof value==="string"&&!!value.trim()&&value.length<=128
+   &&!BANNED.test(value);
+}
+function validPublicEndpoint(value:unknown):value is string{
+ if(typeof value!=="string"||value.length>2048||BANNED.test(value))return false;
+ try{
+   const endpoint=new URL(value);
+   const host=endpoint.hostname.toLowerCase(),parts=host.split(".");
+   const dnsLabel=/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+   return endpoint.protocol==="https:"&&!!host&&host.length<=253
+     &&parts.length>=2&&parts.every(x=>dnsLabel.test(x))
+     &&!/^\d+(?:\.\d+){3}$/.test(host)
+     &&(endpoint.port===""||endpoint.port==="443")
+     &&!endpoint.username&&!endpoint.password
+     &&!endpoint.search&&!endpoint.hash;
+ }catch{return false}
+}
+function observedCounts(input:unknown):Record<string,number>|undefined{
+ if(!input||typeof input!=="object"||Array.isArray(input))return undefined;
+ const data=input as Record<string,unknown>,result:Record<string,number>={};
+ for(const [key,value] of Object.entries(data)){
+   if(!DELIVERY_STATUSES.includes(key as typeof DELIVERY_STATUSES[number])
+     ||typeof value!=="number"||!Number.isSafeInteger(value)||value<0)return undefined;
+   result[key]=value;
+ }
+ return result;
+}
+export function observedIntegrationInventory(
+ kind:unknown,input:unknown
+):Record<string,unknown>[]|null{
+ if((kind!=="service-accounts"&&kind!=="webhooks")
+    ||!Array.isArray(input)||input.length>200)return null;
+ const seen=new Set<string>(),result:Record<string,unknown>[]=[];
+ for(const raw of input){
+   if(!raw||typeof raw!=="object"||Array.isArray(raw))return null;
+   const entry=raw as Row;
+   const id=entry.id;
+   if(typeof id!=="string"
+     ||!(kind==="service-accounts"?ACCOUNT_ID:WEBHOOK_ID).test(id)
+     ||seen.has(id)||!validPublicName(entry.name))return null;
+   seen.add(id);
+   const enabled=knownBool(entry.enabled);
+   if(kind==="service-accounts"){
+     if(!Array.isArray(entry.permissions)||entry.permissions.length<1
+       ||entry.permissions.length>PERMISSIONS.size
+       ||entry.permissions.some(p=>typeof p!=="string"||!PERMISSIONS.has(p))
+       ||new Set(entry.permissions).size!==entry.permissions.length)return null;
+     // Invalid/non-observed flags and expiry never enable a management action.
+     const expires=entry.expires_at===null||entry.expires_at===""
+       ?entry.expires_at:isObservedAbsoluteTime(entry.expires_at)
+         ?entry.expires_at:undefined;
+     result.push({id,name:entry.name,permissions:[...entry.permissions],
+       enabled:enabled===null?undefined:enabled,expires_at:expires});
+   }else{
+     if(!validPublicEndpoint(entry.url)||!Array.isArray(entry.event_classes)
+       ||entry.event_classes.length<1||entry.event_classes.length>INTEGRATION_EVENTS.size
+       ||entry.event_classes.some(c=>typeof c!=="string"||!INTEGRATION_EVENTS.has(c))
+       ||new Set(entry.event_classes).size!==entry.event_classes.length)return null;
+     result.push({id,name:entry.name,url:entry.url,
+       event_classes:[...entry.event_classes],
+       enabled:enabled===null?undefined:enabled,
+       delivery_counts:observedCounts(entry.delivery_counts)});
+   }
+ }
+ return result;
+}
