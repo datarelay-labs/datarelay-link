@@ -6428,6 +6428,7 @@ def set_remote_service_agent(
     reason = "Runtime activation pending."
     client = None
     live_mgmt = False
+    recorded_mgmt_effect = None
     target_host_for_runtime = target_host
     sport_for_runtime = sport
 
@@ -6485,6 +6486,7 @@ def set_remote_service_agent(
                     effect = dict(prev_mgmt)
                     effect["op"] = "update-rs"
                     _record_agent_mgmt_effect(plane_db, effect)
+                recorded_mgmt_effect = _agent_mgmt_effects(plane_db)[-1]
                 endpoint_host = remote.get("endpoint_host") or endpoint_host
                 endpoint_port = remote.get("endpoint_port")
                 pending = int(remote.get("pending_allocation") or 0)
@@ -6552,16 +6554,16 @@ def set_remote_service_agent(
     now = utc_now_iso()
     client_for_pub = client
 
-    class StaleOfflineReconciliation(ControlPlaneError):
-        """Roll back stale offline replay without recording a no-op revision."""
+    class StaleReconciliation(ControlPlaneError):
+        """Skip stale replay without recording a no-op revision."""
 
     def write_all():
         # _mutate holds BEGIN IMMEDIATE here on the autonomous path. The
         # earlier catalog guard cannot cover an edit committed before BEGIN.
-        # Limit this rollback to offline reconciliation; operator edits and
-        # live Server-side compensation retain their existing semantics.
+        # Operator edits retain their existing semantics. Live reconciliation
+        # also compares intent atomically below, after the Server upsert.
         if not server_reachable and reconciliation_intent_changed():
-            raise StaleOfflineReconciliation("Remote Service changed during synchronization")
+            raise StaleReconciliation("Remote Service changed during synchronization")
         # Nested helpers (set_published_service) also call _mutate; run them as batch
         # participants of this outer transaction.
         nested_prev = getattr(plane_db, "_batch_mode", False)
@@ -6605,7 +6607,7 @@ def set_remote_service_agent(
                         reason,
                     ),
                 )
-            if not server_reachable and reconcile_existing:
+            if reconcile_existing and (not server_reachable or live_mgmt):
                 # Batch _mutate may have no transaction. Compare-and-update
                 # in one SQLite statement so a commit after the final SELECT
                 # cannot replay stale intent. Never roll back prior batch work.
@@ -6623,7 +6625,7 @@ def set_remote_service_agent(
                     + tuple(_row_get(existing, field) for field in intent_fields),
                 ).rowcount
                 if not updated:
-                    raise StaleOfflineReconciliation("Remote Service changed during synchronization")
+                    raise StaleReconciliation("Remote Service changed during synchronization")
             else:
                 plane_db.conn.execute(
                     "INSERT OR REPLACE INTO agent_remote_services"
@@ -6652,7 +6654,12 @@ def set_remote_service_agent(
 
     try:
         result = plane_db._mutate("set remote-service %s" % name, "set remote service", write_all)
-    except StaleOfflineReconciliation:
+    except StaleReconciliation:
+        if recorded_mgmt_effect is not None:
+            # Never compensate stale replay back over a newer operator action.
+            # Keep earlier batch effects; synchronize retries with fresh intent.
+            effects = _agent_mgmt_effects(plane_db)
+            effects[:] = [item for item in effects if item is not recorded_mgmt_effect]
         return {"operation": "skipped", "skipped": True,
                 "reason": "Remote Service changed during synchronization"}
     except Exception as exc:

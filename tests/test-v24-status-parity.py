@@ -491,6 +491,116 @@ class StatusParityTests(unittest.TestCase):
         ).fetchone()
         self.assertEqual((row["status"], row["runtime_verified"]), ("DEGRADED", 0))
 
+    def _u005_online_synchronize_upsert_write_race(self, operator_online=True):
+        from unittest import mock
+        import drlink_v24_runtime as runtime
+        operator = ControlPlane(self.agent_tmp)
+        self.addCleanup(operator.close)
+        v24.ensure_v2_schema(operator.conn)
+        state_path = Path(self.agent_tmp, "etc/frp/client-state.json")
+        state = json.loads(state_path.read_text())
+        state.update(frp_server="203.0.113.10", frp_server_port=443,
+                     host_id="agent-a", services={})
+        state_path.write_text(json.dumps(state))
+        Path(self.agent_tmp, "etc/frp/frpc.toml").write_text(
+            'serverAddr = "203.0.113.10"\nserverPort = 443\n'
+            'auth.method = "token"\nauth.token = "fixture-token"\n'
+        )
+        real_set = v24.set_remote_service_agent
+        real_upsert = mgmt.upsert_remote_service_on_server
+        with mock.patch.dict(os.environ, {"FRP_SKIP_SYSTEMD": "1",
+                                         "DRLINK_SERVER_REACHABLE": "1"}), \
+                mock.patch.object(runtime, "runtime_should_apply", return_value=True):
+            for stype, pool in (("fixed-tcp", "fixed-tcp"), ("tcp", "normal")):
+                with self.subTest(type=stype, operator_online=operator_online):
+                    name = "u005-online-" + stype
+                    service = name + "-object"
+                    v24.set_service_object(self.server, service, type=stype,
+                                           port=28144, oneshot=True)
+
+                    def public_set(plane, enabled, reachable=True):
+                        return real_set(plane, name, destination="this-host", service=service,
+                                        enabled=enabled, oneshot=True, root=self.agent_tmp,
+                                        server_reachable=reachable)
+
+                    port = public_set(self.agent, True)["view"]["endpoint_port"]
+                    self.assertEqual(public_set(self.agent, False)["view"]["status"], "DISABLED")
+                    prior_effect = {"op": "update-rs", "name": "prior-batch", "enabled": True}
+                    v24._agent_mgmt_effects(self.agent).append(prior_effect)
+                    fired = []
+                    replays = []
+                    upserts = []
+
+                    def after_upsert(**kwargs):
+                        # Real authenticated HTTP and Server SQLite mutation.
+                        response = real_upsert(**kwargs)
+                        if kwargs["name"] == name:
+                            upserts.append(bool(kwargs["enabled"]))
+                            if not fired and not kwargs["enabled"]:
+                                self.assertTrue(self.agent._batch_mode)
+                                self.assertFalse(self.agent.conn.in_transaction)
+                                self.assertEqual(response["status"], "DISABLED")
+                                fired.append(True)  # Do not inject into operator calls.
+                                changed = public_set(operator, True, reachable=operator_online)
+                                self.assertEqual(changed["view"]["status"],
+                                                 "HEALTHY" if operator_online else "DEGRADED")
+                                if not operator_online:
+                                    self.assertEqual(self.server.conn.execute(
+                                        "SELECT enabled FROM published_services WHERE name=?", (name,)
+                                    ).fetchone()[0], 0)
+                                self.assertEqual(changed["view"]["endpoint_port"], port)
+                                self.assertFalse(operator.conn.in_transaction)
+                        return response
+
+                    def replay(plane, svc_name, **kwargs):
+                        result = real_set(plane, svc_name, **kwargs)
+                        if svc_name == name:
+                            replays.append(result)
+                        return result
+
+                    with mock.patch.object(mgmt, "upsert_remote_service_on_server",
+                                           side_effect=after_upsert), \
+                            mock.patch.object(v24, "set_remote_service_agent", side_effect=replay), \
+                            mock.patch.object(v24, "reconcile_agent_mgmt_side_effects",
+                                              wraps=v24.reconcile_agent_mgmt_side_effects) as compensate:
+                        result = v24.synchronize_agent_remote_services(self.agent, root=self.agent_tmp)
+                    self.assertEqual(fired, [True])
+                    row = self.agent.conn.execute(
+                        "SELECT * FROM agent_remote_services WHERE name=?", (name,)
+                    ).fetchone()
+                    self.assertEqual((row["enabled"], row["endpoint_port"], row["pool_class"]),
+                                     (1, port, pool), dict(row))
+                    self.assertEqual((row["status"], row["runtime_verified"]), ("HEALTHY", 1), result)
+                    self.assertEqual(len(replays), 2, replays)
+                    self.assertTrue(replays[0].get("skipped"), replays)
+                    self.assertFalse(replays[1].get("skipped", False), replays)
+                    self.assertEqual(upserts, [False, True, True, True] if operator_online
+                                     else [False, True])
+                    effects = v24._agent_mgmt_effects(self.agent)
+                    self.assertTrue(any(item is prior_effect for item in effects))
+                    self.assertTrue(all(item.get("enabled") for item in effects
+                                        if item.get("name") == name), effects)
+                    compensate.assert_not_called()
+                    pub = self.server.conn.execute(
+                        "SELECT * FROM published_services WHERE name=? AND released=0", (name,)
+                    ).fetchone()
+                    self.assertEqual((pub["enabled"], pub["public_port"], pub["target_port"]),
+                                     (1, port, 28144))
+                    self.assertEqual(self._server_status(name)["status"], "HEALTHY")
+                    proxy = runtime.remote_service_proxy_id(name)
+                    rec = runtime.load_client_state(self.agent_tmp)["services"][proxy]
+                    self.assertEqual((rec["enabled"], rec["remote_port"], rec["local_port"]),
+                                     (True, port, 28144))
+                    self.assertIn('name = "agent-a-%s"' % proxy,
+                                  Path(self.agent_tmp, "etc/frp/frpc.toml").read_text())
+                    self.assertFalse(self.agent.conn.in_transaction)
+
+    def test_U005_online_synchronize_upsert_write_race(self):
+        self._u005_online_synchronize_upsert_write_race()
+
+    def test_U005_online_retry_repairs_server_after_offline_operator(self):
+        self._u005_online_synchronize_upsert_write_race(operator_online=False)
+
     def _u005_reenable_during_sync(self, phase):
         from unittest import mock
         import drlink_v24_runtime as runtime
