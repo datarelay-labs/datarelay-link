@@ -27,6 +27,7 @@ import {observedAuthenticatedWebSession,observedWebMfaChallenge,observedWebMfaCo
 import {observedCoreHealthSnapshot,observedHealthPlaneCount} from "./uxb-health-state";
 import {observedCoreSystemStatus} from "./uxb-system-status";
 import {observedCoreCertificatePreflight} from "./uxb-certificate-preflight";
+import {observedCoreCertificateActionReceipt,observedCoreCertificateRenewalReceipt} from "./uxb-certificate-actions";
 import {observedCoreJobDisplay,observedJobCancelAvailable} from "./uxb-jobs-display";
 import {observedRolloutPreviewDisplay} from "./uxb-rollout-display";
 import {filterLoadedServiceFacets,type ServiceTypeFacet,type ServiceConfigFacet} from "./uxb-service-facets";
@@ -904,6 +905,10 @@ function SystemPanel({data,operator}:{data:any,operator:any}){
   const [certPem,setCertPem]=useState(""),[keyPem,setKeyPem]=useState(""),[chainPem,setChainPem]=useState("");
   const [productUpdateConfirmation,setProductUpdateConfirmation]=useState(""),[engineUpdateConfirmation,setEngineUpdateConfirmation]=useState("");
   const [preflight,setPreflight]=useState<any>(null),[renewal,setRenewal]=useState<any>(null),[certAction,setCertAction]=useState<any>(null),[updateResult,setUpdateResult]=useState<any>(null),[validation,setValidation]=useState<any>(null),[backupArtifact,setBackupArtifact]=useState<any>(null),[supportArtifact,setSupportArtifact]=useState<any>(null),[error,setError]=useState("");
+  // All certificate writes are Core-authoritative and non-idempotent. Lock
+  // across the four operations immediately, before React's next render.
+  const certMutationInFlight=useRef(false);
+  const [certMutationBusy,setCertMutationBusy]=useState(false);
   async function runPreflight(){
     setError("");setPreflight(null);
     try{
@@ -913,10 +918,61 @@ function SystemPanel({data,operator}:{data:any,operator:any}){
       setPreflight(projected);
     }catch(e:any){setPreflight(null);setError(e.message||String(e))}
   }
-  async function configureCertificate(){setError("");setCertAction(null);try{setCertAction(await api("/api/v1/system/certificate/configure",{method:"POST",body:JSON.stringify({mode:certMode,hostname:certHostname,contact_email:certEmail,acme_environment:acmeEnv,confirmation:certConfigConfirmation})}));setCertConfigConfirmation("")}catch(e:any){setError(e.message||String(e))}}
-  async function issueCertificate(){setError("");setCertAction(null);try{setCertAction(await api("/api/v1/system/certificate/issue",{method:"POST",body:JSON.stringify({confirmation:issueConfirmation})}));setIssueConfirmation("")}catch(e:any){setError(e.message||String(e))}}
-  async function importCertificate(){setError("");setCertAction(null);try{setCertAction(await api("/api/v1/system/certificate/import",{method:"POST",body:JSON.stringify({cert_pem:certPem,key_pem:keyPem,chain_pem:chainPem,confirmation:importConfirmation})}));setImportConfirmation("");setCertPem("");setKeyPem("");setChainPem("")}catch(e:any){setError(e.message||String(e))}}
-  async function renewCertificate(){setError("");setRenewal(null);try{setRenewal(await api("/api/v1/system/certificate/renew",{method:"POST",body:JSON.stringify({confirmation:renewConfirmation})}));setRenewConfirmation("")}catch(e:any){setError(e.message||String(e))}}
+  async function performCertificateAction(
+    operation:"configure"|"issue"|"import",path:string,
+    body:Record<string,unknown>,expected:{hostname:string,mode:string}
+  ){
+    if(certMutationInFlight.current)return;
+    certMutationInFlight.current=true;setCertMutationBusy(true);
+    setError("");setCertAction(null);setRenewal(null);
+    try{
+      const raw=await api(path,{method:"POST",body:JSON.stringify(body)});
+      const confirmed=observedCoreCertificateActionReceipt(raw,operation,expected);
+      if(!confirmed)throw new Error("Core certificate action returned no verified matching mutation receipt.");
+      setCertAction(confirmed);
+    }catch{
+      setCertAction(null);
+      setError("Core mutation outcome UNKNOWN. Re-read Certificate Status and Audit before submitting another certificate change.");
+    }finally{certMutationInFlight.current=false;setCertMutationBusy(false)}
+  }
+  async function configureCertificate(){
+    try{
+      await performCertificateAction("configure","/api/v1/system/certificate/configure",{
+        mode:certMode,hostname:certHostname,contact_email:certEmail,
+        acme_environment:acmeEnv,confirmation:certConfigConfirmation
+      },{hostname:certHostname.trim().toLowerCase(),mode:certMode.toUpperCase().replaceAll("-","_")});
+    }finally{setCertConfigConfirmation("")}
+  }
+  async function issueCertificate(){
+    try{
+      await performCertificateAction("issue","/api/v1/system/certificate/issue",{
+        confirmation:issueConfirmation
+      },data.certificate);
+    }finally{setIssueConfirmation("")}
+  }
+  async function importCertificate(){
+    try{
+      await performCertificateAction("import","/api/v1/system/certificate/import",{
+        cert_pem:certPem,key_pem:keyPem,chain_pem:chainPem,confirmation:importConfirmation
+      },{hostname:data.certificate?.hostname,mode:"USER_CERTIFICATE"});
+    }finally{setCertPem("");setKeyPem("");setChainPem("");setImportConfirmation("")}
+  }
+  async function renewCertificate(){
+    if(certMutationInFlight.current)return;
+    certMutationInFlight.current=true;setCertMutationBusy(true);
+    setError("");setRenewal(null);setCertAction(null);
+    try{
+      const raw=await api("/api/v1/system/certificate/renew",{
+        method:"POST",body:JSON.stringify({confirmation:renewConfirmation})
+      });
+      const confirmed=observedCoreCertificateRenewalReceipt(raw,data.certificate);
+      if(!confirmed)throw new Error("Core renewal receipt was unverified.");
+      setRenewal(confirmed);
+    }catch{
+      setRenewal(null);
+      setError("Core mutation outcome UNKNOWN. Re-read Certificate Status and Audit before retrying renewal.");
+    }finally{certMutationInFlight.current=false;setCertMutationBusy(false);setRenewConfirmation("")}
+  }
   async function checkUpdate(target:string){setError("");setUpdateResult(null);try{setUpdateResult(await api("/api/v1/system/update/check",{method:"POST",body:JSON.stringify({target})}))}catch(e:any){setError(e.message||String(e))}}
   async function updateProduct(){setError("");setUpdateResult(null);try{setUpdateResult(await api("/api/v1/system/update/product",{method:"POST",body:JSON.stringify({confirmation:productUpdateConfirmation})}));setProductUpdateConfirmation("")}catch(e:any){setError(e.message||String(e))}}
   async function refreshProductUpdate(){if(!updateResult?.job_id)return;setError("");try{setUpdateResult(await api("/api/v1/system/update/product/status?job_id="+encodeURIComponent(updateResult.job_id)))}catch(e:any){setError(e.message||String(e))}}
@@ -958,7 +1014,7 @@ function SystemPanel({data,operator}:{data:any,operator:any}){
     <div className="card" id="drlink-certificate-status" tabIndex={-1}>
       <h3>Certificate Status</h3>
       <Table items={[{mode:certificate.mode,hostname:certificate.hostname,certificate:certificate.certificate,issuer:certificate.issuer,expires:certificate.expires,days_remaining:certificate.days_remaining,auto_renewal:certificate.auto_renewal}]}/>
-      <button className="secondary" onClick={runPreflight}>Run Certificate Preflight</button>
+      <button className="secondary" onClick={runPreflight} disabled={certMutationBusy}>Run Certificate Preflight</button>
       {operator.role==="Admin"&&<>
         <h4>Certificate Intent</h4>
         <div className="toolbar">
@@ -967,16 +1023,16 @@ function SystemPanel({data,operator}:{data:any,operator:any}){
           <input value={certEmail} onChange={e=>setCertEmail(e.target.value)} placeholder="ACME contact email"/>
           <select value={acmeEnv} onChange={e=>setAcmeEnv(e.target.value)}><option value="production">Production</option><option value="staging">Staging</option></select>
         </div>
-        <div className="toolbar"><input value={certConfigConfirmation} onChange={e=>setCertConfigConfirmation(e.target.value)} placeholder="Type APPLY"/><button className="danger" onClick={configureCertificate} disabled={certConfigConfirmation!=="APPLY"||!["auto-acme","user-certificate","private-ca"].includes(certMode)}>Apply Certificate Settings</button></div>
-        {certMode!=="user-certificate"&&<div className="toolbar"><input value={issueConfirmation} onChange={e=>setIssueConfirmation(e.target.value)} placeholder="Type ISSUE"/><button className="danger" onClick={issueCertificate} disabled={issueConfirmation!=="ISSUE"}>Issue & Activate Certificate</button></div>}
+        <div className="toolbar"><input value={certConfigConfirmation} onChange={e=>setCertConfigConfirmation(e.target.value)} placeholder="Type APPLY"/><button className="danger" onClick={configureCertificate} disabled={certMutationBusy||certConfigConfirmation!=="APPLY"||!["auto-acme","user-certificate","private-ca"].includes(certMode)}>Apply Certificate Settings</button></div>
+        {certMode!=="user-certificate"&&<div className="toolbar"><input value={issueConfirmation} onChange={e=>setIssueConfirmation(e.target.value)} placeholder="Type ISSUE"/><button className="danger" onClick={issueCertificate} disabled={certMutationBusy||issueConfirmation!=="ISSUE"}>Issue & Activate Certificate</button></div>}
         {certMode==="user-certificate"&&<div className="card">
           <div className="muted">PEM material is sent only in this request, staged under a private Core-owned directory, imported by the canonical TLS engine, then deleted.</div>
           <textarea className="draft-editor" value={certPem} onChange={e=>setCertPem(e.target.value)} placeholder="Certificate PEM"/>
           <textarea className="draft-editor" value={keyPem} onChange={e=>setKeyPem(e.target.value)} placeholder="Private key PEM"/>
           <textarea className="draft-editor" value={chainPem} onChange={e=>setChainPem(e.target.value)} placeholder="Optional chain PEM"/>
-          <div className="toolbar"><input value={importConfirmation} onChange={e=>setImportConfirmation(e.target.value)} placeholder="Type IMPORT"/><button className="danger" onClick={importCertificate} disabled={importConfirmation!=="IMPORT"||!certPem||!keyPem}>Import & Activate Certificate</button></div>
+          <div className="toolbar"><input value={importConfirmation} onChange={e=>setImportConfirmation(e.target.value)} placeholder="Type IMPORT"/><button className="danger" onClick={importCertificate} disabled={certMutationBusy||importConfirmation!=="IMPORT"||!certPem||!keyPem}>Import & Activate Certificate</button></div>
         </div>}
-        <div className="toolbar"><input value={renewConfirmation} onChange={e=>setRenewConfirmation(e.target.value)} placeholder="Type RENEW"/><button className="danger" onClick={renewCertificate} disabled={renewConfirmation!=="RENEW"}>Renew Certificate If Due</button></div>
+        <div className="toolbar"><input value={renewConfirmation} onChange={e=>setRenewConfirmation(e.target.value)} placeholder="Type RENEW"/><button className="danger" onClick={renewCertificate} disabled={certMutationBusy||renewConfirmation!=="RENEW"}>Renew Certificate If Due</button></div>
       </>}
       {preflight&&<section role="status" className="dr-preview-panel">
         <p className="muted">Preflight is advisory: local Core DNS and HTTP/80 probes are not proof of external ACME validation, issuance, browser connectivity or live TLS health.</p>
