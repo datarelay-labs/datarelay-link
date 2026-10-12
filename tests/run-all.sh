@@ -257,6 +257,7 @@ python3 tests/test-v24-managed-host-retirement.py
 python3 tests/test-v24-user-lifecycle-ux.py
 python3 tests/test-v24-ai-auth-convergence.py
 python3 tests/test-v24-ai-job-safety.py
+python3 tests/test-v24-ai-agent-http-status.py
 python3 tests/test-v24-managed-host-liveness.py
 python3 tests/test-v24-ai-jobs-json1-independence.py
 python3 tests/test-v24-authoritative-connectivity-convergence.py

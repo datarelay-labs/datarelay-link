@@ -252,11 +252,11 @@ def _agent_post(url: str, token: str, body: dict, timeout: float = 10) -> dict:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return json.loads(resp.read().decode("utf-8") or "{}")
     except urllib.error.HTTPError as exc:
-        payload = exc.read().decode("utf-8", "replace")
-        try:
-            return json.loads(payload)
-        except Exception:
-            raise ControlPlaneError("agent RPC HTTP %s" % exc.code) from exc
+        # HTTP status, not caller-controlled JSON in an error body, decides
+        # whether Core accepted a claim or completion. A non-2xx response
+        # must never be mistaken for a successful Agent operation receipt.
+        # Do not reflect potentially sensitive server error content.
+        raise ControlPlaneError("agent RPC HTTP %s" % exc.code) from exc
 
 
 # Idle claim polls must not run at interactive rate. A busy poll stays short
