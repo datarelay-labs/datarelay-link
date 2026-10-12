@@ -1631,7 +1631,7 @@ def server_complete_management_job(plane, auth: MgmtAuthContext, body: dict) -> 
             from drlink_v30_jobs import ROLLOUT_JOB_TYPE
 
             claimed = engine.conn.execute(
-                "SELECT j.job_type FROM management_jobs j "
+                "SELECT j.job_type,j.payload_json FROM management_jobs j "
                 "JOIN management_job_targets t ON t.job_id=j.id "
                 "WHERE j.id=? AND t.target_id=? AND t.claim_token=? "
                 "AND t.status='RUNNING'",
@@ -1641,6 +1641,29 @@ def server_complete_management_job(plane, auth: MgmtAuthContext, body: dict) -> 
                 raise MgmtSyncError(
                     "AGENT_UPDATER_NOT_QUALIFIED: signed Agent update completion is unavailable"
                 )
+            if claimed and str(claimed["job_type"]) in (
+                "remote-service-set", "remote-service-delete"
+            ):
+                # The signed caller is the enrolled Host, but its completion
+                # still must identify the exact Core-requested operation and
+                # immutable Remote Service name. An unrelated Job receipt is
+                # never evidence that the requested mutation was performed.
+                kind = str(claimed["job_type"])
+                try:
+                    requested = json.loads(str(claimed["payload_json"] or "{}"))
+                except (TypeError, ValueError):
+                    requested = None
+                name = requested.get("name") if isinstance(requested, dict) else None
+                if (
+                    not isinstance(name, str) or not name
+                    or result.get("operation") != kind
+                    or result.get("name") != name
+                    or (kind == "remote-service-delete"
+                        and result.get("status") != "DELETED")
+                ):
+                    raise MgmtSyncError(
+                        "Core Management Job completion receipt does not match requested Remote Service."
+                    )
         job = engine.complete_target(
             job_id=job_id,
             target_id=machine_id,

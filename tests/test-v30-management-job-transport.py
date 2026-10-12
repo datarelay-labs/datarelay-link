@@ -165,6 +165,54 @@ class V30ManagementJobTransportTests(unittest.TestCase):
         finally:
             engine.close()
 
+    def test_core_remote_service_success_requires_exact_claimed_operation_and_name(self):
+        engine = ManagementJobEngine(self.server_tmp)
+        try:
+            cases = [
+                ("remote-service-set",
+                 {"name": "ssh-access", "destination": "this-host",
+                  "service": "ssh", "enabled": True},
+                 {"operation": "remote-service-set", "name": "ssh-access",
+                  "runtime_status": "HEALTHY", "endpoint": "127.0.0.1:6022"}),
+                ("remote-service-delete", {"name": "ssh-access"},
+                 {"operation": "remote-service-delete", "name": "ssh-access",
+                  "status": "DELETED", "runtime_verified": False}),
+            ]
+            for kind, payload, valid in cases:
+                with self.subTest(kind=kind):
+                    job = engine.enqueue(
+                        job_type=kind, targets=[MACHINE_A],
+                        requested_by="web:admin", resource_type="remote-service",
+                        resource_ref="ssh-access", payload=payload,
+                    )
+                    claim = mgmt.claim_management_jobs_on_server(
+                        root=self.agent_tmp, limit=1
+                    )["jobs"][0]
+                    self.assertEqual(claim["job_id"], job["id"])
+                    for result in (
+                        {}, {**valid, "operation": "doctor"},
+                        {**valid, "name": "another-service"},
+                    ):
+                        with self.subTest(kind=kind, result=result):
+                            with self.assertRaises(mgmt.MgmtSyncError):
+                                mgmt._request_json(
+                                    "POST", self.base + "/v1/management-jobs/complete",
+                                    {"id": claim["job_id"],
+                                     "claim_token": claim["claim_token"],
+                                     "status": "SUCCEEDED", "result": result},
+                                    root=self.agent_tmp,
+                                )
+                            self.assertEqual(engine.get(job["id"])["status"], "RUNNING")
+                    reply = mgmt.complete_management_job_on_server(
+                        root=self.agent_tmp, job_id=job["id"],
+                        claim_token=claim["claim_token"], status="SUCCEEDED",
+                        result=valid,
+                    )
+                    self.assertIs(reply["ok"], True)
+                    self.assertEqual(engine.get(job["id"])["status"], SUCCEEDED)
+        finally:
+            engine.close()
+
     def test_core_signed_completion_never_persists_untrusted_agent_error_text(self):
         engine = ManagementJobEngine(self.server_tmp)
         secret = "Bearer fixture-only-untrusted-signed-completion"
