@@ -229,7 +229,10 @@ class V30ManagementJobTransportTests(unittest.TestCase):
                         root=self.agent_tmp, limit=1
                     )["jobs"][0]
                     self.assertEqual(claim["job_id"], job["id"])
-                    for invalid in ({}, {"operation": "remote-service-delete"}):
+                    for invalid in (
+                        {}, {"operation": "remote-service-delete"},
+                        {"operation": kind, "unreviewed_metadata": "raw"},
+                    ):
                         with self.subTest(kind=kind, result=invalid):
                             with self.assertRaises(mgmt.MgmtSyncError):
                                 mgmt._request_json(
@@ -277,6 +280,7 @@ class V30ManagementJobTransportTests(unittest.TestCase):
                     invalid_results = [
                         {}, {**valid, "operation": "doctor"},
                         {**valid, "name": "another-service"},
+                        {**valid, "unreviewed_metadata": "raw"},
                     ]
                     if kind == "remote-service-set":
                         invalid_results.extend([

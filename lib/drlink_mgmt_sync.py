@@ -1651,6 +1651,45 @@ def server_complete_management_job(plane, auth: MgmtAuthContext, body: dict) -> 
                 "AND t.status='RUNNING'",
                 (job_id, machine_id, claim_token),
             ).fetchone()
+            if claimed:
+                # Host request signatures authenticate an enrolled Agent,
+                # not arbitrary result fields it may inject into Core's
+                # queryable Job history. Accept only documented native
+                # top-level receipt keys for the claimed operation.
+                receipt_fields = {
+                    "doctor": frozenset((
+                        "operation", "overall", "exit_code", "check_count",
+                        "counts", "findings", "network_probe_performed",
+                    )),
+                    "refresh": frozenset((
+                        "operation", "status", "updated", "projected",
+                        "affected", "runtime_error",
+                    )),
+                    "version-check": frozenset((
+                        "operation", "project_version",
+                        "relay_engine_version", "release_channel",
+                        "source_ref", "source_head",
+                        "target_project_version", "target_relay_engine_version",
+                        "target_release_channel", "product_update_available",
+                        "relay_engine_update_available",
+                    )),
+                    "support-bundle": frozenset((
+                        "operation", "artifact_path", "size", "sha256",
+                        "sanitized", "section_count", "skipped_count", "role",
+                    )),
+                    "remote-service-set": frozenset((
+                        "operation", "name", "runtime_status", "reason",
+                        "endpoint",
+                    )),
+                    "remote-service-delete": frozenset((
+                        "operation", "name", "status", "runtime_verified",
+                    )),
+                }
+                allowed = receipt_fields.get(str(claimed["job_type"]))
+                if allowed is not None and any(field not in allowed for field in result):
+                    raise MgmtSyncError(
+                        "Core Management Job completion contains unexpected result fields."
+                    )
             if claimed and str(claimed["job_type"]) == ROLLOUT_JOB_TYPE:
                 raise MgmtSyncError(
                     "AGENT_UPDATER_NOT_QUALIFIED: signed Agent update completion is unavailable"
