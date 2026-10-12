@@ -1019,7 +1019,10 @@ def prepare_v24_plan(plane: ControlPlane, raw_text: str, *, role: Optional[str] 
     if source_revision is None or source_revision == "":
         base_revision = int(plane.current_revision())
     else:
-        if isinstance(source_revision, bool):
+        # YAML floats must never be truncated into a revision. Keep quoted
+        # integer compatibility, but reject booleans (an int subclass) and
+        # all other YAML types before conversion.
+        if isinstance(source_revision, bool) or not isinstance(source_revision, (int, str)):
             _bundle_error("configurationBundle.sourceRevision must be a non-negative integer.")
         try:
             base_revision = int(source_revision)
