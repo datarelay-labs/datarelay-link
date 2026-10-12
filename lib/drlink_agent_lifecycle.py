@@ -388,7 +388,6 @@ def process_management_jobs_once(root: Optional[str] = None, *, limit: int = 4) 
     if type(limit) is not int or limit < 1:
         raise ValueError(invalid)
     count = min(limit, 16)
-    response = claim_management_jobs_on_server(root=root, limit=count)
     # The signed server must provide an explicit bounded claim array. A
     # missing or malformed response is UNKNOWN, not a confirmed empty queue.
     # Validate the WHOLE batch before executing even one mutating Agent job:
@@ -403,6 +402,8 @@ def process_management_jobs_once(root: Optional[str] = None, *, limit: int = 4) 
         or machine_id != machine_id.strip()
         or any(ord(ch) < 33 or ord(ch) > 126 for ch in machine_id)):
         raise ValueError(invalid)
+    # Invalid local enrollment must never claim or lease Core work.
+    response = claim_management_jobs_on_server(root=root, limit=count)
     if not isinstance(response, dict) or not isinstance(response.get("jobs"), list):
         raise ValueError(invalid)
     jobs = response["jobs"]

@@ -69,6 +69,30 @@ class V30ManagementJobTests(unittest.TestCase):
                         agent.process_management_jobs_once(root=self.tmp, limit=invalid)
                     claim.assert_not_called()
 
+    def test_agent_invalid_identity_never_leases_core_work(self):
+        # A valid signed session cannot compensate for absent or malformed
+        # local Host identity; do not reserve Core work before this check.
+        from unittest.mock import patch
+        import drlink_agent_lifecycle as agent
+
+        bad_identities = (
+            {}, {"machine_id": None}, {"machine_id": "  "},
+            {"machine_id": True}, {"machine_id": "host\nspoof"},
+        )
+        for identity in bad_identities:
+            with self.subTest(identity=identity):
+                with patch(
+                    "drlink_mgmt_sync._agent_identity", return_value=identity,
+                ), patch(
+                    "drlink_mgmt_sync.claim_management_jobs_on_server",
+                    side_effect=AssertionError("No Core claim with invalid Host identity"),
+                ) as claim:
+                    with self.assertRaisesRegex(
+                        ValueError, "Core Management Job claim response UNKNOWN"
+                    ):
+                        agent.process_management_jobs_once(root=self.tmp, limit=1)
+                    claim.assert_not_called()
+
     def test_schema_is_separate_from_ai_jobs(self):
         tables = {
             row[0]
