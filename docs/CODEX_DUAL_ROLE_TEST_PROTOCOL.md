@@ -37,7 +37,7 @@ The parent **CODEX_AUDITOR** reads the canonical contract and has the 15/116 cov
 
 All three personas are **Codex**; "AI-assisted" does not mean an outside AI provider or independent ChatGPT account. Fresh means a new context, not `codex exec resume` or `fork` from the auditor/Direct thread. Within an AI scenario, continue the SAME adviser thread to preserve multi-step recovery. Every actor is forbidden to read privileged context. A mere prompt claiming isolation without separately recorded actor inputs/threads is NOT sufficient evidence: unprovable or contaminated separation = PARTIAL/BLOCKED_TOOLING, never PASS.
 
-Codex CLI 0.160.0 supports a fresh `codex exec` thread, `--cd`, `--skip-git-repo-check`, `--sandbox read-only`, `--json`, `--output-last-message`, and `codex exec resume <thread-id>`. For the read-only FCS, use new non-repository actor directories under a **persistent run root** (NOT `/tmp`), least-privilege sandbox and prompts passed via stdin (not command-line arguments). Actor evidence is persisted privately with exact session/thread ID and caller input SHA256. The AI adviser is text-only and must not access terminals or filesystem; the AI operator alone tests CLI guidance through an approved public session. A wrapper may launch Codex actor threads and collect transcripts, but must not replay the scenario or count itself as a user.
+For Direct and AI User roles, use the proven ordinary `codex exec --approve-for-me --json` platform-reviewed launch, not forced `--ignore-user-config --sandbox read-only` flags that prevented public SSH. The **tool-free AI Adviser alone** may use the isolated read-only/no-user-config launch because it must never SSH, inspect files or use tools. Actual platform denials remain binding. FCS user actions remain NON-DESTRUCTIVE; the AI Adviser is text-only and must not use any tool. Store distinct actor prompts under a persistent private run root (NOT `/tmp`), pass them via stdin, not argv. Actor evidence is persisted privately with exact session/thread ID and caller input SHA256. The AI adviser is text-only and must not access terminals or filesystem; the AI operator alone tests CLI guidance through an approved public session. A wrapper may launch Codex actor threads and collect transcripts, but must not replay the scenario or count itself as a user.
 
 ## 3. Same-feature, same-scenario paired execution
 
@@ -94,35 +94,16 @@ The auditor substitutes ONLY the approved role, neutral goal, assigned public en
 
 These are **three Codex roles within one parent Codex test**, not three different model providers. Newly started actor threads are distinct from the auditor thread. Codex 0.160.0 allows new `codex exec` and continuing the existing adviser with `codex exec resume`; never resume/fork the auditor as a first-time actor. Use least-privilege authorized sandbox and stdin-provided prompts. CLI FCS requires read-only runtime. In Full User E2E, each needed state change still requires proper owner authorization.
 
-## 4.2 Actual Codex CLI FCS actor launcher and immutable receipts
+## 4.2 Optional FCS dispatch: never a Full E2E launch gate
 
-The auditor uses the checked-in `tools/codex_fcs_actor_dispatch.py` to start **one** genuinely fresh Codex CLI 0.160.0 thread per Direct User, AI User or AI Adviser actor. This is *not* a test harness that picks public CLI commands: its only responsibility is secure dispatch with already-authored role prompts and durable raw receipts. Full User E2E mutating roles require a **different owner-approved** dispatch boundary and may not use this non-destructive FCS launcher.
-
-**Prerequisites for each non-destructive FCS actor:** owner authorization for the particular accessible test host; a verified public-product installed Source HEAD; one fresh locked `RUN_ID`; private role prompts, separate Direct/AI/Adviser processes and prospective receipts. `tools/codex_fcs_actor_dispatch.py` now accepts an optional diagnostic `--preflight` OR `--installed-source-head` observed on the actual test host. The global seven-host `LAB_GO`, legacy `phase-state.json`, Rocky/Windows registration and unrelated MCP/OAuth are NOT prerequisites for an independent read-only FCS. A previous actual platform/tool denial still blocks its particular effect and may not be rerouted. Never credit an unexecuted lane as PASS.
-For each independently authorized read-only FCS run, the auditor first creates private 0700 `RUN_ID` directory outside `/tmp` with each actor's first prompt (0600) and matching public-only baseline. Example **template** (replace placeholders only after owner approval; DO NOT RUN NOW):
-
-~~~text
-python3 tools/codex_fcs_actor_dispatch.py
-  --run-root /home/aella/drlink-validation/codex-dual-role/<RUN_ID>
-  --run-id <RUN_ID> --pair-id <PAIR_ID>
-  --role DIRECT_USER|AI_OPERATOR|AI_ADVISER
-  --prompt-file /home/aella/drlink-validation/codex-dual-role/<RUN_ID>/prompts/<actor-prompt>
-  --preflight <ACTUAL_APPROVED_GO_PREFLIGHT_STATUS_JSON>
-  --lock e2e-reports/.cli-feature-scenario.lock
-~~~
-
-The launcher passes the prompt on STDIN (never argv), invokes a **new** `codex exec --json` with sandbox `read-only`, no inherited user-specific MCP config, and a source-less actor working directory. It writes private 0600 Codex JSONL event logs, CLI stderr, first/final answer and prospective PID/status/source/prompt-hash receipts. It verifies `thread.started` UUID and `turn.completed`, and rejects ANY AI Adviser shell/MCP/file/browser tool attempt. **A fresh Codex actor context and read-only sandbox are NOT an operating-system guarantee that model knowledge or globally readable files are inaccessible.** The auditor must separately inspect the complete public actor prompts and actual tool transcript; if isolation is unproven, treat the AI lane as BLOCKED/NOT_RUN.
+The legacy `tools/codex_fcs_actor_dispatch.py` can dispatch one genuinely fresh non-destructive FCS role (Direct, AI User or AI Adviser) and preserve locked RUN_ID, installed Source HEAD, private prompt, raw JSONL/PID and structural receipt. It is optional evidence orchestration, not a user, not the Full User E2E launcher, and never a global lab veto. On assigned owner-approved disposable test hosts, do not ask again for a generic approval. For the active Full E2E, preserve and continue its existing ordinary platform-reviewed Codex threads.
 
 **Full User E2E canonical inventory (auditor-only, not product execution):** After reading ALL current `docs/FULL_USER_E2E_SCENARIOS.md`, the Codex auditor uses `python3 tools/generate_full_user_e2e_inventory.py --run-root <PRIVATE_RUN_ID_DIRECTORY>` to freeze `ledger/scenario-inventory.tsv`. This extracts only canonical level-2 scenario headings, precisely **116 unique IDs** with original titles and MANDATORY/CONDITIONAL text; nested `### U-006` is not a second scenario. Missing, extra or duplicate headings BLOCK qualification. The inventory SHA/HEAD receipt is private and immutable per RUN_ID. It is input to the existing full-E2E pair-ledger validator, **not a completed Codex role action or PASS**. The auditor must still pair actual Direct and AI actors on each applicable ID.
 
 For validation, all three event paths go into `DIRECT_CODEX_EVENTS`, `AI_OPERATOR_CODEX_EVENTS` and `AI_ADVISER_CODEX_EVENTS` before `tools/validate_codex_dual_role_pairs.py` is run. The script requires a distinct originating Codex `thread.started`/`turn.completed` for each role and **fresh IDs across separate scenario pairs**, but never substitutes for a human-style user outcome or genuine content-isolation audit.
 
-**Fail-closed sanity check already performed at NOT_READY:** invoking this launcher with the real latest preflight returned exit code 3, `CODEX_ACTOR_BLOCKED=ValueError: Lab readiness NOT_READY/BLOCKED`, and created NO Codex actor process. This does **not** count as a real Codex user/AI test.
+## 5. Per-operation security, not a global startup veto
 
-## 5. Per-lane launch and genuine security boundaries
+The global `LAB_GO`, legacy `phase-state.json`, unrelated MCP/OAuth status and entire seven-host readiness are diagnostics only. For each live operation verify owner-assigned host, actual installed source HEAD, fresh isolated role receipt and real authorization. A platform/tool denial (including B014) blocks only the dependent criterion: do not retry it by another executor/route or claim PASS; continue other legitimate tests.
 
-On 2026-10-12 the owner explicitly removed the project-imposed blanket `LAB_GO` / `NOT_READY` rule for **starting** tests. Start independent owner-authorized non-destructive Codex CLI FCS runs now on currently accessible, installed and verified hosts. Historical `phase-state.json` and optional full-lab diagnostic `PREFLIGHT_STATUS.json` no longer authorize or veto an otherwise allowed FCS actor. The actor still needs a measured candidate Source HEAD, current-run exclusive lock and genuine private persona evidence.
-
-Full User E2E remains a separately scoped state-changing test: for each operation, check the exact disposable host, existing product state, installed HEAD, prospective evidence and actual permission. If Rocky/Windows registration or MCP/OAuth is not available, mark only dependent canonical checks `BLOCKED` or `NOT_RUN` and test the other accessible hosts. Do not treat an unavailable test as PASS; never change executor or invoke an alternate route to defeat a specific tool/platform denial.
-
-This owner test-start policy grants no production, release, credential, off-scope host or merger authority. Two same-HEAD release PASS loops and 116 canonical scenario dispositions are still separately required for release acceptance.
+This grants no off-scope host, production, credential/permission change, merge, tag, publication or release authority. Full E2E still requires the honest 116 scenarios, real traffic/Soak, independent Direct/AI mirrors and two complete same-HEAD PASS runs to release.

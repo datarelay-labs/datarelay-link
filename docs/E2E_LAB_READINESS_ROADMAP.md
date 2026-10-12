@@ -1,131 +1,33 @@
-# DRLink v2.4 — P0 E2E Lab & Test-Method Readiness Roadmap
+# Data Relay Link v2.4 — E2E lab diagnostics (not a launch gate)
 
-> **Priority:** P0 / FIRST actionable quality-convergence workstream; ahead of any next full qualification run or subsequent release steps.
-> **Owner:** CHATGPT_CHAT implements infrastructure preflight/automation and product fixes. Codex performs **TEST-ONLY** when dispatched by the owner, never source edits or release.
-> **Status:** PLANNED / prerequisites not yet passed. Preserve prior binding OpenAI/connector safety denials and unrelated DRLink v3 / DP OS Upgrade environments.
-> **Coordination:** datarelay-labs/datarelay-link Issue #165 (runnable) and parent release Issue #41 (PAUSED), PR #178 (OPEN).
-> **Baseline tested provenance:** 5479d6e544fe01ef0246cfbf8a6f235ccc774163; installed E2E product source was content parent 385a68e4672019b70f93bf216eed6292ee7ed719.
-> **Primary evidence:** frozen Codex E2E run `/home/aella/drlink-validation/codex-full-user-e2e-20261010-owner-dispatch/e2e-reviewed-run/codex-reviewed-20261010T085035Z/`. Previous run ledgers under `e2e-reports/full-user-e2e-*` and `/home/aella/drlink-validation/continued-20261010/` remain independent.
+> **Status:** Supporting diagnostic reference for owner-assigned test hosts.
+> **Authority:** `docs/FULL_USER_E2E_SCENARIOS.md` governs all 116 user scenarios; `docs/E2E_EXECUTION_PROCEDURE.md` specifies live execution and `docs/CODEX_DUAL_ROLE_TEST_PROTOCOL.md` defines independent Codex roles.
+> **Scope:** Issue #165, independently authorized disposable test hosts, source HEAD/evidence and release HOLD. This file is NOT a prerequisite checklist, phase authorization, or competing Work Packet.
 
-## Why this is P0
+## Execute live tests first
 
-The official `docs/FULL_USER_E2E_SCENARIOS.md` is the required 4,283-line full user contract at baseline. Its scope, actual CLI/persona-led testing, negative cases and two complete same-HEAD PASS gates must **NOT** be weakened. Historical executions also failed: Codex 2026-10-07 had FAIL12/PARTIAL67; Codex 2026-10-08 had repeated runs with up to 106 environment-blocked cases; 2026-10-10 ChatGPT c06 ledger PARTIAL101 and no AI mirrors; latest 2026-10-10 Codex 116-ID ledger **PASS0, FAIL3, PARTIAL71, BLOCKED_TOOLING21, BLOCKED_ENVIRONMENT7, FAIL_PRECONDITION3, N/A11**. Latest frozen report: **105/105 applicable AI-assisted mirrors unexecuted**, prospective persona/process proof missing, old Server state persisted because cleanroom uninstall was review-denied, 3,601-second load has significant errors and no qualified numeric SLO, MCP public trusted TLS and owner OAuth absent. A failed gate is not proof 116 features are broken, and a historical/other-HEAD test success is not current PASS.
+Continue the **existing** standard-reviewed Codex Full User E2E from its live session. Do not launch another competing run, force a read-only sandbox, restart completed actors, edit its source HEAD, or repeatedly wait for a new owner authorization already given. `LAB_GO`, legacy `phase-state.json` and global `NOT_READY` are diagnostic statuses, never permission switches. Readiness is diagnostic; no pre-run FCS or repeated seven-host approval sequence is required.
 
-## P0 owner-ordered prerequisite sequence before those lab packages
+F001 and F007 remain open until genuine exact-HEAD, signed Server/Agent evidence and real unaffected SSH/HTTP/TCP during three Fixed TCP cycles show they are fixed. F004, F005, F006 and D001 also require genuine retest; old source tests and historical findings alone never become E2E PASS. A source defect is fixed **after** freezing the affected E2E run, with focused RED→GREEN regression, and then requalified on a new candidate. Continue all independent safe user tests.
 
-**Immediate first:** CHATGPT_CHAT directly fixes/dispositions the frozen Codex E2E actionable findings F001/F004/F005/F006/F007/D001, with source-specific focused safety/negative regressions. F005/D001 have source checkpoint `d2b5fde7`; F004/F006 `631bed6b`. They remain awaiting live exact-HEAD acceptance. **F001 and F007 remain open pending proven root cause/continuity fix; do not mark solved because a synthetic test or status display passed.** Preserve all 30 original findings and unchanged reports; do not treat B/E permission and AI-prerequisite blocks as product bugs.
+## Owner-assigned routing and disposable-host authority
 
-**Scoped bugfix progress:** Commit `df101fbf` removed an unnecessary full FRP restart when current TOML and verified runtime generation are unchanged and only Agent metadata differs. Deterministic old-code FAIL/new-code PASS, including fail-closed unverified/force-reapply checks. This is not proof of fixing active Fixed TCP proxy mutations: see `docs/F001_F007_RUNTIME_CONTINUITY_REMEDIATION.md` and retain F001/F007 as OPEN pending proper generation/continuity evidence.
+- `MCP_DNS_SERVER` handles **MCP + DNS/public-hostname tests only**, including public TLS/OAuth, hostname DNS, bootstrap hostname and associated API checks.
+- `FUNCTION_PERFORMANCE_SERVER` handles **everything else**: functional Server, CLI, Remote Access, Internet Access, Agent, failure/recovery, performance and Soak. Mixed scenarios route each specific criterion to its matching host without doubling the 116-ID inventory.
+- Two-Server separation is **not a new VM guest/snapshot/restore/host-provisioning prerequisite**. Native Windows/Rocky and credentials remain limited to the exact owner-assigned estate.
 
-**Next:** CHATGPT_CHAT repairs the method/procedure in `docs/E2E_EXECUTION_PROCEDURE.md` and its canonical reference, including first-time user/AI isolation, prospective evidence, dynamic command inventory, 3600s stable soak vs separate chaos/stress, no leaked passwords, artifact/source pinning and persistent non-`/tmp` evidence. Focused deterministic fix tests are not new E2E or CLI acceptance runs.
+**Owner decision — every assigned test host may be destroyed:** Within the owner-approved disposable roster, product loss, service interruption and reboot were approved. Before testing each host, inspect its prior DRLink state, clean only eligible test-only state and **verify it is** clean; then deploy the immutable test candidate and execute actual scenarios. Do not demand a fresh owner confirmation merely because a designated test VM may fail. Keep management SSH, unrelated machines and historical evidence intact.
 
-**Current source remediation boundary:** Source now supports strict preexisting-admin, localhost-only, authenticated FRP reload and a truthful sync status report. Both still AWAIT AUTHORIZED LIVE RETEST. Without the legitimately provisioned preexisting management API, proxy-set changes retain the legacy full restart; never mark F007 closed based on isolated tests.
+**Safety boundary:** A real platform/tool refusal for an exact operation, especially B014 Server uninstall or a native/certificate effect, stays binding: **never retry such an effect under an alternate executor** or route. Mark only dependent scenarios BLOCKED/NOT_RUN and continue independently authorized tests. No production, credentials or permissions changes, publication, merger or release are implied.
 
-**Lab work runs in parallel with authorized tests (2026-10-12 owner override):** The LAB-P0-01..05 packages below diagnose each relevant host/effect but no longer block independent non-destructive CLI FCS or functional E2E on available owner-approved hosts. Global NOT_READY excludes only affected operations or hosts; report them as BLOCKED/NOT_RUN, not PASS. The active Work Packet permits Codex source fixes as well. Do not bypass actual platform denials or advance merge/release without separate acceptance.
+## Diagnostics are optional supporting evidence
 
-## P0 work packages (implement in priority order; keep independent actionable work moving)
+`tools/e2e_lab_readiness.py` may inventory observed hosts, Source HEAD, reachable public CLI, native platform, public TLS and applicable OAuth. It emits a private `PREFLIGHT_STATUS.json` and `CLEANROOM_LEDGER.tsv`, which can show GO/NOT_READY/BLOCKED and reasons, but never authorizes/vetoes test execution as a global gate. Do not confuse script/readiness PASS with actual independent user actions.
 
-### LAB-P0-01 — Dedicated, reversible, authorized test estate
+The Codex auditor retains each original actor's JSONL, private role prompts, exact first AI advice, public CLI/traffic evidence, installed Source HEAD, process receipts and canonical `scenario-results.tsv`. Authentic independent Direct User, AI Operator and **tool-free AI Adviser** must cover the same goal and equivalent initial state. An automated script is not a first-time user. Missing actor parity, application traffic, source identity, numeric SLO or native host evidence is not PASS.
 
-**Owner decision — every assigned test host may be destroyed (2026-10-11):**
-The current owner-private E2E test-host roster is **explicitly disposable**.
-No additional owner confirmation is necessary for expected loss of
-test data, service availability, reboot, failed installs or complete
-failure of an assigned test host **within its test scope**. Begin each
-host's test sequence by removing prior-run DRLink test state and leftover
-test-only helpers with the supported authorized cleanup, **verify it is
-clean**, install the frozen candidate, then execute the real assigned
-tests. When a test breaks the disposable host, record it, recover/clean
-using an available legitimate method, and retest. Do not substitute
-planning, VM-kind certification, or a new blanket snapshot approval
-for doing the tests. Exclude non-test hosts, other projects, unrelated
-management paths and immutable historical evidence. Previous
-OpenAI/tool/platform refusals for particular effects remain binding:
-**never retry such an effect under an alternate executor or command**.
-Only that host/lane is blocked; independent authorized tests continue.
+Mandatory stable workload evidence includes `WARMUP=60s`, `STEADY_STATE_EACH_CASE=300s` and `SOAK=3600s`; separately classify intended faults, collateral outages, integrity and actual receiver-confirmed throughput. Do not invent SLOs or turn a partially completed soak into a PASS.
 
-**Owner-assigned two-Server test routing:** `MCP_DNS_SERVER` handles **MCP + DNS/public-hostname tests only** (public TLS/OAuth and relevant AI/MCP, hostname resolution, public/bootstrap-hostname and fallback behavior). `FUNCTION_PERFORMANCE_SERVER` handles **everything else**: normal CLI, Server/Agent installation, enrollment, Remote Access, Internet Access, other security/function tests, errors and recovery, concurrency, throughput, 60s/300s/3600s Soak and F001/F007 continuity. For a mixed canonical scenario, send each individual criterion to the matching Server; no default requirement to rerun the entire scenario on both. Record the actual endpoints in the **owner-private** run inventory. This is a **routing decision**, not a new VM guest/snapshot/restore/host-provisioning prerequisite. Existing operation-specific authorization and prior B014/Windows/Rocky/certificate security denials still apply. Public cloud security rules permitting TCP/80 and TCP/443 do not themselves prove a valid public MCP certificate.
+## Final release quality remains strict
 
-- Prepare an **owner-approved disposable** v2.4 Server, two independent supported Agent Hosts plus authorized native platform routes, separate target and load roles where available; keep management/OOB SSH distinct from product ports.
-- Capture assigned host identity, permitted management path and effect boundaries in `LAB_OWNERSHIP_AND_APPROVAL.md`. Record existing backup/snapshot/restore identifiers **only for operations that actually rely on them**; routing normal installation or stable Soak to an existing VM does not require creating an additional snapshot.
-- Record per-host old product state, database/reservations, service units/listeners, legacy process ownership, temporary target files and immutable installed head in `CLEANROOM_LEDGER.tsv`. The last Codex run left the Server installed, two disconnected records and seven reservations. **Do not retry Server uninstall B014 through any alternative tool, privilege or route.** Gain proper legitimate review/approval or use a separately authorized clean disposable resource.
-- Preserve `/root/drlink-e2e-precleanup-20261010/` on the external E2E Server, all historical evidence, SSH management/tunnels, dev-drlink services, DP OS Upgrade, DRLink v3 linux114, and physically excluded Mac.
-
-**Acceptance:** Observe the correct assigned Server for each test, preserve original scenario coverage and real product evidence, and distinguish each actually blocked operation from independent runnable checks. Keep clean-state, rollback/backup and owner authorization evidence where the **specific destructive test** requires it. **Do not introduce a generic VM or snapshot GO gate merely to separate the two test servers.** Prior denied effects must not be retried.
-
-**Windows native read-only inventory fix:** the assigned existing Windows SSH route now checks the official `%ProgramData%\drlink\tools\drlink.cmd` install path, installed system version Source HEAD, stale FRP processes, registered product services, and scheduled tasks without changing Windows or opening a new management route. Task enumeration failure is NOT_READY; an unavailable localhost:2223 reverse SSH route remains NOT_READY. No Windows live qualification is claimed until the actual assigned host becomes reachable and the authorized native probe succeeds.
-
-### LAB-P0-02 — Preflight validation and candidate integrity
-
-- Implement a deterministic **read-only** `PREFLIGHT_STATUS.json` and human checklist against `AGENTS.md`, `.engineering/project.yaml`, the entire canonical Full User E2E contract, official public `drlink` version/status, OS facts, usable SSH+TTY, TCP routes, time sync, mount/disk/RAM/swap capacity and correct native platform assignment.
-- Verify bundle SHA256, clean build provenance HEAD and content parent mapping; on *every* participating installed Server/Agent confirm exact supported immutable `PRODUCT_SOURCE_HEAD`. Record pre-candidate observations separately from candidate evidence.
-- Check protected test TLS/CA, public MCP trust/real ChatGPT owner OAuth acceptance, source-address policy selectors and genuine review/approval for intended live tests before running affected lanes. Mark exact `NOT_READY` / `BLOCKED_TOOLING` / `BLOCKED_ENVIRONMENT`; no mock acceptances.
-- Distinguish readiness preflight (may use scripts) from independent real human CLI action evidence (scripts forbidden as primary proof).
-
-**Acceptance:** deterministic `GO | NOT_READY | BLOCKED` with per-gate reasons and evidence, no run-wide fictitious PASS if mandatory prerequisites are blocked. Independently authorized primary CLI/user tests may proceed on currently available hosts; tests excluded for missing registration or security denial remain BLOCKED/NOT_RUN.
-
-**Implemented support tooling (post-reboot):** `tools/e2e_lab_readiness.py` with isolated regression `tests/test-e2e-lab-readiness.py` performs approved-alias, read-only host/Source HEAD and ownership-precondition inventory. Provide a private lab-ownership JSON manifest through `--manifest` and durable `--output-dir`; it writes `PREFLIGHT_STATUS.json` and `CLEANROOM_LEDGER.tsv` outside `/tmp`, with exit code 3 when `NOT_READY`. The script cannot approve its own host permissions or override denied effects. Native Windows is not qualified from management reachability alone. This is supporting preflight, **not** a persona test or product readiness PASS.
-
-**Seven-role, two-Server installed-candidate gate:** When the private owner
-manifest declares `two_server_assignment.roles_distinct=true`, it MUST also
-contain the separate required `mcp_server` object with owner-authorized SSH
-alias `frp-release-server`, `role=mcp-server`, and `public_hostname` exactly
-matching the separately frozen MCP DNS hostname. The read-only collector uses
-only `system version`, `system certificate status` and `system diagnostics mcp`.
-It checks the installed MCP Server's exact Source HEAD, `single443` deployment,
-canonical public MCP URL and **locally valid active** certificate independently
-of the other six functional/native roles. Historical single-Server manifests
-remain supported only when no two-Server assignment was declared. The existing
-`MCP_PUBLIC_TLS` gate still requires separately verified **public CA trust and
-real external ingress**; local certificate status PASS is never a substitute for
-that evidence or for real ChatGPT owner-side OAuth. An absent, self-signed or
-unverified certificate leaves GO as NOT_READY. This preflight does not run
-`system certificate preflight` or `system certificate issue`, and cannot
-lift previously denied certificate, B014, Windows or Rocky effects.
-
-**Owner-selected Codex dual-role method:** `docs/CODEX_DUAL_ROLE_TEST_PROTOCOL.md` now defines a Codex auditor and three independent Codex actor contexts (Direct User, AI-assisted User, AI Adviser) within ONE locked RUN_ID. Each applicable feature/FCS and Full User E2E scenario uses the same goal and starting state; first advice is preserved, public-CLI use is observed and paired ledgers are validated. No outside model or ChatGPT test executor is substituted. **Method documented/testable, actor execution NOT YET VERIFIED; preflight remains NOT_READY.**
-
-### LAB-P0-03 — Prospective first-time user/AI role isolation
-
-- The auditor executor **first reads the entire 4,283-line contract end-to-end** in bounded chunks and manages the canonical 116 scenario IDs, 18 use cases and public-command coverage oracle.
-- Before each user action, create `RUN_ID`, role, natural-language mission, permitted hosts and starting state and record public CLI discoverability evidence. The user/Operator/Admin/Responder/Maintainer persona does **not** receive scenario answers, source, private DB, parser, docs or test harness commands as an oracle.
-- For each applicable intent provide **an independent fresh AI advisor context** containing only natural-language user goal plus the same public `drlink` menu/help/Tab/wizard/error/status output. Log first AI answer, any public/unmodified safe command, same-conversation recovery and *actual effect* on namespaced equivalent initial state. No hidden answer-key leakage or retrofitting.
-- Register each executor-owned process/session *at creation* (host, pid/session, role, UTC, purpose, management/product) and archive complete transcripts as they happen; snapshots assembled after execution cannot qualify as prospective persona evidence.
-- Tests can be simulated or scripted **only** for supporting static/unit/measurement evidence, not to impersonate a real actor.
-
-**Acceptance:** `AI_MIRRORS_WITHOUT_DIRECT_BASELINE=0`, `DIRECT_USE_CASES_WITHOUT_AI_MIRROR=0`, documented knowledge isolation, prospective evidence intact, all in-scope complete once user states truly verified.
-
-**Owner-scoped dual-role dispatch:** `tools/codex_fcs_actor_dispatch.py` (unit regressions in `tests/test-e2e-owner-preflight-procedure.py`) now requires the selected installed Source HEAD, an exclusive current FCS run lock, private prompts and independent genuine role receipts. The former global seven-host GO and phase-state flags have been removed from read-only FCS actor admission by explicit owner instruction. A global NOT_READY report remains diagnostic; each real denied effect still blocks only its dependent criterion. Knowledge isolation and user/AI parity require actual Codex role transcripts, not synthetic receipts. See `docs/CODEX_DUAL_ROLE_TEST_PROTOCOL.md`.
-
-### LAB-P0-04 — Separate stable soak from controlled faults and saturation
-
-- Define a validated baseline with OS/host topology and traffic correctness. For steady-mode user workload use contract's **60s warmup, 300s measurable steady windows, 3600s soak**. Capture CPU, RSS, FD, connection/CPS/goodput, p50/p95/p99, per-path errors and recovery with times/IDs.
-- **Independently label** intentional restart, policy, enable/disable, outage, collision, overload/64-worker saturation and fault periods. Keep mandatory real concurrency, fault/recovery and cross-service continuity tests: segregating results is not exempting them.
-- Differentiate connection resets *expected for the targeted service* from interruptions of unrelated services (F007), failed checksum read vs actual payload corruption, accepted sender bytes vs receiver-verified data, transient post-restart recovery vs a true unattended service-health PASS.
-- Declare numeric SLO/profile explicitly when legitimately approved. If missing, `MEASURED_NOT_QUALIFIED` is required, never invented SLO PASS.
-
-**Acceptance:** baseline and fault timelines correlate with commands and remote effects; soak success has no unexplained restart, unbounded leak, integrity/error or policy fault; high-load failures and unrelated path failures dispositioned separately.
-
-**Paired Full E2E 116-ID ledger precondition:** `tools/generate_full_user_e2e_inventory.py` freezes exactly the 116 canonical headings (13 U, 15 O, 20 A, 20 S, 15 C, 24 P, 9 X) and requirement tags with source SHA/HEAD in a private RUN_ID; it rejects a missing, duplicate or extra ID. Every applicable ID must later have an actual Codex Direct User plus separate AI-supported User/AI Adviser evidence. Inventory creation alone never qualifies a feature, scenario or release.
-
-### LAB-P0-05 — Native qualification, repeatability and release gate
-
-- Test the actual assigned native Windows/Rocky hosts only when approved; Docker/mocked runner output cannot qualify native/full-user behavior. Preserve binding Windows extraction, Rocky bootstrap and transfer denials.
-- Build fresh `RUN_ID` ledger, full command/variant coverage, every affected scenario and independent AI mirror. Derive final JSON/Markdown/Issue counters **from the ledger**, validate SHA256 and read back Issue #165 once after execution.
-- Qualified release requires **two complete passes on the same frozen qualified product HEAD** after code fixes; reboot, extra CI, preliminary smoke, historical c06 traffic and partial 3600s data cannot replace these.
-- CLI Feature/Scenario Reconciliation is separate and **runtime non-destructive**: Codex must reread all current `docs/CLI_FEATURE_SCENARIO_RECONCILIATION.md` (1,423 lines baseline), audit FCS-001..FCS-015, stop, then CHATGPT_CHAT directly fixes defects.
-
-**Acceptance:** `PASS1=PASS2=PASS` on exact immutable candidate, no mandatory unexecuted scenario/command/AI lane, no safety/tooling/management blockers, owner accepts release separately. Until then `RELEASE=HOLD`.
-
-## Dependencies, resourcing and restart sequencing
-
-1. Current owner priority **starts this LAB-P0 readiness workstream first**; preserve any already-confirmed ChatGPT E2E bugfix edits as safe, separately labeled WIP. Do not release code from a dirty/uncorroborated build. No overlapping Codex source mutation.
-2. The owner is enlarging **dev-drlink** disk and RAM and plans a restart. Before host shutdown: save/commit scoped authorized v2.4 work, preserve all cleanroom/baseline/legacy worktree metadata and evidence, check system service autostart, capture boot/mount/memory/swap and device baselines. Do not stop unrelated active jobs or reboot on behalf of the owner.
-3. After restart: verify OS disk/LVM/filesystem size (host currently Ubuntu ext4-on-LVM), memory, time sync, SSH/remote MCP reachability, datarelay services, tunnels and Git origin/branch/cleanliness; do **not** re-run old denied shared Server uninstall. Refresh read-only lab inventory and `PREFLIGHT_STATUS.json`.
-4. Then CHATGPT_CHAT resumes E2E bugfix and approved cleanroom work; next Codex CLI FCS test only after the updated candidate is consistently deployed and CLI-run prerequisites are met. Product qualification reruns after changes on the new HEAD.
-
-## Explicit stop conditions
-
-- Unauthorized destructive cleanup, production/credential/security control mutation, prior platform-safety denied effect, release/tag/merge/publish: **STOP affected action only** and record exact approval/tool error.
-- Never discard, force-reset, auto-merge, delete stale worktree branches, truncate 4,283-line contract or replace first-time persona by harness.
-- A reboot interruption is a host operation event, **not** evidence of E2E PASS or completion of the five-phase quality roadmap.
+All **116 canonical IDs** (13 U, 15 O, 20 A, 20 S, 15 C, 24 P, 9 X), independent Direct/AI mirrors, real user traffic, failure/recovery, native applicability, 3600s soak, current Source HEAD/provenance, required CI/qualifications and **two complete same-HEAD Full Real E2E PASS runs** are mandatory before release. `PASS1=PASS2=PASS` is not yet achieved. Until real evidence proves it, `RELEASE=HOLD`. No merge/tag/release/prod deployment without separate owner acceptance.

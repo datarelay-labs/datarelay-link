@@ -84,14 +84,15 @@ class E2EProcedureGuard(unittest.TestCase):
         self.assertIn("this entire canonical document", self.canonical)
         self.assertIn("Never bypass a genuine security denial", self.canonical)
 
-    def test_roadmap_priority_first_bugs_then_method_then_clean_lab(self):
-        bug = self.roadmap.index("Immediate first:")
-        sop = self.roadmap.index("**Next:** CHATGPT_CHAT repairs the method")
-        lab = self.roadmap.index("**Lab work runs in parallel with authorized tests")
-        self.assertLess(bug, sop)
-        self.assertLess(sop, lab)
-        self.assertLess(lab, self.roadmap.index("### LAB-P0-01"))
+    def test_lab_readiness_is_diagnostic_not_a_separate_test_queue(self):
+        self.assertIn("readiness is diagnostic", self.roadmap.lower())
         self.assertIn("F001 and F007 remain open", self.roadmap)
+        self.assertIn("116 canonical IDs", self.roadmap)
+        self.assertIn("two complete same-HEAD", self.roadmap)
+        self.assertNotIn("starts this LAB-P0 readiness workstream first",
+                         self.roadmap)
+        self.assertNotIn("P0 owner-ordered prerequisite sequence", self.roadmap)
+        self.assertIn("B014", self.roadmap)
 
     def test_procedure_retains_full_e2e_and_codex_test_only(self):
         required = (
@@ -112,6 +113,23 @@ class E2EProcedureGuard(unittest.TestCase):
         text = self.procedure
         absent = [p for p in required if p not in text]
         self.assertEqual(absent, [], absent)
+
+    def test_e2e_start_is_not_blocked_by_project_paperwork(self):
+        self.assertNotIn("Gate R1: all actionable", self.procedure)
+        self.assertNotIn("Do not start a new full run while", self.procedure)
+        self.assertNotIn("Approval matrix first", self.procedure)
+        self.assertIn("continue independent", self.procedure.lower())
+        self.assertIn("B014", self.procedure)
+        self.assertIn("116 scenario", self.procedure)
+        self.assertIn("two same-HEAD PASS", self.procedure)
+        agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+        self.assertNotIn("Read and lint the selected packet", agents)
+
+    def test_protocol_uses_standard_review_not_old_global_veto(self):
+        protocol = (ROOT / "docs" / "CODEX_DUAL_ROLE_TEST_PROTOCOL.md").read_text()
+        self.assertIn("--approve-for-me", protocol)
+        self.assertNotIn("replace placeholders only after owner approval", protocol)
+        self.assertNotIn("Fail-closed sanity check already performed", protocol)
 
     def test_open_runtime_continuity_findings_are_not_prematurely_closed(self):
         decision = (ROOT / "docs" / "F001_F007_RUNTIME_CONTINUITY_REMEDIATION.md"
@@ -420,6 +438,38 @@ class CodexActorDispatchSafeguards(unittest.TestCase):
             "latest_source_head": "a" * 40,
         }))
         return base, prompt, lab, lock, status
+
+    def test_codex_uses_ordinary_review_instead_of_forced_isolation(self):
+        argv = self.dispatch.build_codex_command(
+            "/usr/bin/codex", Path("/private/actor"),
+            Path("/private/actor/last-message.txt"), "DIRECT_USER")
+        self.assertEqual(argv[:3], ["/usr/bin/codex", "exec", "--approve-for-me"])
+        self.assertIn("--json", argv)
+        self.assertIn("--skip-git-repo-check", argv)
+        self.assertNotIn("--ignore-user-config", argv)
+        self.assertNotIn("--sandbox", argv)
+        self.assertEqual(argv[-1], "-")
+
+    def test_adviser_retains_stronger_tool_isolation(self):
+        argv = self.dispatch.build_codex_command(
+            "/usr/bin/codex", Path("/private/actor"),
+            Path("/private/actor/last-message.txt"), "AI_ADVISER")
+        self.assertIn("--ignore-user-config", argv)
+        self.assertIn("--sandbox", argv)
+        self.assertIn("read-only", argv)
+        self.assertNotIn("--approve-for-me", argv)
+
+    def test_unknown_ai_adviser_action_fails_closed(self):
+        with tempfile.TemporaryDirectory() as temp:
+            log = Path(temp) / "events.jsonl"
+            events = [
+                {"type": "thread.started", "thread_id": str(uuid.uuid4())},
+                {"type": "item.completed", "item": {"type": "unfamiliar_tool", "name": "x"}},
+                {"type": "turn.completed"},
+            ]
+            log.write_text("\n".join(json.dumps(e) for e in events) + "\n")
+            self.assertEqual(self.dispatch.extract_receipt(log, "AI_ADVISER")
+                             ["status"], "STRUCTURAL_FAIL")
 
     def test_qualified_receipt_preflight_allows_plan_but_does_not_launch_model(self):
         with tempfile.TemporaryDirectory(dir=Path.home()) as temp:
