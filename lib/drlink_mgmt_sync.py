@@ -1670,6 +1670,33 @@ def _require_safe_signed_job_diagnostics(kind: str, result: dict) -> None:
                 ):
                     raise MgmtSyncError(invalid)
 
+    if kind == "support-bundle":
+        # The Agent signs a receipt, not the archive itself. Persist SUCCESS
+        # only with the complete, bounded native metadata, not a bare name.
+        path = result.get("artifact_path")
+        digest = result.get("sha256")
+        role = result.get("role")
+        size = result.get("size")
+        sections = result.get("section_count")
+        skipped = result.get("skipped_count")
+        if (
+            not isinstance(path, str)
+            or not 1 <= len(path) <= 2048
+            or not path.startswith("/var/lib/drlink/")
+            or not path.endswith(".tar.gz")
+            or any(ord(char) < 33 or ord(char) > 126 or char == "\\" for char in path)
+            or any(part in ("", ".", "..") for part in path.split("/")[1:])
+            or type(size) is not int or not 1 <= size <= (1 << 40)
+            or not isinstance(digest, str) or len(digest) != 64
+            or any(char not in "0123456789abcdef" for char in digest)
+            or result.get("sanitized") is not True
+            or type(sections) is not int or not 0 <= sections <= 2048
+            or type(skipped) is not int or not 0 <= skipped <= 2048
+            or not isinstance(role, str) or not 1 <= len(role) <= 40
+            or any(char not in "abcdefghijklmnopqrstuvwxyz0123456789_-" for char in role)
+        ):
+            raise MgmtSyncError(invalid)
+
     if kind == "remote-service-set":
         if "reason" in result and not safe_message(result["reason"]):
             raise MgmtSyncError(invalid)

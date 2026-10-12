@@ -290,13 +290,85 @@ class V30ManagementJobTransportTests(unittest.TestCase):
                                     root=self.agent_tmp,
                                 )
                             self.assertEqual(engine.get(job["id"])["status"], "RUNNING")
+                    # Support Bundle is evidence-bearing: unlike the other
+                    # diagnostics, a bare operation name cannot prove success.
+                    receipt = {"operation": kind}
+                    if kind == "support-bundle":
+                        receipt.update({
+                            "artifact_path": "/var/lib/drlink/support-bundles/test.tar.gz",
+                            "size": 1024, "sha256": "a" * 64,
+                            "sanitized": True, "section_count": 3,
+                            "skipped_count": 0, "role": "client",
+                        })
                     reply = mgmt.complete_management_job_on_server(
                         root=self.agent_tmp, job_id=job["id"],
                         claim_token=claim["claim_token"], status="SUCCEEDED",
-                        result={"operation": kind},
+                        result=receipt,
                     )
                     self.assertIs(reply["ok"], True)
                     self.assertEqual(engine.get(job["id"])["status"], SUCCEEDED)
+        finally:
+            engine.close()
+
+    def test_support_bundle_success_requires_bounded_artifact_receipt(self):
+        # A signed Agent identity does not prove a support archive exists.
+        # A bare operation name must not become a Core Job SUCCESS.
+        canonical = {
+            "operation": "support-bundle",
+            "artifact_path": "/var/lib/drlink/support-bundle-job.tar.gz",
+            "size": 1024, "sha256": "a" * 64, "sanitized": True,
+            "section_count": 3, "skipped_count": 0, "role": "client",
+        }
+        invalid = (
+            {"operation": "support-bundle"},
+            {**canonical, "artifact_path": ""},
+            {**canonical, "artifact_path": "relative/archive.tar.gz"},
+            {**canonical, "artifact_path": "/tmp/invalid\narchive.tar.gz"},
+            {**canonical, "size": 0},
+            {**canonical, "size": True},
+            {**canonical, "sha256": "a" * 63},
+            {**canonical, "sha256": "z" * 64},
+            {**canonical, "sanitized": False},
+            {**canonical, "sanitized": "true"},
+            {**canonical, "section_count": -1},
+            {**canonical, "skipped_count": "0"},
+            {**canonical, "role": ["client"]},
+        )
+        engine = ManagementJobEngine(self.server_tmp)
+        try:
+            for result in invalid:
+                with self.subTest(result=result):
+                    job = engine.enqueue(
+                        job_type="support-bundle", targets=[MACHINE_A],
+                        requested_by="web:admin",
+                    )
+                    claim = mgmt.claim_management_jobs_on_server(
+                        root=self.agent_tmp, limit=1,
+                    )["jobs"][0]
+                    self.assertEqual(claim["job_id"], job["id"])
+                    with self.assertRaises(mgmt.MgmtSyncError):
+                        mgmt._request_json(
+                            "POST", self.base + "/v1/management-jobs/complete",
+                            {"id": job["id"], "claim_token": claim["claim_token"],
+                             "status": "SUCCEEDED", "result": result},
+                            root=self.agent_tmp,
+                        )
+                    self.assertEqual(engine.get(job["id"])["status"], "RUNNING")
+            healthy = engine.enqueue(
+                job_type="support-bundle", targets=[MACHINE_A],
+                requested_by="web:admin",
+            )
+            claim = mgmt.claim_management_jobs_on_server(
+                root=self.agent_tmp, limit=1,
+            )["jobs"][0]
+            self.assertEqual(claim["job_id"], healthy["id"])
+            reply = mgmt.complete_management_job_on_server(
+                root=self.agent_tmp, job_id=healthy["id"],
+                claim_token=claim["claim_token"],
+                status="SUCCEEDED", result=canonical,
+            )
+            self.assertTrue(reply["ok"])
+            self.assertEqual(engine.get(healthy["id"])["status"], SUCCEEDED)
         finally:
             engine.close()
 
