@@ -99,6 +99,10 @@ class RemoteServiceDistributedAtomicity(unittest.TestCase):
         mac_path.write_text(mac, encoding="utf-8")
         os.chmod(mac_path, 0o600)
         Path(self.agent_tmp, "etc/frp/frpc.toml").write_text("[common]\n", encoding="utf-8")
+        # Simulated activation belongs only to this disposable Agent root;
+        # production must not accept an unbound skip as proxy verification.
+        self._prior_deploy_root = os.environ.get("FRP_DEPLOY_TEST_ROOT")
+        os.environ["FRP_DEPLOY_TEST_ROOT"] = self.agent_tmp
         os.environ["DRLINK_SKIP_ACTIVATION"] = "1"
         os.environ["DRLINK_CONFIRM"] = "yes"
         os.environ.pop("DRLINK_FAULT_ACTIVATION", None)
@@ -138,6 +142,11 @@ class RemoteServiceDistributedAtomicity(unittest.TestCase):
             "DRLINK_SERVER_REACHABLE",
         ):
             os.environ.pop(key, None)
+
+        if self._prior_deploy_root is None:
+            os.environ.pop("FRP_DEPLOY_TEST_ROOT", None)
+        else:
+            os.environ["FRP_DEPLOY_TEST_ROOT"] = self._prior_deploy_root
 
     def _server_pub(self, name: str):
         return self.server.conn.execute(

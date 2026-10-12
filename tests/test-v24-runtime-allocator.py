@@ -8,6 +8,10 @@ import socket
 import sys
 import tempfile
 import threading
+import subprocess
+import tarfile
+import time
+from contextlib import contextmanager
 import unittest
 from unittest import mock
 from pathlib import Path
@@ -33,7 +37,10 @@ class RuntimeRenderTests(unittest.TestCase):
         success = 'login to server success\n[host-rs-web] start proxy success\n'
         for logs, expected in ((success, True), (success + 'control worker is closed\n', False),
                                ('login server failed\n' + success, True), ('', False),
-                               (success + '[host-rs-web] start proxy error\n', False)):
+                               (success + '[host-rs-web] start proxy error\n', False),
+                               (success + 'proxy removed: [host-rs-web other-proxy]\n', False),
+                               (success + '[host-rs-web] stop proxy\n', False),
+                               (success + 'proxy removed: [host-rs-web]\n' + '[host-rs-web] start proxy success\n', True)):
             with self.subTest(logs=logs), mock.patch.object(runtime.subprocess, 'check_output', side_effect=[props, logs]):
                 self.assertEqual(runtime._current_runtime_ready(None, 'host', service), expected)
 
@@ -491,6 +498,210 @@ class RuntimeApplyRemoveTests(unittest.TestCase):
         for k in ("FRP_DEPLOY_TEST_ROOT", "DRLINK_SKIP_ACTIVATION", "FRP_SKIP_SYSTEMD",
                   "DRLINK_FAULT_RUNTIME_CONFIG", "DRLINK_FAULT_RUNTIME_VERIFY", "DRLINK_FAULT_RUNTIME_RESTART"):
             os.environ.pop(k, None)
+
+    @contextmanager
+    def _pinned_local_frp_fixture(self):
+        # Every connection belongs to disposable loopback fixtures. No host
+        # service/systemd, external endpoint or operational identity is used.
+        def port():
+            with socket.socket() as sock:
+                sock.bind(('127.0.0.1', 0))
+                return sock.getsockname()[1]
+
+        target = socket.socket()
+        target.bind(('127.0.0.1', 0))
+        target.listen()
+        target.settimeout(0.1)
+        target_port = target.getsockname()[1]
+        marker = b'SSH-2.0-U001-local-target-marker\r\n'
+        stop = threading.Event()
+        def serve():
+            while not stop.is_set():
+                try:
+                    connection, _ = target.accept()
+                except socket.timeout:
+                    continue
+                with connection:
+                    connection.sendall(marker)
+        thread = threading.Thread(target=serve)
+        thread.start()
+        binaries = Path(self.tmp, 'fixture-bin')
+        binaries.mkdir()
+        archive = ROOT / 'third_party/frp/v0.71.0/binaries/frp_0.71.0_linux_amd64.tar.gz'
+        with tarfile.open(archive) as package:
+            for name in ('frpc', 'frps'):
+                member = next(item for item in package.getmembers() if item.name.endswith('/'+name))
+                (binaries/name).write_bytes(package.extractfile(member).read())
+                (binaries/name).chmod(0o755)
+        control_port, web_port = port(), port()
+        state = runtime.load_client_state(self.tmp)
+        state.update(frp_server='127.0.0.1', frp_server_port=control_port, services={})
+        _write_json(Path(self.tmp, 'etc/frp/client-state.json'), state)
+        self.plane.conn.execute("UPDATE agent_object_catalog SET payload=? WHERE kind='service-object' AND name='web'",
+            (json.dumps({'name':'web','type':'tcp','port':target_port}),))
+        self.plane.conn.execute("UPDATE agent_remote_services SET endpoint_port=? WHERE name='web'",(web_port,))
+        self.plane.commit_if_autonomous()
+        server_config=Path(self.tmp,'fixture-frps.toml')
+        server_config.write_text('bindAddr = "127.0.0.1"\nbindPort = %d\nproxyBindAddr = "127.0.0.1"\nauth.method = "token"\nauth.token = "tok"\n'%control_port)
+        server_log=Path(self.tmp,'fixture-frps.log').open('w')
+        client_log=Path(self.tmp,'fixture-frpc.log')
+        client_output=client_log.open('w')
+        server=subprocess.Popen([str(binaries/'frps'),'-c',str(server_config)],stdout=server_log,stderr=subprocess.STDOUT)
+        clients=[]
+        def restart(root):
+            for process in clients:
+                if process.poll() is None:
+                    process.terminate()
+                    process.wait(timeout=5)
+            client_output.seek(0)
+            client_output.truncate()
+            clients.append(subprocess.Popen([str(binaries/'frpc'),'-c',str(Path(self.tmp,'etc/frp/frpc.toml'))],stdout=client_output,stderr=subprocess.STDOUT))
+        def verify(**kwargs):
+            deadline=time.monotonic()+8
+            names=['%s-%s'%(kwargs['host_id'],record['id']) for record in kwargs['expected'].values() if record.get('enabled',True)]
+            while time.monotonic()<deadline:
+                logs=client_log.read_text()
+                if clients[-1].poll() is not None:
+                    raise AssertionError('fixture frpc exited: '+logs)
+                if 'login to server success' in logs and all('[%s] start proxy success'%name in logs for name in names):
+                    return
+                time.sleep(0.01)
+            raise AssertionError('fixture proxy registration timed out: '+client_log.read_text())
+        def fresh(endpoint):
+            with socket.create_connection(('127.0.0.1',endpoint),timeout=2) as connection:
+                return connection.recv(1024)
+        try:
+            deadline=time.monotonic()+8
+            while 'frps started successfully' not in Path(self.tmp,'fixture-frps.log').read_text():
+                if server.poll() is not None or time.monotonic()>deadline:
+                    raise AssertionError('fixture frps did not start')
+                time.sleep(0.01)
+            with mock.patch('drlink_mgmt_sync.use_live_mgmt_path',return_value=False), mock.patch.object(runtime,'_restart_frpc',side_effect=restart), mock.patch.object(runtime,'verify_runtime_proxies',side_effect=verify):
+                initial=runtime.apply_agent_runtime(self.plane,root=self.tmp)
+                self.assertTrue(initial['ok'],initial)
+                self.assertEqual(fresh(web_port),marker)
+                yield port, target_port, marker, fresh
+        finally:
+            for process in clients+[server]:
+                if process.poll() is None:
+                    process.terminate()
+                process.wait(timeout=5)
+            stop.set()
+            thread.join(timeout=2)
+            target.close()
+            server_log.close()
+            client_output.close()
+
+    def test_U001_public_create_cannot_promote_proxy_omitted_by_catalog_race(self):
+        with self._pinned_local_frp_fixture() as (port, _, _, fresh):
+            endpoint=port()
+            self.plane.conn.execute("INSERT INTO agent_object_catalog(kind,name,payload,synced_at) VALUES ('service-object','u001-ssh',?,?)",
+                (json.dumps({'name':'u001-ssh','type':'tcp','port':22}),v24.utc_now_iso()))
+            self.plane.commit_if_autonomous()
+            apply=runtime.apply_agent_runtime
+            observed=[]
+            def catalog_race(plane, **kwargs):
+                # A concurrent authoritative catalog refresh removes a definition
+                # after setter validation but before projection. Real apply must
+                # still verify the unaffected proxy and demote the omitted row.
+                plane.conn.execute("DELETE FROM agent_object_catalog WHERE kind='service-object' AND name='u001-ssh'")
+                plane.commit_if_autonomous()
+                result=apply(plane,**kwargs)
+                observed.append(result)
+                return result
+            with mock.patch.object(v24,'allocate_endpoint_port',return_value=endpoint), mock.patch.object(runtime,'apply_agent_runtime',side_effect=catalog_race):
+                result=v24.set_remote_service_agent(self.plane,'u001-ssh-access',destination='this-host',service='u001-ssh',enabled=True,root=self.tmp)
+            self.assertTrue(observed[-1]['ok'],observed)
+            self.assertNotIn('rs-u001-ssh-access',runtime.load_client_state(self.tmp)['services'])
+            self.assertNotIn('rs-u001-ssh-access',Path(self.tmp,'etc/frp/frpc.toml').read_text())
+            with self.assertRaises(OSError):
+                fresh(endpoint)
+            view=result['view']
+            self.assertEqual(view['endpoint_port'],endpoint)
+            self.assertEqual(view['status'],'DEGRADED',v24.format_remote_service_view(view))
+            self.assertNotIn('Remote Service activated',v24.format_remote_service_view(view))
+            self.assertIsNone(view['connection'])
+            row=self.plane.conn.execute("SELECT enabled,runtime_verified,endpoint_port FROM agent_remote_services WHERE name='u001-ssh-access'").fetchone()
+            self.assertEqual(tuple(row),(1,0,endpoint))
+
+    def test_U001_runtime_invalidation_before_final_status_write_is_not_overwritten(self):
+        with self._pinned_local_frp_fixture() as (port,target_port,marker,fresh):
+            endpoint=port()
+            self.plane.conn.execute("INSERT INTO agent_object_catalog(kind,name,payload,synced_at) VALUES ('service-object','u001-window',?,?)",
+                (json.dumps({'name':'u001-window','type':'tcp','port':target_port}),v24.utc_now_iso()))
+            self.plane.commit_if_autonomous()
+            verify=runtime.verified_remote_service_status
+            proofs=[]
+            def invalidate_after_guard(plane,name,**kwargs):
+                proof=verify(plane,name,**kwargs)
+                self.assertEqual(proof,('HEALTHY',''))
+                self.assertEqual(fresh(endpoint),marker)
+                proofs.append(proof)
+                # Product runtime invalidates proof before replacing config.
+                # Finish that real generation between the final read and write.
+                plane.conn.execute("DELETE FROM agent_object_catalog WHERE kind='service-object' AND name='u001-window'")
+                plane.commit_if_autonomous()
+                applied=runtime.apply_agent_runtime(plane,root=self.tmp)
+                self.assertTrue(applied['ok'],applied)
+                return proof
+            with mock.patch.object(v24,'allocate_endpoint_port',return_value=endpoint), \
+                 mock.patch.object(runtime,'verified_remote_service_status',side_effect=invalidate_after_guard):
+                result=v24.set_remote_service_agent(self.plane,'u001-window-access',destination='this-host',service='u001-window',enabled=True,root=self.tmp)
+            self.assertEqual(len(proofs),1)
+            with self.assertRaises(OSError):
+                fresh(endpoint)
+            self.assertEqual(result['view']['status'],'DEGRADED',result)
+            row=self.plane.conn.execute("SELECT status,runtime_verified,enabled,endpoint_port FROM agent_remote_services WHERE name='u001-window-access'").fetchone()
+            self.assertEqual(tuple(row),('DEGRADED',0,1,endpoint))
+
+    def test_U001_management_ack_cannot_restore_health_after_generation_lost_proxy(self):
+        import drlink_mgmt_sync as mgmt
+        with self._pinned_local_frp_fixture() as (port,target_port,_,fresh):
+            endpoint=port()
+            self.plane.conn.execute("INSERT INTO agent_object_catalog(kind,name,payload,synced_at) VALUES ('service-object','u001-ack',?,?)",
+                (json.dumps({'name':'u001-ack','type':'tcp','port':target_port}),v24.utc_now_iso()))
+            self.plane.commit_if_autonomous()
+            publication={'status':'DEGRADED','endpoint_port':endpoint}
+            receipts=[]
+            def upsert(**body):
+                receipts.append(body['runtime_verified'])
+                if body['runtime_verified']:
+                    # Another reconciliation completes during this management
+                    # response. Actual FRP projects the remaining valid proxy.
+                    self.plane.conn.execute("DELETE FROM agent_object_catalog WHERE kind='service-object' AND name='u001-ack'")
+                    self.plane.commit_if_autonomous()
+                    applied=runtime.apply_agent_runtime(self.plane,root=self.tmp)
+                    self.assertTrue(applied['ok'],applied)
+                    publication['status']='HEALTHY'  # Stale successful response.
+                return dict(publication,endpoint_host='127.0.0.1',pending_allocation=0,reason='')
+            def push(plane,**kwargs):
+                row=plane.conn.execute("SELECT status FROM agent_remote_services WHERE name='u001-ack-access'").fetchone()
+                publication['status']=row['status']
+            with mock.patch.object(mgmt,'use_live_mgmt_path',return_value=True), \
+                 mock.patch.object(v24,'sync_agent_catalog_from_server'), \
+                 mock.patch.object(mgmt,'upsert_remote_service_on_server',side_effect=upsert), \
+                 mock.patch.object(v24,'_push_agent_remote_service_status',side_effect=push):
+                result=v24.set_remote_service_agent(self.plane,'u001-ack-access',destination='this-host',service='u001-ack',enabled=True,root=self.tmp)
+            self.assertEqual(receipts,[False,True])
+            self.assertNotIn('rs-u001-ack-access',runtime.load_client_state(self.tmp)['services'])
+            with self.assertRaises(OSError):
+                fresh(endpoint)
+            self.assertEqual(result['view']['status'],'DEGRADED',result)
+            self.assertEqual(publication,{'status':'DEGRADED','endpoint_port':endpoint})
+            self.assertNotIn('Remote Service activated',v24.format_remote_service_view(result['view']))
+
+    def test_U001_public_healthy_create_has_proxy_and_fresh_target_traffic(self):
+        with self._pinned_local_frp_fixture() as (port,target_port,marker,fresh):
+            endpoint=port()
+            self.plane.conn.execute("INSERT INTO agent_object_catalog(kind,name,payload,synced_at) VALUES ('service-object','u001-target',?,?)",
+                (json.dumps({'name':'u001-target','type':'tcp','port':target_port}),v24.utc_now_iso()))
+            self.plane.commit_if_autonomous()
+            with mock.patch.object(v24,'allocate_endpoint_port',return_value=endpoint):
+                result=v24.set_remote_service_agent(self.plane,'u001-access',destination='this-host',service='u001-target',enabled=True,root=self.tmp)
+            self.assertEqual(result['view']['status'],'HEALTHY',result)
+            self.assertIn('Remote Service activated',v24.format_remote_service_view(result['view']))
+            self.assertIn('rs-u001-access',runtime.load_client_state(self.tmp)['services'])
+            self.assertEqual(fresh(endpoint),marker)
 
     def test_F004_F017_runtime_omitted_service_cannot_be_healthy(self):
         # PASS1 F004/F017: a published row with a public port but no local

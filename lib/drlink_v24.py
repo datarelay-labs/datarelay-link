@@ -6704,14 +6704,27 @@ def set_remote_service_agent(
                 ) from exc
         raise
 
-    def _persist_status(next_status: str, next_reason: str) -> None:
+    def _persist_status(next_status: str, next_reason: str) -> bool:
         verified = 1 if str(next_status or "").upper() == "HEALTHY" else 0
-        plane_db.conn.execute(
+        guard = ''
+        guard_params = ()
+        if verified:
+            import drlink_v24_runtime as runtime
+
+            if not runtime._isolated_skip_fixture(root or getattr(plane_db, 'root', None)):
+                # apply invalidates verification BEFORE replacing a generation.
+                # Do not replay an earlier successful read over that invalidation.
+                guard = (" AND runtime_verified = 1 AND status = 'HEALTHY'"
+                         " AND enabled = 1 AND delete_pending = 0"
+                         " AND endpoint_port = ? AND service_object = ? COLLATE NOCASE")
+                guard_params = (endpoint_port, svc_name)
+        cursor = plane_db.conn.execute(
             "UPDATE agent_remote_services SET status = ?, reason = ?, runtime_verified = ?, "
-            "updated_at = ? WHERE name = ?",
-            (next_status, next_reason, verified, utc_now_iso(), name),
+            "updated_at = ? WHERE name = ?" + guard,
+            (next_status, next_reason, verified, utc_now_iso(), name) + guard_params,
         )
         _commit_if_autonomous(plane_db)
+        return bool(cursor.rowcount)
 
     # Nested Bundle Apply writes desired state only; the outer plan activates runtime.
     if in_batch:
@@ -6757,9 +6770,22 @@ def set_remote_service_agent(
                 runtime_error = applied.get("error") or "Runtime activation failed"
         except Exception as exc:
             runtime_error = str(exc)
+        service_status, service_reason = (
+            runtime.verified_remote_service_status(plane_db, name, root=root)
+            if runtime_ok else ('DEGRADED', runtime_error)
+        )
         if runtime_ok and destination_unreachable:
             status = "DEGRADED"
             reason = DESTINATION_UNREACHABLE_REASON
+            _persist_status(status, reason)
+            if live_mgmt:
+                _push_agent_remote_service_status(plane_db, root=root, names=[name])
+            _clear_agent_mgmt_side_effects(plane_db)
+        elif runtime_ok and service_status != 'HEALTHY':
+            # Other proxies may have activated successfully while this one was
+            # omitted or superseded. Preserve intent/endpoint and retry later;
+            # never acknowledge aggregate success as this service's HEALTHY.
+            status, reason = service_status, service_reason
             _persist_status(status, reason)
             if live_mgmt:
                 _push_agent_remote_service_status(plane_db, root=root, names=[name])
@@ -6792,13 +6818,21 @@ def set_remote_service_agent(
                         status = "DEGRADED"
                         reason = ack_reason or "Runtime activation pending."
                     else:
-                        status = "HEALTHY"
-                        reason = ""
+                        # The management round trip is another runtime race
+                        # boundary. Recheck before publishing the final result.
+                        status, reason = runtime.verified_remote_service_status(
+                            plane_db, name, root=root
+                        )
                 except Exception as exc:
                     status = "DEGRADED"
                     reason = "Runtime applied locally but Server acknowledgement failed: %s" % exc
                     runtime_ok = False
-            _persist_status(status, reason)
+            if not _persist_status(status, reason):
+                status = 'DEGRADED'
+                current = plane_db.conn.execute(
+                    "SELECT reason FROM agent_remote_services WHERE name = ?", (name,)
+                ).fetchone()
+                reason = (str(current['reason'] or '') if current else '') or 'Runtime generation changed during activation.'
             if live_mgmt and status != "HEALTHY":
                 _push_agent_remote_service_status(plane_db, root=root, names=[name])
             # Local desired state is the new definition; do not compensate Server.

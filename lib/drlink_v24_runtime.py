@@ -13,6 +13,7 @@ import re
 import stat
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import Optional
@@ -561,7 +562,15 @@ def _current_runtime_ready(root, host_id, expected) -> bool:
             if not isinstance(rec, dict) or rec.get('enabled', True) is False:
                 continue
             name = '%s-%s' % (host_id, rec.get('id') or sid)
-            mentions = [line for line in epoch if '[%s]' % name in line and 'start proxy' in line.lower()]
+            mentions = []
+            for line in epoch:
+                removed = re.search(r'proxy removed:\s*\[([^\]]*)\]', line)
+                if removed and name in removed.group(1).split():
+                    mentions.append('proxy removed')
+                elif '[%s]' % name in line and any(
+                    event in line.lower() for event in ('start proxy', 'stop proxy')
+                ):
+                    mentions.append(line)
             if not mentions or 'start proxy success' not in mentions[-1].lower():
                 return False
         return True
@@ -899,6 +908,13 @@ def _configured_v24_runtime_ports(root: Optional[str] = None) -> dict:
     return included
 
 
+def _isolated_skip_fixture(root: Optional[str]) -> bool:
+    fixture = str(root or '').rstrip('/')
+    return bool(fixture and fixture != '/'
+                and fixture == str(os.environ.get('FRP_DEPLOY_TEST_ROOT') or '').rstrip('/')
+                and not runtime_should_apply())
+
+
 def mark_runtime_status(plane_db, *, ok: bool, reason: str = "", generation: int = 0) -> None:
     now = utc_now_iso()
     if ok:
@@ -912,11 +928,7 @@ def mark_runtime_status(plane_db, *, ok: bool, reason: str = "", generation: int
         # deterministic fixture contract, but NEVER allow a real Agent or an
         # arbitrary DRLINK_SKIP_ACTIVATION setting to bypass actual rendered
         # proxy/port verification. These results are not release E2E evidence.
-        root = str(getattr(plane_db, "root", None) or "").rstrip("/")
-        fixture_root = str(os.environ.get("FRP_DEPLOY_TEST_ROOT") or "").rstrip("/")
-        isolated_skip_fixture = bool(
-            root and root != "/" and fixture_root == root and not runtime_should_apply()
-        )
+        isolated_skip_fixture = _isolated_skip_fixture(getattr(plane_db, 'root', None))
         if isolated_skip_fixture:
             for row in rows:
                 if row["endpoint_port"] is not None and not int(row["pending_allocation"] or 0):
@@ -980,6 +992,52 @@ def mark_runtime_status(plane_db, *, ok: bool, reason: str = "", generation: int
             commit()
         else:
             plane_db.conn.commit()
+
+
+def verified_remote_service_status(plane_db, name: str, *, root: Optional[str] = None) -> tuple[str, str]:
+    """Read this service's proof, rather than aggregate runtime apply success."""
+    row = plane_db.conn.execute(
+        "SELECT * FROM agent_remote_services WHERE name = ? COLLATE NOCASE", (name,)
+    ).fetchone()
+    missing = "Runtime proxy is not present in the verified generation."
+    if row is None or not row['enabled'] or row['delete_pending']:
+        return 'DEGRADED', missing
+    actual_root = root if root is not None else getattr(plane_db, 'root', None)
+    if _isolated_skip_fixture(actual_root):
+        # Same strictly isolated historical fixture contract as mark_runtime_status.
+        return ('HEALTHY', '') if row['endpoint_port'] is not None and not row['pending_allocation'] else ('DEGRADED', missing)
+    state = load_client_state(actual_root)
+    proxy_id = remote_service_proxy_id(name)
+    record = (state.get('services') or {}).get(proxy_id)
+    desired = build_desired_runtime_services(plane_db, state, root=actual_root).get(proxy_id)
+    installed = _configured_v24_runtime_ports(actual_root)
+    if (not record or not desired or record != desired or row['pending_allocation']
+            or row['endpoint_port'] is None
+            or installed.get(name.lower()) != int(row['endpoint_port'])):
+        return 'DEGRADED', missing
+    if str(row['status']).upper() != 'HEALTHY' or not row['runtime_verified']:
+        return 'DEGRADED', str(row['reason'] or 'Runtime activation pending.')
+    host_id = str(state.get('host_id') or '').strip()
+    if not host_id:
+        machine_id = str(state.get('machine_id') or '')
+        host_id = '%s-%s' % (state.get('hostname') or 'host', machine_id[:8] if machine_id else 'local')
+    try:
+        config = _frpc_toml_path(actual_root).read_text(encoding='utf-8')
+    except OSError:
+        return 'DEGRADED', missing
+    required = ('name = "%s-%s"' % (host_id, proxy_id),
+                'localIP = "%s"' % record['local_ip'],
+                'localPort = %s' % record['local_port'],
+                'remotePort = %s' % record['remote_port'])
+    if not any(all(line in block.splitlines() for line in required)
+               for block in config.split('[[proxies]]')[1:]):
+        return 'DEGRADED', missing
+    # Linux can also check the current process/connection epoch after the
+    # apply and again after management I/O. Other platforms retain their
+    # existing fresh native activation proof plus the per-service checks above.
+    if sys.platform.startswith('linux') and not _current_runtime_ready(actual_root, host_id, {proxy_id: record}):
+        return 'DEGRADED', 'Runtime proxy is not ready in the active generation.'
+    return 'HEALTHY', ''
 
 
 def remove_remote_service_from_runtime(
