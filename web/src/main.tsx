@@ -27,6 +27,7 @@ import {observedAuthenticatedWebSession,observedWebMfaChallenge,observedWebMfaCo
 import {observedCoreHealthSnapshot,observedHealthPlaneCount} from "./uxb-health-state";
 import {observedCoreSystemStatus} from "./uxb-system-status";
 import {observedCoreJobDisplay,observedJobCancelAvailable} from "./uxb-jobs-display";
+import {observedRolloutPreviewDisplay} from "./uxb-rollout-display";
 import {filterLoadedServiceFacets,type ServiceTypeFacet,type ServiceConfigFacet} from "./uxb-service-facets";
 import {operatorAccountState,operatorMfaState,operatorMfaAction,operatorLastLogin} from "./uxb-users-state";
 import {observedOperatorInventory,observedOperatorMfaReceipt,observedOperatorCreateReceipt} from "./uxb-users-state";
@@ -1524,11 +1525,13 @@ function AgentRolloutPreviewPanel(){
       const body={targets:hosts.split(",").map(x=>x.trim()).filter(Boolean),canary_targets:canaries.split(",").map(x=>x.trim()).filter(Boolean),
         artifact:{version:version.trim(),source_ref:sourceRef.trim(),sha256:digest.trim()},
         wave_size:Number(wave),failure_threshold_percent:Number(threshold)};
-      const result=requireObservedRolloutPreview(await api("/api/v1/jobs/agent-update-rollout/preview",{
+      const verified=requireObservedRolloutPreview(await api("/api/v1/jobs/agent-update-rollout/preview",{
         method:"POST",body:JSON.stringify(body)
       }),body);
       if(epoch!==previewGeneration.current)return;
-      setPreview(result);
+      const projected=observedRolloutPreviewDisplay(verified,body);
+      if(!projected)throw new Error("Core Agent observations contain unverified identities or display fields.");
+      setPreview(projected);
     }catch(e:any){
       if(epoch===previewGeneration.current)setError("UNKNOWN · Core Agent Update Preview did not complete for the current inputs: "+(e.message||String(e)));
     }finally{
