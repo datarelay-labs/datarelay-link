@@ -653,16 +653,19 @@ class V30ManagementJobTests(unittest.TestCase):
             reply = commit(**kwargs, now=self.now + timedelta(seconds=2))
             if kwargs["status"] == SUCCEEDED:
                 # A transaction can commit before its response is lost.
-                raise TimeoutError("completion acknowledgement missing")
+                raise TimeoutError("lost receipt Bearer fixture-success-receipt-secret")
             return reply
 
         with BoundedAgentRpcWorkerPool(max_workers=1, max_pending=0) as pool, mock.patch.object(
             self.engine, "complete_target", side_effect=committed_but_unacknowledged
         ):
-            with self.assertRaisesRegex(TimeoutError, "acknowledgement missing"):
+            with self.assertRaisesRegex(
+                ControlPlaneError, "completion receipt UNKNOWN"
+            ) as caught:
                 pool._run_claim(
                     self.engine, claim, lambda _claim: {"operation": "doctor"}
                 )
+        self.assertNotIn("fixture-success-receipt-secret", str(caught.exception))
         self.assertEqual(statuses, [SUCCEEDED], "No contradictory FAILED completion")
         self.assertEqual(self.engine.get(job["id"])["status"], SUCCEEDED)
 
@@ -680,17 +683,20 @@ class V30ManagementJobTests(unittest.TestCase):
         def committed_but_unacknowledged(**kwargs):
             statuses.append(kwargs["status"])
             commit(**kwargs, now=self.now + timedelta(seconds=2))
-            raise TimeoutError("cancellation acknowledgement missing")
+            raise TimeoutError("lost receipt Bearer fixture-cancel-receipt-secret")
 
         with BoundedAgentRpcWorkerPool(max_workers=1, max_pending=0) as pool, mock.patch.object(
             self.engine, "complete_target", side_effect=committed_but_unacknowledged
         ):
-            with self.assertRaisesRegex(TimeoutError, "acknowledgement missing"):
+            with self.assertRaisesRegex(
+                ControlPlaneError, "completion receipt UNKNOWN"
+            ) as caught:
                 pool._run_claim(
                     self.engine, claim, lambda _claim: self.fail(
                         "cancelled claim must not run the handler"
                     )
                 )
+        self.assertNotIn("fixture-cancel-receipt-secret", str(caught.exception))
         self.assertEqual(statuses, [CANCELLED], "No contradictory FAILED completion")
         self.assertEqual(self.engine.get(job["id"])["status"], CANCELLED)
 

@@ -1057,13 +1057,20 @@ class BoundedAgentRpcWorkerPool:
     ) -> dict[str, Any]:
         if engine.is_cancel_requested(claim["job_id"]):
             # An ambiguous CANCELLED receipt must not be re-reported FAILED.
-            return engine.complete_target(
-                job_id=claim["job_id"],
-                target_id=claim["target_id"],
-                claim_token=claim["claim_token"],
-                status=CANCELLED,
-                error="CANCELLED_BEFORE_RPC",
-            )
+            try:
+                return engine.complete_target(
+                    job_id=claim["job_id"],
+                    target_id=claim["target_id"],
+                    claim_token=claim["claim_token"],
+                    status=CANCELLED,
+                    error="CANCELLED_BEFORE_RPC",
+                )
+            except Exception:
+                # Do not expose Core persistence/transport errors that may
+                # include private fields, or invent a terminal Job result.
+                raise ControlPlaneError(
+                    "Management Job completion receipt UNKNOWN; inspect Core before retrying."
+                ) from None
         try:
             if claim.get("job_type") == ROLLOUT_JOB_TYPE:
                 # A generic callable does not prove signed artifact identity,
@@ -1097,14 +1104,20 @@ class BoundedAgentRpcWorkerPool:
                     "Management Job completion receipt UNKNOWN; inspect Core before retrying."
                 ) from None
         # Completion acknowledgement can fail AFTER Core committed SUCCEEDED.
-        # Never send a contradictory FAILED completion for an executed handler.
-        return engine.complete_target(
-            job_id=claim["job_id"],
-            target_id=claim["target_id"],
-            claim_token=claim["claim_token"],
-            status=SUCCEEDED,
-            result=result,
-        )
+        # Never send a contradictory FAILED completion for an executed handler
+        # or expose raw completion errors that may contain sensitive payloads.
+        try:
+            return engine.complete_target(
+                job_id=claim["job_id"],
+                target_id=claim["target_id"],
+                claim_token=claim["claim_token"],
+                status=SUCCEEDED,
+                result=result,
+            )
+        except Exception:
+            raise ControlPlaneError(
+                "Management Job completion receipt UNKNOWN; inspect Core before retrying."
+            ) from None
 
     def dispatch_once(
         self,
