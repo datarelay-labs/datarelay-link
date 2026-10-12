@@ -378,24 +378,32 @@ class AgentLoop:
         if self.agent_root:
             import drlink_mgmt_sync as mgmt
 
-            mgmt.complete_ai_job_on_server(
+            receipt = mgmt.complete_ai_job_on_server(
                 root=self.agent_root,
                 job_id=job_id,
                 result=result,
                 claim_token=claim_token,
                 attempt_id=attempt_id,
             )
+            if not isinstance(receipt, dict) or receipt.get("ok") is not True:
+                raise ValueError(
+                    "AI job completion receipt UNKNOWN; inspect Core before retrying."
+                )
             return
         body = {"id": job_id, "result": result}
         if claim_token is not None:
             body["claim_token"] = claim_token
         if attempt_id is not None:
             body["attempt_id"] = attempt_id
-        _agent_post(
+        receipt = _agent_post(
             self.base_url + "/agent/v1/complete",
             self.token,
             body,
         )
+        if not isinstance(receipt, dict) or receipt.get("ok") is not True:
+            raise ValueError(
+                "AI job completion receipt UNKNOWN; inspect Core before retrying."
+            )
 
     def run_once(self) -> int:
         jobs = self._claim()

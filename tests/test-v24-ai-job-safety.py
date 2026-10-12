@@ -456,6 +456,40 @@ class AiJobSafetyTests(unittest.TestCase):
                     executed.assert_called_once()
                     completed.assert_called_once()
 
+    def test_agent_requires_explicit_core_completion_ack_in_both_transports(self):
+        # A returned HTTP/transport body alone is not proof that Core
+        # accepted an executed Agent action or its matching one-shot claim.
+        modes = (
+            (AgentLoop(agent_root=self.agent_a_tmp),
+             "drlink_mgmt_sync.complete_ai_job_on_server"),
+            (AgentLoop("http://127.0.0.1:1", "disposable-test-token"),
+             "drlink_ai_agent._agent_post"),
+        )
+        invalid = (
+            None, {}, {"ok": None}, {"ok": False},
+            {"ok": "true"}, {"error": "claim no longer current"},
+        )
+        for loop, target in modes:
+            for response in invalid:
+                with self.subTest(target=target, response=response):
+                    with mock.patch(target, return_value=response) as complete:
+                        with self.assertRaisesRegex(
+                            ValueError, "AI job completion receipt UNKNOWN"
+                        ):
+                            loop._complete(
+                                "ai-test-job", {"result": "ALLOW"},
+                                claim_token="atk_test",
+                                attempt_id="att_test",
+                            )
+                        complete.assert_called_once()
+            with self.subTest(target=target, success=True):
+                with mock.patch(target, return_value={"ok": True}) as complete:
+                    self.assertIsNone(loop._complete(
+                        "ai-test-job", {"result": "ALLOW"},
+                        claim_token="atk_test", attempt_id="att_test",
+                    ))
+                    complete.assert_called_once()
+
     def test_agent_exec_timeout_never_outlives_core_deadline(self):
         # A verified signed claim may be queued for several seconds before
         # local execution. Its original timeout cannot extend Core authority.
