@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Launch ONE genuine Codex persona actor for a qualified NON-DESTRUCTIVE CLI FCS.
+"""Launch ONE genuine Codex persona actor for an owner-authorized NON-DESTRUCTIVE CLI FCS.
 
 This is a test-actor launcher and receipt writer, not a scripted user or test
 oracle. No Codex process can start until the caller supplies an actual lab
-GO receipt and the canonical single-run audit lock. Never used for Full E2E
+current public product identity and the canonical single-run audit lock. Never used for Full E2E
 state-changing workflows. Run data/evidence must be private and outside /tmp.
 """
 from __future__ import annotations
@@ -20,9 +20,6 @@ import subprocess
 import sys
 
 REPO = Path("/home/aella/datarelay-link-current")
-OWNER_PHASE_STATE = Path(
-    "/home/aella/drlink-validation/v240-owner-sequence-20261010/phase-state.json"
-)
 ALLOWED = {"DIRECT_USER", "AI_OPERATOR", "AI_ADVISER"}
 SAFE_ID = re.compile(r"^[a-zA-Z0-9_.-]{1,100}$")
 HEX40 = re.compile(r"^[0-9a-f]{40}$")
@@ -36,7 +33,8 @@ def utc() -> str:
 def validate_launch(
     *,
     run_root: Path, run_id: str, pair_id: str, role: str,
-    prompt_file: Path, preflight_file: Path, lock_file: Path,
+    prompt_file: Path, preflight_file: Path | None, lock_file: Path,
+    installed_source_head: str | None = None,
 ) -> dict:
     if not SAFE_ID.fullmatch(run_id) or not SAFE_ID.fullmatch(pair_id):
         raise ValueError("Invalid RUN_ID or PAIR_ID")
@@ -51,34 +49,28 @@ def validate_launch(
         raise ValueError("Private persistent RUN_ID root is missing or a symlink")
     if root.stat().st_mode & 0o077:
         raise ValueError("RUN_ID evidence directory must be owner-private")
-    if not preflight_file.is_file() or preflight_file.is_symlink():
-        raise ValueError("Immutable lab preflight receipt is missing")
-    lab = json.loads(preflight_file.read_text(encoding="utf-8"))
-    if lab.get("status") != "GO" or lab.get("not_ready_gate_ids"):
-        raise ValueError("Lab readiness NOT_READY/BLOCKED: no Codex actors may start")
-    if lab.get("lab_phase") != "INSTALLED_CANDIDATE":
-        raise ValueError("Lab must qualify actual installed candidate, not just cleanroom")
-    # A supplied GO receipt alone is insufficient: it might be stale,
-    # unrelated or user-forged. The independently maintained current owner
-    # phase must explicitly enable test-only Codex after human review.
-    if not OWNER_PHASE_STATE.is_file():
-        raise ValueError("Owner Codex phase authorization is missing")
-    owner = json.loads(OWNER_PHASE_STATE.read_text(encoding="utf-8"))
-    if (owner.get("phase") != "CODEX_CLI_FEATURE_SCENARIO_ONLY"
-            or owner.get("next_codex_test_authorized") is not True
-            or owner.get("p0_go_status") != "GO"):
-        raise ValueError("Codex test-only FCS is not enabled in owner phase state")
+    # Global seven-host readiness is diagnostic. Unrelated unregistered
+    # native hosts or blocked MCP/OAuth may not veto safe independent FCS.
+    lab = {}
+    if preflight_file is not None:
+        if not preflight_file.is_file() or preflight_file.is_symlink():
+            raise ValueError("Provided lab observation is missing or a symlink")
+        lab = json.loads(preflight_file.read_text(encoding="utf-8"))
+        if not isinstance(lab, dict):
+            raise ValueError("Lab observation must be a JSON object")
     head = subprocess.check_output(
         ["git", "-C", str(REPO), "rev-parse", "HEAD"],
         text=True, timeout=8,
     ).strip()
-    if not HEX40.fullmatch(head) or lab.get("repo_head") != head:
-        raise ValueError("Preflight repo HEAD is not the current source/PR HEAD")
-    if owner.get("latest_source_head") != head:
-        raise ValueError("Owner phase-state source HEAD does not match candidate")
-    installed = str(lab.get("candidate_source_head") or "")
+    if not HEX40.fullmatch(head):
+        raise ValueError("Current repository HEAD is invalid")
+    # A stale report may not silently pin a different candidate; the auditor
+    # may instead supply the currently OBSERVED public CLI Source HEAD.
+    if lab and lab.get("repo_head") != head and installed_source_head is None:
+        raise ValueError("Preflight repo HEAD is stale; supply observed installed Source HEAD")
+    installed = str(installed_source_head or lab.get("candidate_source_head") or "")
     if not HEX40.fullmatch(installed):
-        raise ValueError("Preflight did not pin installed content Source HEAD")
+        raise ValueError("Pinned installed Source HEAD is required for this FCS run")
     if not lock_file.is_file() or lock_file.is_symlink():
         raise ValueError("Canonical FCS single-run lock is missing")
     lock = lock_file.read_text(encoding="utf-8")
@@ -98,6 +90,11 @@ def validate_launch(
     return {
         "run_id": run_id, "pair_id": pair_id, "role": role,
         "repo_head": head, "source_head": installed,
+        "scope": "NON_DESTRUCTIVE_FCS",
+        "global_lab_status": lab.get("status", "NOT_PROVIDED"),
+        "excluded_global_gates": lab.get("not_ready_gate_ids", []),
+        "source_pin_origin": ("PUBLIC_OBSERVATION_DECLARED"
+                              if installed_source_head else "LAB_OBSERVATION"),
         "prompt_sha256": hashlib.sha256(prompt).hexdigest(),
         "prompt_bytes": prompt,
         "target": target,
@@ -145,7 +142,10 @@ def main() -> int:
     parser.add_argument("--pair-id", required=True)
     parser.add_argument("--role", required=True, choices=sorted(ALLOWED))
     parser.add_argument("--prompt-file", required=True, type=Path)
-    parser.add_argument("--preflight", required=True, type=Path)
+    parser.add_argument("--preflight", type=Path,
+                        help="Optional diagnostic lab inventory, never a global FCS gate")
+    parser.add_argument("--installed-source-head",
+                        help="Observed 40-hex Source HEAD on assigned actual test host")
     parser.add_argument("--max-seconds", type=int, default=3600)
     parser.add_argument("--lock", type=Path,
                         default=REPO / "e2e-reports/.cli-feature-scenario.lock")
@@ -157,6 +157,7 @@ def main() -> int:
             run_root=args.run_root, run_id=args.run_id, pair_id=args.pair_id,
             role=args.role, prompt_file=args.prompt_file,
             preflight_file=args.preflight, lock_file=args.lock,
+            installed_source_head=args.installed_source_head,
         )
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
         print("CODEX_ACTOR_BLOCKED=" + type(exc).__name__ + ": " + str(exc),
@@ -188,6 +189,10 @@ def main() -> int:
                    "role": ready["role"], "status": "STARTING", "start_utc": ready["utc"],
                    "source_head": ready["source_head"],
                    "repo_head": ready["repo_head"],
+                   "scope": ready["scope"],
+                   "global_lab_status": ready["global_lab_status"],
+                   "excluded_global_gates": ready["excluded_global_gates"],
+                   "source_pin_origin": ready["source_pin_origin"],
                    "prompt_sha256": ready["prompt_sha256"]}
         status.write_text(json.dumps(started, indent=2) + "\n")
         status.chmod(0o600)

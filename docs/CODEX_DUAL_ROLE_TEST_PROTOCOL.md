@@ -1,13 +1,13 @@
 # DRLink — Codex dual-role Direct CLI + AI-assisted scenario protocol
 
 **Owner-approved execution model for datarelay-labs/datarelay-link Issue #165.**
-**State:** Protocol prepared, NOT executed; cleanroom preflight remains NOT_READY. This is an execution supplement, never a replacement for the full canonical contracts.
+**State:** Run each independently owner-authorized FCS on its accessible assigned host. Global Lab NOT_READY is diagnostic, never a blanket prohibition on read-only Codex FCS; this remains supplemental to the canonical contracts.
 
 ## 1. Authority and scope
 
 - **Codex executes both roles itself** for every applicable feature and workflow: (a) Direct CLI User/Operator and (b) AI-assisted User/Operator who consults **a Codex AI-adviser persona**. One Codex executor owns all role executions and final audit; it does not delegate user actions to ChatGPT, a shell replay script, a different model, a third-party AI, or an external assistant.
 - Codex auditor must read the ENTIRE current `docs/CLI_FEATURE_SCENARIO_RECONCILIATION.md` (15 FCS-001..015, including runtime-discovered feature/command union) and the ENTIRE current `docs/FULL_USER_E2E_SCENARIOS.md` (116 scenarios) before starting the respective audit, as required by each contract. User and AI-adviser contexts must **not** receive the canonical contract or any source/test/internal oracle.
-- **CLI FCS is strictly runtime NON-DESTRUCTIVE:** public `drlink` help/menu/Tab/status/show/read-only tests may be executed; mutating command grammar, confirmation, risk and recovery are inspected, never applied on assigned product state. **Full User E2E is a separate future test**, using authorized real operations/traffic only after legitimate lab GO; same Direct/AI pairing applies.
+- **CLI FCS is strictly runtime NON-DESTRUCTIVE:** public `drlink` help/menu/Tab/status/show/read-only tests may be executed; mutating command grammar, confirmation, risk and recovery are inspected, never applied on assigned product state. **Full User E2E is a separate state-changing test**, using actual per-host authorization and real operations/traffic without a global lab GO gate; same Direct/AI pairing applies.
 - Codex is **TEST ONLY**: no product/doc/test-source modification, commit, push, CI source fix, merge, tag, release, host replacement, or bypassing a prior tool/safety denial. ChatGPT Chat owns remediation.
 
 ### Owner-approved disposable test host execution
@@ -98,9 +98,8 @@ These are **three Codex roles within one parent Codex test**, not three differen
 
 The auditor uses the checked-in `tools/codex_fcs_actor_dispatch.py` to start **one** genuinely fresh Codex CLI 0.160.0 thread per Direct User, AI User or AI Adviser actor. This is *not* a test harness that picks public CLI commands: its only responsibility is secure dispatch with already-authored role prompts and durable raw receipts. Full User E2E mutating roles require a **different owner-approved** dispatch boundary and may not use this non-destructive FCS launcher.
 
-**Prerequisites before any launch:** latest `PREFLIGHT_STATUS.json` status `GO` for an actual `INSTALLED_CANDIDATE` with current repo HEAD, an already-acquired current-run FCS coordination lock, and the separate owner-managed `phase-state.json` requiring `phase=CODEX_CLI_FEATURE_SCENARIO_ONLY`, `next_codex_test_authorized=true` and `p0_go_status=GO`. A manually written/fabricated GO JSON alone cannot start any Codex actor. All source/installed identities must agree. Currently every actual preflight is `NOT_READY`; the launcher must refuse any Codex dispatch.
-
-On a legitimate future GO run, the auditor first creates private 0700 `RUN_ID` directory outside `/tmp` with each actor's first prompt (0600) and matching public-only baseline. Example **template** (replace placeholders only after owner approval; DO NOT RUN NOW):
+**Prerequisites for each non-destructive FCS actor:** owner authorization for the particular accessible test host; a verified public-product installed Source HEAD; one fresh locked `RUN_ID`; private role prompts, separate Direct/AI/Adviser processes and prospective receipts. `tools/codex_fcs_actor_dispatch.py` now accepts an optional diagnostic `--preflight` OR `--installed-source-head` observed on the actual test host. The global seven-host `LAB_GO`, legacy `phase-state.json`, Rocky/Windows registration and unrelated MCP/OAuth are NOT prerequisites for an independent read-only FCS. A previous actual platform/tool denial still blocks its particular effect and may not be rerouted. Never credit an unexecuted lane as PASS.
+For each independently authorized read-only FCS run, the auditor first creates private 0700 `RUN_ID` directory outside `/tmp` with each actor's first prompt (0600) and matching public-only baseline. Example **template** (replace placeholders only after owner approval; DO NOT RUN NOW):
 
 ~~~text
 python3 tools/codex_fcs_actor_dispatch.py
@@ -120,8 +119,10 @@ For validation, all three event paths go into `DIRECT_CODEX_EVENTS`, `AI_OPERATO
 
 **Fail-closed sanity check already performed at NOT_READY:** invoking this launcher with the real latest preflight returned exit code 3, `CODEX_ACTOR_BLOCKED=ValueError: Lab readiness NOT_READY/BLOCKED`, and created NO Codex actor process. This does **not** count as a real Codex user/AI test.
 
-## 5. Launch / block gates
+## 5. Per-lane launch and genuine security boundaries
 
-**Do NOT launch Codex yet** merely because this protocol is now written. Before test dispatch require: owner-authorized fixes dispositioned; procedure and pairing gate verified; exclusive FCS/E2E lock and RUN_ID; verified tested product/source HEAD; clean owned lab and necessary approvals; genuine native access, MCP TLS/OAuth where applicable; confirmed separate Codex actor contexts and prospective transcript storage; no previous denied security effect retried. Latest lab preflight remains `NOT_READY` (old Server and Windows tunnel among other gates).
+On 2026-10-12 the owner explicitly removed the project-imposed blanket `LAB_GO` / `NOT_READY` rule for **starting** tests. Start independent owner-authorized non-destructive Codex CLI FCS runs now on currently accessible, installed and verified hosts. Historical `phase-state.json` and optional full-lab diagnostic `PREFLIGHT_STATUS.json` no longer authorize or veto an otherwise allowed FCS actor. The actor still needs a measured candidate Source HEAD, current-run exclusive lock and genuine private persona evidence.
 
-The planned sequence remains: ChatGPT fixes preceding E2E defects → ChatGPT completes dual-role method/procedure → legitimate lab GO → Codex runs direct + AI-assisted FCS then separately qualified Full E2E, both TEST ONLY → ChatGPT fixes new findings. Release HOLD until all original gates pass.
+Full User E2E remains a separately scoped state-changing test: for each operation, check the exact disposable host, existing product state, installed HEAD, prospective evidence and actual permission. If Rocky/Windows registration or MCP/OAuth is not available, mark only dependent canonical checks `BLOCKED` or `NOT_RUN` and test the other accessible hosts. Do not treat an unavailable test as PASS; never change executor or invoke an alternate route to defeat a specific tool/platform denial.
+
+This owner test-start policy grants no production, release, credential, off-scope host or merger authority. Two same-HEAD release PASS loops and 116 canonical scenario dispositions are still separately required for release acceptance.

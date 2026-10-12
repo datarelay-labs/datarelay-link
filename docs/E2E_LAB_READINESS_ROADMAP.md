@@ -21,7 +21,7 @@ The official `docs/FULL_USER_E2E_SCENARIOS.md` is the required 4,283-line full u
 
 **Current source remediation boundary:** Source now supports strict preexisting-admin, localhost-only, authenticated FRP reload and a truthful sync status report. Both still AWAIT AUTHORIZED LIVE RETEST. Without the legitimately provisioned preexisting management API, proxy-set changes retain the legacy full restart; never mark F007 closed based on isolated tests.
 
-**Only after those two gates:** execute the LAB-P0-01..05 readiness work packages below, seek legitimate approvals and attest GO on owned disposable hosts. A current NOT_READY result forbids the next Codex acceptance run. Codex remains TEST-ONLY; no duplicate Codex session, premature soak, CLI FCS, merge or release.
+**Lab work runs in parallel with authorized tests (2026-10-12 owner override):** The LAB-P0-01..05 packages below diagnose each relevant host/effect but no longer block independent non-destructive CLI FCS or functional E2E on available owner-approved hosts. Global NOT_READY excludes only affected operations or hosts; report them as BLOCKED/NOT_RUN, not PASS. The active Work Packet permits Codex source fixes as well. Do not bypass actual platform denials or advance merge/release without separate acceptance.
 
 ## P0 work packages (implement in priority order; keep independent actionable work moving)
 
@@ -62,7 +62,7 @@ Only that host/lane is blocked; independent authorized tests continue.
 - Check protected test TLS/CA, public MCP trust/real ChatGPT owner OAuth acceptance, source-address policy selectors and genuine review/approval for intended live tests before running affected lanes. Mark exact `NOT_READY` / `BLOCKED_TOOLING` / `BLOCKED_ENVIRONMENT`; no mock acceptances.
 - Distinguish readiness preflight (may use scripts) from independent real human CLI action evidence (scripts forbidden as primary proof).
 
-**Acceptance:** deterministic `GO | NOT_READY | BLOCKED` with per-gate reasons and evidence, no run-wide fictitious PASS if mandatory prerequisites are blocked. Independent safely executable diagnostic tests may continue under separately labeled supporting runs.
+**Acceptance:** deterministic `GO | NOT_READY | BLOCKED` with per-gate reasons and evidence, no run-wide fictitious PASS if mandatory prerequisites are blocked. Independently authorized primary CLI/user tests may proceed on currently available hosts; tests excluded for missing registration or security denial remain BLOCKED/NOT_RUN.
 
 **Implemented support tooling (post-reboot):** `tools/e2e_lab_readiness.py` with isolated regression `tests/test-e2e-lab-readiness.py` performs approved-alias, read-only host/Source HEAD and ownership-precondition inventory. Provide a private lab-ownership JSON manifest through `--manifest` and durable `--output-dir`; it writes `PREFLIGHT_STATUS.json` and `CLEANROOM_LEDGER.tsv` outside `/tmp`, with exit code 3 when `NOT_READY`. The script cannot approve its own host permissions or override denied effects. Native Windows is not qualified from management reachability alone. This is supporting preflight, **not** a persona test or product readiness PASS.
 
@@ -95,7 +95,7 @@ lift previously denied certificate, B014, Windows or Rocky effects.
 
 **Acceptance:** `AI_MIRRORS_WITHOUT_DIRECT_BASELINE=0`, `DIRECT_USE_CASES_WITHOUT_AI_MIRROR=0`, documented knowledge isolation, prospective evidence intact, all in-scope complete once user states truly verified.
 
-**Dual-role dispatch hard gate:** `tools/codex_fcs_actor_dispatch.py` (with unit regressions in `tests/test-e2e-owner-preflight-procedure.py`) requires a real installed-candidate GO, exact Git/source identity, canonical single-run lock, explicit separately owned Codex phase authorization and private prompts. A NOT_READY test returned exit 3 without launching Codex. Actual knowledge isolation and user/AI parity remain unproven until real Codex role transcripts are independently audited. See `docs/CODEX_DUAL_ROLE_TEST_PROTOCOL.md`.
+**Owner-scoped dual-role dispatch:** `tools/codex_fcs_actor_dispatch.py` (unit regressions in `tests/test-e2e-owner-preflight-procedure.py`) now requires the selected installed Source HEAD, an exclusive current FCS run lock, private prompts and independent genuine role receipts. The former global seven-host GO and phase-state flags have been removed from read-only FCS actor admission by explicit owner instruction. A global NOT_READY report remains diagnostic; each real denied effect still blocks only its dependent criterion. Knowledge isolation and user/AI parity require actual Codex role transcripts, not synthetic receipts. See `docs/CODEX_DUAL_ROLE_TEST_PROTOCOL.md`.
 
 ### LAB-P0-04 — Separate stable soak from controlled faults and saturation
 

@@ -78,16 +78,16 @@ class E2EProcedureGuard(unittest.TestCase):
             self.assertNotIn("remote.xdr.ooo", doc)
 
     def test_canonical_points_to_owner_fix_first_procedure(self):
-        self.assertIn("Current owner-ordered preparation gate", self.canonical)
+        self.assertIn("Owner-scoped test execution (2026-10-12)", self.canonical)
         self.assertIn("docs/E2E_EXECUTION_PROCEDURE.md", self.canonical)
         self.assertIn("ChatGPT", self.canonical)
         self.assertIn("this entire canonical document", self.canonical)
-        self.assertIn("previously denied security effects remain binding", self.canonical)
+        self.assertIn("Never bypass a genuine security denial", self.canonical)
 
     def test_roadmap_priority_first_bugs_then_method_then_clean_lab(self):
         bug = self.roadmap.index("Immediate first:")
         sop = self.roadmap.index("**Next:** CHATGPT_CHAT repairs the method")
-        lab = self.roadmap.index("**Only after those two gates:**")
+        lab = self.roadmap.index("**Lab work runs in parallel with authorized tests")
         self.assertLess(bug, sop)
         self.assertLess(sop, lab)
         self.assertLess(lab, self.roadmap.index("### LAB-P0-01"))
@@ -97,9 +97,9 @@ class E2EProcedureGuard(unittest.TestCase):
         required = (
             "FULL_USER_E2E_SCENARIOS.md",
             "116 scenario", "3,600-second soak",
-            "two same-HEAD PASS", "Codex TEST-ONLY",
+            "two same-HEAD PASS", "Codex FCS actor dispatch",
             "F001", "F004", "F005", "F006", "F007", "D001",
-            "No new full E2E", "15-FCS audit",
+            "No new full E2E", "Codex FCS",
             "first AI answer", "AI_FIRST_ANSWERS.tsv",
             "PROCESS_REGISTRY.tsv", "CLEANROOM_LEDGER.tsv",
             "status",  # diagnostics and status reports remain explicit
@@ -427,8 +427,6 @@ class CodexActorDispatchSafeguards(unittest.TestCase):
             with mock.patch.object(
                 self.dispatch.subprocess, "check_output",
                 return_value="a" * 40 + "\n",
-            ), mock.patch.object(
-                self.dispatch, "OWNER_PHASE_STATE", root / "owner-phase-state.json"
             ):
                 ready = self.dispatch.validate_launch(
                     run_root=root, run_id="FCS-001-run", pair_id="PAIR-001",
@@ -440,28 +438,39 @@ class CodexActorDispatchSafeguards(unittest.TestCase):
             self.assertEqual(ready["role"], "AI_ADVISER")
             self.assertFalse(ready["target"].exists())
 
-    def test_blockers_prevent_any_model_launch(self):
+    def test_global_not_ready_does_not_veto_readonly_fcs(self):
         with tempfile.TemporaryDirectory(dir=Path.home()) as temp:
-            root, prompt, lab, lock, receipt = self.fixture(Path(temp))
-            blocked = dict(receipt, status="NOT_READY",
-                           not_ready_gate_ids=["SERVER_CLEANUP_B014"])
-            lab.write_text(json.dumps(blocked))
-            with mock.patch.object(
-                self.dispatch.subprocess, "check_output",
-                return_value="a" * 40 + "\n",
-            ), mock.patch.object(
-                self.dispatch.shutil, "which",
-                side_effect=AssertionError("Codex binary lookup not allowed"),
-            ), mock.patch.object(
-                sys, "argv", [
-                    "codex_fcs_actor_dispatch.py", "--run-root", str(root),
-                    "--run-id", "FCS-001-run", "--pair-id", "PAIR-001",
-                    "--role", "AI_ADVISER", "--prompt-file", str(prompt),
-                    "--preflight", str(lab), "--lock", str(lock),
-                ],
-            ):
-                self.assertEqual(self.dispatch.main(), 3)
-            self.assertFalse((root / "actors").exists())
+            root, prompt, lab, lock, status = self.fixture(Path(temp))
+            status.update(status="NOT_READY",
+                          not_ready_gate_ids=["HOST_FRP_E2E_ROCKY8", "OWNER_OAUTH_UI"])
+            lab.write_text(json.dumps(status))
+            with mock.patch.object(self.dispatch.subprocess, "check_output",
+                                   return_value="a"*40+"\n"):
+                ready = self.dispatch.validate_launch(
+                    run_root=root, run_id="FCS-001-run", pair_id="PAIR-001",
+                    role="AI_ADVISER", prompt_file=prompt,
+                    preflight_file=lab, lock_file=lock)
+            self.assertEqual(ready["scope"], "NON_DESTRUCTIVE_FCS")
+            self.assertEqual(ready["global_lab_status"], "NOT_READY")
+            self.assertEqual(ready["excluded_global_gates"], status["not_ready_gate_ids"])
+            self.assertEqual(ready["source_head"], "b"*40)
+            self.assertFalse(ready["target"].exists())
+
+    def test_no_lab_report_requires_actual_observed_source_head(self):
+        with tempfile.TemporaryDirectory(dir=Path.home()) as temp:
+            root, prompt, lab, lock, _ = self.fixture(Path(temp))
+            args = dict(run_root=root, run_id="FCS-001-run", pair_id="PAIR-001",
+                        role="DIRECT_USER", prompt_file=prompt,
+                        preflight_file=None, lock_file=lock)
+            with mock.patch.object(self.dispatch.subprocess, "check_output",
+                                   return_value="a"*40+"\n"):
+                with self.assertRaisesRegex(ValueError, "Pinned installed Source HEAD"):
+                    self.dispatch.validate_launch(**args)
+                ready = self.dispatch.validate_launch(
+                    **args, installed_source_head="c"*40)
+            self.assertEqual(ready["source_head"], "c"*40)
+            self.assertEqual(ready["global_lab_status"], "NOT_PROVIDED")
+            self.assertEqual(ready["source_pin_origin"], "PUBLIC_OBSERVATION_DECLARED")
 
     def test_lock_head_permission_and_duplicate_gates(self):
         with tempfile.TemporaryDirectory(dir=Path.home()) as temp:
@@ -472,10 +481,7 @@ class CodexActorDispatchSafeguards(unittest.TestCase):
                         lock_file=lock)
             with mock.patch.object(self.dispatch.subprocess, "check_output",
                                    return_value="a" * 40 + "\n"), \
-                 mock.patch.object(
-                     self.dispatch, "OWNER_PHASE_STATE",
-                     root / "owner-phase-state.json",
-                 ):
+                 mock.patch.object(self.dispatch, "REPO", ROOT):
                 self.assertEqual(self.dispatch.validate_launch(**args)["role"],
                                  "DIRECT_USER")
                 lock.write_text("RUN_ID=FOREIGN-RUN\n")
@@ -497,29 +503,22 @@ class CodexActorDispatchSafeguards(unittest.TestCase):
                 with self.assertRaises(FileExistsError):
                     self.dispatch.validate_launch(**args)
 
-    def test_go_receipt_cannot_override_owner_denied_phase(self):
+    def test_old_phase_state_is_not_a_global_fcs_veto(self):
         with tempfile.TemporaryDirectory(dir=Path.home()) as temp:
-            root, prompt, lab, lock, receipt = self.fixture(Path(temp))
+            root, prompt, lab, lock, status = self.fixture(Path(temp))
             owner = root / "owner-phase-state.json"
-            owner.write_text(json.dumps({
-                "phase": "CHATGPT_CODEX_E2E_FINDINGS_FIX_AND_SOP",
-                "next_codex_test_authorized": False,
-                "p0_go_status": "NOT_READY",
-                "latest_source_head": "a" * 40,
-            }))
-            with mock.patch.object(
-                self.dispatch.subprocess, "check_output",
-                return_value="a" * 40 + "\n",
-            ), mock.patch.object(
-                self.dispatch, "OWNER_PHASE_STATE", owner
-            ):
-                with self.assertRaisesRegex(ValueError, "not enabled"):
-                    self.dispatch.validate_launch(
-                        run_root=root, run_id="FCS-001-run",
-                        pair_id="PAIR-001", role="AI_ADVISER",
-                        prompt_file=prompt, preflight_file=lab,
-                        lock_file=lock,
-                    )
+            owner.write_text(json.dumps({"phase": "NOT_READY",
+                "next_codex_test_authorized": False, "p0_go_status": "NOT_READY"}))
+            status.update(status="NOT_READY", not_ready_gate_ids=["MCP_PUBLIC_TLS"])
+            lab.write_text(json.dumps(status))
+            with mock.patch.object(self.dispatch.subprocess, "check_output",
+                                   return_value="a"*40+"\n"):
+                ready = self.dispatch.validate_launch(
+                    run_root=root, run_id="FCS-001-run", pair_id="PAIR-001",
+                    role="AI_ADVISER", prompt_file=prompt,
+                    preflight_file=lab, lock_file=lock)
+            self.assertEqual(ready["scope"], "NON_DESTRUCTIVE_FCS")
+            self.assertEqual(ready["global_lab_status"], "NOT_READY")
 
     def test_actor_log_from_real_codex_jsonl_shape_is_audit_only(self):
         with tempfile.TemporaryDirectory(dir=Path.home()) as temp:
