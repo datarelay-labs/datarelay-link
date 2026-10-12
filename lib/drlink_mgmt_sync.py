@@ -1623,6 +1623,27 @@ def _require_safe_signed_job_diagnostics(kind: str, result: dict) -> None:
         return type(value) is str and value in ("", placeholder)
 
     if kind == "doctor":
+        # Native Doctor always returns explicit evidence. A bare signed name
+        # cannot be recorded as a successful examination of Agent health.
+        if (
+            result.get("overall") not in ("PASS", "PASS_WITH_WARNINGS", "FAIL", "ERROR")
+            or type(result.get("exit_code")) is not int
+            or not 0 <= result["exit_code"] <= 255
+            or type(result.get("check_count")) is not int
+            or not 0 <= result["check_count"] <= 10000
+            or not isinstance(result.get("counts"), dict)
+            or len(result["counts"]) > 16
+            or not isinstance(result.get("findings"), list)
+            or len(result["findings"]) > 20
+            or result.get("network_probe_performed") is not False
+        ):
+            raise MgmtSyncError(invalid)
+        if (
+            any(type(value) is not int or not 0 <= value <= 100000
+                for value in result["counts"].values())
+            or sum(result["counts"].values()) != result["check_count"]
+        ):
+            raise MgmtSyncError(invalid)
         if "findings" in result:
             findings = result["findings"]
             if not isinstance(findings, list) or len(findings) > 20:
@@ -1654,6 +1675,21 @@ def _require_safe_signed_job_diagnostics(kind: str, result: dict) -> None:
                 raise MgmtSyncError(invalid)
 
     if kind == "refresh":
+        # A signed ACK without the native synchronized-state counters is
+        # not evidence of a successful Agent refresh.
+        if (
+            result.get("status") not in (
+                "SYNCHRONIZED", "DEGRADED", "OFFLINE", "UNKNOWN"
+            )
+            or type(result.get("updated")) is not int
+            or not 0 <= result["updated"] <= 1000000
+            or type(result.get("projected")) is not int
+            or not 0 <= result["projected"] <= 1000000
+            or not isinstance(result.get("affected"), list)
+            or len(result["affected"]) > 20
+            or not safe_message(result.get("runtime_error"))
+        ):
+            raise MgmtSyncError(invalid)
         if "runtime_error" in result and not safe_message(result["runtime_error"]):
             raise MgmtSyncError(invalid)
         if "affected" in result:

@@ -312,6 +312,18 @@ class V30ManagementJobTransportTests(unittest.TestCase):
                             "product_update_available": True,
                             "relay_engine_update_available": False,
                         })
+                    elif kind == "doctor":
+                        receipt.update({
+                            "overall": "PASS", "exit_code": 0,
+                            "check_count": 1, "counts": {"PASS": 1},
+                            "findings": [], "network_probe_performed": False,
+                        })
+                    elif kind == "refresh":
+                        receipt.update({
+                            "status": "SYNCHRONIZED",
+                            "updated": 1, "projected": 1,
+                            "affected": [], "runtime_error": "",
+                        })
                     reply = mgmt.complete_management_job_on_server(
                         root=self.agent_tmp, job_id=job["id"],
                         claim_token=claim["claim_token"], status="SUCCEEDED",
@@ -319,6 +331,82 @@ class V30ManagementJobTransportTests(unittest.TestCase):
                     )
                     self.assertIs(reply["ok"], True)
                     self.assertEqual(engine.get(job["id"])["status"], SUCCEEDED)
+        finally:
+            engine.close()
+
+    def test_signed_diagnostic_success_requires_native_evidence_fields(self):
+        canonical = {
+            "doctor": {
+                "operation": "doctor", "overall": "PASS", "exit_code": 0,
+                "check_count": 1, "counts": {"PASS": 1}, "findings": [],
+                "network_probe_performed": False,
+            },
+            "refresh": {
+                "operation": "refresh", "status": "SYNCHRONIZED",
+                "updated": 1, "projected": 1, "affected": [],
+                "runtime_error": "",
+            },
+        }
+        invalid = {
+            "doctor": (
+                {"operation": "doctor"},
+                {**canonical["doctor"], "overall": "HEALTHY"},
+                {**canonical["doctor"], "exit_code": True},
+                {**canonical["doctor"], "check_count": -1},
+                {**canonical["doctor"], "counts": {"PASS": 2}},
+                {**canonical["doctor"], "findings": None},
+                {**canonical["doctor"], "network_probe_performed": True},
+                {**canonical["doctor"], "overall": "secrets\nhidden"},
+            ),
+            "refresh": (
+                {"operation": "refresh"},
+                {**canonical["refresh"], "status": "HEALTHY"},
+                {**canonical["refresh"], "updated": True},
+                {**canonical["refresh"], "projected": -1},
+                {**canonical["refresh"], "affected": None},
+                {**canonical["refresh"], "runtime_error": "secret-data"},
+                {**canonical["refresh"], "updated": 1000000000},
+                {key: value for key, value in canonical["refresh"].items()
+                 if key != "status"},
+            ),
+        }
+        engine = ManagementJobEngine(self.server_tmp)
+        try:
+            for kind, cases in invalid.items():
+                for result in cases:
+                    with self.subTest(kind=kind, result=str(result)[:90]):
+                        job = engine.enqueue(
+                            job_type=kind, targets=[MACHINE_A],
+                            requested_by="web:admin",
+                        )
+                        claim = mgmt.claim_management_jobs_on_server(
+                            root=self.agent_tmp, limit=1,
+                        )["jobs"][0]
+                        self.assertEqual(claim["job_id"], job["id"])
+                        with self.assertRaises(mgmt.MgmtSyncError):
+                            mgmt._request_json(
+                                "POST", self.base + "/v1/management-jobs/complete",
+                                {"id": job["id"],
+                                 "claim_token": claim["claim_token"],
+                                 "status": "SUCCEEDED", "result": result},
+                                root=self.agent_tmp,
+                            )
+                        self.assertEqual(engine.get(job["id"])["status"], "RUNNING")
+            for kind, receipt in canonical.items():
+                job = engine.enqueue(
+                    job_type=kind, targets=[MACHINE_A],
+                    requested_by="web:admin",
+                )
+                claim = mgmt.claim_management_jobs_on_server(
+                    root=self.agent_tmp, limit=1,
+                )["jobs"][0]
+                reply = mgmt.complete_management_job_on_server(
+                    root=self.agent_tmp, job_id=job["id"],
+                    claim_token=claim["claim_token"], status="SUCCEEDED",
+                    result=receipt,
+                )
+                self.assertTrue(reply["ok"])
+                self.assertEqual(engine.get(job["id"])["status"], SUCCEEDED)
         finally:
             engine.close()
 
@@ -554,7 +642,11 @@ class V30ManagementJobTransportTests(unittest.TestCase):
             mgmt.complete_management_job_on_server(
                 root=self.agent_tmp, job_id=claim["job_id"],
                 claim_token=claim["claim_token"], status="SUCCEEDED",
-                result={"operation": "doctor"}, error="Bearer untrusted-success-string",
+                result={
+                    "operation": "doctor", "overall": "PASS", "exit_code": 0,
+                    "check_count": 1, "counts": {"PASS": 1}, "findings": [],
+                    "network_probe_performed": False,
+                }, error="Bearer untrusted-success-string",
             )
             final = engine.get(job["id"])
             self.assertEqual(final["status"], "SUCCEEDED")
