@@ -99,6 +99,9 @@ class FRPAuthenticatedReloadSecurityTests(unittest.TestCase):
                 'webServer.password = "%s"\n'
             ) % ("AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_abcd"[:40])
             path.write_text(secure)
+            # The insecure file case must be deterministic even when a Codex
+            # execution profile or CI runner starts with umask 0077.
+            path.chmod(0o644)
             self.assertIsNone(runtime._trusted_existing_frpc_admin(path, secure))
             path.chmod(0o600)
             self.assertIsNotNone(runtime._trusted_existing_frpc_admin(path, secure))
