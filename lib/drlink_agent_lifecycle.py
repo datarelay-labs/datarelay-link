@@ -108,6 +108,17 @@ def _require_agent_remote_service_receipt(
         or entity.get("name") != name
     ):
         raise ValueError(invalid)
+    # The Core Management Job completion contract admits only these native
+    # Agent states. Fail here instead of reporting a misleading signed
+    # SUCCESS from unverified local runtime evidence.
+    if operation == "set":
+        view = result.get("view")
+        if (
+            not isinstance(view, dict)
+            or type(view.get("status")) is not str
+            or view["status"] not in ("HEALTHY", "DEGRADED", "DISABLED")
+        ):
+            raise ValueError(invalid)
     return result
 
 

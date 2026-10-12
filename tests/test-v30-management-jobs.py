@@ -169,6 +169,43 @@ class V30ManagementJobTests(unittest.TestCase):
         job = self._enqueue(targets=("host-a", "host-b"))
         self.assertEqual(job["target_count"], 2)
 
+    def test_agent_remote_service_receipt_rejects_unverified_set_state(self):
+        # A local mutation acknowledgement cannot be promoted to an Agent
+        # success receipt with an invented status. Core accepts only these
+        # concrete native states; unknown evidence stays UNKNOWN.
+        from drlink_agent_lifecycle import _require_agent_remote_service_receipt
+        entity = {
+            "type": "remote-service", "id": "ssh-access", "name": "ssh-access",
+        }
+        base = {
+            "operation": "set", "entity": entity,
+            "view": {
+                "name": "ssh-access", "service": "ssh",
+                "enabled": True, "status": "HEALTHY",
+            },
+        }
+        for bad in ("UNKNOWN", "ACTIVE", "", None, True, [], 0):
+            with self.subTest(runtime_status=bad):
+                receipt = {**base, "view": {**base["view"], "status": bad}}
+                with self.assertRaisesRegex(ValueError, "receipt UNKNOWN"):
+                    _require_agent_remote_service_receipt(
+                        receipt, operation="set", name="ssh-access",
+                    )
+        for state in ("HEALTHY", "DEGRADED", "DISABLED"):
+            with self.subTest(good_runtime_status=state):
+                receipt = {**base, "view": {**base["view"], "status": state}}
+                self.assertIs(
+                    _require_agent_remote_service_receipt(
+                        receipt, operation="set", name="ssh-access",
+                    ), receipt,
+                )
+        deletion = {"operation": "delete", "entity": entity}
+        self.assertIs(
+            _require_agent_remote_service_receipt(
+                deletion, operation="delete", name="ssh-access",
+            ), deletion,
+        )
+
     def test_schema_is_separate_from_ai_jobs(self):
         tables = {
             row[0]
