@@ -1,4 +1,4 @@
-import React,{useState} from "react";
+import React,{useRef,useState} from "react";
 import {isObservedAbsoluteTime} from "./uxb-integrations-state";
 import {sortLoadedSavedViews,isSavedViewSortMode,type SavedViewSortMode} from "./uxb-saved-views-sort";
 
@@ -136,6 +136,17 @@ export function filterLoadedSavedViewsByType(
  });
 }
 
+/** G-33: only three local Saved Views list-presentation controls.
+ * A reset is never a Core operation, private Saved View write or permission.
+ */
+export function savedViewsDisplayResetAvailable(
+ query:unknown,facet:unknown,mode:unknown
+):boolean{
+ return typeof query==="string"&&query.length<=80&&!UNSAFE_VIEW_TEXT.test(query)
+   &&isSavedViewTargetFilter(facet)&&isSavedViewSortMode(mode)
+   &&(query.length>0||facet!=="all"||mode!=="core");
+}
+
 export function SavedViewsWorkspace({data,api,onNavigate,refresh,initialDraft}:{
   data:any,api:(path:string,init?:RequestInit)=>Promise<any>,initialDraft?:unknown,
   onNavigate?:(id:string,group?:string,context?:any)=>void,refresh:()=>void
@@ -147,6 +158,7 @@ export function SavedViewsWorkspace({data,api,onNavigate,refresh,initialDraft}:{
       prepared.route==="services"?"all":prepared.plane):null;
   const [name,setName]=useState(""),[filter,setFilter]=useState(safeDraft?.filter||"");
   const [listQuery,setListQuery]=useState("");
+  const listQueryInputRef=useRef<HTMLInputElement>(null);
   const [listSort,setListSort]=useState<SavedViewSortMode>("core");
   const [targetFacet,setTargetFacet]=useState<SavedViewTargetFilter>("all");
   const [target,setTarget]=useState<StoredViewTarget>(safeDraft?.resource_type||"managed-host");
@@ -167,6 +179,7 @@ export function SavedViewsWorkspace({data,api,onNavigate,refresh,initialDraft}:{
   const visibleRows=filterObservedSavedViewList(rows,listQuery);
   const typedVisibleRows=filterLoadedSavedViewsByType(visibleRows.items,targetFacet);
   const sortedVisibleRows=sortLoadedSavedViews(typedVisibleRows,listSort);
+  const displayResetAvailable=savedViewsDisplayResetAvailable(listQuery,targetFacet,listSort);
   // Never let a local display filter hide an existing name collision.
   const duplicate=conflictingSavedViewName(rows,name);
   // Core currently returns at most 100 views, so an unobserved collision is possible.
@@ -245,10 +258,13 @@ export function SavedViewsWorkspace({data,api,onNavigate,refresh,initialDraft}:{
     <section className="card dr-list-card"><h3>My saved filters</h3>
       <div className="dr-form-actions" role="search" aria-label="Private saved filter name search">
         <label>Find my saved filters <input aria-label="Find my saved filters"
-          value={listQuery} maxLength={80}
+          ref={listQueryInputRef} value={listQuery} maxLength={80}
           onChange={e=>setListQuery(e.target.value)} placeholder="Search saved view names…"/></label>
         {listQuery&&<button type="button" className="secondary"
           onClick={()=>setListQuery("")}>Clear saved filter search</button>}
+        {displayResetAvailable&&<button type="button" className="secondary"
+          onClick={()=>{setListQuery("");setTargetFacet("all");setListSort("core");listQueryInputRef.current?.focus()}}>
+          Reset Saved Views display filters</button>}
         <label>Saved view resource type
           <select aria-label="Filter loaded saved view resource type" value={targetFacet}
             onChange={e=>setTargetFacet(isSavedViewTargetFilter(e.target.value)?e.target.value:"all")}>
