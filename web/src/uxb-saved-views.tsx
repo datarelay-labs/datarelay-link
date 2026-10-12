@@ -146,6 +146,28 @@ export function savedViewsDisplayResetAvailable(
    &&isSavedViewTargetFilter(facet)&&isSavedViewSortMode(mode)
    &&(query.length>0||facet!=="all"||mode!=="core");
 }
+/** G-34: active display clues, NOT user-entered query text or saved payload.
+ * The chip values and IDs are fixed local enumerations, never Core fields.
+ */
+export type SavedViewChipId="search"|"type"|"sort";
+export type SavedViewChip={id:SavedViewChipId,label:string,value:string};
+const VISIBLE_TYPE_LABELS:Record<Exclude<SavedViewTargetFilter,"all">,string>={
+ hosts:"Hosts",services:"Services",policies:"Policies",unsupported:"Unsupported"
+};
+const VISIBLE_SORT_LABELS:Record<Exclude<SavedViewSortMode,"core">,string>={
+ updated_desc:"Recently updated",updated_asc:"Oldest updated"
+};
+export function activeSavedViewFilterChips(
+ query:unknown,facet:unknown,mode:unknown
+):SavedViewChip[]{
+ if(typeof query!=="string"||query.length>80||UNSAFE_VIEW_TEXT.test(query)
+   ||!isSavedViewTargetFilter(facet)||!isSavedViewSortMode(mode))return [];
+ const chips:SavedViewChip[]=[];
+ if(query.length)chips.push({id:"search",label:"Name search",value:"Active"});
+ if(facet!=="all")chips.push({id:"type",label:"Resource type",value:VISIBLE_TYPE_LABELS[facet]});
+ if(mode!=="core")chips.push({id:"sort",label:"Order",value:VISIBLE_SORT_LABELS[mode]});
+ return chips;
+}
 
 export function SavedViewsWorkspace({data,api,onNavigate,refresh,initialDraft}:{
   data:any,api:(path:string,init?:RequestInit)=>Promise<any>,initialDraft?:unknown,
@@ -180,6 +202,7 @@ export function SavedViewsWorkspace({data,api,onNavigate,refresh,initialDraft}:{
   const typedVisibleRows=filterLoadedSavedViewsByType(visibleRows.items,targetFacet);
   const sortedVisibleRows=sortLoadedSavedViews(typedVisibleRows,listSort);
   const displayResetAvailable=savedViewsDisplayResetAvailable(listQuery,targetFacet,listSort);
+  const savedViewChips=activeSavedViewFilterChips(listQuery,targetFacet,listSort);
   // Never let a local display filter hide an existing name collision.
   const duplicate=conflictingSavedViewName(rows,name);
   // Core currently returns at most 100 views, so an unobserved collision is possible.
@@ -265,6 +288,13 @@ export function SavedViewsWorkspace({data,api,onNavigate,refresh,initialDraft}:{
         {displayResetAvailable&&<button type="button" className="secondary"
           onClick={()=>{setListQuery("");setTargetFacet("all");setListSort("core");listQueryInputRef.current?.focus()}}>
           Reset Saved Views display filters</button>}
+        {savedViewChips.length>0&&<div className="dr-form-actions" role="group" aria-label="Active Saved Views display filters">
+          {savedViewChips.map(chip=><button key={chip.id} type="button" className="secondary"
+            aria-label={"Remove "+chip.label+" filter"}
+            onClick={()=>{if(chip.id==="search")setListQuery("");else if(chip.id==="type")setTargetFacet("all");else setListSort("core");listQueryInputRef.current?.focus()}}>
+            {chip.label}: {chip.value} ×</button>)}
+          <span className="muted">Name search chips never display the entered text.</span>
+        </div>}
         <label>Saved view resource type
           <select aria-label="Filter loaded saved view resource type" value={targetFacet}
             onChange={e=>setTargetFacet(isSavedViewTargetFilter(e.target.value)?e.target.value:"all")}>
