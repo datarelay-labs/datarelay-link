@@ -25,6 +25,7 @@ import {filterObservedServices} from "./uxb-service-search";
 import {observedBoundedCoreSearchResponse} from "./uxb-global-search-target";
 import {observedAuthenticatedWebSession,observedWebMfaChallenge,observedWebMfaCompletion} from "./uxb-web-session";
 import {observedCoreHealthSnapshot,observedHealthPlaneCount} from "./uxb-health-state";
+import {observedCoreSystemStatus} from "./uxb-system-status";
 import {filterLoadedServiceFacets,type ServiceTypeFacet,type ServiceConfigFacet} from "./uxb-service-facets";
 import {operatorAccountState,operatorMfaState,operatorMfaAction,operatorLastLogin} from "./uxb-users-state";
 import {observedOperatorInventory,observedOperatorMfaReceipt,observedOperatorCreateReceipt} from "./uxb-users-state";
@@ -939,7 +940,7 @@ function SystemPanel({data,operator}:{data:any,operator:any}){
       </div>
       {operator.role==="Admin"&&update.product_apply_via_web&&<div className="toolbar"><input value={productUpdateConfirmation} onChange={e=>setProductUpdateConfirmation(e.target.value)} placeholder="Type UPDATE PRODUCT"/><button className="danger" onClick={updateProduct} disabled={productUpdateConfirmation!=="UPDATE PRODUCT"}>Update Data Relay Link</button></div>}
       {operator.role==="Admin"&&update.engine_apply_via_web&&<div className="toolbar"><input value={engineUpdateConfirmation} onChange={e=>setEngineUpdateConfirmation(e.target.value)} placeholder="Type UPDATE ENGINE"/><button className="danger" onClick={updateEngine} disabled={engineUpdateConfirmation!=="UPDATE ENGINE"}>Update Relay Engine</button></div>}
-      <div className="muted">Product update apply via Web: {update.product_apply_via_web?"enabled — exact-build queued mode":"unavailable; use local CLI recovery/update"}</div>
+      <div className="muted">Product update apply via Web: {update.product_apply_via_web===true?"enabled — exact-build queued mode":update.product_apply_via_web===false?"unavailable; use local CLI recovery/update":"UNKNOWN · Core did not verify Web update availability"}</div>
       {updateResult?.job_id&&<button className="secondary" onClick={refreshProductUpdate}>Refresh Product Update Status</button>}
       {updateResult&&<pre className="plan">{JSON.stringify(updateResult,null,2)}</pre>}
     </div>
@@ -955,7 +956,7 @@ function SystemPanel({data,operator}:{data:any,operator:any}){
           <input value={certEmail} onChange={e=>setCertEmail(e.target.value)} placeholder="ACME contact email"/>
           <select value={acmeEnv} onChange={e=>setAcmeEnv(e.target.value)}><option value="production">Production</option><option value="staging">Staging</option></select>
         </div>
-        <div className="toolbar"><input value={certConfigConfirmation} onChange={e=>setCertConfigConfirmation(e.target.value)} placeholder="Type APPLY"/><button className="danger" onClick={configureCertificate} disabled={certConfigConfirmation!=="APPLY"}>Apply Certificate Settings</button></div>
+        <div className="toolbar"><input value={certConfigConfirmation} onChange={e=>setCertConfigConfirmation(e.target.value)} placeholder="Type APPLY"/><button className="danger" onClick={configureCertificate} disabled={certConfigConfirmation!=="APPLY"||!["auto-acme","user-certificate","private-ca"].includes(certMode)}>Apply Certificate Settings</button></div>
         {certMode!=="user-certificate"&&<div className="toolbar"><input value={issueConfirmation} onChange={e=>setIssueConfirmation(e.target.value)} placeholder="Type ISSUE"/><button className="danger" onClick={issueCertificate} disabled={issueConfirmation!=="ISSUE"}>Issue & Activate Certificate</button></div>}
         {certMode==="user-certificate"&&<div className="card">
           <div className="muted">PEM material is sent only in this request, staged under a private Core-owned directory, imported by the canonical TLS engine, then deleted.</div>
@@ -2806,9 +2807,14 @@ function View({active,operator,onNavigate,context,setupDraft,onSetupDraftChange}
       }).catch((e:any)=>{if(current)setError(e.message||String(e))});
     }else if(paths[active])api(paths[active]).then(payload=>{
       if(!current)return;
-      try{setData(active==="hygiene"?requireObservedAccessHygiene(payload):
-        active==="hosts"||active==="services"?requireObservedBoundedCorePage(active,payload,"",100):
-        requireObservedMenuPayload(active,payload))}
+      try{
+        const projected=active==="system"?observedCoreSystemStatus(payload):
+          active==="hygiene"?requireObservedAccessHygiene(payload):
+          active==="hosts"||active==="services"?requireObservedBoundedCorePage(active,payload,"",100):
+          requireObservedMenuPayload(active,payload);
+        if(!projected)throw new Error("Core System status is incomplete or not certified read-only. State is UNKNOWN.");
+        setData(projected);
+      }
       catch(e:any){setError(e.message||String(e))}
     }).catch((e:any)=>{if(current)setError(e.message||String(e))});
     return()=>{current=false};
