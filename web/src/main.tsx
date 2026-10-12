@@ -23,7 +23,7 @@ import {serviceVisibleIdentity} from "./uxb-service-detail";
 import {resourceCardSummary} from "./uxb-resource-cards";
 import {filterObservedServices} from "./uxb-service-search";
 import {observedBoundedCoreSearchResponse} from "./uxb-global-search-target";
-import {observedAuthenticatedWebSession} from "./uxb-web-session";
+import {observedAuthenticatedWebSession,observedWebMfaChallenge,observedWebMfaCompletion} from "./uxb-web-session";
 import {filterLoadedServiceFacets,type ServiceTypeFacet,type ServiceConfigFacet} from "./uxb-service-facets";
 import {operatorAccountState,operatorMfaState,operatorMfaAction,operatorLastLogin} from "./uxb-users-state";
 import {observedOperatorInventory,observedOperatorMfaReceipt,observedOperatorCreateReceipt} from "./uxb-users-state";
@@ -155,7 +155,11 @@ function Login({onLogin}:{onLogin:(op:any)=>void}){
     e.preventDefault();setError("");setBusy(true);
     try{
       const d=await api("/api/v1/auth/login",{method:"POST",body:JSON.stringify({username,password,totp,recovery_code:recovery})});
-      if(d.mfa_setup_required){setSetup(d);setSetupCode("");return}
+      if(d.mfa_setup_required===true){
+        const challenge=observedWebMfaChallenge(d);
+        if(!challenge)throw new Error("Core MFA setup challenge is UNKNOWN. Sign in again rather than using an unverified QR or enrollment token.");
+        setSetup(challenge);setSetupCode("");return;
+      }
       const observed=observedAuthenticatedWebSession(d);
       if(!observed)throw new Error("Core authenticated session is UNKNOWN. No Web role or CSRF token was accepted.");
       csrf=observed.csrf_token;onLogin(observed.operator);
@@ -165,9 +169,9 @@ function Login({onLogin}:{onLogin:(op:any)=>void}){
     e.preventDefault();setError("");setBusy(true);
     try{
       const d=await api("/api/v1/auth/mfa/enroll/confirm",{method:"POST",body:JSON.stringify({enrollment_token:setup.enrollment_token,totp:setupCode})});
-      const observed=observedAuthenticatedWebSession(d);
-      if(!observed)throw new Error("Core authenticated session is UNKNOWN. Sign in again rather than repeating MFA setup blindly.");
-      csrf=observed.csrf_token;setRecoveryCodes(d.recovery_codes||[]);setPendingOperator(observed.operator);
+      const completed=observedWebMfaCompletion(d);
+      if(!completed)throw new Error("Core MFA completion receipt is UNKNOWN. Sign in again and inspect MFA status; do not blindly repeat enrollment.");
+      csrf=completed.session.csrf_token;setRecoveryCodes(completed.recovery_codes);setPendingOperator(completed.session.operator);
     }catch(err:any){setError(err.message||String(err))}finally{setBusy(false)}
   }
   async function cancelMfaSetup(){
