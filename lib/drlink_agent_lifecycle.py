@@ -90,6 +90,27 @@ def _public_agent_diagnostic(value: object) -> str:
     )
 
 
+def _require_agent_remote_service_receipt(
+    result: object, *, operation: str, name: str,
+) -> dict:
+    """Bind an Agent's local mutation acknowledgement to the exact service."""
+    invalid = (
+        "Agent Remote Service operation receipt UNKNOWN; "
+        "inspect Agent and Core before retrying."
+    )
+    if not isinstance(result, dict) or result.get("operation") != operation:
+        raise ValueError(invalid)
+    entity = result.get("entity")
+    if (
+        not isinstance(entity, dict)
+        or entity.get("type") != "remote-service"
+        or entity.get("id") != name
+        or entity.get("name") != name
+    ):
+        raise ValueError(invalid)
+    return result
+
+
 def _execute_management_job(claim: dict, root: Optional[str] = None) -> dict:
     kind = str(claim.get("job_type") or "").strip().lower()
     payload = claim.get("payload") or {}
@@ -258,13 +279,28 @@ def _execute_management_job(claim: dict, root: Optional[str] = None) -> dict:
                 root=root,
                 server_reachable=True,
             )
-            view = result.get("view") if isinstance(result, dict) else None
+            receipt = _require_agent_remote_service_receipt(
+                result, operation="set", name=name,
+            )
+            view = receipt.get("view")
+            if (
+                not isinstance(view, dict)
+                or view.get("name") != name
+                or view.get("service") != service
+                or view.get("enabled") is not enabled
+                or not isinstance(view.get("status"), str)
+                or not view["status"]
+            ):
+                raise ValueError(
+                    "Agent Remote Service operation receipt UNKNOWN; "
+                    "inspect Agent and Core before retrying."
+                )
             return {
                 "operation": "remote-service-set",
                 "name": name,
-                "runtime_status": str((view or {}).get("status") or "UNKNOWN"),
-                "reason": _public_agent_diagnostic((view or {}).get("reason")),
-                "endpoint": (view or {}).get("endpoint"),
+                "runtime_status": view["status"],
+                "reason": _public_agent_diagnostic(view.get("reason")),
+                "endpoint": view.get("endpoint"),
             }
         if kind == "remote-service-delete":
             name = str(payload.get("name") or "").strip()
@@ -276,10 +312,16 @@ def _execute_management_job(claim: dict, root: Optional[str] = None) -> dict:
                 root=root,
                 server_reachable=True,
             )
+            _require_agent_remote_service_receipt(
+                result, operation="delete", name=name,
+            )
             return {
                 "operation": "remote-service-delete",
                 "name": name,
-                "status": str((result or {}).get("status") or "DELETED"),
+                "status": "DELETED",
+                # The local configuration removal receipt is not evidence
+                # that a running transport endpoint was actually withdrawn.
+                "runtime_verified": False,
             }
         raise ValueError("Unsupported Agent Management Job type: %s" % kind)
     finally:

@@ -409,9 +409,101 @@ class V30ManagementJobTransportTests(unittest.TestCase):
                 (MACHINE_A, "ssh-access"),
             ).fetchone()
             self.assertIsNotNone(server_row)
+
+            # The same signed Agent path must verify real local deletion, not
+            # a synthetic "DELETED" status lacking an operation receipt.
+            deletion = engine.enqueue(
+                job_type="remote-service-delete",
+                targets=[MACHINE_A],
+                requested_by="web:admin",
+                resource_type="remote-service",
+                resource_ref="ssh-access",
+                payload={"name": "ssh-access"},
+            )
+            self.assertEqual(
+                process_management_jobs_once(self.agent_tmp, limit=1),
+                {"processed": 1, "failed": 0},
+            )
+            deleted_job = engine.get(deletion["id"])
+            self.assertEqual(deleted_job["status"], SUCCEEDED)
+            receipt = deleted_job["targets"][0]["result"]
+            self.assertEqual(receipt["operation"], "remote-service-delete")
+            self.assertEqual(receipt["name"], "ssh-access")
+            self.assertEqual(receipt["status"], "DELETED")
+            self.assertIs(receipt["runtime_verified"], False)
+            agent_after = ControlPlane(self.agent_tmp)
+            try:
+                row = agent_after.conn.execute(
+                    "SELECT name FROM agent_remote_services WHERE name=?",
+                    ("ssh-access",),
+                ).fetchone()
+                self.assertIsNone(row)
+            finally:
+                agent_after.close()
         finally:
             engine.close()
 
+
+    def test_agent_remote_service_jobs_require_matching_local_mutation_receipts(self):
+        from unittest import mock
+        from drlink_agent_lifecycle import _execute_management_job
+
+        set_claim = {
+            "job_type": "remote-service-set",
+            "payload": {
+                "name": "ssh-access", "destination": "this-host",
+                "service": "ssh", "enabled": True,
+            },
+        }
+        delete_claim = {
+            "job_type": "remote-service-delete",
+            "payload": {"name": "ssh-access"},
+        }
+        entity = {
+            "type": "remote-service", "id": "ssh-access", "name": "ssh-access",
+        }
+        valid_set = {
+            "operation": "set", "entity": entity,
+            "view": {
+                "name": "ssh-access", "service": "ssh", "enabled": True,
+                "status": "HEALTHY", "endpoint": "127.0.0.1:6022",
+            },
+        }
+        valid_delete = {"operation": "delete", "entity": entity}
+        bad_set = [
+            {}, {"view": valid_set["view"]},
+            {**valid_set, "entity": {**entity, "id": "another-service"}},
+            {**valid_set, "view": {**valid_set["view"], "enabled": False}},
+            {**valid_set, "operation": "pending"},
+        ]
+        for response in bad_set:
+            with self.subTest(set_result=response), mock.patch(
+                "drlink_v24.set_remote_service_agent", return_value=response
+            ):
+                with self.assertRaisesRegex(ValueError, "receipt UNKNOWN"):
+                    _execute_management_job(set_claim, root=self.agent_tmp)
+        bad_delete = [
+            {}, {"status": "DELETED"},
+            {**valid_delete, "entity": {**entity, "name": "another-service"}},
+            {**valid_delete, "operation": "pending"},
+        ]
+        for response in bad_delete:
+            with self.subTest(delete_result=response), mock.patch(
+                "drlink_v24.unset_remote_service_agent", return_value=response
+            ):
+                with self.assertRaisesRegex(ValueError, "receipt UNKNOWN"):
+                    _execute_management_job(delete_claim, root=self.agent_tmp)
+        with mock.patch("drlink_v24.set_remote_service_agent", return_value=valid_set):
+            self.assertEqual(
+                _execute_management_job(set_claim, root=self.agent_tmp)["runtime_status"],
+                "HEALTHY",
+            )
+        with mock.patch(
+            "drlink_v24.unset_remote_service_agent", return_value=valid_delete
+        ):
+            removed = _execute_management_job(delete_claim, root=self.agent_tmp)
+        self.assertEqual(removed["status"], "DELETED")
+        self.assertIs(removed["runtime_verified"], False)
 
     def test_agent_diagnostic_job_results_do_not_export_raw_private_messages(self):
         from types import SimpleNamespace
@@ -449,10 +541,18 @@ class V30ManagementJobTransportTests(unittest.TestCase):
 
         with mock.patch(
             "drlink_v24.set_remote_service_agent",
-            return_value={"view": {
-                "status": "DEGRADED", "reason": "secret relay URL " + secret,
-                "endpoint": "127.0.0.1:6022",
-            }},
+            return_value={
+                "operation": "set",
+                "entity": {
+                    "type": "remote-service", "id": "ssh-access",
+                    "name": "ssh-access",
+                },
+                "view": {
+                    "name": "ssh-access", "service": "ssh", "enabled": True,
+                    "status": "DEGRADED", "reason": "secret relay URL " + secret,
+                    "endpoint": "127.0.0.1:6022",
+                },
+            },
         ):
             service = _execute_management_job({
                 "job_type": "remote-service-set",
