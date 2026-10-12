@@ -784,7 +784,10 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn('return()=>{current=false}', SOURCE)
         self.assertIn('Core data unavailable · UNKNOWN', SOURCE)
         self.assertIn('Retry Core read →', SOURCE)
-        self.assertIn('requireObservedMenuPayload("jobs",await api("/api/v1/jobs?limit=50"+', SOURCE)
+        self.assertIn('requireObservedJobsPage(await api("/api/v1/jobs?limit=50"+', SOURCE)
+        self.assertIn(')),jobsCursor,50)', SOURCE)
+        self.assertIn('function requireObservedJobsPage(',
+                      (ROOT / "web/src/uxb-menu-evidence.ts").read_text(encoding="utf-8"))
         self.assertIn('if(epoch!==jobsReadEpoch.current)return;', SOURCE)
         self.assertIn('useEffect(()=>{refresh();return()=>{jobsReadEpoch.current+=1}},[jobsCursor]);', SOURCE)
         self.assertIn('setJobsHistory([...jobsHistory,jobsCursor])', SOURCE)

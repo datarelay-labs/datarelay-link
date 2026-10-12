@@ -850,6 +850,60 @@ export function requireObservedInventoryExport(payload:unknown):any{
 
 /** A Job detail belongs to one explicitly requested ID. Incomplete or
  * superseded reads must not imply a matching current Job or cancellable state. */
+/** M2/R6: Core Management Jobs has a distinct bounded keyset page.
+ * An arbitrary HTTP 200 with items[] cannot establish an empty job queue,
+ * job status, resource family or continuation. Project public fixed fields
+ * before rendering; never display requested_by, private payloads, errors,
+ * target claim material, tokens or any unknown nested Core fields. */
+export function requireObservedJobsPage(
+  payload:unknown,requestedCursor:string,limit:number
+):{resource_type:"management-job",limit:number,next_cursor:string|null,items:any[]}{
+  const fail=():never=>{throw new Error(
+    "UNKNOWN · Core Management Jobs page family, limit, identity or cursor was not verified. Reload Jobs before interpreting status."
+  );};
+  const page=requireObservedMenuPayload("jobs",payload);
+  const cursorSafe=(value:unknown):value is string=>
+    typeof value==="string"&&/^[A-Za-z0-9_-]{1,2048}$/.test(value);
+  if(!Number.isSafeInteger(limit)||limit!==50
+    ||typeof requestedCursor!=="string"
+    ||(requestedCursor!==""&&!cursorSafe(requestedCursor))
+    ||page.resource_type!=="management-job"||page.limit!==50
+    ||!Array.isArray(page.items)||page.items.length>50
+    ||!Object.prototype.hasOwnProperty.call(page,"next_cursor")
+    ||(page.next_cursor!==null&&!cursorSafe(page.next_cursor))
+    ||(page.next_cursor!==null&&(page.next_cursor===requestedCursor||page.items.length===0)))
+    return fail();
+  const JOB_TYPES=new Set(["doctor","refresh","version-check","support-bundle",
+    "remote-service-set","remote-service-delete","agent-update-rollout"]);
+  const JOB_STATUSES=new Set(["QUEUED","RUNNING","SUCCEEDED","FAILED","CANCELLED"]);
+  const seen=new Set<string>(),items:any[]=[];
+  for(const entry of page.items){
+    const id=entry.id;
+    if(typeof id!=="string"||!/^mjob_[0-9a-f]{24}$/.test(id)
+      ||seen.has(id)||!JOB_TYPES.has(entry.job_type)
+      ||!JOB_STATUSES.has(entry.status)
+      ||!Number.isSafeInteger(entry.target_count)
+      ||entry.target_count<1||entry.target_count>100
+      ||!isObservedAbsoluteTime(entry.created_at))return fail();
+    seen.add(id);
+    const resourceType=typeof entry.resource_type==="string"
+      &&/^[a-z][a-z0-9-]{0,63}$/.test(entry.resource_type)
+      ?entry.resource_type:"UNKNOWN";
+    // The operational selector is a Core ID, not a URL or bearer token.
+    // Suppress arbitrary raw selector text instead of reflecting credentials.
+    const resourceRef=typeof entry.resource_ref==="string"
+      &&/^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,159}$/.test(entry.resource_ref)
+      ?entry.resource_ref:"UNKNOWN";
+    const finished=entry.finished_at===null?null:
+      isObservedAbsoluteTime(entry.finished_at)?entry.finished_at:"UNKNOWN";
+    items.push({id,job_type:entry.job_type,status:entry.status,
+      resource_type:resourceType,resource_ref:resourceRef,
+      target_count:entry.target_count,created_at:entry.created_at,finished_at:finished});
+  }
+  return {resource_type:"management-job",limit:50,
+    next_cursor:page.next_cursor,items};
+}
+
 export function requireObservedJobDetail(payload:unknown,requestedId:unknown):any{
   const fail=()=>{throw new Error("UNKNOWN · Core Job Detail is missing, mismatched or incomplete. Retry the exact Job ID.");};
   if(!payload||typeof payload!=="object"||Array.isArray(payload)

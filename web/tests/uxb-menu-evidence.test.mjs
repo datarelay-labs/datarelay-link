@@ -866,3 +866,63 @@ test('R2.2 M2: Audit first-50 and keyset pages refuse mismatched/overlong/duplic
   const source=readFileSync(join(root,'src','main.tsx'),'utf8');
   assert.ok(source.includes('requireObservedBoundedCorePage("audit",await api("/api/v1/audit?"'))
 });
+
+test('R2.2/M2 R6: Core Jobs first-50/keyset response is a verified, redacted management-job page',()=>{
+  const id='mjob_'+'a'.repeat(24);
+  const full={id,job_type:'doctor',status:'QUEUED',target_count:2,
+    resource_type:'managed-host',resource_ref:'host-a',
+    created_at:'2026-10-12T02:00:00Z',finished_at:null,
+    requested_by:'hidden.actor',last_error:'secret_NOT_FOR_WEB',
+    payload_json:{credential:'PRIVATE_JOB_KEY'},cancel_requested:0};
+  const payload={resource_type:'management-job',limit:50,items:[full],
+    next_cursor:null,unknown_secret:{bearer:'NO_EXPORT'}};
+  const observed=menu.requireObservedJobsPage(payload,'',50);
+  assert.deepEqual(observed,{
+    resource_type:'management-job',limit:50,next_cursor:null,items:[{
+      id,job_type:'doctor',status:'QUEUED',target_count:2,
+      resource_type:'managed-host',resource_ref:'host-a',
+      created_at:'2026-10-12T02:00:00Z',finished_at:null
+    }]
+  });
+  assert.doesNotMatch(JSON.stringify(observed),/hidden.actor|secret_NOT_FOR_WEB|PRIVATE_JOB_KEY|NO_EXPORT|payload_json/);
+  const unsafeRef=menu.requireObservedJobsPage({...payload,
+    items:[{...full,resource_ref:"https://bad.example/lookup?token=SECRET"}]},'',50);
+  assert.equal(unsafeRef.items[0].resource_ref,"UNKNOWN");
+  assert.doesNotMatch(JSON.stringify(unsafeRef),/SECRET|bad\.example/);
+
+  const cursor='eyJ2IjoxLCJyZXNvdXJjZSI6Im1hbmFnZW1lbnQtam9iIn0';
+  assert.equal(menu.requireObservedJobsPage({...payload,next_cursor:cursor},'',50).next_cursor,cursor);
+  assert.deepEqual(menu.requireObservedJobsPage({...payload,items:[]},'',50).items,[]);
+});
+test('R2.2/M2 R6: wrong Core Job family, limit, ID, status, count, continuation or duplication remains UNKNOWN',()=>{
+  const valid={resource_type:'management-job',limit:50,next_cursor:null,
+    items:[{id:'mjob_'+'b'.repeat(24),job_type:'doctor',status:'QUEUED',
+      target_count:1,resource_type:'managed-host',resource_ref:'host-a',
+      created_at:'2026-10-12T02:00:00Z',finished_at:null}]};
+  const item=valid.items[0];
+  const cursor='opaque-Core-job-cursor';
+  for(const invalid of [null,[],{}, {items:[]},
+    {...valid,resource_type:'audit-event'},{...valid,resource_type:undefined},
+    {...valid,limit:100},{...valid,limit:'50'},
+    {...valid,next_cursor:undefined},{...valid,next_cursor:''},
+    {...valid,next_cursor:123},{...valid,next_cursor:'wrong cursor'},
+    {...valid,items:[],next_cursor:'phantom'},
+    {...valid,items:Array.from({length:51},(_,i)=>({...item,id:'mjob_'+i.toString(16).padStart(24,'0')}))},
+    {...valid,items:[item,item]},
+    {...valid,items:[{...item,id:'another'}]},
+    {...valid,items:[{...item,job_type:'arbitrary'}]},
+    {...valid,items:[{...item,status:'COMPLETED'}]},
+    {...valid,items:[{...item,status:{leak:'private'}}]},
+    {...valid,items:[{...item,target_count:101}]},
+    {...valid,items:[{...item,target_count:-1}]},
+    {...valid,items:[{...item,created_at:'yesterday'}]},
+    {...valid,items:[{...item,created_at:'2026-02-30T00:00:00Z'}]},
+  ]){
+    assert.throws(()=>menu.requireObservedJobsPage(invalid,'',50),/Core|UNKNOWN/,JSON.stringify(invalid)?.slice(0,120));
+  }
+  assert.throws(()=>menu.requireObservedJobsPage({...valid,next_cursor:cursor},cursor,50),/Core|UNKNOWN/);
+  assert.throws(()=>menu.requireObservedJobsPage({...valid,items:[]},'invalid cursor',50),/Core|UNKNOWN/);
+  const main=readFileSync(join(root,'src','main.tsx'),'utf8');
+  assert.match(main,/requireObservedJobsPage\(await api\("\/api\/v1\/jobs\?limit=50"/);
+  assert.match(main,/jobsCursor,50\)/);
+});
