@@ -293,14 +293,9 @@ def process_management_jobs_once(root: Optional[str] = None, *, limit: int = 4) 
             continue
         try:
             result = _execute_management_job(claim, root=root)
-            complete_management_job_on_server(
-                root=root,
-                job_id=job_id,
-                claim_token=claim_token,
-                status="SUCCEEDED",
-                result=result,
-            )
         except Exception as exc:
+            # Only an actual local Agent execution error may be reported as
+            # FAILED. The Core still validates this authenticated claim.
             failed += 1
             complete_management_job_on_server(
                 root=root,
@@ -309,6 +304,18 @@ def process_management_jobs_once(root: Optional[str] = None, *, limit: int = 4) 
                 status="FAILED",
                 result={},
                 error=str(exc)[:1024],
+            )
+        else:
+            # An acknowledgement/transport error can occur AFTER the Core
+            # committed SUCCEEDED. Do NOT catch that error as Agent execution
+            # failure or send a conflicting FAILED completion on the same
+            # one-shot claim. Let worker retry/reconcile from Core authority.
+            complete_management_job_on_server(
+                root=root,
+                job_id=job_id,
+                claim_token=claim_token,
+                status="SUCCEEDED",
+                result=result,
             )
         processed += 1
     return {"processed": processed, "failed": failed}

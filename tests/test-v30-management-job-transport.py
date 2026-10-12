@@ -307,5 +307,67 @@ class V30ManagementJobTransportTests(unittest.TestCase):
             engine.close()
 
 
+class V30AgentCompletionAcknowledgementBoundaryTests(unittest.TestCase):
+    """A lost Core completion acknowledgement must NEVER cause a second,
+    conflicting FAILED completion for an already executed Agent mutation.
+    Pure signed-RPC mock: no network, production Host or Agent effect.
+    """
+
+    def test_lost_success_ack_never_sends_second_failure_completion(self):
+        from unittest import mock
+        from drlink_agent_lifecycle import process_management_jobs_once
+
+        claim = {
+            "job_id": "mjob_" + "a" * 24,
+            "claim_token": "opaque-claim-token",
+            "job_type": "remote-service-set",
+            "target_id": MACHINE_A,
+        }
+        with mock.patch(
+            "drlink_mgmt_sync.claim_management_jobs_on_server",
+            return_value={"jobs": [claim]},
+        ), mock.patch(
+            "drlink_agent_lifecycle._execute_management_job",
+            return_value={"operation": "remote-service-set", "status": "COMMITTED"},
+        ) as executed, mock.patch(
+            "drlink_mgmt_sync.complete_management_job_on_server",
+            side_effect=TimeoutError("Core reply lost after possible commit"),
+        ) as completion:
+            with self.assertRaisesRegex(TimeoutError, "Core reply lost"):
+                process_management_jobs_once(root="/tmp/unused-agent-fixture")
+        executed.assert_called_once_with(claim, root="/tmp/unused-agent-fixture")
+        self.assertEqual(
+            completion.call_count, 1,
+            "A possibly committed Core success MUST NOT be followed by "
+            "a second contradictory FAILED completion using the same claim token.",
+        )
+        self.assertEqual(completion.call_args.kwargs["status"], "SUCCEEDED")
+
+    def test_agent_handler_failure_sends_one_failed_completion_not_false_success(self):
+        from unittest import mock
+        from drlink_agent_lifecycle import process_management_jobs_once
+        claim = {
+            "job_id": "mjob_" + "b" * 24,
+            "claim_token": "opaque-claim",
+            "job_type": "doctor",
+            "target_id": MACHINE_A,
+        }
+        with mock.patch(
+            "drlink_mgmt_sync.claim_management_jobs_on_server",
+            return_value={"jobs": [claim]},
+        ), mock.patch(
+            "drlink_agent_lifecycle._execute_management_job",
+            side_effect=ValueError("LOCAL_DIAGNOSTIC_FAILURE"),
+        ), mock.patch(
+            "drlink_mgmt_sync.complete_management_job_on_server",
+            return_value={"ok": True},
+        ) as completion:
+            summary = process_management_jobs_once(root="/tmp/unused-agent-fixture")
+        self.assertEqual(summary, {"processed": 1, "failed": 1})
+        completion.assert_called_once()
+        self.assertEqual(completion.call_args.kwargs["status"], "FAILED")
+        self.assertEqual(completion.call_args.kwargs["result"], {})
+
+
 if __name__ == "__main__":
     unittest.main()
