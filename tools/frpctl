@@ -3506,10 +3506,6 @@ args = sys.argv[3:]
 path = Path("/var/log/drlink/audit.jsonl")
 if root:
     path = Path(root + "/var/log/drlink/audit.jsonl")
-if not path.is_file():
-    print("(no audit log)")
-    raise SystemExit(0)
-
 want_json = False
 limit = 50
 client_filter = None
@@ -3524,7 +3520,10 @@ while i < len(args):
         continue
     if tok == "last" and i + 1 < len(args):
         try:
-            limit = max(1, min(500, int(args[i + 1])))
+            requested_limit = int(args[i + 1])
+            if requested_limit <= 0:
+                raise ValueError("nonpositive audit limit")
+            limit = min(500, requested_limit)
         except ValueError:
             print("ERROR: system audit last <N> requires a positive integer.", file=sys.stderr)
             raise SystemExit(2)
@@ -3569,6 +3568,10 @@ if managed_host_selector is not None:
         )
         print("Run: show managed-hosts", file=sys.stderr)
         raise SystemExit(2)
+
+if not path.is_file():
+    print("(no audit log)")
+    raise SystemExit(0)
 
 raw_lines = path.read_text(encoding="utf-8").splitlines()
 records = []
