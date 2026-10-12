@@ -64,7 +64,7 @@ test('M2 R6 malformed Job evidence never enables a false cancel or a fabricated 
 test('M2 R6 Job Operations renders sanitized display-only copy, no raw target.result/errors and no unsafe cancellation action',()=>{
  const source=readFileSync(join(root,'src','main.tsx'),'utf8');
  const panel=source.split('function JobOperations(',2)[1]?.split('function ObjectsWorkspace(',1)[0]||'';
- assert.match(source,/import \{observedCoreJobDisplay\} from "\.\/uxb-jobs-display"/);
+ assert.match(source,/import \{observedCoreJobDisplay,observedJobCancelAvailable\} from "\.\/uxb-jobs-display"/);
  assert.match(panel,/const safeDetail=detail\?observedCoreJobDisplay\(detail\):null;/);
  assert.match(panel,/\{safeDetail&&<div className="card">/);
  assert.match(panel,/\{detail&&!safeDetail&&<p role="alert"/);
@@ -73,4 +73,24 @@ test('M2 R6 Job Operations renders sanitized display-only copy, no raw target.re
  assert.doesNotMatch(panel,/result:x.result/);
  assert.doesNotMatch(panel,/error:x.error\|\|""/);
  assert.doesNotMatch(panel,/\{detail&&<div className="card">/);
+});
+
+test('R6 Operator cannot cancel Admin-only Agent rollout, while regular Jobs remain role-scoped',()=>{
+ const doctor=view.observedCoreJobDisplay({...valid,status:'QUEUED'});
+ const rollout=view.observedCoreJobDisplay({...valid,status:'QUEUED',job_type:'agent-update-rollout'});
+ const terminal=view.observedCoreJobDisplay({...valid,status:'SUCCEEDED'});
+ assert.equal(view.observedJobCancelAvailable(doctor,'Admin'),true);
+ assert.equal(view.observedJobCancelAvailable(doctor,'Operator'),true);
+ assert.equal(view.observedJobCancelAvailable(doctor,'Read Only'),false);
+ assert.equal(view.observedJobCancelAvailable(doctor,'unknown'),false);
+ assert.equal(view.observedJobCancelAvailable(rollout,'Admin'),true);
+ assert.equal(view.observedJobCancelAvailable(rollout,'Operator'),false);
+ assert.equal(view.observedJobCancelAvailable(rollout,'Read Only'),false);
+ assert.equal(view.observedJobCancelAvailable(terminal,'Admin'),false);
+ assert.equal(view.observedJobCancelAvailable(terminal,'Operator'),false);
+ assert.equal(view.observedJobCancelAvailable(null,'Admin'),false);
+ const source=readFileSync(join(root,'src','main.tsx'),'utf8');
+ const panel=source.split('function JobOperations(',2)[1]?.split('function ObjectsWorkspace(',1)[0]||'';
+ assert.match(panel,/observedJobCancelAvailable\(safeDetail,operator.role\)/);
+ assert.match(panel,/!observedJobCancelAvailable\(observedCoreJobDisplay\(detail\),operator.role\)/);
 });

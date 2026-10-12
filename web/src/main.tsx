@@ -26,7 +26,7 @@ import {observedBoundedCoreSearchResponse} from "./uxb-global-search-target";
 import {observedAuthenticatedWebSession,observedWebMfaChallenge,observedWebMfaCompletion} from "./uxb-web-session";
 import {observedCoreHealthSnapshot,observedHealthPlaneCount} from "./uxb-health-state";
 import {observedCoreSystemStatus} from "./uxb-system-status";
-import {observedCoreJobDisplay} from "./uxb-jobs-display";
+import {observedCoreJobDisplay,observedJobCancelAvailable} from "./uxb-jobs-display";
 import {filterLoadedServiceFacets,type ServiceTypeFacet,type ServiceConfigFacet} from "./uxb-service-facets";
 import {operatorAccountState,operatorMfaState,operatorMfaAction,operatorLastLogin} from "./uxb-users-state";
 import {observedOperatorInventory,observedOperatorMfaReceipt,observedOperatorCreateReceipt} from "./uxb-users-state";
@@ -1728,7 +1728,7 @@ function JobOperations({operator}:{operator:any}){
     }
   }
   async function cancelJob(){
-    if(cancelInFlight.current||!detail?.id||detailBusy||!observedCoreJobDisplay(detail))return;
+    if(cancelInFlight.current||!detail?.id||detailBusy||!observedJobCancelAvailable(observedCoreJobDisplay(detail),operator.role))return;
     cancelInFlight.current=true;setCancelBusy(true);
     const jobId=String(detail.id);
     detailReadEpoch.current+=1;setError("");setMessage("");
@@ -1810,7 +1810,7 @@ function JobOperations({operator}:{operator:any}){
     {safeDetail&&<div className="card">
       <h3>Job Detail</h3>
       <div className="grid"><Metric label="Status" value={safeDetail.status}/><Metric label="Targets" value={safeDetail.target_count}/><Metric label="Type" value={safeDetail.job_type}/></div>
-      {operator.role!=="Read Only"&&["QUEUED","RUNNING"].includes(String(safeDetail.status))&&<button className="danger" onClick={cancelJob} disabled={cancelBusy||detailBusy}>{cancelBusy?"Requesting Core cancellation…":"Cancel Job"}</button>}
+      {observedJobCancelAvailable(safeDetail,operator.role)&&<button className="danger" onClick={cancelJob} disabled={cancelBusy||detailBusy}>{cancelBusy?"Requesting Core cancellation…":"Cancel Job"}</button>}
       <Table items={safeDetail.targets.map(x=>({target_id:x.target_id,status:x.status,attempt:x.attempt,error:x.error,updated_at:x.updated_at}))}/>
       <p className="muted">Core and Agent raw results, worker identity, nested payloads and arbitrary error text are not displayed here. Only bounded job progress and known error codes are shown.</p>
       <pre className="plan">{JSON.stringify(safeDetail,null,2)}</pre>

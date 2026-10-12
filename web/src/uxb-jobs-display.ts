@@ -58,3 +58,16 @@ export function observedCoreJobDisplay(payload:unknown):ObservedCoreJobDisplay|n
     targets
   };
 }
+
+
+/** Core enforces Admin plus management-update for rollout cancellation,
+ * while routine diagnostic Jobs admit Admin/Operator management-job-run.
+ * Web visibility is a conservative hint, never a substitute for Core RBAC.
+ */
+export function observedJobCancelAvailable(
+  detail:ObservedCoreJobDisplay|null,role:unknown
+):boolean{
+  if(!detail||!["QUEUED","RUNNING"].includes(detail.status))return false;
+  if(role==="Admin")return true;
+  return role==="Operator"&&detail.job_type!=="agent-update-rollout";
+}

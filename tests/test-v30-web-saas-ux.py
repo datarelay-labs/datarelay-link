@@ -972,6 +972,8 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         ):
             self.assertIn(marker,jobs,marker)
         self.assertIn('const result=requireObservedJobDetail(await api(',jobs)
+        self.assertIn('observedJobCancelAvailable(safeDetail,operator.role)',jobs)
+        self.assertIn('!observedJobCancelAvailable(observedCoreJobDisplay(detail),operator.role)',jobs)
         self.assertIn('const safeDetail=detail?observedCoreJobDisplay(detail):null;',jobs)
         self.assertIn('{safeDetail&&<div className="card">',jobs)
         self.assertIn('JSON.stringify(safeDetail,null,2)',jobs)
