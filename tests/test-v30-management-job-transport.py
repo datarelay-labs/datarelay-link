@@ -216,6 +216,53 @@ class V30ManagementJobTransportTests(unittest.TestCase):
         finally:
             engine.close()
 
+    def test_signed_core_rejects_untrusted_nested_diagnostic_receipts(self):
+        # A signed Host is authenticated, but raw nested Agent messages must
+        # not cross into Web-visible Core Job history as trusted evidence.
+        engine = ManagementJobEngine(self.server_tmp)
+        secret = "PRIVATE_AGENT_MESSAGE_DO_NOT_PERSIST"
+        cases = (
+            ("doctor", {}, {"operation": "doctor", "findings": [
+                {"id": "pki", "status": "WARN", "message": secret}]}),
+            ("doctor", {}, {"operation": "doctor", "findings": [
+                {"id": "pki", "status": "WARN", "message": "",
+                 "raw_private": secret}]}),
+            ("doctor", {}, {"operation": "doctor", "findings": secret}),
+            ("refresh", {}, {"operation": "refresh", "runtime_error": secret}),
+            ("refresh", {}, {"operation": "refresh", "affected": [
+                {"name": "ssh", "reason": secret}]}),
+            ("refresh", {}, {"operation": "refresh", "affected": [
+                {"name": "ssh", "reason": "", "raw_private": secret}]}),
+            ("remote-service-set",
+             {"name": "ssh-access", "destination": "this-host",
+              "service": "ssh", "enabled": True},
+             {"operation": "remote-service-set", "name": "ssh-access",
+              "runtime_status": "HEALTHY", "reason": secret}),
+        )
+        try:
+            for kind, payload, result in cases:
+                with self.subTest(kind=kind, result=result):
+                    job = engine.enqueue(
+                        job_type=kind, targets=[MACHINE_A],
+                        requested_by="web:admin", payload=payload,
+                    )
+                    claim = mgmt.claim_management_jobs_on_server(
+                        root=self.agent_tmp, limit=1
+                    )["jobs"][0]
+                    self.assertEqual(claim["job_id"], job["id"])
+                    with self.assertRaises(mgmt.MgmtSyncError):
+                        mgmt._request_json(
+                            "POST", self.base + "/v1/management-jobs/complete",
+                            {"id": job["id"], "claim_token": claim["claim_token"],
+                             "status": "SUCCEEDED", "result": result},
+                            root=self.agent_tmp,
+                        )
+                    current = engine.get(job["id"])
+                    self.assertEqual(current["status"], "RUNNING")
+                    self.assertNotIn(secret, json.dumps(current))
+        finally:
+            engine.close()
+
     def test_core_diagnostic_success_requires_matching_claimed_job_type(self):
         engine = ManagementJobEngine(self.server_tmp)
         try:

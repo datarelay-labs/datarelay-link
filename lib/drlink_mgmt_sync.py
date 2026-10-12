@@ -1609,6 +1609,72 @@ def server_claim_management_jobs(plane, auth: MgmtAuthContext, body: dict) -> di
     return {"jobs": jobs}
 
 
+def _require_safe_signed_job_diagnostics(kind: str, result: dict) -> None:
+    """Reject unreviewed Agent-local diagnostic text before Core persistence.
+
+    A host signature proves identity, not that nested Doctor/Refresh messages
+    are safe to expose through the wider Management Job query/Web audience.
+    The native Agent emits only one fixed public placeholder or no message.
+    """
+    placeholder = "Check Agent-local diagnostics for details."
+    invalid = "Core Management Job diagnostic receipt is unsafe or malformed."
+
+    def safe_message(value: object) -> bool:
+        return type(value) is str and value in ("", placeholder)
+
+    if kind == "doctor":
+        if "findings" in result:
+            findings = result["findings"]
+            if not isinstance(findings, list) or len(findings) > 20:
+                raise MgmtSyncError(invalid)
+            for finding in findings:
+                if (
+                    not isinstance(finding, dict)
+                    or set(finding) - {"id", "status", "message"}
+                    or type(finding.get("id")) is not str
+                    or len(finding["id"]) > 128
+                    or finding.get("status") not in ("FAIL", "WARN", "ERROR")
+                    or not safe_message(finding.get("message", ""))
+                ):
+                    raise MgmtSyncError(invalid)
+        if "counts" in result:
+            counts = result["counts"]
+            if (
+                not isinstance(counts, dict)
+                or len(counts) > 16
+                or any(
+                    type(status) is not str
+                    or len(status) > 24
+                    or not status.isupper()
+                    or type(count) is not int
+                    or not 0 <= count <= 100000
+                    for status, count in counts.items()
+                )
+            ):
+                raise MgmtSyncError(invalid)
+
+    if kind == "refresh":
+        if "runtime_error" in result and not safe_message(result["runtime_error"]):
+            raise MgmtSyncError(invalid)
+        if "affected" in result:
+            affected = result["affected"]
+            if not isinstance(affected, list) or len(affected) > 20:
+                raise MgmtSyncError(invalid)
+            for item in affected:
+                if (
+                    not isinstance(item, dict)
+                    or set(item) - {"name", "reason"}
+                    or type(item.get("name")) is not str
+                    or len(item["name"]) > 128
+                    or not safe_message(item.get("reason", ""))
+                ):
+                    raise MgmtSyncError(invalid)
+
+    if kind == "remote-service-set":
+        if "reason" in result and not safe_message(result["reason"]):
+            raise MgmtSyncError(invalid)
+
+
 def server_complete_management_job(plane, auth: MgmtAuthContext, body: dict) -> dict:
     """Complete only the authenticated Managed Host's currently claimed target."""
     from drlink_v30_jobs import ManagementJobEngine, FAILED, SUCCEEDED
@@ -1690,6 +1756,9 @@ def server_complete_management_job(plane, auth: MgmtAuthContext, body: dict) -> 
                     raise MgmtSyncError(
                         "Core Management Job completion contains unexpected result fields."
                     )
+                _require_safe_signed_job_diagnostics(
+                    str(claimed["job_type"]), result
+                )
             if claimed and str(claimed["job_type"]) == ROLLOUT_JOB_TYPE:
                 raise MgmtSyncError(
                     "AGENT_UPDATER_NOT_QUALIFIED: signed Agent update completion is unavailable"
