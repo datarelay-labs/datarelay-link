@@ -26,6 +26,7 @@ import {observedBoundedCoreSearchResponse} from "./uxb-global-search-target";
 import {observedAuthenticatedWebSession,observedWebMfaChallenge,observedWebMfaCompletion} from "./uxb-web-session";
 import {observedCoreHealthSnapshot,observedHealthPlaneCount} from "./uxb-health-state";
 import {observedCoreSystemStatus} from "./uxb-system-status";
+import {observedCoreCertificatePreflight} from "./uxb-certificate-preflight";
 import {observedCoreJobDisplay,observedJobCancelAvailable} from "./uxb-jobs-display";
 import {observedRolloutPreviewDisplay} from "./uxb-rollout-display";
 import {filterLoadedServiceFacets,type ServiceTypeFacet,type ServiceConfigFacet} from "./uxb-service-facets";
@@ -903,7 +904,15 @@ function SystemPanel({data,operator}:{data:any,operator:any}){
   const [certPem,setCertPem]=useState(""),[keyPem,setKeyPem]=useState(""),[chainPem,setChainPem]=useState("");
   const [productUpdateConfirmation,setProductUpdateConfirmation]=useState(""),[engineUpdateConfirmation,setEngineUpdateConfirmation]=useState("");
   const [preflight,setPreflight]=useState<any>(null),[renewal,setRenewal]=useState<any>(null),[certAction,setCertAction]=useState<any>(null),[updateResult,setUpdateResult]=useState<any>(null),[validation,setValidation]=useState<any>(null),[backupArtifact,setBackupArtifact]=useState<any>(null),[supportArtifact,setSupportArtifact]=useState<any>(null),[error,setError]=useState("");
-  async function runPreflight(){setError("");try{setPreflight(await api("/api/v1/system/certificate/preflight",{method:"POST",body:"{}"}))}catch(e:any){setError(e.message||String(e))}}
+  async function runPreflight(){
+    setError("");setPreflight(null);
+    try{
+      const result=await api("/api/v1/system/certificate/preflight",{method:"POST",body:"{}"});
+      const projected=observedCoreCertificatePreflight(result,data.certificate);
+      if(!projected)throw new Error("Core certificate preflight did not match the configured Host, mode or read-only result. State is UNKNOWN.");
+      setPreflight(projected);
+    }catch(e:any){setPreflight(null);setError(e.message||String(e))}
+  }
   async function configureCertificate(){setError("");setCertAction(null);try{setCertAction(await api("/api/v1/system/certificate/configure",{method:"POST",body:JSON.stringify({mode:certMode,hostname:certHostname,contact_email:certEmail,acme_environment:acmeEnv,confirmation:certConfigConfirmation})}));setCertConfigConfirmation("")}catch(e:any){setError(e.message||String(e))}}
   async function issueCertificate(){setError("");setCertAction(null);try{setCertAction(await api("/api/v1/system/certificate/issue",{method:"POST",body:JSON.stringify({confirmation:issueConfirmation})}));setIssueConfirmation("")}catch(e:any){setError(e.message||String(e))}}
   async function importCertificate(){setError("");setCertAction(null);try{setCertAction(await api("/api/v1/system/certificate/import",{method:"POST",body:JSON.stringify({cert_pem:certPem,key_pem:keyPem,chain_pem:chainPem,confirmation:importConfirmation})}));setImportConfirmation("");setCertPem("");setKeyPem("");setChainPem("")}catch(e:any){setError(e.message||String(e))}}
@@ -969,7 +978,10 @@ function SystemPanel({data,operator}:{data:any,operator:any}){
         </div>}
         <div className="toolbar"><input value={renewConfirmation} onChange={e=>setRenewConfirmation(e.target.value)} placeholder="Type RENEW"/><button className="danger" onClick={renewCertificate} disabled={renewConfirmation!=="RENEW"}>Renew Certificate If Due</button></div>
       </>}
-      {preflight&&<pre className="plan">{JSON.stringify(preflight,null,2)}</pre>}
+      {preflight&&<section role="status" className="dr-preview-panel">
+        <p className="muted">Preflight is advisory: local Core DNS and HTTP/80 probes are not proof of external ACME validation, issuance, browser connectivity or live TLS health.</p>
+        <pre className="plan">{JSON.stringify(preflight,null,2)}</pre>
+      </section>}
       {certAction&&<pre className="plan">{JSON.stringify(certAction,null,2)}</pre>}
       {renewal&&<pre className="plan">{JSON.stringify(renewal,null,2)}</pre>}
     </div>
