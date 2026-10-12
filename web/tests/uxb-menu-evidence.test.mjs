@@ -926,3 +926,49 @@ test('R2.2/M2 R6: wrong Core Job family, limit, ID, status, count, continuation 
   assert.match(main,/requireObservedJobsPage\(await api\("\/api\/v1\/jobs\?limit=50"/);
   assert.match(main,/jobsCursor,50\)/);
 });
+
+test('M2/R6 diagnostic Job start must match submitted type/selection and Core-generated immutable job receipt',()=>{
+  const request={job_type:'doctor',resource_type:'managed-host',resource:'host-a'};
+  const job={id:'mjob_'+'a'.repeat(24),job_type:'doctor',status:'QUEUED',
+    target_count:1,resource_type:'managed-host',resource_ref:'host-a',
+    cancel_requested:0,created_at:'2026-10-12T02:00:00Z',
+    targets:[{target_id:'host-a',status:'QUEUED'}]};
+  const core={job,selection:{resource_type:'managed-host',
+    resource_ref:'host-a',resource_display:'Host A',target_count:1}};
+  assert.equal(menu.requireObservedJobStartForRequest(core,request),core);
+  const all={...core,job:{...job,resource_ref:'all'},selection:{...core.selection,resource_ref:'all'}};
+  assert.equal(menu.requireObservedJobStartForRequest(all,{...request,resource:''}),all);
+  const group={...core,job:{...job,resource_type:'managed-host-group',resource_ref:'group-a'},
+    selection:{...core.selection,resource_type:'managed-host-group',resource_ref:'group-a'}};
+  assert.equal(menu.requireObservedJobStartForRequest(group,
+    {...request,resource_type:'managed-host-group',resource:'Operations'}),group);
+  for(const altered of [
+    {...core,job:{...job,id:'mjob_wrong'}},
+    {...core,job:{...job,resource_ref:'wrong'}},
+    {...core,job:{...job,resource_type:'remote-service'}},
+    {...core,job:{...job,cancel_requested:1}},
+    {...core,job:{...job,created_at:'not-core-time'}},
+    {...core,job:{...job,targets:[]}},
+    {...core,job:{...job,targets:[{target_id:'other-host',status:'QUEUED'}]}},
+    {...core,selection:{...core.selection,resource_type:'managed-host-group'}},
+    {...core,selection:{...core.selection,resource_ref:'different'}},
+    {...core,selection:{...core.selection,target_count:2}},
+  ])assert.throws(()=>menu.requireObservedJobStartForRequest(altered,request),/UNKNOWN|Core/);
+  for(const bad of [null,{},[],{job_type:'refresh',resource_type:'managed-host',resource:'host-a'},
+    {job_type:'doctor',resource_type:'remote-service',resource:'host-a'},
+    {job_type:'doctor',resource_type:'managed-host-group',resource:''}]){
+    assert.throws(()=>menu.requireObservedJobStartForRequest(core,bad),/UNKNOWN|Core/);
+  }
+});
+test('M2/R6 Job start has an immediate ref lock and exact Core intent verification before Web success',()=>{
+ const src=readFileSync(join(root,'src','main.tsx'),'utf8');
+ const panel=src.split('function JobOperations(',2)[1]?.split('function ObjectsWorkspace(',1)[0]||'';
+ assert.match(panel,/const jobStartInFlight=useRef\(false\)/);
+ assert.match(panel,/if\(jobStartInFlight\.current\)return;/);
+ assert.match(panel,/jobStartInFlight\.current=true;/);
+ assert.match(panel,/requireObservedJobStartForRequest\(await api\("\/api\/v1\/jobs\/diagnostic"/);
+ assert.match(panel,/\),body\);/);
+ assert.match(panel,/finally\{jobStartInFlight\.current=false;setJobStartBusy\(false\)\}/);
+ assert.match(panel,/Core Job start response could not be confirmed/);
+ assert.doesNotMatch(panel,/const result=requireObservedJobStart\(await api/);
+});

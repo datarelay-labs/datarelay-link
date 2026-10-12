@@ -1026,6 +1026,7 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         jobs=SOURCE.split("function JobOperations(",1)[1].split("function ObjectsWorkspace(",1)[0]
         for marker in (
             "export function requireObservedJobStart(",
+            "export function requireObservedJobStartForRequest(",
             "export function requireObservedFleetApply(",
             'job.status!=="QUEUED"',
             'value.status!=="APPLIED"',
@@ -1033,7 +1034,7 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         ):
             self.assertIn(marker,evidence,marker)
         for marker in (
-            "requireObservedJobStart(await api(",
+            "requireObservedJobStartForRequest(await api(",
             "requireObservedFleetApplyForPreview(await api(",
             "Core job request accepted",
             "UNKNOWN · Core Job start response",

@@ -10,7 +10,7 @@ import {EnrollmentOnboarding} from "./p0-enrollment";
 import {navGroups,groupFor,labelFor,pageDescriptions,visibleRoute,navMatches,setupContextForObjectFamily} from "./uxb-navigation";
 import {START_PAGE_OPTIONS,startPageKeyForOperator,readPreferredStartPage,writePreferredStartPage} from "./uxb-start-page";
 import {FirstUseHome,observedCoreOverviewEvidence,observedBoundedCountPair,observedHomeAttention,isFreshInstallation,observedCoreRecentFeed,observedNumber,accessPlaneCount,coreHealthState,type RecentFeed} from "./uxb-home";
-import {requireObservedMenuPayload,requireObservedBoundedCorePage,guidedChangePreviewMatchesIntent,requireObservedGuidedChangeApplyReceipt,temporaryAccessPreviewMatchesIntent,observedHostAdmissionPlanForAction,requireObservedHostAdmissionReceipt,requireObservedTemporaryAccessApplyForPlan,requireObservedEmergencyCutoffApplyForPlan,observedEmergencyCutoffPreviewForIntent,requireObservedCutoffInventory,requireObservedLiveAccessView,requireObservedDiagnosisView,requireObservedObjectContinuation,requireObservedAuditRetention,auditRetentionRunPermitted,requireObservedAccessHygiene,hygieneInspectTarget,requireObservedJobsPage,requireObservedJobStart,requireObservedFleetApply,requireObservedFleetPreview,requireObservedFleetApplyForPreview,requireObservedAuditExport,requireObservedRolloutPreview,requireObservedInventoryExport,requireObservedJobDetail,requireObservedJobCancellation,isPartialCorePage,selectMenuPage,combineObservedPolicyPlanes,policyStateLabel,policyExpiryLabel,type MenuPagePosition} from "./uxb-menu-evidence";
+import {requireObservedMenuPayload,requireObservedBoundedCorePage,guidedChangePreviewMatchesIntent,requireObservedGuidedChangeApplyReceipt,temporaryAccessPreviewMatchesIntent,observedHostAdmissionPlanForAction,requireObservedHostAdmissionReceipt,requireObservedTemporaryAccessApplyForPlan,requireObservedEmergencyCutoffApplyForPlan,observedEmergencyCutoffPreviewForIntent,requireObservedCutoffInventory,requireObservedLiveAccessView,requireObservedDiagnosisView,requireObservedObjectContinuation,requireObservedAuditRetention,auditRetentionRunPermitted,requireObservedAccessHygiene,hygieneInspectTarget,requireObservedJobsPage,requireObservedJobStartForRequest,requireObservedFleetApply,requireObservedFleetPreview,requireObservedFleetApplyForPreview,requireObservedAuditExport,requireObservedRolloutPreview,requireObservedInventoryExport,requireObservedJobDetail,requireObservedJobCancellation,isPartialCorePage,selectMenuPage,combineObservedPolicyPlanes,policyStateLabel,policyExpiryLabel,type MenuPagePosition} from "./uxb-menu-evidence";
 import {RemoteServiceEditor} from "./uxb-remote-service";
 import {RevisionHistory} from "./uxb-revisions";
 import {AgentVersionDrift} from "./uxb-versions";
@@ -1582,6 +1582,7 @@ function JobOperations({operator}:{operator:any}){
     fleetResourceType,fleetResource,fleetDescription,fleetTags,fleetRemoveTags,fleetAddGroups,fleetRemoveGroups
   ]);
   const [jobStartBusy,setJobStartBusy]=useState(false);
+  const jobStartInFlight=useRef(false);
   const detailReadEpoch=useRef(0);
   const [detailBusy,setDetailBusy]=useState(false);
   const cancelInFlight=useRef(false);
@@ -1613,12 +1614,15 @@ function JobOperations({operator}:{operator:any}){
     setJobsHistory(jobsHistory.slice(0,-1));
   }
   async function start(){
-    if(jobStartBusy)return;
+    // Ref lock is synchronous; React's busy render can be deferred, and
+    // duplicate non-idempotent POSTs would enqueue two distinct Core Jobs.
+    if(jobStartInFlight.current)return;
+    jobStartInFlight.current=true;
     setError("");setMessage("");setJobStartBusy(true);
     try{
       const body:any={job_type:jobType,resource_type:resourceType};
       if(resource)body.resource=resource;
-      const result=requireObservedJobStart(await api("/api/v1/jobs/diagnostic",{method:"POST",body:JSON.stringify(body)}),jobType);
+      const result=requireObservedJobStartForRequest(await api("/api/v1/jobs/diagnostic",{method:"POST",body:JSON.stringify(body)}),body);
       detailReadEpoch.current+=1;setDetailBusy(false);
       setDetail(result.job);
       setDetailId(result.job.id);
@@ -1626,7 +1630,7 @@ function JobOperations({operator}:{operator:any}){
       if(jobsCursor){setJobsCursor("");setJobsHistory([])}
       else await refresh();
     }catch(e:any){setError("UNKNOWN · Core Job start response could not be confirmed. Inspect Jobs before retrying: "+(e.message||String(e)))}
-    finally{setJobStartBusy(false)}
+    finally{jobStartInFlight.current=false;setJobStartBusy(false)}
   }
   async function loadDetail(id?:string){
     const target=(id||detailId).trim();

@@ -963,6 +963,55 @@ export function requireObservedJobStart(payload:unknown,expectedJobType:string):
 
 /** A Fleet Preview is only meaningful when the Core plan belongs to this
  * form's resource family and the exact intended normalized metadata change. */
+/** M2/R6: an HTTP 200 for a diagnostic Job is not evidence that the
+ * requested target scope was enqueued. Core resolves labels to immutable IDs:
+ * therefore bind the requested FAMILY to both Core selection and Job, verify
+ * the exact Core-generated target list/ref/count, but never infer that a
+ * typed Host name itself is an immutable ID. Caller must inspect Jobs on
+ * ambiguous network/malformed replies; never auto-retry a POST. */
+export function requireObservedJobStartForRequest(payload:unknown,request:unknown):any{
+  const fail=():never=>{throw new Error(
+    "UNKNOWN · Core diagnostic Job receipt does not confirm the submitted family or immutable selection. Inspect Jobs before retrying."
+  );};
+  if(!request||typeof request!=="object"||Array.isArray(request))return fail();
+  const intent=request as Record<string,unknown>;
+  const supported=new Set(["doctor","refresh","version-check","support-bundle"]);
+  if(typeof intent.job_type!=="string"||!supported.has(intent.job_type)
+    ||!["managed-host","managed-host-group"].includes(String(intent.resource_type))
+    ||(intent.resource!==undefined&&typeof intent.resource!=="string")
+    ||typeof intent.resource==="string"&&intent.resource.length>256)return fail();
+  const selector=typeof intent.resource==="string"?intent.resource.trim():"";
+  if(intent.resource_type==="managed-host-group"&&!selector)return fail();
+  const receipt=requireObservedJobStart(payload,intent.job_type);
+  const job=receipt.job,selection=receipt.selection;
+  const id=/^mjob_[0-9a-f]{24}$/,
+    resourceId=/^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,159}$/;
+  if(!id.test(String(job.id))
+    ||selection.resource_type!==intent.resource_type
+    ||job.resource_type!==selection.resource_type
+    ||typeof selection.resource_ref!=="string"
+    ||!resourceId.test(selection.resource_ref)
+    ||job.resource_ref!==selection.resource_ref
+    ||!isObservedAbsoluteTime(job.created_at)
+    ||![0,false].includes(job.cancel_requested)
+    ||!Array.isArray(job.targets)||job.targets.length!==job.target_count)
+    return fail();
+  const targets=new Set<string>();
+  for(const target of job.targets){
+    if(!target||typeof target!=="object"||Array.isArray(target)
+      ||typeof target.target_id!=="string"||!resourceId.test(target.target_id)
+      ||targets.has(target.target_id)||target.status!=="QUEUED")return fail();
+    targets.add(target.target_id);
+  }
+  if(intent.resource_type==="managed-host"){
+    if(selector===""){
+      if(selection.resource_ref!=="all")return fail();
+    }else if(job.target_count!==1
+      ||!targets.has(selection.resource_ref))return fail();
+  }
+  return receipt;
+}
+
 export function requireObservedFleetPreview(payload:unknown,request:unknown):any{
   const fail=()=>{throw new Error("UNKNOWN · Core Fleet Preview has mismatched targets, changes, or impact. Recheck the selection before creating a fresh Change Plan.");};
   const object=(v:unknown):v is Record<string,any>=>!!v&&typeof v==="object"&&!Array.isArray(v);
