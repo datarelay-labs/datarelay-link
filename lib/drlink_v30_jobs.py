@@ -245,10 +245,11 @@ class ManagementJobEngine:
             )
         actor = _bounded_text(requested_by, field="Management Job actor")
         target_ids = _normalize_targets(targets, max_targets=self.max_targets)
-        try:
-            timeout = int(timeout_seconds)
-        except (TypeError, ValueError) as exc:
-            raise ControlPlaneError("Management Job timeout must be an integer.") from exc
+        # Do not coerce boolean, fractional or string deadlines into a real
+        # Job: a changed timeout can expire a queued operation unexpectedly.
+        if type(timeout_seconds) is not int:
+            raise ControlPlaneError("Management Job timeout must be an integer.")
+        timeout = timeout_seconds
         if timeout < 1 or timeout > MAX_JOB_TIMEOUT_SECONDS:
             raise ControlPlaneError(
                 "Management Job timeout must be between 1 and %d seconds."
@@ -445,7 +446,13 @@ class ManagementJobEngine:
         now: Optional[datetime] = None,
     ) -> list[dict[str, Any]]:
         worker = _bounded_text(worker_id, field="Management Job worker")
-        count = max(1, min(int(limit), MAX_CLAIM_BATCH))
+        # Claiming reserves Core leases. Reject invalid or coerced counts
+        # before any deadline recovery, transaction or target state mutation.
+        if type(limit) is not int or limit < 1:
+            raise ControlPlaneError(
+                "Management Job claim limit must be a positive integer."
+            )
+        count = min(limit, MAX_CLAIM_BATCH)
         # A small requested claim batch must not hide eligible canaries behind
         # alphabetically earlier non-canary targets or other paused jobs.
         scan_limit = min(

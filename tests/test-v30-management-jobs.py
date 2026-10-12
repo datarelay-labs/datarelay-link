@@ -93,6 +93,38 @@ class V30ManagementJobTests(unittest.TestCase):
                         agent.process_management_jobs_once(root=self.tmp, limit=1)
                     claim.assert_not_called()
 
+    def test_enqueue_rejects_coerced_timeout_before_queue_mutation(self):
+        before = self.engine.conn.execute(
+            "SELECT COUNT(*) FROM management_jobs"
+        ).fetchone()[0]
+        for invalid in (True, False, 1.5, "2", None):
+            with self.subTest(timeout=invalid):
+                with self.assertRaisesRegex(
+                    ControlPlaneError, "Management Job timeout must be an integer"
+                ):
+                    self._enqueue(timeout_seconds=invalid)
+                self.assertEqual(
+                    self.engine.conn.execute(
+                        "SELECT COUNT(*) FROM management_jobs"
+                    ).fetchone()[0],
+                    before,
+                )
+
+    def test_core_claim_rejects_coerced_limit_before_leasing_target(self):
+        job = self._enqueue(targets=("host-a",))
+        for invalid in (0, -1, True, False, 1.5, "1", None):
+            with self.subTest(limit=invalid):
+                with self.assertRaisesRegex(
+                    ControlPlaneError, "Management Job claim limit must be a positive integer"
+                ):
+                    self.engine.claim_targets(worker_id="worker-a", limit=invalid)
+                self.assertEqual(
+                    self.engine.get(job["id"])["targets"][0]["status"], QUEUED
+                )
+        self.assertEqual(
+            len(self.engine.claim_targets(worker_id="worker-a", limit=1)), 1
+        )
+
     def test_schema_is_separate_from_ai_jobs(self):
         tables = {
             row[0]
