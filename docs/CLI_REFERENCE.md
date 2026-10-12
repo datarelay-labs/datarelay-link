@@ -297,8 +297,11 @@ references, including disabled Rules, before retrying. Confirmed deletion is irr
 
 Bare Managed Host retirement removes Server trust, inventory and the owned Agent
 Remote Service endpoint reservations after reference checks and confirmation.
-Inspect `show managed-host <HOST> references` first. Re-enrollment establishes new
-trust rather than undoing retirement.
+Inspect `show network-object <NAME> references` on the Server using the Managed
+Host's Network Object name, and `show managed-host <HOST> remote-services` for its
+owned Remote Services. Managed Host views are overview, `remote-services`, `agent`,
+and `addresses`; there is no Managed Host `references` view. Re-enrollment
+establishes new trust rather than undoing retirement.
 
 For Permission dependencies, inspect `show ai-access` and `show ai-access <RULE>`; inspect `show permission-groups` and `show permission-group <GROUP>` for Object membership. A blocked `unset permission-object <PERMISSION>` or `unset permission-group <GROUP>` lists the references before confirmation and applies no changes. Review each referencing Rule with `set ai-access <RULE>` to choose a replacement permission, or explicitly remove that Rule with `unset ai-access <RULE>`. Use `set permission-group <GROUP>` to review membership without the Object being retired. Disabling a Rule retains its reference. Review access impact and the required confirmations, then retry deletion only when all references have been removed. No Permission `references` subcommand is required.
 

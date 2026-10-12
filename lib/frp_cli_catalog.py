@@ -1690,6 +1690,9 @@ def domain_help(topic, role):
             "  set enrollment\n"
             "  set enrollment zero-touch\n"
             "  unset managed-host <HOST>\n\n"
+            "Before retirement, inspect dependencies on the Server:\n"
+            "  show network-object <NAME> references\n"
+            "Use the Managed Host's Network Object name.\n"
         )
     if topic in ("network-object", "network-objects"):
         if not server:
@@ -1822,6 +1825,10 @@ def domain_help(topic, role):
             "  test ai-access source <IDENTITY> destination <DEST> permission <PERM>\n"
             "  show ai-access\n"
             "  show ai-access-log\n"
+            "  show ai-access-log identity <IDENTITY>\n"
+            "  show ai-access-log destination <DESTINATION>\n"
+            "  show ai-access-log permission <PERMISSION>\n"
+            "Each supplied filter requires its value; omit filters to list all entries.\n"
         )
     if topic == "system":
         client, server = role_parts(role)

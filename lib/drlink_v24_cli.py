@@ -237,6 +237,11 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         return 0
     if res == "network-object":
         _require_server(plane, "Network Objects")
+        if len(rest) > 3:
+            raise ControlPlaneError(v24.cli_error(
+                "Unexpected arguments after network-object selector.",
+                expected="  show network-object <OBJECT> [references]",
+            ))
         if len(rest) < 2:
             raise ControlPlaneError("Usage: show network-object <OBJECT>")
         name = rest[1]
@@ -290,6 +295,11 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         return 0
     if res == "network-group":
         _require_server(plane, "Network Groups")
+        if len(rest) > 3:
+            raise ControlPlaneError(v24.cli_error(
+                "Unexpected arguments after network-group selector.",
+                expected="  show network-group <GROUP> [references]",
+            ))
         if len(rest) < 2:
             raise ControlPlaneError("Usage: show network-group <GROUP>")
         g = plane.get_object_group(rest[1])
@@ -318,6 +328,11 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         return 0
     if res == "service-object":
         _require_server(plane, "Service Objects")
+        if len(rest) > 3:
+            raise ControlPlaneError(v24.cli_error(
+                "Unexpected arguments after service-object selector.",
+                expected="  show service-object <SERVICE> [references]",
+            ))
         if len(rest) < 2:
             raise ControlPlaneError("Usage: show service-object <SERVICE>")
         sobj = v24.get_service_object(plane, rest[1])
@@ -349,6 +364,11 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         return 0
     if res == "service-group":
         _require_server(plane, "Service Groups")
+        if len(rest) > 3:
+            raise ControlPlaneError(v24.cli_error(
+                "Unexpected arguments after service-group selector.",
+                expected="  show service-group <GROUP> [references]",
+            ))
         if len(rest) < 2:
             raise ControlPlaneError("Usage: show service-group <GROUP>")
         g = v24.get_service_group(plane, rest[1])
@@ -442,8 +462,23 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         _require_server(plane, "Managed Hosts")
         if len(rest) < 2:
             raise ControlPlaneError("Usage: show managed-host <HOST>")
-        client = plane.require_client(rest[1])
+        syntax = "  show managed-host <HOST> [remote-services|agent|addresses]"
+        if len(rest) > 3:
+            raise ControlPlaneError(v24.cli_error(
+                "Unexpected arguments after Managed Host selector.", expected=syntax,
+            ))
         view = rest[2] if len(rest) > 2 else "overview"
+        if view not in ("overview", "remote-services", "agent", "addresses"):
+            recovery = syntax
+            if view == "references":
+                recovery += (
+                    "\n  show network-object <NAME> references"
+                    "\nUse the Managed Host's Network Object name on the Server."
+                )
+            raise ControlPlaneError(v24.cli_error(
+                "Unknown Managed Host view '%s'." % view, expected=recovery,
+            ))
+        client = plane.require_client(rest[1])
         if view == "remote-services":
             services = plane.conn.execute(
                 "SELECT s.name, s.public_port, s.enabled, m.destination_name, m.status, "
@@ -543,13 +578,6 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
                     % (a.get("address") or "-", a.get("scope") or "-", a.get("interface_name") or "-")
                 )
             return 0
-        if view != "overview":
-            raise ControlPlaneError(
-                v24.cli_error(
-                    "Unknown Managed Host view '%s'." % view,
-                    expected="  remote-services\n  agent\n  addresses",
-                )
-            )
         connectivity = plane.managed_host_connectivity(client)
         sys.stdout.write(
             "Managed Host: %s\nHostname: %s\nStatus: %s\nAgent: %s\nAI executor: %s\n"
@@ -911,7 +939,13 @@ def _show_ai_log(plane: ControlPlane, args: list[str]) -> int:
     i = 0
     while i < len(args):
         key = args[i].lower()
-        if key in ("identity", "destination", "permission") and i + 1 < len(args):
+        if key in ("identity", "destination", "permission") and i + 1 >= len(args):
+            raise ControlPlaneError(v24.cli_error(
+                "AI Access Log filter '%s' requires a value." % key,
+                expected=("  show ai-access-log [identity <IDENTITY>] "
+                          "[destination <DESTINATION>] [permission <PERMISSION>]"),
+            ))
+        if key in ("identity", "destination", "permission"):
             if key == "identity":
                 identity = args[i + 1]
             elif key == "destination":
