@@ -302,6 +302,7 @@ def _require_core_management_completion_receipt(
 
 def process_management_jobs_once(root: Optional[str] = None, *, limit: int = 4) -> dict:
     from drlink_mgmt_sync import (
+        _agent_identity,
         claim_management_jobs_on_server,
         complete_management_job_on_server,
     )
@@ -312,6 +313,16 @@ def process_management_jobs_once(root: Optional[str] = None, *, limit: int = 4) 
     # Validate the WHOLE batch before executing even one mutating Agent job:
     # duplicate entries must not run the same remote-service operation twice.
     invalid = "Core Management Job claim response UNKNOWN; inspect Core state before retrying."
+    # A signed Server reply is also bound to the exact locally-enrolled
+    # machine. A wrong-host claim must not cause any Agent work, even if a
+    # Server route or replayed response unexpectedly includes that target.
+    identity = _agent_identity(root)
+    machine_id = identity.get("machine_id") if isinstance(identity, dict) else None
+    if (not isinstance(machine_id, str)
+        or not machine_id.strip() or len(machine_id) > 160
+        or machine_id != machine_id.strip()
+        or any(ord(ch) < 33 or ord(ch) > 126 for ch in machine_id)):
+        raise ValueError(invalid)
     try:
         count = max(1, min(int(limit), 16))
     except (TypeError, ValueError) as exc:
@@ -336,7 +347,7 @@ def process_management_jobs_once(root: Optional[str] = None, *, limit: int = 4) 
         )
         if (not isinstance(job_id, str) or not job_id.startswith("mjob_")
             or len(job_id) != 29 or any(c not in "0123456789abcdef" for c in job_id[5:])
-            or not isinstance(target_id, str) or not target_id or len(target_id) > 160
+            or not isinstance(target_id, str) or target_id != machine_id
             or not isinstance(claim_token, str) or not claim_token
             or len(claim_token) > 128
             or any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"

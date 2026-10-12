@@ -313,6 +313,66 @@ class V30AgentCompletionAcknowledgementBoundaryTests(unittest.TestCase):
     Pure signed-RPC mock: no network, production Host or Agent effect.
     """
 
+    def setUp(self):
+        # The actual signed management request obtains its machine identity
+        # from the Agent client-state; isolated mocked transport tests use
+        # a pinned local identity to exercise the same verification boundary.
+        from unittest import mock
+        identity = mock.patch(
+            "drlink_mgmt_sync._agent_identity",
+            return_value={"machine_id": MACHINE_A},
+        )
+        identity.start()
+        self.addCleanup(identity.stop)
+
+    def test_signed_claim_for_another_host_is_rejected_before_any_agent_side_effect(self):
+        from unittest import mock
+        from drlink_agent_lifecycle import process_management_jobs_once
+        own = {"job_id": "mjob_" + "1" * 24,
+               "claim_token": "a" * 32, "target_id": MACHINE_A,
+               "job_type": "remote-service-set"}
+        other = {**own, "job_id": "mjob_" + "2" * 24,
+                 "claim_token": "b" * 32, "target_id": MACHINE_B}
+        for claims in ([other], [own, other], [other, own]):
+            with self.subTest(claims=claims), mock.patch(
+                "drlink_mgmt_sync.claim_management_jobs_on_server",
+                return_value={"jobs": claims},
+            ), mock.patch(
+                "drlink_agent_lifecycle._execute_management_job",
+                return_value={"operation": "remote-service-set"},
+            ) as executed, mock.patch(
+                "drlink_mgmt_sync.complete_management_job_on_server",
+                return_value={"ok": True},
+            ) as completed:
+                with self.assertRaisesRegex(ValueError, "claim response UNKNOWN"):
+                    process_management_jobs_once(root="/tmp/unused-agent-fixture")
+                executed.assert_not_called()
+                completed.assert_not_called()
+
+    def test_empty_or_malformed_local_agent_identity_never_executes_signed_jobs(self):
+        from unittest import mock
+        from drlink_agent_lifecycle import process_management_jobs_once
+        claim = {"job_id": "mjob_" + "3" * 24,
+                 "claim_token": "c" * 32, "target_id": MACHINE_A,
+                 "job_type": "doctor"}
+        for identity in ({}, {"machine_id": None}, {"machine_id": "  "},
+                         {"machine_id": {"secret": "UNTRUSTED"}}):
+            with self.subTest(identity=identity), mock.patch(
+                "drlink_mgmt_sync._agent_identity", return_value=identity,
+            ), mock.patch(
+                "drlink_mgmt_sync.claim_management_jobs_on_server",
+                return_value={"jobs": [claim]},
+            ), mock.patch(
+                "drlink_agent_lifecycle._execute_management_job",
+                return_value={"operation": "doctor"},
+            ) as executed, mock.patch(
+                "drlink_mgmt_sync.complete_management_job_on_server",
+            ) as completed:
+                with self.assertRaisesRegex(ValueError, "claim response UNKNOWN"):
+                    process_management_jobs_once(root="/tmp/unused-agent-fixture")
+                executed.assert_not_called()
+                completed.assert_not_called()
+
     def test_malformed_or_duplicate_signed_claim_batch_is_unknown_before_any_agent_mutation(self):
         from unittest import mock
         from drlink_agent_lifecycle import process_management_jobs_once
