@@ -730,3 +730,84 @@ test("UX-3 issuing malformed Core credential evidence never advances onboarding 
  assert.equal(parsed?.next_step,"Inspect Managed Hosts after installing the Agent.");
  assert.doesNotMatch(JSON.stringify(parsed),/PRIVATE_/);
 });
+
+test("M2/R6 Remote Service Preview requires exact Core owner, operation, impact and expiring Change Plan",()=>{
+ const request={owner:"host-a",name:"ssh-admin",operation:"set",destination:"this-host",
+   service:"ssh-tcp22",enabled:true};
+ const plan={change_plan_id:"cp_"+"a".repeat(32),operation_class:"CHANGE",
+   operation:"remote-service.set",resource_type:"remote-service",
+   resource_ref:"host-a:ssh-admin",expected_revision:13,
+   confirmation_class:"APPLY",valid_until:"2032-01-01T00:00:00Z",
+   remote_service:"ssh-admin",
+   owner:{id:"host-a",name:"Ops Host",connectivity:"connected",private_key:"SENSITIVE"},
+   impact:{requires_confirmation:true,destructive:false,
+     owner_managed_host_id:"host-a",owner_connectivity:"connected",
+     runtime_authority:"agent-rpc",secret:"SENSITIVE"},
+   private_credentials:{token:"SENSITIVE"}
+ };
+ const preview=service.observedRemoteServicePreview(plan,request,Date.parse("2030-01-01T00:00:00Z"));
+ assert.deepEqual(preview,{
+   change_plan_id:plan.change_plan_id,operation_class:"CHANGE",
+   operation:"remote-service.set",resource_type:"remote-service",
+   resource_ref:"host-a:ssh-admin",expected_revision:13,
+   confirmation_class:"APPLY",valid_until:plan.valid_until,
+   remote_service:"ssh-admin",
+   owner:{id:"host-a",name:"Ops Host",connectivity:"connected"},
+   impact:{requires_confirmation:true,destructive:false,
+     owner_managed_host_id:"host-a",owner_connectivity:"connected",
+     runtime_authority:"agent-rpc"}
+ });
+ assert.doesNotMatch(JSON.stringify(preview),/SENSITIVE|private_key|private_credentials/);
+ for(const invalid of [null,{},[],{...plan,resource_ref:"host-z:ssh-admin"},
+   {...plan,resource_type:"host"}, {...plan,operation:"remote-service.delete"},
+   {...plan,remote_service:"other"}, {...plan,confirmation_class:"DELETE"},
+   {...plan,change_plan_id:"not_plan"},{...plan,expected_revision:"13"},
+   {...plan,valid_until:"2020-01-01T00:00:00Z"},
+   {...plan,owner:{...plan.owner,id:"host-z"}},
+   {...plan,impact:{...plan.impact,destructive:true}},
+   {...plan,impact:{...plan.impact,owner_connectivity:"disconnected"}},
+   {...plan,impact:{...plan.impact,runtime_authority:"web-local"}},
+ ])assert.equal(service.observedRemoteServicePreview(invalid,request,Date.parse("2030-01-01T00:00:00Z")),null);
+});
+
+test("M2/R6 Remote Service Apply must match exact immutable reviewed Core Plan and one queued Agent job",()=>{
+ const plan={change_plan_id:"cp_"+"a".repeat(32),resource_ref:"host-a:ssh-admin",
+   remote_service:"ssh-admin",operation:"remote-service.set",expected_revision:13,
+   owner:{id:"host-a"}};
+ const ack={status:"QUEUED",job_id:"mjob_"+"b".repeat(24),job_status:"QUEUED",
+   target_managed_host_id:"host-a",remote_service:"ssh-admin",
+   operation:"set",authoritative_revision_at_enqueue:13,
+   payload:{token:"DONT_EXPOSE"},agent_private_key:"DONT_EXPOSE"};
+ const result=service.observedRemoteServiceApplyReceipt(ack,plan);
+ assert.deepEqual(result,{status:"QUEUED",job_id:ack.job_id,job_status:"QUEUED",
+   target_managed_host_id:"host-a",remote_service:"ssh-admin",operation:"set",
+   authoritative_revision_at_enqueue:13});
+ assert.doesNotMatch(JSON.stringify(result),/DONT_EXPOSE|agent_private_key/);
+ for(const bad of [null,{}, {...ack,status:"APPLIED"},
+   {...ack,job_id:"unsafe"}, {...ack,job_status:"RUNNING"},
+   {...ack,target_managed_host_id:"host-b"},
+   {...ack,remote_service:"other"},
+   {...ack,operation:"delete"},
+   {...ack,authoritative_revision_at_enqueue:14},
+   {...ack,authoritative_revision_at_enqueue:"13"},
+ ])assert.equal(service.observedRemoteServiceApplyReceipt(bad,plan),null);
+});
+test("M2/R6 Remote Service non-idempotent Apply uses ref lock, strict Core receipts and discards ambiguous plans",()=>{
+ const src=readFileSync(join(root,"src","uxb-remote-service.tsx"),"utf8");
+ const apply=src.split("  async function doApply(){",2)[1]?.split("  async function refreshJob(){",1)[0]||"";
+ const preview=src.split("  async function doPreview(){",2)[1]?.split("  async function doApply(){",1)[0]||"";
+ assert.match(src,/const applyInFlight=useRef\(false\)/);
+ assert.match(preview,/const observed=observedRemoteServicePreview\(result,body\)/);
+ assert.match(preview,/if\(!observed\)throw new Error\(/);
+ assert.match(preview,/setPreview\(observed\)/);
+ assert.match(apply,/if\(applyInFlight\.current\)return;/);
+ assert.match(apply,/applyInFlight\.current=true;/);
+ assert.match(apply,/const reviewed=preview;/);
+ assert.match(apply,/const receipt=observedRemoteServiceApplyReceipt\(result,reviewed\)/);
+ assert.match(apply,/if\(!receipt\)throw new Error\(/);
+ assert.match(apply,/setJob\(receipt\)/);
+ assert.match(apply,/finally\{applyInFlight\.current=false;/);
+ assert.match(apply,/UNKNOWN.*Agent Job may already be queued/);
+ assert.match(apply,/setPreview\(null\);setConfirmation\(""\)/);
+ assert.doesNotMatch(apply,/setJob\(result\)/);
+});

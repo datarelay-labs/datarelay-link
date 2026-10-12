@@ -39,6 +39,105 @@ export function remoteServiceJobEvidence(input:unknown){
  };
 }
 
+/** M2/R6: product-owned, public-only Core Remote Service Change Plan.
+ * Core resolves a possibly friendly Host selector into a unique immutable
+ * Host ID; do not equate typed display aliases to that ID. Instead require
+ * strict internal plan/owner/impact coherence for the exact service name and
+ * operation before displaying a one-shot confirmation.
+ */
+export type ObservedRemoteServicePreview={
+ change_plan_id:string,operation_class:"CHANGE",operation:string,
+ resource_type:"remote-service",resource_ref:string,
+ expected_revision:number,confirmation_class:"APPLY",valid_until:string,
+ remote_service:string,
+ owner:{id:string,name:string,connectivity:string},
+ impact:{requires_confirmation:true,destructive:boolean,
+   owner_managed_host_id:string,owner_connectivity:string,
+   runtime_authority:"agent-rpc"}
+};
+const BANNED=/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/;
+const HOST_ID=/^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,159}$/;
+const PLAN_ID=/^cp_[A-Za-z0-9_-]{16,128}$/;
+const JOB_ID=/^mjob_[0-9a-f]{24}$/;
+const coreObject=(v:unknown):v is Record<string,any>=>
+  v!==null&&typeof v==="object"&&!Array.isArray(v);
+const displayName=(v:unknown,max=160):string=>
+  typeof v==="string"&&v.trim().length>0&&v.length<=max&&!BANNED.test(v)
+    ?v.trim():"UNKNOWN";
+export function observedRemoteServicePreview(
+ input:unknown,requested:unknown,now:number=Date.now()
+):ObservedRemoteServicePreview|null{
+ if(!coreObject(input)||!coreObject(requested)||!Number.isFinite(now))return null;
+ const value=input,req=requested;
+ const requestedName=typeof req.name==="string"?req.name.trim():"";
+ const action=req.operation;
+ if(!["set","delete"].includes(String(action))
+   ||typeof req.owner!=="string"||!req.owner.trim()
+   ||req.owner.length>160||BANNED.test(req.owner)
+   ||!requestedName||requestedName.length>128||BANNED.test(requestedName)
+   ||action==="set"&&(
+      typeof req.destination!=="string"||!req.destination.trim()
+      ||typeof req.service!=="string"||!req.service.trim()
+      ||typeof req.enabled!=="boolean"))return null;
+ if(!PLAN_ID.test(String(value.change_plan_id))
+   ||value.operation_class!=="CHANGE"
+   ||value.operation!=="remote-service."+action
+   ||value.resource_type!=="remote-service"
+   ||!Number.isSafeInteger(value.expected_revision)||value.expected_revision<0
+   ||value.confirmation_class!=="APPLY"
+   ||!isObservedAbsoluteTime(value.valid_until)
+   ||Date.parse(value.valid_until)<=now
+   ||value.remote_service!==requestedName
+   ||!coreObject(value.owner)||!HOST_ID.test(String(value.owner.id))
+   ||value.resource_ref!==value.owner.id+":"+requestedName
+   ||!coreObject(value.impact)
+   ||value.impact.requires_confirmation!==true
+   ||value.impact.destructive!==(action==="delete")
+   ||value.impact.owner_managed_host_id!==value.owner.id
+   ||value.impact.owner_connectivity!==value.owner.connectivity
+   ||value.impact.runtime_authority!=="agent-rpc")return null;
+ const state=displayName(value.owner.connectivity,40);
+ if(state==="UNKNOWN"||state.toLowerCase()!==state)return null;
+ return {
+  change_plan_id:value.change_plan_id,operation_class:"CHANGE",
+  operation:value.operation,resource_type:"remote-service",
+  resource_ref:value.resource_ref,expected_revision:value.expected_revision,
+  confirmation_class:"APPLY",valid_until:value.valid_until,
+  remote_service:requestedName,
+  owner:{id:value.owner.id,name:displayName(value.owner.name),connectivity:state},
+  impact:{requires_confirmation:true,destructive:action==="delete",
+   owner_managed_host_id:value.owner.id,owner_connectivity:state,
+   runtime_authority:"agent-rpc"}
+ };
+}
+
+/** A queued Agent Job is neither an applied Remote Service nor a verified
+ * connection. Check Core's immutable Job identity, owner, operation and
+ * revision against the exact reviewed Change Plan before showing acceptance.
+ */
+export function observedRemoteServiceApplyReceipt(
+ input:unknown,plan:unknown
+):{status:"QUEUED",job_id:string,job_status:"QUEUED",
+  target_managed_host_id:string,remote_service:string,operation:string,
+  authoritative_revision_at_enqueue:number}|null{
+ if(!coreObject(input)||!coreObject(plan)||!coreObject(plan.owner))return null;
+ const receipt=input;
+ const action=plan.operation==="remote-service.set"?"set":
+   plan.operation==="remote-service.delete"?"delete":null;
+ if(!action||receipt.status!=="QUEUED"||receipt.job_status!=="QUEUED"
+   ||typeof receipt.job_id!=="string"||!JOB_ID.test(receipt.job_id)
+   ||receipt.target_managed_host_id!==plan.owner.id
+   ||receipt.remote_service!==plan.remote_service
+   ||receipt.operation!==action
+   ||!Number.isSafeInteger(plan.expected_revision)
+   ||receipt.authoritative_revision_at_enqueue!==plan.expected_revision)
+   return null;
+ return {status:"QUEUED",job_id:receipt.job_id,job_status:"QUEUED",
+   target_managed_host_id:receipt.target_managed_host_id,
+   remote_service:receipt.remote_service,operation:action,
+   authoritative_revision_at_enqueue:receipt.authoritative_revision_at_enqueue};
+}
+
 /** UXB-03: one canonical Remote Service editor used from both Services and Setup. */
 /** Bind the guided setup to its observed Host, not a retained/manual editor value.
  * The standalone advanced Services editor intentionally remains unbound. */
@@ -59,6 +158,7 @@ export function RemoteServiceEditor({api,ownerHint="",onSelection,initialSelecti
   const [job,setJob]=useState<any>(null),[error,setError]=useState(""),[busy,setBusy]=useState(false);
   const lastOwnerHint=useRef(ownerHint);
   const requestGeneration=useRef(0);
+  const applyInFlight=useRef(false);
   const catalog=useCoreCatalog(api,resourceCatalog);
   const visibleJob=remoteServiceJobEvidence(job);
   useEffect(()=>{onBusyChange?.(busy)},[busy]);
@@ -88,25 +188,46 @@ export function RemoteServiceEditor({api,ownerHint="",onSelection,initialSelecti
       if(operation==="set")Object.assign(body,{destination:destination.trim(),service:service.trim(),enabled});
       const result=await api("/api/v1/remote-services/preview",{method:"POST",body:JSON.stringify(body)});
       if(generation!==requestGeneration.current)return;
-      setPreview(result);setConfirmation("");
+      const observed=observedRemoteServicePreview(result,body);
+      if(!observed)throw new Error("Core Remote Service Preview is UNKNOWN; its owner, impact, expiry or requested service was not confirmed.");
+      setPreview(observed);setConfirmation("");
     }catch(e:any){if(generation===requestGeneration.current){setPreview(null);setError(String(e?.message||e))}}
     finally{if(generation===requestGeneration.current)setBusy(false)}
   }
   async function doApply(){
+    // The Core apply can enqueue a distinct Agent Job before React renders
+    // the busy flag. Ref lock closes the duplicate non-idempotent POST gap.
+    if(applyInFlight.current)return;
     if(!preview?.change_plan_id||confirmation!==required||busy)return;
+    if(!isObservedAbsoluteTime(preview.valid_until)
+      ||Date.parse(preview.valid_until)<=Date.now()){
+      setPreview(null);setConfirmation("");
+      setError("Core Remote Service Change Plan expired. Preview again before queueing an Agent Job.");
+      return;
+    }
+    applyInFlight.current=true;
     const generation=++requestGeneration.current;
+    const reviewed=preview;
     setError("");setBusy(true);
     try{
       const result=await api("/api/v1/remote-services/apply",{method:"POST",
-        body:JSON.stringify({change_plan_id:preview.change_plan_id,confirmation})});
+        body:JSON.stringify({change_plan_id:reviewed.change_plan_id,confirmation})});
       // A queued Agent job is NOT a published service or a successful connection.
       if(generation!==requestGeneration.current){
         setError("Owner changed during a previous Agent job request. Review Jobs before proceeding.");
         return;
       }
-      setJob(result);setPreview(null);setConfirmation("");
-    }catch(e:any){if(generation===requestGeneration.current)setError(String(e?.message||e))}
-    finally{if(generation===requestGeneration.current)setBusy(false)}
+      const receipt=observedRemoteServiceApplyReceipt(result,reviewed);
+      if(!receipt)throw new Error("Core Remote Service enqueue receipt does not match reviewed owner, operation or Job.");
+      setJob(receipt);setPreview(null);setConfirmation("");
+    }catch(e:any){
+      if(generation===requestGeneration.current){
+        // A timeout/ambiguous 200 may follow a committed Core enqueue.
+        // Never offer the same confirmation for a blind second Agent Job.
+        setPreview(null);setConfirmation("");setJob(null);
+        setError("UNKNOWN · Core Agent Job may already be queued. Inspect Jobs and Service inventory before a fresh Preview. "+String(e?.message||e));
+      }
+    }finally{applyInFlight.current=false;if(generation===requestGeneration.current)setBusy(false)}
   }
   async function refreshJob(){
     if(!job?.job_id||busy)return;
