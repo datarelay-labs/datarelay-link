@@ -23,6 +23,7 @@ import {serviceVisibleIdentity} from "./uxb-service-detail";
 import {resourceCardSummary} from "./uxb-resource-cards";
 import {filterObservedServices} from "./uxb-service-search";
 import {observedBoundedCoreSearchResponse} from "./uxb-global-search-target";
+import {observedAuthenticatedWebSession} from "./uxb-web-session";
 import {filterLoadedServiceFacets,type ServiceTypeFacet,type ServiceConfigFacet} from "./uxb-service-facets";
 import {operatorAccountState,operatorMfaState,operatorMfaAction,operatorLastLogin} from "./uxb-users-state";
 import {observedOperatorInventory,observedOperatorMfaReceipt,observedOperatorCreateReceipt} from "./uxb-users-state";
@@ -155,14 +156,18 @@ function Login({onLogin}:{onLogin:(op:any)=>void}){
     try{
       const d=await api("/api/v1/auth/login",{method:"POST",body:JSON.stringify({username,password,totp,recovery_code:recovery})});
       if(d.mfa_setup_required){setSetup(d);setSetupCode("");return}
-      csrf=d.csrf_token;onLogin(d.operator);
+      const observed=observedAuthenticatedWebSession(d);
+      if(!observed)throw new Error("Core authenticated session is UNKNOWN. No Web role or CSRF token was accepted.");
+      csrf=observed.csrf_token;onLogin(observed.operator);
     }catch(err:any){setError(err.message||String(err))}finally{setBusy(false)}
   }
   async function finishMfa(e:React.FormEvent){
     e.preventDefault();setError("");setBusy(true);
     try{
       const d=await api("/api/v1/auth/mfa/enroll/confirm",{method:"POST",body:JSON.stringify({enrollment_token:setup.enrollment_token,totp:setupCode})});
-      csrf=d.csrf_token;setRecoveryCodes(d.recovery_codes||[]);setPendingOperator(d.operator);
+      const observed=observedAuthenticatedWebSession(d);
+      if(!observed)throw new Error("Core authenticated session is UNKNOWN. Sign in again rather than repeating MFA setup blindly.");
+      csrf=observed.csrf_token;setRecoveryCodes(d.recovery_codes||[]);setPendingOperator(observed.operator);
     }catch(err:any){setError(err.message||String(err))}finally{setBusy(false)}
   }
   async function cancelMfaSetup(){
@@ -3158,11 +3163,12 @@ function App(){
     let active=true;
     api("/api/v1/session").then(d=>{
       if(!active)return;
-      if(!d?.operator||typeof d.csrf_token!=="string"||!d.csrf_token){
+      const observed=observedAuthenticatedWebSession(d);
+      if(!observed){
         throw new Error("Incomplete authenticated Web session");
       }
-      csrf=d.csrf_token;
-      setOperator(d.operator);
+      csrf=observed.csrf_token;
+      setOperator(observed.operator);
     }).catch(()=>{if(active){csrf="";setOperator(null)}});
     return()=>{active=false};
   },[]);

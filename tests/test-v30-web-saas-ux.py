@@ -114,7 +114,13 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         # An HttpOnly session cookie survives a tab refresh, but JS state
         # does not. A GET session bootstrap must restore CSRF in memory.
         self.assertIn('api("/api/v1/session").then(d=>{', SOURCE)
-        self.assertIn('csrf=d.csrf_token;', SOURCE)
+        self.assertIn('const observed=observedAuthenticatedWebSession(d);', SOURCE)
+        self.assertIn('csrf=observed.csrf_token;', SOURCE)
+        self.assertIn('setOperator(observed.operator);', SOURCE)
+        self.assertIn('onLogin(observed.operator);', SOURCE)
+        self.assertIn('function observedAuthenticatedWebSession(',
+                      (ROOT / "web/src/uxb-web-session.ts").read_text(encoding="utf-8"))
+        self.assertNotIn('csrf=d.csrf_token;', SOURCE)
         self.assertIn('if(csrf)headers["X-CSRF-Token"]=csrf;', SOURCE)
         self.assertNotIn('localStorage.setItem("csrf', SOURCE)
         self.assertNotIn('sessionStorage', SOURCE)
