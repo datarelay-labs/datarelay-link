@@ -329,13 +329,13 @@ test("service publication is preview/typed/queued and cannot imply deployed",()=
 });
 
 test("Remote Service queued job stays refreshable after Core job-detail response",()=>{
- const queued={job_id:"job-42",status:"QUEUED"};
- const running=service.mergeRemoteServiceJob(queued,{id:"job-42",status:"RUNNING",targets:[]});
- assert.equal(running.job_id,"job-42");
+ const queued={job_id:"mjob_"+"a".repeat(24),status:"QUEUED"};
+ const running=service.mergeRemoteServiceJob(queued,{id:queued.job_id,status:"RUNNING",targets:[]});
+ assert.equal(running.job_id,queued.job_id);
  assert.equal(running.status,"RUNNING");
- assert.equal(running.id,"job-42");
- const done=service.mergeRemoteServiceJob(running,{id:"job-42",status:"SUCCEEDED"});
- assert.equal(done.job_id,"job-42");
+ assert.equal(running.id,queued.job_id);
+ const done=service.mergeRemoteServiceJob(running,{id:queued.job_id,status:"SUCCEEDED"});
+ assert.equal(done.job_id,queued.job_id);
  assert.equal(done.status,"SUCCEEDED");
  assert.throws(()=>service.mergeRemoteServiceJob(queued,{id:"different",status:"RUNNING"}),/different Agent job identity/);
 });
@@ -503,13 +503,13 @@ test("UX-3 valid non-secret in-session user draft is restored exactly with ownin
 });
 
 test("UX-8 Remote Service Job detail shows only bounded safe status evidence, never Core arbitrary payload",()=>{
- const raw={id:"job-42",status:"RUNNING",target_count:3,
-  updated_at:"2026-10-11T04:12:00Z",last_error:"none",
+ const raw={id:"mjob_"+"b".repeat(24),status:"RUNNING",target_count:3,
+  updated_at:"2026-10-11T04:12:00Z",last_error:"WORKER_LEASE_EXPIRED",
   access_token:"PRIVATE_TOKEN",credential:{private_key:"PRIVATE_KEY"},
   payload:{secret:"PRIVATE_PAYLOAD"},targets:[{result:{secret:"PRIVATE_RESULT"}}]};
  const safe=service.remoteServiceJobEvidence(raw);
- assert.deepEqual(safe,{job_id:"job-42",status:"RUNNING",target_count:3,
-  updated_at:"2026-10-11T04:12:00Z",last_error:"none"});
+ assert.deepEqual(safe,{job_id:raw.id,status:"RUNNING",target_count:3,
+  updated_at:"2026-10-11T04:12:00Z",last_error:"WORKER_LEASE_EXPIRED"});
  assert.doesNotMatch(JSON.stringify(safe),/PRIVATE_/);
  const source=readFileSync(join(root,"src","uxb-remote-service.tsx"),"utf8");
  assert.match(source,/const visibleJob=remoteServiceJobEvidence\(job\)/);
@@ -520,15 +520,15 @@ test("UX-8 malformed or control-tainted Core Job status/ID is UNKNOWN, not succe
  for(const bad of [
   null,[],{}, {job_id:{secret:"PRIVATE_ID"},status:"SUCCEEDED"},
   {job_id:"job\u202eSUCCESS",status:"SUCCEEDED"},
-  {job_id:"job-42",status:{secret:"PRIVATE_STATUS"},target_count:"0"},
-  {job_id:"job-42",status:"DONE",target_count:-1,updated_at:"yesterday"}
+  {job_id:"mjob_"+"a".repeat(24),status:{secret:"PRIVATE_STATUS"},target_count:"0"},
+  {job_id:"mjob_"+"a".repeat(24),status:"DONE",target_count:-1,updated_at:"yesterday"}
  ]){
   const view=service.remoteServiceJobEvidence(bad);
-  assert.ok(["UNKNOWN","job-42"].includes(view.job_id));
+  assert.ok(["UNKNOWN","mjob_"+"a".repeat(24)].includes(view.job_id));
   assert.equal(view.status,"UNKNOWN",JSON.stringify(bad));
   assert.doesNotMatch(JSON.stringify(view),/PRIVATE_|yesterday|\u202e/);
  }
- assert.equal(service.remoteServiceJobEvidence({job_id:"job-42",status:"SUCCEEDED",target_count:0}).status,"SUCCEEDED");
+ assert.equal(service.remoteServiceJobEvidence({job_id:"mjob_"+"a".repeat(24),status:"SUCCEEDED",target_count:0}).status,"UNKNOWN");
 });
 
 test("UX-3 enrollment history shows UNKNOWN for malformed Core pages, not falsely empty",()=>{
@@ -810,4 +810,31 @@ test("M2/R6 Remote Service non-idempotent Apply uses ref lock, strict Core recei
  assert.match(apply,/UNKNOWN.*Agent Job may already be queued/);
  assert.match(apply,/setPreview\(null\);setConfirmation\(""\)/);
  assert.doesNotMatch(apply,/setJob\(result\)/);
+});
+
+test("M2/R6 Agent Job identity and error display must never echo arbitrary Core/Agent secrets",()=>{
+ const id="mjob_"+"c".repeat(24);
+ const safe=service.remoteServiceJobEvidence({
+   job_id:id,status:"FAILED",target_count:1,
+   updated_at:"2026-10-12T02:00:00Z",last_error:"WORKER_LEASE_EXPIRED",
+   agent_result:{api_key:"PRIVATE_CREDENTIAL"}
+ });
+ assert.deepEqual(safe,{job_id:id,status:"FAILED",target_count:1,
+   updated_at:"2026-10-12T02:00:00Z",last_error:"WORKER_LEASE_EXPIRED"});
+ assert.doesNotMatch(JSON.stringify(safe),/PRIVATE_CREDENTIAL|agent_result/);
+ for(const text of ["Bearer SECRET123","token=SECRET123","https://bad.example/access?key=SECRET123",
+   "HTTP 403: SECRET123", "private-key=SECRET123"]){
+   const actual=service.remoteServiceJobEvidence({
+     job_id:id,status:"FAILED",target_count:1,last_error:text});
+   assert.equal(actual.job_id,id);
+   assert.equal(actual.last_error,"UNKNOWN");
+   assert.doesNotMatch(JSON.stringify(actual),/SECRET123|bad.example|Bearer/);
+ }
+ const notCore=service.remoteServiceJobEvidence({job_id:"job-42",
+   status:"SUCCEEDED",target_count:1});
+ assert.equal(notCore.job_id,"UNKNOWN");
+ assert.equal(notCore.status,"UNKNOWN");
+ const unexpected=service.remoteServiceJobEvidence({job_id:id,
+   status:"SUCCEEDED",target_count:0});
+ assert.equal(unexpected.status,"UNKNOWN");
 });

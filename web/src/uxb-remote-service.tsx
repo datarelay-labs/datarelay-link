@@ -8,7 +8,8 @@ import {isObservedAbsoluteTime} from "./uxb-integrations-state";
 export function mergeRemoteServiceJob(queued:any,detail:any){
   const requested=String(queued?.job_id||queued?.id||"");
   const observed=String(detail?.job_id||detail?.id||"");
-  if(!requested||observed!==requested)throw new Error("Core returned a different Agent job identity.");
+  if(!/^mjob_[0-9a-f]{24}$/.test(requested)
+    ||observed!==requested)throw new Error("Core returned a different Agent job identity.");
   return {...detail,job_id:requested};
 }
 
@@ -22,20 +23,31 @@ export function remoteServiceJobEvidence(input:unknown){
  const data=input!==null&&typeof input==="object"&&!Array.isArray(input)
    ?input as Record<string,unknown>:{};
  const rawId=data.job_id??data.id;
- const jobId=typeof rawId==="string"&&/^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,159}$/.test(rawId)
+ const jobId=typeof rawId==="string"&&/^mjob_[0-9a-f]{24}$/.test(rawId)
+   &&(data.id===undefined||data.job_id===undefined||data.id===data.job_id)
    ?rawId:"UNKNOWN";
  const rawStatus=data.job_status??data.status;
- const status=jobId!=="UNKNOWN"&&typeof rawStatus==="string"
-   &&JOB_STATUSES.has(rawStatus)?rawStatus:"UNKNOWN";
  const count=data.target_count;
+ const validCount=typeof count==="number"&&Number.isSafeInteger(count)
+   &&count>=1&&count<=100;
+ const status=jobId!=="UNKNOWN"&&typeof rawStatus==="string"
+   &&JOB_STATUSES.has(rawStatus)
+   &&!(data.job_status!==undefined&&data.status!==undefined
+     &&data.job_status!==data.status)
+   &&!(rawStatus==="SUCCEEDED"&&count===0)
+   ?rawStatus:"UNKNOWN";
  const lastError=data.last_error;
+ // Core Agent errors are diagnostic codes only in this public view.
+ // Arbitrary backend/worker strings can include bearer URLs or credentials.
+ const safeError=lastError===""||lastError===null?""
+   :typeof lastError==="string"&&/^[A-Z][A-Z0-9_]{0,63}$/.test(lastError)
+     ?lastError:"UNKNOWN";
  return {
    job_id:jobId,
    status,
-   target_count:typeof count==="number"&&Number.isSafeInteger(count)&&count>=0?count:"UNKNOWN",
+   target_count:validCount?count:"UNKNOWN",
    updated_at:isObservedAbsoluteTime(data.updated_at)?data.updated_at:"UNKNOWN",
-   last_error:typeof lastError==="string"&&lastError.length<=160
-     &&!JOB_BAD_TEXT.test(lastError)?lastError:"UNKNOWN",
+   last_error:safeError,
  };
 }
 
