@@ -46,7 +46,7 @@ import {observedPolicyCardSummary} from "./uxb-policy-cards";
 import {AiPolicyMappingCell} from "./uxb-policy-table-ai-mapping";
 import {observedPolicyTableDisplayCells} from "./uxb-policy-table-display";
 import {policyAuditInvestigationTarget} from "./uxb-policy-audit-action";
-import {serviceAccountOperationalStatus,serviceAccountExpiry,serviceAccountPermissions,webhookStatus,webhookDeliverySummary} from "./uxb-integrations-state";
+import {serviceAccountOperationalStatus,serviceAccountExpiry,serviceAccountPermissions,webhookStatus,webhookDeliverySummary,observedWebhookDeliveryPulse} from "./uxb-integrations-state";
 import {observedIntegrationWriteReceipt,integrationLocalExpiryToUtc} from "./uxb-integration-write-receipts";
 import {observedIntegrationInventory} from "./uxb-integrations-state";
 import {filterObservedHosts} from "./uxb-host-search";
@@ -2662,8 +2662,10 @@ function IntegrationsPanel(){
       })}</tbody></table>
     </section>
     <section className="card"><h3>Signed Event Webhooks</h3><p className="muted">HTTPS only, certificate-verified and DNS-pinned. Failed deliveries use bounded retries; event delivery never controls access enforcement.</p>
+      <p className="muted" role="note">Core HTTP-acknowledged does not prove the receiver processed the event. Core outbox observations can be incomplete or expire under retention; missing history is UNKNOWN, not proof of successful delivery.</p>
       <form className="toolbar" onSubmit={createWebhook}><input value={hookName} onChange={e=>setHookName(e.target.value)} placeholder="Endpoint name" required/><input value={hookUrl} onChange={e=>setHookUrl(e.target.value)} placeholder="https://hooks.example.com/events" required type="url"/><select value={hookEvent} onChange={e=>setHookEvent(e.target.value)}><option value="attention">Attention</option><option value="security.lifecycle">Security lifecycle</option><option value="policy.change">Policy change</option><option value="managed_host.lifecycle">Managed Host lifecycle</option></select><button className="primary" disabled={busy||!!once||!hookName||!hookUrl} type="submit">Add webhook</button></form>
-      <table><thead><tr><th>Endpoint</th><th>URL</th><th>Events</th><th>Status</th><th>Delivery</th><th>Actions</th></tr></thead><tbody>{hooks.map(h=><tr key={h.id}><td>{h.name}</td><td>{h.url}</td><td>{(h.event_classes||[]).join(", ")}</td><td>{webhookStatus(h)}</td><td>{webhookDeliverySummary(h)}</td>
+      <table><thead><tr><th>Endpoint</th><th>URL</th><th>Events</th><th>Status</th><th>Delivery</th><th>Transport evidence</th><th>Actions</th></tr></thead><tbody>{hooks.map(h=><tr key={h.id}><td>{h.name}</td><td>{h.url}</td><td>{(h.event_classes||[]).join(", ")}</td><td>{webhookStatus(h)}</td><td>{webhookDeliverySummary(h)}</td>
+    <td>{observedWebhookDeliveryPulse(h).state}</td>
     <td>{webhookStatus(h)==="Enabled"&&<><button type="button" className="secondary" disabled={busy||!!once} onClick={()=>void mutate("/api/v1/webhooks/rotate",{webhook_id:h.id})}>Rotate</button><button type="button" className="danger" disabled={busy||!!once} onClick={()=>{if(window.confirm("Disable this webhook and fail queued deliveries?"))void mutate("/api/v1/webhooks/disable",{webhook_id:h.id})}}>Disable</button></>}</td></tr>)}</tbody></table>
     </section>
     </>}

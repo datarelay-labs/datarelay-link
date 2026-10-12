@@ -88,6 +88,30 @@ export function webhookDeliverySummary(value:unknown):string{
 }
 
 
+/** R4 native Webhook outbox snapshot: Core DELIVERED means only remote
+ * HTTP 2xx accepted by the transport; receiver processing is never proven.
+ * Counts are retained outbox records, not fresh live health or totals over
+ * all historical events (Core may prune terminal rows). Invalid/absent
+ * evidence is UNKNOWN and never an all-healthy zero.
+ */
+export type ObservedWebhookDeliveryPulse={
+ state:"UNKNOWN"|"NO_EVENTS_OBSERVED"|"QUEUED_OR_SENDING"|
+       "FAILURE_RECORDED"|"HTTP_ACKNOWLEDGED_ONLY",
+ pending:number|null,sending:number|null,delivered:number|null,failed:number|null
+};
+export function observedWebhookDeliveryPulse(value:unknown):ObservedWebhookDeliveryPulse{
+ const counts=observedCounts(row(value).delivery_counts);
+ if(!counts||Object.values(counts).some(n=>n>1000000)
+   ||Object.values(counts).reduce((a,b)=>a+b,0)>1000000)
+   return {state:"UNKNOWN",pending:null,sending:null,delivered:null,failed:null};
+ const pending=counts.PENDING||0,sending=counts.SENDING||0,
+   delivered=counts.DELIVERED||0,failed=counts.FAILED||0;
+ const state=failed>0?"FAILURE_RECORDED":
+   pending+sending>0?"QUEUED_OR_SENDING":
+   delivered>0?"HTTP_ACKNOWLEDGED_ONLY":"NO_EVENTS_OBSERVED";
+ return {state,pending,sending,delivered,failed};
+}
+
 /** M2 read-only Admin Integration inventory: Core currently returns up to
  * 200 accounts/hooks without a pagination cursor. Only fixed validated public
  * fields may reach JSX; a malformed list is UNKNOWN, never a confirmed zero.

@@ -107,3 +107,40 @@ test("M2 Web Admin Integrations list is Core-projected before React render and p
  assert.match(panel,/setInventoryState\("unknown"\)/);
  assert.doesNotMatch(panel,/h\.event_classes\|\|\[\]\)\.join\(".*?token/);
 });
+
+test("M2/R4 Webhook HTTP delivery evidence distinguishes zero observation, queue, failure, and transport-only receipt",()=>{
+ const pulse=counts=>helper.observedWebhookDeliveryPulse({delivery_counts:counts});
+ assert.deepEqual(pulse({}),{
+  state:"NO_EVENTS_OBSERVED",pending:0,sending:0,delivered:0,failed:0
+ });
+ assert.deepEqual(pulse({DELIVERED:3}),{
+  state:"HTTP_ACKNOWLEDGED_ONLY",pending:0,sending:0,delivered:3,failed:0
+ });
+ assert.deepEqual(pulse({PENDING:2,SENDING:1}),{
+  state:"QUEUED_OR_SENDING",pending:2,sending:1,delivered:0,failed:0
+ });
+ assert.deepEqual(pulse({PENDING:2,DELIVERED:3,FAILED:1}),{
+  state:"FAILURE_RECORDED",pending:2,sending:0,delivered:3,failed:1
+ });
+ const observed=inventory("webhooks",[{...webhook,delivery_counts:{DELIVERED:8,SENDING:2}}])[0];
+ assert.equal(helper.observedWebhookDeliveryPulse(observed).state,"QUEUED_OR_SENDING");
+ assert.equal(helper.observedWebhookDeliveryPulse({delivery_counts:{DELIVERED:0}}).state,"NO_EVENTS_OBSERVED");
+ for(const data of [null,undefined,{},[],{delivery_counts:null},
+    {delivery_counts:{FAILED:"2"}},{delivery_counts:{PENDING:-1}},
+    {delivery_counts:{ADMIN_PWNED:4,auth_token:"SECRET"}},
+    {delivery_counts:{DELIVERED:Infinity}},
+    {delivery_counts:{FAILED:NaN}}]){
+   assert.equal(helper.observedWebhookDeliveryPulse(data).state,"UNKNOWN");
+   assert.doesNotMatch(JSON.stringify(helper.observedWebhookDeliveryPulse(data)),/SECRET|auth_token|ADMIN_PWNED/);
+ }
+});
+
+test("M2/R4 Admin Webhook delivery UI labels HTTP2xx-only vs real downstream processing without raw Core metadata",()=>{
+ const source=readFileSync(join(root,"src","main.tsx"),"utf8");
+ const panel=source.split("function IntegrationsPanel(",2)[1]?.split("function CommandCenter(",1)[0]||"";
+ assert.match(source,/observedWebhookDeliveryPulse/);
+ assert.match(panel,/observedWebhookDeliveryPulse\(h\)\.state/);
+ assert.match(panel,/HTTP-acknowledged does not prove the receiver processed the event/);
+ assert.match(panel,/Core outbox observations can be incomplete or expire under retention/);
+ assert.doesNotMatch(panel,/Webhook delivery healthy/);
+});
