@@ -324,13 +324,56 @@ class V30AgentCompletionAcknowledgementBoundaryTests(unittest.TestCase):
         )
         identity.start()
         self.addCleanup(identity.stop)
+        from datetime import datetime, timedelta, timezone
+        instant=datetime.now(timezone.utc).replace(microsecond=0)
+        self.claim_times={
+            "lease_expires_at": (instant+timedelta(minutes=2)).isoformat().replace("+00:00","Z"),
+            "deadline_at": (instant+timedelta(minutes=10)).isoformat().replace("+00:00","Z"),
+        }
+
+    def test_stale_or_unverified_core_claim_time_rejects_batch_before_any_agent_work(self):
+        from unittest import mock
+        from drlink_agent_lifecycle import process_management_jobs_once
+        good = {
+            "job_id": "mjob_" + "4" * 24,
+            "claim_token": "4" * 32,
+            "job_type": "remote-service-set",
+            "target_id": MACHINE_A,
+            **self.claim_times,
+        }
+        wrong = [
+            {"lease_expires_at": "2020-01-01T00:00:00Z"},
+            {"deadline_at": "2020-01-01T00:00:00Z"},
+            {"lease_expires_at": None},
+            {"deadline_at": {"token": "DO_NOT_COPY"}},
+            {"lease_expires_at": "yesterday"},
+            {"lease_expires_at": "2026-02-31T00:00:00Z"},
+            {"deadline_at": "2026-02-31T00:00:00Z"},
+            {"lease_expires_at": "2030-01-01T00:00:00"},  # naive calendar time
+            {"lease_expires_at": "2030-01-01T00:00:00+14:00"},  # non-Core clock
+        ]
+        for change in wrong:
+            batch = [good, {**good, "job_id": "mjob_" + "5" * 24,
+                            "claim_token": "5" * 32, **change}]
+            with self.subTest(change=change), mock.patch(
+                "drlink_mgmt_sync.claim_management_jobs_on_server",
+                return_value={"jobs": batch},
+            ), mock.patch(
+                "drlink_agent_lifecycle._execute_management_job",
+            ) as executed, mock.patch(
+                "drlink_mgmt_sync.complete_management_job_on_server",
+            ) as completed:
+                with self.assertRaisesRegex(ValueError,"claim response UNKNOWN"):
+                    process_management_jobs_once(root="/tmp/unused-agent-fixture")
+                executed.assert_not_called()
+                completed.assert_not_called()
 
     def test_signed_claim_for_another_host_is_rejected_before_any_agent_side_effect(self):
         from unittest import mock
         from drlink_agent_lifecycle import process_management_jobs_once
         own = {"job_id": "mjob_" + "1" * 24,
                "claim_token": "a" * 32, "target_id": MACHINE_A,
-               "job_type": "remote-service-set"}
+               "job_type": "remote-service-set", **self.claim_times}
         other = {**own, "job_id": "mjob_" + "2" * 24,
                  "claim_token": "b" * 32, "target_id": MACHINE_B}
         for claims in ([other], [own, other], [other, own]):
@@ -354,7 +397,7 @@ class V30AgentCompletionAcknowledgementBoundaryTests(unittest.TestCase):
         from drlink_agent_lifecycle import process_management_jobs_once
         claim = {"job_id": "mjob_" + "3" * 24,
                  "claim_token": "c" * 32, "target_id": MACHINE_A,
-                 "job_type": "doctor"}
+                 "job_type": "doctor", **self.claim_times}
         for identity in ({}, {"machine_id": None}, {"machine_id": "  "},
                          {"machine_id": {"secret": "UNTRUSTED"}}):
             with self.subTest(identity=identity), mock.patch(
@@ -381,6 +424,7 @@ class V30AgentCompletionAcknowledgementBoundaryTests(unittest.TestCase):
             "claim_token": "opaque-once",
             "job_type": "remote-service-delete",
             "target_id": MACHINE_A,
+            **self.claim_times,
         }
         cases = [
             None, {}, {"jobs": None}, {"jobs": "unexpected"},
@@ -428,6 +472,7 @@ class V30AgentCompletionAcknowledgementBoundaryTests(unittest.TestCase):
             "claim_token": "opaque-claim-token",
             "job_type": "remote-service-set",
             "target_id": MACHINE_A,
+            **self.claim_times,
         }
         with mock.patch(
             "drlink_mgmt_sync.claim_management_jobs_on_server",
@@ -457,6 +502,7 @@ class V30AgentCompletionAcknowledgementBoundaryTests(unittest.TestCase):
             "claim_token": "opaque-current",
             "job_type": "remote-service-set",
             "target_id": MACHINE_A,
+            **self.claim_times,
         }
         # Core can legally mark a late SUCCEEDED completion FAILED because its
         # signed claim lease/deadline expired during Agent work.
@@ -488,6 +534,7 @@ class V30AgentCompletionAcknowledgementBoundaryTests(unittest.TestCase):
             "claim_token": "opaque-current",
             "job_type": "doctor",
             "target_id": MACHINE_A,
+            **self.claim_times,
         }
         correct = {"ok": True, "job": {
             "id": claim["job_id"], "job_type": "doctor",
@@ -540,6 +587,7 @@ class V30AgentCompletionAcknowledgementBoundaryTests(unittest.TestCase):
             "claim_token": "opaque-claim",
             "job_type": "doctor",
             "target_id": MACHINE_A,
+            **self.claim_times,
         }
         with mock.patch(
             "drlink_mgmt_sync.claim_management_jobs_on_server",

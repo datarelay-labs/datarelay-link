@@ -9,6 +9,7 @@ import os
 import platform
 import time
 from pathlib import Path
+from datetime import datetime, timezone
 from typing import Optional
 
 VALID_INTENTS = frozenset({"running", "paused"})
@@ -270,6 +271,22 @@ def _execute_management_job(claim: dict, root: Optional[str] = None) -> dict:
         plane.close()
 
 
+def _unexpired_core_claim_time(value: object, now: datetime) -> bool:
+    """Core emits UTC second-precision Z time for job lease/deadline.
+    Never execute Agent work with a stale, malformed or timezone-naive
+    source claim. Core remains the authority for deadline completion.
+    """
+    if not isinstance(value, str) or len(value) != 20 or value[-1] != "Z":
+        return False
+    try:
+        parsed = datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=timezone.utc
+        )
+    except ValueError:
+        return False
+    return parsed > now
+
+
 def _require_core_management_completion_receipt(
     reply: object, claim: dict, reported_status: str,
 ) -> None:
@@ -338,6 +355,7 @@ def process_management_jobs_once(root: Optional[str] = None, *, limit: int = 4) 
     })
     seen: set[tuple[str, str]] = set()
     tokens: set[str] = set()
+    now = datetime.now(timezone.utc)
     for claim in jobs:
         if not isinstance(claim, dict):
             raise ValueError(invalid)
@@ -353,6 +371,8 @@ def process_management_jobs_once(root: Optional[str] = None, *, limit: int = 4) 
             or any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
                    for ch in claim_token)
             or not isinstance(kind, str) or kind not in known
+            or not _unexpired_core_claim_time(claim.get("lease_expires_at"), now)
+            or not _unexpired_core_claim_time(claim.get("deadline_at"), now)
             or (claim.get("payload") is not None
                 and not isinstance(claim.get("payload"), dict))
             or (job_id, target_id) in seen or claim_token in tokens):
