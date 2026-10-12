@@ -25,6 +25,7 @@ import {filterObservedServices} from "./uxb-service-search";
 import {projectObservedGlobalSearchResults} from "./uxb-global-search-target";
 import {filterLoadedServiceFacets,type ServiceTypeFacet,type ServiceConfigFacet} from "./uxb-service-facets";
 import {operatorAccountState,operatorMfaState,operatorMfaAction,operatorLastLogin} from "./uxb-users-state";
+import {observedOperatorInventory,observedOperatorMfaReceipt,observedOperatorCreateReceipt} from "./uxb-users-state";
 import {operatorUserLabel} from "./uxb-users-state";
 import {auditInvestigation,matchObservedAuditReturn,matchObservedPolicyReturn,recentAuditInvestigation,observedAuditEventDetails,observedAuditAppliedFilters,type ObservedAuditEventDetail} from "./uxb-audit-context";
 import {observedAuditPageRefreshAvailable} from "./uxb-audit-refresh";
@@ -2373,27 +2374,52 @@ function ResourceWorkspace({kind,data,operator,onNavigate,api,initialFilter="",i
 
 function UsersPanel({operator}:{operator:any}){
   const [data,setData]=useState<any>(null),[error,setError]=useState(""),[busy,setBusy]=useState("");
+  const mfaMutationInFlight=useRef(false);
+  const createUserInFlight=useRef(false);
   const [loading,setLoading]=useState(true);
   const [newUsername,setNewUsername]=useState(""),[newPassword,setNewPassword]=useState(""),[newRole,setNewRole]=useState("Read Only");
   async function refresh(){
     setLoading(true);setError("");
-    try{setData(requireObservedMenuPayload("users",await api("/api/v1/operators")))}
+    try{
+      const page=requireObservedMenuPayload("users",await api("/api/v1/operators"));
+      const observed=observedOperatorInventory(page.items);
+      if(!observed)throw new Error("Core operator list returned unverified identities. User inventory is UNKNOWN.");
+      setData({items:observed});
+    }
     catch(e:any){setData(null);setError(e.message||String(e))}
     finally{setLoading(false)}
   }
   useEffect(()=>{refresh()},[]);
   async function setMfa(id:string,required:boolean){
+    if(mfaMutationInFlight.current||createUserInFlight.current)return;
+    mfaMutationInFlight.current=true;
     setBusy(id);setError("");
     try{
-      await api("/api/v1/operators/"+encodeURIComponent(id)+"/mfa",{method:"POST",body:JSON.stringify({required})});
+      const result=await api("/api/v1/operators/"+encodeURIComponent(id)+"/mfa",
+        {method:"POST",body:JSON.stringify({required})});
+      const receipt=observedOperatorMfaReceipt(result,id,required);
+      if(!receipt)throw new Error("Unverified Core MFA write receipt.");
       if(id===operator.id){window.location.reload();return}
       await refresh();
-    }catch(e:any){setError(e.message||String(e))}finally{setBusy("")}
+    }catch(e:any){
+      setError("Core MFA change outcome UNKNOWN. Inspect Users and Audit before retrying; the previous request may already have changed the session policy.");
+    }finally{mfaMutationInFlight.current=false;setBusy("")}
   }
   async function createUser(e:any){
-    e.preventDefault();setBusy("create");setError("");
-    try{await api("/api/v1/operators",{method:"POST",body:JSON.stringify({username:newUsername,password:newPassword,role:newRole})});setNewUsername("");setNewPassword("");setNewRole("Read Only");await refresh()}
-    catch(e:any){setError(e.message||String(e))}finally{setBusy("")}
+    e.preventDefault();
+    if(createUserInFlight.current||mfaMutationInFlight.current||!!busy
+      ||!newUsername.trim()||!newPassword)return;
+    createUserInFlight.current=true;setBusy("create");setError("");
+    try{
+      const result=await api("/api/v1/operators",{method:"POST",
+        body:JSON.stringify({username:newUsername,password:newPassword,role:newRole})});
+      const receipt=observedOperatorCreateReceipt(result,{username:newUsername,role:newRole});
+      if(!receipt)throw new Error("Core operator create receipt did not match the requested actor.");
+      setNewUsername("");setNewRole("Read Only");
+      await refresh();
+    }catch(e:any){
+      setError("Core operator creation outcome UNKNOWN. Inspect Users and Audit before retrying; the account may already have been created.");
+    }finally{setNewPassword("");createUserInFlight.current=false;setBusy("")}
   }
   if(!data)return <section className="card" role={loading?"status":"alert"}>
     <h3>Web Users · {loading?"Loading":"UNKNOWN"}</h3>
@@ -2402,7 +2428,7 @@ function UsersPanel({operator}:{operator:any}){
   </section>;
   return <>{error&&<div className="error" role="alert">{error}</div>}<div className="card">
     <h3>Web Users</h3>
-    <form className="toolbar" onSubmit={createUser}><input value={newUsername} onChange={e=>setNewUsername(e.target.value)} placeholder="Username" autoComplete="off"/><input type="password" value={newPassword} onChange={e=>setNewPassword(e.target.value)} placeholder="Initial password" autoComplete="new-password"/><select value={newRole} onChange={e=>setNewRole(e.target.value)}><option>Read Only</option><option>Operator</option><option>Admin</option></select><button className="primary" type="submit" disabled={busy==="create"||!newUsername||!newPassword}>{busy==="create"?"Creating…":"Create user"}</button></form>
+    <form className="toolbar" onSubmit={createUser}><input value={newUsername} onChange={e=>setNewUsername(e.target.value)} placeholder="Username" autoComplete="off"/><input type="password" value={newPassword} onChange={e=>setNewPassword(e.target.value)} placeholder="Initial password" autoComplete="new-password"/><select value={newRole} onChange={e=>setNewRole(e.target.value)}><option>Read Only</option><option>Operator</option><option>Admin</option></select><button className="primary" type="submit" disabled={!!busy||!newUsername||!newPassword}>{busy==="create"?"Creating…":"Create user"}</button></form>
     <div className="muted">MFA is disabled by default. Enable it per user. Enabling MFA revokes that user's active sessions; on the next password sign-in the user completes TOTP setup and receives recovery codes directly. Missing or inconsistent Core MFA flags remain UNKNOWN and cannot trigger an unverified state toggle.</div>
     <table><thead><tr><th>User</th><th>Role</th><th>Status</th><th>MFA</th><th>Last login</th><th>Action</th></tr></thead><tbody>
       {(data.items||[]).map((x:any)=>{
@@ -2411,7 +2437,7 @@ function UsersPanel({operator}:{operator:any}){
           <td>{["Admin","Operator","Read Only"].includes(x.role)?x.role:"UNKNOWN"}</td>
           <td>{operatorAccountState(x)}</td><td>{operatorMfaState(x)}</td><td>{operatorLastLogin(x)}</td>
           <td><button type="button" className={mfaChange.required===false?"secondary":"primary"}
-            disabled={busy===x.id||mfaChange.required===null}
+            disabled={!!busy||mfaChange.required===null}
             aria-label={mfaChange.label+" for "+operatorUserLabel(x)}
             onClick={()=>{if(mfaChange.required!==null)void setMfa(x.id,mfaChange.required)}}>
             {mfaChange.label}</button></td></tr>;

@@ -787,7 +787,10 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         integrations = SOURCE.split("function IntegrationsPanel(", 1)[1].split("function CommandCenter(", 1)[0]
         for expected in (
             'const [data,setData]=useState<any>(null)',
-            'setData(requireObservedMenuPayload("users",await api("/api/v1/operators")))',
+            'const page=requireObservedMenuPayload("users",await api("/api/v1/operators"));',
+            'const observed=observedOperatorInventory(page.items);',
+            'if(!observed)throw new Error("Core operator list returned unverified identities.',
+            'setData({items:observed});',
             'catch(e:any){setData(null);setError(e.message||String(e))}',
             'if(!data)return <section className="card"',
             'Users inventory unavailable. No empty result was confirmed.',
