@@ -343,6 +343,89 @@ class V30AgentCompletionAcknowledgementBoundaryTests(unittest.TestCase):
         )
         self.assertEqual(completion.call_args.kwargs["status"], "SUCCEEDED")
 
+    def test_core_reply_rejects_late_target_failure_instead_of_fabricating_agent_success(self):
+        from unittest import mock
+        from drlink_agent_lifecycle import process_management_jobs_once
+        claim = {
+            "job_id": "mjob_" + "c" * 24,
+            "claim_token": "opaque-current",
+            "job_type": "remote-service-set",
+            "target_id": MACHINE_A,
+        }
+        # Core can legally mark a late SUCCEEDED completion FAILED because its
+        # signed claim lease/deadline expired during Agent work.
+        late = {"ok": True, "job": {
+            "id": claim["job_id"], "job_type": claim["job_type"],
+            "status": "FAILED",
+            "targets": [{"target_id": MACHINE_A, "status": "FAILED"}],
+        }}
+        with mock.patch(
+            "drlink_mgmt_sync.claim_management_jobs_on_server",
+            return_value={"jobs": [claim]},
+        ), mock.patch(
+            "drlink_agent_lifecycle._execute_management_job",
+            return_value={"operation": "remote-service-set"},
+        ), mock.patch(
+            "drlink_mgmt_sync.complete_management_job_on_server",
+            return_value=late,
+        ) as complete:
+            with self.assertRaisesRegex(ValueError, "completion receipt UNKNOWN"):
+                process_management_jobs_once(root="/tmp/unused-agent-fixture")
+        complete.assert_called_once()
+        self.assertEqual(complete.call_args.kwargs["status"], "SUCCEEDED")
+
+    def test_current_target_ack_identity_required_and_one_valid_ack_accepted(self):
+        from unittest import mock
+        from drlink_agent_lifecycle import process_management_jobs_once
+        claim = {
+            "job_id": "mjob_" + "d" * 24,
+            "claim_token": "opaque-current",
+            "job_type": "doctor",
+            "target_id": MACHINE_A,
+        }
+        correct = {"ok": True, "job": {
+            "id": claim["job_id"], "job_type": "doctor",
+            "status": "SUCCEEDED",
+            "targets": [{"target_id": MACHINE_A, "status": "SUCCEEDED"}],
+        }}
+        for reply in [
+            {}, {"ok": True}, {"ok": "true", "job": correct["job"]},
+            {"ok": True, "job": {**correct["job"], "id": "mjob_" + "e" * 24}},
+            {"ok": True, "job": {**correct["job"], "job_type": "support-bundle"}},
+            {"ok": True, "job": {**correct["job"], "targets": []}},
+            {"ok": True, "job": {**correct["job"], "targets": [
+                {"target_id": MACHINE_B, "status": "SUCCEEDED"}]}},
+            {"ok": True, "job": {**correct["job"], "targets": [
+                {"target_id": MACHINE_A, "status": "SUCCEEDED"},
+                {"target_id": MACHINE_A, "status": "SUCCEEDED"}]}},
+        ]:
+            with self.subTest(reply=str(reply)[:90]), mock.patch(
+                "drlink_mgmt_sync.claim_management_jobs_on_server",
+                return_value={"jobs": [claim]},
+            ), mock.patch(
+                "drlink_agent_lifecycle._execute_management_job",
+                return_value={"operation": "doctor"},
+            ), mock.patch(
+                "drlink_mgmt_sync.complete_management_job_on_server",
+                return_value=reply,
+            ) as complete:
+                with self.assertRaisesRegex(ValueError, "completion receipt UNKNOWN"):
+                    process_management_jobs_once(root="/tmp/unused-agent-fixture")
+                complete.assert_called_once()
+        with mock.patch(
+            "drlink_mgmt_sync.claim_management_jobs_on_server",
+            return_value={"jobs": [claim]},
+        ), mock.patch(
+            "drlink_agent_lifecycle._execute_management_job",
+            return_value={"operation": "doctor"},
+        ), mock.patch(
+            "drlink_mgmt_sync.complete_management_job_on_server",
+            return_value=correct,
+        ) as complete:
+            self.assertEqual(process_management_jobs_once(root="/tmp/unused-agent-fixture"),
+                             {"processed": 1, "failed": 0})
+            complete.assert_called_once()
+
     def test_agent_handler_failure_sends_one_failed_completion_not_false_success(self):
         from unittest import mock
         from drlink_agent_lifecycle import process_management_jobs_once
@@ -360,7 +443,11 @@ class V30AgentCompletionAcknowledgementBoundaryTests(unittest.TestCase):
             side_effect=ValueError("LOCAL_DIAGNOSTIC_FAILURE"),
         ), mock.patch(
             "drlink_mgmt_sync.complete_management_job_on_server",
-            return_value={"ok": True},
+            return_value={"ok": True, "job": {
+                "id": claim["job_id"], "job_type": claim["job_type"],
+                "status": "FAILED",
+                "targets": [{"target_id": MACHINE_A, "status": "FAILED"}],
+            }},
         ) as completion:
             summary = process_management_jobs_once(root="/tmp/unused-agent-fixture")
         self.assertEqual(summary, {"processed": 1, "failed": 1})

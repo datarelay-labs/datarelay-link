@@ -270,6 +270,36 @@ def _execute_management_job(claim: dict, root: Optional[str] = None) -> dict:
         plane.close()
 
 
+def _require_core_management_completion_receipt(
+    reply: object, claim: dict, reported_status: str,
+) -> None:
+    """Check Core's signed Job target receipt, not merely HTTP 200.
+
+    Core can downgrade a late Agent completion to FAILED after the claim lease
+    or deadline expires. No new Agent mutation, retry, credential/log exposure
+    or second contradictory completion is justified by an ambiguous reply.
+    """
+    error = "Core Management Job completion receipt UNKNOWN; inspect Core before retrying."
+    if not isinstance(reply, dict) or reply.get("ok") is not True:
+        raise ValueError(error)
+    job = reply.get("job")
+    if not isinstance(job, dict):
+        raise ValueError(error)
+    if job.get("id") != claim.get("job_id") or (
+        job.get("job_type") != claim.get("job_type")
+    ):
+        raise ValueError(error)
+    targets = job.get("targets")
+    if not isinstance(targets, list) or not 1 <= len(targets) <= 100:
+        raise ValueError(error)
+    matching = [
+        item for item in targets
+        if isinstance(item, dict) and item.get("target_id") == claim.get("target_id")
+    ]
+    if len(matching) != 1 or matching[0].get("status") != reported_status:
+        raise ValueError(error)
+
+
 def process_management_jobs_once(root: Optional[str] = None, *, limit: int = 4) -> dict:
     from drlink_mgmt_sync import (
         claim_management_jobs_on_server,
@@ -297,7 +327,7 @@ def process_management_jobs_once(root: Optional[str] = None, *, limit: int = 4) 
             # Only an actual local Agent execution error may be reported as
             # FAILED. The Core still validates this authenticated claim.
             failed += 1
-            complete_management_job_on_server(
+            receipt = complete_management_job_on_server(
                 root=root,
                 job_id=job_id,
                 claim_token=claim_token,
@@ -305,18 +335,20 @@ def process_management_jobs_once(root: Optional[str] = None, *, limit: int = 4) 
                 result={},
                 error=str(exc)[:1024],
             )
+            _require_core_management_completion_receipt(receipt, claim, "FAILED")
         else:
             # An acknowledgement/transport error can occur AFTER the Core
             # committed SUCCEEDED. Do NOT catch that error as Agent execution
             # failure or send a conflicting FAILED completion on the same
             # one-shot claim. Let worker retry/reconcile from Core authority.
-            complete_management_job_on_server(
+            receipt = complete_management_job_on_server(
                 root=root,
                 job_id=job_id,
                 claim_token=claim_token,
                 status="SUCCEEDED",
                 result=result,
             )
+            _require_core_management_completion_receipt(receipt, claim, "SUCCEEDED")
         processed += 1
     return {"processed": processed, "failed": failed}
 
