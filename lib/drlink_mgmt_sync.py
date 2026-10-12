@@ -1604,7 +1604,9 @@ def server_complete_management_job(plane, auth: MgmtAuthContext, body: dict) -> 
     job_id = str((body or {}).get("id") or "").strip()
     claim_token = str((body or {}).get("claim_token") or "").strip()
     status = str((body or {}).get("status") or "").strip().upper()
-    result = (body or {}).get("result") or {}
+    # Missing result is a legacy empty object; an explicitly supplied
+    # non-object must not be coerced into a successful Core Job receipt.
+    result = (body or {}).get("result", {})
     if not job_id or not claim_token:
         raise MgmtSyncError("Management Job id and claim token are required")
     if status not in (SUCCEEDED, FAILED):

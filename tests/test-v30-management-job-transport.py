@@ -139,6 +139,32 @@ class V30ManagementJobTransportTests(unittest.TestCase):
         finally:
             engine.close()
 
+    def test_signed_core_rejects_explicit_non_object_success_results(self):
+        engine = ManagementJobEngine(self.server_tmp)
+        try:
+            for invalid in (None, [], "", 0, False):
+                with self.subTest(value=invalid):
+                    job = engine.enqueue(
+                        job_type="doctor", targets=[MACHINE_A],
+                        requested_by="web:admin",
+                    )
+                    claim = mgmt.claim_management_jobs_on_server(
+                        root=self.agent_tmp, limit=1
+                    )["jobs"][0]
+                    self.assertEqual(claim["job_id"], job["id"])
+                    # Send the exact signed JSON request, without the Agent's
+                    # client-side dict coercion hiding invalid wire values.
+                    with self.assertRaises(mgmt.MgmtSyncError):
+                        mgmt._request_json(
+                            "POST", self.base + "/v1/management-jobs/complete",
+                            {"id": claim["job_id"], "claim_token": claim["claim_token"],
+                             "status": "SUCCEEDED", "result": invalid},
+                            root=self.agent_tmp,
+                        )
+                    self.assertEqual(engine.get(job["id"])["status"], "RUNNING")
+        finally:
+            engine.close()
+
     def test_core_signed_completion_never_persists_untrusted_agent_error_text(self):
         engine = ManagementJobEngine(self.server_tmp)
         secret = "Bearer fixture-only-untrusted-signed-completion"
