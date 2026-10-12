@@ -6119,6 +6119,9 @@ def set_remote_service_agent(
         service = existing["service_object"]
         enabled = bool(existing["enabled"])
 
+    intent_fields = ("destination", "destination_client_id", "service_object",
+                     "enabled", "endpoint_port", "delete_pending", "updated_at")
+
     def reconciliation_intent_changed():
         if not reconcile_existing:
             return False
@@ -6128,10 +6131,8 @@ def set_remote_service_agent(
         ).fetchone()
         # Catalog I/O can race an operator edit as well as deletion. Do not
         # publish the pre-refresh intent over a newer committed definition.
-        fields = ("destination", "destination_client_id", "service_object",
-                  "enabled", "endpoint_port", "delete_pending", "updated_at")
         return current is None or bool(current["delete_pending"]) or any(
-            _row_get(current, field) != _row_get(existing, field) for field in fields
+            _row_get(current, field) != _row_get(existing, field) for field in intent_fields
         )
 
     if oneshot and existing is None:
@@ -6604,27 +6605,47 @@ def set_remote_service_agent(
                         reason,
                     ),
                 )
-            plane_db.conn.execute(
-                "INSERT OR REPLACE INTO agent_remote_services"
-                "(name, destination, destination_client_id, service_object, enabled, status, "
-                "endpoint_host, endpoint_port, pending_allocation, delete_pending, pool_class, "
-                "reason, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)",
-                (
-                    name,
-                    dest_token,
-                    destination_client_id,
-                    svc_name,
-                    1 if en else 0,
-                    status if en else "DISABLED",
-                    endpoint_host,
-                    endpoint_port,
-                    pending,
-                    pool_class,
-                    reason,
-                    now,
-                ),
-            )
+            if not server_reachable and reconcile_existing:
+                # Batch _mutate may have no transaction. Compare-and-update
+                # in one SQLite statement so a commit after the final SELECT
+                # cannot replay stale intent. Never roll back prior batch work.
+                # ControlPlane connections autocommit unless an outer
+                # transaction is already open; that transaction stays intact.
+                updated = plane_db.conn.execute(
+                    "UPDATE agent_remote_services SET destination=?, destination_client_id=?, "
+                    "service_object=?, enabled=?, status=?, endpoint_host=?, endpoint_port=?, "
+                    "pending_allocation=?, delete_pending=0, pool_class=?, reason=?, updated_at=?, "
+                    "runtime_verified=0, enrollment_seed=0 WHERE name=? COLLATE NOCASE AND "
+                    + " AND ".join(field + " IS ?" for field in intent_fields),
+                    (dest_token, destination_client_id, svc_name, 1 if en else 0,
+                     status if en else "DISABLED", endpoint_host, endpoint_port,
+                     pending, pool_class, reason, now, name)
+                    + tuple(_row_get(existing, field) for field in intent_fields),
+                ).rowcount
+                if not updated:
+                    raise StaleOfflineReconciliation("Remote Service changed during synchronization")
+            else:
+                plane_db.conn.execute(
+                    "INSERT OR REPLACE INTO agent_remote_services"
+                    "(name, destination, destination_client_id, service_object, enabled, status, "
+                    "endpoint_host, endpoint_port, pending_allocation, delete_pending, pool_class, "
+                    "reason, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)",
+                    (
+                        name,
+                        dest_token,
+                        destination_client_id,
+                        svc_name,
+                        1 if en else 0,
+                        status if en else "DISABLED",
+                        endpoint_host,
+                        endpoint_port,
+                        pending,
+                        pool_class,
+                        reason,
+                        now,
+                    ),
+                )
             return {"entity": {"type": "remote-service", "id": name, "name": name}, "operation": "set"}
         finally:
             plane_db._batch_mode = nested_prev

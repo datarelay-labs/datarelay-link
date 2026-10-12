@@ -175,6 +175,122 @@ class CatalogUnavailableIntentRaceTests(unittest.TestCase):
                 self.assertTrue(result.get("skipped"), result)
                 apply.assert_not_called()
 
+    def test_U005_synchronize_batch_compare_write_race(self):
+        from unittest import mock
+        import drlink_v24_runtime as runtime
+        for stype in ("fixed-tcp", "tcp"):
+            with self.subTest(type=stype):
+                name, service, port = self._seed_disabled(stype)
+                original_conn = self.agent.conn
+                original_mutate = self.agent._mutate
+                in_writer = False
+                commits = []
+
+                class BarrierCursor:
+                    def __init__(cursor_self, cursor):
+                        cursor_self.cursor = cursor
+
+                    def fetchone(cursor_self):
+                        row = cursor_self.cursor.fetchone()
+                        if not commits:
+                            # The final freshness SELECT has returned DISABLED,
+                            # but no SQLite write transaction exists in batch mode.
+                            self.assertTrue(self.agent._batch_mode)
+                            self.assertFalse(original_conn.in_transaction)
+                            v24.set_remote_service_agent(
+                                self.operator, name, destination="this-host", service=service,
+                                enabled=True, oneshot=True, root=self.root, server_reachable=False,
+                            )
+                            commits.append(dict(original_conn.execute(
+                                "SELECT * FROM agent_remote_services WHERE name=?", (name,)
+                            ).fetchone()))
+                            self.assertEqual(commits[-1]["enabled"], 1)
+                        return row
+
+                    def __getattr__(cursor_self, attr):
+                        return getattr(cursor_self.cursor, attr)
+
+                class BarrierConnection:
+                    def execute(conn_self, sql, params=()):
+                        cursor = original_conn.execute(sql, params)
+                        if (in_writer and not commits and params == (name,) and
+                                sql.startswith("SELECT * FROM agent_remote_services WHERE name")):
+                            return BarrierCursor(cursor)
+                        return cursor
+
+                    def __getattr__(conn_self, attr):
+                        return getattr(original_conn, attr)
+
+                def mutate(command, summary, writer, **kwargs):
+                    def marked_writer():
+                        nonlocal in_writer
+                        in_writer = True
+                        try:
+                            return writer()
+                        finally:
+                            in_writer = False
+                    return original_mutate(command, summary, marked_writer, **kwargs)
+
+                self.agent.conn = BarrierConnection()
+                try:
+                    with mock.patch.object(v24, "detect_server_reachable", return_value=True), \
+                            mock.patch.object(mgmt, "use_live_mgmt_path", return_value=True), \
+                            mock.patch.object(v24, "sync_agent_catalog_from_server",
+                                              side_effect=mgmt.MgmtUnavailableError("catalog outage")), \
+                            mock.patch.object(self.agent, "_mutate", side_effect=mutate), \
+                            mock.patch.object(v24, "_push_agent_remote_service_status", return_value=0), \
+                            mock.patch.object(runtime, "apply_agent_runtime",
+                                              return_value={"ok": True, "skipped": True}), \
+                            mock.patch.object(runtime, "mark_runtime_status"):
+                        result = v24.synchronize_agent_remote_services(self.agent, root=self.root)
+                finally:
+                    self.agent.conn = original_conn
+                self.assertEqual(len(commits), 1, result)
+                self.assertEqual((self._row(name)["enabled"], self._row(name)["endpoint_port"]),
+                                 (1, port), self._row(name))
+                self.assertFalse(self.agent._batch_mode)
+                self.assertFalse(self.agent.conn.in_transaction)
+
+    def test_offline_reconciliation_preserves_prior_batch_transaction(self):
+        from unittest import mock
+        name, service, port = self._seed_disabled("fixed-tcp")
+        self.agent._batch_mode = True
+        self.agent.conn.execute("BEGIN IMMEDIATE")
+        self.agent.conn.execute("UPDATE service_objects SET port=28145 WHERE name=?", (service,))
+        self.assertTrue(self.agent.conn.in_transaction)
+        with mock.patch.object(mgmt, "use_live_mgmt_path", return_value=True), \
+                mock.patch.object(v24, "sync_agent_catalog_from_server",
+                                  side_effect=mgmt.MgmtUnavailableError("catalog outage")):
+            result = v24.set_remote_service_agent(
+                self.agent, name, root=self.root, server_reachable=True, reconcile_existing=True,
+            )
+        self.assertFalse(result.get("skipped", False))
+        self.assertTrue(self.agent.conn.in_transaction)
+        self.assertEqual(self.agent.conn.execute(
+            "SELECT port FROM service_objects WHERE name=?", (service,)
+        ).fetchone()[0], 28145)
+        original_mutate = self.agent._mutate
+
+        def edit_before_writer(command, summary, writer, **kwargs):
+            self.agent.conn.execute(
+                "UPDATE agent_remote_services SET enabled=1 WHERE name=?", (name,)
+            )
+            return original_mutate(command, summary, writer, **kwargs)
+
+        with mock.patch.object(self.agent, "_mutate", side_effect=edit_before_writer):
+            skipped = v24.set_remote_service_agent(
+                self.agent, name, root=self.root, server_reachable=False, reconcile_existing=True,
+            )
+        self.assertTrue(skipped.get("skipped"), skipped)
+        self.assertTrue(self.agent.conn.in_transaction)
+        self.assertEqual(self._row(name)["enabled"], 1)
+        self.agent.conn.commit()
+        self.agent._batch_mode = False
+        self.assertEqual(self.operator.conn.execute(
+            "SELECT port FROM service_objects WHERE name=?", (service,)
+        ).fetchone()[0], 28145)
+        self.assertEqual(self._row(name)["endpoint_port"], port)
+
     def test_unavailable_catalog_without_edit_preserves_offline_queue(self):
         from unittest import mock
         name, service, port = self._seed_disabled("fixed-tcp")
