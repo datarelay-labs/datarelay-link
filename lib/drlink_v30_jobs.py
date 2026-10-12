@@ -78,12 +78,45 @@ def _unexpired_claim_clock(value: Any, now: datetime) -> bool:
 
 def _json(value: Any, *, max_bytes: int = 16384, field: str = "Management Job JSON") -> str:
     try:
-        raw = json.dumps(value, sort_keys=True, separators=(",", ":"))
+        raw = json.dumps(
+            value, sort_keys=True, separators=(",", ":"), allow_nan=False,
+        )
     except (TypeError, ValueError) as exc:
         raise ControlPlaneError("%s is not JSON serializable." % field) from exc
     if len(raw.encode("utf-8")) > max_bytes:
         raise ControlPlaneError("%s exceeds the %d-byte bound." % (field, max_bytes))
     return raw
+
+
+def _strict_queued_job_payload(raw: Any) -> Optional[dict[str, Any]]:
+    """Return only an unambiguous bounded Core-owned queued Job payload.
+
+    Storage corruption is never authority to claim work with an invented
+    empty payload. This parser is deliberately read-only and fail-closed.
+    """
+    if not isinstance(raw, str) or not raw:
+        return None
+
+    def unique_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        value: dict[str, Any] = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError("duplicate Job payload field")
+            value[key] = item
+        return value
+
+    def reject_constant(_value: str) -> None:
+        raise ValueError("non-finite Job payload number")
+
+    try:
+        if len(raw.encode("utf-8")) > 16384:
+            return None
+        value = json.loads(
+            raw, object_pairs_hook=unique_pairs, parse_constant=reject_constant,
+        )
+    except (TypeError, ValueError, UnicodeError, RecursionError):
+        return None
+    return value if isinstance(value, dict) else None
 
 
 def _bounded_text(value: Any, *, field: str, max_len: int = 256) -> str:
@@ -523,6 +556,13 @@ class ManagementJobEngine:
             for row in rows:
                 if len(claimed) >= count:
                     break
+                # Never lease a Job whose persisted intent is malformed,
+                # ambiguous, non-object, non-finite or outside the source
+                # storage bound. A corrupted record remains QUEUED and
+                # eventually expires rather than executing as empty intent.
+                payload = _strict_queued_job_payload(row["payload_json"])
+                if payload is None:
+                    continue
                 kind = str(row["job_type"])
                 if kind in MUTATING_AGENT_JOB_TYPES:
                     host = self.conn.execute(
@@ -561,10 +601,6 @@ class ManagementJobEngine:
                     "started_at=COALESCE(started_at,?),updated_at=? WHERE id=?",
                     (current, current, row["job_id"]),
                 )
-                try:
-                    payload = json.loads(str(row["payload_json"] or "{}"))
-                except ValueError:
-                    payload = {}
                 claimed.append(
                     {
                         "job_id": str(row["job_id"]),

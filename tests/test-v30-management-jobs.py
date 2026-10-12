@@ -206,6 +206,66 @@ class V30ManagementJobTests(unittest.TestCase):
             ), deletion,
         )
 
+    def test_nonfinite_job_payload_rejected_before_enqueue(self):
+        # The source writer must not persist a Job that the strict lease-time
+        # reader will refuse; fail before creating an executable queue row.
+        before = self.engine.conn.execute(
+            "SELECT COUNT(*) FROM management_jobs"
+        ).fetchone()[0]
+        for value in (float("nan"), float("inf"), float("-inf")):
+            with self.subTest(nonfinite=str(value)):
+                with self.assertRaisesRegex(
+                    ControlPlaneError, "not JSON serializable"
+                ):
+                    self._enqueue(payload={"score": value})
+                after = self.engine.conn.execute(
+                    "SELECT COUNT(*) FROM management_jobs"
+                ).fetchone()[0]
+                self.assertEqual(after, before)
+
+    def test_corrupt_persisted_payload_never_leases_core_job(self):
+        # A corrupted queued Job must never be leased to an Agent as an
+        # invented empty payload. Leave its target queued for investigation.
+        job = self._enqueue(targets=("host-a",), payload={"operation": "doctor"})
+        malformed = (
+            "", "{", "[]", "null", '"text"', "true",
+            '{"value":NaN}', '{"value":Infinity}',
+            '{"operation":"doctor","operation":"refresh"}',
+            '{"large":"' + "x" * 16385 + '"}',
+        )
+        for raw in malformed:
+            with self.subTest(raw=raw[:70]):
+                self.engine.conn.execute(
+                    "UPDATE management_jobs SET payload_json=? WHERE id=?",
+                    (raw, job["id"]),
+                )
+                self.engine.conn.commit()
+                claims = self.engine.claim_targets_for_target(
+                    target_id="host-a", worker_id="agent:host-a", limit=1,
+                    now=self.now + timedelta(seconds=1),
+                )
+                self.assertEqual(claims, [])
+                target = self.engine.conn.execute(
+                    "SELECT status,attempt,claim_token,lease_expires_at "
+                    "FROM management_job_targets WHERE job_id=? AND target_id=?",
+                    (job["id"], "host-a"),
+                ).fetchone()
+                self.assertEqual(target["status"], QUEUED)
+                self.assertEqual(target["attempt"], 0)
+                self.assertFalse(target["claim_token"])
+                self.assertIsNone(target["lease_expires_at"])
+        self.engine.conn.execute(
+            "UPDATE management_jobs SET payload_json=? WHERE id=?",
+            ('{"operation":"doctor"}', job["id"]),
+        )
+        self.engine.conn.commit()
+        claims = self.engine.claim_targets_for_target(
+            target_id="host-a", worker_id="agent:host-a", limit=1,
+            now=self.now + timedelta(seconds=2),
+        )
+        self.assertEqual([c["job_id"] for c in claims], [job["id"]])
+        self.assertEqual(claims[0]["payload"], {"operation": "doctor"})
+
     def test_schema_is_separate_from_ai_jobs(self):
         tables = {
             row[0]
