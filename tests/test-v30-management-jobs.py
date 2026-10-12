@@ -575,6 +575,34 @@ class V30ManagementJobTests(unittest.TestCase):
             release.set()
             pool.close()
 
+    def test_worker_pool_rejects_stale_or_invalid_core_claim_before_handler(self):
+        from unittest import mock
+
+        job = self._enqueue(targets=("host-a",), timeout_seconds=3600)
+        claim = self.engine.claim_targets(
+            worker_id="rpc-worker", limit=1, now=self.now + timedelta(seconds=1)
+        )[0]
+        late = self.now + timedelta(seconds=12)
+        cases = [
+            {"lease_expires_at": claim["lease_expires_at"]},
+            {"deadline_at": (self.now + timedelta(seconds=2)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+             "lease_expires_at": (self.now + timedelta(minutes=1)).strftime("%Y-%m-%dT%H:%M:%SZ")},
+            {"lease_expires_at": {"untrusted": "secret"}},
+            {"deadline_at": "not-a-core-utc-date"},
+        ]
+        for change in cases:
+            offered = {**claim, **change}
+            with self.subTest(change=change), mock.patch(
+                "drlink_v30_jobs._utc_now", return_value=late
+            ), mock.patch.object(self.engine, "complete_target") as completed:
+                with self.assertRaisesRegex(ControlPlaneError, "claim UNKNOWN"):
+                    BoundedAgentRpcWorkerPool(max_workers=1, max_pending=0)._run_claim(
+                        self.engine, offered,
+                        lambda _claim: self.fail("Expired or malformed claim executed")
+                    )
+                completed.assert_not_called()
+        self.assertEqual(self.engine.get(job["id"])["status"], RUNNING)
+
     def test_worker_pool_submit_failure_returns_reserved_capacity(self):
         from unittest import mock
 

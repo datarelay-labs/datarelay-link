@@ -65,6 +65,17 @@ def _parse_utc(value: str) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
+def _unexpired_claim_clock(value: Any, now: datetime) -> bool:
+    """Accept only Core's canonical unexpired UTC-second claim timestamps."""
+    if not isinstance(value, str) or len(value) != 20 or not value.endswith("Z"):
+        return False
+    try:
+        instant = _parse_utc(value)
+        return _utc_text(instant) == value and instant > now
+    except (TypeError, ValueError, OverflowError):
+        return False
+
+
 def _json(value: Any, *, max_bytes: int = 16384, field: str = "Management Job JSON") -> str:
     try:
         raw = json.dumps(value, sort_keys=True, separators=(",", ":"))
@@ -1055,6 +1066,17 @@ class BoundedAgentRpcWorkerPool:
         claim: dict[str, Any],
         handler: Callable[[dict[str, Any]], Optional[dict[str, Any]]],
     ) -> dict[str, Any]:
+        # A claimed Job may sit in an executor queue until Core's lease or
+        # deadline has expired. Check again at the worker execution boundary:
+        # executing it then sending a downgraded completion is not safe.
+        now = _utc_now()
+        if (
+            not _unexpired_claim_clock(claim.get("lease_expires_at"), now)
+            or not _unexpired_claim_clock(claim.get("deadline_at"), now)
+        ):
+            raise ControlPlaneError(
+                "Management Job claim UNKNOWN; inspect Core lease and deadline before retrying."
+            )
         if engine.is_cancel_requested(claim["job_id"]):
             # An ambiguous CANCELLED receipt must not be re-reported FAILED.
             try:
