@@ -210,6 +210,125 @@ class StatusParityTests(unittest.TestCase):
         ).fetchone()
         self.assertEqual((row["status"], row["runtime_verified"]), ("DEGRADED", 0))
 
+    def _u005_reenable_during_sync(self, phase):
+        from unittest import mock
+        import drlink_v24_runtime as runtime
+
+        # Exercise real SQLite, authenticated local management, and runtime
+        # rendering in disposable roots. No installed FRP or test host is used.
+        state_path = Path(self.agent_tmp, "etc/frp/client-state.json")
+        state = json.loads(state_path.read_text())
+        state.update(frp_server="203.0.113.10", frp_server_port=443,
+                     host_id="agent-a", services={})
+        state_path.write_text(json.dumps(state))
+        Path(self.agent_tmp, "etc/frp/frpc.toml").write_text(
+            'serverAddr = "203.0.113.10"\nserverPort = 443\n'
+            'auth.method = "token"\nauth.token = "fixture-token"\n'
+        )
+        real_set = v24.set_remote_service_agent
+        real_sync = v24.sync_agent_catalog_from_server
+        real_dependency = v24._service_dependency_status
+        with mock.patch.dict(os.environ, {"FRP_SKIP_SYSTEMD": "1",
+                                         "DRLINK_SERVER_REACHABLE": "1"}), \
+                mock.patch.object(runtime, "runtime_should_apply", return_value=True):
+            for stype, pool in (("fixed-tcp", "fixed-tcp"), ("tcp", "normal")):
+                with self.subTest(type=stype, phase=phase):
+                    name = "u005-" + stype
+                    service = name + "-object"
+                    v24.set_service_object(self.server, service, type=stype,
+                                           port=28144, oneshot=True)
+
+                    def public_set(enabled):
+                        # Synchronize batches runtime work; an independent user
+                        # command commits and applies immediately.
+                        batch = self.agent._batch_mode
+                        self.agent._batch_mode = False
+                        try:
+                            return real_set(self.agent, name, destination="this-host",
+                                            service=service, enabled=enabled, oneshot=True,
+                                            root=self.agent_tmp, server_reachable=True)
+                        finally:
+                            self.agent._batch_mode = batch
+
+                    created = public_set(True)
+                    port = created["view"]["endpoint_port"]
+                    self.assertEqual(created["view"]["status"], "HEALTHY")
+                    self.assertTrue(6200 <= port <= 6299 if pool == "fixed-tcp"
+                                    else 6000 <= port <= 6098)
+                    disabled = public_set(False)
+                    self.assertEqual(disabled["view"]["endpoint_port"], port)
+                    self.assertEqual(disabled["view"]["status"], "DISABLED")
+                    proxy = runtime.remote_service_proxy_id(name)
+                    self.assertNotIn(proxy, runtime.load_client_state(self.agent_tmp)["services"])
+                    self.assertNotIn('name = "agent-a-%s"' % proxy,
+                                     Path(self.agent_tmp, "etc/frp/frpc.toml").read_text())
+
+                    armed = False
+                    replay_fetches = 0
+                    edits = []
+
+                    def reenable():
+                        with mock.patch.object(v24, "sync_agent_catalog_from_server",
+                                               side_effect=real_sync):
+                            result = public_set(True)
+                        edits.append(result)
+                        self.assertEqual(result["view"]["status"], "HEALTHY")
+                        self.assertEqual(result["view"]["endpoint_port"], port)
+
+                    def dependency(plane, svc):
+                        nonlocal armed
+                        result = real_dependency(plane, svc)
+                        if svc == service:
+                            armed = True  # synchronize has already snapshotted DISABLED
+                            if phase == 0:
+                                reenable()
+                        return result
+
+                    def catalog(plane, server_plane=None, *, root=None):
+                        nonlocal replay_fetches
+                        result = real_sync(plane, server_plane, root=root)
+                        if armed:
+                            replay_fetches += 1
+                            if replay_fetches == phase:
+                                reenable()
+                        return result
+
+                    with mock.patch.object(v24, "_service_dependency_status", side_effect=dependency), \
+                            mock.patch.object(v24, "sync_agent_catalog_from_server", side_effect=catalog):
+                        result = v24.synchronize_agent_remote_services(self.agent, root=self.agent_tmp)
+                    self.assertEqual(len(edits), 1, result)
+                    row = self.agent.conn.execute(
+                        "SELECT * FROM agent_remote_services WHERE name=?", (name,)
+                    ).fetchone()
+                    self.assertEqual((row["enabled"], row["status"], row["runtime_verified"]),
+                                     (1, "HEALTHY", 1), dict(row))
+                    self.assertEqual((row["endpoint_port"], row["pool_class"]), (port, pool))
+                    pub = self.server.conn.execute(
+                        "SELECT * FROM published_services WHERE name=? AND released=0", (name,)
+                    ).fetchone()
+                    self.assertEqual((pub["enabled"], pub["public_port"], pub["target_host"],
+                                      pub["target_port"]), (1, port, "127.0.0.1", 28144))
+                    reservation = self.server.conn.execute(
+                        "SELECT service_id,released FROM port_reservations WHERE public_port=?", (port,)
+                    ).fetchone()
+                    self.assertEqual(tuple(reservation), (pub["id"], 0))
+                    self.assertEqual(self._server_status(name)["status"], "HEALTHY")
+                    rec = runtime.load_client_state(self.agent_tmp)["services"][proxy]
+                    self.assertEqual((rec["enabled"], rec["remote_port"], rec["local_ip"],
+                                      rec["local_port"]), (True, port, "127.0.0.1", 28144))
+                    text = Path(self.agent_tmp, "etc/frp/frpc.toml").read_text()
+                    self.assertIn('name = "agent-a-%s"' % proxy, text)
+                    self.assertIn("remotePort = %s" % port, text)
+                    self.assertIn("localPort = 28144", text)
+
+    def test_U005_reenable_survives_disabled_sync_snapshot(self):
+        self._u005_reenable_during_sync(0)
+
+    def test_U005_reenable_survives_catalog_refresh_races(self):
+        for phase in (1, 2):
+            with self.subTest(catalog_read=phase):
+                self._u005_reenable_during_sync(phase)
+
     def test_F019_transient_missing_service_object_rechecks_authoritative_catalog(self):
         # A previous Agent cache refresh can miss a concurrently committed
         # Server Fixed TCP Service Object. If it is still present in the

@@ -5910,7 +5910,7 @@ def synchronize_agent_remote_services(plane_db, *, root: Optional[str] = None, f
                 continue
             # Re-apply to allocate pending endpoints / refresh HEALTHY
             try:
-                set_remote_service_agent(
+                reapplied = set_remote_service_agent(
                     plane_db,
                     row["name"],
                     destination=row["destination"],
@@ -5921,6 +5921,13 @@ def synchronize_agent_remote_services(plane_db, *, root: Optional[str] = None, f
                     server_reachable=True,
                     reconcile_existing=True,
                 )
+                if reapplied.get("skipped"):
+                    # One bounded retry uses fresh operator intent after a
+                    # catalog-read race; deleted rows remain update-only.
+                    set_remote_service_agent(
+                        plane_db, row["name"], oneshot=True, root=root,
+                        server_reachable=True, reconcile_existing=True,
+                    )
             except ControlPlaneError as exc:
                 msg = str(exc)
                 brief = msg
@@ -6105,6 +6112,28 @@ def set_remote_service_agent(
         # CREATE after the operator has deleted it. Only an explicit public
         # set remote-service / Bundle apply may create a new desired row.
         return {"operation": "skipped", "skipped": True, "reason": "Remote Service no longer exists"}
+    if reconcile_existing:
+        # A lifecycle iteration row is only a scheduling hint. Re-read operator
+        # intent here instead of replaying its possibly stale disabled state.
+        destination = existing["destination"]
+        service = existing["service_object"]
+        enabled = bool(existing["enabled"])
+
+    def reconciliation_intent_changed():
+        if not reconcile_existing:
+            return False
+        current = plane_db.conn.execute(
+            "SELECT * FROM agent_remote_services WHERE name = ? COLLATE NOCASE",
+            (name,),
+        ).fetchone()
+        # Catalog I/O can race an operator edit as well as deletion. Do not
+        # publish the pre-refresh intent over a newer committed definition.
+        fields = ("destination", "destination_client_id", "service_object",
+                  "enabled", "endpoint_port", "delete_pending", "updated_at")
+        return current is None or bool(current["delete_pending"]) or any(
+            _row_get(current, field) != _row_get(existing, field) for field in fields
+        )
+
     if oneshot and existing is None:
         missing = []
         if destination is None:
@@ -6411,15 +6440,9 @@ def set_remote_service_agent(
         import drlink_mgmt_sync as mgmt
 
         live_mgmt = mgmt.use_live_mgmt_path(root)
-        if reconcile_existing:
-            # Network-backed catalog refresh can complete after an operator
-            # deletion. Recheck immediately before any Server allocation.
-            current = plane_db.conn.execute(
-                "SELECT delete_pending FROM agent_remote_services WHERE name = ? COLLATE NOCASE",
-                (name,),
-            ).fetchone()
-            if current is None or int(current["delete_pending"] or 0):
-                return {"operation": "skipped", "skipped": True, "reason": "Remote Service deleted during synchronization"}
+        if reconciliation_intent_changed():
+            return {"operation": "skipped", "skipped": True,
+                    "reason": "Remote Service changed during synchronization"}
         if live_mgmt:
             # Authoritative Server allocator — Agent must not mint online reservations.
             # Disabled services still upsert so immutable destination references remain
@@ -6430,6 +6453,9 @@ def set_remote_service_agent(
                     sync_agent_catalog_from_server(plane_db, root=root)
                 except Exception:
                     pass
+                if reconciliation_intent_changed():
+                    return {"operation": "skipped", "skipped": True,
+                            "reason": "Remote Service changed during synchronization"}
                 prev_mgmt = None
                 if existing is not None:
                     prev_mgmt = _agent_remote_service_mgmt_snapshot(
