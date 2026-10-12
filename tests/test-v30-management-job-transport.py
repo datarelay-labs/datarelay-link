@@ -165,6 +165,40 @@ class V30ManagementJobTransportTests(unittest.TestCase):
         finally:
             engine.close()
 
+    def test_core_diagnostic_success_requires_matching_claimed_job_type(self):
+        engine = ManagementJobEngine(self.server_tmp)
+        try:
+            for kind in ("doctor", "refresh", "version-check", "support-bundle"):
+                with self.subTest(kind=kind):
+                    job = engine.enqueue(
+                        job_type=kind, targets=[MACHINE_A],
+                        requested_by="web:admin",
+                    )
+                    claim = mgmt.claim_management_jobs_on_server(
+                        root=self.agent_tmp, limit=1
+                    )["jobs"][0]
+                    self.assertEqual(claim["job_id"], job["id"])
+                    for invalid in ({}, {"operation": "remote-service-delete"}):
+                        with self.subTest(kind=kind, result=invalid):
+                            with self.assertRaises(mgmt.MgmtSyncError):
+                                mgmt._request_json(
+                                    "POST", self.base + "/v1/management-jobs/complete",
+                                    {"id": claim["job_id"],
+                                     "claim_token": claim["claim_token"],
+                                     "status": "SUCCEEDED", "result": invalid},
+                                    root=self.agent_tmp,
+                                )
+                            self.assertEqual(engine.get(job["id"])["status"], "RUNNING")
+                    reply = mgmt.complete_management_job_on_server(
+                        root=self.agent_tmp, job_id=job["id"],
+                        claim_token=claim["claim_token"], status="SUCCEEDED",
+                        result={"operation": kind},
+                    )
+                    self.assertIs(reply["ok"], True)
+                    self.assertEqual(engine.get(job["id"])["status"], SUCCEEDED)
+        finally:
+            engine.close()
+
     def test_core_remote_service_success_requires_exact_claimed_operation_and_name(self):
         engine = ManagementJobEngine(self.server_tmp)
         try:

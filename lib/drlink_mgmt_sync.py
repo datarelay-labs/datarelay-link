@@ -1642,6 +1642,14 @@ def server_complete_management_job(plane, auth: MgmtAuthContext, body: dict) -> 
                     "AGENT_UPDATER_NOT_QUALIFIED: signed Agent update completion is unavailable"
                 )
             if claimed and str(claimed["job_type"]) in (
+                "doctor", "refresh", "version-check", "support-bundle"
+            ) and result.get("operation") != str(claimed["job_type"]):
+                # A signed response alone does not prove which diagnostic
+                # operation produced it. Preserve Core's queued Job identity.
+                raise MgmtSyncError(
+                    "Core Management Job completion receipt does not match requested Job type."
+                )
+            if claimed and str(claimed["job_type"]) in (
                 "remote-service-set", "remote-service-delete"
             ):
                 # The signed caller is the enrolled Host, but its completion
