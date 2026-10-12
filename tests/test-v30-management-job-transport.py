@@ -223,10 +223,24 @@ class V30ManagementJobTransportTests(unittest.TestCase):
                         root=self.agent_tmp, limit=1
                     )["jobs"][0]
                     self.assertEqual(claim["job_id"], job["id"])
-                    for result in (
+                    invalid_results = [
                         {}, {**valid, "operation": "doctor"},
                         {**valid, "name": "another-service"},
-                    ):
+                    ]
+                    if kind == "remote-service-set":
+                        invalid_results.extend([
+                            {**valid, "runtime_status": None},
+                            {**valid, "runtime_status": "UNKNOWN"},
+                            {**valid, "runtime_status": True},
+                        ])
+                    else:
+                        invalid_results.extend([
+                            {**valid, "runtime_verified": True},
+                            {**valid, "runtime_verified": None},
+                            {key: value for key, value in valid.items()
+                             if key != "runtime_verified"},
+                        ])
+                    for result in invalid_results:
                         with self.subTest(kind=kind, result=result):
                             with self.assertRaises(mgmt.MgmtSyncError):
                                 mgmt._request_json(

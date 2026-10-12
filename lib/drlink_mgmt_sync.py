@@ -1666,8 +1666,19 @@ def server_complete_management_job(plane, auth: MgmtAuthContext, body: dict) -> 
                     not isinstance(name, str) or not name
                     or result.get("operation") != kind
                     or result.get("name") != name
+                    # Only the native Agent local Remote Service view's
+                    # recognized states are usable as a set receipt. A signed
+                    # identity alone cannot turn UNKNOWN/missing evidence into
+                    # an asserted successful local configuration mutation.
+                    or (kind == "remote-service-set"
+                        and (not isinstance(result.get("runtime_status"), str)
+                             or result["runtime_status"] not in (
+                                 "HEALTHY", "DEGRADED", "DISABLED")))
+                    # Deleting local configuration explicitly does not prove
+                    # a running transport endpoint has been torn down.
                     or (kind == "remote-service-delete"
-                        and result.get("status") != "DELETED")
+                        and (result.get("status") != "DELETED"
+                             or result.get("runtime_verified") is not False))
                 ):
                     raise MgmtSyncError(
                         "Core Management Job completion receipt does not match requested Remote Service."
