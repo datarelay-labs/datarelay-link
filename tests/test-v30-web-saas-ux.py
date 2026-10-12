@@ -186,7 +186,12 @@ class V30WebSaasUxContractTests(unittest.TestCase):
         self.assertIn('UNKNOWN · Recent Activity unavailable', SOURCE)
         self.assertIn('UNKNOWN · Change History unavailable', SOURCE)
         self.assertIn('const coreStatus=coreHealthState(data)', SOURCE)
-        self.assertIn('const configuredPlanes=accessPlaneCount(data)', SOURCE)
+        self.assertIn('const configuredPlanes=observedHealthPlaneCount(data)', SOURCE)
+        health=(ROOT / 'web/src/uxb-health-state.ts').read_text(encoding='utf-8')
+        self.assertIn('function observedCoreHealthSnapshot(', health)
+        self.assertIn('function observedHealthPlaneCount(', health)
+        self.assertIn('const observed=observedCoreHealthSnapshot(raw);', SOURCE)
+        self.assertNotIn('JSON.stringify(raw,null,2)', SOURCE)
         self.assertIn('configuredPlanes===null?"UNKNOWN"', SOURCE)
         self.assertIn('observedNumber(jobs.active_jobs)', SOURCE)
         self.assertNotIn('Remote, Internet and AI configured', SOURCE)
@@ -651,7 +656,7 @@ class V30WebSaasUxContractTests(unittest.TestCase):
             "dr-audit-filter-grid",
             "Audit Retention",
             "HealthWorkspace",
-            "Advanced · raw health payload",
+            "Advanced · bounded Core health facts",
             "temporary setup key is not active until you verify",
             "QRCodeSVG",
             "1. Scan the QR code",

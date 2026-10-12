@@ -24,6 +24,7 @@ import {resourceCardSummary} from "./uxb-resource-cards";
 import {filterObservedServices} from "./uxb-service-search";
 import {observedBoundedCoreSearchResponse} from "./uxb-global-search-target";
 import {observedAuthenticatedWebSession,observedWebMfaChallenge,observedWebMfaCompletion} from "./uxb-web-session";
+import {observedCoreHealthSnapshot,observedHealthPlaneCount} from "./uxb-health-state";
 import {filterLoadedServiceFacets,type ServiceTypeFacet,type ServiceConfigFacet} from "./uxb-service-facets";
 import {operatorAccountState,operatorMfaState,operatorMfaAction,operatorLastLogin} from "./uxb-users-state";
 import {observedOperatorInventory,observedOperatorMfaReceipt,observedOperatorCreateReceipt} from "./uxb-users-state";
@@ -2653,24 +2654,31 @@ function CommandCenter({data,operator,onNavigate}:{data:any,operator:any,onNavig
   </div>;
 }
 
-function HealthWorkspace({data,onNavigate}:{data:any,onNavigate?:(id:string,groupId?:string)=>void}){
+function HealthWorkspace({data:raw,onNavigate}:{data:any,onNavigate?:(id:string,groupId?:string)=>void}){
+  const observed=observedCoreHealthSnapshot(raw);
+  if(!observed)return <section className="card" role="alert">
+    <h2>Core Health · UNKNOWN</h2>
+    <p>The authenticated Core health response was incomplete or not read-only. No healthy system, active policy generation or empty workload was confirmed.</p>
+    <button className="secondary" onClick={()=>onNavigate?.("doctor","activity")}>Review Core Doctor →</button>
+  </section>;
+  const data=observed;
   const generations=data.generations||{};
   const jobs=data.management_jobs||{};
   const planes=["remote","internet","ai"].map(name=>({name,value:generations[name]||{}}));
   const coreStatus=coreHealthState(data);
   const coreHealthy=coreStatus==="Healthy";
-  const configuredPlanes=accessPlaneCount(data);
+  const configuredPlanes=observedHealthPlaneCount(data);
   return <div className="dr-resource-workspace">
     <section className="dr-page-intro"><div><p className="dr-eyebrow">Activity & Health</p><h2>Health</h2><p className="muted">Core readiness, runtime generations and bounded management capacity without raw-debug-first presentation.</p></div><div className="dr-page-actions"><button className="secondary" onClick={()=>onNavigate?.("doctor","observability")}>Troubleshoot</button><button className="secondary" onClick={()=>onNavigate?.("system","administration")}>System readiness</button></div></section>
     <section className="dr-health-summary">
       <article className="card dr-health-card"><span>Core</span><strong className={coreHealthy?"healthy":"attention"}>{coreStatus}</strong><small>{coreStatus==="UNKNOWN"?"Core health evidence incomplete":data.mismatch?"Runtime generation mismatch":data.db_healthy?"Control database healthy":"Control database issue"}</small></article>
-      <article className="card dr-health-card"><span>Control DB</span><strong className={data.db_healthy===true?"healthy":"critical-text"}>{typeof data.db_healthy!=="boolean"?"UNKNOWN":data.db_healthy?"Healthy":"Critical"}</strong><small>Schema {data.schema??"—"} · Revision {data.revision??"—"}</small></article>
+      <article className="card dr-health-card"><span>Control DB</span><strong className={data.db_healthy===true?"healthy":"critical-text"}>{typeof data.db_healthy!=="boolean"?"UNKNOWN":data.db_healthy?"Healthy":"Critical"}</strong><small>Schema {data.schema??"UNKNOWN"} · Revision {data.revision??"UNKNOWN"}</small></article>
       <article className="card dr-health-card"><span>Access planes</span><strong>{configuredPlanes===null?"UNKNOWN":configuredPlanes+" / 3"}</strong><small>{configuredPlanes===null?"Core generation evidence unavailable":"Active Core runtime generations; not proof of application reachability"}</small></article>
       <article className="card dr-health-card"><span>Management jobs</span><strong className={jobs.saturated===false?"healthy":"attention"}>{typeof jobs.saturated!=="boolean"?"UNKNOWN":jobs.saturated?"Saturated":"Healthy"}</strong><small>{jobs.active_jobs??"UNKNOWN"} active · {jobs.queued_jobs??"UNKNOWN"} queued</small></article>
     </section>
     <section className="card dr-health-section"><div className="dr-section-head"><div><p className="dr-eyebrow">Runtime</p><h3>Policy planes</h3><p className="muted">Compiled generation state stays separate from configured policy state.</p></div></div><div className="dr-health-plane-list">{planes.map(row=>{const state=String(row.value.status||"unknown");const good=state==="active"||state==="not_configured";return <div className="dr-health-plane" key={row.name}><span className={good?"dr-severity-dot":"dr-severity-dot warning"}/><div><strong>{row.name[0].toUpperCase()+row.name.slice(1)}</strong><small>DB rev {row.value.db_revision??"—"} · generation {row.value.generation??"—"}</small></div><span className={state==="active"?"dr-state active":"dr-state"}><i/>{state.replaceAll("_"," ")}</span>{row.value.error&&<small className="dr-health-error">{row.value.error}</small>}</div>})}</div></section>
     <section className="card dr-health-section"><div className="dr-section-head"><div><p className="dr-eyebrow">Capacity</p><h3>Management workload</h3><p className="muted">Bounded job engine status for asynchronous fleet operations.</p></div><button className="dr-text-action" onClick={()=>onNavigate?.("jobs","operations")}>Open jobs →</button></div><div className="dr-kpi-strip"><div><span>Active</span><strong>{observedNumber(jobs.active_jobs)}</strong><small>Currently active jobs</small></div><div><span>Queued</span><strong>{observedNumber(jobs.queued_jobs)}</strong><small>{observedNumber(jobs.queued_targets)} queued targets</small></div><div><span>Running</span><strong>{observedNumber(jobs.running_jobs)}</strong><small>{observedNumber(jobs.running_targets)} running targets</small></div><div><span>Failed</span><strong>{observedNumber(jobs.failed_jobs)}</strong><small>Completed with failure</small></div></div></section>
-    <details className="card dr-advanced-details"><summary>Advanced · raw health payload</summary><p className="muted">For diagnostics and support. Normal operation should use the structured health views above.</p><pre className="plan">{JSON.stringify(data,null,2)}</pre></details>
+    <details className="card dr-advanced-details"><summary>Advanced · bounded Core health facts</summary><p className="muted">Only validated public fields from the current Core read are included. Private fields and raw nested payloads are never displayed.</p><pre className="plan">{JSON.stringify(observed,null,2)}</pre></details>
   </div>;
 }
 
