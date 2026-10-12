@@ -5206,20 +5206,62 @@ class ControlPlane:
         now = utc_now_iso()
         self._terminalize_expired_queued_ai_jobs(client_id=client_id, now=now)
         self._fail_closed_stale_running_ai_jobs(client_id=client_id, now=now)
-        # Filter by target host before LIMIT so one busy host cannot starve another.
+        # Filter by target host, then scan a bounded window so a damaged
+        # earlier job cannot starve a healthy queued job on the same Host.
+        scan_limit = min(256, max(take, take * 4))
         rows = list(
             self.conn.execute(
                 "SELECT * FROM ai_jobs WHERE status = 'queued' AND client_id = ? "
                 "AND (deadline_at IS NULL OR deadline_at > ?) "
                 "ORDER BY created_at LIMIT ?",
-                (client_id, now, take),
+                (client_id, now, scan_limit),
             )
         )
+
+        def unique_pairs(pairs):
+            obj = {}
+            for key, value in pairs:
+                if key in obj:
+                    raise ValueError("duplicate AI Job payload field")
+                obj[key] = value
+            return obj
+
+        def deny_constant(_value):
+            raise ValueError("invalid AI Job payload number")
+
         claimed = []
         for row in rows:
             if len(claimed) >= take:
                 break
-            payload = json.loads(row["payload_json"] or "{}")
+            # Corrupt queue content must not create a one-shot Agent claim.
+            # Missing/ambiguous intent is never a valid empty operation.
+            raw_payload = row["payload_json"]
+            if not isinstance(raw_payload, str) or not raw_payload:
+                continue
+            try:
+                payload = json.loads(
+                    raw_payload, object_pairs_hook=unique_pairs,
+                    parse_constant=deny_constant,
+                )
+            except (TypeError, ValueError, RecursionError):
+                continue
+            args = payload.get("arguments") if isinstance(payload, dict) else None
+            patterns = payload.get("patterns") if isinstance(payload, dict) else None
+            duration = payload.get("timeout") if isinstance(payload, dict) else None
+            if (
+                not isinstance(payload, dict)
+                or payload.get("client_id") != client_id
+                or payload.get("deadline_at") != row["deadline_at"]
+                or not isinstance(args, dict)
+                or not isinstance(patterns, list) or len(patterns) > 128
+                or any(
+                    not isinstance(item, str) or not item
+                    or len(item) > 4096 or "\x00" in item
+                    for item in patterns
+                )
+                or type(duration) is not int or not 1 <= duration <= 3600
+            ):
+                continue
             claim_token = "atk_" + secrets.token_urlsafe(24)
             attempt_id = _new_id("att")
             self.conn.execute(

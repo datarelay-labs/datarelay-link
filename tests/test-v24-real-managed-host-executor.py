@@ -240,6 +240,90 @@ class RealManagedHostExecutorTests(unittest.TestCase):
         self.assertEqual(dest.read_text(encoding="utf-8"), "from-mcp")
         self.assertFalse(server_shadow.exists())
 
+    def test_corrupt_core_ai_job_payload_never_consumes_agent_lease(self):
+        # A queued Core AI Job is not authority to hand malformed fields to an
+        # Agent. Keep the claim unconsumed, even when SQLite content is damaged.
+        job_id = self.plane.enqueue_ai_job(
+            principal_id=None, endpoint_object_id="ep-a",
+            client_id=MACHINE_A, capability="read_file",
+            arguments={"path": str(self.agent_a_root / "AGENT_MARKER")},
+            patterns=[str(self.agent_a_root) + "/**"], timeout=60,
+        )
+        row = self.plane.conn.execute(
+            "SELECT payload_json FROM ai_jobs WHERE id=?", (job_id,)
+        ).fetchone()
+        original = row["payload_json"]
+        invalid = (
+            "", "{", "[]", "null", "false",
+            '{"arguments":[],"patterns":[],"timeout":5}',
+            '{"arguments":{},"patterns":"invalid","timeout":5}',
+            '{"arguments":{},"patterns":[],"timeout":"5"}',
+            '{"arguments":{},"patterns":[],"timeout":NaN}',
+            '{"arguments":{},"arguments":true,"patterns":[],"timeout":5}',
+        )
+        for payload in invalid:
+            self.plane.conn.execute(
+                "UPDATE ai_jobs SET payload_json=? WHERE id=?", (payload, job_id)
+            )
+            self.plane.conn.commit()
+            with self.subTest(payload=payload[:55]):
+                try:
+                    claimed = self.plane.claim_ai_jobs(MACHINE_A, limit=1)
+                except Exception as exc:
+                    self.fail(
+                        "Corrupt queued AI Job escaped Core claim as %s"
+                        % type(exc).__name__
+                    )
+                self.assertEqual(claimed, [])
+                state = self.plane.conn.execute(
+                    "SELECT status,claim_token,attempt_id,claimed_at "
+                    "FROM ai_jobs WHERE id=?", (job_id,)
+                ).fetchone()
+                self.assertEqual(state["status"], "queued")
+                self.assertFalse(state["claim_token"])
+                self.assertFalse(state["attempt_id"])
+                self.assertIsNone(state["claimed_at"])
+            # Reset only this disposable fixture for the next malformed case.
+            self.plane.conn.execute(
+                "UPDATE ai_jobs SET status='queued',claim_token=NULL,"
+                "attempt_id=NULL,claimed_at=NULL WHERE id=?", (job_id,)
+            )
+            self.plane.conn.commit()
+        self.plane.conn.execute(
+            "UPDATE ai_jobs SET payload_json=? WHERE id=?", (original, job_id)
+        )
+        self.plane.conn.commit()
+        self.assertEqual(
+            [item["id"] for item in self.plane.claim_ai_jobs(MACHINE_A, limit=1)],
+            [job_id],
+        )
+
+    def test_corrupt_ai_head_of_line_does_not_starve_valid_claim(self):
+        # Keep the response bound to one job, but inspect a bounded window
+        # beyond corrupted entries so another ready Job can still progress.
+        def enqueue():
+            return self.plane.enqueue_ai_job(
+                principal_id=None, endpoint_object_id="ep-a",
+                client_id=MACHINE_A, capability="read_file",
+                arguments={"path": str(self.agent_a_root / "AGENT_MARKER")},
+                patterns=[str(self.agent_a_root) + "/**"], timeout=60,
+            )
+
+        corrupt = enqueue()
+        healthy = enqueue()
+        self.plane.conn.execute(
+            "UPDATE ai_jobs SET payload_json=?,created_at=? WHERE id=?",
+            ("{", "2000-01-01T00:00:00Z", corrupt),
+        )
+        self.plane.conn.commit()
+        claims = self.plane.claim_ai_jobs(MACHINE_A, limit=1)
+        self.assertEqual([item["id"] for item in claims], [healthy])
+        status = self.plane.conn.execute(
+            "SELECT status,claim_token FROM ai_jobs WHERE id=?", (corrupt,)
+        ).fetchone()
+        self.assertEqual(status["status"], "queued")
+        self.assertFalse(status["claim_token"])
+
     def test_host_isolation_claim(self):
         job_id = self.plane.enqueue_ai_job(
             principal_id=None,
