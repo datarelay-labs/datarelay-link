@@ -26,6 +26,7 @@ import {observedBoundedCoreSearchResponse} from "./uxb-global-search-target";
 import {observedAuthenticatedWebSession,observedWebMfaChallenge,observedWebMfaCompletion} from "./uxb-web-session";
 import {observedCoreHealthSnapshot,observedHealthPlaneCount} from "./uxb-health-state";
 import {observedCoreSystemStatus} from "./uxb-system-status";
+import {observedCoreJobDisplay} from "./uxb-jobs-display";
 import {filterLoadedServiceFacets,type ServiceTypeFacet,type ServiceConfigFacet} from "./uxb-service-facets";
 import {operatorAccountState,operatorMfaState,operatorMfaAction,operatorLastLogin} from "./uxb-users-state";
 import {observedOperatorInventory,observedOperatorMfaReceipt,observedOperatorCreateReceipt} from "./uxb-users-state";
@@ -1727,7 +1728,7 @@ function JobOperations({operator}:{operator:any}){
     }
   }
   async function cancelJob(){
-    if(cancelInFlight.current||!detail?.id||detailBusy)return;
+    if(cancelInFlight.current||!detail?.id||detailBusy||!observedCoreJobDisplay(detail))return;
     cancelInFlight.current=true;setCancelBusy(true);
     const jobId=String(detail.id);
     detailReadEpoch.current+=1;setError("");setMessage("");
@@ -1750,6 +1751,7 @@ function JobOperations({operator}:{operator:any}){
     }
   }
   const rows=(jobs?.items||[]).map((x:any)=>({id:x.id,job_type:x.job_type,status:x.status,resource_type:x.resource_type,resource_ref:x.resource_ref,target_count:x.target_count,created_at:x.created_at,finished_at:x.finished_at||""}));
+  const safeDetail=detail?observedCoreJobDisplay(detail):null;
   return <>
     {error&&<div className="error" role="alert">{error}</div>}{message&&<div className="notice">{message}</div>}
     {operator.role==="Admin"&&<AgentRolloutPreviewPanel/>}
@@ -1804,12 +1806,14 @@ function JobOperations({operator}:{operator:any}){
         <button className="danger" onClick={applyFleetMetadata} disabled={!fleetPreviewGuard||fleetConfirm!=="APPLY"}>{fleetApplyBusy?"Confirming Core Apply…":"Apply Fleet Metadata"}</button>
       </div>}
     </section>}
-    {detail&&<div className="card">
+    {detail&&!safeDetail&&<p role="alert" className="warning-box">UNKNOWN · Core Job Detail contains unverified identifiers or unbounded fields. No target outcomes or cancellation permissions are inferred. Reload the exact Core Job.</p>}
+    {safeDetail&&<div className="card">
       <h3>Job Detail</h3>
-      <div className="grid"><Metric label="Status" value={detail.status}/><Metric label="Targets" value={detail.target_count}/><Metric label="Type" value={detail.job_type}/></div>
-      {operator.role!=="Read Only"&&["QUEUED","RUNNING"].includes(String(detail.status||""))&&<button className="danger" onClick={cancelJob} disabled={cancelBusy||detailBusy}>{cancelBusy?"Requesting Core cancellation…":"Cancel Job"}</button>}
-      <Table items={(detail.targets||[]).map((x:any)=>({target_id:x.target_id,status:x.status,attempt:x.attempt,error:x.error||"",updated_at:x.updated_at}))}/>
-      <pre className="plan">{JSON.stringify({id:detail.id,resource_type:detail.resource_type,resource_ref:detail.resource_ref,deadline_at:detail.deadline_at,last_error:detail.last_error,targets:(detail.targets||[]).map((x:any)=>({target_id:x.target_id,status:x.status,result:x.result,error:x.error}))},null,2)}</pre>
+      <div className="grid"><Metric label="Status" value={safeDetail.status}/><Metric label="Targets" value={safeDetail.target_count}/><Metric label="Type" value={safeDetail.job_type}/></div>
+      {operator.role!=="Read Only"&&["QUEUED","RUNNING"].includes(String(safeDetail.status))&&<button className="danger" onClick={cancelJob} disabled={cancelBusy||detailBusy}>{cancelBusy?"Requesting Core cancellation…":"Cancel Job"}</button>}
+      <Table items={safeDetail.targets.map(x=>({target_id:x.target_id,status:x.status,attempt:x.attempt,error:x.error,updated_at:x.updated_at}))}/>
+      <p className="muted">Core and Agent raw results, worker identity, nested payloads and arbitrary error text are not displayed here. Only bounded job progress and known error codes are shown.</p>
+      <pre className="plan">{JSON.stringify(safeDetail,null,2)}</pre>
     </div>}
   </>;
 }
