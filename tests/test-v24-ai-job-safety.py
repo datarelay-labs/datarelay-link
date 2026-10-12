@@ -356,6 +356,57 @@ class AiJobSafetyTests(unittest.TestCase):
             server.server_close()
             thread.join(timeout=5)
 
+    def test_agent_loop_rejects_replayed_claim_batch_before_any_local_work(self):
+        # Both signed management identity and the optional local bearer
+        # adapter must validate the complete claimed batch before execution.
+        from datetime import datetime, timedelta, timezone
+        future = (datetime.now(timezone.utc) + timedelta(minutes=2)).isoformat()
+        legitimate = {
+            "id": "ai-job-one", "claim_token": "atk_test_one",
+            "attempt_id": "att_test_one", "capability": "write_file",
+            "arguments": {"path": str(self.agent_a_root / "not-written.txt"),
+                          "content": "not-written"},
+            "patterns": [str(self.agent_a_root / "**")],
+            "timeout": 5, "deadline_at": future,
+        }
+        invalid_batches = (
+            {"jobs": [legitimate, dict(legitimate)]},
+            {"jobs": [legitimate, {"id": "malformed"}]},
+            {"jobs": [legitimate] * 5},
+            {"jobs": "not-a-list"},
+            {"jobs": None},
+            {},
+        )
+        modes = (
+            (AgentLoop(agent_root=self.agent_a_tmp),
+             "drlink_mgmt_sync.claim_ai_jobs_on_server"),
+            (AgentLoop("http://127.0.0.1:1", "disposable-test-token"),
+             "drlink_ai_agent._agent_post"),
+        )
+        for loop, target in modes:
+            for reply in invalid_batches:
+                with self.subTest(target=target, reply=reply):
+                    with mock.patch(target, return_value=reply), mock.patch(
+                        "drlink_ai_agent.execute_local",
+                        return_value={"result": "ALLOW"},
+                    ) as executed, mock.patch.object(loop, "_complete") as completed:
+                        with self.assertRaisesRegex(
+                            ValueError, "AI job claim response UNKNOWN"
+                        ):
+                            loop.run_once()
+                        executed.assert_not_called()
+                        completed.assert_not_called()
+            with self.subTest(valid_target=target):
+                with mock.patch(
+                    target, return_value={"jobs": [legitimate]},
+                ), mock.patch(
+                    "drlink_ai_agent.execute_local",
+                    return_value={"result": "ALLOW"},
+                ) as executed, mock.patch.object(loop, "_complete") as completed:
+                    self.assertEqual(loop.run_once(), 1)
+                    executed.assert_called_once()
+                    completed.assert_called_once()
+
     def test_core_ai_claim_rejects_coerced_limits_without_leasing(self):
         job_id = self._enqueue_with_timeout(MACHINE_A, "read_file", 60)
         for invalid in (0, -1, True, False, 1.5, "2", None):

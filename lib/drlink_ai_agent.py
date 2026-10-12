@@ -270,9 +270,39 @@ class AgentLoop:
             import drlink_mgmt_sync as mgmt
 
             payload = mgmt.claim_ai_jobs_on_server(root=self.agent_root, limit=4)
-            return list(payload.get("jobs") or [])
-        payload = _agent_post(self.base_url + "/agent/v1/claim", self.token, {"limit": 4})
-        return list(payload.get("jobs") or [])
+        else:
+            payload = _agent_post(
+                self.base_url + "/agent/v1/claim", self.token, {"limit": 4}
+            )
+        # A signed reply can still be malformed or replayed. Validate the
+        # WHOLE bounded batch before run_once can execute any local operation.
+        invalid = "AI job claim response UNKNOWN; inspect Core before retrying."
+        if not isinstance(payload, dict) or not isinstance(payload.get("jobs"), list):
+            raise ValueError(invalid)
+        jobs = payload["jobs"]
+        if len(jobs) > 4:
+            raise ValueError(invalid)
+        ids: set[str] = set()
+        tokens: set[str] = set()
+        for job in jobs:
+            if not isinstance(job, dict):
+                raise ValueError(invalid)
+            job_id = job.get("id")
+            claim_token = job.get("claim_token")
+            attempt_id = job.get("attempt_id")
+            if (
+                not isinstance(job_id, str) or not job_id
+                or not isinstance(claim_token, str) or not claim_token
+                or not isinstance(attempt_id, str) or not attempt_id
+                or job_id in ids or claim_token in tokens
+                or not isinstance(job.get("capability"), str)
+                or not isinstance(job.get("arguments"), dict)
+                or not isinstance(job.get("patterns"), list)
+            ):
+                raise ValueError(invalid)
+            ids.add(job_id)
+            tokens.add(claim_token)
+        return jobs
 
     def _complete(
         self,
