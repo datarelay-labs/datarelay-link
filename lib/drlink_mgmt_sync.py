@@ -1785,6 +1785,17 @@ def _require_safe_signed_job_diagnostics(kind: str, result: dict) -> None:
     if kind == "remote-service-set":
         if "reason" in result and not safe_message(result["reason"]):
             raise MgmtSyncError(invalid)
+        # This display-only Agent endpoint is untrusted receipt metadata,
+        # never Core evidence of a reachable remote socket. Do not persist
+        # nested/private data or multiline control characters in Job history.
+        if "endpoint" in result:
+            endpoint = result["endpoint"]
+            if endpoint is not None and (
+                type(endpoint) is not str
+                or not 1 <= len(endpoint) <= 512
+                or any(not 32 <= ord(char) <= 126 for char in endpoint)
+            ):
+                raise MgmtSyncError(invalid)
 
 
 def server_complete_management_job(plane, auth: MgmtAuthContext, body: dict) -> dict:
@@ -1907,7 +1918,13 @@ def server_complete_management_job(plane, auth: MgmtAuthContext, body: dict) -> 
                     or (kind == "remote-service-set"
                         and (not isinstance(result.get("runtime_status"), str)
                              or result["runtime_status"] not in (
-                                 "HEALTHY", "DEGRADED", "DISABLED")))
+                                 "HEALTHY", "DEGRADED", "DISABLED")
+                             # Native Agent always reports DISABLED for
+                             # Core-requested disabled services. A signed
+                             # HEALTHY receipt must not override that intent.
+                             or type(requested.get("enabled")) is not bool
+                             or (requested["enabled"] is False
+                                 and result["runtime_status"] != "DISABLED")))
                     # Deleting local configuration explicitly does not prove
                     # a running transport endpoint has been torn down.
                     or (kind == "remote-service-delete"

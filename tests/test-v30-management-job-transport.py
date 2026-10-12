@@ -561,6 +561,11 @@ class V30ManagementJobTransportTests(unittest.TestCase):
                 ("remote-service-delete", {"name": "ssh-access"},
                  {"operation": "remote-service-delete", "name": "ssh-access",
                   "status": "DELETED", "runtime_verified": False}),
+                ("remote-service-set",
+                 {"name": "ssh-access", "destination": "this-host",
+                  "service": "ssh", "enabled": False},
+                 {"operation": "remote-service-set", "name": "ssh-access",
+                  "runtime_status": "DISABLED", "endpoint": None}),
             ]
             for kind, payload, valid in cases:
                 with self.subTest(kind=kind):
@@ -583,7 +588,18 @@ class V30ManagementJobTransportTests(unittest.TestCase):
                             {**valid, "runtime_status": None},
                             {**valid, "runtime_status": "UNKNOWN"},
                             {**valid, "runtime_status": True},
+                            {**valid, "endpoint": {"private": "unsafe"}},
+                            {**valid, "endpoint": "a" * 2049},
+                            {**valid, "endpoint": "host\nsecret"},
+                            {**valid, "endpoint": False},
+                            {**valid, "endpoint": []},
+                            {**valid, "reason": "credential\nsecret"},
                         ])
+                        if payload["enabled"] is False:
+                            invalid_results.extend([
+                                {**valid, "runtime_status": "HEALTHY"},
+                                {**valid, "runtime_status": "DEGRADED"},
+                            ])
                     else:
                         invalid_results.extend([
                             {**valid, "runtime_verified": True},
