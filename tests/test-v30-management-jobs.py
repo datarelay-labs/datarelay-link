@@ -791,6 +791,42 @@ class V30ManagementJobTests(unittest.TestCase):
         self.assertEqual(late["targets"][0]["error"], "WORKER_LEASE_EXPIRED")
         self.assertEqual(late["targets"][0]["result"], {})
 
+    def test_corrupt_running_lease_never_records_agent_success(self):
+        # A RUNNING row without a canonical unexpired Core lease is not
+        # proof that a late Agent completion may be acknowledged SUCCEEDED.
+        bad_leases = (
+            None,
+            "",
+            "invalid-time",
+            (self.now + timedelta(seconds=30)).isoformat(),
+        )
+        for index, bad_lease in enumerate(bad_leases):
+            with self.subTest(bad_lease=bad_lease):
+                job = self._enqueue(
+                    targets=(f"lease-corrupt-{index}",), timeout_seconds=120
+                )
+                claim = self.engine.claim_targets(
+                    worker_id="worker-corrupt-lease", limit=1,
+                    now=self.now + timedelta(seconds=1),
+                )[0]
+                self.engine.conn.execute(
+                    "UPDATE management_job_targets SET lease_expires_at=? "
+                    "WHERE job_id=? AND target_id=?",
+                    (bad_lease, claim["job_id"], claim["target_id"]),
+                )
+                final = self.engine.complete_target(
+                    job_id=job["id"], target_id=claim["target_id"],
+                    claim_token=claim["claim_token"], status=SUCCEEDED,
+                    result={"agent": "unverified"},
+                    now=self.now + timedelta(seconds=2),
+                )
+                self.assertEqual(final["status"], FAILED)
+                self.assertEqual(final["targets"][0]["status"], FAILED)
+                self.assertEqual(final["targets"][0]["result"], {})
+                self.assertEqual(
+                    final["targets"][0]["error"], "INVALID_EXECUTION_DEADLINE"
+                )
+
     def test_restart_fails_entire_partially_inflight_job(self):
         job = self._enqueue(targets=("host-a", "host-b"))
         self.engine.claim_targets(

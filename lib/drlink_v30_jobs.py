@@ -668,13 +668,22 @@ class ManagementJobEngine:
                 )
             late_reason = ""
             try:
-                if current_dt >= _parse_utc(str(claim["deadline_at"])):
-                    late_reason = "DEADLINE_EXCEEDED"
-                elif claim["lease_expires_at"] and current_dt >= _parse_utc(
-                    str(claim["lease_expires_at"])
-                ):
-                    late_reason = "WORKER_LEASE_EXPIRED"
-            except ValueError:
+                # Completion, like claim dispatch, requires canonical, live
+                # Core clocks. An absent or noncanonical RUNNING lease must
+                # never validate an unverified Agent success acknowledgement.
+                if not _unexpired_claim_clock(claim["deadline_at"], current_dt):
+                    late_reason = (
+                        "DEADLINE_EXCEEDED"
+                        if current_dt >= _parse_utc(str(claim["deadline_at"]))
+                        else "INVALID_EXECUTION_DEADLINE"
+                    )
+                elif not _unexpired_claim_clock(claim["lease_expires_at"], current_dt):
+                    late_reason = (
+                        "WORKER_LEASE_EXPIRED"
+                        if current_dt >= _parse_utc(str(claim["lease_expires_at"]))
+                        else "INVALID_EXECUTION_DEADLINE"
+                    )
+            except (TypeError, ValueError, OverflowError):
                 late_reason = "INVALID_EXECUTION_DEADLINE"
             if late_reason:
                 terminal = FAILED
