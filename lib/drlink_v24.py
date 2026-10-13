@@ -2593,7 +2593,13 @@ def set_network_object(
                 name, value, confirm=confirm, impact=impact,
                 expected_row_version=int(existing["row_version"]),
             )
-            out = {"operation": "update", "name": name}
+            out = {
+                "operation": (
+                    "no_change" if isinstance(result, dict)
+                    and result.get("operation") == "noop" else "update"
+                ),
+                "name": name,
+            }
             if isinstance(result, dict) and "revision" in result:
                 out["revision"] = result["revision"]
             return out

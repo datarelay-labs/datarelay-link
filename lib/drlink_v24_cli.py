@@ -1038,7 +1038,10 @@ def handle_set(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         )
         if isinstance(result, dict) and result.get("cancelled"):
             return 1
-        sys.stdout.write("Network Object %s: %s\n" % (result["operation"], name))
+        if result.get("operation") == "no_change":
+            sys.stdout.write("NO CHANGE: Network Object %s already has the requested value.\n" % name)
+        else:
+            sys.stdout.write("Network Object %s: %s\n" % (result["operation"], name))
         return 0
     if res == "network-group":
         _require_server(plane, "Network Groups")

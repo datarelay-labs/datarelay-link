@@ -42,6 +42,24 @@ class RuleSelectorAndRuntimeRecovery(unittest.TestCase):
             rc = cli.dispatch(tokens, root=str(self.root), plane=self.plane)
         return rc, out.getvalue(), err.getvalue()
 
+    def test_s025_same_network_value_reports_no_change_without_revision(self):
+        name = 's025-fixture'
+        command = ['set', 'network-object', name, 'type', 'ip',
+                   'value', '198.51.100.242']
+        rc, created, err = self.dispatch(command)
+        self.assertEqual(rc, 0, err)
+        self.assertIn('Network Object create:', created)
+        first_revision = self.plane.current_revision()
+        rc, repeated, err = self.dispatch(command)
+        self.assertEqual(rc, 0, err)
+        self.assertIn('NO CHANGE', repeated)
+        self.assertNotIn('Network Object update:', repeated)
+        self.assertEqual(self.plane.current_revision(), first_revision,
+                         'identical value must not create an audit/config revision')
+        rc, shown, err = self.dispatch(['show', 'network-object', name])
+        self.assertEqual(rc, 0, err)
+        self.assertIn('198.51.100.242', shown)
+
     def test_rule_detail_preserves_service_selector_for_show_to_test(self):
         v24.set_network_object(self.plane, 'source', type='ip', value='198.51.100.10', oneshot=True)
         v24.set_network_object(self.plane, 'destination', type='fqdn', value='example.test', oneshot=True)
