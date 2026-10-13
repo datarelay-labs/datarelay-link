@@ -311,6 +311,11 @@ python3 tests/test-agent-catalog-progress.py
 # Codex-finding regression must run in the full non-Docker CI suite.
 python3 tests/test-e2e-lab-readiness.py
 python3 tests/test-e2e-owner-preflight-procedure.py
+# CLI-only E2E source/ledger policy and durable load runner contract.
+# These are deterministic non-live regressions; real CLI/soak runs keep
+# their independent owner-scoped RUN_ID and do not block unrelated CI.
+python3 tests/test-cli-only-e2e-contract.py
+python3 tests/test-cli-only-e2e-persistent-load.py
 python3 tests/test-v24-e2e-actionable-doc-parity.py
 python3 tests/test-cli-rule-selector-and-runtime-recovery.py
 python3 tests/test-doctor-proxy-identity.py
