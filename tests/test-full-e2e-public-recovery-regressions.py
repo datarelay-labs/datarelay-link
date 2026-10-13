@@ -100,14 +100,21 @@ frpctl_lib_candidate() { printf '%s/%s' "$LIB" "$1"; }
             self.assertIn('Scopes: runtime',result.stderr)
             self.assertNotIn('Scopes: control-plane',result.stderr)
 
-    def test_lifecycle_passes_server_reconnect_requirement_to_runtime(self):
+    def test_server_verification_reconciliation_must_not_force_healthy_frpc_restart(self):
         import drlink_agent_lifecycle as lifecycle
         import drlink_control_plane as cp
         import drlink_v24 as v24
+        # The Server can lose verified status independently of a healthy Agent.
+        # A heartbeat request must refresh proofs but never require a broad
+        # frpc restart when existing config/generation is already verified.
         with tempfile.TemporaryDirectory() as tmp:
-            for force in (False,True):
-                with mock.patch.object(lifecycle,'load_lifecycle_intent',return_value='running'), mock.patch.object(lifecycle,'heartbeat_once',return_value={'reconcile_required':force}), mock.patch.object(lifecycle,'reconciliation_needed',return_value=True), mock.patch.object(cp,'ControlPlane') as plane, mock.patch.object(v24,'ensure_v2_schema'), mock.patch.object(v24,'synchronize_agent_remote_services',return_value={'status':'SYNCHRONIZED'}) as sync:
-                    lifecycle.reconcile_once(tmp)
-                    sync.assert_called_once_with(plane.return_value,root=tmp,force_runtime=force)
+            for server_requests_sync in (False, True):
+                for local_needs_sync in (False, True):
+                    with mock.patch.object(lifecycle, 'load_lifecycle_intent', return_value='running'), mock.patch.object(lifecycle, 'heartbeat_once', return_value={'reconcile_required': server_requests_sync}), mock.patch.object(lifecycle, 'reconciliation_needed', return_value=local_needs_sync), mock.patch.object(cp, 'ControlPlane') as plane, mock.patch.object(v24, 'ensure_v2_schema'), mock.patch.object(v24, 'synchronize_agent_remote_services', return_value={'status': 'SYNCHRONIZED'}) as sync:
+                        lifecycle.reconcile_once(tmp)
+                        if server_requests_sync or local_needs_sync:
+                            sync.assert_called_once_with(plane.return_value, root=tmp, force_runtime=False)
+                        else:
+                            sync.assert_not_called()
 
 if __name__ == '__main__':unittest.main()

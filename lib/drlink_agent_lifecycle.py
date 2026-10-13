@@ -99,16 +99,22 @@ def reconcile_once(root: Optional[str] = None) -> dict:
 
 def _reconcile_once(root: Optional[str] = None) -> dict:
     heartbeat = heartbeat_once(root)
-    force_sync = bool((heartbeat or {}).get("reconcile_required", False))
+    server_requests_reconciliation = bool((heartbeat or {}).get("reconcile_required", False))
     from drlink_control_plane import ControlPlane
     from drlink_v24 import ensure_v2_schema, synchronize_agent_remote_services
 
     plane = ControlPlane(root)
     try:
         ensure_v2_schema(plane.conn)
-        if not force_sync and not reconciliation_needed(plane):
+        if not server_requests_reconciliation and not reconciliation_needed(plane):
             return {"status": "HEARTBEAT", "updated": 0}
-        return synchronize_agent_remote_services(plane, root=root, force_runtime=force_sync)
+        # The Server's missing verification requests a fresh status report,
+        # not an unconditional new frpc process. Forced runtime reapplication
+        # disconnects unrelated published traffic on otherwise healthy Agents.
+        # apply_agent_runtime already checks exact config and current running
+        # generation and restarts only when live runtime is not verified or
+        # desired proxy configuration actually changes.
+        return synchronize_agent_remote_services(plane, root=root, force_runtime=False)
     finally:
         plane.close()
 
