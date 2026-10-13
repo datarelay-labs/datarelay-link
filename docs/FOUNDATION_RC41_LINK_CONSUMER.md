@@ -251,3 +251,65 @@ Do not forward this preview publicly, use a live Core root, invent login
 credentials, or assert User E2E from unauthenticated static file checks.
 The public Link `pf8.4` fallback, draft PR and release approval remain
 unchanged.
+
+## Private RC41 installed development candidate activation
+
+The private RC41 Web installer and localhost smoke checks are already
+qualified. The **product-owned** selector keeps the selected *development*
+candidate under the existing 0700 private namespace while rechecking all
+source/package/install evidence. It does **not** modify the public Link
+`web/package.json`, invoke a live Core operation, install a systemd unit,
+publish packages or qualify a customer release.
+
+```bash
+cd /home/aella/datarelay-link-worktrees/drl3-foundation-rc41-consumer-20261013
+root="$HOME/.cache/drlink-foundation-rc41"
+# Read-only check first:
+python3 tools/activate-private-link-foundation-rc41.py \
+  --private-root "$root" \
+  --candidate "$root/dev-installed-f18fd471" \
+  --receipt "$root/installable-link-rc41-f18fd471/private-build-receipt.json"
+
+# Only on explicitly approved private DEVELOPMENT promotion:
+python3 tools/activate-private-link-foundation-rc41.py \
+  --private-root "$root" \
+  --candidate "$root/dev-installed-f18fd471" \
+  --receipt "$root/installable-link-rc41-f18fd471/private-build-receipt.json" \
+  --activate --expected-active-name dev-installed-f18fd471
+```
+
+The selector verifies the original immutable Foundation SHA `46ddb60`,
+the source-locked private receipt, whole Web archive SHA256, all ten
+private npm TAR SHA256 values, all five installed runtime asset digests,
+and the installed `build.json` link/bundle identity. It rejects symlink
+escape, world-readable private roots, missing archives, tampering, unknown
+versions and forged publisher/E2E claims. Activation of a **different**
+private candidate requires the explicitly observed previous active name;
+the value is rechecked before an atomic symlink replacement. This does not
+claim protection against uncoordinated concurrent external pointer changes.
+Nothing alters the public product or starts external services.
+
+On 2026-10-13 the exact private installed RC41
+`dev-installed-f18fd471` was reverified and selected idempotently:
+`PRIVATE_RC41_DEV_ACTIVATION=PASS`, all 10 private npm archives verified,
+5 installed static assets verified, active pointer unchanged and
+development loopback `127.0.0.1:19042` still bound. The new
+`tests/test-link-foundation-rc41-activation.py` uses synthetic files
+only and is included in `tests/run-all.sh`.
+
+### Public default promotion is separate
+
+The **public** Link `pf8.4` family and existing CI must stay reproducible
+until a *legitimate* publisher path has made the requested immutable
+Foundation version available to every builder. Real checks found no Link
+repository-level Actions secrets, GitHub Packages API `403` for missing
+`read:packages`, and an unauthenticated npm registry `E401`. The
+Foundation publisher requires a default-branch SHA match; its observed
+default SHA is not original RC41 `46ddb60`. Existing source/migration
+approval does **not** replace credentials, legal distribution approval,
+publisher provenance, two-real-user tests or the final merge/release gate.
+
+Do not downgrade those checks or commit private RC41 package bytes to the
+public Link repository to simulate completion. Qualified development
+installation is **done**, public default and official release remain
+**NOT QUALIFIED** until the technical/authority gates really pass.
