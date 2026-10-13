@@ -541,6 +541,7 @@ def _cmd(
     risk="none",
     confirmation="none",
     surface="",
+    tail_fields=None,
 ):
     """Describe one canonical command.
 
@@ -587,6 +588,7 @@ def _cmd(
         "risk": risk_text,
         "confirmation": confirm_text,
         "surface": surface_text,
+        "tail_fields": tail_fields or {},
     }
 
 
@@ -658,6 +660,7 @@ def _load_final_commands():
                 args=args,
                 flags=flags,
                 tail=row.get("tail"),
+                tail_fields=row.get("tail_fields"),
                 internal=tuple(row["internal"]) if row.get("internal") else None,
                 aliases=tuple(tuple(a) for a in (row.get("aliases") or ())),
                 destructive=bool(row.get("destructive")),
@@ -1631,11 +1634,12 @@ def root_command_overview(role, detailed=False):
                     "  help ai-access",
                 ]
             )
-        if client or not server:
-            lines.append("  help remote-services")
+        # Server operators also need the Agent ownership/inspection guidance.
+        lines.append("  help remote-services")
         lines.extend(
             [
                 "  help system",
+                "  help configuration",
                 "  help workflows",
                 "  help commands",
                 "",
@@ -1651,6 +1655,22 @@ def domain_help(topic, role):
     """Conceptual help for product domains (v2.4 public nouns)."""
     topic = str(topic or "").strip().lower()
     client, server = role_parts(role)
+    if topic == "configuration":
+        context = "server" if server else "agent"
+        sections = ("networkObjects, networkGroups, serviceObjects, serviceGroups, permissionObjects, "
+                    "permissionGroups, remoteAccess, internetAccess, aiAccess" if server else "remoteServices")
+        return (
+            "ConfigurationBundle\n===================\n\n"
+            "Start with system export configuration <FILE> for this host's redacted format.\n"
+            "Minimal no-change YAML (no apiVersion or kind fields):\n"
+            "configurationBundle:\n  context: " + context + "\n\n"
+            "Allowed sections: " + sections + ". Unsupported or wrong-role sections are rejected.\n"
+            "Sections and objects omitted from a bundle remain unchanged; state: absent explicitly deletes an object.\n"
+            "An identical bundle produces NO CHANGE. Dependencies are validated before atomic apply on this host.\n"
+            + ("Optional sourceRevision is the Server base revision; a stale value rejects apply without changes.\n" if server else "")
+            + "Validate with test configuration <FILE>, inspect system diff configuration <FILE>, then review system apply configuration <FILE>.\n"
+            "Use '-' for stdin; in the interactive CLI finish the YAML with a line containing :end.\n"
+        )
     if topic in ("managed-host", "managed-hosts"):
         if not server:
             return "Managed Hosts help is available on a Data Relay Link server.\n"
@@ -1670,6 +1690,9 @@ def domain_help(topic, role):
             "  set enrollment\n"
             "  set enrollment zero-touch\n"
             "  unset managed-host <HOST>\n\n"
+            "Before retirement, inspect dependencies on the Server:\n"
+            "  show network-object <NAME> references\n"
+            "Use the Managed Host's Network Object name.\n"
         )
     if topic in ("network-object", "network-objects"):
         if not server:
@@ -1690,6 +1713,11 @@ def domain_help(topic, role):
             "  set network-group <NAME> members a,b,c\n"
             "  show network-group <NAME> references\n"
             "  unset network-object <NAME>\n"
+            "\nConcurrent administrator edits:\n"
+            "  Read configuration revision from show network-object <NAME>.\n"
+            "  To reject a stale update from a shell, use:\n"
+            "  sudo env DRLINK_EXPECTED_REVISION=<REV> drlink set network-object <NAME> value <VALUE>\n"
+            "  A revision mismatch reports REVISION_CONFLICT; no change is made.\n"
         )
     if topic in ("service-object", "service-objects"):
         if not server:
@@ -1741,7 +1769,10 @@ def domain_help(topic, role):
             "Remote Services\n"
             "===============\n\n"
             "Agent-local connectivity objects with DRLink endpoints.\n"
-            "UDP Remote Service is not supported.\n\n"
+            "UDP Remote Service is not supported.\n"
+            "SERVICE selects a Server-defined TCP or Fixed TCP Service Object.\n"
+            "The Server allocates/reserves the public endpoint; do not choose a public port on the Agent.\n"
+            "Use destination this-host for the Agent itself or a supported destination object.\n\n"
             "Everyday commands:\n"
             "  show remote-services\n"
             "  show remote-service <NAME>\n"
@@ -1756,6 +1787,7 @@ def domain_help(topic, role):
             "Internet Access\n"
             "===============\n\n"
             "WHITELIST-only, deny-by-default authorization for outbound access.\n"
+            "Supports TCP, HTTP and HTTPS CONNECT; UDP Service Objects and Service Groups containing UDP are rejected.\n"
             "Managed Host may be used as a source; Managed Host destination is rejected.\n\n"
             "Guided path:\n"
             "  menu → Internet Access\n\n"
@@ -1793,6 +1825,10 @@ def domain_help(topic, role):
             "  test ai-access source <IDENTITY> destination <DEST> permission <PERM>\n"
             "  show ai-access\n"
             "  show ai-access-log\n"
+            "  show ai-access-log identity <IDENTITY>\n"
+            "  show ai-access-log destination <DESTINATION>\n"
+            "  show ai-access-log permission <PERMISSION>\n"
+            "Each supplied filter requires its value; omit filters to list all entries.\n"
         )
     if topic == "system":
         client, server = role_parts(role)
@@ -1811,6 +1847,7 @@ def domain_help(topic, role):
             "",
             "Everyday commands:",
             "  show status",
+            *(["  system status"] if server else []),
             "  system version",
             "  system diagnostics",
             "  system support-bundle",
@@ -1978,6 +2015,13 @@ def command_help(cmd):
             else:
                 rows.append((arg["name"], "required" if arg["required"] else "optional"))
         lines.extend(["", "Arguments:"])
+        lines.extend(_fmt_rows(rows))
+    if cmd.get("tail_fields"):
+        rows = []
+        for field, choices in cmd["tail_fields"].items():
+            description = "one of: %s" % ", ".join(choices) if isinstance(choices, list) else ("switch" if choices is False else "value")
+            rows.append((field, description))
+        lines.extend(["", "Fields after the name:"])
         lines.extend(_fmt_rows(rows))
     shown_flags = []
     # Public command help never advertises GNU-style --options.
@@ -2421,6 +2465,7 @@ NAVIGATION_TREE = {
         ("back", "Back", "", "back", None),
     ),
     "server.system.settings": (
+        ("server_show_settings", "Show current Server settings", "", "command", "system status"),
         ("server_set_public", "Remote Service public hostname", "", "workflow", "set_public_hostname"),
         ("server_set_bootstrap", "Bootstrap hostname", "", "workflow", "set_bootstrap_hostname"),
         ("server_set_installer", "Linux/macOS Agent installer URL", "", "workflow", "set_installer_url"),
@@ -2429,7 +2474,7 @@ NAVIGATION_TREE = {
     ),
     "server.system.backup": (
         ("server_bak_create", "Create backup", "", "command", "system backup"),
-        ("server_bak_restore", "Restore backup", "", "workflow", "restore_backup"),
+        ("server_bak_restore", "Restore backup", "First validate read-only: system backup validate <PATH>", "workflow", "restore_backup"),
         ("back", "Back", "", "back", None),
     ),
     "server.system.updates": (

@@ -717,6 +717,12 @@ set permission-group operations members read-only,operator
 
 AI Access Rules may use either a Permission Object or Permission Group.
 
+### Permission dependency inspection and protected deletion
+
+Inspect `show ai-access` and `show ai-access <RULE>` to identify Rule permission selectors; inspect `show permission-groups` and `show permission-group <GROUP>` to identify Object membership. Permission Object/Group deletion validates references before asking for y/N confirmation. A blocked deletion lists its references and applies no changes.
+
+Review each referencing Rule with `set ai-access <RULE>` to select a replacement Permission Object/Group, or explicitly remove it with `unset ai-access <RULE>`. Review containing group membership with `set permission-group <GROUP>` to remove an Object from the group. Disabling a Rule does not remove its reference. Explain the access impact and follow the required confirmations before changing dependencies; retry `unset permission-object <PERMISSION>` or `unset permission-group <GROUP>` only after every reference has been removed. Use these existing public inspection/edit commands; there is no Permission `references` subcommand.
+
 ---
 
 # 13. AI Identity
@@ -1531,7 +1537,10 @@ AI one-shot in Agent context:
 
 ```text
 set remote-service ssh-access destination this-host service ssh enabled
+
 ```
+
+`SERVICE` is a Server-defined TCP or Fixed TCP Service Object. The Server owns endpoint allocation/reservation; the Agent does not choose the public endpoint port.
 
 ---
 
@@ -2289,8 +2298,14 @@ system apply configuration <FILE|->
 system diagnostics
 system support-bundle
 system version
+system history
+system clear
 system uninstall
 ```
+
+`system history` shows the current interactive CLI session's non-secret command history.
+`system clear` clears the interactive terminal display. Neither changes product
+configuration.
 
 `system uninstall` of the active product role must exit the interactive REPL
 cleanly after successful removal (no further backend invocation on the deleted
@@ -2495,7 +2510,7 @@ unset mcp-tls
 unset mcp-tls purge
 ```
 
-`unset mcp-tls` clears TLS intent while retaining DRLink-owned certificate and ACME account material. `unset mcp-tls purge` removes that retained material only after interactive y/N confirmation; non-interactive use fails closed.
+`unset mcp-tls` clears TLS intent and removes the active public MCP route while retaining DRLink-owned certificate and ACME account material. Active MCP/OAuth connections may be interrupted; the explicit command approves this change without an additional confirmation prompt. Check `system certificate status` and `system diagnostics mcp` afterward. `unset mcp-tls purge` removes that retained material only after interactive y/N confirmation; non-interactive use fails closed.
 
 `unset enrollment <ENROLLMENT>`, `unset network-object`, `unset network-group`, `unset service-object`, `unset service-group`, `unset permission-object`, `unset permission-group`, and `unset ai-identity` are destructive lifecycle operations and require explicit `y/N` confirmation after existence/reference validation. Default is No and cancellation applies no change. These are normal `y_n` flows rather than TTY-only flows, so controlled automation may provide `y`/`yes` on stdin; there is no public hidden environment-variable or `--yes` bypass for these commands. Policy Rule deletion uses effect-aware `conditional_y_n`: confirmation is required when the calculated change broadens or materially narrows access, while full `unset <plane>-access policy` reset always requires explicit confirmation.
 
@@ -2522,6 +2537,8 @@ test configuration <FILE|->
 ```text
 system status
 system version
+system history
+system clear
 system diagnostics
 system audit
 
@@ -2557,6 +2574,14 @@ system update check-engine
 system support-bundle
 system uninstall
 ```
+
+`system history` displays only the current interactive CLI session's non-secret
+command history; `system clear` clears the terminal screen. These navigation
+commands are available on both Server and Agent Host and do not mutate product
+state.
+
+`system status` is the detailed Server read-only status and settings view. It includes current public/bootstrap hostnames and Linux/macOS/Windows Agent installer sources, with explicit automatic/default fallback text. `show status` remains the role-aware summary.
+
 
 `system certificate status` is the single public MCP TLS/certificate status surface. Configure TLS intent with `set mcp-tls ...`; there is no separate MCP TLS status read command.
 
@@ -3672,10 +3697,10 @@ A stale earlier diff is never blindly applied.
 Direct mutation workflows can bind an edit to the authoritative revision they reviewed:
 
 ```bash
-DRLINK_EXPECTED_REVISION=42 sudo drlink set network-object branch-dns value 198.51.100.20
+sudo env DRLINK_EXPECTED_REVISION=42 drlink set network-object branch-dns value 198.51.100.20
 ```
 
-`DRLINK_EXPECTED_REVISION` must be a non-negative integer. The direct mutation checks it under the same write transaction before changing state. If the current revision no longer matches, the command fails closed with `REVISION_CONFLICT` and makes no change. The guard applies to the one direct mutation invocation; ConfigurationBundle continues to use `sourceRevision`.
+Set the variable in the elevated command's environment as shown; an assignment before `sudo` can be discarded by its environment filtering. `DRLINK_EXPECTED_REVISION` must be a non-negative integer. The direct mutation checks it under the same write transaction before changing state. If the current revision no longer matches, the command fails closed with `REVISION_CONFLICT` and makes no change. The guard applies to the one direct mutation invocation; ConfigurationBundle continues to use `sourceRevision`.
 
 ---
 

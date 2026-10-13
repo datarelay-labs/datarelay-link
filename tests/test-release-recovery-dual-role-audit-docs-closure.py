@@ -483,7 +483,7 @@ echo RC=$_frp_up_rc
         common = (LIB / "frp-common.sh").read_text(encoding="utf-8")
         self.assertIn("sudo drlink system diagnostics", common)
         self.assertIn("sudo drlink system support-bundle", common)
-        self.assertIn("Do not re-enroll clients or delete state manually.", common)
+        self.assertIn("Do not re-enroll Agent Hosts or delete state manually.", common)
 
 
 if __name__ == "__main__":

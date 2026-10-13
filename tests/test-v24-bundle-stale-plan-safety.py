@@ -9,11 +9,13 @@ under a race-safe guard. Stale prepared plans must not:
 from __future__ import annotations
 
 import os
+import io
 import sys
 import tempfile
 import unittest
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import redirect_stdout, redirect_stderr
 from unittest import mock
 from pathlib import Path
 
@@ -22,6 +24,7 @@ sys.path.insert(0, str(ROOT / "lib"))
 
 from drlink_control_plane import ConcurrencyError, ConfirmationRequired, ControlPlane
 import drlink_v24 as v24
+import drlink_control_cli as cli
 from drlink_v24_bundle import BundleError, apply_v24_plan, export_configuration_v24, prepare_v24_plan
 
 
@@ -254,7 +257,9 @@ class BundleStalePlanSafety(unittest.TestCase):
         )
 
     def test_source_revision_validation_fails_closed(self):
-        for token in ("-1", "not-a-revision", "true"):
+        before = self.plane.current_revision()
+        for token in ("-1", "not-a-revision", "true", "false", "1.5", "1.0", "-0.5",
+                      ".inf", ".nan", "[]", "{}", '"1.5"', '"1.0"'):
             with self.subTest(source_revision=token):
                 raw = """configurationBundle:
   context: server
@@ -264,9 +269,38 @@ class BundleStalePlanSafety(unittest.TestCase):
       type: ip
       value: 198.51.100.10
 """ % token
-                with self.assertRaises(Exception) as ctx:
+                with self.assertRaises(BundleError) as ctx:
                     prepare_v24_plan(self.plane, raw)
                 self.assertIn("sourceRevision", str(ctx.exception))
+                self.assertEqual(self.plane.current_revision(), before)
+                self.assertIsNone(self.plane.get_object("office"))
+
+    def test_source_revision_preserves_integer_and_quoted_integer_values(self):
+        before = self.plane.current_revision()
+        for token, expected in (("0", 0), ("1", 1), ("999999", 999999),
+                                ('"0"', 0), ('"42"', 42)):
+            with self.subTest(source_revision=token):
+                plan = prepare_v24_plan(self.plane, "configurationBundle:\n  context: server\n"
+                                        "  sourceRevision: %s\n" % token)
+                self.assertEqual(plan.base_revision, expected)
+                self.assertIs(type(plan.base_revision), int)
+                self.assertEqual(self.plane.current_revision(), before)
+
+    def test_public_test_and_diff_reject_invalid_source_revision_without_changes(self):
+        before = self.plane.current_revision()
+        for command in (("test", "configuration", "-"),
+                        ("system", "diff", "configuration", "-")):
+            for token in ("1.5", "1.0", "true", "-1"):
+                with self.subTest(command=command, source_revision=token):
+                    raw = "configurationBundle:\n  context: server\n  sourceRevision: %s\n" % token
+                    out, err = io.StringIO(), io.StringIO()
+                    with mock.patch("sys.stdin", io.StringIO(raw)), \
+                         redirect_stdout(out), redirect_stderr(err):
+                        with self.assertRaises(SystemExit) as ctx:
+                            cli.dispatch(list(command), root=self.tmp, plane=self.plane)
+                    self.assertIn("sourceRevision must be a non-negative integer", str(ctx.exception))
+                    self.assertIn("No changes were applied", str(ctx.exception))
+                    self.assertEqual(self.plane.current_revision(), before)
 
     def test_stale_plan_cannot_bypass_last_blacklist_confirmation(self):
         v24.set_network_object(self.plane, "src", type="ip", value="198.51.100.1", oneshot=True)

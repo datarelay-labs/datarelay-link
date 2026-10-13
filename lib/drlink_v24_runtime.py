@@ -10,8 +10,10 @@ from __future__ import annotations
 import json
 import os
 import re
+import stat
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import Optional
@@ -133,6 +135,7 @@ def render_frpc_toml_text(
     services: dict,
     transport: str = "tcp",
     ca_file: str = "",
+    reload_admin: Optional[dict] = None,
 ) -> str:
     transport = (transport or "tcp").strip().lower() or "tcp"
     lines = [
@@ -151,6 +154,16 @@ def render_frpc_toml_text(
                 'transport.tls.trustedCaFile = "%s"' % ca_file,
             ]
         )
+    if reload_admin:
+        # Only preserve an already-provisioned, authenticated loopback admin
+        # listener. The renderer itself never opens a new management port.
+        lines.extend([
+            "",
+            'webServer.addr = "127.0.0.1"',
+            "webServer.port = %d" % int(reload_admin["port"]),
+            "webServer.user = %s" % json.dumps(reload_admin["user"]),
+            "webServer.password = %s" % json.dumps(reload_admin["password"]),
+        ])
     for sid, item in sorted(services.items(), key=lambda kv: str(kv[0])):
         if not isinstance(item, dict):
             continue
@@ -294,6 +307,170 @@ def build_desired_runtime_services(
     return services
 
 
+def _trusted_existing_frpc_admin(path: Path, config_text: Optional[str]) -> Optional[dict]:
+    """Recognize a *preexisting* owner-provisioned secure local reload API.
+
+    Never mint credentials, open ports or accept unauthenticated/wildcard
+    webServer settings through a configuration replay. This parser is intentionally
+    narrow: unexpected webServer fields disable this optimization.
+    """
+    if not config_text:
+        return None
+    try:
+        metadata = path.lstat()
+        folder = path.parent.stat()
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_mode & 0o077
+            or metadata.st_nlink != 1
+            or metadata.st_uid != os.geteuid()
+            or folder.st_uid != os.geteuid()
+            or folder.st_mode & 0o022
+        ):
+            return None
+    except OSError:
+        return None
+    pairs = {}
+    # Ignore sections after the first proxy table for admin eligibility:
+    # webServer fields may not be forged as apparent top-level settings
+    # inside a proxy record.
+    for raw in config_text.split("\n[[proxies]]", 1)[0].splitlines():
+        line = raw.strip()
+        if not line.startswith("webServer."):
+            continue
+        m = re.fullmatch(
+            r"webServer\.(addr|port|user|password)\s*=\s*(.+)", line
+        )
+        if not m or m.group(1) in pairs:
+            return None
+        key, value = m.groups()
+        try:
+            decoded = int(value) if key == "port" else json.loads(value)
+        except (ValueError, TypeError, json.JSONDecodeError):
+            return None
+        pairs[key] = decoded
+    if set(pairs) != {"addr", "port", "user", "password"}:
+        return None
+    if pairs["addr"] != "127.0.0.1":
+        return None
+    if not isinstance(pairs["port"], int) or isinstance(pairs["port"], bool):
+        return None
+    if not 1024 <= pairs["port"] <= 65535:
+        return None
+    user, password = pairs["user"], pairs["password"]
+    if not isinstance(user, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", user):
+        return None
+    if (not isinstance(password, str)
+            or not re.fullmatch(r"[A-Za-z0-9_-]{40,128}", password)
+            or len(set(password)) < 16):
+        return None
+    return pairs
+
+
+def _unchanged_frpc_common(prev_text: str, next_text: str) -> bool:
+    """Hot reload changes *only* proxy declarations, never common settings."""
+    return (prev_text.split("\n[[proxies]]", 1)[0].strip()
+            == next_text.split("\n[[proxies]]", 1)[0].strip())
+
+
+def _frpc_running_invocation_id() -> str:
+    """Systemd current process generation; never trust an earlier start."""
+    try:
+        result = subprocess.check_output(
+            ["systemctl", "show", "drlink-client",
+             "-p", "ActiveState", "-p", "InvocationID"],
+            timeout=5, text=True,
+        )
+        state = dict(line.split("=", 1) for line in result.splitlines() if "=" in line)
+        if state.get("ActiveState") == "active":
+            candidate = state.get("InvocationID") or ""
+            if re.fullmatch(r"[0-9a-f]{32}", candidate):
+                return candidate
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return ""
+
+
+def _frpc_proxy_names(host_id: str, services: dict) -> set[str]:
+    return {
+        "%s-%s" % (host_id, rec.get("id") or sid)
+        for sid, rec in services.items()
+        if isinstance(rec, dict) and rec.get("enabled", True) is not False
+    }
+
+
+def _reload_frpc_authenticated(
+    path: Path, *, root: Optional[str], host_id: str, expected: dict,
+    removed_names: Optional[set[str]] = None,
+) -> None:
+    """Reload over an existing authenticated local API and verify fresh state.
+
+    No secret or raw admin response is included in public errors. Rejected,
+    missing or stale admin endpoint fails closed rather than restarting all
+    unrelated active Remote Services.
+    """
+    # The active FRP process generation must not change during hot reload.
+    # Mac/non-systemd instances must first implement equivalent native proof.
+    real_runtime = not root or str(root).rstrip("/") in ("", "/")
+    prior_invocation = _frpc_running_invocation_id() if real_runtime else "unit-fixture"
+    if not prior_invocation:
+        raise ControlPlaneError(
+            "Authenticated local frpc reload requires a verified running Agent generation."
+        )
+    binary = Path("/usr/local/bin/frpc")
+    if not binary.is_file():
+        raise ControlPlaneError("Authenticated local frpc reload is unavailable; no broad restart performed.")
+    for op in ("verify", "reload", "status"):
+        try:
+            completed = subprocess.run(
+                [str(binary), op, "-c", str(path)],
+                capture_output=True, text=True, timeout=30, check=False,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise ControlPlaneError(
+                "Authenticated local frpc %s could not be completed; check system diagnostics." % op
+            ) from exc
+        if completed.returncode != 0:
+            raise ControlPlaneError(
+                "Authenticated local frpc %s was rejected or failed; no broad restart performed." % op
+            )
+        if op == "status":
+            # Status must unambiguously contain a separate healthy row for
+            # every desired proxy. A CLI exit 0 by itself is not evidence.
+            lines = (completed.stdout or "").splitlines()
+            if removed_names:
+                for name in removed_names:
+                    for line in lines:
+                        words = line.split()
+                        if words and words[0] == name:
+                            # A removed proxy must not remain in the active
+                            # Admin inventory, even as Error: it could later
+                            # reconnect without operator authorization.
+                            raise ControlPlaneError(
+                                "Authenticated reload retained a removed live proxy."
+                            )
+            for sid, rec in expected.items():
+                if not isinstance(rec, dict) or rec.get("enabled", True) is False:
+                    continue
+                name = "%s-%s" % (host_id, rec.get("id") or sid)
+                entries = [line.split() for line in lines
+                           if line.split() and line.split()[0] == name]
+                if len(entries) != 1 or not any(
+                    value.lower() in ("running", "online") for value in entries[0][1:]
+                ):
+                    raise ControlPlaneError(
+                        "Authenticated local frpc status did not verify all expected proxies."
+                    )
+    if real_runtime and _frpc_running_invocation_id() != prior_invocation:
+        raise ControlPlaneError(
+            "Authenticated local frpc reload changed the Agent process generation."
+        )
+    if not _current_runtime_ready(root, host_id, expected):
+        raise ControlPlaneError(
+            "Authenticated local frpc reload lacks verified current-generation proxy evidence."
+        )
+
+
 def _restart_frpc(root: Optional[str] = None) -> None:
     if str(os.environ.get("FRP_SKIP_SYSTEMD") or "").strip() == "1":
         return
@@ -385,7 +562,15 @@ def _current_runtime_ready(root, host_id, expected) -> bool:
             if not isinstance(rec, dict) or rec.get('enabled', True) is False:
                 continue
             name = '%s-%s' % (host_id, rec.get('id') or sid)
-            mentions = [line for line in epoch if '[%s]' % name in line and 'start proxy' in line.lower()]
+            mentions = []
+            for line in epoch:
+                removed = re.search(r'proxy removed:\s*\[([^\]]*)\]', line)
+                if removed and name in removed.group(1).split():
+                    mentions.append('proxy removed')
+                elif '[%s]' % name in line and any(
+                    event in line.lower() for event in ('start proxy', 'stop proxy')
+                ):
+                    mentions.append(line)
             if not mentions or 'start proxy success' not in mentions[-1].lower():
                 return False
         return True
@@ -443,6 +628,7 @@ def apply_agent_runtime(
     *,
     root: Optional[str] = None,
     names: Optional[list] = None,
+    force_reapply: bool = False,
 ) -> dict:
     """Render + apply frpc runtime for desired Remote Services.
 
@@ -512,6 +698,36 @@ def apply_agent_runtime(
             "generation": 0,
         }
 
+    if transport not in ("tcp", "wss"):
+        return {
+            "ok": False,
+            "applied": [],
+            "removed": [],
+            "error": "unsupported FRP transport '%s' (expected tcp or wss)" % transport,
+            "generation": 0,
+        }
+
+    ca_file = ""
+    if transport == "wss":
+        # Bind WSS trust to this Agent's existing state layout. Linux keeps
+        # the CA under /etc/drlink; macOS maps both into the same flat state
+        # directory (including an overridden FRP_MACOS_STATE_ROOT).
+        state_path = _client_state_path(root)
+        linux_state_path = _base(root) / "etc/frp/client-state.json"
+        ca_path = (_base(root) / "etc/drlink/allocator-ca.crt"
+                   if state_path == linux_state_path
+                   else state_path.with_name("allocator-ca.crt"))
+        # Never rewrite a working WSS runtime with an empty trust anchor.
+        if not ca_path.is_file():
+            return {
+                "ok": False,
+                "applied": [],
+                "removed": [],
+                "error": "allocator CA is required for WSS FRP control",
+                "generation": 0,
+            }
+        ca_file = str(ca_path)
+
     new_state = dict(state)
     new_state["services"] = desired
     new_state["management_only"] = not any(
@@ -519,6 +735,8 @@ def apply_agent_runtime(
     )
 
     restart_attempted = False
+    reload_attempted = False
+    hot_reload_admin = _trusted_existing_frpc_admin(prev_toml, backup_toml)
     artifacts_written = False
     try:
         toml_text = render_frpc_toml_text(
@@ -528,6 +746,8 @@ def apply_agent_runtime(
             host_id=host_id,
             services=desired,
             transport=transport,
+            ca_file=ca_file,
+            reload_admin=hot_reload_admin,
         )
         validate_frpc_toml_text(toml_text)
         if str(os.environ.get("DRLINK_FAULT_RUNTIME_CONFIG") or "").strip().lower() in (
@@ -538,16 +758,41 @@ def apply_agent_runtime(
         ):
             raise ControlPlaneError("invalid generated runtime config (injected fault)")
 
-        if (toml_text == backup_toml and state == new_state
+        # Updating Agent metadata does not require restarting every live FRP
+        # proxy when the complete rendered TOML and the verified live proxy
+        # generation are unchanged. A previous state-only comparison caused
+        # unnecessary full restarts during synchronization and interrupted
+        # otherwise unrelated public Remote Services.
+        #
+        # Real hosts must still pass _current_runtime_ready (current systemd
+        # InvocationID plus proxy successes in this connection epoch). Merely
+        # observing client-state on disk never proves runtime HEALTHY.
+        if (not force_reapply and toml_text == backup_toml
                 and _current_runtime_ready(root, host_id, desired)):
+            metadata_updated = state != new_state
+            if metadata_updated:
+                artifacts_written = True
+                _atomic_write_json(prev_state_path, new_state)
             if names is None:
                 mark_runtime_status(plane_db, ok=True)
-            return {'ok': True, 'no_change': True, 'applied': [], 'removed': [],
-                    'error': '', 'generation': 0, 'host_id': host_id, 'toml': str(prev_toml)}
+            return {'ok': True, 'no_change': True, 'metadata_updated': metadata_updated,
+                    'applied': [], 'removed': [], 'error': '', 'generation': 0,
+                    'host_id': host_id, 'toml': str(prev_toml)}
 
         real_runtime = not root or str(root).rstrip('/') in ('', '/')
-        cursor = _runtime_log_cursor() if real_runtime else None
-        # A restart invalidates verification for every proxy in this runtime.
+        # A previously provisioned strongly authenticated loopback admin API
+        # permits narrowly scoped proxy updates without disrupting unrelated
+        # running FRP connections. This cannot bootstrap/create the API; its
+        # first enablement is a separate, explicitly authorized change.
+        reload_safe = (
+            hot_reload_admin is not None and not force_reapply
+            and backup_toml is not None
+            and _unchanged_frpc_common(backup_toml, toml_text)
+            and _current_runtime_ready(root, host_id, state.get("services") or {})
+        )
+        cursor = _runtime_log_cursor() if real_runtime and not reload_safe else None
+        # Any changed generation invalidates prior verification until fresh
+        # runtime and registered-proxy evidence is obtained.
         # Refresh all included rows after the complete generation is verified.
         plane_db.conn.execute(
             'UPDATE agent_remote_services SET runtime_verified = 0 WHERE delete_pending = 0')
@@ -555,13 +800,29 @@ def apply_agent_runtime(
         artifacts_written = True
         _atomic_write_json(prev_state_path, new_state)
         _atomic_write_text(prev_toml, toml_text)
-        restart_attempted = True
-        _restart_frpc(root)
-        verify_runtime_proxies(root=root, host_id=host_id, expected=desired, toml_text=toml_text, since_cursor=cursor)
+        if reload_safe:
+            reload_attempted = True
+            _reload_frpc_authenticated(
+                prev_toml, root=root, host_id=host_id, expected=desired,
+                removed_names=(
+                    _frpc_proxy_names(host_id, state.get("services") or {})
+                    - _frpc_proxy_names(host_id, desired)
+                ),
+            )
+        else:
+            restart_attempted = True
+            _restart_frpc(root)
+            verify_runtime_proxies(
+                root=root, host_id=host_id, expected=desired,
+                toml_text=toml_text, since_cursor=cursor
+            )
         if names is None:
             mark_runtime_status(plane_db, ok=True)
     except Exception as exc:
-        # Rollback previous runtime artifacts when possible.
+        # Rollback saved files first. A failed authenticated hot reload must
+        # NEVER silently fall back to a full process restart: that would flap
+        # unrelated Remote Services and defeat the continuity boundary.
+        rollback_error = ""
         try:
             if artifacts_written and backup_state is not None:
                 _atomic_write_text(prev_state_path, backup_state)
@@ -569,13 +830,25 @@ def apply_agent_runtime(
                 _atomic_write_text(prev_toml, backup_toml)
             if restart_attempted and backup_toml is not None:
                 _restart_frpc(root)
+            elif reload_attempted and backup_toml is not None:
+                _reload_frpc_authenticated(
+                    prev_toml, root=root, host_id=host_id,
+                    expected=state.get("services") or {},
+                    removed_names=(
+                        _frpc_proxy_names(host_id, desired)
+                        - _frpc_proxy_names(host_id, state.get("services") or {})
+                    ),
+                )
         except Exception:
-            pass
+            rollback_error = (
+                " RECOVERY_REQUIRED: the previous authenticated runtime "
+                "configuration could not be verified after rollback."
+            )
         return {
             "ok": False,
             "applied": [],
             "removed": [],
-            "error": str(exc),
+            "error": str(exc) + rollback_error,
             "generation": 0,
         }
 
@@ -596,21 +869,113 @@ def apply_agent_runtime(
     }
 
 
+def _configured_v24_runtime_ports(root: Optional[str] = None) -> dict:
+    """Map the exact Remote Services *included* in the installed frpc generation.
+
+    The runtime only verifies proxies rendered in client-state/frpc.toml.
+    Excluded rows (missing Service Object, invalid destination, mismatched
+    endpoint, or stale projection) are not proven HEALTHY merely because
+    the new frpc process successfully registered other proxies.
+    """
+    state = load_client_state(root)
+    services = state.get("services")
+    if not isinstance(services, dict):
+        return {}
+    included = {}
+    for sid, record in services.items():
+        if not isinstance(record, dict) or not record.get("v24_remote_service"):
+            continue
+        if record.get("enabled", True) is False:
+            continue
+        name = str(record.get("name") or "").strip()
+        if not name or str(sid) != remote_service_proxy_id(name):
+            continue
+        if str(record.get("id") or sid) != str(sid):
+            continue
+        try:
+            port = int(record["remote_port"])
+            local_port = int(record["local_port"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if not (1 <= port <= 65535 and 1 <= local_port <= 65535):
+            continue
+        key = name.lower()
+        if key not in included:
+            included[key] = port
+        elif included[key] != port:
+            # Ambiguous local projection must never authorize verification.
+            included[key] = None
+    return included
+
+
+def _isolated_skip_fixture(root: Optional[str]) -> bool:
+    fixture = str(root or '').rstrip('/')
+    return bool(fixture and fixture != '/'
+                and fixture == str(os.environ.get('FRP_DEPLOY_TEST_ROOT') or '').rstrip('/')
+                and not runtime_should_apply())
+
+
 def mark_runtime_status(plane_db, *, ok: bool, reason: str = "", generation: int = 0) -> None:
     now = utc_now_iso()
     if ok:
-        # Only promote rows that were waiting on runtime (or already healthy).
-        # Never overwrite destination-unreachable or other non-runtime DEGRADED reasons.
-        # verify_runtime_proxies success is the verification event for runtime_verified.
-        plane_db.conn.execute(
-            "UPDATE agent_remote_services SET status = 'HEALTHY', reason = '', "
-            "runtime_verified = 1, updated_at = ? "
-            "WHERE delete_pending = 0 AND endpoint_port IS NOT NULL AND pending_allocation = 0 "
-            "AND enabled = 1 AND ("
-            "  reason = '' OR lower(reason) LIKE 'runtime%' OR lower(reason) LIKE '%activation%'"
-            ") AND lower(reason) NOT LIKE '%unreachable%'",
-            (now,),
-        )
+        installed = _configured_v24_runtime_ports(getattr(plane_db, "root", None))
+        rows = list(plane_db.conn.execute(
+            "SELECT name, status, reason, runtime_verified, endpoint_port, pending_allocation "
+            "FROM agent_remote_services WHERE delete_pending = 0 AND enabled = 1"
+        ))
+        # Strictly disposable test roots may simulate successful activation
+        # without launching an FRP process. Preserve this historical
+        # deterministic fixture contract, but NEVER allow a real Agent or an
+        # arbitrary DRLINK_SKIP_ACTIVATION setting to bypass actual rendered
+        # proxy/port verification. These results are not release E2E evidence.
+        isolated_skip_fixture = _isolated_skip_fixture(getattr(plane_db, 'root', None))
+        if isolated_skip_fixture:
+            for row in rows:
+                if row["endpoint_port"] is not None and not int(row["pending_allocation"] or 0):
+                    installed[str(row["name"]).lower()] = int(row["endpoint_port"])
+        for row in rows:
+            name = str(row["name"] or "")
+            local_port = row["endpoint_port"]
+            bound_port = installed.get(name.lower())
+            in_generation = (
+                local_port is not None
+                and bound_port is not None
+                and int(row["pending_allocation"] or 0) == 0
+                and int(local_port) == bound_port
+            )
+            old_reason = str(row["reason"] or "")
+            allow_promotion = (
+                not old_reason
+                or old_reason.lower().startswith("runtime")
+                or "activation" in old_reason.lower()
+            ) and "unreachable" not in old_reason.lower()
+            if in_generation and allow_promotion:
+                # Called only after apply_agent_runtime verified this generation.
+                plane_db.conn.execute(
+                    "UPDATE agent_remote_services SET status = 'HEALTHY', reason = '', "
+                    "runtime_verified = 1, updated_at = ? WHERE name = ? COLLATE NOCASE",
+                    (now, name),
+                )
+            elif (
+                str(row["status"] or "").upper() == "HEALTHY"
+                or int(row["runtime_verified"] or 0)
+                or (
+                    not in_generation and local_port is not None
+                    and int(row["pending_allocation"] or 0) == 0
+                    and allow_promotion
+                )
+            ):
+                # Reconciled/activated runtime cannot retain a falsely HEALTHY
+                # row that has no current proxy. Keep specific dependency errors.
+                why = old_reason
+                if not why or allow_promotion:
+                    why = "Runtime proxy is not present in the verified generation."
+                plane_db.conn.execute(
+                    "UPDATE agent_remote_services SET status = 'DEGRADED', "
+                    "runtime_verified = 0, reason = ?, updated_at = ? "
+                    "WHERE name = ? COLLATE NOCASE",
+                    (why, now, name),
+                )
     else:
         brief = reason or "Runtime activation pending or failed"
         if brief.startswith("ERROR:"):
@@ -627,6 +992,52 @@ def mark_runtime_status(plane_db, *, ok: bool, reason: str = "", generation: int
             commit()
         else:
             plane_db.conn.commit()
+
+
+def verified_remote_service_status(plane_db, name: str, *, root: Optional[str] = None) -> tuple[str, str]:
+    """Read this service's proof, rather than aggregate runtime apply success."""
+    row = plane_db.conn.execute(
+        "SELECT * FROM agent_remote_services WHERE name = ? COLLATE NOCASE", (name,)
+    ).fetchone()
+    missing = "Runtime proxy is not present in the verified generation."
+    if row is None or not row['enabled'] or row['delete_pending']:
+        return 'DEGRADED', missing
+    actual_root = root if root is not None else getattr(plane_db, 'root', None)
+    if _isolated_skip_fixture(actual_root):
+        # Same strictly isolated historical fixture contract as mark_runtime_status.
+        return ('HEALTHY', '') if row['endpoint_port'] is not None and not row['pending_allocation'] else ('DEGRADED', missing)
+    state = load_client_state(actual_root)
+    proxy_id = remote_service_proxy_id(name)
+    record = (state.get('services') or {}).get(proxy_id)
+    desired = build_desired_runtime_services(plane_db, state, root=actual_root).get(proxy_id)
+    installed = _configured_v24_runtime_ports(actual_root)
+    if (not record or not desired or record != desired or row['pending_allocation']
+            or row['endpoint_port'] is None
+            or installed.get(name.lower()) != int(row['endpoint_port'])):
+        return 'DEGRADED', missing
+    if str(row['status']).upper() != 'HEALTHY' or not row['runtime_verified']:
+        return 'DEGRADED', str(row['reason'] or 'Runtime activation pending.')
+    host_id = str(state.get('host_id') or '').strip()
+    if not host_id:
+        machine_id = str(state.get('machine_id') or '')
+        host_id = '%s-%s' % (state.get('hostname') or 'host', machine_id[:8] if machine_id else 'local')
+    try:
+        config = _frpc_toml_path(actual_root).read_text(encoding='utf-8')
+    except OSError:
+        return 'DEGRADED', missing
+    required = ('name = "%s-%s"' % (host_id, proxy_id),
+                'localIP = "%s"' % record['local_ip'],
+                'localPort = %s' % record['local_port'],
+                'remotePort = %s' % record['remote_port'])
+    if not any(all(line in block.splitlines() for line in required)
+               for block in config.split('[[proxies]]')[1:]):
+        return 'DEGRADED', missing
+    # Linux can also check the current process/connection epoch after the
+    # apply and again after management I/O. Other platforms retain their
+    # existing fresh native activation proof plus the per-service checks above.
+    if sys.platform.startswith('linux') and not _current_runtime_ready(actual_root, host_id, {proxy_id: record}):
+        return 'DEGRADED', 'Runtime proxy is not ready in the active generation.'
+    return 'HEALTHY', ''
 
 
 def remove_remote_service_from_runtime(

@@ -32,6 +32,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from contextlib import nullcontext
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Optional
@@ -703,7 +704,21 @@ def fetch_server_catalog(root: Optional[str] = None) -> dict:
             "ERROR:\nNo Server management URL is configured for catalog synchronization.\n\n"
             "No changes were applied."
         )
-    return _request_json("GET", base + "/v1/catalog", root=root)
+    # Catalog reads can wait for a network timeout before an offline edit can
+    # decide whether cached state is sufficient. Keep terminal users informed,
+    # without adding output to machine consumers or changing error classes.
+    terminal = sys.stderr.isatty()
+    if terminal:
+        print("Checking Server catalog (request timeout: 8 seconds)...", file=sys.stderr, flush=True)
+    try:
+        catalog = _request_json("GET", base + "/v1/catalog", root=root, timeout=8.0)
+    except Exception:
+        if terminal:
+            print("Server catalog request failed.", file=sys.stderr, flush=True)
+        raise
+    if terminal:
+        print("Server catalog received.", file=sys.stderr, flush=True)
+    return catalog
 
 
 def upsert_remote_service_on_server(
@@ -778,7 +793,8 @@ def report_agent_lifecycle_on_server(
     )
 
 
-def delete_remote_service_on_server(*, root: Optional[str] = None, name: str) -> dict:
+def delete_remote_service_on_server(*, root: Optional[str] = None, name: str,
+                                    expected_publication: Optional[dict] = None) -> dict:
     base = resolve_mgmt_base_url(root)
     if not base:
         raise MgmtSyncError(
@@ -788,6 +804,7 @@ def delete_remote_service_on_server(*, root: Optional[str] = None, name: str) ->
     return _request_json(
         "DELETE",
         base + "/v1/remote-services/" + quote(name, safe=""),
+        body={"expected_publication": expected_publication} if expected_publication is not None else None,
         root=root,
     )
 
@@ -833,6 +850,7 @@ def complete_ai_job_on_server(
         base + "/v1/ai-jobs/complete",
         body,
         root=root,
+        timeout=15.0,  # bounded signed completion payload (up to 64 KiB stdout)
     )
 
 
@@ -1162,6 +1180,23 @@ def apply_catalog_to_agent(plane_db, catalog: dict) -> int:
     return count
 
 
+PUBLICATION_RECEIPT_FIELDS = (
+    "id", "client_id", "name", "row_version", "public_port", "enabled",
+    "service_type", "target_mode", "target_host", "target_port",
+)
+
+
+def _publication_receipt(row):
+    return {field: row[field] for field in PUBLICATION_RECEIPT_FIELDS}
+
+
+def _mutate_publication(plane, auth, *args, **kwargs):
+    allocator = getattr(auth, "allocator", None)
+    guard = getattr(allocator, "remote_service_transaction", None)
+    with guard() if callable(guard) else nullcontext():
+        return plane._mutate(*args, **kwargs)
+
+
 def server_upsert_remote_service(plane, auth: MgmtAuthContext, body: dict) -> dict:
     machine_id = auth.machine_id
     name = str(body.get("name") or "").strip()
@@ -1225,74 +1260,117 @@ def server_upsert_remote_service(plane, auth: MgmtAuthContext, body: dict) -> di
             "for an existing Remote Service. Delete and recreate the Remote Service."
         )
 
-    endpoint_port = None
-    proxy_id = None
-    if preserve is not None:
-        endpoint_port = int(preserve)
-    elif existing and existing["public_port"]:
-        endpoint_port = int(existing["public_port"])
-
-    allocator = getattr(auth, "allocator", None)
-    if endpoint_port is None and not enabled:
-        pass
-    elif allocator is not None and enabled:
-        # Authoritative FRP registry allocation (single allocator authority).
-        extra_used = {
-            r[0]
-            for r in plane.conn.execute(
-                "SELECT public_port FROM port_reservations WHERE released = 0 AND public_port IS NOT NULL"
-            )
-        }
-        extra_used |= {
-            r[0]
-            for r in plane.conn.execute(
-                "SELECT public_port FROM published_services WHERE public_port IS NOT NULL AND released = 0"
-            )
-        }
-        try:
-            reserved = allocator.reserve_remote_service_endpoint(
-                machine_id,
-                name,
-                pool_class,
-                local_ip=target_host,
-                local_port=target_port,
-                preserve_port=endpoint_port,
-                extra_used=extra_used,
-            )
-        except Exception as exc:
-            raise MgmtSyncError("Endpoint allocation failed: %s" % exc) from exc
-        endpoint_port = int(reserved["remote_port"])
-        proxy_id = reserved.get("proxy_id")
-    elif endpoint_port is None and enabled:
-        # Test/local path without a live Allocator instance.
-        endpoint_port = v24.allocate_endpoint_port(plane, client["id"], name, pool_class)
-
-    if enabled and runtime_verified and endpoint_port is not None:
-        try:
-            from drlink_upgrade_reconcile import server_destination_reason
-
-            dest_reason = server_destination_reason(
-                plane,
-                destination,
-                owner_client_id=client["id"],
-                destination_client_id=destination_client_id,
-            )
-        except Exception:
-            dest_reason = None
-        if dest_reason:
-            status = "DEGRADED"
-            reason = dest_reason
-        else:
-            status = "HEALTHY"
-            reason = ""
-    elif not enabled:
-        status = "DISABLED"
-        reason = ""
-    else:
-        status = "DEGRADED"
-        reason = "Runtime activation pending."
+    endpoint_port = proxy_id = publication = None
+    status = reason = ""
 
     def write():
+        nonlocal endpoint_port, proxy_id, publication, status, reason
+        # Serialize publication and local allocator bookkeeping together. No
+        # Agent network I/O runs while this Server write transaction is held.
+        existing = plane.conn.execute(
+            "SELECT s.id, s.public_port FROM published_services s "
+            "WHERE s.client_id=? AND s.name=? COLLATE NOCASE AND s.released=0",
+            (client["id"], name),
+        ).fetchone()
+        endpoint_port = None
+        proxy_id = None
+        # The Server reservation is authoritative. An Agent's cached port hint
+        # may be stale after reconnect; it must never move an existing endpoint.
+        if existing is not None and existing["public_port"] is not None:
+            endpoint_port = int(existing["public_port"])
+        elif preserve is not None:
+            endpoint_port = int(preserve)
+
+        allocator = getattr(auth, "allocator", None)
+        if endpoint_port is None and not enabled:
+            pass
+        elif allocator is not None and enabled:
+            # Authoritative FRP registry allocation (single allocator authority).
+            # Exclude only this existing publication's *own* Server reservation.
+            # Its FRP registry proxy may be missing during reconnect/re-render:
+            # treating its held port as a different owner's collision silently
+            # reallocates the public endpoint on enable/reconcile (F002).
+            # Every other reservation/publication remains protected, including
+            # ambiguous/legacy reservations without matching owner IDs.
+            own_id = existing["id"] if existing is not None else None
+            extra_used = {
+                r["public_port"]
+                for r in plane.conn.execute(
+                    "SELECT public_port, client_id, service_id FROM port_reservations "
+                    "WHERE released = 0 AND public_port IS NOT NULL"
+                )
+                if own_id is None or not (
+                    r["client_id"] == client["id"] and r["service_id"] == own_id
+                )
+            }
+            extra_used |= {
+                r["public_port"]
+                for r in plane.conn.execute(
+                    "SELECT id, public_port FROM published_services "
+                    "WHERE public_port IS NOT NULL AND released = 0"
+                )
+                if own_id is None or r["id"] != own_id
+            }
+            try:
+                reserved = allocator.reserve_remote_service_endpoint(
+                    machine_id,
+                    name,
+                    pool_class,
+                    local_ip=target_host,
+                    local_port=target_port,
+                    preserve_port=endpoint_port,
+                    extra_used=extra_used,
+                )
+            except Exception as exc:
+                raise MgmtSyncError("Endpoint allocation failed: %s" % exc) from exc
+            endpoint_port = int(reserved["remote_port"])
+            proxy_id = reserved.get("proxy_id")
+        elif endpoint_port is None and enabled:
+            # Test/local path without a live Allocator instance.
+            endpoint_port = v24.allocate_endpoint_port(plane, client["id"], name, pool_class)
+
+        if enabled and runtime_verified and endpoint_port is not None:
+            try:
+                from drlink_upgrade_reconcile import server_destination_reason
+
+                dest_reason = server_destination_reason(
+                    plane,
+                    destination,
+                    owner_client_id=client["id"],
+                    destination_client_id=destination_client_id,
+                )
+            except Exception:
+                dest_reason = None
+            if dest_reason:
+                status = "DEGRADED"
+                reason = dest_reason
+            else:
+                status = "HEALTHY"
+                reason = ""
+        elif not enabled:
+            status = "DISABLED"
+            reason = ""
+        else:
+            status = "DEGRADED"
+            reason = "Runtime activation pending."
+
+        if endpoint_port is not None:
+            other = plane.conn.execute(
+                "SELECT id FROM published_services WHERE public_port=? AND released=0 "
+                "AND NOT (client_id=? AND name=? COLLATE NOCASE)",
+                (endpoint_port, client["id"], name),
+            ).fetchone()
+            reservation = plane.conn.execute(
+                "SELECT client_id,service_id,service_name FROM port_reservations WHERE public_port=? AND released=0",
+                (endpoint_port,),
+            ).fetchone()
+            own_pending = (reservation and not reservation["service_id"] and
+                           reservation["client_id"] == client["id"] and
+                           str(reservation["service_name"]).lower() == name.lower())
+            if other or (reservation and not own_pending and (existing is None or
+                    reservation["client_id"] != client["id"] or
+                    reservation["service_id"] != existing["id"])):
+                raise MgmtSyncError("Remote Service endpoint is reserved by another publication")
         nested_prev = getattr(plane, "_batch_mode", False)
         plane._batch_mode = True
         try:
@@ -1307,9 +1385,10 @@ def server_upsert_remote_service(plane, auth: MgmtAuthContext, body: dict) -> di
                 public_port=endpoint_port,
             )
             pub = plane.conn.execute(
-                "SELECT id FROM published_services WHERE client_id = ? AND name = ?",
+                "SELECT * FROM published_services WHERE client_id = ? AND name = ?",
                 (client["id"], name),
             ).fetchone()
+            publication = _publication_receipt(pub)
             plane.conn.execute(
                 "INSERT OR REPLACE INTO remote_service_meta"
                 "(service_id, status, pool_class, service_object_id, destination_name, "
@@ -1341,7 +1420,7 @@ def server_upsert_remote_service(plane, auth: MgmtAuthContext, body: dict) -> di
         finally:
             plane._batch_mode = nested_prev
 
-    plane._mutate(
+    _mutate_publication(plane, auth,
         "mgmt set remote-service %s [agent %s]" % (name, machine_id),
         "mgmt set remote service",
         write,
@@ -1371,6 +1450,7 @@ def server_upsert_remote_service(plane, auth: MgmtAuthContext, body: dict) -> di
         "managed_host": host_label,
         "machine_id": machine_id,
         "proxy_id": proxy_id,
+        "publication": publication,
         "generation": 1,
         "runtime_verified": runtime_verified,
         "target_host": target_host,
@@ -1379,46 +1459,74 @@ def server_upsert_remote_service(plane, auth: MgmtAuthContext, body: dict) -> di
     }
 
 
-def server_delete_remote_service(plane, auth: MgmtAuthContext, name: str) -> dict:
+def server_delete_remote_service(plane, auth: MgmtAuthContext, name: str,
+                                 expected_publication: Optional[dict] = None) -> dict:
     machine_id = auth.machine_id
     client = _require_managed_host(plane, machine_id)
-    pub = plane.conn.execute(
-        "SELECT id, public_port FROM published_services WHERE client_id = ? AND name = ? COLLATE NOCASE AND released = 0",
-        (client["id"], name),
-    ).fetchone()
-    if not pub:
-        return {"status": "ABSENT", "name": name}
+    if expected_publication is not None and (
+            not isinstance(expected_publication, dict) or
+            set(expected_publication) != set(PUBLICATION_RECEIPT_FIELDS)):
+        raise MgmtSyncError("Invalid publication cleanup receipt")
 
-    allocator = getattr(auth, "allocator", None)
-    if allocator is not None:
-        try:
-            allocator.release_remote_service_endpoint(machine_id, name)
-        except Exception:
-            pass
+    class PublicationChanged(ControlPlaneError):
+        pass
 
+    outcome = {"status": "ABSENT", "name": name}
     def write():
+        # Compare under the same write lock used by upsert/allocator changes.
+        pub = plane.conn.execute(
+            "SELECT * FROM published_services WHERE client_id=? AND name=? COLLATE NOCASE AND released=0",
+            (client["id"], name),
+        ).fetchone()
+        if pub is None:
+            raise PublicationChanged()
+        if expected_publication is not None and _publication_receipt(pub) != expected_publication:
+            outcome["status"] = "SUPERSEDED"
+            raise PublicationChanged()
+        allocator = getattr(auth, "allocator", None)
+        if allocator is not None:
+            try:
+                released = allocator.release_remote_service_endpoint(machine_id, name)
+            except Exception as exc:
+                raise MgmtSyncError(
+                    "Remote Service endpoint release was not confirmed by the Server allocator. "
+                    "Server publication was not deleted. Inspect diagnostics before retrying."
+                ) from exc
+            expected_port = int(pub["public_port"]) if pub["public_port"] is not None else None
+            returned_port = released.get("released_port") if isinstance(released, dict) else None
+            try:
+                returned_port = int(returned_port) if returned_port is not None else None
+            except (TypeError, ValueError) as exc:
+                raise MgmtSyncError("Server allocator returned an invalid released port.") from exc
+            # A stale disabled upsert can revive only SQLite bookkeeping;
+            # it did not reserve a registry proxy. Ordinary delete stays strict.
+            absent_disabled_cleanup = (expected_publication is not None and
+                                       not pub["enabled"] and returned_port is None)
+            if returned_port != expected_port and not absent_disabled_cleanup:
+                raise MgmtSyncError(
+                    "Server allocator release did not match the published Remote Service port. "
+                    "Server publication was not deleted; check endpoint ownership."
+                )
         if pub["public_port"] is not None:
             plane.conn.execute(
-                "UPDATE port_reservations SET released = 1 WHERE public_port = ?",
-                (pub["public_port"],),
+                "UPDATE port_reservations SET released=1 WHERE public_port=? AND client_id=? AND service_id=?",
+                (pub["public_port"], client["id"], pub["id"]),
             )
-        plane.conn.execute("DELETE FROM remote_service_meta WHERE service_id = ?", (pub["id"],))
+        plane.conn.execute("DELETE FROM remote_service_meta WHERE service_id=?", (pub["id"],))
         plane.conn.execute(
-            "UPDATE published_services SET released = 1, enabled = 0, updated_at = ? WHERE id = ?",
+            "UPDATE published_services SET released=1, enabled=0, row_version=row_version+1, updated_at=? WHERE id=?",
             (utc_now_iso(), pub["id"]),
         )
-        return {
-            "entity": {"type": "remote-service", "id": name, "name": name},
-            "operation": "unset",
-            "after": "agent %s remote-service %s" % (machine_id, name),
-        }
+        outcome.update(status="DELETED", released_port=pub["public_port"])
+        return {"entity": {"type": "remote-service", "id": name, "name": name},
+                "operation": "unset", "after": "agent %s remote-service %s" % (machine_id, name)}
 
-    plane._mutate(
-        "mgmt unset remote-service %s [agent %s]" % (name, machine_id),
-        "mgmt unset remote service",
-        write,
-    )
-    return {"status": "DELETED", "name": name, "released_port": pub["public_port"]}
+    try:
+        _mutate_publication(plane, auth, "mgmt unset remote-service %s [agent %s]" % (name, machine_id),
+                      "mgmt unset remote service", write)
+    except PublicationChanged:
+        pass  # No committed no-op revision for an absent/superseded receipt.
+    return outcome
 
 
 def server_report_agent_lifecycle(plane, auth: MgmtAuthContext, body: dict) -> dict:
@@ -1439,11 +1547,24 @@ def server_report_agent_lifecycle(plane, auth: MgmtAuthContext, body: dict) -> d
         "SELECT agent_heartbeat_at, agent_lifecycle_state FROM clients WHERE id = ?",
         (machine_id,),
     ).fetchone()
+    # Presence can remain fresh while Server verification is lost during
+    # reconciliation. A locally HEALTHY Agent otherwise skips synchronization
+    # forever. Request a new runtime report without treating heartbeat as proof.
+    verification_missing = plane.conn.execute(
+        "SELECT 1 FROM published_services p "
+        "LEFT JOIN remote_service_meta m ON m.service_id = p.id "
+        "WHERE p.client_id = ? AND p.released = 0 AND p.enabled = 1 "
+        "AND COALESCE(m.delete_pending, 0) = 0 "
+        "AND COALESCE(m.runtime_verified, 0) = 0 LIMIT 1",
+        (machine_id,),
+    ).fetchone() is not None
     return {
         "ok": True,
         "state": client["agent_lifecycle_state"] if client else state,
         "heartbeat_at": client["agent_heartbeat_at"] if client else None,
-        "reconcile_required": bool(state == "connected" and not was_fresh),
+        "reconcile_required": bool(
+            state == "connected" and (not was_fresh or verification_missing)
+        ),
     }
 
 
@@ -1542,8 +1663,13 @@ def server_report_remote_service_status(plane, auth: MgmtAuthContext, body: dict
     owners, registry_available = _status_registry_owners(plane, auth)
 
     updated = []
+    changed = False
+
+    class UnchangedStatusReport(ControlPlaneError):
+        """No database mutation or revision is needed for this status replay."""
 
     def write():
+        nonlocal changed
         nested_prev = getattr(plane, "_batch_mode", False)
         plane._batch_mode = True
         try:
@@ -1574,6 +1700,7 @@ def server_report_remote_service_status(plane, auth: MgmtAuthContext, body: dict
                     (pub["id"],),
                 ).fetchone()
                 if meta is None:
+                    changed = True
                     plane.conn.execute(
                         "INSERT INTO remote_service_meta"
                         "(service_id, status, pool_class, destination_name, destination_client_id, "
@@ -1604,6 +1731,7 @@ def server_report_remote_service_status(plane, auth: MgmtAuthContext, body: dict
                     missing_registry_port_is_stale=False,
                 )
                 if stale and pub["public_port"] is not None:
+                    changed = True
                     _release_stale_port(
                         plane,
                         int(pub["public_port"]),
@@ -1639,6 +1767,13 @@ def server_report_remote_service_status(plane, auth: MgmtAuthContext, body: dict
                 projection = _canonical_status_projection(name, pub, meta, status, extra or "")
                 pending = int(projection["pending_allocation"])
                 verified_flag = 1 if status == "HEALTHY" else 0
+                # Return the Server's *validated* runtime result to the Agent.
+                # Omitting this field made the Agent ACK reconciler clear
+                # runtime_verified even after a successful live proxy apply,
+                # leaving the public view falsely DEGRADED on every sync.
+                # Never echo the unvalidated Agent claim; HEALTHY is only
+                # computed by effective_remote_service_status above.
+                projection["runtime_verified"] = bool(verified_flag)
                 try:
                     current_verified = int(meta["runtime_verified"] or 0)
                 except (KeyError, IndexError, TypeError):
@@ -1649,12 +1784,18 @@ def server_report_remote_service_status(plane, auth: MgmtAuthContext, body: dict
                     or int(meta["pending_allocation"] or 0) != pending
                     or current_verified != verified_flag
                 ):
+                    changed = True
                     plane.conn.execute(
                         "UPDATE remote_service_meta SET status = ?, reason = ?, pending_allocation = ?, "
                         "runtime_verified = ? WHERE service_id = ?",
                         (status, extra or "", pending, verified_flag, pub["id"]),
                     )
                 updated.append(projection)
+            if not changed:
+                # Repeated Agent heartbeats still receive the validated status
+                # projection, but must not flood the Server's configuration
+                # history or invalidate unrelated sourceRevision consumers.
+                raise UnchangedStatusReport()
             return {
                 "entity": {"type": "remote-service-status", "id": machine_id, "name": machine_id},
                 "operation": "status",
@@ -1663,11 +1804,16 @@ def server_report_remote_service_status(plane, auth: MgmtAuthContext, body: dict
         finally:
             plane._batch_mode = nested_prev
 
-    plane._mutate(
-        "mgmt remote-service status [agent %s]" % machine_id,
-        "mgmt remote service status",
-        write,
-    )
+    try:
+        plane._mutate(
+            "mgmt remote-service status [agent %s]" % machine_id,
+            "mgmt remote service status",
+            write,
+        )
+    except UnchangedStatusReport:
+        # _mutate rolled back the no-op transaction. All statuses were still
+        # validated, and no mutation/audit/revision took place.
+        pass
     return {"updated": updated, "services": updated, "count": len(updated)}
 
 
@@ -1720,7 +1866,8 @@ class _MgmtHandler(BaseHTTPRequestHandler):
 
     def do_DELETE(self):  # noqa: N802
         try:
-            self._dispatch("DELETE", b"")
+            length = int(self.headers.get("Content-Length") or "0")
+            self._dispatch("DELETE", self.rfile.read(length) if length else b"")
         except Exception as exc:
             self._send(500, {"error": str(exc)})
 
@@ -1812,7 +1959,11 @@ def handle_allocator_http(
             return 200, _with_response_mac(result, auth)
         if method.upper() == "DELETE" and parsed.startswith("/v1/remote-services/"):
             name = unquote(parsed[len("/v1/remote-services/") :])
-            result = server_delete_remote_service(plane, auth, name)
+            data = json.loads(raw.decode("utf-8") or "{}") if raw else {}
+            if not isinstance(data, dict):
+                return 400, {"error": "invalid JSON"}
+            result = server_delete_remote_service(plane, auth, name,
+                                                 expected_publication=data.get("expected_publication"))
             return 200, _with_response_mac(result, auth)
         if method.upper() == "POST" and parsed == "/v1/ai-jobs/claim":
             data = json.loads(raw.decode("utf-8") or "{}") if raw else {}

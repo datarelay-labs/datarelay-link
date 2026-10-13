@@ -145,6 +145,30 @@ echo "$manual_set" | grep -q '"action": "create_enrollment"' \
   || fail "set enrollment manual must dispatch create_enrollment"
 pass "SET_ENROLLMENT_ZERO_TOUCH_PUBLIC"
 
+# F005: invalid configuration selection must not discard the earlier name/note.
+# All three platform choices must retry only the mistaken menu step; they
+# must not return to the REPL or silently restart the identification wizard.
+for platform in linux windows macos; do
+  case "$platform" in
+    linux) platform_id=1; option=1; platform_hi=3 ;;
+    windows) platform_id=2; option=2; platform_hi=4 ;;
+    macos) platform_id=3; option=1; platform_hi=3 ;;
+  esac
+  run_repl "$SERVER" "$WORKDIR/zt-invalid-$platform.out" \
+    "set enrollment zero-touch" "$platform_id" "draft-$platform" "keep-$platform" \
+    "ec2-user" "$option" "aella" 22 exit \
+    || fail "F005 invalid configuration selector $platform"
+  grep -q "ERROR: select 1-${platform_hi}" "$WORKDIR/zt-invalid-$platform.out" \
+    || fail "F005 invalid selector feedback missing for $platform"
+  grep -qF -- "--client-name draft-$platform" "$WORKDIR/zt-invalid-$platform.out" \
+    || fail "F005 draft name lost after invalid selector $platform"
+  grep -qF -- "--note keep-$platform" "$WORKDIR/zt-invalid-$platform.out" \
+    || fail "F005 draft description lost after invalid selector $platform"
+  ident_count="$(grep -c 'Managed Host details' "$WORKDIR/zt-invalid-$platform.out" || true)"
+  [[ "$ident_count" == "1" ]] || fail "F005 details prompted $ident_count times for $platform"
+done
+pass "F005_ZERO_TOUCH_INVALID_SELECTION_PRESERVES_DRAFT"
+
 # --- Guided: SSH only ---
 # set enrollment zero-touch → platform(Linux) → identity → SSH only
 run_repl "$SERVER" "$WORKDIR/zt-ssh.out" \

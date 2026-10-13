@@ -107,8 +107,12 @@ if frp_macos_launchd_running; then
   exit 1
 fi
 stop_body="$(awk '/^frp_client_stop\(\)/,/^frp_client_install_ai_agent_unit\(\)/' "$ROOT/lib/frp-client-common.sh")"
-printf '%s\n' "$stop_body" | grep -q 'frp_macos_launchd_stop'
-if printf '%s\n' "$stop_body" | grep -q 'frp_macos_launchd_kickstart'; then
+# Avoid grep -q exiting early and causing printf EPIPE under pipefail on macOS.
+if [[ "$stop_body" != *frp_macos_launchd_stop* ]]; then
+  echo "FAIL: frp_client_stop no longer stops launchd on macOS" >&2
+  exit 1
+fi
+if [[ "$stop_body" == *frp_macos_launchd_kickstart* ]]; then
   echo "FAIL: frp_client_stop still kickstarts on macOS" >&2
   exit 1
 fi

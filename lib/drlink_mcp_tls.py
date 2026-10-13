@@ -1264,7 +1264,8 @@ def reload_frontend(root: Optional[str | Path] = None) -> None:
         raise McpTlsError("insufficient permission to reload frontend", failure_class="PROXY_RELOAD_FAILED") from exc
 
 
-def refresh_frontend_config(root, *, enabled: bool = True) -> Optional[dict]:
+def refresh_frontend_config(root, *, enabled: bool = True,
+                            acme_challenge_hostname: Optional[str] = None) -> Optional[dict]:
     """Converge the installed derived frontend using the canonical renderer.
 
     Isolated material-only fixtures have no installed frontend. Live activation
@@ -1286,7 +1287,12 @@ def refresh_frontend_config(root, *, enabled: bool = True) -> Optional[dict]:
         value = Path(value)
         return str(value if base == Path('/') or value == base or base in value.parents else base / str(value).lstrip('/'))
     active = active_dir(base)
-    meta = json.loads((active / 'meta.json').read_text()) if enabled else {}
+    active_meta = active / 'meta.json'
+    if enabled and not active_meta.is_file() and any(
+        (active / name).exists() for name in ('fullchain.pem', 'privkey.pem')
+    ):
+        raise McpTlsError('active certificate metadata missing', failure_class='PROXY_CONFIG_INVALID')
+    meta = json.loads(active_meta.read_text()) if enabled and active_meta.is_file() else {}
     host = str(meta.get('hostname') or '')
     port = int(cfg.get('frp_control_public_port') or frontend.DEFAULT_FRONTEND_PORT)
     rendered = frontend.render_nginx_conf(
@@ -1299,9 +1305,12 @@ def refresh_frontend_config(root, *, enabled: bool = True) -> Optional[dict]:
         pid_path=str(base / 'run/drlink/frontend/nginx.pid'),
         temp_root=str(base / 'var/lib/drlink/nginx'),
         mcp_tls_hostname=host,
-        mcp_tls_cert=str(active / 'fullchain.pem') if enabled else '',
-        mcp_tls_key=str(active / 'privkey.pem') if enabled else '',
-        acme_webroot=str(acme_webroot(base)) if meta.get('mode') == MODE_AUTO_ACME else '',
+        mcp_tls_cert=str(active / 'fullchain.pem') if enabled and meta else '',
+        mcp_tls_key=str(active / 'privkey.pem') if enabled and meta else '',
+        acme_webroot=str(acme_webroot(base)) if (
+            meta.get('mode') == MODE_AUTO_ACME or acme_challenge_hostname
+        ) else '',
+        acme_http_hostname=acme_challenge_hostname or '',
     )
     nginx = shutil.which('nginx')
     if not nginx:
@@ -1319,6 +1328,35 @@ def refresh_frontend_config(root, *, enabled: bool = True) -> Optional[dict]:
     finally:
         Path(candidate).unlink()
     return {'path': path, 'previous': old, 'port': port}
+
+
+def restore_acme_http01_frontend(root, snapshot: Optional[dict], *, reload: bool = True) -> None:
+    """Roll back a temporary HTTP-01 nginx route; never touch TLS key material."""
+    if not snapshot:
+        return
+    _write_public_file(snapshot['path'], snapshot['previous'], 0o600)
+    if reload:
+        reload_frontend(root)
+
+
+def prepare_acme_http01_frontend(root, hostname: str, *, reload: bool = True) -> Optional[dict]:
+    """Serve HTTP-01 BEFORE a first certificate exists, retaining FRP/WSS SNI.
+
+    The public hostname's TCP/80 route is challenge-only and requires neither
+    an issued MCP certificate nor any private-key exposure. Retain the exact
+    prior frontend bytes for rollback on failure; TLS-443 stays unchanged.
+    """
+    host = canonicalize_hostname(hostname)
+    ensure_http01_publish_permissions(root)
+    snapshot = refresh_frontend_config(root, acme_challenge_hostname=host)
+    try:
+        if reload and snapshot:
+            reload_frontend(root)
+    except Exception:
+        if snapshot:
+            restore_acme_http01_frontend(root, snapshot, reload=reload)
+        raise
+    return snapshot
 
 
 def frontend_tls_material(root) -> dict:
@@ -1593,6 +1631,7 @@ def issue_and_activate(plane, root=None, *, reload: bool = True, health_port: Op
     _audit(plane, "acme_issuance_requested" if mode == MODE_AUTO_ACME else "private_ca_issuance_requested",
            hostname=host, mode=mode)
 
+    acme_frontend_snapshot = None
     try:
         if mode == MODE_AUTO_ACME:
             pre = preflight_hostname(host, require_public_dns=True)
@@ -1605,6 +1644,10 @@ def issue_and_activate(plane, root=None, *, reload: bool = True, health_port: Op
             # Guard: never let automated tests silently hit production if env says staging.
             if (state.get("acme_environment") or "").upper() == ACME_ENV_STAGING and "staging" not in directory and not directory_url_override:
                 directory = LE_STAGING_DIRECTORY
+            # Fresh certificates have no active MCP TLS leaf yet. Serve the
+            # HTTP-01 challenge on 80 before contacting the ACME CA, while
+            # preserving the existing FRP/WSS TLS identity on 443.
+            acme_frontend_snapshot = prepare_acme_http01_frontend(root, host, reload=reload)
             meta = issue_acme_certificate(
                 root,
                 hostname=host,
@@ -1616,9 +1659,17 @@ def issue_and_activate(plane, root=None, *, reload: bool = True, health_port: Op
         else:
             raise McpTlsError("unsupported TLS mode for issue", failure_class="TLS_MODE_INVALID")
     except McpTlsError as exc:
+        rollback_error = None
+        if acme_frontend_snapshot:
+            try:
+                restore_acme_http01_frontend(root, acme_frontend_snapshot, reload=reload)
+            except Exception as restore_exc:
+                rollback_error = restore_exc
         state = load_state(plane)
         state["pending_intent"] = None
-        state["last_failure_class"] = exc.failure_class
+        state["last_failure_class"] = (
+            "PROXY_ROLLBACK_FAILED" if rollback_error else exc.failure_class
+        )
         state["last_failure_at"] = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
         # Keep prior valid cert status if present
         if state.get("fingerprint_sha256"):
@@ -1627,18 +1678,29 @@ def issue_and_activate(plane, root=None, *, reload: bool = True, health_port: Op
             state["status"] = STATUS_INVALID
         save_state(plane, state)
         _audit(plane, "acme_issuance_failed" if mode == MODE_AUTO_ACME else "certificate_issuance_failed",
-               hostname=host, mode=mode, result="failed", failure_class=exc.failure_class)
+               hostname=host, mode=mode, result="failed",
+               failure_class=state["last_failure_class"])
+        if rollback_error:
+            raise McpTlsError(
+                "ACME failed and the prior frontend could not be restored",
+                failure_class="PROXY_ROLLBACK_FAILED",
+            ) from rollback_error
         raise
 
-    state = activate_material(
-        plane,
-        root,
-        meta,
-        reload=reload,
-        health_port=health_port,
-        health_ca=health_ca,
-        validate_proxy_cfg=validate_proxy_cfg,
-    )
+    try:
+        state = activate_material(
+            plane,
+            root,
+            meta,
+            reload=reload,
+            health_port=health_port,
+            health_ca=health_ca,
+            validate_proxy_cfg=validate_proxy_cfg,
+        )
+    except Exception:
+        if acme_frontend_snapshot:
+            restore_acme_http01_frontend(root, acme_frontend_snapshot, reload=reload)
+        raise
     _audit(
         plane,
         "acme_issuance_succeeded" if mode == MODE_AUTO_ACME else "certificate_issuance_succeeded",

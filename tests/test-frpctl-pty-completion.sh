@@ -45,23 +45,17 @@ payload = {
 }
 env["FRP_CTL_GRAMMAR_PAYLOAD"] = json.dumps(payload)
 
-master, slave = pty.openpty()
-pid = os.fork()
+# pty.fork() attaches a controlling terminal on both Darwin/libedit and
+# Linux/GNU Readline. An inherited openpty fd after setsid() is not a
+# controlling TTY on macOS and may cause the REPL to exit after one action.
+pid, master = pty.fork()
 if pid == 0:
-    os.close(master)
-    os.setsid()
-    os.dup2(slave, 0)
-    os.dup2(slave, 1)
-    os.dup2(slave, 2)
-    if slave > 2:
-        os.close(slave)
     os.chdir(root)
     os.execve(
         sys.executable,
         [sys.executable, "-u", str(Path(root) / "lib" / "frp_ctl_repl.py")],
         env,
     )
-os.close(slave)
 
 buf = b""
 
@@ -164,6 +158,31 @@ if "Unknown command: s\n" in text or "Unknown command: s\r" in text:
     sys.stderr.write(text)
     raise SystemExit("ambiguous Tab executed partial token")
 print("PTY_AMBIGUOUS_SAFE=PASS")
+
+# Named one-shot configuration fields must reach Readline without dispatch.
+for resource, partial, completed in (
+    ("network-object", "t", "type"),
+    ("service-object", "p", "port"),
+    ("remote-access", "m", "mode"),
+    ("network-group", "m", "members"),
+    ("service-group", "m", "members"),
+    ("permission-object", "p", "permissions"),
+    ("permission-group", "m", "members"),
+    ("internet-access", "m", "mode"),
+    ("ai-access", "pa", "paths"),
+):
+    os.write(master, b"\x15")
+    read_some(0.1)
+    start = len(buf)
+    line = "set %s fixture %s" % (resource, partial)
+    os.write(master, line.encode() + b"\t")
+    read_some(0.6)
+    observed = buf[start:].decode("utf-8", "replace")
+    if "set %s fixture %s" % (resource, completed) not in observed:
+        raise SystemExit("named field Tab failed: " + observed)
+    if "STUB_FRPCTL" in observed:
+        raise SystemExit("named field Tab dispatched a mutation")
+print("PTY_NAMED_CONFIGURATION_FIELDS=PASS")
 
 try:
     os.write(master, b"\x04")

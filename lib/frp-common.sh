@@ -1771,6 +1771,9 @@ frp_select_compatible_python() {
   local candidate bin
   bin="$(type -P python3 2>/dev/null || true)"
   if [[ -n "$bin" ]] && "$bin" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 7) else 1)' >/dev/null 2>&1; then
+    # PATH may select /usr/local/bin/python3 while systemd's fixed
+    # /usr/bin/python3 remains the unsupported distribution interpreter.
+    _FRP_COMPAT_PYTHON_BIN="$bin"
     return 0
   fi
   for candidate in python3.13 python3.12 python3.11 python3.10 python3.9 python3.8 python3.7; do
@@ -2380,7 +2383,7 @@ if ! declare -F frp_emit_update_rollback_recovery_guidance >/dev/null 2>&1; then
     echo "  sudo drlink system diagnostics" >&2
     echo "  sudo drlink system support-bundle" >&2
     echo >&2
-    echo "Do not re-enroll clients or delete state manually." >&2
+    echo "Do not re-enroll Agent Hosts or delete state manually." >&2
   }
 fi
 

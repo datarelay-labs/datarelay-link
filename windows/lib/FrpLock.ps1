@@ -17,10 +17,27 @@ function Get-FrpClientLockPath {
 }
 
 function Test-FrpLockPidAlive {
-    param([string]$ProcessId)
+    param([string]$ProcessId, [string]$PidPath)
     if (-not $ProcessId -or $ProcessId -notmatch '^[0-9]+$') { return $false }
     try {
-        $null = Get-Process -Id ([int]$ProcessId) -ErrorAction Stop
+        $holder = Get-Process -Id ([int]$ProcessId) -ErrorAction Stop
+        # Every client management lock is written with the PowerShell $PID.
+        # Windows may reuse that numeric PID for unrelated processes after an
+        # interrupted command. Never let svchost.exe or another non-PowerShell
+        # process indefinitely block updates, enrollment, or local recovery.
+        if ($holder.ProcessName -notin @('powershell', 'pwsh')) { return $false }
+        if ($PidPath -and (Test-Path -LiteralPath $PidPath)) {
+            try {
+                $pidWrittenAt = (Get-Item -LiteralPath $PidPath -ErrorAction Stop).LastWriteTimeUtc
+                $processStartedAt = $holder.StartTime.ToUniversalTime()
+                # A new PowerShell process started after this pid file was
+                # written is also PID reuse, not the original lock owner.
+                if ($processStartedAt -gt $pidWrittenAt) { return $false }
+            } catch {
+                # Unknown process timestamps are NOT proof of a stale lock.
+                return $true
+            }
+        }
         return $true
     } catch {
         return $false
@@ -40,7 +57,7 @@ function Enter-FrpClientLock {
         if (Test-Path -LiteralPath $pidPath) {
             try { $old = ([string](Get-Content -LiteralPath $pidPath -ErrorAction SilentlyContinue | Select-Object -First 1)).Trim() } catch { $old = '' }
         }
-        if (Test-FrpLockPidAlive -ProcessId $old) {
+        if (Test-FrpLockPidAlive -ProcessId $old -PidPath $pidPath) {
             Write-Host 'ERROR: another Data Relay Link Agent management operation is already running.'
             return $false
         }

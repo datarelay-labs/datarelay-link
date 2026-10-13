@@ -13,6 +13,9 @@
 > **Release validation:** docs/RELEASE_VALIDATION.md
 > **Release checklist:** docs/RELEASE_CHECKLIST.md
 > **Status:** Normative living document
+> **Operator execution procedure:** docs/E2E_EXECUTION_PROCEDURE.md (per-lane readiness, independent actors, frozen evidence); the auditor reads this entire canonical document before any user action.
+> **Owner-scoped test execution (2026-10-12):** The previous global `LAB_GO` / `phase-state.json` gate is removed as a prerequisite for independently authorized tests. Run CLI FCS and Full User E2E on eligible installed and approved test hosts. Exclude hosts where enrollment or a specific platform/tool operation is denied; record only those canonical criteria as `BLOCKED` / `NOT_RUN`, not PASS. Preserve every canonical ID, separate real Direct/AI actors, real traffic/soak and the two complete same-HEAD PASS loops required before release. Never bypass a genuine security denial.
+> **Codex both-role owner override (#165):** Codex is the owner-selected independent Direct User, AI-assisted User and tool-free AI Adviser executor. Use `docs/CODEX_DUAL_ROLE_TEST_PROTOCOL.md` and preserve same goals, fresh separate threads, first advice, public CLI actions and prospective evidence. Codex also owns defect reproduction, source fixes, focused tests, authorized candidate installation and retesting after freezing evidence; no ChatGPT implementation handoff is required. Global Lab NOT_READY no longer forbids independent tests; actual denied operations still cannot run.
 
 
 ### Continuous execution and finding accumulation
@@ -64,43 +67,45 @@ A release-qualification request uses this full suite plus the exact-HEAD double-
 
 ### 1.1 User E2E execution ownership
 
-FULL_USER_E2E is executed and independently evaluated by **ChatGPT**, not by Cursor.
+**Codex owns the complete test-and-fix loop for Issue #165**, following the execution rule in `AGENTS.md`. Codex coordinates the Direct CLI User, AI-assisted User, separate tool-free AI Adviser and auditor contexts under one RUN_ID, freezes evidence, fixes verified defects, tests and installs the authorized candidate, and performs the required retest. Role isolation is an evidence boundary, not a handoff to another implementer.
 
-This is a hard ownership rule:
+This is an owner-selected tester identity rule (the current explicit owner overrides the repository default):
 
 ~~~text
-USER_E2E_EXECUTOR=ChatGPT
-USER_E2E_FINAL_AUDITOR=ChatGPT
+USER_E2E_EXECUTOR=OWNER_SELECTED_RUNTIME
+ISSUE_165_USER_E2E_EXECUTOR=CODEX
+USER_E2E_FINAL_AUDITOR=OWNER_SELECTED_RUNTIME
+ISSUE_165_USER_E2E_FINAL_AUDITOR=CODEX
 CURSOR_MAY_EXECUTE_FULL_USER_E2E=NO
 CURSOR_MAY_DECLARE_USER_E2E_PASS=NO
 ~~~
 
-FULL_USER_E2E never chooses or starts an implementation agent. Product remediation is a separate post-run Engineering workflow and must use the implementer authorized by the active Work Packet and `AGENTS.md`. The repository default is ChatGPT Chat; Cursor remains disabled unless the owner explicitly reactivates it for that Work Packet.
+Codex continues from frozen findings into authorized remediation and retesting without another owner prompt. Separate genuine actor knowledge contexts and immutable candidate evidence remain required; remediation never rewrites a completed test result.
 
 The required loop is:
 
 ~~~text
-ChatGPT
+OWNER_SELECTED_TEST_EXECUTOR (CODEX for Issue #165)
 → pin exact candidate HEAD/build
 → execute FULL_USER_E2E to exhaustion
 → freeze evidence and final findings
 → update the active Work Packet once
 
 If implementation change is required after the run:
-  Engineering workflow
-  → use the currently authorized implementer from AGENTS.md / Work Packet
+  Codex continues the same authorized workstream
   → implement the bounded fix
   → run implementation-level deterministic tests
+  → install/update the candidate on authorized participating test hosts
   → report exact branch/HEAD/evidence
 
-ChatGPT
+OWNER_SELECTED_TEST_EXECUTOR (CODEX for Issue #165, per-lane authorized accessible host)
 → independently verify the implementation result with targeted deterministic regression as supporting evidence
 → because product/public-surface/contract remediation changed the candidate, start a brand-new **complete FULL_USER_E2E run from the beginning with a new RUN_ID**
 → repeat complete run → final report/readback/offboarding → remediation → complete rerun with no fixed pass limit until the latest complete run has zero new/unresolved actionable findings and zero mandatory FAIL/PARTIAL/BLOCKED
 → make the final E2E PASS/PARTIAL/FAIL determination only from the latest complete persona-led run
 ~~~
 
-Implementation-agent output may be supporting evidence for static/source review, isolated deterministic checks, or remediation verification, but it does **not** substitute for ChatGPT's requested persona-led User E2E execution.
+Implementation-agent output may be supporting evidence for static/source review, isolated deterministic checks, or remediation verification, but it does **not** substitute for the **owner-selected CODEX** first-time Direct/AI persona-led User E2E in Issue #165. No scripted test may impersonate either Codex actor.
 
 A Cursor session must never be treated as the executor of an unqualified request such as:
 
@@ -113,11 +118,14 @@ User E2E
 전수 사용자 테스트
 ~~~
 
-If ChatGPT cannot execute a mandatory scenario because the real environment is unavailable, the result is `BLOCKED_ENVIRONMENT`; the scenario must not be delegated to Cursor merely to obtain PASS.
+If the owner-selected tester cannot execute a mandatory scenario because the real environment is unavailable, the result is `BLOCKED_ENVIRONMENT`; the scenario must not be delegated to Cursor merely to obtain PASS.
 
-Historical PASS results, synthetic tests, unit tests, Docker-only results, Cursor-run results, or results from another Git HEAD do not replace a requested real User E2E run by ChatGPT.
+Historical PASS results, synthetic tests, unit tests, Docker-only results, Cursor-run results, or results from another Git HEAD do not replace a requested real User E2E run by the owner-selected tester.
 
 If product code, dependencies, generated runtime artifacts, or the tested build changes during a full pass, record the new HEAD/build identity and invalidate the affected pass. For final release qualification, the double-pass counter resets as defined by the release validation policy.
+
+
+For this owner-selected Work Packet, Codex must read the full current canonical contract, then follow `docs/CODEX_DUAL_ROLE_TEST_PROTOCOL.md` for **both** independent Direct and AI-assisted roles. The same separated role sessions may continue across scenarios with fresh per-scenario evidence; a cold-start user scenario still requires its own clean actor. Preserve genuine public CLI advice, exact first adviser output and all evidence. Codex fixes verified product defects under the current owner authorization after freezing test evidence, without modifying a candidate during its frozen user-test pass. The global Lab GO/phase state is **not** a start prerequisite for independently authorized Full User E2E lanes. The prior 116-ID frozen run is immutable; a missing AI mirror or excluded host remains PARTIAL/BLOCKED/NOT_RUN, never PASS.
 
 ## 1.2 Immediate-execution contract (hard gate)
 
@@ -771,6 +779,16 @@ Any qualifying product/dependency/generated-artifact change resets the release p
 
 Use disposable or explicitly designated test systems for destructive scenarios.
 
+### 5.0 Independently assigned two-Server test roles
+
+Where the owner assigns **two distinct DRLink Server environments**, record their actual addresses in the **private per-RUN_ID lab host inventory** and follow this simple test routing rule:
+
+- **MCP_DNS_SERVER — MCP and DNS/hostname tests only:** Public DNS resolution, public/ bootstrap hostname behavior and fallback, public TLS/HTTPS for the MCP endpoint, `/mcp`, OAuth and real ChatGPT consent, MCP-related AI Identity/Access, MCP authorization/denial, MCP concurrency/performance and applicable Plugin cases. This includes the DNS/hostname criteria in U-009, A-018 and S-017, and MCP cases such as U-007, U-011, A-006, C-006, P-011 and applicable X scenarios. Evaluate the actual external DNS and trusted HTTPS behavior on this Server only.
+- **FUNCTION_PERFORMANCE_SERVER — every other test:** All non-MCP, non-DNS/hostname product features, normal CLI, initial Server/Agent installation, native platforms, enrollment, Remote Access, Internet Access, Remote Services, security policies, failures/recovery, concurrent user traffic, performance, 60-second warmup, 300-second steady measurements and the 3,600-second Soak, including F001/F007 continuity. Do **not** run those tests on the MCP/DNS Server.
+- **Mixed-scope scenarios:** Where one canonical scenario contains both kinds of checks (for example U-009, U-013, A-016, A-018, S-001 or S-017), route **each specific check** to its matching Server. Do not treat a mixed scenario as a requirement to repeat all its checks on both Servers, or as an automatic cross-Server integration prerequisite. Retain the original scenario ID and combine its actual evidence without changing coverage.
+- This assignment **does not create a new VM-detection, VM-provisioning, snapshot or snapshot-restore gate**. Use the already assigned existing test hosts. Continue to respect any pre-existing authorization/security restriction that is genuinely required for an individual destructive operation; do not apply a missing MCP certificate to unrelated functionality/Soak checks.
+- Record the independently observed Source HEAD for each Server and the actual evidence for its assigned checks. Keep lab-specific addresses and management routes in the owner-private test map, not this portable canonical contract. Preserve all 116 scenarios, the real Direct+AI actor method and the two same-HEAD release qualification passes; no preparation-only check is an E2E PASS.
+
 Minimum full topology:
 
 ~~~text
@@ -910,7 +928,47 @@ The current configured estate is sufficient by contract: do not stop a run or as
 
 ### 5.3 Mandatory pre-run clean-room state gate
 
-Before any FULL_USER_E2E product workflow begins, prepare every assigned test host so results cannot be contaminated by a previous run. **Historical product state, stale test services, cached endpoints, prior enrollment state, leftover load generators, or old temporary artifacts must never be accepted as the starting state of a new Full User E2E.**
+**Owner-authorized destructive TEST HOST scope (2026-10-11):** Every host
+explicitly assigned in the current owner-private E2E host inventory is a
+**disposable test host**. The owner accepts complete loss of DRLink test state,
+temporary test data, service interruption, failed installs, reboots and even
+a host becoming unusable as outcomes of legitimate test operations. **Do not
+pause to ask for another owner approval merely because one of those test hosts
+or its test product state could be damaged.** This applies only to the named,
+assigned test hosts: unrelated production, other-project VMs, excluded hosts,
+shared management infrastructure and historical immutable test evidence are
+not part of that authorization.
+
+**Mandatory execution order on each assigned test host:**
+
+1. Record only the minimum pre-clean identity, previous installation state
+   and any existing explicitly protected test evidence.
+2. **Clean the prior test installation, enrollment, product state, previous
+   RUN_ID targets/load services and stale test artifacts before testing.**
+   Use supported public cleanup/uninstall for the role where permitted;
+   observe the actual result rather than assuming that cleanup succeeded.
+3. Verify the clean host has no active previous-run product process, service
+   unit, endpoint, reservation or disposable test listener. Preserve the
+   management route required to reach the test host.
+4. Install and attest the frozen candidate for that host's designated role,
+   then start its assigned real CLI, functional, error/recovery and load/Soak
+   scenarios. Repeat **clean → install → test → diagnose → fix → clean →
+   retest** as required until testable bugs are resolved; a broken host is
+   a test result, not a reason to avoid testing.
+5. If a **specific cleanup effect** is denied by an actual tool/platform
+   security control, **do not disguise, reroute or retry that denied effect**
+   under another command/tool/host. Mark only the dependent host or criterion
+   BLOCKED and continue independently clean and authorized test lanes.
+   Test-host disposability alone cannot override a security-tool denial.
+
+No new VM certification, extra snapshot, snapshot-restore or extra host
+requirement is created by this authorization. Existing operation-specific
+rollback/backup requirements for scenarios that actually test restore remain.
+The owner's two-Server split is unchanged: only MCP/DNS/hostname criteria
+on MCP_DNS_SERVER; **all other** tests, including normal installation and
+long Soak, on FUNCTION_PERFORMANCE_SERVER.
+
+Before a host begins its dependent FULL_USER_E2E product workflow, prepare that participating host so results cannot be contaminated by a previous run. **Historical product state, stale test services, cached endpoints, prior enrollment state, leftover load generators, or old temporary artifacts must never be accepted as the starting state of a new Full User E2E.**
 
 The cleanup step happens after host reachability discovery but before fresh Server/Agent installation, enrollment, command-discovery personas, baseline traffic, or performance measurement.
 
@@ -961,7 +1019,7 @@ DIRTY_SOURCE_USED_TO_BUILD_OR_INSTALL=NO
 CLEAN_STATE_RESULT=PASS|FAIL|BLOCKED_ENVIRONMENT
 ~~~
 
-Aggregate hard gate before the active User E2E begins:
+Per-host clean-room eligibility before that host participates in a dependent scenario; the aggregate below is a final complete-run qualification requirement, never a global start veto:
 
 ~~~text
 ALL_REACHABLE_ASSIGNED_HOSTS_CLEAN=PASS
@@ -981,7 +1039,7 @@ Development-worktree dirtiness is **not** test-host contamination by itself and 
 
 If any assigned host fails this gate, clean/recover that host before using it. Do not silently continue and later interpret inherited state as a product PASS. If cleanup cannot be completed, mark only scenarios depending on that host `BLOCKED_ENVIRONMENT` and continue independent clean hosts.
 
-After this gate passes, create the new RUN_ID and all subsequent product/test state from scratch. Every enrollment, endpoint allocation, Object/Group/Rule, AI identity, certificate/config override, temporary target, load process, Bundle and evidence artifact used for PASS must be attributable to the current RUN_ID or an explicitly documented current-run prerequisite.
+Create a new RUN_ID and, after each participating host passes its applicable clean-room checks, create its subsequent product/test state from scratch. Every enrollment, endpoint allocation, Object/Group/Rule, AI identity, certificate/config override, temporary target, load process, Bundle and evidence artifact used for PASS must be attributable to the current RUN_ID or an explicitly documented current-run prerequisite.
 
 ### 5.4 Spawned-process and session registry / cleanup gate
 
@@ -2016,13 +2074,19 @@ Verify support output identifies Agent Host role, includes useful provenance, an
 Agent Host:
 
 ~~~text
-system update check-engine
 system update product
 system update engine
 system version
 ~~~
 
-Verify product and upstream engine versions remain separate, check-engine is read-only, product update and engine update are independently discoverable/actions, update does not require ordinary re-enrollment, and endpoint/identity/state are preserved.
+Server (read-only upstream release inspection):
+
+~~~text
+system update check-engine
+system version
+~~~
+
+Verify product and upstream engine versions remain separate, Server check-engine is read-only, Agent product and engine updates are independently discoverable/actions, update does not require ordinary re-enrollment, and endpoint/identity/state are preserved. The Agent must not advertise a Server-only check-engine action; an Agent invocation must give an actionable Server-only explanation without changing Agent state.
 
 ## O-010 — Reboot/autostart recovery — MANDATORY
 
@@ -2317,6 +2381,8 @@ system diagnostics
 ~~~
 
 Validate the newly created backup before restore. Exercise at least one invalid/corrupt backup through `system backup validate` and require a clear failure before any restore mutation.
+
+A known-invalid restore archive must fail before offering live replacement confirmation. Restored backup-time host presence and proxy verification are stale: require fresh Agent runtime verification and actual SSH/HTTP/TCP traffic recovery on the preserved identities/endpoints before accepting restored health.
 
 Restore into the supported clean/recovery topology.
 
@@ -3656,7 +3722,6 @@ system autostart enable
 system autostart disable
 
 system update product
-system update check-engine
 system update engine
 system synchronize
 
@@ -3983,8 +4048,8 @@ A full run must end with a summary at least equivalent to:
 
 ~~~text
 PHASE=FULL_USER_E2E
-EXECUTOR=ChatGPT
-FINAL_AUDITOR=ChatGPT
+EXECUTOR=OWNER_SELECTED_RUNTIME
+FINAL_AUDITOR=OWNER_SELECTED_RUNTIME
 CURSOR_EXECUTED_USER_E2E=NO
 FINAL_STATUS=PASS|PARTIAL|FAIL
 
@@ -4120,6 +4185,17 @@ A clean `FULL_USER_E2E=PASS` also requires no unresolved product defect or actio
 
 ### 17.1 GitHub reporting — final only
 
+**Incremental local evidence:** Maintain the 116 existing canonical rows in the
+**intermediate scenario-results.tsv** throughout the run. As soon as a real
+scenario or role step is complete, record its observed status and evidence;
+do not leave completed work marked NOT_RUN until the final auditor pass.
+An unfinished/missing AI mirror stays PARTIAL/NOT_RUN/BLOCKED: **do not claim PASS without verified evidence**. Preserve separate actual Direct/AI
+logs and exact Source HEAD, and commit each private ledger update atomically.
+A local checkpoint is neither product PASS nor a GitHub Issue report; only
+the frozen final audit produces a release-gate verdict. Do not wait for every
+host or the one-hour soak to finish before recording independent results.
+
+
 Do not update the active `[AI Work]` Issue for each intermediate finding. Keep findings in the current RUN_ID evidence while continuing every independent scenario.
 
 After all executable scenarios, command/use-case/AI-mirror coverage, performance/concurrency lanes, recovery checks, and cleanup are exhausted and the final report is frozen, update the active `[AI Work]` Issue once with the consolidated result, evidence root, counters, blockers, and next remediation action if any.
@@ -4168,7 +4244,7 @@ The invariant for future User E2E requests is:
 
 ~~~text
 USER_E2E_REQUEST
--> ChatGPT is the executor and final auditor; do not delegate User E2E execution to Cursor
+-> Issue #165 owner override: Codex executes independent Direct + AI-assisted roles and final audit; the current owner-selected implementer fixes verified defects after evidence is frozen; Cursor remains disabled.
 -> locate this canonical document at docs/FULL_USER_E2E_SCENARIOS.md
 -> capture candidate/build identity only; do not perform a pre-run code review
 -> probe all configured test hosts, remove previous-run DRLink state/test services/load processes/temp artifacts, preserve only explicit management access infrastructure, and require the section 5.3 clean-room gate before fresh product activity
@@ -4258,10 +4334,10 @@ On a trigger, the minimum startup sequence is:
 5. Probe configured hosts in parallel.
 6. Classify every reachable configured host, assign every suitable host an intended Server/Agent/Relay/client/target/load-generator/recovery role, and record any unused reachable host with a concrete reason.
 7. Execute the section 5.3 clean-room gate on every assigned host: inventory old state, use supported product uninstall for fresh lanes when an immutable candidate artifact is available, stop previous E2E/load runtimes, remove disposable old artifacts and stale/broken product service-unit links, verify product listeners/state are gone, record the development worktree state, pin the installed candidate identity, never build/install from dirty source, and explicitly record preserved management-access infrastructure.
-8. Do not start product discovery or create PASS-eligible state until ALL_REACHABLE_ASSIGNED_HOSTS_CLEAN=PASS. Then create the new RUN_ID/current-run test state and open the section 5.4 process/session registry.
+8. Create the new RUN_ID and open the section 5.4 process/session registry. Start product discovery and PASS-eligible state only on participating hosts that passed their applicable section 5.3 checks; a failed or denied host blocks only dependent scenarios. ALL_REACHABLE_ASSIGNED_HOSTS_CLEAN remains a complete-run qualification requirement, not a global launch veto.
 9. On every freshly installed/assigned Server/Agent role, start public command discovery in parallel with drlink, ?, help, help commands, menu, Tab and visible wizard/error guidance.
 10. Build the runtime command/variant ledger and map discovered capabilities to realistic use-case lanes; section 14 is auditor-only omission detection.
-11. Before each lane, assign ChatGPT an explicit End User, Agent Operator, DRLink Administrator, Incident Responder, or Platform Maintainer persona plus a production-style mission; create RUN_ID-scoped namespaced resources and immediately start every independent use-case lane whose prerequisites are discovered.
+11. Before each lane, assign the owner-selected tester an explicit End User, Agent Operator, DRLink Administrator, Incident Responder, or Platform Maintainer persona plus a production-style mission; create RUN_ID-scoped namespaced resources and immediately start every independent use-case lane whose prerequisites are discovered.
 12. Run Direct CLI, guided/TTY, adversarial, multi-platform enrollment, real-traffic, AI-assisted mirror and performance lanes concurrently at maximum practical utilization of the currently configured hosts; never pause to request new test hosts. Progressively ramp performance toward the selected target or practical saturation boundary. Apply section 1.4.1 prerequisite, evidence-reuse, FAIL_PRECONDITION, and bounded performance-stop rules.
 13. Behave like a real operator who has not read the manual: pursue the mission, follow product output/next actions, copy/paste generated commands, make realistic mistakes from section 1.3.3, recover only from user-visible CLI/AI guidance or minimum test-host/test-state recovery, and continuously record terminology/clarity/cross-surface inconsistencies.
 14. Continue discovery and use-case execution together until no discovered/oracle command or behavior-changing public variant lacks disposition.
@@ -4269,7 +4345,7 @@ On a trigger, the minimum startup sequence is:
 16. If one lane is blocked by tooling/environment/management-path or fails a functional prerequisite, record only that lane as BLOCKED_TOOLING/BLOCKED_ENVIRONMENT/BLOCKED_MANAGEMENT_PATH/FAIL_PRECONDITION as applicable and continue every independent lane immediately.
 17. Do not inspect product source, test source, internal DB/state, or harness implementation during active discovery.
 18. Run mixed function-under-load, policy-mutation, restart/reconnect, outage, race and all-host scenarios continuously; execute P-024 collision rows while representative load is active, then execute P-023 maximum-topology mixed stress with multiple load processes/generators on the existing test hosts where available and verify post-saturation recovery without redundant saturation against already-failed functional paths.
-19. Finish command/use-case/AI-mirror/repetition/mistake/function-under-load disposition, process-registry cleanup and final reporting. Do not modify product code, rebuild the candidate, or start Cursor as part of this trigger. Any implementation/harness diagnosis is a separate post-run engineering action.
+19. Finish command/use-case/AI-mirror/repetition/mistake/function-under-load disposition, process-registry cleanup and final reporting. Acting user roles must not modify product code or rebuild the frozen candidate. Any implementation/harness diagnosis is a separate post-run engineering action performed by the current owner-authorized implementer after evidence is frozen; Cursor remains disabled.
 20. After the full executable run is exhausted and evidence/counters are frozen, update the active `[AI Work]` Issue once with the consolidated result. Do not perform intermediate per-finding Issue updates.
 ~~~
 

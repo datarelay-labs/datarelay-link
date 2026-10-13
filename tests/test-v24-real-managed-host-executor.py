@@ -320,6 +320,30 @@ class RealManagedHostExecutorTests(unittest.TestCase):
         self.assertIn("host-A", text)
         self.assertNotIn("SERVER_ONLY", text)
 
+    def test_signed_mgmt_ai_exec_large_result_delivers_bounded_output(self):
+        # F014: unlike bearer /agent/v1 unit tests, this exercises the
+        # production AgentLoop's signed /v1/ai-jobs/claim and /complete API.
+        # Still isolated from nginx/public AWS reachability.
+        from drlink_ai_agent import MAX_STDOUT_BYTES
+
+        self._start_mgmt_worker(self.agent_a_tmp)
+        for count in (65536, 1048576):
+            with self.subTest(output_bytes=count):
+                text = self._text(self._call(
+                    "exec",
+                    command="python3 -c 'import sys; sys.stdout.write(chr(89)*%s)'" % count,
+                ))
+                payload = json.loads(text)
+                self.assertEqual(payload.get("result"), "ALLOW", text[:500])
+                self.assertEqual(
+                    payload.get("stdout_truncated"),
+                    count > MAX_STDOUT_BYTES,
+                )
+                self.assertEqual(
+                    len(str(payload.get("stdout") or "").encode("utf-8")),
+                    min(count, MAX_STDOUT_BYTES),
+                )
+
     def test_linux_service_unit_ships_with_product(self):
         unit = ROOT / "client" / "drlink-ai-agent.service"
         self.assertTrue(unit.is_file())

@@ -37,6 +37,12 @@ python3 -m py_compile server/frp-port-allocator.py server/frp-access-plugin.py s
 python3 -m py_compile tools/frp-create-client tools/frp-enrollments tools/frp-enrollment-revoke tools/frp-enrollment-purge tools/frp-enroll-bulk tools/frp-clients tools/frp-client-info tools/frp-client-set tools/frp-release-client tools/frp-release-service tools/frp-revoke-client tools/frp-set-client-installer-url tools/frp-server-set tools/frp-backup tools/frp-restore
 python3 -m py_compile tests/test-allocator.py tests/test-chatgpt-owner-acceptance.py tests/test-enrollment-security.py tests/test-mgmt-identity.py tests/test-pki-https.py tests/test-bootstrap-ticket.py tests/test-frontend-proxy.py tests/test-single443-mgmt-origin.py tests/test-client-registry.py tests/test-access-control.py tests/test-egress-control.py tests/test-service-profiles.py tests/test-destructive-selector-toctou.py tests/test-egress-create-safe-default.py tests/test-policy-fingerprint.py tests/test-strict-cli-parsing.py tests/test-cli-backend-reverse-parity.py tests/test-enabled-egress-mutation-confirm.py tests/test-lifecycle-contract-matrix.py tests/test-allocator-tls-slow-handshake.py tests/test-http-relay-half-close-idle.py tests/test-http-connection-critical-headers.py tests/test-nonce-capacity-replay.py tests/test-restore-corrupt-current.py tests/test-egress-confirm-toctou.py tests/test-state-paths-backup-restore.py tests/test-enrollment-ttl-help.py tests/test-enrollment-pair-atomicity.py tests/test-enrollment-retention-policy.py tests/test-frpctl-completion-inventory.py tests/test-cli-flag-metadata.py tests/test-operator-workflow-regressions.py tests/test-ai-access-mcp-e2e.py tests/test-mcp-public-endpoint-e2e.py tests/test-mcp-public-tls-lifecycle.py tests/test-mcp-remote-connector-interop.py tests/test-oauth-manual-consent-browser.py tests/test-oauth-redirect-uri-validation.py tests/test-oauth-cimd-ssrf.py tests/test-oauth-pending-bounds.py tests/test-oauth-revoke-form.py tests/test-bounded-zero-touch.py tests/test-configuration-bundle.py tests/test-read-only-db-contention.py tests/mcp_sdk_interop_client.py tests/mcp_sdk_env.py tests/test-qualified-artifacts.py tests/test-v24-ai-policy-cli-parity.py tests/test-egress-concurrency-isolation.py tests/test-egress-parent-traverse.py
 
+# Check complete test registration before the expensive full functional suite.
+# Previously this ran last and wasted an entire CI run when new tests were
+# forgotten; preserve fail-closed orphan detection while failing fast.
+echo "=== test registration completeness ==="
+./tests/test-orphan-suite-coverage.sh
+
 echo "=== tests ==="
 ./tests/test-server-migration.sh
 ./tests/test-registry-init.sh
@@ -59,6 +65,7 @@ done
 ./tests/test-systemd-runtime-prep.sh
 ./tests/test-server-install-config.sh
 ./tests/test-qualified-artifacts.sh
+bash tests/test-fresh-client-source-provenance.sh
 python3 tests/test-qualified-artifacts.py
 ./tests/test-install-config-hardening.sh
 ./tests/test-install-server-help.sh
@@ -120,6 +127,7 @@ python3 tests/test-release-recovery-dual-role-audit-docs-closure.py
 python3 tests/test-repl-live-inventory.py
 ./tests/test-real-e2e-canonical-cli.sh
 ./tests/test-client-upgrade.sh
+python3 tests/test-agent-upgrade-runtime-preservation.py
 python3 tests/test-client-python-runtime.py
 ./tests/test-client-upgrade-provenance.sh
 ./tests/test-ai-agent-unit-lifecycle.sh
@@ -201,6 +209,8 @@ python3 tests/test-service-profiles.py
 ./tests/test-legacy-identity-migration.sh
 ./tests/test-legacy-frpc-unit-migration.sh
 ./tests/test-client-proxy-health-wait.sh
+bash tests/test-proxy-readiness-session-causality.sh
+bash tests/test-macos-proxy-wait-cursor.sh
 ./tests/test-ca-bootstrap.sh
 ./tests/test-allocator-process-cleanup.sh
 ./tests/test-pki-https.py
@@ -221,6 +231,14 @@ python3 tests/test-single443-mgmt-origin.py
 ./tests/test-version-governance.sh
 python3 tests/test-pre-release-exhaustive-gates.py
 python3 tests/test-cli-feature-scenario-remediation.py
+python3 tests/test-cli-reconciliation-role-parser-regression.py
+python3 tests/test-permission-dependency-recovery.py
+python3 tests/test-internet-access-recovery-guidance.py
+python3 tests/test-enrollment-retention-recovery-guidance.py
+python3 tests/test-public-help-required-operands.py
+python3 tests/test-native-restore-confirmation.py
+python3 tests/test-native-public-consent.py
+python3 tests/test-enrollment-public-guidance.py
 python3 tests/test-release-attest-binding.py
 python3 tests/test-stable-publication-projection.py
 ./tests/test-release-gate-target.sh
@@ -229,6 +247,7 @@ python3 tests/test-release-manifest-schema.py
 ./tests/test-install-txn-rollback.sh
 ./tests/test-fresh-install-sandbox-rollback.sh
 python3 tests/test-audit-log.py
+python3 tests/test-audit-tail-validation.py
 ./tests/test-frp-compatibility.sh
 ./tests/test-backup-restore.sh
 ./tests/test-server-uninstall-fail-closed.sh
@@ -238,6 +257,7 @@ python3 tests/test-v24-status-parity.py
 python3 tests/test-v24-bootstrap-catalog-convergence.py
 python3 tests/test-v24-managed-host-policy.py
 python3 tests/test-v24-runtime-allocator.py
+python3 tests/test-doctor-agent-runtime-projection.py
 python3 tests/test-v24-mgmt-api-auth.py
 python3 tests/test-v24-cli-ai-master.py
 python3 tests/test-v24-cli-ai-master-closure.py
@@ -247,8 +267,10 @@ python3 tests/test-v24-doc-consistency.py
 python3 tests/test-v24-ai-policy-cli-parity.py
 python3 tests/test-v24-manual-e2e-findings.py
 python3 tests/test-v24-cli-workflow-semantic-parity.py
+python3 tests/test-v24-readonly-selector-operands.py
 python3 tests/test-v24-revision-rollback.py
 python3 tests/test-v24-direct-revision-guard.py
+python3 tests/test-v24-admin-concurrency-ux.py
 python3 tests/test-v24-ai-access-reference-integrity.py
 python3 tests/test-v24-ai-path-scope-public-parity.py
 python3 tests/test-v24-group-policy-test-false-assurance.py
@@ -281,7 +303,30 @@ python3 tests/test-v24-whitelist-last-rule-outage-safety.py
 python3 tests/test-v24-empty-state-cli.py
 python3 tests/test-human-ux-framework-unit.py
 ./tests/test-agent-runtime-payload.sh
-./tests/test-orphan-suite-coverage.sh
+# Every newly added deterministic functional regression is executed by the
+# full non-Docker suite; orphan coverage must remain a hard gate, not an
+# allowlist waiver for missing functional tests.
+python3 tests/test-agent-catalog-progress.py
+# Direct bugfix workflow prerequisites: each newly introduced LAB-P0 /
+# Codex-finding regression must run in the full non-Docker CI suite.
+python3 tests/test-e2e-lab-readiness.py
+python3 tests/test-e2e-owner-preflight-procedure.py
+# CLI-only E2E source/ledger policy and durable load runner contract.
+# These are deterministic non-live regressions; real CLI/soak runs keep
+# their independent owner-scoped RUN_ID and do not block unrelated CI.
+python3 tests/test-cli-only-e2e-contract.py
+python3 tests/test-cli-only-e2e-persistent-load.py
+python3 tests/test-v24-e2e-actionable-doc-parity.py
+python3 tests/test-cli-rule-selector-and-runtime-recovery.py
+python3 tests/test-doctor-proxy-identity.py
+python3 tests/test-full-e2e-public-recovery-regressions.py
+python3 tests/test-guided-configuration-input.py
+python3 tests/test-v24-ai-completion-delivery.py
+python3 tests/test-v24-denied-upload-response.py
+bash tests/test-v24-legacy-update-check-readonly.sh
+python3 tests/test-v24-mcp-oauth-discovery-origin.py
+python3 tests/test-v24-pass1-output-regressions.py
+bash tests/test-v24-upgrade-egress-account.sh
 
 echo "=== leftover test allocators ==="
 # shellcheck source=lib/frp-test-procs.sh

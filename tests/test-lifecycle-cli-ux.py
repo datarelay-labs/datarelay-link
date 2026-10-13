@@ -150,7 +150,12 @@ class LifecycleCliUx(unittest.TestCase):
 
     def test_client_uninstall_message_product_identity(self):
         text = (ROOT / "uninstall-client.sh").read_text(encoding="utf-8")
-        self.assertIn("Data Relay Link client removed locally", text)
+        self.assertIn("Data Relay Link Agent Host removed locally", text)
+        self.assertNotIn("Data Relay Link client removed locally", text)
+        self.assertNotIn("after client uninstall", text)
+        self.assertNotIn("server release command", text)
+        self.assertIn("show managed-host <HOST>", text)
+        self.assertIn("removes its record and reservations", text)
         self.assertNotIn("FRP client removed locally", text)
         self.assertIn("unset managed-host <HOST>", text)
         self.assertNotIn("unset client <CLIENT>", text)

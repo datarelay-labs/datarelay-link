@@ -415,7 +415,7 @@
     "roles": "server",
     "category": "Onboarding",
     "summary": "Create enrollment codes in bulk",
-    "detail": "Bulk issuance from a count or a CSV file.",
+    "detail": "Open the reviewed count/CSV issuance wizard (at most 10 codes; at most 10 active unused codes). CSV is UTF-8 with header label,ssh_user,note, for example agent-a,operator,lab. A blank ssh_user is management-only; label and note may be blank. Default lifetime is 1 hour, maximum 24 hours. Review before issuance and keep the one-time codes private.",
     "examples": [
       "set enrollment bulk"
     ],
@@ -667,7 +667,7 @@
     "roles": "any",
     "category": "System",
     "summary": "Show Data Relay Link and Relay Engine versions",
-    "detail": "Project version, release channel, source ref, FRP version, and the installed bundle checksum.",
+    "detail": "Project version, release channel, source ref, FRP version, and the installed bundle checksum when available.",
     "examples": [
       "system version"
     ],
@@ -693,7 +693,7 @@
     "roles": "server",
     "category": "System",
     "summary": "Show detailed server status",
-    "detail": "Canonical Server status. show status remains the role-aware summary.",
+    "detail": "Detailed Server status followed by the read-only Server settings view. show status remains the role-aware summary.",
     "examples": [
       "system status"
     ],
@@ -744,7 +744,7 @@
     "roles": "server",
     "category": "System",
     "summary": "Create a server disaster-recovery backup",
-    "detail": "Creates the supported v2.4 Server DR archive (identity/PKI/config + canonical drlink.db).",
+    "detail": "Creates the supported v2.4 Server DR archive (identity/PKI/config + canonical drlink.db). Backups contain private identity and PKI material: restrict access and store securely. Validate the archive with system backup validate <PATH> before planning a restore.",
     "examples": [
       "system backup",
       "system backup /var/lib/drlink/backups/b.tar.gz"
@@ -804,7 +804,7 @@
     "roles": "server",
     "category": "System",
     "summary": "Restore from a backup archive",
-    "detail": "Same-version restore only unless a migration exists. Shows a product-owned preflight and requires interactive y/N confirmation before mutation; non-interactive restore fails closed. Creates a pre-restore snapshot, replaces server state, and restarts services with automatic rollback on failure.",
+    "detail": "Same-version restore only unless a migration exists. Shows a product-owned preflight and requires interactive y/N confirmation before mutation; non-interactive restore fails closed. Creates a pre-restore snapshot, replaces server state, and restarts services with automatic rollback on failure. First run system backup validate <PATH> (read-only). After restore inspect show status and system diagnostics. If restore or rollback fails, preserve the archive and error evidence before further recovery.",
     "examples": [
       "system restore /var/lib/drlink/backups/b.tar.gz"
     ],
@@ -1219,7 +1219,7 @@
     "roles": "any",
     "category": "System",
     "summary": "Uninstall Data Relay Link on this host",
-    "detail": "Guided uninstall for the installed role(s). Completely removes local Data Relay Link software and product-owned state for that role. Agent uninstall does not contact the server; the Managed Host record and endpoint reservations remain until an operator retires that host with unset managed-host <HOST>.",
+    "detail": "Guided uninstall for the installed role(s). Completely removes local Data Relay Link software and product-owned state for that role. Agent uninstall attempts a signed disconnect notification when reachable; the Managed Host record and endpoint reservations remain until an operator retires that host with unset managed-host <HOST>.",
     "examples": [
       "system uninstall"
     ],
@@ -1441,7 +1441,7 @@
     "summary": "Create or edit a Remote Access rule",
     "detail": "Create or edit a Remote Access rule. The calculated security impact of an edit is checked before mutation. A y/N confirmation is required when that impact broadens or materially narrows access; safe creation and no-change paths need no additional confirmation.",
     "examples": [
-      "set remote-access",
+      "set remote-access <RULE>",
       "set remote-access block-partner mode blacklist source partner-office destination ubuntu-prod service ssh enabled",
       "set remote-access enabled",
       "set remote-access disabled"
@@ -1460,7 +1460,18 @@
     "risk": "security_change",
     "confirmation": "conditional_y_n",
     "surface": "",
-    "flags": []
+    "flags": [],
+    "tail_fields": {
+      "mode": [
+        "blacklist",
+        "whitelist"
+      ],
+      "source": null,
+      "destination": null,
+      "service": null,
+      "enabled": false,
+      "disabled": false
+    }
   },
   {
     "path": [
@@ -1520,7 +1531,7 @@
     "summary": "Create or edit an Internet Access rule",
     "detail": "Create or edit an Internet Access rule. The calculated security impact of an edit is checked before mutation. A y/N confirmation is required when that impact broadens or materially narrows access; safe creation and no-change paths need no additional confirmation.",
     "examples": [
-      "set internet-access",
+      "set internet-access <RULE>",
       "set internet-access github-https mode whitelist source ubuntu-prod destination github service https enabled",
       "set internet-access enabled",
       "set internet-access disabled"
@@ -1539,7 +1550,17 @@
     "risk": "security_change",
     "confirmation": "conditional_y_n",
     "surface": "",
-    "flags": []
+    "flags": [],
+    "tail_fields": {
+      "mode": [
+        "whitelist"
+      ],
+      "source": null,
+      "destination": null,
+      "service": null,
+      "enabled": false,
+      "disabled": false
+    }
   },
   {
     "path": [
@@ -1599,9 +1620,9 @@
     "summary": "Create or edit an AI Access rule",
     "detail": "Create or edit an AI Access rule. The calculated security impact of an edit is checked before mutation. A y/N confirmation is required when that impact broadens or materially narrows access; safe creation and no-change paths need no additional confirmation.",
     "examples": [
-      "set ai-access",
+      "set ai-access <RULE>",
       "set ai-access allow-ops mode whitelist source automation-ai destination production-servers permission operations enabled",
-      "set ai-access allow-read mode whitelist source automation-ai destination ubuntu-prod permission read-only paths /var/lib/vendor/** enabled",
+      "set ai-access allow-read mode whitelist source automation-ai destination ubuntu-prod permission read-only paths '/var/lib/vendor/**' enabled",
       "set ai-access enabled",
       "set ai-access disabled"
     ],
@@ -1619,7 +1640,18 @@
     "risk": "security_change",
     "confirmation": "conditional_y_n",
     "surface": "",
-    "flags": []
+    "flags": [],
+    "tail_fields": {
+      "mode": [
+        "whitelist"
+      ],
+      "source": null,
+      "destination": null,
+      "permission": null,
+      "paths": null,
+      "enabled": false,
+      "disabled": false
+    }
   },
   {
     "path": [
@@ -1836,7 +1868,7 @@
     "roles": "server",
     "category": "Remote Access",
     "summary": "Explain Remote Access authorization",
-    "detail": "Explain Remote Access authorization",
+    "detail": "Explain Remote Access authorization without changing configuration.\nSyntax: test remote-access source <SOURCE> destination <DESTINATION> service <SERVICE>\nSource selects an existing Network Object or Network Group name, not literal IP/CIDR values. Destination selects an existing Network Object or Network Group name, or a literal IP address. Managed Hosts are Network Objects.\nService selects an existing Service Object or Service Group name, not a protocol:port literal.\nDiscover selectors with show network-objects, show network-groups, show service-objects, and show service-groups.\nExample names must already exist. If inventories are empty, inspect help network-objects and help service-objects for prerequisites before testing.\nAuthorization does not create connectivity or guarantee a running Remote Service.",
     "examples": [
       "test remote-access source partner-office destination ubuntu-prod service ssh"
     ],
@@ -1859,7 +1891,7 @@
     "roles": "server",
     "category": "Internet Access",
     "summary": "Explain Internet Access authorization",
-    "detail": "Explain Internet Access authorization",
+    "detail": "Explain Internet Access authorization without changing configuration.\nSyntax: test internet-access source <SOURCE> destination <DESTINATION> service <SERVICE>\nSource selects an existing Network Object or Network Group name, not literal IP/CIDR values. Destination selects an existing Network Object or Network Group name, or a literal IP address. Managed Hosts are Network Objects.\nService selects an existing Service Object or Service Group name, not a protocol:port literal.\nDiscover selectors with show network-objects, show network-groups, show service-objects, and show service-groups.\nExample names must already exist. If inventories are empty, inspect help network-objects and help service-objects for prerequisites before testing.\nInternet Access also accepts a literal destination hostname. Internet Access is WHITELIST-only; Managed Host destination is rejected, including through a Network Group. Transport supports TCP, HTTP and HTTPS CONNECT only; UDP Service Objects and Service Groups containing UDP are rejected.",
     "examples": [
       "test internet-access source ubuntu-prod destination github service https"
     ],
@@ -2196,7 +2228,7 @@
     "roles": "any",
     "category": "System",
     "summary": "Export redacted ConfigurationBundle",
-    "detail": "Export configuration owned by this host role as a redacted ConfigurationBundle YAML suitable for review and AI-assisted editing. Secrets are never exported.",
+    "detail": "Export configuration owned by this host role as a redacted ConfigurationBundle YAML suitable for review and AI-assisted editing. Secrets are never exported. See help configuration for role-specific YAML, omission/deletion semantics and sourceRevision conflict handling.",
     "examples": [
       "system export configuration drlink.yaml"
     ],
@@ -2224,7 +2256,7 @@
     "roles": "any",
     "category": "System",
     "summary": "Validate a ConfigurationBundle without mutation",
-    "detail": "Parse, validate role context and dependencies, and show the Change Plan for a ConfigurationBundle. Supports file path or '-' for stdin.",
+    "detail": "Parse, validate role context and dependencies, and show the Change Plan for a ConfigurationBundle. Supports file path or '-' for stdin. See help configuration for role-specific YAML, omission/deletion semantics and sourceRevision conflict handling.",
     "examples": [
       "test configuration drlink.yaml",
       "test configuration -"
@@ -2255,7 +2287,7 @@
     "roles": "any",
     "category": "System",
     "summary": "Diff a ConfigurationBundle",
-    "detail": "Show the Change Plan and security impact for a ConfigurationBundle without mutation. Supports file path or '-' for stdin.",
+    "detail": "Show the Change Plan and security impact for a ConfigurationBundle without mutation. Supports file path or '-' for stdin. See help configuration for role-specific YAML, omission/deletion semantics and sourceRevision conflict handling.",
     "examples": [
       "system diff configuration drlink.yaml",
       "system diff configuration -"
@@ -2286,7 +2318,7 @@
     "roles": "any",
     "category": "System",
     "summary": "Apply a ConfigurationBundle",
-    "detail": "Validate, test, diff, confirm, and atomically apply a ConfigurationBundle through the shared Change Plan engine. Supports file path or '-' for stdin. Does not issue Zero-Touch tickets.",
+    "detail": "Validate, test, diff, confirm, and atomically apply a ConfigurationBundle through the shared Change Plan engine. Supports file path or '-' for stdin. Does not issue Zero-Touch tickets. See help configuration for role-specific YAML, omission/deletion semantics and sourceRevision conflict handling.",
     "examples": [
       "system apply configuration drlink.yaml",
       "system apply configuration -"
@@ -2348,11 +2380,11 @@
   },
   {
     "roles": "server",
-    "detail": "Clear MCP TLS intent while retaining DRLink-owned certificate and ACME account material.",
+    "detail": "Clear MCP TLS intent and remove its active public MCP route while retaining DRLink-owned certificate and ACME account material. Active MCP/OAuth connections may be interrupted. The explicit command is sufficient approval; no additional confirmation prompt is required. Check system certificate status and system diagnostics mcp afterward.",
     "aliases": [],
-    "destructive": false,
+    "destructive": true,
     "hidden": false,
-    "risk": "none",
+    "risk": "outage",
     "confirmation": "none",
     "surface": "",
     "flags": [],
@@ -2441,7 +2473,7 @@
     "roles": "server",
     "category": "System",
     "summary": "Issue and activate the configured MCP certificate",
-    "detail": "Issue and activate a certificate for the configured MCP TLS mode. The previous valid certificate is retained on failed activation.",
+    "detail": "Issue and activate a certificate for the configured MCP TLS mode. The previous valid certificate is retained on failed activation. The explicit command authorizes certificate activation and required service changes; no additional confirmation is used. Activation may interrupt MCP connections. Afterwards inspect system certificate status and system diagnostics.",
     "examples": [
       "system certificate issue"
     ],
@@ -2465,7 +2497,7 @@
     "roles": "server",
     "category": "System",
     "summary": "Import and activate an MCP certificate",
-    "detail": "Import matching certificate/key material and activate it after validation.",
+    "detail": "Import matching certificate/key material and activate it after validation. The explicit command authorizes certificate activation and required service changes; no additional confirmation is used. Activation may interrupt MCP connections. Afterwards inspect system certificate status and system diagnostics.",
     "examples": [
       "system certificate import <CERT> <KEY> [CHAIN]"
     ],
@@ -2505,7 +2537,7 @@
     "roles": "server",
     "category": "System",
     "summary": "Renew and activate the MCP certificate when due",
-    "detail": "Renew the configured MCP certificate when due and retain the previous valid certificate on failed renewal.",
+    "detail": "Renew the configured MCP certificate when due and retain the previous valid certificate on failed renewal. The explicit command authorizes certificate activation and required service changes; no additional confirmation is used. Activation may interrupt MCP connections. Afterwards inspect system certificate status and system diagnostics.",
     "examples": [
       "system certificate renew"
     ],
@@ -2612,7 +2644,10 @@
       },
       {
         "name": "[VIEW]",
-        "required": false
+        "required": false,
+        "complete": [
+          "references"
+        ]
       }
     ],
     "tail": "any",
@@ -2669,7 +2704,10 @@
       },
       {
         "name": "[VIEW]",
-        "required": false
+        "required": false,
+        "complete": [
+          "references"
+        ]
       }
     ],
     "tail": "any",
@@ -2692,7 +2730,7 @@
     "summary": "Create or edit a Network Object",
     "detail": "Create or edit a Network Object. The calculated security impact of an edit is checked before mutation. A y/N confirmation is required when that impact broadens or materially narrows access; safe creation and no-change paths need no additional confirmation.",
     "examples": [
-      "set network-object",
+      "set network-object <NAME>",
       "set network-object office-admin type ip value 203.0.113.10"
     ],
     "args": [
@@ -2709,7 +2747,15 @@
     "risk": "security_change",
     "confirmation": "conditional_y_n",
     "surface": "",
-    "flags": []
+    "flags": [],
+    "tail_fields": {
+      "type": [
+        "ip",
+        "cidr",
+        "fqdn"
+      ],
+      "value": null
+    }
   },
   {
     "path": [
@@ -2721,7 +2767,7 @@
     "summary": "Create or edit a Network Group",
     "detail": "Create or edit a Network Group. The calculated security impact of an edit is checked before mutation. A y/N confirmation is required when that impact broadens or materially narrows access; safe creation and no-change paths need no additional confirmation.",
     "examples": [
-      "set network-group",
+      "set network-group <NAME>",
       "set network-group approved-admins members office-admin,vpn-admin"
     ],
     "args": [
@@ -2738,7 +2784,10 @@
     "risk": "security_change",
     "confirmation": "conditional_y_n",
     "surface": "",
-    "flags": []
+    "flags": [],
+    "tail_fields": {
+      "members": null
+    }
   },
   {
     "path": [
@@ -2748,9 +2797,9 @@
     "roles": "server",
     "category": "Network Objects",
     "summary": "Delete a Network Object",
-    "detail": "Delete a Network Object",
+    "detail": "Delete a Network Object. Inspect show network-object <NAME> references first. Reference validation runs before confirmation; a blocked deletion lists references and makes no change. Replace or remove dependent policy/member references, including disabled rules, then retry. Confirmed deletion is irreversible.",
     "examples": [
-      "unset network-object"
+      "unset network-object <OBJECT>"
     ],
     "args": [
       {
@@ -2777,9 +2826,9 @@
     "roles": "server",
     "category": "Network Objects",
     "summary": "Delete a Network Group",
-    "detail": "Delete a Network Group",
+    "detail": "Delete a Network Group. Inspect show network-group <NAME> references first. Reference validation runs before confirmation; a blocked deletion lists references and makes no change. Replace or remove dependent policy/member references, including disabled rules, then retry. Confirmed deletion is irreversible.",
     "examples": [
-      "unset network-group"
+      "unset network-group <GROUP>"
     ],
     "args": [
       {
@@ -2841,7 +2890,10 @@
       },
       {
         "name": "[VIEW]",
-        "required": false
+        "required": false,
+        "complete": [
+          "references"
+        ]
       }
     ],
     "tail": "any",
@@ -2897,7 +2949,10 @@
       },
       {
         "name": "[VIEW]",
-        "required": false
+        "required": false,
+        "complete": [
+          "references"
+        ]
       }
     ],
     "tail": "any",
@@ -2920,7 +2975,7 @@
     "summary": "Create or edit a Service Object",
     "detail": "Create or edit a Service Object. The calculated security impact of an edit is checked before mutation. A y/N confirmation is required when that impact broadens or materially narrows access; safe creation and no-change paths need no additional confirmation.",
     "examples": [
-      "set service-object",
+      "set service-object <NAME>",
       "set service-object postgres type tcp port 5432"
     ],
     "args": [
@@ -2937,7 +2992,15 @@
     "risk": "security_change",
     "confirmation": "conditional_y_n",
     "surface": "",
-    "flags": []
+    "flags": [],
+    "tail_fields": {
+      "type": [
+        "tcp",
+        "udp",
+        "fixed-tcp"
+      ],
+      "port": null
+    }
   },
   {
     "path": [
@@ -2949,7 +3012,7 @@
     "summary": "Create or edit a Service Group",
     "detail": "Create or edit a Service Group. The calculated security impact of an edit is checked before mutation. A y/N confirmation is required when that impact broadens or materially narrows access; safe creation and no-change paths need no additional confirmation.",
     "examples": [
-      "set service-group",
+      "set service-group <NAME>",
       "set service-group web-services members http,https"
     ],
     "args": [
@@ -2966,7 +3029,10 @@
     "risk": "security_change",
     "confirmation": "conditional_y_n",
     "surface": "",
-    "flags": []
+    "flags": [],
+    "tail_fields": {
+      "members": null
+    }
   },
   {
     "path": [
@@ -2976,9 +3042,9 @@
     "roles": "server",
     "category": "Service Objects",
     "summary": "Delete a Service Object",
-    "detail": "Delete a Service Object",
+    "detail": "Delete a Service Object. Inspect show service-object <NAME> references first. Reference validation runs before confirmation; a blocked deletion lists references and makes no change. Replace or remove dependent policy/member references, including disabled rules, then retry. Confirmed deletion is irreversible.",
     "examples": [
-      "unset service-object"
+      "unset service-object <SERVICE>"
     ],
     "args": [
       {
@@ -3004,9 +3070,9 @@
     "roles": "server",
     "category": "Service Objects",
     "summary": "Delete a Service Group",
-    "detail": "Delete a Service Group",
+    "detail": "Delete a Service Group. Inspect show service-group <NAME> references first. Reference validation runs before confirmation; a blocked deletion lists references and makes no change. Replace or remove dependent policy/member references, including disabled rules, then retry. Confirmed deletion is irreversible.",
     "examples": [
-      "unset service-group"
+      "unset service-group <GROUP>"
     ],
     "args": [
       {
@@ -3055,9 +3121,9 @@
     "roles": "server",
     "category": "AI Access",
     "summary": "Show a Permission Object",
-    "detail": "Show a Permission Object",
+    "detail": "Inspect permissions. To inspect dependencies, use show ai-access and show ai-access <RULE>, then show permission-groups and show permission-group <GROUP> for group membership. Referenced deletion is blocked before confirmation and lists the dependencies. Review each Rule with set ai-access <RULE> to select a replacement permission, or explicitly remove it with unset ai-access <RULE>. Edit containing groups with set permission-group <GROUP> to remove this Object from their membership. Disabling a Rule does not remove its reference. Review the access impact and required confirmations before making changes; retry deletion only after all references are removed.",
     "examples": [
-      "show permission-object"
+      "show permission-object <PERMISSION>"
     ],
     "args": [
       {
@@ -3106,9 +3172,9 @@
     "roles": "server",
     "category": "AI Access",
     "summary": "Show a Permission Group",
-    "detail": "Show a Permission Group",
+    "detail": "Inspect Permission Object membership. To inspect dependencies, use show ai-access and show ai-access <RULE>. Referenced deletion is blocked before confirmation and lists the dependencies. Review each Rule with set ai-access <RULE> to select a replacement permission, or explicitly remove it with unset ai-access <RULE>. Disabling a Rule does not remove its reference. Review the access impact and required confirmations before making changes; retry deletion only after all references are removed.",
     "examples": [
-      "show permission-group"
+      "show permission-group <GROUP>"
     ],
     "args": [
       {
@@ -3136,7 +3202,7 @@
     "summary": "Create or edit a Permission Object",
     "detail": "Create or edit a Permission Object. The calculated security impact of an edit is checked before mutation. A y/N confirmation is required when that impact broadens or materially narrows access; safe creation and no-change paths need no additional confirmation.",
     "examples": [
-      "set permission-object",
+      "set permission-object <NAME>",
       "set permission-object read-only permissions host-info,process-read,file-read"
     ],
     "args": [
@@ -3153,7 +3219,10 @@
     "risk": "security_change",
     "confirmation": "conditional_y_n",
     "surface": "",
-    "flags": []
+    "flags": [],
+    "tail_fields": {
+      "permissions": null
+    }
   },
   {
     "path": [
@@ -3165,7 +3234,7 @@
     "summary": "Create or edit a Permission Group",
     "detail": "Create or edit a Permission Group. The calculated security impact of an edit is checked before mutation. A y/N confirmation is required when that impact broadens or materially narrows access; safe creation and no-change paths need no additional confirmation.",
     "examples": [
-      "set permission-group",
+      "set permission-group <NAME>",
       "set permission-group operations members read-only,operator"
     ],
     "args": [
@@ -3182,7 +3251,10 @@
     "risk": "security_change",
     "confirmation": "conditional_y_n",
     "surface": "",
-    "flags": []
+    "flags": [],
+    "tail_fields": {
+      "members": null
+    }
   },
   {
     "path": [
@@ -3192,9 +3264,9 @@
     "roles": "server",
     "category": "AI Access",
     "summary": "Delete a Permission Object",
-    "detail": "Delete a Permission Object",
+    "detail": "Delete only an unreferenced Permission Object after explicit y/N confirmation. Reference validation happens before confirmation; a blocked delete lists AI Access Rules and Permission Groups and applies no changes. Inspect show ai-access <RULE>, show permission-groups and show permission-group <GROUP>. Review set ai-access <RULE> to select a replacement permission or unset ai-access <RULE> to remove a Rule; use set permission-group <GROUP> to remove the Object from group membership. Disabling a Rule does not remove its reference. Review access impact and required confirmations; retry deletion only after every reference is removed.",
     "examples": [
-      "unset permission-object"
+      "unset permission-object <PERMISSION>"
     ],
     "args": [
       {
@@ -3220,9 +3292,9 @@
     "roles": "server",
     "category": "AI Access",
     "summary": "Delete a Permission Group",
-    "detail": "Delete a Permission Group",
+    "detail": "Delete only an unreferenced Permission Group after explicit y/N confirmation. Reference validation happens before confirmation; a blocked delete lists AI Access Rules and applies no changes. Inspect show ai-access <RULE>. Review set ai-access <RULE> to select a replacement permission or unset ai-access <RULE> to remove a Rule. Disabling a Rule does not remove its reference. Review access impact and required confirmations; retry deletion only after every reference is removed.",
     "examples": [
-      "unset permission-group"
+      "unset permission-group <GROUP>"
     ],
     "args": [
       {
@@ -3327,7 +3399,12 @@
       },
       {
         "name": "[VIEW]",
-        "required": false
+        "required": false,
+        "complete": [
+          "remote-services",
+          "agent",
+          "addresses"
+        ]
       }
     ],
     "tail": "any",
@@ -3348,7 +3425,7 @@
     "roles": "server",
     "category": "Managed Hosts",
     "summary": "Remove a Managed Host or remove its Managed Host Group membership",
-    "detail": "Bare unset managed-host <HOST> performs reference-safe Managed Host retirement. unset managed-host <HOST> group <GROUP> removes only that Managed Host Group membership; identity, Remote Services, and public ports are unchanged. Managed Host Groups are distinct from Network Groups.",
+    "detail": "Bare unset managed-host <HOST> performs reference-safe Managed Host retirement. unset managed-host <HOST> group <GROUP> removes only that Managed Host Group membership; identity, Remote Services, and public ports are unchanged. Managed Host Groups are distinct from Network Groups. Before confirmation, retirement checks policy references and refuses with no change while references remain. Inspect show managed-host <HOST> and its references first. Retirement removes Server trust and inventory plus owned Agent Remote Service endpoint reservations; it is irreversible. Re-enrollment establishes new trust rather than undoing retirement. Group membership removal uses the separate group form.",
     "examples": [
       "unset managed-host ubuntu-prod",
       "unset managed-host ubuntu-prod group edge"
@@ -3415,7 +3492,7 @@
     "summary": "Show an AI Identity",
     "detail": "Show an AI Identity",
     "examples": [
-      "show ai-identity"
+      "show ai-identity <IDENTITY>"
     ],
     "args": [
       {
@@ -3444,7 +3521,7 @@
     "summary": "Connect / bind an AI Identity",
     "detail": "Connect / bind an AI Identity",
     "examples": [
-      "set ai-identity"
+      "set ai-identity <IDENTITY>"
     ],
     "args": [
       {
@@ -3472,7 +3549,7 @@
     "summary": "Delete an AI Identity",
     "detail": "Delete an AI Identity",
     "examples": [
-      "unset ai-identity"
+      "unset ai-identity <IDENTITY>"
     ],
     "args": [
       {
@@ -3637,7 +3714,7 @@
     "summary": "Show a Remote Service",
     "detail": "Show a Remote Service",
     "examples": [
-      "show remote-service"
+      "show remote-service <NAME>"
     ],
     "args": [
       {
@@ -3664,11 +3741,12 @@
     "roles": "client",
     "category": "Remote Services",
     "summary": "Create or edit a Remote Service",
-    "detail": "Create or edit a Remote Service. The name-only form opens a reviewed edit wizard. Use enabled or disabled in the complete form to change activation. Editing or disabling can interrupt access to the service. The explicit complete command authorizes that change without an additional confirmation prompt; the wizard reviews the change before apply.",
+    "detail": "Create or edit a Remote Service. SERVICE selects a Server-defined TCP or Fixed TCP Service Object; the Server allocates/reserves the public endpoint, so the Agent does not choose a public port. Use destination this-host for the Agent itself or a supported destination object. The name-only form opens a reviewed edit wizard. Use enabled or disabled in the complete form to change activation. Editing or disabling can interrupt access to the service. The explicit complete command authorizes that change without an additional confirmation prompt; the wizard reviews the change before apply.",
     "examples": [
       "set remote-service <NAME>",
       "set remote-service ssh-access destination this-host service ssh enabled",
-      "set remote-service ssh-access destination this-host service ssh disabled"
+      "set remote-service vendor-api destination this-host service vendor-fixed-tcp enabled",
+      "show remote-service <NAME>"
     ],
     "args": [
       {
@@ -3685,7 +3763,13 @@
     "risk": "outage",
     "confirmation": "none",
     "surface": "",
-    "flags": []
+    "flags": [],
+    "tail_fields": {
+      "destination": null,
+      "service": null,
+      "enabled": false,
+      "disabled": false
+    }
   },
   {
     "path": [

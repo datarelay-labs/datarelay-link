@@ -2587,10 +2587,19 @@ def set_network_object(
             impact = referenced_selector_mutation_security_impact(
                 plane_db, kind="network-object", name=name, value=value
             )
+            # Capture the version before confirmation and runtime preparation.
+            # Two writers that reviewed the same object cannot both overwrite it.
             result = plane_db.replace_object_value(
-                name, value, confirm=confirm, impact=impact
+                name, value, confirm=confirm, impact=impact,
+                expected_row_version=int(existing["row_version"]),
             )
-            out = {"operation": "update", "name": name}
+            out = {
+                "operation": (
+                    "no_change" if isinstance(result, dict)
+                    and result.get("operation") == "noop" else "update"
+                ),
+                "name": name,
+            }
             if isinstance(result, dict) and "revision" in result:
                 out["revision"] = result["revision"]
             return out
@@ -3475,6 +3484,29 @@ def ai_identity_references(plane_db, name: str) -> list[dict]:
     return refs
 
 
+def _permission_delete_recovery(refs: list[dict]) -> str:
+    """Guide protected deletion through existing public inspection/edit commands."""
+    lines = ["Next actions (review access impact before changing dependencies):"]
+    for ref in refs:
+        if ref["kind"] == "ai-access":
+            lines.extend([
+                "  Inspect: show ai-access %s" % ref["name"],
+                "  Review a replacement permission: set ai-access %s" % ref["name"],
+                "  Or explicitly remove the Rule: unset ai-access %s" % ref["name"],
+            ])
+        elif ref["kind"] == "permission-group":
+            lines.extend([
+                "  Inspect membership: show permission-group %s" % ref["name"],
+                "  Review membership without this Object: set permission-group %s" % ref["name"],
+            ])
+    lines.extend([
+        "Disabling a Rule does not remove its reference.",
+        "Follow the required confirmations for any dependency changes.",
+        "Retry deletion only after every reference is removed.",
+    ])
+    return "\n".join(lines)
+
+
 def unset_permission_object(plane_db, name: str, *, confirm: Optional[bool] = None) -> dict:
     name = validate_public_name(name, "Permission Object name")
     obj = get_permission_object(plane_db, name)
@@ -3484,8 +3516,8 @@ def unset_permission_object(plane_db, name: str, *, confirm: Optional[bool] = No
     if refs:
         raise ControlPlaneError(
             "ERROR:\nPermission Object '%s' is still referenced.\n\nReferences:\n%s\n\n"
-            "No changes were applied."
-            % (name, "\n".join("  %s" % r["display"] for r in refs))
+            "No changes were applied.\n\n%s"
+            % (name, "\n".join("  %s" % r["display"] for r in refs), _permission_delete_recovery(refs))
         )
 
     def write():
@@ -3519,8 +3551,8 @@ def unset_permission_group(plane_db, name: str, *, confirm: Optional[bool] = Non
     if refs:
         raise ControlPlaneError(
             "ERROR:\nPermission Group '%s' is still referenced.\n\nReferences:\n%s\n\n"
-            "No changes were applied."
-            % (name, "\n".join("  %s" % r["display"] for r in refs))
+            "No changes were applied.\n\n%s"
+            % (name, "\n".join("  %s" % r["display"] for r in refs), _permission_delete_recovery(refs))
         )
 
     def write():
@@ -4014,7 +4046,13 @@ def _resolve_test_source_ip(plane_db, source_name: str) -> str:
             # FQDN sources are unusual; still allow exact-string evaluation via host match path.
             return str(vals[0])
         return _representative_ip_from_value(vals[0])
-    raise ControlPlaneError(cli_error("Network Object '%s' was not found." % source_name))
+    raise ControlPlaneError(
+        cli_error(
+            "Network Object '%s' was not found." % source_name,
+            expected="  Network Object or Network Group",
+            next_step="Use:\n  show network-objects\n  show network-groups",
+        )
+    )
 
 
 def _resolve_test_destination(plane_db, destination_name: str, *, plane: str) -> str:
@@ -4026,7 +4064,11 @@ def _resolve_test_destination(plane_db, destination_name: str, *, plane: str) ->
             if plane == "remote":
                 return obj["name"]
             raise ControlPlaneError(
-                cli_error("Managed Host cannot be used as an Internet Access destination.")
+                cli_error(
+                    "Managed Host cannot be used as an Internet Access destination.",
+                    expected="  IP, CIDR, or FQDN Network Object, or a Network Group containing those Objects",
+                    next_step="Use an IP, CIDR, or FQDN Network Object as destination.\nUse:\n  show network-objects\n  show network-groups",
+                )
             )
         vals = plane_db._object_values(obj["id"])
         if not vals:
@@ -4043,7 +4085,13 @@ def _resolve_test_destination(plane_db, destination_name: str, *, plane: str) ->
         pass
     if plane == "internet" and "." in str(destination_name):
         return str(destination_name).rstrip(".").lower()
-    raise ControlPlaneError(cli_error("Network Object '%s' was not found." % destination_name))
+    raise ControlPlaneError(
+        cli_error(
+            "Network Object '%s' was not found." % destination_name,
+            expected="  Network Object or Network Group",
+            next_step="Use:\n  show network-objects\n  show network-groups",
+        )
+    )
 
 
 def _resolve_test_service(plane_db, service_name: str) -> tuple[str, int]:
@@ -4076,7 +4124,11 @@ def _network_test_leaves(plane_db, selector: str, *, role: str) -> tuple[bool, l
         members = plane_db._expand_group_members(grp["id"], set())
         if not members:
             raise ControlPlaneError(
-                cli_error("Network Group '%s' has no members." % selector)
+                cli_error(
+                    "Network Group '%s' has no members." % selector,
+                    expected="  Network Group with at least one Network Object",
+                    next_step="Inspect the group and select a populated group or Network Object.\nUse:\n  show network-group %s\n  show network-objects" % selector,
+                )
             )
         names = []
         seen = set()
@@ -4091,7 +4143,13 @@ def _network_test_leaves(plane_db, selector: str, *, role: str) -> tuple[bool, l
     if role == "destination":
         # Literal tokens are treated as a single concrete leaf.
         return False, [str(selector)]
-    raise ControlPlaneError(cli_error("Network Object '%s' was not found." % selector))
+    raise ControlPlaneError(
+        cli_error(
+            "Network Object '%s' was not found." % selector,
+            expected="  Network Object or Network Group",
+            next_step="Use:\n  show network-objects\n  show network-groups",
+        )
+    )
 
 
 def _service_test_leaves(plane_db, selector: str) -> tuple[bool, list[str]]:
@@ -4110,7 +4168,13 @@ def _service_test_leaves(plane_db, selector: str) -> tuple[bool, list[str]]:
         )
     ]
     if not members:
-        raise ControlPlaneError(cli_error("Service Group '%s' has no members." % selector))
+        raise ControlPlaneError(
+            cli_error(
+                "Service Group '%s' has no members." % selector,
+                expected="  Service Group with at least one supported Service Object",
+                next_step="Inspect the group and select a populated group or Service Object.\nUse:\n  show service-group %s\n  show service-objects" % selector,
+            )
+        )
     names = []
     seen = set()
     for mem in members:
@@ -4143,11 +4207,18 @@ def _evaluate_resolved_access(
     resolve_fn: Optional[Callable[[str], list[str]]] = None,
 ) -> dict:
     """Run one concrete Remote/Internet evaluation through runtime-equivalent APIs."""
-    if plane == "internet" and str(proto).lower() == "udp":
+    if str(proto).lower() == "udp":
+        if plane == "internet":
+            message = "Internet Access v2.4 has a TCP/HTTP/HTTPS CONNECT datapath only; UDP Service Objects cannot be selected."
+            expected = "  TCP/HTTP/HTTPS Service Object, or a Service Group containing supported Objects"
+        else:
+            message = "Remote Access supports TCP and Fixed TCP only; UDP Service Objects cannot be selected."
+            expected = "  TCP or Fixed TCP Service Object, or a Service Group containing supported Objects"
         raise ControlPlaneError(
             cli_error(
-                "Internet Access v2.4 has a TCP/HTTP/HTTPS CONNECT datapath only; "
-                "UDP Service Objects cannot be selected."
+                message,
+                expected=expected,
+                next_step="Select a supported Service Object or Group.\nUse:\n  show service-objects\n  show service-groups",
             )
         )
     if plane == "remote":
@@ -5593,18 +5664,18 @@ def _reconcile_agent_from_server_status(plane_db, result: dict) -> int:
                 values.append(int(new_pending))
         if "status" in item:
             status = str(item.get("status") or "").strip().upper()
-            if status in ("HEALTHY", "DEGRADED", "DISABLED") and str(row["status"] or "") != status:
-                assignments.append("status = ?")
-                values.append(status)
-                # Server authority: HEALTHY only remains verified when Server says HEALTHY.
-                # Status push never invents verification; Server DEGRADED clears the flag.
+            if status in ("HEALTHY", "DEGRADED", "DISABLED"):
+                if str(row["status"] or "") != status:
+                    assignments.append("status = ?")
+                    values.append(status)
+                # Verification is independent of a status *text* change.
+                # A validated Server ACK can confirm the generation of an
+                # already-HEALTHY row; Server refusal/revoke clears stale
+                # verification even if the status string did not change.
                 want_verified = 1 if status == "HEALTHY" and bool(item.get("runtime_verified")) else 0
                 if int(_row_get(row, "runtime_verified") or 0) != want_verified:
                     assignments.append("runtime_verified = ?")
                     values.append(want_verified)
-            elif status == "DEGRADED" and int(_row_get(row, "runtime_verified") or 0):
-                assignments.append("runtime_verified = ?")
-                values.append(0)
         if "reason" in item:
             reason = str(item.get("reason") or "")
             if str(row["reason"] or "") != reason:
@@ -5627,11 +5698,28 @@ def _reconcile_agent_from_server_status(plane_db, result: dict) -> int:
 
 
 def _collect_degraded_remote_services(plane_db) -> list[dict]:
+    """Public Agent synchronization cannot claim a runtime-unverified PASS.
+
+    The authenticated Server ACK can preserve HEALTHY status text while
+    explicitly clearing runtime_verified. That state is intentionally shown
+    as DEGRADED in Agent views. Include it in synchronize outcome without
+    granting verification or mutating the authoritative Agent/Server state.
+    """
     rows = []
     for row in plane_db.conn.execute(
-        "SELECT name, reason FROM agent_remote_services WHERE delete_pending = 0 AND status = 'DEGRADED' ORDER BY name"
+        "SELECT name, status, reason, runtime_verified FROM agent_remote_services "
+        "WHERE delete_pending = 0 AND enabled = 1 "
+        "AND (upper(status) = 'DEGRADED' "
+        "OR (upper(status) = 'HEALTHY' AND runtime_verified = 0)) "
+        "ORDER BY name"
     ):
-        rows.append({"name": row["name"], "reason": str(row["reason"] or "").strip()})
+        reason = str(row["reason"] or "").strip()
+        if not reason and str(row["status"] or "").upper() == "HEALTHY":
+            reason = (
+                "Runtime generation verification is pending; the Server "
+                "acknowledged the service without a verified active proxy."
+            )
+        rows.append({"name": row["name"], "reason": reason})
     return rows
 
 
@@ -5723,7 +5811,9 @@ def invalidate_runtime_verification_for_restart(*, root: Optional[str] = None) -
             close()
 
 
-def synchronize_agent_remote_services(plane_db, *, root: Optional[str] = None) -> dict:
+def synchronize_agent_remote_services(plane_db, *, root: Optional[str] = None,
+                                      force_runtime: bool = False,
+                                      server_verification_only: bool = False) -> dict:
     """Reconnect synchronization: allocate pending endpoints, apply deletes, revalidate deps."""
     # Enrollment projection is a lifecycle write. show/status must not do it.
     projected = project_enrolled_services_into_agent_catalog(plane_db, root=root)
@@ -5745,6 +5835,7 @@ def synchronize_agent_remote_services(plane_db, *, root: Optional[str] = None) -
     # A management failure must not wipe desired state, but it must not
     # report SYNCHRONIZED either.
     catalog_error = ""
+    reconciliation_error = ""
     try:
         if mgmt.use_live_mgmt_path(root or getattr(plane_db, "root", None)):
             sync_agent_catalog_from_server(plane_db, root=root)
@@ -5752,14 +5843,103 @@ def synchronize_agent_remote_services(plane_db, *, root: Optional[str] = None) -
         catalog_error = str(exc).strip()
 
     def _finish(result: dict) -> dict:
-        if not catalog_error:
+        error = catalog_error or reconciliation_error
+        if not error:
             return result
         out = dict(result)
         if str(out.get("status") or "").upper() == "SYNCHRONIZED":
             out["status"] = "DEGRADED"
         if not str(out.get("runtime_error") or "").strip():
-            out["runtime_error"] = catalog_error
+            out["runtime_error"] = error
         return out
+
+    # Signed Server re-verification is not a request to replace the entire
+    # FRP generation. First try an immutable, verified-runtime heartbeat. The
+    # Server response must confirm every existing endpoint and status; an
+    # omitted/revoked/reallocated service falls through to full reconciliation.
+    # This path never trusts persisted HEALTHY alone and never upgrades a
+    # missing proxy without current-process evidence.
+    if server_verification_only and not force_runtime and not projected and not catalog_error:
+        try:
+            import drlink_v24_runtime as runtime
+
+            if mgmt.use_live_mgmt_path(root or getattr(plane_db, "root", None)):
+                snapshot_rows = list(plane_db.conn.execute(
+                    "SELECT * FROM agent_remote_services WHERE delete_pending = 0"
+                ))
+                claims = []
+                stable = bool(snapshot_rows)
+                for row in snapshot_rows:
+                    enabled = bool(row["enabled"])
+                    expected_status = "HEALTHY" if enabled else "DISABLED"
+                    if (str(row["status"] or "").upper() != expected_status
+                        or row["pending_allocation"]
+                        or (enabled and (
+                            not row["runtime_verified"] or row["endpoint_port"] is None))):
+                        stable = False
+                        break
+                    if (_destination_dependency_status(
+                            plane_db, row["destination"], root=root,
+                            destination_client_id=_row_get(row, "destination_client_id"))
+                        or _service_dependency_status(plane_db, row["service_object"])):
+                        stable = False
+                        break
+                    if enabled and runtime.verified_remote_service_status(
+                            plane_db, row["name"], root=root)[0] != "HEALTHY":
+                        stable = False
+                        break
+                    claims.append({
+                        "name": row["name"],
+                        "status": expected_status,
+                        "reason": str(row["reason"] or ""),
+                        "runtime_verified": enabled,
+                        "endpoint_port": row["endpoint_port"],
+                    })
+                if stable:
+                    acknowledged = mgmt.report_remote_service_status_on_server(
+                        root=root or getattr(plane_db, "root", None),
+                        services=claims,
+                    )
+                    returned = acknowledged.get("services") if isinstance(acknowledged, dict) else None
+                    by_name = {
+                        str(item.get("name") or "").lower(): item
+                        for item in (returned or []) if isinstance(item, dict)
+                    }
+                    verified = len(by_name) == len(claims)
+                    for original in snapshot_rows:
+                        item = by_name.get(str(original["name"]).lower())
+                        enabled = bool(original["enabled"])
+                        current = plane_db.conn.execute(
+                            "SELECT * FROM agent_remote_services "
+                            "WHERE name=? COLLATE NOCASE AND delete_pending=0",
+                            (original["name"],),
+                        ).fetchone()
+                        if (item is None or current is None
+                            or tuple(current) != tuple(original)
+                            or str(item.get("status") or "").upper()
+                                != ("HEALTHY" if enabled else "DISABLED")
+                            or bool(item.get("runtime_verified")) != enabled
+                            or item.get("endpoint_port") != original["endpoint_port"]
+                            or int(item.get("pending_allocation") or 0)
+                                != int(original["pending_allocation"] or 0)
+                            or (enabled and runtime.verified_remote_service_status(
+                                plane_db, original["name"], root=root)[0] != "HEALTHY")):
+                            verified = False
+                            break
+                    # Reconcile authoritative endpoint/verification projections
+                    # even if a fresh Server reply reveals missing ownership.
+                    _reconcile_agent_from_server_status(plane_db, acknowledged)
+                    if verified:
+                        return _finish({
+                            "status": "SYNCHRONIZED",
+                            "updated": 0,
+                            "no_change": True,
+                            "affected": [],
+                        })
+        except Exception:
+            # Auth/transport/runtime problems cannot be a silent PASS; execute
+            # the normal fail-closed synchronization and recovery path below.
+            pass
 
     updated = 0
     # Defer runtime restarts to a single apply at the end of this synchronize.
@@ -5798,6 +5978,23 @@ def synchronize_agent_remote_services(plane_db, *, root: Optional[str] = None) -
                 destination_client_id=_row_get(row, "destination_client_id"),
             )
             svc_reason = _service_dependency_status(plane_db, svc_name)
+            if (
+                svc_reason
+                and "missing or invalid" in svc_reason
+                and not catalog_error
+            ):
+                # F019: a single Agent catalog read can race an authoritative
+                # Server Service Object update. Before demoting a previously
+                # published Fixed TCP endpoint, fetch the signed Server
+                # catalog once more. A genuinely deleted object remains
+                # missing and still fails closed; never use stale Agent
+                # cache as proof of permission or dependency validity.
+                try:
+                    if mgmt.use_live_mgmt_path(root or getattr(plane_db, "root", None)):
+                        sync_agent_catalog_from_server(plane_db, root=root)
+                        svc_reason = _service_dependency_status(plane_db, svc_name)
+                except Exception as exc:
+                    catalog_error = str(exc).strip() or "Authoritative catalog recheck failed"
             reason = dest_reason or svc_reason
             if reason:
                 plane_db.conn.execute(
@@ -5811,7 +6008,7 @@ def synchronize_agent_remote_services(plane_db, *, root: Optional[str] = None) -
                 continue
             # Re-apply to allocate pending endpoints / refresh HEALTHY
             try:
-                set_remote_service_agent(
+                reapplied = set_remote_service_agent(
                     plane_db,
                     row["name"],
                     destination=row["destination"],
@@ -5820,12 +6017,21 @@ def synchronize_agent_remote_services(plane_db, *, root: Optional[str] = None) -
                     oneshot=True,
                     root=root,
                     server_reachable=True,
+                    reconcile_existing=True,
                 )
+                if reapplied.get("skipped"):
+                    # One bounded retry uses fresh operator intent after a
+                    # catalog-read race; deleted rows remain update-only.
+                    set_remote_service_agent(
+                        plane_db, row["name"], oneshot=True, root=root,
+                        server_reachable=True, reconcile_existing=True,
+                    )
             except ControlPlaneError as exc:
                 msg = str(exc)
                 brief = msg
                 if msg.startswith("ERROR:\n"):
                     brief = msg[7:].split("\n\n")[0]
+                reconciliation_error = reconciliation_error or brief
                 plane_db.conn.execute(
                     "UPDATE agent_remote_services SET status = 'DEGRADED', runtime_verified = 0, "
                     "reason = ?, updated_at = ? "
@@ -5846,7 +6052,7 @@ def synchronize_agent_remote_services(plane_db, *, root: Optional[str] = None) -
     try:
         import drlink_v24_runtime as runtime
 
-        applied = runtime.apply_agent_runtime(plane_db, root=root)
+        applied = runtime.apply_agent_runtime(plane_db, root=root, force_reapply=force_runtime)
         if not applied.get("ok") and not applied.get("skipped"):
             runtime.mark_runtime_status(
                 plane_db, ok=False, reason=applied.get("error") or "Runtime activation failed"
@@ -5992,6 +6198,7 @@ def set_remote_service_agent(
     oneshot: bool = False,
     root: Optional[str] = None,
     server_reachable: bool = True,
+    reconcile_existing: bool = False,
 ) -> dict:
     name = validate_public_name(name, "Remote Service name")
     identity = load_agent_identity(root)
@@ -5999,6 +6206,34 @@ def set_remote_service_agent(
     existing = plane_db.conn.execute(
         "SELECT * FROM agent_remote_services WHERE name = ? COLLATE NOCASE", (name,)
     ).fetchone()
+    if reconcile_existing and (existing is None or int(existing["delete_pending"] or 0)):
+        # F024: a synchronizer's stale iteration row does not authorize a
+        # CREATE after the operator has deleted it. Only an explicit public
+        # set remote-service / Bundle apply may create a new desired row.
+        return {"operation": "skipped", "skipped": True, "reason": "Remote Service no longer exists"}
+    if reconcile_existing:
+        # A lifecycle iteration row is only a scheduling hint. Re-read operator
+        # intent here instead of replaying its possibly stale disabled state.
+        destination = existing["destination"]
+        service = existing["service_object"]
+        enabled = bool(existing["enabled"])
+
+    intent_fields = ("destination", "destination_client_id", "service_object",
+                     "enabled", "endpoint_port", "delete_pending", "updated_at")
+
+    def reconciliation_intent_changed():
+        if not reconcile_existing:
+            return False
+        current = plane_db.conn.execute(
+            "SELECT * FROM agent_remote_services WHERE name = ? COLLATE NOCASE",
+            (name,),
+        ).fetchone()
+        # Catalog I/O can race an operator edit as well as deletion. Do not
+        # publish the pre-refresh intent over a newer committed definition.
+        return current is None or bool(current["delete_pending"]) or any(
+            _row_get(current, field) != _row_get(existing, field) for field in intent_fields
+        )
+
     if oneshot and existing is None:
         missing = []
         if destination is None:
@@ -6034,6 +6269,12 @@ def set_remote_service_agent(
             raise
         except Exception:
             pass
+
+    # A catalog outage switches to offline queuing, but does not authorize
+    # replaying reconciliation intent over an operator edit committed during I/O.
+    if reconciliation_intent_changed():
+        return {"operation": "skipped", "skipped": True,
+                "reason": "Remote Service changed during synchronization"}
 
     # Resolve destination single-target
     dest_token = str(dest).strip()
@@ -6286,6 +6527,7 @@ def set_remote_service_agent(
     reason = "Runtime activation pending."
     client = None
     live_mgmt = False
+    recorded_mgmt_effect = None
     target_host_for_runtime = target_host
     sport_for_runtime = sport
 
@@ -6315,6 +6557,9 @@ def set_remote_service_agent(
                     sync_agent_catalog_from_server(plane_db, root=root)
                 except Exception:
                     pass
+                if reconciliation_intent_changed():
+                    return {"operation": "skipped", "skipped": True,
+                            "reason": "Remote Service changed during synchronization"}
                 prev_mgmt = None
                 if existing is not None:
                     prev_mgmt = _agent_remote_service_mgmt_snapshot(
@@ -6340,6 +6585,7 @@ def set_remote_service_agent(
                     effect = dict(prev_mgmt)
                     effect["op"] = "update-rs"
                     _record_agent_mgmt_effect(plane_db, effect)
+                recorded_mgmt_effect = _agent_mgmt_effects(plane_db)[-1]
                 endpoint_host = remote.get("endpoint_host") or endpoint_host
                 endpoint_port = remote.get("endpoint_port")
                 pending = int(remote.get("pending_allocation") or 0)
@@ -6407,7 +6653,16 @@ def set_remote_service_agent(
     now = utc_now_iso()
     client_for_pub = client
 
+    class StaleReconciliation(ControlPlaneError):
+        """Skip stale replay without recording a no-op revision."""
+
     def write_all():
+        # _mutate holds BEGIN IMMEDIATE here on the autonomous path. The
+        # earlier catalog guard cannot cover an edit committed before BEGIN.
+        # Operator edits retain their existing semantics. Live reconciliation
+        # also compares intent atomically below, after the Server upsert.
+        if not server_reachable and reconciliation_intent_changed():
+            raise StaleReconciliation("Remote Service changed during synchronization")
         # Nested helpers (set_published_service) also call _mutate; run them as batch
         # participants of this outer transaction.
         nested_prev = getattr(plane_db, "_batch_mode", False)
@@ -6451,33 +6706,76 @@ def set_remote_service_agent(
                         reason,
                     ),
                 )
-            plane_db.conn.execute(
-                "INSERT OR REPLACE INTO agent_remote_services"
-                "(name, destination, destination_client_id, service_object, enabled, status, "
-                "endpoint_host, endpoint_port, pending_allocation, delete_pending, pool_class, "
-                "reason, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)",
-                (
-                    name,
-                    dest_token,
-                    destination_client_id,
-                    svc_name,
-                    1 if en else 0,
-                    status if en else "DISABLED",
-                    endpoint_host,
-                    endpoint_port,
-                    pending,
-                    pool_class,
-                    reason,
-                    now,
-                ),
-            )
+            if reconcile_existing and (not server_reachable or live_mgmt):
+                # Batch _mutate may have no transaction. Compare-and-update
+                # in one SQLite statement so a commit after the final SELECT
+                # cannot replay stale intent. Never roll back prior batch work.
+                # ControlPlane connections autocommit unless an outer
+                # transaction is already open; that transaction stays intact.
+                updated = plane_db.conn.execute(
+                    "UPDATE agent_remote_services SET destination=?, destination_client_id=?, "
+                    "service_object=?, enabled=?, status=?, endpoint_host=?, endpoint_port=?, "
+                    "pending_allocation=?, delete_pending=0, pool_class=?, reason=?, updated_at=?, "
+                    "runtime_verified=0, enrollment_seed=0 WHERE name=? COLLATE NOCASE AND "
+                    + " AND ".join(field + " IS ?" for field in intent_fields),
+                    (dest_token, destination_client_id, svc_name, 1 if en else 0,
+                     status if en else "DISABLED", endpoint_host, endpoint_port,
+                     pending, pool_class, reason, now, name)
+                    + tuple(_row_get(existing, field) for field in intent_fields),
+                ).rowcount
+                if not updated:
+                    raise StaleReconciliation("Remote Service changed during synchronization")
+            else:
+                plane_db.conn.execute(
+                    "INSERT OR REPLACE INTO agent_remote_services"
+                    "(name, destination, destination_client_id, service_object, enabled, status, "
+                    "endpoint_host, endpoint_port, pending_allocation, delete_pending, pool_class, "
+                    "reason, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)",
+                    (
+                        name,
+                        dest_token,
+                        destination_client_id,
+                        svc_name,
+                        1 if en else 0,
+                        status if en else "DISABLED",
+                        endpoint_host,
+                        endpoint_port,
+                        pending,
+                        pool_class,
+                        reason,
+                        now,
+                    ),
+                )
             return {"entity": {"type": "remote-service", "id": name, "name": name}, "operation": "set"}
         finally:
             plane_db._batch_mode = nested_prev
 
     try:
         result = plane_db._mutate("set remote-service %s" % name, "set remote service", write_all)
+    except StaleReconciliation:
+        if recorded_mgmt_effect is not None:
+            # Never compensate stale replay back over a newer operator action.
+            # Keep earlier batch effects; synchronize retries with fresh intent.
+            effects = _agent_mgmt_effects(plane_db)
+            effects[:] = [item for item in effects if item is not recorded_mgmt_effect]
+            current = plane_db.conn.execute(
+                "SELECT delete_pending FROM agent_remote_services WHERE name=? COLLATE NOCASE", (name,)
+            ).fetchone()
+            if current is None or current["delete_pending"]:
+                receipt = remote.get("publication")
+                if not receipt:
+                    raise ControlPlaneError("Stale publication cleanup lacks a Server receipt; recovery required")
+                try:
+                    cleaned = mgmt.delete_remote_service_on_server(
+                        root=root, name=name, expected_publication=receipt,
+                    )
+                    if cleaned.get("status") not in ("DELETED", "ABSENT", "SUPERSEDED"):
+                        raise RuntimeError("cleanup was not confirmed")
+                except Exception as exc:
+                    raise ControlPlaneError("Stale publication cleanup was not confirmed; recovery required") from exc
+        return {"operation": "skipped", "skipped": True,
+                "reason": "Remote Service changed during synchronization"}
     except Exception as exc:
         # Server mutation already happened on the live path; compensate before re-raising.
         if live_mgmt and getattr(plane_db, "_agent_mgmt_side_effects", None):
@@ -6502,14 +6800,27 @@ def set_remote_service_agent(
                 ) from exc
         raise
 
-    def _persist_status(next_status: str, next_reason: str) -> None:
+    def _persist_status(next_status: str, next_reason: str) -> bool:
         verified = 1 if str(next_status or "").upper() == "HEALTHY" else 0
-        plane_db.conn.execute(
+        guard = ''
+        guard_params = ()
+        if verified:
+            import drlink_v24_runtime as runtime
+
+            if not runtime._isolated_skip_fixture(root or getattr(plane_db, 'root', None)):
+                # apply invalidates verification BEFORE replacing a generation.
+                # Do not replay an earlier successful read over that invalidation.
+                guard = (" AND runtime_verified = 1 AND status = 'HEALTHY'"
+                         " AND enabled = 1 AND delete_pending = 0"
+                         " AND endpoint_port = ? AND service_object = ? COLLATE NOCASE")
+                guard_params = (endpoint_port, svc_name)
+        cursor = plane_db.conn.execute(
             "UPDATE agent_remote_services SET status = ?, reason = ?, runtime_verified = ?, "
-            "updated_at = ? WHERE name = ?",
-            (next_status, next_reason, verified, utc_now_iso(), name),
+            "updated_at = ? WHERE name = ?" + guard,
+            (next_status, next_reason, verified, utc_now_iso(), name) + guard_params,
         )
         _commit_if_autonomous(plane_db)
+        return bool(cursor.rowcount)
 
     # Nested Bundle Apply writes desired state only; the outer plan activates runtime.
     if in_batch:
@@ -6555,9 +6866,22 @@ def set_remote_service_agent(
                 runtime_error = applied.get("error") or "Runtime activation failed"
         except Exception as exc:
             runtime_error = str(exc)
+        service_status, service_reason = (
+            runtime.verified_remote_service_status(plane_db, name, root=root)
+            if runtime_ok else ('DEGRADED', runtime_error)
+        )
         if runtime_ok and destination_unreachable:
             status = "DEGRADED"
             reason = DESTINATION_UNREACHABLE_REASON
+            _persist_status(status, reason)
+            if live_mgmt:
+                _push_agent_remote_service_status(plane_db, root=root, names=[name])
+            _clear_agent_mgmt_side_effects(plane_db)
+        elif runtime_ok and service_status != 'HEALTHY':
+            # Other proxies may have activated successfully while this one was
+            # omitted or superseded. Preserve intent/endpoint and retry later;
+            # never acknowledge aggregate success as this service's HEALTHY.
+            status, reason = service_status, service_reason
             _persist_status(status, reason)
             if live_mgmt:
                 _push_agent_remote_service_status(plane_db, root=root, names=[name])
@@ -6590,13 +6914,21 @@ def set_remote_service_agent(
                         status = "DEGRADED"
                         reason = ack_reason or "Runtime activation pending."
                     else:
-                        status = "HEALTHY"
-                        reason = ""
+                        # The management round trip is another runtime race
+                        # boundary. Recheck before publishing the final result.
+                        status, reason = runtime.verified_remote_service_status(
+                            plane_db, name, root=root
+                        )
                 except Exception as exc:
                     status = "DEGRADED"
                     reason = "Runtime applied locally but Server acknowledgement failed: %s" % exc
                     runtime_ok = False
-            _persist_status(status, reason)
+            if not _persist_status(status, reason):
+                status = 'DEGRADED'
+                current = plane_db.conn.execute(
+                    "SELECT reason FROM agent_remote_services WHERE name = ?", (name,)
+                ).fetchone()
+                reason = (str(current['reason'] or '') if current else '') or 'Runtime generation changed during activation.'
             if live_mgmt and status != "HEALTHY":
                 _push_agent_remote_service_status(plane_db, root=root, names=[name])
             # Local desired state is the new definition; do not compensate Server.
@@ -6641,13 +6973,28 @@ def set_remote_service_agent(
             _push_agent_remote_service_status(plane_db, root=root, names=[name])
         _clear_agent_mgmt_side_effects(plane_db)
     elif not en:
-        # Disabled: ensure runtime proxy removed.
+        # Disabled desired state is not proof the old frpc listener stopped.
         try:
             import drlink_v24_runtime as runtime
 
-            runtime.apply_agent_runtime(plane_db, root=root)
-        except Exception:
-            pass
+            applied = runtime.apply_agent_runtime(plane_db, root=root)
+            if not isinstance(applied, dict) or not applied.get("ok"):
+                raise RuntimeError("runtime refresh did not confirm success")
+        except Exception as exc:
+            status = "DEGRADED"
+            reason = "Runtime deactivation could not be verified."
+            _persist_status(status, reason)
+            # Server desired-state disable remains intact; never roll back to
+            # ENABLED simply because the local runtime refresh failed.
+            _clear_agent_mgmt_side_effects(plane_db)
+            raise ControlPlaneError(
+                "ERROR:\nRemote Service was marked disabled, but runtime "
+                "deactivation could not be verified.\n\n"
+                "PARTIAL: The previous relay endpoint may remain active until "
+                "the Agent runtime is refreshed.\n"
+                "Run:\n  system diagnostics\n  system restart\n"
+                "Then verify the service is disabled and its endpoint is closed."
+            ) from exc
         status = "DISABLED"
         reason = DISABLED_OPERATOR_REASON
         _persist_status(status, reason)
@@ -6798,12 +7145,25 @@ def unset_remote_service_agent(plane_db, name: str, *, root: Optional[str] = Non
     if getattr(plane_db, "_batch_mode", False):
         return result
     # Always remove local runtime proxy immediately (including offline tombstone deletes).
+    # The desired-state deletion may already be committed locally and on the
+    # Server. An unsuccessful frpc refresh must not be reported as a completed
+    # removal while the prior runtime could still expose the endpoint.
     try:
         import drlink_v24_runtime as runtime
 
-        runtime.apply_agent_runtime(plane_db, root=root)
-    except Exception:
-        pass
+        applied = runtime.apply_agent_runtime(plane_db, root=root)
+        if not isinstance(applied, dict) or not applied.get("ok"):
+            raise RuntimeError("runtime refresh did not confirm success")
+    except Exception as exc:
+        _clear_agent_mgmt_side_effects(plane_db)
+        raise ControlPlaneError(
+            "ERROR:\nRemote Service deletion was saved, but runtime deactivation "
+            "could not be verified.\n\n"
+            "PARTIAL: The previous relay endpoint may remain active until "
+            "the Agent runtime is refreshed.\n"
+            "Run:\n  system diagnostics\n  system restart\n"
+            "Then verify the service is absent and its endpoint is closed."
+        ) from exc
     _clear_agent_mgmt_side_effects(plane_db)
     return result
 
@@ -7311,19 +7671,46 @@ def format_show_agent(root: Optional[str] = None) -> str:
     runtime = probe_agent_runtime_unit(root=root)
     autostart = "unknown"
     try:
+        import platform
         import subprocess
 
-        proc = subprocess.run(
-            ["systemctl", "is-enabled", "drlink-client.service"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            universal_newlines=True,
-            check=False,
-        )
-        if proc.returncode == 0:
-            autostart = (proc.stdout or "").strip() or "enabled"
-        elif (proc.stdout or "").strip():
-            autostart = (proc.stdout or "").strip()
+        if platform.system().lower() == "darwin":
+            # launchctl persists its enabled bit separately from process
+            # liveness. "print-disabled system" is the same authority used by
+            # the macOS lifecycle CLI; true means autostart is disabled.
+            proc = subprocess.run(
+                ["launchctl", "print-disabled", "system"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                universal_newlines=True,
+                check=False,
+            )
+            if proc.returncode == 0:
+                label = re.escape(
+                    os.environ.get("FRP_MACOS_LAUNCHD_LABEL")
+                    or "com.datarelay.drlink.frpc"
+                )
+                match = re.search(
+                    r'"' + label + r'"\s*=>\s*(true|false)\b',
+                    proc.stdout or "",
+                    flags=re.IGNORECASE,
+                )
+                if match:
+                    autostart = (
+                        "disabled" if match.group(1).lower() == "true" else "enabled"
+                    )
+        else:
+            proc = subprocess.run(
+                ["systemctl", "is-enabled", "drlink-client.service"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                universal_newlines=True,
+                check=False,
+            )
+            if proc.returncode == 0:
+                autostart = (proc.stdout or "").strip() or "enabled"
+            elif (proc.stdout or "").strip():
+                autostart = (proc.stdout or "").strip()
     except Exception:
         pass
     server = ""

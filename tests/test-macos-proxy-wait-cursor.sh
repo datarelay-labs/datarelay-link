@@ -64,8 +64,8 @@ case "$CURSOR_A" in
 esac
 # Exact Real E2E shape: UTC wall clock vs local-time frpc line.
 printf '%s\n' \
+  '2026-09-13 09:32:28.729 [I] login to server success' \
   '2026-09-13 09:32:28.730 [I] [host-ssh] start proxy success' \
-  'login to server success' \
   >>"$OUT_LOG"
 export FRP_PROXY_WAIT_CURSOR="$CURSOR_A"
 if ! wait_for_proxies host-ssh; then
@@ -149,6 +149,28 @@ if wait_for_proxies host-ssh host-http; then
   fail "Test F: missing expected proxy must FAIL"
 fi
 pass "TEST_F_EXPECTED_PROXY_MISSING"
+
+# --- Test G: successful proxy from a disconnected connection epoch is stale ---
+: >"$OUT_LOG"
+CURSOR_G="$(frp_client_journal_cursor)"
+export FRP_PROXY_WAIT_CURSOR="$CURSOR_G"
+printf '%s\n' \
+  'login to server success' \
+  '[host-ssh] start proxy success' \
+  'control worker is closed' \
+  >>"$OUT_LOG"
+if wait_for_proxies host-ssh; then
+  fail "Test G: disconnected old epoch cannot establish current macOS proxy readiness"
+fi
+printf '%s\n' \
+  'login to server success' \
+  '[host-ssh] start proxy success' \
+  >>"$OUT_LOG"
+if ! wait_for_proxies host-ssh; then
+  fail "Test G: fresh macOS epoch must recover after proxy announcement"
+fi
+pass "TEST_G_MACOS_LAST_CONNECTION_EPOCH"
+
 
 # --- Legacy ISO cursor must not accept pre-existing stale success ---
 printf '%s\n' \

@@ -20,6 +20,7 @@ import subprocess
 import tempfile
 import threading
 import time
+from contextlib import contextmanager, nullcontext
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -1928,7 +1929,24 @@ class Allocator:
         return True
 
     def registry_lock(self):
+        if getattr(self, '_remote_service_owner', None) == threading.get_ident():
+            return nullcontext()
         return FileLock(registry_lock_path(self.registry_file))
+
+    @contextmanager
+    def remote_service_transaction(self):
+        # Enrollment already uses registry -> SQLite order. Keep that order
+        # for compound publication writes, with same-thread nested helpers.
+        if getattr(self, '_remote_service_owner', None) == threading.get_ident():
+            yield
+            return
+        with LOCK:
+            with self.registry_lock():
+                self._remote_service_owner = threading.get_ident()
+                try:
+                    yield
+                finally:
+                    self._remote_service_owner = None
 
     def registry_present(self):
         return Path(self.registry_file).exists()
@@ -2012,137 +2030,135 @@ class Allocator:
 
         sid = proxy_id or remote_service_proxy_id(service_name)
         pool = 'fixed-tcp' if str(pool_class or '').strip().lower() == 'fixed-tcp' else 'normal'
-        with LOCK:
-            with self.registry_lock():
-                state = self.load_registry()
-                clients = state.setdefault('clients', {})
-                client = clients.get(machine_id)
-                if not isinstance(client, dict):
-                    raise RegistrySchemaError('unknown client identity for endpoint reservation')
-                if not isinstance(client.get('services'), dict):
-                    client['services'] = {}
-                services = client['services']
-                used = self.used_ports(state)
-                if extra_used:
-                    for item in extra_used:
-                        port = coerce_port(item)
-                        if port is not None:
-                            used.add(port)
-                # Ports held only in reserved[] remain blocked.
-                for item in state.get('reserved') or []:
+        with self.remote_service_transaction():
+            state = self.load_registry()
+            clients = state.setdefault('clients', {})
+            client = clients.get(machine_id)
+            if not isinstance(client, dict):
+                raise RegistrySchemaError('unknown client identity for endpoint reservation')
+            if not isinstance(client.get('services'), dict):
+                client['services'] = {}
+            services = client['services']
+            used = self.used_ports(state)
+            if extra_used:
+                for item in extra_used:
                     port = coerce_port(item)
                     if port is not None:
                         used.add(port)
+            # Ports held only in reserved[] remain blocked.
+            for item in state.get('reserved') or []:
+                port = coerce_port(item)
+                if port is not None:
+                    used.add(port)
 
-                previous = services.get(sid) if isinstance(services.get(sid), dict) else {}
-                remote_port = coerce_port(preserve_port)
-                if remote_port is None:
-                    remote_port = coerce_port(previous.get('remote_port'))
-                start, end = self.pool_port_range(pool)
-                if remote_port is not None:
-                    # Reuse only when still free or already owned by this proxy id.
-                    owner = None
-                    for mid, other in (state.get('clients') or {}).items():
-                        for osid, svc in ((other.get('services') or {}).items()):
-                            if coerce_port((svc or {}).get('remote_port')) == remote_port:
-                                owner = (mid, osid)
-                                break
-                        if owner:
+            previous = services.get(sid) if isinstance(services.get(sid), dict) else {}
+            remote_port = coerce_port(preserve_port)
+            if remote_port is None:
+                remote_port = coerce_port(previous.get('remote_port'))
+            start, end = self.pool_port_range(pool)
+            if remote_port is not None:
+                # Reuse only when still free or already owned by this proxy id.
+                owner = None
+                for mid, other in (state.get('clients') or {}).items():
+                    for osid, svc in ((other.get('services') or {}).items()):
+                        if coerce_port((svc or {}).get('remote_port')) == remote_port:
+                            owner = (mid, osid)
                             break
-                    if owner and owner != (machine_id, sid):
-                        remote_port = None
-                    elif remote_port in self.protected_ports():
-                        remote_port = None
-                    elif remote_port < start or remote_port > end:
-                        remote_port = None
-                    elif remote_port in used and owner != (machine_id, sid):
-                        remote_port = None
-                    elif owner != (machine_id, sid) and not port_is_available(remote_port):
-                        remote_port = None
-                if remote_port is None:
-                    # Exclude our previous port from "used" so allocate can reclaim it.
-                    prev_port = coerce_port(previous.get('remote_port'))
-                    alloc_used = set(used)
-                    if prev_port is not None:
-                        alloc_used.discard(prev_port)
-                    remote_port = self.allocate_port(alloc_used, start=start, end=end)
-                    used.add(remote_port)
+                    if owner:
+                        break
+                if owner and owner != (machine_id, sid):
+                    remote_port = None
+                elif remote_port in self.protected_ports():
+                    remote_port = None
+                elif remote_port < start or remote_port > end:
+                    remote_port = None
+                elif remote_port in used and owner != (machine_id, sid):
+                    remote_port = None
+                elif owner != (machine_id, sid) and not port_is_available(remote_port):
+                    remote_port = None
+            if remote_port is None:
+                # Exclude our previous port from "used" so allocate can reclaim it.
+                prev_port = coerce_port(previous.get('remote_port'))
+                alloc_used = set(used)
+                if prev_port is not None:
+                    alloc_used.discard(prev_port)
+                remote_port = self.allocate_port(alloc_used, start=start, end=end)
+                used.add(remote_port)
 
-                stored = {
-                    'name': str(service_name),
-                    'protocol': 'tcp',
-                    'local_ip': str(local_ip or '127.0.0.1'),
-                    'local_port': int(local_port),
-                    'remote_port': int(remote_port),
-                    'preset': 'custom',
-                    'enabled': True,
-                    'v24_remote_service': True,
-                    'pool_class': pool,
-                }
-                services[sid] = stored
-                # Keep reserved[] in sync for bookkeeping consumers.
-                reserved = list(state.get('reserved') or [])
-                if int(remote_port) not in [coerce_port(x) for x in reserved]:
-                    reserved.append(int(remote_port))
-                    state['reserved'] = reserved
-                self.save_registry(state)
-                # Mirror legacy registry.json when the live inventory path differs.
-                try:
-                    live = Path(self.registry_file).resolve()
-                    legacy = live.parent.parent / 'registry.json'
-                    if legacy != live and legacy.parent.is_dir():
-                        atomic_write_json(str(legacy), state)
-                except OSError:
-                    pass
-                return {
-                    'proxy_id': sid,
-                    'remote_port': int(remote_port),
-                    'pool_class': pool,
-                }
+            stored = {
+                'name': str(service_name),
+                'protocol': 'tcp',
+                'local_ip': str(local_ip or '127.0.0.1'),
+                'local_port': int(local_port),
+                'remote_port': int(remote_port),
+                'preset': 'custom',
+                'enabled': True,
+                'v24_remote_service': True,
+                'pool_class': pool,
+            }
+            services[sid] = stored
+            # Keep reserved[] in sync for bookkeeping consumers.
+            reserved = list(state.get('reserved') or [])
+            if int(remote_port) not in [coerce_port(x) for x in reserved]:
+                reserved.append(int(remote_port))
+                state['reserved'] = reserved
+            self.save_registry(state)
+            # Mirror legacy registry.json when the live inventory path differs.
+            try:
+                live = Path(self.registry_file).resolve()
+                legacy = live.parent.parent / 'registry.json'
+                if legacy != live and legacy.parent.is_dir():
+                    atomic_write_json(str(legacy), state)
+            except OSError:
+                pass
+            return {
+                'proxy_id': sid,
+                'remote_port': int(remote_port),
+                'pool_class': pool,
+            }
 
     def release_remote_service_endpoint(self, machine_id, service_name, *, proxy_id=None):
         """Release a v2.4 Remote Service endpoint from the authoritative registry."""
         from drlink_v24_runtime import remote_service_proxy_id
 
         sid = proxy_id or remote_service_proxy_id(service_name)
-        with LOCK:
-            with self.registry_lock():
-                state = self.load_registry()
-                clients = state.setdefault('clients', {})
-                client = clients.get(machine_id)
-                if not isinstance(client, dict):
-                    return {'released_port': None, 'proxy_id': sid}
-                services = client.get('services') or {}
-                if not isinstance(services, dict):
-                    return {'released_port': None, 'proxy_id': sid}
-                prev = services.pop(sid, None)
-                released = coerce_port((prev or {}).get('remote_port')) if isinstance(prev, dict) else None
-                # Drop from reserved[] only when no other owner still uses the port.
-                if released is not None:
-                    still_used = False
-                    for other in (state.get('clients') or {}).values():
-                        for svc in ((other.get('services') or {}).values()):
-                            if coerce_port((svc or {}).get('remote_port')) == released:
-                                still_used = True
-                                break
-                        if still_used:
+        with self.remote_service_transaction():
+            state = self.load_registry()
+            clients = state.setdefault('clients', {})
+            client = clients.get(machine_id)
+            if not isinstance(client, dict):
+                return {'released_port': None, 'proxy_id': sid}
+            services = client.get('services') or {}
+            if not isinstance(services, dict):
+                return {'released_port': None, 'proxy_id': sid}
+            prev = services.pop(sid, None)
+            released = coerce_port((prev or {}).get('remote_port')) if isinstance(prev, dict) else None
+            # Drop from reserved[] only when no other owner still uses the port.
+            if released is not None:
+                still_used = False
+                for other in (state.get('clients') or {}).values():
+                    for svc in ((other.get('services') or {}).values()):
+                        if coerce_port((svc or {}).get('remote_port')) == released:
+                            still_used = True
                             break
-                    if not still_used:
-                        reserved = []
-                        for item in state.get('reserved') or []:
-                            if coerce_port(item) != released:
-                                reserved.append(item)
-                        state['reserved'] = reserved
-                client['services'] = services
-                self.save_registry(state)
-                try:
-                    live = Path(self.registry_file).resolve()
-                    legacy = live.parent.parent / 'registry.json'
-                    if legacy != live and legacy.parent.is_dir():
-                        atomic_write_json(str(legacy), state)
-                except OSError:
-                    pass
-                return {'released_port': released, 'proxy_id': sid}
+                    if still_used:
+                        break
+                if not still_used:
+                    reserved = []
+                    for item in state.get('reserved') or []:
+                        if coerce_port(item) != released:
+                            reserved.append(item)
+                    state['reserved'] = reserved
+            client['services'] = services
+            self.save_registry(state)
+            try:
+                live = Path(self.registry_file).resolve()
+                legacy = live.parent.parent / 'registry.json'
+                if legacy != live and legacy.parent.is_dir():
+                    atomic_write_json(str(legacy), state)
+            except OSError:
+                pass
+            return {'released_port': released, 'proxy_id': sid}
 
     def enrollment_path(self, enrollment_id):
         if not enrollment_id or any(c not in '0123456789abcdef' for c in enrollment_id.lower()):
@@ -3818,12 +3834,14 @@ def make_handler(allocator):
                         )
                         return
                     try:
+                        length = int(self.headers.get('Content-Length', '0'))
+                        raw = self.rfile.read(length) if length else b''
                         handled = MGMT_SYNC.handle_allocator_http(
                             plane,
                             'DELETE',
                             path,
                             self.headers,
-                            b'',
+                            raw,
                             verifier=MGMT_SYNC.AllocatorMgmtVerifier(allocator),
                         )
                         if handled is not None:

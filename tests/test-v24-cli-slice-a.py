@@ -548,23 +548,50 @@ class SliceARestorePreflightTests(unittest.TestCase):
         return tmp, root, archive, env
 
     def test_valid_archive_reaches_confirmation_without_loader_traceback(self):
+        import pty
+        import select
+        import time
+
         _tmp, root, archive, env = self._seed_server_and_broadening_backup()
         env["DRLINK_CONFIRM"] = "yes"
         env["FRP_RESTORE_YES"] = "1"
-        env["FRP_CTL_TEST_INPUT"] = "1"
-        proc = subprocess.run(
+        env.pop("FRP_CTL_TEST_INPUT", None)
+        master, slave = pty.openpty()
+        proc = subprocess.Popen(
             ["bash", str(ROOT / "tools" / "drlink"), "system", "restore", str(archive)],
-            cwd=str(ROOT),
-            input="n\n",
-            capture_output=True,
-            text=True,
-            check=False,
-            env=env,
+            cwd=str(ROOT), stdin=slave, stdout=slave, stderr=slave, env=env,
         )
-        combined = proc.stdout + proc.stderr
+        os.close(slave)
+        output = bytearray()
+        declined = False
+        deadline = time.monotonic() + 30
+        try:
+            while time.monotonic() < deadline:
+                ready, _, _ = select.select([master], [], [], 0.1)
+                if ready:
+                    try:
+                        chunk = os.read(master, 65536)
+                    except OSError:
+                        break
+                    if not chunk:
+                        break
+                    output.extend(chunk)
+                    if not declined and b"Continue with restore? [y/N]:" in output:
+                        os.write(master, b"n\n")
+                        declined = True
+                if proc.poll() is not None and not ready:
+                    break
+            self.assertTrue(declined, output.decode(errors="replace"))
+            proc.wait(timeout=5)
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+            os.close(master)
+        combined = output.decode(errors="replace")
         self.assertNotIn("Traceback", combined)
         self.assertNotIn("AttributeError", combined)
-        self.assertIn("Restore Data Relay Link", proc.stdout)
+        self.assertIn("Restore Data Relay Link", combined)
         self.assertIn("broaden", combined.lower())
         self.assertIn("Cancelled", combined)
         # User-declined restore is a clean cancellation in the public frpctl

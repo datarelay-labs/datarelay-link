@@ -63,6 +63,8 @@ Credential rotate/revoke/configure are security-sensitive authentication changes
 
 Public MCP is served only through the `single443` HTTPS frontend. `direct` deployment mode uses its public control port for the FRP listener and therefore must not advertise or activate `https://<host>/mcp`; `set mcp-tls` and certificate mutation commands fail closed until the Server is reconfigured to `single443`. The supported transition is to re-run the Data Relay Link Server installer from the same immutable release/source ref with `FRP_DEPLOYMENT_MODE=single443`, confirming the cutover by typing `SWITCH` on a TTY or setting `FRP_CONFIRM_MODE_SWITCH=yes` for a non-interactive run. A stale TLS intent or certificate from an earlier configuration does not make Direct mode MCP-capable.
 
+For a single443 Server with an explicitly configured MCP TLS hostname and mode, that hostname is the canonical `https://<MCP-HOSTNAME>/mcp` origin for OAuth issuer, discovery, registration and token exchange. It takes priority over an older `DRLINK_MCP_PUBLIC_URL` environment override (which remains a fallback when no dedicated MCP TLS hostname is configured). After a hostname change, inspect `/.well-known/oauth-authorization-server` and `/.well-known/oauth-protected-resource/mcp` through the externally reachable MCP HTTPS hostname; the issuer, registration endpoint, token endpoint and protected resource must all match the routed, certificate-valid FQDN. Internal loopback discovery checks do not substitute for the external client test.
+
 ### v2.4.0 release status
 
 MCP Bridge is included in the v2.4.0 target. The current stable-release blocker is the real ChatGPT owner/UI authentication path on a plan/surface that officially supports full MCP at evidence-capture time, not MCP protocol implementation itself.
@@ -177,7 +179,7 @@ Direct file operations must enforce configured path scope after safe canonical p
 Public v2.4 configuration binds those scopes on the AI Access rule:
 
 ```text
-set ai-access allow-read ... permission read-only paths /var/lib/vendor/** enabled
+set ai-access allow-read ... permission read-only paths '/var/lib/vendor/**' enabled
 ```
 
 ConfigurationBundle rules use the same `paths` list. Omit `paths` on edit to preserve existing scopes; export includes configured scopes so same-state reapply is NO CHANGE.
@@ -214,8 +216,18 @@ restored together on failure. Clearing MCP TLS intent removes its SNI route;
 purging secrets happens only after that route has been removed and reloaded.
 The distinct control hostname retains its private-CA certificate and WSS route.
 HTTP-01 is enabled only for AUTO_ACME; an imported certificate does not require
-a new listener on port 80. These checks qualify local certificate activation;
-real MCP host interoperability remains a separate user gate.
+a new listener on port 80. On **first** AUTO_ACME issuance there is not yet
+an active public MCP certificate: the issuer must first stage a challenge-only
+HTTP/80 nginx route for the configured hostname, while preserving the existing
+FRP/WSS HTTPS/443 configuration. The challenge listener is prepared only within
+the authorized issuance lifecycle, and the exact previous frontend bytes and
+listener state are restored if ACME issuance fails. Therefore HTTP/80 being
+closed before the first issuance request is **not by itself** proof that the OCI
+Security List is closed; cloud ingress policy, actual challenge listener and
+external ACME reachability need separate evidence. No private CA, -k/skip-verify
+or successful unit fixture substitutes for a real publicly trusted certificate.
+These checks qualify local certificate activation; real MCP host interoperability
+remains a separate user gate.
 
 Do not claim ChatGPT, Claude, Cursor, or another MCP host as supported solely from protocol conformance.
 

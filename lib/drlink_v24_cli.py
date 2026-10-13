@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import sys
+import threading
+from contextlib import contextmanager
 from typing import Optional
 
 from drlink_control_db import ControlPlaneError
@@ -17,6 +19,49 @@ except ImportError:  # pragma: no cover
 
 def _presence_word(connectivity: str) -> str:
     return {"connected": "Connected", "stale": "Stale"}.get(connectivity, "Disconnected")
+
+
+def _agent_operation_progress(message: str) -> None:
+    if sys.stderr.isatty():
+        print(message, file=sys.stderr, flush=True)
+
+
+@contextmanager
+def _agent_operation_wait_progress(operation: str, *, interval_seconds: float = 15.0):
+    """TTY-only heartbeat for potentially slow Agent/Server mutations.
+
+    This is operator feedback, NOT confirmation that a remote mutation
+    succeeded, and does not loosen timeout, rollback, or security behavior.
+    """
+    stream = sys.stderr
+    if not stream.isatty():
+        yield
+        return
+    completed = threading.Event()
+
+    def heartbeat():
+        while not completed.wait(interval_seconds):
+            try:
+                print(
+                    "%s is still in progress. Server connectivity may be delayed. "
+                    "Do not repeat the command; verify the final result and use "
+                    "show remote-service / system diagnostics for recovery."
+                    % operation,
+                    file=stream,
+                    flush=True,
+                )
+            except (OSError, ValueError):
+                return
+
+    worker = threading.Thread(
+        target=heartbeat, name="drlink-agent-operation-progress", daemon=True
+    )
+    worker.start()
+    try:
+        yield
+    finally:
+        completed.set()
+        worker.join(timeout=0.5)
 
 
 def _public_endpoint_host(plane: ControlPlane, stored: str = "") -> str:
@@ -192,6 +237,11 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         return 0
     if res == "network-object":
         _require_server(plane, "Network Objects")
+        if len(rest) > 3:
+            raise ControlPlaneError(v24.cli_error(
+                "Unexpected arguments after network-object selector.",
+                expected="  show network-object <OBJECT> [references]",
+            ))
         if len(rest) < 2:
             raise ControlPlaneError("Usage: show network-object <OBJECT>")
         name = rest[1]
@@ -229,8 +279,9 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         payload = dict(obj)
         values = payload.get("values") or plane._object_values(payload["id"])
         sys.stdout.write(
-            "Network Object: %s\nType : %s\nValue: %s\n"
-            % (payload["name"], v24.display_network_type(payload["type"]), values[0] if values else "-")
+            "Network Object: %s\nType : %s\nValue: %s\nConfiguration revision: %d\n"
+            % (payload["name"], v24.display_network_type(payload["type"]),
+               values[0] if values else "-", plane.current_revision())
         )
         return 0
     if res in ("network-groups",):
@@ -244,6 +295,11 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         return 0
     if res == "network-group":
         _require_server(plane, "Network Groups")
+        if len(rest) > 3:
+            raise ControlPlaneError(v24.cli_error(
+                "Unexpected arguments after network-group selector.",
+                expected="  show network-group <GROUP> [references]",
+            ))
         if len(rest) < 2:
             raise ControlPlaneError("Usage: show network-group <GROUP>")
         g = plane.get_object_group(rest[1])
@@ -272,6 +328,11 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         return 0
     if res == "service-object":
         _require_server(plane, "Service Objects")
+        if len(rest) > 3:
+            raise ControlPlaneError(v24.cli_error(
+                "Unexpected arguments after service-object selector.",
+                expected="  show service-object <SERVICE> [references]",
+            ))
         if len(rest) < 2:
             raise ControlPlaneError("Usage: show service-object <SERVICE>")
         sobj = v24.get_service_object(plane, rest[1])
@@ -303,6 +364,11 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         return 0
     if res == "service-group":
         _require_server(plane, "Service Groups")
+        if len(rest) > 3:
+            raise ControlPlaneError(v24.cli_error(
+                "Unexpected arguments after service-group selector.",
+                expected="  show service-group <GROUP> [references]",
+            ))
         if len(rest) < 2:
             raise ControlPlaneError("Usage: show service-group <GROUP>")
         g = v24.get_service_group(plane, rest[1])
@@ -396,8 +462,23 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         _require_server(plane, "Managed Hosts")
         if len(rest) < 2:
             raise ControlPlaneError("Usage: show managed-host <HOST>")
-        client = plane.require_client(rest[1])
+        syntax = "  show managed-host <HOST> [remote-services|agent|addresses]"
+        if len(rest) > 3:
+            raise ControlPlaneError(v24.cli_error(
+                "Unexpected arguments after Managed Host selector.", expected=syntax,
+            ))
         view = rest[2] if len(rest) > 2 else "overview"
+        if view not in ("overview", "remote-services", "agent", "addresses"):
+            recovery = syntax
+            if view == "references":
+                recovery += (
+                    "\n  show network-object <NAME> references"
+                    "\nUse the Managed Host's Network Object name on the Server."
+                )
+            raise ControlPlaneError(v24.cli_error(
+                "Unknown Managed Host view '%s'." % view, expected=recovery,
+            ))
+        client = plane.require_client(rest[1])
         if view == "remote-services":
             services = plane.conn.execute(
                 "SELECT s.name, s.public_port, s.enabled, m.destination_name, m.status, "
@@ -497,13 +578,6 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
                     % (a.get("address") or "-", a.get("scope") or "-", a.get("interface_name") or "-")
                 )
             return 0
-        if view != "overview":
-            raise ControlPlaneError(
-                v24.cli_error(
-                    "Unknown Managed Host view '%s'." % view,
-                    expected="  remote-services\n  agent\n  addresses",
-                )
-            )
         connectivity = plane.managed_host_connectivity(client)
         sys.stdout.write(
             "Managed Host: %s\nHostname: %s\nStatus: %s\nAgent: %s\nAI executor: %s\n"
@@ -632,13 +706,14 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
             if row["pending_allocation"] or row["endpoint_port"] is None
             else "%s:%s" % (_public_endpoint_host(plane, row["endpoint_host"]), row["endpoint_port"])
         )
+        effective_status = _agent_service_status(plane, row, _agent_runtime_level(plane))
         sys.stdout.write(
             "Remote Service: %s\nDestination: %s\nService: %s\nStatus: %s\nEndpoint: %s\nEnabled: %s\n"
             % (
                 row["name"],
                 row["destination"],
                 row["service_object"],
-                _agent_service_status(plane, row, _agent_runtime_level(plane)),
+                effective_status,
                 endpoint,
                 "YES" if row["enabled"] else "NO",
             )
@@ -660,6 +735,23 @@ def handle_show(plane: ControlPlane, rest: list[str]) -> Optional[int]:
                     "  show remote-service %s\n"
                     "  show status\n" % row["name"]
                 )
+        elif (
+            row["enabled"]
+            and effective_status == "DEGRADED"
+            and str(row["status"] or "").strip().upper() == "HEALTHY"
+        ):
+            # The stored status is not sufficient evidence of a currently
+            # verified generation. Explain this read-only, fail-closed
+            # projection rather than leaving DEGRADED without a reason.
+            sys.stdout.write(
+                "Reason: Current Agent runtime verification could not confirm this service.\n"
+                "Next action:\n"
+                "  system diagnostics\n"
+                "  system synchronize\n"
+                "Then verify:\n"
+                "  show remote-service %s\n"
+                "  show status\n" % row["name"]
+            )
         return 0
     return None
 
@@ -741,13 +833,15 @@ def _show_policy(plane: ControlPlane, family: str, rest: list[str]) -> int:
     if not rule:
         raise ControlPlaneError(v24.cli_error("Rule '%s' was not found." % rest[1]))
     view = plane._rule_view(rule)
+    service_selector = v24._rule_service_public_name(plane, rule["id"])
     sys.stdout.write(
-        "%s Rule: %s\nSource: %s\nDestination: %s\nService: %s\nEnabled: %s\n"
+        "%s Rule: %s\nSource: %s\nDestination: %s\nService: %s\nService details: %s\nEnabled: %s\n"
         % (
             title,
             view["name"],
             ", ".join(view.get("sources") or []) or "-",
             ", ".join(view.get("destinations") or []) or "-",
+            service_selector or "No named selector",
             ", ".join(view.get("services") or []) or "-",
             "YES" if view["enabled"] else "NO",
         )
@@ -845,7 +939,13 @@ def _show_ai_log(plane: ControlPlane, args: list[str]) -> int:
     i = 0
     while i < len(args):
         key = args[i].lower()
-        if key in ("identity", "destination", "permission") and i + 1 < len(args):
+        if key in ("identity", "destination", "permission") and i + 1 >= len(args):
+            raise ControlPlaneError(v24.cli_error(
+                "AI Access Log filter '%s' requires a value." % key,
+                expected=("  show ai-access-log [identity <IDENTITY>] "
+                          "[destination <DESTINATION>] [permission <PERMISSION>]"),
+            ))
+        if key in ("identity", "destination", "permission"):
             if key == "identity":
                 identity = args[i + 1]
             elif key == "destination":
@@ -872,7 +972,7 @@ def _show_ai_log(plane: ControlPlane, args: list[str]) -> int:
             % (
                 row.get("timestamp") or "-",
                 row.get("principal") or row.get("principal_name") or "-",
-                row.get("endpoint") or "-",
+                row.get("endpoint_name") or row.get("endpoint") or "-",
                 v24.CAP_TO_PERMISSION.get(str(cap), str(cap)),
                 row.get("result") or row.get("decision") or "-",
             )
@@ -938,7 +1038,10 @@ def handle_set(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         )
         if isinstance(result, dict) and result.get("cancelled"):
             return 1
-        sys.stdout.write("Network Object %s: %s\n" % (result["operation"], name))
+        if result.get("operation") == "no_change":
+            sys.stdout.write("NO CHANGE: Network Object %s already has the requested value.\n" % name)
+        else:
+            sys.stdout.write("Network Object %s: %s\n" % (result["operation"], name))
         return 0
     if res == "network-group":
         _require_server(plane, "Network Groups")
@@ -1206,17 +1309,19 @@ def handle_set(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         enabled = None
         if "enabled" in kv:
             enabled = str(kv["enabled"]).lower() in ("yes", "true", "1", "enabled")
-        reachable = v24.detect_server_reachable(plane, plane.root)
-        result = v24.set_remote_service_agent(
-            plane,
-            name,
-            destination=kv.get("destination"),
-            service=kv.get("service"),
-            enabled=enabled,
-            oneshot=True,
-            root=plane.root,
-            server_reachable=reachable,
-        )
+        _agent_operation_progress("Updating Remote Service; checking Server connectivity and local runtime...")
+        with _agent_operation_wait_progress("Updating Remote Service"):
+            reachable = v24.detect_server_reachable(plane, plane.root)
+            result = v24.set_remote_service_agent(
+                plane,
+                name,
+                destination=kv.get("destination"),
+                service=kv.get("service"),
+                enabled=enabled,
+                oneshot=True,
+                root=plane.root,
+                server_reachable=reachable,
+            )
         sys.stdout.write(v24.format_remote_service_view(result.get("view") or {"name": name, "destination": "-", "service": "-", "status": "HEALTHY", "endpoint": "-"}))
         return 0
     return None
@@ -1387,10 +1492,12 @@ def handle_unset(plane: ControlPlane, rest: list[str]) -> Optional[int]:
         if not _confirm_from_stdin("Continue? [y/N]:"):
             sys.stdout.write("Cancelled.\nNo changes were applied.\n")
             return 1
-        reachable = v24.detect_server_reachable(plane, plane.root)
-        v24.unset_remote_service_agent(
-            plane, name, root=plane.root, server_reachable=reachable
-        )
+        _agent_operation_progress("Removing Remote Service; checking Server connectivity and local runtime...")
+        with _agent_operation_wait_progress("Removing Remote Service"):
+            reachable = v24.detect_server_reachable(plane, plane.root)
+            v24.unset_remote_service_agent(
+                plane, name, root=plane.root, server_reachable=reachable
+            )
         sys.stdout.write(
             "Remote Service deleted: %s\n" % name
             if reachable

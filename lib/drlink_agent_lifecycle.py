@@ -7,6 +7,7 @@ import json
 import os
 import platform
 import time
+from contextlib import ExitStack
 from pathlib import Path
 from typing import Optional
 
@@ -78,17 +79,47 @@ def disconnect_once(root: Optional[str] = None) -> dict:
 def reconcile_once(root: Optional[str] = None) -> dict:
     if load_lifecycle_intent(root) == "paused":
         return {"status": "PAUSED", "updated": 0}
+    # Unix software upgrades restart this worker before their protected-state
+    # verification. A stable, shared lock keeps that restart from writing a
+    # runtime projection inside the upgrade's byte-preservation window.
+    # Windows has a separate installer and no Unix software-upgrade barrier.
+    if os.name == "nt":
+        return _reconcile_once(root)
+    from drlink_v24_runtime import _client_state_path
+    from frp_control_locks import ExclusiveFileLock, LockTimeout
+
+    lock = _client_state_path(root).with_name("client-software-upgrade.lock")
+    with ExitStack() as locks:
+        try:
+            locks.enter_context(ExclusiveFileLock(lock, timeout=0))
+        except LockTimeout:
+            return {"status": "DEFERRED", "updated": 0}
+        return _reconcile_once(root)
+
+
+def _reconcile_once(root: Optional[str] = None) -> dict:
     heartbeat = heartbeat_once(root)
-    force_sync = bool((heartbeat or {}).get("reconcile_required", False))
+    server_requests_reconciliation = bool((heartbeat or {}).get("reconcile_required", False))
     from drlink_control_plane import ControlPlane
     from drlink_v24 import ensure_v2_schema, synchronize_agent_remote_services
 
     plane = ControlPlane(root)
     try:
         ensure_v2_schema(plane.conn)
-        if not force_sync and not reconciliation_needed(plane):
+        local_reconciliation_needed = reconciliation_needed(plane)
+        if not server_requests_reconciliation and not local_reconciliation_needed:
             return {"status": "HEARTBEAT", "updated": 0}
-        return synchronize_agent_remote_services(plane, root=root)
+        # A Server-only verification retry must not replay unchanged desired
+        # services or replace a currently verified FRP generation. The signed
+        # no-op path checks the current Agent runtime and every Server ACK;
+        # missing ownership or an actual local pending change executes normal
+        # full reconciliation with its original concurrency/rollback guards.
+        if server_requests_reconciliation and not local_reconciliation_needed:
+            return synchronize_agent_remote_services(
+                plane, root=root, force_runtime=False,
+                server_verification_only=True,
+            )
+        return synchronize_agent_remote_services(plane, root=root, force_runtime=False)
     finally:
         plane.close()
 
@@ -100,7 +131,7 @@ def worker(root: Optional[str] = None) -> int:
         try:
             result = reconcile_once(root)
             status = str(result.get("status") or "").upper()
-            if status in ("OFFLINE", "DEGRADED"):
+            if status in ("OFFLINE", "DEGRADED", "DEFERRED"):
                 time.sleep(backoff)
                 backoff = min(MAX_RETRY_SECONDS, max(retry, backoff * 2))
             else:

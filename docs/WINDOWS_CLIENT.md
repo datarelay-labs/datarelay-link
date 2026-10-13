@@ -71,7 +71,8 @@ Pinned allocator CA verification and hostname/IP SAN checks both apply on the .N
 ### Updates, PID, secrets
 
 - `drlink system update engine` refreshes pinned `frpc.exe` with SHA256 verify; failure restores binary, metadata, config, and prior running/stopped state (`RECOVERY_REQUIRED=YES` if rollback itself fails).
-- `drlink system update product` does **not** download a project artifact in this release. On an installed client, re-run the canonical Windows installer to refresh management tools (identity/ports preserved). Developers/CI may set `FRP_WINDOWS_PROJECT_SRC` to a `windows/` tree.
+- `drlink system update product` does **not** automatically download a Windows project artifact in this release. For an already enrolled Agent, verify an immutable source package, set process-scoped `FRP_WINDOWS_PROJECT_SRC` to its `windows/` directory and run `drlink system update product`. This refresh preserves identity and port reservations; do not use the enrollment installer to perform an update.
+- `drlink system version` prints both the installed candidate **Source HEAD** and the packaged **Content Source HEAD**. `Source HEAD: UNKNOWN` means verified candidate provenance is missing; do **not** edit `version` or provenance files to match the Server. To refresh management tools on an **already enrolled** Agent, obtain and verify an immutable Windows source package, point `FRP_WINDOWS_PROJECT_SRC` to its `windows/` directory, then run `drlink system update product` as documented in `docs/UPGRADE.md`. **Do not rerun the Zero-Touch installer or re-enroll**; the installer intentionally rejects an existing enrollment. A successful local-source refresh does **not** itself prove Server-qualified source attestation. Recheck `system version` and keep exact-HEAD release qualification on HOLD while Source HEAD remains UNKNOWN or mismatched.
 - Check modes are distinct: `system update product -Check` checks the project-update path and `system update engine -Check` / `system update check-engine` check Relay Engine availability without applying it.
 - Stop kills only a PID whose recorded exe matches the managed `frpc.exe`.
 - Secret ACL application is fail-closed on Windows.
@@ -139,6 +140,7 @@ tools\drlink.cmd system uninstall
 | --- | --- |
 | `system pause/resume/restart` | Manages the local Agent runtime while preserving identity and Remote Service intent |
 | `show/set/unset remote-service(s)` | Canonical Agent Remote Service lifecycle; Service Objects are resolved from the synchronized Server catalog |
+| `show/set/unset remote-access` and `internet-access` | Server-only policies; the Windows Agent rejects these operations without changing state and directs the operator to the DRLink Server |
 | `test/system ... configuration` | Canonical Agent ConfigurationBundle validation, diff, export and atomic apply surface |
 | `system info` | Prints connection details without secrets |
 | `system update product/engine` | Separates Data Relay Link management updates from Relay Engine updates |

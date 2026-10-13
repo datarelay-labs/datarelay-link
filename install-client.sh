@@ -2,6 +2,13 @@
 set -euo pipefail
 
 _FRP_INSTALL_CLIENT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Bash 4.2 (Amazon Linux 2) may drop BASH_SOURCE[0] inside a
+# previously sourced function under set -u. Capture invocation identity while
+# the installer file is being loaded, before any CLI entry point executes.
+_FRP_INSTALL_CLIENT_EXECUTED=0
+if [[ "${BASH_SOURCE[0]:-}" == "$0" ]]; then
+  _FRP_INSTALL_CLIENT_EXECUTED=1
+fi
 [[ -f "${_FRP_INSTALL_CLIENT_DIR}/lib/frp-common.sh" ]] || {
   echo "ERROR: missing project file: ${_FRP_INSTALL_CLIENT_DIR}/lib/frp-common.sh" >&2
   exit 1
@@ -678,6 +685,7 @@ frp_client_main() {
     frp_zero_touch_require_inputs || return 1
   fi
   frp_bootstrap_allocator_ca "$ALLOCATOR_URL" || return 1
+  frp_client_verify_fresh_source_provenance || return 1
   frp_detect_os >/dev/null || exit 1
   frp_detect_architecture || exit 1
 
@@ -725,7 +733,7 @@ frp_client_main() {
   }
   # Sourced callers (tests, frpctl wrappers) already own EXIT. Replacing or
   # chaining that trap leaks test allocators or SIGSEGVs bash on restore.
-  if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  if [[ "${_FRP_INSTALL_CLIENT_EXECUTED}" == "1" ]]; then
     trap '_frp_client_enroll_tmp_cleanup' EXIT
   fi
 
@@ -1037,7 +1045,7 @@ frp_client_main() {
   unset FRP_ENROLLED_PROXIES_VERIFIED
 
   print_complete "$FRP_SERVER" "$SERVICES_FILE" "${FRP_PUBLIC_HOSTNAME:-}"
-  if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then
+  if [[ "${_FRP_INSTALL_CLIENT_EXECUTED}" != "1" ]]; then
     _frp_client_enroll_tmp_cleanup
   fi
 }
@@ -1059,7 +1067,7 @@ EOF
 # When this file is executed as a program, always honor CLI args. FRP_CLIENT_SOURCED
 # is only for intentional `. install-client.sh` use; an exported leak from a prior
 # sourced test must not make `install-client.sh --upgrade` become a silent no-op.
-if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+if [[ "${_FRP_INSTALL_CLIENT_EXECUTED}" == "1" ]]; then
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --upgrade|upgrade)

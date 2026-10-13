@@ -24,6 +24,73 @@ GRAMMAR = load("frp_ctl_grammar", "lib/frp_ctl_grammar.py")
 
 
 class CompletionInventoryTests(unittest.TestCase):
+    def test_named_object_and_rule_fields(self):
+        cases = {
+            "set network-object office ": ["type", "value"],
+            "set network-object office t": ["type"],
+            "set network-object office type ": ["ip", "cidr", "fqdn"],
+            "set network-object office type cidr ": ["value"],
+            "set network-object office value type ": ["type"],
+            "set network-object office type cidr value 192.0.2.0/24 ": [],
+            "set service-object database ": ["type", "port"],
+            "set service-object database type ": ["tcp", "udp", "fixed-tcp"],
+            "set service-object database type tcp port ": [],
+            "set remote-access office ": ["mode", "source", "destination", "service", "enabled", "disabled"],
+            "set remote-access office mode ": ["blacklist", "whitelist"],
+            "set remote-access office mode whitelist ": ["source", "destination", "service", "enabled", "disabled"],
+            "set remote-access office enabled ": ["mode", "source", "destination", "service"],
+            "set remote-access enabled ": [],
+            "set network-object office unknown ": [],
+        }
+        for line, expected in cases.items():
+            with self.subTest(line=line):
+                hits = GRAMMAR.completion_candidates(line, "server", [], {}, [])
+                self.assertEqual(hits, expected)
+                self.assertEqual(GRAMMAR.completion_candidates(line, "agent", [], {}, []), [])
+
+    def test_named_field_help_and_partial_values(self):
+        for resource, field in (("network-object", "value"), ("service-object", "port"), ("remote-access", "source")):
+            cmd = GRAMMAR.CATALOG.find(["set", resource])
+            self.assertIn("Fields after the name:", GRAMMAR.CATALOG.command_help(cmd))
+            self.assertIn(field, GRAMMAR.CATALOG.command_help(cmd))
+        self.assertEqual(
+            GRAMMAR.completion_candidates("set remote-access rule mode wh", "server", [], {}, []),
+            ["whitelist"],
+        )
+
+    def test_all_named_field_families_and_display_context(self):
+        for resource, expected in {
+            "network-group": ["members"],
+            "service-group": ["members"],
+            "permission-group": ["members"],
+            "permission-object": ["permissions"],
+            "internet-access": ["mode", "source", "destination", "service", "enabled", "disabled"],
+            "ai-access": ["mode", "source", "destination", "permission", "paths", "enabled", "disabled"],
+            "remote-service": ["destination", "service", "enabled", "disabled"],
+        }.items():
+            role = "client" if resource == "remote-service" else "server"
+            line = "set %s example " % resource
+            with self.subTest(resource=resource):
+                hits = GRAMMAR.completion_candidates(line, role, [], {}, [])
+                self.assertEqual(hits, expected)
+                other = "server" if role == "client" else "client"
+                self.assertEqual(GRAMMAR.completion_candidates(line, other, [], {}, []), [])
+                rendered = GRAMMAR.format_tab_candidates(line, hits, role)
+                self.assertNotIn("Remote Services", rendered)
+                self.assertNotIn("System", rendered)
+                self.assertIn("Fields after the name:", GRAMMAR.help_text(["set", resource], role))
+        for resource in ("internet-access", "ai-access"):
+            self.assertEqual(GRAMMAR.completion_candidates(
+                "set %s example mode " % resource, "server", [], {}, []), ["whitelist"])
+        self.assertEqual(GRAMMAR.completion_candidates(
+            "set remote-service example destination this-host service ssh enabled ",
+            "client", [], {}, []), [])
+        line = "set remote-access example "
+        rendered = GRAMMAR.format_tab_candidates(line,
+            GRAMMAR.completion_candidates(line, "server", [], {}, []), "server")
+        self.assertNotIn("Remote Services", rendered)
+        self.assertNotIn("System", rendered)
+
     def test_managed_host_completion(self):
         hits = GRAMMAR.completion_candidates(
             "show managed-host ",

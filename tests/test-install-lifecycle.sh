@@ -1079,7 +1079,8 @@ pass "CLIENT_UNINSTALL_NO_SERVER_RELEASE"
 [[ ! -e "$CL/var/lib/drlink" ]] || fail "second client uninstall recreated var/lib"
 pass "CLIENT_UNINSTALL_IDEMPOTENT"
 
-# Dual-role: client uninstall must not delete server token / shared CLI
+# Internal shared-storage cleanup fixture, not supported dual-role product usage:
+# Agent uninstall must not delete pre-existing Server files / shared CLI.
 DUAL="$WORKDIR/dual"
 mkdir -p "$DUAL/etc/frp" "$DUAL/etc/drlink" "$DUAL/usr/local/bin" "$DUAL/usr/local/lib/drlink"
 echo server-token >"$DUAL/etc/frp/server_token"
@@ -1132,7 +1133,8 @@ export FRP_UNINSTALL_TEST_ROOT="$DUAL"
 "$DUAL/usr/local/bin/drlink" system diagnostics | grep -q 'doctor ok' || fail "dual-role doctor missing"
 pass "DUAL_ROLE_CLIENT_UNINSTALL_PRESERVES_SERVER_CLI"
 
-# Dual-role opposite: server uninstall must keep client drlink usable
+# Opposite internal shared-storage cleanup fixture (dual-role use is unsupported):
+# Server uninstall must keep the remaining Agent files / shared CLI usable.
 DUAL2="$WORKDIR/dual2"
 mkdir -p "$DUAL2/etc/frp" "$DUAL2/etc/drlink" "$DUAL2/usr/local/bin" "$DUAL2/usr/local/lib/drlink" \
   "$DUAL2/etc/systemd/system" "$DUAL2/var/lib/drlink"
@@ -1147,8 +1149,8 @@ touch "$DUAL2/etc/systemd/system/drlink-client.service"
 cat >"$DUAL2/usr/local/bin/drlink" <<'EOF'
 #!/bin/sh
 case "$1" in
-  system) if [ "$2" = "version" ]; then echo "drlink client 0.0.0"; else echo "drlink $*"; fi;;
-  show) if [ "$2" = "status" ]; then echo "Client status: ok (fixture)"; else echo "drlink $*"; fi;;
+  system) if [ "$2" = "version" ]; then echo "drlink Agent Host 0.0.0"; else echo "drlink $*"; fi;;
+  show) if [ "$2" = "status" ]; then echo "Agent status: ok (fixture)"; else echo "drlink $*"; fi;;
   *) echo "drlink $*";;
 esac
 EOF
@@ -1166,7 +1168,7 @@ export FRP_UNINSTALL_TEST_ROOT="$DUAL2"
 [[ ! -f "$DUAL2/etc/frp/server_token" ]] || fail "dual-role server uninstall left server token"
 [[ ! -f "$DUAL2/etc/drlink/config.json" ]] || fail "dual-role server uninstall left server config"
 [[ ! -f "$DUAL2/var/lib/drlink/registry.json" ]] || fail "dual-role server uninstall left registry"
-"$DUAL2/usr/local/bin/drlink" system version | grep -q 'drlink client' || fail "dual-role client drlink broken after server uninstall"
+"$DUAL2/usr/local/bin/drlink" system version | grep -q 'drlink Agent Host' || fail "remaining Agent drlink broken after Server uninstall"
 pass "DUAL_ROLE_SERVER_UNINSTALL_PRESERVES_CLIENT_CLI"
 
 # ---------------------------------------------------------------------------

@@ -55,6 +55,51 @@ the update fails closed. It does not silently fall back to a public GitHub
 artifact. Explicit engineering update URL overrides remain a separate
 compatibility/testing mechanism rather than the normal operator workflow.
 
+### Windows product update from verified source
+
+The Windows Agent Host currently refreshes product management software from a
+separate local source package through the existing `system update product`
+command. It does not automatically download a product update. Obtain the complete
+repository package for the intended immutable release tag or exact 40-character
+source SHA, including its `windows/` directory and repository metadata. Before
+running it, verify the source identity, release channel and package/file SHA256
+checksums against the trusted release or explicitly qualified candidate evidence.
+Do not use mutable `main`, an unverified download, or a copy of the installed
+product tree as the source. Keep this verified package outside the installation.
+
+In an elevated PowerShell process, point the existing source selector at that
+package's `windows/` directory, then invoke the public command. Restore the prior
+process environment value afterward:
+
+```powershell
+$previousSource = $env:FRP_WINDOWS_PROJECT_SRC
+try {
+    $env:FRP_WINDOWS_PROJECT_SRC = 'C:\verified-drlink-source\windows'
+    drlink system update product
+    if ($LASTEXITCODE -ne 0) { throw 'Product update failed; preserve diagnostic output.' }
+} finally {
+    if ($null -eq $previousSource) {
+        Remove-Item Env:FRP_WINDOWS_PROJECT_SRC -ErrorAction SilentlyContinue
+    } else {
+        $env:FRP_WINDOWS_PROJECT_SRC = $previousSource
+    }
+}
+```
+
+Source verification is an operator prerequisite for this local-source path; the
+source selector alone does not authenticate a package. This refresh preserves
+existing Agent identity, enrollment trust, desired configuration and reserved
+ports. Start a new PowerShell session to load the refreshed modules, then check
+`drlink system version`, `drlink show status` and `drlink system diagnostics`.
+Version/provenance output must agree with the verified package; preserve and
+investigate any mismatch rather than claiming the update is qualified.
+
+If no verified source package is available, the update fails without applying
+changes. Obtain and verify the package before retrying. Do not uninstall or
+re-enroll to repair a software update: the first-time installer rejects an
+already enrolled Agent Host, and uninstall removes local identity/configuration.
+The Relay Engine remains a separate `system update engine` operation.
+
 ## 4. Development and pre-release updates
 
 Before an immutable stable tag exists, candidate validation must use an exact immutable SHA or qualified candidate artifact.

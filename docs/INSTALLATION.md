@@ -79,6 +79,69 @@ If installation allows a domain to be selected as the product public identity, t
 
 Changing a friendly Remote Service hostname alias must not silently change management identity.
 
+### Internet Access listener recovery
+
+The Internet Access listener address and port are **installer-owned** deployment
+settings. They have no public `set server` command. Start with `system version`,
+`system diagnostics`, and `show internet-access` to record the installed immutable
+Source HEAD, current deployment mode, listener, and Server identity. Keep a
+validated `system backup` before a planned reinstall and preserve the diagnostic
+output before repairing an invalid listener.
+
+Use the Server installer from the **same immutable release/source ref** as the
+installed Server. From that verified release/source directory, the supported
+installer invocation for a trusted address already assigned to the Server is:
+
+```bash
+sudo env FRP_EGRESS_LISTEN_ADDR=<TRUSTED_SERVER_ADDRESS> bash ./install-server.sh
+```
+
+If the port must also change, supply `FRP_EGRESS_LISTEN_PORT=<VALID_PORT>` in that
+same installer invocation. The port must be 1–65535 and outside the Remote Service
+range, Fixed TCP endpoint pool, and other infrastructure listeners. Preserve the
+current `direct` or `single443` deployment mode and Server identity; this is not a
+mode-switch or re-enrollment workflow. On an existing installation, omitted
+listener settings retain their current values, so setting the address alone does
+not request a new port. Use the normal install/reconfigure invocation shown above,
+without `--upgrade`: the software-only upgrade path does not reconfigure this
+listener. Do not edit `config.json` or derived runtime files by hand.
+
+Review the installer's changes before proceeding. A reinstall can restart
+services and interrupt active connections. Data Relay Link does not assign a new
+OS interface address or change external firewall/NAT rules; those prerequisites
+remain the operator's responsibility. Afterward, run `show internet-access` and
+`system diagnostics`, and verify that protected applications still use the
+intended proxy endpoint. A listener repair does not authorize additional policy
+destinations or disable WHITELIST enforcement.
+
+### Enrollment retention recovery
+
+Enrollment retention is **installer-owned**; there is no public command to set
+its stored configuration field. Normal Server installation configures the
+supported default of **30 days** for retained terminal records. If diagnostics
+reports an invalid retained value, first save the diagnostic evidence and
+inspect `show enrollments`. The diagnostic scan uses 30 days for reporting but
+does not repair configuration or delete records.
+
+Use the Server installer from the **same immutable release/source ref** as the
+installed Server. From the verified source directory, run the normal supported
+reconfiguration with `sudo bash ./install-server.sh`, without `--upgrade`.
+Preserve the current deployment mode, public/listener settings, and Server
+identity. Review the installer prompts before proceeding; services may restart.
+This restores the default and does not require Agent re-enrollment. Do not edit
+`config.json` or invent a `set` command for this internal field.
+
+Review retained terminal records before recovery: subsequent enrollment
+lifecycle cleanup can remove terminal records older than 30 days. Active
+enrollments are not eligible for retention cleanup. If restoring a known healthy
+configuration is more appropriate, use `system backup validate <FILE>` followed
+by the documented same-version `system restore <FILE>` workflow; review its
+broader state replacement and confirmation before proceeding. A new backup of
+the invalid configuration preserves evidence but is not a healthy repair.
+
+After recovery, run `show enrollments` and `system diagnostics` and verify that
+the invalid-retention warning has cleared.
+
 ## 5. Connect a Managed Host
 
 On the DRLink Server:

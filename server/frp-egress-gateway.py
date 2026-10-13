@@ -277,6 +277,42 @@ def _send_simple_sock(sock: socket.socket, code: int, reason: str, body: bytes =
         pass
 
 
+
+# A failed HTTP upload may already be in flight when a source/destination
+# policy rejects the request. Closing TCP with unread data creates an RST that
+# hides the HTTP 403 from real curl/requests clients. Drain a small *bounded*
+# amount only after sending the denial. Never forward denied bytes upstream.
+DENIED_UPLOAD_DRAIN_LIMIT = 2 * 1024 * 1024
+DENIED_UPLOAD_DRAIN_SECONDS = 2.0
+
+
+def _send_denial_with_bounded_upload_drain(
+    sock: socket.socket,
+    code: int,
+    reason: str,
+    *,
+    content_length: int,
+    body_prefix: bytes,
+) -> None:
+    _send_simple_sock(sock, code, reason, b"denied\n")
+    remaining = max(0, int(content_length) - len(body_prefix))
+    if not remaining or content_length > DENIED_UPLOAD_DRAIN_LIMIT:
+        return
+    deadline = time.monotonic() + DENIED_UPLOAD_DRAIN_SECONDS
+    while remaining:
+        left = deadline - time.monotonic()
+        if left <= 0:
+            return
+        try:
+            sock.settimeout(min(0.2, left))
+            received = sock.recv(min(65536, remaining))
+        except (OSError, socket.timeout):
+            return
+        if not received:
+            return
+        remaining -= len(received)
+
+
 _HEADER_NAME_RE = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
 
 
@@ -1498,7 +1534,10 @@ def _handle_client_inner(gw: GatewayState, request: socket.socket, client_addres
             code, label = 503, "Service Unavailable"
         else:
             code, label = 403, "Forbidden"
-        _send_simple_sock(request, code, label, b"denied\n")
+        _send_denial_with_bounded_upload_drain(
+            request, code, label,
+            content_length=content_length, body_prefix=body_prefix,
+        )
         return
 
     # Allowed: receive the exact body BEFORE DNS/connect so incomplete bodies

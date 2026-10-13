@@ -87,6 +87,17 @@ def read_only_completion_inventory(role, root=""):
                     result["services"][selector] = names
             result["groups"] = [str(row["name"]) for row in conn.execute(
                 "SELECT name FROM client_groups ORDER BY name")]
+            # Names only: completion never reads credentials or writes authority.
+            result["inventory"] = {
+                kind: [str(row["name"]) for row in conn.execute(
+                    "SELECT name FROM %s ORDER BY name" % table)]
+                for kind, table in (
+                    (CATALOG.C_OBJECT, "objects"),
+                    (CATALOG.C_OBJECT_GROUP, "object_groups"),
+                    (CATALOG.C_AI_PRINCIPAL, "ai_principals"),
+                    (CATALOG.C_AI_RULE, "ai_access_rules"),
+                )
+            }
         if client:
             result["local_services"] = [str(row["name"]) for row in conn.execute(
                 "SELECT name FROM agent_remote_services WHERE delete_pending = 0 ORDER BY name")]
@@ -209,10 +220,10 @@ _PUBLIC_ROOTS = frozenset({"show", "set", "unset", "test", "system", "menu", "he
 _RETIRED_HELP_TOPICS = frozenset({"access", "group"})
 _HIDDEN_SHOW_RESOURCES = {
     "version": "Use system version instead.",
-    "info": "Use system info instead.",
-    "audit": "Use system audit instead.",
+    "info": "Use system info on the DRLink Agent Host instead.",
+    "audit": "Use system audit on the DRLink Server instead.",
     "upstream": "Use system update check-engine instead.",
-    "backups": "Use system backup / system backup validate / system restore instead.",
+    "backups": "Use system backup / system backup validate / system restore on the DRLink Server instead.",
 }
 _OBSOLETE_RESOURCES = frozenset(
     {
@@ -259,11 +270,37 @@ _OBSOLETE_RESOURCES = frozenset(
         "ai-activity",
         "fixed-tcp",
         "access-log",
+        "access-assign",
+        "access-public",
+        "access-lists",
+        "egress",
+        "egress-tcp",
+        "egress-tcp-entry",
     }
 )
 _OBSOLETE_POINTERS = {
-    "access": "Use show/set/unset/test remote-access and Network/Service Objects instead.",
-    "egress": "Use show/set/unset/test internet-access and Service Objects (type fixed-tcp when needed).",
+    "access": (
+        "On the DRLink Server, use:\n"
+        "  show remote-access\n"
+        "  set remote-access <RULE>\n"
+        "  unset remote-access <RULE>\n"
+        "  test remote-access source <SOURCE> destination <DESTINATION> service <SERVICE>\n"
+        "Inspect dependencies with:\n"
+        "  show network-objects\n"
+        "  show service-objects\n"
+        "See: help remote-access"
+    ),
+    "egress": (
+        "On the DRLink Server, use:\n"
+        "  show internet-access\n"
+        "  set internet-access <RULE>\n"
+        "  unset internet-access <RULE>\n"
+        "  test internet-access source <SOURCE> destination <DESTINATION> service <SERVICE>\n"
+        "Inspect dependencies with:\n"
+        "  show network-objects\n"
+        "  show service-objects\n"
+        "See: help internet-access"
+    ),
     "acl": "Use remote-access rules with Network/Service Objects instead.",
     "service-profile": "Use Service Objects and Agent Remote Services instead.",
     "internet-profile": "Use internet-access rules with Network/Service Objects instead.",
@@ -289,10 +326,42 @@ def reject_obsolete_surface(tokens):
     if not tokens:
         return None
     raw = [str(t) for t in tokens]
+    if raw[0] == "menu" and len(raw) > 1:
+        return {
+            "status": "error",
+            "exit_code": 2,
+            "message": (
+                "Guided menu does not accept a legacy submenu name.\n"
+                "Use menu, then select the current Data Relay Link domain."
+            ),
+        }
     verb = raw[0]
+    if verb == "help" and len(raw) > 1 and raw[1] in (
+        "show", "set", "unset", "test", "system", "menu",
+    ):
+        # Nested command help must reject the same retired paths as execution.
+        rejected = reject_obsolete_surface(raw[1:])
+        if rejected is not None:
+            return rejected
     # Reject retired nested forms before help or legacy system fallthrough
     # can turn them into an executable operation or successful discovery.
     focus = raw[1:] if verb == "help" else raw
+    if (
+        focus[:2] == ["system", "credential"]
+        and len(focus) >= 4
+        and focus[2] in ("rotate", "revoke", "configure")
+        and focus[3] == "ai-principal"
+    ):
+        return {
+            "status": "error", "exit_code": 2,
+            "message": "Retired AI Principal credential noun is not public grammar.\n"
+                       "On the DRLink Server, use system credential %s ai-identity <NAME>%s.\n"
+                       "See: help system credential %s" % (
+                           focus[2],
+                           " authentication <static-bearer|oauth>" if focus[2] == "configure" else "",
+                           focus[2],
+                       ),
+        }
     if focus[:3] == ["system", "audit", "ai-principal"]:
         return {
             "status": "error", "exit_code": 2,
@@ -322,6 +391,13 @@ def reject_obsolete_surface(tokens):
             "message": "Retired system revoke is not a public command.\n"
                        "Use unset enrollment <ID> or reference-safe unset managed-host <HOST>.\n"
                        "See: help commands",
+        }
+    if focus[:2] == ["test", "access"]:
+        return {
+            "status": "error", "exit_code": 2,
+            "message": "Retired test access is not a public command.\n"
+                       "Use test remote-access source <SOURCE> destination <DESTINATION> service <SERVICE>\n"
+                       "on the DRLink Server. See: help remote-access",
         }
     if focus[:2] == ["system", "update"] and len(focus) >= 3:
         target = focus[2]
@@ -401,6 +477,16 @@ def reject_obsolete_surface(tokens):
                 % (raw[1], _HIDDEN_SHOW_RESOURCES[raw[1]])
             ),
         }
+    if verb == "test" and len(raw) >= 2 and raw[1] in (
+        "group", "groups", "service", "services",
+    ):
+        return {
+            "status": "error", "exit_code": 2,
+            "message": "Retired test resource '%s' is not part of the current grammar.\n"
+                       "On the DRLink Server, use test remote-access, test internet-access, "
+                       "or test ai-access for policy decisions.\n"
+                       "See: help test" % raw[1],
+        }
     if len(raw) >= 2 and raw[1] in ("service", "services"):
         if verb in ("show", "set", "unset", "add", "remove", "enable", "disable"):
             return {
@@ -408,7 +494,12 @@ def reject_obsolete_surface(tokens):
                 "exit_code": 2,
                 "message": (
                     "Legacy local-service commands are not part of the v2.4 Agent grammar.\n"
-                    "Use show/set/unset remote-service on the Agent and system synchronize when reconciliation is needed."
+                    "On the Agent Host, use:\n"
+                    "  show remote-services\n"
+                    "  show remote-service <NAME>\n"
+                    "  set remote-service <NAME>\n"
+                    "  unset remote-service <NAME>\n"
+                    "  system synchronize    (when reconciliation is needed)"
                 ),
             }
         if verb == "system" and raw[1] == "services":
@@ -417,7 +508,10 @@ def reject_obsolete_surface(tokens):
                 "exit_code": 2,
                 "message": (
                     "Legacy 'system services ...' commands are not part of the v2.4 Agent grammar.\n"
-                    "Use set/unset remote-service and system synchronize."
+                    "On the Agent Host, use:\n"
+                    "  set remote-service <NAME>\n"
+                    "  unset remote-service <NAME>\n"
+                    "  system synchronize"
                 ),
             }
     if len(raw) >= 2 and raw[1] == "internet" and verb in ("show", "test"):
@@ -789,7 +883,17 @@ def help_text(tokens, role):
         return CATALOG.workflow_help(role)
     if verb in ("command", "commands"):
         return CATALOG.commands_help(role)
-    domain = CATALOG.domain_help(verb, role)
+    # A multi-token help request is command help first; otherwise the broad
+    # domain page would hide exact lifecycle children such as certificate or
+    # credential operations.
+    if len(tokens) > 1:
+        catalog_topic = _catalog_help_topic(tokens, role)
+        if catalog_topic is not None:
+            return catalog_topic
+        children = _catalog_next_path_tokens(tokens, role)
+        if children:
+            return _fmt_available([(child, "") for child in children])
+    domain = CATALOG.domain_help(verb, role) if len(tokens) == 1 else None
     if domain is not None:
         return domain
     catalog_topic = _catalog_help_topic(tokens, role)
@@ -820,8 +924,8 @@ def help_text(tokens, role):
         "reference.",
         "Canonical roots: show, set, unset, test, system, menu, help, exit",
     ]
-    if client or server:
-        pass
+    if CATALOG.domain_help(verb, role) is not None:
+        lines.extend(["", "See: help %s" % verb])
     return "\n".join(lines) + "\n"
 
 
@@ -834,6 +938,25 @@ def _catalog_help_topic(tokens, role):
     cmd = CATALOG.find(probe)
     if cmd is not None and len(cmd["path"]) == len(probe):
         return CATALOG.command_help(cmd)
+    # Help may name a documented positional enum (for example
+    # `help set enrollment zero-touch`). Resolve the longest command prefix
+    # and accept only values advertised by that command's argument metadata.
+    for cut in range(len(probe) - 1, 0, -1):
+        parent = CATALOG.find(probe[:cut])
+        if parent is None or not CATALOG.role_allows(parent["roles"], role):
+            continue
+        trailing = probe[cut:]
+        args = list(parent.get("args") or ())
+        if len(trailing) > len(args):
+            continue
+        valid = True
+        for value, arg in zip(trailing, args):
+            choices = arg.get("complete")
+            if isinstance(choices, (list, tuple)) and value not in choices:
+                valid = False
+                break
+        if valid:
+            return CATALOG.command_help(parent)
     if len(probe) == 1 and CATALOG.canonical_actions(root):
         text = CATALOG.resource_help(root, role)
         if text is not None:
@@ -1127,7 +1250,7 @@ def _update_help(role):
         )
     lines.extend(
         [
-            "A software update does not re-enroll clients or rotate CA/token/ports.",
+            "A software update does not re-enroll Agent Hosts or rotate CA/token/ports.",
             "See: help system / help commands",
         ]
     )
@@ -1270,9 +1393,9 @@ def _catalog_context_help(tokens, role, names=None, clients=None):
     if tokens[1] not in actions:
         if root in FALLTHROUGH_ROOTS:
             return None
-        if not rows:
-            return None
-        return _fmt_available(rows)
+        # Unknown resources must not look accepted through ancestor help.
+        # Use the same rejection and canonical pointer as nested help.
+        return help_text(tokens, role)
     probe = [root] + list(tokens[1:])
     cmd = CATALOG.find(probe)
     if cmd is None or not CATALOG.role_allows(cmd["roles"], role):
@@ -1296,8 +1419,12 @@ def _catalog_context_help(tokens, role, names=None, clients=None):
         ("unset", "remote-access"),
         ("unset", "internet-access"),
         ("unset", "ai-access"),
+        ("unset", "mcp-tls"),
         ("system", "diff"),
         ("system", "backup"),
+        ("set", "remote-access"),
+        ("set", "internet-access"),
+        ("set", "ai-access"),
     }
     if tuple(probe) in parent_help_paths:
         rendered = CATALOG.command_help(cmd).rstrip()
@@ -1328,7 +1455,7 @@ def _catalog_context_help(tokens, role, names=None, clients=None):
     if len(probe) == len(cmd["path"]):
         available = []
         if cmd["args"]:
-            complete = cmd["args"][0]["complete"]
+            complete = _role_argument_completion(cmd, cmd["args"][0], role)
             if isinstance(complete, (list, tuple)):
                 available.extend(str(item) for item in complete)
         available.extend(str(tok) for tok in nxt)
@@ -1341,12 +1468,21 @@ def _catalog_context_help(tokens, role, names=None, clients=None):
     index = len(probe) - len(cmd["path"])
     if index < len(cmd["args"]):
         arg = cmd["args"][index]
-        complete = arg["complete"]
+        complete = _role_argument_completion(cmd, arg, role)
         if complete == CATALOG.C_CLIENT:
             return _context_client_list(names, clients)
         if isinstance(complete, (list, tuple)):
             return _fmt_available([(item, "") for item in complete])
     return CATALOG.command_help(cmd)
+
+
+def _role_argument_completion(cmd, arg, role):
+    """Keep shared argument discovery within the installed role's scope."""
+    complete = arg["complete"]
+    client, server = _role_parts(role)
+    if cmd["path"] == ("system", "diagnostics") and client and not server:
+        return ["runtime"]
+    return complete
 
 
 def context_help(tokens, role, names=None, clients=None):
@@ -1459,7 +1595,8 @@ def context_help(tokens, role, names=None, clients=None):
             "Use Managed Hosts and Enrollment on the DRLink Server:\n"
             "  show managed-hosts\n"
             "  show managed-host <HOST>\n"
-            "  set enrollment zero-touch|manual\n"
+            "  set enrollment zero-touch\n"
+            "  set enrollment manual\n"
             "  set managed-host <HOST> group <GROUP>\n"
             "  unset managed-host <HOST>\n\n"
             "See: help managed-hosts\n"
@@ -1486,7 +1623,8 @@ def context_help(tokens, role, names=None, clients=None):
         "enrollment": (
             '"enrollment" is not a current public root.\n\n'
             "Use:\n"
-            "  set enrollment zero-touch|manual\n"
+            "  set enrollment zero-touch\n"
+            "  set enrollment manual\n"
             "  set enrollment bulk\n"
             "  show enrollments\n"
             "  unset enrollment <ENROLLMENT>\n"
@@ -1960,6 +2098,7 @@ def public_option_rejection(tokens):
     # Enrollment / zero-touch / destination create flows are prompt-driven.
     # Other commands may still accept catalog-declared hidden machine flags.
     guided_prefixes = (
+        ("set", "enrollment"),
         ("create", "enrollment"),
         ("create", "enrollments"),
         ("create", "zero-touch"),
@@ -1973,9 +2112,10 @@ def public_option_rejection(tokens):
         ("zero-touch", "create"),
         ("egress", "add-destination"),
     )
+    guided_focus = focus[1:] if focus[:1] == ["help"] else focus
     is_guided = False
     for prefix in guided_prefixes:
-        if tuple(focus[: len(prefix)]) == prefix:
+        if tuple(guided_focus[: len(prefix)]) == prefix:
             is_guided = True
             break
     if bad not in ("-", "--") and not is_guided:
@@ -2041,9 +2181,15 @@ def _public_input_option_error(tokens):
     if opt_err is not None:
         return opt_err
     allowed = _machine_allowed_flags(tokens)
+    help_focus = list(tokens[1:]) if list(tokens[:1]) == ["help"] else list(tokens)
     for tok in tokens:
         raw = str(tok)
-        if raw in ("-h", "--help") or raw.split("=", 1)[0] in allowed:
+        # Binary meta-flags belong at the root, except documented uninstall help.
+        # Never forward an unsupported help request into a lifecycle effect.
+        if raw in ("-h", "--help"):
+            if help_focus[:2] == ["system", "uninstall"]:
+                continue
+        elif raw.split("=", 1)[0] in allowed:
             continue
         if raw == "--" or raw.startswith("--") or (
             len(raw) >= 2 and raw.startswith("-")
@@ -2252,14 +2398,22 @@ def match(tokens, role, names=None, clients=None):
                 "message": message,
             }
         focus = CATALOG.resolve_tokens(raw_focus, role=role)
+        if (len(focus) > 1 and focus[0] == "system"
+                and CATALOG.find(focus) is None
+                and not _catalog_next_path_tokens(focus, role)):
+            return {"status": "error", "exit_code": 2,
+                    "message": "Unknown system operation.\nUse: system ?\nSee: help system"}
         rejected = reject_obsolete_surface(focus)
         if rejected is not None:
             return rejected
+        message = context_help(focus, role, names=names, clients=clients)
+        if message.startswith("Unknown help topic:"):
+            return {"status": "error", "exit_code": 2, "message": message}
         return {
             "status": "ok",
             "action": "context_help",
             "focus": focus,
-            "message": context_help(focus, role, names=names, clients=clients),
+            "message": message,
         }
     # Bang-prefix is always shell — check before option scanning.
     if str(tokens[0]).startswith("!"):
@@ -3481,8 +3635,8 @@ def _match_create(tokens, role, names=None):
         if len(tokens) > 2:
             return incomplete(
                 "Unexpected arguments.",
-                ["create zero-touch"],
-                tip="Prefer: set client   (or help clients)",
+                ["set enrollment zero-touch"],
+                tip="Type: set enrollment zero-touch ?",
             )
         return {"status": "ok", "action": "create_zero_touch"}
     if resource == "enrollment":
@@ -4236,6 +4390,7 @@ def completion_candidates(
     egress_profiles=None,
     access_lists=None,
     service_profiles=None,
+    inventory=None,
 ):
     try:
         tokens = tokenize(line)
@@ -4276,6 +4431,7 @@ def completion_candidates(
         egress_profiles=egress_profiles,
         access_lists=access_lists,
         service_profiles=service_profiles,
+        inventory=inventory,
         tokens=tokens,
         trailing=trailing,
     )
@@ -4294,6 +4450,7 @@ def completion_candidates(
         egress_profiles=egress_profiles,
         access_lists=access_lists,
         service_profiles=service_profiles,
+        inventory=inventory,
     )
 
 
@@ -4322,6 +4479,8 @@ def _catalog_desc_map(filled, role):
             return {}, "clients"
         if isinstance(complete, (list, tuple)):
             return {item: "" for item in complete}, "named"
+    if cmd.get("tail_fields") and index >= len(cmd["args"]):
+        return {}, "fields"
     return {}, "plain"
 
 
@@ -4493,7 +4652,7 @@ def format_tab_candidates(line, matches, role, names=None, clients=None):
         return "\n".join(lines)
     # Progressive disclosure: group large resource lists by product domain.
     groups = CATALOG.group_completion_candidates(matches)
-    if groups and style != "clients" and len(matches) >= 6:
+    if groups and style not in ("clients", "fields") and len(matches) >= 6:
         out = []
         for title, members in groups:
             out.append(title)
@@ -4547,8 +4706,9 @@ def _inventory(
     egress_profiles=None,
     access_lists=None,
     service_profiles=None,
+    inventory=None,
 ):
-    return {
+    pools = {
         CATALOG.C_CLIENT: list(names or []),
         CATALOG.C_GROUP: list(groups or []),
         CATALOG.C_LOCAL_SERVICE: list(local_services or []),
@@ -4556,6 +4716,10 @@ def _inventory(
         CATALOG.C_ACCESS_LIST: list(access_lists or []),
         CATALOG.C_PROFILE: list(service_profiles or []),
     }
+    for kind in (CATALOG.C_OBJECT, CATALOG.C_OBJECT_GROUP,
+                 CATALOG.C_AI_PRINCIPAL, CATALOG.C_AI_RULE):
+        pools[kind] = list((inventory or {}).get(kind) or [])
+    return pools
 
 
 def _pending_flag_value(tokens, cmd, *, trailing):
@@ -4581,6 +4745,7 @@ def _catalog_candidates(
     egress_profiles=None,
     access_lists=None,
     service_profiles=None,
+    inventory=None,
     tokens=(),
     trailing=False,
 ):
@@ -4659,7 +4824,7 @@ def _catalog_candidates(
         return []
     if index < len(cmd["args"]):
         arg = cmd["args"][index]
-        complete = arg["complete"]
+        complete = _role_argument_completion(cmd, arg, role)
         hits = []
         if isinstance(complete, (list, tuple)):
             hits = _filter(list(complete), prefix)
@@ -4675,6 +4840,7 @@ def _catalog_candidates(
                 egress_profiles=egress_profiles,
                 access_lists=access_lists,
                 service_profiles=service_profiles,
+                inventory=inventory,
             ).get(complete)
             if pool is not None:
                 hits = _filter(pool, prefix)
@@ -4689,6 +4855,32 @@ def _catalog_candidates(
     longer = _longer_path_children()
     if longer:
         return longer
+    fields = cmd.get("tail_fields")
+    if fields:
+        # Consume complete field/value pairs; free-form values are never
+        # interpreted as new field names. Switches consume only themselves.
+        tail = probe[len(cmd["path"]) + len(cmd["args"]):]
+        used = set()
+        pos = 0
+        while pos < len(tail):
+            field = tail[pos]
+            if field not in fields or field in used:
+                return []
+            used.add(field)
+            choices = fields[field]
+            if choices is False:
+                pos += 1
+                continue
+            if pos + 1 == len(tail):
+                if isinstance(choices, list):
+                    return _filter(choices, prefix)
+                return []
+            pos += 2
+        if probe[2] in ("enabled", "disabled") and cmd["path"] == ("set", "remote-access"):
+            return []
+        if "enabled" in used or "disabled" in used:
+            used.update(("enabled", "disabled"))
+        return _filter([field for field in fields if field not in used], prefix)
     # No further catalog tokens — allow verb-specific overlays (set service
     # properties, set client metadata, …) instead of hard-stopping with [].
     return None
@@ -4713,6 +4905,7 @@ def _canonical_completion(
     egress_profiles=None,
     access_lists=None,
     service_profiles=None,
+    inventory=None,
 ):
     client, server = _role_parts(role)
     prefix = _current_prefix(tokens, trailing)
@@ -4730,6 +4923,7 @@ def _canonical_completion(
         egress_profiles=egress_profiles,
         access_lists=access_lists,
         service_profiles=service_profiles,
+        inventory=inventory,
         tokens=tokens,
         trailing=trailing,
     )
@@ -4899,6 +5093,7 @@ def complete_line(
     egress_profiles=None,
     access_lists=None,
     service_profiles=None,
+    inventory=None,
 ):
     trailing = bool(line) and line[-1:] in " \t"
     cands = completion_candidates(
@@ -4912,6 +5107,7 @@ def complete_line(
         egress_profiles=egress_profiles,
         access_lists=access_lists,
         service_profiles=service_profiles,
+        inventory=inventory,
     )
     if not cands:
         return line
@@ -5043,6 +5239,7 @@ def main(argv=None):
     egress_profiles = payload.get("egress") or []
     access_lists = payload.get("access_lists") or []
     service_profiles = payload.get("service_profiles") or []
+    inventory = payload.get("inventory") or {}
     if cmd == "match":
         tokens = payload.get("tokens") or argv[1:]
         json.dump(match(tokens, role, names=names, clients=payload.get("clients") or []), sys.stdout)
@@ -5065,6 +5262,7 @@ def main(argv=None):
             egress_profiles=egress_profiles,
             access_lists=access_lists,
             service_profiles=service_profiles,
+            inventory=inventory,
         ):
             sys.stdout.write(item + "\n")
         return 0
@@ -5081,6 +5279,7 @@ def main(argv=None):
                 egress_profiles=egress_profiles,
                 access_lists=access_lists,
                 service_profiles=service_profiles,
+                inventory=inventory,
             )
         )
         return 0

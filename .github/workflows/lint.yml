@@ -68,8 +68,39 @@ jobs:
           python3 ./scripts/generate-sbom.py -o dist/sbom.spdx.json
           ./scripts/verify-sbom.sh
 
+  # Full functional PR CI for the active v2.4 integration target. This is
+  # deterministic code/portability CI, NOT ChatGPT persona-led Full User E2E.
+  full-functional-v24:
+    if: github.event_name == 'pull_request' && github.base_ref == 'feature/v2.4.0-final-product-closure'
+    name: v2.4 complete non-Docker functionality
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+      - name: Install OS dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends python3-acme
+      - name: Install pinned official MCP SDK
+        run: |
+          SDK_PY="$(./tests/ensure-mcp-sdk-venv.sh | tail -n 1)"
+          test -x "$SDK_PY"
+          echo "DRLINK_MCP_SDK_PYTHON=$SDK_PY" >> "$GITHUB_ENV"
+      - name: Run complete functional non-Docker suite
+        run: bash tests/run-all.sh
+      - name: Check product artifacts, provenance and public metadata
+        run: |
+          bash scripts/verify-sha256sums.sh
+          bash scripts/verify-release-manifest-artifacts.sh
+          bash scripts/check-public-metadata.sh
+          bash scripts/secret-scan.sh
+
   portability-containers:
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' || github.base_ref == 'feature/v2.4.0-final-product-closure'
     name: distro ${{ matrix.image }}
     runs-on: ubuntu-latest
     permissions:

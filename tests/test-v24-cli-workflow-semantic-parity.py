@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import io
 import os
+import socket
 import sys
 import tempfile
 import unittest
@@ -159,6 +160,20 @@ class RemoteAccessSemanticParity(_Base):
 
 
 class InternetAccessSemanticParity(_Base):
+    def test_fqdn_resolution_failure_is_reported_without_allow(self):
+        v24.set_network_object(self.plane, "agent-src", type="ip", value="10.10.10.20", oneshot=True)
+        v24.set_network_object(self.plane, "audit-fqdn", type="fqdn", value="example.com", oneshot=True)
+        with mock.patch("socket.getaddrinfo", side_effect=socket.gaierror("fixture DNS unavailable")):
+            rc, out, err = self._run(
+                "test", "internet-access", "source", "agent-src",
+                "destination", "audit-fqdn", "service", "https",
+            )
+        self.assertEqual(rc, 1)
+        self.assertNotIn("ALLOW", out)
+        self.assertIn("could not resolve destination 'example.com'", err)
+        self.assertIn("fixture DNS unavailable", err)
+        self.assertIn("No changes were applied.", err)
+
     def test_user_intent_equivalent_fqdn_objects(self):
         # Intent: "Would traffic to example.com be denied?"
         # WHITELIST references audit-fqdn; test with another-object (same FQDN).
@@ -176,31 +191,33 @@ class InternetAccessSemanticParity(_Base):
             enabled=True,
             oneshot=True,
         )
-        rc_named, out_named, _err = self._run(
-            "test",
-            "internet-access",
-            "source",
-            "agent-src",
-            "destination",
-            "audit-fqdn",
-            "service",
-            "https",
-        )
-        rc_alias, out_alias, _err = self._run(
-            "test",
-            "internet-access",
-            "source",
-            "agent-src",
-            "destination",
-            "another-object",
-            "service",
-            "https",
-        )
+        # Public tests resolve FQDN candidates just as the gateway does. Keep
+        # this semantic regression deterministic instead of depending on DNS.
+        def resolve(hostname, port, *, type):
+            self.assertEqual(hostname, "example.com")
+            self.assertIsNone(port)
+            self.assertEqual(type, socket.SOCK_STREAM)
+            return [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP,
+                     "", ("93.184.216.34", 0))]
+
+        with mock.patch("socket.getaddrinfo", side_effect=resolve) as resolver:
+            rc_named, out_named, _err = self._run(
+                "test", "internet-access", "source", "agent-src",
+                "destination", "audit-fqdn", "service", "https",
+            )
+            rc_alias, out_alias, _err = self._run(
+                "test", "internet-access", "source", "agent-src",
+                "destination", "another-object", "service", "https",
+            )
+        self.assertEqual(resolver.call_count, 2)
         self.assertEqual(rc_named, 0)
         self.assertEqual(rc_alias, 0)
         self.assertIn("ALLOW", out_named)
         self.assertIn("ALLOW", out_alias)
-        runtime = self.plane.evaluate_internet_access("10.10.10.20", "example.com", 443, "https")
+        runtime = self.plane.evaluate_internet_access(
+            "10.10.10.20", "example.com", 443, "https",
+            candidate_ips=["93.184.216.34"],
+        )
         self.assertEqual(runtime["action"], "ALLOW")
 
     def test_whitelist_and_equivalent_ip_service(self):
@@ -233,6 +250,72 @@ class InternetAccessSemanticParity(_Base):
         )
         self.assertEqual(rc, 0)
         self.assertIn("ALLOW", out)
+
+
+class MissingNetworkSelectorRecovery(_Base):
+    def _policy_test_objects(self):
+        v24.set_network_object(self.plane, "office", type="ip", value="198.51.100.10", oneshot=True)
+        v24.set_network_object(self.plane, "target", type="ip", value="198.51.100.20", oneshot=True)
+        v24.set_network_group(self.plane, "empty-net", members=[], oneshot=True)
+        v24.set_service_object(self.plane, "dns-udp", type="udp", port=53, oneshot=True)
+        v24.set_service_group(self.plane, "empty-services", members=[], oneshot=True)
+        v24.set_service_group(self.plane, "udp-services", members=["dns-udp"], oneshot=True)
+        v24.set_service_group(self.plane, "mixed-services", members=["https", "dns-udp"], oneshot=True)
+        self.plane.upsert_client("a" * 32, label="managed-target", hostname="managed-target", addresses=[{"address": "198.51.100.21", "family": "ipv4"}])
+        v24.set_network_group(self.plane, "managed-targets", members=["managed-target"], oneshot=True)
+
+    def test_invalid_policy_selectors_supply_recovery_without_changes(self):
+        self._policy_test_objects()
+        before = list(self.plane.conn.iterdump())
+        cases = (
+            ("remote-access", "empty-net", "target", "https", "show network-group"),
+            ("internet-access", "office", "empty-net", "https", "show network-group"),
+            ("remote-access", "office", "target", "empty-services", "show service-group"),
+            ("internet-access", "office", "target", "dns-udp", "show service-objects"),
+            ("internet-access", "office", "managed-target", "https", "show network-objects"),
+            ("internet-access", "office", "managed-targets", "https", "show network-objects"),
+        )
+        for plane, source, destination, service, recovery in cases:
+            with self.subTest(plane=plane, source=source, destination=destination, service=service):
+                rc, out, err = self._run("test", plane, "source", source, "destination", destination, "service", service)
+                message = out + err
+                self.assertNotEqual(rc, 0)
+                self.assertIn("Expected:", message)
+                self.assertIn(recovery, message)
+                self.assertIn("No changes were applied.", message)
+                self.assertEqual(list(self.plane.conn.iterdump()), before)
+
+    def test_remote_udp_objects_and_groups_never_report_allow(self):
+        self._policy_test_objects()
+        before = list(self.plane.conn.iterdump())
+        for service in ("dns-udp", "udp-services", "mixed-services"):
+            with self.subTest(service=service):
+                rc, out, err = self._run("test", "remote-access", "source", "office", "destination", "target", "service", service)
+                message = out + err
+                self.assertNotEqual(rc, 0)
+                self.assertNotIn("Result: ALLOW", message)
+                self.assertIn("UDP", message)
+                self.assertIn("Expected:", message)
+                self.assertIn("show service-objects", message)
+                self.assertIn("No changes were applied.", message)
+                self.assertEqual(list(self.plane.conn.iterdump()), before)
+
+    def test_access_tests_explain_missing_selectors_without_changes(self):
+        v24.set_network_object(self.plane, "office", type="ip", value="198.51.100.10", oneshot=True)
+        before = list(self.plane.conn.iterdump())
+        for plane in ("internet-access", "remote-access"):
+            for source, destination in (("office", "missing-destination"), ("missing-source", "198.51.100.20")):
+                with self.subTest(plane=plane, source=source):
+                    rc, out, err = self._run("test", plane, "source", source, "destination", destination, "service", "https")
+                    message = out + err
+                    self.assertNotEqual(rc, 0)
+                    self.assertIn("was not found", message)
+                    self.assertIn("Expected:", message)
+                    self.assertIn("Network Object", message)
+                    self.assertIn("show network-objects", message)
+                    self.assertIn("show network-groups", message)
+                    self.assertIn("No changes were applied.", message)
+                    self.assertEqual(list(self.plane.conn.iterdump()), before)
 
 
 class ObjectReferenceSubviews(_Base):

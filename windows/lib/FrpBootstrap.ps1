@@ -428,7 +428,7 @@ function Complete-FrpZeroTouchPostEnroll {
             Install-FrpCommandShim | Out-Null
         } catch {
             Write-Host ("WARNING: could not put the product CLI on the system PATH: {0}" -f $_.Exception.Message)
-            Write-Host ("Run the client explicitly as: {0}" -f (Get-FrpShimPath))
+            Write-Host ("Run the product CLI explicitly as: {0}" -f (Get-FrpShimPath))
         }
     }
 
@@ -479,7 +479,7 @@ function Complete-FrpZeroTouchPostEnroll {
         } catch {
             try { Uninstall-FrpLifecycleTask | Out-Null } catch { }
             Write-Host ("ERROR: failed to register autostart: {0}" -f $_.Exception.Message)
-            Write-Host 'ERROR: enabled public services require reboot persistence without login. This client is not fully installed.'
+            Write-Host 'ERROR: enabled public services require reboot persistence without login. This Agent Host is not fully installed.'
             return 1
         }
     }
@@ -1203,11 +1203,11 @@ function Invoke-FrpAgentLifecycle {
       Report signed Agent lifecycle presence to the v2.4 management API.
     #>
     param([ValidateSet('connected','disconnected')][string]$State = 'connected')
-    if (-not (Test-FrpIsEnrolled)) { throw 'ERROR: client is not enrolled' }
+    if (-not (Test-FrpIsEnrolled)) { throw 'ERROR: Agent Host is not enrolled' }
     $client = Read-FrpClientState
     $machineId = [string]$client.machine_id
     $allocatorUrl = [string]$client.allocator_url
-    if (-not $machineId -or -not $allocatorUrl) { throw 'ERROR: client lifecycle state is incomplete' }
+    if (-not $machineId -or -not $allocatorUrl) { throw 'ERROR: Agent Host lifecycle state is incomplete' }
     $uri = [Uri]$allocatorUrl
     $path = '/v1/agent-lifecycle'
     $url = ('{0}://{1}{2}' -f $uri.Scheme, $uri.Authority, $path)
@@ -1299,7 +1299,7 @@ function Invoke-FrpZeroTouch {
     )
 
     if (-not (Enter-FrpClientLock)) {
-        Write-Host 'ERROR: another Data Relay Link client lifecycle operation is already running on this host.'
+        Write-Host 'ERROR: another Data Relay Link Agent Host lifecycle operation is already running on this host.'
         Write-Host 'FAILURE_CLASS=CLIENT_LOCK_BUSY'
         Write-Host 'Wait for it to finish, then check status with: drlink show status'
         return 1
@@ -1381,7 +1381,7 @@ function Invoke-FrpZeroTouch {
             $enrollmentSecret = $pending.EnrollmentSecret
             $operationId = [string]$pending.OperationId
             if ([string]::IsNullOrWhiteSpace($enrollmentSecret)) {
-                throw 'ERROR: local recovery state is present but unusable. Create a new Enrollment Code and re-enroll this client.'
+                throw 'ERROR: local recovery state is present but unusable. Create a new Enrollment Code and re-enroll this Agent Host.'
             }
             $services = @($pending.Services)
             # Identity was generated and saved to disk before the pending
@@ -1389,7 +1389,7 @@ function Invoke-FrpZeroTouch {
             # not match what the allocator may have already bound on an
             # "enrolled" exact replay).
             if (-not (Test-Path -LiteralPath (Get-FrpIdentityPubPath))) {
-                throw 'ERROR: local recovery state is present but the management identity is missing. Create a new Enrollment Code and re-enroll this client.'
+                throw 'ERROR: local recovery state is present but the management identity is missing. Create a new Enrollment Code and re-enroll this Agent Host.'
             }
             $publicPem = [System.IO.File]::ReadAllText((Get-FrpIdentityPubPath))
         } else {

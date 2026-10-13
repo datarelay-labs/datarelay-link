@@ -529,6 +529,85 @@ class MgmtApiAuthTests(unittest.TestCase):
         self.assertEqual(acked["status"], "HEALTHY")
         self.assertEqual(acked["endpoint_port"], result["endpoint_port"])
 
+    def test_F002_reconcile_preserves_own_server_reserved_port(self):
+        # A missing FRP registry proxy projection must not change an existing
+        # public endpoint when the Server still owns the exact reservation.
+        created = mgmt.upsert_remote_service_on_server(
+            root=self.agent_tmp, name="ssh-access", destination="this-host",
+            service="ssh", enabled=True, pool_class="normal",
+            target_host="127.0.0.1", target_port=22, target_mode="self",
+        )
+        original_port = int(created["endpoint_port"])
+        another = mgmt.upsert_remote_service_on_server(
+            root=self.agent_tmp, name="second-ssh", destination="this-host",
+            service="ssh", enabled=True, pool_class="normal",
+            target_host="127.0.0.1", target_port=22, target_mode="self",
+        )
+        other_port = int(another["endpoint_port"])
+        self.assertNotEqual(original_port, other_port)
+
+        class MissingRegistryProjection:
+            seen_extra_used = None
+
+            def reserve_remote_service_endpoint(self, machine_id, service_name,
+                                                pool_class, *, preserve_port,
+                                                extra_used, **kwargs):
+                self.seen_extra_used = set(extra_used)
+                # Mirrors the allocator when its proxy row is temporarily
+                # absent: a port listed as externally used is reallocated.
+                port = original_port + 6 if preserve_port in extra_used else preserve_port
+                return {"remote_port": port, "proxy_id": "rs-ssh-access"}
+
+        allocator = MissingRegistryProjection()
+        auth = mgmt.MgmtAuthContext(
+            MACHINE_A, {}, "fresh-nonce", int(time.time()), allocator=allocator
+        )
+        updated = mgmt.server_upsert_remote_service(
+            self.server, auth, {
+                "name": "ssh-access", "destination": "this-host", "service": "ssh",
+                "enabled": True, "pool_class": "normal", "target_mode": "self",
+                "target_host": "127.0.0.1", "target_port": 22,
+                "preserve_endpoint_port": original_port,
+            }
+        )
+        self.assertNotIn(original_port, allocator.seen_extra_used)
+        self.assertIn(other_port, allocator.seen_extra_used)
+        self.assertEqual(updated["endpoint_port"], original_port)
+        self.assertEqual(
+            self.server.conn.execute(
+                "SELECT public_port FROM published_services WHERE name = 'ssh-access'"
+            ).fetchone()[0], original_port,
+        )
+
+    def test_F002_server_reservation_overrides_stale_agent_port_hint(self):
+        created = mgmt.upsert_remote_service_on_server(
+            root=self.agent_tmp, name="ssh-access", destination="this-host",
+            service="ssh", enabled=True, pool_class="normal",
+            target_host="127.0.0.1", target_port=22, target_mode="self",
+        )
+        actual_port = int(created["endpoint_port"])
+
+        class RecordingAllocator:
+            preserved_port = None
+
+            def reserve_remote_service_endpoint(self, machine_id, service_name,
+                                                pool_class, *, preserve_port, **kwargs):
+                self.preserved_port = preserve_port
+                return {"remote_port": preserve_port, "proxy_id": "rs-ssh-access"}
+
+        allocator = RecordingAllocator()
+        auth = mgmt.MgmtAuthContext(
+            MACHINE_A, {}, "fresh-nonce", int(time.time()), allocator=allocator
+        )
+        updated = mgmt.server_upsert_remote_service(self.server, auth, {
+            "name": "ssh-access", "destination": "this-host", "service": "ssh",
+            "enabled": True, "pool_class": "normal", "target_mode": "self",
+            "target_host": "127.0.0.1", "target_port": 22,
+            "preserve_endpoint_port": actual_port + 12,  # stale Agent cache
+        })
+        self.assertEqual(allocator.preserved_port, actual_port)
+        self.assertEqual(updated["endpoint_port"], actual_port)
+
     def test_MGMT_AUTH_REMOTE_SERVICE_DELETE_VALID_AGENT_PASS(self):
         mgmt.upsert_remote_service_on_server(
             root=self.agent_tmp,
@@ -554,6 +633,70 @@ class MgmtApiAuthTests(unittest.TestCase):
             "SELECT 1 FROM port_reservations WHERE released = 0"
         ).fetchone()
         self.assertIsNone(ports)
+
+    def test_F020_failed_registry_release_cannot_report_deleted(self):
+        # The public DELETE must never discard Server publication/dependency
+        # metadata when the authoritative allocator failed to release its port.
+        from types import SimpleNamespace
+
+        created = mgmt.upsert_remote_service_on_server(
+            root=self.agent_tmp,
+            name="f020-keep-on-failure",
+            destination="this-host",
+            service="ssh",
+            enabled=True,
+            pool_class="normal",
+            target_host="127.0.0.1",
+            target_port=22,
+            target_mode="self",
+        )
+        port = int(created["endpoint_port"])
+        before = self.server.conn.execute(
+            "SELECT id, released, public_port FROM published_services "
+            "WHERE name = 'f020-keep-on-failure'"
+        ).fetchone()
+        self.assertEqual(before["released"], 0)
+
+        class FailingAllocator:
+            def release_remote_service_endpoint(self, *_args):
+                raise RuntimeError("simulated registry storage failure")
+
+        class WrongPortAllocator:
+            def release_remote_service_endpoint(self, *_args):
+                return {"released_port": port + 1, "proxy_id": "rs-f020-keep-on-failure"}
+
+        auth = SimpleNamespace(machine_id=MACHINE_A, allocator=None)
+        for allocator in (FailingAllocator(), WrongPortAllocator()):
+            with self.subTest(allocator=type(allocator).__name__):
+                auth.allocator = allocator
+                with self.assertRaises(mgmt.MgmtSyncError):
+                    mgmt.server_delete_remote_service(
+                        self.server, auth, "f020-keep-on-failure"
+                    )
+                row = self.server.conn.execute(
+                    "SELECT id, released, public_port FROM published_services "
+                    "WHERE name = 'f020-keep-on-failure'"
+                ).fetchone()
+                self.assertEqual(tuple(row), tuple(before))
+                reserved = self.server.conn.execute(
+                    "SELECT released FROM port_reservations WHERE public_port=?", (port,)
+                ).fetchone()
+                self.assertIsNotNone(reserved)
+                self.assertEqual(reserved["released"], 0)
+
+        class ConfirmingAllocator:
+            def release_remote_service_endpoint(self, *_args):
+                return {"released_port": port, "proxy_id": "rs-f020-keep-on-failure"}
+
+        auth.allocator = ConfirmingAllocator()
+        deleted = mgmt.server_delete_remote_service(
+            self.server, auth, "f020-keep-on-failure"
+        )
+        self.assertEqual(deleted["status"], "DELETED")
+        row = self.server.conn.execute(
+            "SELECT released FROM published_services WHERE name='f020-keep-on-failure'"
+        ).fetchone()
+        self.assertEqual(row["released"], 1)
 
     def test_UNAUTHENTICATED_REQUEST_NO_PORT_RESERVATION(self):
         before = self._snapshot()

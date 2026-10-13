@@ -194,7 +194,8 @@ fi
 
 echo 'Local software will be removed.'
 echo 'Server-side reservations remain.'
-echo 'Use an explicit server release command if ports should be freed.'
+echo 'On the DRLink Server, inspect the Managed Host with: show managed-host <HOST>'
+echo 'Retiring it with unset managed-host <HOST> removes its record and reservations.'
 echo
 
 frp_u_legacy_client_unit_is_product_owned() {
@@ -520,14 +521,14 @@ fi
 
 if frp_u_use_systemd; then
   if ! frp_u_legacy_systemctl daemon-reload >/dev/null 2>&1; then
-    echo "ERROR: daemon-reload failed after client uninstall" >&2
+    echo "ERROR: daemon-reload failed after Agent Host uninstall" >&2
     echo "FAILURE_CLASS=CLIENT_UNIT_RELOAD_FAILED" >&2
     exit 1
   fi
   frp_u_legacy_systemctl reset-failed >/dev/null 2>&1 || true
 fi
 
-echo 'Data Relay Link client removed locally.'
+echo 'Data Relay Link Agent Host removed locally.'
 echo 'A signed disconnect notification was attempted when the Server was reachable.'
 echo 'Offline uninstall still completes; Server presence then expires by heartbeat timeout.'
 echo 'Remote Managed Host records and reservations remain until removed on the server.'

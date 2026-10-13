@@ -64,12 +64,14 @@ class LineEditor:
         self.egress_profiles = payload.get("egress") or []
         self.access_lists = payload.get("access_lists") or []
         self.service_profiles = payload.get("service_profiles") or []
+        self.inventory = payload.get("inventory") or {}
         self._matches = []
         self._last_display_key = None
         self.prompt = os.environ.get("FRP_CTL_PROMPT") or "drlink> "
 
     def _completion_kwargs(self):
         return {
+            "inventory": self.inventory,
             "groups": self.groups,
             "egress_profiles": self.egress_profiles,
             "access_lists": self.access_lists,
@@ -237,6 +239,24 @@ def _looks_secret(grammar, line):
 
 
 _MUTATING_PUBLIC_PREFIXES = (
+    ("set", "managed-host"),
+    ("unset", "managed-host"),
+    ("set", "managed-host-group"),
+    ("unset", "managed-host-group"),
+    ("set", "network-object"),
+    ("unset", "network-object"),
+    ("set", "network-group"),
+    ("unset", "network-group"),
+    ("set", "ai-identity"),
+    ("unset", "ai-identity"),
+    ("set", "ai-access"),
+    ("unset", "ai-access"),
+    ("set", "remote-service"),
+    ("unset", "remote-service"),
+    ("system", "apply", "configuration"),
+    ("system", "synchronize"),
+    # Guided menus may change inventory before returning to this session.
+    ("menu",),
     ("set", "client"),
     ("unset", "client"),
     ("set", "client-group"),
@@ -264,6 +284,7 @@ _MUTATING_PUBLIC_PREFIXES = (
     ("set", "service"),
     ("unset", "service"),
     ("system", "restore"),
+    ("system", "rollback"),
     ("system", "import"),
     ("system", "backup"),
     ("system", "cleanup"),
@@ -286,7 +307,7 @@ def _should_refresh_inventory(tokens):
         return False
     root = tokens[0]
     # Read-only / discovery — never refresh.
-    if root in ("show", "test", "help", "?", "menu", "exit", "quit", "q"):
+    if root in ("show", "test", "help", "?", "exit", "quit", "q"):
         return False
     for prefix in _MUTATING_PUBLIC_PREFIXES:
         if tuple(tokens[: len(prefix)]) == prefix:
@@ -326,8 +347,11 @@ def _refresh_editor_inventory(editor, frpctl_bin):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             universal_newlines=True,
+            timeout=8,
         )
-    except OSError:
+    except (OSError, subprocess.TimeoutExpired):
+        # Completion is best-effort. Never trap the operator in a stale or
+        # unresponsive snapshot after the mutation itself has completed.
         return
     if proc.returncode != 0 or not (proc.stdout or "").strip():
         return
@@ -347,6 +371,7 @@ def _refresh_editor_inventory(editor, frpctl_bin):
     editor.egress_profiles = payload.get("egress") or []
     editor.access_lists = payload.get("access_lists") or []
     editor.service_profiles = payload.get("service_profiles") or []
+    editor.inventory = payload.get("inventory") or {}
 
 
 def _run_backend(argv, env):

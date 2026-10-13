@@ -2024,7 +2024,17 @@ def reconcile_from_allocator(allocator) -> dict:
     except Exception as exc:
         return {"ok": False, "applied": False, "error": "control plane unavailable: %s" % exc}
     try:
-        return reconcile_control_plane(plane, root=root, cfg=cfg, connected=False)
+        result = reconcile_control_plane(plane, root=root, cfg=cfg, connected=False)
+        # Startup has no enclosing upgrade hook to publish the revision that
+        # reconciliation just committed. Readers must see matching policy
+        # generations before the allocator starts serving restored state.
+        if result.get("ok") and (result.get("applied") or plane.status().get("mismatch")):
+            try:
+                plane.compile_runtime()
+            except Exception as exc:
+                result["ok"] = False
+                result["error"] = "startup runtime compilation failed: %s" % exc
+        return result
     finally:
         try:
             plane.close()
