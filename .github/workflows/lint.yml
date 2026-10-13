@@ -40,6 +40,44 @@ jobs:
             exit 1
           fi
           echo "DRLINK_MCP_SDK_PYTHON=$SDK_PY" >> "$GITHUB_ENV"
+      - name: Stage exact private RC41 for trusted Foundation PR suite
+        if: >-
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.head.repo.full_name == github.repository &&
+          github.event.pull_request.head.ref == 'feat/drl3-ux-saved-admission-pfci'
+        env:
+          FOUNDATION_READ_TOKEN: ${{ secrets.FOUNDATION_READ_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${FOUNDATION_READ_TOKEN:-}" || exit 2
+          umask 077
+          scratch="$(mktemp -d)"
+          trap 'rm -rf "$scratch"' EXIT
+          printf '%s\n' '@datarelay-labs:registry=https://npm.pkg.github.com' '//npm.pkg.github.com/:_authToken=${FOUNDATION_READ_TOKEN}' > "$scratch/.npmrc"
+          export NPM_CONFIG_USERCONFIG="$scratch/.npmrc"
+          python3 - <<'RC41'
+          import importlib.util
+          from pathlib import Path
+          spec = importlib.util.spec_from_file_location('rc41', 'tools/verify-link-foundation-rc41.py')
+          mod = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(mod)
+          assert len(mod.PACKAGE_SHA256) == 10
+          RC41
+          for name in auth-ui foundation foundation-cli icons product-shell system-admin-ui system-contracts testkit tokens ui; do
+            npm pack "@datarelay-labs/$name@0.1.0-rc.41" --ignore-scripts --fetch-retries=0 --pack-destination "$scratch" > "$scratch/result" 2> "$scratch/errors"
+          done
+          python3 - "$scratch" <<'RC41'
+          import importlib.util, hashlib, pathlib, sys
+          spec=importlib.util.spec_from_file_location('rc41','tools/verify-link-foundation-rc41.py')
+          mod=importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+          root=pathlib.Path(sys.argv[1]); dest=pathlib.Path('web/.foundation/packs')
+          for name, digest in mod.PACKAGE_SHA256.items():
+              f=root/f'datarelay-labs-{name}-{mod.VERSION}.tgz'
+              assert f.is_file() and hashlib.sha256(f.read_bytes()).hexdigest()==digest
+              (dest/f.name).write_bytes(f.read_bytes())
+          print('FOUNDATION_LINT_RC41_ARCHIVES=PASS_10_OF_10')
+          RC41
       - name: Full local non-Docker suite
         run: ./tests/run-all.sh
       # Live distro containers cannot validate systemd unless PID 1 is systemd.
