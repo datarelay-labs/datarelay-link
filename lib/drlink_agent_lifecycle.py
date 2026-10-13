@@ -29,13 +29,38 @@ def lifecycle_state_path(root: Optional[str] = None) -> Path:
     return Path("/var/lib/drlink/agent-lifecycle.json")
 
 def load_lifecycle_intent(root: Optional[str] = None) -> str:
+    """A missing first-run state may start; a corrupt existing state may not."""
     path = lifecycle_state_path(root)
+
+    def unique_keys(pairs):
+        data = {}
+        for key, value in pairs:
+            if key in data:
+                raise ValueError("duplicate Agent lifecycle state key")
+            data[key] = value
+        return data
+
+    def reject_nonfinite(_value):
+        raise ValueError("non-finite Agent lifecycle state value")
+
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        data = json.loads(
+            path.read_text(encoding="utf-8"),
+            object_pairs_hook=unique_keys,
+            parse_constant=reject_nonfinite,
+        )
+    except FileNotFoundError:
+        # A new Agent legitimately has no persistent lifecycle intent yet.
         return "running"
-    intent = str(data.get("intent") or "").strip().lower()
-    return intent if intent in VALID_INTENTS else "running"
+    except (OSError, UnicodeError, ValueError):
+        # Never turn a previously paused Agent into running on corruption.
+        return "paused"
+    if not isinstance(data, dict):
+        return "paused"
+    if "schema" in data and (type(data["schema"]) is not int or data["schema"] != 1):
+        return "paused"
+    intent = data.get("intent")
+    return intent if type(intent) is str and intent in VALID_INTENTS else "paused"
 
 
 def set_lifecycle_intent(intent: str, root: Optional[str] = None) -> Path:
