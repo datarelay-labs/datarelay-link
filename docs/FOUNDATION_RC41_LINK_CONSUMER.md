@@ -123,6 +123,45 @@ login, credential, Agent, Browser, second user, live test host, publisher or
 installed public product release was involved. The default public Link package
 lock remains at pf8.4.
 
+## Reproducible private RC41 Link Web installable bundle
+
+To package the complete Link Web source with the **exact ten privately
+reproduced RC41 npm archives**, use the Link-owned source-only builder.
+It requires normal authenticated access to the immutable Foundation source
+and matching 10 independent archive hashes; it does not use the previously
+platform-denied cross-host transfer or publish any package. The private
+packaging directory must be a mode-0700 root *outside* the public Link repo.
+
+```bash
+cd /home/aella/datarelay-link-worktrees/drl3-foundation-rc41-consumer-20261013
+python3 tools/build-private-link-foundation-rc41-web.py \
+  --private-source-checkout "$HOME/.cache/drlink-foundation-rc41/private-source" \
+  --verified-package-dir "$HOME/.cache/drlink-foundation-rc41/packs-normalized" \
+  --source-package-manifest "$HOME/.cache/drlink-foundation-rc41/stage-normalized/release-manifest.json" \
+  --private-root "$HOME/.cache/drlink-foundation-rc41" \
+  --output-dir "$HOME/.cache/drlink-foundation-rc41/installable-web-candidate"
+```
+
+The builder selects the **clean exact Link Git HEAD**, exports it to a
+private temporary tree, applies only the independently SHA256-pinned RC41
+Foundation archives/lock, installs offline with npm scripts disabled, runs
+the production build and the existing Administration/Journey/P0 source suites,
+then creates the native `data-relay-link-web.tar.gz` package twice and
+compares SHA256. The package verifier checks all 10 nested npm archive
+bytes and required static assets. Finally, `install-web.sh` is executed in
+an **isolated disposable** fake Core root with a SQLite existence fixture
+and `DRLINK_WEB_INSTALL_SKIP_SYSTEMD=1`. It validates installed asset
+hashes and the explicit Link source and bundle hash marker. The stub is NOT
+a real installed customer Core or authenticated product E2E.
+
+Only after every gate succeeds does the builder put one private candidate
+`data-relay-link-web-foundation-rc41-<linkhead>.private.tar.gz` and its
+`private-build-receipt.json` into the mode-0700 output directory. The
+bundle **contains private RC41 npm package bytes**; never commit, upload to
+a public Link PR or CI artifact, distribute to customers, or treat as a
+signed/published release. Source-level npm tests and private install tests
+are not owner acceptance, signed distribution or full User E2E.
+
 ## Consumer migration boundary
 
 The default PUBLIC Link Web remains on the tracked `pf8.4` package family
