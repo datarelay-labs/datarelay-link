@@ -405,20 +405,34 @@ class AIIdentityOAuth(unittest.TestCase):
 
 class AgentBundleOfflineLifecycle(unittest.TestCase):
     def setUp(self):
+        import socket
+
         self.tmp = tempfile.mkdtemp(prefix="drlink-agent-")
-        _agent_root(self.tmp)
+        _agent_root(self.tmp, hostname="127.0.0.1")
         os.environ["FRP_DEPLOY_TEST_ROOT"] = self.tmp
         os.environ["DRLINK_CONFIRM"] = "yes"
         os.environ["DRLINK_SKIP_ACTIVATION"] = "1"
         os.environ["DRLINK_SERVER_REACHABLE"] = "1"
         self.plane = ControlPlane(self.tmp)
         v24.ensure_v2_schema(self.plane.conn)
+        # Online/reconnected HEALTHY requires a reachable local target. Keep
+        # owned listeners for both services used by these bundle scenarios.
+        self.ssh_target = socket.socket()
+        self.ssh_target.bind(("127.0.0.1", 0))
+        self.ssh_target.listen(32)
+        self.addCleanup(self.ssh_target.close)
+        self.postgres_target = socket.socket()
+        self.postgres_target.bind(("127.0.0.1", 0))
+        self.postgres_target.listen(32)
+        self.addCleanup(self.postgres_target.close)
+        ssh_port = self.ssh_target.getsockname()[1]
+        postgres_port = self.postgres_target.getsockname()[1]
         # Seed synchronized catalog + service object
-        v24.set_service_object(self.plane, "ssh", type="tcp", port=22, oneshot=True)
-        v24.set_service_object(self.plane, "postgres", type="tcp", port=5432, oneshot=True)
+        v24.set_service_object(self.plane, "ssh", type="tcp", port=ssh_port, oneshot=True)
+        v24.set_service_object(self.plane, "postgres", type="tcp", port=postgres_port, oneshot=True)
         v24.set_service_object(self.plane, "dns-udp", type="udp", port=53, oneshot=True)
         now = v24.utc_now_iso() if hasattr(v24, "utc_now_iso") else __import__("drlink_control_db", fromlist=["utc_now_iso"]).utc_now_iso()
-        for name, typ, port in (("ssh", "tcp", 22), ("postgres", "tcp", 5432)):
+        for name, typ, port in (("ssh", "tcp", ssh_port), ("postgres", "tcp", postgres_port)):
             self.plane.conn.execute(
                 "INSERT OR REPLACE INTO agent_object_catalog(kind, name, payload, synced_at) VALUES (?, ?, ?, ?)",
                 ("service-object", name, '{"name":"%s","type":"%s","port":%d}' % (name, typ, port), now),

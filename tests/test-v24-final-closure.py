@@ -468,17 +468,31 @@ class LiveMgmtPathClosure(unittest.TestCase):
             os.environ.pop(k, None)
 
     def test_SERVER_ENDPOINT_ALLOCATOR_REAL_PATH(self):
+        import socket
+
         self.assertTrue(mgmt.use_live_mgmt_path(self.agent_tmp))
-        result = v24.set_remote_service_agent(
-            self.agent,
-            "ssh-access",
-            destination="this-host",
-            service="ssh",
-            enabled=True,
-            oneshot=True,
-            root=self.agent_tmp,
-            server_reachable=True,
-        )
+        # The real path probes its local target before claiming HEALTHY. Use
+        # an owned listener instead of assuming this test host serves port 22.
+        with socket.socket() as target:
+            target.bind(("127.0.0.1", 0))
+            target.listen(1)
+            target_port = target.getsockname()[1]
+            v24.set_service_object(
+                self.server, "ssh", type="tcp", port=target_port, oneshot=True
+            )
+            v24.set_service_object(
+                self.agent, "ssh", type="tcp", port=target_port, oneshot=True
+            )
+            result = v24.set_remote_service_agent(
+                self.agent,
+                "ssh-access",
+                destination="this-host",
+                service="ssh",
+                enabled=True,
+                oneshot=True,
+                root=self.agent_tmp,
+                server_reachable=True,
+            )
         view = result["view"]
         self.assertEqual(view["status"], "HEALTHY")
         self.assertIsNotNone(view["endpoint_port"])
