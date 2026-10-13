@@ -50,6 +50,16 @@ class FoundationPrivatePackageReadContract(unittest.TestCase):
         self.assertIn("trap 'rm -rf \"$scratch\"' EXIT", self.source)
         self.assertIn("umask 077", self.source)
 
+    def test_token_authentication_scope_verified_without_exposing_secret(self):
+        self.assertIn("https://api.github.com/user", self.source)
+        self.assertIn("--dump-header \"$scratch/auth-headers\"", self.source)
+        self.assertIn("--output \"$scratch/auth-response\"", self.source)
+        self.assertIn("x-oauth-scopes:.*read:packages", self.source)
+        self.assertIn("FOUNDATION_TOKEN_AUTHENTICATION=PASS", self.source)
+        self.assertIn("FOUNDATION_TOKEN_READ_PACKAGES_SCOPE=PASS", self.source)
+        self.assertNotIn("cat \"$scratch/auth-response\"", self.source)
+        self.assertNotIn("cat \"$scratch/auth-headers\"", self.source)
+
     def test_exact_all_ten_independent_owner_sha256_pins(self):
         pinned = dict(re.findall(
             r"^\s+\[([a-z0-9-]+)\]=([0-9a-f]{64})$",

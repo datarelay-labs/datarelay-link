@@ -31,6 +31,24 @@ jobs:
           umask 077
           scratch="$(mktemp -d)"
           trap 'rm -rf "$scratch"' EXIT
+          # Verify the actual secret's classic PAT scopes without printing
+          # token content, response headers, or private account metadata.
+          http="$(curl --silent --show-error --max-time 20 --retry 0 \
+            --dump-header "$scratch/auth-headers" \
+            --output "$scratch/auth-response" --write-out '%{http_code}' \
+            --header 'Accept: application/vnd.github+json' \
+            --header "Authorization: Bearer $FOUNDATION_READ_TOKEN" \
+            https://api.github.com/user)"
+          if [[ "$http" != '200' ]]; then
+            echo "FOUNDATION_TOKEN_AUTHENTICATION=BLOCKED_HTTP_$http"
+            exit 2
+          fi
+          if ! grep -iq '^x-oauth-scopes:.*read:packages' "$scratch/auth-headers"; then
+            echo 'FOUNDATION_TOKEN_SCOPE=BLOCKED_MISSING_READ_PACKAGES'
+            exit 2
+          fi
+          echo 'FOUNDATION_TOKEN_AUTHENTICATION=PASS'
+          echo 'FOUNDATION_TOKEN_READ_PACKAGES_SCOPE=PASS'
           # Let npm interpolate the env var; the token itself never enters
           # GitHub Actions logs or a tracked repository file.
           printf '%s\n' \
