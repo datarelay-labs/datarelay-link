@@ -268,6 +268,7 @@ def summary(rows: list[dict]):
         "NOT_RUN": counts["NOT_RUN"],
         "IN_PROGRESS": counts["IN_PROGRESS"],
         "FAIL": counts["FAIL"],
+        "FAIL_PRECONDITION": counts["FAIL_PRECONDITION"],
         "PARTIAL": counts["PARTIAL"],
         "BLOCKED": sum(counts[key] for key in BLOCKED),
         "MEASURED_NOT_QUALIFIED": counts["MEASURED_NOT_QUALIFIED"],

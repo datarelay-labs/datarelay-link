@@ -102,6 +102,25 @@ class CLIE2EContractTest(unittest.TestCase):
                                   if r["SCENARIO_ID"] == "U-007")["RESULT"],
                              "EXCLUDED_AI_MCP")
 
+    def test_failed_soak_prerequisite_has_a_separate_visible_counter(self):
+        m = load()
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "private"
+            root.mkdir(mode=0o700)
+            m.initialize(root, CANONICAL.read_text(), "a" * 40)
+            m.record(root, "P-013", result="FAIL_PRECONDITION",
+                     target="frp-e2e-server",
+                     installed_head="b" * 40,
+                     command="curl --fail http://owned-test-service/",
+                     evidence="", cleanup="NO_OWNED_RESOURCES",
+                     skip_reason="Owned HTTP data-plane refused connection",
+                     notes="Original functional failure, not a measured soak")
+            report = m.summary(m.read_ledger(root))
+            self.assertEqual(report["FAIL_PRECONDITION"], 1)
+            self.assertEqual(report["FAIL"], 0)
+            self.assertEqual(report["NOT_RUN"], 99)
+            self.assertFalse(report["ALL_APPLICABLE_CLI_E2E_PASS"])
+
     def test_performance_profile_does_not_automatically_pass(self):
         m = load()
         with tempfile.TemporaryDirectory() as temp:
