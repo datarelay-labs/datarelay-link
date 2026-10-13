@@ -91,7 +91,10 @@ def sha256_file(path: Path) -> str:
 def _require_files(libdir: Path, names: Iterable[str]) -> list[str]:
     missing = []
     for name in names:
-        if not (libdir / name).is_file():
+        target = libdir / name
+        # Installed runtime members must be regular files inside the Agent
+        # payload, not symlinks resolving outside the verified install tree.
+        if target.is_symlink() or not target.is_file():
             missing.append(name)
     return missing
 
@@ -141,19 +144,54 @@ def verify_installed_lineage(libdir: Path, source_lib: Path | None = None) -> li
         return ["missing: %s" % ", ".join(missing)]
     live = hash_lib_files(libdir, AGENT_LIB_FILES)
     manifest_path = libdir / RUNTIME_MANIFEST_NAME
-    if manifest_path.is_file():
+    if manifest_path.is_symlink():
+        problems.append("runtime manifest is a symlink")
+    elif manifest_path.exists():
         try:
-            recorded = json.loads(manifest_path.read_text(encoding="utf-8")).get("files") or {}
-        except json.JSONDecodeError:
-            recorded = {}
-        for name in AGENT_CRITICAL_LINEAGE_FILES:
-            expected = recorded.get(name)
-            if not expected:
-                problems.append("%s missing from runtime manifest" % name)
-            elif expected != live.get(name):
-                problems.append(
-                    "%s live=%s manifest=%s" % (name, live.get(name), expected)
-                )
+            if manifest_path.stat().st_size > 65536:
+                raise ValueError("oversized runtime manifest")
+
+            def unique_fields(pairs):
+                fields = {}
+                for name, value in pairs:
+                    if name in fields:
+                        raise ValueError("duplicate runtime manifest field")
+                    fields[name] = value
+                return fields
+
+            def reject_nonfinite(_value):
+                raise ValueError("nonfinite runtime manifest value")
+
+            parsed = json.loads(
+                manifest_path.read_text(encoding="utf-8"),
+                object_pairs_hook=unique_fields,
+                parse_constant=reject_nonfinite,
+            )
+            if (
+                not isinstance(parsed, dict)
+                or type(parsed.get("schema")) is not int
+                or parsed["schema"] != 1
+                or not isinstance(parsed.get("files"), dict)
+                or parsed.get("critical") != list(AGENT_CRITICAL_LINEAGE_FILES)
+            ):
+                raise ValueError("unsupported runtime manifest")
+            recorded = parsed["files"]
+            if set(recorded) != set(AGENT_LIB_FILES) or any(
+                type(digest) is not str
+                or len(digest) != 64
+                or any(ch not in "0123456789abcdef" for ch in digest)
+                for digest in recorded.values()
+            ):
+                raise ValueError("invalid runtime manifest hashes")
+        except (OSError, UnicodeError, ValueError, TypeError):
+            problems.append("runtime manifest is invalid or unreadable")
+        else:
+            for name in AGENT_CRITICAL_LINEAGE_FILES:
+                expected = recorded.get(name)
+                if expected != live.get(name):
+                    problems.append(
+                        "%s live=%s manifest=%s" % (name, live.get(name), expected)
+                    )
     if source_lib is not None:
         problems.extend(verify_payload_match(source_lib, libdir))
     return problems

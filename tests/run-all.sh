@@ -323,6 +323,7 @@ python3 tests/test-v24-upgrade-policy-preservation.py
 python3 tests/test-v24-whitelist-last-rule-outage-safety.py
 python3 tests/test-v24-empty-state-cli.py
 python3 tests/test-human-ux-framework-unit.py
+python3 tests/test-v30-agent-payload-integrity.py
 ./tests/test-agent-runtime-payload.sh
 ./tests/test-orphan-suite-coverage.sh
 
