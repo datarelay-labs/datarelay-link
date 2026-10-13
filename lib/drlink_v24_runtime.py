@@ -530,8 +530,8 @@ def _current_runtime_ready(root, host_id, expected) -> bool:
     if any(str(os.environ.get(key) or '').lower() in ('1', 'yes', 'true', 'y')
            for key in ('DRLINK_FAULT_RUNTIME_VERIFY', 'DRLINK_FAULT_RUNTIME_RESTART', 'DRLINK_FAULT_RUNTIME_CONFIG')):
         return False
-    if root and str(root).rstrip('/') not in ('', '/'):
-        return True  # Deterministic non-host runtime for injected unit tests.
+    if _isolated_skip_fixture(root):
+        return True  # Exact isolated, activation-disabled test fixture only.
     if not sys.platform.startswith('linux'):
         # Native current-process/connection-epoch proof is not yet available
         # here. launchctl job presence alone would admit a stale or absent

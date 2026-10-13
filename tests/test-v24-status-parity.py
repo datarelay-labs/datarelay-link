@@ -588,6 +588,7 @@ class StatusParityTests(unittest.TestCase):
             '{"role":"server"}\n', encoding="utf-8"
         )
         os.environ["DRLINK_SKIP_ACTIVATION"] = "1"
+        os.environ["FRP_DEPLOY_TEST_ROOT"] = self.agent_tmp
         os.environ["DRLINK_CONFIRM"] = "yes"
         os.environ.pop("DRLINK_MGMT_TOKEN", None)
         self.server = ControlPlane(self.server_tmp)
@@ -609,7 +610,7 @@ class StatusParityTests(unittest.TestCase):
         mgmt.stop_mgmt_server(self.httpd)
         self.server.close()
         self.agent.close()
-        for key in ("DRLINK_SKIP_ACTIVATION", "DRLINK_CONFIRM", "DRLINK_MGMT_URL"):
+        for key in ("DRLINK_SKIP_ACTIVATION", "FRP_DEPLOY_TEST_ROOT", "DRLINK_CONFIRM", "DRLINK_MGMT_URL"):
             os.environ.pop(key, None)
 
     def _server_status(self, name: str):
@@ -703,22 +704,32 @@ class StatusParityTests(unittest.TestCase):
             'localPort = %s\nremotePort = %s\n' % (proxy_id, local_port, endpoint)
         )
         for platform_name in ('darwin', 'win32'):
-            with self.subTest(platform=platform_name), \
-                 mock.patch.object(runtime.sys, 'platform', platform_name), \
-                 mock.patch.object(runtime, '_isolated_skip_fixture', return_value=False), \
-                 mock.patch.object(runtime, 'load_client_state', return_value=state), \
-                 mock.patch.object(runtime, 'build_desired_runtime_services',
-                                   return_value={proxy_id: record}), \
-                 mock.patch.object(runtime, '_configured_v24_runtime_ports',
-                                   return_value={'stale-native': endpoint}), \
-                 mock.patch.object(runtime, '_current_runtime_ready', return_value=False):
-                self.assertEqual(runtime.verified_remote_service_status(
-                    self.agent, 'stale-native', root=self.agent_tmp,
-                )[0], 'DEGRADED')
-                self.assertEqual(runtime.verified_remote_service_status(
-                    self.agent, 'stale-native', root=self.agent_tmp,
-                    allow_unverified=True,
-                )[0], 'DEGRADED')
+            for fixture_root, skip_activation in (
+                (self.server_tmp, '1'),  # Arbitrary non-root path is not the fixture.
+                (self.agent_tmp, '0'),   # Matching path with activation enabled.
+            ):
+                with self.subTest(platform=platform_name,
+                                  fixture_root=fixture_root,
+                                  skip_activation=skip_activation), \
+                     mock.patch.dict(os.environ, {
+                         'FRP_DEPLOY_TEST_ROOT': fixture_root,
+                         'DRLINK_SKIP_ACTIVATION': skip_activation,
+                     }), \
+                     mock.patch.object(runtime.sys, 'platform', platform_name), \
+                     mock.patch.object(runtime, 'load_client_state', return_value=state), \
+                     mock.patch.object(runtime, 'build_desired_runtime_services',
+                                       return_value={proxy_id: record}), \
+                     mock.patch.object(runtime, '_configured_v24_runtime_ports',
+                                       return_value={'stale-native': endpoint}):
+                    self.assertFalse(runtime._current_runtime_ready(
+                        self.agent_tmp, 'agent-a', {proxy_id: record}))
+                    self.assertEqual(runtime.verified_remote_service_status(
+                        self.agent, 'stale-native', root=self.agent_tmp,
+                    )[0], 'DEGRADED')
+                    self.assertEqual(runtime.verified_remote_service_status(
+                        self.agent, 'stale-native', root=self.agent_tmp,
+                        allow_unverified=True,
+                    )[0], 'DEGRADED')
 
     def test_runtime_generation_fixture_requires_exact_isolated_skip(self):
         from unittest import mock
@@ -728,9 +739,15 @@ class StatusParityTests(unittest.TestCase):
                                        'DRLINK_SKIP_ACTIVATION': '1'}):
             self.assertTrue(runtime._isolated_skip_fixture(self.agent_tmp))
             self.assertFalse(runtime._isolated_skip_fixture(self.server_tmp))
+            self.assertTrue(runtime._current_runtime_ready(
+                self.agent_tmp, 'agent-a', {}))
+            self.assertFalse(runtime._current_runtime_ready(
+                self.server_tmp, 'agent-a', {}))
         with mock.patch.dict(os.environ, {'FRP_DEPLOY_TEST_ROOT': self.agent_tmp,
                                        'DRLINK_SKIP_ACTIVATION': '0'}):
             self.assertFalse(runtime._isolated_skip_fixture(self.agent_tmp))
+            self.assertFalse(runtime._current_runtime_ready(
+                self.agent_tmp, 'agent-a', {}))
 
     def test_real_platform_without_native_generation_proof_fails_closed(self):
         from unittest import mock
@@ -1034,7 +1051,8 @@ class StatusParityTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {"FRP_SKIP_SYSTEMD": "1",
                                          "DRLINK_SERVER_REACHABLE": "1"}), \
                 mock.patch.object(v24, "_probe_tcp", return_value=True), \
-                mock.patch.object(runtime, "runtime_should_apply", return_value=True):
+                mock.patch.object(runtime, "runtime_should_apply", return_value=True), \
+                mock.patch.object(runtime, "_current_runtime_ready", return_value=True):
             for stype, pool in (("fixed-tcp", "fixed-tcp"), ("tcp", "normal")):
                 with self.subTest(type=stype, operator_online=operator_online):
                     name = "u005-online-" + stype
@@ -1147,7 +1165,8 @@ class StatusParityTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {"FRP_SKIP_SYSTEMD": "1",
                                          "DRLINK_SERVER_REACHABLE": "1"}), \
                 mock.patch.object(v24, "_probe_tcp", return_value=True), \
-                mock.patch.object(runtime, "runtime_should_apply", return_value=True):
+                mock.patch.object(runtime, "runtime_should_apply", return_value=True), \
+                mock.patch.object(runtime, "_current_runtime_ready", return_value=True):
             for stype, pool in (("fixed-tcp", "fixed-tcp"), ("tcp", "normal")):
                 with self.subTest(type=stype, phase=phase):
                     name = "u005-" + stype

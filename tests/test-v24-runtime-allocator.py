@@ -453,6 +453,7 @@ class RuntimeApplyRemoveTests(unittest.TestCase):
         self.tmp = tempfile.mkdtemp(prefix="drlink-rt-")
         frp = Path(self.tmp, "etc/frp")
         frp.mkdir(parents=True)
+        frp.chmod(0o700)
         _write_json(
             frp / "client-state.json",
             {
@@ -490,6 +491,13 @@ class RuntimeApplyRemoveTests(unittest.TestCase):
         os.environ["FRP_DEPLOY_TEST_ROOT"] = self.tmp
         os.environ["DRLINK_SKIP_ACTIVATION"] = "0"
         os.environ["FRP_SKIP_SYSTEMD"] = "1"
+        # These tests simulate native activation separately. Bind their
+        # continuing-generation proof explicitly instead of relying on an
+        # arbitrary non-root path to stand in for a live process.
+        self.runtime_ready_patch = mock.patch.object(
+            runtime, "_current_runtime_ready", return_value=True)
+        self.runtime_ready_patch.start()
+        self.addCleanup(self.runtime_ready_patch.stop)
         self.plane = ControlPlane(self.tmp)
         v24.ensure_v2_schema(self.plane.conn)
         now = v24.utc_now_iso()
