@@ -94,7 +94,7 @@ class E2EProcedureGuard(unittest.TestCase):
         self.assertNotIn("P0 owner-ordered prerequisite sequence", self.roadmap)
         self.assertIn("B014", self.roadmap)
 
-    def test_procedure_retains_full_e2e_and_codex_test_only(self):
+    def test_procedure_retains_full_e2e_quality(self):
         required = (
             "FULL_USER_E2E_SCENARIOS.md",
             "116 scenario", "3,600-second soak",
@@ -135,9 +135,38 @@ class E2EProcedureGuard(unittest.TestCase):
 
     def test_protocol_uses_standard_review_not_old_global_veto(self):
         protocol = (ROOT / "docs" / "CODEX_DUAL_ROLE_TEST_PROTOCOL.md").read_text()
-        self.assertIn("--approve-for-me", protocol)
+        self.assertIn("existing working native session", protocol)
+        self.assertIn("normal platform review", protocol)
+        self.assertNotIn("codex exec --approve-for-me", protocol)
+        self.assertNotIn("codex exec --approve-for-me", self.procedure)
         self.assertNotIn("replace placeholders only after owner approval", protocol)
         self.assertNotIn("Fail-closed sanity check already performed", protocol)
+
+    def test_codex_owns_test_fix_retest_without_historical_launch_gates(self):
+        fcs = (ROOT / "docs/CLI_FEATURE_SCENARIO_RECONCILIATION.md").read_text()
+        cli = (ROOT / "docs/CLI_ONLY_E2E_SCENARIOS.md").read_text()
+        agents = (ROOT / "AGENTS.md").read_text()
+        for stale in (
+            "CODEX for TEST ONLY", "Only ChatGPT Chat implements fixes",
+            "ChatGPT must implement the fixes", "No Codex source changes",
+            "No new Codex testing is allowed until approved lab readiness GO",
+            "only AFTER the owner-authorized cleanroom/readiness gate",
+        ):
+            self.assertNotIn(stale, fcs)
+        self.assertNotIn("prepare every assigned test host", self.canonical)
+        self.assertNotIn("FULL_USER_E2E never chooses or starts an implementation agent",
+                         self.canonical)
+        self.assertNotIn("read-only CLI on an already pinned", cli)
+        self.assertNotIn("EXECUTOR=ChatGPT", self.canonical)
+        self.assertNotIn("FINAL_AUDITOR=ChatGPT", self.canonical)
+        self.assertNotIn("implemented/tested by ChatGPT", cli)
+        self.assertIn("Codex owns the complete test-and-fix loop", self.canonical)
+        self.assertIn("Codex owns the owner-selected CLI-only or Full User E2E scope",
+                      agents)
+        self.assertIn("real commands/exit codes/evidence", agents)
+        self.assertIn("Freeze test evidence before source changes", agents)
+        self.assertIn("runtime non-destructive", fcs)
+        self.assertIn("two complete same-HEAD", self.canonical)
 
     def test_real_scenario_ledger_is_updated_during_the_run(self):
         # Progress must be observable; old procedure delayed the 116-row
@@ -499,7 +528,7 @@ class CodexDualRoleEvidenceContractTests(unittest.TestCase):
             report = self._check(dropped, root)
             self.assertIn("missing feature FEATURE-AI", report["ERRORS"])
 
-    def test_canonical_documents_select_codex_both_roles_and_do_not_run_yet(self):
+    def test_canonical_documents_select_codex_independent_roles(self):
         fcs = (ROOT / "docs" / "CLI_FEATURE_SCENARIO_RECONCILIATION.md"
                ).read_text(encoding="utf-8")
         full = CANONICAL.read_text(encoding="utf-8")

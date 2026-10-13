@@ -21,7 +21,7 @@ other standards, histories, work packets or old test reports without a reason.
 
 ## Data Relay Link E2E fast path
 
-- The owner explicitly authorizes continuing Full User E2E. Resume the actual public product test before routine implementation coordination; any general packet-lint/work-admission tooling is diagnostic here, not a separate permission switch. All actual platform denials remain binding.
+- **Execution rule:** Codex owns the owner-selected CLI-only or Full User E2E scope end to end: continue the existing working session, clean owned test fixtures, execute available public CLI scenarios, record real commands/exit codes/evidence, and skip only blocked dependencies. Freeze test evidence before source changes, then reproduce → fix → focused regression → authorized install → retest without a ChatGPT handoff or repeated project approval. Preserve independent qualifying user-role contexts, other workers’ state, actual platform denials and separate release authority. packet-lint/work-admission tooling is diagnostic here, not a permission switch.
 
 ## Start work instead of processing paperwork
 

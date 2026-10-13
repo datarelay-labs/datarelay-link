@@ -15,7 +15,7 @@
 > **Status:** Normative living document
 > **Operator execution procedure:** docs/E2E_EXECUTION_PROCEDURE.md (per-lane readiness, independent actors, frozen evidence); the auditor reads this entire canonical document before any user action.
 > **Owner-scoped test execution (2026-10-12):** The previous global `LAB_GO` / `phase-state.json` gate is removed as a prerequisite for independently authorized tests. Run CLI FCS and Full User E2E on eligible installed and approved test hosts. Exclude hosts where enrollment or a specific platform/tool operation is denied; record only those canonical criteria as `BLOCKED` / `NOT_RUN`, not PASS. Preserve every canonical ID, separate real Direct/AI actors, real traffic/soak and the two complete same-HEAD PASS loops required before release. Never bypass a genuine security denial.
-> **Codex both-role owner override (#165):** Codex is the owner-selected independent Direct User, AI-assisted User and tool-free AI Adviser executor. Use `docs/CODEX_DUAL_ROLE_TEST_PROTOCOL.md` and preserve same goals, fresh separate threads, first advice, public CLI actions and prospective evidence. The current owner Work Packet may also authorize Codex product fixes. Global Lab NOT_READY no longer forbids independent tests; actual denied operations still cannot run.
+> **Codex both-role owner override (#165):** Codex is the owner-selected independent Direct User, AI-assisted User and tool-free AI Adviser executor. Use `docs/CODEX_DUAL_ROLE_TEST_PROTOCOL.md` and preserve same goals, fresh separate threads, first advice, public CLI actions and prospective evidence. Codex also owns defect reproduction, source fixes, focused tests, authorized candidate installation and retesting after freezing evidence; no ChatGPT implementation handoff is required. Global Lab NOT_READY no longer forbids independent tests; actual denied operations still cannot run.
 
 
 ### Continuous execution and finding accumulation
@@ -67,7 +67,7 @@ A release-qualification request uses this full suite plus the exact-HEAD double-
 
 ### 1.1 User E2E execution ownership
 
-FULL_USER_E2E defaults to **ChatGPT** unless the owner selects a different authorized tester. For **Issue #165 the owner explicitly selects CODEX** to act as both the Direct CLI User and the AI-assisted User, with a separate Codex AI Adviser under one auditor-owned RUN_ID. The current explicit owner instruction selects the product implementer; for Issue #165 it also authorizes Codex to fix verified defects after freezing the run. Cursor remains disabled.
+**Codex owns the complete test-and-fix loop for Issue #165**, following the execution rule in `AGENTS.md`. Codex coordinates the Direct CLI User, AI-assisted User, separate tool-free AI Adviser and auditor contexts under one RUN_ID, freezes evidence, fixes verified defects, tests and installs the authorized candidate, and performs the required retest. Role isolation is an evidence boundary, not a handoff to another implementer.
 
 This is an owner-selected tester identity rule (the current explicit owner overrides the repository default):
 
@@ -80,7 +80,7 @@ CURSOR_MAY_EXECUTE_FULL_USER_E2E=NO
 CURSOR_MAY_DECLARE_USER_E2E_PASS=NO
 ~~~
 
-FULL_USER_E2E never chooses or starts an implementation agent. Product remediation is a separate post-run Engineering workflow and must use the implementer selected by the current explicit owner instruction, then the fresh Work Packet and `AGENTS.md`. A historical TEST-ONLY or ChatGPT-only handoff does not override current owner authorization; Cursor remains disabled unless the owner explicitly reactivates it for that Work Packet.
+Codex continues from frozen findings into authorized remediation and retesting without another owner prompt. Separate genuine actor knowledge contexts and immutable candidate evidence remain required; remediation never rewrites a completed test result.
 
 The required loop is:
 
@@ -92,10 +92,10 @@ OWNER_SELECTED_TEST_EXECUTOR (CODEX for Issue #165)
 → update the active Work Packet once
 
 If implementation change is required after the run:
-  Engineering workflow
-  → use the current owner-selected product implementer (Codex is authorized for Issue #165)
+  Codex continues the same authorized workstream
   → implement the bounded fix
   → run implementation-level deterministic tests
+  → install/update the candidate on authorized participating test hosts
   → report exact branch/HEAD/evidence
 
 OWNER_SELECTED_TEST_EXECUTOR (CODEX for Issue #165, per-lane authorized accessible host)
@@ -125,7 +125,7 @@ Historical PASS results, synthetic tests, unit tests, Docker-only results, Curso
 If product code, dependencies, generated runtime artifacts, or the tested build changes during a full pass, record the new HEAD/build identity and invalidate the affected pass. For final release qualification, the double-pass counter resets as defined by the release validation policy.
 
 
-For this owner-selected Work Packet, Codex must read the full current canonical contract, then follow `docs/CODEX_DUAL_ROLE_TEST_PROTOCOL.md` for **both** independent Direct and AI-assisted roles. The same separated role sessions may continue across scenarios with fresh per-scenario evidence; a cold-start user scenario still requires its own clean actor. Preserve genuine public CLI advice, exact first adviser output and all evidence. Codex can also fix product code when permitted by the current owner instruction and ACTIVE Work Packet, but must not modify source during a frozen user-test pass. The global Lab GO/phase state is **not** a start prerequisite for independently authorized Full User E2E lanes. The prior 116-ID frozen run is immutable; a missing AI mirror or excluded host remains PARTIAL/BLOCKED/NOT_RUN, never PASS.
+For this owner-selected Work Packet, Codex must read the full current canonical contract, then follow `docs/CODEX_DUAL_ROLE_TEST_PROTOCOL.md` for **both** independent Direct and AI-assisted roles. The same separated role sessions may continue across scenarios with fresh per-scenario evidence; a cold-start user scenario still requires its own clean actor. Preserve genuine public CLI advice, exact first adviser output and all evidence. Codex fixes verified product defects under the current owner authorization after freezing test evidence, without modifying a candidate during its frozen user-test pass. The global Lab GO/phase state is **not** a start prerequisite for independently authorized Full User E2E lanes. The prior 116-ID frozen run is immutable; a missing AI mirror or excluded host remains PARTIAL/BLOCKED/NOT_RUN, never PASS.
 
 ## 1.2 Immediate-execution contract (hard gate)
 
@@ -968,7 +968,7 @@ The owner's two-Server split is unchanged: only MCP/DNS/hostname criteria
 on MCP_DNS_SERVER; **all other** tests, including normal installation and
 long Soak, on FUNCTION_PERFORMANCE_SERVER.
 
-Before any FULL_USER_E2E product workflow begins, prepare every assigned test host so results cannot be contaminated by a previous run. **Historical product state, stale test services, cached endpoints, prior enrollment state, leftover load generators, or old temporary artifacts must never be accepted as the starting state of a new Full User E2E.**
+Before a host begins its dependent FULL_USER_E2E product workflow, prepare that participating host so results cannot be contaminated by a previous run. **Historical product state, stale test services, cached endpoints, prior enrollment state, leftover load generators, or old temporary artifacts must never be accepted as the starting state of a new Full User E2E.**
 
 The cleanup step happens after host reachability discovery but before fresh Server/Agent installation, enrollment, command-discovery personas, baseline traffic, or performance measurement.
 
@@ -4048,8 +4048,8 @@ A full run must end with a summary at least equivalent to:
 
 ~~~text
 PHASE=FULL_USER_E2E
-EXECUTOR=ChatGPT
-FINAL_AUDITOR=ChatGPT
+EXECUTOR=OWNER_SELECTED_RUNTIME
+FINAL_AUDITOR=OWNER_SELECTED_RUNTIME
 CURSOR_EXECUTED_USER_E2E=NO
 FINAL_STATUS=PASS|PARTIAL|FAIL
 

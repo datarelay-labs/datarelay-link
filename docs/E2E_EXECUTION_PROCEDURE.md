@@ -10,7 +10,7 @@
 - Historical F001, F004, F005, F006, F007 and D001 findings are targeted retests, not run-wide launch prerequisites. F001 false synchronization health and F007 unrelated HTTP/TCP disruption remain OPEN until exact-HEAD signed Agent/Server status, real SSH/HTTP/TCP traffic and applicable three Fixed TCP cycles prove closure. No source-only or old FRP log PASS; see docs/F001_F007_RUNTIME_CONTINUITY_REMEDIATION.md.
 - Record findings, then continue independent authorized checks. Once a full run's evidence is frozen, reproduce actionable defects with failing targeted tests, fix minimally and verify focused safety/regression GREEN on a new candidate. Never turn BLOCKED_TOOLING, NOT_READY or unexecuted user actions into PASS. Use the existing PR #178 for integration; merge, tag, release and production deployment need separate authority. Release HOLD.
 
-### R2 — Procedure and readiness gate: make failures attributable
+### R2 — Per-host preparation: make failures attributable
 
 **Owner's destructive test-host authorization — execute, do not reapprove:** All
 hosts enumerated in the current owner-private DRLink E2E roster are
@@ -44,7 +44,7 @@ independent lanes. No new mandatory VM-type/snapshot/restore gate.
 
 **Codex direct/AI parity gate:** Same Codex model executes both roles using **fresh separately identifiable threads** under a single audit RUN_ID, including one AI Adviser thread distinct from the Direct User and AI-assisted User. The supported pair-ledger consistency check and FCS-001..015 / E2E 116-ID inventories are in `docs/CODEX_DUAL_ROLE_TEST_PROTOCOL.md`. Neither a nominal role switch in an auditor context nor generic AI CLI guidance counts as an actual same-scenario AI mirror. A complete Direct lane with missing AI advice remains incomplete, not PASS.
 
-**Codex runs directly:** While a run is active, continue its existing `codex exec --approve-for-me` session and private JSONL rather than launching duplicate actors or maintaining an FCS-only dispatcher. Never resume a frozen run as though it were still active. Reuse independent per-role sessions with scenario-scoped real receipts. Ordinary platform review and per-effect owner scope remain binding. Missing enrollment, native host or MCP/OAuth blocks only the dependent criterion.
+**Codex runs directly:** While a run is active, continue its existing working native session and private evidence rather than launching duplicate actors or prescribing a new batch session. Never resume a frozen run as though it were still active. Reuse independent per-role sessions with scenario-scoped real receipts. Ordinary platform review and per-effect owner scope remain binding. Missing enrollment, native host or MCP/OAuth blocks only the dependent criterion.
 
 **Per-operation verification (not a global test-start gate):** Verify genuine actor isolation and appropriate authorization, installed candidate and evidence only for the host and operation being tested. A blocked host is excluded and its dependent checks are `BLOCKED` / `NOT_RUN`; other authorized functionality proceeds. Global NOT_READY is diagnostic, not a test-start veto or release PASS. The optional readiness command retains exit 3 for a NOT_READY diagnostic; do not chain it as a prerequisite for independently authorized E2E lanes. Configuration errors and actual per-effect security denials still require correction or exclusion.
 
