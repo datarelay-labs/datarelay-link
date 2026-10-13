@@ -9,6 +9,7 @@ import socket
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from unittest import mock
 from contextlib import redirect_stdout
@@ -29,6 +30,330 @@ MACHINE = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 
 
 class BootstrapCatalogConvergenceTests(unittest.TestCase):
+    def test_runtime_apply_rejects_outer_db_writer_before_lock(self):
+        agent = ControlPlane(self.agent_tmp)
+        self.addCleanup(agent.close)
+        agent.conn.execute('BEGIN IMMEDIATE')
+        try:
+            with mock.patch.object(V24R, 'runtime_should_apply', return_value=True), \
+                    mock.patch('frp_control_locks.ExclusiveFileLock') as lock, \
+                    mock.patch.object(V24R, '_restart_frpc') as restart:
+                result = V24R.apply_agent_runtime(agent, root=self.agent_tmp)
+            self.assertFalse(result['ok'], result)
+            self.assertIn('committed intent', result['error'])
+            lock.assert_not_called()
+            restart.assert_not_called()
+        finally:
+            agent.conn.execute('ROLLBACK')
+
+    def test_runtime_apply_lock_timeout_fails_without_activation(self):
+        from frp_control_locks import LockTimeout
+
+        agent = ControlPlane(self.agent_tmp)
+        self.addCleanup(agent.close)
+        state_path = Path(self.agent_tmp) / 'etc/frp/client-state.json'
+        before_state = state_path.read_bytes()
+        with mock.patch.object(V24R, 'runtime_should_apply', return_value=True), \
+                mock.patch('frp_control_locks.ExclusiveFileLock',
+                           side_effect=LockTimeout('busy')), \
+                mock.patch.object(V24R, '_restart_frpc') as restart:
+            result = V24R.apply_agent_runtime(agent, root=self.agent_tmp)
+        self.assertFalse(result['ok'], result)
+        self.assertIn('busy', result['error'])
+        self.assertEqual(state_path.read_bytes(), before_state)
+        restart.assert_not_called()
+
+    def test_concurrent_revoke_apply_corrects_after_inflight_restart(self):
+        state_path = Path(self.agent_tmp) / 'etc/frp/client-state.json'
+        state = json.loads(state_path.read_text())
+        state['frp_server_port'] = 443
+        state_path.write_text(json.dumps(state))
+        toml_path = state_path.parent / 'frpc.toml'
+        toml_path.write_text('serverAddr = "203.0.113.10"\nauth.token = "fixture-token"\n')
+        first_plane = ControlPlane(self.agent_tmp)
+        second_plane = ControlPlane(self.agent_tmp)
+        exec_pre_plane = ControlPlane(self.agent_tmp)
+        self.addCleanup(first_plane.close)
+        self.addCleanup(second_plane.close)
+        self.addCleanup(exec_pre_plane.close)
+        v24.project_enrolled_services_into_agent_catalog(first_plane, root=self.agent_tmp)
+        with mock.patch.object(V24R, 'runtime_should_apply', return_value=True), \
+                mock.patch.object(V24R, '_current_runtime_ready', return_value=True):
+            self.assertTrue(V24R.apply_agent_runtime(first_plane, root=self.agent_tmp)['ok'])
+            entered_restart = threading.Event()
+            release_restart = threading.Event()
+            revocation_committed = threading.Event()
+            exec_pre_write_done = threading.Event()
+            outcomes = {}
+            calls = []
+            def restart_gate(_root):
+                calls.append('restart')
+                if len(calls) == 1:
+                    entered_restart.set()
+                    self.assertTrue(release_restart.wait(5), 'restart gate timed out')
+                    exec_pre_plane.conn.execute(
+                        "UPDATE agent_remote_services SET runtime_verified=0 WHERE name='ssh'")
+                    exec_pre_plane.conn.commit()
+                    exec_pre_write_done.set()
+            def first_apply():
+                outcomes['first'] = V24R.apply_agent_runtime(
+                    first_plane, root=self.agent_tmp, force_reapply=True)
+            def revoke_and_apply():
+                second_plane.conn.execute(
+                    "UPDATE agent_remote_services SET enabled=0, delete_pending=1, "
+                    "status='DISABLED', runtime_verified=0 WHERE name='ssh'")
+                second_plane.conn.commit()
+                revocation_committed.set()
+                outcomes['revoked'] = V24R.apply_agent_runtime(
+                    second_plane, root=self.agent_tmp, force_reapply=True)
+            with mock.patch.object(V24R, '_restart_frpc', side_effect=restart_gate):
+                first = threading.Thread(target=first_apply)
+                second = threading.Thread(target=revoke_and_apply)
+                first.start()
+                self.assertTrue(entered_restart.wait(5), 'first apply did not reach restart')
+                second.start()
+                self.assertTrue(revocation_committed.wait(1),
+                                'restart held the DB lock needed by ExecStartPre')
+                time.sleep(0.2)
+                self.assertNotIn('revoked', outcomes)
+                release_restart.set()
+                first.join(5)
+                second.join(5)
+            self.assertFalse(first.is_alive(), 'first apply deadlocked')
+            self.assertFalse(second.is_alive(), 'revocation apply deadlocked')
+            self.assertTrue(exec_pre_write_done.is_set(), 'ExecStartPre DB write did not finish')
+            self.assertTrue(outcomes['first']['ok'], outcomes)
+            self.assertTrue(outcomes['revoked']['ok'], outcomes)
+            self.assertEqual(len(calls), 2)
+            self.assertNotIn('rs-ssh', json.loads(state_path.read_text())['services'])
+            self.assertNotIn('frp-client-bbbbbbbb-rs-ssh', toml_path.read_text())
+
+    def test_unverified_or_mismatched_prior_seed_does_not_block_convergence(self):
+        state_path = Path(self.agent_tmp) / 'etc/frp/client-state.json'
+        state = json.loads(state_path.read_text())
+        state['frp_server_port'] = 443
+        state_path.write_text(json.dumps(state))
+        toml_path = state_path.parent / 'frpc.toml'
+        toml_path.write_text('serverAddr = "203.0.113.10"\nauth.token = "fixture-token"\n')
+        agent = ControlPlane(self.agent_tmp)
+        self.addCleanup(agent.close)
+        v24.project_enrolled_services_into_agent_catalog(agent, root=self.agent_tmp)
+        with mock.patch.object(V24R, 'runtime_should_apply', return_value=True), \
+                mock.patch.object(V24R, '_restart_frpc'):
+            with mock.patch.object(V24R, '_current_runtime_ready', return_value=True):
+                initial = V24R.apply_agent_runtime(agent, root=self.agent_tmp)
+            self.assertTrue(initial['ok'], initial)
+            verified_state = state_path.read_bytes()
+            verified_toml = toml_path.read_text()
+            seed = agent.conn.execute(
+                "SELECT service_object FROM agent_remote_services WHERE name='ssh'"
+            ).fetchone()['service_object']
+            agent.conn.execute(
+                "DELETE FROM agent_object_catalog WHERE kind='service-object' AND name=?",
+                (seed,),
+            )
+            agent.conn.commit()
+            original_get = v24.get_service_object
+            def missing_fallback(plane, name):
+                return None if name == seed else original_get(plane, name)
+            for case in ('no_current_proof', 'mismatched_proxy_block',
+                         'numeric_port_prefix', 'name_prefix', 'wrong_type',
+                         'wrong_local_ip', 'delete_pending'):
+                with self.subTest(case=case):
+                    state_path.write_bytes(verified_state)
+                    if case == 'mismatched_proxy_block':
+                        prior = verified_toml.replace('remotePort = 6000', 'remotePort = 6001')
+                        prior += '\n[[proxies]]\nname = "unrelated"\nremotePort = 6000\n'
+                        toml_path.write_text(prior)
+                    elif case == 'numeric_port_prefix':
+                        toml_path.write_text(verified_toml.replace(
+                            'remotePort = 6000', 'remotePort = 60001'))
+                    elif case == 'name_prefix':
+                        toml_path.write_text(verified_toml.replace(
+                            'name = "frp-client-bbbbbbbb-rs-ssh"',
+                            'name = "frp-client-bbbbbbbb-rs-ssh-extra"'))
+                    elif case == 'wrong_type':
+                        toml_path.write_text(verified_toml.replace(
+                            'type = "tcp"', 'type = "udp"'))
+                    elif case == 'wrong_local_ip':
+                        toml_path.write_text(verified_toml.replace(
+                            'localIP = "127.0.0.1"', 'localIP = "127.0.0.2"'))
+                    else:
+                        toml_path.write_text(verified_toml)
+                    agent.conn.execute(
+                        "UPDATE agent_remote_services SET status='HEALTHY', runtime_verified=1, "
+                        "reason='', enabled=?, delete_pending=? WHERE name='ssh'",
+                        (0 if case == 'delete_pending' else 1,
+                         1 if case == 'delete_pending' else 0),
+                    )
+                    agent.conn.commit()
+                    with mock.patch.object(v24, 'get_service_object',
+                                           side_effect=missing_fallback), \
+                            mock.patch.object(V24R, '_current_runtime_ready',
+                                              return_value=case != 'no_current_proof'):
+                        result = V24R.apply_agent_runtime(agent, root=self.agent_tmp)
+                    self.assertTrue(result['ok'], result)
+                    self.assertNotIn('rs-ssh', json.loads(state_path.read_text())['services'])
+
+    def test_intent_changed_after_desired_build_aborts_stale_activation(self):
+        state_path = Path(self.agent_tmp) / 'etc/frp/client-state.json'
+        state = json.loads(state_path.read_text())
+        state['frp_server_port'] = 443
+        state_path.write_text(json.dumps(state))
+        toml_path = state_path.parent / 'frpc.toml'
+        toml_path.write_text('serverAddr = "203.0.113.10"\nauth.token = "fixture-token"\n')
+        agent = ControlPlane(self.agent_tmp)
+        self.addCleanup(agent.close)
+        v24.project_enrolled_services_into_agent_catalog(agent, root=self.agent_tmp)
+        original_build = V24R.build_desired_runtime_services
+        with mock.patch.object(V24R, 'runtime_should_apply', return_value=True), \
+                mock.patch.object(V24R, '_restart_frpc') as restart, \
+                mock.patch.object(V24R, '_current_runtime_ready', return_value=True):
+            self.assertTrue(V24R.apply_agent_runtime(agent, root=self.agent_tmp)['ok'])
+            before_state = state_path.read_bytes()
+            before_toml = toml_path.read_bytes()
+            for change, statement, args in (
+                ('delete', "UPDATE agent_remote_services SET delete_pending=1, enabled=0 "
+                           "WHERE name='ssh'", ()),
+                ('disable', "UPDATE agent_remote_services SET enabled=0, status='DISABLED' "
+                            "WHERE name='ssh'", ()),
+                ('endpoint', "UPDATE agent_remote_services SET endpoint_port=6001 "
+                             "WHERE name='ssh'", ()),
+            ):
+                with self.subTest(change=change):
+                    state_path.write_bytes(before_state)
+                    toml_path.write_bytes(before_toml)
+                    agent.conn.execute(
+                        "UPDATE agent_remote_services SET enabled=1, delete_pending=0, "
+                        "status='HEALTHY', endpoint_port=6000, pending_allocation=0 "
+                        "WHERE name='ssh'"
+                    )
+                    agent.conn.commit()
+                    restart.reset_mock()
+                    def changed_after_build(plane, current_state, *, root=None):
+                        stale = original_build(plane, current_state, root=root)
+                        plane.conn.execute(statement, args)
+                        return stale
+                    with mock.patch.object(V24R, 'build_desired_runtime_services',
+                                           side_effect=changed_after_build):
+                        result = V24R.apply_agent_runtime(
+                            agent, root=self.agent_tmp, force_reapply=True)
+                    self.assertFalse(result['ok'], result)
+                    self.assertEqual(state_path.read_bytes(), before_state)
+                    self.assertEqual(toml_path.read_bytes(), before_toml)
+                    restart.assert_not_called()
+
+    def test_intent_changed_before_write_aborts_stale_activation(self):
+        state_path = Path(self.agent_tmp) / 'etc/frp/client-state.json'
+        state = json.loads(state_path.read_text())
+        state['frp_server_port'] = 443
+        state_path.write_text(json.dumps(state))
+        toml_path = state_path.parent / 'frpc.toml'
+        toml_path.write_text('serverAddr = "203.0.113.10"\nauth.token = "fixture-token"\n')
+        agent = ControlPlane(self.agent_tmp)
+        self.addCleanup(agent.close)
+        v24.project_enrolled_services_into_agent_catalog(agent, root=self.agent_tmp)
+        with mock.patch.object(V24R, 'runtime_should_apply', return_value=True), \
+                mock.patch.object(V24R, '_restart_frpc') as restart, \
+                mock.patch.object(V24R, '_current_runtime_ready', return_value=True):
+            self.assertTrue(V24R.apply_agent_runtime(agent, root=self.agent_tmp)['ok'])
+            before_state = state_path.read_bytes()
+            before_toml = toml_path.read_bytes()
+            restart.reset_mock()
+            def change_before_write(*_args):
+                agent.conn.execute(
+                    "UPDATE agent_remote_services SET endpoint_port=6001 WHERE name='ssh'")
+                return None
+            with mock.patch.object(V24R, '_trusted_existing_frpc_admin',
+                                   side_effect=change_before_write):
+                result = V24R.apply_agent_runtime(
+                    agent, root=self.agent_tmp, force_reapply=True)
+            self.assertFalse(result['ok'], result)
+            self.assertEqual(state_path.read_bytes(), before_state)
+            self.assertEqual(toml_path.read_bytes(), before_toml)
+            restart.assert_not_called()
+
+    def test_incomplete_seed_projection_preserves_verified_generation(self):
+        state_path = Path(self.agent_tmp) / 'etc/frp/client-state.json'
+        state = json.loads(state_path.read_text())
+        state['frp_server_port'] = 443
+        state_path.write_text(json.dumps(state))
+        toml_path = state_path.parent / 'frpc.toml'
+        toml_path.write_text('serverAddr = "203.0.113.10"\nauth.token = "fixture-token"\n')
+        agent = ControlPlane(self.agent_tmp)
+        self.addCleanup(agent.close)
+        v24.project_enrolled_services_into_agent_catalog(agent, root=self.agent_tmp)
+        seed = agent.conn.execute(
+            "SELECT service_object FROM agent_remote_services WHERE name='ssh'"
+        ).fetchone()['service_object']
+        agent.conn.execute(
+            "INSERT INTO agent_object_catalog(kind,name,payload,synced_at) "
+            "VALUES ('service-object',?,?,?)",
+            (seed, json.dumps({'name': seed, 'port': self.local_port}), v24.utc_now_iso()),
+        )
+        agent.conn.commit()
+        with mock.patch.object(V24R, 'runtime_should_apply', return_value=True), \
+                mock.patch.object(V24R, '_restart_frpc') as restart, \
+                mock.patch.object(V24R, '_current_runtime_ready', return_value=True):
+            initial = V24R.apply_agent_runtime(agent, root=self.agent_tmp)
+            self.assertTrue(initial['ok'], initial)
+            self.assertIn('rs-ssh', json.loads(state_path.read_text())['services'])
+            before_row = agent.conn.execute(
+                "SELECT status, runtime_verified FROM agent_remote_services WHERE name='ssh'"
+            ).fetchone()
+            self.assertEqual((before_row['status'], before_row['runtime_verified']), ('HEALTHY', 1))
+            before_state = state_path.read_bytes()
+            before_toml = toml_path.read_bytes()
+            restart.reset_mock()
+            # The fetched catalog loses this Service Object and its local
+            # fallback is unavailable. No revoke/delete was requested.
+            agent.conn.execute(
+                "DELETE FROM agent_object_catalog WHERE kind='service-object' AND name=?",
+                (seed,),
+            )
+            agent.conn.commit()
+            original_get = v24.get_service_object
+            def missing_fallback(plane, name):
+                return None if name == seed else original_get(plane, name)
+            with mock.patch.object(v24, 'get_service_object', side_effect=missing_fallback):
+                result = V24R.apply_agent_runtime(agent, root=self.agent_tmp)
+            self.assertFalse(result['ok'], result)
+            self.assertEqual(state_path.read_bytes(), before_state)
+            self.assertEqual(toml_path.read_bytes(), before_toml)
+            restart.assert_not_called()
+            demoted = agent.conn.execute(
+                "SELECT status, runtime_verified, reason FROM agent_remote_services WHERE name='ssh'"
+            ).fetchone()
+            self.assertEqual((demoted['status'], demoted['runtime_verified']), ('DEGRADED', 0))
+            self.assertIn('previous generation preserved', demoted['reason'])
+            with mock.patch.object(v24, 'detect_server_reachable', return_value=True), \
+                    mock.patch.object(mgmt, 'use_live_mgmt_path', return_value=False), \
+                    mock.patch.object(v24, 'get_service_object', side_effect=missing_fallback):
+                synchronized = v24.synchronize_agent_remote_services(agent, root=self.agent_tmp)
+            self.assertEqual(synchronized['status'], 'DEGRADED', synchronized)
+            self.assertEqual(state_path.read_bytes(), before_state)
+            self.assertEqual(toml_path.read_bytes(), before_toml)
+            restart.assert_not_called()
+            failed_row = agent.conn.execute(
+                "SELECT status, runtime_verified FROM agent_remote_services WHERE name='ssh'"
+            ).fetchone()
+            self.assertEqual((failed_row['status'], failed_row['runtime_verified']), ('DEGRADED', 0))
+
+            # The actual authenticated delete path must still remove the proxy.
+            with mock.patch.object(mgmt, 'use_live_mgmt_path', return_value=True), \
+                    mock.patch.object(mgmt, 'fetch_server_catalog', return_value={}), \
+                    mock.patch.object(mgmt, 'delete_remote_service_on_server',
+                                      return_value={'status': 'DELETED'}) as signed_delete:
+                v24.unset_remote_service_agent(
+                    agent, 'ssh', root=self.agent_tmp, server_reachable=True
+                )
+            signed_delete.assert_called_once()
+            self.assertIsNone(agent.conn.execute(
+                "SELECT name FROM agent_remote_services WHERE name='ssh'"
+            ).fetchone())
+            self.assertNotIn('rs-ssh', json.loads(state_path.read_text())['services'])
+            self.assertEqual(restart.call_count, 1)
+
     def test_F001_F007_same_proxy_config_metadata_delta_does_not_restart_frpc(self):
         """A harmless Agent-state projection change must not flap live proxies.
 
@@ -47,7 +372,8 @@ class BootstrapCatalogConvergenceTests(unittest.TestCase):
         self.addCleanup(agent.close)
         v24.project_enrolled_services_into_agent_catalog(agent, root=self.agent_tmp)
         with mock.patch.object(V24R, 'runtime_should_apply', return_value=True), \
-                mock.patch.object(V24R, '_restart_frpc') as restart:
+                mock.patch.object(V24R, '_restart_frpc') as restart, \
+                mock.patch.object(V24R, '_current_runtime_ready', return_value=True):
             first = V24R.apply_agent_runtime(agent, root=self.agent_tmp)
             self.assertTrue(first['ok'], first)
             self.assertEqual(restart.call_count, 1)

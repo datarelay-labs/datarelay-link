@@ -630,7 +630,73 @@ def verify_runtime_proxies(
             raise ControlPlaneError('Agent connection and proxy activation could not be verified for the new runtime generation') from exc
 
 
+def _agent_runtime_intent_snapshot(plane_db) -> tuple:
+    """Fields that authorize the exact Agent proxy set and public endpoints."""
+    return tuple(tuple(row) for row in plane_db.conn.execute(
+        "SELECT name, destination, destination_client_id, service_object, "
+        "enabled, endpoint_port, pending_allocation, delete_pending, "
+        "pool_class, enrollment_seed, updated_at, rowid "
+        "FROM agent_remote_services ORDER BY name"
+    ))
+
+
+def _prior_exact_proxy_present(toml_text: str, host_id: str, proxy_id: str,
+                               prior: dict) -> bool:
+    """Check all required fields in one rendered TOML proxy block."""
+    try:
+        required = {
+            'name = "%s-%s"' % (host_id, proxy_id),
+            'type = "tcp"',
+            'localIP = "%s"' % prior['local_ip'],
+            'localPort = %s' % int(prior['local_port']),
+            'remotePort = %s' % int(prior['remote_port']),
+        }
+    except (KeyError, TypeError, ValueError):
+        return False
+    return any(required.issubset(set(block.splitlines()))
+               for block in toml_text.split('[[proxies]]')[1:])
+
+
 def apply_agent_runtime(
+    plane_db,
+    *,
+    root: Optional[str] = None,
+    names: Optional[list] = None,
+    force_reapply: bool = False,
+) -> dict:
+    """Serialize all Agent runtime applies through activation and restart.
+
+    A signed delete can commit while another apply is restarting FRP. Its own
+    apply waits here and must correct the final generation before delete can
+    report success. The lock is separate from SQLite: drlink-client's
+    ExecStartPre writes the DB, so holding BEGIN IMMEDIATE through restart
+    would deadlock. Keep the lock inode for concurrent waiters.
+    """
+    if not runtime_should_apply():
+        return {"ok": True, "skipped": True, "applied": [], "removed": [], "generation": 0}
+    if plane_db.conn.in_transaction:
+        # Public set/unset and Bundle Apply commit desired state before this
+        # boundary. Waiting for the runtime lock while holding a DB writer
+        # would invert the order against restart's DB-writing ExecStartPre.
+        return {
+            "ok": False, "applied": [], "removed": [], "generation": 0,
+            "error": "Agent runtime activation requires committed intent; retry after the control transaction",
+        }
+    from frp_control_locks import ExclusiveFileLock, LockTimeout
+
+    lock_path = _client_state_path(root).with_name('client-runtime-apply.lock')
+    try:
+        with ExclusiveFileLock(lock_path, timeout=180):
+            return _apply_agent_runtime_serialized(
+                plane_db, root=root, names=names, force_reapply=force_reapply)
+    except LockTimeout:
+        return {
+            "ok": False, "applied": [], "removed": [], "generation": 0,
+            "error": "Agent runtime activation is busy; retry synchronization",
+        }
+
+
+def _apply_agent_runtime_serialized(
     plane_db,
     *,
     root: Optional[str] = None,
@@ -666,7 +732,13 @@ def apply_agent_runtime(
     except OSError:
         pass
 
+    intent_snapshot = _agent_runtime_intent_snapshot(plane_db)
     desired = build_desired_runtime_services(plane_db, state, root=root)
+    if _agent_runtime_intent_snapshot(plane_db) != intent_snapshot:
+        return {
+            "ok": False, "applied": [], "removed": [], "generation": 0,
+            "error": "Agent Remote Service intent changed during runtime projection; retry synchronization",
+        }
     if names is not None:
         want = {remote_service_proxy_id(n) for n in names}
         # Still keep legacy + selected; drop other v24 not in names only when names filter set
@@ -682,6 +754,53 @@ def apply_agent_runtime(
         machine_id = str(state.get("machine_id") or "")
         hostname = str(state.get("hostname") or "host")
         host_id = "%s-%s" % (hostname, machine_id[:8] if machine_id else "local")
+
+    if names is None and backup_toml is not None:
+        # A transiently incomplete catalog must not replace a previously
+        # installed enrollment proxy with a smaller, otherwise valid FRP
+        # generation. The signed Server revoke path clears its endpoint (or
+        # marks deletion) before runtime projection, so it remains removable.
+        previous = state.get("services") if isinstance(state.get("services"), dict) else {}
+        for row in plane_db.conn.execute(
+            "SELECT name, endpoint_port FROM agent_remote_services WHERE "
+            "enrollment_seed=1 AND enabled=1 AND delete_pending=0 AND "
+            "pending_allocation=0 AND endpoint_port IS NOT NULL ORDER BY name"
+        ):
+            proxy_id = remote_service_proxy_id(row["name"])
+            old = previous.get(proxy_id)
+            if not isinstance(old, dict) or not old.get("v24_remote_service"):
+                continue
+            try:
+                prior_port = int(old["remote_port"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if prior_port != int(row["endpoint_port"]):
+                continue
+            if not _prior_exact_proxy_present(backup_toml, host_id, proxy_id, old):
+                continue
+            if (proxy_id not in desired
+                    and _current_runtime_ready(root, host_id, {proxy_id: old})):
+                error = ("Runtime projection incomplete for %s; previous "
+                         "generation preserved" % row["name"])
+                changed = plane_db.conn.execute(
+                    "UPDATE agent_remote_services SET status='DEGRADED', "
+                    "runtime_verified=0, reason=?, updated_at=? WHERE name=? COLLATE NOCASE "
+                    "AND enrollment_seed=1 AND enabled=1 AND delete_pending=0 "
+                    "AND pending_allocation=0 AND endpoint_port=?",
+                    (error, utc_now_iso(), row["name"], row["endpoint_port"]),
+                ).rowcount
+                plane_db.commit_if_autonomous()
+                current = plane_db.conn.execute(
+                    "SELECT enabled, delete_pending, pending_allocation, endpoint_port "
+                    "FROM agent_remote_services WHERE name=? COLLATE NOCASE", (row["name"],)
+                ).fetchone()
+                if (changed and current is not None and current['enabled']
+                        and not current['delete_pending'] and not current['pending_allocation']
+                        and current['endpoint_port'] == row['endpoint_port']):
+                    return {
+                        "ok": False, "applied": [], "removed": [], "generation": 0,
+                        "error": error,
+                    }
 
     token = _token_from_toml(prev_toml)
     if not token:
@@ -757,6 +876,11 @@ def apply_agent_runtime(
             reload_admin=hot_reload_admin,
         )
         validate_frpc_toml_text(toml_text)
+        if _agent_runtime_intent_snapshot(plane_db) != intent_snapshot:
+            return {
+                "ok": False, "applied": [], "removed": [], "generation": 0,
+                "error": "Agent Remote Service intent changed before runtime activation; retry synchronization",
+            }
         if str(os.environ.get("DRLINK_FAULT_RUNTIME_CONFIG") or "").strip().lower() in (
             "1",
             "yes",
@@ -798,6 +922,15 @@ def apply_agent_runtime(
             and _current_runtime_ready(root, host_id, state.get("services") or {})
         )
         cursor = _runtime_log_cursor() if real_runtime and not reload_safe else None
+        # The journal cursor and authenticated reload probe may take time.
+        # Do not write files from a desired set built before a concurrent
+        # signed delete, disable, or endpoint change. We cannot hold a DB
+        # write lock across systemctl restart: its ExecStartPre writes this DB.
+        if _agent_runtime_intent_snapshot(plane_db) != intent_snapshot:
+            return {
+                "ok": False, "applied": [], "removed": [], "generation": 0,
+                "error": "Agent Remote Service intent changed before runtime activation; retry synchronization",
+            }
         # Any changed generation invalidates prior verification until fresh
         # runtime and registered-proxy evidence is obtained.
         # Refresh all included rows after the complete generation is verified.
