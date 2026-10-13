@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import socket
 import stat
 import shutil
 import subprocess
@@ -1006,6 +1007,19 @@ def verified_remote_service_status(
     if row is None or not row['enabled'] or row['delete_pending']:
         return 'DEGRADED', missing
     actual_root = root if root is not None else getattr(plane_db, 'root', None)
+    # A proxy can remain correctly registered while its local target is down.
+    # An earlier unreachable-target verdict must not be promoted by a Server
+    # heartbeat until that same target accepts a connection again.
+    if allow_unverified and 'unreachable' in str(row['reason'] or '').lower():
+        current = load_client_state(actual_root)
+        target = (current.get('services') or {}).get(remote_service_proxy_id(name))
+        try:
+            with socket.create_connection(
+                (str(target['local_ip']), int(target['local_port'])), timeout=0.2
+            ):
+                pass
+        except (OSError, TypeError, ValueError, KeyError):
+            return 'DEGRADED', str(row['reason'] or missing)
     if _isolated_skip_fixture(actual_root):
         # Same strictly isolated historical fixture contract as mark_runtime_status.
         return ('HEALTHY', '') if row['endpoint_port'] is not None and not row['pending_allocation'] else ('DEGRADED', missing)

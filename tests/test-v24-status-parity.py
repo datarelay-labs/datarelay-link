@@ -619,6 +619,57 @@ class StatusParityTests(unittest.TestCase):
             (name,),
         ).fetchone()
 
+    def test_self_target_must_be_reachable_before_healthy(self):
+        import socket
+        from unittest import mock
+
+        with socket.socket() as unused:
+            unused.bind(("127.0.0.1", 0))
+            port = unused.getsockname()[1]
+        v24.set_service_object(
+            self.server, "fh-self-target", type="tcp", port=port,
+            oneshot=True,
+        )
+        with mock.patch.dict(os.environ, {'FRP_DEPLOY_TEST_ROOT': self.agent_tmp}):
+            first = v24.set_remote_service_agent(
+                self.agent, 'fh-self-service', destination='this-host',
+                service='fh-self-target', enabled=True, oneshot=True,
+                root=self.agent_tmp,
+            )
+            self.assertEqual(first['view']['status'], 'DEGRADED', first)
+            self.assertFalse(self.agent.conn.execute(
+                "SELECT runtime_verified FROM agent_remote_services "
+                "WHERE name='fh-self-service'"
+            ).fetchone()[0])
+            self.assertNotEqual(self._server_status('fh-self-service')['status'],
+                                'HEALTHY')
+            heartbeat = v24.synchronize_agent_remote_services(
+                self.agent, root=self.agent_tmp,
+                server_verification_only=True,
+            )
+            self.assertEqual(heartbeat['status'], 'DEGRADED', heartbeat)
+            self.assertEqual(self.agent.conn.execute(
+                "SELECT status FROM agent_remote_services "
+                "WHERE name='fh-self-service'"
+            ).fetchone()[0], 'DEGRADED')
+
+            with socket.socket() as listener:
+                listener.bind(("127.0.0.1", port))
+                listener.listen(1)
+                recovered = v24.synchronize_agent_remote_services(
+                    self.agent, root=self.agent_tmp,
+                    server_verification_only=True,
+                )
+            self.assertEqual(recovered['status'], 'SYNCHRONIZED', recovered)
+            final = self.agent.conn.execute(
+                "SELECT status, runtime_verified, endpoint_port "
+                "FROM agent_remote_services WHERE name='fh-self-service'"
+            ).fetchone()
+            self.assertEqual((final['status'], final['runtime_verified']),
+                             ('HEALTHY', 1))
+            self.assertEqual(first['view']['endpoint_port'],
+                             final['endpoint_port'])
+
     def test_F026_synchronize_verified_noop_avoids_republication_and_restart(self):
         from unittest import mock
         import drlink_v24_runtime as runtime
@@ -900,8 +951,11 @@ class StatusParityTests(unittest.TestCase):
         )
         real_set = v24.set_remote_service_agent
         real_upsert = mgmt.upsert_remote_service_on_server
+        # The race fixture has no real listener; model a reachable target so
+        # these assertions isolate catalog/commit ordering.
         with mock.patch.dict(os.environ, {"FRP_SKIP_SYSTEMD": "1",
                                          "DRLINK_SERVER_REACHABLE": "1"}), \
+                mock.patch.object(v24, "_probe_tcp", return_value=True), \
                 mock.patch.object(runtime, "runtime_should_apply", return_value=True):
             for stype, pool in (("fixed-tcp", "fixed-tcp"), ("tcp", "normal")):
                 with self.subTest(type=stype, operator_online=operator_online):
@@ -1011,8 +1065,10 @@ class StatusParityTests(unittest.TestCase):
         real_set = v24.set_remote_service_agent
         real_sync = v24.sync_agent_catalog_from_server
         real_dependency = v24._service_dependency_status
+        # The race fixture has no real listener; model a reachable target.
         with mock.patch.dict(os.environ, {"FRP_SKIP_SYSTEMD": "1",
                                          "DRLINK_SERVER_REACHABLE": "1"}), \
+                mock.patch.object(v24, "_probe_tcp", return_value=True), \
                 mock.patch.object(runtime, "runtime_should_apply", return_value=True):
             for stype, pool in (("fixed-tcp", "fixed-tcp"), ("tcp", "normal")):
                 with self.subTest(type=stype, phase=phase):

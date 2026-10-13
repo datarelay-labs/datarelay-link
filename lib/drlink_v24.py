@@ -6685,11 +6685,12 @@ def set_remote_service_agent(
                     status = "DEGRADED"
                     reason = "No endpoint port is currently available"
 
-    # Routed destination reachability is independent of proxy registration.
+    # Target reachability is independent of proxy registration, including a
+    # this-host target behind a correctly registered local FRP proxy.
     if destination_identity_reason and en:
         status = "DEGRADED"
         reason = destination_identity_reason
-    elif en and target_mode == "routed" and endpoint_port is not None and pending == 0:
+    elif en and endpoint_port is not None and pending == 0:
         if not _probe_tcp(target_host, sport):
             destination_unreachable = True
             status = "DEGRADED"
