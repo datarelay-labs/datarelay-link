@@ -79,6 +79,29 @@ def unpack_link_source(target: Path, link_head: str) -> None:
         files.extractall(target, filter="data")
 
 
+def clear_old_packages_in_private_export(web: Path, private_root: Path) -> int:
+    """Remove only historic public pins in an isolated Git-exported Web tree."""
+    root = stage.private_scratch_root(private_root)
+    resolved = web.resolve(strict=True)
+    if root not in resolved.parents:
+        raise PrivateBundleError("Cannot edit Foundation packages outside private staging")
+    packs = web / ".foundation" / "packs"
+    if packs.is_symlink() or not packs.is_dir():
+        raise PrivateBundleError("Private Web archive directory is invalid")
+    files = list(packs.iterdir())
+    if not files:
+        raise PrivateBundleError("Historic fallback inventory not found in private export")
+    for item in files:
+        if (item.is_symlink() or not item.is_file()
+                or not item.name.startswith("datarelay-labs-")
+                or not item.name.endswith(".tgz")):
+            raise PrivateBundleError("Unexpected private export package member")
+    for item in files:
+        item.unlink()
+    packs.rmdir()
+    return len(files)
+
+
 def _exec(command: list[str], *, cwd: Path, env: dict | None = None) -> None:
     subprocess.run(command, cwd=cwd, env=env, check=True, timeout=360)
 
@@ -164,14 +187,12 @@ def build_private_candidate(
         work.mkdir()
         unpack_link_source(work, current_head)
         web = work / "web"
+        # Git archive brings the public pf8.4 rollback files into the PRIVATE
+        # copy. Remove only those copies before immutable RC41 package staging.
+        clear_old_packages_in_private_export(web, private_root)
         stage.stage_reproduced_private_packages(
             source_checkout, pack_dir, source_manifest, web,
         )
-        # Private-stage content is isolated. Never include the public pf8.4
-        # rollback packages in an RC41-only distribution archive.
-        for tar in (web / ".foundation" / "packs").glob("*.tgz"):
-            if not tar.name.endswith("-" + stage.gate.VERSION + ".tgz"):
-                tar.unlink()
         stage.verify_private_web_runtime(web)
         private_bundle = work / "dist" / "data-relay-link-web.tar.gz"
         _exec([sys.executable, "scripts/build-web-bundle.py"], cwd=work)

@@ -74,6 +74,33 @@ class RC41PrivateWebPackageTests(unittest.TestCase):
         with self.assertRaisesRegex(packager.PrivateBundleError, "absolute"):
             packager.validate_output(self.private_root, Path("relative"))
 
+    def test_only_private_git_export_fallback_packs_are_replaced(self):
+        web = self.private_root / "copied-link" / "web"
+        packs = web / ".foundation" / "packs"
+        packs.mkdir(parents=True)
+        for name in ("datarelay-labs-foundation-0.1.0-pf8.4.tgz",
+                     "datarelay-labs-ui-0.1.0-pf5b.1.tgz"):
+            (packs / name).write_bytes(b"old public rollback copy")
+        self.assertEqual(
+            packager.clear_old_packages_in_private_export(web, self.private_root), 2
+        )
+        self.assertFalse(packs.exists())
+        with self.assertRaisesRegex(
+                packager.PrivateBundleError, "outside private"):
+            packager.clear_old_packages_in_private_export(ROOT / "web", self.private_root)
+
+    def test_unexpected_file_in_private_fallback_folder_blocks_replacement(self):
+        web = self.private_root / "copied-link" / "web"
+        packs = web / ".foundation" / "packs"
+        packs.mkdir(parents=True)
+        (packs / "datarelay-labs-foundation-0.1.0-pf8.4.tgz").write_bytes(b"valid")
+        (packs / "unexpected.txt").write_bytes(b"do-not-delete")
+        with self.assertRaisesRegex(
+                packager.PrivateBundleError, "Unexpected"):
+            packager.clear_old_packages_in_private_export(web, self.private_root)
+        self.assertTrue((packs / "unexpected.txt").exists())
+        self.assertTrue((packs / "datarelay-labs-foundation-0.1.0-pf8.4.tgz").exists())
+
     def test_all_private_foundation_tarballs_have_correct_embedded_digest(self):
         self._tar()
         with mock.patch.object(packager.stage.gate, "PACKAGE_SHA256", self.hashes):
