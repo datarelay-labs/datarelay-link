@@ -106,17 +106,22 @@ clean Git source checkout, immutable versioned package manifest, independently
 pinned **all ten** individual tar SHA256 hashes, and ownership-only private
 scratch. It then installs npm strictly offline with scripts disabled, builds
 the **actual Link Web source**, and runs Admin/Operator/Read Only Administration,
-full Web Journey and P0 test suites against RC41. It stages the original Link
-CSS and the exact PUBLIC docs/Core read-only test fixture in its temporary
-private test layout, cleans up temporary files, and leaves the separately
-retained authenticated private source/packages under the 0700 parent.
+full Web Journey and P0 test suites against RC41. It stages Link-owned
+`index.html`/`styles.css` and exact PUBLIC docs/Core read-only test fixtures
+in its temporary private test layout, cleans up temporary files, and leaves
+the retained authenticated private source/packages under the 0700 parent.
 
 This staging helper also has **synthetic fixture** security tests in
 `tests/test-link-foundation-rc41-staging.py`. On 2026-10-13 a **separate
 real-package** private run verified ten matching tar SHA256 hashes and passed
 the Link Web production build, Administration **20/20**, Journey **412/412**
-and P0 **42/42**; it did **not** install a live Server/Agent, qualify Browser
-E2E, publish RC41 or alter the public Link dependency lock.
+and P0 **42/42**. On the same verified private RC41 Web build, the native
+Link `create_server` with isolated disposable Core root and `127.0.0.1` port 0
+served `index.html`, `app.js`, `styles.css` and `foundation.css` with HTTP 200
+and exact local bytes: **4/4 loopback static-route checks PASS**. No real
+login, credential, Agent, Browser, second user, live test host, publisher or
+installed public product release was involved. The default public Link package
+lock remains at pf8.4.
 
 ## Consumer migration boundary
 

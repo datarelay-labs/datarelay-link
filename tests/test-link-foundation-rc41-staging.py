@@ -50,6 +50,7 @@ class RC41OfflineStageTests(unittest.TestCase):
         (self.web / "dist").mkdir()
         (self.web / "dist" / "app.js").write_text("compiled")
         (self.web / "dist" / "styles.css").write_text("link source style")
+        (self.web / "dist" / "index.html").write_text("<title>Link Web</title>")
         (self.fake_repo / "docs").mkdir()
         for name in stage.PRODUCT_TEST_DOCS:
             (self.fake_repo / "docs" / name).write_text("product-owned public evidence")
@@ -159,6 +160,7 @@ class RC41OfflineStageTests(unittest.TestCase):
             self.assertFalse((staged / old).exists(), old)
         self.assertTrue((staged / "package-lock.json").is_file())
         self.assertTrue((staged / "dist" / "styles.css").is_file())
+        self.assertTrue((staged / "dist" / "index.html").is_file())
         self.assertFalse((staged / "dist" / "app.js").exists())
         self.assertTrue((staged.parent / "lib" / "drlink_management_service.py").is_file())
         for name in stage.PRODUCT_TEST_DOCS:

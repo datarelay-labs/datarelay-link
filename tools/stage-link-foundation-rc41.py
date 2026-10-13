@@ -108,11 +108,13 @@ def prepare_copy(web_source: Path, scratch_web: Path):
         web_source, scratch_web,
         ignore=shutil.ignore_patterns(".foundation", "node_modules", "dist"),
     )
-    original_dist = web_source / "dist" / "styles.css"
-    if not original_dist.is_file():
-        raise StageError("Link Web source stylesheet is missing")
+    original_dist = web_source / "dist"
+    for name in ("styles.css", "index.html"):
+        if not (original_dist / name).is_file():
+            raise StageError("Link Web source static asset is missing: " + name)
     (scratch_web / "dist").mkdir()
-    shutil.copy2(original_dist, scratch_web / "dist" / "styles.css")
+    for name in ("styles.css", "index.html"):
+        shutil.copy2(original_dist / name, scratch_web / "dist" / name)
     # Native Web tests audit the exact Link-owned, PUBLIC docs and Core
     # service projection alongside source. Omitting them produces false REDs.
     root = web_source.parent
