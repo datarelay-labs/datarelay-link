@@ -146,9 +146,9 @@ class V30AdditiveManagementSchemaTests(unittest.TestCase):
                 conn, now=datetime(2026, 10, 4, 2, 0, tzinfo=timezone.utc)
             )
             self.assertEqual(summary["managed_hosts"]["total"], 1)
-            self.assertEqual(summary["managed_hosts"]["connected"], 1)
+            self.assertEqual(summary["managed_hosts"]["connected"], 0)
             self.assertEqual(summary["managed_hosts"]["stale"], 0)
-            self.assertEqual(summary["managed_hosts"]["disconnected"], 0)
+            self.assertEqual(summary["managed_hosts"]["disconnected"], 1)
             self.assertEqual(summary["managed_hosts"]["legacy"], 1)
         finally:
             conn.close()

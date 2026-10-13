@@ -192,6 +192,33 @@ class V30ManagementScalabilityTests(unittest.TestCase):
         self.assertEqual(summary["disconnected"], 0)
         self.assertEqual(self.conn.total_changes, before)
 
+    def test_overview_admission_and_legacy_connectivity_match_core(self):
+        # A revoked, retired or offline Legacy Host cannot be healthy merely
+        # because its lifecycle or an old heartbeat says it was connected.
+        cases = (
+            ("healthy", "trusted", "active", "connected", 1, "2026-10-04T01:59:30Z"),
+            ("revoked", "revoked", "active", "connected", 1, "2026-10-04T01:59:30Z"),
+            ("retired", "trusted", "retired", "connected", 1, "2026-10-04T01:59:30Z"),
+            ("legacy-up", "trusted", "active", "legacy", 1, None),
+            ("legacy-down", "trusted", "active", "legacy", 0, None),
+            ("legacy-retired", "trusted", "retired", "legacy", 1, None),
+            ("stale", "trusted", "active", "connected", 1, None),
+        )
+        for ident, trust, status, lifecycle, connected, heartbeat in cases:
+            self._insert_client(ident, lifecycle=lifecycle, connected=connected,
+                                heartbeat=heartbeat)
+            self.conn.execute("UPDATE clients SET trust_status=?,status=? WHERE id=?",
+                              (trust, status, ident))
+        self.conn.commit()
+        before = self.conn.total_changes
+        counts = overview_summary(self.conn, now=self.now)["managed_hosts"]
+        self.assertEqual(counts["total"], 7)
+        self.assertEqual(counts["connected"], 2)
+        self.assertEqual(counts["stale"], 1)
+        self.assertEqual(counts["disconnected"], 4)
+        self.assertEqual(counts["legacy"], 3)
+        self.assertEqual(self.conn.total_changes, before)
+
     def test_query_service_read_models_do_not_need_writer_slot(self):
         self._insert_client("host-a")
         self.conn.commit()

@@ -26,21 +26,27 @@ def overview_summary(conn, *, now: datetime | None = None) -> dict[str, Any]:
     stale_before = _utc_text(current - timedelta(seconds=AGENT_HEARTBEAT_SECONDS))
     current_text = _utc_text(current)
 
+    # Mirror Core.managed_host_connectivity's trust, retirement and legacy
+    # connected checks. Read models may never revive an ineligible Host as
+    # healthy based solely on a stale lifecycle label or heartbeat.
+    eligible = (
+        "(connected=1 AND COALESCE(trust_status,'') IN ('','trusted') "
+        "AND LOWER(COALESCE(status,'')) NOT IN ('retired','removed','deleted'))"
+    )
     host = conn.execute(
         "SELECT COUNT(*) AS total,"
-        "SUM(CASE WHEN agent_lifecycle_state='legacy' THEN 1 "
-        "WHEN agent_lifecycle_state='connected' AND connected=1 "
+        f"SUM(CASE WHEN {eligible} AND agent_lifecycle_state='legacy' THEN 1 "
+        f"WHEN {eligible} AND agent_lifecycle_state='connected' "
         "AND julianday(agent_heartbeat_at)>=julianday(?) "
         "AND julianday(agent_heartbeat_at)<=julianday(?) THEN 1 ELSE 0 END) "
         "AS connected,"
-        "SUM(CASE WHEN agent_lifecycle_state='connected' AND connected=1 "
+        f"SUM(CASE WHEN {eligible} AND agent_lifecycle_state='connected' "
         "AND (julianday(agent_heartbeat_at) IS NULL "
         "OR julianday(agent_heartbeat_at)<julianday(?) "
         "OR julianday(agent_heartbeat_at)>julianday(?)) "
         "THEN 1 ELSE 0 END) AS stale,"
-        "SUM(CASE WHEN agent_lifecycle_state='disconnected' OR "
-        "(agent_lifecycle_state<>'legacy' AND connected=0) THEN 1 ELSE 0 END) "
-        "AS disconnected,"
+        f"SUM(CASE WHEN NOT {eligible} OR agent_lifecycle_state='disconnected' "
+        "THEN 1 ELSE 0 END) AS disconnected,"
         "SUM(CASE WHEN agent_lifecycle_state='legacy' THEN 1 ELSE 0 END) AS legacy,"
         "SUM(CASE WHEN agent_version IS NULL OR agent_version='' THEN 1 ELSE 0 END) "
         "AS version_unknown,"
