@@ -533,6 +533,75 @@ class V30ManagementJobTests(unittest.TestCase):
         self.engine.conn.commit()
         self.assertFalse(self.engine.rollout_control(job["id"], action="resume")["payload"]["operator_paused"])
 
+    def test_rollout_claim_rejects_corrupt_persisted_authority_without_leases(self):
+        # A previously valid queued rollout can lose its immutable artifact or
+        # have operator pause state corrupted on disk. Neither is an authority
+        # to lease a staged update; malformed data stays unchanged for audit.
+        import json
+        from drlink_control_plane import ControlPlane
+
+        plane = ControlPlane(self.tmp)
+        try:
+            for host in ("host-a", "host-b"):
+                plane.upsert_client(host, hostname=host)
+        finally:
+            plane.close()
+        job = self.engine.enqueue_rollout(
+            targets=("host-a", "host-b"), canary_targets=("host-a",),
+            requested_by="admin-a",
+            artifact={"version": "3.0.0-rc.1", "source_ref": "a" * 40,
+                      "sha256": "b" * 64},
+            wave_size=2, now=self.now,
+        )
+        original = job["payload"]
+        malformed = (
+            {**original, "operator_paused": 0},
+            {**original, "operator_paused": None},
+            {**original, "operator_paused": ""},
+            {**original, "artifact": {}},
+            {**original, "artifact": {**original["artifact"], "source_ref": "main"}},
+            {**original, "artifact": {**original["artifact"], "sha256": "bad"}},
+        )
+        for invalid in malformed:
+            raw = json.dumps(invalid)
+            with self.subTest(raw=raw[:90]):
+                self.engine.conn.execute(
+                    "UPDATE management_jobs SET payload_json=? WHERE id=?",
+                    (raw, job["id"]),
+                )
+                self.engine.conn.commit()
+                before = tuple(self.engine.conn.execute(
+                    "SELECT payload_json,status,updated_at FROM management_jobs WHERE id=?",
+                    (job["id"],),
+                ).fetchone())
+                self.assertEqual(
+                    self.engine.claim_targets(
+                        worker_id="offline-rollout-test", limit=2,
+                        now=self.now + timedelta(seconds=1),
+                    ), [],
+                    "Corrupt rollout authority must not lease any target",
+                )
+                after = tuple(self.engine.conn.execute(
+                    "SELECT payload_json,status,updated_at FROM management_jobs WHERE id=?",
+                    (job["id"],),
+                ).fetchone())
+                self.assertEqual(after, before)
+                states = self.engine.conn.execute(
+                    "SELECT status FROM management_job_targets WHERE job_id=?",
+                    (job["id"],),
+                ).fetchall()
+                self.assertTrue(all(row["status"] == QUEUED for row in states))
+        self.engine.conn.execute(
+            "UPDATE management_jobs SET payload_json=? WHERE id=?",
+            (json.dumps(original), job["id"]),
+        )
+        self.engine.conn.commit()
+        claims = self.engine.claim_targets(
+            worker_id="offline-rollout-test", limit=2,
+            now=self.now + timedelta(seconds=1),
+        )
+        self.assertEqual([claim["target_id"] for claim in claims], ["host-a"])
+
     def test_generic_job_api_cannot_bypass_rollout_artifact_and_canary_validation(self):
         with self.assertRaisesRegex(ControlPlaneError, "Rollout"):
             self.engine.enqueue(

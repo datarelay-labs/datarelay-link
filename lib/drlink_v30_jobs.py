@@ -428,8 +428,25 @@ class ManagementJobEngine:
         job_id = str(row["job_id"])
         target = str(row["target_id"])
         try:
-            payload = json.loads(str(row["payload_json"] or "{}"))
-            if not isinstance(payload, dict):
+            payload = _strict_queued_job_payload(row["payload_json"])
+            if payload is None:
+                return False
+            # This scheduler is independently reachable from the Core claim
+            # path: reject corrupted artifact identity or a coerced operator
+            # pause flag before issuing even an offline rollout lease.
+            artifact = payload.get("artifact")
+            if not isinstance(artifact, dict):
+                return False
+            version = artifact.get("version")
+            source_ref = artifact.get("source_ref")
+            sha256 = artifact.get("sha256")
+            hexchars = frozenset("0123456789abcdefABCDEF")
+            if (not isinstance(version, str) or not version.strip()
+                or not isinstance(source_ref, str) or len(source_ref) != 40
+                or not all(char in hexchars for char in source_ref)
+                or not isinstance(sha256, str) or len(sha256) != 64
+                or not all(char in hexchars for char in sha256)
+                or type(payload.get("operator_paused", False)) is not bool):
                 return False
             # Only the exact validated Core rollout shape can authorize a
             # staged Agent claim. Never silently upgrade corrupt/missing
