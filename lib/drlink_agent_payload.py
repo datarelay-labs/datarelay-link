@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import tempfile
 from pathlib import Path
 from typing import Iterable
 
@@ -116,7 +118,30 @@ def write_installed_manifest(libdir: Path) -> dict:
         "critical": list(AGENT_CRITICAL_LINEAGE_FILES),
     }
     dest = libdir / RUNTIME_MANIFEST_NAME
-    dest.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    # Never open the existing pathname for writing: it may be a symlink to
+    # a file outside the Agent root. Write a same-directory temporary file
+    # then atomically replace the name without following an existing link.
+    # Preserve any more-restrictive permissions on an existing regular file.
+    mode = (
+        dest.stat().st_mode & 0o777
+        if not dest.is_symlink() and dest.is_file()
+        else 0o644
+    )
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=libdir,
+            prefix=".runtime-sha256-", suffix=".tmp", delete=False,
+        ) as output:
+            temporary = Path(output.name)
+            output.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+            output.flush()
+            os.fsync(output.fileno())
+        temporary.chmod(mode)
+        os.replace(temporary, dest)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
     return payload
 
 

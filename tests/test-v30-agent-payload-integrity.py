@@ -48,6 +48,23 @@ class AgentPayloadIntegrityTests(unittest.TestCase):
         self.assertTrue(failures, "A symlink outside Agent lib passed payload verification")
         self.assertIn(filename, " ".join(failures))
 
+    def test_manifest_write_must_not_follow_external_symlink(self):
+        outside = Path(self.temp.name) / "unrelated-config"
+        outside.write_text("DO_NOT_OVERWRITE\\n", encoding="utf-8")
+        manifest = self.installed / RUNTIME_MANIFEST_NAME
+        manifest.symlink_to(outside)
+        write_installed_manifest(self.installed)
+        self.assertEqual(outside.read_text(encoding="utf-8"), "DO_NOT_OVERWRITE\\n")
+        self.assertFalse(manifest.is_symlink())
+        self.assertEqual(verify_installed_lineage(self.installed), [])
+
+    def test_manifest_rewrite_preserves_restrictive_permissions(self):
+        write_installed_manifest(self.installed)
+        manifest = self.installed / RUNTIME_MANIFEST_NAME
+        manifest.chmod(0o600)
+        write_installed_manifest(self.installed)
+        self.assertEqual(manifest.stat().st_mode & 0o777, 0o600)
+
     def test_present_corrupt_manifest_fails_closed_without_throwing(self):
         payload = write_installed_manifest(self.installed)
         manifest = self.installed / RUNTIME_MANIFEST_NAME
