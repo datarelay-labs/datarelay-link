@@ -823,7 +823,9 @@ class StatusParityTests(unittest.TestCase):
                  mock.patch.object(mgmt, 'report_remote_service_status_on_server',
                                    side_effect=acknowledge) as report, \
                  mock.patch.object(v24, 'set_remote_service_agent') as replay, \
-                 mock.patch.object(runtime, 'apply_agent_runtime') as apply:
+                 mock.patch.object(runtime, 'apply_agent_runtime') as apply, \
+                 mock.patch.object(runtime, '_restart_frpc') as restart, \
+                 mock.patch.object(runtime, '_reload_frpc_authenticated') as reload:
                 result = v24.synchronize_agent_remote_services(
                     self.agent, root=self.agent_tmp,
                     server_verification_only=True)
@@ -833,6 +835,8 @@ class StatusParityTests(unittest.TestCase):
             report.assert_called_once()
             replay.assert_not_called()
             apply.assert_not_called()
+            restart.assert_not_called()
+            reload.assert_not_called()
             self.assertEqual(
                 self.agent.conn.execute("SELECT status,runtime_verified FROM "
                                         "agent_remote_services WHERE name='f026-healthy'").fetchone()[:],
