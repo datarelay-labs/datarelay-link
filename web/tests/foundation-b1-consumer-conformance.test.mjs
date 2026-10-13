@@ -57,8 +57,15 @@ function preflight(role, registeredActionIds=actualLinkActionIds()) {
 }
 
 test("exact Foundation B1 compiled Testkit is installed for the Link consumer", () => {
-  assert.equal(locked.source_head,"8726549f80f85b79d94e91a87324d2523e27ddbb");
-  assert.equal(locked.version,"0.1.0-pf8.4");
+  // The public checkout remains on pf8.4. A separately approved, verified
+  // private RC41 scratch consumer may test the same Link-native task catalog.
+  // No arbitrary or mutable Foundation version is accepted by this fixture.
+  const allowedPins={
+    "0.1.0-pf8.4":"8726549f80f85b79d94e91a87324d2523e27ddbb",
+    "0.1.0-rc.41":"46ddb60cad8eae7b1718588cd19421e61b5300e7"
+  };
+  assert.ok(Object.hasOwn(allowedPins,locked.version),"Unreviewed Foundation version");
+  assert.equal(locked.source_head,allowedPins[locked.version]);
   assert.equal(locked.packages.length,10);
   assert.equal(typeof verifyAdministrationConsumer,"function");
 });

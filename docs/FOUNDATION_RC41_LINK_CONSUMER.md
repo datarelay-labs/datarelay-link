@@ -40,6 +40,34 @@ root, path and member types. It **does not extract**, execute, install, access
 the network, change Git, or accept an unreviewed in-bundle digest as authority.
 A successful preflight is necessary but **not sufficient** for product adoption.
 
+## Private, isolated Web compatibility stage
+
+If the operator has independently supplied the approved, complete original
+RC41 archive on `dev-drlink`, a single Link-owned command can validate and
+exercise the same Web with ten RC41 packages **without modifying the public
+checkout or default `pf8.4` package pins**:
+
+```bash
+mkdir -p -m 700 "$HOME/.cache/drlink-foundation-rc41-staging"
+python3 tools/stage-link-foundation-rc41.py \
+  --bundle /approved/private/foundation-only-46ddb60cad8eae7b1718588cd19421e61b5300e7.tar.gz \
+  --private-root "$HOME/.cache/drlink-foundation-rc41-staging"
+```
+
+The command first enforces the original independent SHA256 pins, stages only
+verified npm archives, checks the immutable Foundation lock and changes only
+the private scratch Web dependency projection. It performs `npm install`
+strictly offline with lifecycle scripts disabled, verifies all ten installed
+package names/versions, then runs the existing Link Web build, 3-role
+Administration tests and Journey tests. Temporary private archives and the
+scratch Web are removed after test completion or failure. An absent/unverified
+RC41 bundle fails before staging. This is a source compatibility gate, not a
+live Web installation, signed product qualification or a release decision.
+
+This staging helper has **synthetic fixture** tests in
+`tests/test-link-foundation-rc41-staging.py`; passing those tests does not
+mean the real RC41 bundle was installed or tested on Link.
+
 ## Consumer migration boundary
 
 The default Link Web remains on the public, already tracked `pf8.4` package
