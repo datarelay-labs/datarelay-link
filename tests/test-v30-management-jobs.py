@@ -232,6 +232,7 @@ class V30ManagementJobTests(unittest.TestCase):
         malformed = (
             "", "{", "[]", "null", '"text"', "true",
             '{"field":NaN}', '{"field":Infinity}',
+            '{"field":1e309}', '{"field":-1e309}', '{"field":[1e309]}',
             '{"id":"first","id":"second"}',
             '{"large":"' + "x" * 16385 + '"}',
         )
@@ -285,6 +286,7 @@ class V30ManagementJobTests(unittest.TestCase):
         malformed = (
             "", "{", "[]", "null", '"text"', "true",
             '{"value":NaN}', '{"value":Infinity}',
+            '{"value":1e309}', '{"value":-1e309}', '{"value":[1e309]}',
             '{"operation":"doctor","operation":"refresh"}',
             '{"large":"' + "x" * 16385 + '"}',
         )

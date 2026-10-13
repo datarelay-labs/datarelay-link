@@ -12,6 +12,7 @@ transactions.
 from __future__ import annotations
 
 import json
+import math
 import secrets
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -108,11 +109,20 @@ def _strict_queued_job_payload(raw: Any) -> Optional[dict[str, Any]]:
     def reject_constant(_value: str) -> None:
         raise ValueError("non-finite Job payload number")
 
+    def reject_nonfinite_float(text: str) -> float:
+        # JSON permits exponent notation, but Python can decode an extreme
+        # finite decimal as infinity; neither may become Core job authority.
+        parsed = float(text)
+        if not math.isfinite(parsed):
+            raise ValueError("non-finite Job payload number")
+        return parsed
+
     try:
         if len(raw.encode("utf-8")) > 16384:
             return None
         value = json.loads(
             raw, object_pairs_hook=unique_pairs, parse_constant=reject_constant,
+            parse_float=reject_nonfinite_float,
         )
     except (TypeError, ValueError, UnicodeError, RecursionError):
         return None
