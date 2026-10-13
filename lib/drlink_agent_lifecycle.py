@@ -58,8 +58,12 @@ def reconciliation_needed(plane) -> bool:
     row = plane.conn.execute(
         "SELECT COUNT(*) AS n FROM agent_remote_services "
         "WHERE delete_pending = 1 OR pending_allocation = 1 "
-        "OR (enabled = 1 AND (runtime_verified = 0 "
-        "OR endpoint_port IS NULL OR upper(status) != 'HEALTHY'))"
+        "OR (enabled = 1 AND (endpoint_port IS NULL "
+        "OR (upper(status) = 'HEALTHY' AND runtime_verified = 0) "
+        "OR upper(status) NOT IN ('HEALTHY', 'DEGRADED') "
+        "OR (upper(status) = 'DEGRADED' AND "
+        "(reason LIKE 'Runtime activation%' "
+        "OR reason LIKE '%Server unreachable%'))))"
     ).fetchone()
     return bool(row and int(row["n"] or 0) > 0)
 

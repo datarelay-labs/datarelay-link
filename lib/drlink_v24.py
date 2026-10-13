@@ -5869,13 +5869,14 @@ def synchronize_agent_remote_services(plane_db, *, root: Optional[str] = None,
                 ))
                 claims = []
                 stable = bool(snapshot_rows)
+                degraded = []
+                promotable = set()
                 for row in snapshot_rows:
                     enabled = bool(row["enabled"])
-                    expected_status = "HEALTHY" if enabled else "DISABLED"
-                    if (str(row["status"] or "").upper() != expected_status
-                        or row["pending_allocation"]
-                        or (enabled and (
-                            not row["runtime_verified"] or row["endpoint_port"] is None))):
+                    status = str(row["status"] or "").upper()
+                    if (row["pending_allocation"]
+                        or (enabled and row["endpoint_port"] is None)
+                        or (not enabled and status != "DISABLED")):
                         stable = False
                         break
                     if (_destination_dependency_status(
@@ -5884,15 +5885,42 @@ def synchronize_agent_remote_services(plane_db, *, root: Optional[str] = None,
                         or _service_dependency_status(plane_db, row["service_object"])):
                         stable = False
                         break
-                    if enabled and runtime.verified_remote_service_status(
-                            plane_db, row["name"], root=root)[0] != "HEALTHY":
-                        stable = False
-                        break
+                    claim_status = status
+                    if enabled:
+                        live_status = runtime.verified_remote_service_status(
+                            plane_db, row["name"], root=root,
+                            allow_unverified=status == "DEGRADED")[0]
+                        if status == "HEALTHY":
+                            if not row["runtime_verified"] or live_status != "HEALTHY":
+                                stable = False
+                                break
+                        elif status == "DEGRADED":
+                            # Keep a missing proxy DEGRADED without restarting
+                            # unrelated verified services on each heartbeat.
+                            if row["runtime_verified"]:
+                                stable = False
+                                break
+                            if live_status == "HEALTHY":
+                                # A recovered proxy can be promoted only after
+                                # the Server acknowledges its current endpoint.
+                                claim_status = "HEALTHY"
+                                promotable.add(str(row["name"]).lower())
+                            elif live_status == "DEGRADED":
+                                degraded.append({
+                                    "name": row["name"],
+                                    "reason": str(row["reason"] or ""),
+                                })
+                            else:
+                                stable = False
+                                break
+                        else:
+                            stable = False
+                            break
                     claims.append({
                         "name": row["name"],
-                        "status": expected_status,
-                        "reason": str(row["reason"] or ""),
-                        "runtime_verified": enabled,
+                        "status": claim_status,
+                        "reason": "" if claim_status == "HEALTHY" else str(row["reason"] or ""),
+                        "runtime_verified": enabled and claim_status == "HEALTHY",
                         "endpoint_port": row["endpoint_port"],
                     })
                 if stable:
@@ -5906,8 +5934,13 @@ def synchronize_agent_remote_services(plane_db, *, root: Optional[str] = None,
                         for item in (returned or []) if isinstance(item, dict)
                     }
                     verified = len(by_name) == len(claims)
+                    claims_by_name = {
+                        str(claim["name"]).lower(): claim for claim in claims
+                    }
                     for original in snapshot_rows:
-                        item = by_name.get(str(original["name"]).lower())
+                        key = str(original["name"]).lower()
+                        item = by_name.get(key)
+                        claim = claims_by_name[key]
                         enabled = bool(original["enabled"])
                         current = plane_db.conn.execute(
                             "SELECT * FROM agent_remote_services "
@@ -5917,24 +5950,36 @@ def synchronize_agent_remote_services(plane_db, *, root: Optional[str] = None,
                         if (item is None or current is None
                             or tuple(current) != tuple(original)
                             or str(item.get("status") or "").upper()
-                                != ("HEALTHY" if enabled else "DISABLED")
-                            or bool(item.get("runtime_verified")) != enabled
+                                != claim["status"]
+                            or bool(item.get("runtime_verified"))
+                                != bool(claim["runtime_verified"])
                             or item.get("endpoint_port") != original["endpoint_port"]
                             or int(item.get("pending_allocation") or 0)
                                 != int(original["pending_allocation"] or 0)
                             or (enabled and runtime.verified_remote_service_status(
-                                plane_db, original["name"], root=root)[0] != "HEALTHY")):
+                                plane_db, original["name"], root=root,
+                                allow_unverified=key in promotable)[0]
+                                != claim["status"])):
                             verified = False
                             break
                     # Reconcile authoritative endpoint/verification projections
                     # even if a fresh Server reply reveals missing ownership.
                     _reconcile_agent_from_server_status(plane_db, acknowledged)
                     if verified:
+                        for name in promotable:
+                            plane_db.conn.execute(
+                                "UPDATE agent_remote_services SET status='HEALTHY', "
+                                "runtime_verified=1, reason='', updated_at=? "
+                                "WHERE name=? COLLATE NOCASE AND delete_pending=0",
+                                (utc_now_iso(), name),
+                            )
+                        if promotable:
+                            _commit_if_autonomous(plane_db)
                         return _finish({
-                            "status": "SYNCHRONIZED",
+                            "status": "DEGRADED" if degraded else "SYNCHRONIZED",
                             "updated": 0,
                             "no_change": True,
-                            "affected": [],
+                            "affected": degraded,
                         })
         except Exception:
             # Auth/transport/runtime problems cannot be a silent PASS; execute

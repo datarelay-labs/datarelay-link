@@ -658,6 +658,83 @@ class StatusParityTests(unittest.TestCase):
                 ).fetchone()
                 self.assertEqual((meta['status'],meta['runtime_verified']), ('HEALTHY',1))
 
+    def test_persistent_degraded_row_preserves_verified_healthy_runtime(self):
+        from unittest import mock
+        import drlink_v24_runtime as runtime
+
+        with mock.patch.dict(os.environ, {'FRP_DEPLOY_TEST_ROOT': self.agent_tmp}):
+            v24.set_service_object(
+                self.server, 'f026-other', type='tcp', port=18888, oneshot=True)
+            for name, service in (('f026-healthy', 'ssh'),
+                                  ('f026-stuck', 'f026-other')):
+                created = v24.set_remote_service_agent(
+                    self.agent, name, destination='this-host',
+                    service=service, enabled=True, oneshot=True, root=self.agent_tmp,
+                )
+                self.assertIsNotNone(created['view']['endpoint_port'])
+            self.agent.conn.execute(
+                "UPDATE agent_remote_services SET status='DEGRADED',runtime_verified=0,"
+                "reason='Runtime proxy is not present in the verified generation.' "
+                "WHERE name='f026-stuck'"
+            )
+            self.agent.conn.commit()
+            self.assertEqual(
+                runtime.verified_remote_service_status(
+                    self.agent, 'f026-stuck', root=self.agent_tmp,
+                    allow_unverified=True,
+                )[0],
+                'HEALTHY',
+            )
+
+            def verified(_plane, name, *, root, **kwargs):
+                return ('HEALTHY', '') if name == 'f026-healthy' else (
+                    'DEGRADED', 'Runtime proxy is not present in the verified generation.')
+            def acknowledge(*, root, services):
+                return {'services': [
+                    dict(item, pending_allocation=0) for item in services
+                ]}
+            with mock.patch.object(runtime, 'verified_remote_service_status',
+                                   side_effect=verified), \
+                 mock.patch.object(mgmt, 'report_remote_service_status_on_server',
+                                   side_effect=acknowledge) as report, \
+                 mock.patch.object(v24, 'set_remote_service_agent') as replay, \
+                 mock.patch.object(runtime, 'apply_agent_runtime') as apply:
+                result = v24.synchronize_agent_remote_services(
+                    self.agent, root=self.agent_tmp,
+                    server_verification_only=True)
+            self.assertEqual(result['status'], 'DEGRADED', result)
+            self.assertTrue(result.get('no_change'), result)
+            self.assertEqual(result['updated'], 0)
+            report.assert_called_once()
+            replay.assert_not_called()
+            apply.assert_not_called()
+            self.assertEqual(
+                self.agent.conn.execute("SELECT status,runtime_verified FROM "
+                                        "agent_remote_services WHERE name='f026-healthy'").fetchone()[:],
+                ('HEALTHY', 1),
+            )
+            # Once a previously missing proxy appears in the current verified
+            # process generation, promote it without replacing healthy proxies.
+            with mock.patch.object(runtime, 'verified_remote_service_status',
+                                   return_value=('HEALTHY', '')), \
+                 mock.patch.object(mgmt, 'report_remote_service_status_on_server',
+                                   side_effect=acknowledge) as report, \
+                 mock.patch.object(v24, 'set_remote_service_agent') as replay, \
+                 mock.patch.object(runtime, 'apply_agent_runtime') as apply:
+                recovered = v24.synchronize_agent_remote_services(
+                    self.agent, root=self.agent_tmp,
+                    server_verification_only=True)
+            self.assertEqual(recovered['status'], 'SYNCHRONIZED', recovered)
+            self.assertTrue(recovered.get('no_change'), recovered)
+            report.assert_called_once()
+            replay.assert_not_called()
+            apply.assert_not_called()
+            self.assertEqual(
+                self.agent.conn.execute("SELECT status,runtime_verified FROM "
+                                        "agent_remote_services WHERE name='f026-stuck'").fetchone()[:],
+                ('HEALTHY', 1),
+            )
+
     def test_F027_incomplete_signed_server_ack_must_not_short_circuit_reconcile(self):
         from unittest import mock
         created = v24.set_remote_service_agent(
@@ -2477,6 +2554,57 @@ class AgentLifecycleWorkerTests(unittest.TestCase):
                 self.assertEqual(result["status"], "SYNCHRONIZED")
                 heartbeat.assert_called_once()
                 sync.assert_called_once()
+
+            plane = ControlPlane(tmp)
+            plane.conn.execute(
+                "UPDATE agent_remote_services SET status='ERROR', "
+                "pending_allocation=0, endpoint_port=6019, reason='Unexpected state.' "
+                "WHERE name='pending'"
+            )
+            plane.conn.commit()
+            self.assertTrue(lifecycle.reconciliation_needed(plane))
+            plane.close()
+
+    def test_persistent_degraded_service_does_not_replay_healthy_services(self):
+        from unittest import mock
+        import drlink_agent_lifecycle as lifecycle
+
+        with tempfile.TemporaryDirectory(prefix="drlink-lifecycle-mixed-") as tmp:
+            root = Path(tmp)
+            (root / "etc/drlink").mkdir(parents=True)
+            (root / "etc/drlink/config.json").write_text(
+                '{"role":"agent"}\n', encoding="utf-8"
+            )
+            plane = ControlPlane(tmp)
+            v24.ensure_v2_schema(plane.conn)
+            for name, status, verified, port, reason in (
+                ("healthy", "HEALTHY", 1, 6019, ""),
+                ("stuck", "DEGRADED", 0, 6020,
+                 "Runtime proxy is not present in the verified generation."),
+            ):
+                plane.conn.execute(
+                    "INSERT INTO agent_remote_services "
+                    "(name, destination, service_object, enabled, status, endpoint_port, "
+                    "pending_allocation, delete_pending, pool_class, reason, "
+                    "runtime_verified, updated_at) VALUES (?, 'this-host', 'ssh', 1, ?, ?, "
+                    "0, 0, 'normal', ?, ?, '2026-10-13T00:00:00Z')",
+                    (name, status, port, reason, verified),
+                )
+            plane.conn.commit()
+            plane.close()
+            lifecycle.set_lifecycle_intent("running", tmp)
+            with mock.patch(
+                "drlink_mgmt_sync.report_agent_lifecycle_on_server",
+                return_value={"ok": True, "state": "connected", "reconcile_required": True},
+            ), mock.patch(
+                "drlink_v24.synchronize_agent_remote_services",
+                return_value={"status": "DEGRADED", "updated": 0},
+            ) as sync:
+                result = lifecycle.reconcile_once(tmp)
+            self.assertEqual(result["status"], "DEGRADED")
+            self.assertEqual(sync.call_count, 1)
+            self.assertTrue(sync.call_args.kwargs.get("server_verification_only"),
+                            "a static degraded row must not trigger full replay of a healthy proxy")
 
     def test_paused_worker_does_not_touch_server(self):
         from unittest import mock

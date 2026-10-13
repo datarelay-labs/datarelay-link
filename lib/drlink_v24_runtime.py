@@ -994,7 +994,10 @@ def mark_runtime_status(plane_db, *, ok: bool, reason: str = "", generation: int
             plane_db.conn.commit()
 
 
-def verified_remote_service_status(plane_db, name: str, *, root: Optional[str] = None) -> tuple[str, str]:
+def verified_remote_service_status(
+    plane_db, name: str, *, root: Optional[str] = None,
+    allow_unverified: bool = False,
+) -> tuple[str, str]:
     """Read this service's proof, rather than aggregate runtime apply success."""
     row = plane_db.conn.execute(
         "SELECT * FROM agent_remote_services WHERE name = ? COLLATE NOCASE", (name,)
@@ -1015,7 +1018,9 @@ def verified_remote_service_status(plane_db, name: str, *, root: Optional[str] =
             or row['endpoint_port'] is None
             or installed.get(name.lower()) != int(row['endpoint_port'])):
         return 'DEGRADED', missing
-    if str(row['status']).upper() != 'HEALTHY' or not row['runtime_verified']:
+    if not allow_unverified and (
+        str(row['status']).upper() != 'HEALTHY' or not row['runtime_verified']
+    ):
         return 'DEGRADED', str(row['reason'] or 'Runtime activation pending.')
     host_id = str(state.get('host_id') or '').strip()
     if not host_id:
