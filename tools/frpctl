@@ -1283,7 +1283,12 @@ frpctl_nav_workflow() {
       done
       ;;
     create_remote_service)
-      id="$(frpctl_nav_prompt_id "Remote Service name: ")" || return 1
+      id="$(frpctl_nav_prompt_id "Remote Service name (empty cancels): " true)" || return 1
+      if [[ -z "$id" ]]; then
+        echo "Cancelled."
+        echo "No changes were applied."
+        return 0
+      fi
       # Dispatch the canonical name-only form so the v2.4 backend enters the
       # interactive Remote Service wizard instead of a bare usage dead-end.
       frpctl_dispatch set remote-service "$id" || true

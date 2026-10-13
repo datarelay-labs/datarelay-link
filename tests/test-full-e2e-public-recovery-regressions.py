@@ -100,6 +100,27 @@ frpctl_lib_candidate() { printf '%s/%s' "$LIB" "$1"; }
             self.assertIn('Scopes: runtime',result.stderr)
             self.assertNotIn('Scopes: control-plane',result.stderr)
 
+    def test_agent_guided_create_empty_name_cancels_like_server(self):
+        # User-visible Server and Agent guided Create must give the same
+        # non-mutating empty-name cancellation guidance (U-013/O-015).
+        for answer in ('', '   '):
+            script = (
+                'frpctl_read() { printf "%s" "$ANSWER"; }; '
+                'frpctl_dispatch() { printf "DISPATCHED"; };\n'
+                + shell_function('frpctl_nav_prompt_id')
+                + shell_function('frpctl_nav_workflow')
+                + '\nfrpctl_nav_workflow create_remote_service'
+            )
+            result = subprocess.run(
+                ['bash', '-c', script],
+                env=dict(os.environ, ANSWER=answer), capture_output=True, text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn('Cancelled.', result.stdout)
+            self.assertIn('No changes were applied.', result.stdout)
+            self.assertNotIn('DISPATCHED', result.stdout)
+            self.assertNotIn('ERROR: value is required', result.stderr)
+
     def test_server_verification_reconciliation_must_not_force_healthy_frpc_restart(self):
         import drlink_agent_lifecycle as lifecycle
         import drlink_control_plane as cp
