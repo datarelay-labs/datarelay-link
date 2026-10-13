@@ -1293,10 +1293,11 @@ class BoundedAgentRpcWorkerPool:
     ) -> list[Future]:
         if self._closed:
             raise ControlPlaneError("Agent RPC worker pool is closed.")
-        wanted = min(
-            self.capacity,
-            max(1, int(limit if limit is not None else self.max_workers)),
-        )
+        # Reserving work changes Core leases. Reject invalid caller bounds
+        # before acquiring any worker slot or requesting a mutable claim.
+        if limit is not None and (type(limit) is not int or limit < 1):
+            raise ControlPlaneError("Agent RPC worker dispatch limit must be a positive integer.")
+        wanted = min(self.capacity, limit if limit is not None else self.max_workers)
         reserved = 0
         for _ in range(wanted):
             if not self._slots.acquire(blocking=False):

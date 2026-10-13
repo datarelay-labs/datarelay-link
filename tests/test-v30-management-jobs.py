@@ -1012,6 +1012,32 @@ class V30ManagementJobTests(unittest.TestCase):
             release.set()
             pool.close()
 
+    def test_worker_pool_rejects_invalid_dispatch_limit_before_claim(self):
+        # The local worker limit is a Core lease input.  A coerced bool,
+        # fraction, text or non-positive value must never reserve jobs.
+        from unittest import mock
+
+        with BoundedAgentRpcWorkerPool(max_workers=2, max_pending=0) as pool:
+            with mock.patch.object(
+                self.engine, "claim_targets",
+                side_effect=AssertionError("invalid limit leased Core work"),
+            ) as claim:
+                for invalid in (0, -1, True, False, 1.5, "1", object()):
+                    with self.subTest(limit=repr(invalid)):
+                        with self.assertRaisesRegex(ControlPlaneError, "limit"):
+                            pool.dispatch_once(
+                                self.engine,
+                                lambda _claim: self.fail("invalid limit ran handler"),
+                                worker_id="rpc-worker",
+                                limit=invalid,
+                            )
+                claim.assert_not_called()
+            # Invalid admission must not consume bounded worker capacity.
+            self.assertTrue(pool._slots.acquire(blocking=False))
+            self.assertTrue(pool._slots.acquire(blocking=False))
+            pool._slots.release()
+            pool._slots.release()
+
     def test_worker_pool_rejects_stale_or_invalid_core_claim_before_handler(self):
         from unittest import mock
 
