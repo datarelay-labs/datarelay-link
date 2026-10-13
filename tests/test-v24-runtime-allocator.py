@@ -427,6 +427,19 @@ class RuntimeApplyRemoveTests(unittest.TestCase):
         self.assertTrue(result['ok'], result)
         self.assertEqual(self.plane.conn.execute("SELECT runtime_verified FROM agent_remote_services WHERE name='web'").fetchone()[0], 1)
 
+    def test_fresh_apply_without_continuing_generation_proof_stays_degraded(self):
+        # A native startup check can succeed even though the current process
+        # cannot later be bound to that verified proxy generation.
+        with mock.patch.object(runtime, '_current_runtime_ready', return_value=False):
+            result = runtime.apply_agent_runtime(self.plane, root=self.tmp)
+        self.assertTrue(result['ok'], result)
+        row = self.plane.conn.execute(
+            "SELECT status, runtime_verified, reason FROM agent_remote_services "
+            "WHERE name='web'"
+        ).fetchone()
+        self.assertEqual((row['status'], row['runtime_verified']), ('DEGRADED', 0))
+        self.assertIn('active generation', row['reason'])
+
     def test_same_artifacts_with_unhealthy_runtime_reapply_for_recovery(self):
         with mock.patch.object(runtime, '_restart_frpc') as restart:
             self.assertTrue(runtime.apply_agent_runtime(self.plane, root=self.tmp)['ok'])

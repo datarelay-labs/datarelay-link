@@ -531,7 +531,13 @@ def _current_runtime_ready(root, host_id, expected) -> bool:
            for key in ('DRLINK_FAULT_RUNTIME_VERIFY', 'DRLINK_FAULT_RUNTIME_RESTART', 'DRLINK_FAULT_RUNTIME_CONFIG')):
         return False
     if root and str(root).rstrip('/') not in ('', '/'):
-        return True  # Isolated deterministic runtime fixture; no host services.
+        return True  # Deterministic non-host runtime for injected unit tests.
+    if not sys.platform.startswith('linux'):
+        # Native current-process/connection-epoch proof is not yet available
+        # here. launchctl job presence alone would admit a stale or absent
+        # proxy, so macOS and Python-on-Windows fail closed until bound proof
+        # can be supplied. Windows PowerShell has its separate native path.
+        return False
     try:
         props = subprocess.check_output(
             ['systemctl', 'show', 'drlink-client', '-p', 'ActiveState', '-p', 'InvocationID'],
@@ -818,7 +824,16 @@ def apply_agent_runtime(
                 toml_text=toml_text, since_cursor=cursor
             )
         if names is None:
-            mark_runtime_status(plane_db, ok=True)
+            # Fresh activation proves this apply, but a long-lived HEALTHY bit
+            # also needs proof that these proxies belong to the process and
+            # connection epoch still running now. Native hosts without that
+            # second proof remain DEGRADED for lifecycle verification.
+            current_ready = _current_runtime_ready(root, host_id, desired)
+            mark_runtime_status(
+                plane_db, ok=current_ready,
+                reason="Runtime proxy is not ready in the active generation."
+                if not current_ready else "",
+            )
     except Exception as exc:
         # Rollback saved files first. A failed authenticated hot reload must
         # NEVER silently fall back to a full process restart: that would flap
@@ -1051,10 +1066,11 @@ def verified_remote_service_status(
     if not any(all(line in block.splitlines() for line in required)
                for block in config.split('[[proxies]]')[1:]):
         return 'DEGRADED', missing
-    # Linux can also check the current process/connection epoch after the
-    # apply and again after management I/O. Other platforms retain their
-    # existing fresh native activation proof plus the per-service checks above.
-    if sys.platform.startswith('linux') and not _current_runtime_ready(actual_root, host_id, {proxy_id: record}):
+    # Persisted status and a rendered TOML never prove a live proxy on any
+    # platform. Linux has current systemd/connection-epoch proof; hosts without
+    # an equivalent native proof must remain DEGRADED rather than replaying a
+    # stale success from a previous process generation.
+    if not _current_runtime_ready(actual_root, host_id, {proxy_id: record}):
         return 'DEGRADED', 'Runtime proxy is not ready in the active generation.'
     return 'HEALTHY', ''
 

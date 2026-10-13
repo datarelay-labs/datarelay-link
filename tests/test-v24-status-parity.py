@@ -670,6 +670,80 @@ class StatusParityTests(unittest.TestCase):
             self.assertEqual(first['view']['endpoint_port'],
                              final['endpoint_port'])
 
+    def test_non_linux_stale_persisted_healthy_needs_live_runtime_proof(self):
+        import socket
+        from unittest import mock
+        import drlink_v24_runtime as runtime
+
+        with socket.socket() as listener:
+            listener.bind(('127.0.0.1', 0))
+            listener.listen(1)
+            local_port = listener.getsockname()[1]
+            v24.set_service_object(
+                self.server, 'stale-native-target', type='tcp',
+                port=local_port, oneshot=True,
+            )
+            with mock.patch.dict(os.environ, {'FRP_DEPLOY_TEST_ROOT': self.agent_tmp}):
+                created = v24.set_remote_service_agent(
+                    self.agent, 'stale-native', destination='this-host',
+                    service='stale-native-target', enabled=True, oneshot=True,
+                    root=self.agent_tmp,
+                )
+        self.assertEqual(created['view']['status'], 'HEALTHY')
+        endpoint = created['view']['endpoint_port']
+        proxy_id = runtime.remote_service_proxy_id('stale-native')
+        record = {
+            'id': proxy_id, 'name': 'stale-native', 'enabled': True,
+            'v24_remote_service': True, 'local_ip': '127.0.0.1',
+            'local_port': local_port, 'remote_port': endpoint,
+        }
+        state = {'host_id': 'agent-a', 'services': {proxy_id: record}}
+        Path(self.agent_tmp, 'etc/frp/frpc.toml').write_text(
+            '[[proxies]]\nname = "agent-a-%s"\nlocalIP = "127.0.0.1"\n'
+            'localPort = %s\nremotePort = %s\n' % (proxy_id, local_port, endpoint)
+        )
+        for platform_name in ('darwin', 'win32'):
+            with self.subTest(platform=platform_name), \
+                 mock.patch.object(runtime.sys, 'platform', platform_name), \
+                 mock.patch.object(runtime, '_isolated_skip_fixture', return_value=False), \
+                 mock.patch.object(runtime, 'load_client_state', return_value=state), \
+                 mock.patch.object(runtime, 'build_desired_runtime_services',
+                                   return_value={proxy_id: record}), \
+                 mock.patch.object(runtime, '_configured_v24_runtime_ports',
+                                   return_value={'stale-native': endpoint}), \
+                 mock.patch.object(runtime, '_current_runtime_ready', return_value=False):
+                self.assertEqual(runtime.verified_remote_service_status(
+                    self.agent, 'stale-native', root=self.agent_tmp,
+                )[0], 'DEGRADED')
+                self.assertEqual(runtime.verified_remote_service_status(
+                    self.agent, 'stale-native', root=self.agent_tmp,
+                    allow_unverified=True,
+                )[0], 'DEGRADED')
+
+    def test_runtime_generation_fixture_requires_exact_isolated_skip(self):
+        from unittest import mock
+        import drlink_v24_runtime as runtime
+
+        with mock.patch.dict(os.environ, {'FRP_DEPLOY_TEST_ROOT': self.agent_tmp,
+                                       'DRLINK_SKIP_ACTIVATION': '1'}):
+            self.assertTrue(runtime._isolated_skip_fixture(self.agent_tmp))
+            self.assertFalse(runtime._isolated_skip_fixture(self.server_tmp))
+        with mock.patch.dict(os.environ, {'FRP_DEPLOY_TEST_ROOT': self.agent_tmp,
+                                       'DRLINK_SKIP_ACTIVATION': '0'}):
+            self.assertFalse(runtime._isolated_skip_fixture(self.agent_tmp))
+
+    def test_real_platform_without_native_generation_proof_fails_closed(self):
+        from unittest import mock
+        import drlink_v24_runtime as runtime
+
+        for platform_name in ('darwin', 'win32', 'freebsd14'):
+            with self.subTest(platform=platform_name), \
+                 mock.patch.object(runtime.sys, 'platform', platform_name), \
+                 mock.patch.object(runtime.subprocess, 'check_output') as output:
+                self.assertFalse(runtime._current_runtime_ready(
+                    None, 'agent-a', {}))
+                output.assert_not_called()
+
     def test_F026_synchronize_verified_noop_avoids_republication_and_restart(self):
         from unittest import mock
         import drlink_v24_runtime as runtime
