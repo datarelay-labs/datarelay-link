@@ -68,7 +68,13 @@ def pinned_web_dependencies(package: dict) -> dict:
     for short in gate.PACKAGE_SHA256:
         name = "@datarelay-labs/" + short
         existing = deps.get(name)
-        if not isinstance(existing, str) or not existing.startswith("file:.foundation/packs/"):
+        # Legacy public pf8.4 was file-pinned; the qualified source default is
+        # now exact private-registry RC41. Both can be projected into owner-only
+        # verified offline tarballs. Never accept a range or arbitrary registry.
+        if not isinstance(existing, str) or not (
+            existing.startswith("file:.foundation/packs/")
+            or existing == gate.VERSION
+        ):
             raise StageError("Existing Foundation family is not an offline pinned family")
         deps[name] = (
             "file:.foundation/packs/datarelay-labs-" + short + "-" +

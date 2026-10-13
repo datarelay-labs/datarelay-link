@@ -119,6 +119,28 @@ class RC41OfflineStageTests(unittest.TestCase):
             with self.assertRaises(stage.StageError):
                 stage.pinned_web_dependencies(altered)
 
+    def test_private_staging_accepts_only_exact_published_rc41_default(self):
+        with mock.patch.object(stage.gate, "PACKAGE_SHA256", self.hashes):
+            published = json.loads(json.dumps(self.pkg))
+            for short in self.hashes:
+                published["dependencies"]["@datarelay-labs/" + short] = stage.gate.VERSION
+            projected = stage.pinned_web_dependencies(published)
+            for short in self.hashes:
+                self.assertEqual(
+                    projected["dependencies"]["@datarelay-labs/" + short],
+                    f"file:.foundation/packs/datarelay-labs-{short}-{stage.gate.VERSION}.tgz"
+                )
+                self.assertEqual(
+                    published["dependencies"]["@datarelay-labs/" + short],
+                    stage.gate.VERSION,
+                )
+            published["dependencies"]["@datarelay-labs/foundation"] = "^" + stage.gate.VERSION
+            with self.assertRaisesRegex(stage.StageError, "offline pinned"):
+                stage.pinned_web_dependencies(published)
+            published["dependencies"]["@datarelay-labs/foundation"] = "0.1.0-rc.40"
+            with self.assertRaisesRegex(stage.StageError, "offline pinned"):
+                stage.pinned_web_dependencies(published)
+
     def test_manifest_must_match_exact_original_source_and_archive_digests(self):
         locked = {
             "schema_version": 1,
