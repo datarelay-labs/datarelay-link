@@ -170,3 +170,45 @@ product-specific isolated install and verify:
   is part of the public Link Git change. Separate private package distribution,
   secure publication, user/release gates and live candidate promotion remain
   explicitly unqualified.
+
+## RC41 private development preview (2026-10-13)
+
+The owner-approved isolated RC41 Web is also served by the **actual Link Web
+server** on `dev-drlink`, not by a synthetic Storybook rendering.
+
+- Last directly observed endpoint: `http://127.0.0.1:19041` on dev-drlink
+  (loopback only, **not** an external URL or an installed live product).
+- Private Web assets:
+  `$HOME/.cache/drlink-foundation-rc41/consumer-web-rc41/dist`.
+- Link Core root:
+  `$HOME/.cache/drlink-foundation-rc41/preview-root`, isolated from live
+  Core; both source/packages and preview state remain under the owner-only
+  mode-0700 private parent.
+- Link HEAD at preview validation: `97832f378fbe78b32d0d5375c5466e623c9adc6a`.
+  Foundation package family `0.1.0-rc.41`, original Foundation source
+  `46ddb60cad8eae7b1718588cd19421e61b5300e7`.
+- HTTP GET `/index.html`, `/app.js`, `/styles.css`,
+  `/foundation.css` returned HTTP 200 and byte-identical local SHA256
+  **4/4 PASS**. Anonymous request to `/api/v1/system/status` was **401**;
+  no session or privileged user identity was provisioned or exercised.
+- This is a currently observed development **process**, not a durable
+  systemd service, external TLS endpoint, authenticated Browser PASS, or
+  installed Server/Agent product release.
+
+To launch the same local-only private preview using the previously
+verified RC41 assets, after confirming the port is unused:
+
+```bash
+cd /home/aella/datarelay-link-worktrees/drl3-foundation-rc41-consumer-20261013
+install -d -m 700 "$HOME/.cache/drlink-foundation-rc41/preview-root"
+PYTHONPATH="$PWD/lib" DRLINK_WEB_QUIET=1 DRLINK_SKIP_ACTIVATION=1 \
+  PYTHONDONTWRITEBYTECODE=1 \
+  python3 server/drlink-web.py --listen 127.0.0.1 --port 19041 \
+    --root "$HOME/.cache/drlink-foundation-rc41/preview-root" \
+    --static-root "$HOME/.cache/drlink-foundation-rc41/consumer-web-rc41/dist"
+```
+
+Do not forward this preview publicly, use a live Core root, invent login
+credentials, or assert User E2E from unauthenticated static file checks.
+The public Link `pf8.4` fallback, draft PR and release approval remain
+unchanged.
