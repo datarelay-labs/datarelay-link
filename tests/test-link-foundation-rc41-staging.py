@@ -49,6 +49,12 @@ class RC41OfflineStageTests(unittest.TestCase):
         (self.web / "node_modules" / "old").write_text("old")
         (self.web / "dist").mkdir()
         (self.web / "dist" / "app.js").write_text("compiled")
+        (self.web / "dist" / "styles.css").write_text("link source style")
+        (self.fake_repo / "docs").mkdir()
+        for name in stage.PRODUCT_TEST_DOCS:
+            (self.fake_repo / "docs" / name).write_text("product-owned public evidence")
+        (self.fake_repo / "lib").mkdir()
+        (self.fake_repo / "lib" / "drlink_management_service.py").write_text("# public Core evidence")
         self.secret_root = self.base / "private"
         self.secret_root.mkdir(mode=0o700)
         self.source = "b" * 40
@@ -149,8 +155,14 @@ class RC41OfflineStageTests(unittest.TestCase):
         stage.prepare_copy(self.web, staged)
         self.assertTrue((staged / "package.json").is_file())
         self.assertTrue((staged / "src" / "main.tsx").is_file())
-        for old in (".foundation", "node_modules", "dist", "package-lock.json"):
+        for old in (".foundation", "node_modules"):
             self.assertFalse((staged / old).exists(), old)
+        self.assertTrue((staged / "package-lock.json").is_file())
+        self.assertTrue((staged / "dist" / "styles.css").is_file())
+        self.assertFalse((staged / "dist" / "app.js").exists())
+        self.assertTrue((staged.parent / "lib" / "drlink_management_service.py").is_file())
+        for name in stage.PRODUCT_TEST_DOCS:
+            self.assertTrue((staged.parent / "docs" / name).is_file())
         self.assertTrue((self.web / ".foundation" / "packs" / "old-private.tgz").is_file())
 
     def test_verified_staging_executes_offline_only_and_preserves_public_checkout(self):
@@ -166,7 +178,7 @@ class RC41OfflineStageTests(unittest.TestCase):
             if command[1] == "install":
                 self.assertIn("--offline", command)
                 self.assertIn("--ignore-scripts", command)
-                self.assertIn("--package-lock=false", command)
+                self.assertNotIn("--package-lock=false", command)
                 for name in self.hashes:
                     dest = (Path(kwargs["cwd"]) / "node_modules" /
                             "@datarelay-labs" / name)
@@ -179,11 +191,64 @@ class RC41OfflineStageTests(unittest.TestCase):
         with self._patch_literal_pins()[0], self._patch_literal_pins()[1], self._patch_literal_pins()[2], mock.patch.object(stage.gate, "verify_bundle", return_value=2) as verifier:
             stage.run_private_compatibility(self.bundle, self.secret_root, self.web, run=fake_npm)
             verifier.assert_called_once_with(self.bundle)
-        self.assertEqual([x[1] for x in commands], ["install", "run", "run", "run"])
-        self.assertEqual([x[-1] for x in commands[1:]], ["build", "test:administration", "test:journey"])
+        self.assertEqual([x[1] for x in commands], ["install", "run", "run", "run", "run"])
+        self.assertEqual([x[-1] for x in commands[1:]], ["build", "test:administration", "test:journey", "test:p0"])
         for name, content in before.items():
             self.assertEqual((self.web / name).read_bytes(), content)
         self.assertEqual(list(self.secret_root.iterdir()), [])
+
+    def _reproduced_private_fixture(self):
+        src = self.base / "original-private-foundation"
+        src.mkdir(mode=0o700)
+        packs = self.base / "private-packs"
+        packs.mkdir(mode=0o700)
+        manifest = self.base / "private-release-manifest.json"
+        manifest.write_text(json.dumps({
+            "schema_version": 1,
+            "version": "0.1.0-rc.41",
+            "registry": {"scope": "@datarelay-labs"},
+            "packages": [{
+                "name": "@datarelay-labs/" + name,
+                "path": name,
+                "sha256": "a" * 64,
+            } for name in self.hashes],
+        }), encoding="utf-8")
+        for name, raw in self.raw_packages.items():
+            (packs / ("datarelay-labs-" + name + "-0.1.0-rc.41.tgz")).write_bytes(raw)
+        dest = self.secret_root / "test-scratch" / "web"
+        stage.prepare_copy(self.web, dest)
+        return src, packs, manifest, dest
+
+    def test_exact_git_source_and_all_ten_package_digests_gate_private_rebuild(self):
+        source, packs, manifest, scratch_web = self._reproduced_private_fixture()
+        def git_reply(args, **kwargs):
+            if args[-2:] == ["rev-parse", "HEAD"]:
+                return self.source + "\n"
+            if args[-2:] == ["status", "--porcelain"]:
+                return ""
+            raise AssertionError("Unexpected Git command")
+        with self._patch_literal_pins()[0], self._patch_literal_pins()[1], self._patch_literal_pins()[2], mock.patch.object(stage.subprocess, "check_output", side_effect=git_reply):
+            stage.stage_reproduced_private_packages(source, packs, manifest, scratch_web)
+            locked = json.loads((scratch_web / "foundation.lock.json").read_text())
+            self.assertEqual(stage.source_head_from_lock(locked), self.source)
+        for name, expected in self.hashes.items():
+            candidate = scratch_web / ".foundation" / "packs" / ("datarelay-labs-" + name + "-0.1.0-rc.41.tgz")
+            self.assertEqual(stage.gate.digest_file(candidate), expected)
+        self.assertEqual(json.loads((scratch_web / "package.json").read_text())["dependencies"]["react"], "19.3.0")
+        self.assertFalse((self.web / "node_modules" / "@datarelay-labs").exists())
+
+    def test_reproduced_private_packages_fail_closed_on_wrong_git_or_tamper(self):
+        source, packs, manifest, scratch_web = self._reproduced_private_fixture()
+        with self._patch_literal_pins()[0], self._patch_literal_pins()[1], self._patch_literal_pins()[2]:
+            with mock.patch.object(stage.subprocess, "check_output", return_value="c" * 40 + "\n"):
+                with self.assertRaisesRegex(stage.StageError, "HEAD mismatch"):
+                    stage.stage_reproduced_private_packages(source, packs, manifest, scratch_web)
+            def git_reply(args, **kwargs):
+                return self.source + "\n" if args[-2:] == ["rev-parse", "HEAD"] else ""
+            with mock.patch.object(stage.subprocess, "check_output", side_effect=git_reply):
+                (packs / "datarelay-labs-foundation-0.1.0-rc.41.tgz").write_bytes(b"tampered")
+                with self.assertRaisesRegex(stage.StageError, "SHA256 mismatch"):
+                    stage.stage_reproduced_private_packages(source, packs, manifest, scratch_web)
 
     def test_native_ci_runs_private_staging_contract_without_private_packages(self):
         source = (REPO / "tests" / "run-all.sh").read_text(encoding="utf-8")

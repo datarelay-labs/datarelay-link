@@ -64,18 +64,69 @@ scratch Web are removed after test completion or failure. An absent/unverified
 RC41 bundle fails before staging. This is a source compatibility gate, not a
 live Web installation, signed product qualification or a release decision.
 
-This staging helper has **synthetic fixture** tests in
-`tests/test-link-foundation-rc41-staging.py`; passing those tests does not
-mean the real RC41 bundle was installed or tested on Link.
+### Authenticated private GitHub source: deterministic RC41 package replay
+
+A distinct, owner-approved internal source path can also be used when the
+original whole bundle is not available. It is **not** a retry of the previously
+platform-denied dev-atlas-to-dev-drlink transfer. The developer must have
+normal authorized **private GitHub repository read access**, retrieve the exact
+immutable `46ddb60` Foundation commit into an owner-only directory outside
+the Link Git tree, and rebuild 10 npm tarballs using Foundation's original
+`tools/stage-release.mjs` with `0.1.0-rc.41`.
+
+The builder must normalize Foundation Git-tracked source file modes to the
+actual Git index modes (0644 for non-executables and 0755 for executable
+entries) before staging. The originally observed `umask 077` mode 0600
+produced nonmatching archives; staging under `umask 022` after restoring
+tracked source modes reproduced **10/10 exact original RC41 tar SHA256s**.
+These operations take place **only inside the authenticated private checkout**
+whose ancestor directory is mode 0700, never in public Link Git.
+
+The resulting private, source-locked paths on the approved `dev-drlink`:
+
+```text
+$HOME/.cache/drlink-foundation-rc41/private-source
+$HOME/.cache/drlink-foundation-rc41/stage-normalized/release-manifest.json
+$HOME/.cache/drlink-foundation-rc41/packs-normalized
+```
+
+Run the same Link-owned fail-closed compatibility gate without weakening the
+original whole-bundle verifier:
+
+```bash
+python3 tools/stage-link-foundation-rc41.py \
+  --verified-package-dir "$HOME/.cache/drlink-foundation-rc41/packs-normalized" \
+  --private-source-checkout "$HOME/.cache/drlink-foundation-rc41/private-source" \
+  --source-package-manifest "$HOME/.cache/drlink-foundation-rc41/stage-normalized/release-manifest.json" \
+  --private-root "$HOME/.cache/drlink-foundation-rc41"
+```
+
+Before touching npm, this mode verifies exact private `git rev-parse HEAD`,
+clean Git source checkout, immutable versioned package manifest, independently
+pinned **all ten** individual tar SHA256 hashes, and ownership-only private
+scratch. It then installs npm strictly offline with scripts disabled, builds
+the **actual Link Web source**, and runs Admin/Operator/Read Only Administration,
+full Web Journey and P0 test suites against RC41. It stages the original Link
+CSS and the exact PUBLIC docs/Core read-only test fixture in its temporary
+private test layout, cleans up temporary files, and leaves the separately
+retained authenticated private source/packages under the 0700 parent.
+
+This staging helper also has **synthetic fixture** security tests in
+`tests/test-link-foundation-rc41-staging.py`. On 2026-10-13 a **separate
+real-package** private run verified ten matching tar SHA256 hashes and passed
+the Link Web production build, Administration **20/20**, Journey **412/412**
+and P0 **42/42**; it did **not** install a live Server/Agent, qualify Browser
+E2E, publish RC41 or alter the public Link dependency lock.
 
 ## Consumer migration boundary
 
-The default Link Web remains on the public, already tracked `pf8.4` package
-family until approved internal transport and complete private RC41 staging
-have passed. Do not change `web/package.json`, `package-lock.json`,
-`foundation.lock.json` or delete rollback packages simply because this
-preflight exists. Do not commit an RC41 file dependency whose underlying
-private archive is absent from the publicly reproducible checkout.
+The default PUBLIC Link Web remains on the tracked `pf8.4` package family
+until an authorized, reproducible **private package supply for all product
+builders/CI** is available. Although authenticated private RC41 staging and
+source tests now PASS on dev-drlink, do not change default `web/package.json`,
+`package-lock.json`, `foundation.lock.json` or delete the rollback packages.
+Never commit an RC41 file dependency whose private archive is absent from the
+publicly reproducible checkout or publish private Foundation sources/assets.
 
 Once a permitted private delivery is available, Link's owning Chat can run
 product-specific isolated install and verify:
@@ -96,11 +147,21 @@ product-specific isolated install and verify:
 
 ## Current Link checkpoint (2026-10-13)
 
-- Existing Link Draft PR #206 baseline `f33f0fcaaa8e326aa8d4accd4196d5d60fe81b59`.
-- Private RC41 original SHA verified on the Foundation development host.
-- Cross-host direct SSH port 22 unavailable. A secure temporary transfer was
-  partially attempted, but a repeated platform safety denial prohibited
-  completion. **Do not use partial transfer bytes or change transfer route to
-  circumvent the denial**.
-- No installed RC41 Web, Agent, product role/browser or user-E2E PASS.
-- No private Foundation package is part of this public Link change.
+- Link Draft PR #206 source candidate before this scoped update:
+  `f8adc3f94026528f7aec17a7837b804d62132180` (exact latest PR HEAD
+  must always be re-read). Public default Web packages remain `pf8.4`.
+- Foundation private original RC41 source `46ddb60cad8eae7b1718588cd19421e61b5300e7`
+  was checked out directly through the authenticated private GitHub remote on
+  dev-drlink and built inside a 0700 root; rebuilt npm archives **10/10 SHA256
+  exactly match** the independent Foundation owner receipt.
+- The original dev-atlas cross-host transport was safety denied; partial bytes
+  were discarded, **not reused, retransmitted or used as an authorization**.
+- The Link RC41 private isolated Web dependency installation and source build
+  passed, with native Admin 20/20, Journey 412/412 and P0 42/42. The private
+  compatibility runner independently reproduced the same results and cleaned
+  its temporary Web staging. All results are source/isolated-product checks,
+  **not installed Server/Agent/Browser or genuine User E2E**.
+- No original Foundation package, Wheel, secret, private code or npm tarball
+  is part of the public Link Git change. Separate private package distribution,
+  secure publication, user/release gates and live candidate promotion remain
+  explicitly unqualified.

@@ -91,13 +91,37 @@ def private_scratch_root(path: Path) -> Path:
     return root
 
 
+PRODUCT_TEST_DOCS = (
+    "COMPETITOR_UI_APPLIED_MATRIX_2026-10-12.md",
+    "COMPETITOR_UI_SCREEN_EVIDENCE_2026-10-11.md",
+    "WEB_UX_COMPETITIVE_AUDIT_2026-10.md",
+    "WEB_USER_JOURNEY_UX_ROADMAP.md",
+)
+
+
 def prepare_copy(web_source: Path, scratch_web: Path):
     if not (web_source / "package.json").is_file():
         raise StageError("Link Web source/package.json missing")
+    # Reuse only public package-lock metadata for offline third-party dependencies.
+    # npm resolves the ten *verified* RC41 archives solely in private scratch.
     shutil.copytree(
         web_source, scratch_web,
-        ignore=shutil.ignore_patterns(".foundation", "node_modules", "dist", "package-lock.json"),
+        ignore=shutil.ignore_patterns(".foundation", "node_modules", "dist"),
     )
+    original_dist = web_source / "dist" / "styles.css"
+    if not original_dist.is_file():
+        raise StageError("Link Web source stylesheet is missing")
+    (scratch_web / "dist").mkdir()
+    shutil.copy2(original_dist, scratch_web / "dist" / "styles.css")
+    # Native Web tests audit the exact Link-owned, PUBLIC docs and Core
+    # service projection alongside source. Omitting them produces false REDs.
+    root = web_source.parent
+    (scratch_web.parent / "docs").mkdir(exist_ok=True)
+    (scratch_web.parent / "lib").mkdir(exist_ok=True)
+    for name in PRODUCT_TEST_DOCS:
+        shutil.copy2(root / "docs" / name, scratch_web.parent / "docs" / name)
+    shutil.copy2(root / "lib" / "drlink_management_service.py",
+                 scratch_web.parent / "lib" / "drlink_management_service.py")
 
 
 def stage_archives(bundle: Path, scratch_web: Path) -> None:
@@ -132,6 +156,81 @@ def stage_archives(bundle: Path, scratch_web: Path) -> None:
     )
 
 
+def stage_reproduced_private_packages(
+    source_checkout: Path, pack_dir: Path, source_manifest: Path, scratch_web: Path
+) -> None:
+    """Accept only exact RC41 bytes rebuilt from authenticated immutable source.
+
+    This is NOT a transfer of the previously safety-denied private archive.
+    The Foundation Git source and every tarball must already exist in the
+    owner-authorized private local checkout.
+    """
+    private_scratch_root(source_checkout)
+    if not pack_dir.is_absolute() or pack_dir.is_symlink() or not pack_dir.is_dir():
+        raise StageError("Private package directory is unavailable")
+    if not source_manifest.is_absolute() or source_manifest.is_symlink() or not source_manifest.is_file():
+        raise StageError("Original-source package manifest is unavailable")
+    repo = REPO.resolve(strict=True)
+    for candidate in (pack_dir.resolve(strict=True), source_manifest.resolve(strict=True)):
+        if candidate == repo or repo in candidate.parents or candidate in repo.parents:
+            raise StageError("Private packages cannot be loaded from the public repository")
+    head = subprocess.check_output(
+        ["git", "-C", str(source_checkout), "rev-parse", "HEAD"],
+        text=True, timeout=20, stderr=subprocess.DEVNULL,
+    ).strip()
+    if head != gate.SOURCE:
+        raise StageError("Original private Foundation Git HEAD mismatch")
+    dirty = subprocess.check_output(
+        ["git", "-C", str(source_checkout), "status", "--porcelain"],
+        text=True, timeout=20, stderr=subprocess.DEVNULL,
+    )
+    if dirty.strip():
+        raise StageError("Original private Foundation Git checkout is modified")
+    manifest = json.loads(source_manifest.read_text(encoding="utf-8"))
+    if not isinstance(manifest, dict) or manifest.get("version") != gate.VERSION:
+        raise StageError("Original Foundation release stage version mismatch")
+    rows = manifest.get("packages")
+    if not isinstance(rows, list) or len(rows) != len(gate.PACKAGE_SHA256):
+        raise StageError("Original Foundation release stage package family incomplete")
+    locked = dict(manifest)
+    locked.update(commit=gate.SOURCE, source_head=gate.SOURCE)
+    locked["packages"] = []
+    for row in rows:
+        if not isinstance(row, dict) or row.get("name") != "@datarelay-labs/" + str(row.get("path")):
+            raise StageError("Original package manifest identity mismatch")
+        short = row["path"]
+        if short not in gate.PACKAGE_SHA256:
+            raise StageError("Unrecognized Foundation private package")
+        if not isinstance(row.get("sha256"), str) or len(row["sha256"]) != 64:
+            raise StageError("Original package source digest missing")
+        locked["packages"].append({
+            **row, "archive_sha256": gate.PACKAGE_SHA256[short]
+        })
+    source_head_from_lock(locked)
+    destination = scratch_web / ".foundation" / "packs"
+    destination.mkdir(parents=True, mode=0o700)
+    for short, expected in gate.PACKAGE_SHA256.items():
+        filename = f"datarelay-labs-{short}-{gate.VERSION}.tgz"
+        candidate = pack_dir / filename
+        if not candidate.is_file() or candidate.is_symlink():
+            raise StageError("Required private package archive unavailable: " + short)
+        if gate.digest_file(candidate) != expected:
+            raise StageError("Original RC41 package SHA256 mismatch: " + short)
+        staged = destination / filename
+        shutil.copyfile(candidate, staged)
+        staged.chmod(0o600)
+        if gate.digest_file(staged) != expected:
+            raise StageError("RC41 archive digest changed while staging")
+    (scratch_web / "foundation.lock.json").write_text(
+        json.dumps(locked, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    (scratch_web / "package.json").write_text(
+        json.dumps(pinned_web_dependencies(json.loads(
+            (scratch_web / "package.json").read_text(encoding="utf-8")
+        )), indent=2) + "\n", encoding="utf-8"
+    )
+
+
 def validate_installed_family(scratch_web: Path) -> None:
     for short in gate.PACKAGE_SHA256:
         package = scratch_web / "node_modules" / "@datarelay-labs" / short / "package.json"
@@ -142,9 +241,26 @@ def validate_installed_family(scratch_web: Path) -> None:
             raise StageError("Installed Foundation package identity/version mismatch: " + short)
 
 
-def run_private_compatibility(bundle: Path, private_root: Path, web_source: Path, *, run=subprocess.run) -> None:
-    # The only production-callable verification uses the independent literal
-    # expected archive length and outer/inner digest; no CLI test overrides.
+def verify_private_web_runtime(scratch_web: Path, *, run=subprocess.run) -> None:
+    env = dict(os.environ)
+    env["CI"] = "true"
+    env["npm_config_offline"] = "true"
+    for command in (
+        ["npm", "install", "--offline", "--ignore-scripts", "--no-audit", "--no-fund"],
+        ["npm", "run", "build"],
+        ["npm", "run", "test:administration"],
+        ["npm", "run", "test:journey"],
+        ["npm", "run", "test:p0"],
+    ):
+        run(command, cwd=scratch_web, env=env, check=True, timeout=300)
+        if command[1] == "install":
+            validate_installed_family(scratch_web)
+
+
+def run_private_compatibility(
+    bundle: Path, private_root: Path, web_source: Path, *, run=subprocess.run
+) -> None:
+    # Original immutable whole-bundle receipt remains the independent authority.
     gate.verify_bundle(bundle)
     private_root = private_scratch_root(private_root)
     if web_source.resolve(strict=True) != (REPO / "web").resolve(strict=True):
@@ -153,28 +269,44 @@ def run_private_compatibility(bundle: Path, private_root: Path, web_source: Path
         scratch_web = Path(scratch) / "web"
         prepare_copy(web_source, scratch_web)
         stage_archives(bundle, scratch_web)
-        env = dict(os.environ)
-        env["CI"] = "true"
-        env["npm_config_offline"] = "true"
-        for command in (
-            ["npm", "install", "--offline", "--ignore-scripts", "--no-audit",
-             "--no-fund", "--package-lock=false"],
-            ["npm", "run", "build"],
-            ["npm", "run", "test:administration"],
-            ["npm", "run", "test:journey"],
-        ):
-            run(command, cwd=scratch_web, env=env, check=True, timeout=300)
-            if command[1] == "install":
-                validate_installed_family(scratch_web)
+        verify_private_web_runtime(scratch_web, run=run)
+
+
+def run_reproduced_compatibility(
+    source_checkout: Path, pack_dir: Path, source_manifest: Path,
+    private_root: Path, web_source: Path, *, run=subprocess.run
+) -> None:
+    private_root = private_scratch_root(private_root)
+    if web_source.resolve(strict=True) != (REPO / "web").resolve(strict=True):
+        raise StageError("Only the checked-out Link Web source is accepted")
+    with tempfile.TemporaryDirectory(prefix="drlink-foundation-rc41-", dir=private_root) as scratch:
+        scratch_web = Path(scratch) / "web"
+        prepare_copy(web_source, scratch_web)
+        stage_reproduced_private_packages(source_checkout, pack_dir, source_manifest, scratch_web)
+        verify_private_web_runtime(scratch_web, run=run)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--bundle", required=True, type=Path)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--bundle", type=Path)
+    source.add_argument("--verified-package-dir", type=Path)
+    parser.add_argument("--private-source-checkout", type=Path)
+    parser.add_argument("--source-package-manifest", type=Path)
     parser.add_argument("--private-root", required=True, type=Path)
     args = parser.parse_args()
     try:
-        run_private_compatibility(args.bundle, args.private_root, REPO / "web")
+        if args.bundle is not None:
+            if args.private_source_checkout or args.source_package_manifest:
+                raise StageError("Whole bundle and original-source flags are mutually exclusive")
+            run_private_compatibility(args.bundle, args.private_root, REPO / "web")
+        else:
+            if args.private_source_checkout is None or args.source_package_manifest is None:
+                raise StageError("Verified original-source checkout and package manifest required")
+            run_reproduced_compatibility(
+                args.private_source_checkout, args.verified_package_dir,
+                args.source_package_manifest, args.private_root, REPO / "web"
+            )
     except (StageError, gate.CandidateError, OSError, ValueError,
             json.JSONDecodeError, subprocess.SubprocessError) as exc:
         print("FOUNDATION_RC41_LINK_COMPATIBILITY=BLOCKED")
