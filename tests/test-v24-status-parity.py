@@ -2649,18 +2649,53 @@ class AgentLifecycleWorkerTests(unittest.TestCase):
             plane.conn.commit()
             plane.close()
             lifecycle.set_lifecycle_intent("running", tmp)
+            for server_requests_reconciliation in (True, False):
+                with mock.patch(
+                    "drlink_mgmt_sync.report_agent_lifecycle_on_server",
+                    return_value={"ok": True, "state": "connected",
+                                  "reconcile_required": server_requests_reconciliation},
+                ), mock.patch(
+                    "drlink_v24.synchronize_agent_remote_services",
+                    return_value={"status": "DEGRADED", "updated": 0},
+                ) as sync:
+                    result = lifecycle.reconcile_once(tmp)
+                self.assertEqual(result["status"], "DEGRADED")
+                self.assertEqual(sync.call_count, 1)
+                self.assertTrue(sync.call_args.kwargs.get("server_verification_only"),
+                                "a static degraded row must not trigger full replay of a healthy proxy")
+
+    def test_local_degraded_status_push_failure_retries_verification_without_replay(self):
+        from unittest import mock
+        import drlink_agent_lifecycle as lifecycle
+
+        with tempfile.TemporaryDirectory(prefix="drlink-lifecycle-local-retry-") as tmp:
+            plane = ControlPlane(tmp)
+            v24.ensure_v2_schema(plane.conn)
+            plane.conn.execute(
+                "INSERT INTO agent_remote_services "
+                "(name, destination, service_object, enabled, status, endpoint_port, "
+                "pending_allocation, delete_pending, pool_class, reason, "
+                "runtime_verified, updated_at) VALUES ('lost-push', 'this-host', 'ssh', "
+                "1, 'DEGRADED', 6025, 0, 0, 'normal', "
+                "'Server status push failed.', 0, '2026-10-13T00:00:00Z')"
+            )
+            plane.conn.commit()
+            self.assertFalse(lifecycle.reconciliation_needed(plane))
+            plane.close()
+            lifecycle.set_lifecycle_intent("running", tmp)
             with mock.patch(
                 "drlink_mgmt_sync.report_agent_lifecycle_on_server",
-                return_value={"ok": True, "state": "connected", "reconcile_required": True},
+                return_value={"ok": True, "state": "connected",
+                              "reconcile_required": False},
             ), mock.patch(
                 "drlink_v24.synchronize_agent_remote_services",
                 return_value={"status": "DEGRADED", "updated": 0},
             ) as sync:
                 result = lifecycle.reconcile_once(tmp)
             self.assertEqual(result["status"], "DEGRADED")
-            self.assertEqual(sync.call_count, 1)
+            sync.assert_called_once()
             self.assertTrue(sync.call_args.kwargs.get("server_verification_only"),
-                            "a static degraded row must not trigger full replay of a healthy proxy")
+                            "local retry must not replay unrelated healthy proxies")
 
     def test_paused_worker_does_not_touch_server(self):
         from unittest import mock

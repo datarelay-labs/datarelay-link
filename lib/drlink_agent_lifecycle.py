@@ -68,6 +68,17 @@ def reconciliation_needed(plane) -> bool:
     return bool(row and int(row["n"] or 0) > 0)
 
 
+def local_verification_retry_needed(plane) -> bool:
+    """Retry a stable DEGRADED claim even when Server heartbeat asks for no replay."""
+    row = plane.conn.execute(
+        "SELECT 1 FROM agent_remote_services "
+        "WHERE enabled = 1 AND delete_pending = 0 AND pending_allocation = 0 "
+        "AND endpoint_port IS NOT NULL AND upper(status) = 'DEGRADED' "
+        "AND runtime_verified = 0 LIMIT 1"
+    ).fetchone()
+    return row is not None
+
+
 def heartbeat_once(root: Optional[str] = None) -> dict:
     from drlink_mgmt_sync import report_agent_lifecycle_on_server
 
@@ -111,14 +122,19 @@ def _reconcile_once(root: Optional[str] = None) -> dict:
     try:
         ensure_v2_schema(plane.conn)
         local_reconciliation_needed = reconciliation_needed(plane)
-        if not server_requests_reconciliation and not local_reconciliation_needed:
+        local_verification_retry = (
+            not local_reconciliation_needed and local_verification_retry_needed(plane)
+        )
+        if (not server_requests_reconciliation and not local_reconciliation_needed
+                and not local_verification_retry):
             return {"status": "HEARTBEAT", "updated": 0}
-        # A Server-only verification retry must not replay unchanged desired
+        # A verification retry must not replay unchanged desired
         # services or replace a currently verified FRP generation. The signed
         # no-op path checks the current Agent runtime and every Server ACK;
         # missing ownership or an actual local pending change executes normal
         # full reconciliation with its original concurrency/rollback guards.
-        if server_requests_reconciliation and not local_reconciliation_needed:
+        if ((server_requests_reconciliation or local_verification_retry)
+                and not local_reconciliation_needed):
             return synchronize_agent_remote_services(
                 plane, root=root, force_runtime=False,
                 server_verification_only=True,
