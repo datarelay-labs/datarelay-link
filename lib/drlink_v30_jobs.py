@@ -1044,7 +1044,46 @@ class ManagementJobEngine:
                     raise ControlPlaneError("Managed Update rollout was not found.")
                 if str(row["status"]) in TERMINAL_STATUSES:
                     raise ControlPlaneError("Completed rollout cannot be paused or resumed.")
-                payload = json.loads(str(row["payload_json"] or "{}"))
+                # Pause/resume is not permission to repair or reinterpret a
+                # corrupted Core rollout plan. Preserve the original bytes
+                # and target state until the persisted intent is investigated.
+                payload = _strict_queued_job_payload(row["payload_json"])
+                artifact = payload.get("artifact") if payload is not None else None
+                canaries = payload.get("canary_targets") if payload is not None else None
+                wave_size = payload.get("wave_size") if payload is not None else None
+                threshold = payload.get("failure_threshold_percent") if payload is not None else None
+                state = payload.get("rollout_state") if payload is not None else None
+                hexchars = frozenset("0123456789abcdefABCDEF")
+                source_ref = artifact.get("source_ref") if isinstance(artifact, dict) else None
+                sha256 = artifact.get("sha256") if isinstance(artifact, dict) else None
+                version = artifact.get("version") if isinstance(artifact, dict) else None
+                target_ids = {
+                    str(target["target_id"]) for target in self.conn.execute(
+                        "SELECT target_id FROM management_job_targets WHERE job_id=?",
+                        (str(job_id),),
+                    )
+                }
+                if (
+                    not isinstance(payload, dict)
+                    or not isinstance(version, str) or not version.strip()
+                    or not isinstance(source_ref, str) or len(source_ref) != 40
+                    or not all(ch in hexchars for ch in source_ref)
+                    or not isinstance(sha256, str) or len(sha256) != 64
+                    or not all(ch in hexchars for ch in sha256)
+                    or not isinstance(canaries, list) or not canaries
+                    or len(canaries) > self.max_targets
+                    or any(not isinstance(host, str) or not host
+                           or host != host.strip() for host in canaries)
+                    or len(set(canaries)) != len(canaries)
+                    or not set(canaries).issubset(target_ids)
+                    or type(wave_size) is not int
+                    or not 1 <= wave_size <= min(MAX_ROLLOUT_WAVE_SIZE, self.max_targets)
+                    or type(threshold) is not int
+                    or not 0 <= threshold <= MAX_ROLLOUT_FAILURE_THRESHOLD
+                    or state not in ("CANARY", "WAVE", "PAUSED", "HALTED")
+                    or type(payload.get("operator_paused", False)) is not bool
+                ):
+                    raise ControlPlaneError("Management Job stored rollout payload is malformed.")
                 payload["operator_paused"] = verb == "pause"
                 if verb == "pause":
                     payload["rollout_state"] = "PAUSED"

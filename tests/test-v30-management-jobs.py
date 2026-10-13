@@ -484,6 +484,55 @@ class V30ManagementJobTests(unittest.TestCase):
         resumed = self.engine.rollout_control(job["id"], action="resume")
         self.assertFalse(resumed["payload"]["operator_paused"])
 
+    def test_rollout_control_rejects_corrupt_stored_intent_without_mutation(self):
+        import json
+        from drlink_control_plane import ControlPlane
+
+        plane = ControlPlane(self.tmp)
+        try:
+            plane.upsert_client("host-a", hostname="host-a")
+            plane.upsert_client("host-b", hostname="host-b")
+        finally:
+            plane.close()
+        job = self.engine.enqueue_rollout(
+            targets=("host-a", "host-b"), canary_targets=("host-a",),
+            requested_by="admin-a",
+            artifact={"version": "3.0.0-rc.1", "source_ref": "a" * 40, "sha256": "b" * 64},
+            wave_size=2, now=self.now,
+        )
+        original = job["payload"]
+        malformed = (
+            "{", "[]", "{}", '{"one":1,"one":2}', '{"one":NaN}',
+            json.dumps({**original, "canary_targets": []}),
+            json.dumps({**original, "wave_size": "2"}),
+            json.dumps({**original, "operator_paused": "false"}),
+            json.dumps({**original, "artifact": {}}),
+        )
+        for raw in malformed:
+            with self.subTest(raw=raw[:72]):
+                self.engine.conn.execute(
+                    "UPDATE management_jobs SET payload_json=? WHERE id=?",
+                    (raw, job["id"]),
+                )
+                self.engine.conn.commit()
+                before = tuple(self.engine.conn.execute(
+                    "SELECT payload_json,status,updated_at FROM management_jobs WHERE id=?",
+                    (job["id"],),
+                ).fetchone())
+                with self.assertRaisesRegex(ControlPlaneError, "stored rollout payload"):
+                    self.engine.rollout_control(job["id"], action="resume")
+                after = tuple(self.engine.conn.execute(
+                    "SELECT payload_json,status,updated_at FROM management_jobs WHERE id=?",
+                    (job["id"],),
+                ).fetchone())
+                self.assertEqual(after, before)
+        self.engine.conn.execute(
+            "UPDATE management_jobs SET payload_json=? WHERE id=?",
+            (json.dumps(original), job["id"]),
+        )
+        self.engine.conn.commit()
+        self.assertFalse(self.engine.rollout_control(job["id"], action="resume")["payload"]["operator_paused"])
+
     def test_generic_job_api_cannot_bypass_rollout_artifact_and_canary_validation(self):
         with self.assertRaisesRegex(ControlPlaneError, "Rollout"):
             self.engine.enqueue(
