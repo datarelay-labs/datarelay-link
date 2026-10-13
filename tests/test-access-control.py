@@ -630,6 +630,276 @@ class PolicyCacheFailClosedTests(unittest.TestCase):
                 self.assertNotIn("authorization unavailable", reason)
                 self.assertNotIn("DB_UNAVAILABLE", reason)
 
+    def test_production_access_server_busy_recovery_and_fd_bound(self):
+        """The production server must reject overload, recover slots, and not leak FDs."""
+        import io
+        import threading
+        from concurrent.futures import ThreadPoolExecutor
+        from contextlib import redirect_stderr
+        from http.client import HTTPConnection
+
+        self.assertIsNotNone(self.plugin.AccessServer)
+
+        class FakePlane:
+            def status(self):
+                return {
+                    "db_healthy": True,
+                    "mismatch": False,
+                    "clients": 1,
+                    "services": 1,
+                }
+
+            def close(self):
+                pass
+
+        class BlockingCache:
+            def __init__(self, expected):
+                self.expected = expected
+                self.gate = threading.Event()
+                self.full = threading.Event()
+                self.lock = threading.Lock()
+                self.active = 0
+                self.peak = 0
+
+            def open_isolated(self):
+                with self.lock:
+                    self.active += 1
+                    self.peak = max(self.peak, self.active)
+                    if self.active == self.expected:
+                        self.full.set()
+                try:
+                    if not self.gate.wait(5):
+                        return None, "fixture timeout", {}
+                    return FakePlane(), None, {}
+                finally:
+                    with self.lock:
+                        self.active -= 1
+
+        cache = BlockingCache(self.plugin.ACCESS_MAX_CONCURRENT)
+        handler = self.plugin.make_handler(cache, "/access-auth")
+        server = self.plugin.AccessServer(("127.0.0.1", 0), handler)
+        port = server.server_address[1]
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+
+        def health():
+            conn = HTTPConnection("127.0.0.1", port, timeout=5)
+            try:
+                conn.request("GET", "/healthz")
+                resp = conn.getresponse()
+                return resp.status, json.loads(resp.read().decode())
+            finally:
+                conn.close()
+
+        fd_path = Path("/proc/self/fd")
+        before_fds = len(list(fd_path.iterdir())) if fd_path.is_dir() else None
+        stderr = io.StringIO()
+        try:
+            with redirect_stderr(stderr):
+                with ThreadPoolExecutor(max_workers=server.max_concurrent) as pool:
+                    held = [pool.submit(health) for _ in range(server.max_concurrent)]
+                    self.assertTrue(
+                        cache.full.wait(3), "production handler slots did not fill"
+                    )
+                    busy_status, busy = health()
+                    self.assertEqual(busy_status, 503)
+                    self.assertTrue(busy.get("reject"), busy)
+                    self.assertEqual(busy.get("reject_reason"), "server busy")
+                    cache.gate.set()
+                    self.assertEqual(
+                        [f.result()[0] for f in held], [200] * server.max_concurrent
+                    )
+                recovered_status, recovered = health()
+                self.assertEqual(recovered_status, 200)
+                self.assertTrue(recovered.get("ok"), recovered)
+        finally:
+            cache.gate.set()
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
+        after_fds = len(list(fd_path.iterdir())) if fd_path.is_dir() else None
+        self.assertEqual(cache.peak, server.max_concurrent)
+        if before_fds is not None and after_fds is not None:
+            self.assertLessEqual(after_fds, before_fds + 1, (before_fds, after_fds))
+
+    def test_newuserconn_integrity_scan_count(self):
+        """Quantify the current full integrity-scan cost per NewUserConn request."""
+        import io
+        import threading
+        from contextlib import redirect_stderr
+        from http.client import HTTPConnection
+        from unittest import mock
+
+        import drlink_control_plane as control_plane
+        import drlink_v24 as v24
+        from drlink_control_plane import ControlPlane
+
+        mode_plane = ControlPlane(str(self.root))
+        try:
+            v24.ensure_policy_mode(mode_plane, "remote", "whitelist", oneshot=True)
+        finally:
+            mode_plane.close()
+        self.cache.reload(force=True)
+
+        handler = self.plugin.make_handler(self.cache, "/access-auth")
+        server = self.plugin.AccessServer(("127.0.0.1", 0), handler)
+        port = server.server_address[1]
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        proxy = self.RP.expected_proxy_name("alpha-host", self.mid, "ssh")
+        raw = json.dumps({
+            "op": "NewUserConn",
+            "content": {"proxy_name": proxy, "remote_addr": "198.51.100.9:12345"},
+        }).encode()
+        original = control_plane.integrity_check
+        calls = []
+        cached_conn_id = id(self.cache._inner.plane.conn)
+        force_integrity_failure = [False]
+
+        def counted(conn):
+            calls.append(id(conn))
+            if force_integrity_failure[0]:
+                raise RuntimeError("simulated integrity failure")
+            return original(conn)
+
+        try:
+            with redirect_stderr(io.StringIO()):
+                with mock.patch.object(control_plane, "integrity_check", side_effect=counted):
+                    for _ in range(6):
+                        conn = HTTPConnection("127.0.0.1", port, timeout=5)
+                        try:
+                            conn.request(
+                                "POST",
+                                "/access-auth?op=NewUserConn",
+                                body=raw,
+                                headers={
+                                    "Content-Type": "application/json",
+                                    "Content-Length": str(len(raw)),
+                                },
+                            )
+                            resp = conn.getresponse()
+                            body = json.loads(resp.read().decode())
+                            self.assertEqual(resp.status, 200)
+                            self.assertFalse(body.get("reject"), body)
+                        finally:
+                            conn.close()
+                    successful_calls = len(calls)
+                    force_integrity_failure[0] = True
+                    conn = HTTPConnection("127.0.0.1", port, timeout=5)
+                    try:
+                        conn.request(
+                            "POST",
+                            "/access-auth?op=NewUserConn",
+                            body=raw,
+                            headers={
+                                "Content-Type": "application/json",
+                                "Content-Length": str(len(raw)),
+                            },
+                        )
+                        resp = conn.getresponse()
+                        denied = json.loads(resp.read().decode())
+                        self.assertEqual(resp.status, 200)
+                        self.assertTrue(denied.get("reject"), denied)
+                        self.assertEqual(denied.get("reject_reason"), self.RP.REASON_DB_UNAVAILABLE)
+                    finally:
+                        conn.close()
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
+        self.assertEqual(successful_calls, 6, "expected one integrity scan per successful request")
+        self.assertEqual(len(calls), 7, "failed integrity scan must also fail closed per request")
+        self.assertNotIn(cached_conn_id, calls, "unchanged cache fingerprint must stay lightweight")
+
+    def test_newuserconn_isolated_plane_lock_serializes_authorization(self):
+        """Quantify the global request-private connection lock's serialization."""
+        import io
+        import threading
+        import time
+        from concurrent.futures import ThreadPoolExecutor
+        from contextlib import redirect_stderr
+        from http.client import HTTPConnection
+        from unittest import mock
+
+        import drlink_v24 as v24
+        from drlink_control_plane import ControlPlane
+
+        mode_plane = ControlPlane(str(self.root))
+        try:
+            v24.ensure_policy_mode(mode_plane, "remote", "whitelist", oneshot=True)
+        finally:
+            mode_plane.close()
+        self.cache.reload(force=True)
+
+        handler = self.plugin.make_handler(self.cache, "/access-auth")
+
+        class EightSlotAccessServer(self.plugin.AccessServer):
+            max_concurrent = 8
+
+        server = EightSlotAccessServer(("127.0.0.1", 0), handler)
+        port = server.server_address[1]
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        proxy = self.RP.expected_proxy_name("alpha-host", self.mid, "ssh")
+        original = self.plugin.RP.authorize_remote
+        lock = threading.Lock()
+        active = 0
+        peak = 0
+
+        def observed(*args, **kwargs):
+            nonlocal active, peak
+            with lock:
+                active += 1
+                peak = max(peak, active)
+            try:
+                time.sleep(0.05)
+                return original(*args, **kwargs)
+            finally:
+                with lock:
+                    active -= 1
+
+        def one(index):
+            raw = json.dumps({
+                "op": "NewUserConn",
+                "content": {
+                    "proxy_name": proxy,
+                    "remote_addr": "198.51.100.9:%d" % (12000 + index),
+                },
+            }).encode()
+            conn = HTTPConnection("127.0.0.1", port, timeout=5)
+            try:
+                conn.request(
+                    "POST",
+                    "/access-auth?op=NewUserConn",
+                    body=raw,
+                    headers={"Content-Type": "application/json", "Content-Length": str(len(raw))},
+                )
+                resp = conn.getresponse()
+                body = json.loads(resp.read().decode())
+                return resp.status, body
+            finally:
+                conn.close()
+
+        started = time.monotonic()
+        try:
+            with redirect_stderr(io.StringIO()):
+                with mock.patch.object(self.plugin.RP, "authorize_remote", side_effect=observed):
+                    with ThreadPoolExecutor(max_workers=8) as pool:
+                        results = list(pool.map(one, range(8)))
+        finally:
+            elapsed = time.monotonic() - started
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
+        self.assertEqual(peak, 1)
+        self.assertGreaterEqual(elapsed, 0.35)
+        for status, body in results:
+            self.assertEqual(status, 200, body)
+            self.assertFalse(body.get("reject"), body)
+
 
 
 class AccessTtlBoundsTests(unittest.TestCase):

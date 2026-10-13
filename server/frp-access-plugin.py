@@ -64,6 +64,35 @@ ACCESS_MAX_CONCURRENT = int(os.environ.get("FRP_ACCESS_MAX_CONCURRENT", "32"))
 _ACCESS_REQUEST_SLOTS = threading.BoundedSemaphore(ACCESS_MAX_CONCURRENT)
 
 
+def _reject_busy(request, _client_address):
+    """Return the fail-closed FRP plugin response for an overloaded server."""
+    try:
+        body = b'{"reject":true,"reject_reason":"server busy","unchange":true}'
+        response = (
+            b"HTTP/1.1 503 Service Unavailable\r\n"
+            b"Content-Type: application/json\r\n"
+            b"Content-Length: %d\r\n"
+            b"Connection: close\r\n\r\n"
+            % len(body)
+            + body
+        )
+        request.sendall(response)
+    except OSError:
+        pass
+
+
+if _BOUNDED is not None:
+    class AccessServer(_BOUNDED.BoundedThreadingMixIn, HTTPServer):
+        """Production bounded access-plugin server (module-level for regression tests)."""
+
+        max_concurrent = ACCESS_MAX_CONCURRENT
+        request_timeout = 30.0
+        daemon_threads = True
+        reject_callback = staticmethod(_reject_busy)
+else:
+    AccessServer = None
+
+
 class PolicyCache:
     """SQLite-backed Remote Access policy cache (access-control.json is not authority)."""
 
@@ -316,31 +345,10 @@ def main():
 
     cache = PolicyCache(config_path)
     handler = make_handler(cache, plugin_path)
-    if _BOUNDED is None:
+    if AccessServer is None:
         raise SystemExit(
             _BOUNDED_LOAD_ERROR or "ERROR: missing frp_bounded_server.py; refusing unbounded server"
         )
-
-    def _reject(request, _client_address):
-        try:
-            body = b'{"reject":true,"reject_reason":"server busy","unchange":true}'
-            response = (
-                b"HTTP/1.1 503 Service Unavailable\r\n"
-                b"Content-Type: application/json\r\n"
-                b"Content-Length: %d\r\n"
-                b"Connection: close\r\n\r\n"
-                % len(body)
-                + body
-            )
-            request.sendall(response)
-        except OSError:
-            pass
-
-    class AccessServer(_BOUNDED.BoundedThreadingMixIn, HTTPServer):
-        max_concurrent = ACCESS_MAX_CONCURRENT
-        request_timeout = 30.0
-        daemon_threads = True
-        reject_callback = staticmethod(_reject)
 
     server = AccessServer((host, port), handler)
     print("drlink-access listening on http://%s:%s%s" % (host, port, plugin_path), flush=True)

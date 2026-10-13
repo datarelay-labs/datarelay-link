@@ -731,14 +731,29 @@ class ControlPlaneCache:
         self.db_identity = None
 
     def _fingerprint(self, plane: ControlPlane) -> tuple:
-        st = plane.status()
+        # This is only a change detector.  Calling status() here performs a
+        # full SQLite integrity/foreign-key scan even when the database is
+        # unchanged; NewUserConn authorization immediately performs its own
+        # fail-closed status() on the request-private connection.  Keep this
+        # path lightweight, while reload() still runs the full check whenever
+        # the fingerprint changes (and for every forced reload).
+        revision = plane.current_revision()
+        mismatch = False
+        for row in plane.conn.execute(
+            "SELECT generation, status FROM runtime_generations"
+        ):
+            if row["status"] == "mismatch" or (
+                row["status"] == "active" and row["generation"] != revision
+            ):
+                mismatch = True
+                break
         db = db_path(plane.root)
         try:
             stat = db.stat()
             db_fp = (stat.st_ino, stat.st_size, getattr(stat, "st_mtime_ns", int(stat.st_mtime * 1e9)))
         except OSError:
             db_fp = (None, None, None)
-        return (st.get("revision"), st.get("mismatch"), db_fp, str(db))
+        return (revision, mismatch, db_fp, str(db))
 
     def reload(self, force: bool = False) -> None:
         with self.lock:
