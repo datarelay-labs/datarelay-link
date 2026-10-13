@@ -1663,8 +1663,13 @@ def server_report_remote_service_status(plane, auth: MgmtAuthContext, body: dict
     owners, registry_available = _status_registry_owners(plane, auth)
 
     updated = []
+    changed = False
+
+    class UnchangedStatusReport(ControlPlaneError):
+        """No database mutation or revision is needed for this status replay."""
 
     def write():
+        nonlocal changed
         nested_prev = getattr(plane, "_batch_mode", False)
         plane._batch_mode = True
         try:
@@ -1695,6 +1700,7 @@ def server_report_remote_service_status(plane, auth: MgmtAuthContext, body: dict
                     (pub["id"],),
                 ).fetchone()
                 if meta is None:
+                    changed = True
                     plane.conn.execute(
                         "INSERT INTO remote_service_meta"
                         "(service_id, status, pool_class, destination_name, destination_client_id, "
@@ -1725,6 +1731,7 @@ def server_report_remote_service_status(plane, auth: MgmtAuthContext, body: dict
                     missing_registry_port_is_stale=False,
                 )
                 if stale and pub["public_port"] is not None:
+                    changed = True
                     _release_stale_port(
                         plane,
                         int(pub["public_port"]),
@@ -1777,12 +1784,18 @@ def server_report_remote_service_status(plane, auth: MgmtAuthContext, body: dict
                     or int(meta["pending_allocation"] or 0) != pending
                     or current_verified != verified_flag
                 ):
+                    changed = True
                     plane.conn.execute(
                         "UPDATE remote_service_meta SET status = ?, reason = ?, pending_allocation = ?, "
                         "runtime_verified = ? WHERE service_id = ?",
                         (status, extra or "", pending, verified_flag, pub["id"]),
                     )
                 updated.append(projection)
+            if not changed:
+                # Repeated Agent heartbeats still receive the validated status
+                # projection, but must not flood the Server's configuration
+                # history or invalidate unrelated sourceRevision consumers.
+                raise UnchangedStatusReport()
             return {
                 "entity": {"type": "remote-service-status", "id": machine_id, "name": machine_id},
                 "operation": "status",
@@ -1791,11 +1804,16 @@ def server_report_remote_service_status(plane, auth: MgmtAuthContext, body: dict
         finally:
             plane._batch_mode = nested_prev
 
-    plane._mutate(
-        "mgmt remote-service status [agent %s]" % machine_id,
-        "mgmt remote service status",
-        write,
-    )
+    try:
+        plane._mutate(
+            "mgmt remote-service status [agent %s]" % machine_id,
+            "mgmt remote service status",
+            write,
+        )
+    except UnchangedStatusReport:
+        # _mutate rolled back the no-op transaction. All statuses were still
+        # validated, and no mutation/audit/revision took place.
+        pass
     return {"updated": updated, "services": updated, "count": len(updated)}
 
 

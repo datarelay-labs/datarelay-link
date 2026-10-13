@@ -110,6 +110,44 @@ class RuleSelectorAndRuntimeRecovery(unittest.TestCase):
         self.assertFalse(mgmt.server_report_agent_lifecycle(self.plane, auth,
                                                            {'state':'connected'})['reconcile_required'])
 
+    def test_repeated_identical_signed_status_reports_do_not_write_new_config_revisions(self):
+        """Heartbeat status replay must not flood sourceRevision or audit history."""
+        machine = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+        self.plane.upsert_client(machine, label='fixture-agent', hostname='fixture-agent')
+        auth = mgmt.MgmtAuthContext(machine, {}, 'fixture-nonce', 0)
+        self.plane.set_published_service(machine, 'fixture-stable', service_type='tcp',
+            target_mode='self', target_host='127.0.0.1', target_port=22,
+            enabled=False, public_port=6022)
+        service = self.plane.conn.execute('SELECT id FROM published_services WHERE name=?',
+                                          ('fixture-stable',)).fetchone()['id']
+        self.plane.conn.execute('INSERT OR REPLACE INTO remote_service_meta '
+            '(service_id,status,pool_class,destination_name,destination_client_id,'
+            'pending_allocation,delete_pending,reason,runtime_verified) '
+            "VALUES (?,'DISABLED','normal','this-host',?,0,0,'',0)",
+            (service, machine))
+        self.plane.conn.commit()
+        payload = {'services': [{'name':'fixture-stable','status':'DISABLED',
+                   'runtime_verified':False, 'endpoint_port':6022,'reason':''}]}
+        first = mgmt.server_report_remote_service_status(self.plane, auth, payload)
+        after_first = self.plane.current_revision()
+        second = mgmt.server_report_remote_service_status(self.plane, auth, payload)
+        self.assertEqual(second['services'], first['services'])
+        self.assertEqual(self.plane.current_revision(), after_first,
+                         'identical status heartbeat must not create a config revision')
+        row = self.plane.conn.execute('SELECT status,runtime_verified FROM remote_service_meta '
+                                      'WHERE service_id=?',(service,)).fetchone()
+        self.assertEqual((row['status'],row['runtime_verified']), ('DISABLED',0))
+        # A real mismatch must still repair the Server and create one revision.
+        self.plane.conn.execute('UPDATE remote_service_meta SET status=?, reason=? '
+                                'WHERE service_id=?', ('DEGRADED','stale report',service))
+        self.plane.conn.commit()
+        before_repair = self.plane.current_revision()
+        repaired = mgmt.server_report_remote_service_status(self.plane, auth, payload)
+        self.assertGreater(self.plane.current_revision(), before_repair)
+        self.assertEqual(repaired['services'][0]['status'], 'DISABLED')
+        self.assertEqual(self.plane.conn.execute('SELECT status FROM remote_service_meta '
+                        'WHERE service_id=?',(service,)).fetchone()['status'], 'DISABLED')
+
 
 if __name__ == '__main__':
     unittest.main()
