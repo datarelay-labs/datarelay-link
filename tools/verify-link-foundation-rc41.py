@@ -110,7 +110,10 @@ def verify_bundle(
             for item in members:
                 name = item.name
                 components = name.split("/")
-                if (not name.startswith(prefix) or name.startswith("/")
+                # tarfile strips the trailing slash from directory entries;
+                # the one legitimate archive root is an exact directory.
+                inside_root = name.startswith(prefix) or (item.isdir() and name == source_head)
+                if (not inside_root or name.startswith("/")
                         or "\\" in name or any(part in ("", ".", "..") for part in components[:-1])
                         or item.issym() or item.islnk() or not (item.isdir() or item.isfile())):
                     raise CandidateError("Archive contains an unsafe member")

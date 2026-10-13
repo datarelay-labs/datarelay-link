@@ -39,6 +39,12 @@ class PrivateFoundationCandidateTests(unittest.TestCase):
 
     def _write_tar(self, *, omit=None, extra=None):
         with tarfile.open(self.bundle, "w:gz") as archive:
+            # Actual RC41 contains explicit top-level directory entries.
+            # Python tarfile normalizes their names without trailing slashes.
+            for dirname in (self.prefix, self.prefix + "archives/"):
+                entry = tarfile.TarInfo(dirname)
+                entry.type = tarfile.DIRTYPE
+                archive.addfile(entry)
             for name, raw in self.package_bytes.items():
                 path = (
                     self.prefix + "archives/datarelay-labs-" + name + "-" +
