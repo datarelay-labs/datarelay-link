@@ -1,4 +1,52 @@
-# Link 3.0 — Private Product Foundation RC41 consumer gate
+# Link 3.0 — Product Foundation RC41 (private-registry source default)
+
+## Current Foundation-only status — 2026-10-13
+
+Foundation's original immutable ten npm packages (`0.1.0-rc.41`, source
+`46ddb60cad8eae7b1718588cd19421e61b5300e7`) have now been legitimately
+published to **private GitHub Packages**. Link Actions has validated
+`FOUNDATION_READ_TOKEN` authentication/scope and verified **10/10 original
+package SHA256s** using the existing read-only workflow. The historical
+unpublished blocker described below has been resolved; do not republish RC41.
+
+The **source-default** `web/package.json`, `web/package-lock.json`, and
+`web/foundation.lock.json` now require exactly RC41 for all ten packages.
+The package lock includes independent original TAR `sha512` integrity;
+only `@datarelay-labs` resolves through the scoped private npm registry,
+never via guessed local `file:` URLs. `resolved` TAR URLs for these ten are
+intentionally omitted rather than inventing an unauthenticated or guessed
+registry URL; trusted Actions `npm ci` must resolve and verify the real bytes.
+
+`.github/workflows/foundation-rc41-consumer.yml` is restricted to the existing
+same-repository PR #206 adoption branch. It downloads each private package,
+checks every archive SHA256 before installation, runs `npm ci --ignore-scripts`
+from the committed lock, then performs actual Web build, Admin/Journey/P0 and
+deterministic private bundle tests. The secret exists only in its bounded
+download/install step, in a 0700 temporary npm configuration; it is not sent
+to forks or other branches. No private npm archives/compiled RC41 Web/credentials
+may be checked into PUBLIC Link Git or uploaded to a public Actions artifact.
+A source clone without private registry permission must **fail closed** rather
+than silently build against pf8.4.
+
+The previous **public pf8.4 rollback candidate** is preserved as
+`web/rollback/pf8.4/{package.json,package-lock.json,foundation.lock.json}`
+along with the existing publicly committed versioned pf8.4 TAR files under
+`web/.foundation/packs/`. Rollback means an explicitly reviewed **new
+development/source change**, restoring all three files atomically, running
+the previous offline tests and building a *new* signed/qualified candidate.
+This does not authorize production rollback or source/default promotion.
+
+**Release boundary:** Existing PUBLIC `web/dist` and `dist/` artifacts,
+actual installed Server/Agent, and production endpoints are **not** republished,
+rebuilt with private code, or asserted qualified by this source change.
+RC41 compiled Web is qualified only in owner-only private dev scratch and
+authenticated trusted CI; a legally approved private distribution/installer,
+user-role Browser PASS, two-user real E2E, PR merge and product release
+remain separate gates.
+
+---
+
+## Historical private RC41 handoff (prior to registry publication)
 
 This is a product-owned **offline preflight**, not Foundation RC41 product installation,
 browser acceptance, release permission, or a replacement for Foundation's canonical

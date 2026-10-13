@@ -48,6 +48,7 @@ python3 tests/test-link-foundation-rc41-private-web-bundle.py -q
 python3 tests/test-link-foundation-rc41-activation.py -q
 # Public workflow contract; never loads the actual secret or private package in native CI.
 python3 tests/test-link-foundation-rc41-private-registry.py -q
+python3 tests/test-link-foundation-rc41-default.py -q
 ./tests/test-server-migration.sh
 ./tests/test-registry-init.sh
 python3 tests/test-allocator.py
