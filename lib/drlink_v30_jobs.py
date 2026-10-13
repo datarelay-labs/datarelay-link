@@ -366,14 +366,21 @@ class ManagementJobEngine:
             (str(job_id), self.max_targets),
         ).fetchall()
         out = {key: job[key] for key in job.keys() if key != "payload_json"}
-        out["payload"] = json.loads(str(job["payload_json"] or "{}"))
+        payload = _strict_queued_job_payload(job["payload_json"])
+        if payload is None:
+            # A read-only Job detail must not present a corrupt queued
+            # payload as a legitimate empty object or leak raw stored text.
+            raise ControlPlaneError("Management Job stored payload is malformed.")
+        out["payload"] = payload
         out["targets"] = []
         for row in targets:
             item = {key: row[key] for key in row.keys() if key != "result_json"}
-            try:
-                item["result"] = json.loads(str(row["result_json"] or "{}"))
-            except ValueError:
-                item["result"] = {}
+            result = _strict_queued_job_payload(row["result_json"])
+            if result is None:
+                # A corrupt result must not appear as successful empty
+                # evidence in Core/Web Job history.
+                raise ControlPlaneError("Management Job stored result is malformed.")
+            item["result"] = result
             out["targets"].append(item)
         return out
 

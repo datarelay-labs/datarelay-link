@@ -223,6 +223,61 @@ class V30ManagementJobTests(unittest.TestCase):
                 ).fetchone()[0]
                 self.assertEqual(after, before)
 
+    def test_persisted_job_details_fail_closed_on_corrupt_json(self):
+        # Neither a valid Core job ID nor a previous SUCCEEDED status makes
+        # corrupted persisted JSON safe to present as a healthy Job detail.
+        job = self._enqueue(
+            targets=("host-a",), payload={"operation": "doctor"}
+        )
+        malformed = (
+            "", "{", "[]", "null", '"text"', "true",
+            '{"field":NaN}', '{"field":Infinity}',
+            '{"id":"first","id":"second"}',
+            '{"large":"' + "x" * 16385 + '"}',
+        )
+        for column, table, key in (
+            ("payload_json", "management_jobs", "id"),
+            ("result_json", "management_job_targets", "job_id"),
+        ):
+            if column == "result_json":
+                # A completed Job with corrupted evidence is still UNKNOWN
+                # to the reader, regardless of its persisted SUCCESS flags.
+                self.engine.conn.execute(
+                    "UPDATE management_jobs SET status='SUCCEEDED' WHERE id=?",
+                    (job["id"],),
+                )
+                self.engine.conn.execute(
+                    "UPDATE management_job_targets SET status='SUCCEEDED' "
+                    "WHERE job_id=?", (job["id"],),
+                )
+                self.engine.conn.commit()
+            for raw in malformed:
+                with self.subTest(column=column, value=raw[:60]):
+                    self.engine.conn.execute(
+                        f"UPDATE {table} SET {column}=? WHERE {key}=?",
+                        (raw, job["id"]),
+                    )
+                    self.engine.conn.commit()
+                    with self.assertRaisesRegex(
+                        ControlPlaneError, "Management Job stored .* malformed"
+                    ):
+                        self.engine.get(job["id"])
+                    # Source corruption must not be silently repaired or
+                    # promoted to a succeeded target during a read.
+                    actual = self.engine.conn.execute(
+                        f"SELECT {column} FROM {table} WHERE {key}=?",
+                        (job["id"],),
+                    ).fetchone()[0]
+                    self.assertEqual(actual, raw)
+            self.engine.conn.execute(
+                f"UPDATE {table} SET {column}='{{}}' WHERE {key}=?",
+                (job["id"],),
+            )
+            self.engine.conn.commit()
+        healthy = self.engine.get(job["id"])
+        self.assertEqual(healthy["payload"], {})
+        self.assertEqual(healthy["targets"][0]["result"], {})
+
     def test_corrupt_persisted_payload_never_leases_core_job(self):
         # A corrupted queued Job must never be leased to an Agent as an
         # invented empty payload. Leave its target queued for investigation.
