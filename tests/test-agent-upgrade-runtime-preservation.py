@@ -81,6 +81,12 @@ class UpgradeRuntimePreservationTests(unittest.TestCase):
     def test_continuous_worker_finishes_pass_then_defers_for_upgrade(self):
         self._exercise_upgrade(continuous=True)
 
+    def test_long_reconciliation_pass_hands_off_to_upgrade_without_state_loss(self):
+        # The real Agent held its barrier beyond the old 30-second installer
+        # deadline. The installer must wait for that pass, then exclude the
+        # worker during its byte-preservation window.
+        self._exercise_upgrade(continuous=True, delayed_release=32)
+
     def test_inner_lock_failure_is_not_reclassified_as_upgrade_deferral(self):
         sys.path.insert(0,str(REPO/'lib'))
         import drlink_agent_lifecycle as lifecycle
@@ -97,7 +103,8 @@ class UpgradeRuntimePreservationTests(unittest.TestCase):
             with ExclusiveFileLock(etc/'client-software-upgrade.lock',timeout=0):
                 pass
 
-    def _exercise_upgrade(self, inject=False, busy=False, continuous=False):
+    def _exercise_upgrade(self, inject=False, busy=False, continuous=False,
+                          delayed_release=0):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             etc = root / 'etc/frp'
@@ -152,6 +159,8 @@ class UpgradeRuntimePreservationTests(unittest.TestCase):
             self.assertEqual({str(p):p.read_bytes() for p in files},before)
             if busy:
                 import fcntl
+                # Exercise the same fail-closed deadline without a 3-minute test.
+                env['FRP_TEST_CLIENT_UPGRADE_LOCK_WAIT_SECONDS']='0.2'
                 with (etc/'client-software-upgrade.lock').open('a') as held:
                     fcntl.flock(held,fcntl.LOCK_EX|fcntl.LOCK_NB)
                     result=subprocess.run(command,env=env,capture_output=True,text=True)
@@ -172,7 +181,7 @@ class UpgradeRuntimePreservationTests(unittest.TestCase):
                 # release the in-flight pass after its first busy result.
                 shim=root/'shim'; shim.mkdir()
                 python=shim/'python3'
-                python.write_text('#!'+sys.executable+'\nimport os, sys, pathlib, fcntl\nargs=sys.argv[1:]\nif len(args)==2 and args[0]=="-" and args[1].isdigit():\n code=sys.stdin.read()\n real=fcntl.flock\n def observed(fd, flags):\n  try: return real(fd, flags)\n  except BlockingIOError:\n   pathlib.Path('+repr(str(root/'finish-pass'))+').touch()\n   raise\n fcntl.flock=observed\n sys.argv=["-"]+args[1:]\n exec(compile(code,"<installer-preservation>","exec"))\nelse: os.execv('+repr(sys.executable)+', ['+repr(sys.executable)+']+args)\n')
+                python.write_text('#!'+sys.executable+'\nimport os, sys, pathlib, fcntl, threading\nargs=sys.argv[1:]\nif len(args)==2 and args[0]=="-" and args[1].isdigit():\n code=sys.stdin.read()\n real=fcntl.flock\n scheduled=False\n def observed(fd, flags):\n  global scheduled\n  try: return real(fd, flags)\n  except BlockingIOError:\n   if not scheduled:\n    scheduled=True\n    delay='+repr(delayed_release)+'\n    marker=pathlib.Path('+repr(str(root/'finish-pass'))+')\n    if delay: threading.Timer(delay, marker.touch).start()\n    else: marker.touch()\n   raise\n fcntl.flock=observed\n sys.argv=["-"]+args[1:]\n exec(compile(code,"<installer-preservation>","exec"))\nelse: os.execv('+repr(sys.executable)+', ['+repr(sys.executable)+']+args)\n')
                 python.chmod(0o755)
                 env['PATH']=str(shim)+os.pathsep+env['PATH']
                 try:

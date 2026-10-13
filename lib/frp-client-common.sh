@@ -6132,12 +6132,16 @@ frp_client_apply_upgrade() {
   exec {_FRP_CLIENT_UPGRADE_PRESERVATION_FD}>>"$preservation_lock"
   chmod 0600 "$preservation_lock"
   if ! python3 - "$_FRP_CLIENT_UPGRADE_PRESERVATION_FD" <<'PY'
-import fcntl, sys, time
+import fcntl, os, sys, time
 # A persistent worker may already be inside a reconciliation pass. Wait for
 # that pass to release the barrier; process liveness is not quiescence.
 # Acquire before taking any protected-state snapshot, and fail closed if a
-# stuck pass does not finish within the bounded coordination window.
-deadline = time.monotonic() + 30
+# stuck pass does not finish within the bounded coordination window. A pass
+# over a populated Agent can exceed 30 seconds, especially during recovery.
+wait_seconds = 180
+if os.environ.get('FRP_CLIENT_TEST_ROOT'):
+    wait_seconds = float(os.environ.get('FRP_TEST_CLIENT_UPGRADE_LOCK_WAIT_SECONDS', wait_seconds))
+deadline = time.monotonic() + wait_seconds
 while True:
     try:
         fcntl.flock(int(sys.argv[1]), fcntl.LOCK_EX | fcntl.LOCK_NB)
