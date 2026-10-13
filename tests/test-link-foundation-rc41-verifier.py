@@ -137,6 +137,12 @@ class PrivateFoundationCandidateTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("PRIVATE_FOUNDATION_RC41=FAIL", result.stdout)
 
+    def test_native_ci_runs_the_private_preflight_unit_tests_without_private_bundle(self):
+        runner = (ROOT / "tests" / "run-all.sh").read_text(encoding="utf-8")
+        invocation = "python3 tests/test-link-foundation-rc41-verifier.py -q"
+        self.assertEqual(runner.count(invocation), 1)
+        self.assertIn(invocation, runner.split('echo "=== tests ==="', 1)[1][:400])
+
     def test_missing_bundle_fails_without_dangerous_side_effects(self):
         with self.assertRaisesRegex(gate.CandidateError, "regular non-symlink"):
             gate.verify_bundle(Path(self.workspace.name) / "not-supplied.tar.gz")
