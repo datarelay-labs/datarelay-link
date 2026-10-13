@@ -168,6 +168,30 @@ class V30ManagementScalabilityTests(unittest.TestCase):
         self.assertEqual(versions[("linux", "3.0.0")], 1)
         self.assertEqual(versions[("win32", "unknown")], 1)
 
+    def test_overview_heartbeat_offsets_future_and_corrupt_fail_conservatively(self):
+        # Read-only operational health must agree with Core's actual UTC
+        # heartbeat freshness predicate, never lexical ordering of raw text.
+        samples = (
+            ("fresh-utc", "2026-10-04T01:59:30Z"),
+            ("fresh-plus-two", "2026-10-04T03:59:30+02:00"),
+            ("fresh-minus-five", "2026-10-03T20:59:30-05:00"),
+            ("future", "2026-10-04T02:00:01Z"),
+            ("invalid", "not-a-timestamp"),
+            ("invalid-offset", "2026-10-04T01:59:30+99:00"),
+            ("stale", "2026-10-04T01:50:00Z"),
+        )
+        for name, stamp in samples:
+            self._insert_client(name, heartbeat=stamp)
+        self.conn.commit()
+
+        before = self.conn.total_changes
+        summary = overview_summary(self.conn, now=self.now)["managed_hosts"]
+        self.assertEqual(summary["total"], 7)
+        self.assertEqual(summary["connected"], 3)
+        self.assertEqual(summary["stale"], 4)
+        self.assertEqual(summary["disconnected"], 0)
+        self.assertEqual(self.conn.total_changes, before)
+
     def test_query_service_read_models_do_not_need_writer_slot(self):
         self._insert_client("host-a")
         self.conn.commit()
