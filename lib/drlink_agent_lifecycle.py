@@ -106,14 +106,19 @@ def _reconcile_once(root: Optional[str] = None) -> dict:
     plane = ControlPlane(root)
     try:
         ensure_v2_schema(plane.conn)
-        if not server_requests_reconciliation and not reconciliation_needed(plane):
+        local_reconciliation_needed = reconciliation_needed(plane)
+        if not server_requests_reconciliation and not local_reconciliation_needed:
             return {"status": "HEARTBEAT", "updated": 0}
-        # The Server's missing verification requests a fresh status report,
-        # not an unconditional new frpc process. Forced runtime reapplication
-        # disconnects unrelated published traffic on otherwise healthy Agents.
-        # apply_agent_runtime already checks exact config and current running
-        # generation and restarts only when live runtime is not verified or
-        # desired proxy configuration actually changes.
+        # A Server-only verification retry must not replay unchanged desired
+        # services or replace a currently verified FRP generation. The signed
+        # no-op path checks the current Agent runtime and every Server ACK;
+        # missing ownership or an actual local pending change executes normal
+        # full reconciliation with its original concurrency/rollback guards.
+        if server_requests_reconciliation and not local_reconciliation_needed:
+            return synchronize_agent_remote_services(
+                plane, root=root, force_runtime=False,
+                server_verification_only=True,
+            )
         return synchronize_agent_remote_services(plane, root=root, force_runtime=False)
     finally:
         plane.close()

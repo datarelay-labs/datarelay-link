@@ -5805,7 +5805,9 @@ def invalidate_runtime_verification_for_restart(*, root: Optional[str] = None) -
             close()
 
 
-def synchronize_agent_remote_services(plane_db, *, root: Optional[str] = None, force_runtime: bool = False) -> dict:
+def synchronize_agent_remote_services(plane_db, *, root: Optional[str] = None,
+                                      force_runtime: bool = False,
+                                      server_verification_only: bool = False) -> dict:
     """Reconnect synchronization: allocate pending endpoints, apply deletes, revalidate deps."""
     # Enrollment projection is a lifecycle write. show/status must not do it.
     projected = project_enrolled_services_into_agent_catalog(plane_db, root=root)
@@ -5844,6 +5846,94 @@ def synchronize_agent_remote_services(plane_db, *, root: Optional[str] = None, f
         if not str(out.get("runtime_error") or "").strip():
             out["runtime_error"] = error
         return out
+
+    # Signed Server re-verification is not a request to replace the entire
+    # FRP generation. First try an immutable, verified-runtime heartbeat. The
+    # Server response must confirm every existing endpoint and status; an
+    # omitted/revoked/reallocated service falls through to full reconciliation.
+    # This path never trusts persisted HEALTHY alone and never upgrades a
+    # missing proxy without current-process evidence.
+    if server_verification_only and not force_runtime and not projected and not catalog_error:
+        try:
+            import drlink_v24_runtime as runtime
+
+            if mgmt.use_live_mgmt_path(root or getattr(plane_db, "root", None)):
+                snapshot_rows = list(plane_db.conn.execute(
+                    "SELECT * FROM agent_remote_services WHERE delete_pending = 0"
+                ))
+                claims = []
+                stable = bool(snapshot_rows)
+                for row in snapshot_rows:
+                    enabled = bool(row["enabled"])
+                    expected_status = "HEALTHY" if enabled else "DISABLED"
+                    if (str(row["status"] or "").upper() != expected_status
+                        or row["pending_allocation"]
+                        or (enabled and (
+                            not row["runtime_verified"] or row["endpoint_port"] is None))):
+                        stable = False
+                        break
+                    if (_destination_dependency_status(
+                            plane_db, row["destination"], root=root,
+                            destination_client_id=_row_get(row, "destination_client_id"))
+                        or _service_dependency_status(plane_db, row["service_object"])):
+                        stable = False
+                        break
+                    if enabled and runtime.verified_remote_service_status(
+                            plane_db, row["name"], root=root)[0] != "HEALTHY":
+                        stable = False
+                        break
+                    claims.append({
+                        "name": row["name"],
+                        "status": expected_status,
+                        "reason": str(row["reason"] or ""),
+                        "runtime_verified": enabled,
+                        "endpoint_port": row["endpoint_port"],
+                    })
+                if stable:
+                    acknowledged = mgmt.report_remote_service_status_on_server(
+                        root=root or getattr(plane_db, "root", None),
+                        services=claims,
+                    )
+                    returned = acknowledged.get("services") if isinstance(acknowledged, dict) else None
+                    by_name = {
+                        str(item.get("name") or "").lower(): item
+                        for item in (returned or []) if isinstance(item, dict)
+                    }
+                    verified = len(by_name) == len(claims)
+                    for original in snapshot_rows:
+                        item = by_name.get(str(original["name"]).lower())
+                        enabled = bool(original["enabled"])
+                        current = plane_db.conn.execute(
+                            "SELECT * FROM agent_remote_services "
+                            "WHERE name=? COLLATE NOCASE AND delete_pending=0",
+                            (original["name"],),
+                        ).fetchone()
+                        if (item is None or current is None
+                            or tuple(current) != tuple(original)
+                            or str(item.get("status") or "").upper()
+                                != ("HEALTHY" if enabled else "DISABLED")
+                            or bool(item.get("runtime_verified")) != enabled
+                            or item.get("endpoint_port") != original["endpoint_port"]
+                            or int(item.get("pending_allocation") or 0)
+                                != int(original["pending_allocation"] or 0)
+                            or (enabled and runtime.verified_remote_service_status(
+                                plane_db, original["name"], root=root)[0] != "HEALTHY")):
+                            verified = False
+                            break
+                    # Reconcile authoritative endpoint/verification projections
+                    # even if a fresh Server reply reveals missing ownership.
+                    _reconcile_agent_from_server_status(plane_db, acknowledged)
+                    if verified:
+                        return _finish({
+                            "status": "SYNCHRONIZED",
+                            "updated": 0,
+                            "no_change": True,
+                            "affected": [],
+                        })
+        except Exception:
+            # Auth/transport/runtime problems cannot be a silent PASS; execute
+            # the normal fail-closed synchronization and recovery path below.
+            pass
 
     updated = 0
     # Defer runtime restarts to a single apply at the end of this synchronize.

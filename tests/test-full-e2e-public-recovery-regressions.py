@@ -133,8 +133,13 @@ frpctl_lib_candidate() { printf '%s/%s' "$LIB" "$1"; }
                 for local_needs_sync in (False, True):
                     with mock.patch.object(lifecycle, 'load_lifecycle_intent', return_value='running'), mock.patch.object(lifecycle, 'heartbeat_once', return_value={'reconcile_required': server_requests_sync}), mock.patch.object(lifecycle, 'reconciliation_needed', return_value=local_needs_sync), mock.patch.object(cp, 'ControlPlane') as plane, mock.patch.object(v24, 'ensure_v2_schema'), mock.patch.object(v24, 'synchronize_agent_remote_services', return_value={'status': 'SYNCHRONIZED'}) as sync:
                         lifecycle.reconcile_once(tmp)
-                        if server_requests_sync or local_needs_sync:
-                            sync.assert_called_once_with(plane.return_value, root=tmp, force_runtime=False)
+                        if server_requests_sync and not local_needs_sync:
+                            sync.assert_called_once_with(
+                                plane.return_value, root=tmp, force_runtime=False,
+                                server_verification_only=True)
+                        elif server_requests_sync or local_needs_sync:
+                            sync.assert_called_once_with(
+                                plane.return_value, root=tmp, force_runtime=False)
                         else:
                             sync.assert_not_called()
 

@@ -619,6 +619,70 @@ class StatusParityTests(unittest.TestCase):
             (name,),
         ).fetchone()
 
+    def test_F026_synchronize_verified_noop_avoids_republication_and_restart(self):
+        from unittest import mock
+        import drlink_v24_runtime as runtime
+        with mock.patch.dict(os.environ, {'FRP_DEPLOY_TEST_ROOT': self.agent_tmp}):
+            created = v24.set_remote_service_agent(
+                self.agent, 'f026-stable', destination='this-host',
+                service='ssh', enabled=True, oneshot=True, root=self.agent_tmp,
+            )
+            endpoint = created['view']['endpoint_port']
+            self.assertIsNotNone(endpoint)
+            self.agent.conn.execute(
+                "UPDATE agent_remote_services SET status='HEALTHY',runtime_verified=1,"
+                "reason='' WHERE name='f026-stable'"
+            )
+            self.agent.conn.commit()
+            self.assertEqual(runtime.verified_remote_service_status(
+                self.agent, 'f026-stable', root=self.agent_tmp)[0], 'HEALTHY')
+            original_upsert = mgmt.upsert_remote_service_on_server
+            def observe(**kwargs):
+                return original_upsert(**kwargs)
+            for _ in range(2):
+                with mock.patch.object(mgmt, 'upsert_remote_service_on_server',
+                                       side_effect=observe) as republish, \
+                     mock.patch.object(runtime, '_restart_frpc') as restart:
+                    result = v24.synchronize_agent_remote_services(
+                        self.agent, root=self.agent_tmp,
+                        server_verification_only=True)
+                self.assertEqual(result['status'], 'SYNCHRONIZED', result)
+                self.assertTrue(result.get('no_change'), result)
+                republish.assert_not_called()
+                restart.assert_not_called()
+                self.assertEqual(self._server_status('f026-stable')['public_port'], endpoint)
+                meta = self.server.conn.execute(
+                    "SELECT m.status,m.runtime_verified FROM remote_service_meta m "
+                    "JOIN published_services s ON m.service_id=s.id "
+                    "WHERE s.name='f026-stable'"
+                ).fetchone()
+                self.assertEqual((meta['status'],meta['runtime_verified']), ('HEALTHY',1))
+
+    def test_F027_incomplete_signed_server_ack_must_not_short_circuit_reconcile(self):
+        from unittest import mock
+        created = v24.set_remote_service_agent(
+            self.agent, 'f027-stable', destination='this-host',
+            service='ssh', enabled=True, oneshot=True, root=self.agent_tmp,
+        )
+        self.assertIsNotNone(created['view']['endpoint_port'])
+        self.agent.conn.execute(
+            "UPDATE agent_remote_services SET status='HEALTHY',runtime_verified=1,"
+            "reason='' WHERE name='f027-stable'"
+        )
+        self.agent.conn.commit()
+        upstream = mgmt.upsert_remote_service_on_server
+        with mock.patch.dict(os.environ, {'FRP_DEPLOY_TEST_ROOT': self.agent_tmp}), \
+             mock.patch.object(mgmt, 'report_remote_service_status_on_server',
+                               return_value={'services': []}), \
+             mock.patch.object(mgmt, 'upsert_remote_service_on_server',
+                               side_effect=upstream) as republish:
+            result = v24.synchronize_agent_remote_services(
+                self.agent, root=self.agent_tmp,
+                server_verification_only=True)
+        republish.assert_called()
+        self.assertFalse(result.get('no_change'),
+                         'incomplete authenticated Server ACK must never qualify no-op')
+
     def test_F001_synchronize_does_not_claim_success_for_unverified_healthy_text(self):
         # A signed Server ACK may retain HEALTHY text while explicitly
         # revoking runtime_verified. Agent show/status projects this as
