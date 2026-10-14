@@ -209,3 +209,43 @@ test('UXR-1.5 incomplete related-service inventory cannot certify no services',(
   await page.getByRole('dialog').getByRole('alert').waitFor();
   await absent(page,'No services reference this server in the returned inventory.');
 }));
+
+test('UXR-1.7 selected admission review is target-bound and has no Host ID re-entry',()=>scenario(async page=>{
+  await mount(page,[{body:inventory([host('pending',{admission_state:'PENDING_APPROVAL'})])}]);
+  await page.getByRole('button',{name:/Review approval/}).click();
+  assert.equal(await page.getByPlaceholder('Exact Core Managed Host ID').count(),0);
+  await page.getByLabel('Admission action').selectOption('approve');
+  const validUntil=new Date(Date.now()+300000).toISOString();
+  await page.evaluate(body=>window.responses.push({body}),{
+    change_plan_id:'cp_'+ 'a'.repeat(24),operation_class:'CHANGE',operation:'managed-host-admission.approve',
+    admission_operation:'approve',resource_type:'managed-host',resource_ref:'pending',expected_revision:7,
+    confirmation_class:'APPROVE',no_change:false,valid_until:validUntil,
+    preview:{id:'pending',before:'PENDING_APPROVAL',after:'APPROVED'},
+    impact:{kind:'managed-host-admission',before:'PENDING_APPROVAL',after:'APPROVED',requires_confirmation:true,
+      destructive:false,access_broadened:true,access_narrowed:false,warning:'Approval restores normal policy evaluation.',kept:['Host identity']}
+  });
+  await page.getByRole('button',{name:'Preview Admission Impact',exact:true}).click();
+  await page.getByPlaceholder('APPROVE').waitFor();
+  const posted=await page.evaluate(()=>window.calls.filter(x=>x.method==='POST').map(x=>JSON.parse(x.body)));
+  assert.equal(posted.at(-1).host,'pending');assert.equal(posted.at(-1).operation,'approve');
+}));
+
+test('UXR-1.7 selected lifecycle review rejects wrong-target preview and never asks for Host ID',()=>scenario(async page=>{
+  await mount(page,[{body:inventory([host('life')])}]);
+  await page.getByRole('button',{name:/Server life/}).first().click();await page.getByRole('tab',{name:'Settings',exact:true}).click();
+  await page.getByText('Advanced lifecycle actions',{exact:true}).click();await page.getByRole('button',{name:'Review lifecycle action',exact:true}).click();
+  assert.equal(await page.getByPlaceholder('Managed Host ID/name').count(),0);
+  const validUntil=new Date(Date.now()+300000).toISOString();
+  await page.evaluate(body=>window.responses.push({body}),{
+    change_plan_id:'cp_'+ 'b'.repeat(24),operation_class:'CHANGE',operation:'managed-host-lifecycle.revoke-trust',
+    resource_type:'managed-host',resource_ref:'other-host',expected_revision:9,confirmation_class:'REVOKE',
+    lifecycle_operation:'revoke-trust',no_change:false,valid_until:validUntil,
+    preview:{entity:{type:'managed-host',id:'other-host',name:'Other'},operation:'revoke-trust'},
+    impact:{kind:'managed-host-trust-revoke',requires_confirmation:true,destructive:false,warning:'Re-enrollment required.',kept:['published services']}
+  });
+  await page.getByRole('button',{name:'Preview Impact',exact:true}).click();
+  await page.getByRole('alert').filter({hasText:'does not confirm the selected Host'}).waitFor();
+  assert.equal(await page.getByPlaceholder('REVOKE').count(),0);
+  const posted=await page.evaluate(()=>window.calls.filter(x=>x.method==='POST').map(x=>JSON.parse(x.body)));
+  assert.equal(posted.at(-1).host,'life');assert.equal(posted.at(-1).operation,'revoke-trust');
+}));

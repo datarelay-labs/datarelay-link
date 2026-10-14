@@ -6,7 +6,7 @@ import {createLinkFoundationAdministrationTasks} from "./foundation-administrati
 import {backupToolReadiness} from "./foundation-administration";
 import {observedCoreFlag,observedCoreCount,observedCoreNames} from "./uxb-impact-evidence";
 import {AccessEvidenceExplorer,GuidedPolicyJourney,coreFlowKey,coreCutoffKey,visibleCoreEvidence,resolveCompletePolicyMatch,observedHostInspectContext,type AccessPlane} from "./p0-access-policy";
-import {ServerRoute,type ServerManagementAction} from "./workflow-servers";
+import {ServerRoute,observedServerLifecyclePlan,requireServerLifecycleReceipt,type ServerManagementAction} from "./workflow-servers";
 import {EnrollmentOnboarding} from "./p0-enrollment";
 import {navGroups,groupFor,labelFor,pageDescriptions,visibleRoute,navMatches,setupContextForObjectFamily} from "./uxb-navigation";
 import {START_PAGE_OPTIONS,startPageKeyForOperator,readPreferredStartPage,writePreferredStartPage} from "./uxb-start-page";
@@ -469,21 +469,31 @@ function GuidedApplyPanel({title,build}:{title:string,build:()=>any}){
   </div>;
 }
 
-function ManagedHostMetadataPanel(){
-  const [host,setHost]=useState(""),[label,setLabel]=useState(""),[description,setDescription]=useState("");
+function ManagedHostMetadataPanel({selectedHost}:{selectedHost:any}){
+  const host=String(selectedHost?.id||"");
+  const [label,setLabel]=useState(""),[description,setDescription]=useState(""),[descriptionTouched,setDescriptionTouched]=useState(false);
   const [tags,setTags]=useState("");
   function request(){
-    const payload:any={host,description};
-    if(label)payload.label=label;
+    const payload:any={host};
+    if(label.trim())payload.label=label.trim();
+    if(descriptionTouched)payload.description=description;
     const tagMap:any={};tags.split(",").map(x=>x.trim()).filter(Boolean).forEach(item=>{const i=item.indexOf("=");if(i>0)tagMap[item.slice(0,i).trim()]=item.slice(i+1).trim()});
     if(Object.keys(tagMap).length)payload.tags=tagMap;
     return {change_type:"managed-host-metadata",payload};
   }
-  return <div><div className="card"><h3>Guided Managed Host Metadata</h3><div className="toolbar"><input value={host} onChange={e=>setHost(e.target.value)} placeholder="Managed Host ID/name"/><input value={label} onChange={e=>setLabel(e.target.value)} placeholder="Optional label"/><input value={description} onChange={e=>setDescription(e.target.value)} placeholder="Description (blank clears)"/><input value={tags} onChange={e=>setTags(e.target.value)} placeholder="tags: env=prod,owner=netops"/></div></div><GuidedApplyPanel key={JSON.stringify([host,label,description,tags])} title="Managed Host Change Plan" build={request}/></div>;
+  return <div><div className="card"><h3>Edit server details</h3>
+    <p className="muted">Selected server: <strong>{String(selectedHost?.name||host)}</strong> · {host}. The target cannot be changed here.</p>
+    <div className="dr-form-grid">
+      <label className="dr-field"><span>Display name</span><input aria-label="Display name" value={label} onChange={e=>setLabel(e.target.value)} placeholder="Optional display name"/></label>
+      <label className="dr-field"><span>Description</span><input aria-label="Description" value={description} onChange={e=>{setDescriptionTouched(true);setDescription(e.target.value)}} placeholder="Edit to change; blank clears"/></label>
+      <label className="dr-field"><span>Tags</span><input aria-label="Tags" value={tags} onChange={e=>setTags(e.target.value)} placeholder="env=prod, owner=netops"/></label>
+    </div>
+  </div><GuidedApplyPanel key={JSON.stringify([host,label,description,descriptionTouched,tags])} title="Review server detail change" build={request}/></div>;
 }
 
-function ManagedHostAdmissionPanel(){
-  const [host,setHost]=useState(""),[operation,setOperation]=useState("quarantine");
+function ManagedHostAdmissionPanel({selectedHost}:{selectedHost:any}){
+  const host=String(selectedHost?.id||"");
+  const [operation,setOperation]=useState("quarantine");
   const [preview,setPreview]=useState<any>(null),[confirmation,setConfirmation]=useState("");
   const [message,setMessage]=useState(""),[error,setError]=useState(""),[busy,setBusy]=useState(false);
   const previewGeneration=useRef(0);
@@ -502,8 +512,8 @@ function ManagedHostAdmissionPanel(){
   },[preview?.change_plan_id,preview?.valid_until,busy]);
   function resetAdmission(){previewGeneration.current+=1;setPreview(null);setConfirmation("");setMessage("")}
   async function doPreview(){
-    if(busy||!host.trim())return;
-    const token=++previewGeneration.current,requestHost=host.trim(),requestOperation=operation;
+    if(busy||!host)return;
+    const token=++previewGeneration.current,requestHost=host,requestOperation=operation;
     setError("");setMessage("");setPreview(null);setConfirmation("");setBusy(true);
     try{
       const result=await api("/api/v1/managed-hosts/admission/preview",{
@@ -515,7 +525,7 @@ function ManagedHostAdmissionPanel(){
         return;
       }
       const valid=observedHostAdmissionPlanForAction(result,requestHost,requestOperation);
-      if(!valid)throw new Error("Core Host admission plan does not confirm the exact Host ID or requested transition.");
+      if(!valid)throw new Error("Core Host admission plan does not confirm the selected Host ID or requested transition.");
       setPreview(valid);setConfirmation("");
     }catch(e:any){if(token===previewGeneration.current)
       setError("Host admission Preview unverified: "+String(e.message||e))}
@@ -524,7 +534,7 @@ function ManagedHostAdmissionPanel(){
   async function doApply(){
     if(busy||!preview||confirmation!==operation.toUpperCase())return;
     const reviewedPlan=preview;
-    if(!observedHostAdmissionPlanForAction(reviewedPlan,host.trim(),operation)){
+    if(!observedHostAdmissionPlanForAction(reviewedPlan,host,operation)){
       resetAdmission();
       setError("Core Host admission Change Plan expired or changed; obtain a fresh Preview.");
       return;
@@ -538,29 +548,26 @@ function ManagedHostAdmissionPanel(){
       if(token!==previewGeneration.current)return;
       const confirmed=requireObservedHostAdmissionReceipt(result,reviewedPlan,operation);
       setMessage("Core Host admission "+(operation==="approve"?"approved":"quarantined")+
-        " at revision "+confirmed.revision+". Reload Managed Hosts to verify exact state.");
+        " at revision "+confirmed.revision+". Refresh Servers to verify current state.");
       setPreview(null);setConfirmation("");
     }catch(e:any){if(token===previewGeneration.current){
-      // An unknown response may follow a committed Core revision. Never
-      // reuse this one-shot plan without checking current Host inventory.
       setPreview(null);setConfirmation("");setMessage("");
       setError("Core Admission Apply outcome UNKNOWN. Inspect Host inventory and Change History before retrying. "+String(e.message||e));
     }}finally{if(token===previewGeneration.current)setBusy(false)}
   }
-  const currentActionable=observedHostAdmissionPlanForAction(preview,host.trim(),operation);
+  const currentActionable=observedHostAdmissionPlanForAction(preview,host,operation);
   const required=operation.toUpperCase();
   return <div className="card">
-    <h3>Managed Host Approval / Quarantine</h3>
-    <p className="muted">Admission is separate from connection and management trust. Quarantine denies new Host access; active connections are not terminated. Identity, policy references, services and public ports are preserved. Approval restores normal policy evaluation, not unconditional access. Use the exact Core Host ID from Managed Hosts.</p>
+    <h3>Review approval or quarantine</h3>
+    <p className="muted">Selected server: <strong>{String(selectedHost?.name||host)}</strong> · {host}. Admission is separate from connection and trust. Quarantine denies new Host access; it does not terminate active connections.</p>
     {error&&<div className="error" role="alert">{error}</div>}
     {message&&<div className="notice" role="status">{message}</div>}
     <div className="toolbar">
-      <input value={host} disabled={busy} onChange={e=>{resetAdmission();setHost(e.target.value)}} placeholder="Exact Core Managed Host ID"/>
       <select aria-label="Admission action" disabled={busy} value={operation} onChange={e=>{resetAdmission();setOperation(e.target.value)}}>
         <option value="quarantine">Quarantine new access</option>
-        <option value="approve">Approve / restore access</option>
+        <option value="approve">Approve / restore normal policy evaluation</option>
       </select>
-      <button className="secondary" disabled={busy||!host.trim()} onClick={doPreview}>Preview Admission Impact</button>
+      <button className="secondary" disabled={busy||!host} onClick={doPreview}>Preview Admission Impact</button>
     </div>
     {preview&&<div className="warning-box">
       <pre className="plan">{JSON.stringify({preview:preview.preview,impact:preview.impact,valid_until:preview.valid_until},null,2)}</pre>
@@ -575,38 +582,73 @@ function ManagedHostAdmissionPanel(){
   </div>;
 }
 
-function ManagedHostLifecyclePanel(){
-  const [host,setHost]=useState(""),[operation,setOperation]=useState("revoke-trust");
-  const [preview,setPreview]=useState<any>(null),[confirmation,setConfirmation]=useState(""),[message,setMessage]=useState(""),[error,setError]=useState("");
+function ManagedHostLifecyclePanel({selectedHost}:{selectedHost:any}){
+  const host=String(selectedHost?.id||"");
+  const [operation,setOperation]=useState("revoke-trust");
+  const [preview,setPreview]=useState<any>(null),[confirmation,setConfirmation]=useState(""),[message,setMessage]=useState(""),[error,setError]=useState(""),[busy,setBusy]=useState(false);
+  const generation=useRef(0);
+  useEffect(()=>()=>{generation.current+=1},[]);
+  useEffect(()=>{
+    if(!preview||busy)return;
+    const delay=Date.parse(preview.valid_until)-Date.now();
+    if(!Number.isFinite(delay)||delay>2147483647)return;
+    const timer=setTimeout(()=>{
+      if(Date.now()>=Date.parse(preview.valid_until)){
+        generation.current+=1;setPreview(null);setConfirmation("");
+        setError("Core lifecycle Change Plan expired. Request a fresh Preview.");
+      }
+    },Math.max(0,delay));
+    return()=>clearTimeout(timer);
+  },[preview?.change_plan_id,preview?.valid_until,busy]);
+  function resetLifecycle(){generation.current+=1;setPreview(null);setConfirmation("");setMessage("")}
   async function doPreview(){
-    setError("");setMessage("");
+    if(busy||!host)return;
+    const token=++generation.current,requestOperation=operation;
+    setError("");setMessage("");setPreview(null);setConfirmation("");setBusy(true);
     try{
-      const result=await api("/api/v1/managed-hosts/lifecycle/preview",{method:"POST",body:JSON.stringify({host,operation})});
-      setPreview(result);setConfirmation("");
-    }catch(e:any){setPreview(null);setError(e.message||String(e))}
+      const result=await api("/api/v1/managed-hosts/lifecycle/preview",{method:"POST",body:JSON.stringify({host,operation:requestOperation})});
+      if(token!==generation.current)return;
+      if(result?.no_change===true){setMessage("Core reports NO_CHANGE; no lifecycle Apply is required.");return}
+      const valid=observedServerLifecyclePlan(result,host,requestOperation);
+      if(!valid)throw new Error("Core lifecycle plan does not confirm the selected Host, operation, revision, confirmation, or expiry.");
+      setPreview(valid);
+    }catch(e:any){if(token===generation.current)setError("Lifecycle Preview unverified: "+String(e.message||e))}
+    finally{if(token===generation.current)setBusy(false)}
   }
   async function doApply(){
-    setError("");setMessage("");
+    const required=operation==="retire"?"RETIRE":"REVOKE";
+    if(busy||!preview||confirmation!==required)return;
+    const reviewed=preview;
+    if(!observedServerLifecyclePlan(reviewed,host,operation)){
+      resetLifecycle();setError("Core lifecycle Change Plan expired or changed; obtain a fresh Preview.");return;
+    }
+    const token=++generation.current;setError("");setMessage("");setBusy(true);
     try{
-      const result=await api("/api/v1/managed-hosts/lifecycle/apply",{method:"POST",body:JSON.stringify({change_plan_id:preview?.change_plan_id||"",confirmation})});
-      setMessage((operation==="retire"?"Managed Host retired":"Managed Host trust revoked")+" at revision "+result.revision);
+      const result=await api("/api/v1/managed-hosts/lifecycle/apply",{method:"POST",body:JSON.stringify({change_plan_id:reviewed.change_plan_id,confirmation})});
+      if(token!==generation.current)return;
+      const confirmed=requireServerLifecycleReceipt(result,reviewed);
+      setMessage((operation==="retire"?"Managed Host retired":"Managed Host trust revoked")+" at revision "+confirmed.revision+". Refresh Servers before another action.");
       setPreview(null);setConfirmation("");
-    }catch(e:any){setError(e.message||String(e))}
+    }catch(e:any){if(token===generation.current){
+      setPreview(null);setConfirmation("");setMessage("");
+      setError("Lifecycle Apply outcome UNKNOWN. Inspect Host inventory and Change History before retrying. "+String(e.message||e));
+    }}finally{if(token===generation.current)setBusy(false)}
   }
-  const required=preview?.confirmation_class||"";
+  const required=operation==="retire"?"RETIRE":"REVOKE";
+  const currentActionable=observedServerLifecyclePlan(preview,host,operation);
   return <div className="card">
-    <h3>Managed Host Lifecycle</h3>
-    <div className="muted">Trust revoke keeps the Managed Host record, Remote Services, and public port reservations but requires re-enrollment. Retire permanently removes reference-safe server-owned Host state and owned Remote Services/port reservations.</div>
-    {error&&<div className="error">{error}</div>}{message&&<div className="notice">{message}</div>}
+    <h3>Advanced lifecycle action</h3>
+    <p className="muted">Selected server: <strong>{String(selectedHost?.name||host)}</strong> · {host}. Trust revoke preserves the Host record, services and reservations but requires re-enrollment. Retirement permanently removes reference-safe server-owned state.</p>
+    {error&&<div className="error" role="alert">{error}</div>}{message&&<div className="notice" role="status">{message}</div>}
     <div className="toolbar">
-      <input value={host} onChange={e=>{setHost(e.target.value);setPreview(null);setConfirmation("")}} placeholder="Managed Host ID/name"/>
-      <select value={operation} onChange={e=>{setOperation(e.target.value);setPreview(null);setConfirmation("")}}><option value="revoke-trust">Revoke trust</option><option value="retire">Retire Managed Host</option></select>
-      <button className="primary" onClick={doPreview} disabled={!host}>Preview Impact</button>
+      <select aria-label="Lifecycle action" disabled={busy} value={operation} onChange={e=>{resetLifecycle();setOperation(e.target.value)}}><option value="revoke-trust">Revoke trust</option><option value="retire">Retire Managed Host</option></select>
+      <button className="secondary" type="button" onClick={doPreview} disabled={busy||!host}>Preview Impact</button>
     </div>
     {preview&&<div className="warning-box">
       <pre className="plan">{JSON.stringify({preview:preview.preview,impact:preview.impact,valid_until:preview.valid_until},null,2)}</pre>
-      <label className="apply-label">Type {required} to continue<input value={confirmation} onChange={e=>setConfirmation(e.target.value)} placeholder={required}/></label>
-      <button className="danger" onClick={doApply} disabled={confirmation!==required}>{operation==="retire"?"Retire Managed Host":"Revoke Managed Host Trust"}</button>
+      <label className="apply-label">Type {required} to continue<input value={confirmation} disabled={busy||!currentActionable} onChange={e=>setConfirmation(e.target.value)} placeholder={required}/></label>
+      <button className="danger" type="button" onClick={doApply} disabled={busy||!currentActionable||confirmation!==required}>{operation==="retire"?"Retire Managed Host":"Revoke Managed Host Trust"}</button>
+      {!currentActionable&&<p role="status" className="muted">Core lifecycle Preview expired or unverified. Request a new Preview.</p>}
     </div>}
   </div>;
 }

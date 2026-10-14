@@ -9,6 +9,7 @@ import {activeHostFilterChips,type HostFilterChipId} from './uxb-host-filter-chi
 import {requireObservedBoundedCorePage,requireObservedInventoryContinuation} from './uxb-menu-evidence';
 import {resourceCardSummary} from './uxb-resource-cards';
 import {serviceVisibleIdentity,serviceStateLabel} from './uxb-service-detail';
+import {isObservedAbsoluteTime} from './uxb-integrations-state';
 
 type Row=Record<string,any>;
 type Actor={id?:string,role?:string,username?:string}|null;
@@ -61,6 +62,60 @@ function approvalLabel(row:Row):string{
   return row.admission_state==='APPROVED'?'Approved':row.admission_state==='PENDING_APPROVAL'?'Pending approval':row.admission_state==='QUARANTINED'?'Quarantined':'Not reported';
 }
 const observedLabel=(value:string)=>value==='UNKNOWN'?'Not reported':value;
+
+
+const safeLifecycleText=(value:unknown,max=1024):value is string=>
+  typeof value==='string'&&!!value.trim()&&value.length<=max
+  &&!(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/.test(value));
+
+/** UXR-1.7: accept a lifecycle preview only when Core proves the exact
+ * selected Host, operation, revision, confirmation phrase and live expiry.
+ * This helper grants no authority; Core remains the mutation gate. */
+export function observedServerLifecyclePlan(
+  input:unknown,hostId:unknown,action:unknown,now:number=Date.now()
+):any|null{
+  if(!input||typeof input!=='object'||Array.isArray(input)
+    ||!validId(hostId)||!['revoke-trust','retire'].includes(String(action))
+    ||!Number.isFinite(now))return null;
+  const plan=input as Row,preview=plan.preview,impact=plan.impact;
+  if(!preview||typeof preview!=='object'||Array.isArray(preview)
+    ||!impact||typeof impact!=='object'||Array.isArray(impact))return null;
+  const expected=action==='retire'?'RETIRE':'REVOKE';
+  if(typeof plan.change_plan_id!=='string'||!/^cp_[A-Za-z0-9_-]{16,128}$/.test(plan.change_plan_id)
+    ||plan.operation_class!=='CHANGE'||plan.operation!=='managed-host-lifecycle.'+action
+    ||plan.resource_type!=='managed-host'||plan.resource_ref!==hostId
+    ||!Number.isSafeInteger(plan.expected_revision)||plan.expected_revision<0
+    ||plan.confirmation_class!==expected||plan.lifecycle_operation!==action
+    ||plan.no_change!==false||!isObservedAbsoluteTime(plan.valid_until)
+    ||Date.parse(plan.valid_until)<=now
+    ||preview.operation!==action||preview.entity?.type!=='managed-host'
+    ||preview.entity?.id!==hostId||impact.requires_confirmation!==true
+    ||!safeLifecycleText(impact.warning))return null;
+  if(action==='revoke-trust'){
+    if(impact.destructive!==false||!Array.isArray(impact.kept)
+      ||impact.kept.some((item:unknown)=>!safeLifecycleText(item,96)))return null;
+  }else if(!Array.isArray(preview.cleanup)
+    ||preview.cleanup.some((item:unknown)=>!safeLifecycleText(item,160)))return null;
+  return plan;
+}
+
+/** A lifecycle Apply acknowledgement must advance the exact reviewed plan.
+ * Ambiguous HTTP 200 is UNKNOWN and must not be retried blindly. */
+export function requireServerLifecycleReceipt(input:unknown,plan:unknown):{revision:number}{
+  const fail=():never=>{throw new Error(
+    'UNKNOWN · Core Managed Host lifecycle Apply receipt is unverified. Inspect Host inventory and Change History before retrying.'
+  )};
+  if(!input||typeof input!=='object'||Array.isArray(input)
+    ||!plan||typeof plan!=='object'||Array.isArray(plan))return fail();
+  const receipt=input as Row,reviewed=plan as Row;
+  if(!observedServerLifecyclePlan(reviewed,reviewed.resource_ref,reviewed.lifecycle_operation,
+      Date.parse(reviewed.valid_until)-1)
+    ||receipt.status!=='APPLIED'||receipt.lifecycle_operation!==reviewed.lifecycle_operation
+    ||!Number.isSafeInteger(receipt.revision)
+    ||Number(receipt.revision)<=Number(reviewed.expected_revision))return fail();
+  return {revision:receipt.revision as number};
+}
+
 
 export function ServerGlyph({kind='server'}:{kind?:string}){
   const props={viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:1.7,strokeLinecap:'round' as const,strokeLinejoin:'round' as const,'aria-hidden':true as const};

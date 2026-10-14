@@ -814,7 +814,7 @@ test("UI-03 Managed Host admission must verify exact Core Host, action, impact a
    {...receipt,revision:"18"}])
   assert.throws(()=>menu.requireObservedHostAdmissionReceipt(wrong,plan,"quarantine"),/UNKNOWN|Core/);
  const main=readFileSync(join(root,"src","main.tsx"),"utf8");
- const panel=main.split("function ManagedHostAdmissionPanel(){")[1]?.split("function ManagedHostLifecyclePanel(",1)[0]||"";
+ const panel=main.split("function ManagedHostAdmissionPanel(")[1]?.split("function ManagedHostLifecyclePanel(",1)[0]||"";
  assert.match(panel,/observedHostAdmissionPlanForAction\(result,requestHost,requestOperation\)/);
  assert.match(panel,/requireObservedHostAdmissionReceipt\(result,reviewedPlan,operation\)/);
  assert.match(panel,/Core Admission Apply outcome UNKNOWN/);
