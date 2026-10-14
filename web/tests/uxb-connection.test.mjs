@@ -891,3 +891,15 @@ test("UXR-3.7 Policy authorization never collapses into transport success",()=>{
  assert.match(workspace,/Policy ALLOW never becomes connection success/);
  assert.match(workspace,/Observed live use/);assert.match(workspace,/matchingLive\?\.fidelity\|\|"UNKNOWN"/);
 });
+
+test("UXR-3.11 selected-service diagnosis keeps its return target and labels observation time without inventing a probe",()=>{
+ const src=readFileSync(join(root,"src","main.tsx"),"utf8");
+ const workspace=src.split("function AccessOperations(",2)[1]?.split("function AuditEventList(",1)[0]||"";
+ assert.match(workspace,/Back to selected.*service/);
+ assert.match(workspace,/savedFilter:"id:"\+context\.originId,inspectResourceId:context\.originId/);
+ assert.match(workspace,/setDiagnosisObservedAt\(new Date\(\)\.toISOString\(\)\)/);
+ assert.match(workspace,/Browser received this verified Core response at/);
+ assert.match(workspace,/does not provide a separate Core observation timestamp/);
+ assert.match(workspace,/network_probe_performed\?"Performed":"Not tested"/);
+ assert.match(workspace,/Next action: \{matchingDiagnosis\.next_action\}/);
+});

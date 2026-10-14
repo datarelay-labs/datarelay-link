@@ -1129,6 +1129,7 @@ function AccessOperations({operator,onNavigate,context}:{operator:any,onNavigate
   const [diagnosisEvidence,setDiagnosisEvidence]=useState<{key:string,value:any}|null>(null);
   const [liveEvidence,setLiveEvidence]=useState<{key:string,value:any}|null>(null);
   const [diagnosisBusy,setDiagnosisBusy]=useState(false),[liveBusy,setLiveBusy]=useState(false),[error,setError]=useState("");
+  const [diagnosisObservedAt,setDiagnosisObservedAt]=useState("");
   const [liveResource,setLiveResource]=useState("");
   const [cutoffEvidence,setCutoffEvidence]=useState<{key:string,value:any}|null>(null);
   const cutoffGeneration=useRef(0);
@@ -1169,7 +1170,7 @@ function AccessOperations({operator,onNavigate,context}:{operator:any,onNavigate
     if(field==="source")setSource(value);
     else if(field==="destination")setDestination(value);
     else setSelector(value);
-    diagnosisGeneration.current+=1;setDiagnosisEvidence(null);setDiagnosisBusy(false);setError("");
+    diagnosisGeneration.current+=1;setDiagnosisEvidence(null);setDiagnosisObservedAt("");setDiagnosisBusy(false);setError("");
   }
 
   async function loadCutoffs(){
@@ -1186,7 +1187,7 @@ function AccessOperations({operator,onNavigate,context}:{operator:any,onNavigate
   function changePlane(value:string){
     if(plane===value||cutoffBusy)return;
     diagnosisGeneration.current+=1;liveGeneration.current+=1;
-    setPlane(value);setSelector("");setDiagnosisEvidence(null);setLiveEvidence(null);
+    setPlane(value);setSelector("");setDiagnosisEvidence(null);setDiagnosisObservedAt("");setLiveEvidence(null);
     setDiagnosisBusy(false);setLiveBusy(false);setLiveResource("");
     setScopeKind("plane");setScopeRef("");invalidateCutoff();
   }
@@ -1201,7 +1202,7 @@ function AccessOperations({operator,onNavigate,context}:{operator:any,onNavigate
       const result=await api("/api/v1/diagnose",{method:"POST",body:JSON.stringify(body)});
       if(diagnosisGeneration.current!==token)return;
       const valid=requireObservedDiagnosisView(result,plane,source.trim(),destination.trim(),selector.trim());
-      setDiagnosisEvidence({key:requestKey,value:valid});
+      setDiagnosisEvidence({key:requestKey,value:valid});setDiagnosisObservedAt(new Date().toISOString());
     }catch(e:any){if(diagnosisGeneration.current===token)setError(e.message||String(e))}
     finally{if(diagnosisGeneration.current===token)setDiagnosisBusy(false)}
   }
@@ -1276,7 +1277,7 @@ function AccessOperations({operator,onNavigate,context}:{operator:any,onNavigate
   const flowContext=connectionReviewContext(plane as AccessPlane,source,destination,selector);
   return <div className="dr-access-workspace">
     {error&&<div className="error">{error}</div>}
-    {context?.originId&&<section className="dr-uxb-context card" role="note"><strong>Investigating {context.originType||"resource"}: {context.originId}</strong><p>Core resource names are not automatically Network/Service Objects. Select the exact source, destination and selector before interpreting any Core access decision.</p><button className="secondary" onClick={()=>onNavigate?.("audit","activity",context)}>Review matching Activity log →</button></section>}
+    {context?.originId&&<section className="dr-uxb-context card" role="note"><strong>Investigating {context.originType||"resource"}: {context.originId}</strong><p>Core resource names are not automatically Network/Service Objects. Select the exact source, destination and selector before interpreting any Core access decision.</p><div className="dr-form-actions"><button className="secondary" onClick={()=>onNavigate?.("audit","activity",context)}>Review matching Activity log →</button>{typeof context.originId==="string"&&/^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,159}$/.test(context.originId)&&(context.originType==="remote-service"||context.originType==="managed-host")&&<button className="secondary" onClick={()=>onNavigate?.(context.originType==="remote-service"?"services":"hosts","connections",{savedFilter:"id:"+context.originId,inspectResourceId:context.originId})}>Back to selected {context.originType==="remote-service"?"service":"server"} →</button>}</div></section>}
     <section className="dr-page-intro"><div><p className="dr-eyebrow">Access</p><h2>Access Workspace</h2><p className="muted">Understand who can reach what, why the decision is made, and what is active now.</p></div><div className="dr-page-actions"><button className="secondary" onClick={()=>onNavigate?.("policies","access",flowContext)}>Policies</button>{operator.role!=="Read Only"&&<button className="primary" onClick={()=>onNavigate?.("drafts","access",flowContext)}>Draft change</button>}</div></section>
     <div className="dr-access-purpose-grid" role="tablist" aria-label="Access plane">{(["remote","internet","ai"] as AccessPlane[]).map(value=>{const item=accessPlanePurpose(value);return <button key={value} role="tab" aria-selected={plane===value} className={plane===value?"active":""} disabled={cutoffBusy} onClick={()=>changePlane(value)}>
       <strong>{item.label}</strong><small>{item.summary}</small><span>{item.agentRequired?"Managed Agent path":"No Managed Agent prerequisite"}</span>
@@ -1301,7 +1302,7 @@ function AccessOperations({operator,onNavigate,context}:{operator:any,onNavigate
       </div>
     </section>
     <AccessEvidenceExplorer api={api} plane={plane as AccessPlane} source={source} destination={destination} selector={selector}
-      onSelect={flow=>{diagnosisGeneration.current+=1;setSource(flow.source);setDestination(flow.destination);setSelector(flow.selector);setDiagnosisEvidence(null);setDiagnosisBusy(false)}}
+      onSelect={flow=>{diagnosisGeneration.current+=1;setSource(flow.source);setDestination(flow.destination);setSelector(flow.selector);setDiagnosisEvidence(null);setDiagnosisObservedAt("");setDiagnosisBusy(false)}}
       onInspectHost={hostId=>{const target=observedHostInspectContext(hostId);if(target)onNavigate?.("hosts","infrastructure",target)}}
       actor={operator} onNavigate={(id,group,detail)=>onNavigate?.(id,group,detail??context)}/>
     <div className="card">
@@ -1317,6 +1318,7 @@ function AccessOperations({operator,onNavigate,context}:{operator:any,onNavigate
         <div className="grid"><Metric label="Overall" value={matchingDiagnosis.overall}/><Metric label="Network probe" value={matchingDiagnosis.network_probe_performed?"YES":"NO"}/></div>
         <Table items={layers}/>
         <div className="muted">Next action: {matchingDiagnosis.next_action}</div>
+        <div className="muted">Browser received this verified Core response at {diagnosisObservedAt||"UNKNOWN"}. The current diagnosis contract does not provide a separate Core observation timestamp.</div>
       </>}
       {!matchingDiagnosis&&!diagnosisBusy&&<p className="muted" role="status">Diagnosis: UNKNOWN until the current source, destination and selector have a fresh Core result.</p>}
     </div>
