@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 8,
+  "revision": 9,
   "repository": "datarelay-labs/datarelay-link",
   "roadmap": 184,
   "packet": 182,
@@ -11,7 +11,7 @@
   "priority": "P0_EXCLUSIVE_UI_REDESIGN",
   "exclusive": true,
   "scope_complete": false,
-  "next_task": "UXR-6.1",
+  "next_task": "UXR-7.1",
   "owner_acceptance": null,
   "scope_change_approval": null,
   "milestones": [
@@ -1259,7 +1259,7 @@
         "deployed_source_head": "971f35e250a3a724803478ed68091cf61e6786fc",
         "preview": "https://dev-preview.example.invalid:19044",
         "private_bundle_sha256": "53558225b27f7973544a81c7e48c17fff5876aea51e09027a7c08ac09dab2f08",
-        "verification": "Shared readable headings, 44px primary interaction baseline and common focus-trap contract. Responsive matrix passes after RED 35.5\u201340px controls were corrected.",
+        "verification": "Shared readable headings, 44px primary interaction baseline and common focus-trap contract. Responsive matrix passes after RED 35.5–40px controls were corrected.",
         "qualification": "Exact-head private development deployment; no production/release or live-user acceptance inferred."
       }
     },
@@ -1337,7 +1337,7 @@
         "deployed_source_head": "971f35e250a3a724803478ed68091cf61e6786fc",
         "preview": "https://dev-preview.example.invalid:19044",
         "private_bundle_sha256": "53558225b27f7973544a81c7e48c17fff5876aea51e09027a7c08ac09dab2f08",
-        "verification": "Production View responsive browser matrix PASS: 8 route/error modes \u00d7 4 viewports \u00d7 2 themes; no page-wide overflow, browser errors or fixture writes.",
+        "verification": "Production View responsive browser matrix PASS: 8 route/error modes × 4 viewports × 2 themes; no page-wide overflow, browser errors or fixture writes.",
         "qualification": "Exact-head private development deployment; no production/release or live-user acceptance inferred."
       }
     },
@@ -1434,17 +1434,13 @@
         "UXR-3.4"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "APPROVAL_REQUIRED",
+      "status": "IMPLEMENTED",
       "approval_required": true,
       "evidence": {
         "security_contract": "docs/UI06_TWO_PERSON_TEMPORARY_ACCESS_SECURITY_CONTRACT_2026-10-14.md",
-        "current_gap": "Existing TemporaryAccessPanel is one-actor direct Core preview/apply, not requester/reviewer approval.",
-        "existing_contracts": [
-          "docs/MANAGEMENT_SURFACE_CONTRACT.md section 9.9",
-          "docs/COMPETITIVE_EXPANSION_3_0.md section 9"
-        ],
-        "approval_scope": "Exact UXR-6.1 contract requires explicit owner/security approval before schema/RBAC/API mutation.",
-        "qualification": "Design frozen only; no Core schema, permission, API, Web authority or runtime behavior changed."
+        "approval_ref": "GitHub Issue #182 ACTIVE Work Packet / roadmap #184; owner/security UXR-6.1 approval recorded 2026-10-14 KST",
+        "saved_record": "GitHub Issue #182 ACTIVE Work Packet plus frozen repository contract",
+        "qualification": "Exact UXR-6.1 scope approved for UXR-6.2–6.4 implementation; source implementation is not UXR-6.5 or ACCEPTED proof."
       }
     },
     {
@@ -1461,9 +1457,15 @@
         "UXR-6.1"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "IMPLEMENTED",
       "approval_required": true,
-      "evidence": {}
+      "evidence": {
+        "schema": "Core schema v4 temporary_access_requests with transactional v3 upgrade/fresh/repeat/rollback/read-only coverage",
+        "rbac": "dedicated management-access-request-review; Admin reviewer, distinct actor; Operator requester; Read Only no mutation",
+        "core": "lib/drlink_management_temporary_access_requests.py plus Management Core/Web adapter routes",
+        "focused_tests": "tests/test-v30-temporary-access-requests.py 17/17 PASS; migration and concurrency included",
+        "qualification": "Durable source integration implemented; genuine deployed two-user proof remains UXR-6.5."
+      }
     },
     {
       "id": "UXR-6.3",
@@ -1479,9 +1481,15 @@
         "UXR-6.2"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "IMPLEMENTED",
       "approval_required": true,
-      "evidence": {}
+      "evidence": {
+        "web": "Policies mounts TemporaryAccessRequestsPanel over request/list/detail/review/revoke APIs; direct one-actor Apply retained only under Advanced",
+        "states": "PENDING/APPROVED/REJECTED/EXPIRED/REVOKED; requested-vs-approved duration and bounded request history",
+        "role_ui": "Read Only has no request/review/revoke affordance",
+        "focused_tests": "web/tests/uxb-temporary-access-requests.test.mjs 5/5 PASS; prior full Web service focused suite 31/31 PASS",
+        "qualification": "Actual source/API integration implemented; no deployed-persona acceptance inferred."
+      }
     },
     {
       "id": "UXR-6.4",
@@ -1497,9 +1505,13 @@
         "UXR-6.2"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "IMPLEMENTED",
       "approval_required": true,
-      "evidence": {}
+      "evidence": {
+        "focused_tests": "tests/test-v30-temporary-access-requests.py 17/17 PASS",
+        "covered": "approve-vs-reject concurrency, replay/lost reply, stale revision, target recheck on approve/reject, duration bounds, safety fail/truncation, expiry, revoke, restart, audit redaction",
+        "qualification": "Core safety source implementation verified; real two-user behavior remains UXR-6.5."
+      }
     },
     {
       "id": "UXR-6.5",
@@ -1518,7 +1530,10 @@
       "owner": "CHATGPT_CHAT",
       "status": "SPEC_BOUND",
       "approval_required": true,
-      "evidence": {}
+      "evidence": {
+        "blocker": "Genuine deployed requester plus independent authorized reviewer proof has not yet been executed on one immutable candidate.",
+        "acceptance_claimed": false
+      }
     },
     {
       "id": "UXR-7.1",
@@ -2862,7 +2877,7 @@
   "uxe_to_wbs": [
     {
       "id": "LEGACY19-UXE-01",
-      "meaning": "New Admin logs in and locates \u201cAdd Agent\u201d without instructions | Can discover action and distinguish on-prem install roles",
+      "meaning": "New Admin logs in and locates “Add Agent” without instructions | Can discover action and distinguish on-prem install roles",
       "source_line": 229,
       "wbs": [
         "UXR-7.5"
@@ -2886,7 +2901,7 @@
     },
     {
       "id": "LEGACY19-UXE-04",
-      "meaning": "An intentionally denied source tries to connect | A single \u201cWhy denied?\u201d workflow shows truthful reason, policy and next action; no false ALLOW",
+      "meaning": "An intentionally denied source tries to connect | A single “Why denied?” workflow shows truthful reason, policy and next action; no false ALLOW",
       "source_line": 232,
       "wbs": [
         "UXR-7.5"

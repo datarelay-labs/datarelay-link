@@ -144,6 +144,8 @@ Milestone PASS: All affected screens satisfy Foundation styles, data/role/theme/
 
 Milestone PASS: Approved durable Core contract and real requester/different reviewer/expiry/revoke/audit proof; approval dependency remains explicit.
 
+**Current source status — 2026-10-14 KST:** UXR-6.1 is owner/security approved; UXR-6.2, UXR-6.3 and UXR-6.4 are source **IMPLEMENTED** with focused Core/Web security regressions. UXR-6.5 genuine two-user deployed proof remains **OPEN**. No UXR-6 task is promoted to ACCEPTED by source tests alone.
+
 | WBS | Required change / removal | Verification | Exact PASS | Dependencies / implementation anchors |
 |---|---|---|---|---|
 | **UXR-6.1 Mandatory UI06 contract and approval** | Retain genuine requester/different reviewer/target/duration/expiry/revoke/audit; document minimal Core threat/schema/rollback design. Explicit security approval required. | Review current Core, concrete transaction/roles and owner decision scope. | Approved exact contract before privileged implementation; otherwise APPROVAL_REQUIRED, not excluded/completed; UI-only lock stays. | UXR-3.4; `docs/WEB_USER_JOURNEY_UX_ROADMAP.md`, `Core contract decision` |

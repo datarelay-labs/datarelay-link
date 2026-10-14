@@ -28,7 +28,7 @@
 | UI-03 carry a verified context | setup/policy/draft navigation, exact audit investigation/return | **APPLIED** source |
 | UI-04 Home/Host/Admin guided sections | `main.tsx`, `uxb-host-detail.tsx`, Foundation 4 group Hub, G37 | **APPLIED** source |
 | UI-05 explicit Core change impact | bounded blast radius, required tests and typed one-shot confirmation | **APPLIED** existing canonical Core/Change Plan semantics |
-| **UI-06 two-person time-bounded access request/review** | Existing `TemporaryAccessPanel` is **one actor's** Core preview/apply, explicitly says **NOT** request/reviewer approval. No durable request→different authorized reviewer→atomic decision→expiration/audit contract exists. | **SECURITY GATE — NOT IMPLEMENTED.** Requires explicit owner/security design acceptance, SQLite migration/roles/transaction/replay/concurrency/rollback and canonical Core contract. A fake reviewer form would create an unsafe privilege claim |
+| **UI-06 two-person time-bounded access request/review** | Owner-approved `UI06_TWO_PERSON_TEMPORARY_ACCESS_SECURITY_CONTRACT_2026-10-14.md`; Core schema v4 `temporary_access_requests`; dedicated `management-access-request-review`; Web/Core request/list/detail/review/revoke routes; `TemporaryAccessRequestsPanel` on Policies. Legacy same-actor `TemporaryAccessPanel` remains only under **Advanced · direct Temporary Access** and still is not requester/reviewer approval. | **APPLIED — SOURCE IMPLEMENTED / DEPLOYED TWO-USER PROOF OPEN.** Distinct requester/reviewer, bounded duration, exact revision, policy-safety, expiry/revoke/audit and migration negatives are source-tested. Genuine two-user deployed Browser proof and final acceptance remain separate |
 
 ## Competitor screen → product code/decision ledger
 
@@ -38,7 +38,7 @@ References `CUI-001…040` are **40 ledger slots, not 40 distinct live authentic
 | --- | --- | --- |
 | CUI-001 NetBird, CUI-003 Twingate | context-focused who→policy→resource | **APPLIED** G01 modeled-path focus, UI02 verified publication, G37 bounded Home context; no NetBird/Twingate mesh model transplanted |
 | CUI-002 Tailscale | guided policy rule + preview/tests | **APPLIED** existing GuidedPolicyJourney and G06 explicit prepared intent |
-| CUI-004 Teleport, CUI-005 StrongDM | enterprise requester/reviewer and expiry/history | **SECURITY GATE** UI06 genuine separate Core model absent; **no copy** or false completion. Only independently applicable read-only cards/review evidence adapted G20/21 |
+| CUI-004 Teleport, CUI-005 StrongDM | enterprise requester/reviewer and expiry/history | **APPLIED** as original DRLink UI06 over the owner-approved Core contract: distinct requester/reviewer, bounded duration, durable state, revoke and Audit; **no copied vendor UI**. Genuine deployed two-user Browser proof remains open |
 | CUI-006 Cloudflare | actor/decision/time audit filtering | **PRESERVED** existing AuditExplorer filter/query; no fake per-request auth events |
 | CUI-007 StrongDM | inspect single audit event details | **APPLIED** G07 source-whitelisted event details |
 | CUI-008 Boundary | session broker/recording | **REJECTED** unowned session broker; existing Live Access observation does not prove Boundary session semantics |
@@ -56,7 +56,7 @@ References `CUI-001…040` are **40 ledger slots, not 40 distinct live authentic
 | CUI-020 Teleport | global resource search→exact detail | **APPLIED** G18 |
 | CUI-021 Pomerium | SSH Service connection guidance | **APPLIED** G10; no unauthenticated SSH/browser launch |
 | CUI-022 Teleport | resource table/card density | **APPLIED** G19 Host/Service cards |
-| CUI-023 / CUI-024 Teleport | reviewer resource/duration cards | **APPLIED** G20 expiry triage/G21 Policy cards for READ-only facts; actual independent approval UI06 **SECURITY GATE** |
+| CUI-023 / CUI-024 Teleport | reviewer resource/duration cards | **APPLIED** G20 expiry triage/G21 Policy cards plus Core-backed UI06 requested-vs-approved duration and request history; real two-user deployed acceptance remains open |
 | CUI-025 Teleport | event→policy/Audit deep-link | **APPLIED** G22 read-only policy row/card→Audit |
 | CUI-026 NetBird | Policy Name order | **APPLIED** G23 local policy sort |
 | CUI-027* NetBird | Policy active filter chips/reset | **APPLIED** G24; indexed from G24 P0-1 evidence without inventing additional observation |
@@ -76,7 +76,7 @@ References `CUI-001…040` are **40 ledger slots, not 40 distinct live authentic
 
 ### Unresolved items (do not relabel as completed)
 
-**Only one known owner-mandated missing competitor UI capability cannot be delivered with currently authorized Core:** **UI-06 distinct reviewer/expiry/Audit approval**. Its exact proposed canonical Core contract, RED→GREEN authorization scenarios and explicit separate owner approval gate are documented in `WEB_USER_JOURNEY_UX_ROADMAP.md` and Issue #184. Work on adjacent ordinary UI does not create that contract.
+**No owner-mandated competitor UI source capability remains blocked on an absent UI-06 contract.** UI-06 now has the owner-approved Core contract and source implementation. Its remaining gate is **genuine two-user deployed Browser proof on one exact candidate**, plus the broader role/viewport/final acceptance gates. Source tests do not satisfy those real-user gates.
 
 Previous specifically platform-denied detail-drawer correction/Browser/Client/packaging effects remain held; do not retarget through another tool. E2E explicitly deferred by user. Other roadmap **M2 Core/Agent integration** and **M3 backup/offline upgrade** are still independently tracked as integration or privileged qualification, **not all implemented merely because competitor UI source is mapped**. M5 release is not approved. The Draft PR is not merged, CI and distributed build acceptance remain separate.
 
@@ -84,7 +84,7 @@ Previous specifically platform-denied detail-drawer correction/Browser/Client/pa
 
 - Every G01–G37 `P0-1` source/license/REA and `P0-2` original product implementation/test timeline is in the companion ledger, which takes precedence over this crosswalk if a date or source is ambiguous.
 - G37 last source candidate: P0 38/38 PASS, Web Journey 345/345 PASS, Administration 20/20 PASS, Python UX 56/56 PASS, Bundle 6/6 PASS, production build + diff PASS; exact commit `290048551d95f0a7e20eed657c208ecce1127aa7`; **not Browser/full E2E**.
-- This matrix reconciles **source implementation vs gated/rejected**; there is no truthful basis to assert “all competitor features fully implemented and accepted” until UI06 is separately authorized and implemented, and full user qualification is separately completed when requested.
+- This matrix reconciles **source implementation vs gated/rejected**; there is no truthful basis to assert “all competitor features fully accepted” until UI06 passes genuine deployed two-user proof and the broader full-user qualification/final acceptance gates are completed.
 
 
 ## Original 13-product audit — complete first-pass disposition

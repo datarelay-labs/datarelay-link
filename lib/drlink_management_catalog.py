@@ -82,6 +82,11 @@ MANAGEMENT_PERMISSIONS = (
         frozenset({TEST, CHANGE}),
     ),
     ManagementPermission(
+        "management-access-request-review",
+        "Review distinct-actor two-person Temporary Access requests in first-party Web.",
+        frozenset({OBSERVE, CHANGE}),
+    ),
+    ManagementPermission(
         "management-config",
         "Preview and apply guided server-owned configuration changes through Core.",
         frozenset({TEST, CHANGE}),

@@ -1417,6 +1417,96 @@ class V30WebServiceTests(unittest.TestCase):
         finally:
             plane.close()
 
+    def test_ui06_two_person_temporary_access_request_review_and_revoke(self):
+        # Seed one eligible WHITELIST rule without granting Temporary Access.
+        plane = ControlPlane(self.tmp)
+        try:
+            v24.set_network_object(plane, "ui06-src", type="ip", value="198.51.100.40", oneshot=True)
+            v24.set_network_object(plane, "ui06-dst", type="ip", value="198.51.100.41", oneshot=True)
+            v24.set_service_object(plane, "ui06-ssh", type="tcp", port=22, oneshot=True)
+            v24.set_access_rule(
+                plane, "remote", "ui06-rule", mode="whitelist",
+                source="ui06-src", destination="ui06-dst", service="ui06-ssh",
+                enabled=True, oneshot=True, confirm=True,
+            )
+            before = plane.current_revision()
+        finally:
+            plane.close()
+
+        # Create a distinct Operator requester using the already-established local Admin root.
+        auth = WebAuthService(self.tmp)
+        try:
+            auth.create_operator_local(
+                username="requester", role="Operator", password="RequesterPass1"
+            )
+        finally:
+            auth.close()
+
+        status, headers, payload = self.request(
+            "POST", "/api/v1/auth/login",
+            {"username":"requester","password":"RequesterPass1"},
+        )
+        self.assertEqual(status, 200, payload)
+        requester_cookie = (headers.get("set-cookie") or "").split(";",1)[0]
+        requester_csrf = payload["csrf_token"]
+        self.cookie = requester_cookie
+        self.csrf = requester_csrf
+
+        status, _, denied = self.request(
+            "POST", "/api/v1/temporary-access-requests",
+            {"plane":"remote","rule":"ui06-rule","purpose":"incident work","duration_seconds":900},
+        )
+        self.assertEqual(status, 403, denied)
+
+        status, _, request_row = self.request(
+            "POST", "/api/v1/temporary-access-requests",
+            {"plane":"remote","rule":"ui06-rule","purpose":"incident work","duration_seconds":900},
+            headers={"X-CSRF-Token": requester_csrf},
+        )
+        self.assertEqual(status, 200, request_row)
+        self.assertEqual(request_row["status"], "PENDING")
+        request_id = request_row["id"]
+        plane = ControlPlane(self.tmp)
+        try:
+            self.assertEqual(plane.current_revision(), before)
+            self.assertIsNone(plane._get_rule("remote", "ui06-rule")["expires_at"])
+        finally:
+            plane.close()
+
+        status, _, own = self.request("GET", "/api/v1/temporary-access-requests")
+        self.assertEqual(status, 200, own)
+        self.assertEqual([item["id"] for item in own["items"]], [request_id])
+
+        # Operator cannot review, even if they own the request.
+        status, _, blocked = self.request(
+            "POST", f"/api/v1/temporary-access-requests/{request_id}/review",
+            {"decision":"approve","approved_duration_seconds":600,"reason":"self","row_version":request_row["row_version"]},
+            headers={"X-CSRF-Token": requester_csrf},
+        )
+        self.assertEqual(status, 403, blocked)
+
+        # Login as the independent Admin reviewer.
+        self.cookie = ""; self.csrf = ""; self.login()
+        status, _, approved = self.request(
+            "POST", f"/api/v1/temporary-access-requests/{request_id}/review",
+            {"decision":"approve","approved_duration_seconds":600,"reason":"approved","row_version":request_row["row_version"]},
+            headers={"X-CSRF-Token": self.csrf},
+        )
+        self.assertEqual(status, 200, approved)
+        self.assertEqual(approved["status"], "APPROVED")
+        self.assertEqual(approved["approved_duration_seconds"], 600)
+        self.assertEqual(approved["applied_revision"], before + 1)
+
+        # Original requester can revoke early; the canonical rule becomes expired/narrowed.
+        self.cookie = requester_cookie; self.csrf = requester_csrf
+        status, _, revoked = self.request(
+            "POST", f"/api/v1/temporary-access-requests/{request_id}/revoke",
+            {"row_version": approved["row_version"]},
+            headers={"X-CSRF-Token": requester_csrf},
+        )
+        self.assertEqual(status, 200, revoked)
+        self.assertEqual(revoked["status"], "REVOKED")
+
     def test_audit_export_and_retention_web_routes_are_csrf_and_role_guarded(self):
         self.login()
 

@@ -227,6 +227,45 @@ class ManagementWebApiAdapter:
             actor=actor,
         )
 
+    def temporary_access_request_create(
+        self, *, actor: ManagementActor, plane: str, rule: str,
+        purpose: str, duration_seconds: int,
+    ) -> dict[str, Any]:
+        return self.core.temporary_access_request_create(
+            actor=actor, plane=plane, rule=rule, purpose=purpose,
+            duration_seconds=duration_seconds,
+        )
+
+    def temporary_access_request_list(
+        self, *, actor: ManagementActor, status: str = "", limit: int = 50,
+        cursor: str = "",
+    ) -> dict[str, Any]:
+        return self.core.temporary_access_request_list(
+            actor=actor, status=status, limit=limit, cursor=cursor,
+        )
+
+    def temporary_access_request_get(
+        self, request_id: str, *, actor: ManagementActor,
+    ) -> dict[str, Any]:
+        return self.core.temporary_access_request_get(request_id, actor=actor)
+
+    def temporary_access_request_review(
+        self, request_id: str, *, actor: ManagementActor, decision: str,
+        approved_duration_seconds: int | None, reason: str, row_version: int,
+    ) -> dict[str, Any]:
+        return self.core.temporary_access_request_review(
+            request_id, actor=actor, decision=decision,
+            approved_duration_seconds=approved_duration_seconds,
+            reason=reason, row_version=row_version,
+        )
+
+    def temporary_access_request_revoke(
+        self, request_id: str, *, actor: ManagementActor, row_version: int,
+    ) -> dict[str, Any]:
+        return self.core.temporary_access_request_revoke(
+            request_id, actor=actor, row_version=row_version,
+        )
+
     def system_status(self, *, actor: ManagementActor) -> dict[str, Any]:
         return self.core.system_status(actor=actor)
 

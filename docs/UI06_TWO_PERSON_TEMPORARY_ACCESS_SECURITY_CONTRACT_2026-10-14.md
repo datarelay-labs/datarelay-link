@@ -1,9 +1,10 @@
 # UI-06 Two-Person Temporary Access — Security Contract
 
-Status: **OWNER / SECURITY APPROVAL REQUIRED BEFORE UXR-6.2 IMPLEMENTATION**
+Status: **OWNER / SECURITY APPROVED FOR UXR-6.2–UXR-6.4 IMPLEMENTATION — 2026-10-14 KST**
 
-This document freezes the minimal UXR-6.1 contract. It grants no implementation
-authority and changes no current Core behavior.
+Approval record: GitHub Issue #182 ACTIVE Work Packet / roadmap #184. The
+approval authority is external to this file; this document remains the frozen
+minimal UXR-6.1 contract and does not authorize scope beyond that exact record.
 
 ## 1. Existing authority and gap
 

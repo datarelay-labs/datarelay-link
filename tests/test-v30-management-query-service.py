@@ -205,10 +205,10 @@ class V30ManagementQueryServiceTests(unittest.TestCase):
         self.assertIn("dst", names)
         self.assertNotIn("managed-projection", names)
 
-    def test_health_is_read_only_and_reports_schema3(self):
+    def test_health_is_read_only_and_reports_current_schema(self):
         health = self.service.health()
         self.assertTrue(health["read_only"])
-        self.assertEqual(health["schema"], 3)
+        self.assertEqual(health["schema"], 4)
         self.assertEqual(health["clients"], 3)
 
     def test_policy_test_delegates_to_same_core_evaluator(self):

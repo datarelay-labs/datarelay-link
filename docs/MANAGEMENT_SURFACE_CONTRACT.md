@@ -239,6 +239,7 @@ management-read
 management-diagnose
 management-policy-test
 management-temporary-access
+management-access-request-review
 management-emergency-cutoff
 management-job-observe
 management-job-run
@@ -482,9 +483,11 @@ quality and cannot trigger automatic lock/delete/policy mutation.
 ### 9.9 Lightweight JIT request / approval — P2 stretch
 
 If shipped, requester and reviewer are distinct principals. One Admin Approve/Deny action
-may create the same Temporary Access grant already defined by Core. Multi-stage approval,
-self-approval, recurring entitlements, external workflow engines, and automatic renewal are
-outside the stretch contract. Plugin approval is disabled by default.
+may create the same Temporary Access grant already defined by Core. Review requires the
+dedicated `management-access-request-review` permission in addition to Admin role; direct
+`management-temporary-access` authority alone does not imply reviewer authority. Multi-stage
+approval, self-approval, recurring entitlements, external workflow engines, and automatic
+renewal are outside the stretch contract. Plugin approval is disabled by default.
 
 ## 10. Web / Plugin experience relationship
 

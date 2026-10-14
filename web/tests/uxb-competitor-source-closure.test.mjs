@@ -12,6 +12,7 @@ const matrix=md("COMPETITOR_UI_APPLIED_MATRIX_2026-10-12.md");
 const ledger=md("COMPETITOR_UI_SCREEN_EVIDENCE_2026-10-11.md");
 const main=src("main.tsx");
 const path=src("p0-access-policy.tsx");
+const ui06=src("uxb-temporary-access-requests-panel.tsx");
 
 test("Competitor UI source closure declares all 8 UX, all 6 UI and every evidence slot CUI-001..040",()=>{
  for(let i=1;i<=8;i++)assert.ok(matrix.includes("UX-"+i+" "),String(i));
@@ -60,10 +61,14 @@ test("Adopted UI implementation has original Link code for explain/change/enroll
  assert.match(main,/AdministrationHub/);
 });
 
-test("UI-06 is explicitly NOT IMPLEMENTED, not disguised as single-actor Temporary Access",()=>{
+test("UI-06 source uses approved distinct requester/reviewer Core flow and keeps same-actor access advanced",()=>{
  assert.match(matrix,/UI-06 two-person/);
- assert.match(matrix,/SECURITY GATE — NOT IMPLEMENTED/);
- assert.match(matrix,/owner\/security design acceptance/);
+ assert.match(matrix,/SOURCE IMPLEMENTED \/ DEPLOYED TWO-USER PROOF OPEN/);
+ assert.match(main,/TemporaryAccessRequestsPanel api=\{api\} operator=\{operator\}/);
+ assert.match(main,/Advanced · direct Temporary Access/);
+ for(const route of ["temporary-access-requests","review","revoke"])assert.ok(ui06.includes(route),route);
+ assert.match(ui06,/Read Only can inspect policy state but cannot request, review, or revoke Temporary Access/);
+ assert.match(ui06,/Request history/);
  const start=main.indexOf("function TemporaryAccessPanel(){");
  const end=main.indexOf("function PolicySafetyPanel(",start);
  assert.ok(start>0&&end>start);
@@ -71,8 +76,7 @@ test("UI-06 is explicitly NOT IMPLEMENTED, not disguised as single-actor Tempora
  assert.match(single,/not a requester\/reviewer approval/);
  assert.match(single,/\/api\/v1\/temporary-access\/preview/);
  assert.match(single,/\/api\/v1\/temporary-access\/apply/);
- assert.doesNotMatch(single,/\/api\/v1\/access-requests|approveAccessRequest|requestReviewAccess/);
- assert.match(matrix,/Browser UNVERIFIED|Browser E2E|NOT release approval/);
+ assert.match(matrix,/two-user deployed Browser proof|DEPLOYED TWO-USER PROOF OPEN/);
 });
 
 test("Old proposed audits point to current applied status instead of falsely claiming unfinished selected source",()=>{

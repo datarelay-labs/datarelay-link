@@ -56,6 +56,7 @@ import {filterLoadedHostConnections,type HostConnectionFilter} from "./uxb-host-
 import {hostDisplayFilterResetAvailable} from "./uxb-host-filter-reset";
 import {activeHostFilterChips,type HostFilterChipId} from "./uxb-host-filter-chips";
 import {FirstConnectionSetup,connectionReviewContext,type SetupDraft} from "./uxb-setup";
+import {TemporaryAccessRequestsPanel} from "./uxb-temporary-access-requests-panel";
 
 type Json = Record<string, any>;
 
@@ -2311,6 +2312,7 @@ function PolicyWorkspace({data,operator,onNavigate,api,context}:{data:any,operat
             Review related Audit →
           </button></td></tr>)}</tbody></table></div>}
     </section>
+    <TemporaryAccessRequestsPanel api={api} operator={operator}/>
     {selected&&<div className="dr-drawer-backdrop" onMouseDown={e=>{if(e.currentTarget===e.target)setSelected(null)}}><aside ref={detailRef} className="dr-detail-drawer" role="dialog" aria-modal="true" aria-label="Policy detail" tabIndex={-1}><header><div><p className="dr-eyebrow">{selected.plane||"Policy"} access</p><h2>{selected.name||selected.id}</h2><p>{selected.id}</p></div><button className="dr-icon-button" onClick={()=>setSelected(null)} aria-label="Close detail">×</button></header><div className="dr-drawer-status"><span className={policyStateLabel(selected.enabled)==="Enabled"?"dr-state active":"dr-state"}><i/>{policyStateLabel(selected.enabled)}</span></div><div className="dr-detail-fields">{observedPolicyDetailFields(selected).map(field=><div key={field.label}><span>{field.label}</span><strong>{field.value}</strong></div>)}</div><footer><button className="secondary" onClick={()=>{const target={originId:String(selected.id||selected.name||""),originType:"access-rule",plane:selected.plane};setSelected(null);onNavigate?.("audit","activity",target)}}>Recent activity</button><button className="primary" onClick={()=>{const target={originId:String(selected.id||selected.name||""),originType:"access-rule",plane:selected.plane||"remote",source:String(selected.source||""),destination:String(selected.destination||""),selector:String(selected.plane==="ai"?selected.permission||"":selected.service||"")};setSelected(null);onNavigate?.("access","access",target)}}>Why allowed / denied?</button></footer></aside></div>}
   </div>;
 }
@@ -3085,7 +3087,7 @@ function LegacyView({active,operator,onNavigate,context,setupDraft,onSetupDraftC
     const initialFlow=connectionReviewContext(selectedPlane,context?.source,context?.destination,context?.selector);
     return <><PolicyWorkspace data={data} operator={operator} onNavigate={onNavigate} api={api} context={context}/>
       {operator.role!=="Read Only"&&<GuidedPolicyJourney api={api} onNavigate={onNavigate}
-        initialPlane={selectedPlane} initialFlow={"source" in initialFlow?initialFlow:undefined}/>}<PolicySafetyPanel operator={operator}/>{operator.role!=="Read Only"&&<><GuidedPolicySettingsPanel/><TemporaryAccessPanel/></>}</>;
+        initialPlane={selectedPlane} initialFlow={"source" in initialFlow?initialFlow:undefined}/>}<PolicySafetyPanel operator={operator}/>{operator.role!=="Read Only"&&<><GuidedPolicySettingsPanel/><details className="dr-technical-details"><summary>Advanced · direct Temporary Access</summary><TemporaryAccessPanel/></details></>}</>;
   }
   if(active==="doctor"&&data)return <CoreDoctorWorkspace data={data} onNavigate={onNavigate}/>;
   if(active==="health"&&data)return <HealthWorkspace data={data} onNavigate={onNavigate}/>;
