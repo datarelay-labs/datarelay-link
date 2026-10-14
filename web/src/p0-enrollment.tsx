@@ -754,7 +754,7 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate,onBus
           <button className="secondary" disabled={!admin||!matchingHostScope||!selected||busy||fetchBusy} onClick={previewApproval}>Preview approval impact</button>
           {scopedPreview&&<div className="dr-p0-review">
             <p>Authoritative Core plan · valid until {scopedPreview.valid_until||"UNKNOWN"}</p>
-            <details><summary>Review exact approval impact</summary><pre className="plan">{JSON.stringify({preview:scopedPreview.preview,impact:scopedPreview.impact},null,2)}</pre></details>
+            <details className="dr-technical-details"><summary>Technical details · approval impact</summary><pre className="plan">{JSON.stringify({preview:scopedPreview.preview,impact:scopedPreview.impact},null,2)}</pre></details>
             <label className="dr-field"><span>Type {required} to approve</span><input value={confirm} onChange={e=>setConfirm(e.target.value)} placeholder={required}/></label>
             <button className="danger" disabled={!admin||!matchingHostScope||!approvalActionable||confirm!==required||busy} onClick={applyApproval}>Approve through Core</button>
           </div>}

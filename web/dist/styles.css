@@ -547,3 +547,6 @@
 :is(.dr-resource-workspace,.dr-access-workspace,.dr-audit-card,.dr-p0-section,.dr-workflow-servers,.dr-command-palette) :is(button.primary,button.secondary,button.danger){min-height:44px}
 .dr-detail-drawer :is(button.primary,button.secondary,button.danger),.dr-detail-drawer .dr-icon-button{min-height:44px}
 .dr-detail-drawer:focus-visible{outline:2px solid var(--dr-focus-ring);outline-offset:-2px}
+
+/* UXR-5.2 shared progressive disclosure for nonessential implementation evidence. */
+.dr-technical-details{margin-top:10px}.dr-technical-details>summary{min-height:44px;display:flex;align-items:center;cursor:pointer;font-weight:600;color:var(--dr-text-secondary)}.dr-technical-details[open]>summary{margin-bottom:8px}.dr-technical-details>summary:focus-visible{outline:2px solid var(--dr-focus-ring);outline-offset:2px}.dr-technical-details .plan{max-height:320px;overflow:auto}

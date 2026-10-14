@@ -294,7 +294,7 @@ export function RemoteServiceEditor({api,ownerHint="",onSelection,initialSelecti
     {preview&&<div className="dr-p0-review">
       <h4>Core change preview</h4>
       <p>Valid until: {preview.valid_until||"UNKNOWN"} · approval never means Agent job completed.</p>
-      <details><summary>Review owning Host, impact and expected work</summary>
+      <details className="dr-technical-details"><summary>Technical details · owning Host and expected work</summary>
         <pre className="plan">{JSON.stringify({owner:preview.owner,impact:preview.impact,preview:preview.preview},null,2)}</pre>
       </details>
       <label className="dr-field"><span>Type {required} to queue</span><input value={confirmation} onChange={e=>setConfirmation(e.target.value)} placeholder={required}/></label>
@@ -306,7 +306,7 @@ export function RemoteServiceEditor({api,ownerHint="",onSelection,initialSelecti
       <strong>Agent job: {visibleJob.job_id}</strong>
       <p>Status: {visibleJob.status}. The public endpoint is confirmed only by fresh Remote Service inventory after the job succeeds; target reachability remains separate.</p>
       <button className="secondary" disabled={busy||!job.job_id||visibleJob.job_id==="UNKNOWN"} onClick={refreshJob}>Refresh actual job status</button>
-      <details><summary>Bounded Core job evidence</summary><pre className="plan">{JSON.stringify(visibleJob,null,2)}</pre>
+      <details className="dr-technical-details"><summary>Technical details · bounded Core job evidence</summary><pre className="plan">{JSON.stringify(visibleJob,null,2)}</pre>
         <p className="muted">Unrestricted Agent payloads, credentials and job results are not displayed in this workspace. Check authenticated Jobs for permitted diagnostic details.</p>
       </details>
     </div>}

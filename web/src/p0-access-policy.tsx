@@ -542,7 +542,7 @@ export function AccessEvidenceExplorer({api,plane,source,destination,selector,on
         <p className="muted">The policy list verifies an exact single rule identity before opening details. A trace name alone is not a policy ID.</p>
       </div>}
       {visibleTrace.mixed===true&&<p className="warning-box">Mixed group membership outcomes; inspect individual member results before acting.</p>}
-      <details><summary>Advanced · exact Core trace</summary><pre className="plan">{JSON.stringify(visibleTrace,null,2)}</pre></details>
+      <details className="dr-technical-details"><summary>Technical details · exact Core trace</summary><pre className="plan">{JSON.stringify(visibleTrace,null,2)}</pre></details>
     </div>}
     {!visibleTrace&&!traceBusy&&<p className="muted">Decision: UNKNOWN until a fresh Core decision trace succeeds.</p>}
   </section>;
@@ -794,7 +794,7 @@ export function GuidedPolicyJourney({api,onNavigate,initialPlane="remote",locked
       {preview.blast_radius?.limits?.truncated&&<p className="warning-box">Core impact model is truncated. Apply is blocked until an untruncated preview is available.</p>}
       {unknowns.length>0&&<div className="warning-box">Unknown impact evidence: {unknowns.slice(0,8).join(" · ")}</div>}
       {preview.policy_regression&&<p className={preview.policy_regression.ok?"notice":"warning-box"}>Core preview required tests: {preview.policy_regression.passed??"?"}/{preview.policy_regression.count??"?"}; failures {preview.policy_regression.required_failed??"UNKNOWN"}</p>}
-      <details><summary>Advanced · Core preview and graph overlay</summary><pre className="plan">{JSON.stringify({preview:preview.preview,impact:preview.impact,blast_radius:preview.blast_radius,graph_overlay:preview.graph_overlay},null,2)}</pre></details>
+      <details className="dr-technical-details"><summary>Technical details · Core preview and graph overlay</summary><pre className="plan">{JSON.stringify({preview:preview.preview,impact:preview.impact,blast_radius:preview.blast_radius,graph_overlay:preview.graph_overlay},null,2)}</pre></details>
       <h4>3. Independently verify saved required tests</h4>
       <p className="muted">Read-only Core test run is a second check. Failing or unavailable results block Apply.</p>
       <button className="secondary" disabled={!preview.change_plan_id||busy} onClick={verifyRequired}>{busy?"Checking…":"Run required policy regression tests"}</button>

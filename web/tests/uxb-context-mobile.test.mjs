@@ -53,3 +53,20 @@ test("UXR-5.1/5.5 redesigned workflow targets and generic detail dialogs use sha
  assert.match(css,/button\.primary,button\.secondary,button\.danger\)\{min-height:44px\}/);
  assert.match(css,/\.dr-detail-drawer:focus-visible/);
 });
+
+
+test("UXR-5.2 nonessential Core implementation evidence uses one accessible Technical details disclosure while critical warnings stay visible",()=>{
+ const files=["p0-enrollment.tsx","p0-access-policy.tsx","uxb-remote-service.tsx","main.tsx"].map(name=>readFileSync(join(root,"src",name),"utf8")).join("\n");
+ const css=readFileSync(join(root,"dist","styles.css"),"utf8");
+ assert.match(files,/Technical details · approval impact/);
+ assert.match(files,/Technical details · exact Core trace/);
+ assert.match(files,/Technical details · Core preview and graph overlay/);
+ assert.match(files,/Technical details · owning Host and expected work/);
+ assert.match(files,/Technical details · bounded Core job evidence/);
+ assert.match(files,/Technical details · bounded Core health facts/);
+ assert.match(files,/Delete is destructive/);
+ assert.match(files,/Core impact model is truncated|impact model is truncated/);
+ assert.match(files,/Required tests:/);
+ assert.match(css,/\.dr-technical-details>summary\{min-height:44px/);
+ assert.match(css,/\.dr-technical-details>summary:focus-visible/);
+});
