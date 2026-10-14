@@ -1,3 +1,19 @@
+## 2026-10-14 continuation — V3 Access, Home and Activity development deployment
+
+Exact deployed Link source: `1c90e9ef0029fe53340f5bf2793eac60cf8da011`. UXR-3.1–3.11 and UXR-4.1–4.10 are source-complete and deployed to the approved development preview, while live-user acceptance remains open.
+
+- Access now presents Remote / Internet / AI as distinct planes, keeps basic rule editing separate from advanced exact-name entry, displays prepared SET/DELETE intent, retains Core Preview → required tests → typed Apply, separates current/draft/preview evidence, and preserves focused bounded graph/policy/Audit pivots.
+- Policy authorization, transport testing and observed live-use evidence are visibly distinct. The selected-service diagnosis preserves a safe return target, shows the Core next action, and labels the browser receipt time instead of inventing a server observation timestamp or network probe.
+- Home makes next tasks dominant, places fleet counts under evidence disclosure, and exposes only observed enabled services without claiming reachability. Activity is a six-column human-readable list with one bounded selected event.
+- Global Search retains old aliases and now exposes a keyboard-readable “What changed in navigation?” help panel. Saved Views, shell preferences, Foundation Administration and operational detail paths remain intact.
+- Focused source tests: Access/Policy **153/153 PASS**; Home/Audit/Saved Views/Search/Admin/operations **163/163 PASS**; Journey **437/437 PASS**; P0 **44/44 PASS**.
+- Private RC41 bundle `439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b`, Foundation `46ddb60`, ten private archives; activation moved only the approved development pointer from `dev-installed-df12fde7` to `dev-installed-1c90e9ef`.
+- Served preview `https://221.139.249.111:19044`: all five assets HTTP 200 and match the installed candidate; app.js `def05ce30033073d4807fee067b276c6a6c2aee8826565323dde6e4c687bd642`, styles.css `0c31801485e67f1875af4417e454459b514bf30aaab3e7e45637e0ec4eeb071e`, anonymous session **401**.
+
+No UXR-3/4 task is marked ACCEPTED from fixture/source/deployment evidence. Actual authenticated roles, real traffic/Agent, all route/viewports and owner acceptance remain later UXR-5/7 evidence. Next source task: **UXR-5.1**.
+
+---
+
 ## 2026-10-14 continuation — V2 server-to-service journey deployed
 
 Exact deployed Link source: `df12fde730a8f40bb961821888302de90492d7b7`. This continuation implements the UXR-2 source journey without changing Core authorization, enrollment, admission, Remote Service or policy semantics.

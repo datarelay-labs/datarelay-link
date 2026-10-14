@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 3,
+  "revision": 4,
   "repository": "datarelay-labs/datarelay-link",
   "roadmap": 184,
   "packet": 182,
@@ -11,7 +11,7 @@
   "priority": "P0_EXCLUSIVE_UI_REDESIGN",
   "exclusive": true,
   "scope_complete": false,
-  "next_task": "UXR-3.1",
+  "next_task": "UXR-5.1",
   "owner_acceptance": null,
   "scope_change_approval": null,
   "milestones": [
@@ -673,9 +673,16 @@
         "UXR-1.10"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "DEV_DEPLOYED",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "source_commit": "79040bbbad40cca820642047c09e2b3a17ee432a",
+        "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
+        "preview": "https://221.139.249.111:19044",
+        "focused_tests": "Remote/Internet/AI plane semantics and source identity separation; explicit Agent prerequisite only for Remote. Focused policy/access suite 153/153 PASS; P0 44/44; Journey 437/437 at current source.",
+        "qualification": "Development preview only; authenticated live-user/real-traffic acceptance remains open."
+      }
     },
     {
       "id": "UXR-3.2",
@@ -691,9 +698,16 @@
         "UXR-3.1"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "DEV_DEPLOYED",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "source_commit": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
+        "preview": "https://221.139.249.111:19044",
+        "focused_tests": "Basic Core-choice rule editor with advanced exact-name disclosure; normal workflow has no raw JSON requirement. Focused policy/access suite 153/153 PASS; P0 44/44; Journey 437/437 at current source.",
+        "qualification": "Development preview only; authenticated live-user/real-traffic acceptance remains open."
+      }
     },
     {
       "id": "UXR-3.3",
@@ -709,9 +723,16 @@
         "UXR-3.2"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "DEV_DEPLOYED",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "source_commit": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
+        "preview": "https://221.139.249.111:19044",
+        "focused_tests": "Prepared SET/DELETE intent exposes rule/plane/source/destination/selector/enabled/expiry before Preview. Focused policy/access suite 153/153 PASS; P0 44/44; Journey 437/437 at current source.",
+        "qualification": "Development preview only; authenticated live-user/real-traffic acceptance remains open."
+      }
     },
     {
       "id": "UXR-3.4",
@@ -728,9 +749,16 @@
         "UXR-3.3"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "DEV_DEPLOYED",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "source_commit": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
+        "preview": "https://221.139.249.111:19044",
+        "focused_tests": "Core Preview, bounded impact, required regression tests and typed one-shot Apply with expiry/concurrency/UNKNOWN handling. Focused policy/access suite 153/153 PASS; P0 44/44; Journey 437/437 at current source.",
+        "qualification": "Development preview only; authenticated live-user/real-traffic acceptance remains open."
+      }
     },
     {
       "id": "UXR-3.5",
@@ -746,9 +774,16 @@
         "UXR-3.1"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "DEV_DEPLOYED",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "source_commit": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
+        "preview": "https://221.139.249.111:19044",
+        "focused_tests": "Current Core graph/trace, screen-only draft and authoritative Preview are separately labeled; no browser draft authority. Focused policy/access suite 153/153 PASS; P0 44/44; Journey 437/437 at current source.",
+        "qualification": "Development preview only; authenticated live-user/real-traffic acceptance remains open."
+      }
     },
     {
       "id": "UXR-3.6",
@@ -764,9 +799,16 @@
         "UXR-3.5"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "DEV_DEPLOYED",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "source_commit": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
+        "preview": "https://221.139.249.111:19044",
+        "focused_tests": "Focused loaded Core-modeled paths, >16 matching discovery, bounded/truncated warnings and no no-match=DENY claim. Focused policy/access suite 153/153 PASS; P0 44/44; Journey 437/437 at current source.",
+        "qualification": "Development preview only; authenticated live-user/real-traffic acceptance remains open."
+      }
     },
     {
       "id": "UXR-3.7",
@@ -783,9 +825,16 @@
         "UXR-3.6"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "DEV_DEPLOYED",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "source_commit": "79040bbbad40cca820642047c09e2b3a17ee432a",
+        "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
+        "preview": "https://221.139.249.111:19044",
+        "focused_tests": "Policy, transport test and observed live-use evidence are separate; policy ALLOW never means connection success. Focused policy/access suite 153/153 PASS; P0 44/44; Journey 437/437 at current source.",
+        "qualification": "Development preview only; authenticated live-user/real-traffic acceptance remains open."
+      }
     },
     {
       "id": "UXR-3.8",
@@ -802,9 +851,16 @@
         "UXR-3.6"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "DEV_DEPLOYED",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "source_commit": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
+        "preview": "https://221.139.249.111:19044",
+        "focused_tests": "Exact Service->Host, same-plane Policy and bounded Audit pivots use already-authorized identity only. Focused policy/access suite 153/153 PASS; P0 44/44; Journey 437/437 at current source.",
+        "qualification": "Development preview only; authenticated live-user/real-traffic acceptance remains open."
+      }
     },
     {
       "id": "UXR-3.9",
@@ -821,9 +877,16 @@
         "UXR-3.2"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "DEV_DEPLOYED",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "source_commit": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
+        "preview": "https://221.139.249.111:19044",
+        "focused_tests": "Policy state/expiry/search/sort/chips/cards/table/AI mapping regressions retained. Focused policy/access suite 153/153 PASS; P0 44/44; Journey 437/437 at current source.",
+        "qualification": "Development preview only; authenticated live-user/real-traffic acceptance remains open."
+      }
     },
     {
       "id": "UXR-3.10",
@@ -840,9 +903,16 @@
         "UXR-3.9"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "DEV_DEPLOYED",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "source_commit": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
+        "preview": "https://221.139.249.111:19044",
+        "focused_tests": "Actor-private policy Saved Views and safe carried flow context retained; UI preference never grants access. Focused policy/access suite 153/153 PASS; P0 44/44; Journey 437/437 at current source.",
+        "qualification": "Development preview only; authenticated live-user/real-traffic acceptance remains open."
+      }
     },
     {
       "id": "UXR-3.11",
@@ -860,9 +930,16 @@
         "UXR-3.8"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "DEV_DEPLOYED",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "source_commit": "19b95265c87abf7f87dbe1b280300b6c0fd3a5bf",
+        "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
+        "preview": "https://221.139.249.111:19044",
+        "focused_tests": "Selected-service diagnosis preserves return target, labels browser receipt time vs missing Core timestamp, and exposes Core next action without network-probe invention. Focused policy/access suite 153/153 PASS; P0 44/44; Journey 437/437 at current source.",
+        "qualification": "Development preview only; authenticated live-user/real-traffic acceptance remains open."
+      }
     },
     {
       "id": "UXR-4.1",
@@ -879,9 +956,16 @@
         "UXR-2.10"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "DEV_DEPLOYED",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "source_commit": "7b279aef5255e8ac9fcc5cf46a4dfb4208a20abe",
+        "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
+        "preview": "https://221.139.249.111:19044",
+        "focused_tests": "Purpose-first Home keeps next tasks primary and moves fleet counters into secondary evidence disclosure. Focused Home/Audit/Saved Views/Search/Admin/operations suite 163/163 PASS; Journey 437/437.",
+        "qualification": "Development preview only; authenticated three-role browser acceptance remains open."
+      }
     },
     {
       "id": "UXR-4.2",
@@ -898,9 +982,16 @@
         "UXR-4.1"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "DEV_DEPLOYED",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "source_commit": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
+        "preview": "https://221.139.249.111:19044",
+        "focused_tests": "Core-derived attention and health rows remain actionable with bounded count/time/scope and UNKNOWN handling. Focused Home/Audit/Saved Views/Search/Admin/operations suite 163/163 PASS; Journey 437/437.",
+        "qualification": "Development preview only; authenticated three-role browser acceptance remains open."
+      }
     },
     {
       "id": "UXR-4.3",
@@ -917,9 +1008,16 @@
         "UXR-4.1"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "DEV_DEPLOYED",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "source_commit": "7b279aef5255e8ac9fcc5cf46a4dfb4208a20abe",
+        "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
+        "preview": "https://221.139.249.111:19044",
+        "focused_tests": "Home exposes only observed enabled loaded services as actions and never calls them reachable/popular. Focused Home/Audit/Saved Views/Search/Admin/operations suite 163/163 PASS; Journey 437/437.",
+        "qualification": "Development preview only; authenticated three-role browser acceptance remains open."
+      }
     },
     {
       "id": "UXR-4.4",
@@ -936,9 +1034,16 @@
         "UXR-1.8"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "DEV_DEPLOYED",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "source_commit": "7b279aef5255e8ac9fcc5cf46a4dfb4208a20abe",
+        "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
+        "preview": "https://221.139.249.111:19044",
+        "focused_tests": "Activity uses six human columns and one selected bounded Core event; raw nested payloads remain hidden. Focused Home/Audit/Saved Views/Search/Admin/operations suite 163/163 PASS; Journey 437/437.",
+        "qualification": "Development preview only; authenticated three-role browser acceptance remains open."
+      }
     },
     {
       "id": "UXR-4.5",
@@ -955,9 +1060,16 @@
         "UXR-4.4"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "DEV_DEPLOYED",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "source_commit": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
+        "preview": "https://221.139.249.111:19044",
+        "focused_tests": "Audit UTC presets, applied query/page refresh, pagination, export and retention guards retained. Focused Home/Audit/Saved Views/Search/Admin/operations suite 163/163 PASS; Journey 437/437.",
+        "qualification": "Development preview only; authenticated three-role browser acceptance remains open."
+      }
     },
     {
       "id": "UXR-4.6",
@@ -974,9 +1086,16 @@
         "UXR-1.4"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "DEV_DEPLOYED",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "source_commit": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
+        "preview": "https://221.139.249.111:19044",
+        "focused_tests": "Saved Views search/sort/type/chips/reset/25-row page/private reopen behavior retained including legacy unsupported state. Focused Home/Audit/Saved Views/Search/Admin/operations suite 163/163 PASS; Journey 437/437.",
+        "qualification": "Development preview only; authenticated three-role browser acceptance remains open."
+      }
     },
     {
       "id": "UXR-4.7",
@@ -993,9 +1112,16 @@
         "UXR-1.5"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "DEV_DEPLOYED",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "source_commit": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
+        "preview": "https://221.139.249.111:19044",
+        "focused_tests": "Ctrl/Cmd+K Search retains old aliases, exact typed results and adds keyboard-readable What changed navigation help. Focused Home/Audit/Saved Views/Search/Admin/operations suite 163/163 PASS; Journey 437/437.",
+        "qualification": "Development preview only; authenticated three-role browser acceptance remains open."
+      }
     },
     {
       "id": "UXR-4.8",
@@ -1012,9 +1138,16 @@
         "UXR-1.10"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "DEV_DEPLOYED",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "source_commit": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
+        "preview": "https://221.139.249.111:19044",
+        "focused_tests": "Home plus four task groups, single title/breadcrumb/sticky shell, theme/collapse and icon+text navigation retained. Focused Home/Audit/Saved Views/Search/Admin/operations suite 163/163 PASS; Journey 437/437.",
+        "qualification": "Development preview only; authenticated three-role browser acceptance remains open."
+      }
     },
     {
       "id": "UXR-4.9",
@@ -1031,9 +1164,16 @@
         "UXR-4.8"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "DEV_DEPLOYED",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "source_commit": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
+        "preview": "https://221.139.249.111:19044",
+        "focused_tests": "Foundation Administration canonical role/task integration retained without duplicating common auth/users/MFA authority. Focused Home/Audit/Saved Views/Search/Admin/operations suite 163/163 PASS; Journey 437/437.",
+        "qualification": "Development preview only; authenticated three-role browser acceptance remains open."
+      }
     },
     {
       "id": "UXR-4.10",
@@ -1051,9 +1191,16 @@
         "UXR-4.9"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "DEV_DEPLOYED",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "source_commit": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
+        "preview": "https://221.139.249.111:19044",
+        "focused_tests": "Health/Doctor/jobs/version/revisions/export/support/integration operations retain truthful Pending/UNKNOWN/Failed evidence. Focused Home/Audit/Saved Views/Search/Admin/operations suite 163/163 PASS; Journey 437/437.",
+        "qualification": "Development preview only; authenticated three-role browser acceptance remains open."
+      }
     },
     {
       "id": "UXR-5.1",
@@ -1320,12 +1467,12 @@
       "status": "IMPLEMENTED",
       "approval_required": false,
       "evidence": {
-        "source_commit": "df12fde730a8f40bb961821888302de90492d7b7",
-        "bundle_sha256": "98dd9d687fbcb75f4e887a6ee96f8f5b8b38e938ad6089de827f5bd3f687fc4a",
+        "source_commit": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
         "foundation_head": "46ddb60cad8eae7b1718588cd19421e61b5300e7",
         "foundation_package_count": 10,
-        "private_candidate": "dev-installed-df12fde7",
-        "qualification": "Exact-head deterministic private RC41 build, web suites and disposable install PASS; not release acceptance."
+        "private_candidate": "dev-installed-1c90e9ef",
+        "qualification": "Exact-source deterministic private RC41 build and disposable install PASS; not release acceptance."
       }
     },
     {
@@ -1345,17 +1492,16 @@
       "status": "DEV_DEPLOYED",
       "approval_required": false,
       "evidence": {
-        "source_commit": "df12fde730a8f40bb961821888302de90492d7b7",
-        "deployed_source_head": "df12fde730a8f40bb961821888302de90492d7b7",
+        "source_commit": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+        "deployed_source_head": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
         "preview": "https://221.139.249.111:19044",
-        "app_sha256": "97ee5a4716519db81c7a90aa0de3436261ceed4ccc3c920dcb19e3fa8b59facc",
-        "styles_sha256": "7d134e663acbb348cff238579a001aa67bf8b7c5a03c0bd5be30785a809adf93",
+        "app_sha256": "def05ce30033073d4807fee067b276c6a6c2aee8826565323dde6e4c687bd642",
+        "styles_sha256": "0c31801485e67f1875af4417e454459b514bf30aaab3e7e45637e0ec4eeb071e",
         "foundation_css_sha256": "3049f76b67d9341920254bcbe1b26b48d52b05e9faa9bc992f0d51f6887928d7",
-        "favicon_sha256": "7ec193f6192213c31b63cc5cee2e8bb5439efaaa79b07534a1916c3f3b897462",
         "anonymous_session_http": 401,
-        "previous_candidate": "dev-installed-50944164",
-        "active_candidate": "dev-installed-df12fde7",
-        "qualification": "Approved development preview updated through private pointer; TLS explicit-cert asset parity PASS. Authenticated live-browser acceptance remains open."
+        "previous_candidate": "dev-installed-df12fde7",
+        "active_candidate": "dev-installed-1c90e9ef",
+        "qualification": "Approved dev pointer updated; explicit-cert served asset parity PASS. Authenticated live-browser acceptance remains open."
       }
     },
     {

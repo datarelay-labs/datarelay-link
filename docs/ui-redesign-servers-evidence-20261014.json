@@ -183,6 +183,30 @@
         "service_and_connection": "57/57",
         "setup_browser": "2/2"
       }
+    },
+    {
+      "acceptance_claimed": false,
+      "anonymous_session_http": 401,
+      "dev_candidate": "dev-installed-1c90e9ef",
+      "live_authenticated_browser_verified": false,
+      "preview": "https://221.139.249.111:19044",
+      "previous_candidate": "dev-installed-df12fde7",
+      "private_bundle_sha256": "439ad4de4d7181f9aba4c41a0c8b193cad29bbc1b05b41c802788242f2f6fd4b",
+      "real_traffic_verified": false,
+      "recorded_at": "2026-10-14T05:32:35.184642+00:00",
+      "scope": "UXR-3/4 source + approved dev deployment; authenticated live acceptance open",
+      "served": {
+        "app.js": "def05ce30033073d4807fee067b276c6a6c2aee8826565323dde6e4c687bd642",
+        "foundation.css": "3049f76b67d9341920254bcbe1b26b48d52b05e9faa9bc992f0d51f6887928d7",
+        "styles.css": "0c31801485e67f1875af4417e454459b514bf30aaab3e7e45637e0ec4eeb071e"
+      },
+      "source_commit": "1c90e9ef0029fe53340f5bf2793eac60cf8da011",
+      "tests": {
+        "access_policy": "153/153",
+        "home_activity_admin": "163/163",
+        "journey": "437/437",
+        "p0": "44/44"
+      }
     }
   ],
   "logs": {
