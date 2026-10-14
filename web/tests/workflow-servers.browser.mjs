@@ -24,7 +24,7 @@ before(async()=>{
   window.fetch=(path,init={})=>{window.calls.push({path,method:init.method||'GET',body:init.body||null});
     const response=window.responses.shift();if(!response)return Promise.reject(new Error('No fixture for '+path));
     if(response.reject)return Promise.reject(new Error(response.reject));
-    if(response.pending)return new Promise((resolve,reject)=>window.pending.set(response.pending,{resolve:result=>resolve(new Response(JSON.stringify(result.body),{status:result.status||200,headers:{'Content-Type':'application/json'}})),reject}));
+    if(response.pending)return new Promise((resolve,reject)=>{window.pending.set(response.pending,{resolve:result=>resolve(new Response(JSON.stringify(result.body),{status:result.status||200,headers:{'Content-Type':'application/json'}})),reject});if(!response.ignoreAbort)init.signal?.addEventListener('abort',()=>reject(new DOMException('Request aborted','AbortError')),{once:true});});
     return Promise.resolve(new Response(JSON.stringify(response.body),{status:response.status||200,headers:{'Content-Type':'application/json'}}));};
   window.mount=(props)=>{window.props={active:'hosts',operator:${JSON.stringify(admin)},onNavigate:(...args)=>window.navigations.push(args),onServerReturnStateChange:state=>window.serverReturnState=state,...props};root.render(<View {...window.props}/>);};
   window.remount=(props)=>{window.props={...window.props,...props};root.render(<View {...window.props}/>);};
@@ -164,4 +164,48 @@ test('UXR-1.8 foreign-actor UI snapshot is ignored rather than leaking search co
   const serverReturnState={actor:'private-old:Admin',filter:'private-needle',admission:'all',connection:'connected',sort:'name_desc',cards:true,reviewOnly:true,inspectResourceId:'one',detailTab:'settings',scrollTop:100};
   await mount(page,[{body:inventory([host('one')])}],{serverReturnState});await page.getByRole('textbox',{name:'Search servers'}).waitFor();
   assert.equal(await page.getByRole('textbox',{name:'Search servers'}).inputValue(),'');assert.equal(await page.getByRole('dialog').count(),0);
+}));
+
+// UXR-1.1: prove actual timeout and refresh-epoch handling, not a pre-rejected fixture.
+test('UXR-1.1 real request timeout is distinct from empty and retry is bounded',()=>scenario(async page=>{
+  await page.clock.install();await mount(page,[{pending:'timeout'}]);
+  await page.getByRole('status').filter({hasText:'Reading servers'}).waitFor();
+  await page.clock.fastForward(15001);await page.getByRole('alert').filter({hasText:'timed out'}).waitFor();
+  await absent(page,'Connect your first server');
+  await page.evaluate(body=>window.responses.push({body}),inventory());
+  await page.getByRole('button',{name:'Retry',exact:true}).click();await visible(page,'Connect your first server');
+  assert.equal(await page.evaluate(()=>window.calls.length),2);
+}));
+test('UXR-1.1 superseded refresh response cannot replace latest inventory',()=>scenario(async page=>{
+  await mount(page,[{body:inventory([host('initial')])}]);await page.getByRole('button',{name:/Server initial/}).first().waitFor();
+  await page.evaluate(()=>window.responses.push({pending:'old-refresh',ignoreAbort:true}));await page.getByRole('button',{name:'Refresh',exact:true}).click();
+  await page.evaluate(body=>window.responses.push({body}),inventory([host('latest')]));await page.getByRole('button',{name:'Refresh',exact:true}).click();
+  await page.getByRole('button',{name:/Server latest/}).first().waitFor();
+  await page.evaluate(body=>window.settle('old-refresh',body),inventory([host('superseded')]));await page.waitForTimeout(80);
+  await absent(page,'Server superseded');await page.getByRole('button',{name:/Server latest/}).first().waitFor();
+}));
+for(const flag of [{partial:true},{truncated:true},{complete:false},{stale:true}])test('UXR-1.1 explicit incomplete marker '+JSON.stringify(flag)+' cannot imply first use',()=>scenario(async page=>{
+  await mount(page,[{body:{...inventory(),...flag}}]);await page.getByRole('alert').waitFor();await absent(page,'Connect your first server');
+}));
+test('UXR-1.5 related-service navigation preserves exact selected identity',()=>scenario(async page=>{
+  await mount(page,[{body:inventory([host()])}]);await page.getByRole('button',{name:/Server host-a/}).first().click();
+  await page.evaluate(()=>window.responses.push({body:{resource_type:'remote-service',limit:100,items:[{id:'svc-a',name:'SSH',managed_host_id:'host-a',enabled:true}],next_cursor:null}}));
+  await page.getByRole('tab',{name:'Services',exact:true}).click();await page.getByRole('button',{name:/SSH.*Open service details/}).click();
+  const navigation=await page.evaluate(()=>window.navigations.at(-1));assert.equal(navigation[0],'services');assert.equal(navigation[2].inspectResourceId,'svc-a');
+}));
+
+test('UXR-1.9 stale connection observations do not retain a current-success presentation',()=>scenario(async page=>{
+  await mount(page,[{body:inventory([host('observed')])}]);await page.getByRole('button',{name:/Server observed/}).first().waitFor();
+  await page.evaluate(()=>window.responses.push({status:503,body:{error:'Unavailable'}}));await page.getByRole('button',{name:'Refresh',exact:true}).click();
+  await visible(page,'Previous server observations · not current');
+  assert.equal(await page.locator('.dr-wf-state.success').count(),0,'Historical Agent state must not look current');
+  await page.getByRole('button',{name:/Server observed/}).first().click();
+  assert.equal(await page.getByRole('dialog').locator('.dr-wf-state.success').count(),0);
+}));
+test('UXR-1.5 incomplete related-service inventory cannot certify no services',()=>scenario(async page=>{
+  await mount(page,[{body:inventory([host()])}]);await page.getByRole('button',{name:/Server host-a/}).first().click();
+  await page.evaluate(()=>window.responses.push({body:{resource_type:'remote-service',limit:100,items:[],next_cursor:null,partial:true}}));
+  await page.getByRole('tab',{name:'Services',exact:true}).click();
+  await page.getByRole('dialog').getByRole('alert').waitFor();
+  await absent(page,'No services reference this server in the returned inventory.');
 }));

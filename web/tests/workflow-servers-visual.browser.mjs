@@ -31,7 +31,7 @@ let browser;const observations=[];
 try{
  browser=await chromium.launch({headless:true});
  const host=(n)=>({id:'host-'+n,name:'Server '+String(n).padStart(3,'0'),hostname:'node-'+n+'.example.test',connected:n%4===0?false:n%4===1?null:true,admission_state:n%5===0?'PENDING_APPROVAL':n%5===1?'QUARANTINED':'APPROVED',trust_status:'trusted',agent_platform:'Linux',agent_version:'3.0.0',agent_heartbeat_at:'2026-10-14T02:00:00Z'});
- for(const [width,height] of [[1440,900],[1280,800],[375,812],[320,568]])for(const theme of ['light','dark'])for(const count of [0,10]){
+ for(const [width,height] of [[1440,900],[1280,800],[375,812],[320,568]])for(const theme of ['light','dark'])for(const count of [0,1,10,50]){
   const page=await browser.newPage({viewport:{width,height}});const pageErrors=[];page.on('pageerror',e=>pageErrors.push(e.message));
   await page.goto('http://127.0.0.1:'+server.address().port);await page.evaluate(({rows,theme})=>{document.documentElement.setAttribute('data-dr-theme',theme);window.load({rows});},{rows:Array.from({length:count},(_,n)=>host(n)),theme});
   await page.locator(count?'.dr-server-table':'.dr-server-welcome').waitFor();
@@ -46,7 +46,7 @@ try{
   await page.screenshot({path:join(output,name+'.png'),fullPage:true});
   observations.push({name,scope:'production View with synthetic GET fixture, not live login',...metrics,pageErrors});
   if(count){
-   const trigger=page.getByRole('button',{name:/Server 002/}).first();await trigger.click();await page.getByRole('dialog',{name:'Server details'}).waitFor();
+   const trigger=page.getByRole('button',{name:count===1?/Server 000/:/Server 002/}).first();await trigger.click();await page.getByRole('dialog',{name:'Server details'}).waitFor();
    await page.screenshot({path:join(output,name+'-detail.png'),fullPage:false});
    await page.getByRole('tab',{name:'Overview',exact:true}).focus();await page.keyboard.press('ArrowRight');
    const selected=await page.getByRole('tab',{name:'Services',exact:true}).getAttribute('aria-selected');assert.equal(selected,'true');

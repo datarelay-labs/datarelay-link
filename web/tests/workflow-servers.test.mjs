@@ -102,9 +102,11 @@ test('server detail allowlists facts and escapes untrusted visible text',()=>{
 });
 test('real host route uses workflow surface and target-bound panels, not extra page-bottom forms',()=>{
   const main=readFileSync(join(root,'src','main.tsx'),'utf8');
-  const line=main.split('\n').find(x=>x.includes('if(active==="hosts"&&data)'))||'';
-  assert.match(line,/<ServerWorkspace/);
-  assert.doesNotMatch(line,/<ManagedHostMetadataPanel\/>|<ManagedHostAdmissionPanel\/>|<ManagedHostLifecyclePanel\/>/);
+  // The real route now owns asynchronous reads; mounted browser tests exercise it.
+  const view=main.slice(main.indexOf('function View('),main.indexOf('function LegacyView('));
+  assert.match(view,/if\(active==="hosts"\)return <ServerRoute/);
+  assert.match(view,/renderManagement=/);
+  assert.doesNotMatch(main,/<ManagedHostMetadataPanel\/>|<ManagedHostAdmissionPanel\/>|<ManagedHostLifecyclePanel\/>/);
   assert.match(main,/function SelectedServerManagement/);
   assert.match(main,/selectedHostId/);
 });
