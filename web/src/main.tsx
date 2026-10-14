@@ -3107,6 +3107,7 @@ function GlobalSearch({open,onClose,onNavigate,operator,returnFocusRef}:{
   const [rejectedCount,setRejectedCount]=useState(0);
   const [returnedCount,setReturnedCount]=useState(0);
   const [busy,setBusy]=useState(false),[error,setError]=useState("");
+  const [navigationTourOpen,setNavigationTourOpen]=useState(false);
   const requestGeneration=useRef(0);
   const dialogRef=useRef<HTMLElement|null>(null);
   const navigatingRef=useRef(false);
@@ -3120,7 +3121,7 @@ function GlobalSearch({open,onClose,onNavigate,operator,returnFocusRef}:{
   }
   useEffect(()=>{if(!open){
     requestGeneration.current+=1;
-    setQuery("");setResults([]);setError("");setBusy(false);
+    setQuery("");setResults([]);setError("");setBusy(false);setNavigationTourOpen(false);
     setSearchStatus("idle");setRejectedCount(0);setReturnedCount(0);
   }},[open]);
   useEffect(()=>{
@@ -3200,7 +3201,13 @@ function GlobalSearch({open,onClose,onNavigate,operator,returnFocusRef}:{
           <button onClick={()=>go("access","access")}><WorkspaceIcon kind="access"/><span><strong>Access workspace</strong><small>Diagnose and inspect current access</small></span></button>
           <button onClick={()=>go("views","observability")}><WorkspaceIcon kind="observability"/><span><strong>Saved Views</strong><small>Open operator-saved filters</small></span></button>
           <button onClick={()=>go("doctor","observability")}><WorkspaceIcon kind="observability"/><span><strong>Troubleshoot</strong><small>Open bounded Doctor checks</small></span></button>
-        </div></>}
+          <button type="button" onClick={()=>setNavigationTourOpen(value=>!value)} aria-expanded={navigationTourOpen}><WorkspaceIcon kind="overview"/><span><strong>What changed in navigation?</strong><small>See old names and their current task locations</small></span></button>
+        </div>
+        {navigationTourOpen&&<section className="dr-command-navigation-tour" role="note" aria-label="Navigation changes">
+          <strong>Old names still work in Search</strong>
+          <p>Infrastructure → Servers & Agents / Published services · Policies → Access rules · Observability → Activity & Health · Operations → Jobs / Change history.</p>
+          <p className="muted">This is navigation help only. Routes, Core permissions and saved state are unchanged.</p>
+        </section>}</>}
         {query.trim()&&<><div className="dr-command-results-head"><p className="dr-command-label">Pages and tasks · old names also work</p><button className="dr-text-action" onClick={()=>search()} disabled={busy}>{busy?"Searching…":"Search resources"}</button></div>
         <p className="dr-command-label" role="status" aria-live="polite">{busy?"Searching Core resources…":searchStatus==="ready"?results.length+" safe results from "+returnedCount+" bounded Core search hits":""}</p>
         {searchStatus==="ready"&&results.length===0&&rejectedCount===0&&<p role="status" className="dr-command-empty">No matching Core resources in the returned search page. Other Core pages and retained resources remain UNKNOWN.</p>}

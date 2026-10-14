@@ -141,3 +141,18 @@ test("R2.2 M2 Core Search page is bound to the submitted query and exact 20-row 
  const global=source.split("function GlobalSearch(",2)[1]?.split("function Shell(",1)[0]||"";
  assert.ok(global.includes("observedBoundedCoreSearchResponse(data,q)"));
 });
+
+test("UXR-4.7 Global Search keeps old aliases and exposes a keyboard-readable navigation change tour",()=>{
+ const source=readFileSync(join(root,"src","main.tsx"),"utf8");
+ const global=source.split("function GlobalSearch(",2)[1]?.split("function readBrowserStartingPage(",1)[0]||"";
+ assert.match(global,/What changed in navigation\?/);
+ assert.match(global,/aria-expanded=\{navigationTourOpen\}/);
+ assert.match(global,/aria-label="Navigation changes"/);
+ assert.match(global,/Infrastructure → Servers & Agents \/ Published services/);
+ assert.match(global,/Policies → Access rules/);
+ assert.match(global,/Observability → Activity & Health/);
+ assert.match(global,/Old names still work in Search/);
+ const nav=readFileSync(join(root,"src","uxb-navigation.ts"),"utf8");
+ assert.match(nav,/oldAliases/);assert.match(nav,/managed hosts/);assert.match(nav,/remote services/);
+ assert.match(nav,/access control/);assert.match(nav,/observability/);assert.match(nav,/operations/);
+});
