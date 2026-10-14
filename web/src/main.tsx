@@ -768,9 +768,9 @@ function TemporaryAccessPanel(){
     {error&&<div className="error">{error}</div>}{message&&<div className="notice">{message}</div>}
     <div className="toolbar">
       <select value={plane} disabled={busy} onChange={e=>{resetChangePlan();setPlane(e.target.value)}}><option value="remote">Remote</option><option value="internet">Internet</option><option value="ai">AI</option></select>
-      <input value={rule} disabled={busy} onChange={e=>{resetChangePlan();setRule(e.target.value)}} placeholder="Rule name"/>
+      <input aria-label="Temporary Access rule name" value={rule} disabled={busy} onChange={e=>{resetChangePlan();setRule(e.target.value)}} placeholder="Rule name"/>
       <select value={operation} disabled={busy} onChange={e=>{resetChangePlan();setOperation(e.target.value)}}><option value="set">Set / change expiry</option><option value="clear">Clear expiry</option></select>
-      {operation==="set"&&<input value={expiresAt} disabled={busy} onChange={e=>{resetChangePlan();setExpiresAt(e.target.value)}} placeholder="2030-01-01T00:00:00Z"/>}
+      {operation==="set"&&<input aria-label="Temporary Access expiry" value={expiresAt} disabled={busy} onChange={e=>{resetChangePlan();setExpiresAt(e.target.value)}} placeholder="2030-01-01T00:00:00Z"/>}
       <button className="primary" onClick={doPreview} disabled={busy||!rule||operation==="set"&&!expiresAt}>Preview</button>
     </div>
     {preview&&<div className="card">
@@ -860,9 +860,9 @@ function PolicySafetyPanel({operator}:{operator:any}){
       {error&&<div className="error">{error}</div>}{message&&<div className="notice">{message}</div>}
       <div className="toolbar">
         <select value={plane} onChange={e=>{setPlane(e.target.value);setSelector("");setPath("")}}><option value="remote">Remote</option><option value="internet">Internet</option><option value="ai">AI</option></select>
-        <input value={source} onChange={e=>setSource(e.target.value)} placeholder={plane==="ai"?"AI Identity":"Source object/group"}/>
-        <input value={destination} onChange={e=>setDestination(e.target.value)} placeholder="Destination"/>
-        <input value={selector} onChange={e=>setSelector(e.target.value)} placeholder={plane==="ai"?"Permission object/group":"Service object/group"}/>
+        <input aria-label={plane==="ai"?"Policy simulator AI identity":"Policy simulator source"} value={source} onChange={e=>setSource(e.target.value)} placeholder={plane==="ai"?"AI Identity":"Source object/group"}/>
+        <input aria-label="Policy simulator destination" value={destination} onChange={e=>setDestination(e.target.value)} placeholder="Destination"/>
+        <input aria-label={plane==="ai"?"Policy simulator permission":"Policy simulator service"} value={selector} onChange={e=>setSelector(e.target.value)} placeholder={plane==="ai"?"Permission object/group":"Service object/group"}/>
         {plane==="ai"&&<input value={path} onChange={e=>setPath(e.target.value)} placeholder="Optional path"/>}
         <button className="primary" onClick={simulate} disabled={!ready}>Simulate</button>
       </div>
@@ -897,7 +897,7 @@ function PolicySafetyPanel({operator}:{operator:any}){
       <Table items={tests.map((x:any)=>({name:x.name,plane:x.plane,expected:x.expected,required:x.required,enabled:x.enabled}))}/>
       {operator.role!=="Read Only"&&<>
         <div className="toolbar">
-          <input value={testName} onChange={e=>{invalidateTestPreview();setTestName(e.target.value)}} placeholder="Test name"/>
+          <input aria-label="Policy regression test name" value={testName} onChange={e=>{invalidateTestPreview();setTestName(e.target.value)}} placeholder="Test name"/>
           <select value={expected} onChange={e=>{invalidateTestPreview();setExpected(e.target.value)}}><option value="ALLOW">Expect ALLOW</option><option value="DENY">Expect DENY</option></select>
           <label><input type="checkbox" checked={required} onChange={e=>{invalidateTestPreview();setRequired(e.target.checked)}}/> Required</label>
           <label><input type="checkbox" checked={enabled} onChange={e=>{invalidateTestPreview();setEnabled(e.target.checked)}}/> Enabled</label>
@@ -1324,9 +1324,9 @@ function AccessOperations({operator,onNavigate,context}:{operator:any,onNavigate
       <div className="dr-section-head"><div><p className="dr-eyebrow">Policy Simulator</p><h3>Connection Diagnosis</h3></div></div>
       <div className="muted">Side-effect-free Core correlation. No browser-triggered DNS or target probe is launched; missing evidence stays UNKNOWN.</div>
       <div className="toolbar">
-        <input value={source} onChange={e=>changeDiagnosisFlow("source",e.target.value)} placeholder={plane==="ai"?"AI Identity / source":"Source Object / Group"}/>
-        <input value={destination} onChange={e=>changeDiagnosisFlow("destination",e.target.value)} placeholder="Destination Object / Group"/>
-        <input value={selector} onChange={e=>changeDiagnosisFlow("selector",e.target.value)} placeholder={plane==="ai"?"Permission Object / Group":"Service Object / Group"}/>
+        <input aria-label={plane==="ai"?"Diagnosis AI identity":"Diagnosis source"} value={source} onChange={e=>changeDiagnosisFlow("source",e.target.value)} placeholder={plane==="ai"?"AI Identity / source":"Source Object / Group"}/>
+        <input aria-label="Diagnosis destination" value={destination} onChange={e=>changeDiagnosisFlow("destination",e.target.value)} placeholder="Destination Object / Group"/>
+        <input aria-label={plane==="ai"?"Diagnosis permission":"Diagnosis service"} value={selector} onChange={e=>changeDiagnosisFlow("selector",e.target.value)} placeholder={plane==="ai"?"Permission Object / Group":"Service Object / Group"}/>
         <button className="primary" disabled={!diagnosisReady||diagnosisBusy} onClick={runDiagnosis}>{diagnosisBusy?"Checking Core…":"Diagnose"}</button>
       </div>
       {matchingDiagnosis&&<>
@@ -1341,7 +1341,7 @@ function AccessOperations({operator,onNavigate,context}:{operator:any,onNavigate
       <h3>Live Access Visibility</h3>
       <div className="muted">Bounded current-use evidence only. Remote Access remains UNKNOWN unless official FRP can prove exact lifecycle state.</div>
       <div className="toolbar">
-        <input value={liveResource} onChange={e=>{liveGeneration.current+=1;setLiveResource(e.target.value);setLiveEvidence(null);setLiveBusy(false)}} placeholder="Optional resource/session/identity filter"/>
+        <input aria-label="Live access resource filter" value={liveResource} onChange={e=>{liveGeneration.current+=1;setLiveResource(e.target.value);setLiveEvidence(null);setLiveBusy(false)}} placeholder="Optional resource/session/identity filter"/>
         <button className="secondary" disabled={liveBusy} onClick={loadLive}>{liveBusy?"Refreshing Core…":"Refresh "+plane+" live access"}</button>
       </div>
       {matchingLive&&<>
@@ -1368,8 +1368,8 @@ function AccessOperations({operator,onNavigate,context}:{operator:any,onNavigate
       <div className="toolbar">
         <select value={cutoffOperation} disabled={cutoffBusy} onChange={e=>{invalidateCutoff();setCutoffOperation(e.target.value)}}><option value="apply">Apply cutoff</option><option value="clear">Clear cutoff</option></select>
         <select value={scopeKind} disabled={cutoffBusy} onChange={e=>{invalidateCutoff();setScopeKind(e.target.value);setScopeRef("")}}>{scopeOptions[plane].map(x=><option key={x} value={x}>{x}</option>)}</select>
-        {scopeKind!=="plane"&&<input value={scopeRef} disabled={cutoffBusy} onChange={e=>{invalidateCutoff();setScopeRef(e.target.value)}} placeholder={scopeKind+" selector"}/>}
-        {cutoffOperation==="apply"&&<input value={reason} disabled={cutoffBusy} onChange={e=>{invalidateCutoff();setReason(e.target.value)}} placeholder="Incident reason (optional)"/>}
+        {scopeKind!=="plane"&&<input aria-label="Emergency cutoff scope selector" value={scopeRef} disabled={cutoffBusy} onChange={e=>{invalidateCutoff();setScopeRef(e.target.value)}} placeholder={scopeKind+" selector"}/>}
+        {cutoffOperation==="apply"&&<input aria-label="Emergency cutoff incident reason" value={reason} disabled={cutoffBusy} onChange={e=>{invalidateCutoff();setReason(e.target.value)}} placeholder="Incident reason (optional)"/>}
         <button className="danger" disabled={cutoffBusy} onClick={previewCutoff}>{cutoffBusy?"Checking Core…":"Preview cutoff"}</button>
       </div>
       {currentCutoffPreview&&<>

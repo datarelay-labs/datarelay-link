@@ -111,3 +111,44 @@ test('UXR-5.4 affected workflow screens remain usable across desktop/mobile and 
  }
  assert.deepEqual(failures,[]);
 });
+
+test('UXR-5.5 controls are named, detail focus is contained/restored, and shared text tokens meet 4.5:1',async()=>{
+ const page=await browser.newPage({viewport:{width:1280,height:800}});page.setDefaultTimeout(5000);
+ await page.goto(url);
+ for(const [active,marker,mode] of routes.filter(([, ,mode])=>mode==='ready')){
+   await page.evaluate(({active,mode})=>window.renderRoute(active,'light',mode),{active,mode});
+   await page.locator(marker).first().waitFor();
+   const unnamed=await page.evaluate(()=>[...document.querySelectorAll('button,a[href],input,select,textarea,summary')]
+     .filter(el=>el.getClientRects().length&&getComputedStyle(el).visibility!=='hidden')
+     .filter(el=>{
+       const labelledBy=(el.getAttribute('aria-labelledby')||'').split(/\s+/).filter(Boolean)
+         .map(id=>document.getElementById(id)?.textContent||'').join(' ').trim();
+       const labels=('labels' in el&&el.labels)?[...el.labels].map(label=>label.textContent||'').join(' ').trim():'';
+       const name=(el.getAttribute('aria-label')||labelledBy||labels||el.textContent||el.getAttribute('title')||'').trim();
+       return !name;
+     }).map(el=>({tag:el.tagName,cls:el.className||'',type:el.getAttribute('type')||''})));
+   assert.deepEqual(unnamed,[],active+' has unnamed visible controls');
+ }
+ await page.evaluate(()=>window.renderRoute('services','light','ready'));await page.getByRole('heading',{name:'Remote Services'}).waitFor();
+ const trigger=page.getByRole('button',{name:'Inspect Remote Service SSH Admin'});await trigger.focus();await trigger.click();
+ const dialog=page.getByRole('dialog',{name:'Remote Services detail'});await dialog.waitFor();
+ assert.equal(await dialog.evaluate(el=>el===document.activeElement),true);
+ await page.keyboard.press('Tab');assert.equal(await dialog.evaluate(el=>el.contains(document.activeElement)),true);
+ await page.keyboard.press('Shift+Tab');assert.equal(await dialog.evaluate(el=>el.contains(document.activeElement)),true);
+ await page.keyboard.press('Escape');await trigger.waitFor();assert.equal(await trigger.evaluate(el=>el===document.activeElement),true);
+
+ for(const theme of ['light','dark']){
+   const contrasts=await page.evaluate(theme=>{
+     document.documentElement.setAttribute('data-dr-theme',theme);
+     const probe=document.createElement('span');probe.style.position='fixed';probe.style.left='-9999px';document.body.appendChild(probe);
+     const rgb=value=>{const m=value.match(/rgba?\(([^)]+)\)/);if(!m)return null;const p=m[1].split(/[ ,/]+/).filter(Boolean).slice(0,3).map(Number);return p.length===3?p:null};
+     const lum=parts=>{const linear=parts.map(v=>{v/=255;return v<=.04045?v/12.92:Math.pow((v+.055)/1.055,2.4)});return .2126*linear[0]+.7152*linear[1]+.0722*linear[2]};
+     const ratio=(fg,bg)=>{const a=lum(fg),b=lum(bg);return (Math.max(a,b)+.05)/(Math.min(a,b)+.05)};
+     const pairs=[['--dr-text-primary','--dr-surface-page'],['--dr-text-secondary','--dr-surface-page'],['--dr-text-muted','--dr-surface-page'],['--dr-text-primary','--dr-surface-card'],['--dr-text-secondary','--dr-surface-section'],['--dr-text-muted','--dr-surface-card'],['--dr-text-inverse','--dr-action-primary']];
+     const result=pairs.map(([fg,bg])=>{probe.style.color='var('+fg+')';probe.style.backgroundColor='var('+bg+')';const cs=getComputedStyle(probe),f=rgb(cs.color),b=rgb(cs.backgroundColor);return {fg,bg,ratio:f&&b?ratio(f,b):0,color:cs.color,background:cs.backgroundColor}});
+     probe.remove();return result;
+   },theme);
+   for(const item of contrasts)assert.ok(item.ratio>=4.5,theme+' '+item.fg+' on '+item.bg+' contrast '+item.ratio.toFixed(2));
+ }
+ await page.close();
+});
