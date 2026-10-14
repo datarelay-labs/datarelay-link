@@ -540,6 +540,26 @@ class BootstrapCatalogConvergenceTests(unittest.TestCase):
         self.assertEqual(v24.get_service_object(agent, name)['port'], 1)
         self.assertIsNone(agent.conn.execute("SELECT name FROM agent_remote_services WHERE name='ssh'").fetchone())
 
+    def test_runtime_verification_missing_reason_keeps_valid_seed_projection(self):
+        agent = ControlPlane(self.agent_tmp)
+        self.addCleanup(agent.close)
+        v24.project_enrolled_services_into_agent_catalog(agent, root=self.agent_tmp)
+        initial = V24R.build_desired_runtime_services(
+            agent, V24R.load_client_state(self.agent_tmp), root=self.agent_tmp
+        )
+        self.assertIn("rs-ssh", initial)
+        agent.conn.execute(
+            "UPDATE agent_remote_services SET status='DEGRADED', runtime_verified=0, "
+            "reason='Runtime verification is missing.' WHERE name='ssh'"
+        )
+        agent.conn.commit()
+        desired = V24R.build_desired_runtime_services(
+            agent, V24R.load_client_state(self.agent_tmp), root=self.agent_tmp
+        )
+        self.assertIn("rs-ssh", desired)
+        self.assertEqual(desired["rs-ssh"]["remote_port"], 6000)
+        self.assertEqual(desired["rs-ssh"]["local_port"], self.local_port)
+
     def setUp(self):
         self.agent_tmp = tempfile.mkdtemp(prefix="drlink-boot-agt-")
         self.server_tmp = tempfile.mkdtemp(prefix="drlink-boot-srv-")

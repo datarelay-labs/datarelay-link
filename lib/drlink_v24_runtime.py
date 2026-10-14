@@ -233,12 +233,24 @@ def build_desired_runtime_services(
         enabled = bool(row["enabled"]) and str(row["status"] or "") != "DISABLED"
         endpoint_port = row["endpoint_port"]
         reason = str(row["reason"] or "")
-        # Dependency / offline pending → do not emit a live proxy.
+        # Dependency / offline pending → do not emit a live proxy. Runtime
+        # verification reasons are not dependency failures: synchronize
+        # deliberately clears runtime_verified before applying the next
+        # generation, and the Server may answer "Runtime verification is
+        # missing." during that bounded window. Treating any generic
+        # "missing" text as a dependency removes valid enrolled proxies from
+        # the desired generation and makes synchronization fail itself.
         if not enabled:
             continue
         if endpoint_port is None or int(row["pending_allocation"] or 0):
             continue
-        if "missing" in reason.lower() or "invalid" in reason.lower() or "udp" in reason.lower():
+        reason_l = reason.lower()
+        dependency_reason = reason_l.startswith(
+            ("required ", "bound managed host ", "remote service destination ")
+        )
+        if dependency_reason and (
+            "missing" in reason_l or "invalid" in reason_l or "udp" in reason_l
+        ):
             continue
         # Resolve local target from desired row fields stored at set time via catalog.
         target_host = "127.0.0.1"
