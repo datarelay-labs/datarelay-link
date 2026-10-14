@@ -5801,6 +5801,26 @@ def _invalidate_agent_remote_service_runtime_verification(plane_db) -> int:
     return int(cur.rowcount or 0)
 
 
+def _demote_agent_runtime_for_reverification(plane_db) -> int:
+    """Commit fail-closed Agent state before any full-sync Server demotion.
+
+    A full lifecycle reconciliation can take long enough for public readers to
+    observe each surface independently. Never let the authoritative Server be
+    downgraded to runtime-unverified while the committed Agent row still says
+    HEALTHY. Already-DEGRADED dependency rows keep their more specific reason.
+    """
+    now = utc_now_iso()
+    cur = plane_db.conn.execute(
+        "UPDATE agent_remote_services SET status='DEGRADED', runtime_verified=0, "
+        "reason='Runtime activation pending.', updated_at=? "
+        "WHERE delete_pending=0 AND enabled=1 AND endpoint_port IS NOT NULL "
+        "AND pending_allocation=0 AND (upper(status)='HEALTHY' OR runtime_verified != 0)",
+        (now,),
+    )
+    _commit_if_autonomous(plane_db)
+    return int(cur.rowcount or 0)
+
+
 def invalidate_runtime_verification_for_restart(*, root: Optional[str] = None) -> dict:
     """Public restart / service-start boundary for Remote Service verification.
 
@@ -6087,6 +6107,12 @@ def _synchronize_agent_remote_services_locked(plane_db, *, root: Optional[str] =
             # the normal fail-closed synchronization and recovery path below.
             pass
 
+    # Full reconciliation may demote Server runtime verification before the
+    # runtime generation is re-applied. Commit the same fail-closed state on
+    # Agent first so public readers can never observe Agent HEALTHY while the
+    # authoritative Server is already DEGRADED.
+    _demote_agent_runtime_for_reverification(plane_db)
+
     updated = 0
     # Defer runtime restarts to a single apply at the end of this synchronize.
     prev_batch = bool(getattr(plane_db, "_batch_mode", False))
@@ -6249,11 +6275,9 @@ def _synchronize_agent_remote_services_locked(plane_db, *, root: Optional[str] =
                 "affected": affected,
                 "runtime_error": applied.get("error") or "Runtime activation failed",
             })
-        # skipped=True is the DRLINK_SKIP_ACTIVATION unit-test shortcut; treat it
-        # as verified the same way set_remote_service_agent does, so reconnect
-        # sync can promote runtime-pending rows to HEALTHY.
-        if applied.get("ok") or applied.get("skipped"):
-            runtime.mark_runtime_status(plane_db, ok=True)
+        # skipped=True is the DRLINK_SKIP_ACTIVATION unit-test shortcut. Runtime
+        # success is necessary but not sufficient for public HEALTHY: promote
+        # Agent and Server as a two-phase operation below.
     except Exception as exc:
         _push_agent_remote_service_status(plane_db, root=root)
         affected = _collect_degraded_remote_services(plane_db)
@@ -6264,7 +6288,26 @@ def _synchronize_agent_remote_services_locked(plane_db, *, root: Optional[str] =
             "runtime_error": str(exc),
         })
     try:
-        _push_agent_remote_service_status(plane_db, root=root, require_ack=True)
+        # Two-phase HEALTHY promotion. Keep the last committed Agent state
+        # DEGRADED while staging local verified rows in a private transaction;
+        # send those verified claims to Server; only after the authenticated
+        # Server ACK succeeds commit Agent HEALTHY. External read-only clients
+        # therefore see DEGRADED until Server is already HEALTHY.
+        previous_batch = bool(getattr(plane_db, "_batch_mode", False))
+        plane_db.conn.execute("BEGIN IMMEDIATE")
+        plane_db._batch_mode = True
+        try:
+            runtime.mark_runtime_status(plane_db, ok=True)
+            _push_agent_remote_service_status(
+                plane_db, root=root, require_ack=True
+            )
+            plane_db.conn.execute("COMMIT")
+        except Exception:
+            if plane_db.conn.in_transaction:
+                plane_db.conn.execute("ROLLBACK")
+            raise
+        finally:
+            plane_db._batch_mode = previous_batch
     except Exception as exc:
         # Runtime may already be serving traffic, but HEALTHY is a cross-surface
         # claim. If the authoritative Server cannot acknowledge it after the

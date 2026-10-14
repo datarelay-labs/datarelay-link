@@ -2762,6 +2762,103 @@ class AgentPushFalseHealthyTests(unittest.TestCase):
         self.assertEqual(server["status"], "HEALTHY")
         self.assertEqual(int(server["runtime_verified"] or 0), 1)
 
+    def test_full_synchronize_two_phase_status_never_exposes_false_healthy(self):
+        # Live exact-acf9 O-004 reproduction: a lifecycle full synchronize can
+        # demote the Server while an external Agent reader still sees the last
+        # committed HEALTHY row. Full reconciliation must fail closed locally
+        # before any unverified Server write, then publish HEALTHY to Server
+        # before committing Agent HEALTHY.
+        import sqlite3
+        from unittest import mock
+
+        created = mgmt.upsert_remote_service_on_server(
+            root=self.agent_tmp,
+            name="sync-two-phase",
+            destination="this-host",
+            service="ssh",
+            enabled=True,
+            pool_class="normal",
+            target_host="127.0.0.1",
+            target_port=22,
+            target_mode="self",
+            runtime_verified=True,
+        )
+        port = int(created["endpoint_port"])
+        self.assertEqual(self._server_status("sync-two-phase")["status"], "HEALTHY")
+        self.agent.conn.execute(
+            "INSERT OR REPLACE INTO agent_remote_services"
+            "(name, destination, service_object, enabled, status, endpoint_host, endpoint_port, "
+            "pending_allocation, delete_pending, pool_class, reason, runtime_verified, updated_at) "
+            "VALUES ('sync-two-phase', 'this-host', 'ssh', 1, 'HEALTHY', 'drlink.local', ?, "
+            "0, 0, 'normal', '', 1, '2026-10-14T00:00:00Z')",
+            (port,),
+        )
+        self.agent.conn.commit()
+
+        def external_state():
+            conn = sqlite3.connect(
+                "file:%s?mode=ro" % self.agent.db_file,
+                uri=True,
+                isolation_level=None,
+            )
+            conn.row_factory = sqlite3.Row
+            try:
+                row = conn.execute(
+                    "SELECT status, runtime_verified FROM agent_remote_services "
+                    "WHERE name='sync-two-phase'"
+                ).fetchone()
+                return (str(row["status"]), int(row["runtime_verified"] or 0))
+            finally:
+                conn.close()
+
+        before_unverified_server_write = []
+        before_final_healthy_ack = []
+        real_upsert = mgmt.upsert_remote_service_on_server
+        real_report = mgmt.report_remote_service_status_on_server
+
+        def observe_upsert(**kwargs):
+            if kwargs.get("name") == "sync-two-phase" and not kwargs.get("runtime_verified"):
+                before_unverified_server_write.append(external_state())
+            return real_upsert(**kwargs)
+
+        def observe_report(*, root, services):
+            for item in services:
+                if (item.get("name") == "sync-two-phase"
+                        and str(item.get("status") or "").upper() == "HEALTHY"
+                        and bool(item.get("runtime_verified"))):
+                    before_final_healthy_ack.append(external_state())
+            return real_report(root=root, services=services)
+
+        with mock.patch.dict(os.environ, {
+            "FRP_DEPLOY_TEST_ROOT": self.agent_tmp,
+            "DRLINK_SKIP_ACTIVATION": "1",
+        }), mock.patch.object(
+            v24, "_probe_tcp", return_value=True
+        ), mock.patch.object(
+            mgmt, "upsert_remote_service_on_server", side_effect=observe_upsert
+        ), mock.patch.object(
+            mgmt, "report_remote_service_status_on_server", side_effect=observe_report
+        ):
+            result = v24.synchronize_agent_remote_services(
+                self.agent, root=self.agent_tmp, force_runtime=True
+            )
+
+        self.assertTrue(before_unverified_server_write, result)
+        self.assertEqual(
+            before_unverified_server_write[0], ("DEGRADED", 0),
+            "Agent must commit fail-closed state before Server demotion",
+        )
+        self.assertTrue(before_final_healthy_ack, result)
+        self.assertEqual(
+            before_final_healthy_ack[-1], ("DEGRADED", 0),
+            "Agent HEALTHY must remain uncommitted until Server HEALTHY ACK",
+        )
+        local = external_state()
+        server = self._server_status("sync-two-phase")
+        self.assertEqual(local, ("HEALTHY", 1))
+        self.assertEqual(server["status"], "HEALTHY")
+        self.assertEqual(int(server["runtime_verified"] or 0), 1)
+
     def test_synchronize_final_status_push_failure_keeps_agent_degraded(self):
         # Live U-008 e0a3 regression: runtime recovered and public traffic was
         # healthy, but a lost final status projection left Agent HEALTHY while
