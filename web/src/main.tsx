@@ -1364,6 +1364,23 @@ function AccessOperations({operator,onNavigate,context}:{operator:any,onNavigate
   </div>;
 }
 
+function AuditEventList({items,onInspect,canInspect}:{
+  items:any[],onInspect:(item:any,index:number)=>void,canInspect:(item:any,index:number)=>boolean
+}){
+  if(!items.length)return <div className="dr-audit-empty"><strong>No events in this loaded Core page</strong><p>Nothing matched the applied query in this page. Retention and other pages remain outside this evidence.</p></div>;
+  return <div className="dr-audit-readable-scroll"><table className="dr-audit-readable-table">
+    <thead><tr><th scope="col">When</th><th scope="col">What</th><th scope="col">Who</th><th scope="col">Resource</th><th scope="col">Result</th><th scope="col">Action</th></tr></thead>
+    <tbody>{items.map((item,index)=><tr key={item.event_id||index}>
+      <td data-label="When"><span>{item.occurred_at||"UNKNOWN"}</span></td>
+      <td data-label="What"><strong>{item.event_type||"UNKNOWN"}</strong><small>{item.category||"UNKNOWN"}</small></td>
+      <td data-label="Who">{item.actor||"UNKNOWN"}</td>
+      <td data-label="Resource">{item.resource||"UNKNOWN"}</td>
+      <td data-label="Result"><span className={String(item.result).toLowerCase()==="success"?"dr-state active":"dr-state"}><i/>{item.result||"UNKNOWN"}</span></td>
+      <td data-label="Action"><button type="button" className="secondary" disabled={!canInspect(item,index)} aria-label={"Inspect event "+String(item.event_id||index)} onClick={()=>onInspect(item,index)}>View details →</button></td>
+    </tr>)}</tbody>
+  </table></div>;
+}
+
 function AuditExplorer({operator,context,onNavigate}:{operator:any,context?:any,onNavigate?:(id:string,groupId?:string,context?:any)=>void}){
   const [data,setData]=useState<any>(null),[retention,setRetention]=useState<any>(null),[error,setError]=useState(""),[message,setMessage]=useState(""),[exportResult,setExportResult]=useState<any>(null);
   const [auditState,setAuditState]=useState<"loading"|"ready"|"unknown"|"idle">("loading");
@@ -1530,7 +1547,7 @@ function AuditExplorer({operator,context,onNavigate}:{operator:any,context?:any,
         No privileged resource-by-ID fetch is performed.</p>
     </section>}
     <section className="card dr-audit-card">
-      <div className="dr-section-head"><div><p className="dr-eyebrow">Activity & Health</p><h3>Audit Explorer</h3><p className="muted">Unified control, access-decision and security-lifecycle history with bounded keyset pagination.</p></div><button className="secondary" onClick={exportAudit} disabled={exportBusy}>{exportBusy?"Exporting with Core…":"Export NDJSON"}</button></div>
+      <div className="dr-section-head"><div><p className="dr-eyebrow">Activity · Audit Explorer</p><h3>Activity log</h3><p className="muted">Who did what, when, to which resource, and with what result. Open one event for bounded Core evidence.</p></div><button className="secondary" onClick={exportAudit} disabled={exportBusy}>{exportBusy?"Exporting with Core…":"Export NDJSON"}</button></div>
       {exportError&&<p role="alert" className="warning-box">{exportError} The result may have been committed; inspect Activity log before trying again.</p>}
       <p className="muted">Audit filters are applied to observed Core events; an empty page is not proof
         of no historical activity outside the selected filters or retained Core window.
@@ -1568,7 +1585,7 @@ function AuditExplorer({operator,context,onNavigate}:{operator:any,context?:any,
           <div className="dr-p0-facts">{appliedFilters.map(item=>
             <span key={item.label}>{item.label}: {item.value}</span>)}</div>}
       </section>}
-      <div className="dr-audit-table">{auditState==="ready"?<Table items={rows}
+      <div className="dr-audit-table">{auditState==="ready"?<AuditEventList items={rows}
         onInspect={(_,index)=>{
           if(auditFiltersEdited||appliedFilters===null)return;
           const proof=observedAuditEventDetails(data?.items?.[index]);
@@ -2745,13 +2762,22 @@ function IntegrationsPanel(){
 function CommandCenter({data,operator,onNavigate}:{data:any,operator:any,onNavigate?:(id:string,groupId?:string,context?:any)=>void}){
   const [activity,setActivity]=useState<RecentFeed>({status:"loading",items:[]});
   const [changes,setChanges]=useState<RecentFeed>({status:"loading",items:[]});
+  const [usefulServices,setUsefulServices]=useState<{status:"loading"|"ready"|"unknown",items:any[]}>({status:"loading",items:[]});
   useEffect(()=>{
     let cancelled=false;
-    Promise.allSettled([api("/api/v1/audit?limit=6"),api("/api/v1/revisions?limit=6")]).then(results=>{
+    Promise.allSettled([
+      api("/api/v1/audit?limit=6"),api("/api/v1/revisions?limit=6"),
+      api("/api/v1/inventory?resource_type=remote-service&limit=100")
+    ]).then(results=>{
       if(cancelled)return;
-      const [auditResult,revisionResult]=results;
+      const [auditResult,revisionResult,serviceResult]=results;
       setActivity(observedCoreRecentFeed(auditResult,"audit-event"));
       setChanges(observedCoreRecentFeed(revisionResult,"revision"));
+      if(serviceResult.status!=="fulfilled"){setUsefulServices({status:"unknown",items:[]});return}
+      try{
+        const page=requireObservedBoundedCorePage("services",serviceResult.value,"",100);
+        setUsefulServices({status:"ready",items:page.items.filter((row:any)=>serviceStateLabel(row)==="Enabled").slice(0,4)});
+      }catch{setUsefulServices({status:"unknown",items:[]})}
     });
     return()=>{cancelled=true};
   },[]);
@@ -2782,23 +2808,26 @@ function CommandCenter({data,operator,onNavigate}:{data:any,operator:any,onNavig
   return <div className="dr-command-center">
     <section className="dr-hero-row"><div><p className="dr-eyebrow">Welcome · Data Relay Link</p><h2>Connect one service. Control who can use it.</h2><p className="muted">Start with the steps below, or inspect the existing Core status and activity.</p></div><div className="dr-hero-actions">{operator.role==="Admin"&&<button className="primary" onClick={()=>onNavigate?.("setup","connections")}>Set up a connection →</button>}<button className="secondary" onClick={()=>onNavigate?.("access","access")}>Test access</button></div></section>
     <FirstUseHome data={data} operator={operator} api={api} onNavigate={onNavigate}/>
-    <section className="dr-kpi-strip">
-      <div><span>Managed Hosts</span><strong>{hostCounts.total}</strong><small>{hostCounts.subset} connected</small>
-        <button type="button" className="dr-text-action" onClick={()=>onNavigate?.("hosts","connections")}>Inspect Hosts →</button></div>
-      <div><span>Remote Services</span><strong>{serviceCounts.total}</strong><small>{serviceCounts.subset} enabled</small>
-        <button type="button" className="dr-text-action" onClick={()=>onNavigate?.("services","connections")}>Inspect Services →</button></div>
-      <div><span>Active Jobs</span><strong>{observed(j.active_jobs)}</strong><small>{observed(j.failed_jobs)} failed</small>
-        <button type="button" className="dr-text-action" onClick={()=>onNavigate?.("jobs","activity")}>Inspect Jobs →</button></div>
-      <div><span>Needs Attention</span><strong>{attention?attention.length:"UNKNOWN"}</strong>
-        <small>{!attention?"Core attention evidence unavailable":attention.some((x:any)=>x.severity==="critical")?"Critical item present":"Current findings"}</small>
-        <button type="button" className="dr-text-action" onClick={()=>onNavigate?.("doctor","activity")}>Review evidence →</button></div>
-    </section>
-    <p className="muted dr-home-evidence-scope" role="status">
-      {overviewEvidence.status==="observed"
-        ?<>Fleet-wide derived Core counts · Core observation: {overviewEvidence.observedAt}</>
-        :<>Fleet overview evidence UNKNOWN · Core observation: UNKNOWN</>}.
-      These are configuration/observation summaries, not proof of current live access.
-    </p>
+    <details className="card dr-home-evidence-details">
+      <summary>Core inventory evidence</summary>
+      <p className="muted dr-home-evidence-scope" role="status">
+        {overviewEvidence.status==="observed"
+          ?<>Fleet-wide derived Core counts · Core observation: {overviewEvidence.observedAt}</>
+          :<>Fleet overview evidence UNKNOWN · Core observation: UNKNOWN</>}.
+        These are configuration/observation summaries, not proof of current live access.
+      </p>
+      <div className="dr-home-evidence-grid">
+        <div><span>Managed Hosts</span><strong>{hostCounts.total}</strong><small>{hostCounts.subset} connected</small>
+          <button type="button" className="dr-text-action" onClick={()=>onNavigate?.("hosts","connections")}>Inspect Hosts →</button></div>
+        <div><span>Remote Services</span><strong>{serviceCounts.total}</strong><small>{serviceCounts.subset} enabled</small>
+          <button type="button" className="dr-text-action" onClick={()=>onNavigate?.("services","connections")}>Inspect Services →</button></div>
+        <div><span>Active Jobs</span><strong>{observed(j.active_jobs)}</strong><small>{observed(j.failed_jobs)} failed</small>
+          <button type="button" className="dr-text-action" onClick={()=>onNavigate?.("jobs","activity")}>Inspect Jobs →</button></div>
+        <div><span>Needs Attention</span><strong>{attention?attention.length:"UNKNOWN"}</strong>
+          <small>{!attention?"Core attention evidence unavailable":attention.some((x:any)=>x.severity==="critical")?"Critical item present":"Current findings"}</small>
+          <button type="button" className="dr-text-action" onClick={()=>onNavigate?.("doctor","activity")}>Review evidence →</button></div>
+      </div>
+    </details>
     <div className="dr-overview-columns">
       <section className="card dr-attention-card"><div className="dr-section-head"><div><p className="dr-eyebrow">Posture</p><h3>Needs Attention</h3></div><button className="dr-text-action" onClick={()=>onNavigate?.("doctor","observability")}>Troubleshoot →</button></div>{!attention?<div className="dr-compact-empty">UNKNOWN · Core attention evidence unavailable. Check System Health.</div>:attention.length?<div className="dr-attention-list">{attention.slice(0,8).map((x:any)=><button key={x.kind} type="button"
         className="dr-attention-row dr-attention-link"
@@ -2816,6 +2845,12 @@ function CommandCenter({data,operator,onNavigate}:{data:any,operator:any,onNavig
   </p></div></div>}</section>
       <section className="card dr-access-card"><div className="dr-section-head"><div><p className="dr-eyebrow">Access</p><h3>Policy Coverage</h3></div><button className="dr-text-action" onClick={()=>onNavigate?.("access","access")}>Open workspace →</button></div><div className="dr-access-posture">{policyRows.map(row=><button key={row.key} type="button" aria-label={"Inspect "+row.label+" policies"} onClick={()=>onNavigate?.("policies","access",{plane:row.key})}><span className="dr-access-icon"><WorkspaceIcon kind="access"/></span><span><strong>{row.label}</strong><small>{row.value.subset} enabled of {row.value.total}</small></span><b>{row.value.subset}</b></button>)}</div></section>
     </div>
+    <section className="card dr-home-useful-services"><div className="dr-section-head"><div><p className="dr-eyebrow">Use a connection</p><h3>Available published services</h3><p className="muted">Enabled configuration only; access policy and transport success remain unverified until checked.</p></div><button className="dr-text-action" onClick={()=>onNavigate?.("services","connections")}>All services →</button></div>
+      {usefulServices.status!=="ready"?<div className="dr-compact-empty" role="status">{usefulServices.status==="loading"?"Loading published services…":"UNKNOWN · Published Service inventory unavailable."}</div>:
+       usefulServices.items.length?<div className="dr-home-service-list">{usefulServices.items.map((item:any)=><button key={item.id} type="button" onClick={()=>onNavigate?.("services","connections",{savedFilter:"id:"+item.id,inspectResourceId:item.id})}>
+        <span className="dr-service-type-icon"><ServiceTypeGlyph type={item.service_type}/></span><span><strong>{serviceVisibleIdentity(item).primary}</strong><small>{item.service_type||"UNKNOWN"} · port {item.public_port??"UNKNOWN"}</small></span><span className="dr-state active"><i/>Configured</span><span aria-hidden="true">→</span>
+       </button>)}</div>:<div className="dr-compact-empty">No enabled Remote Service was confirmed in the loaded Core page.</div>}
+    </section>
     <div className="dr-overview-columns">
       <section className="card"><div className="dr-section-head"><div><p className="dr-eyebrow">Activity</p><h3>Recent Activity</h3></div><button className="dr-text-action" onClick={()=>onNavigate?.("audit","observability")}>Open audit →</button></div>{activity.status!=="ready"?<div className="dr-compact-empty" role="status">{activity.status==="loading"?"Loading recent activity…":"UNKNOWN · Recent Activity unavailable. Open Audit to retry."}</div>:activity.items.length?<div className="dr-activity-list">{activity.items.map((item:any,i:number)=><button key={item.event_id||item.id||i}
         onClick={()=>onNavigate?.("audit","activity",recentAuditInvestigation(item)||undefined)}><span className={item.result==="deny"||item.result==="failed"?"dr-activity-mark warning":"dr-activity-mark"}/><span><strong>{item.event_type||item.action||item.operation||"Activity"}</strong><small>{item.actor_id||item.actor||"system"} · {item.occurred_at||item.timestamp||""}</small></span><span>{item.result||item.category||""}</span></button>)}</div>:<div className="dr-compact-empty">No retained recent activity.</div>}</section>

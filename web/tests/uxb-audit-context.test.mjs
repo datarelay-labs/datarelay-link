@@ -298,3 +298,16 @@ test("CUI-007 Audit row Inspect links to exactly selected loaded Core record and
  assert.match(audit,/Audit event detail belongs to the loaded Core page and applied filters only/);
  assert.match(audit,/auditFiltersEdited\?null:/);
 });
+
+test("UXR-4.4 Activity log uses six human columns and opens only the selected bounded Core event",()=>{
+ const main=readFileSync(join(root,"src","main.tsx"),"utf8");
+ const list=main.split("function AuditEventList(",2)[1]?.split("function AuditExplorer(",1)[0]||"";
+ const audit=main.split("function AuditExplorer(",2)[1]?.split("function AgentRolloutPreviewPanel(",1)[0]||"";
+ for(const label of ["When","What","Who","Resource","Result","Action"])assert.match(list,new RegExp('>'+label+'<'));
+ assert.match(list,/View details →/);assert.match(list,/disabled=\{!canInspect\(item,index\)\}/);
+ assert.match(audit,/<AuditEventList items=\{rows\}/);
+ assert.match(audit,/observedAuditEventDetails\(data\?\.items\?\.\[index\]\)/);
+ assert.match(audit,/aria-label="Observed Core Audit event detail"/);
+ assert.match(audit,/Activity log/);
+ assert.doesNotMatch(list,/JSON\.stringify|metadata|payload|session_id|private_key/);
+});

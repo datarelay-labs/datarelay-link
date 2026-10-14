@@ -105,3 +105,20 @@ test("G37 accessible attention CTAs use native button focus and mobile-safe 44px
  assert.match(region,/\{x\.severity\}/);
  assert.match(region,/\{x\.label\}/);
 });
+
+test("UXR-4.1 configured Home keeps next tasks dominant and moves fleet counts into secondary evidence disclosure",()=>{
+ assert.match(command,/<FirstUseHome data=\{data\}/);
+ assert.match(command,/<details className="card dr-home-evidence-details">/);
+ assert.match(command,/Core inventory evidence/);
+ assert.doesNotMatch(command,/<section className="dr-kpi-strip">/);
+ assert.match(command,/These are configuration\/observation summaries, not proof of current live access/);
+});
+
+test("UXR-4.3 Home exposes enabled loaded services as actions without calling them reachable",()=>{
+ assert.match(command,/resource_type=remote-service&limit=100/);
+ assert.match(command,/requireObservedBoundedCorePage\("services",serviceResult\.value,"",100\)/);
+ assert.match(command,/serviceStateLabel\(row\)==="Enabled"/);
+ assert.match(command,/Enabled configuration only; access policy and transport success remain unverified/);
+ assert.match(command,/inspectResourceId:item\.id/);
+ assert.doesNotMatch(command,/popular|most used|reachable service|connection successful/i);
+});
