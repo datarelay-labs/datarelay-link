@@ -5814,6 +5814,36 @@ def invalidate_runtime_verification_for_restart(*, root: Optional[str] = None) -
 def synchronize_agent_remote_services(plane_db, *, root: Optional[str] = None,
                                       force_runtime: bool = False,
                                       server_verification_only: bool = False) -> dict:
+    """Serialize Agent reconciliation across CLI and lifecycle-worker callers."""
+    import drlink_v24_runtime as runtime
+    from frp_control_locks import ExclusiveFileLock, LockTimeout
+
+    actual_root = root if root is not None else getattr(plane_db, "root", None)
+    lock_path = runtime._client_state_path(actual_root).with_name("client-synchronize.lock")
+    timeout = float(os.environ.get("DRLINK_SYNCHRONIZE_LOCK_TIMEOUT") or 180)
+    try:
+        with ExclusiveFileLock(lock_path, timeout=timeout):
+            return _synchronize_agent_remote_services_locked(
+                plane_db,
+                root=root,
+                force_runtime=force_runtime,
+                server_verification_only=server_verification_only,
+            )
+    except LockTimeout:
+        return {
+            "status": "DEGRADED",
+            "updated": 0,
+            "affected": [],
+            "runtime_error": (
+                "Another Agent synchronization is already in progress; "
+                "retry after it finishes."
+            ),
+        }
+
+
+def _synchronize_agent_remote_services_locked(plane_db, *, root: Optional[str] = None,
+                                             force_runtime: bool = False,
+                                             server_verification_only: bool = False) -> dict:
     """Reconnect synchronization: allocate pending endpoints, apply deletes, revalidate deps."""
     # Enrollment projection is a lifecycle write. show/status must not do it.
     projected = project_enrolled_services_into_agent_catalog(plane_db, root=root)
