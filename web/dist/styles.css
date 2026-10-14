@@ -85,7 +85,7 @@
 .dr-p0-check input{width:16px;height:16px;flex:0 0 16px}
 .dr-p0-counters{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
 .dr-p0-status{font-weight:600;color:var(--dr-text-primary);font-size:13px}
-.dr-p0-onboarding{display:grid;gap:15px;min-width:0}
+.dr-p0-onboarding{display:grid;gap:15px;min-width:0;width:100%}.dr-p0-onboarding>.card{min-width:0;max-width:100%}
 .dr-p0-table{width:100%;max-width:100%;overflow-x:auto}
 .dr-p0-table table{width:100%;min-width:560px;border-collapse:collapse}
 .dr-p0-table th,.dr-p0-table td{padding:9px 10px;border-bottom:1px solid var(--dr-border-divider);text-align:left;font-size:12px}
@@ -497,3 +497,16 @@
 }
 /* Previous observations retain their values, not a current-success visual cue. */
 .dr-workflow-servers[data-read-state="stale"] .dr-wf-state,.dr-workflow-servers[data-read-state="refreshing"] .dr-wf-state{color:var(--dr-text-secondary);background:var(--dr-surface-section);border-color:var(--dr-border-default)}
+
+/* UXR-2.1 focused platform chooser; advanced enrollment stays disclosed. */
+.dr-enrollment-platforms{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:4px 0 2px}
+.dr-enrollment-platform{display:grid;grid-template-columns:40px minmax(0,1fr);align-items:center;gap:10px;min-height:72px;border:1px solid var(--dr-border-default);border-radius:10px;background:var(--dr-surface-card);padding:10px 12px;color:var(--dr-text-primary);text-align:left}
+.dr-enrollment-platform:hover:not(:disabled){background:var(--dr-surface-hover);border-color:var(--dr-border-strong)}
+.dr-enrollment-platform.selected{border-color:var(--dr-action-primary);box-shadow:0 0 0 1px var(--dr-action-primary)}
+.dr-enrollment-platform-icon{display:grid;width:38px;height:38px;place-items:center;border-radius:9px;background:var(--dr-surface-section);color:var(--dr-action-primary)}
+.dr-enrollment-platform-icon svg{width:22px;height:22px}
+.dr-enrollment-platform>span:last-child{display:grid;gap:2px;min-width:0}
+.dr-enrollment-platform strong{font-size:13px}.dr-enrollment-platform small{color:var(--dr-text-muted);font-size:11px;line-height:1.35}
+.dr-enrollment-choice{margin:6px 0 2px!important;font-size:13px;color:var(--dr-text-secondary)}
+.dr-enrollment-advanced{margin-top:4px}.dr-enrollment-advanced>.dr-p0-form{margin-top:12px}
+@media(max-width:560px){.dr-enrollment-platforms{grid-template-columns:1fr}.dr-enrollment-platform{min-height:64px}}

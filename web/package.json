@@ -10,7 +10,8 @@
     "test:servers": "node --test tests/workflow-servers.test.mjs",
     "test:servers:browser": "node --test tests/workflow-servers.browser.mjs",
     "test:servers:shell": "node tests/workflow-servers-shell.browser.mjs",
-    "test:servers:visual": "node tests/workflow-servers-visual.browser.mjs"
+    "test:servers:visual": "node tests/workflow-servers-visual.browser.mjs",
+    "test:enrollment:browser": "node --test tests/workflow-enrollment.browser.mjs"
   },
   "dependencies": {
     "qrcode.react": "4.2.0",

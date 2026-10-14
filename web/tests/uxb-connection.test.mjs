@@ -215,7 +215,7 @@ test("non-admin never sees enabled enrollment issue during setup",()=>{
   api:async()=>{throw new Error("SSR must not call Core API")},
   operator:{role:"Read Only"},
  }));
- assert.match(html,/<button[^>]*disabled=""[^>]*>Issue enrollment →<\/button>/);
+ assert.match(html,/<button[^>]*disabled=""[^>]*>Create invitation →<\/button>/);
 });
 
 test("First-time Admin picks an understandable purpose, sees glossary, and does not skip Core evidence",()=>{

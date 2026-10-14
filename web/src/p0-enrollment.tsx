@@ -5,6 +5,19 @@ import {isObservedAbsoluteTime} from "./uxb-integrations-state";
 type Navigate=(id:string,groupId?:string)=>void;
 export const enrollmentSteps=["Issue enrollment","Install / join","Review & approve","Verify connectivity"] as const;
 
+export const enrollmentPlatformOptions=[
+ {id:"linux",label:"Linux",hint:"systemd-based servers"},
+ {id:"macos",label:"macOS",hint:"Apple Silicon client"},
+ {id:"windows",label:"Windows",hint:"PowerShell bootstrap"},
+] as const;
+
+function EnrollmentPlatformIcon({platform}:{platform:string}){
+ const common={viewBox:"0 0 24 24",fill:"none",stroke:"currentColor",strokeWidth:1.7,strokeLinecap:"round" as const,strokeLinejoin:"round" as const,"aria-hidden":true as const};
+ if(platform==="windows")return <svg {...common}><path d="M3 5.5 10.5 4v7H3zM13 3.5 21 2v9h-8zM3 13h7.5v7L3 18.5zM13 13h8v9l-8-1.5z"/></svg>;
+ if(platform==="macos")return <svg {...common}><path d="M15.8 4.2c-.9.1-1.9.7-2.4 1.4-.5.6-.9 1.6-.7 2.5 1 .1 2-.5 2.5-1.2.6-.7 1-1.7.9-2.6M18.7 14.4c0-2.1 1.7-3.1 1.8-3.2-1-1.5-2.6-1.7-3.2-1.7-1.4-.1-2.7.8-3.4.8-.7 0-1.8-.8-3-.7-1.5 0-3 .9-3.8 2.3-1.6 2.8-.4 7 1.2 9.3.8 1.1 1.7 2.3 2.9 2.2 1.2 0 1.6-.7 3.1-.7 1.4 0 1.9.7 3.1.7 1.3 0 2.1-1.1 2.8-2.2.9-1.3 1.3-2.5 1.3-2.6-.1 0-2.8-1.1-2.8-4.2Z"/></svg>;
+ return <svg {...common}><path d="M12 3c-2.2 0-4 1.7-4 3.8v2.5c-1.2 1-2 2.6-2 4.3 0 3.2 2.7 5.8 6 5.8s6-2.6 6-5.8c0-1.8-.8-3.3-2-4.3V6.8C16 4.7 14.2 3 12 3Z"/><path d="M9.5 13.5h.01M14.5 13.5h.01M9 18l-1.2 2.5M15 18l1.2 2.5"/></svg>;
+}
+
 /** UX-3: Core's list_enrollments returns at most 50 recently observed rows
  * and a fleet total. A malformed snapshot must not look like zero tickets or
  * expose arbitrary nested allocator credentials in this read-only history.
@@ -624,18 +637,32 @@ export function EnrollmentOnboarding({api,data,refresh,operator,onNavigate,onBus
       {error&&<p className="error" role="alert">{error}</p>}
       {scopedMessage&&<p className="notice" role="status">{scopedMessage}</p>}
       {step===1&&<div className="dr-p0-stage">
-        <h3>1. Issue an enrollment invitation</h3>
-        <div className="dr-p0-form">
-          <label className="dr-field"><span>Enrollment mode</span><select value={mode} disabled={busy} onChange={e=>{setIssued(null);setCopyStatus("");setMode(e.target.value);setPreApproved(false);setTtl(e.target.value==="manual"?"600":"3600");if(e.target.value==="manual"&&platform==="windows")setPlatform("linux")}}><option value="zero-touch">Zero-Touch (recommended)</option><option value="manual">Manual (interactive credential)</option></select></label>
-          <label className="dr-field"><span>Agent platform</span><select value={platform} disabled={busy} onChange={e=>{setIssued(null);setCopyStatus("");setPlatform(e.target.value)}}><option value="linux">Linux</option><option value="macos">macOS</option>{mode!=="manual"&&<option value="windows">Windows</option>}</select></label>
-          <label className="dr-field"><span>Invitation TTL (seconds)</span><input value={ttl} disabled={busy} onChange={e=>{setIssued(null);setCopyStatus("");setTtl(e.target.value)}} placeholder={mode==="manual"?"60–2592000":"60–86400"}/></label>
-          <label className="dr-field"><span>Host label</span><input value={label} disabled={busy} onChange={e=>{setIssued(null);setCopyStatus("");setLabel(e.target.value)}} placeholder="e.g. branch-gateway"/></label>
-          <label className="dr-field"><span>Optional note</span><input value={note} disabled={busy} onChange={e=>{setIssued(null);setCopyStatus("");setNote(e.target.value)}} placeholder="Operator context"/></label>
+        <h3>1. Choose the Agent platform</h3>
+        <p className="muted">Start with the machine you are connecting. Zero-Touch is the recommended default; advanced invitation options stay out of the normal path.</p>
+        <div className="dr-enrollment-platforms" role="group" aria-label="Agent platform">
+          {enrollmentPlatformOptions.map(option=>{
+            const unavailable=mode==="manual"&&option.id==="windows";
+            return <button type="button" key={option.id} className={platform===option.id?"dr-enrollment-platform selected":"dr-enrollment-platform"}
+              aria-pressed={platform===option.id} disabled={busy||unavailable}
+              onClick={()=>{setIssued(null);setCopyStatus("");setPlatform(option.id)}}>
+              <span className="dr-enrollment-platform-icon"><EnrollmentPlatformIcon platform={option.id}/></span>
+              <span><strong>{option.label}</strong><small>{unavailable?"Zero-Touch only":option.hint}</small></span>
+            </button>})}
         </div>
-        {admin&&mode==="zero-touch"&&<label className="dr-p0-check"><input type="checkbox" checked={preApproved} disabled={busy} onChange={e=>{setIssued(null);setCopyStatus("");setPreApproved(e.target.checked)}}/><span>Pre-approve first Host from this ticket (explicit Admin action)</span></label>}
-        <p className="muted">Pending Approval is the default, regardless of agent connection status. Credentials are display-once and must not be saved to browser storage.</p>
+        <p className="dr-enrollment-choice">Selected: <strong>{enrollmentPlatformOptions.find(option=>option.id===platform)?.label||"UNKNOWN"}</strong> · {mode==="zero-touch"?"Zero-Touch invitation":"Manual enrollment"}</p>
+        <details className="dr-wf-disclosure dr-enrollment-advanced">
+          <summary>Advanced enrollment options</summary>
+          <div className="dr-p0-form">
+            <label className="dr-field"><span>Enrollment mode</span><select value={mode} disabled={busy} onChange={e=>{setIssued(null);setCopyStatus("");setMode(e.target.value);setPreApproved(false);setTtl(e.target.value==="manual"?"600":"3600");if(e.target.value==="manual"&&platform==="windows")setPlatform("linux")}}><option value="zero-touch">Zero-Touch (recommended)</option><option value="manual">Manual (interactive credential)</option></select></label>
+            <label className="dr-field"><span>Invitation TTL (seconds)</span><input value={ttl} disabled={busy} onChange={e=>{setIssued(null);setCopyStatus("");setTtl(e.target.value)}} placeholder={mode==="manual"?"60–2592000":"60–86400"}/></label>
+            <label className="dr-field"><span>Host label</span><input value={label} disabled={busy} onChange={e=>{setIssued(null);setCopyStatus("");setLabel(e.target.value)}} placeholder="e.g. branch-gateway"/></label>
+            <label className="dr-field"><span>Optional note</span><input value={note} disabled={busy} onChange={e=>{setIssued(null);setCopyStatus("");setNote(e.target.value)}} placeholder="Operator context"/></label>
+          </div>
+          {admin&&mode==="zero-touch"&&<label className="dr-p0-check"><input type="checkbox" checked={preApproved} disabled={busy} onChange={e=>{setIssued(null);setCopyStatus("");setPreApproved(e.target.checked)}}/><span>Pre-approve first Host from this ticket (explicit Admin action)</span></label>}
+        </details>
+        <p className="muted">Pending Approval is the default, regardless of Agent connection status. Credentials are display-once and must not be saved to browser storage.</p>
         {issueProblem&&<p className="warning-box" role="alert">{issueProblem}</p>}
-        <button className="primary" disabled={!admin||busy||!!issueProblem} onClick={issue}>{busy?"Issuing…":"Issue enrollment →"}</button>
+        <button className="primary" disabled={!admin||busy||!!issueProblem} onClick={issue}>{busy?"Issuing…":"Create invitation →"}</button>
       </div>}
       {step===2&&<div className="dr-p0-stage">
         <h3>2. Install the Agent and join</h3>

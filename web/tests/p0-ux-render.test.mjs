@@ -189,10 +189,24 @@ for(const [role,allowed] of [["Admin",true],["Operator",false],["Read Only",fals
     assert.match(html,/data-testid="p0-enrollment-journey"/);
     assert.match(html,/Pending Approval is the default/);
     assert.equal(html.includes("Pre-approve first Host"),allowed);
-    if(allowed)assert.match(html,/<button[^>]*>Issue enrollment →<\/button>/);
-    else assert.match(html,/<button[^>]*disabled=""[^>]*>Issue enrollment →<\/button>/);
+    if(allowed)assert.match(html,/<button[^>]*>Create invitation →<\/button>/);
+    else assert.match(html,/<button[^>]*disabled=""[^>]*>Create invitation →<\/button>/);
   });
 }
+
+test("UXR-2.1 enrollment starts with three supported platform choices and collapsed advanced options",()=>{
+ const html=renderToStaticMarkup(React.createElement(enroll.EnrollmentOnboarding,{
+  api:async()=>{throw new Error("SSR did not call API")},data:{items:[],total:0},refresh:()=>{},
+  operator:{id:"admin-a",role:"Admin"},
+ }));
+ for(const label of ["Linux","macOS","Windows"])assert.match(html,new RegExp(">"+label+"<"));
+ assert.match(html,/role="group" aria-label="Agent platform"/);
+ assert.match(html,/aria-pressed="true"/);
+ assert.match(html,/<details class="dr-wf-disclosure dr-enrollment-advanced">/);
+ assert.doesNotMatch(html,/<details[^>]*open/);
+ assert.match(html,/Advanced enrollment options/);
+ assert.match(html,/Create invitation →/);
+});
 
 test("UX-3 display-once enrollment ticket is scoped to exact operator and unchanged issuance intent",()=>{
  const intent={
