@@ -73,13 +73,28 @@ async function api(path:string, init:RequestInit={}):Promise<Json>{
   return body;
 }
 
-function useEscapeClose(enabled:boolean,onClose:()=>void){
+function useDialogFocusTrap(enabled:boolean,onClose:()=>void,containerRef:React.RefObject<HTMLElement|null>){
   useEffect(()=>{
     if(!enabled)return;
-    function handle(e:KeyboardEvent){if(e.key==="Escape")onClose()}
-    window.addEventListener("keydown",handle);
-    return()=>window.removeEventListener("keydown",handle);
-  },[enabled,onClose]);
+    const previous=document.activeElement instanceof HTMLElement?document.activeElement:null;
+    const dialog=containerRef.current;dialog?.focus();
+    function handle(e:KeyboardEvent){
+      if(e.key==="Escape"){e.preventDefault();onClose();return}
+      if(e.key!=="Tab"||!dialog)return;
+      const focusable=Array.from(dialog.querySelectorAll<HTMLElement>(
+        'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),summary,[tabindex]:not([tabindex="-1"])'
+      )).filter(element=>element.getClientRects().length>0&&!element.closest("[inert],[hidden]"));
+      if(!focusable.length){e.preventDefault();dialog.focus();return}
+      const first=focusable[0],last=focusable[focusable.length-1],active=document.activeElement;
+      if(e.shiftKey&&(active===first||active===dialog||!dialog.contains(active))){e.preventDefault();last.focus()}
+      else if(!e.shiftKey&&(active===last||active===dialog||!dialog.contains(active))){e.preventDefault();first.focus()}
+    }
+    document.addEventListener("keydown",handle);
+    return()=>{
+      document.removeEventListener("keydown",handle);
+      if(previous?.isConnected)previous.focus({preventScroll:true});
+    };
+  },[enabled]);
 }
 
 function Table({items,onInspect,canInspect}:{
@@ -1986,8 +2001,9 @@ function ObjectsWorkspace({data,onNavigate,context,api}:{data:any,onNavigate?:(i
   const initialFamily=["all","network","service","permission","ai"].includes(String(context?.family||""))
     ?String(context.family):"all";
   const [family,setFamily]=useState(initialFamily),[filter,setFilter]=useState(""),[selected,setSelected]=useState<any>(null);
+  const detailRef=useRef<HTMLElement>(null);
   useEffect(()=>{setFamily(initialFamily);setFilter("");setSelected(null)},[initialFamily]);
-  useEscapeClose(!!selected,()=>setSelected(null));
+  useDialogFocusTrap(!!selected,()=>setSelected(null),detailRef);
   const resources=data?.resources&&typeof data.resources==="object"?data.resources:null;
   const requiredTypes=["network-object","network-group","service-object","service-group",
     "permission-object","permission-group","ai-identity"];
@@ -2060,7 +2076,7 @@ function ObjectsWorkspace({data,onNavigate,context,api}:{data:any,onNavigate?:(i
           "Create or adjust a reusable object below, or change the current filter."}</p>
       </div>:<div className="dr-table-scroll"><table className="dr-resource-table"><thead><tr><th>Name</th><th>Kind</th><th>Type</th><th>Status</th><th>Description</th></tr></thead><tbody>{rows.map((item:any)=><tr key={item.resource_type+":"+item.id} tabIndex={0} onClick={()=>setSelected(item)} onKeyDown={e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();setSelected(item)}}}><td><strong>{item.name||item.id}</strong><small>{item.id}</small></td><td>{item.resource_type}</td><td>{item.type||"—"}</td><td>{item.status||item.credential_status||(item.enabled===undefined?"—":item.enabled?"Enabled":"Disabled")}</td><td>{item.description||"—"}</td></tr>)}</tbody></table></div>}
     </section>
-    {selected&&<div className="dr-drawer-backdrop" onMouseDown={e=>{if(e.currentTarget===e.target)setSelected(null)}}><aside className="dr-detail-drawer" role="dialog" aria-modal="true" aria-label="Object detail" tabIndex={-1} autoFocus><header><div><p className="dr-eyebrow">{selected.resource_type}</p><h2>{selected.name||selected.id}</h2><p>{selected.id}</p></div><button className="dr-icon-button" onClick={()=>setSelected(null)} aria-label="Close detail">×</button></header><div className="dr-detail-fields">{Object.entries(selected).filter(([,value])=>typeof value!=="object"&&value!==null&&value!=="").map(([key,value])=><div key={key}><span>{key.replaceAll("_"," ")}</span><strong>{String(value)}</strong></div>)}</div><footer><button className="primary" onClick={()=>{setSelected(null);onNavigate?.("policies","access")}}>Use in policy</button></footer></aside></div>}
+    {selected&&<div className="dr-drawer-backdrop" onMouseDown={e=>{if(e.currentTarget===e.target)setSelected(null)}}><aside ref={detailRef} className="dr-detail-drawer" role="dialog" aria-modal="true" aria-label="Object detail" tabIndex={-1}><header><div><p className="dr-eyebrow">{selected.resource_type}</p><h2>{selected.name||selected.id}</h2><p>{selected.id}</p></div><button className="dr-icon-button" onClick={()=>setSelected(null)} aria-label="Close detail">×</button></header><div className="dr-detail-fields">{Object.entries(selected).filter(([,value])=>typeof value!=="object"&&value!==null&&value!=="").map(([key,value])=><div key={key}><span>{key.replaceAll("_"," ")}</span><strong>{String(value)}</strong></div>)}</div><footer><button className="primary" onClick={()=>{setSelected(null);onNavigate?.("policies","access")}}>Use in policy</button></footer></aside></div>}
   </div>;
 }
 
@@ -2086,8 +2102,8 @@ function PolicyWorkspace({data,operator,onNavigate,api,context}:{data:any,operat
   const [nextByPlane,setNextByPlane]=useState<Record<string,string|null>>(data.next_cursor_by_plane||{});
   const [exhausted,setExhausted]=useState<string[]>([]);
   const [loadingPlane,setLoadingPlane]=useState(""),[pageError,setPageError]=useState("");
-  const pageEpoch=useRef(0);
-  useEscapeClose(!!selected,()=>setSelected(null));
+  const pageEpoch=useRef(0),detailRef=useRef<HTMLElement>(null);
+  useDialogFocusTrap(!!selected,()=>setSelected(null),detailRef);
   useEffect(()=>{
     setAdditional([]);setNextByPlane(data.next_cursor_by_plane||{});
     setExhausted([]);setPageError("");setLoadingPlane("");
@@ -2295,7 +2311,7 @@ function PolicyWorkspace({data,operator,onNavigate,api,context}:{data:any,operat
             Review related Audit →
           </button></td></tr>)}</tbody></table></div>}
     </section>
-    {selected&&<div className="dr-drawer-backdrop" onMouseDown={e=>{if(e.currentTarget===e.target)setSelected(null)}}><aside className="dr-detail-drawer" role="dialog" aria-modal="true" aria-label="Policy detail" tabIndex={-1} autoFocus><header><div><p className="dr-eyebrow">{selected.plane||"Policy"} access</p><h2>{selected.name||selected.id}</h2><p>{selected.id}</p></div><button className="dr-icon-button" onClick={()=>setSelected(null)} aria-label="Close detail">×</button></header><div className="dr-drawer-status"><span className={policyStateLabel(selected.enabled)==="Enabled"?"dr-state active":"dr-state"}><i/>{policyStateLabel(selected.enabled)}</span></div><div className="dr-detail-fields">{observedPolicyDetailFields(selected).map(field=><div key={field.label}><span>{field.label}</span><strong>{field.value}</strong></div>)}</div><footer><button className="secondary" onClick={()=>{const target={originId:String(selected.id||selected.name||""),originType:"access-rule",plane:selected.plane};setSelected(null);onNavigate?.("audit","activity",target)}}>Recent activity</button><button className="primary" onClick={()=>{const target={originId:String(selected.id||selected.name||""),originType:"access-rule",plane:selected.plane||"remote",source:String(selected.source||""),destination:String(selected.destination||""),selector:String(selected.plane==="ai"?selected.permission||"":selected.service||"")};setSelected(null);onNavigate?.("access","access",target)}}>Why allowed / denied?</button></footer></aside></div>}
+    {selected&&<div className="dr-drawer-backdrop" onMouseDown={e=>{if(e.currentTarget===e.target)setSelected(null)}}><aside ref={detailRef} className="dr-detail-drawer" role="dialog" aria-modal="true" aria-label="Policy detail" tabIndex={-1}><header><div><p className="dr-eyebrow">{selected.plane||"Policy"} access</p><h2>{selected.name||selected.id}</h2><p>{selected.id}</p></div><button className="dr-icon-button" onClick={()=>setSelected(null)} aria-label="Close detail">×</button></header><div className="dr-drawer-status"><span className={policyStateLabel(selected.enabled)==="Enabled"?"dr-state active":"dr-state"}><i/>{policyStateLabel(selected.enabled)}</span></div><div className="dr-detail-fields">{observedPolicyDetailFields(selected).map(field=><div key={field.label}><span>{field.label}</span><strong>{field.value}</strong></div>)}</div><footer><button className="secondary" onClick={()=>{const target={originId:String(selected.id||selected.name||""),originType:"access-rule",plane:selected.plane};setSelected(null);onNavigate?.("audit","activity",target)}}>Recent activity</button><button className="primary" onClick={()=>{const target={originId:String(selected.id||selected.name||""),originType:"access-rule",plane:selected.plane||"remote",source:String(selected.source||""),destination:String(selected.destination||""),selector:String(selected.plane==="ai"?selected.permission||"":selected.service||"")};setSelected(null);onNavigate?.("access","access",target)}}>Why allowed / denied?</button></footer></aside></div>}
   </div>;
 }
 
@@ -2364,8 +2380,8 @@ function ResourceWorkspace({kind,data,operator,onNavigate,api,initialFilter="",i
   const [cursor,setCursor]=useState<string|null>(isPartialCorePage(data)?data.next_cursor:null);
   const [moreBusy,setMoreBusy]=useState(false),[moreError,setMoreError]=useState("");
   const [pagesLoaded,setPagesLoaded]=useState(1);
-  const loadEpoch=useRef(0);
-  useEscapeClose(!!selected,()=>setSelected(null));
+  const loadEpoch=useRef(0),detailRef=useRef<HTMLElement>(null);
+  useDialogFocusTrap(!!selected,()=>setSelected(null),detailRef);
   useEffect(()=>{
     loadEpoch.current+=1;setLoaded(data.items||[]);
     setCursor(isPartialCorePage(data)?data.next_cursor:null);
@@ -2564,7 +2580,7 @@ function ResourceWorkspace({kind,data,operator,onNavigate,api,initialFilter="",i
     aria-label={"Inspect Remote Service "+serviceVisibleIdentity(item).primary}
     onClick={event=>{event.stopPropagation();setSelected(item)}}>Inspect Remote Service →</button></td><td>{item.managed_host||item.managed_host_id||"—"}</td><td>{item.service_type||"—"}</td><td>{item.public_port??"—"}</td><td>{[item.target_host,item.target_port].filter(Boolean).join(":")||item.target_mode||"—"}</td><td><span className={serviceStateLabel(item)==="Enabled"?"dr-state active":"dr-state"}><i/>{serviceStateLabel(item)}</span></td></>}</tr>)}</tbody></table></div>}
     </section>
-    {selected&&<div className="dr-drawer-backdrop" onMouseDown={e=>{if(e.currentTarget===e.target)setSelected(null)}}><aside className="dr-detail-drawer" role="dialog" aria-modal="true" aria-label={heading+" detail"} tabIndex={-1} autoFocus><header><div><p className="dr-eyebrow">{isHost?"Managed Host":"Remote Service"}</p><h2>{isHost?hostVisibleIdentity(selected).primary:serviceVisibleIdentity(selected).primary}</h2><p>{isHost?hostVisibleIdentity(selected).secondary:serviceVisibleIdentity(selected).secondary}</p></div><button className="dr-icon-button" onClick={()=>setSelected(null)} aria-label="Close detail">×</button></header><div className="dr-drawer-status"><span className={(isHost?hostConnectionState(selected)==="Connected":serviceStateLabel(selected)==="Enabled")?"dr-state active":"dr-state"}><i/>{isHost?hostConnectionState(selected):serviceStateLabel(selected)}</span>{isHost&&<span className={selected.admission_state==="APPROVED"?"dr-state active":"dr-state"}>{selected.admission_state==="PENDING_APPROVAL"?"Pending approval":selected.admission_state==="QUARANTINED"?"Quarantined":selected.admission_state==="APPROVED"?"Approved":"Unknown admission"}</span>}</div>{!isHost&&<ServiceEvidenceStatus service={selected}/>}<div className="dr-detail-fields">{isHost?hostDetailSections(selected).map(section=><section key={section.title} className="dr-host-detail-section"><h3>{section.title}</h3>{section.fields.map(field=><div key={field.label}><span>{field.label}</span><strong>{field.value}</strong></div>)}</section>):serviceDetailSections(selected).map(section=><section key={section.title} className="dr-host-detail-section">
+    {selected&&<div className="dr-drawer-backdrop" onMouseDown={e=>{if(e.currentTarget===e.target)setSelected(null)}}><aside ref={detailRef} className="dr-detail-drawer" role="dialog" aria-modal="true" aria-label={heading+" detail"} tabIndex={-1}><header><div><p className="dr-eyebrow">{isHost?"Managed Host":"Remote Service"}</p><h2>{isHost?hostVisibleIdentity(selected).primary:serviceVisibleIdentity(selected).primary}</h2><p>{isHost?hostVisibleIdentity(selected).secondary:serviceVisibleIdentity(selected).secondary}</p></div><button className="dr-icon-button" onClick={()=>setSelected(null)} aria-label="Close detail">×</button></header><div className="dr-drawer-status"><span className={(isHost?hostConnectionState(selected)==="Connected":serviceStateLabel(selected)==="Enabled")?"dr-state active":"dr-state"}><i/>{isHost?hostConnectionState(selected):serviceStateLabel(selected)}</span>{isHost&&<span className={selected.admission_state==="APPROVED"?"dr-state active":"dr-state"}>{selected.admission_state==="PENDING_APPROVAL"?"Pending approval":selected.admission_state==="QUARANTINED"?"Quarantined":selected.admission_state==="APPROVED"?"Approved":"Unknown admission"}</span>}</div>{!isHost&&<ServiceEvidenceStatus service={selected}/>}<div className="dr-detail-fields">{isHost?hostDetailSections(selected).map(section=><section key={section.title} className="dr-host-detail-section"><h3>{section.title}</h3>{section.fields.map(field=><div key={field.label}><span>{field.label}</span><strong>{field.value}</strong></div>)}</section>):serviceDetailSections(selected).map(section=><section key={section.title} className="dr-host-detail-section">
   <h3>{section.title}</h3>{section.fields.map(field=><div key={field.label}>
     <span>{field.label}</span><strong>{field.value}</strong></div>)}</section>)}</div>{!isHost&&<ServiceUseActions key={String(selected.id||"")} service={selected}/>}<footer><button className="secondary" onClick={()=>{const target={originType:isHost?"managed-host":"remote-service",originId:String(selected.id||"")};setSelected(null);onNavigate?.("audit","activity",target)}}>Recent activity</button><button className="primary" onClick={()=>{const target={originType:isHost?"managed-host":"remote-service",originId:String(selected.id||""),plane:"remote"};setSelected(null);onNavigate?.("access","access",target)}}>Why can / cannot connect?</button></footer></aside></div>}
   </div>;

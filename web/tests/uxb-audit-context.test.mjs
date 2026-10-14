@@ -133,7 +133,7 @@ test("Returning to resource uses existing authorized loaded row, not server-side
  assert.match(resource,/matchObservedAuditReturn\(loaded,initialInspectId\)/);
  assert.match(view,/initialInspectId=\{context\?\.inspectResourceId\}/);
  assert.match(resource,/requireObservedInventoryContinuation/);
- assert.match(resource,/useEscapeClose\(!!selected,.*setSelected\(null\)/);
+ assert.match(resource,/useDialogFocusTrap\(!!selected,.*setSelected\(null\),detailRef\)/);
 });
 test("Audit context is source-only, Core audit resource filter and pagination remain intact",()=>{
  const main=readFileSync(join(root,"src","main.tsx"),"utf8");

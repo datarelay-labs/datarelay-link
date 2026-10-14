@@ -40,3 +40,16 @@ test('UX-4 actionable Core attention rows wrap safely at 320px and remain keyboa
  assert.match(css,/@media\(max-width:560px\)\{\.dr-uxb-attention-list>li\{grid-template-columns:minmax\(0,1fr\)/);
  assert.match(css,/\.dr-uxb-attention-list>li button\{width:100%\}\}/);
 });
+
+test("UXR-5.1/5.5 redesigned workflow targets and generic detail dialogs use shared readable focus contract",()=>{
+ const main=readFileSync(join(root,"src","main.tsx"),"utf8");
+ const css=readFileSync(join(root,"dist","styles.css"),"utf8");
+ assert.match(main,/function useDialogFocusTrap/);
+ assert.match(main,/e\.key==="Escape"/);assert.match(main,/e\.key!=="Tab"/);
+ assert.match(main,/previous\.focus\(\{preventScroll:true\}\)/);
+ assert.match(main,/ref=\{detailRef\} className="dr-detail-drawer"/);
+ assert.equal((main.match(/useDialogFocusTrap\(\!\!selected/g)||[]).length,3);
+ assert.match(css,/\.dr-page-intro h2,.dr-server-welcome h2\{font-size:24px/);
+ assert.match(css,/button\.primary,button\.secondary,button\.danger\)\{min-height:44px\}/);
+ assert.match(css,/\.dr-detail-drawer:focus-visible/);
+});
