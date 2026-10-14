@@ -47,6 +47,28 @@ def _write_identity(root: Path, machine_id: str, hostname: str):
     return key, pub.read_text(encoding="utf-8"), mac
 
 
+class SynchronizeSerializationTests(unittest.TestCase):
+    def test_concurrent_synchronize_is_bounded_before_reconciliation(self):
+        from frp_control_locks import ExclusiveFileLock
+        from drlink_v24_runtime import _client_state_path
+
+        with tempfile.TemporaryDirectory(prefix="c014-sync-lock-") as tmp:
+            lock_path = _client_state_path(tmp).with_name("client-synchronize.lock")
+            old_timeout = os.environ.get("DRLINK_SYNCHRONIZE_LOCK_TIMEOUT")
+            os.environ["DRLINK_SYNCHRONIZE_LOCK_TIMEOUT"] = "0.05"
+            try:
+                with ExclusiveFileLock(lock_path, timeout=0):
+                    result = v24.synchronize_agent_remote_services(object(), root=tmp)
+            finally:
+                if old_timeout is None:
+                    os.environ.pop("DRLINK_SYNCHRONIZE_LOCK_TIMEOUT", None)
+                else:
+                    os.environ["DRLINK_SYNCHRONIZE_LOCK_TIMEOUT"] = old_timeout
+        self.assertEqual(result["status"], "DEGRADED")
+        self.assertEqual(result["updated"], 0)
+        self.assertIn("already in progress", result["runtime_error"])
+
+
 class CatalogUnavailableIntentRaceTests(unittest.TestCase):
     """Catalog failure must not replay intent over a committed operator edit."""
 
