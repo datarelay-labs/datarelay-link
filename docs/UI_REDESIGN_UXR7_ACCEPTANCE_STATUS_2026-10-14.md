@@ -68,8 +68,9 @@ Both were corrected without changing runtime policy/authorization:
 - current bundle generation is deterministic on repeated execution;
 - generated client/server bundles are synchronized to current source.
 
-The repair HEAD is 1e50c66cccc486df163b220fded71d486d5c7d78.
-GitHub CI must reach terminal status on this exact head before UXR-7.7 can be closed. No earlier CI result is reused.
+The product-UI source lineage was subsequently synchronized at 89dd5ff7fb59c0144b0c919f9ef9f62245cb8177 after a production rebuild proved tracked app.js stale by four minified-line replacements. Two consecutive rebuilds were byte-identical; after committing the generated bundle, another production build left the worktree clean.
+
+On that source, local UI closure passed: plan integrity 16/16, Administration 20/20, P0 44/44, Journey 439/439, local assets 3/3, production build and diff check. PR #206 had zero inline review threads at inspection. Exact final-branch GitHub workflow status is recorded on Issue #182 / PR #206 after it reaches terminal state; no earlier-head CI is reused and no Browser/User acceptance is inferred.
 
 ## Remaining acceptance boundary
 

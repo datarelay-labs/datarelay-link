@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 6,
+  "revision": 7,
   "repository": "datarelay-labs/datarelay-link",
   "roadmap": 184,
   "packet": 182,
@@ -1652,9 +1652,15 @@
         "UXR-6.5"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "BLOCKED",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "blockers": [
+          "UXR-7.4 genuine three-role Browser acceptance",
+          "UXR-6.5 genuine two-user UI-06 proof"
+        ],
+        "qualification": "Real Agent/traffic/user evidence cannot be replaced by fixture/SSR/CI."
+      }
     },
     {
       "id": "UXR-7.6",
@@ -1699,12 +1705,14 @@
       "status": "IMPLEMENTED",
       "approval_required": false,
       "evidence": {
-        "head": "1e50c66cccc486df163b220fded71d486d5c7d78",
-        "repair": "Public evidence metadata sanitized and deterministic dist/bootstrap-* regenerated after exact-head CI exposed both defects.",
-        "public_metadata_scan": "PASS; live IPv4=0, fingerprints=0, non-doc IPv6=0",
-        "dist_rebuild": "deterministic repeated build PASS",
-        "github_ci": "Running on exact head; prior-head results are not reused.",
-        "status_record": "docs/UI_REDESIGN_UXR7_ACCEPTANCE_STATUS_2026-10-14.md"
+        "product_ui_source_head": "89dd5ff7fb59c0144b0c919f9ef9f62245cb8177",
+        "local_ui_closure": "Plan 16/16; Administration 20/20; P0 44/44; Journey 439/439; local assets 3/3; production build and git diff check PASS.",
+        "generated_asset_parity": "web/dist/app.js rebuilt twice identically then committed; subsequent production build leaves worktree clean.",
+        "public_metadata_scan": "PASS; live IPv4=0, fingerprints=0, non-doc IPv6=0.",
+        "review_threads": "PR #206 inline review threads = 0 at verification time.",
+        "github_ci_binding": "Exact final-branch workflow status is recorded in Issue #182 and PR #206 after terminal completion; prior-head CI is never reused.",
+        "status_record": "docs/UI_REDESIGN_UXR7_ACCEPTANCE_STATUS_2026-10-14.md",
+        "qualification": "Implementation/CI closure evidence only; not Browser/User acceptance, merge or release."
       }
     },
     {
@@ -1725,9 +1733,17 @@
         "UXR-7.7"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "BLOCKED",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "blockers": [
+          "UXR-7.5",
+          "UXR-7.6",
+          "final owner acceptance"
+        ],
+        "closure_check": "Must remain nonzero until every required WBS is ACCEPTED.",
+        "qualification": "Exclusive UI lock remains enabled; no automatic merge/release."
+      }
     }
   ],
   "source_register": [
