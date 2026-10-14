@@ -2711,6 +2711,57 @@ class AgentPushFalseHealthyTests(unittest.TestCase):
         self.assertEqual(server["status"], "HEALTHY")
         self.assertEqual(int(server["runtime_verified"] or 0), 1)
 
+    def test_direct_set_final_status_push_closes_stale_lifecycle_race(self):
+        # Live fda5 O-004 smoke: the runtime-verified upsert can ACK HEALTHY,
+        # then a stale lifecycle projection can demote Server state before the
+        # Agent persists its final HEALTHY row. Direct set must finish with a
+        # final idempotent status projection so both public surfaces converge.
+        from unittest import mock
+        import drlink_v24_runtime as runtime
+
+        v24.sync_agent_catalog_from_server(self.agent, root=self.agent_tmp)
+        real_upsert = mgmt.upsert_remote_service_on_server
+        injected = {"done": False}
+
+        def raced_upsert(**kwargs):
+            result = real_upsert(**kwargs)
+            if kwargs.get("runtime_verified") and not injected["done"]:
+                injected["done"] = True
+                stale = dict(kwargs)
+                stale["runtime_verified"] = False
+                stale["preserve_endpoint_port"] = int(result["endpoint_port"])
+                real_upsert(**stale)
+            return result
+
+        with mock.patch.object(
+            v24, "_probe_tcp", return_value=True
+        ), mock.patch.object(
+            runtime, "verified_remote_service_status", return_value=("HEALTHY", "")
+        ), mock.patch.object(
+            runtime, "_isolated_skip_fixture", return_value=True
+        ), mock.patch.object(
+            mgmt, "upsert_remote_service_on_server", side_effect=raced_upsert
+        ):
+            result = v24.set_remote_service_agent(
+                self.agent,
+                "direct-race",
+                destination="this-host",
+                service="ssh",
+                enabled=True,
+                root=self.agent_tmp,
+            )
+
+        self.assertTrue(injected["done"], result)
+        self.assertEqual(result["view"]["status"], "HEALTHY", result)
+        local = self.agent.conn.execute(
+            "SELECT status, runtime_verified FROM agent_remote_services WHERE name='direct-race'"
+        ).fetchone()
+        self.assertEqual(local["status"], "HEALTHY")
+        self.assertEqual(int(local["runtime_verified"] or 0), 1)
+        server = self._server_status("direct-race")
+        self.assertEqual(server["status"], "HEALTHY")
+        self.assertEqual(int(server["runtime_verified"] or 0), 1)
+
     def test_synchronize_final_status_push_failure_keeps_agent_degraded(self):
         # Live U-008 e0a3 regression: runtime recovered and public traffic was
         # healthy, but a lost final status projection left Agent HEALTHY while

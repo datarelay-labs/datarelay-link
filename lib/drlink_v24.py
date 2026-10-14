@@ -68,6 +68,18 @@ NORMAL_PORT_START, NORMAL_PORT_END = 6000, 6099
 FIXED_PORT_START, FIXED_PORT_END = 6200, 6299
 
 _ENDPOINT_ALLOC_LOCK = threading.Lock()
+_AGENT_SYNCHRONIZE_LOCK_STATE = threading.local()
+
+def _agent_synchronize_lock_held() -> bool:
+    return int(getattr(_AGENT_SYNCHRONIZE_LOCK_STATE, "depth", 0) or 0) > 0
+
+def _agent_synchronize_lock_enter() -> int:
+    previous = int(getattr(_AGENT_SYNCHRONIZE_LOCK_STATE, "depth", 0) or 0)
+    _AGENT_SYNCHRONIZE_LOCK_STATE.depth = previous + 1
+    return previous
+
+def _agent_synchronize_lock_restore(previous: int) -> None:
+    _AGENT_SYNCHRONIZE_LOCK_STATE.depth = int(previous)
 
 V2_SCHEMA_SQL = r"""
 CREATE TABLE IF NOT EXISTS access_policies (
@@ -5844,12 +5856,16 @@ def synchronize_agent_remote_services(plane_db, *, root: Optional[str] = None,
     timeout = float(os.environ.get("DRLINK_SYNCHRONIZE_LOCK_TIMEOUT") or 180)
     try:
         with ExclusiveFileLock(lock_path, timeout=timeout):
-            return _synchronize_agent_remote_services_locked(
-                plane_db,
-                root=root,
-                force_runtime=force_runtime,
-                server_verification_only=server_verification_only,
-            )
+            previous_lock_depth = _agent_synchronize_lock_enter()
+            try:
+                return _synchronize_agent_remote_services_locked(
+                    plane_db,
+                    root=root,
+                    force_runtime=force_runtime,
+                    server_verification_only=server_verification_only,
+                )
+            finally:
+                _agent_synchronize_lock_restore(previous_lock_depth)
     except LockTimeout:
         return {
             "status": "DEGRADED",
@@ -6387,6 +6403,36 @@ def set_remote_service_agent(
     reconcile_existing: bool = False,
 ) -> dict:
     name = validate_public_name(name, "Remote Service name")
+    if not reconcile_existing and not _agent_synchronize_lock_held():
+        import drlink_v24_runtime as runtime
+        from frp_control_locks import ExclusiveFileLock, LockTimeout
+
+        actual_root = root if root is not None else getattr(plane_db, "root", None)
+        lock_path = runtime._client_state_path(actual_root).with_name("client-synchronize.lock")
+        timeout = float(os.environ.get("DRLINK_SYNCHRONIZE_LOCK_TIMEOUT") or 180)
+        try:
+            with ExclusiveFileLock(lock_path, timeout=timeout):
+                previous_lock_depth = _agent_synchronize_lock_enter()
+                try:
+                    return set_remote_service_agent(
+                        plane_db,
+                        name,
+                        destination=destination,
+                        service=service,
+                        enabled=enabled,
+                        oneshot=oneshot,
+                        root=root,
+                        server_reachable=server_reachable,
+                        reconcile_existing=False,
+                    )
+                finally:
+                    _agent_synchronize_lock_restore(previous_lock_depth)
+        except LockTimeout as exc:
+            raise ControlPlaneError(
+                "ERROR:\nAnother Agent synchronization is already in progress.\n\n"
+                "Retry after it finishes.\n\nNo changes were applied."
+            ) from exc
+
     identity = load_agent_identity(root)
     host_name = identity.get("hostname") or identity.get("label") or "this-host"
     existing = plane_db.conn.execute(
@@ -7155,8 +7201,45 @@ def set_remote_service_agent(
                     "SELECT reason FROM agent_remote_services WHERE name = ?", (name,)
                 ).fetchone()
                 reason = (str(current['reason'] or '') if current else '') or 'Runtime generation changed during activation.'
-            if live_mgmt and status != "HEALTHY":
-                _push_agent_remote_service_status(plane_db, root=root, names=[name])
+            if live_mgmt:
+                if status == "HEALTHY":
+                    try:
+                        # The runtime-verified upsert above can race a lifecycle
+                        # projection that started before this direct operator edit.
+                        # Persist local HEALTHY first, then make one final
+                        # idempotent Server projection while the shared
+                        # synchronize lock is still held.
+                        _push_agent_remote_service_status(
+                            plane_db, root=root, names=[name], require_ack=True
+                        )
+                        confirmed = plane_db.conn.execute(
+                            "SELECT status, reason, runtime_verified FROM agent_remote_services "
+                            "WHERE name = ? COLLATE NOCASE",
+                            (name,),
+                        ).fetchone()
+                        if (confirmed is None
+                                or str(confirmed["status"] or "").upper() != "HEALTHY"
+                                or int(confirmed["runtime_verified"] or 0) != 1):
+                            status = "DEGRADED"
+                            reason = (
+                                str(confirmed["reason"] or "") if confirmed is not None else ""
+                            ) or "Server did not confirm the final runtime status."
+                            runtime_ok = False
+                    except Exception as exc:
+                        status = "DEGRADED"
+                        reason = (
+                            "Runtime applied locally but Server acknowledgement failed: %s" % exc
+                        )
+                        runtime_ok = False
+                        _persist_status(status, reason)
+                        # Best effort: if a previous HEALTHY write committed before
+                        # its response was lost, immediately project the local
+                        # fail-closed state back to Server too.
+                        _push_agent_remote_service_status(
+                            plane_db, root=root, names=[name]
+                        )
+                else:
+                    _push_agent_remote_service_status(plane_db, root=root, names=[name])
             # Local desired state is the new definition; do not compensate Server.
             _clear_agent_mgmt_side_effects(plane_db)
         else:
