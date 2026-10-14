@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 1,
+  "revision": 2,
   "repository": "datarelay-labs/datarelay-link",
   "roadmap": 184,
   "packet": 182,
@@ -11,7 +11,7 @@
   "priority": "P0_EXCLUSIVE_UI_REDESIGN",
   "exclusive": true,
   "scope_complete": false,
-  "next_task": "UXR-1.1",
+  "next_task": "UXR-1.6",
   "owner_acceptance": null,
   "scope_change_approval": null,
   "milestones": [
@@ -125,9 +125,14 @@
         "UXR-0.1"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "IMPLEMENTED",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "source_commit": "06bd16e843083d46d8a136d4aa0830069dc7faa6",
+        "implementation_report": "docs/UI_REDESIGN_IMPLEMENTATION_2026-10-14.md",
+        "focused_tests": "docs/ui-redesign-servers-evidence-20261014.json",
+        "qualification": "Source only; not deployed, live-browser-verified or accepted."
+      }
     },
     {
       "id": "UXR-0.5",
@@ -163,9 +168,14 @@
         "UXR-0.4"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "IMPLEMENTED",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "source_commit": "06bd16e843083d46d8a136d4aa0830069dc7faa6",
+        "implementation_report": "docs/UI_REDESIGN_IMPLEMENTATION_2026-10-14.md",
+        "focused_tests": "docs/ui-redesign-servers-evidence-20261014.json",
+        "qualification": "Source only; not deployed, live-browser-verified or accepted."
+      }
     },
     {
       "id": "UXR-1.2",
@@ -182,9 +192,14 @@
         "UXR-1.1"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "IMPLEMENTED",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "source_commit": "06bd16e843083d46d8a136d4aa0830069dc7faa6",
+        "implementation_report": "docs/UI_REDESIGN_IMPLEMENTATION_2026-10-14.md",
+        "focused_tests": "docs/ui-redesign-servers-evidence-20261014.json",
+        "qualification": "Source only; not deployed, live-browser-verified or accepted."
+      }
     },
     {
       "id": "UXR-1.3",
@@ -201,9 +216,14 @@
         "UXR-1.1"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "IMPLEMENTED",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "source_commit": "06bd16e843083d46d8a136d4aa0830069dc7faa6",
+        "implementation_report": "docs/UI_REDESIGN_IMPLEMENTATION_2026-10-14.md",
+        "focused_tests": "docs/ui-redesign-servers-evidence-20261014.json",
+        "qualification": "Source only; not deployed, live-browser-verified or accepted."
+      }
     },
     {
       "id": "UXR-1.4",
@@ -221,9 +241,14 @@
         "UXR-1.3"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "IMPLEMENTED",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "source_commit": "06bd16e843083d46d8a136d4aa0830069dc7faa6",
+        "implementation_report": "docs/UI_REDESIGN_IMPLEMENTATION_2026-10-14.md",
+        "focused_tests": "docs/ui-redesign-servers-evidence-20261014.json",
+        "qualification": "Source only; not deployed, live-browser-verified or accepted."
+      }
     },
     {
       "id": "UXR-1.5",
@@ -240,9 +265,14 @@
         "UXR-1.3"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "IMPLEMENTED",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "source_commit": "06bd16e843083d46d8a136d4aa0830069dc7faa6",
+        "implementation_report": "docs/UI_REDESIGN_IMPLEMENTATION_2026-10-14.md",
+        "focused_tests": "docs/ui-redesign-servers-evidence-20261014.json",
+        "qualification": "Source only; not deployed, live-browser-verified or accepted."
+      }
     },
     {
       "id": "UXR-1.6",
@@ -259,9 +289,13 @@
         "UXR-1.5"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "BLOCKED",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "implementation_report": "docs/UI_REDESIGN_IMPLEMENTATION_2026-10-14.md",
+        "blocker": "Selected-host panel correction rejected twice by the platform; coherent V1 requires those panels.",
+        "retry_policy": "Normal current-condition retry on continuation; no bypass and no permanent-ban assumption."
+      }
     },
     {
       "id": "UXR-1.7",
@@ -278,9 +312,13 @@
         "UXR-1.5"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "BLOCKED",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "implementation_report": "docs/UI_REDESIGN_IMPLEMENTATION_2026-10-14.md",
+        "blocker": "Selected-host panel correction rejected twice by the platform; coherent V1 requires those panels.",
+        "retry_policy": "Normal current-condition retry on continuation; no bypass and no permanent-ban assumption."
+      }
     },
     {
       "id": "UXR-1.8",
@@ -297,9 +335,14 @@
         "UXR-1.5"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "IMPLEMENTED",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "source_commit": "06bd16e843083d46d8a136d4aa0830069dc7faa6",
+        "implementation_report": "docs/UI_REDESIGN_IMPLEMENTATION_2026-10-14.md",
+        "focused_tests": "docs/ui-redesign-servers-evidence-20261014.json",
+        "qualification": "Source only; not deployed, live-browser-verified or accepted."
+      }
     },
     {
       "id": "UXR-1.9",
@@ -316,9 +359,14 @@
         "UXR-1.3"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "IMPLEMENTED",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "source_commit": "06bd16e843083d46d8a136d4aa0830069dc7faa6",
+        "implementation_report": "docs/UI_REDESIGN_IMPLEMENTATION_2026-10-14.md",
+        "focused_tests": "docs/ui-redesign-servers-evidence-20261014.json",
+        "qualification": "Source only; not deployed, live-browser-verified or accepted."
+      }
     },
     {
       "id": "UXR-1.10",
@@ -340,9 +388,13 @@
         "UXR-1.9"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "BLOCKED",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "implementation_report": "docs/UI_REDESIGN_IMPLEMENTATION_2026-10-14.md",
+        "blocker": "Selected-host panel correction rejected twice by the platform; coherent V1 requires those panels.",
+        "retry_policy": "Normal current-condition retry on continuation; no bypass and no permanent-ban assumption."
+      }
     },
     {
       "id": "UXR-2.1",
@@ -944,7 +996,10 @@
       "owner": "CHATGPT_CHAT",
       "status": "SPEC_BOUND",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "partial_work_report": "docs/UI_REDESIGN_IMPLEMENTATION_2026-10-14.md",
+        "qualification": "Servers-only cross-cutting work; all affected product screens remain unqualified."
+      }
     },
     {
       "id": "UXR-5.2",
@@ -963,7 +1018,10 @@
       "owner": "CHATGPT_CHAT",
       "status": "SPEC_BOUND",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "partial_work_report": "docs/UI_REDESIGN_IMPLEMENTATION_2026-10-14.md",
+        "qualification": "Servers-only cross-cutting work; all affected product screens remain unqualified."
+      }
     },
     {
       "id": "UXR-5.3",
@@ -982,7 +1040,10 @@
       "owner": "CHATGPT_CHAT",
       "status": "SPEC_BOUND",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "partial_work_report": "docs/UI_REDESIGN_IMPLEMENTATION_2026-10-14.md",
+        "qualification": "Servers-only cross-cutting work; all affected product screens remain unqualified."
+      }
     },
     {
       "id": "UXR-5.4",
@@ -1001,7 +1062,10 @@
       "owner": "CHATGPT_CHAT",
       "status": "SPEC_BOUND",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "partial_work_report": "docs/UI_REDESIGN_IMPLEMENTATION_2026-10-14.md",
+        "qualification": "Servers-only cross-cutting work; all affected product screens remain unqualified."
+      }
     },
     {
       "id": "UXR-5.5",
@@ -1020,7 +1084,10 @@
       "owner": "CHATGPT_CHAT",
       "status": "SPEC_BOUND",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "partial_work_report": "docs/UI_REDESIGN_IMPLEMENTATION_2026-10-14.md",
+        "qualification": "Servers-only cross-cutting work; all affected product screens remain unqualified."
+      }
     },
     {
       "id": "UXR-5.6",
@@ -1039,7 +1106,10 @@
       "owner": "CHATGPT_CHAT",
       "status": "SPEC_BOUND",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "partial_work_report": "docs/UI_REDESIGN_IMPLEMENTATION_2026-10-14.md",
+        "qualification": "Servers-only cross-cutting work; all affected product screens remain unqualified."
+      }
     },
     {
       "id": "UXR-5.7",
@@ -1058,7 +1128,10 @@
       "owner": "CHATGPT_CHAT",
       "status": "SPEC_BOUND",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "partial_work_report": "docs/UI_REDESIGN_IMPLEMENTATION_2026-10-14.md",
+        "qualification": "Servers-only cross-cutting work; all affected product screens remain unqualified."
+      }
     },
     {
       "id": "UXR-6.1",
@@ -2418,7 +2491,7 @@
   "uxe_to_wbs": [
     {
       "id": "LEGACY19-UXE-01",
-      "meaning": "New Admin logs in and locates \u201cAdd Agent\u201d without instructions | Can discover action and distinguish on-prem install roles",
+      "meaning": "New Admin logs in and locates “Add Agent” without instructions | Can discover action and distinguish on-prem install roles",
       "source_line": 229,
       "wbs": [
         "UXR-7.5"
@@ -2442,7 +2515,7 @@
     },
     {
       "id": "LEGACY19-UXE-04",
-      "meaning": "An intentionally denied source tries to connect | A single \u201cWhy denied?\u201d workflow shows truthful reason, policy and next action; no false ALLOW",
+      "meaning": "An intentionally denied source tries to connect | A single “Why denied?” workflow shows truthful reason, policy and next action; no false ALLOW",
       "source_line": 232,
       "wbs": [
         "UXR-7.5"

@@ -1,0 +1,87 @@
+{
+  "schema_version": 1,
+  "created_at": "2026-10-14T03:28:22.964460+00:00",
+  "source_commit": "06bd16e843083d46d8a136d4aa0830069dc7faa6",
+  "report": "docs/UI_REDESIGN_IMPLEMENTATION_2026-10-14.md",
+  "private_root": "/tmp/drlink-ui-resume-20261014",
+  "scope": "UI-only checkpoint; no live product mutation or acceptance",
+  "logs": {
+    "wip-red.log": {
+      "sha256": "e80f93f5eeb0c70c4a8e71bf652e54dd6b2d7a4d108945a27c37abb0dbdfb99e",
+      "bytes": 91390
+    },
+    "mounted-red.log": {
+      "sha256": "552c244c40b4c2088569d6db1502d0b64e2827228796fee618bb024425440069",
+      "bytes": 15592
+    },
+    "selection-red.log": {
+      "sha256": "18e27f1b866e4a6c760e66db925afef217f4ede216229ae6a0554a26656c4235",
+      "bytes": 2927
+    },
+    "return-state-red.log": {
+      "sha256": "7a0e4ebd62f562367783bcd3061dedba4caa3af9e04b613ca56471a814b3a468",
+      "bytes": 1315
+    },
+    "mounted-final.log": {
+      "sha256": "4ed6b15b3b0dab37715ed0ab55d176268766491619b543a0ab0bb8a9a893f819",
+      "bytes": 5967
+    },
+    "shell-current.log": {
+      "sha256": "785421ffffd62c9627428669db75a4c928ef9799f4f164954b5f483af49d0080",
+      "bytes": 508
+    },
+    "visual-freeze.log": {
+      "sha256": "dbed331b749aad69777b45d2b6bb87522a3c3febbf2d27fd17798ef43f4aa2c2",
+      "bytes": 197
+    },
+    "administration-final.log": {
+      "sha256": "d489c3decc155855187639bcb96312f620e8d88bec019a2063340882a0ff2c8c",
+      "bytes": 4632
+    },
+    "p0-final.log": {
+      "sha256": "f8ba7f5b80626750aa8b109e54e19958eeaf2f04c3d5ab1c3716519bcb2b5313",
+      "bytes": 10279
+    },
+    "journey-registered-final.log": {
+      "sha256": "5469f5d552264a499608486293bcfe31b915ed7b420934ffc8ab0332369ddcb1",
+      "bytes": 107622
+    },
+    "dev-preview-readonly.json": {
+      "sha256": "b699130abbcb8cf26884bd7c35d7beb0fffa0a289421580da5f0dff8e7ffdc82",
+      "bytes": 979
+    }
+  },
+  "source_files": {
+    "web/src/main.tsx": "1588f052a36eb83af03efc2905b1f9fffb7cea4cb4b73860a34cf66a5a915e6c",
+    "web/src/workflow-servers.tsx": "9b1effd46ed7280571cd4ef7334010d0e98d53bd91ae14a7d91b81f7264a9d37",
+    "web/dist/styles.css": "b992d288ae678ad7e0d1f0c522e55084a614cf23e1ca17ff755d58fa9684cf03",
+    "web/tests/workflow-servers.browser.mjs": "df5ed09a1c1d4bf1f98f3be4c6f32ff21f9580c63152acabc2dcbe38a7a7561d",
+    "web/tests/workflow-servers-shell.browser.mjs": "38504dae336e60e68916b3ab70b2bee2d353be8aa4ae8c2ff8aeeace6f43d303",
+    "web/tests/workflow-servers-visual.browser.mjs": "e40d3afc43e5828ade6618d12ee6ab353b85051beb4d573471e0db18f3d418ec"
+  },
+  "dev_preview_readonly": {
+    "scope": "read-only approved development preview; no credentials or product state changed",
+    "origin": "https://221.139.249.111:19044",
+    "assets": {
+      "app.js": {
+        "http": 200,
+        "served_sha256": "934e17568f8cfddb88b0a57ac7ea7496cebf840b73ad03f7dcb110bdc32cd5c2",
+        "disk_sha256": "934e17568f8cfddb88b0a57ac7ea7496cebf840b73ad03f7dcb110bdc32cd5c2",
+        "matches_existing_disk": true
+      },
+      "styles.css": {
+        "http": 200,
+        "served_sha256": "ed9163d376e84b5ea776695be5a95e1e7b26c52fd83cee1b58fdaef08ca2c322",
+        "disk_sha256": "ed9163d376e84b5ea776695be5a95e1e7b26c52fd83cee1b58fdaef08ca2c322",
+        "matches_existing_disk": true
+      },
+      "foundation.css": {
+        "http": 200,
+        "served_sha256": "3049f76b67d9341920254bcbe1b26b48d52b05e9faa9bc992f0d51f6887928d7",
+        "disk_sha256": "3049f76b67d9341920254bcbe1b26b48d52b05e9faa9bc992f0d51f6887928d7",
+        "matches_existing_disk": true
+      }
+    },
+    "anonymous_session_http": 401
+  }
+}
