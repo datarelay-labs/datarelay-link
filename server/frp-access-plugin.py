@@ -61,6 +61,9 @@ except SystemExit as exc:
     _BOUNDED_LOAD_ERROR = str(exc) or "ERROR: missing frp_bounded_server.py"
 
 ACCESS_MAX_CONCURRENT = int(os.environ.get("FRP_ACCESS_MAX_CONCURRENT", "32"))
+# NewUserConn authorization is read-only, but each SQLite reader owns a file
+# descriptor. Keep a smaller DB-reader bound under the HTTP worker bound.
+ACCESS_DB_MAX_CONCURRENT = 8
 _ACCESS_REQUEST_SLOTS = threading.BoundedSemaphore(ACCESS_MAX_CONCURRENT)
 
 
@@ -86,6 +89,10 @@ if _BOUNDED is not None:
         """Production bounded access-plugin server (module-level for regression tests)."""
 
         max_concurrent = ACCESS_MAX_CONCURRENT
+        # HTTPServer inherits TCPServer's backlog of 5. That queues only a
+        # fraction of the authorized worker capacity and makes connection
+        # bursts wait for TCP retransmission before policy code even runs.
+        request_queue_size = ACCESS_MAX_CONCURRENT
         request_timeout = 30.0
         daemon_threads = True
         reject_callback = staticmethod(_reject_busy)
@@ -94,10 +101,21 @@ else:
 
 
 class PolicyCache:
-    """SQLite-backed Remote Access policy cache (access-control.json is not authority)."""
+    """SQLite-backed Remote Access policy cache (access-control.json is not authority).
+
+    NewUserConn uses stateless request-private read-only connections. The
+    generic runtime-policy cache intentionally keeps a long-lived connection
+    for egress compatibility, but overlapping short-lived readers beside that
+    connection retain SQLite DB descriptors. Access authorization therefore
+    keeps only metadata between requests and bounds concurrent readers.
+    """
 
     def __init__(self, config_path: Path):
+        self.config_path = Path(config_path)
         self._inner = RP.ControlPlaneCache(config_path)
+        self._reader_slots = threading.BoundedSemaphore(ACCESS_DB_MAX_CONCURRENT)
+        self._meta_lock = threading.RLock()
+        self._root = None
         # Test-compat aliases (legacy fingerprint fields unused for authority).
         self.access_fp = None
         self.registry_fp = None
@@ -109,26 +127,76 @@ class PolicyCache:
         self.registry_path = None
         self.cfg = {}
         self.load_error = None
+        self.fingerprint = None
         self.reload(force=True)
 
+    def _release_reader_slot(self):
+        try:
+            self._reader_slots.release()
+        except ValueError:
+            pass
+
+    def _close_inner_plane(self):
+        plane = self._inner.plane
+        if plane is not None:
+            self._root = plane.root
+        self._inner._close_cached_plane()
+
     def reload(self, force: bool = False) -> None:
+        """Validate current config/DB, then drop the long-lived SQLite handle."""
         self._inner.reload(force=force)
         self.cfg = dict(self._inner.cfg)
         self.load_error = self._inner.load_error
         self.fingerprint = self._inner.fingerprint
+        self._close_inner_plane()
 
     def snapshot(self):
+        """Compatibility snapshot for non-threaded tests/legacy callers."""
         plane, load_error, cfg = self._inner.snapshot()
         self.cfg = dict(cfg)
         self.load_error = load_error
+        self.fingerprint = self._inner.fingerprint
         return plane, load_error, cfg
 
     def open_isolated(self):
-        """Request-private control plane. Caller must close the plane."""
-        plane, load_error, cfg = self._inner.open_isolated()
-        self.cfg = dict(cfg)
-        self.load_error = load_error
-        return plane, load_error, cfg
+        """Open one bounded request-private read-only ControlPlane.
+
+        No long-lived cached SQLite connection is retained on this production
+        path, so parallel readers close back to the baseline FD count.
+        """
+        with self._meta_lock:
+            try:
+                cfg = json.loads(self.config_path.read_text(encoding="utf-8"))
+                root = RP.root_from_cfg(cfg)
+                db = RP.db_path(root)
+                if not db.is_file():
+                    raise RuntimeError("control DB missing")
+            except Exception as exc:
+                self.cfg = {}
+                self.load_error = "config/control DB unavailable: %s" % exc
+                return None, self.load_error, {}
+            self.cfg = dict(cfg)
+            self.load_error = None
+            self._root = root
+
+        self._reader_slots.acquire()
+        plane = None
+        try:
+            plane = RP.ControlPlane(root, read_only=True)
+        except Exception as exc:
+            if plane is not None:
+                try:
+                    plane.close()
+                except Exception:
+                    pass
+            self._release_reader_slot()
+            self.load_error = str(exc)
+            return None, self.load_error, cfg
+
+        # ControlPlane.close() already supports a release callback for
+        # request-private readers. Reuse that lifecycle hook for this slot.
+        plane._release_isolated_conn_lock = self._release_reader_slot
+        return plane, None, cfg
 
 
 def make_handler(cache: PolicyCache, plugin_path: str):

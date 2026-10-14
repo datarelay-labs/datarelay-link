@@ -754,7 +754,10 @@ class PolicyCacheFailClosedTests(unittest.TestCase):
         }).encode()
         original = control_plane.integrity_check
         calls = []
-        cached_conn_id = id(self.cache._inner.plane.conn)
+        self.assertIsNone(
+            self.cache._inner.plane,
+            "production NewUserConn cache must not retain a long-lived SQLite connection",
+        )
         force_integrity_failure = [False]
 
         def counted(conn):
@@ -811,11 +814,15 @@ class PolicyCacheFailClosedTests(unittest.TestCase):
 
         self.assertEqual(successful_calls, 6, "expected one integrity scan per successful request")
         self.assertEqual(len(calls), 7, "failed integrity scan must also fail closed per request")
-        self.assertNotIn(cached_conn_id, calls, "unchanged cache fingerprint must stay lightweight")
+        self.assertIsNone(
+            self.cache._inner.plane,
+            "request authorization must not recreate a long-lived cached SQLite connection",
+        )
 
-    def test_newuserconn_isolated_plane_lock_serializes_authorization(self):
-        """Quantify the global request-private connection lock's serialization."""
+    def test_newuserconn_isolated_plane_readers_are_bounded_and_parallel(self):
+        """Request-private read-only policy connections must not serialize NewUserConn."""
         import io
+        import os
         import threading
         import time
         from concurrent.futures import ThreadPoolExecutor
@@ -835,10 +842,10 @@ class PolicyCacheFailClosedTests(unittest.TestCase):
 
         handler = self.plugin.make_handler(self.cache, "/access-auth")
 
-        class EightSlotAccessServer(self.plugin.AccessServer):
-            max_concurrent = 8
+        class SixteenSlotAccessServer(self.plugin.AccessServer):
+            max_concurrent = 16
 
-        server = EightSlotAccessServer(("127.0.0.1", 0), handler)
+        server = SixteenSlotAccessServer(("127.0.0.1", 0), handler)
         port = server.server_address[1]
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
@@ -847,6 +854,20 @@ class PolicyCacheFailClosedTests(unittest.TestCase):
         lock = threading.Lock()
         active = 0
         peak = 0
+        db_path = str(self.RP.db_path(str(self.root)))
+
+        def db_fds():
+            count = 0
+            fd_root = Path("/proc/self/fd")
+            if not fd_root.is_dir():
+                return None
+            for item in fd_root.iterdir():
+                try:
+                    if os.readlink(str(item)) == db_path:
+                        count += 1
+                except OSError:
+                    pass
+            return count
 
         def observed(*args, **kwargs):
             nonlocal active, peak
@@ -882,20 +903,26 @@ class PolicyCacheFailClosedTests(unittest.TestCase):
             finally:
                 conn.close()
 
+        before_fds = db_fds()
         started = time.monotonic()
         try:
             with redirect_stderr(io.StringIO()):
                 with mock.patch.object(self.plugin.RP, "authorize_remote", side_effect=observed):
-                    with ThreadPoolExecutor(max_workers=8) as pool:
-                        results = list(pool.map(one, range(8)))
+                    with ThreadPoolExecutor(max_workers=16) as pool:
+                        results = list(pool.map(one, range(16)))
+            request_elapsed = time.monotonic() - started
         finally:
-            elapsed = time.monotonic() - started
             server.shutdown()
             server.server_close()
             thread.join(timeout=3)
+        after_fds = db_fds()
 
-        self.assertEqual(peak, 1)
-        self.assertGreaterEqual(elapsed, 0.35)
+        self.assertEqual(peak, self.plugin.ACCESS_DB_MAX_CONCURRENT, peak)
+        # This measures implementation parallelism, not a product latency SLO.
+        self.assertGreaterEqual(request_elapsed, 0.09, request_elapsed)
+        self.assertLess(request_elapsed, 0.80, request_elapsed)
+        if before_fds is not None and after_fds is not None:
+            self.assertLessEqual(after_fds, before_fds + 1, (before_fds, after_fds))
         for status, body in results:
             self.assertEqual(status, 200, body)
             self.assertFalse(body.get("reject"), body)
