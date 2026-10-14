@@ -903,6 +903,66 @@ class StatusParityTests(unittest.TestCase):
                 ('HEALTHY', 1),
             )
 
+    def test_dependency_degraded_verification_only_does_not_full_replay(self):
+        from unittest import mock
+        import drlink_v24_runtime as runtime
+
+        with mock.patch.dict(os.environ, {'FRP_DEPLOY_TEST_ROOT': self.agent_tmp}):
+            v24.set_service_object(
+                self.server, 'c014-dependency', type='tcp', port=18792, oneshot=True)
+            for name, service in (('c014-healthy', 'ssh'),
+                                  ('c014-stuck', 'c014-dependency')):
+                created = v24.set_remote_service_agent(
+                    self.agent, name, destination='this-host',
+                    service=service, enabled=True, oneshot=True, root=self.agent_tmp,
+                )
+                self.assertIsNotNone(created['view']['endpoint_port'])
+            self.agent.conn.execute(
+                "UPDATE agent_remote_services SET status='HEALTHY',runtime_verified=1,"
+                "reason='' WHERE name='c014-healthy'"
+            )
+            self.agent.conn.execute(
+                "UPDATE agent_remote_services SET destination='stuck-target',"
+                "status='DEGRADED',runtime_verified=0,"
+                "reason='Destination is currently unreachable from Relay Host.' "
+                "WHERE name='c014-stuck'"
+            )
+            self.agent.conn.commit()
+
+            def dependency(_plane, destination, **kwargs):
+                if destination == 'stuck-target':
+                    return 'Destination is currently unreachable from Relay Host.'
+                return None
+
+            def verified(_plane, name, *, root, **kwargs):
+                if name == 'c014-healthy':
+                    return ('HEALTHY', '')
+                return ('DEGRADED', 'Destination is currently unreachable from Relay Host.')
+
+            def acknowledge(*, root, services):
+                return {'services': [
+                    dict(item, pending_allocation=0) for item in services
+                ]}
+
+            with mock.patch.object(v24, '_destination_dependency_status',
+                                   side_effect=dependency), \
+                 mock.patch.object(runtime, 'verified_remote_service_status',
+                                   side_effect=verified), \
+                 mock.patch.object(mgmt, 'report_remote_service_status_on_server',
+                                   side_effect=acknowledge) as report, \
+                 mock.patch.object(v24, 'set_remote_service_agent') as replay, \
+                 mock.patch.object(runtime, 'apply_agent_runtime') as apply:
+                result = v24.synchronize_agent_remote_services(
+                    self.agent, root=self.agent_tmp,
+                    server_verification_only=True)
+
+            self.assertEqual(result['status'], 'DEGRADED', result)
+            self.assertTrue(result.get('no_change'), result)
+            self.assertEqual(result['updated'], 0)
+            report.assert_called_once()
+            replay.assert_not_called()
+            apply.assert_not_called()
+
     def test_F027_incomplete_signed_server_ack_must_not_short_circuit_reconcile(self):
         from unittest import mock
         created = v24.set_remote_service_agent(

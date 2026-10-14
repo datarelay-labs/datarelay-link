@@ -5909,12 +5909,46 @@ def _synchronize_agent_remote_services_locked(plane_db, *, root: Optional[str] =
                         or (not enabled and status != "DISABLED")):
                         stable = False
                         break
-                    if (_destination_dependency_status(
-                            plane_db, row["destination"], root=root,
-                            destination_client_id=_row_get(row, "destination_client_id"))
-                        or _service_dependency_status(plane_db, row["service_object"])):
+                    destination_reason = _destination_dependency_status(
+                        plane_db, row["destination"], root=root,
+                        destination_client_id=_row_get(row, "destination_client_id")
+                    )
+                    service_reason = _service_dependency_status(
+                        plane_db, row["service_object"]
+                    )
+                    # A missing/invalid Service Object changes desired runtime
+                    # structure and must still fall through to full fail-closed
+                    # reconciliation. A known unreachable destination is
+                    # different: the publication/endpoint is already valid and
+                    # replaying every Remote Service cannot make the target
+                    # listener reachable. Keep that stable DEGRADED projection
+                    # on the signed status-only path so the lifecycle worker
+                    # does not contend with an operator mutation.
+                    if service_reason:
                         stable = False
                         break
+                    stable_unreachable = (
+                        destination_reason == DESTINATION_UNREACHABLE_REASON
+                        and enabled
+                        and status == "DEGRADED"
+                        and not bool(row["runtime_verified"])
+                    )
+                    if destination_reason and not stable_unreachable:
+                        stable = False
+                        break
+                    if stable_unreachable:
+                        degraded.append({
+                            "name": row["name"],
+                            "reason": destination_reason,
+                        })
+                        claims.append({
+                            "name": row["name"],
+                            "status": "DEGRADED",
+                            "reason": destination_reason,
+                            "runtime_verified": False,
+                            "endpoint_port": row["endpoint_port"],
+                        })
+                        continue
                     claim_status = status
                     if enabled:
                         live_status = runtime.verified_remote_service_status(

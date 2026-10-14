@@ -423,24 +423,28 @@ class RemoteServiceDistributedAtomicity(unittest.TestCase):
         self.assertEqual(int(pub["enabled"]), 0)
 
     def test_successful_create_update_delete_unchanged(self):
-        created = self._create("svc-ok")
-        port = int(created["view"]["endpoint_port"])
-        self.assertEqual(created["view"]["status"], "HEALTHY")
-        self.assertEqual(int(self._server_pub("svc-ok")["target_port"]), 22)
+        # This test isolates distributed atomicity from target reachability.
+        # The disposable fixture does not run real listeners on ports 22/443;
+        # target-health behavior is covered separately.
+        with mock.patch.object(v24, "_probe_tcp", return_value=True):
+            created = self._create("svc-ok")
+            port = int(created["view"]["endpoint_port"])
+            self.assertEqual(created["view"]["status"], "HEALTHY")
+            self.assertEqual(int(self._server_pub("svc-ok")["target_port"]), 22)
 
-        updated = v24.set_remote_service_agent(
-            self.agent,
-            "svc-ok",
-            destination="this-host",
-            service="https",
-            enabled=True,
-            oneshot=True,
-            root=self.agent_tmp,
-            server_reachable=True,
-        )
-        self.assertEqual(updated["view"]["status"], "HEALTHY")
-        self.assertEqual(int(updated["view"]["endpoint_port"]), port)
-        self.assertEqual(int(self._server_pub("svc-ok")["target_port"]), 443)
+            updated = v24.set_remote_service_agent(
+                self.agent,
+                "svc-ok",
+                destination="this-host",
+                service="https",
+                enabled=True,
+                oneshot=True,
+                root=self.agent_tmp,
+                server_reachable=True,
+            )
+            self.assertEqual(updated["view"]["status"], "HEALTHY")
+            self.assertEqual(int(updated["view"]["endpoint_port"]), port)
+            self.assertEqual(int(self._server_pub("svc-ok")["target_port"]), 443)
 
         v24.unset_remote_service_agent(
             self.agent, "svc-ok", root=self.agent_tmp, server_reachable=True
