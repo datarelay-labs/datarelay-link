@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 7,
+  "revision": 8,
   "repository": "datarelay-labs/datarelay-link",
   "roadmap": 184,
   "packet": 182,
@@ -120,14 +120,21 @@
         "UXR-0.1"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "BLOCKED",
+      "status": "IMPLEMENTED",
       "approval_required": false,
       "evidence": {
-        "browser_ledger": "docs/UXB_06F_B2_BROWSER_ACCEPTANCE_LEDGER.md",
-        "fixture_evidence": "/home/aella/drlink-validation/ui-uxr5-20261014",
-        "missing_required_evidence": "Exact original product source commit and original browser viewport are not encoded in the artifact and remain unverified.",
-        "qualification": "Owner screenshot exists through the PDF evidence, but exact baseline source/viewport metadata is not inferred.",
-        "owner_screenshot_recovered": "PDF page 1 contains the user-provided rejected Servers & Agents screen and identifies zero-host/dark/Admin presentation."
+        "owner_capture": "Library /02. DataRelay Link/image(20261014-010534).png",
+        "capture_pixels": "2048x1420",
+        "visible_role": "admin / Admin",
+        "visible_data_scope": "0 managed hosts; old Servers & Agents zero-host screen with targetless management forms visible",
+        "visible_theme": "dark",
+        "preview_identity_source": "Issue #182 NEXT_CHAT_START comment 6159728889",
+        "preview_source_head": "810d162fb133a825041df5cb4ffb121ab07fd45e",
+        "preview_pointer": "dev-installed-current -> dev-installed-810d162f",
+        "preview_app_sha256": "934e17568f8cfddb88b0a57ac7ea7496cebf840b73ad03f7dcb110bdc32cd5c2",
+        "preview_styles_sha256": "ed9163d376e84b5ea776695be5a95e1e7b26c52fd83cee1b58fdaef08ca2c322",
+        "preview_foundation_css_sha256": "3049f76b67d9341920254bcbe1b26b48d52b05e9faa9bc992f0d51f6887928d7",
+        "qualification": "Genuine owner rejected baseline is identified by source/assets, role, data scope, dark theme and capture dimensions. Capture pixel size includes browser chrome; no unmeasured CSS viewport or usability timing is invented."
       }
     },
     {
