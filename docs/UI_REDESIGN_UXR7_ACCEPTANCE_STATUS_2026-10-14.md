@@ -32,16 +32,13 @@ Current UXR-5 matrix observation manifest SHA256:
 
 These screenshots mount real production React routes with synthetic authorized GET data. They are not authenticated-user evidence.
 
-### Blocking evidence
+### PDF3–5 recovery and remaining blocker
 
-UXR-7.3 explicitly requires comparison against the retained PDF3–5 source material and actual interactions. The current repository and accessible Project file search contain no PDF3–5 artifacts; only roadmap references to them are available. No replacement source is invented.
+The owner-provided five-page DRLink_UI_Reanalysis_Decision_20261014.pdf was recovered from the authorized project Library and reviewed page-by-page. Pages 3–5 are mapped to current V1/V2/V3 source and fixture evidence in UI_REDESIGN_PDF3_5_FIDELITY_2026-10-14.md. Missing PDF source is no longer a blocker, and no mapped source-level deviation was found.
 
 The private preview currently has one enabled Web operator record: admin / Admin. No Operator or Read Only preview accounts are provisioned. No credential is read, reset, created, or copied for this check.
 
-Therefore UXR-7.3 remains BLOCKED, not PASS:
-
-1. PDF3–5 source visuals must be supplied or restored to the authorized project evidence set.
-2. A permitted authenticated browser session is needed to compare deployed routes rather than fixture DOM/screenshots.
+UXR-7.3 remains BLOCKED only on the real-interaction portion of its contract: a permitted authenticated same-condition deployed-browser session is required to compare actual routes/interactions rather than fixture DOM/screenshots. Source/fixture fidelity is not promoted to Browser PASS.
 
 ## UXR-7.4 — 20 routes + shell, three roles
 

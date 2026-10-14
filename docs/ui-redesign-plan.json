@@ -125,8 +125,9 @@
       "evidence": {
         "browser_ledger": "docs/UXB_06F_B2_BROWSER_ACCEPTANCE_LEDGER.md",
         "fixture_evidence": "/home/aella/drlink-validation/ui-uxr5-20261014",
-        "missing_required_evidence": "Genuine owner before-baseline screenshot/capture with source, actor role, data scope, theme and viewport is not present in current Project files, Library search, repository, or retained validation directory.",
-        "qualification": "Fixture screenshots remain supplemental. No owner baseline is fabricated; real before evidence remains unverified."
+        "missing_required_evidence": "Exact original product source commit and original browser viewport are not encoded in the artifact and remain unverified.",
+        "qualification": "Owner screenshot exists through the PDF evidence, but exact baseline source/viewport metadata is not inferred.",
+        "owner_screenshot_recovered": "PDF page 1 contains the user-provided rejected Servers & Agents screen and identifies zero-host/dark/Admin presentation."
       }
     },
     {
@@ -1595,8 +1596,14 @@
         "fixture_visual_old_manifest_sha256": "fde3201624a754453e9555625c32e240e461d904df8833f1aa438dea543789e3",
         "fixture_visual_current_manifest_sha256": "6cab53564b291c536422f1fdb3f838f66b76e3c285e06d266e0d74954a9370c1",
         "fixture_matrix": "32 + 32 same-name Server cases; 0 overflow, undersized controls, runtime errors, writes",
-        "blocker": "Required PDF3-5 visual sources are absent from current repo/accessible Project files and no permitted authenticated browser session is available.",
-        "acceptance_claimed": false
+        "blocker": "Same-condition authenticated deployed-browser interactions remain required; source/fixture evidence cannot substitute.",
+        "acceptance_claimed": false,
+        "pdf_source": "DRLink_UI_Reanalysis_Decision_20261014.pdf; owner-provided five-page Library artifact; roadmap SHA256 10dc9a02f969b4268d77bd2a439d055ba1fd0a2827b77ebdf77b5531eb4ff300",
+        "pdf_fidelity_matrix": "docs/UI_REDESIGN_PDF3_5_FIDELITY_2026-10-14.md",
+        "pdf_pages_reviewed": "3-5",
+        "pdf_source_available": true,
+        "source_fixture_deviation": "NONE FOUND in mapped V1/V2/V3 requirements",
+        "focused_post_recovery": "Servers browser 35/35; Setup continuity browser PASS; related V1/V2/V3 source tests 78/78; responsive/accessibility 2/2"
       }
     },
     {
