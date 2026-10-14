@@ -1,5 +1,44 @@
 # DataRelay Link 3.0 — Unified R1–R7 Execution Roadmap
 
+## Accepted visual workflow redesign — 2026-10-14
+
+Owner accepted the revised competitor-screen proposal and requested continuation.
+This overrides the previous Foundation-package-only implementation scope for the
+Link-owned Web screens below. Foundation shared components/tokens, Core APIs,
+authorization, credentials, stored state, production and release gates are unchanged.
+Existing Work Packet #182, single roadmap #184 and Draft PR #206 are reused.
+
+Goal: replace the text-heavy menu/form wall with target-first tasks, not a NOC
+analytics dashboard. The reviewed HTML proposal is illustrative, not test evidence.
+Reuse the existing competitor ledger: NetBird compact resource list, Tailscale
+focused add/edit forms, Teleport resource actions, Twingate selected-resource graph.
+No vendor code/assets or fabricated traffic/service-count/connection verdicts.
+
+1. **WU1 — Servers & Agents:** true empty onboarding vs loading/error/no match;
+   compact loaded-scope status tabs/search/table; selected-server detail with
+   Overview/Services/Activity/Settings; existing metadata/admission/lifecycle forms
+   appear only for the selected authorized server, never below the empty list.
+2. **WU2 — Connect and publish:** focused Agent setup, selected-server service
+   publication and usable service cards/actions; preserve exact Preview/Apply guards.
+3. **WU3 — Explain a selected service:** contextual source/rule/destination path;
+   policy verdict separate from connection testing; no new authority or fake telemetry.
+4. **WU4 — Home and visual qualification:** next tasks rather than decorative zero
+   metrics; readable Foundation-token typography, responsive and keyboard checks.
+
+No schema migration/new dependency or authorization expansion. Preserve saved views,
+advanced filters, pagination, actor scoping and UNKNOWN evidence. Code/static tests
+are not genuine two-user E2E. Build proprietary RC41 compiled assets only in private
+scratch; deploy only to the already owner-approved development preview on port 19044,
+preserving its data/account/TLS and rollback assets. Never commit those bytes publicly.
+
+Acceptance: first empty viewport has one Add server primary action and no targetless
+mutation forms; invalid/incomplete inventory never claims empty; selectable rows open
+a keyboard-operable detail; dangerous actions retain existing previews/confirmation;
+text is disclosed when relevant; live served asset hashes match the tested build.
+
+---
+
+
 > **2026-10-12 source status pointer:** [40-slot competitor UI adoption crosswalk](COMPETITOR_UI_APPLIED_MATRIX_2026-10-12.md) reconciles historical proposals against the current Draft PR #206. G01–G37 source findings are recorded, with only genuine UI-06 Core-backed independent reviewer still a security-design/authorization gate; real Browser E2E is deferred at owner request. The single execution roadmap remains GitHub Issue #184.
 
 > **ONE CURRENT EXECUTION ROADMAP:** [GitHub Issue #184 — DataRelay Link 3.0 R1–R7](https://github.com/datarelay-labs/datarelay-link/issues/184).

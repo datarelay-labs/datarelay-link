@@ -1,4 +1,4 @@
-import React, {useEffect, useRef, useState} from "react";
+import React, {useCallback, useEffect, useRef, useState} from "react";
 import {createRoot} from "react-dom/client";
 import {QRCodeSVG} from "qrcode.react";
 import {AdministrationHub,type AdministrationHubTask} from "@datarelay-labs/foundation";
@@ -6,6 +6,7 @@ import {createLinkFoundationAdministrationTasks} from "./foundation-administrati
 import {backupToolReadiness} from "./foundation-administration";
 import {observedCoreFlag,observedCoreCount,observedCoreNames} from "./uxb-impact-evidence";
 import {AccessEvidenceExplorer,GuidedPolicyJourney,coreFlowKey,coreCutoffKey,visibleCoreEvidence,resolveCompletePolicyMatch,observedHostInspectContext,type AccessPlane} from "./p0-access-policy";
+import {ServerRoute,type ServerManagementAction} from "./workflow-servers";
 import {EnrollmentOnboarding} from "./p0-enrollment";
 import {navGroups,groupFor,labelFor,pageDescriptions,visibleRoute,navMatches,setupContextForObjectFamily} from "./uxb-navigation";
 import {START_PAGE_OPTIONS,startPageKeyForOperator,readPreferredStartPage,writePreferredStartPage} from "./uxb-start-page";
@@ -2882,7 +2883,22 @@ function SystemAdministrationWorkspace({data,operator,onNavigate}:{data:any,oper
   </div>;
 }
 
-function View({active,operator,onNavigate,context,setupDraft,onSetupDraftChange}:{active:string,operator:any,onNavigate?:(id:string,groupId?:string,context?:any)=>void,context?:any,setupDraft?:SetupDraft|null,onSetupDraftChange?:(draft:SetupDraft)=>void}){
+function SelectedServerManagement({server,action}:{server:any,action:ServerManagementAction}){
+  const selectedHostId=server.id;
+  if(action==="metadata")return <ManagedHostMetadataPanel key={selectedHostId} selectedHost={server}/>;
+  if(action==="admission")return <ManagedHostAdmissionPanel key={selectedHostId} selectedHost={server}/>;
+  return <ManagedHostLifecyclePanel key={selectedHostId} selectedHost={server}/>;
+}
+
+function View(props:any){
+  const {active,operator,onNavigate,context}=props;
+  if(active==="hosts")return <ServerRoute key={String(operator?.id||"")+":"+String(operator?.role||"")} operator={operator}
+    api={api} onNavigate={onNavigate} context={context} returnState={props.serverReturnState} onReturnStateChange={props.onServerReturnStateChange}
+    renderManagement={(server,action)=><SelectedServerManagement server={server} action={action}/>}/>;
+  return <LegacyView {...props}/>;
+}
+
+function LegacyView({active,operator,onNavigate,context,setupDraft,onSetupDraftChange}:{active:string,operator:any,onNavigate?:(id:string,groupId?:string,context?:any)=>void,context?:any,setupDraft?:SetupDraft|null,onSetupDraftChange?:(draft:SetupDraft)=>void}){
   const [data,setData]=useState<any>(null),[error,setError]=useState(""),[query,setQuery]=useState("");
   const [retryNonce,setRetryNonce]=useState(0);
   useEffect(()=>{
@@ -2940,7 +2956,6 @@ function View({active,operator,onNavigate,context,setupDraft,onSetupDraftChange}
   if(active==="versions"&&data)return <AgentVersionDrift data={data} onNavigate={onNavigate}/>;
   if(active==="system"&&data)return <SystemAdministrationWorkspace data={data} operator={operator} onNavigate={onNavigate}/>;
   if(active==="objects"&&data)return <><ObjectsWorkspace data={data} onNavigate={onNavigate} context={context} api={api}/>{operator.role!=="Read Only"&&<GuidedObjectPanel/>}</>;
-  if(active==="hosts"&&data)return <><ResourceWorkspace kind="host" data={data} operator={operator} onNavigate={onNavigate} api={api} initialFilter={String(context?.savedFilter||"").slice(0,120)} initialAdmission={context?.savedAdmission} initialInspectId={context?.inspectResourceId}/>{operator.role!=="Read Only"&&<ManagedHostMetadataPanel/>}{operator.role==="Admin"&&<ManagedHostAdmissionPanel/>}{operator.role==="Admin"&&<ManagedHostLifecyclePanel/>}</>;
   if(active==="services"&&data)return <><ResourceWorkspace kind="service" data={data} operator={operator} onNavigate={onNavigate} api={api} initialFilter={String(context?.savedFilter||"").slice(0,120)} initialInspectId={context?.inspectResourceId}/>{operator.role!=="Read Only"&&<RemoteServiceEditor api={api}/>}</>;
   if(active==="policies"&&data){
     const selectedPlane=["remote","internet","ai"].includes(String(context?.plane||context?.focusPolicy?.plane))
@@ -3121,6 +3136,10 @@ function Shell({operator,onLogout}:{operator:any,onLogout:()=>void}){
   const [searchOpen,setSearchOpen]=useState(false);
   const searchReturnFocusRef=useRef<HTMLElement|null>(null);
   const [navigationContext,setNavigationContext]=useState<any>(null);
+  // Non-secret Servers navigation choices; this shell is keyed by authenticated actor.
+  const serverReturnRef=useRef<any>(null);
+  const [serverReturnState,setServerReturnState]=useState<any>(null);
+  const rememberServerReturn=useCallback((state:any)=>{serverReturnRef.current=state},[]);
   // Current authenticated React session only, never URL or localStorage.
   // Store only non-secret wizard choices; Core plans and tokens always expire.
   const [setupDraft,setSetupDraft]=useState<SetupDraft|null>(null);
@@ -3182,6 +3201,7 @@ function Shell({operator,onLogout}:{operator:any,onLogout:()=>void}){
   function visible(id:string){return visibleRoute(id,operator.role)}
   function activate(id:string,groupId?:string,context?:any){
     if(!visible(id))return;
+    if(id==="hosts")setServerReturnState(serverReturnRef.current);
     // Navigation context is ephemeral, never written to browser storage or URL.
     setNavigationContext(context||null);
     setActive(id);
@@ -3197,7 +3217,7 @@ function Shell({operator,onLogout}:{operator:any,onLogout:()=>void}){
   const title=labelFor(active);
   const crumb=navGroups.find(group=>group.id===activeGroup)?.label||"Connections";
   const healthText={loading:"Checking",healthy:"Healthy",attention:"Attention",unknown:"UNKNOWN"}[coreHealthy];
-  return <div className={collapsed?"shell dr-shell is-collapsed":"shell dr-shell"}>
+  return <div data-route={active} className={collapsed?"shell dr-shell is-collapsed":"shell dr-shell"}>
     <a className="dr-skip-link" href="#drlink-main-content">Skip to content</a>
     <aside className={collapsed?"sidebar dr-sidebar is-collapsed":"sidebar dr-sidebar"}>
       <div className="dr-sidebar-brand">
@@ -3266,7 +3286,7 @@ function Shell({operator,onLogout}:{operator:any,onLogout:()=>void}){
           <button className="dr-icon-button" onClick={()=>setDark(!dark)} title="Toggle theme"><WorkspaceIcon kind={dark?"sun":"moon"}/></button>
         </div>
       </header>
-      <main id="drlink-main-content" className="content dr-workspace" tabIndex={-1}><div className="dr-content-frame"><View key={active+":"+refreshNonce+":"+(navigationContext?.originId||navigationContext?.searchResultKey||"")} active={active} operator={operator} onNavigate={activate} context={navigationContext} setupDraft={setupDraft} onSetupDraftChange={setSetupDraft}/></div></main>
+      <main id="drlink-main-content" className="content dr-workspace" tabIndex={-1}><div className="dr-content-frame"><View key={active+":"+refreshNonce+":"+(navigationContext?.originId||navigationContext?.searchResultKey||"")} active={active} operator={operator} onNavigate={activate} context={navigationContext} serverReturnState={serverReturnState} onServerReturnStateChange={rememberServerReturn} setupDraft={setupDraft} onSetupDraftChange={setSetupDraft}/></div></main>
     </div>
     <GlobalSearch open={searchOpen} onClose={()=>setSearchOpen(false)} onNavigate={activate} operator={operator} returnFocusRef={searchReturnFocusRef}/>
   </div>;
@@ -3295,4 +3315,6 @@ function App(){
   return <Shell key={String(operator.id||"")+":"+String(operator.role||"")} operator={operator} onLogout={()=>setOperator(null)}/>;
 }
 
-createRoot(document.getElementById("app")!).render(<App/>);
+export {App, View};
+const appElement=document.getElementById("app");
+if(appElement)createRoot(appElement).render(<App/>);
