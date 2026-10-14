@@ -1,3 +1,16 @@
+## 2026-10-14 governance reconciliation — UXR-0 evidence status
+
+Existing research and planning were not rerun. Historical source hashes and current route/plan guards were read back against the retained roadmap.
+
+- UXR-0.1 IMPLEMENTED: no-omission source register retained; three canonical historical source SHA256 values verified directly from historical HEAD 914d5c459a99d6e4cfae28f6b51468fa73a80c3a. The registered five-page UI reanalysis PDF remains referenced by SHA only; the attachment is not currently available, so no new visual claim is made.
+- UXR-0.2 IMPLEMENTED: actual navigation contains exactly 20 unique product routes (Home + 15 grouped + 4 contextual), each with current description and legacy search aliases.
+- UXR-0.5 IMPLEMENTED: roadmap guard 16/16 PASS and structural validator PASS at 66 WBS / 40 CUI / 37 gaps / 22 vendors / 24 UXE versions / exclusive=true. It rejects mapping omission, fake ACCEPTED state and silent scope unlock.
+- UXR-0.3 is explicitly BLOCKED, not completed: the required genuine owner before-baseline capture with role/data/theme/viewport metadata is not present in current Project files, Library retrieval, repository or retained validation evidence. Existing fixture screenshots are not promoted to owner baseline evidence.
+
+No product code, Core state, auth, preview deployment, merge or release changed in this reconciliation.
+
+---
+
 ## 2026-10-14 continuation — cross-cutting UXR-5 development deployment
 
 Exact deployed Web source: `971f35e250a3a724803478ed68091cf61e6786fc`; private RC41 bundle SHA256 `53558225b27f7973544a81c7e48c17fff5876aea51e09027a7c08ac09dab2f08`; active development candidate `dev-installed-971f35e2`.

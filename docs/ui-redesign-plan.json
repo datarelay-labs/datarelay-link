@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": 5,
+  "revision": 6,
   "repository": "datarelay-labs/datarelay-link",
   "roadmap": 184,
   "packet": 182,
@@ -69,9 +69,19 @@
       ],
       "depends_on": [],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "IMPLEMENTED",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "source_register": "docs/UI_REDESIGN_WBS_2026-10-14.md#no-omission-source-register",
+        "historical_head": "914d5c459a99d6e4cfae28f6b51468fa73a80c3a",
+        "verified_hashes": {
+          "docs/COMPETITOR_UI_SCREEN_EVIDENCE_2026-10-11.md": "360cfd07729609bd1ddda9f1461bf5ea248ae3b8e78c8f01c024cb913464f08e",
+          "docs/COMPETITOR_UI_APPLIED_MATRIX_2026-10-12.md": "469a3cb071ae4a16d362032d16f50885dade85277180de058ab21060da5bc9cc",
+          "docs/WEB_UX_COMPETITIVE_AUDIT_2026-10.md": "2bdf53aac57375038f19a16477f0b74255ea3d6ee407762bcd98ab9ba24937a0"
+        },
+        "pdf_registry": "DRLink_UI_Reanalysis_Decision_20261014.pdf SHA256 10dc9a02f969b4268d77bd2a439d055ba1fd0a2827b77ebdf77b5531eb4ff300; attachment absent in current Project/Library, so no new visual claim is made.",
+        "qualification": "Historical research/proposal inventory is frozen and mapped; no new competitor research or browser acceptance inferred."
+      }
     },
     {
       "id": "UXR-0.2",
@@ -87,9 +97,14 @@
         "UXR-0.1"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "IMPLEMENTED",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "route_source": "web/src/uxb-navigation.ts",
+        "route_count": 20,
+        "verification": "Programmatic census: overview + 15 grouped + 4 contextual routes = 20 unique IDs; every route has page description and legacy alias entry.",
+        "qualification": "Capability/navigation mapping only; this does not prove logged-in route acceptance."
+      }
     },
     {
       "id": "UXR-0.3",
@@ -105,9 +120,14 @@
         "UXR-0.1"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "BLOCKED",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "browser_ledger": "docs/UXB_06F_B2_BROWSER_ACCEPTANCE_LEDGER.md",
+        "fixture_evidence": "/home/aella/drlink-validation/ui-uxr5-20261014",
+        "missing_required_evidence": "Genuine owner before-baseline screenshot/capture with source, actor role, data scope, theme and viewport is not present in current Project files, Library search, repository, or retained validation directory.",
+        "qualification": "Fixture screenshots remain supplemental. No owner baseline is fabricated; real before evidence remains unverified."
+      }
     },
     {
       "id": "UXR-0.4",
@@ -149,9 +169,16 @@
         "UXR-0.1"
       ],
       "owner": "CHATGPT_CHAT",
-      "status": "SPEC_BOUND",
+      "status": "IMPLEMENTED",
       "approval_required": false,
-      "evidence": {}
+      "evidence": {
+        "plan": "docs/ui-redesign-plan.json",
+        "guard": "scripts/check-ui-redesign-plan.py",
+        "tests": "tests/test-ui-redesign-plan.py",
+        "verification": "16/16 plan integrity tests PASS; validator reports 66 WBS, 40 CUI, 37 gaps, 22 vendors, 24 UXE versions and exclusive=true; negative tests reject omission, false ACCEPTED and fake scope unlock.",
+        "github_records": "Issue #184 roadmap + ACTIVE #182 packet retain exclusive UI scope.",
+        "qualification": "Executable-plan governance implemented; product acceptance remains 0/66 until acceptance gates are met."
+      }
     },
     {
       "id": "UXR-1.1",
